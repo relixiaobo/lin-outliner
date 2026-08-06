@@ -21,6 +21,7 @@ describe('managed skill store', () => {
     const store = new ManagedSkillStore(root);
     const skill = fixture('Stored v1');
     const version = storedVersionFromValidated('a'.repeat(40), 100, skill);
+    expect(version.userInvocable).toBe(true);
 
     const installedPath = await store.installValidatedContent(skill.name, skill);
     expect(installedPath).toBe(store.contentPath(skill.name, skill.contentHash));
@@ -109,7 +110,7 @@ describe('managed skill store', () => {
     await store.installValidatedContent(previousSkill.name, previousSkill);
     await store.installValidatedContent(orphanSkill.name, orphanSkill);
     await store.replaceIndex({
-      schemaVersion: 1,
+      schemaVersion: 2,
       skills: [{
         id: activeSkill.name,
         name: activeSkill.name,
@@ -133,6 +134,27 @@ describe('managed skill store', () => {
     expect(await store.verifyVersion(previousSkill.name, previous)).toEqual({ ok: true });
     expect(await store.verifyVersion(orphanSkill.name, storedVersionFromValidated('c'.repeat(40), 110, orphanSkill)))
       .toMatchObject({ ok: false });
+  });
+
+  test('initialization quarantines an index this build cannot decode and starts empty', async () => {
+    const root = await temporaryRoot();
+    const store = new ManagedSkillStore(root);
+    // An index written by an older schema. Decoding stays fail-closed, but that
+    // verdict used to be permanent: every later read threw, so the runtime roots,
+    // the library, and every install stayed broken with no way back.
+    await mkdir(path.dirname(store.indexPath), { recursive: true });
+    await writeFile(store.indexPath, JSON.stringify({ schemaVersion: 1, skills: [] }), 'utf8');
+
+    await store.initialize();
+
+    expect(await store.readIndex()).toEqual({ schemaVersion: 2, skills: [] });
+    const quarantined = (await readdir(path.dirname(store.indexPath)))
+      .filter((entry) => entry.startsWith('index.json.unreadable-'));
+    expect(quarantined).toHaveLength(1);
+    // Renamed, never deleted: a schema break must not destroy the record of what
+    // was installed.
+    expect(JSON.parse(await readFile(path.join(path.dirname(store.indexPath), quarantined[0]!), 'utf8')))
+      .toEqual({ schemaVersion: 1, skills: [] });
   });
 });
 

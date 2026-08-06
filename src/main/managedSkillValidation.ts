@@ -74,6 +74,7 @@ export interface ManagedSkillFile {
 export interface ValidatedManagedSkill {
   name: string;
   description: string;
+  userInvocable: boolean;
   version?: string;
   compatibility: ManagedSkillCompatibilityView;
   contentHash: string;
@@ -87,6 +88,7 @@ export interface ValidatedManagedSkill {
 export interface ManagedSkillFrontmatterSummary {
   name: string;
   description: string;
+  userInvocable: boolean;
   version?: string;
   compatibility: ManagedSkillCompatibilityView;
 }
@@ -279,6 +281,13 @@ export function parseManagedSkillFrontmatter(input: {
       'execution',
     );
   }
+  if (parsed['user-invocable'] !== undefined && typeof parsed['user-invocable'] !== 'boolean') {
+    throw new ManagedSkillValidationError(
+      'invalid_frontmatter',
+      'Managed SKILL.md user-invocable must be a boolean.',
+      'user-invocable',
+    );
+  }
 
   const metadata = isRecord(parsed.metadata) ? parsed.metadata : {};
   if (metadata.tenon !== undefined && !isRecord(metadata.tenon)) {
@@ -304,6 +313,7 @@ export function parseManagedSkillFrontmatter(input: {
   return {
     name: nameValue,
     description,
+    userInvocable: parsed['user-invocable'] !== false,
     ...(versionValue ? { version: versionValue } : {}),
     compatibility: resolveManagedSkillCompatibility({
       appVersion: input.appVersion,

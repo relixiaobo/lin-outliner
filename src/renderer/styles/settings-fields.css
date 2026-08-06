@@ -1,76 +1,7 @@
-.agent-settings-row {
-  display: flex;
-  min-height: 30px;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-8);
-}
-
-.agent-settings-checkbox {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-4);
-  color: var(--text-soft);
-  font-size: var(--font-meta);
-}
-
-.agent-settings-checkbox input {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  opacity: 0;
-  pointer-events: none;
-}
-
-.agent-settings-checkbox:hover .checkbox-mark:not(.checked) {
-  border-color: var(--text-secondary);
-  background: var(--fill-1);
-}
-
-:root[data-input-modality="keyboard"] .agent-settings-checkbox:focus-within .checkbox-mark {
-  box-shadow: var(--focus-ring-shadow);
-}
-
 .agent-settings-notice {
   color: var(--text-tertiary);
   font-size: var(--font-meta);
   line-height: var(--line-meta);
-}
-
-.agent-settings-model-stat {
-  display: flex;
-  min-height: 32px;
-  flex-direction: column;
-  justify-content: center;
-  gap: var(--space-hairline);
-  border-radius: var(--radius-sm);
-  background: var(--fill-1);
-  padding: 0 var(--space-6);
-}
-
-.agent-settings-model-stat span {
-  color: var(--text-tertiary);
-  font-size: var(--font-ui-2xs);
-  line-height: var(--line-ui-2xs-tight);
-  text-transform: uppercase;
-}
-
-.agent-settings-model-stat strong {
-  color: var(--text-strong);
-  font-size: var(--font-ui-sm);
-  font-weight: 500;
-  line-height: var(--line-meta-tight);
-}
-
-.agent-settings-model-placeholder {
-  border-radius: var(--radius-sm);
-  background: var(--fill-1);
-  color: var(--text-tertiary);
-  font-size: var(--font-meta);
-  line-height: var(--line-meta);
-  padding: var(--space-5) var(--space-6);
 }
 
 /* Notice / error banner = neutral box, status colour on TEXT only (B4) — the same
@@ -108,4 +39,14 @@
 
 .agent-settings-empty.feedback-state-inline {
   justify-content: flex-start;
+}
+
+/* Feedback is pinned to the bottom of the pane, not appended to its scroll
+   content: an error reported below the fold is an error the user never sees. */
+.agent-settings-feedback {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  padding-top: var(--space-3);
+  background: linear-gradient(to bottom, transparent, var(--bg-content) var(--space-3));
 }

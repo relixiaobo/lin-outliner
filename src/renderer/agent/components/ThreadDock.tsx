@@ -404,7 +404,7 @@ export function ThreadDock({
             <button
               className="button button-primary"
               disabled={creating}
-              onClick={() => void window.lin?.openSettings?.({ category: 'providers' })}
+              onClick={() => void window.lin?.openSettings?.({ page: 'services' })}
               type="button"
             >
               <SettingsIcon size={ICON_SIZE.menu} />

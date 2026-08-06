@@ -67,7 +67,7 @@ describe('resolveSkillContentTarget (single skill-path source of truth)', () => 
   });
 });
 
-describe('skill ratification provenance', () => {
+describe('skill provenance and undo', () => {
   // A trivial in-memory store standing in for the userData-backed file store.
   function createMemoryProvenanceStore(): AgentSkillProvenanceStore & { records: Record<string, AgentSkillProvenanceRecord> } {
     const records: Record<string, AgentSkillProvenanceRecord> = {};
@@ -103,81 +103,29 @@ describe('skill ratification provenance', () => {
     return { root, skillFile, content };
   }
 
-  test('mutable skills are ratified by default while accepted hashes persist separately', async () => {
+  // The two tests that stood here exercised the trust model: ratification (a
+  // permission gate hardcoded open) and acceptance (a claim whose only writer was
+  // a button gated behind that gate). Both are deleted — a per-Skill
+  // accept-before-use gate is an approval policy, which Tenon does not have. What
+  // provenance still owes the product is Undo, covered in agentLocalTools.
+
+  test('an agent write stays invocable without any acceptance step', async () => {
     const { root, skillFile, content } = await writeAuthoredSkill('authored', 'Follow the authored workflow.');
     const store = createMemoryProvenanceStore();
 
     const first = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false, provenanceStore: store });
     await first.recordAgentSkillWrite(skillFile, skillContentHash(content));
     await first.notifySkillContentWritten([skillFile]);
-    expect((await first.getSkill('authored'))).toMatchObject({ ratified: true, accepted: false });
+    expect(await first.getSkill('authored')).toBeDefined();
 
-    // "Restart": a fresh runtime sharing the persisted store keeps the default-allow
-    // ratification policy without manufacturing an acceptedHash record.
+    // A fresh runtime over the same store behaves identically — there is no
+    // acceptance record to rehydrate and nothing gated on one.
     const second = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false, provenanceStore: store });
-    expect((await second.getSkill('authored'))).toMatchObject({ ratified: true, accepted: false });
     const invocation = await second.invokeSkill({ skill: 'authored', trigger: 'agent' });
     expect(invocation.ok).toBe(true);
-    expect((await second.getSkill('authored'))).toMatchObject({ ratified: true, accepted: false });
-
-    const third = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false });
-    expect((await third.getSkill('authored'))).toMatchObject({ ratified: true, accepted: false });
   });
 
-  test('accepting a skill records exactly those bytes; an agent re-patch clears accepted state', async () => {
-    const { root, skillFile, content } = await writeAuthoredSkill('accepted', 'Follow the accepted workflow.');
-    const store = createMemoryProvenanceStore();
-
-    const runtime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false, provenanceStore: store });
-    await runtime.recordAgentSkillWrite(skillFile, skillContentHash(content));
-    await runtime.notifySkillContentWritten([skillFile]);
-    expect((await runtime.getSkill('accepted'))).toMatchObject({ ratified: true, accepted: false });
-
-    // Accept carries the hash of the bytes the user saw; a mismatch is refused
-    // (TOCTOU guard), the matching hash records acceptance.
-    await expect(runtime.acceptSkill('accepted', 'not-the-displayed-hash')).rejects.toThrow('changed since it was displayed');
-    await runtime.acceptSkill('accepted', skillContentHash(content));
-    const accepted = await runtime.getSkill('accepted');
-    expect(accepted?.ratified).toBe(true);
-    expect(accepted?.accepted).toBe(true);
-    const invocation = await runtime.invokeSkill({ skill: 'accepted', trigger: 'agent' });
-    expect(invocation.ok).toBe(true);
-
-    // Acceptance survives a restart through the same store.
-    const restarted = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false, provenanceStore: store });
-    expect((await restarted.getSkill('accepted'))?.ratified).toBe(true);
-
-    // An agent re-patch records a fresh agentHash; the stale acceptedHash no longer
-    // matches, so accepted state clears while default ratification remains true.
-    const patched = skillMarkdown('Follow the patched workflow.');
-    await writeFile(skillFile, patched, 'utf8');
-    await runtime.recordAgentSkillWrite(skillFile, skillContentHash(patched), { hash: skillContentHash(content), content });
-    await runtime.notifySkillContentWritten([skillFile]);
-    const afterPatch = await runtime.getSkill('accepted');
-    expect(afterPatch?.ratified).toBe(true);
-    expect(afterPatch?.accepted).toBe(false);
-  });
-
-  test('revoking acceptance clears accepted state without disabling the skill', async () => {
-    const { root, skillFile, content } = await writeAuthoredSkill('revoked', 'Follow the revoked workflow.');
-    const store = createMemoryProvenanceStore();
-
-    const runtime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false, provenanceStore: store });
-    await runtime.recordAgentSkillWrite(skillFile, skillContentHash(content));
-    await runtime.notifySkillContentWritten([skillFile]);
-    await runtime.acceptSkill('revoked', skillContentHash(content));
-    expect((await runtime.getSkill('revoked'))?.ratified).toBe(true);
-
-    await runtime.revokeSkillAcceptance('revoked');
-    const revoked = await runtime.getSkill('revoked');
-    expect(revoked?.ratified).toBe(true);
-    expect(revoked?.accepted).toBe(false);
-    const invocation = await runtime.invokeSkill({ skill: 'revoked', trigger: 'agent' });
-    expect(invocation.ok).toBe(true);
-    expect((await runtime.getSkill('revoked'))?.ratified).toBe(true);
-  });
-
-  test('undo restores the project original without self-ratifying; the slot is consumed', async () => {
+  test('undo restores the project original, and the slot is consumed', async () => {
     const { root, skillFile, content: original } = await writeAuthoredSkill('undone', 'The user-authored original.');
     const store = createMemoryProvenanceStore();
     const runtime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false, provenanceStore: store });
@@ -188,13 +136,11 @@ describe('skill ratification provenance', () => {
     await runtime.recordAgentSkillWrite(skillFile, skillContentHash(edited), { hash: skillContentHash(original), content: original });
     await runtime.notifySkillContentWritten([skillFile]);
     const afterEdit = await runtime.getSkill('undone');
-    expect(afterEdit?.ratified).toBe(true);
     expect(afterEdit?.canUndoLastAgentEdit).toBe(true);
 
     await runtime.undoLastAgentSkillEdit('undone');
     const restored = await runtime.getSkill('undone');
     expect(restored?.body).toContain('The user-authored original.');
-    expect(restored?.ratified).toBe(true);
     expect(restored?.canUndoLastAgentEdit).toBe(false);
     await expect(runtime.undoLastAgentSkillEdit('undone')).rejects.toThrow('no recorded previous version');
   });
@@ -217,7 +163,6 @@ describe('skill ratification provenance', () => {
     await writeFile(skillFile, handEdited, 'utf8');
     await runtime.notifySkillContentWritten([skillFile]);
     const afterHandEdit = await runtime.getSkill('guard-undo');
-    expect(afterHandEdit?.ratified).toBe(true);
     expect(afterHandEdit?.canUndoLastAgentEdit).toBe(false);
     await expect(runtime.undoLastAgentSkillEdit('guard-undo')).rejects.toThrow('edited after the last agent write');
     expect((await runtime.getSkill('guard-undo'))?.body).toContain('hand-tuned');
@@ -232,7 +177,6 @@ describe('skill ratification provenance', () => {
     await runtime.undoLastAgentSkillEdit('guard-undo');
     const restored = await runtime.getSkill('guard-undo');
     expect(restored?.body).toContain('hand-tuned');
-    expect(restored?.ratified).toBe(true);
   });
 
   test('the undo slot holds only the version preceding the LAST agent write', async () => {
@@ -256,23 +200,21 @@ describe('skill ratification provenance', () => {
     expect(restored?.canUndoLastAgentEdit).toBe(false);
   });
 
-  test('a project hand-edit after acceptance clears accepted state but stays usable', async () => {
-    const { root, skillFile, content } = await writeAuthoredSkill('hand-after-accept', 'Agent draft.');
+  test('a hand-edit over an agent draft stays usable', async () => {
+    const { root, skillFile, content } = await writeAuthoredSkill('hand-after-agent', 'Agent draft.');
     const store = createMemoryProvenanceStore();
     const runtime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false, provenanceStore: store });
     await runtime.recordAgentSkillWrite(skillFile, skillContentHash(content));
     await runtime.notifySkillContentWritten([skillFile]);
-    await runtime.acceptSkill('hand-after-accept', skillContentHash(content));
 
-    const handEdited = skillMarkdown('User tuned the accepted draft.');
+    const handEdited = skillMarkdown('User tuned the draft.');
     await writeFile(skillFile, handEdited, 'utf8');
     await runtime.notifySkillContentWritten([skillFile]);
-    const skill = await runtime.getSkill('hand-after-accept');
-    expect(skill?.ratified).toBe(true);
-    expect(skill?.accepted).toBe(false);
+    const invocation = await runtime.invokeSkill({ skill: 'hand-after-agent', trigger: 'agent' });
+    expect(invocation.ok).toBe(true);
   });
 
-  test('user-source hand-edits keep the original self-ratification rule', async () => {
+  test('a user-source hand-edit stays usable', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'lin-skills-user-root-'));
     const userRoot = await mkdtemp(path.join(tmpdir(), 'lin-skills-user-dir-'));
     const skillsDir = path.join(userRoot, 'skills');
@@ -292,18 +234,16 @@ describe('skill ratification provenance', () => {
     const authored = await runtime.getSkill('user-edited');
     await runtime.recordAgentSkillWrite(skillFile, authored?.contentHash ?? '');
     await runtime.notifySkillContentWritten([skillFile]);
-    expect((await runtime.getSkill('user-edited'))).toMatchObject({ ratified: true, accepted: false });
+    expect((await runtime.getSkill('user-edited'))).toMatchObject({});
 
-    const handEdited = skillMarkdown('User tuned the accepted draft.');
+    const handEdited = skillMarkdown('User tuned the agent draft.');
     await writeFile(skillFile, handEdited, 'utf8');
     await runtime.notifySkillContentWritten([skillFile]);
     const skill = await runtime.getSkill('user-edited');
     expect(skill?.source).toBe('user');
-    expect(skill?.ratified).toBe(true);
-    expect(skill?.accepted).toBe(false);
   });
 
-  test('trust actions resolve paths:-conditional skills the panel lists', async () => {
+  test('Undo provenance resolves paths:-conditional skills the panel lists', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'lin-skills-provenance-'));
     const skillFile = path.join(root, '.agents', 'skills', 'conditional', 'SKILL.md');
     const content = [
@@ -322,35 +262,17 @@ describe('skill ratification provenance', () => {
     await runtime.recordAgentSkillWrite(skillFile, skillContentHash(content));
     await runtime.notifySkillContentWritten([skillFile]);
 
-    // Inactive conditional skills appear in the Skills panel (listAllSkills) with
-    // default-allow trust derivation, while Accept still records an optional hash.
+    // A conditional skill that has not matched anything yet still appears in the
+    // library, so the user can see and manage it before it ever activates.
     const listed = (await runtime.listAllSkills()).find((skill) => skill.name === 'conditional');
-    expect(listed?.ratified).toBe(true);
-    await runtime.acceptSkill('conditional', skillContentHash(content));
-    const accepted = (await runtime.listAllSkills()).find((skill) => skill.name === 'conditional');
-    expect(accepted?.ratified).toBe(true);
-    expect(accepted?.accepted).toBe(true);
+    expect(listed).toBeDefined();
   });
 
-  test('refreshTrustRecords propagates a trust change made through another runtime', async () => {
-    const { root, skillFile, content } = await writeAuthoredSkill('shared', 'Shared workflow.');
-    const store = createMemoryProvenanceStore();
-    const settingsRuntime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false, provenanceStore: store });
-    const conversationRuntime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false, provenanceStore: store });
+  // The acceptance-propagation case that stood here is gone with acceptance. The
+  // surviving reason a second runtime must re-read the store is Undo, which
+  // rewrites the file — covered by the test below.
 
-    await settingsRuntime.recordAgentSkillWrite(skillFile, skillContentHash(content));
-    await settingsRuntime.notifySkillContentWritten([skillFile]);
-    expect((await conversationRuntime.getSkill('shared'))).toMatchObject({ ratified: true, accepted: false });
-
-    // The Settings runtime accepts; the live Thread's own registry only
-    // sees acceptedHash after a trust refresh (its in-memory snapshot is otherwise stale).
-    await settingsRuntime.acceptSkill('shared', skillContentHash(content));
-    expect((await conversationRuntime.getSkill('shared'))).toMatchObject({ ratified: true, accepted: false });
-    await conversationRuntime.refreshTrustRecords();
-    expect((await conversationRuntime.getSkill('shared'))).toMatchObject({ ratified: true, accepted: true });
-  });
-
-  test('refreshTrustRecords reloads externally restored Skill bytes and schedules a catalog delta', async () => {
+  test('refreshProvenanceRecords reloads externally restored Skill bytes and schedules a catalog delta', async () => {
     const { root, skillFile, content: firstContent } = await writeAuthoredSkill('shared-undo', 'First workflow.');
     const store = createMemoryProvenanceStore();
     const settingsRuntime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false, provenanceStore: store });
@@ -371,14 +293,14 @@ describe('skill ratification provenance', () => {
       .toMatchObject({ contentHash: skillContentHash(secondContent) });
 
     await settingsRuntime.undoLastAgentSkillEdit('shared-undo');
-    await conversationRuntime.refreshTrustRecords();
+    await conversationRuntime.refreshProvenanceRecords();
     expect(acknowledgePendingCatalogRefresh(conversationRuntime)).toBe(true);
     const after = await conversationRuntime.buildSkillCatalogSnapshot();
     expect(after.entries.find((entry) => entry.name === 'shared-undo'))
       .toMatchObject({ contentHash: skillContentHash(firstContent) });
   });
 
-  test('undo back to an earlier agent version keeps default ratification', async () => {
+  test('undo back to an earlier agent version restores those bytes', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'lin-skills-provenance-'));
     const skillFile = path.join(root, '.agents', 'skills', 'agent-born', 'SKILL.md');
     await mkdir(path.dirname(skillFile), { recursive: true });
@@ -400,7 +322,6 @@ describe('skill ratification provenance', () => {
     await runtime.undoLastAgentSkillEdit('agent-born');
     const restored = await runtime.getSkill('agent-born');
     expect(restored?.body).toContain('Agent version one.');
-    expect(restored?.ratified).toBe(true);
   });
 });
 
@@ -411,7 +332,6 @@ describe('agent skills', () => {
       body: 'Follow demo instructions.',
     });
     const runtime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false });
-    await acceptSkillForTest(runtime, 'demo');
 
     const first = await runtime.buildSkillCatalogSnapshot();
     const replay = await runtime.buildSkillCatalogSnapshot();
@@ -504,7 +424,6 @@ describe('agent skills', () => {
       body: 'Follow demo instructions.',
     });
     const runtime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false });
-    await acceptSkillForTest(runtime, 'demo');
 
     await runtime.notifyFileTouched([path.join(root, 'src', 'file.ts')]);
     const skill = await runtime.getSkill('demo');
@@ -531,7 +450,6 @@ describe('agent skills', () => {
       body: 'Topic=$topic\nTarget=$target\nFirst=$0\nAll=$ARGUMENTS\nDir=${AGENT_SKILL_DIR}',
     });
     const runtime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false });
-    await acceptSkillForTest(runtime, 'demo');
     const invocation = await runtime.invokeSkill({
       skill: 'demo',
       args: '"hello world" file.ts',
@@ -579,7 +497,6 @@ describe('agent skills', () => {
         status: 'completed',
       }),
     });
-    await acceptSkillForTest(runtime, 'demo');
 
     const invocation = await runtime.invokeSkill({
       skill: 'demo',
@@ -684,7 +601,6 @@ describe('agent skills', () => {
       source: 'built-in',
       modelInvocable: true,
       userInvocable: true,
-      ratified: true,
     });
     const text = invocation?.ok ? invocation.evidence.instructions : '';
     expect(text).not.toContain('Base directory for this skill:');
@@ -761,7 +677,7 @@ describe('agent skills', () => {
 
     expect(body).toContain('available immediately');
     expect(body).toContain('slash invocation works immediately');
-    expect(body).toContain('without a separate trust prompt');
+    expect(body).toContain('without a separate approval prompt');
     expect(body).toContain('Do not write executable or binary support files');
   });
 
@@ -838,8 +754,6 @@ describe('agent skills', () => {
       skillFile: path.join(skillDir, 'SKILL.md'),
       modelInvocable: true,
       userInvocable: true,
-      ratified: true,
-      accepted: false,
       canUndoLastAgentEdit: false,
       allowedTools: [],
     });
@@ -1091,7 +1005,6 @@ describe('agent skills', () => {
       execution: 'isolated',
       modelInvocable: true,
       userInvocable: true,
-      ratified: true,
       argumentHint: '<question or area to research>',
       argumentNames: ['question'],
     });
@@ -1249,7 +1162,6 @@ describe('agent skills', () => {
         result: `isolated result: ${renderedContent}`,
       }),
     });
-    await acceptSkillForTest(runtime, 'isolated');
 
     expect((await runtime.buildSkillCatalogSnapshot()).entries.find((entry) => entry.name === 'isolated')?.description)
       .toContain('Isolated skill');
@@ -1296,7 +1208,6 @@ describe('agent skills', () => {
         transcriptPath: '/tmp/isolated-thread-stopped.md',
       }),
     });
-    await acceptSkillForTest(runtime, 'stoppable');
 
     const invocation = await runtime.invokeSkill({ skill: 'stoppable', trigger: 'agent' });
     expect(invocation.ok).toBe(true);
@@ -1330,7 +1241,6 @@ describe('agent skills', () => {
         result: renderedContent,
       }),
     });
-    await acceptSkillForTest(runtime, 'forked');
 
     const skill = await runtime.getSkill('forked');
     expect(skill?.execution).toBe('inline');
@@ -1358,7 +1268,6 @@ describe('agent skills', () => {
         result: 'one-shot isolated result',
       }),
     });
-    await acceptSkillForTest(runtime, 'isolated');
 
     expect(await resolveUserSkillInvocation(runtime, '/isolated demo')).toBeNull();
     const invocation = await runtime.invokeSkill({ skill: 'isolated', args: 'demo', trigger: 'agent' });
@@ -1377,7 +1286,6 @@ describe('agent skills', () => {
       body: 'Requires isolated execution.',
     });
     const runtime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false });
-    await acceptSkillForTest(runtime, 'isolated');
 
     const invocation = await runtime.invokeSkill({ skill: 'isolated', trigger: 'agent' });
 
@@ -1471,7 +1379,6 @@ describe('agent skills', () => {
       body: 'Use external instructions.',
     }, extraDir);
     const runtime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false });
-    await acceptSkillForTest(runtime, 'demo');
 
     const projectCatalog = await runtime.buildSkillCatalogSnapshot();
     runtime.updateAdditionalSkillDirectories([extraDir]);
@@ -1500,7 +1407,6 @@ describe('agent skills', () => {
       includeUserSkills: false,
       additionalSkillDirectories: [extraDir],
     });
-    await acceptSkillForTest(runtime, 'demo');
 
     const catalog = await runtime.buildSkillCatalogSnapshot();
 
@@ -1518,7 +1424,6 @@ describe('agent skills', () => {
       body: 'Use TS conventions.',
     });
     const runtime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false });
-    await acceptSkillForTest(runtime, 'typescript-review');
 
     expect((await runtime.buildSkillCatalogSnapshot()).entries.some((entry) => (
       entry.name === 'typescript-review'
@@ -1551,8 +1456,6 @@ describe('agent skills', () => {
     });
 
     const runtime = new AgentSkillRuntime({ localRoot: root, includeUserSkills: false });
-    await acceptSkillForTest(runtime, 'src-directory');
-    await acceptSkillForTest(runtime, 'src-globstar');
 
     expect((await runtime.buildSkillCatalogSnapshot()).entries.some((entry) => (
       entry.name === 'src-directory'
@@ -1602,7 +1505,6 @@ describe('agent skills', () => {
     }, nestedSkillsDir);
     await runtime.notifyFileTouched([touchedFile]);
 
-    expect((await runtime.getSkill('late-dynamic'))?.ratified).toBe(true);
     expect(acknowledgePendingCatalogRefresh(runtime)).toBe(true);
     expect((await runtime.buildSkillCatalogSnapshot()).entries.some((entry) => (
       entry.name === 'late-dynamic'
@@ -1662,11 +1564,6 @@ async function createSkillInRoot(
   return dir;
 }
 
-async function acceptSkillForTest(runtime: AgentSkillRuntime, name: string): Promise<void> {
-  const skill = (await runtime.listAllSkills()).find((candidate) => candidate.name === name);
-  if (!skill?.contentHash) throw new Error(`Missing test skill hash for ${name}`);
-  await runtime.acceptSkill(name, skill.contentHash);
-}
 
 function createMemoryProvenanceStore(): AgentSkillProvenanceStore & { records: Record<string, AgentSkillProvenanceRecord> } {
   const records: Record<string, AgentSkillProvenanceRecord> = {};

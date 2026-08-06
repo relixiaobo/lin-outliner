@@ -36,7 +36,6 @@ function skillDefinition(name: string, userInvocable = true): SkillDefinition {
     hasUserSpecifiedDescription: true,
     userInvocable,
     modelInvocable: true,
-    ratified: true,
     allowedTools: [],
     argumentNames: [],
     execution: 'inline',

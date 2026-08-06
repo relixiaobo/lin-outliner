@@ -27,7 +27,10 @@ export interface ManagedInstallReview {
  * separate surface. Both need the same catalog, the same installed list, and the
  * same busy/error envelope, so neither can own it.
  */
-export function useManagedSkills(onApplied: () => Promise<void>) {
+export function useManagedSkills(
+  onApplied: () => Promise<void>,
+  onInstalled?: (skill: ManagedSkillView) => Promise<boolean>,
+) {
   const t = useT();
   const [catalog, setCatalog] = useState<ManagedSkillCatalogView | null>(null);
   const [skills, setSkills] = useState<ManagedSkillView[]>([]);
@@ -124,15 +127,19 @@ export function useManagedSkills(onApplied: () => Promise<void>) {
     setBusy(`install:${review.candidate.id}`);
     clearFeedback();
     try {
-      await api.agentManagedSkillInstall({
+      const installed = await api.agentManagedSkillInstall({
         discoveryId: review.discovery.id,
         candidateId: review.candidate.id,
         expectedCommit: review.discovery.resolvedCommit,
       });
       if (!mounted.current) return;
+      const fullyEnabled = await onInstalled?.(installed) ?? true;
+      if (!mounted.current) return;
       setInstallReview(null);
       setSourceUrl('');
-      setNotice(t.settings.skills.managedInstalledNotice({ name: review.candidate.name }));
+      if (fullyEnabled) {
+        setNotice(t.settings.skills.managedInstalledNotice({ name: review.candidate.name }));
+      }
       await loadAll(false);
       await onApplied();
     } catch (cause) {
@@ -142,22 +149,26 @@ export function useManagedSkills(onApplied: () => Promise<void>) {
     }
   }
 
-  async function setEnabled(skill: ManagedSkillView, enabled: boolean) {
-    setBusy(`enabled:${skill.id}`);
-    clearFeedback();
+  async function setEnabled(
+    skill: ManagedSkillView,
+    enabled: boolean,
+  ): Promise<{ ok: true; value: ManagedSkillView } | { ok: false; error: ManagedSkillErrorView }> {
     try {
       const next = await api.agentManagedSkillSetEnabled(skill.id, enabled, skill.active.contentHash);
-      if (!mounted.current) return;
-      replaceSkill(next);
-      setNotice(enabled
-        ? t.settings.skills.managedEnabledNotice({ name: skill.name })
-        : t.settings.skills.managedDisabledNotice({ name: skill.name }));
-      await onApplied();
+      if (mounted.current) replaceSkill(next);
+      // Persistence already succeeded. A secondary refresh failure must not turn
+      // this into a rejected toggle and make the row lie about what is on disk.
+      await onApplied().catch(() => undefined);
+      return { ok: true, value: next };
     } catch (cause) {
-      if (mounted.current) setError(managedSkillErrorFromUnknown(cause));
-    } finally {
-      if (mounted.current) setBusy(null);
+      return { ok: false, error: managedSkillErrorFromUnknown(cause) };
     }
+  }
+
+  function showEnabledNotice(name: string, enabled: boolean) {
+    setNotice(enabled
+      ? t.settings.skills.managedEnabledNotice({ name })
+      : t.settings.skills.managedDisabledNotice({ name }));
   }
 
   async function checkUpdates(skillId?: string) {
@@ -297,6 +308,7 @@ export function useManagedSkills(onApplied: () => Promise<void>) {
     reviewSelectedCandidate,
     runConfirmedAction,
     setEnabled,
+    showEnabledNotice,
     setConfirmAction,
     setInstallReview,
     setOpenMenu,

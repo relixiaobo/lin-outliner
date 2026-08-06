@@ -15,11 +15,14 @@ import { SettingsRowMenu, type RowMenuAction } from './SettingsRowMenu';
 import {
   ManagedSkillsSettings,
   managedSkillActions,
+  managedSkillAttentionLabel,
   managedSkillErrorMessage,
-  managedStatusLabel,
 } from './ManagedSkillsSettings';
 import { useManagedSkills } from './useManagedSkills';
 import { cx } from '../primitives/cx';
+import { beginKeyedMutation, isCurrentKeyedMutation } from '../keyedMutationGeneration';
+import { createKeyedSerialMutationQueue } from '../../../core/serialMutationQueue';
+import { skillLibraryCount } from './skillLibraryCount';
 
 /** A fault in the Skill's own bytes or identity, as opposed to a failed check. */
 function isSkillFault(skill: ManagedSkillView): boolean {
@@ -33,11 +36,14 @@ interface SettingsSkillLibrarySectionProps {
   additionalSkillDirectories: readonly string[];
   onDirectoriesChange: (next: string[]) => Promise<readonly string[]>;
   onToggleSkill: (skillName: string) => void;
+  toggleErrors?: ReadonlyMap<string, string>;
   /**
    * Persists one name's `disabledSkills` membership immediately. Used by the
    * managed toggle, whose activation half is already immediate.
    */
   onPersistSkillDisabled: (skillName: string, disabled: boolean) => Promise<boolean>;
+  /** Reports the actual unified row count back to the Agent category. */
+  onSkillCountChange: (count: number) => void;
   /**
    * Reports how many managed Skills currently have an update waiting. The shell
    * owns the nav badge and cannot see this list, so while the library is mounted
@@ -77,11 +83,20 @@ function directoryContaining(
 interface LibraryRow {
   key: string;
   name: string;
+  /**
+   * The managed index's id for this row, absent on every other source. Managed
+   * per-row state — override, target, queue, generation, error — is keyed by it,
+   * because a name is not an identity here: the `name_conflict` state this pane
+   * surfaces is precisely a name held by more than one Skill.
+   */
+  managedId?: string;
   displayName: string;
+  /** Whether typing `/name` in the composer actually invokes it. */
+  userInvocable: boolean;
   description: string;
   /** The chip that names where this Skill came from. */
   sourceChip: string;
-  /** Trust / status chips shown after the source chip. */
+  /** Provenance / status chips shown after the source chip. */
   chips: string[];
   /**
    * Why this Skill needs attention, in words. Carried alongside the description
@@ -98,15 +113,11 @@ interface LibraryRow {
    */
   diagnosticTone?: 'danger' | 'muted';
   enabled: boolean;
-  /** Controls are quiet while a mutation for this row is in flight. */
-  busy: boolean;
   dimmed: boolean;
   toggleLabel: string;
   onToggle: (enabled: boolean) => void;
   actions: RowMenuAction[];
   actionsLabel: string;
-  /** Row-level accept action, used by unratified user/project Skills. */
-  accept?: { label: string; ariaLabel: string; onSelect: () => void };
 }
 
 export function SettingsSkillLibrarySection({
@@ -114,7 +125,9 @@ export function SettingsSkillLibrarySection({
   additionalSkillDirectories,
   onDirectoriesChange,
   onToggleSkill,
+  toggleErrors = EMPTY_STRING_MAP,
   onPersistSkillDisabled,
+  onSkillCountChange,
   onUpdateCountChange,
   onError,
   onNotice,
@@ -122,21 +135,35 @@ export function SettingsSkillLibrarySection({
 }: SettingsSkillLibrarySectionProps) {
   const t = useT();
   const [allSkills, setAllSkills] = useState<SkillDefinition[]>([]);
+  const [skillsLoaded, setSkillsLoaded] = useState(false);
   const [loadingSkills, setLoadingSkills] = useState(false);
-  // Skill trust actions (accept / revoke / undo) round-trip through main and return
-  // the refreshed skill list; one shared busy flag keeps the row controls quiet
-  // while a mutation is in flight.
-  const [skillTrustBusy, setSkillTrustBusy] = useState(false);
+  // Undo round-trips through main and returns the refreshed skill list; its own
+  // menu action is disabled while that provenance mutation is in flight.
+  const [provenanceActionBusy, setProvenanceActionBusy] = useState(false);
   const [openRowMenu, setOpenRowMenu] = useState<string | null>(null);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [acquireOpen, setAcquireOpen] = useState(false);
   // A pick that turned out to be a Skill folder, awaiting the user's decision
   // about binding its parent instead.
   const [pendingParentBind, setPendingParentBind] = useState<{ picked: string; parent: string } | null>(null);
+  // Unbinding is not destructive to files, but it is invisible in scale: the
+  // action is offered on EVERY row that came from the directory, and one click
+  // removes all of them at once. The confirmation exists to say how many.
+  const [pendingUnbind, setPendingUnbind] = useState<{ directory: string; skillCount: number } | null>(null);
+  const [managedToggleOverrides, setManagedToggleOverrides] = useState<Map<string, boolean>>(new Map());
+  const [managedToggleErrors, setManagedToggleErrors] = useState<Map<string, string>>(new Map());
   const addAnchorRef = useRef<HTMLButtonElement | null>(null);
   const mountedRef = useRef(false);
   const sectionRequestRef = useRef(0);
-  const managed = useManagedSkills(onApplied);
+  const disabledSkillsRef = useRef(disabledSkills);
+  disabledSkillsRef.current = disabledSkills;
+  const managedToggleTargetsRef = useRef(new Map<string, boolean>());
+  const managedToggleQueuesRef = useRef(createKeyedSerialMutationQueue());
+  const managedToggleGenerationsRef = useRef(new Map<string, number>());
+  const managed = useManagedSkills(onApplied, async (installed) => {
+    if (!disabledSkillsRef.current.includes(installed.name)) return true;
+    return onPersistSkillDisabled(installed.name, false);
+  });
 
   // A local directory is POINTED AT, never copied in: Tenon stores the path, so
   // the user's edits are live and there is no snapshot to drift.
@@ -237,7 +264,10 @@ export function SettingsSkillLibrarySection({
     setLoadingSkills(true);
     try {
       const skills = await api.agentListAllSkills();
-      if (isCurrent()) setAllSkills(skills);
+      if (isCurrent()) {
+        setAllSkills(skills);
+        setSkillsLoaded(true);
+      }
     } catch (caught) {
       if (isCurrent()) onError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -264,13 +294,18 @@ export function SettingsSkillLibrarySection({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [managed.listLoaded, managed.skills]);
 
-  const runSkillTrustAction = (action: () => Promise<SkillDefinition[]>) => {
-    setSkillTrustBusy(true);
+  useEffect(() => {
+    if (!skillsLoaded || !managed.listLoaded) return;
+    onSkillCountChange(skillLibraryCount(allSkills, managed.skills));
+  }, [allSkills, managed.listLoaded, managed.skills, onSkillCountChange, skillsLoaded]);
+
+  const runSkillProvenanceAction = (action: () => Promise<SkillDefinition[]>) => {
+    setProvenanceActionBusy(true);
     onError(null);
     void action()
       .then((skills) => setAllSkills(skills))
       .catch((cause) => onError(cause instanceof Error ? cause.message : String(cause)))
-      .finally(() => setSkillTrustBusy(false));
+      .finally(() => setProvenanceActionBusy(false));
   };
 
   // Every chip in this column is localized. Returning the raw enum for
@@ -321,6 +356,65 @@ export function SettingsSkillLibrarySection({
     return t.settings.skills.sourceUser;
   };
 
+  function toggleManagedSkill(skill: ManagedSkillView) {
+    const persistedEnabled = skill.enabled && !disabledSkillsRef.current.includes(skill.name);
+    const enabled = !(managedToggleTargetsRef.current.get(skill.id) ?? persistedEnabled);
+    const generation = beginKeyedMutation(managedToggleGenerationsRef.current, skill.id);
+    managedToggleTargetsRef.current.set(skill.id, enabled);
+    setManagedToggleOverrides((current) => withMapValue(current, skill.id, enabled));
+    setManagedToggleErrors((current) => withoutMapKey(current, skill.id));
+    managed.clearFeedback();
+
+    void managedToggleQueuesRef.current.run(skill.id, async () => {
+      const result = await managed.setEnabled(skill, enabled);
+      if (!result.ok) {
+        if (isCurrentManagedToggle(skill.id, generation)) {
+          managedToggleTargetsRef.current.delete(skill.id);
+          setManagedToggleOverrides((current) => withoutMapKey(current, skill.id));
+          setManagedToggleErrors((current) => withMapValue(
+            current,
+            skill.id,
+            managedSkillErrorMessage(result.error, t),
+          ));
+        }
+        return;
+      }
+
+      // The managed index and disabledSkills are deliberately separate stores.
+      // Keep the optimistic override visible across both writes so the one switch
+      // still behaves as one control.
+      if (enabled && disabledSkillsRef.current.includes(skill.name)) {
+        if (!(await onPersistSkillDisabled(skill.name, false))) {
+          if (isCurrentManagedToggle(skill.id, generation)) {
+            managedToggleTargetsRef.current.delete(skill.id);
+            setManagedToggleOverrides((current) => withoutMapKey(current, skill.id));
+            managed.clearFeedback();
+          }
+          return;
+        }
+      }
+
+      if (isCurrentManagedToggle(skill.id, generation)) {
+        managedToggleTargetsRef.current.delete(skill.id);
+        setManagedToggleOverrides((current) => withoutMapKey(current, skill.id));
+        setManagedToggleErrors((current) => withoutMapKey(current, skill.id));
+        managed.showEnabledNotice(skill.name, enabled);
+      }
+    });
+  }
+
+  function isCurrentManagedToggle(skillId: string, generation: number): boolean {
+    return mountedRef.current
+      && isCurrentKeyedMutation(managedToggleGenerationsRef.current, skillId, generation);
+  }
+
+  // Two stores, two keys: the shell's disabledSkills errors are per Skill name
+  // (that list IS a set of names), the managed ones per managed id.
+  function rowToggleError(row: LibraryRow): string | undefined {
+    return toggleErrors.get(row.name)
+      ?? (row.managedId === undefined ? undefined : managedToggleErrors.get(row.managedId));
+  }
+
   /**
    * Managed rows come from the managed index rather than the loaded catalog,
    * because a Skill that is installed but not activated is absent from the
@@ -330,12 +424,16 @@ export function SettingsSkillLibrarySection({
   const managedRows: LibraryRow[] = useMemo(() => managed.skills.map((skill) => {
     // The row reflects the same predicate main applies, so the list can never
     // claim a Skill is on while the model cannot see it.
-    const enabled = skill.enabled && !disabledSkills.includes(skill.name);
+    const persistedEnabled = skill.enabled && !disabledSkills.includes(skill.name);
+    const enabled = managedToggleOverrides.get(skill.id) ?? persistedEnabled;
     const busy = managed.busy !== null;
+    const attention = managedSkillAttentionLabel(skill, t);
     return {
       key: `managed:${skill.id}`,
       name: skill.name,
+      managedId: skill.id,
       displayName: skill.name,
+      userInvocable: skill.userInvocable,
       // The description always survives. A failed update check is produced for
       // every installed Skill by an offline launch, from an action the user
       // never requested, so it must not repaint the library; but it still has
@@ -356,29 +454,12 @@ export function SettingsSkillLibrarySection({
       sourceChip: t.settings.skills.sourceManaged,
       chips: [
         skill.recommended ? t.settings.skills.managedRecommended : t.settings.skills.managedUnverified,
-        managedStatusLabel(skill, t),
+        ...(attention ? [attention] : []),
       ],
       enabled,
-      busy,
       dimmed: !enabled || skill.status === 'modified',
       toggleLabel: t.settings.skills.managedEnableToggle({ name: skill.name }),
-      onToggle: (next: boolean) => {
-        // A managed Skill can also be named in disabledSkills, and activation
-        // alone would not turn the row back on. Both halves persist
-        // immediately: splitting one action across two commit models is what
-        // let Cancel leave the Skill activated-but-suppressed.
-        //
-        // Sequenced, not parallel. setEnabled sets its "<name> enabled" notice
-        // only after its own IPC resolves, so racing the two let a fast
-        // rejection clear an empty feedback state and the success notice then
-        // appear anyway — a green success above a red error above a switch that
-        // had snapped back off.
-        void (async () => {
-          await managed.setEnabled(skill, next);
-          if (!next || !disabledSkills.includes(skill.name)) return;
-          if (!(await onPersistSkillDisabled(skill.name, false))) managed.clearFeedback();
-        })();
-      },
+      onToggle: () => toggleManagedSkill(skill),
       actions: [...managedRevealAction, ...managedSkillActions(skill, {
         check: () => void managed.checkUpdates(skill.id),
         preview: () => void managed.previewUpdate(skill),
@@ -395,38 +476,21 @@ export function SettingsSkillLibrarySection({
     // render, so depending on them would recompute every row every time and
     // defeat the memo outright. skillRoots is absent because managed rows no
     // longer resolve a folder to reveal.
-  }), [disabledSkills, managed.busy, managed.skills, onPersistSkillDisabled, t]);
+  }), [disabledSkills, managed.busy, managed.skills, managedToggleOverrides, t]);
 
   const localRows: LibraryRow[] = useMemo(() => allSkills
     .filter((skill) => skill.source !== 'managed')
     .map((skill) => {
       const disabled = disabledSkills.includes(skill.name);
-      // Trust state is derived in main. Mutable skills are model-usable
-      // by default; acceptedHash is only a retained management fact.
-      const pending = !skill.ratified;
       const actions: RowMenuAction[] = [...revealAction(skill.name)];
-      if (skill.accepted) {
-        actions.push({
-          label: t.settings.skills.revokeAcceptance,
-          disabled: skillTrustBusy,
-          onSelect: () => runSkillTrustAction(() => api.agentRevokeSkillAcceptance(skill.name)),
-        });
-      }
       if (skill.canUndoLastAgentEdit) {
         actions.push({
           label: t.settings.skills.undoAgentEdit,
-          disabled: skillTrustBusy,
-          onSelect: () => runSkillTrustAction(() => api.agentUndoSkillAgentEdit(skill.name)),
+          disabled: provenanceActionBusy,
+          onSelect: () => runSkillProvenanceAction(() => api.agentUndoSkillAgentEdit(skill.name)),
         });
       }
       const chips: string[] = [];
-      if (pending) {
-        chips.push(skill.source === 'project'
-          ? t.settings.skills.pendingWorkspaceChip
-          : t.settings.skills.pendingChip);
-      } else if (skill.accepted) {
-        chips.push(t.settings.skills.acceptedChip);
-      }
       const localDirectory = directoryContaining(skill.rootDir, additionalSkillDirectories);
       if (localDirectory) {
         // No second "Show in Finder" here: the row already offers one for its
@@ -438,32 +502,28 @@ export function SettingsSkillLibrarySection({
           // pointer and leaves every file where it is. The label has to say the
           // same thing the handler does.
           label: t.settings.skills.localUnbind,
-          onSelect: () => void unbindDirectory(localDirectory),
+          onSelect: () => setPendingUnbind({
+            directory: localDirectory,
+            skillCount: allSkills.filter((candidate) => directoryContaining(candidate.rootDir, additionalSkillDirectories) === localDirectory).length,
+          }),
         });
       }
       return {
         key: `skill:${skill.name}`,
         name: skill.name,
         displayName: skill.displayName || skill.name,
+        userInvocable: skill.userInvocable,
         description: skill.description,
         sourceChip: localDirectory ? t.settings.skills.sourceLocal : sourceChipLabel(skill.source),
         chips,
         enabled: !disabled,
-        busy: skillTrustBusy,
         dimmed: disabled,
         toggleLabel: t.settings.skills.toggleSkill({ name: skill.name }),
         onToggle: () => onToggleSkill(skill.name),
         actions,
         actionsLabel: t.settings.skills.rowActionsAriaLabel({ name: skill.name }),
-        ...(pending ? {
-          accept: {
-            label: t.settings.skills.acceptButton,
-            ariaLabel: t.settings.skills.acceptSkill({ name: skill.name }),
-            onSelect: () => runSkillTrustAction(() => api.agentAcceptSkill(skill.name, skill.contentHash ?? '')),
-          },
-        } : {}),
       } satisfies LibraryRow;
-    }), [allSkills, disabledSkills, onToggleSkill, skillTrustBusy, t]);
+    }), [allSkills, disabledSkills, onToggleSkill, provenanceActionBusy, t]);
 
   // One list, sorted by the name the user reads, so a Skill's position never
   // depends on where it came from.
@@ -540,6 +600,23 @@ export function SettingsSkillLibrarySection({
 
   return (
     <section className="agent-settings-section settings-skills-section" aria-label={t.settings.skills.sectionAriaLabel}>
+      {pendingUnbind ? (
+        <ConfirmDialog
+          cancelLabel={t.dialog.cancel}
+          confirmLabel={t.settings.skills.localUnbind}
+          message={t.settings.skills.localUnbindConfirmMessage({
+            directory: pendingUnbind.directory,
+            count: pendingUnbind.skillCount,
+          })}
+          onCancel={() => setPendingUnbind(null)}
+          onConfirm={() => {
+            const directory = pendingUnbind.directory;
+            setPendingUnbind(null);
+            void unbindDirectory(directory);
+          }}
+          title={t.settings.skills.localUnbindConfirmTitle}
+        />
+      ) : null}
       {pendingParentBind ? (
         <ConfirmDialog
           cancelLabel={t.dialog.cancel}
@@ -573,15 +650,21 @@ export function SettingsSkillLibrarySection({
           label={t.settings.skills.installedGroup}
         >
           {rows.length === 0 && emptyDirectories.length === 0 ? (
-            <InsetRow disabled label={t.settings.skills.noneInstalled} />
+            <InsetRow empty label={t.settings.skills.noneInstalled} />
           ) : null}
           {rows.map((row) => (
             <InsetRow
               dimmed={row.dimmed}
+              feedback={rowToggleError(row) ? (
+                <span role="alert">{rowToggleError(row)}</span>
+              ) : undefined}
               key={row.key}
               label={(
                 <>
-                  /{row.displayName}
+                  {/* The slash form only where typing it does something. A Skill
+                      declaring `user-invocable: false` was still displayed as
+                      `/foo`, advertising a command the composer filters out. */}
+                  {row.userInvocable ? `/${row.displayName}` : row.displayName}
                   <span className="settings-chip">{row.sourceChip}</span>
                   {row.chips.map((chip) => (
                     <span className="settings-chip" key={chip}>{chip}</span>
@@ -590,7 +673,10 @@ export function SettingsSkillLibrarySection({
               )}
               sublabel={(
                 <>
-                  <span className="settings-skill-description" title={row.description}>
+                  {/* Keep the list scan-stable at two description lines. The full
+                      text remains in the accessibility tree and in the Skill
+                      source; focusing the menu or switch must not reflow rows. */}
+                  <span className="settings-skill-description">
                     {row.description}
                   </span>
                   {row.diagnostic ? (
@@ -602,18 +688,6 @@ export function SettingsSkillLibrarySection({
               )}
               trailing={(
                 <>
-                  {row.accept ? (
-                    <Button
-                      aria-label={row.accept.ariaLabel}
-                      className="settings-skill-accept"
-                      disabled={row.busy}
-                      onClick={row.accept.onSelect}
-                      size="sm"
-                      variant="secondary"
-                    >
-                      {row.accept.label}
-                    </Button>
-                  ) : null}
                   {row.actions.length > 0 ? (
                     <SettingsRowMenu
                       actions={row.actions}
@@ -624,7 +698,6 @@ export function SettingsSkillLibrarySection({
                   ) : null}
                   <SwitchControl
                     checked={row.enabled}
-                    disabled={row.busy}
                     onCheckedChange={row.onToggle}
                     label={row.toggleLabel}
                   >
@@ -669,4 +742,19 @@ export function SettingsSkillLibrarySection({
       )}
     </section>
   );
+}
+
+const EMPTY_STRING_MAP: ReadonlyMap<string, string> = new Map();
+
+function withMapValue<K, V>(current: ReadonlyMap<K, V>, key: K, value: V): Map<K, V> {
+  const next = new Map(current);
+  next.set(key, value);
+  return next;
+}
+
+function withoutMapKey<K, V>(current: ReadonlyMap<K, V>, key: K): Map<K, V> {
+  if (!current.has(key)) return current as Map<K, V>;
+  const next = new Map(current);
+  next.delete(key);
+  return next;
 }

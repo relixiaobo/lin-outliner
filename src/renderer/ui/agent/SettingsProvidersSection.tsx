@@ -13,10 +13,10 @@ import { SettingsRowMenu, type RowMenuAction } from './SettingsRowMenu';
 import {
   buildImageModelMenu,
   buildProviderChoices,
-  providerStatusLabel,
   type ProviderChoice,
   type ProviderRowHandlers,
 } from './settingsProviderModel';
+import { providerStatusSentence, resolveProviderStatus } from './providerStatus';
 
 // A single provider row in the inset grouped list. Configured rows expose an
 // enable switch plus details/removal actions. Unconfigured catalog rows usually
@@ -27,10 +27,12 @@ const SettingsProviderRow = memo(function SettingsProviderRow({
   provider,
   menuOpen,
   handlers,
+  toggleError,
 }: {
   provider: ProviderChoice;
   menuOpen: boolean;
   handlers: ProviderRowHandlers;
+  toggleError?: string;
 }) {
   const t = useT();
   const name = formatProviderName(provider.providerId);
@@ -66,11 +68,11 @@ const SettingsProviderRow = memo(function SettingsProviderRow({
     </div>
   ) : quickEnable ? (
     <SwitchControl
-      checked={false}
+      checked={provider.enabled}
       label={t.settings.providers.enabledToggleNamed({ name })}
       onCheckedChange={(enabled) => handlers.onToggleEnabled(provider.providerId, enabled)}
     >
-      <SwitchMark checked={false} />
+      <SwitchMark checked={provider.enabled} />
     </SwitchControl>
   ) : actions.length > 1 ? (
     <SettingsRowMenu
@@ -90,16 +92,26 @@ const SettingsProviderRow = memo(function SettingsProviderRow({
       {t.settings.providers.configure}
     </Button>
   );
+  const status = resolveProviderStatus(provider);
+  const statusSentence = providerStatusSentence(status, t);
+  // The row states its status only when the status is worth stating. Labelling
+  // every healthy row "Ready" is noise that buries the two rows that need the
+  // user — and until now the list said nothing at all, so which connection was
+  // Active was visible in the detail window and nowhere else. A provider-supplied
+  // explanation wins when there is one: "CC Switch has no direct-runnable
+  // registry provider" tells the user more than "Unavailable" does.
+  const unremarkable = status.state === 'ready' && !status.uncheckable;
   return (
     <InsetRow
-      ariaLabel={t.settings.providers.rowAriaLabel({ name, status: providerStatusLabel(provider, t) })}
+      ariaLabel={t.settings.providers.rowAriaLabel({ name, status: statusSentence })}
       dimmed={(provider.configured || quickEnable) && !provider.enabled}
+      feedback={toggleError ? <span role="alert">{toggleError}</span> : undefined}
       label={name}
       leading={<ProviderAvatar providerId={provider.providerId} />}
       onSelect={quickEnable
         ? () => handlers.onToggleEnabled(provider.providerId, true)
         : () => handlers.onConfigure(provider.providerId)}
-      sublabel={provider.connectionStatusMessage ?? (!provider.configured && provider.detected ? t.settings.providers.detectedSublabel : undefined)}
+      sublabel={provider.connectionStatusMessage ?? (unremarkable ? undefined : statusSentence)}
       trailing={trailing}
     />
   );
@@ -108,7 +120,9 @@ const SettingsProviderRow = memo(function SettingsProviderRow({
 interface SettingsProvidersSectionProps {
   settings: AgentProviderSettingsView | null;
   draftProviderId: string;
-  saving: boolean;
+  enabledOverrides: ReadonlyMap<string, boolean>;
+  toggleErrors: ReadonlyMap<string, string>;
+  onToggleProviderEnabled: (providerId: string, baseUrl: string | null) => void;
   /**
    * The shared mutation envelope. Provider rows commit through the parent because
    * a provider mutation writes the settings, drafts, saving flag, and
@@ -129,7 +143,9 @@ interface SettingsProvidersSectionProps {
 export function SettingsProvidersSection({
   settings,
   draftProviderId,
-  saving,
+  enabledOverrides,
+  toggleErrors,
+  onToggleProviderEnabled,
   runProviderMutation,
 }: SettingsProvidersSectionProps) {
   const t = useT();
@@ -145,10 +161,13 @@ export function SettingsProvidersSection({
     return catalog;
   }, [settings]);
 
-  const providerChoices = useMemo(
-    () => settings ? buildProviderChoices(settings, draftProviderId, providerCatalog) : [],
-    [draftProviderId, providerCatalog, settings],
-  );
+  const providerChoices = useMemo(() => {
+    const choices = settings ? buildProviderChoices(settings, draftProviderId, providerCatalog) : [];
+    return choices.map((choice) => {
+      const override = enabledOverrides.get(choice.providerId);
+      return override === undefined ? choice : { ...choice, enabled: override };
+    });
+  }, [draftProviderId, enabledOverrides, providerCatalog, settings]);
   // Grouped inset list: "Configured" = a provider row Tenon owns or an external
   // provider already configured by its own app; "Add Providers" = catalog
   // rows that still need Tenon's config window.
@@ -194,14 +213,13 @@ export function SettingsProvidersSection({
       void window.lin?.openProviderConfig?.({ providerId, mode: 'configure' });
       return;
     }
-    const notice = enabled ? t.settings.providers.enabledNotice : t.settings.providers.disabledNotice;
-    runProviderMutation(
-      () => api.agentUpsertProviderConfig({
-        providerId,
-        baseUrl: provider?.baseUrl ?? catalogEntry?.defaultBaseUrl ?? null,
-        enabled,
-      }),
-      notice,
+    // An existing row keeps exactly the endpoint it stores — including none. Falling
+    // through to the catalog default wrote a Base URL the user never entered, and
+    // main reads that as an endpoint change, so merely flipping the switch dropped
+    // the connection verdict. The default belongs only to the row being created.
+    onToggleProviderEnabled(
+      providerId,
+      provider ? provider.baseUrl ?? null : catalogEntry?.defaultBaseUrl ?? null,
     );
   }
 
@@ -238,11 +256,12 @@ export function SettingsProvidersSection({
       key={provider.providerId}
       menuOpen={openRowMenu === provider.providerId}
       provider={provider}
+      toggleError={toggleErrors.get(provider.providerId)}
     />
   );
 
   return (
-    <section className="agent-settings-section settings-providers-section" aria-label={t.settings.categories.providers.label}>
+    <section className="agent-settings-section settings-providers-section" aria-label={t.settings.pages.services}>
       {/* Providers is the reference pane: flat base + grouped inset cards.
           The other panes were migrated onto this idiom. */}
       {/* No "Providers" title — the selected rail category already names
@@ -260,8 +279,6 @@ export function SettingsProvidersSection({
               : t.settings.providers.defaultImageModelSublabel}
             trailing={(
               <SelectControl
-                className="settings-image-model-select"
-                disabled={saving}
                 label={t.settings.providers.defaultImageModelLabel}
                 onChange={(event) => changeDefaultImageModel(event.target.value)}
                 value={settings?.imageGeneration.defaultModel ?? ''}

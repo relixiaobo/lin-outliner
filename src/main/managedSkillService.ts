@@ -234,6 +234,12 @@ export class ManagedSkillService {
     }
     const candidate = session.discovery.candidates.find((entry) => entry.view.id === input.candidateId);
     if (!candidate) throw new ManagedSkillServiceError('candidate_not_found', 'Select one of the discovered skill folders.');
+    if (candidate.view.skillBodyTruncated) {
+      throw new ManagedSkillServiceError(
+        'invalid_request',
+        'The selected SKILL.md is too large to review in full and cannot be installed.',
+      );
+    }
     const validated = await this.github.downloadCandidate({
       origin: session.discovery.origin,
       candidate,
@@ -267,7 +273,13 @@ export class ManagedSkillService {
         recommended: session.recommended,
         ...(session.catalogId ? { catalogId: session.catalogId } : {}),
         ...(session.catalogCompatibilityRange ? { catalogCompatibilityRange: session.catalogCompatibilityRange } : {}),
-        enabled: false,
+        // Installing enables. A Skill that installs into a do-nothing state reads
+        // as broken — the user chose it, saw an "Installed" chip, and nothing
+        // happened — and the second toggle was an approval step for something
+        // already approved in the review dialog, which is the posture #410 ruled
+        // out. The dialog now shows the SKILL.md body, so what is consented to is
+        // the instruction itself, not just where it came from.
+        enabled: true,
         active,
       };
       try {
@@ -600,7 +612,13 @@ export class ManagedSkillService {
         ...record,
         active: record.previous,
         previous: record.active,
-        updateCommit: record.active.commit,
+        // No updateCommit. Setting it to the commit just abandoned made the app
+        // advertise an update pointing at the version the user had deliberately
+        // rejected — a badge on the rail and a "Preview update" row action that
+        // would re-apply exactly what they backed out of. A rollback leaves the
+        // Skill at a known version with nothing pending; the next check-updates
+        // finds a genuine newer commit if one exists.
+        updateCommit: undefined,
         diagnostic: {
           code: 'rolled_back',
           message: `Rolled back from ${record.active.commit.slice(0, 12)}.`,
@@ -940,9 +958,16 @@ function discoveryView(session: DiscoverySession): ManagedSkillDiscoveryView {
 function managedSkillView(record: ManagedSkillRecord, appVersion: string): ManagedSkillView {
   const compatibility = currentCompatibility(record.active, appVersion);
   const diagnostic = managedSkillDiagnosticView(record, compatibility);
+  // `update_failed` is deliberately NOT a failure state. It means a check could
+  // not reach GitHub, which says nothing is wrong with the Skill —
+  // agent-skills.md is explicit that it "stays quiet", and one offline launch
+  // produces it for every managed Skill at once. Painting them all "Needs
+  // attention" while the row's own diagnostic line stays muted made each row both
+  // shout and whisper. A name conflict or an incompatible version is a real
+  // problem with the Skill, so those remain.
   const status = record.diagnostic?.code === 'modified'
     ? 'modified'
-    : record.diagnostic?.code === 'update_failed' || record.diagnostic?.code === 'name_conflict' || compatibility.error
+    : record.diagnostic?.code === 'name_conflict' || compatibility.error
       ? 'failed'
       : record.updateCommit
         ? 'update-available'
@@ -953,6 +978,7 @@ function managedSkillView(record: ManagedSkillRecord, appVersion: string): Manag
     id: record.id,
     name: record.name,
     description: record.active.description,
+    userInvocable: record.active.userInvocable,
     repository: record.origin.repository,
     subdirectory: record.origin.subdirectory,
     trackingRef: record.origin.trackingRef,

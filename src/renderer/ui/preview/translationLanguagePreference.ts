@@ -1,59 +1,40 @@
 import { useSyncExternalStore } from 'react';
 import { DEFAULT_LOCALE } from '../../../core/locale';
 import type { TranslationLanguage } from '../../../core/translationLanguage';
+import { createOptimisticPreferenceStore } from './optimisticPreferenceStore';
 
-let currentLanguage: TranslationLanguage | null = null;
-let bridgeUnsubscribe: (() => void) | null = null;
-const listeners = new Set<() => void>();
-
-function initialLanguage(): TranslationLanguage {
-  if (currentLanguage) return currentLanguage;
-  currentLanguage = typeof window === 'undefined'
-    ? DEFAULT_LOCALE
-    : window.lin?.initialTranslationLanguage ?? DEFAULT_LOCALE;
-  return currentLanguage;
+/**
+ * One field, so that this preference gets the same optimistic-write contract as
+ * its multi-field sibling instead of a second hand-written copy of it.
+ */
+interface TranslationLanguageState {
+  language: TranslationLanguage;
 }
 
-function emit(): void {
-  for (const listener of listeners) listener();
-}
-
-function subscribe(listener: () => void): () => void {
-  listeners.add(listener);
-  if (!bridgeUnsubscribe && typeof window !== 'undefined') {
-    bridgeUnsubscribe = window.lin?.onTranslationLanguageChanged?.((language) => {
-      if (currentLanguage === language) return;
-      currentLanguage = language;
-      emit();
-    }) ?? null;
-  }
-  return () => {
-    listeners.delete(listener);
-    if (listeners.size === 0 && bridgeUnsubscribe) {
-      bridgeUnsubscribe();
-      bridgeUnsubscribe = null;
-    }
-  };
-}
-
-function snapshot(): TranslationLanguage {
-  return initialLanguage();
-}
+const store = createOptimisticPreferenceStore<TranslationLanguageState>({
+  fallback: { language: DEFAULT_LOCALE },
+  initial: () => ({ language: window.lin?.initialTranslationLanguage ?? DEFAULT_LOCALE }),
+  observe: (onChange) => window.lin?.onTranslationLanguageChanged?.((language) => onChange({ language })),
+  // The bridge acknowledges without echoing a canonical value, so what was sent is
+  // what was stored.
+  write: async (state) => {
+    await window.lin?.setTranslationLanguage?.(state.language);
+    return state;
+  },
+});
 
 export function useTranslationLanguagePreference(): {
   language: TranslationLanguage;
-  setLanguage: (language: TranslationLanguage) => void;
+  setLanguage: (language: TranslationLanguage) => Promise<void>;
 } {
-  const language = useSyncExternalStore(subscribe, snapshot, () => DEFAULT_LOCALE);
+  const { language } = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getServerSnapshot);
   return { language, setLanguage: setTranslationLanguagePreference };
 }
 
-export function setTranslationLanguagePreference(language: TranslationLanguage): void {
-  if (currentLanguage !== language) {
-    currentLanguage = language;
-    emit();
-  }
-  if (typeof window !== 'undefined') {
-    void window.lin?.setTranslationLanguage?.(language);
-  }
+export function setTranslationLanguagePreference(language: TranslationLanguage): Promise<void> {
+  return store.set('language', language);
+}
+
+export function resetTranslationLanguagePreferenceForTests(): void {
+  store.resetForTests();
 }

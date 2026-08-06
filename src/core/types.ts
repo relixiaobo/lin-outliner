@@ -761,10 +761,6 @@ export interface SkillDefinition {
   whenToUse?: string;
   userInvocable: boolean;
   modelInvocable: boolean;
-  /** Trust state derived from the current bytes and source-specific policy. */
-  ratified: boolean;
-  /** True when the user explicitly accepted exactly these bytes for automatic model use. */
-  accepted?: boolean;
   /** True when one previous version of the last agent edit is held for single-step undo. */
   canUndoLastAgentEdit?: boolean;
   /** sha256 of the raw SKILL.md content; absent for code-registered built-ins. */
@@ -893,6 +889,16 @@ export interface ManagedSkillDiscoveryCandidateView {
   version?: string;
   compatibility: ManagedSkillCompatibilityView;
   scripts: string[];
+  /**
+   * The SKILL.md text, so the install review can show what the Skill will tell
+   * the model to do. Installing now enables, which puts this text into the
+   * agent's context — the inertness boundary covers execution, not instruction,
+   * so consent has to be given to the words themselves. Bounded like a diff.
+   */
+  skillBody?: string;
+  /** Set when `skillBody` was cut short, because a capped payload presented as
+   *  complete is the same defect as an unmarked truncated diff. */
+  skillBodyTruncated?: boolean;
 }
 
 export interface ManagedSkillDiscoveryView {
@@ -927,6 +933,8 @@ export interface ManagedSkillView {
   id: string;
   name: string;
   description: string;
+  /** Whether the active version may appear as a slash command. */
+  userInvocable: boolean;
   repository: string;
   subdirectory: string;
   trackingRef: string;
@@ -1009,6 +1017,34 @@ export interface AgentProviderConfigView {
    * collapse into `auth.credentialed`/`auth.hasStoredKey`.
    */
   auth?: ProviderAuthView;
+  /**
+   * The last connection probe's verdict, if one has ever run. Absent means
+   * unverified — which is honest, and is also the state a credential write
+   * restores, so a rotated key never inherits the old key's verdict.
+   *
+   * It exists because "has a credential" and "works" are different facts and the
+   * settings list could only ever report the first. `outcome` is deliberately
+   * three-valued: a probe that failed for a reason unrelated to the credential
+   * (offline, timeout, 429, 5xx) must not be recorded as a rejection. Tenon
+   * probes only on an explicit user write or an explicit Test — never on open,
+   * on a schedule, or in the background — because the probe bills a 1-token
+   * completion against the provider.
+   */
+  connectionCheck?: ProviderConnectionCheckView;
+}
+
+export interface ProviderConnectionCheckView {
+  outcome: 'ok' | 'rejected' | 'unreachable';
+  /** Epoch ms, so the surface can say when rather than implying "now". */
+  at: number;
+  /**
+   * Inferred, not read: main derives it by matching the redacted error text, so
+   * only a confident 401/403 may produce `rejected`. Anything else — including
+   * an unclassified failure — is `unreachable`.
+   */
+  statusCode?: number;
+  /** Already passed through `redactProviderErrorMessage` before it is stored. */
+  message?: string;
 }
 
 export interface OAuthLoginSelectOption {

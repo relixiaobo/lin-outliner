@@ -1,6 +1,12 @@
 export const LIN_REPORT_RENDERER_ERROR_CHANNEL = 'lin:report-renderer-error';
 export const LIN_REVEAL_DIAGNOSTICS_LOG_CHANNEL = 'lin:reveal-diagnostics-log';
 export const LIN_EXPORT_DIAGNOSTICS_CHANNEL = 'lin:export-diagnostics';
+/**
+ * The same environment triple the diagnostics export writes, read by About so a
+ * user can copy it into a bug report. It was already assembled and already
+ * scrubbed; the only thing missing was a way to read it back.
+ */
+export const LIN_APP_INFO_CHANNEL = 'lin:app-info';
 
 export type ErrorSeverity = 'warn' | 'error' | 'fatal';
 
@@ -72,6 +78,17 @@ export interface DiagnosticExportArtifact {
   exportedAt: number;
   environment: DiagnosticEnvironment;
   records: DiagnosticLogRecord[];
+}
+
+/** What About shows, and what "Copy version info" puts on the clipboard. */
+export interface AppInfo {
+  name: string;
+  version: string;
+  platform: string;
+  arch: string;
+  electron: string;
+  chrome: string;
+  node: string;
 }
 
 export interface DiagnosticsActionResult {

@@ -166,6 +166,7 @@ export class ManagedSkillGitHubClient {
           ...(summary.version ? { version: summary.version } : {}),
           compatibility: summary.compatibility,
           scripts: candidateScriptPaths(tree, subdirectory),
+          ...boundedSkillBody(skillContent),
         },
         repositoryTree: tree,
       });
@@ -635,6 +636,24 @@ function candidateScriptPaths(
     }
   }
   return scripts;
+}
+
+// Install refuses what it cannot show in full, so this bound decides which
+// SKILL.md files are installable at all — it is NOT the update diff's bound, which
+// only decides how much of a change is worth scrolling. Sized past any
+// hand-written SKILL.md rather than at the typical one: at the diff's 240 lines a
+// perfectly ordinary ~250-line Skill became uninstallable with no workaround.
+// Still bounded, because validation admits a 1 MiB file and the review dialog has
+// to render whatever this returns.
+const MAX_SKILL_BODY_LINES = 2_000;
+const MAX_SKILL_BODY_CHARS = 160_000;
+
+function boundedSkillBody(skillContent: string): { skillBody: string; skillBodyTruncated?: boolean } {
+  const lines = skillContent.split('\n');
+  let body = lines.slice(0, MAX_SKILL_BODY_LINES).join('\n');
+  const truncated = lines.length > MAX_SKILL_BODY_LINES || body.length > MAX_SKILL_BODY_CHARS;
+  if (body.length > MAX_SKILL_BODY_CHARS) body = body.slice(0, MAX_SKILL_BODY_CHARS);
+  return truncated ? { skillBody: body, skillBodyTruncated: true } : { skillBody: body };
 }
 
 function candidateId(subdirectory: string): string {

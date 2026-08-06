@@ -1,26 +1,9 @@
-/* Optional muted pane copy. Most Settings panes rely on the toolbar title plus
-   grouped-list headers; keep this quiet treatment only for copy that cannot live in
-   a row sublabel. The pane's list groups are the .inset-* primitive
-   (settings-inset-list.css); behaviour toggles, skills, and permission rows all
-   render as inset rows, so there is no bespoke row / card styling here anymore. */
-.settings-section-desc {
-  color: var(--text-tertiary);
-  font-size: var(--font-meta);
-  line-height: var(--line-meta);
-}
-
-/* Pending skill acceptance uses the shared Button skin; this variant only adds
-   the in-flight disabled state. */
-.settings-skill-accept:disabled {
-  color: var(--text-tertiary);
-}
-
 /* A Skill's description is written for the model to route on, so it routinely
    runs to a paragraph. The library is a scan-and-toggle surface — one row should
    be one glance — so clamp it to two lines and let the row stay a row. The full
-   text is still on hover, and lives in the Skill itself. Clamping (rather than
-   shrinking the type) keeps every row the same height, so the list does not
-   ripple as descriptions vary. */
+   text remains in the DOM for assistive technology and lives in the Skill itself.
+   Clamping (rather than shrinking the type) keeps every row the same height, so
+   focusing its menu or switch never reflows the list. */
 .settings-skill-description {
   display: -webkit-box;
   overflow: hidden;
@@ -43,9 +26,15 @@
   color: var(--text-tertiary);
 }
 
+.managed-skill-github-row {
+  padding: var(--space-3) var(--space-5);
+}
+
 .managed-skill-source-control {
   display: flex;
-  width: min(390px, 46vw);
+  /* Spans its row. It used to be pinned to a viewport-relative width, which has
+     nothing to do with how wide the dialog holding it is. */
+  width: 100%;
   align-items: center;
   gap: var(--space-3);
 }
@@ -100,13 +89,16 @@
   display: grid;
   grid-template-columns: minmax(92px, 0.35fr) minmax(0, 1fr);
   gap: var(--space-4);
-  border-bottom: var(--inset-hairline) solid var(--separator);
+  /* `--inset-hairline` is an inset box-shadow, not a length: inside a border
+     shorthand the whole declaration is invalid and the parser drops it, so these
+     rows had no separator at all in either theme. */
+  border-bottom: 1px solid var(--separator);
   padding: var(--space-3) 0;
 }
 
 .managed-skill-details dt,
 .managed-skill-changed-paths > span:first-child {
-  color: var(--text-tertiary);
+  color: var(--text-secondary);
   font-size: var(--font-ui-2xs);
   line-height: var(--line-ui-2xs);
 }
@@ -137,7 +129,7 @@
 }
 
 .managed-skill-diff {
-  max-height: 260px;
+  max-height: var(--settings-scroll-cap);
   overflow: auto;
   margin: var(--space-4) 0 0;
   border-radius: var(--radius-sm);
@@ -170,4 +162,25 @@
     grid-template-columns: 1fr;
     gap: var(--space-1);
   }
+}
+
+/* Install review: the description and the SKILL.md body the user is consenting
+   to. Installing enables, and enabling is what puts this text in front of the
+   model, so the review has to show it rather than a file list. */
+.managed-skill-review-description {
+  margin: 0;
+  font-size: var(--font-meta);
+  color: var(--text-secondary);
+}
+
+.managed-skill-review-body-label {
+  margin: 0;
+  font-size: var(--font-meta);
+  color: var(--text-secondary);
+}
+
+.managed-skill-review-truncated {
+  margin: 0;
+  font-size: var(--font-meta);
+  color: var(--text-secondary);
 }

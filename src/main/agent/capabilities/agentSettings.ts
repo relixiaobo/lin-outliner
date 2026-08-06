@@ -11,6 +11,7 @@ import type {
   OAuthCredentials,
   SimpleStreamOptions,
 } from '@earendil-works/pi-ai';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { join } from 'node:path';
 import { AGENT_REASONING_LADDER } from '../../../core/types';
 import type {
@@ -29,9 +30,11 @@ import type {
   AgentProviderSecretStatus,
   AgentProviderStoredApiKey,
   AgentProviderSettingsView,
+  ProviderConnectionCheckView,
   ProviderAuthView,
 } from '../../../core/types';
 import { isLocalBaseUrl } from '../../../core/localEndpoint';
+import { createKeyedSerialMutationQueue } from '../../../core/serialMutationQueue';
 import {
   CC_SWITCH_LOCAL_PROVIDER_ID,
   LOCAL_GATEWAY_PROVIDER_REGISTRY,
@@ -95,6 +98,13 @@ interface AgentProviderConfig {
   providerId: string;
   baseUrl?: string;
   enabled: boolean;
+  /** Main-only identity version for rejecting probe results from an old connection. */
+  connectionGeneration?: number;
+  /**
+   * The last probe verdict. Absent means unverified, which is what a credential
+   * write restores — a rotated key must never inherit the old key's result.
+   */
+  connectionCheck?: ProviderConnectionCheckView;
 }
 
 interface ProviderConfigFile {
@@ -102,6 +112,16 @@ interface ProviderConfigFile {
   agent?: StoredAgentRuntimeSettings;
   imageGeneration?: StoredImageGenerationSettings;
   providers: AgentProviderConfig[];
+}
+
+export interface ProviderConnectionProbeContext {
+  input: {
+    providerId: string;
+    baseUrl?: string;
+    apiKey?: string;
+  };
+  connectionGeneration?: number;
+  matchesStoredConnection: boolean;
 }
 
 type StoredAgentRuntimeSettings = Partial<AgentRuntimeSettings>;
@@ -157,6 +177,11 @@ interface CcSwitchModelSortKey {
 }
 
 const ccSwitchModelSortKeysByProvider = new Map<string, Map<string, CcSwitchModelSortKey>>();
+// Credential writes for one provider are serialized: a login, a key edit, and pi's
+// own OAuth refresh all read-modify-write the same secret file entry, and each
+// then decides whether the connection verdict survives.
+const providerCredentialMutations = createKeyedSerialMutationQueue();
+let providerConnectionGenerationClock = Date.now();
 
 export interface AgentProviderRuntimeConfig extends AgentProviderConfig {
   apiKey?: string;
@@ -252,22 +277,22 @@ export async function getProviderRuntimeConfig(
 }
 
 export async function updateAgentRuntimeSettings(input: AgentRuntimeSettingsInput) {
-  const file = await readProviderFile();
-  file.agent = normalizeAgentRuntimeSettings({
-    ...normalizeAgentRuntimeSettings(file.agent),
-    ...input,
+  await mutateProviderFile((file) => {
+    file.agent = normalizeAgentRuntimeSettings({
+      ...normalizeAgentRuntimeSettings(file.agent),
+      ...input,
+    });
   });
-  await writeProviderFile(file);
   return getProviderSettings();
 }
 
 export async function updateImageGenerationSettings(input: AgentImageGenerationSettingsInput) {
-  const file = await readProviderFile();
-  file.imageGeneration = normalizeImageGenerationSettings({
-    ...normalizeImageGenerationSettings(file.imageGeneration),
-    ...input,
+  await mutateProviderFile((file) => {
+    file.imageGeneration = normalizeImageGenerationSettings({
+      ...normalizeImageGenerationSettings(file.imageGeneration),
+      ...input,
+    });
   });
-  await writeProviderFile(file);
   return getProviderSettings();
 }
 
@@ -296,18 +321,40 @@ export function providerStreamOptionsFromRuntimeSettings(
 
 export async function upsertProviderConfig(input: AgentProviderConfigInput) {
   const config = normalizeConfig(input);
-  const file = await readProviderFile();
-  const index = file.providers.findIndex((provider) => provider.providerId === config.providerId);
-  if (index >= 0) file.providers[index] = config;
-  else file.providers.push(config);
-  if (file.activeProviderId === config.providerId && !config.enabled) file.activeProviderId = undefined;
-  file.providers.sort((left, right) => left.providerId.localeCompare(right.providerId));
+  await mutateProviderFile((file) => {
+    const index = file.providers.findIndex((provider) => provider.providerId === config.providerId);
+    if (index >= 0) {
+      // The endpoint is part of what a verdict was about, so changing it advances
+      // the identity version. A late probe for the old endpoint can no longer
+      // overwrite the new row even after the old verdict has been cleared.
+      const previous = file.providers[index]!;
+      // Compared normalized, so an absent endpoint and an empty one are the same
+      // endpoint. A raw !== would let a stored '' and an incoming undefined read as
+      // a change and discard a verdict nothing about the connection invalidated.
+      const endpointUnchanged = normalizeBaseUrl(previous.baseUrl) === normalizeBaseUrl(config.baseUrl);
+      file.providers[index] = {
+        ...config,
+        connectionGeneration: endpointUnchanged
+          ? providerConnectionGeneration(previous)
+          : allocateProviderConnectionGeneration(providerConnectionGeneration(previous)),
+        ...(endpointUnchanged && previous.connectionCheck
+          ? { connectionCheck: previous.connectionCheck }
+          : {}),
+      };
+    } else {
+      file.providers.push({
+        ...config,
+        connectionGeneration: allocateProviderConnectionGeneration(),
+      });
+    }
+    if (file.activeProviderId === config.providerId && !config.enabled) file.activeProviderId = undefined;
+    file.providers.sort((left, right) => left.providerId.localeCompare(right.providerId));
+  });
   // No auto-activation side effect (provider-config-cleanup A2): an upsert never
   // makes a provider active by itself — the credential may not be stored yet. Read
   // paths resolve the active provider by falling back through credentialed rows, so
   // a freshly credentialed provider is usable immediately; the startup reconcile
   // tidies the persisted activeProviderId at the next launch.
-  await writeProviderFile(file);
   return getProviderSettings();
 }
 
@@ -320,15 +367,19 @@ export async function upsertProviderConfig(input: AgentProviderConfigInput) {
  */
 export async function ensureProviderConfig(providerIdInput: string): Promise<void> {
   const providerId = normalizeProviderId(providerIdInput);
-  const file = await readProviderFile();
-  if (file.providers.some((provider) => provider.providerId === providerId)) return;
-  file.providers.push({ providerId, enabled: true });
-  file.providers.sort((left, right) => left.providerId.localeCompare(right.providerId));
-  // The OAuth credential is persisted before this row is created, so read paths
-  // resolve it as the active provider via the credentialed-row fallback even before
-  // the startup reconcile tidies the persisted activeProviderId — no auto-activation
-  // side effect needed here (provider-config-cleanup A2).
-  await writeProviderFile(file);
+  await mutateProviderFile((file) => {
+    if (file.providers.some((provider) => provider.providerId === providerId)) return;
+    file.providers.push({
+      providerId,
+      enabled: true,
+      connectionGeneration: allocateProviderConnectionGeneration(),
+    });
+    file.providers.sort((left, right) => left.providerId.localeCompare(right.providerId));
+    // The OAuth credential is persisted before this row is created, so read paths
+    // resolve it as the active provider via the credentialed-row fallback even before
+    // the startup reconcile tidies the persisted activeProviderId — no auto-activation
+    // side effect needed here (provider-config-cleanup A2).
+  });
 }
 
 /**
@@ -356,12 +407,12 @@ function firstRankedModel(providerId: string): Model<Api> | null {
 
 export async function deleteProviderConfig(providerIdInput: string) {
   const providerId = normalizeProviderId(providerIdInput);
-  const file = await readProviderFile();
-  const previousLength = file.providers.length;
-  file.providers = file.providers.filter((provider) => provider.providerId !== providerId);
-  if (file.providers.length === previousLength) throw new Error(`provider not found: ${providerId}`);
-  if (file.activeProviderId === providerId) file.activeProviderId = file.providers.find((provider) => provider.enabled)?.providerId;
-  await writeProviderFile(file);
+  await mutateProviderFile((file) => {
+    const previousLength = file.providers.length;
+    file.providers = file.providers.filter((provider) => provider.providerId !== providerId);
+    if (file.providers.length === previousLength) throw new Error(`provider not found: ${providerId}`);
+    if (file.activeProviderId === providerId) file.activeProviderId = file.providers.find((provider) => provider.enabled)?.providerId;
+  });
   await mutateSecretFile((secrets) => {
     delete secrets.credentials[providerId];
   });
@@ -370,33 +421,77 @@ export async function deleteProviderConfig(providerIdInput: string) {
 
 export async function setActiveProvider(providerIdInput: string) {
   const providerId = normalizeProviderId(providerIdInput);
-  const file = await readProviderFile();
-  const provider = file.providers.find((candidate) => candidate.providerId === providerId);
-  if (!provider) {
-    throw new Error(`provider not found: ${providerId}`);
-  }
-  if (!provider.enabled) throw new Error(`provider is disabled: ${providerId}`);
-  file.activeProviderId = providerId;
-  await writeProviderFile(file);
+  await mutateProviderFile((file) => {
+    const provider = file.providers.find((candidate) => candidate.providerId === providerId);
+    if (!provider) {
+      throw new Error(`provider not found: ${providerId}`);
+    }
+    if (!provider.enabled) throw new Error(`provider is disabled: ${providerId}`);
+    file.activeProviderId = providerId;
+  });
   return getProviderSettings();
+}
+
+/**
+ * Record what a probe found, or clear it.
+ *
+ * The mapping is deliberately conservative because `statusCode` is *inferred* —
+ * `testProviderConnection` derives it by matching the redacted error text — and
+ * this verdict is durable in a way a transient banner is not. A 500 whose body
+ * happens to contain "unauthorized" must not be written down forever as a
+ * rejected key, so only a confident 401/403 produces `rejected` and everything
+ * else, including an unclassified failure, is `unreachable`.
+ */
+export async function recordProviderConnectionCheck(
+  providerIdInput: string,
+  result: { success: boolean; message?: string; statusCode?: number } | null,
+  expectedGeneration?: number,
+): Promise<boolean> {
+  const providerId = normalizeProviderId(providerIdInput);
+  let recorded = false;
+  await mutateProviderFile((file) => {
+    const provider = file.providers.find((candidate) => candidate.providerId === providerId);
+    if (!provider) return;
+    if (expectedGeneration !== undefined && providerConnectionGeneration(provider) !== expectedGeneration) return;
+
+    if (!result) {
+      delete provider.connectionCheck;
+    } else {
+      const rejected = result.statusCode === 401 || result.statusCode === 403;
+      provider.connectionCheck = {
+        outcome: result.success ? 'ok' : rejected ? 'rejected' : 'unreachable',
+        at: Date.now(),
+        ...(result.statusCode ? { statusCode: result.statusCode } : {}),
+        ...(result.message ? { message: result.message } : {}),
+      };
+    }
+    recorded = true;
+  });
+  return recorded;
 }
 
 export async function setProviderApiKey(providerIdInput: string, apiKeyInput: string): Promise<AgentProviderSecretStatus> {
   const providerId = normalizeProviderId(providerIdInput);
   if (isExternalSecretProviderId(providerId)) {
-    await mutateSecretFile((secrets) => {
-      delete secrets.credentials[providerId];
+    await withProviderCredentialMutation(providerId, async () => {
+      await mutateSecretFile((secrets) => {
+        delete secrets.credentials[providerId];
+      });
+      await invalidateProviderConnection(providerId);
     });
     return { providerId, hasApiKey: false };
   }
   const apiKey = apiKeyInput.trim();
-  await mutateSecretFile((secrets) => {
-    if (apiKey) {
-      secrets.credentials[providerId] = { type: 'api_key', key: apiKey };
-    } else if (secrets.credentials[providerId]?.type === 'api_key') {
-      // Clearing the key field removes only a stored key — never an oauth login.
-      delete secrets.credentials[providerId];
-    }
+  await withProviderCredentialMutation(providerId, async () => {
+    await mutateSecretFile((secrets) => {
+      if (apiKey) {
+        secrets.credentials[providerId] = { type: 'api_key', key: apiKey };
+      } else if (secrets.credentials[providerId]?.type === 'api_key') {
+        // Clearing the key field removes only a stored key — never an oauth login.
+        delete secrets.credentials[providerId];
+      }
+    });
+    await invalidateProviderConnection(providerId);
   });
   if (apiKey) await refreshPiProviderModels(providerId).catch(() => undefined);
   return { providerId, hasApiKey: !!apiKey };
@@ -404,8 +499,11 @@ export async function setProviderApiKey(providerIdInput: string, apiKeyInput: st
 
 export async function deleteProviderApiKey(providerIdInput: string): Promise<AgentProviderSecretStatus> {
   const providerId = normalizeProviderId(providerIdInput);
-  await mutateSecretFile((secrets) => {
-    if (secrets.credentials[providerId]?.type === 'api_key') delete secrets.credentials[providerId];
+  await withProviderCredentialMutation(providerId, async () => {
+    await mutateSecretFile((secrets) => {
+      if (secrets.credentials[providerId]?.type === 'api_key') delete secrets.credentials[providerId];
+    });
+    await invalidateProviderConnection(providerId);
   });
   return { providerId, hasApiKey: false };
 }
@@ -460,17 +558,63 @@ export async function getProviderApiKey(providerIdInput: string): Promise<string
 /** Persist an oauth login / a rotated token. The only writer of oauth credentials. */
 export async function persistOAuthCredential(providerIdInput: string, credentials: OAuthCredentials): Promise<void> {
   const providerId = normalizeProviderId(providerIdInput);
-  await mutateSecretFile((secrets) => {
-    secrets.credentials[providerId] = { type: 'oauth', ...credentials };
+  await withProviderCredentialMutation(providerId, async () => {
+    await mutateSecretFile((secrets) => {
+      secrets.credentials[providerId] = { type: 'oauth', ...credentials };
+    });
+    await invalidateProviderConnection(providerId);
   });
 }
 
 /** Remove any stored credential for a provider (oauth sign-out). */
 export async function deleteProviderCredential(providerIdInput: string): Promise<void> {
   const providerId = normalizeProviderId(providerIdInput);
-  await mutateSecretFile((secrets) => {
-    delete secrets.credentials[providerId];
+  await withProviderCredentialMutation(providerId, async () => {
+    await mutateSecretFile((secrets) => {
+      delete secrets.credentials[providerId];
+    });
+    await invalidateProviderConnection(providerId);
   });
+}
+
+/**
+ * Capture exactly what a connection probe will test. A supplied Base URL is an
+ * explicit override even when it is the empty string (meaning the provider's
+ * official endpoint); omitting it uses the stored endpoint. Unsaved inputs can be
+ * tested, but only a byte-equivalent stored key and the stored endpoint may
+ * produce a durable verdict.
+ */
+export async function prepareProviderConnectionProbe(input: {
+  providerId: string;
+  baseUrl?: string | null;
+  apiKey?: string | null;
+  baseUrlOverride?: boolean;
+  apiKeyOverride?: boolean;
+}): Promise<ProviderConnectionProbeContext> {
+  const providerId = normalizeProviderId(input.providerId);
+  await providerCredentialMutations.settled(providerId);
+  const file = await readProviderFile();
+  const provider = file.providers.find((candidate) => candidate.providerId === providerId);
+  const storedBaseUrl = normalizeBaseUrl(provider?.baseUrl);
+  const baseUrl = input.baseUrlOverride ? normalizeBaseUrl(input.baseUrl) : storedBaseUrl;
+  const apiKey = input.apiKeyOverride ? input.apiKey?.trim() || undefined : undefined;
+  let credentialMatches = true;
+  if (input.apiKeyOverride) {
+    const storedCredential = (await readSecretFileSafe()).credentials[providerId];
+    const storedApiKey = storedCredential?.type === 'api_key' ? storedCredential.key?.trim() : undefined;
+    credentialMatches = secretsEqual(apiKey, storedApiKey);
+  }
+  return {
+    input: {
+      providerId,
+      ...(baseUrl ? { baseUrl } : {}),
+      ...(apiKey ? { apiKey } : {}),
+    },
+    connectionGeneration: provider ? providerConnectionGeneration(provider) : undefined,
+    matchesStoredConnection: Boolean(provider)
+      && baseUrl === storedBaseUrl
+      && credentialMatches,
+  };
 }
 
 async function toSettingsView(file: ProviderConfigFile, secrets: SecretFile): Promise<AgentProviderSettingsView> {
@@ -515,6 +659,7 @@ async function toSettingsView(file: ProviderConfigFile, secrets: SecretFile): Pr
         hasApiKey: hasStoredKey,
         hasEnvApiKey,
         auth,
+        ...(provider.connectionCheck ? { connectionCheck: provider.connectionCheck } : {}),
       };
     })),
     availableProviders,
@@ -864,10 +1009,9 @@ export async function reconcileProviderConfig(): Promise<void> {
   await piRestoreDynamicModels();
   const { secrets, readable } = await readSecretsWithStatus();
   if (!readable) return; // rule 1: credential picture unknown → touch nothing
-  const file = await readProviderFile();
-  if (reconcileProviderFile(file, secrets)) {
-    await writeProviderFile(file);
-  }
+  await mutateProviderFile((file) => {
+    reconcileProviderFile(file, secrets);
+  });
 }
 
 /** Mutates `file` in place; returns whether anything changed. See `reconcileProviderConfig`. */
@@ -920,6 +1064,42 @@ function normalizeProviderId(providerIdInput: string) {
   return providerId;
 }
 
+function normalizeBaseUrl(baseUrl: string | null | undefined): string | undefined {
+  return baseUrl?.trim() || undefined;
+}
+
+function providerConnectionGeneration(provider: AgentProviderConfig): number {
+  return Number.isSafeInteger(provider.connectionGeneration) && (provider.connectionGeneration ?? -1) >= 0
+    ? provider.connectionGeneration!
+    : 0;
+}
+
+function allocateProviderConnectionGeneration(after = -1): number {
+  providerConnectionGenerationClock = Math.max(
+    providerConnectionGenerationClock + 1,
+    after + 1,
+  );
+  return providerConnectionGenerationClock;
+}
+
+async function invalidateProviderConnection(providerId: string): Promise<void> {
+  await mutateProviderFile((file) => {
+    const provider = file.providers.find((candidate) => candidate.providerId === providerId);
+    if (!provider) return;
+    provider.connectionGeneration = allocateProviderConnectionGeneration(
+      providerConnectionGeneration(provider),
+    );
+    delete provider.connectionCheck;
+  });
+}
+
+function secretsEqual(left: string | undefined, right: string | undefined): boolean {
+  if (left === undefined || right === undefined) return left === right;
+  const leftDigest = createHash('sha256').update(left).digest();
+  const rightDigest = createHash('sha256').update(right).digest();
+  return timingSafeEqual(leftDigest, rightDigest);
+}
+
 function getSupportedReasoningLevelsForModel(model: Model<Api>): AgentReasoningLevel[] {
   return getSupportedThinkingLevels(model);
 }
@@ -945,8 +1125,13 @@ async function readProviderFile(): Promise<ProviderConfigFile> {
   return readJsonOrDefault(providerPath(), { providers: [] });
 }
 
-async function writeProviderFile(file: ProviderConfigFile) {
-  await writeJsonFile(providerPath(), file);
+async function mutateProviderFile(mutator: (file: ProviderConfigFile) => void | Promise<void>): Promise<ProviderConfigFile> {
+  return updateJsonFile(
+    providerPath(),
+    { providers: [] },
+    (value) => value as ProviderConfigFile,
+    mutator,
+  );
 }
 
 async function readSecretFile(): Promise<SecretFile> {
@@ -1024,23 +1209,68 @@ async function listPiCredentials(): Promise<readonly CredentialInfo[]> {
     ));
 }
 
+/**
+ * pi's credential-store `modify` hook — the write path for logins AND for every
+ * automatic OAuth token refresh, which `Models.getAuth()` runs under this lock.
+ *
+ * So it invalidates the connection verdict only when the credential is a
+ * different *connection*, not on every write. Invalidating unconditionally meant
+ * an OAuth verdict was wiped each time the access token rotated (roughly hourly),
+ * and — worse — that it could never stick at all: pressing Test on an expired
+ * token refreshes it mid-probe, which bumped the very generation
+ * `prepareProviderConnectionProbe` had captured, so `recordProviderConnectionCheck`
+ * silently discarded the successful result.
+ */
 async function modifyPiCredential(
   providerId: string,
   fn: (current: Credential | undefined) => Promise<Credential | undefined>,
 ): Promise<Credential | undefined> {
   let nextCredential: Credential | undefined;
-  await mutateSecretFileAsync(async (secrets) => {
-    const currentCredential = toPiCredential(secrets.credentials[providerId]);
-    nextCredential = await fn(currentCredential) ?? currentCredential;
-    if (nextCredential) secrets.credentials[providerId] = fromPiCredential(nextCredential);
+  let connectionChanged = false;
+  await withProviderCredentialMutation(providerId, async () => {
+    await mutateSecretFileAsync(async (secrets) => {
+      const currentCredential = toPiCredential(secrets.credentials[providerId]);
+      nextCredential = await fn(currentCredential) ?? currentCredential;
+      if (nextCredential) secrets.credentials[providerId] = fromPiCredential(nextCredential);
+      connectionChanged = credentialConnectionChanged(currentCredential, nextCredential);
+    });
+    if (connectionChanged) await invalidateProviderConnection(providerId);
   });
   return nextCredential;
 }
 
+/**
+ * Whether two stored credentials describe different connections.
+ *
+ * A verdict answers "does this credential reach this endpoint", so what identifies
+ * it is the durable half: the api key, or the OAuth refresh token that identifies
+ * the login. `access`/`expires` rotate underneath a single login and say nothing
+ * about whether it still works.
+ */
+function credentialConnectionChanged(
+  previous: Credential | undefined,
+  next: Credential | undefined,
+): boolean {
+  if (!previous || !next) return Boolean(previous) !== Boolean(next);
+  if (previous.type === 'api_key' && next.type === 'api_key') {
+    return !secretsEqual(previous.key, next.key)
+      || JSON.stringify(previous.env ?? null) !== JSON.stringify(next.env ?? null);
+  }
+  if (previous.type === 'oauth' && next.type === 'oauth') return !secretsEqual(previous.refresh, next.refresh);
+  return true;
+}
+
 async function deletePiCredential(providerId: string): Promise<void> {
-  await mutateSecretFile((secrets) => {
-    delete secrets.credentials[providerId];
+  await withProviderCredentialMutation(providerId, async () => {
+    await mutateSecretFile((secrets) => {
+      delete secrets.credentials[providerId];
+    });
+    await invalidateProviderConnection(providerId);
   });
+}
+
+async function withProviderCredentialMutation<T>(providerId: string, task: () => Promise<T>): Promise<T> {
+  return providerCredentialMutations.run(providerId, task);
 }
 
 async function mutateSecretFileAsync(mutator: (file: SecretFile) => Promise<void>): Promise<SecretFile> {

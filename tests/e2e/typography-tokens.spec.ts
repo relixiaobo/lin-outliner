@@ -184,8 +184,10 @@ const layoutTransitionProperties = new Set([
 const stateLayoutDeclarationProperties = new Set([
   ...layoutTransitionProperties,
   'font-size',
+  'line-clamp',
   'letter-spacing',
   'line-height',
+  'webkit-line-clamp',
 ]);
 const inlineFoundationStyleProperties = new Set([
   'borderRadius',
@@ -329,10 +331,11 @@ function collectUndefinedTokenReferences(file: string, css: string, startLine: n
 function collectDeclarationViolations(
   declarationPattern: RegExp,
   isAllowed: (value: string, property: string) => boolean,
+  fileFilter?: (file: string) => boolean,
 ) {
   const violations: string[] = [];
 
-  for (const file of productStyleFiles) {
+  for (const file of productStyleFiles.filter((candidate) => fileFilter?.(candidate) ?? true)) {
     const text = readFileSync(file, 'utf8');
     const lines = text.split('\n');
     for (const [index, line] of lines.entries()) {
@@ -899,6 +902,21 @@ test.describe('typography tokens', () => {
         /\b(gap|column-gap|row-gap|padding|margin):\s*([^;]+);/,
         (value) => !/\d+px/.test(value) || value.includes('var('),
       ),
+      // Dimensions were unpoliced entirely, which is how one stylesheet accumulated
+      // eighteen multi-digit px literals — several of them hand-copies of tokens
+      // that already existed. Single-digit values stay allowed: hairlines, 1px
+      // borders and 2px nudges are geometry, not a ladder rung.
+      //
+      // Scoped to the settings surface, which is the one that was audited and
+      // cleaned. Product-wide this currently reports ~94 declarations; widening it
+      // is a real sweep, not a line in someone else's PR.
+      ...collectDeclarationViolations(
+        /\b(width|height|min-width|min-height|max-width|max-height|flex-basis):\s*([^;]+);/,
+        // Viewport-relative caps are layout geometry — a dialog sized against the
+        // window is not picking a rung off a ladder.
+        (value) => !/\b\d{2,}px/.test(value) || value.includes('var(') || /\d+v[wh]/.test(value),
+        (file) => /settings-[a-z-]+\.css$/.test(file),
+      ),
     ];
 
     expect(violations).toEqual([]);
@@ -1115,7 +1133,10 @@ test.describe('typography tokens', () => {
 
   test('keeps level-2 focused overlays on the opaque elevated tier', () => {
     const violations = collectCssRuleDeclarationViolations(
-      /(?:^|,\s*)(?:\.command-palette|\.confirm-dialog)(?:$|[\s,:])/,
+      // The settings dialogs belong to this tier too. The regex named two
+      // selectors, so `.managed-skill-dialog` and `.managed-skill-update-dialog`
+      // were correct only by luck, with nothing preventing a regression.
+      /(?:^|,\s*)(?:\.command-palette|\.confirm-dialog|\.managed-skill-dialog|\.managed-skill-update-dialog)(?:$|[\s,:])/,
       /\b(background(?:-color)?|(?:-webkit-)?backdrop-filter|box-shadow):\s*([^;]+);/g,
       (value, property) => {
         if (property === 'background' || property === 'background-color') return value === 'var(--bg-elevated)';

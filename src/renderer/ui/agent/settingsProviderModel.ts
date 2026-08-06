@@ -1,12 +1,11 @@
 import type {
   AgentProviderCapabilityModelOption,
+  AgentProviderConfigView,
   AgentProviderOption,
   AgentProviderSettingsView,
 } from '../../api/types';
-import type { Messages } from '../../../core/i18n';
 import { composeProviderQualifiedModel } from '../../../core/agentModelId';
 import {
-  isLocalGatewayProviderId,
   isQuickEnableProviderId,
   isRefreshableLocalGatewayProviderId,
 } from '../../../core/localGatewayProviders';
@@ -26,6 +25,7 @@ export interface ProviderChoice {
   quickEnable?: boolean;
   defaultBaseUrl?: string;
   canRefreshModels?: boolean;
+  connectionCheck?: AgentProviderConfigView['connectionCheck'];
 }
 
 export interface ProviderRowHandlers {
@@ -73,6 +73,9 @@ export function buildProviderChoices(
         || Boolean(providerCatalog?.modelsRefreshable)
         || Boolean(providerCatalog?.capabilities?.some((capability) => capability.refreshable))
       ),
+      // Only a configured row can carry a probe verdict: the check runs against a
+      // credential Tenon stored, and a catalog row has none to check.
+      connectionCheck: provider.connectionCheck,
     });
   }
 
@@ -165,16 +168,6 @@ function compareProviderChoices(left: ProviderChoice, right: ProviderChoice): nu
   });
 }
 
-// Module-level helper (can't call useT) — the caller passes `t` in.
-export function providerStatusLabel(provider: ProviderChoice, t: Messages): string {
-  const s = t.settings.providers.status;
-  if (provider.connectionStatus === 'proxy-required') return s.proxyRequired;
-  if (provider.connectionStatus === 'unsupported') return s.unsupported;
-  if (provider.connectionStatus === 'not-detected') return s.notDetected;
-  if (!provider.configured && provider.detected) return s.detected;
-  if (!provider.configured) return provider.hasCredential ? s.ready : s.addKey;
-  if (!provider.enabled) return s.disabled;
-  if (isLocalGatewayProviderId(provider.providerId) && !provider.hasCredential) return s.unavailable;
-  if (!provider.hasCredential) return s.needsKey;
-  return provider.active ? s.active : s.ready;
-}
+// Status derivation and phrasing now live in `providerStatus.ts`, shared by the
+// list row and the per-provider config window so one connection cannot be
+// described two ways.

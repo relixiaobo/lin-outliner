@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, mock, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
@@ -10,6 +10,16 @@ import { parseHTML } from 'linkedom';
 mock.module('../../src/renderer/ui/agent/providerIcon', () => ({
   providerIconSvg: (providerId: string) => `<svg data-fixture-logo="${providerId}"></svg>`,
 }));
+mock.module('../../CHANGELOG.md?raw', () => ({
+  default: `# Changelog
+
+## [Unreleased]
+
+### Changed
+
+- Deterministic release-note fixture.
+`,
+}));
 import type {
   AgentCapabilitySettingsView,
   AgentProviderSettingsView,
@@ -17,7 +27,9 @@ import type {
   ManagedSkillView,
   SkillDefinition,
 } from '../../src/renderer/api/types';
-import type { SettingsCategoryTarget } from '../../src/core/settingsWindow';
+import type { SettingsOpenTarget } from '../../src/core/settingsWindow';
+import { resetUrlPageTranslationPreferencesForTests } from '../../src/renderer/ui/preview/urlPageTranslationPreferences';
+import { resetTranslationLanguagePreferenceForTests } from '../../src/renderer/ui/preview/translationLanguagePreference';
 
 // Imported dynamically, after the mock above: a static import would hoist above
 // mock.module and pull in the real provider-icon module before it is stubbed.
@@ -120,7 +132,6 @@ function skill(overrides: Partial<SkillDefinition> & Pick<SkillDefinition, 'name
     hasUserSpecifiedDescription: true,
     userInvocable: true,
     modelInvocable: true,
-    ratified: true,
     allowedTools: [],
     argumentNames: [],
     execution: 'inline',
@@ -132,13 +143,12 @@ function skill(overrides: Partial<SkillDefinition> & Pick<SkillDefinition, 'name
 
 const ALL_SKILLS: SkillDefinition[] = [
   skill({ name: 'skillify', source: 'built-in' }),
-  skill({ name: 'user-notes', source: 'user', contentHash: 'a'.repeat(64), accepted: true }),
-  skill({ name: 'project-lint', source: 'project', contentHash: 'b'.repeat(64), ratified: false }),
+  skill({ name: 'user-notes', source: 'user', contentHash: 'a'.repeat(64) }),
+  skill({ name: 'project-lint', source: 'project', contentHash: 'b'.repeat(64) }),
   skill({
-    name: 'project-unratified',
+    name: 'project-undoable',
     source: 'project',
     contentHash: 'c'.repeat(64),
-    ratified: false,
     canUndoLastAgentEdit: true,
   }),
   skill({ name: 'pdf', source: 'managed', managedContentHash: 'd'.repeat(64) }),
@@ -149,6 +159,7 @@ const MANAGED_SKILLS: ManagedSkillView[] = [
     id: 'managed-pdf',
     name: 'pdf',
     description: 'Create, inspect, extract, repair, render, OCR, redact, and verify PDF artifacts.',
+    userInvocable: true,
     repository: 'https://github.com/relixiaobo/linlab-skills',
     subdirectory: 'pdf',
     trackingRef: 'main',
@@ -217,22 +228,43 @@ const INVOKE_RESULTS: Record<string, unknown> = {
   },
 };
 
-const CATEGORIES: SettingsCategoryTarget[] = ['general', 'providers', 'security', 'skills'];
+// Every destination the rail and its drill-downs can reach. The pages are here
+// for the same reason the categories are: a sub-page is a real route now, so a
+// refactor that quietly restructures one has to show up in this diff too.
+const ROUTES: SettingsOpenTarget[] = [
+  { category: 'general' },
+  { category: 'agent' },
+  { category: 'preview' },
+  { page: 'services' },
+  { page: 'skills' },
+  { page: 'about' },
+];
+
+// The Preview pane reads the same module-level translation stores the preview
+// panel does — which is the point of that pane, but it means a sibling test
+// leaving a preference set changes this markup. Reset before each render so the
+// snapshot describes the pane, not the suite's running order.
+beforeEach(() => {
+  resetUrlPageTranslationPreferencesForTests();
+  resetTranslationLanguagePreferenceForTests();
+});
 
 describe('settings page DOM', () => {
-  for (const category of CATEGORIES) {
-    test(`renders the ${category} category byte-stably`, async () => {
-      const rendered = await renderCategory(category);
+  for (const route of ROUTES) {
+    const name = route.page ? `${route.page} page` : `${route.category} category`;
+    test(`renders the ${name} byte-stably`, async () => {
+      const rendered = await renderCategory(route);
       const root = rendered.document.querySelector('.settings-window');
       if (!root) throw new Error('Missing .settings-window');
       expect(formatMarkup(root.outerHTML)).toMatchSnapshot();
     });
   }
 
-  test('badges the Skills nav row when managed updates are waiting', async () => {
+  test('badges the Agent nav row when managed updates are waiting', async () => {
     // The badge lives in the shell, not the library, so it must show while a
-    // different category is on screen — here, General.
-    const rendered = await renderCategory('general', [
+    // different category is on screen — here, General. Skills is a page inside
+    // Agent now, so the count surfaces on the Agent row.
+    const rendered = await renderCategory({ category: 'general' }, [
       { ...MANAGED_SKILLS[0]!, updateCommit: 'f'.repeat(40) },
     ]);
 
@@ -242,17 +274,37 @@ describe('settings page DOM', () => {
   });
 
   test('shows no badge when nothing has an update', async () => {
-    const rendered = await renderCategory('general');
+    const rendered = await renderCategory({ category: 'general' });
     expect(rendered.document.querySelector('.settings-nav-badge')).toBeNull();
+  });
+
+  test('scrolls to and briefly marks a contextual settings anchor', async () => {
+    let scrolledTarget: HTMLElement | null = null;
+    const rendered = await renderCategory(
+      { category: 'agent', anchor: 'agent-access' },
+      MANAGED_SKILLS,
+      (target) => { scrolledTarget = target; },
+    );
+
+    expect(scrolledTarget?.getAttribute('data-settings-anchor')).toBe('agent-access');
+    expect(rendered.document.querySelector('[data-settings-anchor="agent-access"]')?.classList)
+      .toContain('is-settings-anchor-target');
   });
 });
 
 async function renderCategory(
-  category: SettingsCategoryTarget,
+  target: SettingsOpenTarget,
   managedSkills: ManagedSkillView[] = MANAGED_SKILLS,
+  onScrollIntoView?: (target: HTMLElement) => void,
 ): Promise<Rendered> {
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
   installDomGlobals(window);
+  if (onScrollIntoView) {
+    Object.defineProperty(window.HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value(this: HTMLElement) { onScrollIntoView(this); },
+    });
+  }
   Object.assign(window, {
     lin: {
       initialLanguage: 'en',
@@ -265,8 +317,15 @@ async function renderCategory(
       },
       getTheme: async () => 'system',
       setTheme: async () => undefined,
-      getNotificationPrefs: async () => ({ osNotificationsEnabled: false }),
-      setNotificationPrefs: async () => undefined,
+      appInfo: async () => ({
+        name: 'Tenon',
+        version: '0.1.0',
+        platform: 'darwin',
+        arch: 'arm64',
+        electron: '39.0.0',
+        chrome: '142.0.0',
+        node: '22.0.0',
+      }),
       // Subscriptions return their unsubscribe, as the real bridge does.
       onSettingsNavigate: () => () => undefined,
       onSettingsChanged: () => () => undefined,
@@ -284,7 +343,7 @@ async function renderCategory(
   await act(async () => {
     root.render(
       <AgentSettingsView
-        initialTarget={{ category }}
+        initialTarget={target}
         onApplied={async () => undefined}
         onClose={() => undefined}
       />,

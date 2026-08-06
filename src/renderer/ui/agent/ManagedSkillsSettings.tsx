@@ -98,7 +98,7 @@ export function ManagedSkillsSettings({
           <h2 className="confirm-dialog-title" id={acquireTitleId}>{t.settings.skills.acquireTitle}</h2>
           <InsetGroup ariaLabel={t.settings.skills.managedCatalogAriaLabel} label={t.settings.skills.managedCatalogGroup}>
         {loading && !catalog ? (
-          <InsetRow disabled label={t.settings.skills.managedCatalogLoading} leading={<LoaderIcon size={ICON_SIZE.menu} />} />
+          <InsetRow empty label={t.settings.skills.managedCatalogLoading} leading={<LoaderIcon size={ICON_SIZE.menu} />} />
         ) : catalog?.status === 'unavailable' ? (
           <InsetRow
             label={t.settings.skills.managedCatalogUnavailable}
@@ -126,9 +126,10 @@ export function ManagedSkillsSettings({
               trailing={installed ? (
                 <span className="settings-chip">{t.settings.skills.managedInstalledChip}</span>
               ) : nameTaken ? (
-                <span className="settings-chip" title={t.settings.skills.managedNameTakenHint({ name: entry.name })}>
-                  {t.settings.skills.managedNameTaken}
-                </span>
+                // The chip states the whole outcome, so the reason no longer hides
+                // in a mouse-only `title` — the same unreachable tooltip the
+                // clamped Skill description used to depend on.
+                <span className="settings-chip">{t.settings.skills.managedNameTaken}</span>
               ) : (
                 <Button disabled={busy !== null} onClick={() => void beginDiscovery({ catalogId: entry.id })} size="sm" variant="secondary">
                   {installing ? <LoaderIcon size={ICON_SIZE.menu} /> : <AddIcon size={ICON_SIZE.menu} />}
@@ -139,7 +140,7 @@ export function ManagedSkillsSettings({
             />
           );
         }) : (
-          <InsetRow disabled label={t.settings.skills.managedCatalogEmpty} />
+          <InsetRow empty label={t.settings.skills.managedCatalogEmpty} />
         )}
         {catalog?.status === 'cached' ? (
           <InsetRow
@@ -157,40 +158,53 @@ export function ManagedSkillsSettings({
       </InsetGroup>
 
       <InsetGroup ariaLabel={t.settings.skills.managedGitHubAriaLabel} label={t.settings.skills.managedGitHubGroup}>
-        <InsetRow
-          label={t.settings.skills.managedGitHubLabel}
-          trailing={(
-            <div className="managed-skill-source-control">
-              <Input
-                autoCapitalize="none"
-                autoCorrect="off"
-                label={t.settings.skills.managedGitHubLabel}
-                maxLength={2_048}
-                onChange={(event) => setSourceUrl(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key !== 'Enter' || !sourceUrl.trim() || busy !== null) return;
-                  event.preventDefault();
-                  void beginDiscovery({ sourceUrl });
-                }}
-                placeholder={t.settings.skills.managedGitHubPlaceholder}
-                spellCheck={false}
-                value={sourceUrl}
-                variant="bare"
-              />
-              <Button
-                disabled={!sourceUrl.trim() || busy !== null}
-                onClick={() => void beginDiscovery({ sourceUrl })}
-                size="sm"
-                variant="secondary"
-              >
-                {busy === 'github' ? <LoaderIcon size={ICON_SIZE.menu} /> : <AddIcon size={ICON_SIZE.menu} />}
-                <span>{busy === 'github' ? t.settings.skills.managedResolving : t.settings.skills.managedAdd}</span>
-              </Button>
+        {/* A field is not a trailing control. As one it was pinned to a
+            viewport-relative width unrelated to the dialog's, so it took half the
+            row and wrapped the label beside it onto two lines — a label that
+            repeated the group header and the placeholder anyway. The input spans
+            the row and keeps its accessible name; what to paste is shown by the
+            placeholder, which is the example the label was describing. */}
+        <div className="inset-row managed-skill-github-row" role="listitem">
+          <div className="managed-skill-source-control">
+            <Input
+              autoCapitalize="none"
+              autoCorrect="off"
+              label={t.settings.skills.managedGitHubLabel}
+              maxLength={2_048}
+              onChange={(event) => setSourceUrl(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter' || !sourceUrl.trim() || busy !== null) return;
+                event.preventDefault();
+                void beginDiscovery({ sourceUrl });
+              }}
+              placeholder={t.settings.skills.managedGitHubPlaceholder}
+              spellCheck={false}
+              value={sourceUrl}
+              variant="bare"
+            />
+            <Button
+              disabled={!sourceUrl.trim() || busy !== null}
+              onClick={() => void beginDiscovery({ sourceUrl })}
+              size="sm"
+              variant="secondary"
+            >
+              {busy === 'github' ? <LoaderIcon size={ICON_SIZE.menu} /> : <AddIcon size={ICON_SIZE.menu} />}
+              <span>{busy === 'github' ? t.settings.skills.managedResolving : t.settings.skills.managedAdd}</span>
+            </Button>
+          </div>
+        </div>
+      </InsetGroup>
+          {/* Inside the dialog, because outside it is behind the backdrop. Every
+              failure of the GitHub flow — bad URL, rate limit, timeout, repo too
+              large, no SKILL.md — rendered into page flow under a dimming
+              overlay, so the primary error path of this panel was invisible and
+              the button simply returned from "Resolving…" to "Add". */}
+          {error && !installReview && !updatePreview && !confirmAction ? (
+            <div className="agent-settings-alert" role="alert">
+              <WarningIcon size={ICON_SIZE.menu} />
+              <span>{managedSkillErrorMessage(error, t)}</span>
             </div>
-          )}
-            wrap
-          />
-        </InsetGroup>
+          ) : null}
           {/* Installing is not "confirming" this panel — each entry commits
               through its own review dialog — so the only action here is to
               dismiss it. Without a visible one, the panel could be left only by
@@ -203,7 +217,7 @@ export function ManagedSkillsSettings({
         </Dialog>
       ) : null}
 
-      {error && !installReview && !updatePreview && !confirmAction ? (
+      {error && !open && !installReview && !updatePreview && !confirmAction ? (
         <div className="agent-settings-alert" role="alert">
           <WarningIcon size={ICON_SIZE.menu} />
           <span>{managedSkillErrorMessage(error, t)}</span>
@@ -327,13 +341,30 @@ function InstallReviewDialog({
         repository={review.discovery.repository}
         scripts={review.candidate.scripts}
         subdirectory={review.candidate.subdirectory}
-        trust={review.discovery.recommended ? t.settings.skills.managedRecommended : t.settings.skills.managedUnverified}
+        distribution={review.discovery.recommended ? t.settings.skills.managedRecommended : t.settings.skills.managedUnverified}
         version={review.candidate.version}
       />
+      {/* What the Skill will tell the model, shown because installing enables and
+          enabling puts this text into the agent's context. The update path has
+          always shown its diff; only the initial install asked people to consent
+          to a file list, which was survivable while a second toggle stood between
+          the bytes and the model and is not now. */}
+      {review.candidate.description ? (
+        <p className="managed-skill-review-description">{review.candidate.description}</p>
+      ) : null}
+      {review.candidate.skillBody ? (
+        <>
+          <p className="managed-skill-review-body-label">{t.settings.skills.managedSkillBodyLabel}</p>
+          <pre className="managed-skill-diff">{review.candidate.skillBody}</pre>
+          {review.candidate.skillBodyTruncated ? (
+            <p className="managed-skill-review-truncated">{t.settings.skills.managedSkillBodyTooLargeToInstall}</p>
+          ) : null}
+        </>
+      ) : null}
       <ManagedSkillDialogError error={error} />
       <div className="confirm-dialog-actions">
         <Button disabled={busy} onClick={onCancel} variant="ghost">{t.dialog.cancel}</Button>
-        <Button disabled={busy} onClick={onInstall} variant="primary">
+        <Button disabled={busy || review.candidate.skillBodyTruncated === true} onClick={onInstall} variant="primary">
           {busy ? <LoaderIcon size={ICON_SIZE.menu} /> : <AddIcon size={ICON_SIZE.menu} />}
           <span>{busy ? t.settings.skills.managedInstalling : t.settings.skills.managedInstall}</span>
         </Button>
@@ -373,7 +404,7 @@ function UpdatePreviewDialog({
         repository={preview.repository}
         scripts={preview.scripts}
         subdirectory={preview.subdirectory}
-        trust={preview.recommended ? t.settings.skills.managedRecommended : t.settings.skills.managedUnverified}
+        distribution={preview.recommended ? t.settings.skills.managedRecommended : t.settings.skills.managedUnverified}
         version={`${preview.current.version ?? t.settings.skills.managedCompatibilityUnknown} -> ${preview.candidate.version ?? t.settings.skills.managedCompatibilityUnknown}`}
       />
       <div className="managed-skill-changed-paths">
@@ -381,6 +412,11 @@ function UpdatePreviewDialog({
         <span>{preview.changedPaths.join(', ') || t.settings.skills.managedNoFileChanges}</span>
       </div>
       <pre className="managed-skill-diff">{preview.skillDiff}</pre>
+      {/* `diffTruncated` was produced and never read, so a review gate that exists
+          to let the user consent to specific bytes could silently hide the rest. */}
+      {preview.diffTruncated ? (
+        <p className="managed-skill-review-truncated">{t.settings.skills.managedSkillBodyTruncated}</p>
+      ) : null}
       <ManagedSkillDialogError error={error} />
       <div className="confirm-dialog-actions">
         <Button disabled={busy} onClick={onCancel} variant="ghost">{t.dialog.cancel}</Button>
@@ -397,19 +433,19 @@ function ManagedSkillDetails({
   commit,
   compatibility,
   contentHash,
+  distribution,
   repository,
   scripts,
   subdirectory,
-  trust,
   version,
 }: {
   commit: string;
   compatibility: string;
   contentHash?: string;
+  distribution: string;
   repository: string;
   scripts: string[];
   subdirectory: string;
-  trust: string;
   version?: string;
 }) {
   const t = useT();
@@ -419,7 +455,7 @@ function ManagedSkillDetails({
     ...(version ? [[t.settings.skills.managedVersion, version]] : []),
     ...(contentHash ? [[t.settings.skills.managedContentHash, shortHash(contentHash)]] : []),
     [t.settings.skills.managedCompatibility, compatibility],
-    [t.settings.skills.managedTrust, trust],
+    [t.settings.skills.managedDistribution, distribution],
     [t.settings.skills.managedScripts, scripts.length > 0 ? scripts.join(', ') : t.settings.skills.managedNoScripts],
   ];
   return (
@@ -478,7 +514,7 @@ function ManagedSkillActionDialog({
         repository={action.skill.repository}
         scripts={version?.scripts ?? action.skill.scripts}
         subdirectory={action.skill.subdirectory}
-        trust={action.skill.recommended ? t.settings.skills.managedRecommended : t.settings.skills.managedUnverified}
+        distribution={action.skill.recommended ? t.settings.skills.managedRecommended : t.settings.skills.managedUnverified}
         version={version?.version}
       />
       <ManagedSkillDialogError error={error} />
@@ -528,9 +564,13 @@ export function managedSkillActions(
   ];
 }
 
-export function managedStatusLabel(skill: ManagedSkillView, t: ReturnType<typeof useT>): string {
-  if (skill.status === 'installed-disabled') return t.settings.skills.managedStatusDisabled;
-  if (skill.status === 'enabled') return t.settings.skills.managedStatusEnabled;
+export function managedSkillAttentionLabel(
+  skill: ManagedSkillView,
+  t: ReturnType<typeof useT>,
+): string | undefined {
+  // Enabled/disabled is already stated by the adjacent switch. Only states that
+  // need attention earn a chip, so the two representations cannot contradict.
+  if (skill.status === 'installed-disabled' || skill.status === 'enabled') return undefined;
   if (skill.status === 'update-available') return t.settings.skills.managedStatusUpdate;
   if (skill.status === 'modified') return t.settings.skills.managedStatusModified;
   return t.settings.skills.managedStatusFailure;

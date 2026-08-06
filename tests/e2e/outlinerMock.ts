@@ -1,6 +1,8 @@
 import { expect, type Page } from '@playwright/test';
 import type { TranslationLanguage } from '../../src/core/translationLanguage';
 import type { UrlPageTranslationPreferences } from '../../src/core/urlPageTranslation';
+import type { ManagedSkillCatalogEntryView, ManagedSkillView } from '../../src/core/types';
+import type { AppInfo } from '../../src/core/errorObservability';
 
 export const ids = {
   workspace: 'workspace',
@@ -63,6 +65,18 @@ interface MockFixtureOptions {
   attachmentUploadDelayMs?: number;
   /** Starts with the configured language-model provider disabled and uncredentialed. */
   agentProviderUsable?: boolean;
+  /** Seeds the global Memory switch; defaults to enabled. */
+  memoryFeatureMode?: 'enabled' | 'disabled';
+  /** Seeds the Memory status line's freshness, backlog, error, and stray-node count. */
+  memoryLastSuccessfulRunAt?: number | null;
+  memoryLastError?: string | null;
+  memoryPendingJobs?: number;
+  memoryStrayTaggedNodeCount?: number;
+  /** Installs managed Skills; empty by default, since the pane must be right with none. */
+  managedSkills?: ManagedSkillView[];
+  /** Seeds the Linlab catalog rows and its freshness state. */
+  managedCatalogEntries?: ManagedSkillCatalogEntryView[];
+  managedCatalogStatus?: 'fresh' | 'cached' | 'unavailable';
 }
 
 type E2EWindow = Window & {
@@ -109,6 +123,7 @@ type E2EWindow = Window & {
     openSettings?: (target?: unknown) => Promise<void>;
     closeProviderConfig?: () => Promise<void>;
     notifySettingsChanged?: () => Promise<void>;
+    appInfo?: () => Promise<AppInfo>;
     onSettingsChanged?: (listener: () => void) => () => void;
     onSettingsNavigate?: (listener: (target: unknown) => void) => () => void;
     openLocalFile?: (options: { path: string; threadId?: string; attachmentId?: string }) => Promise<{ opened: boolean }>;
@@ -518,6 +533,29 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       blocks: [...(options.capabilityBlocks ?? [])] as string[],
       diagnostics: [] as Array<{ ruleValue: string; code: string; message: string }>,
     };
+    // The Memory group polls `memory_settings_get` on an interval for as long as
+    // its pane is mounted. Without a branch for it the mock's unhandled-invoke
+    // throw became a red alert on the pane every few seconds — including in the
+    // design-system probes, which were photographing that banner rather than the
+    // pane. Deterministic: no timers, no worker, and the counters only move when
+    // a spec drives them.
+    const memorySettings = {
+      status: {
+        featureMode: options.memoryFeatureMode ?? 'enabled',
+        featureModeGeneration: 1,
+        resetEpoch: 0,
+        memoryVisibilityGeneration: 1,
+        lastSuccessfulRunAt: options.memoryLastSuccessfulRunAt ?? null,
+        lastError: options.memoryLastError ?? null,
+        pendingJobs: options.memoryPendingJobs ?? 0,
+        strayTaggedNodeCount: options.memoryStrayTaggedNodeCount ?? 0,
+      },
+      thread: null as { threadId: string; mode: string } | null,
+    };
+    // Managed Skills default to none installed and an empty catalog: the pane has
+    // to be correct in that state, and a spec that wants rows opts into them.
+    const managedSkills = (options.managedSkills ?? []).map((skill) => ({ ...skill }));
+    const managedCatalogEntries = options.managedCatalogEntries ?? [];
     const agentSkills = [{
       name: 'workspace-review',
       source: 'project',
@@ -527,8 +565,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       hasUserSpecifiedDescription: true,
       userInvocable: true,
       modelInvocable: true,
-      ratified: false,
-      accepted: false,
       canUndoLastAgentEdit: false,
       contentHash: 'hash-workspace-review-v1',
       allowedTools: [],
@@ -1705,6 +1741,15 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     win.lin = {
       initialTranslationLanguage: translationLanguage,
       initialUrlPageTranslationPreferences: clone(translationPreferences),
+      appInfo: async () => ({
+        name: 'Tenon',
+        version: '0.1.0',
+        platform: 'darwin',
+        arch: 'arm64',
+        electron: '39.0.0',
+        chrome: '142.0.0',
+        node: '22.0.0',
+      }),
       automationRequest: async <T,>(method: string, input: Record<string, unknown> = {}): Promise<T> => {
         calls.push({ cmd: `automation/${method}`, args: clone(input) });
         if (method === 'list') return clone({ data: mockAutomations }) as T;
@@ -2742,6 +2787,61 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         if (cmd === 'agent_get_capability_settings') {
           return clone(agentCapabilities) as T;
         }
+        if (cmd === 'memory_settings_get') {
+          return clone(memorySettings) as T;
+        }
+        if (cmd === 'memory_feature_mode_set') {
+          memorySettings.status.featureMode = String(args.mode ?? 'enabled');
+          memorySettings.status.featureModeGeneration += 1;
+          return clone(memorySettings) as T;
+        }
+        if (cmd === 'memory_open') {
+          memorySettings.status.memoryVisibilityGeneration += 1;
+          return clone(memorySettings) as T;
+        }
+        if (cmd === 'memory_reset') {
+          memorySettings.status.resetEpoch += 1;
+          memorySettings.status.lastSuccessfulRunAt = null;
+          memorySettings.status.lastError = null;
+          memorySettings.status.pendingJobs = 0;
+          memorySettings.status.strayTaggedNodeCount = 0;
+          return clone(memorySettings) as T;
+        }
+        // Managed-Skill channels. `managedCommand` unwraps an { ok, value } /
+        // { ok, error } envelope, so these return that shape rather than the view
+        // directly — a bare view would surface as `undefined` at the call site
+        // instead of failing loudly.
+        if (cmd === 'agent_managed_skill_list') {
+          return { ok: true, value: clone(managedSkills) } as T;
+        }
+        if (cmd === 'agent_managed_skill_catalog') {
+          return {
+            ok: true,
+            value: { status: options.managedCatalogStatus ?? 'fresh', entries: clone(managedCatalogEntries) },
+          } as T;
+        }
+        if (cmd === 'agent_managed_skill_check_updates') {
+          return { ok: true, value: clone(managedSkills) } as T;
+        }
+        if (cmd === 'agent_managed_skill_set_enabled') {
+          const skill = managedSkills.find((candidate) => candidate.id === String(args.skillId ?? ''));
+          if (!skill) return { ok: false, error: { code: 'skill_missing', message: 'Managed skill is no longer installed.' } } as T;
+          skill.enabled = args.enabled === true;
+          skill.status = skill.enabled ? 'enabled' : 'installed-disabled';
+          return { ok: true, value: clone(skill) } as T;
+        }
+        if (cmd === 'agent_managed_skill_uninstall') {
+          const index = managedSkills.findIndex((candidate) => candidate.id === String(args.skillId ?? ''));
+          if (index >= 0) managedSkills.splice(index, 1);
+          return { ok: true, value: clone(managedSkills) } as T;
+        }
+        if (cmd === 'agent_update_image_generation_settings') {
+          const settings = (args.settings ?? {}) as { defaultModel?: string | null };
+          agentSettings.imageGeneration = settings.defaultModel
+            ? { defaultModel: settings.defaultModel }
+            : {};
+          return clone(agentSettings) as T;
+        }
         if (cmd === 'agent_list_all_skills') {
           if (options.agentSkillsDelayMs) await delay(options.agentSkillsDelayMs);
           const skills = args.userInvocableOnly === true
@@ -2750,25 +2850,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             ))
             : agentSkills;
           return clone(skills) as T;
-        }
-        if (cmd === 'agent_accept_skill') {
-          const skillName = String(args.skillName ?? '');
-          const expectedHash = String(args.expectedHash ?? '');
-          const skill = agentSkills.find((item) => item.name === skillName);
-          if (skill && skill.contentHash === expectedHash) {
-            skill.ratified = true;
-            skill.accepted = true;
-          }
-          return clone(agentSkills) as T;
-        }
-        if (cmd === 'agent_revoke_skill_acceptance') {
-          const skillName = String(args.skillName ?? '');
-          const skill = agentSkills.find((item) => item.name === skillName);
-          if (skill) {
-            skill.ratified = false;
-            skill.accepted = false;
-          }
-          return clone(agentSkills) as T;
         }
         if (cmd === 'agent_apply_capability_settings_patch') {
           const patch = args.patch as {
