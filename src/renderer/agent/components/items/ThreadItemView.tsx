@@ -8,6 +8,7 @@ import {
   type MouseEventHandler,
   type ReactNode,
 } from 'react';
+import { Lexer, type Token, type Tokens } from 'marked';
 import type {
   CollaborationToolName,
   DynamicToolOutputContent,
@@ -68,7 +69,7 @@ import {
   threadNodeReferenceStyle,
   type ThreadNodeReferenceOpenHandler,
 } from '../../threadReferences';
-import { basenameForPath } from '../../../../core/referenceMarkup';
+import { basenameForPath, splitReferenceMarkers } from '../../../../core/referenceMarkup';
 import {
   boundedToolArgumentsForDisplay,
   modelCallArgumentSource,
@@ -143,6 +144,7 @@ export function ThreadItemView(props: ThreadItemViewProps) {
     case 'userMessage':
       return <UserMessageItem {...props} item={props.item} />;
     case 'agentMessage':
+      if (props.item.phase === 'commentary' && !props.item.text.trim()) return null;
       return (
         <article
           className={`thread-item thread-agent-message thread-agent-message-${props.item.phase ?? 'response'}`}
@@ -578,41 +580,113 @@ function ReasoningDisclosure({
   readonly streaming: boolean;
 }) {
   const t = useT();
+  const summaryRef = useRef<HTMLSpanElement | null>(null);
+  const summaryMeasureFrameRef = useRef<number | null>(null);
+  const summaryMeasuredRef = useRef(false);
+  const [summaryOverflow, setSummaryOverflow] = useState(false);
   const text = parts.join('\n\n');
   const trimmed = text.trim();
-  if (!trimmed) {
+  const hasText = trimmed.length > 0;
+  const presentation = reasoningPresentation(trimmed);
+  const expanded = expandState.isExpanded(disclosureId, defaultExpanded);
+  const measureSummary = useCallback(() => {
+    const element = summaryRef.current;
+    if (!element) return;
+    const nextOverflow = element.scrollWidth > element.clientWidth + 1;
+    setSummaryOverflow((current) => current === nextOverflow ? current : nextOverflow);
+  }, []);
+
+  const cancelScheduledSummaryMeasure = useCallback(() => {
+    if (summaryMeasureFrameRef.current === null) return;
+    window.cancelAnimationFrame(summaryMeasureFrameRef.current);
+    summaryMeasureFrameRef.current = null;
+  }, []);
+
+  const scheduleSummaryMeasure = useCallback(() => {
+    if (summaryMeasureFrameRef.current !== null) return;
+    summaryMeasureFrameRef.current = window.requestAnimationFrame(() => {
+      summaryMeasureFrameRef.current = null;
+      measureSummary();
+    });
+  }, [measureSummary]);
+
+  useLayoutEffect(() => {
+    if (!hasText) return;
+    const discoveringExpandedOverflow = expanded
+      && !presentation.details
+      && !summaryOverflow;
+    if (expanded && !discoveringExpandedOverflow) return;
+    if (streaming && summaryMeasuredRef.current) scheduleSummaryMeasure();
+    else {
+      cancelScheduledSummaryMeasure();
+      measureSummary();
+      summaryMeasuredRef.current = true;
+    }
+  }, [
+    cancelScheduledSummaryMeasure,
+    expanded,
+    hasText,
+    measureSummary,
+    presentation.details,
+    presentation.summary,
+    scheduleSummaryMeasure,
+    streaming,
+    summaryOverflow,
+  ]);
+
+  const canExpand = Boolean(presentation.details) || summaryOverflow;
+
+  useLayoutEffect(() => {
+    if (!hasText || expanded) return undefined;
+    const element = summaryRef.current;
+    if (!element || typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(measureSummary);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [canExpand, disclosureId, expanded, hasText, measureSummary]);
+
+  useEffect(() => () => cancelScheduledSummaryMeasure(), [cancelScheduledSummaryMeasure]);
+
+  if (!hasText) {
     // Same class set as the populated branch: the first token must not change
     // the element's classes underneath the reader.
     return streaming
       ? <div className="thread-item thread-reasoning is-thinking">{t.agent.thinking.thinking}</div>
       : null;
   }
-  const expanded = expandState.isExpanded(disclosureId, defaultExpanded);
-  const gist = expanded ? '' : reasoningGist(trimmed);
+  if (!canExpand) {
+    return (
+      <div className="thread-item thread-reasoning">
+        <span className="thread-reasoning-summary" ref={summaryRef} title={presentation.summary}>
+          {presentation.summary}
+        </span>
+      </div>
+    );
+  }
   return (
     <div className="thread-item thread-reasoning">
       <ButtonControl
         aria-expanded={expanded}
-        className="thread-reasoning-toggle"
+        className={`thread-reasoning-toggle${expanded ? ' is-expanded' : ''}`}
         data-thread-disclosure-id={disclosureId}
         onClick={(event) => expandState.toggle(disclosureId, expanded, event.currentTarget)}
       >
-        <span className="thread-reasoning-headline">
-          {streaming ? t.agent.thinking.thinking : t.agent.thinking.thought}
+        <span className="thread-reasoning-summary" ref={summaryRef} title={presentation.summary}>
+          {presentation.summary}
         </span>
-        {gist ? <span className="thread-reasoning-gist" title={gist}>· {gist}</span> : null}
         <ChevronRightIcon
+          aria-hidden
           className={`thread-reasoning-chevron${expanded ? ' is-expanded' : ''}`}
           size={ICON_SIZE.menu}
         />
       </ButtonControl>
-      {expanded ? (
+      {expanded && presentation.details ? (
         <div className="thread-reasoning-body">
           <ThreadMarkdown
             index={index}
             onNodeReferenceOpen={onOpenNodeReference}
             streaming={streaming}
-            text={trimmed}
+            text={presentation.details}
           />
         </div>
       ) : null}
@@ -1888,9 +1962,84 @@ function outputLanguage(text: string): string {
   return isJsonText(text) ? 'json' : 'text';
 }
 
-function reasoningGist(text: string): string {
-  const first = text.split('\n').map((line) => line.trim()).find(Boolean) ?? '';
-  return first.replace(/^#+\s*/, '').replace(/\*+/g, '').replace(/\s+/g, ' ').trim();
+function reasoningPresentation(text: string): { readonly summary: string; readonly details: string } {
+  try {
+    const tokens = Lexer.lex(text);
+    const firstIndex = tokens.findIndex(isVisibleMarkdownToken);
+    const first = tokens[firstIndex];
+    if (!first) return { summary: '', details: '' };
+    const paragraph = first.type === 'paragraph' ? first as Tokens.Paragraph : null;
+    const plainParagraph = paragraph?.tokens.every(isPlainMarkdownTextToken) ?? false;
+    const summary = plainParagraph
+      ? compactReasoningText(paragraph?.text ?? first.raw)
+      : reasoningTokenSummary(first);
+    const firstOffset = tokens
+      .slice(0, firstIndex)
+      .reduce((length, token) => length + token.raw.length, 0);
+    const remainder = text.slice(firstOffset + first.raw.length).trim();
+    const details = plainParagraph
+      ? hasVisibleMarkdown(remainder) ? remainder : ''
+      : text;
+    return {
+      summary: summary || compactReasoningText(first.raw) || text,
+      details,
+    };
+  } catch {
+    return { summary: compactReasoningText(firstLine(text)), details: text };
+  }
+}
+
+function isVisibleMarkdownToken(token: Token): boolean {
+  return token.type !== 'space' && token.type !== 'def';
+}
+
+function hasVisibleMarkdown(text: string): boolean {
+  if (!text) return false;
+  try {
+    return Lexer.lex(text).some(isVisibleMarkdownToken);
+  } catch {
+    return true;
+  }
+}
+
+function isPlainMarkdownTextToken(token: Token): boolean {
+  return token.type === 'text'
+    && (!token.tokens || token.tokens.every(isPlainMarkdownTextToken));
+}
+
+function reasoningTokenSummary(token: Token): string {
+  if (token.type === 'code') return compactReasoningText(firstLine(token.text));
+  if (token.type === 'list') return compactReasoningText(token.items[0]?.text ?? firstLine(token.raw));
+  if (token.type === 'table') {
+    const table = token as Tokens.Table;
+    return compactReasoningText(table.header.map((cell) => markdownTokenText(cell.tokens)).join(' | '));
+  }
+  if ('tokens' in token && Array.isArray(token.tokens)) {
+    const tokenText = compactReasoningText(markdownTokenText(token.tokens));
+    if (tokenText) return tokenText;
+  }
+  if ('text' in token && typeof token.text === 'string') {
+    const tokenText = compactReasoningText(firstLine(token.text));
+    if (tokenText) return tokenText;
+  }
+  return compactReasoningText(firstLine(token.raw));
+}
+
+function markdownTokenText(tokens: readonly Token[]): string {
+  return tokens.map((token) => {
+    if (token.type === 'br') return ' ';
+    if ('tokens' in token && Array.isArray(token.tokens)) return markdownTokenText(token.tokens);
+    if ('text' in token && typeof token.text === 'string') return token.text;
+    return token.raw;
+  }).join('');
+}
+
+function compactReasoningText(text: string): string {
+  return splitReferenceMarkers(text)
+    .map((segment) => segment.type === 'text' ? segment.text : segment.label)
+    .join('')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function firstLine(text: string): string {

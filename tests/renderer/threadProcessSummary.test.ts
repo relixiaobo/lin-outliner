@@ -1,7 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import type { ThreadItem, Turn } from '../../src/core/agent/protocol';
 import { en } from '../../src/core/i18n';
-import { threadProcessSummary } from '../../src/renderer/agent/components/ThreadView';
+import {
+  groupTurnContent,
+  threadProcessSummary,
+} from '../../src/renderer/agent/components/ThreadView';
 import {
   collaborationThreadIds,
   type SubagentPresentation,
@@ -43,6 +46,37 @@ describe('active Turn process summary', () => {
   });
 });
 
+describe('Turn process projection', () => {
+  test('removes empty commentary before building process and item blocks', () => {
+    const user = userMessage('user');
+    const empty = commentary('empty', '   ');
+    const response = agentResponse('response');
+    const completed: Turn = {
+      ...turn([user, empty, response]),
+      status: 'completed',
+      completedAt: 3,
+      durationMs: 2,
+    };
+
+    expect(groupTurnContent(completed).map((block) => (
+      block.kind === 'process'
+        ? { kind: block.kind, itemIds: block.items.map((item) => item.id) }
+        : { kind: block.kind, itemId: block.item.id }
+    ))).toEqual([
+      { kind: 'item', itemId: 'user' },
+      { kind: 'process', itemIds: [] },
+      { kind: 'item', itemId: 'response' },
+    ]);
+  });
+
+  test('retains commentary that has visible text in the process block', () => {
+    const visible = commentary('commentary', 'Checking the workspace.');
+    const blocks = groupTurnContent(turn([visible]));
+
+    expect(blocks).toEqual([{ kind: 'process', items: [visible] }]);
+  });
+});
+
 function turn(items: readonly ThreadItem[]): Turn {
   return {
     id: 'turn-parent',
@@ -74,6 +108,39 @@ function collaboration(
     model: null,
     reasoningEffort: null,
     agentsStates: {},
+  };
+}
+
+function userMessage(id: string): Extract<ThreadItem, { type: 'userMessage' }> {
+  return {
+    id,
+    provenance: { originThreadId: 'thread-parent', originTurnId: 'turn-parent', originItemId: id },
+    type: 'userMessage',
+    clientId: null,
+    content: [{ type: 'text', text: 'Inspect the workspace.' }],
+    acceptedAt: 1,
+  };
+}
+
+function commentary(id: string, text: string): Extract<ThreadItem, { type: 'agentMessage' }> {
+  return {
+    id,
+    provenance: { originThreadId: 'thread-parent', originTurnId: 'turn-parent', originItemId: id },
+    type: 'agentMessage',
+    text,
+    phase: 'commentary',
+    memoryCitation: null,
+  };
+}
+
+function agentResponse(id: string): Extract<ThreadItem, { type: 'agentMessage' }> {
+  return {
+    id,
+    provenance: { originThreadId: 'thread-parent', originTurnId: 'turn-parent', originItemId: id },
+    type: 'agentMessage',
+    text: 'Finished.',
+    phase: 'final_answer',
+    memoryCitation: null,
   };
 }
 

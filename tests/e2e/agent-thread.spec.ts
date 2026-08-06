@@ -2760,9 +2760,9 @@ test.describe('canonical agent Thread surface', () => {
 
     const thought = page.locator('.thread-reasoning-toggle').first();
     await expect(thought).toBeVisible();
-    await expect(thought).toHaveAccessibleName(/Thought.*Inspect the current workspace/);
-    await expect(thought.locator('.thread-reasoning-headline')).toHaveCSS('font-weight', '400');
-    await expect(thought.locator('.thread-reasoning-gist')).toHaveCSS('font-weight', '400');
+    await expect(thought).toHaveAccessibleName('Inspect the current workspace');
+    await expect(thought.locator('.thread-reasoning-summary')).toHaveCSS('font-weight', '400');
+    await expect(thought).toHaveAttribute('aria-expanded', 'false');
     const thoughtChevron = thought.locator('.thread-reasoning-chevron');
     await expect(thoughtChevron).toHaveCSS('opacity', '0');
     const activity = page.getByRole('button', { name: /^Ran a command · read / });
@@ -2772,16 +2772,17 @@ test.describe('canonical agent Thread surface', () => {
     expect(Math.abs(thoughtBox!.x - activityBox!.x)).toBeLessThan(1);
     await thought.hover();
     await expect(thoughtChevron).toHaveCSS('opacity', '1');
+    expect(await thought.boundingBox()).toEqual(thoughtBox);
     await setTranscriptFollowingBottom(page);
     await toggleDisclosureWithStableAnchor(thought);
     await expect(thought).toHaveAttribute('aria-expanded', 'true');
     await expect(thoughtChevron).toHaveCSS('opacity', '1');
     const reasoningBody = page.locator('.thread-reasoning-body');
-    await expect(reasoningBody).toContainText('Inspect the current workspace');
     await expect(reasoningBody).toContainText('The workspace has enough evidence.');
-    await expect(reasoningBody.locator('p')).toHaveCount(2);
+    await expect(reasoningBody).not.toContainText('Inspect the current workspace');
+    await expect(reasoningBody.locator('p')).toHaveCount(1);
     const [thoughtHeadlineBox, reasoningBodyBox] = await Promise.all([
-      thought.locator('.thread-reasoning-headline').boundingBox(),
+      thought.locator('.thread-reasoning-summary').boundingBox(),
       reasoningBody.boundingBox(),
     ]);
     expect(thoughtHeadlineBox).toBeTruthy();
@@ -2792,13 +2793,13 @@ test.describe('canonical agent Thread surface', () => {
     await setTranscriptFollowingBottom(page);
     await toggleDisclosureWithStableAnchor(thought);
     await expect(thought).toHaveAttribute('aria-expanded', 'true');
-    const singleLineThought = page.locator('.thread-reasoning-toggle').nth(1);
-    await expect(singleLineThought).toHaveAccessibleName(/Thought.*Preparing the final response/);
-    await expect(singleLineThought).toHaveAttribute('aria-expanded', 'false');
-    await singleLineThought.click();
-    await expect(singleLineThought).toHaveAttribute('aria-expanded', 'true');
-    await expect(singleLineThought.locator('xpath=..').locator('.thread-reasoning-body'))
-      .toHaveText('Preparing the final response');
+    const singleLineThought = page.locator('.thread-reasoning-summary', {
+      hasText: 'Preparing the final response',
+    });
+    await expect(singleLineThought).toHaveCount(1);
+    expect(await singleLineThought.evaluate((element) => element.parentElement?.tagName)).toBe('DIV');
+    await expect(singleLineThought.locator('xpath=..').locator('.thread-reasoning-chevron')).toHaveCount(0);
+    await expect(page.getByText('Thought', { exact: true })).toHaveCount(0);
 
     const activityStatus = activity.locator('.thread-disclosure-status');
     const activityChevron = activity.locator('.thread-disclosure-chevron');
@@ -2920,6 +2921,165 @@ test.describe('canonical agent Thread surface', () => {
       'tool:01910000-0000-7000-8000-00000000aa03': true,
       'tools:01910000-0000-7000-8000-00000000aa03': true,
     });
+  });
+
+  test('groups tools across empty commentary and spaces a truncated reasoning line', async ({ page }) => {
+    await createNewThread(page);
+    const fixture = await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+      const threadId = response?.data[0]?.id;
+      if (!threadId) throw new Error('Mock Thread not found');
+      const turnId = '01910000-0000-7000-8000-00000000af01';
+      const itemId = (suffix: string) => `01910000-0000-7000-8000-00000000${suffix}`;
+      const provenance = (originItemId: string) => ({ originThreadId: threadId, originTurnId: turnId, originItemId });
+      const webSearch = (id: string, query: string) => ({
+        id,
+        type: 'webSearch',
+        provenance: provenance(id),
+        query,
+        modelCall: {
+          disposition: 'replayable',
+          identity: { namespace: null, name: 'web_search' },
+          providerName: 'web_search',
+          arguments: { storage: 'inline', value: { query } },
+          schemaDigest: '0'.repeat(64),
+        },
+        results: [{ title: 'Forecast', url: 'https://example.com/weather', snippet: 'Rain' }],
+        status: 'completed',
+        error: null,
+      });
+      const webFetch = (id: string, url: string) => ({
+        id,
+        type: 'dynamicToolCall',
+        provenance: provenance(id),
+        namespace: null,
+        tool: 'web_fetch',
+        arguments: { url },
+        modelCall: {
+          disposition: 'replayable',
+          identity: { namespace: null, name: 'web_fetch' },
+          providerName: 'web_fetch',
+          arguments: { storage: 'inline', value: { url } },
+          schemaDigest: '0'.repeat(64),
+        },
+        status: 'completed',
+        outputRef: null,
+        contentItems: [{ type: 'text', text: 'Forecast loaded' }],
+        success: true,
+        durationMs: 4,
+      });
+      const emptyCommentary = (id: string) => ({
+        id,
+        type: 'agentMessage',
+        provenance: provenance(id),
+        text: '',
+        phase: 'commentary',
+        memoryCitation: null,
+      });
+      const reasoningId = itemId('af06');
+      const answerId = itemId('af10');
+      const reasoningText = [
+        'Planning an additional official NMC search with enough detail to exceed the compact timeline width',
+        'while preserving the complete reasoning text when the disclosure is opened',
+      ].join(' ');
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/completed',
+        threadId,
+        turnId,
+        turn: {
+          id: turnId,
+          items: [
+            webSearch(itemId('af02'), 'Chengdu weather August 5'),
+            emptyCommentary(itemId('af03')),
+            webFetch(itemId('af04'), 'https://weather.example.com/chengdu'),
+            {
+              id: reasoningId,
+              type: 'reasoning',
+              provenance: provenance(reasoningId),
+              summary: [reasoningText],
+              content: [],
+            },
+            webSearch(itemId('af07'), 'Chengdu NMC forecast'),
+            emptyCommentary(itemId('af08')),
+            webFetch(itemId('af09'), 'https://www.nmc.cn/chengdu'),
+            {
+              id: answerId,
+              type: 'agentMessage',
+              provenance: provenance(answerId),
+              text: 'Rain is expected today.',
+              phase: 'final_answer',
+              memoryCitation: null,
+            },
+          ],
+          itemsView: 'full',
+          provenance: { originThreadId: threadId, originTurnId: turnId, trigger: { kind: 'user' } },
+          status: 'completed',
+          error: null,
+          startedAt: 1,
+          completedAt: 36_001,
+          durationMs: 36_000,
+        },
+      });
+      return { reasoningText, turnId };
+    });
+
+    const turn = page.locator(`[data-thread-turn-row="${fixture.turnId}"]`);
+    await turn.getByRole('button', { name: 'Worked for 36s' }).click();
+    const summary = turn.locator('.thread-reasoning-summary', {
+      hasText: fixture.reasoningText,
+    });
+    await expect(summary).toHaveCount(1);
+    await expect(turn.locator('.thread-tool-activity-toggle')).toHaveCount(2);
+    await expect(turn.locator('.thread-tool-toggle')).toHaveCount(0);
+    await expect(turn.locator('.thread-agent-message-commentary')).toHaveCount(0);
+    await expect(turn.getByText('Thought', { exact: true })).toHaveCount(0);
+
+    const rhythm = await summary.evaluate((element) => {
+      const reasoning = element.closest<HTMLElement>('.thread-reasoning');
+      const timeline = reasoning?.parentElement;
+      const previousTool = reasoning?.previousElementSibling
+        ?.querySelector<HTMLElement>('.thread-tool-activity-toggle');
+      const nextTool = reasoning?.nextElementSibling
+        ?.querySelector<HTMLElement>('.thread-tool-activity-toggle');
+      if (!reasoning || !timeline || !previousTool || !nextTool) {
+        throw new Error('Missing split web timeline rhythm elements');
+      }
+      const expected = Number.parseFloat(getComputedStyle(timeline).rowGap);
+      const previousRect = previousTool.getBoundingClientRect();
+      const reasoningRect = reasoning.getBoundingClientRect();
+      const nextRect = nextTool.getBoundingClientRect();
+      return {
+        above: reasoningRect.top - previousRect.bottom,
+        below: nextRect.top - reasoningRect.bottom,
+        expected,
+      };
+    });
+    expect(rhythm.expected).toBeGreaterThan(0);
+    expect(Math.abs(rhythm.above - rhythm.expected)).toBeLessThan(1);
+    expect(Math.abs(rhythm.below - rhythm.expected)).toBeLessThan(1);
+    expect(Math.abs(rhythm.above - rhythm.below)).toBeLessThan(1);
+
+    const reasoningToggle = summary.locator('xpath=..');
+    await expect(reasoningToggle).toHaveAttribute('aria-expanded', 'false');
+    expect(await summary.evaluate((element) => element.scrollWidth > element.clientWidth + 1)).toBe(true);
+    await reasoningToggle.click();
+    await expect(reasoningToggle).toHaveAttribute('aria-expanded', 'true');
+    const expandedMetrics = await summary.evaluate((element) => ({
+      fits: element.scrollWidth <= element.clientWidth + 1,
+      lineHeight: Number.parseFloat(getComputedStyle(element).lineHeight),
+      height: element.getBoundingClientRect().height,
+      text: element.textContent,
+    }));
+    expect(expandedMetrics).toEqual(expect.objectContaining({
+      fits: true,
+      text: fixture.reasoningText,
+    }));
+    expect(expandedMetrics.height).toBeGreaterThan(expandedMetrics.lineHeight + 1);
+    await expect(turn.locator('.thread-reasoning-body')).toHaveCount(0);
   });
 
   test('explains only non-zero shell exit codes', async ({ page }) => {
@@ -3214,7 +3374,7 @@ test.describe('canonical agent Thread surface', () => {
     await expect(page.getByText('Turn interrupted')).toHaveCount(1);
   });
 
-  test('keeps a live reasoning disclosure open when a newer Item lands', async ({ page }) => {
+  test('keeps an explicitly opened live reasoning disclosure open when a newer Item lands', async ({ page }) => {
     await createNewThread(page);
     const ids = await page.evaluate(async () => {
       const target = window as Window & {
@@ -3232,7 +3392,7 @@ test.describe('canonical agent Thread surface', () => {
         type: 'reasoning',
         provenance: { originThreadId: threadId, originTurnId: turnId, originItemId: reasoningId },
         summary: ['Deciding which file to open'],
-        content: [],
+        content: ['Checking the available file candidates.'],
       };
       const liveTurn = (items: unknown[]) => ({
         id: turnId,
@@ -3251,7 +3411,11 @@ test.describe('canonical agent Thread surface', () => {
       return { threadId, turnId, toolId, reasoning };
     });
 
-    // Open while it is the streaming tail.
+    const reasoningToggle = page.locator('.thread-reasoning-toggle');
+    await expect(reasoningToggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(page.locator('.thread-reasoning-body')).toHaveCount(0);
+    await reasoningToggle.click();
+    await expect(reasoningToggle).toHaveAttribute('aria-expanded', 'true');
     await expect(page.locator('.thread-reasoning-body')).toHaveCount(1);
 
     // A tool call lands: the reasoning is no longer the tail. It must not snap
@@ -3300,9 +3464,198 @@ test.describe('canonical agent Thread surface', () => {
     await expect(page.locator('.thread-tool')).toHaveCount(1);
     await expect(page.locator('.thread-reasoning-body')).toHaveCount(1);
 
-    // An explicit collapse still wins over the latch.
-    await page.locator('.thread-reasoning-toggle').click();
+    await reasoningToggle.click();
     await expect(page.locator('.thread-reasoning-body')).toHaveCount(0);
+  });
+
+  test('paints structural process updates at the followed bottom with one compact rhythm', async ({ page }) => {
+    await page.setViewportSize({ width: 900, height: 520 });
+    await createNewThread(page);
+    const fixture = await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+      const threadId = response?.data[0]?.id;
+      if (!threadId) throw new Error('Mock Thread not found');
+      const turnId = '01910000-0000-7000-8000-00000000c601';
+      const userItemId = '01910000-0000-7000-8000-00000000c602';
+      const itemId = (sequence: number) => (
+        `01910000-0000-7000-8000-${sequence.toString().padStart(12, '0')}`
+      );
+      const itemProvenance = (originItemId: string) => ({
+        originThreadId: threadId,
+        originTurnId: turnId,
+        originItemId,
+      });
+      const fileReadItem = (
+        id: string,
+        index: number,
+        status: 'completed' | 'inProgress',
+      ) => ({
+        id,
+        type: 'dynamicToolCall',
+        provenance: itemProvenance(id),
+        namespace: null,
+        tool: 'file_read',
+        arguments: { file_path: `/mock/process-${index}.json` },
+        modelCall: {
+          disposition: 'replayable',
+          identity: { namespace: null, name: 'file_read' },
+          providerName: 'file_read',
+          arguments: {
+            storage: 'inline',
+            value: { file_path: `/mock/process-${index}.json` },
+          },
+          schemaDigest: '0'.repeat(64),
+        },
+        status,
+        outputRef: null,
+        contentItems: status === 'completed' ? [{ type: 'text', text: 'ok' }] : null,
+        success: status === 'completed' ? true : null,
+        durationMs: status === 'completed' ? 5 : null,
+      });
+      const processItems = Array.from({ length: 8 }, (_, index) => {
+        const reasoningId = itemId(10_000 + index * 2);
+        const toolId = itemId(10_001 + index * 2);
+        return [
+          {
+            id: reasoningId,
+            type: 'reasoning',
+            provenance: itemProvenance(reasoningId),
+            summary: [`Process reasoning ${index + 1}`],
+            content: [],
+          },
+          fileReadItem(toolId, index + 1, 'completed'),
+        ];
+      }).flat();
+      const finalReasoningId = itemId(10_100);
+      const nextToolId = itemId(10_101);
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/started',
+        threadId,
+        turnId,
+        turn: {
+          id: turnId,
+          items: [
+            {
+              id: userItemId,
+              type: 'userMessage',
+              provenance: itemProvenance(userItemId),
+              clientId: null,
+              acceptedAt: Date.now(),
+              content: [{ type: 'text', text: 'Keep this process timeline stable.' }],
+            },
+            ...processItems,
+            {
+              id: finalReasoningId,
+              type: 'reasoning',
+              provenance: itemProvenance(finalReasoningId),
+              summary: ['Preparing the next file read'],
+              content: ['Confirming the final candidate before the read.'],
+            },
+          ],
+          itemsView: 'full',
+          provenance: { originThreadId: threadId, originTurnId: turnId, trigger: { kind: 'user' } },
+          status: 'inProgress',
+          error: null,
+          startedAt: Date.now(),
+          completedAt: null,
+          durationMs: null,
+        },
+      });
+      return {
+        finalReasoningId,
+        nextTool: fileReadItem(nextToolId, 9, 'inProgress'),
+        nextToolId,
+        threadId,
+        turnId,
+      };
+    });
+
+    const transcript = page.locator('.thread-transcript');
+    const reasoningToggle = page.locator(
+      `[data-thread-disclosure-id="reasoning:${fixture.finalReasoningId}"]`,
+    );
+    await expect(reasoningToggle).toHaveAttribute('aria-expanded', 'false');
+    await reasoningToggle.click();
+    await expect(reasoningToggle).toHaveAttribute('aria-expanded', 'true');
+    await setTranscriptFollowingBottom(page);
+    await reasoningToggle.evaluate((element) => { element.dataset.identityProbe = 'stable'; });
+
+    const frames = await page.evaluate(async ({ nextTool, nextToolId, threadId, turnId }) => {
+      const target = window as Window & {
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      const scroll = document.querySelector<HTMLElement>('.thread-transcript');
+      const anchor = document.querySelector<HTMLElement>('[data-identity-probe="stable"]');
+      if (!scroll || !anchor) throw new Error('Missing process stability probe');
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'item/started',
+        threadId,
+        turnId,
+        item: nextTool,
+      });
+      const samples: Array<{
+        anchorTop: number;
+        bottomGap: number;
+        toolMounted: boolean;
+      }> = [];
+      const toolDisclosureId = `tool:${nextToolId}`;
+      for (let frame = 0; frame < 8; frame += 1) {
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+        samples.push({
+          anchorTop: anchor.getBoundingClientRect().top,
+          bottomGap: scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight,
+          toolMounted: Boolean(document.querySelector(
+            `[data-thread-disclosure-id="${CSS.escape(toolDisclosureId)}"]`,
+          )),
+        });
+      }
+      return samples;
+    }, fixture);
+
+    const mountedFrames = frames.filter((frame) => frame.toolMounted);
+    expect(mountedFrames.length).toBeGreaterThan(1);
+    expect(mountedFrames[0]!.bottomGap).toBeLessThanOrEqual(1);
+    expect(Math.max(...mountedFrames.map((frame) => frame.bottomGap))).toBeLessThanOrEqual(1);
+    expect(Math.max(...mountedFrames.map((frame) => frame.anchorTop))
+      - Math.min(...mountedFrames.map((frame) => frame.anchorTop))).toBeLessThan(1);
+    await expect(reasoningToggle).toHaveAttribute('data-identity-probe', 'stable');
+    await expect.poll(() => transcript.evaluate((element) => (
+      element.scrollHeight - element.scrollTop - element.clientHeight
+    ))).toBeLessThanOrEqual(1);
+
+    const rhythm = await reasoningToggle.evaluate((toggle) => {
+      const reasoning = toggle.closest<HTMLElement>('.thread-reasoning');
+      const timeline = reasoning?.parentElement;
+      const bodyLine = reasoning?.querySelector<HTMLElement>(
+        '.thread-reasoning-body .thread-markdown > :first-child',
+      );
+      const previousTool = reasoning?.previousElementSibling?.querySelector<HTMLElement>('.thread-tool-toggle');
+      const nextTool = reasoning?.nextElementSibling?.querySelector<HTMLElement>('.thread-tool-toggle');
+      if (!reasoning || !timeline || !bodyLine || !previousTool || !nextTool) {
+        throw new Error('Missing compact process rhythm elements');
+      }
+      const expected = Number.parseFloat(getComputedStyle(timeline).rowGap);
+      const previousRect = previousTool.getBoundingClientRect();
+      const toggleRect = toggle.getBoundingClientRect();
+      const bodyRect = bodyLine.getBoundingClientRect();
+      const nextRect = nextTool.getBoundingClientRect();
+      return {
+        actual: [
+          toggleRect.top - previousRect.bottom,
+          bodyRect.top - toggleRect.bottom,
+          nextRect.top - bodyRect.bottom,
+        ],
+        expected,
+      };
+    });
+    expect(rhythm.expected).toBeGreaterThan(0);
+    for (const interval of rhythm.actual) {
+      expect(Math.abs(interval - rhythm.expected)).toBeLessThan(1);
+    }
   });
 
   test('says a command failed without inventing an exit code it never reported', async ({ page }) => {
@@ -4039,6 +4392,7 @@ test.describe('canonical agent Thread surface', () => {
       const turnId = '01910000-0000-7000-8000-00000000ab01';
       const userMessageId = '01910000-0000-7000-8000-00000000ab02';
       const reasoningId = '01910000-0000-7000-8000-00000000ab03';
+      const commentaryId = '01910000-0000-7000-8000-00000000ab04';
       const provenance = (itemId: string) => ({ originThreadId: threadId, originTurnId: turnId, originItemId: itemId });
       const turn = {
         id: turnId,
@@ -4056,7 +4410,15 @@ test.describe('canonical agent Thread surface', () => {
             type: 'reasoning',
             provenance: provenance(reasoningId),
             summary: ['The outline is currently empty.'],
-            content: [],
+            content: ['No outline nodes require inspection.'],
+          },
+          {
+            id: commentaryId,
+            type: 'agentMessage',
+            provenance: provenance(commentaryId),
+            text: '   ',
+            phase: 'commentary',
+            memoryCitation: null,
           },
         ],
         status: 'completed',
@@ -4073,9 +4435,67 @@ test.describe('canonical agent Thread surface', () => {
       });
     });
 
-    const thought = page.getByRole('button', { name: 'Thought' });
+    const thought = page.getByRole('button', { name: 'The outline is currently empty.' });
     await expect(thought).toHaveAttribute('aria-expanded', 'true');
     await expect(page.getByText('The outline is currently empty.', { exact: true })).toBeVisible();
+    await expect(page.getByText('No outline nodes require inspection.', { exact: true })).toBeVisible();
+    await expect(page.getByText('Thought', { exact: true })).toHaveCount(0);
+  });
+
+  test('keeps live lone reasoning folded when the Turn settles without a response', async ({ page }) => {
+    await createNewThread(page);
+    const fixture = await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+      const threadId = response?.data[0]?.id;
+      if (!threadId) throw new Error('Mock Thread not found');
+      const turnId = '01910000-0000-7000-8000-00000000ac01';
+      const reasoningId = '01910000-0000-7000-8000-00000000ac02';
+      const reasoning = {
+        id: reasoningId,
+        type: 'reasoning',
+        provenance: { originThreadId: threadId, originTurnId: turnId, originItemId: reasoningId },
+        summary: ['Inspecting the current outline'],
+        content: ['No outline nodes currently require changes.'],
+      };
+      const turn = {
+        id: turnId,
+        items: [reasoning],
+        itemsView: 'full',
+        provenance: { originThreadId: threadId, originTurnId: turnId, trigger: { kind: 'user' } },
+        status: 'inProgress',
+        error: null,
+        startedAt: 1,
+        completedAt: null,
+        durationMs: null,
+      };
+      target.__LIN_E2E__?.emitAgentCoreNotification({ type: 'turn/started', threadId, turnId, turn });
+      return { reasoningId, threadId, turn, turnId };
+    });
+
+    const toggle = page.locator(`[data-thread-disclosure-id="reasoning:${fixture.reasoningId}"]`);
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(page.locator('.thread-reasoning-body')).toHaveCount(0);
+    const top = await toggle.evaluate((element) => element.getBoundingClientRect().top);
+
+    await page.evaluate(({ threadId, turn, turnId }) => {
+      const target = window as Window & {
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/completed',
+        threadId,
+        turnId,
+        turn: { ...turn, status: 'completed', completedAt: 2, durationMs: 1 },
+      });
+    }, fixture);
+
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(page.locator('.thread-reasoning-body')).toHaveCount(0);
+    expect(Math.abs(await toggle.evaluate((element) => element.getBoundingClientRect().top) - top)).toBeLessThan(1);
   });
 
   test('keeps the composer primary action identical to the active Turn state', async ({ page }) => {
@@ -4443,7 +4863,7 @@ test.describe('canonical agent Thread surface', () => {
               type: 'reasoning',
               provenance: provenance(reasoningItemId),
               summary: ['Inspect'],
-              content: [],
+              content: ['Review the response stream.'],
             },
             {
               id: responseItemId,
@@ -4538,12 +4958,10 @@ test.describe('canonical agent Thread surface', () => {
 
     const transcript = page.locator('.thread-transcript');
     await expect.poll(() => transcript.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
-    await transcript.evaluate((element) => {
-      element.scrollTop = 0;
-      element.dispatchEvent(new Event('scroll'));
-    });
+    await setTranscriptFollowingBottom(page);
+    await expect.poll(() => transcript.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
 
-    await page.evaluate(async () => {
+    const frames = await page.evaluate(async () => {
       const target = window as Window & {
         lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
         __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
@@ -4551,8 +4969,11 @@ test.describe('canonical agent Thread surface', () => {
       const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
       const threadId = response?.data[0]?.id;
       if (!threadId) throw new Error('Mock Thread not found');
+      const scroll = document.querySelector<HTMLElement>('.thread-transcript');
+      if (!scroll) throw new Error('Thread transcript not found');
       const turnId = '01910000-0000-7000-8000-00000000ef01';
       const itemId = '01910000-0000-7000-8000-00000000ef02';
+      scroll.scrollTop = 0;
       target.__LIN_E2E__?.emitAgentCoreNotification({
         type: 'turn/completed',
         threadId,
@@ -4576,8 +4997,22 @@ test.describe('canonical agent Thread surface', () => {
           durationMs: 1,
         },
       });
+      const samples: Array<{ bottomGap: number; messageMounted: boolean; scrollTop: number }> = [];
+      for (let frame = 0; frame < 4; frame += 1) {
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+        samples.push({
+          bottomGap: scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight,
+          messageMounted: document.body.textContent?.includes('New evidence arrived.') ?? false,
+          scrollTop: scroll.scrollTop,
+        });
+      }
+      return samples;
     });
 
+    const mountedFrames = frames.filter((frame) => frame.messageMounted);
+    expect(mountedFrames.length).toBeGreaterThan(1);
+    expect(Math.max(...mountedFrames.map((frame) => frame.scrollTop))).toBeLessThanOrEqual(1);
+    expect(Math.min(...mountedFrames.map((frame) => frame.bottomGap))).toBeGreaterThan(1);
     await expect(page.getByText('New evidence arrived.')).toHaveCount(1);
     await expect.poll(() => transcript.evaluate((element) => element.scrollTop)).toBeLessThanOrEqual(1);
   });

@@ -392,6 +392,7 @@ export function ThreadView({
   const scrollMetricsFrameRef = useRef<number | null>(null);
   const virtualScrollAdjustmentFrameRef = useRef<number | null>(null);
   const followRef = useRef(follow);
+  const synchronizedScrollTopRef = useRef(initialScrollSnapshot?.top ?? 0);
   const expectedProgrammaticScrollTopRef = useRef<number | null>(null);
   const pendingVirtualScrollAdjustmentRef = useRef<PendingVirtualScrollAdjustment | null>(null);
   const pendingSendScrollRef = useRef<PendingSendAnchor | null>(null);
@@ -426,6 +427,7 @@ export function ThreadView({
   // that have been open by default stay open even after their row unmounts to
   // virtualization. Deliberately not persisted — see the latch comment below.
   const latchedReasoning = useRef(new Set<string>()).current;
+  const liveReasoningSeen = useRef(new Set<string>()).current;
   const activeTurn = useMemo(() => findActiveTurn(turns), [turns]);
   const activePlan = activeTurn && plan?.turnId === activeTurn.id ? plan : null;
   const editableTurnId = useMemo(() => latestUserMessageTurnId(turns), [turns]);
@@ -532,11 +534,25 @@ export function ThreadView({
   }, []);
 
   const synchronizeScrollPosition = useCallback((element: HTMLDivElement) => {
+    synchronizedScrollTopRef.current = element.scrollTop;
     const nextFollow = isTranscriptFollowing(element);
     setFollowValue(nextFollow);
     cacheThreadScrollSnapshot(threadId, { follow: nextFollow, top: element.scrollTop });
     updateScrollMetrics(element);
   }, [setFollowValue, threadId, updateScrollMetrics]);
+
+  const releaseUnsynchronizedUpwardScroll = useCallback((element: HTMLDivElement) => {
+    const synchronizedTop = synchronizedScrollTopRef.current;
+    const maximumTop = Math.max(0, element.scrollHeight - element.clientHeight);
+    if (
+      element.scrollTop >= synchronizedTop - 1
+      || maximumTop < synchronizedTop - 1
+    ) return false;
+    expectedProgrammaticScrollTopRef.current = null;
+    scrollRestoreRef.current = null;
+    synchronizeScrollPosition(element);
+    return true;
+  }, [synchronizeScrollPosition]);
 
   const setProgrammaticScrollTop = useCallback((element: HTMLDivElement, top: number) => {
     element.scrollTop = top;
@@ -669,6 +685,12 @@ export function ThreadView({
       if (replayAfterAnchor) bottomPinDeferredRef.current = true;
       return;
     }
+    const currentScroll = scrollRef.current;
+    if (currentScroll && releaseUnsynchronizedUpwardScroll(currentScroll)) {
+      bottomPinDeferredRef.current = false;
+      bottomScrollFrameReplayRef.current = false;
+      return;
+    }
     if (bottomScrollFrameRef.current !== null) {
       if (replayAfterAnchor) bottomScrollFrameReplayRef.current = true;
       return;
@@ -685,9 +707,23 @@ export function ThreadView({
         if (replayPendingPin) bottomPinDeferredRef.current = true;
         return;
       }
+      if (releaseUnsynchronizedUpwardScroll(scroll)) return;
       setProgrammaticScrollTop(scroll, scroll.scrollHeight);
     });
-  }, [hasPendingAnchor, setProgrammaticScrollTop]);
+  }, [hasPendingAnchor, releaseUnsynchronizedUpwardScroll, setProgrammaticScrollTop]);
+
+  const pinStructuralBottomBeforePaint = useCallback(() => {
+    const scroll = scrollRef.current;
+    if (
+      !scroll
+      || !followRef.current
+      || hasPendingAnchor()
+      || pendingSendScrollRef.current
+      || sendAnchorSpacerRef.current
+      || releaseUnsynchronizedUpwardScroll(scroll)
+    ) return;
+    setProgrammaticScrollTop(scroll, scroll.scrollHeight);
+  }, [hasPendingAnchor, releaseUnsynchronizedUpwardScroll, setProgrammaticScrollTop]);
 
   const scheduleSendAnchorLayout = useCallback(() => {
     if (!pendingSendScrollRef.current && !sendAnchorSpacerRef.current) {
@@ -871,16 +907,19 @@ export function ThreadView({
 
   useLayoutEffect(() => {
     const previousContent = bottomPinContentRef.current;
+    const structuralItemAdded = itemCount > previousContent.itemCount;
     const replayBottomPin = previousContent.itemCount !== itemCount
       || previousContent.turns !== turns;
     bottomPinContentRef.current = { itemCount, turns };
     attemptScrollRestore();
     scheduleSendAnchorLayout();
+    if (structuralItemAdded) pinStructuralBottomBeforePaint();
     scheduleBottomPin(replayBottomPin);
   }, [
     attemptScrollRestore,
     itemCount,
     pendingSendVersion,
+    pinStructuralBottomBeforePaint,
     scheduleBottomPin,
     scheduleSendAnchorLayout,
     sendAnchorSpacer,
@@ -1395,6 +1434,7 @@ export function ThreadView({
               scrollRestoreRef.current = null;
             }
             reconcileDisclosureAnchorRunway(scroll);
+            synchronizedScrollTopRef.current = scroll.scrollTop;
             const nextFollow = isTranscriptFollowing(scroll);
             setFollowValue(nextFollow);
             cacheThreadScrollSnapshot(threadId, { follow: nextFollow, top: scroll.scrollTop });
@@ -1436,6 +1476,7 @@ export function ThreadView({
                         onReadToolArguments={onReadToolArguments}
                         onReadToolOutput={onReadToolOutput}
                         latchedReasoning={latchedReasoning}
+                        liveReasoningSeen={liveReasoningSeen}
                         threadId={threadId}
                         threadCwd={threadCwd}
                         threadsById={threadsById}
@@ -1646,6 +1687,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
   expandState,
   index,
   latchedReasoning,
+  liveReasoningSeen,
   onEditUserMessage,
   onContinueInNewChat,
   onInterruptThread,
@@ -1666,6 +1708,8 @@ const ThreadTurnView = memo(function ThreadTurnView({
   readonly index: DocumentIndex;
   /** Reasoning Item ids that have been open by default this session. */
   readonly latchedReasoning: Set<string>;
+  /** Reasoning Item ids first observed while their Turn was live. */
+  readonly liveReasoningSeen: Set<string>;
   readonly onEditUserMessage: (turn: Turn, content: readonly ThreadUserContent[]) => Promise<void>;
   readonly onContinueInNewChat: (turn: Turn) => Promise<void>;
   readonly onInterruptThread: (threadId: string) => Promise<void>;
@@ -1683,17 +1727,17 @@ const ThreadTurnView = memo(function ThreadTurnView({
 }) {
   const t = useT();
   const responseItem = lastAgentResponse(turn);
-  // A reasoning disclosure that has been open by default stays open for the
-  // rest of the session. `isExpanded` re-reads the default every render, so a
-  // default derived from live state retracts the instant the Turn moves on and
-  // snaps the disclosure shut under the reader. The latch lives here rather
-  // than in the disclosure component so a Turn row unmounting to virtualization
-  // does not silently re-collapse it, and rather than in the persisted
-  // overrides so watching a run live does not permanently expand every
-  // reasoning Item the reader never touched.
+  // A resultless reasoning Item first observed after settlement opens for the
+  // session. An Item observed live stays folded when completion arrives, so the
+  // terminal update cannot insert a body under the reader.
   const reasoningExpandedByDefault = (candidateTurn: Turn, item: ThreadItem): boolean => {
-    const live = candidateTurn.status === 'inProgress' && candidateTurn.items.at(-1)?.id === item.id;
-    if (live || isSoloResultlessReasoning(candidateTurn, item)) latchedReasoning.add(item.id);
+    if (item.type === 'reasoning' && candidateTurn.status === 'inProgress') {
+      liveReasoningSeen.add(item.id);
+      return false;
+    }
+    if (!liveReasoningSeen.has(item.id) && isSoloResultlessReasoning(candidateTurn, item)) {
+      latchedReasoning.add(item.id);
+    }
     return latchedReasoning.has(item.id);
   };
   const standaloneContextBoundary = turn.status !== 'inProgress'
@@ -2429,7 +2473,7 @@ export type ThreadContentBlock =
 export function groupTurnContent(turn: Turn): ThreadContentBlock[] {
   const processItems = turn.items.filter(isThreadProcessItem);
   const itemBlocks = turn.items
-    .filter((item) => !isThreadProcessItem(item))
+    .filter((item) => !isThreadProcessItem(item) && !isEmptyCommentaryItem(item))
     .map((item) => ({ kind: 'item' as const, item }));
   const hasFinalResponse = itemBlocks.some((block) => (
     block.item.type === 'agentMessage' && block.item.phase !== 'commentary'
@@ -2453,10 +2497,18 @@ export function groupTurnContent(turn: Turn): ThreadContentBlock[] {
 
 export function isThreadProcessItem(item: ThreadItem): boolean {
   if (isThreadToolItem(item)) return true;
-  if (item.type === 'agentMessage') return item.phase === 'commentary';
+  if (item.type === 'agentMessage') {
+    return item.phase === 'commentary' && item.text.trim().length > 0;
+  }
   return item.type === 'reasoning'
     || item.type === 'subAgentActivity'
     || item.type === 'imageView';
+}
+
+function isEmptyCommentaryItem(item: ThreadItem): boolean {
+  return item.type === 'agentMessage'
+    && item.phase === 'commentary'
+    && item.text.trim().length === 0;
 }
 
 type ThreadItemGroup =
@@ -2500,15 +2552,7 @@ function isSoloResultlessReasoning(turn: Turn, item: ThreadItem): boolean {
     && candidate.phase !== 'commentary'
     && candidate.text.trim().length > 0
   ))) return false;
-  const processItems = turn.items.filter((candidate) => {
-    if (
-      candidate.type === 'userMessage'
-      || candidate.type === 'contextEvidence'
-      || candidate.type === 'contextReset'
-      || candidate.type === 'contextCompaction'
-    ) return false;
-    return candidate.type !== 'agentMessage' || candidate.phase === 'commentary';
-  });
+  const processItems = turn.items.filter(isThreadProcessItem);
   return processItems.length === 1 && processItems[0]?.id === item.id;
 }
 

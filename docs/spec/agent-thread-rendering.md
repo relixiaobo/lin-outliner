@@ -68,11 +68,24 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
 
 - user and agent messages render readable text at the same content register as
   the outliner
-- reasoning uses the established `Thinking` / `Thought` disclosure with a
-  one-line gist while collapsed and every provider-supplied summary/content
-  part in the expanded body; every non-empty reasoning Item remains expandable,
-  including a single-part or single-line provider summary, so truncation never
-  removes access to the complete text; only the actual tail Item streams
+- reasoning places a compact summary of its first visible Markdown block
+  directly in the process timeline, without a `Thinking` / `Thought` prefix
+  once content exists. The summary is derived from parsed Markdown rather than
+  by cutting the source at a physical newline, and literal text such as glob or
+  multiplication asterisks is never stripped. A plain-text leading paragraph
+  may be separated from later blocks, so expansion reveals only the remaining
+  content without repeating the summary. When the leading block carries
+  Markdown structure or inline formatting, expansion renders the complete
+  canonical source so fences, lists, tables, links, references, and inline code
+  remain intact. A compact summary that fits the available width is plain text
+  with no disclosure affordance. A visually truncated summary becomes a
+  disclosure whose expansion wraps it in place. Its first width read also runs
+  when the disclosure mounts with an expanded override; streaming updates
+  coalesce later reads by frame and reuse one `ResizeObserver` while the
+  disclosure remains folded. A folded disclosure keeps its chevron hidden at
+  rest and reveals it on hover or keyboard focus without changing row geometry;
+  an open disclosure keeps the chevron visible. An empty live Item retains the
+  `Thinking` placeholder
 - consecutive command, file, MCP, dynamic-tool, collaboration, and search Items
   form one counted activity disclosure without creating another data model
 - each tool row derives a readable summary from its canonical fields and exposes
@@ -257,14 +270,23 @@ only in-progress tool and at least one projected child remains active, that row
 instead reads `Waiting on N subagents` plus the same live elapsed time. A
 receiverless wait does not count as an additional agent; the count is the
 distinct active child Thread identities in the projection. Rendering builds one
-Turn-level process projection from every reasoning, commentary, image-view, Subagent, and
-tool Item. That block is placed before the first final response regardless of
+Turn-level process projection from every reasoning, non-empty commentary,
+image-view, Subagent, and tool Item. That block is placed before the first final
+response regardless of
 the Items' persisted arrival order, so a late reasoning Item cannot appear
 below the answer. The process disclosure contains the independent reasoning,
 activity-group, and tool detail disclosures rather than replacing them.
 An empty process does not render an empty timeline container. The status line,
 separator, visible timeline, and following answer use the same tokenized
-vertical interval on either side of the separator.
+vertical interval on either side of the separator. Within the timeline, the
+direct reasoning summary, expanded reasoning body, and adjacent compact process
+rows use one shared tokenized interval; reasoning between separate tool runs
+therefore has the same visible interval above and below, and expansion does not
+introduce a tighter internal step. Empty commentary Items are removed at this
+projection boundary rather than only hidden by the leaf renderer, so an
+inspection-only provider boundary cannot create an empty process block, split a
+consecutive tool group, count against lone reasoning, or add an invisible flex
+interval between visible rows.
 
 The status line never claims more than the run is doing. A settled Turn is
 described in the past — it never falls through to the live `Working` label —
@@ -283,16 +305,15 @@ timeline still keeps a neutral, status-free header rather than becoming an
 unlabelled list of rows.
 Counted activity reports finished and in-flight work separately — "Read 5 files
 · reading 1", never one present-tense count covering work that has already
-finished. A reasoning disclosure that opened by default **latches** open for the rest of
-the session: the default is otherwise recomputed each render from live state,
-so a newly arriving Item retracted it and snapped the disclosure shut mid-run,
-shifting the layout under the reader. An explicit collapse is recorded and
-still wins over the latch. The latch is Thread-session state, not a persisted
-override — it survives a Turn row unmounting to virtualization, and a reloaded
-transcript rests at the settled default rather than permanently expanding every
-reasoning Item a reader once watched live. The
-empty placeholder carries the same classes as the populated one so the first
-token does not restyle the element. The reconnect
+finished. Live reasoning disclosures start folded even while their Item is the
+streaming tail. An explicit expansion is recorded and remains open when a newer
+Item arrives. Reasoning first observed while its Turn is live stays folded when
+that Turn settles, so completion cannot insert the body under the reader. A
+lone multi-line terminal reasoning Item first observed only after settlement
+still opens for readability; that terminal default and the live-observation
+latch are Thread-session state, not persisted overrides. The empty placeholder
+carries the same classes as the populated one so the first token does not
+restyle the element. The reconnect
 banner honors `prefers-reduced-motion` and is cleared when a new Turn starts or
 the Thread list reloads, so it cannot outlive the attempt it describes.
 
@@ -727,12 +748,20 @@ values.
 
 The transcript follows streaming output only while its visible follow state is
 within 56 pixels of the bottom after a user or programmatic scroll. While follow
-is active, Turn updates, non-Turn transcript content, transcript viewport changes,
-and composer-region height changes all coalesce through one frame-level bottom
-pin. Moving upward releases follow, so later Item updates never pull the reader
-away from earlier evidence. A visible Jump to latest material pill appears only
-when follow is inactive and content remains below the viewport; activating it
-returns to the bottom, re-engages follow, and restores composer focus.
+is active, a canonical Item-count increase pins from the content layout commit,
+so the new row and its final bottom-followed position paint together rather than
+moving the existing transcript one frame later. Other Turn updates, non-Turn
+transcript content, transcript viewport changes, and composer-region height
+changes coalesce through one frame-level bottom pin. Before either path writes,
+it compares the current DOM position with the last synchronized position; an
+upward divergence releases follow even when the browser's `scroll` event is
+still queued in the same task. A lower maximum caused by content contraction is
+treated as browser clamping rather than reader intent. The structural path
+yields to pending send and explicit disclosure anchors. Moving upward releases
+follow, so later Item updates never pull the reader away from earlier evidence.
+A visible Jump to latest material pill appears only when follow is inactive and
+content remains below the viewport; activating it returns to the bottom,
+re-engages follow, and restores composer focus.
 
 Starting a new Turn first moves to the existing tail for immediate feedback. Once
 the accepted user message mounts and measures, that message is anchored at the
@@ -812,12 +841,15 @@ terminal completion, failure, interruption, Thread deletion, catalog reload,
 or application restart removes it. The pill is the Plan's *content* surface —
 the current step — and does not replace the record that the tool ran.
 
-Process, reasoning, tool-group, and tool-detail disclosures keep per-Thread UI
+Process, expandable reasoning, tool-group, and tool-detail disclosures keep per-Thread UI
 overrides in versioned local storage. Their keys use canonical Item identities;
 switching Threads, streaming-to-terminal remounts, and application reloads do not
-discard an explicit user choice. A live reasoning Item is open while streaming.
-A terminal reasoning Item rests folded unless it is the only process Item in a
-Turn without a final agent response, in which case it opens by default. Expanding
+discard an explicit user choice. A live reasoning Item starts folded while
+streaming and remains folded when that Turn settles. A terminal multi-line
+reasoning Item first observed after settlement rests folded unless it is the
+only process Item in a Turn without a final agent response, in which case it
+opens by default. A single-line reasoning Item has disclosure state only while
+its collapsed text exceeds the available row width. Expanding
 or collapsing any explicit transcript disclosure preserves its activated surface's
 viewport position. This includes the persisted process, reasoning, tool-group, and
 tool-detail disclosures as well as measured long-user-message and image-gallery
