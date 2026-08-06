@@ -124,4 +124,20 @@ describe('agent capabilities', () => {
       capabilityConfig: parseAgentCapabilitySettings({ blocks: ['Command(git push origin main)'] }),
     })).rejects.toMatchObject({ code: 'operation_unavailable' });
   });
+
+  test('injects the host process environment into embedded Skill shell', async () => {
+    const { workspace } = await workspaceFixture();
+
+    await expect(executeAgentSkillShellCommand({
+      command: 'printf "%s|%s" "$BROWSER_PILOT_CLIENT_KEY" "$BROWSER_PILOT_OUTPUT_DIR"',
+      localRoot: workspace,
+      capabilityConfig: parseAgentCapabilitySettings({ blocks: [] }),
+      processEnvironment: async () => ({
+        env: {
+          BROWSER_PILOT_CLIENT_KEY: 'tenon.skill-thread',
+          BROWSER_PILOT_OUTPUT_DIR: '/agent-scratch/browser-pilot/thread/turn',
+        },
+      }),
+    })).resolves.toBe('tenon.skill-thread|/agent-scratch/browser-pilot/thread/turn');
+  });
 });

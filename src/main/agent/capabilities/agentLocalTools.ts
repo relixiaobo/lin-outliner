@@ -68,7 +68,17 @@ export interface LocalToolOptions {
   workspace?: AgentLocalWorkspaceContext;
   skillRuntime?: AgentSkillRuntime;
   imageNormalizer?: AgentFileReadImageNormalizer;
+  processEnvironment?: AgentShellProcessEnvironmentProvider;
 }
+
+export interface AgentShellProcessEnvironment {
+  env?: NodeJS.ProcessEnv;
+  leadingToolPathSegments?: readonly string[];
+}
+
+export type AgentShellProcessEnvironmentProvider = () => (
+  AgentShellProcessEnvironment | Promise<AgentShellProcessEnvironment>
+);
 
 export interface AgentLocalWorkspaceContext {
   // The Thread working directory: cwd, default file-tool search root, and relative-path base.
@@ -79,6 +89,7 @@ export interface AgentLocalWorkspaceContext {
   scratchRoot: string;
   readFileState: Map<string, ReadFileState>;
   skillRuntime?: AgentSkillRuntime;
+  processEnvironment?: AgentShellProcessEnvironmentProvider;
 }
 
 type WorkspaceContext = AgentLocalWorkspaceContext;
@@ -625,7 +636,12 @@ const BASH_STOP_PARAMETERS = {
 };
 
 export function createLocalTools(options: LocalToolOptions = {}): AgentTool<any>[] {
-  const workspace = options.workspace ?? createWorkspaceContext(options.localRoot, options.scratchRoot, options.skillRuntime);
+  const workspace = options.workspace ?? createWorkspaceContext(
+    options.localRoot,
+    options.scratchRoot,
+    options.skillRuntime,
+    options.processEnvironment,
+  );
   return [
     createFileReadTool(workspace, options.imageNormalizer),
     createFileGlobTool(workspace),
@@ -645,9 +661,15 @@ export async function runLocalBashCommand(
     command: string;
     timeout?: number;
     signal?: AbortSignal;
+    processEnvironment?: AgentShellProcessEnvironmentProvider;
   },
 ): Promise<LocalBashRunResult> {
-  const workspace = createWorkspaceContext(options.localRoot, options.scratchRoot);
+  const workspace = createWorkspaceContext(
+    options.localRoot,
+    options.scratchRoot,
+    undefined,
+    options.processEnvironment,
+  );
   const params = normalizeBashParams({
     command: options.command,
     timeout: options.timeout,
@@ -690,6 +712,7 @@ function createWorkspaceContext(
   localRoot?: string,
   scratchRoot?: string,
   skillRuntime?: AgentSkillRuntime,
+  processEnvironment?: AgentShellProcessEnvironmentProvider,
 ): WorkspaceContext {
   const root = path.resolve(localRoot ?? process.cwd());
   const resolvedScratchRoot = scratchRootForWorkdir(localRoot, scratchRoot);
@@ -698,6 +721,7 @@ function createWorkspaceContext(
     scratchRoot: resolvedScratchRoot,
     readFileState: new Map<string, ReadFileState>(),
     skillRuntime,
+    processEnvironment,
   };
 }
 
@@ -705,8 +729,9 @@ export function createAgentLocalWorkspaceContext(
   localRoot?: string,
   scratchRoot?: string,
   skillRuntime?: AgentSkillRuntime,
+  processEnvironment?: AgentShellProcessEnvironmentProvider,
 ): AgentLocalWorkspaceContext {
-  return createWorkspaceContext(localRoot, scratchRoot, skillRuntime);
+  return createWorkspaceContext(localRoot, scratchRoot, skillRuntime, processEnvironment);
 }
 
 export async function restorePostCompactReadFiles(
@@ -1848,10 +1873,11 @@ async function runForegroundCommand(workspace: WorkspaceContext, params: BashPar
   const capture = await createForegroundOutputCapture(workspace);
   let processHandle: BashProcessHandle;
   try {
+    const env = await buildWorkspaceShellProcessEnv(workspace);
     const child = await getAgentProcessExecutor().spawnShell({
       command: params.command,
       cwd: workspace.root,
-      env: buildAgentLocalToolProcessEnv(),
+      env,
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: process.platform !== 'win32',
       windowsHide: true,
@@ -1976,10 +2002,11 @@ async function registerBackgroundTask(
     stdoutPath = capture.stdoutPath;
     stderrPath = capture.stderrPath;
     try {
+      const env = await buildWorkspaceShellProcessEnv(workspace);
       const child = await getAgentProcessExecutor().spawnShell({
         command: params.command,
         cwd: workspace.root,
-        env: buildAgentLocalToolProcessEnv(),
+        env,
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: process.platform !== 'win32',
         windowsHide: true,
@@ -2031,6 +2058,14 @@ async function registerBackgroundTask(
     persistedOutputPath: outputPath,
     persistedOutputSize: task.outputBytes,
   };
+}
+
+async function buildWorkspaceShellProcessEnv(workspace: WorkspaceContext): Promise<NodeJS.ProcessEnv> {
+  const host = await workspace.processEnvironment?.();
+  return buildAgentLocalToolProcessEnv({
+    env: host?.env,
+    leadingToolPathSegments: host?.leadingToolPathSegments,
+  });
 }
 
 interface FileGlobCandidates {

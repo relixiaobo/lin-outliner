@@ -168,6 +168,7 @@ export interface ThreadServiceOptions {
 
 export interface SkillAdmissionResolutionInput {
   readonly thread: Thread;
+  readonly turnId: TurnId;
   readonly configuration: EffectiveThreadConfiguration;
   readonly content: readonly ThreadUserContent[];
   readonly acceptedAt: number;

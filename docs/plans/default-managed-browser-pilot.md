@@ -93,7 +93,9 @@ Skill catalog snapshot.
   as a product default.
 - **DEC-4:** Later Skill updates follow `skill-stable`, are detected by the
   existing ambient/explicit checks, and still require preview and explicit Apply.
-  The catalog must not track Browser Pilot's development `main` branch.
+  The catalog must not track Browser Pilot's development `main` branch. v0.6.1 is
+  only the first reviewed seed, not a terminal Browser Pilot or CLI version; after
+  each Apply, that active Skill's compatibility contract becomes authoritative.
 - **DEC-5:** The managed Skill's mandatory preflight is the only CLI provisioner.
   It checks `command -v bp` and `bp --version`, accepts a compatible existing
   installation, and otherwise invokes the installer path, repository, and version
@@ -101,10 +103,12 @@ Skill catalog snapshot.
   archive plus SHA-256 sidecar, validates and extracts it, preserves the complete
   versioned release, and publishes owned `bp` and `browser-pilot` command links.
   It never substitutes GitHub `latest` or npm `@latest`.
-- **DEC-6:** Apple Silicon macOS uses the official native v0.6.1 release and has no
-  Node.js/npm prerequisite. The exact npm fallback is eligible only when the
-  native installer returns its declared unsupported-platform exit code; it still
-  requires Node.js 22 or newer. Download, checksum, extraction, command-conflict,
+- **DEC-6:** The initial v0.6.1 Skill uses the official native v0.6.1 release on
+  Apple Silicon macOS and has no Node.js/npm prerequisite. A later applied stable
+  Skill may name a newer tested release without a Tenon code change. The exact npm
+  fallback is eligible only when the active Skill's native installer returns its
+  declared unsupported-platform exit code; it still requires the Node.js version
+  declared by that Skill. Download, checksum, extraction, command-conflict,
   filesystem, and PATH failures stop the browser task and never fall through to
   npm. Intel Mac remains unsupported by Browser Pilot.
 - **DEC-7:** Tenon gives the upstream installer a durable, app-owned command
@@ -338,10 +342,12 @@ implementation queue from actual open-PR files immediately before build work.
 
 ## Open Questions
 
-None. Browser Pilot v0.6.1 resolves the former provisioning choice: the accepted
+None. Browser Pilot v0.6.1 resolves the initial provisioning choice: the accepted
 target is remote release-pinned managed Skill acquisition plus its upstream
-native-first lazy installer. Tenon supplies deterministic host paths and runtime
-identity/output environment, but owns neither installer nor executable bytes.
+native-first lazy installer. It remains a seed rather than a final version;
+future releases advance through `skill-stable` and the active Skill's version
+contract. Tenon supplies deterministic host paths and runtime identity/output
+environment, but owns neither installer nor executable bytes.
 
 ## Acceptance And Verification
 
@@ -371,9 +377,9 @@ identity/output environment, but owns neither installer nor executable bytes.
       Homebrew, or another external directory is neither overwritten, moved, nor
       deleted: on Apple Silicon the active Skill's exact native installer targets
       Tenon's dedicated root/bin, validates the published SHA-256, preserves a
-      complete versioned release, resolves v0.6.1 ahead of that legacy command,
-      and never follows GitHub `latest` or npm `@latest`. No Node.js/npm is
-      required.
+      complete versioned release, resolves the initial v0.6.1 CLI ahead of that
+      legacy command, and never follows GitHub `latest` or npm `@latest`. No
+      Node.js/npm is required for that initial native release.
 - [ ] **AC-8:** Only the declared unsupported-platform exit code permits the exact
       Node.js 22+/npm fallback. An unmanaged `bp` or `browser-pilot` entry inside
       Tenon's dedicated bin directory produces `command_conflict` and is not

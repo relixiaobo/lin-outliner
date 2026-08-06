@@ -21,6 +21,7 @@ import {
 } from './managedSkillValidation';
 
 const INDEX_SCHEMA_VERSION = 2;
+const DEFAULT_POLICY_SCHEMA_VERSION = 1;
 const PRIVATE_DIRECTORY_MODE = process.platform === 'win32' ? undefined : 0o700;
 const PRIVATE_FILE_MODE = process.platform === 'win32' ? undefined : 0o600;
 const IMMUTABLE_DIRECTORY_MODE = process.platform === 'win32' ? undefined : 0o500;
@@ -79,11 +80,17 @@ export interface ManagedSkillIntegrityResult {
   reason?: string;
 }
 
+interface ManagedSkillDefaultPolicy {
+  schemaVersion: 1;
+  optOuts: string[];
+}
+
 export class ManagedSkillStore {
   readonly controlRoot: string;
   readonly contentRoot: string;
   readonly indexPath: string;
   readonly catalogCachePath: string;
+  readonly defaultPolicyPath: string;
   private readonly stagingRoot: string;
 
   constructor(userDataRoot: string) {
@@ -91,6 +98,7 @@ export class ManagedSkillStore {
     this.contentRoot = path.join(userDataRoot, 'managed-skill-content');
     this.indexPath = path.join(this.controlRoot, 'index.json');
     this.catalogCachePath = path.join(this.controlRoot, 'catalog-cache.json');
+    this.defaultPolicyPath = path.join(this.controlRoot, 'default-policy.json');
     this.stagingRoot = path.join(this.controlRoot, 'staging');
   }
 
@@ -165,6 +173,32 @@ export class ManagedSkillStore {
   async writeCatalogCache(value: unknown): Promise<void> {
     await ensureNormalDirectory(this.controlRoot, PRIVATE_DIRECTORY_MODE);
     await writeJsonFile(this.catalogCachePath, value, PRIVATE_JSON_FILE_OPTIONS);
+  }
+
+  async hasDefaultOptOut(skillId: string): Promise<boolean> {
+    assertSafeSkillId(skillId);
+    await ensureNormalDirectory(this.controlRoot, PRIVATE_DIRECTORY_MODE);
+    const policy = await readJsonOrDefault(
+      this.defaultPolicyPath,
+      emptyDefaultPolicy(),
+      parseManagedSkillDefaultPolicy,
+    );
+    return policy.optOuts.includes(skillId);
+  }
+
+  async recordDefaultOptOut(skillId: string): Promise<void> {
+    assertSafeSkillId(skillId);
+    await ensureNormalDirectory(this.controlRoot, PRIVATE_DIRECTORY_MODE);
+    await updateJsonFile(
+      this.defaultPolicyPath,
+      emptyDefaultPolicy(),
+      parseManagedSkillDefaultPolicy,
+      (policy) => policy.optOuts.includes(skillId) ? policy : {
+        ...policy,
+        optOuts: [...policy.optOuts, skillId].sort(),
+      },
+      PRIVATE_JSON_FILE_OPTIONS,
+    );
   }
 
   contentPath(skillId: string, contentHash: string): string {
@@ -345,6 +379,29 @@ export function storedVersionFromValidated(
 
 function emptyIndex(): ManagedSkillIndex {
   return { schemaVersion: INDEX_SCHEMA_VERSION, skills: [] };
+}
+
+function emptyDefaultPolicy(): ManagedSkillDefaultPolicy {
+  return { schemaVersion: DEFAULT_POLICY_SCHEMA_VERSION, optOuts: [] };
+}
+
+function parseManagedSkillDefaultPolicy(value: unknown): ManagedSkillDefaultPolicy {
+  if (
+    !isRecord(value)
+    || value.schemaVersion !== DEFAULT_POLICY_SCHEMA_VERSION
+    || !Array.isArray(value.optOuts)
+  ) {
+    throw new Error('Managed skill default policy has an unsupported or corrupt schema.');
+  }
+  const optOuts = value.optOuts.map((entry) => {
+    if (typeof entry !== 'string') throw new Error('Managed skill default policy contains an invalid opt-out.');
+    assertSafeSkillId(entry);
+    return entry;
+  });
+  if (new Set(optOuts).size !== optOuts.length) {
+    throw new Error('Managed skill default policy contains duplicate opt-outs.');
+  }
+  return { schemaVersion: DEFAULT_POLICY_SCHEMA_VERSION, optOuts: [...optOuts].sort() };
 }
 
 function parseManagedSkillIndex(value: unknown): ManagedSkillIndex {
@@ -544,7 +601,12 @@ function safeChildPath(root: string, relativePath: string): string {
 }
 
 function assertSafeIdentity(skillId: string, contentHash: string): void {
-  if (!SAFE_SKILL_ID.test(skillId) || !SAFE_HASH.test(contentHash)) throw new Error('Invalid managed skill storage identity.');
+  assertSafeSkillId(skillId);
+  if (!SAFE_HASH.test(contentHash)) throw new Error('Invalid managed skill storage identity.');
+}
+
+function assertSafeSkillId(skillId: string): void {
+  if (!SAFE_SKILL_ID.test(skillId)) throw new Error(`Invalid managed skill id: ${skillId}`);
 }
 
 function requiredString(value: unknown, field: string): string {

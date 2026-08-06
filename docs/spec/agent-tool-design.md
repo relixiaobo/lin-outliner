@@ -112,6 +112,35 @@ identity, and may return a background handle. `bash_stop` addresses only a known
 live process handle. Native command exit and filesystem errors remain visible to
 the model.
 
+Browser Pilot remains a managed Skill workflow over this same shell surface:
+
+```text
+Agent -> browser-pilot Skill -> bash -> bp CLI -> Chrome
+```
+
+For every Skill-shell, foreground `bash`, and background `bash` process in one
+Turn, the host asynchronously binds the same Browser Pilot environment. A
+Tenon-owned durable bin directory under `userData/browser-pilot` is first on the
+Agent command `PATH`; the ordinary user path remains behind it, with
+`~/.local/bin` considered before Homebrew fallbacks. This lets a managed install
+win command resolution without overwriting, moving, or deleting an incompatible
+user-owned legacy command. The active Skill and its installer remain responsible
+for version compatibility and command ownership checks.
+
+`BROWSER_PILOT_CLIENT_KEY` is a base64url SHA-256 identity derived from the
+installation ID and Thread ID. It is stable across Turns in one Thread and
+different for root, forked, child, isolated-Skill, and concurrent Threads.
+`BROWSER_PILOT_OUTPUT_DIR` is a canonical private directory under Agent scratch,
+scoped by Thread ID and Turn ID. The host rejects unsafe IDs and symlink escapes
+before launching the process; the existing scratch TTL owns cleanup.
+
+These values, `BROWSER_PILOT_INSTALL_ROOT`, and `BROWSER_PILOT_BIN_DIR` are host
+execution context. They never enter model parameters, tool arguments, canonical
+Items, transcripts, or diagnostics. Tenon does not set `BROWSER_PILOT_HOME`, so
+compatible clients keep using Browser Pilot's ordinary shared service, and it
+does not set one Turn-wide `BROWSER_PILOT_REQUEST_ID` because request identity is
+per command.
+
 ### Web, Image, And Import
 
 - `web_search`: bounded web or image discovery

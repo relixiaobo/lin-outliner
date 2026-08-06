@@ -16,6 +16,24 @@ afterEach(async () => {
 });
 
 describe('managed skill store', () => {
+  test('persists product-default opt-outs independently and idempotently', async () => {
+    const root = await temporaryRoot();
+    const store = new ManagedSkillStore(root);
+
+    expect(await store.hasDefaultOptOut('browser-pilot')).toBe(false);
+    await store.recordDefaultOptOut('browser-pilot');
+    await store.recordDefaultOptOut('browser-pilot');
+
+    expect(await store.hasDefaultOptOut('browser-pilot')).toBe(true);
+    expect(JSON.parse(await readFile(store.defaultPolicyPath, 'utf8'))).toEqual({
+      schemaVersion: 1,
+      optOuts: ['browser-pilot'],
+    });
+    if (process.platform !== 'win32') {
+      expect((await lstat(store.defaultPolicyPath)).mode & 0o077).toBe(0);
+    }
+  });
+
   test('promotes validated bytes into a content-addressed immutable version', async () => {
     const root = await temporaryRoot();
     const store = new ManagedSkillStore(root);
