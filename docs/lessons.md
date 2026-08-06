@@ -116,3 +116,21 @@ belongs under the contained scratch root, never the clone root (the
 containment shipped later as `agent-local-root-boundary`; this file predates
 it). History rewrite was judged not worth the eight-clone coordination cost —
 removal from HEAD is the fix, the lesson is the guard.
+
+## An optional integration contributes to a universal path; it never gates one
+
+Six of the ten gate findings on #492 were one shape: a product-specific host
+provider was placed **on** the env-build path of every agent shell command
+instead of **alongside** it. Because it was awaited unconditionally, any of its
+setup failures — a scratch path that is a symlink, an EACCES on `mkdir`, an
+unsafe turn id — returned a Browser Pilot error for `ls`, and the agent had no
+shell at all; because it was attached whether or not the Skill was installed, it
+ran for users who had opted out; because its `$PATH` segment led the list, it
+outranked the user's own `LIN_AGENT_EXTRA_TOOL_PATH`; and because nothing cached
+per Turn, every spawn redid ~14 syscalls. A memoized `this.x ??= load()` then
+made one transient read failure permanent, since `??=` caches a *rejected*
+promise as happily as a resolved one — cache the resolved value, not the promise.
+The shape to reach for is a registry keyed by what is actually active, where each
+contributor is additive, failure-isolated, and ordered behind the user's own
+overrides. A12 says invariants on the user path must degrade rather than throw;
+this is its constructive half — the arrangement that makes degrading possible.

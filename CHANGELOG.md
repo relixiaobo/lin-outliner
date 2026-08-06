@@ -10,6 +10,27 @@ Entries reference the pull request that introduced them.
 
 `main` is the `0.2.0` train; entries here move under the next tag.
 
+### Added
+
+- **Browser Pilot arrives already installed (PR #492, codex-4)** — the Skill that
+  lets the agent drive Chrome is acquired and enabled on launch instead of
+  waiting to be found in the catalog, while staying an ordinary `managed` Skill
+  on the public `Agent → browser-pilot → bash → bp → Chrome` path: no bundled
+  bytes, no product-owned downloader, no Browser Pilot model tools. The `bp` CLI
+  is not fetched at startup — the Skill's own preflight reuses a compatible
+  command or installs the pinned tested release on the first task that needs a
+  browser. Removing the Skill is durable: uninstall records an opt-out, so the
+  default does not quietly reinstall itself on the next launch, and an unreadable
+  opt-out file is quarantined *toward* opted-out rather than toward silent
+  re-enablement. Host environment reaches the shell through a registry keyed by
+  the managed Skills active in the Turn — an integration the user does not have
+  contributes nothing, one that fails is logged and skipped rather than taking
+  `bash` down with it, and its `$PATH` entry sits behind the user's own
+  `LIN_AGENT_EXTRA_TOOL_PATH` override and is admitted only when the directory
+  holds nothing but managed links into the pinned install root. Startup
+  acquisition is off the turn-admission path, so a slow or captive network delays
+  the Skill, not the user's first message.
+
 ### Fixed
 
 - **The agent process timeline reads as one compact sequence (PR #493, codex-3)** —

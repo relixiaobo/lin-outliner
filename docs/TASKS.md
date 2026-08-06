@@ -21,9 +21,6 @@ See `AGENTS.md` for the full workflow.
 
 Open PRs and claims — the PR queue, not this snapshot, is authoritative.
 
-- **#492 `default-managed-browser-pilot`** (codex-4, Draft, opened 2026-08-05) —
-  Browser Pilot as an enabled-by-default managed Skill (not built-in): catalog
-  entry, default acquisition and opt-out lifecycle, shell/PATH isolation.
 - **Approved and unclaimed, top of queue:** the two `unified-command-surface`
   implementation PRs (design merged #485, refined #491) — see Backlog top.
 - **Approved and unclaimed, small:** `whats-new-user-notes` — What's New renders
@@ -659,6 +656,12 @@ and the merged PR, distilled rules in [`lessons.md`](lessons.md). Everything
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
 
+- **default-managed-browser-pilot** (codex-4, PR #492, merged 2026-08-06) —
+  Browser Pilot is acquired and enabled by default as an ordinary managed Skill,
+  with a durable opt-out that survives uninstall, the `bp` CLI installed on first
+  relevant task rather than at startup, and host env/PATH contributed through a
+  registry keyed by the Skills active in the Turn. Plan archived:
+  `docs/plans/archive/default-managed-browser-pilot.md`.
 - **agent-process-timeline-stability** (codex-3, PR #493, merged 2026-08-06) —
   the agent process timeline reads as one compact sequence: equal reasoning-row
   spacing, no second-frame jump at the followed bottom, live reasoning folded
