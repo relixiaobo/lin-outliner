@@ -30,6 +30,7 @@ import {
 import {
   selfDefinitionRootEntries,
 } from './agentAuthoring';
+import { isPathInside } from './agentAttachmentMaterialization';
 import {
   optionalNormalizedString,
   requiredNormalizedString,
@@ -1383,7 +1384,7 @@ function createFileDeleteTool(workspace: WorkspaceContext): AgentTool<any, ToolE
           throw new LocalToolFailure('root_delete_forbidden', 'Cannot delete the Thread working directory root.', 'Delete a specific file or subdirectory instead.');
         }
         const trashRoot = agentTrashRoot(workspace);
-        if (isResolvedPathInside(trashRoot, path.resolve(filePath))) {
+        if (isPathInside(trashRoot, path.resolve(filePath))) {
           throw new LocalToolFailure('trash_delete_forbidden', 'Cannot delete the agent trash directory with file_delete.', 'Leave trash cleanup to the app or delete a specific non-trash path.');
         }
         const fileStat = await stat(filePath);
@@ -1746,7 +1747,7 @@ async function nextTrashPath(workspace: WorkspaceContext, filePath: string): Pro
 function clearReadStateForDeletedPath(workspace: WorkspaceContext, filePath: string): void {
   const resolved = path.resolve(filePath);
   for (const cachedPath of [...workspace.readFileState.keys()]) {
-    if (isResolvedPathInside(resolved, path.resolve(cachedPath))) {
+    if (isPathInside(resolved, path.resolve(cachedPath))) {
       workspace.readFileState.delete(cachedPath);
     }
   }
@@ -3496,11 +3497,6 @@ function nearestExistingPath(inputPath: string): string {
     current = parent;
   }
   return current;
-}
-
-function isResolvedPathInside(root: string, candidate: string): boolean {
-  const relative = path.relative(root, candidate);
-  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
 function localFsError(error: unknown, filePath: string): LocalToolFailure {
