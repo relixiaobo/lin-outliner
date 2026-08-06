@@ -148,9 +148,11 @@ describe('SettingsAboutSection', () => {
     );
   });
 
-  test('a development build reads the live file and still names its own version', async () => {
-    // No `[0.2.0]` section yet, so the build resolves to Unreleased — which the
-    // user never sees under that name, and which has no tag to pin to.
+  // A build ahead of the last release must never fall through to Unreleased:
+  // its opening block is the maintainer line naming the train `main` is on, and
+  // rendering it as a note is what shipped "`main` is the `0.2.0` train; entries
+  // here move under the next tag" as somebody's What's New.
+  test('a development build shows the newest released note, never Unreleased', async () => {
     if (!window.lin) throw new Error('Missing test bridge');
     const appInfo = window.lin.appInfo;
     window.lin.appInfo = async () => ({ ...(await appInfo!()), version: '0.2.0' });
@@ -158,14 +160,31 @@ describe('SettingsAboutSection', () => {
     const opened = openedUrls();
 
     expect(document.querySelector('[data-settings-anchor="whats-new"] .inset-group-header')?.textContent)
-      .toBe('What’s new in 0.2.0');
-    expect(document.body.textContent).toContain('Next release is taking shape.');
+      .toBe('What’s new in 0.1.0');
+    expect(document.body.textContent).toContain('Welcome to Tenon 0.1.');
+    expect(document.body.textContent).not.toContain('Next release is taking shape.');
     expect(document.body.textContent).not.toContain('Unreleased');
 
     const fullChangelog = [...document.querySelectorAll<HTMLButtonElement>('button')]
       .find((button) => button.textContent?.includes('Full changelog'));
     await act(async () => { fullChangelog?.click(); });
-    expect(opened.at(-1)).toBe('https://github.com/relixiaobo/lin-outliner/blob/main/CHANGELOG.md#unreleased');
+    expect(opened.at(-1)).toBe(
+      'https://github.com/relixiaobo/lin-outliner/blob/v0.1.0/CHANGELOG.md#010---2026-08-05',
+    );
+  });
+
+  test('shows nothing at all when no release carries a note', async () => {
+    await renderAbout(`# Changelog
+
+## [Unreleased]
+
+\`main\` is the 0.2.0 train; entries here move under the next tag.
+`);
+
+    expect(document.querySelector('[data-settings-anchor="whats-new"]')).toBeNull();
+    expect(document.body.textContent).not.toContain('0.2.0 train');
+    // The rest of About still stands.
+    expect(document.body.textContent).toContain('Support');
   });
 
   test('falls back to the link alone for a section written before the convention', async () => {
@@ -184,18 +203,16 @@ describe('SettingsAboutSection', () => {
     expect(document.querySelector('.settings-about-release-note')).toBeNull();
   });
 
-  test('claims no version in the heading when app info does not load', async () => {
+  test('still names a release when app info does not load', async () => {
     if (!window.lin) throw new Error('Missing test bridge');
     window.lin.appInfo = async () => { throw new Error('unavailable'); };
 
     await renderAbout();
 
     expect(document.querySelector('[data-settings-anchor="whats-new"] .inset-group-header')?.textContent)
-      .toBe('What’s new');
-    // Falling back to the changelog's own label here is what surfaced the word
-    // `Unreleased` in the shipped build.
+      .toBe('What’s new in 0.1.0');
+    expect(document.body.textContent).toContain('Welcome to Tenon 0.1.');
     expect(document.body.textContent).not.toContain('Unreleased');
-    expect(document.body.textContent).toContain('Next release is taking shape.');
   });
 
   test('omits the identity group when app info cannot be loaded', async () => {

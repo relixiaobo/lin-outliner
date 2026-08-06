@@ -82,7 +82,19 @@ export function parseChangelogReleases(source: string): ChangelogRelease[] {
   return releases;
 }
 
-/** Select the running app's release, falling back to the live Unreleased notes. */
+/**
+ * Select the release whose note this build should show.
+ *
+ * A section matching the running version wins, note or not — it is that build's
+ * own record, and one written before the convention degrades to the changelog
+ * link rather than borrowing an older release's words.
+ *
+ * A build running ahead of the last release — a dev build, or any build before
+ * the next freeze — falls back to the newest release that HAS a note. `Unreleased`
+ * is never it. Its opening block is the maintainer bookkeeping naming the train
+ * `main` is on, not a note; rendering it as one put "`main` is the `0.2.0` train;
+ * entries here move under the next tag" in front of the user as their What's New.
+ */
 export function resolveChangelogRelease(
   releases: readonly ChangelogRelease[],
   appVersion: string | null | undefined,
@@ -92,7 +104,11 @@ export function resolveChangelogRelease(
     const matching = releases.find((release) => normalizedVersion(release.version) === expected);
     if (matching) return matching;
   }
-  return releases.find((release) => release.version.toLowerCase() === 'unreleased') ?? null;
+  return releases.find((release) => !isUnreleased(release) && release.note) ?? null;
+}
+
+function isUnreleased(release: ChangelogRelease): boolean {
+  return release.version.trim().toLowerCase() === 'unreleased';
 }
 
 /**
@@ -111,8 +127,7 @@ export function resolveChangelogRelease(
  * a user — every build a user has was published, so its tag resolves.
  */
 export function changelogSectionPath(release: ChangelogRelease): string {
-  const isUnreleased = release.version.toLowerCase() === 'unreleased';
-  const ref = isUnreleased ? 'main' : `v${normalizedVersion(release.version)}`;
+  const ref = isUnreleased(release) ? 'main' : `v${normalizedVersion(release.version)}`;
   const heading = `[${release.version}]${release.date ? ` - ${release.date}` : ''}`;
   return `${ref}/CHANGELOG.md#${headingAnchor(heading)}`;
 }

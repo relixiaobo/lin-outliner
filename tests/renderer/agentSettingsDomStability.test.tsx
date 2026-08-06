@@ -15,6 +15,10 @@ mock.module('../../CHANGELOG.md?raw', () => ({
 
 ## [Unreleased]
 
+The maintainer bookkeeping the pane must never render as a note.
+
+## [0.1.0] - 2026-08-05
+
 A deterministic user note, which is all the pane renders.
 
 ### Changed

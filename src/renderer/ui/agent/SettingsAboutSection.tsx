@@ -5,6 +5,7 @@ import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
   changelogSectionPath,
+  normalizedVersion,
   parseChangelogReleases,
   resolveChangelogRelease,
   type ChangelogRelease,
@@ -63,6 +64,8 @@ const RELEASE_NOTE_COMPONENTS = { a: ReleaseNoteLink };
  * not. There is no version picker either: browsing other releases' notes is a
  * maintainer's errand, and the control existed mainly to surface `Unreleased`,
  * which is the repo's word for itself and meant nothing to the person reading it.
+ * Nothing here can select that section any more — a build ahead of the last
+ * release shows the newest release that has a note.
  *
  * Slots the product has not filled — a contact channel beyond the two GitHub
  * links, the one-paragraph description — are omitted rather than stubbed. An
@@ -98,13 +101,13 @@ export function SettingsAboutSection({
   }, [loadChangelog, onError, t.settings.about.releaseNotesUnavailable]);
 
   const release = resolveChangelogRelease(releases, info?.version);
-  // The heading names the version the person is running, never the changelog's
-  // own bookkeeping for it. `Unreleased` and "development train" are how the repo
-  // talks to itself: what a user has is 0.2.0, and this is what is new in it.
-  // Without app info there is no version to name, so the heading simply does not
-  // claim one.
-  const whatsNewLabel = info
-    ? t.settings.about.whatsNewInVersion({ version: info.version })
+  // The heading names the release whose note is shown. For anyone running a
+  // published build that is their own version; on a build ahead of the last
+  // release the two differ, and naming the release is the honest reading —
+  // the identity group directly above states what is installed.
+  const releaseVersion = release ? normalizedVersion(release.version) : '';
+  const whatsNewLabel = releaseVersion
+    ? t.settings.about.whatsNewInVersion({ version: releaseVersion })
     : t.settings.about.whatsNewGroup;
 
   // The triple a bug report needs, in the order a person reads it back.

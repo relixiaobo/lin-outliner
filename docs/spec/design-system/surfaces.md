@@ -324,17 +324,23 @@ model, and clearing saved translations; Websites clears URL-preview session data
 The preview Languages popover writes the same cross-window preference store.
 
 **About.** Identity/version with copy, What's New for the running version,
-support, and legal. The native About item opens this page. `AppInfo.version`
-selects its `CHANGELOG` section, falling back to `Unreleased`.
+support, and legal. The native About item opens this page.
 
-The group is headed **"What's new in `<AppInfo.version>`"** — the version the
-person is running, never the changelog's bookkeeping for it. `Unreleased` and
-"development train" are how the repo talks to itself; a user has 0.2.0, and this
-is what is new in it. Without app info the heading claims no version rather than
-falling back to the section label, which is how the word `Unreleased` reached a
-shipped build. There is no version picker: browsing other releases' notes is a
-maintainer's errand served by the full changelog, and the control existed mainly
-to surface that same vocabulary.
+`AppInfo.version` selects its `CHANGELOG` section — note or not, since that is
+the build's own record. A build running **ahead** of the last release (a dev
+build, or any build before the next freeze) falls back to the newest release that
+*has* a note. **`Unreleased` is never selected.** Its opening block is the
+maintainer bookkeeping naming the train `main` is on, not a note; selecting it
+rendered "`main` is the `0.2.0` train; entries here move under the next tag" as
+somebody's What's New. When no release carries a note the group does not render.
+
+The group is headed **"What's new in `<the selected release's version>`"** — for a
+published build that is the running version; on a build ahead of the last release
+the two differ, and naming the release is the honest reading, since the identity
+group directly above states what is installed. There is no version picker:
+browsing other releases' notes is a maintainer's errand served by the full
+changelog, and the control existed mainly to surface `Unreleased` — the repo's
+word for itself, which meant nothing to the person reading it.
 
 What's New renders **only** that section's opening user-register note — the block
 above its first heading of any depth — inline and uncollapsed, followed by one

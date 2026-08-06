@@ -116,10 +116,20 @@ Shipping a snippet:
     expect(release?.note).not.toContain('A fix.');
   });
 
-  test('prefers the running version and falls back to Unreleased', () => {
+  // `Unreleased` opens with the maintainer line naming the train `main` is on.
+  // Selecting it put "`main` is the `0.2.0` train; entries here move under the
+  // next tag" in front of the user as their What's New, so it is never selected:
+  // a build ahead of the last release shows the newest release that has a note.
+  test('prefers the running version and falls back past Unreleased to the newest note', () => {
     const releases = parseChangelogReleases(`## [Unreleased]
 
-Next.
+\`main\` is the 0.3.0 train; entries here move under the next tag.
+
+## [0.2.0] - 2026-09-01
+
+### Added
+
+- A section frozen before the note convention.
 
 ## [v0.1.0] - 2026-08-05
 
@@ -127,9 +137,24 @@ Current.
 `);
 
     expect(resolveChangelogRelease(releases, '0.1.0')?.version).toBe('v0.1.0');
-    expect(resolveChangelogRelease(releases, '9.9.9')?.version).toBe('Unreleased');
-    expect(resolveChangelogRelease(releases, null)?.version).toBe('Unreleased');
+    // The running version's own section wins even with no note: it is that
+    // build's record, and it degrades to the changelog link rather than
+    // borrowing an older release's words.
+    expect(resolveChangelogRelease(releases, '0.2.0')?.version).toBe('0.2.0');
+    // A dev build ahead of every release skips both Unreleased and the noteless
+    // section.
+    expect(resolveChangelogRelease(releases, '0.3.0')?.version).toBe('v0.1.0');
+    expect(resolveChangelogRelease(releases, null)?.version).toBe('v0.1.0');
     expect(resolveChangelogRelease([], '0.1.0')).toBeNull();
+  });
+
+  test('has nothing to show when only Unreleased carries prose', () => {
+    const releases = parseChangelogReleases(`## [Unreleased]
+
+\`main\` is the 0.2.0 train; entries here move under the next tag.
+`);
+
+    expect(resolveChangelogRelease(releases, '0.2.0')).toBeNull();
   });
 
   test('pins a released section to its tag and an unreleased one to main', () => {
