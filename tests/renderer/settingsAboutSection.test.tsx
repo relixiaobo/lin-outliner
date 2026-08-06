@@ -8,6 +8,8 @@ const CHANGELOG_FIXTURE = `# Changelog
 
 ## [Unreleased]
 
+Next release is taking shape.
+
 ### Internal
 
 - Private implementation detail.
@@ -18,9 +20,11 @@ const CHANGELOG_FIXTURE = `# Changelog
 
 ## [0.1.0] - 2026-08-05
 
+**Welcome to Tenon 0.1.** See the [details](https://example.com/release).
+
 ### Added
 
-- Current public feature with [details](https://example.com/release).
+- Current public engineering entry.
 
 ### Internal
 
@@ -83,47 +87,132 @@ afterEach(() => {
   }
 });
 
+async function renderAbout(changelog = CHANGELOG_FIXTURE): Promise<void> {
+  await act(async () => {
+    root?.render(
+      <SettingsAboutSection
+        loadChangelog={async () => changelog}
+        onError={() => undefined}
+        onNotice={() => undefined}
+      />,
+    );
+  });
+  await act(async () => { await Promise.resolve(); });
+}
+
+function openedUrls(): string[] {
+  const opened: string[] = [];
+  if (!window.lin) throw new Error('Missing test bridge');
+  window.lin.invoke = (async (channel: string, payload: unknown) => {
+    opened.push(String((payload as { url?: string } | undefined)?.url ?? channel));
+    return { opened: true };
+  }) as typeof window.lin.invoke;
+  return opened;
+}
+
 describe('SettingsAboutSection', () => {
-  test('selects the running version, omits Internal, and switches releases', async () => {
-    await act(async () => {
-      root?.render(
-        <SettingsAboutSection
-          loadChangelog={async () => CHANGELOG_FIXTURE}
-          onError={() => undefined}
-          onNotice={() => undefined}
-        />,
-      );
-    });
-    await act(async () => { await Promise.resolve(); });
+  test('heads What\'s New with the running version and shows its note inline', async () => {
+    await renderAbout();
 
-    const releasePicker = document.querySelector<HTMLSelectElement>('select[aria-label="Release notes version"]');
-    expect(releasePicker?.value).toBe('0.1.0');
-    const disclosure = [...document.querySelectorAll<HTMLButtonElement>('button')]
-      .find((button) => button.textContent?.includes('Release notes'));
-    expect(disclosure?.getAttribute('aria-expanded')).toBe('false');
-    expect(document.body.textContent).not.toContain('Current public feature with details.');
+    // The heading names the version the person is running — no picker, and none
+    // of the changelog's own bookkeeping for it.
+    expect(document.querySelector('[data-settings-anchor="whats-new"] .inset-group-header')?.textContent)
+      .toBe('What’s new in 0.1.0');
+    expect(document.querySelector('select')).toBeNull();
+    expect(document.body.textContent).not.toContain('Unreleased');
+    expect(document.body.textContent).not.toContain('development');
 
-    await act(async () => { disclosure?.click(); });
-    expect(disclosure?.getAttribute('aria-expanded')).toBe('true');
-    expect(document.body.textContent).toContain('Current public feature with details.');
+    // The note is the pane's content, not something behind a disclosure.
+    expect(document.querySelector('.settings-about-release-note')?.textContent)
+      .toContain('Welcome to Tenon 0.1.');
+    expect([...document.querySelectorAll('button')].map((button) => button.getAttribute('aria-expanded')))
+      .not.toContain('false');
+
+    // Nothing below the note's first `###` may reach a user surface.
+    expect(document.querySelectorAll('h3')).toHaveLength(0);
+    expect(document.body.textContent).not.toContain('Added');
+    expect(document.body.textContent).not.toContain('Current public engineering entry.');
     expect(document.body.textContent).not.toContain('Private packaging detail.');
     expect(document.body.textContent).not.toContain('Next public fix.');
+  });
 
-    await act(async () => {
-      if (!releasePicker) throw new Error('Missing release picker');
-      Object.defineProperty(releasePicker, 'value', {
-        configurable: true,
-        value: 'Unreleased',
-      });
-      releasePicker.dispatchEvent(new Event('change', { bubbles: true }));
-    });
+  test('pins the full-changelog link to the tag the build shipped as', async () => {
+    await renderAbout();
+    const opened = openedUrls();
 
-    expect(disclosure?.getAttribute('aria-expanded')).toBe('false');
-    expect(document.body.textContent).not.toContain('Next public fix.');
-    await act(async () => { disclosure?.click(); });
-    expect(document.body.textContent).toContain('Next public fix.');
-    expect(document.body.textContent).not.toContain('Private implementation detail.');
-    expect(document.body.textContent).not.toContain('Current public feature');
+    const fullChangelog = [...document.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.includes('Full changelog'));
+    await act(async () => { fullChangelog?.click(); });
+    expect(opened.at(-1)).toBe(
+      'https://github.com/relixiaobo/lin-outliner/blob/v0.1.0/CHANGELOG.md#010---2026-08-05',
+    );
+  });
+
+  // A build ahead of the last release must never fall through to Unreleased:
+  // its opening block is the maintainer line naming the train `main` is on, and
+  // rendering it as a note is what shipped "`main` is the `0.2.0` train; entries
+  // here move under the next tag" as somebody's What's New.
+  test('a development build shows the newest released note, never Unreleased', async () => {
+    if (!window.lin) throw new Error('Missing test bridge');
+    const appInfo = window.lin.appInfo;
+    window.lin.appInfo = async () => ({ ...(await appInfo!()), version: '0.2.0' });
+    await renderAbout();
+    const opened = openedUrls();
+
+    expect(document.querySelector('[data-settings-anchor="whats-new"] .inset-group-header')?.textContent)
+      .toBe('What’s new in 0.1.0');
+    expect(document.body.textContent).toContain('Welcome to Tenon 0.1.');
+    expect(document.body.textContent).not.toContain('Next release is taking shape.');
+    expect(document.body.textContent).not.toContain('Unreleased');
+
+    const fullChangelog = [...document.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.includes('Full changelog'));
+    await act(async () => { fullChangelog?.click(); });
+    expect(opened.at(-1)).toBe(
+      'https://github.com/relixiaobo/lin-outliner/blob/v0.1.0/CHANGELOG.md#010---2026-08-05',
+    );
+  });
+
+  test('shows nothing at all when no release carries a note', async () => {
+    await renderAbout(`# Changelog
+
+## [Unreleased]
+
+\`main\` is the 0.2.0 train; entries here move under the next tag.
+`);
+
+    expect(document.querySelector('[data-settings-anchor="whats-new"]')).toBeNull();
+    expect(document.body.textContent).not.toContain('0.2.0 train');
+    // The rest of About still stands.
+    expect(document.body.textContent).toContain('Support');
+  });
+
+  test('falls back to the link alone for a section written before the convention', async () => {
+    await renderAbout(`# Changelog
+
+## [0.1.0] - 2026-08-05
+
+### Added
+
+- Only engineering detail here.
+`);
+
+    expect(document.body.textContent).toContain('Full changelog');
+    expect(document.body.textContent).not.toContain('Only engineering detail here.');
+    expect(document.body.textContent).not.toContain('Added');
+    expect(document.querySelector('.settings-about-release-note')).toBeNull();
+  });
+
+  test('still names a release when app info does not load', async () => {
+    if (!window.lin) throw new Error('Missing test bridge');
+    window.lin.appInfo = async () => { throw new Error('unavailable'); };
+
+    await renderAbout();
+
+    expect(document.querySelector('[data-settings-anchor="whats-new"] .inset-group-header')?.textContent)
+      .toBe('What’s new in 0.1.0');
+    expect(document.body.textContent).toContain('Welcome to Tenon 0.1.');
+    expect(document.body.textContent).not.toContain('Unreleased');
   });
 
   test('omits the identity group when app info cannot be loaded', async () => {

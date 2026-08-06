@@ -24,28 +24,55 @@
   box-shadow: var(--inset-hairline), var(--focus-ring-shadow);
 }
 
-.settings-about-release-notes-row {
+/* The release's user note reads inline: it is a short paragraph and a handful of
+   bullets, so it needs neither a scroll bound nor the focus stop a scrollable
+   region would have to carry. The pane's own scroller is the only one.
+
+   It is a card row, so it draws the card's hairline like every other row —
+   the note is not an `.inset-row` (it holds prose, not the label/trailing grid),
+   and without this the "Full changelog" row below butts against the note's last
+   paragraph and reads as one more line of prose instead of something to click. */
+.settings-about-release-note-row {
+  position: relative;
   min-width: 0;
 }
 
-.settings-about-release-notes {
-  max-height: min(480px, 50vh);
+.settings-about-release-note-row:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  right: var(--inset-separator-inset-right, 0);
+  bottom: 0;
+  left: var(--inset-separator-inset, var(--space-4));
+  height: 1px;
+  background: var(--separator);
+  pointer-events: none;
+}
+
+.settings-about-release-note {
   max-width: none;
-  overflow: auto;
-  overscroll-behavior: contain;
   padding: var(--space-5);
   font-size: var(--font-content);
   line-height: var(--line-content);
-  scrollbar-gutter: stable;
 }
 
-.settings-about-release-notes > :first-child {
+.settings-about-release-note > :first-child {
   margin-top: 0;
 }
 
-.settings-about-release-notes:focus-visible {
-  box-shadow: var(--outline-focus);
-  outline: none;
+.settings-about-release-note > :last-child {
+  margin-bottom: 0;
+}
+
+/* A note is prose and bullets, but the pane must not break if one carries a GFM
+   table: a table cannot shrink below its intrinsic width, so without this it
+   widens the inset card and the whole settings pane scrolls sideways. The wide
+   element scrolls inside itself instead — bounding the note container again
+   would put a focus stop on every visit for a case that may never occur. */
+.settings-about-release-note table {
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  overflow-x: auto;
 }
 
 /* Native System Settings section header: sentence-case, prominent, NOT the old

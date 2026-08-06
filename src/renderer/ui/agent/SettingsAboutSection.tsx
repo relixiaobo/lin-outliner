@@ -4,6 +4,8 @@ import { useEffect, useState, type ComponentPropsWithoutRef } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
+  changelogSectionPath,
+  normalizedVersion,
   parseChangelogReleases,
   resolveChangelogRelease,
   type ChangelogRelease,
@@ -12,7 +14,6 @@ import { serializeUnknownError, type AppInfo } from '../../../core/errorObservab
 import { api } from '../../api/client';
 import { useT } from '../../i18n/I18nProvider';
 import { Button } from '../primitives/Button';
-import { SelectControl } from '../primitives/SelectControl';
 import { ICON_SIZE, OpenIcon } from '../icons';
 import { InsetGroup, InsetRow } from './SettingsInsetList';
 
@@ -25,14 +26,14 @@ interface SettingsAboutSectionProps {
   loadChangelog?: () => Promise<string>;
 }
 
-const RELEASE_NOTES_REMARK_PLUGINS = [remarkGfm];
+const RELEASE_NOTE_REMARK_PLUGINS = [remarkGfm];
 
 async function loadBundledChangelog(): Promise<string> {
   const module = await import('../../../../CHANGELOG.md?raw');
   return module.default;
 }
 
-function ReleaseNotesLink({ children, href, ...props }: ComponentPropsWithoutRef<'a'>) {
+function ReleaseNoteLink({ children, href, ...props }: ComponentPropsWithoutRef<'a'>) {
   return (
     <a
       {...props}
@@ -47,7 +48,7 @@ function ReleaseNotesLink({ children, href, ...props }: ComponentPropsWithoutRef
   );
 }
 
-const RELEASE_NOTES_COMPONENTS = { a: ReleaseNotesLink };
+const RELEASE_NOTE_COMPONENTS = { a: ReleaseNoteLink };
 
 /**
  * About: what this is, what changed, and how to reach us.
@@ -55,6 +56,16 @@ const RELEASE_NOTES_COMPONENTS = { a: ReleaseNotesLink };
  * The native About panel is not a second home for this — the menu item opens
  * this page instead. Two About surfaces would be the duplication this redesign
  * exists to remove, and the OS panel cannot hold release notes or support links.
+ *
+ * What's New shows the running version's user note and nothing else. The
+ * changelog's `### Added` … `### Internal` categories are an engineering ledger —
+ * hundreds of entries per release, most about work no user experiences — so they
+ * stay on GitHub behind one link rather than being rendered here, collapsed or
+ * not. There is no version picker either: browsing other releases' notes is a
+ * maintainer's errand, and the control existed mainly to surface `Unreleased`,
+ * which is the repo's word for itself and meant nothing to the person reading it.
+ * Nothing here can select that section any more — a build ahead of the last
+ * release shows the newest release that has a note.
  *
  * Slots the product has not filled — a contact channel beyond the two GitHub
  * links, the one-paragraph description — are omitted rather than stubbed. An
@@ -68,8 +79,6 @@ export function SettingsAboutSection({
   const t = useT();
   const [info, setInfo] = useState<AppInfo | null>(null);
   const [releases, setReleases] = useState<readonly ChangelogRelease[]>([]);
-  const [selectedVersion, setSelectedVersion] = useState<string | null>(null);
-  const [releaseNotesExpanded, setReleaseNotesExpanded] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -91,11 +100,15 @@ export function SettingsAboutSection({
     return () => { active = false; };
   }, [loadChangelog, onError, t.settings.about.releaseNotesUnavailable]);
 
-  const selectedRelease = releases.find((release) => release.version === selectedVersion)
-    ?? resolveChangelogRelease(releases, info?.version);
-  const selectedReleaseLabel = selectedRelease?.version.toLowerCase() === 'unreleased' && info
-    ? t.settings.about.developmentReleaseLabel({ version: info.version })
-    : selectedRelease?.label;
+  const release = resolveChangelogRelease(releases, info?.version);
+  // The heading names the release whose note is shown. For anyone running a
+  // published build that is their own version; on a build ahead of the last
+  // release the two differ, and naming the release is the honest reading —
+  // the identity group directly above states what is installed.
+  const releaseVersion = release ? normalizedVersion(release.version) : '';
+  const whatsNewLabel = releaseVersion
+    ? t.settings.about.whatsNewInVersion({ version: releaseVersion })
+    : t.settings.about.whatsNewGroup;
 
   // The triple a bug report needs, in the order a person reads it back.
   async function copyVersionInfo(): Promise<void> {
@@ -139,58 +152,28 @@ export function SettingsAboutSection({
         </InsetGroup>
       ) : null}
 
-      {selectedRelease ? (
-        <InsetGroup ariaLabel={t.settings.about.whatsNewGroup} id="whats-new" label={t.settings.about.whatsNewGroup}>
-          {releases.length > 1 ? (
-            <InsetRow
-              label={t.settings.about.releaseLabel}
-              trailing={(
-                <SelectControl
-                  label={t.settings.about.releasePickerLabel}
-                  onChange={(event) => {
-                    setSelectedVersion(event.currentTarget.value);
-                    setReleaseNotesExpanded(false);
-                  }}
-                  value={selectedRelease.version}
-                  variant="popup"
-                >
-                  {releases.map((release) => (
-                    <option key={release.version} value={release.version}>
-                      {release.version.toLowerCase() === 'unreleased' && info
-                        ? t.settings.about.developmentReleaseLabel({ version: info.version })
-                        : release.label}
-                    </option>
-                  ))}
-                </SelectControl>
-              )}
-            />
-          ) : null}
-          <InsetRow
-            ariaControls="settings-about-release-notes"
-            disclosure={releaseNotesExpanded ? 'expanded' : 'collapsed'}
-            label={t.settings.about.releaseNotesLabel}
-            onSelect={() => setReleaseNotesExpanded((expanded) => !expanded)}
-            sublabel={selectedReleaseLabel}
-          />
-          {releaseNotesExpanded ? (
-            <div className="settings-about-release-notes-row" role="listitem">
-              <div
-                aria-label={t.settings.about.releaseNotesAriaLabel({ version: selectedReleaseLabel ?? selectedRelease.version })}
-                className="file-preview-markdown settings-about-release-notes"
-                id="settings-about-release-notes"
-                role="region"
-                tabIndex={0}
-              >
+      {release ? (
+        <InsetGroup ariaLabel={whatsNewLabel} id="whats-new" label={whatsNewLabel}>
+          {/* A section written before the note convention degrades to the link
+              alone — better an honest pointer than a dump of category detail. */}
+          {release.note ? (
+            <div className="settings-about-release-note-row" role="listitem">
+              <div className="file-preview-markdown settings-about-release-note">
                 <Markdown
-                  components={RELEASE_NOTES_COMPONENTS}
-                  remarkPlugins={RELEASE_NOTES_REMARK_PLUGINS}
+                  components={RELEASE_NOTE_COMPONENTS}
+                  remarkPlugins={RELEASE_NOTE_REMARK_PLUGINS}
                   skipHtml
                 >
-                  {selectedRelease.markdown}
+                  {release.note}
                 </Markdown>
               </div>
             </div>
           ) : null}
+          <InsetRow
+            label={t.settings.about.fullChangelogAction}
+            onSelect={() => void api.openExternalUrl(`${HELP_URL}/blob/${changelogSectionPath(release)}`)}
+            trailing={<OpenIcon size={ICON_SIZE.tiny} aria-hidden="true" />}
+          />
         </InsetGroup>
       ) : null}
 

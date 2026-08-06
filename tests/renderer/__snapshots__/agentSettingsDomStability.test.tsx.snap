@@ -1056,20 +1056,26 @@ exports[`settings page DOM renders the about page byte-stably 1`] = `
           </div>
         </div>
         <div data-settings-anchor="whats-new" class="inset-group">
-          <div class="inset-group-header">What’s new</div>
-          <div role="list" class="inset-card" aria-label="What’s new">
+          <div class="inset-group-header">What’s new in 0.1.0</div>
+          <div role="list" class="inset-card" aria-label="What’s new in 0.1.0">
+            <div role="listitem" class="settings-about-release-note-row">
+              <div class="file-preview-markdown settings-about-release-note">
+                <p>A deterministic user note, which is all the pane renders.</p>
+              </div>
+            </div>
             <div role="listitem" class="inset-row">
-              <button type="button" class="inset-row-main" aria-expanded="false" aria-controls="settings-about-release-notes">
+              <button type="button" class="inset-row-main">
                 <span class="inset-row-text">
-                  <span class="inset-row-label">Release notes</span>
-                  <span class="inset-row-sublabel">0.1.0 development</span>
-                </span>
-                <span aria-hidden="true" class="settings-drilldown-chevron">
-                  <svg aria-hidden="true" class="lucide lucide-chevron-right" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.75" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">
-                    <path d="m9 18 6-6-6-6" />
-                  </svg>
+                  <span class="inset-row-label">Full changelog</span>
                 </span>
               </button>
+              <div class="inset-row-trailing">
+                <svg aria-hidden="true" class="lucide lucide-external-link" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="10" width="10" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M15 3h6v6" />
+                  <path d="M10 14 21 3" />
+                  <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                </svg>
+              </div>
             </div>
           </div>
         </div>

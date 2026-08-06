@@ -1,58 +1,96 @@
 #!/usr/bin/env bun
 /**
- * release-notes — lifts one version's section out of CHANGELOG.md.
+ * release-notes — lifts one version's user note out of CHANGELOG.md.
  *
- * The release body is the changelog section, not a second hand-written summary:
- * two descriptions of one release drift, and the one nobody edits is the one
- * users read. This reads the file that already has to be right.
+ * The release body is the changelog's own note, not a second hand-written
+ * summary: two descriptions of one release drift, and the one nobody edits is
+ * the one users read. This reads the file that already has to be right, through
+ * the same parser the in-app What's New pane uses — so the two user surfaces
+ * cannot disagree about what a release says.
  *
- * Usage: bun scripts/release-notes.ts 0.1.0
- * Exits 1 when the version has no section — a release whose notes would be empty
- * is a mistake worth stopping for, not a blank body to publish.
+ * The `### Added` … `### Internal` categories under the note stay behind: they
+ * are the engineering ledger, read on GitHub in the file itself, and shipping
+ * hundreds of them as the release body is what buried the note in the first
+ * place. The body links to them rather than reprinting them, so "left behind"
+ * never means "unreachable".
+ *
+ * Usage: bun scripts/release-notes.ts 0.1.0 [path/to/CHANGELOG.md]
+ *
+ * Exits 1 when the version has no section, when its note is missing or is still
+ * the Unreleased train line, and when asked for `Unreleased` itself — a release
+ * whose notes would be empty or nonsense is a mistake worth stopping for, not a
+ * body to publish.
+ *
+ * RUN IT BEFORE TAGGING. The release workflow runs it after the `v*` push, so a
+ * failure there lands with the tag already public and recovery means deleting and
+ * re-pushing it. As a pre-flight it costs a second and the tag never moves.
  */
 
-const version = process.argv[2]?.replace(/^v/, '');
+import { fileURLToPath } from 'node:url';
+import { isAbsolute, resolve } from 'node:path';
+import { changelogSectionPath, normalizedVersion, parseChangelogReleases } from '../src/core/changelog';
+
+const REPO_URL = 'https://github.com/relixiaobo/lin-outliner';
+
+const version = normalizedVersion(process.argv[2]);
 if (!version) {
-  console.error('usage: release-notes <version>');
+  console.error('usage: release-notes <version> [changelog-path]');
   process.exit(1);
 }
 
-const lines = (await Bun.file(new URL('../CHANGELOG.md', import.meta.url)).text()).split('\n');
-const start = lines.findIndex((line) => line.startsWith(`## [${version}]`));
-if (start === -1) {
+// Resolved as a path, never interpolated into a URL: a clone directory holding
+// `#`, `?`, or `%` would otherwise be parsed as URL syntax and the script would
+// die on an unhandled ENOENT instead of reaching either error message below.
+const changelogPath = process.argv[3]
+  ? (isAbsolute(process.argv[3]) ? process.argv[3] : resolve(process.cwd(), process.argv[3]))
+  : fileURLToPath(new URL('../CHANGELOG.md', import.meta.url));
+
+if (version.toLowerCase() === 'unreleased') {
+  console.error('`Unreleased` is not a release. Freeze it under a version heading first.');
+  process.exit(1);
+}
+
+const releases = parseChangelogReleases(await Bun.file(changelogPath).text());
+const release = releases.find((entry) => normalizedVersion(entry.version) === version);
+if (!release) {
   console.error(`CHANGELOG.md has no section for ${version}. Add it before tagging.`);
   process.exit(1);
 }
-const rest = lines.slice(start + 1);
-const end = rest.findIndex((line) => line.startsWith('## ['));
-let body = (end === -1 ? rest : rest.slice(0, end)).join('\n').trim();
-if (!body) {
-  console.error(`The ${version} section is empty.`);
+if (!release.note) {
+  console.error(
+    `The ${version} section has no user note. Write one above its first "###" heading `
+    + '— it is both the release body and What\'s New.',
+  );
   process.exit(1);
 }
 
-// GitHub rejects release bodies over 125,000 characters. The 0.1.0 section —
-// the project's entire pre-release history — is ~500KB, so an oversized section
-// becomes a summary that points at the section instead of failing the publish.
-const MAX_BODY_CHARS = 100_000;
-if (body.length > MAX_BODY_CHARS) {
-  const bodyLines = body.split('\n');
-  const entryCount = bodyLines.filter((line) => line.startsWith('- **')).length;
-  const categories = bodyLines
-    .filter((line) => line.startsWith('### '))
-    .map((line) => line.slice(4).trim());
-  body = [
-    `This release's changelog section is larger than a GitHub release body allows`,
-    `(${entryCount} entries across ${categories.join(', ')}), so the full notes live in`,
-    `[CHANGELOG.md](https://github.com/relixiaobo/lin-outliner/blob/v${version}/CHANGELOG.md).`,
-  ].join('\n');
+// The one bad note with a straight path to production. Freezing by renaming
+// `## [Unreleased]` to `## [X.Y.Z] - <date>` and opening a fresh `## [Unreleased]`
+// above it — the natural motion — carries the train line down into the released
+// section, where it stops being recognizable as `Unreleased` by heading and
+// becomes a perfectly non-empty "note". The emptiness check passes and the train
+// line publishes as the entire release body. This is not a prose-quality judge:
+// no check distinguishes a good note from a mediocre one, and that is what
+// main-drafts-PM-ratifies is for. It refuses exactly one known sentence.
+const TRAIN_LINE = /^`?main`?\s+is\s+the\s+`?\d+\.\d+\.\d+`?\s+train\b/i;
+if (TRAIN_LINE.test(release.note)) {
+  console.error(
+    `The ${version} section still opens with the Unreleased train line, not a user note. `
+    + 'The freeze renames the heading; it also has to replace that line.',
+  );
+  process.exit(1);
 }
 
-// The build is unsigned and un-notarized (`mac.identity: null`), so first launch
-// is blocked by Gatekeeper until the user right-clicks Open. Saying so here is
-// not boilerplate: without it the download reads as broken.
+// The entries themselves still have to be reachable. Publishing the note alone
+// would leave a release page whose forty-odd fixes and additions appear nowhere
+// and are pointed at by nothing — the categories are read on GitHub, so the body
+// carries the same link the About pane grew, built by the same helper so the two
+// surfaces cannot point at different places. The tag exists by now: this runs
+// from the workflow the tag push triggers.
 console.log([
-  body,
+  release.note,
+  '',
+  `**[Full changelog](${REPO_URL}/blob/${changelogSectionPath(release)})** — every entry in this release.`,
   '',
   '---',
   '',

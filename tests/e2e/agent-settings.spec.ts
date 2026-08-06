@@ -71,32 +71,38 @@ test.describe('agent settings window', () => {
     await expect(settings.getByRole('list', { name: 'Agent access' })).toBeVisible();
   });
 
-  test('shows public release notes and copies the running version information', async ({ page }) => {
+  // Runs against the real bundled CHANGELOG.md, so this is the case that would
+  // catch the convention breaking in the file itself — the mocked build is 0.1.0
+  // and that section must carry a note. Asserted structurally: the note's wording
+  // is main-agent-owned prose, and pinning the `main` e2e signal to it would turn
+  // the run red for an editorial change in a file this PR does not own.
+  test('shows the release note in user language and copies the running version information', async ({ page }) => {
     const settings = await openSettings(page, '&category=general/about');
 
     await expect(settings.getByRole('heading', { name: 'About' })).toBeVisible();
     await expect(settings.getByText('Version 0.1.0', { exact: true })).toBeVisible();
-    const releaseNotes = settings.getByRole('list', { name: 'What’s new' });
-    await expect(releaseNotes).toBeVisible();
-    const releaseDisclosure = releaseNotes.getByRole('button', { name: /Release notes.*0\.1\.0 development/ });
-    await expect(releaseDisclosure).toHaveAttribute('aria-expanded', 'false');
-    await expect(releaseNotes.getByRole('heading', { name: 'Fixed' })).toHaveCount(0);
-    await releaseDisclosure.click();
-    await expect(releaseDisclosure).toHaveAttribute('aria-expanded', 'true');
-    await expect(releaseNotes.getByRole('heading', { name: 'Fixed' }).first()).toBeVisible();
-    await expect(releaseNotes.getByRole('heading', { name: 'Internal' })).toHaveCount(0);
-    await expect(releaseNotes.getByLabel('Release notes version')).toHaveCount(0);
-    const releaseNotesRegion = releaseNotes.getByRole('region', { name: /Release notes for 0\.1\.0 development/ });
-    await expect(releaseNotesRegion).toHaveAttribute('tabindex', '0');
-    const releaseNotesGeometry = await releaseNotesRegion.evaluate((element) => ({
-      clientHeight: element.clientHeight,
-      scrollHeight: element.scrollHeight,
-      viewportHeight: window.innerHeight,
-    }));
-    expect(releaseNotesGeometry.clientHeight).toBeLessThanOrEqual(
-      Math.min(480, releaseNotesGeometry.viewportHeight * 0.5) + 1,
-    );
-    expect(releaseNotesGeometry.scrollHeight).toBeGreaterThan(releaseNotesGeometry.clientHeight);
+    // The group names the running version; the changelog's own `Unreleased` /
+    // development-train vocabulary never reaches the pane.
+    const whatsNew = settings.getByRole('list', { name: 'What’s new in 0.1.0' });
+    await expect(whatsNew).toBeVisible();
+    await expect(settings.getByText('Unreleased')).toHaveCount(0);
+    await expect(settings.locator('select')).toHaveCount(0);
+
+    // The note reads inline — nothing to expand, and no engineering category.
+    const note = whatsNew.locator('.settings-about-release-note');
+    await expect(note).toBeVisible();
+    expect((await note.innerText()).trim().length).toBeGreaterThan(0);
+    await expect(whatsNew.getByRole('button', { expanded: false })).toHaveCount(0);
+    await expect(whatsNew.getByRole('heading', { name: 'Added' })).toHaveCount(0);
+    await expect(whatsNew.getByRole('heading', { name: 'Fixed' })).toHaveCount(0);
+    await expect(whatsNew.getByRole('heading', { name: 'Internal' })).toHaveCount(0);
+
+    // The full ledger is one link away, pinned to the tag this build shipped as.
+    await whatsNew.getByRole('button', { name: 'Full changelog' }).click();
+    await expect.poll(async () => {
+      const calls = await commandCalls(page);
+      return calls.findLast((call) => call.cmd === 'open_external_url')?.args;
+    }).toMatchObject({ url: expect.stringContaining('/blob/v0.1.0/CHANGELOG.md#') });
 
     await settings.getByRole('button', { name: 'Copy version info' }).click();
     await expect.poll(() => clipboardText(page)).toContain('Tenon 0.1.0\ndarwin arm64');

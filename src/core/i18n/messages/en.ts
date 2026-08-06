@@ -387,12 +387,13 @@ export const en = {
       copyVersionInfo: 'Copy version info',
       copiedNotice: 'Version info copied.',
       copyFailed: 'Could not copy version info.',
+      // The heading names the release whose note is shown. `whatsNewGroup` is the
+      // fallback for a heading the changelog left unnamed (`## [ ]`), the only way
+      // that version can come out empty — NOT for a build whose app info failed to
+      // load, which still resolves a release and names it.
       whatsNewGroup: 'What’s new',
-      releaseLabel: 'Release',
-      releasePickerLabel: 'Release notes version',
-      releaseNotesLabel: 'Release notes',
-      developmentReleaseLabel: ({ version }: { version: string }) => `${version} development`,
-      releaseNotesAriaLabel: ({ version }: { version: string }) => `Release notes for ${version}`,
+      whatsNewInVersion: ({ version }: { version: string }) => `What’s new in ${version}`,
+      fullChangelogAction: 'Full changelog',
       releaseNotesUnavailable: 'Release notes are unavailable.',
       supportGroup: 'Support',
       helpAction: 'Tenon Help',
