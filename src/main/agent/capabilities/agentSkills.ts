@@ -16,6 +16,7 @@ import type { SkillDefinition } from '../../../core/types';
 // module; we import its validator for the undo restore path. Neither side touches the
 // other's bindings at module-evaluation time, so the cycle is safe under ESM.
 import { AgentSkillAuthoringError, isValidSkillName, validateAgentSkillContentWrite } from './agentSkillAuthoring';
+import { isPathInside as isPathInsideOrEqual } from './agentAttachmentMaterialization';
 import {
   BUILT_IN_SKILL_RESOURCE_DIR_NAME,
   BUILT_IN_SKILL_SOURCE_DIR,
@@ -2111,9 +2112,15 @@ function normalizePathForPrompt(value: string): string {
   return process.platform === 'win32' ? value.replace(/\\/g, '/') : value;
 }
 
+/**
+ * Strict containment — this file's callers treat the root itself as outside, unlike the
+ * shared predicate, which admits it. The adapter carries only that contract difference
+ * (and the argument order these call sites read in); the predicate has one implementation.
+ */
 function isPathInside(candidate: string, root: string): boolean {
-  const relative = path.relative(root, candidate);
-  return !!relative && !relative.startsWith('..') && !path.isAbsolute(relative);
+  const resolvedRoot = path.resolve(root);
+  const resolvedCandidate = path.resolve(candidate);
+  return resolvedCandidate !== resolvedRoot && isPathInsideOrEqual(resolvedRoot, resolvedCandidate);
 }
 
 async function directoryExists(dir: string): Promise<boolean> {

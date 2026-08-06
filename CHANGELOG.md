@@ -93,6 +93,22 @@ Entries reference the pull request that introduced them.
   Behaviour is unchanged; the point is that the next correction to a path-escape
   guard has one fewer place to be missed.
 
+- **One implementation of the path-containment predicate (main-agent)** — the
+  `path.relative` / `startsWith('..')` / `isAbsolute` triple that `isPathInside`
+  exports had been copied into three more standalone helpers:
+  `ToolPayloadStore`'s own `isPathInside`, `agentLocalTools`'
+  `isResolvedPathInside`, and `agentSkills`' reversed-argument variant. The first
+  two now call the shared helper directly; the third stays a named local because
+  its callers treat the root itself as *outside*, but it is a one-line adapter
+  over the shared predicate rather than a second copy of the logic. Behaviour is
+  unchanged at all eight call sites. Four sites keep their inline check on
+  purpose — `skillMatchesPath`, `isGitIgnored`, and
+  `isSelfDefinitionContentPath` need the `relative` value they compute for glob
+  matching, the `git check-ignore` argument, and segment counting, so routing
+  them through a boolean helper would compute the relative path twice; the two
+  remaining `agentLocalTools` sites are a different predicate (a normalized
+  relative, and a glob pattern rather than a path).
+
 - **Open the 0.2.0 train; seed user-register release notes (main-agent)** —
   `package.json` dials to `0.2.0` after the v0.1.0 publication. `[0.1.0]` gains
   a user-language welcome note as its opening block (its engineering provenance

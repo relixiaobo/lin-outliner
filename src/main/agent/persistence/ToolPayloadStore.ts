@@ -2,7 +2,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import { constants, type Stats } from 'node:fs';
 import type { FileHandle } from 'node:fs/promises';
 import { copyFile, link, lstat, mkdir, open, readFile, readdir, realpath, rm, rmdir, utimes, writeFile } from 'node:fs/promises';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { isPathInside } from '../capabilities/agentAttachmentMaterialization';
 import {
   MAX_MANAGED_ATTACHMENT_BYTES,
   MAX_THREAD_MANAGED_ATTACHMENT_BYTES,
@@ -1276,11 +1277,6 @@ function isFileSystemCapacityError(error: unknown): boolean {
 function isDirectoryNotEmpty(error: unknown): boolean {
   return typeof error === 'object' && error !== null && 'code' in error
     && (error as { code?: unknown }).code === 'ENOTEMPTY';
-}
-
-function isPathInside(root: string, candidate: string): boolean {
-  const pathFromRoot = relative(resolve(root), resolve(candidate));
-  return pathFromRoot === '' || (!pathFromRoot.startsWith('..') && !isAbsolute(pathFromRoot));
 }
 
 function validateResourceMetadata(byteLength: number, mimeType: string, fileName: string): void {
