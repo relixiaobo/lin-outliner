@@ -160,7 +160,7 @@ default so the pass isn't blocked.
   is a **token nudge in `theme-dark.css`** — it does **not** edit any
   `settings-*.css` regardless. Re-grep cited selectors against `main` (#118
   reshaped the settings CSS).
-- **Sequence after Layer 1/2** (`ui-quality-roadmap.md`): this pass verifies the
+- **Sequence after Layer 1/2** (`archive/ui-quality-roadmap.md`): this pass verifies the
   *final* state. Running it before `design-system-consistency`, `composition-rhythm`,
   `button-primitive`, `input-primitive`, `feedback-states` land would re-confirm a
   surface those plans then change. Pull this plan **last** (it is P3 and explicitly

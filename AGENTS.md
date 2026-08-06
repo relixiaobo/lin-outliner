@@ -224,7 +224,10 @@ requirement, so the PM can drive several at once:
    section that is already there** — never open a second `### Fixed`. Doing that
    for 300+ merges produced one `[Unreleased]` block with 21 duplicate sections
    and 445 entries, which made "what changed in this release" unanswerable until
-   it was untangled by hand on 2026-08-03.
+   it was untangled by hand on 2026-08-03. A carry-forward engineering lesson
+   from the gate goes into `docs/lessons.md` as a distilled rule; the board keeps
+   a **one-line** completion record — the retrospective lives in the CHANGELOG
+   entry and the PR, so the board stays small enough for every agent to load.
 5. **Resync.** After a merge, dev agents `git fetch && git rebase origin/main` on
    their active branches.
 
@@ -393,20 +396,26 @@ one question lives in one document; every document has a lifecycle.
 | `AGENTS.md` | How do we work together? | stable |
 | `docs/TASKS.md` | What's to do, and where does each item stand? (the single board) | updated continuously / on merge |
 | `docs/plans/<topic>.md` | How exactly is this change done? (design only — no status) | ship → fold design into `spec/` → `docs/plans/archive/` |
+| `docs/plans/reference/*` | What standing design authorities govern an area? | rewritten while authoritative; never a unit of work |
 | `docs/spec/*` | How does it work now? | rewritten, never deleted |
+| `docs/lessons.md` | What mistakes have we already paid for? (distilled, reusable rules) | append at the gate; promote load-bearing ones into the principles above |
 | `CHANGELOG.md` | What changed, when? | append-only (`Internal` for throwaway) |
 | `README.md` | What is this project? | as needed |
 | module `README.md` | How does this one module work? | with the module |
 
 - `docs/spec/` — current intended behavior. Read these to understand the code;
   `docs/spec/README.md` is the map. Update the spec in the SAME change as the
-  behavior. `docs/spec/agent-progress.md` is the agent-integration checklist;
+  behavior. `docs/spec/agent-integration.md` is the agent-integration checklist;
   detailed contracts go in `docs/spec/agent-tool-design.md`.
 - `docs/plans/` — forward-looking work: **pure design, nothing else.** A plan
   answers only *how is this built?* and carries **no status, priority, or
   frontmatter** — those are project-management facts, not properties of a design,
   and live solely in `docs/TASKS.md`, which points out to each plan by link.
-  `docs/TASKS.md` **is** the single active-work catalog. A shipped plan moves to
+  `docs/TASKS.md` **is** the single active-work catalog. The top level of
+  `docs/plans/` holds only buildable designs; standing authorities that are never
+  "done" (`agent-program`, the agent data/conversation/memory contracts,
+  `nodex-parity-decisions`, record-only decisions) live in `docs/plans/reference/`.
+  A shipped plan moves to
   `docs/plans/archive/` for tidiness once its board item is `done`; we never delete
   a plan. (Provenance — author, dates — is in git history.) The `bun run docs:check`
   guard keeps the board and the plan files structurally consistent (every plan link

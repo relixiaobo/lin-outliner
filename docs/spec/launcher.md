@@ -5,7 +5,7 @@ forward-looking design and the deferred features live in
 [`../plans/archive/lazy-like-global-launcher.md`](../plans/archive/lazy-like-global-launcher.md)
 and its split plans (`launcher-ai-actions.md`,
 `launcher-capture-destinations.md`, `launcher-provider-expansion.md`,
-`browser-extension-integration.md`). This document describes only what exists.
+`reference/browser-extension-integration.md`). This document describes only what exists.
 
 ## What it is
 

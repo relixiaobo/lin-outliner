@@ -14,7 +14,7 @@ different meaning. The fixes are centralized and cheap — almost all live in
 `icons.ts` plus a few resolver lines — and carry near-zero behavioral risk
 (glyph swaps, no logic change).
 
-This is **Layer 3, P3** in `docs/plans/ui-quality-roadmap.md` — independent of
+This is **Layer 3, P3** in `docs/plans/archive/ui-quality-roadmap.md` — independent of
 the cosmetic Layer-1/2 work and runnable anytime (it touches no shared CSS
 tokens, no primitives, no protocol surface).
 
@@ -162,7 +162,7 @@ follows whatever is chosen.
   resolver files (`ThreadItemView.tsx`, `DefinitionConfigPanel.tsx`), one call
   site (`NodeContextMenu.tsx`), and a spec
   paragraph in `design-system.md`.
-- **Roadmap boundary contract** (`docs/plans/ui-quality-roadmap.md`): no other
+- **Roadmap boundary contract** (`docs/plans/archive/ui-quality-roadmap.md`): no other
   Layer-1/2/3 plan touches icon glyph choices — `composition-rhythm` owns
   context-menu glass/radius (not its item glyphs), `button-primitive` owns button
   shape (not icons), `feedback-states` owns empty/error *idioms* (it may render

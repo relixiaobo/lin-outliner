@@ -70,6 +70,9 @@ Two options, decide before implementing:
 Recommendation: **A** — fits lin's "no special buckets" stance better than
 B and matches the PARA-removal direction (commit `ab971d7`).
 
+**Decided: option A** (PM-ratified 2026-08-06). Build against per-tag
+`defaultExtractParentId`; option B is recorded above as the path not taken.
+
 ## Open questions
 
 - Should the `#` button be available with no text selection? Probably not —

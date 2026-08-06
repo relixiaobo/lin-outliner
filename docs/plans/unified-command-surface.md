@@ -89,7 +89,7 @@ does not need them to build.
   is a main-process static URL reader; this plan neither builds nor blocks it, and
   the capture loop (D9) works with or without it. Provider breadth stays in
   `launcher-provider-expansion.md`. **No browser extension is built by anyone** —
-  `browser-extension-integration.md` is a historical filename for a plan whose own
+  `reference/browser-extension-integration.md` is a historical filename for a plan whose own
   non-goals exclude extensions.
 
   **It is a separate API, not the ambient seam.** `captureExternalContext` runs on
@@ -2275,13 +2275,13 @@ only pin state remains in `workspace`. Two presentation decisions are also close
   through the ambient `PageContentExtractor` seam (see Non-goals). That plan's open
   question ("is the static reader still valuable beside the hardened preview?") is
   answered yes by this decision: it has a second consumer.
-- `browser-extension-integration.md` — record-only, and a **deferred second
+- `reference/browser-extension-integration.md` — record-only, and a **deferred second
   extraction source** (JS-rendered / signed-in pages) behind the static reader. Its
   fallback-chain claim and its `PageContentExtractor` nomination were corrected in
   this change. One correction remains outstanding: **the filename says "extension"
   while its own non-goals exclude one**, and renaming breaks the `docs/TASKS.md`
   link, so it needs the main agent.
-- `agent-conversation-model.md` / `agent-data-model.md` — authorities for the
+- `reference/agent-conversation-model.md` / `reference/agent-data-model.md` — authorities for the
   handoff content shape in D9.
 
 ## Collision self-check

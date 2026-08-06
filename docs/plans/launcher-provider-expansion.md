@@ -4,7 +4,7 @@
 > which URLs/apps we classify into which source `kind` + capture framing. It is
 > *orthogonal* to the command surface (`unified-command-surface.md`) and survives
 > the cmd+k/launcher unification intact. Rich content from an explicitly
-> selected internal Preview belongs to `browser-extension-integration.md`;
+> selected internal Preview belongs to `reference/browser-extension-integration.md`;
 > authenticated external-browser content has no approved reader plan.
 
 ## Why this plan exists
@@ -19,7 +19,7 @@ the single home for "which providers we add next," so the declared-but-unproduce
 union members aren't silent placeholders.
 
 It does **not** own rich extraction (page body, transcript, email thread, chat
-messages). `browser-extension-integration.md` owns only the explicit internal
+messages). `reference/browser-extension-integration.md` owns only the explicit internal
 URL Preview path. External-browser authenticated DOM, email/chat bodies, and
 other source readers are deferred until a source-specific plan owns them.
 This plan is about URL/app **classification + the right source `kind` + capture
@@ -52,7 +52,7 @@ Light up the declared providers, in two tiers, each only when it actually works
 ## Non-goals
 
 - No rich content extraction. Internal URL Preview reading belongs to
-  `browser-extension-integration.md`; all other readers require a separate
+  `reference/browser-extension-integration.md`; all other readers require a separate
   approved source-specific plan.
 - No disabled "coming soon" provider rows. A provider id/kind is *declared* in the
   contract (A7) but only *produced* once its classifier + test land here.

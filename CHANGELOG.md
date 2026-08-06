@@ -5341,6 +5341,32 @@ changed in this release" unanswerable; the sections are merged, no entry was edi
 
 ### Internal
 
+- **Publish releases from the changelog (PR #480, main-agent)** — pushing a `v*`
+  tag builds the unsigned Apple-silicon `.dmg` and creates the GitHub Release
+  with that version's `CHANGELOG.md` section as its body (`scripts/release-notes.ts`
+  exits non-zero when the section is missing or empty; a body over GitHub's
+  125k-character limit degrades to a counted summary linking the changelog at the
+  tag). The 21 duplicate category sections that had accumulated under
+  `[Unreleased]` are folded into this `[0.1.0]` section — merged by category,
+  multiset-verified, no entry edited. A `workflow_dispatch` input rehearses the
+  build without publishing.
+
+- **Document-system overhaul (main-agent, direct on `main`, fast-track)** — the
+  board (`docs/TASKS.md`) drops from ~6300 lines to ~700 so agents can actually
+  load it at plan time: completion records become one-liners pointing at the
+  CHANGELOG and PRs, the hand-maintained agent-status table is retired in favor
+  of `gh pr list`, and carry-forward engineering lessons move to the new
+  `docs/lessons.md`. `docs/plans/` gains a `reference/` tier for standing
+  authorities (`agent-program`, data/conversation/memory contracts,
+  `nodex-parity-decisions`, record-only decisions); `ui-quality-roadmap` is
+  archived (its layers all shipped) and `macos-liquid-glass-icon` shelved by PM
+  decision. `docs:check` grows real-reference orphan matching scoped to
+  `origin/main` (the substring rule had greenlit three never-boarded plans and
+  contradicted the dev-agents-never-edit-the-board flow), file-relative board
+  link checking that matches how GitHub renders, and C4 link integrity for
+  `README.md`/`AGENTS.md` (both had dangling references).
+
+
 - **Unified command surface contract refinement (PR #491, codex, plan-only)** —
   makes the plan's noun/verb boundary structural: result rows, chips, and parameter
   candidates are objects, while the active subject resolves separately typed action
