@@ -5349,7 +5349,9 @@ changed in this release" unanswerable; the sections are merged, no entry was edi
   tag). The 21 duplicate category sections that had accumulated under
   `[Unreleased]` are folded into this `[0.1.0]` section — merged by category,
   multiset-verified, no entry edited. A `workflow_dispatch` input rehearses the
-  build without publishing.
+  build without publishing. The rehearsal caught electron-builder's
+  implicit CI publish demanding a token after the `.dmg` was already built;
+  `build.publish: null` pins publishing to the workflow's `gh release create`.
 
 - **Document-system overhaul (main-agent, direct on `main`, fast-track)** — the
   board (`docs/TASKS.md`) drops from ~6300 lines to ~700 so agents can actually

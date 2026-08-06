@@ -84,6 +84,7 @@
     "appId": "dev.linlab.tenon",
     "productName": "Tenon",
     "copyright": "© 2026 Lin Lab",
+    "publish": null,
     "afterPack": "build/afterPack.cjs",
     "directories": {
       "output": "release"
