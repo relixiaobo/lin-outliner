@@ -1,21 +1,20 @@
 import { describe, expect, test } from 'bun:test';
-import { readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
 const ROOT = join(import.meta.dir, '..', '..');
 const SELF = 'tests/core/agentCodexLegacyResidue.test.ts';
 
-// Main archives these superseded or destructive plans together with its board
-// update at the integration gate. Active code, tests, and specs have no such
-// exception.
+// Standing authorities under `plans/reference/` record the arc that replaced the
+// legacy model, so they name it by design. Listed one by one rather than
+// exempting the directory: a new reference document gets no free pass. Terminal
+// plans under `plans/archive/` are covered by the prefix rule below. Active
+// code, tests, and specs have no such exception.
 const PLANS_WITH_SCOPED_LEGACY_ASSERTIONS = new Set([
-  'docs/plans/agent-codex-core.md',
-  'docs/plans/agent-codex-automations.md',
-  'docs/plans/agent-codex-memory.md',
-  'docs/plans/agent-conversation-model.md',
-  'docs/plans/agent-data-model.md',
-  'docs/plans/agent-memory-foundations.md',
-  'docs/plans/agent-program.md',
+  'docs/plans/reference/agent-conversation-model.md',
+  'docs/plans/reference/agent-data-model.md',
+  'docs/plans/reference/agent-memory-foundations.md',
+  'docs/plans/reference/agent-program.md',
 ]);
 
 const LEGACY_PATTERNS: ReadonlyArray<{ readonly label: string; readonly pattern: RegExp }> = [
@@ -66,6 +65,16 @@ const LEGACY_PATTERNS: ReadonlyArray<{ readonly label: string; readonly pattern:
 ];
 
 describe('Agent Core clean replacement', () => {
+  // A moved or renamed plan turns its exemption into dead config that silently
+  // stops covering anything — which is how the `plans/reference/` split broke
+  // this guard. Fail on the stale path instead of on the residue it lets through.
+  test('keeps every scoped legacy-assertion exemption pointing at a real plan', () => {
+    const missing = [...PLANS_WITH_SCOPED_LEGACY_ASSERTIONS]
+      .filter((rel) => !existsSync(join(ROOT, rel)))
+      .sort();
+    expect(missing).toEqual([]);
+  });
+
   test('keeps active source, tests, specs, and non-superseded plans free of legacy model residue', () => {
     const violations: string[] = [];
     for (const file of scanFiles()) {

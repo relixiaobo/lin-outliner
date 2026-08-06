@@ -22,6 +22,18 @@ Entries reference the pull request that introduced them.
   under a present ref means the path is absent. A genuine orphan — a plan on
   `origin/main` with no board reference — still fails as before.
 
+- **`test:core` is green again after the `plans/reference/` split (main)** — the
+  legacy-residue guard exempts the standing authorities that describe the model
+  the Agent Core replaced, by exact path. Moving `agent-program`,
+  `agent-conversation-model`, `agent-data-model`, and `agent-memory-foundations`
+  into `docs/plans/reference/` left those paths pointing at nothing, so the four
+  documents were scanned and the guard failed on their own subject matter. The
+  exemptions now name the real locations, the three archived `agent-codex-*`
+  entries are dropped as redundant with the `plans/archive/` prefix rule, and a
+  new assertion fails on any exemption path that no longer resolves — so the next
+  move reports the stale entry instead of the residue it silently stopped
+  covering. `plans/reference/` is still not exempt as a directory.
+
 ## [0.1.0] - 2026-08-06
 
 First tagged release. Everything below shipped to `main` before this tag and had been
