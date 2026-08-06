@@ -15,9 +15,15 @@
  * never means "unreachable".
  *
  * Usage: bun scripts/release-notes.ts 0.1.0 [path/to/CHANGELOG.md]
- * Exits 1 when the version has no section or its note is missing — a release
- * whose notes would be empty is a mistake worth stopping for, not a blank body
- * to publish.
+ *
+ * Exits 1 when the version has no section, when its note is missing or is still
+ * the Unreleased train line, and when asked for `Unreleased` itself — a release
+ * whose notes would be empty or nonsense is a mistake worth stopping for, not a
+ * body to publish.
+ *
+ * RUN IT BEFORE TAGGING. The release workflow runs it after the `v*` push, so a
+ * failure there lands with the tag already public and recovery means deleting and
+ * re-pushing it. As a pre-flight it costs a second and the tag never moves.
  */
 
 import { fileURLToPath } from 'node:url';
