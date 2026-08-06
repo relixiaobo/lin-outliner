@@ -12,6 +12,56 @@ import type { ReasoningEffort } from './configuration';
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | readonly JsonValue[] | { readonly [key: string]: JsonValue };
 
+export const MAX_INLINE_MODEL_TOOL_ARGUMENT_BYTES = 32 * 1024;
+export const MAX_MODEL_TOOL_EVIDENCE_SUMMARY_BYTES = 32 * 1024;
+export const MAX_MODEL_TOOL_PROVIDER_NAME_BYTES = 1024;
+export const MAX_MODEL_TOOL_CORRECTION_BYTES = 4 * 1024;
+
+export interface ModelToolIdentity {
+  readonly namespace: string | null;
+  readonly name: string;
+}
+
+export const MODEL_TOOL_CALL_EVIDENCE_REASONS = Object.freeze([
+  'unresolvedTool',
+  'invalidArguments',
+  'truncatedArguments',
+  'argumentPersistenceUnavailable',
+  'schemaIncompatible',
+  'argumentPayloadUnavailable',
+  'resultPayloadUnavailable',
+] as const);
+export type ModelToolCallEvidenceReason = typeof MODEL_TOOL_CALL_EVIDENCE_REASONS[number];
+
+export type ModelToolCallArguments =
+  | { readonly storage: 'inline'; readonly value: JsonValue }
+  | { readonly storage: 'payload'; readonly ref: ThreadContextPayloadReference };
+
+export type ModelToolCallHistory =
+  | {
+      readonly disposition: 'replayable';
+      readonly identity: ModelToolIdentity;
+      readonly providerName: string;
+      readonly arguments: ModelToolCallArguments;
+      readonly schemaDigest: string;
+    }
+  | {
+      readonly disposition: 'redactedReplay';
+      readonly identity: ModelToolIdentity;
+      readonly providerName: string;
+      readonly redactedArguments: ModelToolCallArguments;
+      readonly redactedPaths: readonly string[];
+      readonly schemaDigest: string;
+    }
+  | {
+      readonly disposition: 'evidenceOnly';
+      readonly identity: ModelToolIdentity | null;
+      readonly providerName: string;
+      readonly redactedArgumentsSummary: JsonValue;
+      readonly reason: ModelToolCallEvidenceReason;
+      readonly correction: string;
+    };
+
 export type ThreadId = string;
 export type TurnId = string;
 export type ThreadItemId = string;
@@ -362,6 +412,9 @@ export interface TurnDiagnosticsToolExecution {
   readonly toolName: string;
   /** Null only for deliberately transient tools that have no canonical Thread Item. */
   readonly itemId: ThreadItemId | null;
+  readonly admissionDisposition: ModelToolCallHistory['disposition'];
+  readonly canonicalIdentity: ModelToolIdentity | null;
+  readonly schemaDigest: string | null;
   readonly startedAt: number;
   readonly completedAt: number | null;
   readonly status: ItemExecutionStatus;
@@ -459,6 +512,35 @@ export type ThreadFileSource =
   | { readonly kind: 'localFile'; readonly path: string }
   | { readonly kind: 'threadPayload'; readonly ref: ThreadResourceReference };
 
+export const IMAGE_ARTIFACT_RETENTIONS = [
+  'external',
+  'durable',
+  'tiered',
+  'observationOnly',
+] as const;
+
+export type ImageArtifactRetention = typeof IMAGE_ARTIFACT_RETENTIONS[number];
+
+export interface ImageArtifactGeometry {
+  readonly sourceWidth: number;
+  readonly sourceHeight: number;
+  readonly observationWidth: number;
+  readonly observationHeight: number;
+  /** Row-major 2D affine matrix mapping observation pixels to source pixels. */
+  readonly observationToSource: readonly [number, number, number, number, number, number];
+}
+
+/** Immutable logical image identity. Rendition availability may change independently. */
+export interface ThreadImageArtifactReference {
+  /** Lowercase SHA-256 digest of the immutable artifact fields. */
+  readonly id: string;
+  readonly createdAt: number;
+  readonly retention: ImageArtifactRetention;
+  readonly original: ThreadFileSource | null;
+  readonly observation: ThreadResourceReference;
+  readonly geometry: ImageArtifactGeometry;
+}
+
 export interface ThreadAttachmentContent {
   readonly type: 'attachment';
   readonly id: string;
@@ -466,7 +548,7 @@ export interface ThreadAttachmentContent {
   readonly mimeType: string;
   readonly sizeBytes: number;
   readonly source: ThreadFileSource;
-  readonly promptImage?: ThreadResourceReference;
+  readonly artifactRef?: ThreadImageArtifactReference;
   readonly extractedText?: string;
 }
 
@@ -780,6 +862,19 @@ export interface ActiveObservationCheckpointEntry {
   readonly projectionRef: ThreadContextPayloadReference;
 }
 
+export type ContextDegradationCode =
+  | 'payloadUnavailable'
+  | 'payloadInvalid'
+  | 'journalDiscontinuity'
+  | 'checkpointMismatch'
+  | 'projectionConflict';
+
+export interface ContextDegradationCheckpointEntry {
+  readonly code: ContextDegradationCode;
+  readonly source: string;
+  readonly reference: string;
+}
+
 export interface CompactionRestoredStateContextPayload {
   readonly schemaVersion: 1;
   readonly kind: 'compactionRestoredState';
@@ -791,12 +886,19 @@ export interface CompactionRestoredStateContextPayload {
   readonly userViewBaselineRef: ThreadContextPayloadReference | null;
   readonly additionalContextBaselineRef: ThreadContextPayloadReference | null;
   readonly activeObservations: readonly ActiveObservationCheckpointEntry[];
+  readonly degradations: readonly ContextDegradationCheckpointEntry[];
 }
 
 export interface CompactionInstructionsContextPayload {
   readonly schemaVersion: 1;
   readonly kind: 'compactionInstructions';
   readonly entries: readonly ContextTextEntry[];
+}
+
+export interface ToolCallArgumentsContextPayload {
+  readonly schemaVersion: 1;
+  readonly kind: 'toolCallArguments';
+  readonly value: JsonValue;
 }
 
 export type ThreadContextPayload =
@@ -811,7 +913,8 @@ export type ThreadContextPayload =
   | InheritedContextPayload
   | CompactionSummaryContextPayload
   | CompactionRestoredStateContextPayload
-  | CompactionInstructionsContextPayload;
+  | CompactionInstructionsContextPayload
+  | ToolCallArgumentsContextPayload;
 
 export type ContextPayloadKind = ThreadContextPayload['kind'];
 
@@ -820,6 +923,7 @@ export const CONTEXT_PAYLOAD_KINDS = Object.freeze([
   'compactionSummary',
   'compactionRestoredState',
   'compactionInstructions',
+  'toolCallArguments',
 ] as const satisfies readonly ContextPayloadKind[]);
 
 type MissingContextPayloadKind = Exclude<ContextPayloadKind, typeof CONTEXT_PAYLOAD_KINDS[number]>;
@@ -829,6 +933,7 @@ void CONTEXT_PAYLOAD_KINDS_ARE_EXHAUSTIVE;
 interface ThreadToolItemBase extends ThreadItemBase {
   readonly status: ItemExecutionStatus;
   readonly outputRef: ThreadItemOutputReference | null;
+  readonly modelCall: ModelToolCallHistory;
 }
 
 export interface UserMessageThreadItem extends ThreadItemBase {
@@ -903,14 +1008,7 @@ export type DynamicToolOutputContent =
   | { readonly type: 'text'; readonly text: string }
   | {
       readonly type: 'image';
-      readonly source: Extract<ThreadFileSource, { readonly kind: 'threadPayload' }>;
-      readonly alt?: string;
-    }
-  | {
-      readonly type: 'image';
-      readonly source: Extract<ThreadFileSource, { readonly kind: 'localFile' }>;
-      /** Thread-owned snapshot used to reproduce the exact provider-visible image. */
-      readonly promptImage: ThreadResourceReference;
+      readonly artifactRef: ThreadImageArtifactReference;
       readonly alt?: string;
     }
   | { readonly type: 'json'; readonly value: JsonValue };

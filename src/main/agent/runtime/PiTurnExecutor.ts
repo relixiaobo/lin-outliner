@@ -25,18 +25,21 @@ import type {
   DynamicToolOutputContent,
   JsonValue,
   MessagePhase,
+  ModelToolCallHistory,
   SkillInvocationContextPayload,
   SubagentExecutionState,
   ThreadItem,
+  ThreadImageArtifactReference,
   ThreadItemOutputReference,
   Turn,
   TurnExecutionDetails,
 } from '../../../core/agent/protocol';
 import { INITIAL_CONTEXT_EPOCH_ID } from '../../../core/agent/cacheAffinity';
-import { decodeThreadContextPayload } from '../../../core/agent/codec';
+import { decodeThreadContextPayload, decodeThreadImageArtifactReference } from '../../../core/agent/codec';
 import {
   CanonicalContextProjector,
   type CanonicalContextProjection,
+  type LiveModelToolCall,
 } from '../context/ContextProjector';
 import {
   ContextCapacityError,
@@ -63,15 +66,21 @@ import {
   getProviderRuntimeConfig,
   providerStreamOptionsFromRuntimeSettings,
 } from '../capabilities/agentSettings';
-import { persistedToolResultDetails } from '../capabilities/agentToolResultPersistence';
+import {
+  persistedToolResultDetails,
+  persistedToolResultText,
+} from '../capabilities/agentToolResultPersistence';
+import { readAgentImageDimensions } from '../capabilities/agentLocalTools';
+import { createImageArtifactReference, ImageObservationNormalizationError } from '../imageArtifacts';
 import {
   MAX_TOOL_PAYLOAD_IMAGE_BYTES,
+  ThreadResourceQuotaError,
   measureToolPayloadImage,
 } from '../persistence/ToolPayloadStore';
 import {
   piExternalProviderId,
   piCompleteSimple,
-  piResolveAuthApiKey,
+  piRequestApiKeyOverride,
 } from '../../piModels';
 import {
   applyCustomOpenAIResponsesPayloadProfile,
@@ -84,6 +93,7 @@ import type {
   TurnExecutionResult,
   TurnExecutor,
 } from './types';
+import { persistToolCallAdmission } from './toolCallHistory';
 
 export const MAX_PERSISTED_TOOL_ARGUMENT_CHARS = 32_000;
 export const MAX_PERSISTED_TOOL_OUTPUT_CHARS = 50_000;
@@ -184,7 +194,13 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
           itemIds: context.turn.items.map((item) => item.id),
         },
       });
+      const disableDiagnostics = (error: unknown) => {
+        if (!diagnostics.available) return;
+        diagnostics.disable();
+        context.onTurnDiagnosticsError(error);
+      };
       const reasoningReplay = internalMemory ? null : new ActiveTurnReasoningReplay(context.turn.id);
+      const liveModelToolCalls = new Map<string, LiveModelToolCall>();
       const normalizer = new PiEventNormalizer(context, {
         ...(reasoningReplay ? {
           assistantCompleted: ({ itemId, message }) => reasoningReplay.retain(itemId, message),
@@ -193,6 +209,7 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
           execution.callId,
           execution.toolName,
           execution.itemId,
+          execution.modelCall,
           execution.startedAt,
         ),
         completed: (execution) => diagnostics.captureToolExecutionCompleted(
@@ -242,6 +259,7 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
               tools,
               prompt,
               reasoningReplay,
+              liveModelToolCalls,
               {
                 prepared: (prepared) => diagnostics.prepareProviderPlan(prepared),
                 compacted: (compacted) => diagnostics.captureContextCompaction(compacted),
@@ -250,9 +268,15 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
           };
       const gatewayOptions: PiModelGatewayOptions = {
         onProviderContext: (providerContext) => diagnostics.captureProviderContext(providerContext),
-        onPayload: (payload, model) => {
+        onPayload: async (payload, model) => {
           const transformed = agentProviderPayload(payload, model, stablePrompt);
-          diagnostics.captureProviderRequest(transformed ?? payload);
+          if (diagnostics.available) {
+            try {
+              await diagnostics.captureProviderRequest(transformed ?? payload);
+            } catch (error) {
+              disableDiagnostics(error);
+            }
+          }
           return transformed;
         },
         onResponse: (response) => diagnostics.captureTransportResponse(response),
@@ -287,6 +311,19 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
               return compacted ? await transformContext() : null;
             }
           : undefined,
+        admitToolCall: async (request) => {
+          const decision = await persistToolCallAdmission(
+            request,
+            (value) => context.persistToolCallArguments(value),
+          );
+          if (request.outcome.type === 'admitted' && decision.execute) {
+            liveModelToolCalls.set(request.toolCallId, {
+              providerName: request.providerName,
+              arguments: request.outcome.arguments,
+            });
+          }
+          return decision;
+        },
         getApiKey: runtime.getApiKey,
         transformContext,
         sessionId: cacheAffinity,
@@ -301,7 +338,13 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
         return { status: 'interrupted' };
       }
       unsubscribe = agent.subscribe(async (event) => {
-        diagnostics.captureEvent(event);
+        if (diagnostics.available) {
+          try {
+            await diagnostics.captureEvent(event);
+          } catch (error) {
+            disableDiagnostics(error);
+          }
+        }
         normalizer.handle(event);
         await normalizer.flush();
       });
@@ -309,7 +352,14 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
         const activityIndex = diagnostics.captureSteering(input.items, input.acceptedAt);
         const message = await projector.projectUserItems(input.items, input.acceptedAt);
         if (!context.signal.aborted && agent) {
-          agent.steer(message, () => diagnostics.setSteeringDelivered(activityIndex, true));
+          agent.steer(message, () => {
+            if (!diagnostics.available) return;
+            try {
+              diagnostics.setSteeringDelivered(activityIndex, true);
+            } catch (error) {
+              disableDiagnostics(error);
+            }
+          });
         }
       });
       await agent.prompt(prompt);
@@ -369,6 +419,7 @@ async function projectCanonicalProviderContext(
   tools: readonly AgentTool[],
   preparedInitialPrompt: UserMessage,
   reasoningReplay: ActiveTurnReasoningReplay | null,
+  liveModelToolCalls: ReadonlyMap<string, LiveModelToolCall>,
   observer?: {
     readonly prepared?: (input: {
       readonly messages: readonly Message[];
@@ -390,7 +441,11 @@ async function projectCanonicalProviderContext(
         ],
       },
     ];
-    const projector = new CanonicalContextProjector(model, context);
+    const projector = new CanonicalContextProjector(model, context, {
+      liveToolCall: (turnId, itemId) => (
+        turnId === context.turn.id ? liveModelToolCalls.get(itemId) ?? null : null
+      ),
+    });
     const canonicalProjection = await projector.projectTurnsWithBoundaries(sourceTurns);
     const projection = reasoningReplay?.reattach(canonicalProjection, model) ?? canonicalProjection;
     const initialUser = context.turn.items.find((item) => (
@@ -616,7 +671,7 @@ async function resolveDefaultRuntime(context: PiRuntimeContext): Promise<PiRunti
     thinkingLevel,
     getApiKey: async (providerId) => {
       if (piExternalProviderId(providerId) !== provider.providerId) return undefined;
-      return provider.apiKey ?? piResolveAuthApiKey(model);
+      return provider.apiKey ?? piRequestApiKeyOverride(model);
     },
   };
 }
@@ -731,6 +786,7 @@ export class PiEventNormalizer {
         readonly callId: string;
         readonly toolName: string;
         readonly itemId: string | null;
+        readonly modelCall: ModelToolCallHistory;
         readonly startedAt: number;
       }) => void;
       readonly completed?: (execution: {
@@ -773,8 +829,14 @@ export class PiEventNormalizer {
       case 'message_end':
         if (event.message.role === 'assistant') await this.completeAssistant(event.message);
         return;
+      case 'tool_call_admission':
+        await this.startTool(
+          event.toolCallId,
+          event.decision.modelCall,
+          event.decision.displayArguments,
+        );
+        return;
       case 'tool_execution_start':
-        await this.startTool(event.toolCallId, event.toolName, event.args);
         return;
       case 'tool_execution_end':
         await this.completeTool(event.toolCallId, event.result, event.isError);
@@ -852,13 +914,24 @@ export class PiEventNormalizer {
     this.activeReasoningItem = null;
   }
 
-  private async startTool(callId: string, providerName: string, args: unknown): Promise<void> {
-    const identity = canonicalIdentity(providerName);
+  private async startTool(
+    callId: string,
+    modelCall: ModelToolCallHistory,
+    args: unknown,
+  ): Promise<void> {
+    const providerName = modelCall.providerName;
+    const identity = modelCall.identity ?? canonicalIdentity(providerName);
     const startedAt = Date.now();
-    const item = startedToolItem(this.context, callId, identity, args);
+    const item = startedToolItem(this.context, callId, identity, modelCall, args);
     const started = await this.context.recorder.started(item);
     this.toolItems.set(callId, { item: started, startedAt });
-    this.executionObserver?.started?.({ callId, toolName: providerName, itemId: started.id, startedAt });
+    this.executionObserver?.started?.({
+      callId,
+      toolName: providerName,
+      itemId: started.id,
+      modelCall,
+      startedAt,
+    });
   }
 
   private async completeTool(callId: string, result: unknown, isError: boolean): Promise<void> {
@@ -909,12 +982,14 @@ function startedToolItem(
   context: TurnExecutionContext,
   itemId: string,
   identity: { namespace: string | null; name: string },
+  modelCall: ModelToolCallHistory,
   args: unknown,
 ): ThreadItem {
   const base = {
     id: itemId,
     provenance: context.recorder.localProvenance(itemId),
     outputRef: null,
+    modelCall,
   };
   if (identity.namespace === 'collaboration' && isCollaborationToolName(identity.name)) {
     const input = isRecord(args) ? args : {};
@@ -948,7 +1023,7 @@ function startedToolItem(
       description: typeof input.description === 'string' && input.description.trim()
         ? boundedText(input.description.trim(), MAX_PERSISTED_TOOL_STRING_CHARS)
         : null,
-      cwd: boundedText(typeof input.cwd === 'string' ? input.cwd : context.thread.cwd, MAX_PERSISTED_TOOL_STRING_CHARS),
+      cwd: boundedText(context.thread.cwd, MAX_PERSISTED_TOOL_STRING_CHARS),
       processId: null,
       status: 'inProgress',
       commandActions: [],
@@ -968,7 +1043,7 @@ function startedToolItem(
       ...base,
       type: 'fileChange',
       changes: [{
-        path,
+        path: boundedText(path, MAX_PERSISTED_TOOL_STRING_CHARS),
         kind: identity.name === 'file_delete' ? 'delete' : identity.name === 'file_write' ? 'add' : 'update',
       }],
       status: 'inProgress',
@@ -979,7 +1054,9 @@ function startedToolItem(
     return {
       ...base,
       type: 'webSearch',
-      query: typeof input.query === 'string' ? input.query : '',
+      query: typeof input.query === 'string'
+        ? boundedText(input.query, MAX_PERSISTED_TOOL_STRING_CHARS)
+        : '',
       status: 'inProgress',
       results: [],
       error: null,
@@ -1107,6 +1184,7 @@ async function executionDetails(
 }> {
   let diagnosticsRef: TurnExecutionDetails['diagnosticsRef'] = null;
   const refresh = async () => {
+    if (!diagnostics.available) return null;
     try {
       diagnosticsRef = await context.persistTurnDiagnostics(diagnostics.payload());
     } catch (error) {
@@ -1211,14 +1289,17 @@ async function persistFullToolOutput(
   isError: boolean,
 ): Promise<ThreadItemOutputReference | null> {
   const output = fullToolOutput(result);
-  if (!output.text) return null;
+  const text = item.type === 'dynamicToolCall'
+    ? persistedToolResultText({ toolNamespace: item.namespace, toolName: item.tool, text: output.text })
+    : output.text;
+  if (!text) return null;
   const state = isError ? 'error' : 'output';
   const tool = toolItemLabel(item);
-  const normalized = output.text.replace(/\s+/g, ' ').trim();
+  const normalized = text.replace(/\s+/g, ' ').trim();
   const preview = normalized.length > 200 ? `${normalized.slice(0, 200).trim()}...` : normalized;
   return context.persistOutputText(
     item.id,
-    output.text,
+    text,
     output.mimeType,
     preview ? `${tool} ${state}: ${preview}` : `${tool} ${state}`,
   );
@@ -1385,11 +1466,18 @@ async function dynamicOutput(
     imageByteLimit: 0,
     callByteLimit: 0,
     quotaExceeded: 0,
+    dimensionsUnavailable: 0,
+    normalizationFailed: 0,
   };
   for (const part of result.content) {
     if (!isRecord(part) || typeof part.type !== 'string') continue;
     if (part.type === 'text' && typeof part.text === 'string' && remainingText > 0) {
-      const text = boundedText(part.text, remainingText);
+      const persisted = persistedToolResultText({
+        toolNamespace: item.namespace,
+        toolName: item.tool,
+        text: part.text,
+      });
+      const text = boundedText(persisted, remainingText);
       content.push({ type: 'text', text });
       remainingText -= text.length;
     }
@@ -1414,25 +1502,50 @@ async function dynamicOutput(
         omittedImages.invalidMimeType += 1;
         continue;
       }
-      const existingPath = toolImagePath(item.tool, result, sourceImageIndex);
-      const promptImage = await context.persistOutputImage(part.data, mimeType).catch((error: unknown) => {
-        if (isThreadResourceQuotaError(error)) return null;
+      const observationBytes = Buffer.from(part.data, 'base64');
+      const observationDimensions = readAgentImageDimensions(observationBytes, mimeType);
+      if (!observationDimensions) {
+        omittedImages.dimensionsUnavailable += 1;
+        continue;
+      }
+      const persistedArtifact = toolImageArtifact(item.namespace, item.tool, result, sourceImageIndex);
+      const canonicalObservation = persistedArtifact
+        && persistedArtifact.observation.mimeType === mimeType
+        && persistedArtifact.observation.byteLength === observationBytes.byteLength
+        && persistedArtifact.geometry.observationWidth === observationDimensions.width
+        && persistedArtifact.geometry.observationHeight === observationDimensions.height
+        ? await context.readResource(persistedArtifact.observation).catch(() => null)
+        : null;
+      if (canonicalObservation?.equals(observationBytes)) {
+        persistedImageBytes += measurement.byteLength;
+        content.push({ type: 'image', artifactRef: persistedArtifact! });
+        persistedImages += 1;
+        continue;
+      }
+      const persisted = await context.persistOutputImage(observationBytes, mimeType).catch((error: unknown) => {
+        if (error instanceof ThreadResourceQuotaError) return 'quotaExceeded' as const;
+        if (error instanceof ImageObservationNormalizationError) return 'normalizationFailed' as const;
         throw error;
       });
-      if (!promptImage) {
-        omittedImages.quotaExceeded += 1;
+      if (persisted === 'quotaExceeded' || persisted === 'normalizationFailed') {
+        omittedImages[persisted] += 1;
         continue;
       }
       persistedImageBytes += measurement.byteLength;
-      if (existingPath) {
-        content.push({
-          type: 'image',
-          source: { kind: 'localFile', path: existingPath },
-          promptImage,
-        });
-      } else {
-        content.push({ type: 'image', source: { kind: 'threadPayload', ref: promptImage } });
-      }
+      const existingPath = toolImagePath(item.namespace, item.tool, result);
+      const artifactRef = createImageArtifactReference({
+        retention: existingPath ? 'external' : 'observationOnly',
+        original: existingPath ? { kind: 'localFile', path: existingPath } : null,
+        observation: persisted.observation,
+        sourceDimensions: toolImageSourceDimensions(
+          item.namespace,
+          item.tool,
+          result,
+          persisted.sourceDimensions,
+        ),
+        observationDimensions: persisted.observationDimensions,
+      });
+      content.push({ type: 'image', artifactRef });
       persistedImages += 1;
     }
   }
@@ -1451,7 +1564,11 @@ async function dynamicOutput(
       },
     });
   }
-  const persistedDetails = persistedToolResultDetails({ toolName: item.tool, details: result.details });
+  const persistedDetails = persistedToolResultDetails({
+    toolNamespace: item.namespace,
+    toolName: item.tool,
+    details: result.details,
+  });
   if (persistedDetails !== undefined) {
     content.push({ type: 'json', value: boundedJsonValue(persistedDetails, MAX_PERSISTED_TOOL_OUTPUT_CHARS) });
   } else if (content.length === 0 && result.details !== undefined) {
@@ -1460,38 +1577,74 @@ async function dynamicOutput(
   return content;
 }
 
+function toolImagePath(
+  toolNamespace: string | null,
+  toolName: string,
+  result: Record<string, unknown>,
+): string | null {
+  const details = toolDetails(result);
+  if (!isRecord(details) || !isRecord(details.data)) return null;
+  if (toolNamespace === null && toolName === 'file_read' && isRecord(details.data.file)) {
+    if (details.data.type === 'image' && typeof details.data.file.filePath === 'string') {
+      return details.data.file.filePath;
+    }
+  }
+  return null;
+}
+
+function toolImageArtifact(
+  toolNamespace: string | null,
+  toolName: string,
+  result: Record<string, unknown>,
+  imageIndex: number,
+): ThreadImageArtifactReference | null {
+  if (toolNamespace !== null || toolName !== 'generate_image') return null;
+  const details = toolDetails(result);
+  if (!isRecord(details) || !isRecord(details.data) || !Array.isArray(details.data.images)) return null;
+  const image = details.data.images.find((candidate) => (
+    isRecord(candidate) && candidate.previewIndex === imageIndex
+  ));
+  if (!isRecord(image) || image.artifactRef === undefined) return null;
+  try {
+    return decodeThreadImageArtifactReference(image.artifactRef, 'generateImage.artifactRef');
+  } catch {
+    return null;
+  }
+}
+
+function toolImageSourceDimensions(
+  toolNamespace: string | null,
+  toolName: string,
+  result: Record<string, unknown>,
+  fallback: { readonly width: number; readonly height: number },
+): { readonly width: number; readonly height: number } {
+  if (toolNamespace !== null || toolName !== 'file_read') return fallback;
+  const details = toolDetails(result);
+  if (!isRecord(details) || !isRecord(details.data) || !isRecord(details.data.file)) return fallback;
+  const dimensions = details.data.file.sourceDimensions;
+  if (!isRecord(dimensions)) return fallback;
+  return typeof dimensions.width === 'number' && typeof dimensions.height === 'number'
+    && Number.isSafeInteger(dimensions.width) && dimensions.width > 0
+    && Number.isSafeInteger(dimensions.height) && dimensions.height > 0
+    ? { width: dimensions.width, height: dimensions.height }
+    : fallback;
+}
+
 type ImageOmissionReason =
   | 'countLimit'
   | 'invalidBase64'
   | 'invalidMimeType'
   | 'imageByteLimit'
   | 'callByteLimit'
-  | 'quotaExceeded';
+  | 'quotaExceeded'
+  | 'dimensionsUnavailable'
+  | 'normalizationFailed';
 
 function dynamicImageMimeType(value: unknown): string | null {
   if (value === undefined) return 'image/png';
   if (typeof value !== 'string') return null;
   const normalized = value.trim().toLowerCase();
   return /^image\/[a-z0-9][a-z0-9.+-]*$/u.test(normalized) ? normalized : null;
-}
-
-function isThreadResourceQuotaError(error: unknown): boolean {
-  return error instanceof Error && /\bquota\b/iu.test(error.message);
-}
-
-function toolImagePath(toolName: string, result: Record<string, unknown>, imageIndex: number): string | null {
-  const details = toolDetails(result);
-  if (!isRecord(details) || !isRecord(details.data)) return null;
-  if (toolName === 'file_read' && isRecord(details.data.file)) {
-    if (details.data.type === 'image' && typeof details.data.file.filePath === 'string') {
-      return details.data.file.filePath;
-    }
-  }
-  if (toolName === 'generate_image' && Array.isArray(details.data.images)) {
-    const image = details.data.images[imageIndex];
-    if (isRecord(image) && typeof image.path === 'string') return image.path;
-  }
-  return null;
 }
 
 function boundedJsonValue(

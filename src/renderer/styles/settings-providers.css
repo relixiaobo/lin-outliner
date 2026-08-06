@@ -39,7 +39,7 @@
 
 .settings-nav-item {
   display: flex;
-  min-height: 34px;
+  min-height: var(--settings-row-min-height);
   align-items: center;
   gap: var(--space-3);
   border-radius: var(--radius-sm);
@@ -59,8 +59,8 @@
 
 .settings-nav-icon {
   display: inline-flex;
-  width: 22px;
-  height: 22px;
+  width: var(--settings-tile-size);
+  height: var(--settings-tile-size);
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
@@ -95,8 +95,8 @@
    its appearance never reflows the nav item (B7). */
 .settings-nav-badge {
   display: inline-flex;
-  min-width: 18px;
-  height: 18px;
+  min-width: var(--settings-badge-size);
+  height: var(--settings-badge-size);
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
@@ -129,9 +129,25 @@
      padding: padding scrolls away and lets dense rows pass under the history
      capsule/title. This structural exclusion keeps the opaque content layer from
      bleeding through the chrome controls. */
-  margin-top: calc(var(--chrome-height) + var(--space-lg));
+  /* `--chrome-height` is measured from the WINDOW's top edge, but this margin
+     applies inside `.settings-window`'s padding, so adding the two counted that
+     padding twice and pushed the first card 32px below the toolbar where the
+     ladder rung is 24px. Subtracting the inset puts the gap where it was meant
+     to be. */
+  margin-top: calc(var(--chrome-height) - var(--layout-gap) + var(--space-lg));
   padding-bottom: var(--space-6);
   overflow-y: auto;
+  /* The scrollport reaches into the window's right padding and puts that inset
+     back as its own, so the overlay scrollbar has a lane of its own. Without it
+     the scrollport ended where the cards did, and macOS draws overlay scrollbars
+     ON TOP of content — invisible while the window was wider than
+     --settings-content-max-width and the cards were capped short of the edge,
+     but at the default 760px width the cards fill the scrollport and the
+     scrollbar sat across their right edge.
+     `scrollbar-gutter` cannot solve this: it reserves nothing for overlay
+     scrollbars, which is exactly the kind this surface gets. */
+  margin-right: calc(-1 * var(--layout-gap));
+  padding-right: max(var(--layout-gap), var(--scrollbar-lane));
   scrollbar-gutter: stable;
 }
 
@@ -153,8 +169,8 @@
 .settings-provider-add-leading {
   display: inline-flex;
   flex: 0 0 auto;
-  width: 22px;
-  height: 22px;
+  width: var(--settings-tile-size);
+  height: var(--settings-tile-size);
   align-items: center;
   justify-content: center;
   color: var(--text-tertiary);
@@ -176,10 +192,6 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-}
-
-.settings-image-model-select {
-  max-width: min(360px, 48vw);
 }
 
 /* Holds the Configured / Add Providers InsetGroups (SettingsInsetList). The rows are
@@ -208,8 +220,8 @@
 .settings-provider-avatar {
   display: flex;
   flex: 0 0 auto;
-  width: 22px;
-  height: 22px;
+  width: var(--settings-tile-size);
+  height: var(--settings-tile-size);
   align-items: center;
   justify-content: center;
   border-radius: var(--radius-sm);
@@ -220,8 +232,8 @@
 }
 
 .settings-provider-avatar.is-large {
-  width: 38px;
-  height: 38px;
+  width: var(--settings-tile-size-lg);
+  height: var(--settings-tile-size-lg);
   border-radius: var(--radius-md);
   font-size: var(--font-ui-md);
 }
@@ -231,8 +243,8 @@
    own fills and ignore it. */
 .settings-provider-logo {
   display: inline-flex;
-  width: 16px;
-  height: 16px;
+  width: var(--icon-size-md);
+  height: var(--icon-size-md);
   color: var(--text-strong);
 }
 
@@ -243,8 +255,8 @@
 }
 
 .settings-provider-avatar.is-large .settings-provider-logo {
-  width: 24px;
-  height: 24px;
+  width: var(--space-lg);
+  height: var(--space-lg);
 }
 
 .agent-settings-doc-link {
@@ -275,8 +287,8 @@
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  width: var(--chrome-control-height);
+  height: var(--chrome-control-height);
   border: 0;
   border-radius: var(--radius-pill);
   background: transparent;
@@ -313,7 +325,7 @@
 .settings-row-menu-item {
   display: flex;
   width: 100%;
-  min-height: 30px;
+  min-height: var(--settings-menu-item-height);
   align-items: center;
   border-radius: var(--radius-sm);
   color: var(--text-soft);

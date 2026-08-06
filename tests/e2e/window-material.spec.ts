@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { emulateVisualMedia } from './emulatedMedia';
 import { openMockedApp } from './outlinerMock';
 
 // The renderer makes its floating rails translucent only when the main process
@@ -20,41 +21,64 @@ test.describe('window material surfaces', () => {
     return parts.length >= 4 ? Number(parts[3]) : 1;
   };
 
-  test('rails turn translucent only with a material; wrappers and panels stay opaque', async ({ page }) => {
-    await openMockedApp(page);
-
-    const read = () => page.evaluate(() => {
-      const bg = (selector: string) => {
-        const element = document.querySelector(selector);
-        if (!(element instanceof HTMLElement)) throw new Error(`missing ${selector}`);
-        return getComputedStyle(element).backgroundColor;
-      };
+  const read = (page: import('@playwright/test').Page) => page.evaluate(() => {
+    const styles = (selector: string) => {
+      const element = document.querySelector(selector);
+      if (!(element instanceof HTMLElement)) throw new Error(`missing ${selector}`);
+      const computed = getComputedStyle(element);
       return {
-        appShell: bg('.app-shell'),
-        sidebar: bg('.sidebar-dock'),
-        panel: bg('.main-panel'),
+        background: computed.backgroundColor,
+        backdropFilter: computed.backdropFilter,
       };
-    });
+    };
+    return {
+      appShell: styles('.app-shell'),
+      sidebar: styles('.sidebar-dock'),
+      panel: styles('.main-panel'),
+      reducedTransparency: matchMedia('(prefers-reduced-transparency: reduce)').matches,
+    };
+  });
+
+  const reportMaterial = (page: import('@playwright/test').Page) => page.evaluate(() => {
+    document.documentElement.dataset.windowMaterial = 'vibrancy';
+  });
+
+  test('rails turn translucent only with a material when transparency is allowed', async ({ page }) => {
+    await emulateVisualMedia(page, { colorScheme: 'light', reducedTransparency: 'no-preference' });
+    await openMockedApp(page);
 
     // No material reported (the default in the browser/dev preview): every surface
     // is fully opaque, exactly as before this feature.
-    const opaque = await read();
-    expect(alphaOf(opaque.appShell)).toBe(1);
-    expect(alphaOf(opaque.sidebar)).toBe(1);
-    expect(alphaOf(opaque.panel)).toBe(1);
+    const opaque = await read(page);
+    expect(opaque.reducedTransparency).toBe(false);
+    expect(alphaOf(opaque.appShell.background)).toBe(1);
+    expect(alphaOf(opaque.sidebar.background)).toBe(1);
+    expect(alphaOf(opaque.panel.background)).toBe(1);
 
     // Simulate the main process having applied vibrancy.
-    await page.evaluate(() => {
-      document.documentElement.dataset.windowMaterial = 'vibrancy';
-    });
+    await reportMaterial(page);
 
-    const frosted = await read();
+    const frosted = await read(page);
     // The floating rail carries the frost, so it becomes translucent.
-    expect(alphaOf(frosted.sidebar)).toBeLessThan(1);
+    expect(alphaOf(frosted.sidebar.background)).toBeLessThan(1);
+    expect(frosted.sidebar.backdropFilter).not.toBe('none');
     // The app-shell wrapper is neutralised to an opaque base so the rail's
     // translucency never stacks into a near-opaque double layer.
-    expect(alphaOf(frosted.appShell)).toBe(1);
+    expect(alphaOf(frosted.appShell.background)).toBe(1);
     // Content panels stay opaque for readability.
-    expect(alphaOf(frosted.panel)).toBe(1);
+    expect(alphaOf(frosted.panel.background)).toBe(1);
+  });
+
+  test('rails use the opaque fallback when reduced transparency is requested', async ({ page }) => {
+    await emulateVisualMedia(page, { colorScheme: 'light', reducedTransparency: 'reduce' });
+    await openMockedApp(page);
+    await reportMaterial(page);
+
+    const reduced = await read(page);
+    expect(reduced.reducedTransparency).toBe(true);
+    expect(alphaOf(reduced.sidebar.background)).toBe(1);
+    expect(reduced.sidebar.backdropFilter).toBe('none');
+    expect(alphaOf(reduced.appShell.background)).toBe(1);
+    expect(alphaOf(reduced.panel.background)).toBe(1);
   });
 });

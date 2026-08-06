@@ -73,6 +73,10 @@ describe('FilePreviewPanel EPUB translation chrome', () => {
     const toggle = rendered.document.querySelector<HTMLButtonElement>('.file-preview-translation-toggle');
     expect(toggle?.getAttribute('aria-label')).toBe('Translation settings: Translation off');
     expect(rendered.document.querySelector('.file-preview-reader-title')?.textContent).toContain('book.epub');
+    const trailingActions = rendered.document.querySelector('.panel-breadcrumb-actions');
+    expect(trailingActions?.querySelectorAll('.file-preview-reader-actions')).toHaveLength(2);
+    expect(trailingActions?.contains(toggle ?? null)).toBe(true);
+    expect(rendered.document.querySelector('.pane-drag-handle')?.contains(toggle ?? null)).toBe(false);
     expect(rendered.invokedCommands).not.toContain('url_page_translate_blocks');
 
     await act(async () => {
@@ -340,6 +344,11 @@ function renderEpubPanel(
           onRoot={() => undefined}
           onTogglePin={() => undefined}
           panelId="panel-epub"
+          panelDragHandle={{
+            onDragEnd: () => undefined,
+            onDragStart: () => undefined,
+            title: 'Drag to reorder panes',
+          }}
           presentation="reader"
           run={async () => null}
           setDragId={() => undefined}

@@ -9,7 +9,7 @@ import { useMenuKeyboard } from '../../ui/primitives/useMenuKeyboard';
 
 interface ThreadListProps {
   readonly anchorRef: RefObject<HTMLElement | null>;
-  /** Roots whose subtree has a live descendant Turn. */
+  /** Roots with live work outside the currently selected root surface. */
   readonly backgroundWorkThreadIds: ReadonlySet<string>;
   readonly threads: readonly Thread[];
   readonly selectedThreadId: ThreadId | null;

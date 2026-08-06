@@ -731,9 +731,29 @@ describe('agent local tools', () => {
       const tool = createLocalTools({ localRoot: workspaceRoot }).find((candidate) => candidate.name === 'file_read')!;
       const result = await (tool.execute as any)('test-call', { file_path: filePath });
       const visible = JSON.parse(result.content[0].text);
-      expect(visible.data.file.dimensions).toEqual({ width: 7, height: 11 });
+      expect(visible.data.file.observationDimensions).toEqual({ width: 7, height: 11 });
+      expect(visible.data.file.sourceDimensions).toEqual({ width: 7, height: 11 });
+      expect(visible.data.file.sourcePixelsPerObservationPixel).toEqual({ x: 1, y: 1 });
+      expect(visible.data.file.observationToSource).toEqual([1, 0, 0, 1, 0, 0]);
       expect(visible.data.file.base64).toBeUndefined();
       expect(result.content.some((block: { type: string }) => block.type === 'image')).toBe(true);
+    });
+  });
+
+  test('file_read detects a materialized image from bytes when its stable path has no extension', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const filePath = path.join(workspaceRoot, 'image-artifact');
+      await writeFile(filePath, makePng(9, 13));
+
+      const read = await executeTool<{
+        type: 'image';
+        file: { dimensions: { width: number; height: number }; type: string };
+      }>(workspaceRoot, 'file_read', { file_path: filePath });
+
+      expect(read.ok).toBe(true);
+      expect(read.data!.type).toBe('image');
+      expect(read.data!.file.type).toBe('image/png');
+      expect(read.data!.file.dimensions).toEqual({ width: 9, height: 13 });
     });
   });
 
@@ -1690,8 +1710,6 @@ describe('agent local tools', () => {
 
       const skill = await skillRuntime.getSkill('guarded-skill');
       expect(skill?.modelInvocable).toBe(true);
-      expect(skill?.ratified).toBe(true);
-      expect(skill?.accepted).toBe(false);
 
       expect(acknowledgePendingCatalogRefresh(skillRuntime)).toBe(true);
       expect((await skillRuntime.buildSkillCatalogSnapshot()).entries.some((entry) => (
@@ -1701,7 +1719,6 @@ describe('agent local tools', () => {
       // Model-triggered invocation and slash invocation both work without a trust prompt.
       const agentInvocation = await skillRuntime.invokeSkill({ skill: 'guarded-skill', trigger: 'agent' });
       expect(agentInvocation.ok).toBe(true);
-      expect((await skillRuntime.getSkill('guarded-skill'))?.accepted).toBe(false);
       const slashInvocation = await skillRuntime.invokeSkill({ skill: 'guarded-skill', trigger: 'slash' });
       expect(slashInvocation.ok).toBe(true);
 
@@ -1715,10 +1732,7 @@ describe('agent local tools', () => {
       ].join('\n'), 'utf8');
       await skillRuntime.notifySkillContentWritten([skillFile]);
       const handEdited = await skillRuntime.getSkill('guarded-skill');
-      expect(handEdited?.ratified).toBe(true);
-      expect(handEdited?.accepted).toBe(false);
       expect((await skillRuntime.invokeSkill({ skill: 'guarded-skill', trigger: 'agent' })).ok).toBe(true);
-      expect((await skillRuntime.getSkill('guarded-skill'))?.accepted).toBe(false);
     });
   });
 
@@ -1748,14 +1762,12 @@ describe('agent local tools', () => {
       });
       expect((result.details as ToolEnvelope<unknown>).ok).toBe(true);
       const edited = await skillRuntime.getSkill('undoable-skill');
-      expect(edited?.ratified).toBe(true);
       expect(edited?.canUndoLastAgentEdit).toBe(true);
 
       // Undo restores the user's bytes and consumes the one-shot previous-version slot.
       await skillRuntime.undoLastAgentSkillEdit('undoable-skill');
       const restored = await skillRuntime.getSkill('undoable-skill');
       expect(restored?.body).toContain('hand-tuned instructions');
-      expect(restored?.ratified).toBe(true);
       expect(restored?.canUndoLastAgentEdit).toBe(false);
     });
   });
@@ -1818,10 +1830,6 @@ describe('agent local tools', () => {
       ].join('\r\n')}`;
       await mkdir(path.dirname(skillFile), { recursive: true });
       await writeFile(skillFile, initialContent, 'utf8');
-      const initialSkill = await skillRuntime.getSkill('crlf-skill');
-      expect(initialSkill?.ratified).toBe(true);
-      await skillRuntime.acceptSkill('crlf-skill', initialSkill?.contentHash ?? '');
-      expect((await skillRuntime.getSkill('crlf-skill'))?.ratified).toBe(true);
 
       // An agent patch preserves model usability even though writeTextFile restores
       // CRLF/BOM on disk; the canonical hash still tracks exact content identity.
@@ -1835,10 +1843,8 @@ describe('agent local tools', () => {
 
       const patched = await skillRuntime.getSkill('crlf-skill');
       expect(patched?.body).toContain('agent-patched');
-      expect(patched?.ratified).toBe(true);
       const agentInvocation = await skillRuntime.invokeSkill({ skill: 'crlf-skill', trigger: 'agent' });
       expect(agentInvocation.ok).toBe(true);
-      expect((await skillRuntime.getSkill('crlf-skill'))?.ratified).toBe(true);
     });
   });
 

@@ -72,6 +72,46 @@ not install that projection port or overflow recovery; they send a top-level
 snapshot of their raw in-memory transcript, which already preserves
 same-execution provider parts without canonical re-projection.
 
+Tool history is projected only from each Item's `modelCall` envelope. Admission freezes
+the canonical identity, exact provider-visible name, arguments, and schema digest.
+Projection loads that frozen inline or Thread-owned value and preflights its complete
+argument/result dependencies before emitting the call/result pair. It never resolves
+the call through the current registry or validates it against a later schema; tool
+retirement, provider-name changes, and schema evolution cannot retroactively erase an
+exchange. The digest remains immutable audit evidence. Corrupt or missing argument or
+output payloads and missing image snapshots degrade the entire pair to bounded typed
+evidence on this runtime user path; they never throw the Turn, emit an orphan result, or
+derive replacement arguments from presentation fields. Evidence bounds its argument and
+outcome fields independently, so call identity, reason, and correction always survive.
+If a frozen output projection is unavailable, evidence explicitly marks that result
+unavailable and never substitutes mutable Item output text. An unreadable duplicate does
+not poison a later valid projection for the same output; the later valid payload heals
+that transient state. Two readable projections with conflicting content remain
+unavailable for the whole projection and cannot be healed by a third duplicate.
+
+Redacted replay compatibility is decided against the admission schema. A compatible
+copy freezes `redactedReplay` and later emits one indivisible marker/call/result unit;
+the marker states that placeholders were not executed values and must not be copied or
+retried. An incompatible redacted copy freezes executed `evidenceOnly`: the validated
+source call still executes, but later history emits only typed evidence with the visible
+outcome. Other rejected `evidenceOnly` calls never execute and project correction
+evidence without a tool call or result. Replayable calls from one provider assistant
+batch remain in one assistant message, their results follow in call order, and any typed
+evidence from rejected members is appended after that complete batch. Projection never
+splits the assistant message around evidence, so the batch's unmodified signed-thinking
+blocks are attached exactly once.
+
+The active Turn alone keeps a transient raw-call overlay for admitted executable calls,
+so an immediate follow-up provider request observes the exact value that executed. The
+overlay is never persisted and is unavailable to later Turns, restart, fork, or
+compaction. Once cancellation is observed, sequential and parallel batch loops stop
+before admitting any remaining call; no Item or argument payload is created for those
+unadmitted calls, while already admitted calls settle as interrupted results.
+Fork and child inheritance copy payload-backed tool arguments when available. A missing
+argument payload is recoverable inspection data rather than a hard dependency: the
+canonical reference survives, and later provider projection emits
+`argumentPayloadUnavailable` evidence instead of failing the user operation.
+
 Direct slash and natural-language inline Skill routing run during the same admission
 boundary. Inline Skills are side-effect-free by contract; shell expansion and all
 execution overrides require isolated execution through the canonical `skill` tool.
@@ -169,7 +209,7 @@ their provider projection contains only mode, meaningful delta state, names, dis
 display names, descriptions, and usage guidance. Skill invocation similarly omits storage
 identity, content hash, resource root, and admission timestamps from model-visible prose.
 Literal user-authored `<system-reminder>` or `<context-evidence>` text is never parsed or
-upgraded, and there is no legacy reader or compatibility fallback. The active provider
+upgraded, and there is no compatibility parser for those wrappers. The active provider
 supplies message metadata. No hidden provider transcript is stored or used as a history
 authority.
 
@@ -189,17 +229,22 @@ projects as `[[node:<label>^<node-id>]]` at its original position. The serialize
 those markers with the surrounding text into one user narrative, preserving whitespace
 and position. It then appends one independent attachment block per file in attachment
 order: name, MIME type, source byte length, readable path, file/directory tool guidance,
-and any bounded extracted text. An image attachment block is followed by its immutable
-prompt snapshot bytes. The inline marker and the independent resource block are both
+and any bounded extracted text. An image attachment block reports its stable artifact
+id, source and observation dimensions, both scale factors, and the full
+observation-to-source matrix, then includes only its immutable observation bytes. The
+inline marker and the independent resource block are both
 required: the marker preserves what the user wrote and where, while the resource block
 describes what the model can inspect. Multiple files, Nodes, and images therefore retain
 one model-visible identity grammar and exact user order without parsing markers back
-into canonical state. Resolved canonical input
-requires every image to carry
-a Thread-owned image `promptImage` and forbids `promptImage` on non-images. Admission
-rejects an invalid shape before publishing the user Item, and projection fails closed if
-corrupt canonical history violates the same invariant; an image never degrades to a
-mutable file-path fallback.
+into canonical state. Resolved canonical input requires every image to carry an
+immutable `artifactRef`, requires its artifact original to match the attachment source,
+and forbids an artifact on non-images. Admission rejects an invalid shape before
+publishing the user Item. If corrupt canonical history violates the invariant or an
+admitted observation later becomes unavailable, projection emits an explicit textual
+marker and continues; it never falls back to mutable original-path bytes. Failure to
+materialize a readable artifact path is weaker than rendition loss: projection records
+the error, labels only the path as unavailable, and still includes retained observation
+bytes.
 
 Attachment sources are reference-only. `localFile` records a canonical live
 path; `threadPayload` records a lowercase SHA-256 digest, MIME type, byte length,
@@ -266,10 +311,21 @@ the atomic `turn/started` event. Subagent activity already queued while the Thre
 idle is admitted before that evidence and the trailing user message, so it remains prior
 assistant history without breaking the active user boundary. Later steering evidence and
 input use `items/completed`. Neither path synthesizes a streaming lifecycle.
-The recorder validates local provenance and rejects completion before start. Tool arguments and visible results use bounded
+The recorder validates local provenance and rejects completion before start. A raw
+provider call first resolves canonical identity, runs model-argument preparation, and
+passes the exposed schema. The kernel then persists one admission decision and emits
+`tool_call_admission`; only admitted calls may emit `tool_execution_start` and reach
+capability evaluation or execution. Unknown tools, malformed or provider-truncated
+arguments, and argument-persistence failure complete a failed Item from `evidenceOnly`
+without a capability decision. Presentation arguments and visible results use bounded
 projections with explicit truncation metadata. Tool-result details pass through
 the shared persistence slimmer before entering an Item. Dynamic image result
 lists also have a fixed maximum length.
+Before admission, the kernel preserves the first non-empty provider call ID that is
+unused in provider-visible history and the current run. An empty ID or any same-batch
+or later collision is remapped to a fresh Turn-local UUIDv7. Admission, execution,
+mutation causation, Item identity, result pairing, and subsequent history use only that
+canonical ID; the original provider ID is transient stream-correlation data.
 
 Every textual tool completion also writes its complete normalized result to the
 Thread-owned content-addressed payload store. The Item keeps only a bounded
@@ -295,30 +351,41 @@ inheritance use the same bytes while the complete `outputRef` remains available 
 inspection and checkpoint dependencies.
 
 Binary image output never enters rollout JSON, SQLite projection, or IPC as a
-data URL. Existing readable outputs such as `file_read` and generated-image files
-retain a typed `localFile` source for UI/file operations plus a Thread-owned
-`promptImage` snapshot of the exact bytes exposed to the provider. Other provider
-images use their content-addressed `threadPayload` source as that snapshot.
+data URL. Every accepted dynamic-tool image stores one immutable `artifactRef`; the
+artifact's Thread-owned observation is the exact bounded image exposed to the provider,
+while its optional original remains available to file-oriented consumers. The adjacent
+provider text identifies the artifact and reports source size, observation size, both
+scale factors, and the observation-to-source affine matrix. This gives the model enough
+information to relate the bounded observation to the admitted source-image pixel plane.
+The runtime does not inspect, validate, convert, or rewrite later tool arguments.
 Event admission, the payload store, and the canonical Item codec independently
 require an image MIME type; invalid MIME metadata produces a structured omission
 instead of a provider image block.
 Base64 length is validated before decoding, with independent per-image and
 per-tool-call byte budgets. Invalid, oversized, over-count, over-total, and Thread-quota
 images produce one structured omission summary instead of failing the complete tool
-result. Binary `data` fields are replaced before full textual output persistence, so
-neither small nor large base64 images leak into text payloads. Forking copies managed
-sources and local-image prompt snapshots under the target Thread while preserving the
-same references; external readable file paths remain unchanged. A
-Thread-scoped preview resolves managed images to disposable scratch copies rather than
-exposing canonical resource paths. Deleting a Thread deletes only that Thread's payload
-directory.
+result. Images within the generic source budgets pass through the common 2,000 px /
+4.5 MiB normalizer before persistence. Binary `data` fields are replaced before full
+textual output persistence, so neither small nor large base64 images leak into text
+payloads. Forking copies each available managed rendition under the target Thread while
+preserving the same artifact reference; a missing image rendition is skipped rather
+than aborting the fork. This exception is based on actual artifact use, not MIME type;
+an ordinary referenced `image/*` resource remains required. Inherited-context scans are
+recursive, so the same distinction governs child copying and pressure retention. A
+Thread-scoped preview resolves the best available rendition to
+a stable disposable scratch materialization rather than exposing canonical resource
+paths. Deleting a Thread deletes only that Thread's payload directory and materialized
+copies; it never touches an external original.
 
 ## Tools And Causation
 
-`ToolRuntime` filters tools through the effective Thread configuration, Core
-scope, explicit capability blocks, and canonical registry identity. It emits the
-started Item before execution and always emits a terminal Item, including native
-unavailable or thrown results.
+`ToolRuntime` exposes tools through the effective Thread configuration, Core scope,
+and canonical registry identity. The kernel freezes a schema-valid canonical call
+before `ToolRuntime` evaluates argument-dependent capability blocks. A valid blocked
+call therefore retains its call/result pair and structured `operation_unavailable`
+audit; an invalid call never reaches capability evaluation. Admission starts the
+canonical Item, and every admission receives a terminal Item, including rejection,
+native unavailable, cancellation, or a thrown result.
 
 The current Item identity is bound through asynchronous execution context.
 Outliner transactions and bulk imports therefore receive exact
@@ -372,6 +439,12 @@ Item still `inProgress` is completed as `interrupted`; unexpected executor
 failure completes it as `failed`. The terminal Turn records the corresponding
 status and error.
 
+If cancellation arrives after a schema-valid call is prepared, the runtime preserves
+its admitted envelope and records an explicit aborted outcome while skipping the tool
+side effect. Cancellation is never relabeled as `invalidArguments`. Every raw call in
+the returned assistant batch still receives an admission decision, so the live
+no-projection kernel path cannot retain an unsanitized trailing tool call.
+
 ## Context Planning And Compaction
 
 Every provider boundary, including post-tool requests and steering, runs one global
@@ -379,7 +452,9 @@ budget plan over the stable prompt, canonical tool schemas, reduced history, cur
 evidence, images, and the active Turn. The input limit reserves provider framing plus up
 to one quarter of the model context window for output, capped by the model output limit.
 The active Turn is mandatory. Assistant tool calls and their complete result set form one
-indivisible unit; an orphan, duplicate, or incomplete exchange fails closed. If the
+indivisible unit; a `redactedReplay` marker/call/result triple is one distinct
+indivisible unit. An orphan, duplicate, incomplete exchange, or marker separated from
+its redacted call fails closed. If the
 stable prompt, tools, and active Turn alone cannot fit, the Turn fails with an explicit
 capacity error rather than dropping the current request.
 
@@ -420,13 +495,22 @@ catalogs, active Skill instructions, the latest view baseline, and active observ
 compacting that result again preserves the same state until later canonical Items change
 or invalidate it. Every nested context/output dependency is validated before the new
 checkpoint is admitted.
+If a previously admitted inspection payload later becomes unavailable or disagrees with
+its checkpoint, reduction records a typed degradation entry and clears or skips only the
+affected catalog, baseline, or observation. Projection renders the deduplicated marker;
+compaction, fork, and delegation remain usable. Strict dependency rejection remains at
+payload publication and Thread decode, not on the provider-request path.
 
 A successful non-preview `node_create`, `node_edit`, or `node_delete` invalidates all
 active Node observations because one bounded `node_read` can project descendants,
 references, and definition-dependent content that cannot be reconstructed from mutation
 arguments alone. Successful `outline_undo_stack` undo/redo has the same effect; list,
 preview, failed, and interrupted calls do not. File observations remain path-keyed and
-invalidate only after a completed mutation of that path.
+invalidate after a completed mutation of that path. The reducer resolves canonical
+arguments once per Item. A structured `evidenceOnly` summary may identify a conservative
+invalidation target, but it never creates a new observation. When a successful Node or
+file mutation's argument payload is unavailable, the reducer clears every observation
+in that domain rather than checkpointing a snapshot that may already be stale.
 
 `/clear` records a `contextReset` in a completed feature Turn without invoking the
 provider. Projection starts after the latest reset, clears the user-view diff baseline,
@@ -454,6 +538,50 @@ and model-error taxonomy under `src/main/agent/runtime/kernel/`.
 `@earendil-works/pi-ai` is transport-only behind `ModelGateway`; provider
 failures cross that port as complete terminal assistant messages, while
 `ModelError` is only a derived classification used for policy decisions.
+Tenon consumes `pi-ai` directly and does not use `pi-agent-core`: the native
+kernel remains the sole owner of Turns, tools, projection, retries, and durable
+history.
+
+`piModels` owns one provider collection. Authentication capability comes from
+each provider's `auth` definition rather than a parallel OAuth registry. OAuth
+sign-in and sign-out run through `Models.login()` / `Models.logout()`; main maps
+the provider-neutral `AuthInteraction` to the renderer event union while keeping
+credentials in main. Flow cancellation aborts the whole interaction, and a
+provider may independently abort one prompt when a callback race completes.
+After a successful login, main creates the provider connection row and refreshes
+that provider's dynamic catalog before returning settings. OAuth providers that
+also accept a normal pasted API key expose that fallback; GitHub Copilot does
+not, because its alternate token is an ambient integration credential rather
+than a key-entry workflow. Request dispatch leaves stored OAuth credentials with
+`Models.applyAuth()` so provider-derived headers and per-credential endpoints are
+preserved; explicit `apiKey` overrides are reserved for an unsaved form key and
+the model-specific CC Switch boundary.
+
+The injected credential store persists one type-tagged credential per provider
+in `agent-secrets.json`. Its serialized `modify()` operation is the only write
+path, so concurrent OAuth resolutions share one rotated token; `list()` returns
+only provider IDs and credential types. A separate `agent-model-catalogs.json`
+store persists validated dynamic text catalogs. Startup restores these catalogs
+without network access before Thread and Automation initialization; settings and
+runtime-config reads await the same memoized restore as a defensive boundary.
+Saving a pasted key and login best-effort fetch and persist only the target
+provider's current catalog; a catalog warm failure does not turn a successful
+credential write into a failed save. The explicit provider refresh command still
+reports failures. Connection validation uses an isolated provider collection and
+in-memory catalog store, so testing an unsaved key cannot mutate live model
+choices or durable state. Refreshability is provider-level metadata even while
+the model list is empty; capability rows list only models that actually exist.
+
+Provider auth resolution is provider-scoped. Custom OpenAI-compatible local and
+remote endpoints use separate internal provider identities, so registering a
+localhost validation probe cannot leave a later remote request on the inert
+`local-endpoint` sentinel. CC Switch remains the model-specific exception at the
+application boundary: main resolves the selected registry model's source key
+immediately before dispatch and supplies it as an explicit request override;
+without that override its pi provider reports unconfigured. Neither the pi
+provider resolver nor renderer receives the registry key. Provider-specific
+endpoint materialization, including Cloudflare account and Gateway placeholders,
+occurs inside provider dispatch after auth environment values have resolved.
 
 Retryable provider request/stream failures use bounded Codex-style backoff. Responses
 request retries include rate limits, server failures, and classified transport failures.
@@ -476,6 +604,12 @@ new affinity. Ordinary Turns, steering, restart, compaction, and changes to the 
 tree's grouping `sessionId` retain it. Tools are sorted by exact canonical name before
 Agent construction, so equivalent registries serialize identically regardless of
 assembly order.
+Diagnostic redaction never participates in provider serialization, cache-control
+selection, request fingerprints, or affinity. Exact admitted arguments remain in the
+same-Turn transient overlay, so ordinary requests and immediate tool-loop prefixes are
+unchanged. On a later Turn, a recognized credential is represented only by its durable
+placeholder; the provider prefix after that historical call can miss once, which is the
+necessary cost of not persisting the credential.
 
 Anthropic Messages requests use at most four cache-control breakpoints. The stable
 prompt's structured blocks split it into protected L0 firmware and the remaining stable
@@ -518,6 +652,23 @@ settings. Configured-base-URL diagnostics remove URL userinfo, query, and fragme
 before persistence. These audit facts explain how the call was prepared; they are not a
 renderer-reconstructed request or another context authority.
 
+Each tool execution diagnostic records its admission disposition, canonical identity,
+and schema digest when one exists. Assistant responses and tool observations pass the
+same Secretlint-backed, high-confidence redaction policy before diagnostics persistence;
+structured fields require both a credential name and a credential-candidate string, while
+ambiguous values and scanner failures pass unchanged. Raw recognized credentials and host
+credentials are not diagnostic history.
+Canonical-message snapshots and post-adapter request fragments are redacted only in the
+diagnostic copy immediately before persistence. Serialized function-call arguments are
+scanned only at their outer adapter boundary and nested JSON strings are left intact.
+Each provider copy has a 64,000-character scan budget; text beyond it is replaced only in
+diagnostics, scanner work yields cooperatively, and an unexpected whole-copy failure
+stores a typed omission marker. The live provider request and the raw normalized value
+used for its fingerprint remain unchanged.
+If diagnostic preparation or provenance alignment itself fails, the collector is
+disabled for that Turn and `diagnosticsRef` remains null; provider transport, event
+normalization, and the Turn continue.
+
 The post-adapter provider payload is observed after compatibility, reasoning-summary,
 and cache-breakpoint policy and immediately before provider transport. Diagnostics
 retain the complete image-sanitized request as an ordered, reconstructable representation,
@@ -555,6 +706,9 @@ provides no transport facts.
 
 An assistant `message_end` closes the latest open Provider Call with its provider-neutral
 normalized assistant message, real usage, stop reason, error details, and receive time.
+A `pending` stop reason is streaming-only; if one appears on an impossible
+`message_end`, diagnostics skips it rather than widening the durable terminal
+response union or failing the Turn.
 A failed or retried call may legitimately have no response. The collector also appends one
 typed ordered activity stream. Initial and steering admission, every Model Call, parallel
 tool-execution batches, request/stream retries, and automatic-preflight/provider-overflow

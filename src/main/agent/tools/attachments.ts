@@ -6,6 +6,7 @@ import {
 } from '../../../core/agentAttachmentLimits';
 import type {
   ThreadAttachmentContent,
+  ThreadImageArtifactReference,
   ThreadResourceReference,
   ThreadUserContent,
 } from '../../../core/agent/protocol';
@@ -18,13 +19,13 @@ export interface AttachmentResolverOptions {
     ref: ThreadResourceReference,
     use: (path: string) => Promise<T>,
   ) => Promise<T | null>;
-  readonly prepareImageSnapshot: (input: {
+  readonly prepareImageArtifact: (input: {
     readonly threadId: string;
     readonly attachment: ThreadAttachmentContent;
     readonly sourcePath: string;
   }) => Promise<{
-    readonly ref: ThreadResourceReference;
-    readonly created: boolean;
+    readonly artifactRef: ThreadImageArtifactReference;
+    readonly createdResources: readonly ThreadResourceReference[];
   }>;
 }
 
@@ -88,25 +89,30 @@ export class AttachmentResolver {
       source,
     };
     if (!normalized.mimeType.startsWith('image/')) return normalized;
-    if (normalized.promptImage) {
-      await this.validatePromptImage(context.threadId, normalized.promptImage);
+    if (normalized.artifactRef) {
+      await this.validateImageArtifact(context.threadId, normalized);
       return normalized;
     }
-    const promptImage = await this.options.prepareImageSnapshot({
+    const prepared = await this.options.prepareImageArtifact({
       threadId: context.threadId,
       attachment: normalized,
       sourcePath,
     });
-    if (promptImage.created) context.recordCreatedResource(promptImage.ref);
+    for (const ref of prepared.createdResources) context.recordCreatedResource(ref);
     return {
       ...normalized,
-      promptImage: promptImage.ref,
+      artifactRef: prepared.artifactRef,
     };
   }
 
-  private async validatePromptImage(threadId: string, ref: ThreadResourceReference): Promise<void> {
+  private async validateImageArtifact(threadId: string, attachment: ThreadAttachmentContent): Promise<void> {
+    const artifact = attachment.artifactRef!;
+    const ref = artifact.observation;
     if (!ref.mimeType.startsWith('image/') || ref.byteLength > MAX_PROMPT_IMAGE_BYTES) {
-      throw new Error('Attachment prompt image exceeds the model-input image budget.');
+      throw new Error('Attachment observation exceeds the model-input image budget.');
+    }
+    if (JSON.stringify(artifact.original) !== JSON.stringify(attachment.source)) {
+      throw new Error('Attachment source does not match its image artifact original.');
     }
     const available = await this.options.useResourcePath(threadId, ref, async () => true);
     if (!available) throw new Error(`Managed attachment payload is unavailable or corrupt: ${ref.id}`);

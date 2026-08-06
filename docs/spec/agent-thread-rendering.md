@@ -20,10 +20,13 @@ displace a root between pages — and the list renders no lineage indent. A chil
 is reached from the parent transcript, from the parent's Thread Details, or by
 direct id; the renderer's Thread map is a catalog rather than the list, so a
 child recovered that way keeps its identity and live status, and a reload's
-omission of children proves nothing about them. A root whose subtree has a live
-descendant Turn shows a neutral background-activity indicator on its list row,
-which is also the only place a fire-and-forget child is visible after its
-parent Turn ended.
+omission of children proves nothing about them. A root shows a neutral
+background-activity indicator on its list row when it is not selected and its
+own Turn is actively running, or whenever its subtree has an actively running
+descendant Turn. A Thread flagged `waitingOnUserInput` is blocked rather than
+running and does not receive that indicator. The selected root's own foreground
+Turn does not duplicate its status in the list. This is also the only place a
+fire-and-forget child is visible after its parent Turn ended.
 
 A selected child Thread gains a back affordance naming its parent, ahead of the
 list affordance rather than in place of it: the Thread list is the only route to
@@ -73,8 +76,25 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
 - consecutive command, file, MCP, dynamic-tool, collaboration, and search Items
   form one counted activity disclosure without creating another data model
 - each tool row derives a readable summary from its canonical fields and exposes
-  status plus direct argument/result data; structured arguments and results render
-  as their JSON rather than a second presentation model, while command output,
+  status plus direct argument/result data. Its readable act may use type-specific
+  presentation fields, but the Arguments detail and copy source only the Item's
+  `modelCall` envelope: exact inline arguments, marked redacted arguments, a payload
+  resolved on demand by main, or bounded rejection evidence. The renderer never renders
+  a payload-reference stub as if it were arguments. Expansion and Turn copy request the
+  exact authorized payload, then bound its renderer-facing value to 32,000 characters
+  before caching, formatting, syntax highlighting, or copying. Inline values that fit
+  the 32 KiB storage contract remain complete even when pretty-printed JSON is longer.
+  While a payload read is pending, missing, or mismatched, the disclosure and Turn copy
+  show the same typed unavailable value. Neither surface falls back to presentation
+  fields or a payload-reference identifier. Host
+  execution metadata such as command `cwd` is labelled separately and never appears as
+  a model argument. Structured arguments and results render as their JSON rather than a
+  second presentation model. `bash` is the deliberate exception to JSON argument rendering:
+  its expanded input shows the envelope's `command` as copyable shell text with bash
+  highlighting, while optional fields remain available through canonical diagnostics.
+  Presentation Item construction receives the complete transient redacted argument
+  structure and applies bounds to each stored display field, so a large `file_write`
+  retains its path even when content moves to a payload. Command output,
   file interaction, copy actions, and image previews retain their native
   affordances; a successful shell exit code is redundant with the completed row
   and stays hidden, while a non-zero exit code is rendered as an explicit failure
@@ -156,10 +176,12 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
 - every ordinary tool, including a loaded or isolated Skill, uses the same
   expandable row inside the counted activity group; tool-specific icons,
   summaries, images, and child-Thread links remain supplemental affordances;
-  managed tool images resolve from their typed resource reference through the owning
-  Thread and preview only a disposable scratch copy; Add to Today sends the same typed
-  identity to a main-only ingest seam, which reauthorizes ownership and returns asset
-  metadata without accepting or returning a managed path
+  tool images resolve from their stable `artifactRef` through the owning Thread. Preview
+  selects the original first and observation second, then serves a disposable stable
+  extensionless materialization with MIME derived from its bytes. The renderer never
+  receives a canonical payload path or chooses a rendition itself. Add to Today sends
+  the same typed identity to a main-only ingest seam, which reauthorizes ownership and
+  returns asset metadata without accepting or returning a managed path
 - local paths in tool arguments and results retain the surrounding terminal-style
   code rendering: no file icon, resting background, independent wrapping, or
   ordinary-click navigation. Holding the platform primary modifier reveals the
@@ -322,7 +344,10 @@ image pixels, exposes rest/hover/active/focus feedback, and does not add a
 backdrop filter or the file-preview action shadow. The ordinary file reference
 retains its Thread-scoped preview identity without a second attachment-card
 wrapper; every gallery tile retains the same scoped identity and opens the shared
-reader. Replay, fork, context projection, and Model Interactions consume the
+reader. Image attachments resolve through their artifact's original-then-observation
+fallback without changing the attachment's canonical file identity; an unavailable
+rendition leaves the rest of the message usable. Replay, fork, context projection, and
+Model Interactions consume the
 unchanged canonical ordering rather than reconstructing attachment placement from
 this presentation projection. Free-text editing is exposed only when
 canonical content contains at most one text part, and replacement preserves every
@@ -363,7 +388,9 @@ inside the lazy Canonical Items disclosure as well as the default Summary.
 
 Copy on a response copies the complete assistant side of that Turn in order:
 commentary, tool arguments, full tool results when available, and
-the final response. A partial failed response remains the copy authority; its
+the final response. Tool arguments use the canonical envelope and never reverse-map
+command, file-change, MCP/dynamic display, collaboration, or result fields. A partial
+failed response remains the copy authority; its
 error summary is used only when the Turn has no copyable assistant content.
 Right-clicking the terminal response opens the native message menu with the same
 Copy, Continue in new chat, and Details commands.
@@ -410,6 +437,11 @@ results, not a child of either Response or Request. Parallel tools from one mode
 one batch; a transient tool with no canonical Item remains an explicit execution fact.
 Wrapper-level retries create another Call and a typed retry activity; retries hidden inside a
 provider SDK remain part of that SDK invocation.
+Each tool entry exposes its recorded admission disposition, canonical identity, and
+admission-time schema digest when present. Those are historical facts rather than a
+revalidation against the currently loaded tool catalog. Rejected admission is labelled
+argument/tool admission, never permission denial; a later capability-unavailable result
+remains a separate execution fact.
 The timeline expresses hierarchy with disclosure indentation and horizontal activity
 separators only; it does not draw a vertical guide-line axis through nested content.
 
@@ -473,6 +505,13 @@ schemas, provider messages, responses, and Item JSON mount
 only while their disclosure is open. Expanding an evidence Item issues one exact
 `(threadId, turnId, itemId, contextId)` audit read and renders the decoded semantic
 payload; it never receives a canonical payload path or gains digest-only read authority.
+The same IPC method may read payload-backed tool arguments only when main derives the
+requested reference from that exact Item's canonical `modelCall`; another Item or digest
+is rejected. Renderer caching keys the immutable Thread-owned payload identity and stores
+only its bounded display projection. New argument-bearing views consume the required
+canonical envelope. Diagnostics and exports show
+only structured secret-redacted values and RFC 6901 redaction paths; they never reveal a
+raw model-authored secret or host-injected credential.
 Missing, corrupt, rolled-back, or mismatched evidence remains explicitly unavailable.
 Opening Turn Diagnostics pushes the current view onto the pane's Back stack and never creates a
 split. Opening another Turn while Turn Diagnostics is current replaces only the target,
@@ -527,6 +566,38 @@ viewport clamping are retained. A selection submits one atomic
 while a request is pending, and for non-root Threads; it never edits another
 agent entity or exposes host-private capability configuration.
 
+Model selection is model-first. The list is flat: the model name leads each row,
+and the provider appears only as a secondary origin label, only when more than
+one provider is listed, and never as a group heading or a raw provider ID. The
+listed providers are the usable ones plus, when the Thread is pinned to a
+provider that is no longer usable, that provider. The Thread's own provider is
+listed first, the rest follow the preferred provider order, and models keep the
+catalog order, which main has already ranked newest-first. Providers survive as
+a truncation unit — each keeps its own "show all" budget, that expander names
+its provider whenever origin labels are shown, and a pinned model outside the
+window stays visible.
+
+The list leads with a floating selection that follows the connection's newest
+model. Choosing it writes only the model field, as the `inherit` sentinel; the
+Thread's provider is never rewritten, so the selection cannot move a Thread to a
+different connection. It is offered only when that connection resolves a model,
+since the sentinel is otherwise unsatisfiable. Because main validates the
+sentinel by resolving it, the submitted reasoning effort is clamped against the
+model the sentinel resolves to — the connection's head, not the model being
+un-pinned, which is a different model whenever the Thread is pinned at all.
+
+A pinned selection is reported verbatim, including a model id stored without a
+`providerId/` qualifier; it is never replaced by the connection's head, which
+would name one model while the runtime ran another. Only a floating selection
+resolves to the head.
+
+The chip and the parent menu row name the model that will actually run in either
+state. Only the check mark distinguishes the two, and it is placed from the
+stored value rather than the resolved one — a floating selection resolves to the
+same model an explicit pin to the newest model resolves to, so inferring the
+state after resolution would make the two indistinguishable and strand a Thread
+on a model it never chose to pin.
+
 Reopening the Agent rail restores focus to the composer of an editable Thread.
 An active `request_user_input` keeps focus in its current step instead; opening
 the rail never steals focus from that blocking form.
@@ -543,16 +614,40 @@ the click (self-focusing popovers, dialogs, the inline message editor).
 Keyboard-activated clicks are never intercepted, and an active
 `request_user_input` suspends the hand-back entirely.
 
-Typing `/` opens the established composer command menu. It is populated from
-the reserved `/compact` and `/clear` commands plus the current user-invocable Skill
-catalog. `/compact` inserts a trailing space for optional instructions; `/clear` inserts
-the complete command. Skill entries insert `/<skill> ` without
-flattening other structured composer content. A direct Skill invocation without
-attachments is resolved by the Turn's Skill runtime before the model prompt is
-sent; the canonical userMessage Item retains exactly what the user submitted.
-The two reserved commands are recognized only as the sole text part and require an idle
-Thread; they create completed feature Turns without sending a user message or launching
-the model. Messages with attachments and unknown slash text remain ordinary Turn input.
+Typing `/` opens the established composer command menu. It keeps `/compact` as
+the default entry, followed by `/clear` and `/new`, then appends the current
+user-invocable Skill catalog. Runtime names are reserved case-insensitively, so
+a conflicting Skill entry is omitted rather than rendered as an unreachable
+duplicate. Filtering ranks label matches ahead of description-only matches.
+`/new` and `/clear` insert their complete command; an exact-cased complete token
+closes the menu so the next Enter submits it. `/compact` inserts a trailing
+space for optional instructions. A case-variant query remains in the menu, so
+Enter accepts the selected canonical command text and waits for a subsequent
+submission. Skill entries insert `/<skill> ` without flattening other structured
+composer content. A direct Skill invocation without attachments is resolved by
+the Turn's Skill runtime before the model prompt is sent; the canonical
+userMessage Item retains exactly what the user submitted.
+
+Submitting `/new` as the exact trimmed text with no attachments, Node
+references, file references, or other structured content routes to the same
+dock-owned `thread/start` action as the Thread list. It creates and selects one
+root user Thread, focuses its empty composer, and starts no Turn. The prior
+Thread remains intact; an active prior Turn continues in the background without
+an interrupt or steer request. Thread creation uses the list action's
+any-usable-provider gate, pending guard, and dock error presentation rather than
+the selected Thread's send gate. A failed creation keeps the old selection and
+the `/new` draft and restores focus only after the pending disabled state has
+cleared. A keyboard submission blocked by the provider gate shows the existing
+provider-required copy inline. Structured content accompanying exact `/new`
+blocks both Thread and Turn creation, preserves the complete draft, and shows
+inline validation until the user removes that content or edits away from the
+command.
+
+`/compact` and `/clear` are recognized only as the sole text part and require an
+idle Thread; they create completed feature Turns without sending a user message
+or launching the model. A case variant submitted without accepting its canonical
+menu completion, `/new` with additional text, messages with attachments that are
+not exact `/new`, and unknown slash text remain ordinary Turn input.
 
 Only a root user Thread exposes the composer. Child, Automation, Memory, and
 other feature Threads remain fully inspectable but are driven through their

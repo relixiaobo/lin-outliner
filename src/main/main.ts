@@ -1,10 +1,10 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, powerMonitor, protocol, session, shell } from 'electron';
-import type { IpcMainInvokeEvent } from 'electron';
+import type { IpcMainInvokeEvent, NativeImage } from 'electron';
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
-import { mkdir, readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
-import { basename, dirname, extname, join, posix, resolve } from 'node:path';
+import { mkdir, open, readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
+import { basename, dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pathToFileURL } from 'node:url';
 import { DocumentService } from './documentService';
@@ -26,6 +26,7 @@ import { PiTurnExecutor } from './agent/runtime/PiTurnExecutor';
 import { ToolRuntime } from './agent/runtime/ToolRuntime';
 import { observedSkillFilePaths } from './agent/context/SkillContextReducer';
 import { AttachmentResolver } from './agent/tools/attachments';
+import { createImageArtifactReference, ImageObservationNormalizationError } from './agent/imageArtifacts';
 import { Mutex } from './agent/Mutex';
 import { AgentSkillRuntime, expandSkillDirectory, resolveUserSkillInvocation } from './agent/capabilities/agentSkills';
 import { isValidSkillName } from './agent/capabilities/agentSkillAuthoring';
@@ -49,7 +50,6 @@ import {
   type AgentLocalWorkspaceContext,
 } from './agent/capabilities/agentLocalTools';
 import type { AgentImageGenerationRuntime } from './agent/capabilities/agentImageGenerationTool';
-import { resolveGeneratedImageReadPath } from './generatedImagePaths';
 import {
   piFindImageModel,
   piGenerateImages,
@@ -96,11 +96,15 @@ import { applyMacWindowCorner } from './nativeWindowCorner';
 import {
   LIN_SETTINGS_CHANGED_CHANNEL,
   LIN_SETTINGS_NAVIGATE_CHANNEL,
+  SETTINGS_ANCHOR_PARAM,
   SETTINGS_CATEGORY_PARAM,
   PROVIDER_CONFIG_MODE_PARAM,
   PROVIDER_CONFIG_PROVIDER_PARAM,
   WINDOW_SURFACE_QUERY_PARAM,
+  isSettingsAnchorTarget,
   isSettingsCategoryTarget,
+  isSettingsPageTarget,
+  settingsTargetPath,
   type ProviderConfigMode,
   type SettingsOpenTarget,
 } from '../core/settingsWindow';
@@ -143,6 +147,7 @@ import {
 } from '../core/types';
 import {
   serializeUnknownError,
+  LIN_APP_INFO_CHANNEL,
   LIN_EXPORT_DIAGNOSTICS_CHANNEL,
   LIN_REPORT_RENDERER_ERROR_CHANNEL,
   LIN_REVEAL_DIAGNOSTICS_LOG_CHANNEL,
@@ -168,6 +173,8 @@ import {
   updateImageGenerationSettings,
   updateAgentRuntimeSettings,
   upsertProviderConfig,
+  prepareProviderConnectionProbe,
+  recordProviderConnectionCheck,
   testProviderConnection,
 } from './agent/capabilities/agentSettings';
 import { validateAgentModelSelection } from './agent/capabilities/agentModelResolution';
@@ -201,7 +208,6 @@ import { loadWindowState, trackWindowState } from './windowState';
 import {
   loadAppPreferences,
   saveLanguagePreference,
-  saveOsNotificationsPreference,
   saveThemePreference,
   saveTranslationLanguagePreference,
   saveUrlPageTranslationPreferences,
@@ -223,7 +229,6 @@ import {
 } from '../core/agentAttachmentLimits';
 import { safeAttachmentFileName } from '../core/agentAttachmentPaths';
 import {
-  AGENT_GENERATED_IMAGE_DIR,
   isPathInside,
   pruneAgentScratch,
 } from './agent/capabilities/agentAttachmentMaterialization';
@@ -516,14 +521,24 @@ let threadService!: ThreadService;
 const agentImageObservationMutex = new Mutex();
 const attachmentResolver = new AttachmentResolver({
   useResourcePath: (threadId, ref, use) => threadService.useThreadResourcePath(threadId, ref, use),
-  prepareImageSnapshot: async ({ threadId, attachment, sourcePath }) => {
+  prepareImageArtifact: async ({ threadId, attachment, sourcePath }) => {
     const snapshot = await prepareAttachmentPromptImage(attachment, sourcePath);
-    return threadService.writeThreadResourceWithStatus(
+    const written = await threadService.writeThreadResourceWithStatus(
       threadId,
       snapshot.bytes,
       snapshot.mimeType,
       snapshot.fileName,
     );
+    return {
+      artifactRef: createImageArtifactReference({
+        retention: attachment.source.kind === 'localFile' ? 'external' : 'durable',
+        original: attachment.source,
+        observation: written.ref,
+        sourceDimensions: snapshot.sourceDimensions,
+        observationDimensions: snapshot.dimensions,
+      }),
+      createdResources: written.created ? [written.ref] : [],
+    };
   },
 });
 const turnExecutor = new PiTurnExecutor({
@@ -554,6 +569,27 @@ threadService = ThreadService.open(
       validateAgentModelSelection(selection.model, selection.reasoningEffort, provider);
     },
     resolveUserContent: (content, context) => attachmentResolver.resolve(content, context),
+    normalizeOutputImage: async ({ bytes, mimeType, signal }) => {
+      try {
+        const prepared = await prepareBoundedAgentImageBytes(
+          Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength),
+          mimeType,
+          'tool output image',
+          signal,
+        );
+        return {
+          bytes: prepared.bytes,
+          mimeType: prepared.mimeType,
+          sourceDimensions: prepared.sourceDimensions,
+          observationDimensions: prepared.dimensions,
+        };
+      } catch (error) {
+        if (signal?.aborted || error instanceof ImageObservationNormalizationError) throw error;
+        throw new ImageObservationNormalizationError(
+          `Tool output image could not be normalized: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    },
     getDocumentProjection: () => documentService.getProjection(),
     resolveReferencedAsset: async (assetId) => {
       const [path, metadata] = await Promise.all([
@@ -710,9 +746,9 @@ async function prepareSkillRuntimeForTurn(
   }
 }
 
-async function refreshTurnSkillTrustRecords(): Promise<void> {
+async function refreshTurnSkillProvenanceRecords(): Promise<void> {
   await Promise.all(
-    [...turnSkillRuntimes.values()].map((runtime) => runtime.refreshTrustRecords()),
+    [...turnSkillRuntimes.values()].map((runtime) => runtime.refreshProvenanceRecords()),
   );
 }
 
@@ -798,7 +834,7 @@ toolRuntime = new ToolRuntime(threadService, {
   },
   skillRuntime: prepareSkillRuntimeForTurn,
   imageGeneration: (context) => createThreadImageGenerationRuntime(
-    context.turn.id,
+    context,
     localWorkspaceForTurn(context),
   ),
   dynamicTools: () => [createAutomationTool(automationService)],
@@ -818,7 +854,7 @@ automationService.subscribe((notification) => {
 });
 
 function createThreadImageGenerationRuntime(
-  turnId: string,
+  context: import('./agent/runtime/types').TurnExecutionContext,
   workspace: AgentLocalWorkspaceContext,
 ): AgentImageGenerationRuntime {
   return {
@@ -852,21 +888,41 @@ function createThreadImageGenerationRuntime(
       validateImageGenerationOptions(providerId, modelId, options)
     ),
     readLocalImage: async ({ filePath }) => {
-      const resolvedPath = await resolveGeneratedImageReadPath(workspace, filePath)
-        ?? resolveAgentLocalReadPath(workspace, filePath);
+      const resolvedPath = resolveAgentLocalReadPath(workspace, filePath);
       const data = await readFile(resolvedPath);
       const mimeType = sniffMimeType(data, resolvedPath);
       if (!mimeType?.startsWith('image/')) throw new Error(`File is not a supported image: ${filePath}`);
       return { data, mimeType, label: basename(resolvedPath) };
     },
-    writeGeneratedImage: async ({ toolCallId, index, data, mimeType }) => {
-      const turnPart = shortGeneratedImagePathPart(turnId, 'turn');
-      const directory = join(workspace.scratchRoot, AGENT_GENERATED_IMAGE_DIR, turnPart);
-      await mkdir(directory, { recursive: true });
+    persistGeneratedImage: async ({ toolCallId, index, data, mimeType, signal }) => {
+      signal?.throwIfAborted();
       const callDigest = createHash('sha256').update(toolCallId).digest('hex').slice(0, 6);
       const fileName = `image-${index}-${callDigest}${generatedImageExtension(mimeType)}`;
-      await writeFile(join(directory, fileName), data);
-      return { path: posix.join(AGENT_GENERATED_IMAGE_DIR, turnPart, fileName) };
+      const original = await context.persistOutputResource(data, mimeType, fileName);
+      const persistedObservation = await context.persistOutputImage(data, mimeType);
+      signal?.throwIfAborted();
+      const artifactRef = createImageArtifactReference({
+        retention: 'tiered',
+        original: { kind: 'threadPayload', ref: original },
+        observation: persistedObservation.observation,
+        sourceDimensions: persistedObservation.sourceDimensions,
+        observationDimensions: persistedObservation.observationDimensions,
+      });
+      const materializedPath = await context.resolveImageArtifactPath(artifactRef);
+      if (!materializedPath) throw new Error('Generated image artifact could not be materialized.');
+      return {
+        artifactRef,
+        path: materializedPath,
+        observation: {
+          data: Buffer.from(
+            persistedObservation.observationBytes.buffer,
+            persistedObservation.observationBytes.byteOffset,
+            persistedObservation.observationBytes.byteLength,
+          ),
+          mimeType: persistedObservation.observation.mimeType,
+          label: persistedObservation.observation.fileName,
+        },
+      };
     },
     generateImages: async ({ providerId, modelId, context, options }) => {
       const model = piFindImageModel(providerId, modelId);
@@ -881,12 +937,6 @@ function createThreadImageGenerationRuntime(
 function imageProviderPriority(priority: readonly string[], providerId: string): number {
   const index = priority.indexOf(providerId);
   return index >= 0 ? index : priority.length;
-}
-
-function shortGeneratedImagePathPart(value: string, fallback: string): string {
-  const safe = safeAttachmentFileName(value).slice(0, 10).replace(/[._-]+$/u, '') || fallback;
-  const digest = createHash('sha256').update(value).digest('hex').slice(0, 6);
-  return `${safe}-${digest}`;
 }
 
 function generatedImageExtension(mimeType: string): string {
@@ -1311,7 +1361,10 @@ function buildApplicationMenu(): Electron.Menu {
     template.push({
       label: APP_NAME,
       submenu: [
-        { role: 'about', label: t.about({ app: APP_NAME }) },
+        {
+          label: t.about({ app: APP_NAME }),
+          click: () => openSettingsWindow({ page: 'about' }),
+        },
         { type: 'separator' },
         { label: t.settings, accelerator: 'CmdOrCtrl+,', click: () => openSettingsWindow() },
         { type: 'separator' },
@@ -1689,17 +1742,23 @@ function executeLauncherCommand(id: unknown): LauncherExecuteResult {
 // region. It isn't persisted across launches.
 function sanitizeSettingsOpenTarget(raw: unknown): SettingsOpenTarget {
   if (!raw || typeof raw !== 'object') return {};
-  const input = raw as { category?: unknown };
+  const input = raw as { category?: unknown; page?: unknown; anchor?: unknown };
   const category = isSettingsCategoryTarget(input.category) ? input.category : undefined;
+  const page = isSettingsPageTarget(input.page) ? input.page : undefined;
+  const anchor = (category || page) && isSettingsAnchorTarget(input.anchor) ? input.anchor : undefined;
   return {
     ...(category ? { category } : {}),
+    ...(page ? { page } : {}),
+    ...(anchor ? { anchor } : {}),
   };
 }
 
 function settingsWindowQuery(target: SettingsOpenTarget = {}): Record<string, string> {
+  const path = settingsTargetPath(target);
   return {
     [WINDOW_SURFACE_QUERY_PARAM]: 'settings',
-    ...(target.category ? { [SETTINGS_CATEGORY_PARAM]: target.category } : {}),
+    ...(path ? { [SETTINGS_CATEGORY_PARAM]: path } : {}),
+    ...(path && target.anchor ? { [SETTINGS_ANCHOR_PARAM]: target.anchor } : {}),
   };
 }
 
@@ -1708,11 +1767,19 @@ function settingsWindowSearch(target: SettingsOpenTarget = {}): string {
 }
 
 function openSettingsWindow(openTarget: SettingsOpenTarget = {}) {
-  if (settingsWindow) {
-    if (settingsWindow.isMinimized()) settingsWindow.restore();
-    settingsWindow.show();
-    settingsWindow.focus();
-    settingsWindow.webContents.send(LIN_SETTINGS_NAVIGATE_CHANNEL, openTarget);
+  // `liveWindow`, not a truthiness check: `settingsWindow` is cleared on 'closed',
+  // so a ⌘, landing between 'close' and 'closed' found a destroyed window and threw
+  // inside the ipcMain handler — an unhandled rejection, and no window opened.
+  const existing = liveWindow(settingsWindow);
+  if (existing) {
+    if (existing.isMinimized()) existing.restore();
+    existing.show();
+    existing.focus();
+    // An untargeted Cmd+, must not yank a user who is already somewhere else back
+    // to General. A page names its own category, so it is independently explicit.
+    if (openTarget.category || openTarget.page) {
+      existing.webContents.send(LIN_SETTINGS_NAVIGATE_CHANNEL, openTarget);
+    }
     return;
   }
   // A utilitarian Preferences window: opaque content, no OS material (unlike the
@@ -1963,12 +2030,6 @@ function configChildWindowParent(excluded: BrowserWindow | null = null): Browser
   return liveWindow(settingsWindow) ?? liveWindow(mainWindow);
 }
 
-function trustedLocalFileReferenceOptions() {
-  return {
-    relativeGeneratedImageRoots: [agentScratchRoot],
-  };
-}
-
 interface LocalFileOperationInput {
   readonly path?: unknown;
   readonly threadId?: unknown;
@@ -1988,7 +2049,6 @@ async function resolveLocalFileOperation(
     return resolveTrustedLocalFileReference(
       raw?.path,
       [agentLocalFileRoot, agentScratchRoot],
-      trustedLocalFileReferenceOptions(),
     );
   }
   const attachment = await threadService.resolveAttachmentFile(threadId, attachmentId).catch(() => null);
@@ -1997,7 +2057,6 @@ async function resolveLocalFileOperation(
     return resolveTrustedLocalFileReference(
       raw?.path,
       [attachment.path],
-      trustedLocalFileReferenceOptions(),
     );
   }
   if (allowAttachmentPathHint) {
@@ -2086,7 +2145,6 @@ function registerIpc() {
         assertMainRenderer(event, 'Preview');
         return handlePreviewCommand(command, args ?? {}, {
           agentLocalFileRoots: [agentLocalFileRoot, agentScratchRoot],
-          agentGeneratedImageRoots: [agentScratchRoot],
           assetService,
           assetFileStreamUrl: async (filePath, mimeType) => {
             const token = await localFilePreviewStreams.issuePath(filePath, mimeType);
@@ -2098,10 +2156,13 @@ function registerIpc() {
             return token ? previewLocalUrl(token) : null;
           },
           threadAttachmentFile: async (threadId, attachmentId) => (
-            threadService.resolveAttachmentFile(threadId, attachmentId).then((resolved) => {
+            threadService.resolveAttachmentFile(threadId, attachmentId).then(async (resolved) => {
               if (!resolved) return null;
               return {
                 ...resolved,
+                ...(resolved.attachment.artifactRef
+                  ? { mimeType: await sniffPreviewFileMimeType(resolved.path, resolved.attachment.mimeType) }
+                  : {}),
                 acceptedPathHints: resolved.attachment.source.kind === 'localFile'
                   ? [resolved.attachment.source.path]
                   : [resolved.attachment.name, resolved.attachment.source.ref.fileName],
@@ -2114,6 +2175,22 @@ function registerIpc() {
               return {
                 ...resolved,
                 acceptedPathHints: [resolved.ref.fileName],
+              };
+            }).catch(() => null)
+          ),
+          threadImageArtifactFile: async (threadId, artifact) => (
+            threadService.resolveImageArtifactFile(threadId, artifact).then(async (resolved) => {
+              if (!resolved) return null;
+              return {
+                ...resolved,
+                mimeType: await sniffPreviewFileMimeType(resolved.path, resolved.artifact.observation.mimeType),
+                acceptedPathHints: [
+                  resolved.artifact.id,
+                  resolved.artifact.observation.fileName,
+                  ...(resolved.artifact.original?.kind === 'threadPayload'
+                    ? [resolved.artifact.original.ref.fileName]
+                    : []),
+                ],
               };
             }).catch(() => null)
           ),
@@ -2160,7 +2237,13 @@ function registerIpc() {
   });
 
   ipcMain.handle('lin:open-settings', (_event, target?: unknown) => openSettingsWindow(sanitizeSettingsOpenTarget(target)));
-  ipcMain.handle('lin:close-settings', () => settingsWindow?.close());
+  // Only the settings surface may close the settings window. Every sibling
+  // privileged handler checks its sender; this one did not, so any renderer could
+  // close it.
+  ipcMain.handle('lin:close-settings', (event) => {
+    const window = liveWindow(settingsWindow);
+    if (window && BrowserWindow.fromWebContents(event.sender) === window) window.close();
+  });
   ipcMain.handle(LIN_CLEAR_URL_PREVIEW_DATA_CHANNEL, clearUrlPreviewWebsiteData);
   ipcMain.handle(LIN_CLEAR_PREVIEW_TRANSLATION_CACHE_CHANNEL, clearPreviewTranslationCache);
   // Launcher window IPC (the prewarmed global launcher).
@@ -2219,9 +2302,10 @@ function registerIpc() {
       });
       const captureId = `cap:${randomUUID()}`;
       // Basic-info capture: the node carries title + URL + author only. Rich page
-      // content (body/selection/transcript) is not extracted today — it returns
-      // with the unified browser extension/CDP backend
-      // (docs/plans/browser-extension-integration.md).
+      // content (body/selection/transcript) is not extracted today, and no browser
+      // extension or CDP backend is planned; when it lands it will be an explicit
+      // reader invoked after the user picks an action, never on the ambient hotkey
+      // path (docs/plans/unified-command-surface.md).
       const input = buildContextCaptureInput({
         context,
         destinationParentId: documentService.todayId(),
@@ -2264,21 +2348,6 @@ function registerIpc() {
     if (!isThemeMode(mode)) return;
     nativeTheme.themeSource = mode;
     saveThemePreference(mode);
-  });
-  // Opt-in OS-notification preference. Dedicated channels (not the agent-command
-  // union) so the off-floor task plane owns its preference without touching the
-  // shared command/type surface; backed by the shared synchronous app-preferences
-  // store (theme/language live there too).
-  ipcMain.handle('lin:get-notification-prefs', () => ({
-    osNotificationsEnabled: loadAppPreferences().osNotificationsEnabled,
-  }));
-  ipcMain.handle('lin:set-notification-prefs', (_event, input: unknown) => {
-    const enabled =
-      !!input && typeof input === 'object' && 'osNotificationsEnabled' in input
-        ? (input as { osNotificationsEnabled?: unknown }).osNotificationsEnabled === true
-        : false;
-    saveOsNotificationsPreference(enabled);
-    return { osNotificationsEnabled: enabled };
   });
   // Language preference. Read synchronously so preload can seed the renderer's first
   // paint without a flash; setting it persists, broadcasts to every window (open
@@ -2344,11 +2413,17 @@ function registerIpc() {
     return getStoredProviderApiKey(String(args?.providerId ?? ''));
   });
   // A provider setting changed in the settings window or its config child.
-  // Tell BOTH the main window (stale provider state) and the settings window (its
-  // list reflects the new configured provider row) to re-fetch.
-  ipcMain.handle('lin:settings-changed', () => {
-    liveWindow(mainWindow)?.webContents.send(LIN_SETTINGS_CHANGED_CHANNEL);
-    liveWindow(settingsWindow)?.webContents.send(LIN_SETTINGS_CHANGED_CHANNEL);
+  // Tell the main window (stale provider state) and the settings window (its list
+  // reflects the new configured provider row) to re-fetch — but never the window
+  // that just wrote.
+  //
+  // Fanning it back to the sender was a real defect, not just waste: the settings
+  // window's listener refetches and reapplies wholesale, so a write made there
+  // reverted the user's other pending toggles. Deleting the draft removed the
+  // damage; excluding the sender removes the cause, and with it a full settings
+  // round-trip plus a list re-render on every instant toggle.
+  ipcMain.handle('lin:settings-changed', (event) => {
+    notifySettingsChanged(BrowserWindow.fromWebContents(event.sender));
   });
 
   ipcMain.handle(LIN_REPORT_RENDERER_ERROR_CHANNEL, (_event, raw: unknown) => {
@@ -2363,6 +2438,19 @@ function registerIpc() {
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
+  });
+
+  ipcMain.handle(LIN_APP_INFO_CHANNEL, async () => {
+    const environment = await diagnosticEnvironment();
+    return {
+      name: APP_NAME,
+      version: environment.appVersion,
+      platform: environment.platform,
+      arch: environment.arch,
+      electron: environment.electron,
+      chrome: environment.chrome,
+      node: environment.node,
+    };
   });
 
   ipcMain.handle(LIN_EXPORT_DIAGNOSTICS_CHANNEL, async (event): Promise<DiagnosticsActionResult> => {
@@ -2653,7 +2741,6 @@ async function handleAssetCommand(
       const file = await resolveTrustedLocalFileReference(
         (args as { path?: unknown }).path,
         [agentLocalFileRoot, agentScratchRoot],
-        trustedLocalFileReferenceOptions(),
       );
       if (!file || file.entryKind !== 'file') return null;
       return assetService.ingest({ kind: 'path', path: file.path });
@@ -2847,6 +2934,45 @@ async function diagnosticEnvironment(): Promise<DiagnosticEnvironment> {
     node: process.versions.node ?? 'unknown',
     providerId,
   };
+}
+
+/**
+ * Tell the windows that read provider settings to re-fetch, skipping the one that
+ * wrote. Fanning a write back to its own sender was a real defect — the settings
+ * window reapplies wholesale, so its own write reverted the user's other pending
+ * changes — and even without a draft to lose it costs a settings round trip and a
+ * list re-render for nothing. `origin` is undefined when main itself is the
+ * writer, in which case every window hears it.
+ */
+function notifySettingsChanged(origin?: BrowserWindow | null): void {
+  for (const target of [liveWindow(mainWindow), liveWindow(settingsWindow)]) {
+    if (target && target !== origin) target.webContents.send(LIN_SETTINGS_CHANGED_CHANNEL);
+  }
+}
+
+/**
+ * Run the connection probe for a provider and store what it found. Failures here
+ * are not the user's problem — a probe that cannot run leaves the row unverified,
+ * which is the honest state and the one it started in.
+ */
+async function probeAndRecordConnection(providerIdInput: unknown): Promise<void> {
+  const providerId = String(providerIdInput ?? '');
+  if (!providerId) return;
+  let connectionGeneration: number | undefined;
+  try {
+    const probe = await prepareProviderConnectionProbe({ providerId });
+    connectionGeneration = probe.connectionGeneration;
+    if (!probe.matchesStoredConnection || connectionGeneration === undefined) return;
+    const result = await testProviderConnection(probe.input);
+    const recorded = await recordProviderConnectionCheck(providerId, result, connectionGeneration);
+    if (recorded) notifySettingsChanged();
+  } catch {
+    if (connectionGeneration !== undefined) {
+      const recorded = await recordProviderConnectionCheck(providerId, null, connectionGeneration)
+        .catch(() => false);
+      if (recorded) notifySettingsChanged();
+    }
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -3256,40 +3382,84 @@ async function localPickedFile(filePath: string) {
 async function prepareAttachmentPromptImage(
   attachment: ThreadAttachmentContent,
   sourcePath: string,
-): Promise<{
+): Promise<PreparedBoundedAgentImage> {
+  return prepareBoundedAgentImage(sourcePath, attachment.name);
+}
+
+interface PreparedBoundedAgentImage {
   readonly bytes: Buffer;
   readonly mimeType: 'image/png' | 'image/jpeg';
   readonly fileName: string;
+  readonly sourceDimensions: { readonly width: number; readonly height: number };
   readonly dimensions: { readonly width: number; readonly height: number };
-}> {
-  return prepareBoundedAgentImage(sourcePath, attachment.name);
 }
 
 async function prepareBoundedAgentImage(
   sourcePath: string,
   displayName: string,
   signal?: AbortSignal,
-): Promise<{
-  readonly bytes: Buffer;
-  readonly mimeType: 'image/png' | 'image/jpeg';
-  readonly fileName: string;
-  readonly dimensions: { readonly width: number; readonly height: number };
-}> {
+): Promise<PreparedBoundedAgentImage> {
   return agentImageObservationMutex.run(async () => {
     signal?.throwIfAborted();
     return prepareBoundedAgentImageUnlocked(sourcePath, displayName);
   });
 }
 
+async function prepareBoundedAgentImageBytes(
+  sourceBytes: Buffer,
+  sourceMimeType: string,
+  displayName: string,
+  signal?: AbortSignal,
+): Promise<PreparedBoundedAgentImage> {
+  return agentImageObservationMutex.run(async () => {
+    signal?.throwIfAborted();
+    if (sourceBytes.byteLength === 0) {
+      throw new ImageObservationNormalizationError(`Image is empty: ${displayName}`);
+    }
+    if (sourceBytes.byteLength > MAX_IMAGE_ATTACHMENT_SOURCE_BYTES) {
+      throw new ImageObservationNormalizationError(
+        `Image exceeds the ${formatFileSize(MAX_IMAGE_ATTACHMENT_SOURCE_BYTES)} image decode budget: ${displayName}`,
+      );
+    }
+    let image = nativeImage.createFromBuffer(sourceBytes);
+    if (image.isEmpty()) {
+      throw new ImageObservationNormalizationError(`Image could not be decoded: ${displayName}`);
+    }
+    const sourceDimensions = image.getSize();
+    const boundedSource = sourceBytes.byteLength <= MAX_PROMPT_IMAGE_BYTES
+      && sourceDimensions.width <= MAX_PROMPT_IMAGE_DIMENSION
+      && sourceDimensions.height <= MAX_PROMPT_IMAGE_DIMENSION;
+    const normalizedSourceMimeType = sourceMimeType.trim().toLowerCase();
+    if (boundedSource && (normalizedSourceMimeType === 'image/png' || normalizedSourceMimeType === 'image/jpeg')) {
+      return {
+        bytes: sourceBytes,
+        mimeType: normalizedSourceMimeType,
+        fileName: normalizedSourceMimeType === 'image/png' ? 'prompt.png' : 'prompt.jpg',
+        sourceDimensions,
+        dimensions: sourceDimensions,
+      };
+    }
+    const scale = Math.min(
+      1,
+      MAX_PROMPT_IMAGE_DIMENSION / sourceDimensions.width,
+      MAX_PROMPT_IMAGE_DIMENSION / sourceDimensions.height,
+    );
+    if (scale < 1) {
+      image = image.resize({
+        width: Math.max(1, Math.floor(sourceDimensions.width * scale)),
+        height: Math.max(1, Math.floor(sourceDimensions.height * scale)),
+        quality: 'best',
+      });
+    }
+    signal?.throwIfAborted();
+    return encodeBoundedAgentImage(image, sourceDimensions, displayName);
+  });
+}
+
 async function prepareBoundedAgentImageUnlocked(
   sourcePath: string,
   displayName: string,
-): Promise<{
-  readonly bytes: Buffer;
-  readonly mimeType: 'image/png' | 'image/jpeg';
-  readonly fileName: string;
-  readonly dimensions: { readonly width: number; readonly height: number };
-}> {
+): Promise<PreparedBoundedAgentImage> {
   const sourceStat = await stat(sourcePath);
   if (!sourceStat.isFile() || sourceStat.size <= 0) {
     throw new Error(`Image is not a readable regular file: ${displayName}`);
@@ -3299,18 +3469,31 @@ async function prepareBoundedAgentImageUnlocked(
       `Image exceeds the ${formatFileSize(MAX_IMAGE_ATTACHMENT_SOURCE_BYTES)} image decode budget: ${displayName}`,
     );
   }
+  const sourceImage = nativeImage.createFromPath(sourcePath);
+  if (sourceImage.isEmpty()) throw new Error(`Image could not be decoded: ${displayName}`);
+  const sourceDimensions = sourceImage.getSize();
   let image = await nativeImage.createThumbnailFromPath(sourcePath, {
     width: MAX_PROMPT_IMAGE_DIMENSION,
     height: MAX_PROMPT_IMAGE_DIMENSION,
   });
   if (image.isEmpty()) throw new Error(`Image could not be decoded: ${displayName}`);
 
+  return encodeBoundedAgentImage(image, sourceDimensions, displayName);
+}
+
+function encodeBoundedAgentImage(
+  initialImage: NativeImage,
+  sourceDimensions: { readonly width: number; readonly height: number },
+  displayName: string,
+): PreparedBoundedAgentImage {
+  let image = initialImage;
   const png = image.toPNG();
   if (png.byteLength <= MAX_PROMPT_IMAGE_BYTES) {
     return {
       bytes: png,
       mimeType: 'image/png',
       fileName: 'prompt.png',
+      sourceDimensions,
       dimensions: image.getSize(),
     };
   }
@@ -3323,6 +3506,7 @@ async function prepareBoundedAgentImageUnlocked(
           bytes: jpeg,
           mimeType: 'image/jpeg',
           fileName: 'prompt.jpg',
+          sourceDimensions,
           dimensions: image.getSize(),
         };
       }
@@ -3333,7 +3517,9 @@ async function prepareBoundedAgentImageUnlocked(
     if (width === size.width && height === size.height) break;
     image = image.resize({ width, height, quality: 'best' });
   }
-  throw new Error(`Image could not fit the model-input image budget: ${displayName}`);
+  throw new ImageObservationNormalizationError(
+    `Image could not fit the model-input image budget: ${displayName}`,
+  );
 }
 
 function formatFileSize(bytes: number): string {
@@ -3369,6 +3555,18 @@ function inferMimeType(filePath: string): string {
   if (extension === '.yaml' || extension === '.yml') return 'application/yaml';
   if (TEXT_ATTACHMENT_EXTENSIONS.has(extension)) return 'text/plain';
   return 'application/octet-stream';
+}
+
+async function sniffPreviewFileMimeType(filePath: string, fallback: string): Promise<string> {
+  const handle = await open(filePath, 'r').catch(() => null);
+  if (!handle) return fallback;
+  try {
+    const head = Buffer.alloc(512);
+    const { bytesRead } = await handle.read(head, 0, head.byteLength, 0);
+    return sniffMimeType(head.subarray(0, bytesRead), filePath) ?? fallback;
+  } finally {
+    await handle.close();
+  }
 }
 
 const TEXT_ATTACHMENT_EXTENSIONS = new Set([
@@ -3562,8 +3760,26 @@ async function handleAgentCommand(_event: IpcMainInvokeEvent, command: AgentComm
       });
     case 'agent_append_capability_block':
       return appendAgentCapabilityBlockView(String(args.ruleValue ?? ''));
-    case 'agent_upsert_provider_config':
-      return withCanonicalSkillDirectories(await upsertProviderConfig(args.provider as AgentProviderConfigInput));
+    case 'agent_upsert_provider_config': {
+      const input = args.provider as AgentProviderConfigInput;
+      const settings = withCanonicalSkillDirectories(await upsertProviderConfig(input));
+      // Prove the connection AFTER committing it when the caller says this was a
+      // connection save. The same upsert command also backs the provider-list
+      // enable switch; that switch must not spend a billed completion merely to
+      // change local activation state.
+      //
+      // Saving a credential is the
+      // user's intent and must not wait on a network round trip — the window
+      // closes at once, which is also why there is no timeout to design here and
+      // no "can I close mid-probe" question to answer. The verdict lands on the
+      // row when it arrives and the broadcast refreshes whoever is looking.
+      //
+      // This is one of exactly two things that probe: an explicit write, and the
+      // explicit Test button. Nothing probes on open, on a schedule, or in the
+      // background, because the probe bills a 1-token completion.
+      if (args.probeConnection === true) void probeAndRecordConnection(input.providerId);
+      return settings;
+    }
     case 'agent_delete_provider_config':
       return withCanonicalSkillDirectories(await deleteProviderConfig(String(args.providerId)));
     case 'agent_set_active_provider':
@@ -3579,11 +3795,17 @@ async function handleAgentCommand(_event: IpcMainInvokeEvent, command: AgentComm
       // another provider can't deliver them to the wrong window (where they'd be
       // dropped, leaving the interactive step unanswerable and login() hung).
       const loginWindow = providerConfigWindow;
-      return withCanonicalSkillDirectories(await oauthLoginManager.startLogin(String(args.providerId), (envelope) => {
+      const providerId = String(args.providerId);
+      const settings = withCanonicalSkillDirectories(await oauthLoginManager.startLogin(providerId, (envelope) => {
         if (loginWindow && !loginWindow.isDestroyed()) {
           loginWindow.webContents.send(LIN_AGENT_OAUTH_EVENT_CHANNEL, envelope);
         }
       }));
+      // A successful sign-in is a credential write just like saving an API key.
+      // Keep the login response fast, then persist the same conservative probe
+      // verdict the API-key path records in the background.
+      void probeAndRecordConnection(providerId);
+      return settings;
     }
     case 'agent_oauth_logout':
       return withCanonicalSkillDirectories(await oauthLoginManager.logout(String(args.providerId)));
@@ -3593,29 +3815,39 @@ async function handleAgentCommand(_event: IpcMainInvokeEvent, command: AgentComm
     case 'agent_oauth_cancel':
       oauthLoginManager.cancel(String(args.providerId));
       return undefined;
-    case 'agent_test_provider_connection':
-      return testProviderConnection({
-        providerId: String(args.providerId),
-        baseUrl: args.baseUrl ? String(args.baseUrl) : undefined,
-        apiKey: args.apiKey ? String(args.apiKey) : undefined,
+    case 'agent_test_provider_connection': {
+      const providerId = String(args.providerId);
+      const apiKeyOverride = typeof args.apiKey === 'string' && args.apiKey.trim().length > 0;
+      const probe = await prepareProviderConnectionProbe({
+        providerId,
+        baseUrl: typeof args.baseUrl === 'string' ? args.baseUrl : undefined,
+        apiKey: apiKeyOverride ? args.apiKey as string : undefined,
+        baseUrlOverride: Object.prototype.hasOwnProperty.call(args, 'baseUrl'),
+        apiKeyOverride,
       });
+      const result = await testProviderConnection(probe.input);
+      // An explicit Test is the other thing allowed to probe, so its answer is
+      // kept rather than thrown away the moment the dialog closes — which is how
+      // "Ready" came to mean "has a credential" instead of "works". Recorded only
+      // when it probed the STORED connection: a test against a key typed into the
+      // form but not saved is not a verdict about what is on disk.
+      if (probe.matchesStoredConnection && probe.connectionGeneration !== undefined) {
+        const recorded = await recordProviderConnectionCheck(
+          providerId,
+          result,
+          probe.connectionGeneration,
+        ).catch(() => false);
+        if (recorded) notifySettingsChanged();
+      }
+      return result;
+    }
     case 'agent_list_all_skills':
       return args.userInvocableOnly === true
         ? skillRuntime.listUserInvocableSkills()
         : skillRuntime.listAllSkills();
-    case 'agent_accept_skill': {
-      await skillRuntime.acceptSkill(String(args.skillName), String(args.expectedHash ?? ''));
-      await refreshTurnSkillTrustRecords();
-      return skillRuntime.listAllSkills();
-    }
-    case 'agent_revoke_skill_acceptance': {
-      await skillRuntime.revokeSkillAcceptance(String(args.skillName));
-      await refreshTurnSkillTrustRecords();
-      return skillRuntime.listAllSkills();
-    }
     case 'agent_undo_skill_agent_edit': {
       await skillRuntime.undoLastAgentSkillEdit(String(args.skillName));
-      await refreshTurnSkillTrustRecords();
+      await refreshTurnSkillProvenanceRecords();
       return skillRuntime.listAllSkills();
     }
     case 'agent_managed_skill_catalog':
@@ -3721,6 +3953,10 @@ if (!app.requestSingleInstanceLock()) {
   }
 
   app.whenReady().then(async () => {
+    // Restore persisted dynamic model catalogs before Threads or Automations can
+    // resolve a saved model. The same best-effort pass cleans legacy keyless rows;
+    // neither local catalog corruption nor cleanup failure may block app startup.
+    await reconcileProviderConfig().catch(() => { /* best-effort; catalog reads remain guarded */ });
     await documentService.initWorkspace();
     await threadService.initialize();
     await memoryExtension.startWorker();
@@ -3766,11 +4002,6 @@ if (!app.requestSingleInstanceLock()) {
     // the first paint (prePaintBackgroundColor → shouldUseDarkColors) already
     // matches the chosen theme rather than the OS default.
     nativeTheme.themeSource = loadAppPreferences().theme;
-    // One-time, best-effort cleanup of any keyless junk provider row left on disk
-    // (the old save-side-effect bug); skips itself when secrets are unreadable so a
-    // transient secret-file read failure never turns into row loss. Fire-and-forget — boot never waits
-    // on or fails from it. See `reconcileProviderConfig`.
-    void reconcileProviderConfig().catch(() => { /* best-effort; cleaned next launch */ });
     configureSessionSecurity();
     urlPreviewSession = session.fromPartition(URL_PREVIEW_WEBVIEW_PARTITION);
     configureUrlPreviewSession(urlPreviewSession);

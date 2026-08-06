@@ -5,12 +5,8 @@ import { useI18n } from '../../i18n/I18nProvider';
 import { Button } from '../primitives/Button';
 import { SegmentedControl } from '../primitives/SegmentedControl';
 import { SelectControl } from '../primitives/SelectControl';
-import { SwitchControl } from '../primitives/SwitchControl';
-import { SwitchMark } from '../primitives/SwitchMark';
+import type { SettingsPageTarget } from '../../../core/settingsWindow';
 import { InsetGroup, InsetRow } from './SettingsInsetList';
-import { WebsiteDataSettingsGroup } from './WebsiteDataSettingsGroup';
-import { TranslationDataSettingsGroup } from './TranslationDataSettingsGroup';
-import { MemorySettingsGroup } from './MemorySettingsGroup';
 
 // Theme segment values; their visible labels are localized at render
 // (settings.general.theme*).
@@ -19,23 +15,21 @@ const THEME_VALUES: readonly ThemeMode[] = ['system', 'light', 'dark'];
 interface SettingsGeneralSectionProps {
   onError: (message: string | null) => void;
   onNotice: (message: string | null) => void;
+  onOpenPage: (page: SettingsPageTarget) => void;
 }
 
 /**
  * The General category. Everything here applies immediately and persists on its
- * own — theme, language, notifications, the data groups, diagnostics — so this
+ * own — theme, language, the data groups, diagnostics — so this
  * category has no draft and never participates in the footer Save. That is why
  * all of its state is local to this component and only the shared error/notice
  * surface is passed down.
  */
-export function SettingsGeneralSection({ onError, onNotice }: SettingsGeneralSectionProps) {
+export function SettingsGeneralSection({ onError, onNotice, onOpenPage }: SettingsGeneralSectionProps) {
   // App-level appearance preference. Independent of the provider/capability save
   // flow: it applies immediately across all windows via the main process
   // (nativeTheme.themeSource) and persists, so there is no Save step.
   const [themeMode, setThemeMode] = useState<ThemeMode>('system');
-  // Opt-in OS-notification preference. Self-contained like the theme: applies
-  // immediately, persisted by main, no Save step. Default off.
-  const [osNotificationsEnabled, setOsNotificationsEnabled] = useState(false);
   const [diagnosticsBusy, setDiagnosticsBusy] = useState<null | 'reveal' | 'export'>(null);
   // Display language: the picker reads/writes the shared i18n context (seeded before
   // first paint, broadcast across windows), so it applies instantly like the theme.
@@ -64,22 +58,6 @@ export function SettingsGeneralSection({ onError, onNotice }: SettingsGeneralSec
   function changeTheme(mode: ThemeMode) {
     setThemeMode(mode);
     void window.lin?.setTheme?.(mode);
-  }
-
-  // Load the persisted OS-notification opt-in once. Best-effort like the theme load.
-  useEffect(() => {
-    let active = true;
-    void window.lin?.getNotificationPrefs?.()
-      .then((prefs) => {
-        if (active) setOsNotificationsEnabled(prefs.osNotificationsEnabled);
-      })
-      .catch(() => { /* keep the default (off) */ });
-    return () => { active = false; };
-  }, []);
-
-  function changeOsNotifications(enabled: boolean) {
-    setOsNotificationsEnabled(enabled);
-    void window.lin?.setNotificationPrefs?.({ osNotificationsEnabled: enabled });
   }
 
   async function revealDiagnosticsLog() {
@@ -159,28 +137,6 @@ export function SettingsGeneralSection({ onError, onNotice }: SettingsGeneralSec
         />
       </InsetGroup>
       <InsetGroup
-        ariaLabel={t.settings.general.notificationsGroup}
-        label={t.settings.general.notificationsGroup}
-      >
-        <InsetRow
-          label={t.settings.general.osNotificationsLabel}
-          sublabel={t.settings.general.osNotificationsSublabel}
-          trailing={(
-            <SwitchControl
-              checked={osNotificationsEnabled}
-              onCheckedChange={changeOsNotifications}
-              label={t.settings.general.osNotificationsLabel}
-            >
-              <SwitchMark checked={osNotificationsEnabled} />
-            </SwitchControl>
-          )}
-          wrap
-        />
-      </InsetGroup>
-      <MemorySettingsGroup onError={onError} onNotice={onNotice} />
-      <WebsiteDataSettingsGroup onError={onError} onNotice={onNotice} />
-      <TranslationDataSettingsGroup onError={onError} onNotice={onNotice} />
-      <InsetGroup
         ariaLabel={t.settings.general.diagnosticsGroup}
         label={t.settings.general.diagnosticsGroup}
       >
@@ -211,6 +167,13 @@ export function SettingsGeneralSection({ onError, onNotice }: SettingsGeneralSec
             </Button>
           )}
           wrap
+        />
+      </InsetGroup>
+      <InsetGroup ariaLabel={t.settings.about.sectionAriaLabel} id="about">
+        <InsetRow
+          drillsDown
+          label={t.settings.about.rowLabel}
+          onSelect={() => onOpenPage('about')}
         />
       </InsetGroup>
     </section>

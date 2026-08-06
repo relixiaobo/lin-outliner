@@ -13,11 +13,13 @@ import {
 } from './agentToolEnvelope';
 import { readAgentImageDimensions } from './agentLocalTools';
 import {
-  formatLocalFileReferenceUrl,
   parseLocalFileReferenceUrl,
   splitFileReferenceMarkers,
   type FileReferenceSegment,
 } from '../../../core/referenceMarkup';
+import { MAX_IMAGE_ATTACHMENT_SOURCE_BYTES } from '../../../core/agentAttachmentLimits';
+import type { ThreadImageArtifactReference } from '../../../core/agent/protocol';
+import { measureToolPayloadImage } from '../persistence/ToolPayloadStore';
 
 export const GENERATE_IMAGE_TOOL_NAME = 'generate_image';
 
@@ -49,7 +51,7 @@ export interface AgentImageGenerationRuntime {
     options: GenerateImageRuntimeOptions;
   }): AgentImageGenerationOptionValidationIssue | null;
   readLocalImage(input: { filePath: string }): Promise<AgentImageGenerationInputImage>;
-  writeGeneratedImage(input: {
+  persistGeneratedImage(input: {
     toolCallId: string;
     index: number;
     providerId: string;
@@ -57,7 +59,12 @@ export interface AgentImageGenerationRuntime {
     data: Buffer;
     mimeType: string;
     prompt: string;
-  }): Promise<{ path: string }>;
+    signal?: AbortSignal;
+  }): Promise<{
+    readonly artifactRef: ThreadImageArtifactReference;
+    readonly path: string;
+    readonly observation: AgentImageGenerationInputImage;
+  }>;
   generateImages(input: {
     providerId: string;
     modelId: string;
@@ -93,12 +100,14 @@ export interface GenerateImageData {
 }
 
 export interface GeneratedImageResult {
+  providerIndex: number;
+  artifactRef: ThreadImageArtifactReference;
   path: string;
-  markdownImage: string;
   mimeType: string;
   byteLength: number;
   width?: number;
   height?: number;
+  previewIndex?: number;
 }
 
 interface NormalizedGenerateImageParams {
@@ -120,7 +129,7 @@ export function createGenerateImageTool(runtime: AgentImageGenerationRuntime): A
     description: [
       'Generate or edit raster images with an enabled image-capable provider.',
       'Use this for original bitmap assets such as illustrations, photos, mockups, textures, and UI artwork. Do not use it for web image search or file conversion.',
-      'Omit model to use the best enabled image model. Omit image_paths for text-to-image; pass image_paths only when editing or transforming existing local images. When the user should see generated images, place the returned markdownImage exactly where each image belongs in the final answer.',
+      'Omit model to use the best enabled image model. Omit image_paths for text-to-image; pass image_paths only when editing or transforming existing local images. Generated images are shown to the user automatically. Use each returned path when an image must be copied or edited.',
     ].join(' '),
     parameters: {
       type: 'object',
@@ -141,8 +150,8 @@ export function createGenerateImageTool(runtime: AgentImageGenerationRuntime): A
         image_paths: {
           type: 'array',
           maxItems: MAX_IMAGE_PATHS,
-          description: 'Optional local image paths for edits or transformations. Use path values or markdownImage values returned by earlier tool results, absolute paths, or workspace-relative paths for user files. Omit for text-to-image.',
-          items: { type: 'string', minLength: 1, description: 'Readable local image path, file:^... target, Markdown image, or [[file:...]] marker to use as an edit/reference input.' },
+          description: 'Optional local image paths for edits or transformations. Use path values returned by earlier tool results, absolute paths, workspace-relative paths, file:^ targets, or [[file:...]] markers. Omit for text-to-image.',
+          items: { type: 'string', minLength: 1, description: 'Readable local image path, file:^... target, or [[file:...]] marker to use as an edit/reference input.' },
         },
         count: {
           type: 'integer',
@@ -274,26 +283,66 @@ export function createGenerateImageTool(runtime: AgentImageGenerationRuntime): A
           }));
         }
 
-        const images = await Promise.all(imageOutputs.map(async (image, index): Promise<GeneratedImageResult> => {
-          const data = Buffer.from(stripDataUrlPrefix(image.data), 'base64');
-          const dimensions = readAgentImageDimensions(data, image.mimeType);
-          const saved = await runtime.writeGeneratedImage({
-            toolCallId,
-            index,
-            providerId: selected.providerId,
-            modelId: selected.id,
-            data,
-            mimeType: image.mimeType,
-            prompt: params.prompt,
-          });
-          return {
+        const images: GeneratedImageResult[] = [];
+        const extraContent: PiImageContent[] = [];
+        const warnings: string[] = [];
+        let savedOutputBytes = 0;
+        for (const [index, image] of imageOutputs.entries()) {
+          if (index >= MAX_GENERATED_IMAGES) {
+            warnings.push(`Generated image ${index + 1} was not saved: the provider returned more than ${MAX_GENERATED_IMAGES} images.`);
+            continue;
+          }
+          const dataBase64 = stripDataUrlPrefix(image.data);
+          const mimeType = generatedImageMimeType(image.mimeType);
+          if (!mimeType) {
+            warnings.push(generatedImageSourceWarning(index, 'invalidMimeType'));
+            continue;
+          }
+          const measurement = measureToolPayloadImage(dataBase64, MAX_IMAGE_ATTACHMENT_SOURCE_BYTES);
+          if (!measurement.ok) {
+            warnings.push(generatedImageSourceWarning(index, measurement.reason));
+            continue;
+          }
+          const data = Buffer.from(dataBase64, 'base64');
+          if (data.byteLength !== measurement.byteLength) {
+            warnings.push(generatedImageSourceWarning(index, 'invalidBase64'));
+            continue;
+          }
+          let saved: Awaited<ReturnType<AgentImageGenerationRuntime['persistGeneratedImage']>>;
+          try {
+            saved = await runtime.persistGeneratedImage({
+              toolCallId,
+              index,
+              providerId: selected.providerId,
+              modelId: selected.id,
+              data,
+              mimeType,
+              prompt: params.prompt,
+              signal,
+            });
+          } catch (error) {
+            signal?.throwIfAborted();
+            warnings.push(`Generated image ${index + 1} could not be saved: ${errorMessage(error)}`);
+            continue;
+          }
+          savedOutputBytes += data.byteLength;
+          const dimensions = readAgentImageDimensions(data, mimeType);
+          const generated: GeneratedImageResult = {
+            providerIndex: index + 1,
+            artifactRef: saved.artifactRef,
             path: saved.path,
-            markdownImage: `![${generatedImageAlt(index)}](${formatLocalFileReferenceUrl(saved.path)})`,
-            mimeType: image.mimeType,
+            mimeType,
             byteLength: data.byteLength,
             ...(dimensions ? { width: dimensions.width, height: dimensions.height } : {}),
           };
-        }));
+          generated.previewIndex = extraContent.length;
+          extraContent.push({
+            type: 'image',
+            data: saved.observation.data.toString('base64'),
+            mimeType: saved.observation.mimeType,
+          });
+          images.push(generated);
+        }
 
         const data: GenerateImageData = {
           providerId: selected.providerId,
@@ -305,13 +354,16 @@ export function createGenerateImageTool(runtime: AgentImageGenerationRuntime): A
         };
         return agentToolResult(
           successEnvelope(GENERATE_IMAGE_TOOL_NAME, data, {
-            instructions: 'Use each returned markdownImage value verbatim to place generated images in the final answer. Use path or markdownImage in image_paths for follow-up edits.',
+            status: warnings.length > 0 ? 'partial' : 'success',
+            instructions: generatedImageInstructions(images.length, extraContent.length),
+            ...(warnings.length > 0 ? { warnings } : {}),
             metrics: {
               durationMs: elapsed(startedAt),
-              outputBytes: images.reduce((total, image) => total + image.byteLength, 0),
+              outputBytes: savedOutputBytes,
             },
           }),
           modelVisibleGenerateImageData(data),
+          extraContent,
         );
       } catch (error) {
         return agentToolResult(errorEnvelope(GENERATE_IMAGE_TOOL_NAME, 'image_generation_failed', errorMessage(error), {
@@ -445,13 +497,30 @@ function noImageModelMessage(requested: string | undefined): string {
 
 function modelVisibleGenerateImageData(data: GenerateImageData) {
   return {
-    images: data.images.map((image) => ({
-      path: image.path,
-      markdownImage: image.markdownImage,
-      mimeType: image.mimeType,
-      byteLength: image.byteLength,
-      ...(image.width && image.height ? { width: image.width, height: image.height } : {}),
-    })),
+    images: data.images.map((image) => {
+      const geometry = image.artifactRef.geometry;
+      return {
+        providerIndex: image.providerIndex,
+        artifactId: image.artifactRef.id,
+        path: image.path,
+        mimeType: image.mimeType,
+        byteLength: image.byteLength,
+        ...(image.width && image.height ? { width: image.width, height: image.height } : {}),
+        observationDimensions: {
+          width: geometry.observationWidth,
+          height: geometry.observationHeight,
+        },
+        sourceDimensions: {
+          width: geometry.sourceWidth,
+          height: geometry.sourceHeight,
+        },
+        sourcePixelsPerObservationPixel: {
+          x: geometry.sourceWidth / geometry.observationWidth,
+          y: geometry.sourceHeight / geometry.observationHeight,
+        },
+        observationToSource: geometry.observationToSource,
+      };
+    }),
     ...(data.text.length ? { text: data.text } : {}),
   };
 }
@@ -459,11 +528,6 @@ function modelVisibleGenerateImageData(data: GenerateImageData) {
 function normalizeImagePathValue(value: string): string {
   const fileUrl = parseLocalFileReferenceUrl(value);
   if (fileUrl?.entryKind === 'file') return fileUrl.path;
-  const markdownTarget = markdownImageTarget(value);
-  if (markdownTarget) {
-    const markdownFileUrl = parseLocalFileReferenceUrl(markdownTarget);
-    if (markdownFileUrl?.entryKind === 'file') return markdownFileUrl.path;
-  }
   const segments = splitFileReferenceMarkers(value);
   const files = segments.filter((segment): segment is FileReferenceSegment => segment.type === 'file');
   if (files.length !== 1) return value;
@@ -475,13 +539,39 @@ function normalizeImagePathValue(value: string): string {
   return value;
 }
 
-function markdownImageTarget(value: string): string | null {
-  const match = value.match(/^!\[[^\]\r\n]*\]\(([^()\s]+)\)$/u);
-  return match?.[1] ?? null;
+function generatedImageSourceWarning(
+  index: number,
+  reason: 'invalidBase64' | 'invalidMimeType' | 'imageByteLimit',
+): string {
+  const prefix = `Generated image ${index + 1} was not saved`;
+  switch (reason) {
+    case 'invalidBase64':
+      return `${prefix}: the provider returned invalid base64 image data. Retry once or switch image models.`;
+    case 'invalidMimeType':
+      return `${prefix}: the provider returned an invalid image MIME type. Retry once or switch image models.`;
+    case 'imageByteLimit':
+      return `${prefix}: it exceeds the ${formatMegabytes(MAX_IMAGE_ATTACHMENT_SOURCE_BYTES)} source-image safety limit.`;
+  }
 }
 
-function generatedImageAlt(index: number): string {
-  return `Generated image ${index + 1}`;
+function generatedImageMimeType(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toLowerCase();
+  return /^image\/[a-z0-9][a-z0-9.+-]*$/u.test(normalized) ? normalized : null;
+}
+
+function generatedImageInstructions(imageCount: number, previewCount: number): string {
+  if (imageCount === 0) return 'No generated image was saved. Follow the warnings before retrying.';
+  const subject = imageCount === 1 ? 'The generated image is' : 'The generated images are';
+  const location = imageCount === 1 ? 'the returned local path' : 'the returned local paths';
+  const previews = previewCount > 0
+    ? 'Available previews are already shown to the user; do not render them again in the final answer.'
+    : 'No model preview is available; do not claim to have inspected the image.';
+  return `${subject} saved at ${location}. ${previews} Each artifact id is stable; its local path is a rematerializable access hint and can become unavailable under storage retention. If an image belongs somewhere in particular, copy it there now.`;
+}
+
+function formatMegabytes(bytes: number): string {
+  return `${bytes / (1024 * 1024)} MB`;
 }
 
 function stringParam(value: unknown): string | undefined {

@@ -25,15 +25,19 @@ and the sidebar toggle sit at its top. Default width is `216px`, range
 radius, `16px` icon slots, neutral hover, and no persistent selected-fill for the
 workspace tree. Product Settings stays pinned at the bottom.
 
-**Top strip.** One drag-region strip at traffic-light height holds:
+**Top strip.** One visually continuous strip at traffic-light height holds:
 
 - left: traffic lights + sidebar toggle;
 - center: each pane breadcrumb header and its close affordance;
 - right: selected Thread header when open plus the fixed agent toggle.
 
-Everything shares the traffic-light centreline. Header controls follow
-[patterns.md → Header Chrome](./patterns.md#header-chrome): fixed position,
-stable hit target, colour-deepen hover, no rounded-square hover box.
+Everything shares the traffic-light centreline. Native window dragging is split
+across the fixed left/right `WindowChrome` zones and pane breadcrumb chrome; it
+is not inherited by every header aligned to the strip. In particular, the
+selected Thread header is visually aligned but is not a drag region because its
+box overlaps the fixed agent toggle from a sibling DOM tree. Header controls
+follow [patterns.md → Header Chrome](./patterns.md#header-chrome): fixed
+position, stable hit target, colour-deepen hover, no rounded-square hover box.
 
 **Rail toggles.** Sidebar and agent toggles are fixed window-chrome controls in
 stable absolute positions. They change state in place, never move with pane count,
@@ -228,10 +232,12 @@ The agent dock is a right glass rail subordinate to the outliner workspace. It i
 toggled by the fixed top-right control; open squeezes the layout, closed hides the
 rail. Motion follows [foundations.md → Motion](./foundations.md#motion).
 
-**Header and Thread list.** The header shows the selected Thread title and compact
-actions. It carries no provider line, decorative status dot, or member chrome.
-The Thread list is scan-first and single-line. Child Threads are visibly nested;
-ordinary rows expose a compact actions menu for fork, rename, and delete.
+**Header and Thread list.** The header shows the selected Thread title followed
+by an always-visible downward chevron that rotates when the Thread list opens.
+It carries no redundant agent glyph, provider line, decorative status dot, or
+member chrome. The Thread list is scan-first and single-line. Child Threads are
+visibly nested; ordinary rows expose a compact actions menu for fork, rename,
+and delete.
 
 Creating a Thread is immediate and focuses the composer. Rename uses the shared
 dialog and delete uses the shared confirmation surface. The selected row is a
@@ -276,20 +282,53 @@ selected category title. History controls reuse the main chrome control family
 inside one neutral `--radius-pill` capsule with a center divider. The content
 scrollport starts below fixed chrome via margin, not scroll padding.
 
-**Category rail and content.** The left rail lists categories: General,
-Providers, Security, Skills, Configuration Profiles. The content pane is a flat opaque
-Preferences base with constrained grouped content (`--settings-content-max-width`,
-920px). There is no permanent detail pane; per-provider config opens a native
-child window. Categories, not providers, are top-level rail rows. The rail,
-toolbar, and selected category surface render immediately; provider/runtime data
-loads into the pane asynchronously instead of replacing the window with a loading
-page.
+**Category rail and content.** The left rail lists General, Agent, and Preview,
+cut along user intent rather than implementation subsystem. The content pane is
+an opaque Preferences base constrained to `--settings-content-max-width` (920px).
+Rail, toolbar, and category render immediately; provider/runtime data loads locally.
 
-**General.** General owns app-wide preferences: Theme and Language. Theme uses
-`SegmentedControl` (System / Light / Dark) with neutral selected state, ARIA
-`radiogroup`, roving tabindex, arrow-key navigation, and neutral focus. Language
-uses `SelectControl variant="popup"`. Both apply immediately across windows
-without a save footer.
+**Pages.** Model services and Skills sit under Agent; About sits under General.
+An unbounded collection the user installs or connects becomes a page; bounded
+settings stay inline. Page rows carry chevrons, history walks real routes, and
+per-provider configuration remains a native child window.
+
+**Deep links.** Categories are `general|agent|preview`; pages are
+`agent/services`, `agent/skills`, and `general/about`. An optional bounded
+lowercase-slug anchor (`[a-z0-9][a-z0-9-]{0,63}`) scrolls to and briefly
+highlights a group. Category/page mismatches do not route; retired ids have no
+aliases. Explicit targets retarget an open window, while `Cmd+,` only focuses it.
+
+**Commit model.** Controls apply immediately with no footer or draft. Optimistic
+writes revert on failure, show a localized row-owned `role="alert"`, and record
+raw errors only in diagnostics. Writes serialize per key; independent Agent
+mutations use independent keys and a shared pending count. Provider commands
+also share a response queue because they return full settings snapshots, so an
+older Set active, Remove, Refresh, or image-model response cannot overwrite a
+later enable intent. Composite Preview writes serialize from the last persisted
+snapshot: failure rolls back only its field, later pending fields stay visible,
+and broadcasts merge below pending values. Settings and the preview popover use
+the same failure contract. Only the modal provider form retains Cancel/Save.
+
+**General.** Appearance (Theme and Language), Diagnostics, and About. Theme is a
+neutral `SegmentedControl` radiogroup with roving tabindex and arrow navigation;
+Language is `SelectControl variant="popup"`.
+
+**Agent.** Model services and Skills are pages; Memory and Permissions stay
+inline. Permissions states the Full Access boundary, lists explicit blocks, and
+commits removal on the row; boundary explanation is a footnote under that row.
+The Skill library is a scan-and-toggle surface: descriptions stay clamped to two
+lines, and focusing or operating a row's menu or switch never expands the row.
+
+**Preview.** Translation owns target language, webpage/EPUB auto-translation,
+model, and clearing saved translations; Websites clears URL-preview session data.
+The preview Languages popover writes the same cross-window preference store.
+
+**About.** Identity/version with copy, per-version What's New, support, and legal.
+The native About item opens this page. `AppInfo.version` selects its `CHANGELOG`
+section; if absent, `Unreleased` is labelled as that version's development train.
+`Internal` is hidden, multiple sections use a native select, and notes start
+collapsed before expanding into a bounded keyboard-scrollable region. Changelog
+links use external navigation; legal links to the actual MIT license.
 
 **Grouped rows.** Every pane uses the `InsetGroup` / `InsetRow` primitive in
 [components.md → Inset Groups And Rows](./components.md#inset-groups-and-rows).
@@ -308,6 +347,12 @@ the row is a direct external enable row. Vendored logos may keep identity colour
 but the tile never carries functional colour. Row separators stay inset; the
 trailing More button is icon-only and unboxed at rest.
 
+An enabled provider whose language or image capability is refreshable exposes a
+row refresh command. Capability, not provider identity, controls this affordance,
+so a dynamic provider with an empty initial catalog can still recover and then
+populate its model choices. Refresh remains an explicit network action; ordinary
+settings loading uses only the last persisted catalog.
+
 **Provider config.** Per-provider config is a native modal child window
 (`?surface=provider-config`) and owns connection only. It has no traffic lights,
 no in-renderer backdrop, and closes through Cancel / Save / Escape. One inset card
@@ -320,6 +365,40 @@ main rejects the dedicated key-read IPC from all other windows. Before provider
 settings resolve, the window still paints the provider title/avatar, reserved
 credential/base-URL rows, and disabled footer actions with `aria-busy`; it never
 falls back to a whole-window loading page.
+
+Credential mode follows main's provider auth descriptor. OAuth-capable providers
+show the shared sign-in flow for browser URLs, device codes, progress, selection,
+and manual-code prompts; closing or cancelling the flow aborts outstanding
+prompts. When that same provider accepts a normal user API key, the sheet offers
+"Use an API key instead" and returns to the standard key form. Reopening a
+provider that already has a stored API key starts on that key form rather than
+presenting it as a disconnected OAuth account. OAuth-only providers omit the
+fallback. A completed sign-in may populate a dynamic model catalog without
+changing the sheet's connection-only ownership. Capability rows render only
+non-empty model groups; provider-level refreshability remains available to the
+settings row when a dynamic catalog is empty.
+
+Save commits before its non-blocking probe; OAuth completion follows the same
+path, while opening Settings never probes. Using the stored Base URL, the probe
+lists models and sends a one-token completion. It records timestamped, redacted
+`ok`, confident 401/403 `rejected`, or other `unreachable`. Connection changes
+clear the result and advance a main-only generation; results commit only when
+their generation still matches. Explicit Test persists only for the stored
+endpoint and credential, compared via fixed-size digests in constant time.
+
+A *connection* change is a change to what the verdict was about: the endpoint, or
+the durable half of the credential — the API key, or the OAuth refresh token that
+identifies the login. An access token rotating under one login is not one. Every
+write counting as a change wiped an OAuth verdict roughly hourly and made it
+impossible to record at all, because pressing Test on an expired token refreshes
+it mid-probe and so advanced the generation the probe had captured. Endpoints are
+compared normalized, so an absent and an empty Base URL are the same endpoint, and
+the list's enable switch sends the row's own endpoint — never a catalog default the
+user did not enter.
+
+The stored verdict is displayed as an age ("Checked just now", "Checked 5 minutes
+ago"), localized as a whole sentence rather than an English fragment placed in a
+localized frame.
 
 Every framed content block in the config window uses `--radius-md`; row-level
 field focus uses `:focus-within` on the row because inset cards clip outer rings.

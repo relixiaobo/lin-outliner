@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import type { Locator, Page } from '@playwright/test';
+import { emulateVisualMedia, resolveTokenColor } from './emulatedMedia';
 import { clipboardText, commandCalls, ids, openMockedApp, rowBody } from './outlinerMock';
 
 const FORMER_SHARED_ATTACHMENT_LIMIT_BYTES = 10 * 1024 * 1024;
@@ -101,6 +102,13 @@ async function seedMixedStatusToolTurn(page: Page): Promise<void> {
         type: 'commandExecution',
         provenance: { originThreadId: threadId, originTurnId: turnId, originItemId: id },
         command,
+        modelCall: {
+          disposition: 'replayable',
+          identity: { namespace: null, name: 'bash' },
+          providerName: 'bash',
+          arguments: { storage: 'inline', value: { command } },
+          schemaDigest: '0'.repeat(64),
+        },
         description: null,
         cwd: '/mock/workspace',
         processId: null,
@@ -397,6 +405,13 @@ test.describe('canonical agent Thread surface', () => {
               namespace: null,
               tool: 'node_read',
               arguments: { node_id: memoryNodeId },
+              modelCall: {
+                disposition: 'replayable',
+                identity: { namespace: null, name: 'node_read' },
+                providerName: 'node_read',
+                arguments: { storage: 'inline', value: { node_id: memoryNodeId } },
+                schemaDigest: '0'.repeat(64),
+              },
               status: 'completed',
               outputRef: null,
               contentItems: [{ type: 'json', value: { nodeId: memoryNodeId, text: 'Prefer concise answers.' } }],
@@ -1231,22 +1246,49 @@ test.describe('canonical agent Thread surface', () => {
     await expect(gallery.getByRole('button', { name: 'Show all 6 images' })).toBeVisible();
 
     await page.setViewportSize({ width: 420, height: 760 });
-    await page.emulateMedia({ colorScheme: 'dark' });
     await expect(gallery).toBeInViewport();
-    const overflowContrast = await gallery.getByRole('button', { name: 'Show all 6 images' }).evaluate((element) => {
+    const overflowBadge = gallery.getByRole('button', { name: 'Show all 6 images' });
+    const readOverflowContrast = () => overflowBadge.evaluate((element) => {
       const buttonStyle = getComputedStyle(element);
-      const rootStyle = getComputedStyle(document.documentElement);
       return {
         background: buttonStyle.backgroundColor,
         backdropFilter: buttonStyle.backdropFilter,
         foreground: buttonStyle.color,
-        expectedBackground: rootStyle.getPropertyValue('--media-hud-bg').trim(),
-        expectedForeground: rootStyle.getPropertyValue('--media-hud-fg').trim(),
+        reducedTransparency: matchMedia('(prefers-reduced-transparency: reduce)').matches,
       };
     });
-    expect(overflowContrast.background).toBe(overflowContrast.expectedBackground);
-    expect(overflowContrast.backdropFilter).toBe('none');
-    expect(overflowContrast.foreground).toBe(overflowContrast.expectedForeground);
+    const expectResolvedOverflowContrast = async (reducedTransparency: boolean) => {
+      const expected = {
+        background: await resolveTokenColor(page, '--media-hud-bg'),
+        backdropFilter: 'none',
+        foreground: await resolveTokenColor(page, '--media-hud-fg'),
+        reducedTransparency,
+      };
+      await expect.poll(readOverflowContrast, {
+        message: `Overflow badge contrast did not settle for reducedTransparency=${reducedTransparency}`,
+      }).toEqual(expected);
+      return expected;
+    };
+
+    await emulateVisualMedia(page, { colorScheme: 'dark', reducedTransparency: 'no-preference' });
+    const standardContrast = await expectResolvedOverflowContrast(false);
+
+    await emulateVisualMedia(page, { colorScheme: 'dark', reducedTransparency: 'reduce' });
+    const reducedContrast = await expectResolvedOverflowContrast(true);
+    expect(reducedContrast.background).not.toBe(standardContrast.background);
+    const reducedInteractionBackgrounds = {
+      hover: await resolveTokenColor(page, '--media-hud-hover-bg'),
+      active: await resolveTokenColor(page, '--media-hud-active-bg'),
+    };
+
+    await emulateVisualMedia(page, { colorScheme: 'dark', reducedTransparency: 'no-preference' });
+    const interactionBackgrounds = {
+      hover: await resolveTokenColor(page, '--media-hud-hover-bg'),
+      active: await resolveTokenColor(page, '--media-hud-active-bg'),
+    };
+    expect(interactionBackgrounds.hover).not.toBe(reducedInteractionBackgrounds.hover);
+    expect(interactionBackgrounds.active).not.toBe(reducedInteractionBackgrounds.active);
+
     const overflowGeometry = await gallery.getByRole('button', { name: 'Show all 6 images' }).evaluate((element) => {
       const tile = element.closest('.thread-image-gallery-tile');
       if (!tile) throw new Error('Overflow badge tile was not found');
@@ -1265,14 +1307,6 @@ test.describe('canonical agent Thread surface', () => {
     expect(overflowGeometry.areaRatio).toBeLessThan(0.25);
     expect(overflowGeometry.rightInset).toBe(overflowGeometry.expectedRightInset);
     expect(overflowGeometry.bottomInset).toBe(overflowGeometry.expectedBottomInset);
-    const overflowBadge = gallery.getByRole('button', { name: 'Show all 6 images' });
-    const interactionBackgrounds = await overflowBadge.evaluate(() => {
-      const rootStyle = getComputedStyle(document.documentElement);
-      return {
-        hover: rootStyle.getPropertyValue('--media-hud-hover-bg').trim(),
-        active: rootStyle.getPropertyValue('--media-hud-active-bg').trim(),
-      };
-    });
     await overflowBadge.hover();
     await expect(overflowBadge).toHaveCSS('background-color', interactionBackgrounds.hover);
     await page.mouse.down();
@@ -1756,6 +1790,53 @@ test.describe('canonical agent Thread surface', () => {
     await expect(control).toBeFocused();
   });
 
+  test('returns a pinned Thread to the connection\'s newest model without changing provider', async ({ page }) => {
+    await createNewThread(page);
+
+    const control = page.getByRole('button', { name: 'Model and reasoning' });
+    const openModelList = async () => {
+      await control.click();
+      await page.getByRole('menu', { name: 'Model and reasoning' })
+        .getByRole('menuitem', { name: /GPT-5\.4/ })
+        .click();
+      return page.getByRole('menu', { name: 'Model', exact: true });
+    };
+
+    // Pinning is what used to be a one-way door: the menu offered only concrete
+    // models, so a Thread could never be handed back to "whatever is newest".
+    await (await openModelList()).getByRole('menuitemradio', { name: 'GPT-5.4 Mini' }).click();
+    await expect(control).toContainText('GPT-5.4 Mini');
+
+    const alwaysNewest = (await openModelList()).getByRole('menuitemradio', { name: /Always newest/ });
+    await expect(alwaysNewest).toHaveAttribute('aria-checked', 'false');
+    // The row names what selecting it switches TO — the head — not the model
+    // currently pinned, which is what it would advertise if it read the resolved
+    // option while pinned.
+    await expect(alwaysNewest).not.toContainText('Mini');
+    await alwaysNewest.click();
+    // The pill keeps naming the model that will run — now the ranked head again.
+    // Asserted as an exclusion too: 'GPT-5.4' is a substring of 'GPT-5.4 Mini',
+    // so containment alone would pass without the pill ever updating.
+    await expect(control).not.toContainText('Mini');
+    await expect(control).toContainText('GPT-5.4');
+
+    const restored = (await openModelList()).getByRole('menuitemradio', { name: /Always newest/ });
+    await expect(restored).toHaveAttribute('aria-checked', 'true');
+    // Floating must not read as a pin to the model it happens to resolve to.
+    await expect(
+      page.getByRole('menu', { name: 'Model', exact: true })
+        .getByRole('menuitemradio', { name: 'GPT-5.4', exact: true }),
+    ).toHaveAttribute('aria-checked', 'false');
+    await page.keyboard.press('Escape');
+
+    const updates = (await commandCalls(page)).filter((call) => call.cmd === 'thread/configuration/set');
+    expect(updates.map((call) => call.args)).toEqual([
+      expect.objectContaining({ modelProvider: 'openai', model: 'openai/gpt-5.4-mini' }),
+      // Only the model field moves; the connection is left exactly as it was.
+      expect.objectContaining({ modelProvider: 'openai', model: 'inherit' }),
+    ]);
+  });
+
   test('retains the anchored Thread list dismissal and row-action interactions', async ({ page }) => {
     await createNewThread(page);
     const listButton = page.getByRole('button', { name: 'Show Threads' });
@@ -2043,6 +2124,13 @@ test.describe('canonical agent Thread surface', () => {
               namespace: null,
               tool: 'skill',
               arguments: { name: 'research' },
+              modelCall: {
+                disposition: 'replayable',
+                identity: { namespace: null, name: 'skill' },
+                providerName: 'skill',
+                arguments: { storage: 'inline', value: { name: 'research' } },
+                schemaDigest: '0'.repeat(64),
+              },
               contentItems: null,
               status: 'inProgress',
               success: null,
@@ -2408,6 +2496,13 @@ test.describe('canonical agent Thread surface', () => {
                 type: 'collabAgentToolCall',
                 provenance: provenance(waitItemId),
                 tool: 'wait_agent',
+                modelCall: {
+                  disposition: 'replayable',
+                  identity: { namespace: null, name: 'wait_agent' },
+                  providerName: 'wait_agent',
+                  arguments: { storage: 'inline', value: {} },
+                  schemaDigest: '0'.repeat(64),
+                },
                 status: 'inProgress',
                 outputRef: null,
                 senderThreadId: parentThreadId,
@@ -2583,6 +2678,13 @@ test.describe('canonical agent Thread surface', () => {
             type: 'commandExecution',
             provenance: provenance(commandId),
             command: 'pwd',
+            modelCall: {
+              disposition: 'replayable',
+              identity: { namespace: null, name: 'bash' },
+              providerName: 'bash',
+              arguments: { storage: 'inline', value: { command: 'pwd' } },
+              schemaDigest: '0'.repeat(64),
+            },
             cwd: '/mock/workspace',
             processId: null,
             status: 'completed',
@@ -2598,6 +2700,16 @@ test.describe('canonical agent Thread surface', () => {
             namespace: 'node',
             tool: 'read',
             arguments: { node_id: 'node-alpha', file_path: 'notes with spaces.md' },
+            modelCall: {
+              disposition: 'replayable',
+              identity: { namespace: 'node', name: 'read' },
+              providerName: 'node__read',
+              arguments: {
+                storage: 'inline',
+                value: { node_id: 'node-alpha', file_path: 'notes with spaces.md' },
+              },
+              schemaDigest: '0'.repeat(64),
+            },
             status: 'completed',
             contentItems: [{ type: 'json', value: { title: 'Alpha' } }],
             success: true,
@@ -2778,7 +2890,7 @@ test.describe('canonical agent Thread surface', () => {
       .click();
     expect(await clipboardText(page)).toBe([
       '```tool bash',
-      JSON.stringify({ command: 'pwd', cwd: '/mock/workspace' }, null, 2),
+      JSON.stringify({ command: 'pwd' }, null, 2),
       '```',
       '',
       '```tool-result',
@@ -2835,6 +2947,13 @@ test.describe('canonical agent Thread surface', () => {
               type: 'commandExecution',
               provenance: { originThreadId: threadId, originTurnId: turnId, originItemId: commandId },
               command: 'false',
+              modelCall: {
+                disposition: 'replayable',
+                identity: { namespace: null, name: 'bash' },
+                providerName: 'bash',
+                arguments: { storage: 'inline', value: { command: 'false' } },
+                schemaDigest: '0'.repeat(64),
+              },
               cwd: '/mock/workspace',
               processId: null,
               status: 'failed',
@@ -2898,6 +3017,13 @@ test.describe('canonical agent Thread surface', () => {
             namespace: null,
             tool: 'file_read',
             arguments: { file_path: '/mock/workspace/notes.md' },
+            modelCall: {
+              disposition: 'replayable',
+              identity: { namespace: null, name: 'file_read' },
+              providerName: 'file_read',
+              arguments: { storage: 'inline', value: { file_path: '/mock/workspace/notes.md' } },
+              schemaDigest: '0'.repeat(64),
+            },
             status: 'completed',
             outputRef: null,
             contentItems: null,
@@ -2973,6 +3099,13 @@ test.describe('canonical agent Thread surface', () => {
           type: 'commandExecution',
           provenance: { originThreadId: threadId, originTurnId: turnId, originItemId: toolId },
           command: 'sleep 30',
+          modelCall: {
+            disposition: 'replayable',
+            identity: { namespace: null, name: 'bash' },
+            providerName: 'bash',
+            arguments: { storage: 'inline', value: { command: 'sleep 30' } },
+            schemaDigest: '0'.repeat(64),
+          },
           description: null,
           cwd: '/mock/workspace',
           processId: null,
@@ -3140,6 +3273,13 @@ test.describe('canonical agent Thread surface', () => {
             namespace: null,
             tool: 'file_read',
             arguments: { file_path: '/mock/workspace/notes.md' },
+            modelCall: {
+              disposition: 'replayable',
+              identity: { namespace: null, name: 'file_read' },
+              providerName: 'file_read',
+              arguments: { storage: 'inline', value: { file_path: '/mock/workspace/notes.md' } },
+              schemaDigest: '0'.repeat(64),
+            },
             status: 'inProgress',
             outputRef: null,
             contentItems: null,
@@ -3343,6 +3483,13 @@ test.describe('canonical agent Thread surface', () => {
         type: 'commandExecution',
         provenance: { originThreadId: threadId, originTurnId: liveTurnId, originItemId: id },
         command,
+        modelCall: {
+          disposition: 'replayable',
+          identity: { namespace: null, name: 'bash' },
+          providerName: 'bash',
+          arguments: { storage: 'inline', value: { command } },
+          schemaDigest: '0'.repeat(64),
+        },
         cwd: '/mock/workspace',
         processId: null,
         status,
@@ -3424,6 +3571,13 @@ test.describe('canonical agent Thread surface', () => {
               type: 'webSearch',
               provenance: { originThreadId: threadId, originTurnId: turnId, originItemId: toolId },
               query: 'Chengdu weather',
+              modelCall: {
+                disposition: 'replayable',
+                identity: { namespace: null, name: 'web_search' },
+                providerName: 'web_search',
+                arguments: { storage: 'inline', value: { query: 'Chengdu weather' } },
+                schemaDigest: '0'.repeat(64),
+              },
               results: [{ title: 'Forecast', url: 'https://example.com/weather', snippet: 'Sunny' }],
               status: 'completed',
               error: null,
@@ -3808,6 +3962,16 @@ test.describe('canonical agent Thread surface', () => {
           namespace: null,
           tool: 'skill',
           arguments: { skill: 'review-pr', args: '429 --focus rendering' },
+          modelCall: {
+            disposition: 'replayable',
+            identity: { namespace: null, name: 'skill' },
+            providerName: 'skill',
+            arguments: {
+              storage: 'inline',
+              value: { skill: 'review-pr', args: '429 --focus rendering' },
+            },
+            schemaDigest: '0'.repeat(64),
+          },
           status: 'completed',
           contentItems: [{ type: 'text', text: 'Launching skill: review-pr' }],
           success: true,
@@ -3819,6 +3983,16 @@ test.describe('canonical agent Thread surface', () => {
           namespace: null,
           tool: 'skill',
           arguments: { skill: 'investigate', args: 'render regression' },
+          modelCall: {
+            disposition: 'replayable',
+            identity: { namespace: null, name: 'skill' },
+            providerName: 'skill',
+            arguments: {
+              storage: 'inline',
+              value: { skill: 'investigate', args: 'render regression' },
+            },
+            schemaDigest: '0'.repeat(64),
+          },
           status: 'completed',
           contentItems: [{ type: 'text', text: 'Isolated skill result.' }],
           success: true,
@@ -4667,7 +4841,9 @@ test('opens provider settings instead of creating a Thread when no provider is u
   await page.getByRole('button', { name: 'Open Providers' }).click();
 
   const calls = await commandCalls(page);
-  expect(calls).toContainEqual({ cmd: 'open_settings', args: { category: 'providers' } });
+  // Model services is a page inside Agent now, so the dock's CTA opens it
+  // directly rather than landing on a category and leaving the user to find it.
+  expect(calls).toContainEqual({ cmd: 'open_settings', args: { page: 'services' } });
   expect(calls.some((call) => call.cmd === 'thread/start')).toBe(false);
 });
 

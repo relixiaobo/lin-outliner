@@ -8,6 +8,7 @@ import { ButtonControl } from '../primitives/ButtonControl';
 import { ErrorState } from '../primitives/FeedbackState';
 import { Input } from '../primitives/Input';
 import { isLocalBaseUrl } from '../../../core/localEndpoint';
+import { providerStatusSentence, type ProviderStatus } from './providerStatus';
 
 // The draft committed by Save. `apiKey` empty means "leave the saved key
 // unchanged"; a non-empty value replaces it. A provider is a CONNECTION only —
@@ -41,6 +42,10 @@ interface ProviderConfigFormProps {
   hasCredential: boolean;
   hasStoredKey: boolean;
   isActive: boolean;
+  /** The shared status, derived by the window so the list and this page agree. */
+  status?: ProviderStatus;
+  /** When the verdict was taken, already localized ("checked 5 minutes ago"). */
+  checkedAt?: string;
   capabilities?: readonly AgentProviderCapabilitySummary[];
   /** Managed-credential providers (e.g. AWS Bedrock) show a note instead of a key field. */
   authNote?: AuthNote;
@@ -76,6 +81,8 @@ export function ProviderConfigForm({
   hasCredential,
   hasStoredKey,
   isActive,
+  status,
+  checkedAt,
   capabilities,
   authNote,
   docsUrl,
@@ -98,7 +105,7 @@ export function ProviderConfigForm({
   const [apiKey, setApiKey] = useState('');
   const [storedApiKey, setStoredApiKey] = useState<string | null>(null);
   const [reveal, setReveal] = useState(false);
-  const [status, setStatus] = useState<FormStatus>('idle');
+  const [formStatus, setFormStatus] = useState<FormStatus>('idle');
   const [keyLoading, setKeyLoading] = useState(false);
   const [message, setMessage] = useState('');
 
@@ -108,9 +115,11 @@ export function ProviderConfigForm({
     firstFieldRef.current?.focus();
   }, []);
 
-  const validating = status === 'validating';
-  const saving = status === 'saving';
+  const validating = formStatus === 'validating';
+  const saving = formStatus === 'saving';
   const busy = validating || saving || keyLoading;
+  const statusSentence = status ? providerStatusSentence(status, t) : '';
+  const statusAriaLabel = t.providerConfig.statusAriaLabel;
 
   const trimmedProviderId = providerId.trim();
   const showKeyField = !authNote;
@@ -134,8 +143,8 @@ export function ProviderConfigForm({
 
   function clearResult() {
     validationToken.current += 1;
-    if (status !== 'idle' && status !== 'saving') {
-      setStatus('idle');
+    if (formStatus !== 'idle' && formStatus !== 'saving') {
+      setFormStatus('idle');
       setMessage('');
     }
   }
@@ -150,7 +159,7 @@ export function ProviderConfigForm({
       setStoredApiKey(key);
       return key;
     } catch (caught) {
-      setStatus('error');
+      setFormStatus('error');
       setMessage(caught instanceof Error ? caught.message : String(caught));
       return null;
     } finally {
@@ -171,10 +180,10 @@ export function ProviderConfigForm({
     if (!key) return;
     try {
       await navigator.clipboard.writeText(key);
-      setStatus('success');
+      setFormStatus('success');
       setMessage(t.providerConfig.keyCopied);
     } catch (caught) {
-      setStatus('error');
+      setFormStatus('error');
       setMessage(caught instanceof Error ? caught.message : String(caught));
     }
   }
@@ -182,36 +191,36 @@ export function ProviderConfigForm({
   async function runValidate() {
     if (!canValidate) return;
     const token = ++validationToken.current;
-    setStatus('validating');
+    setFormStatus('validating');
     setMessage('');
     try {
       const result = await onValidate(draft);
       if (validationToken.current !== token) return; // cancelled or superseded
-      setStatus(result.success ? 'success' : 'error');
+      setFormStatus(result.success ? 'success' : 'error');
       setMessage(result.message);
     } catch (caught) {
       if (validationToken.current !== token) return;
-      setStatus('error');
+      setFormStatus('error');
       setMessage(caught instanceof Error ? caught.message : String(caught));
     }
   }
 
   function cancelValidate() {
     validationToken.current += 1;
-    setStatus('idle');
+    setFormStatus('idle');
     setMessage('');
   }
 
   async function runSave() {
     if (!canSave) return;
     validationToken.current += 1;
-    setStatus('saving');
+    setFormStatus('saving');
     setMessage('');
     try {
       await onSubmit(draft);
       onClose();
     } catch (caught) {
-      setStatus('error');
+      setFormStatus('error');
       setMessage(caught instanceof Error ? caught.message : String(caught));
     }
   }
@@ -230,6 +239,26 @@ export function ProviderConfigForm({
       </header>
 
       <div className="settings-sheet-body">
+        {status ? (
+          <section className="inset-card settings-sheet-status" aria-label={statusAriaLabel}>
+            <div className="settings-sheet-status-row">
+              <span className="settings-sheet-status-state">{statusSentence}</span>
+              {checkedAt ? <span className="settings-sheet-status-when">{checkedAt}</span> : null}
+            </div>
+            <div className="settings-sheet-status-actions">
+              {onSetActive && !isActive ? (
+                <Button disabled={busy} onClick={onSetActive} size="sm" variant="secondary">
+                  {t.providerConfig.setActive}
+                </Button>
+              ) : null}
+              {onRemoveProvider ? (
+                <Button disabled={busy} onClick={onRemoveProvider} size="sm" variant="danger">
+                  {t.providerConfig.removeProvider}
+                </Button>
+              ) : null}
+            </div>
+          </section>
+        ) : null}
         {authNote ? (
           <div className="settings-sheet-note">
             <p>{authNote.note}</p>
@@ -333,14 +362,14 @@ export function ProviderConfigForm({
             <span className="settings-sheet-result-text">{t.providerConfig.validating}</span>
             <Button onClick={cancelValidate} size="sm" variant="ghost">{t.providerConfig.cancel}</Button>
           </div>
-        ) : status === 'success' ? (
+        ) : formStatus === 'success' ? (
           <div className="settings-sheet-result is-success" role="status">
             <span className="settings-sheet-result-text">
               <CheckIcon size={ICON_SIZE.menu} aria-hidden />
               <span>{message || t.providerConfig.connectionSuccessful}</span>
             </span>
           </div>
-        ) : status !== 'idle' && status !== 'saving' ? (
+        ) : formStatus !== 'idle' && formStatus !== 'saving' ? (
           <ErrorState
             className="settings-sheet-result"
             message={message || t.providerConfig.validationFailed}
@@ -349,19 +378,12 @@ export function ProviderConfigForm({
         ) : null}
       </div>
 
+      {/* Only the connection draft. Set active and Remove apply instantly and
+          close the window, so sharing a button row with Save meant pressing one
+          of them silently discarded a key the user had just typed — they live in
+          the status group now, where an instant action belongs. */}
       <div className="settings-sheet-actions">
-        <div className="settings-sheet-actions-left">
-          {onRemoveProvider ? (
-            <Button disabled={busy} onClick={onRemoveProvider} variant="danger">
-              {t.providerConfig.removeProvider}
-            </Button>
-          ) : null}
-          {onSetActive && !isActive ? (
-            <Button disabled={busy} onClick={onSetActive} variant="secondary">
-              {t.providerConfig.setActive}
-            </Button>
-          ) : null}
-        </div>
+        <div className="settings-sheet-actions-left" />
         <div className="settings-sheet-actions-right">
           <Button disabled={saving} onClick={onClose} variant="ghost">
             {t.providerConfig.cancel}

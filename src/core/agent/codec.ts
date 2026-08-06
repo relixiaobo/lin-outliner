@@ -1,6 +1,12 @@
 import {
   CONTEXT_EVIDENCE_KINDS,
   CONTEXT_PAYLOAD_KINDS,
+  IMAGE_ARTIFACT_RETENTIONS,
+  MAX_INLINE_MODEL_TOOL_ARGUMENT_BYTES,
+  MAX_MODEL_TOOL_CORRECTION_BYTES,
+  MAX_MODEL_TOOL_EVIDENCE_SUMMARY_BYTES,
+  MAX_MODEL_TOOL_PROVIDER_NAME_BYTES,
+  MODEL_TOOL_CALL_EVIDENCE_REASONS,
   MAX_THREAD_CONTEXT_PAYLOAD_BYTES,
   MAX_TURN_DIAGNOSTICS_PAYLOAD_BYTES,
   THREAD_HISTORY_MODE,
@@ -24,8 +30,11 @@ import {
   type DynamicToolOutputContent,
   type FileUpdateChange,
   type ItemProvenance,
+  type ImageArtifactGeometry,
   type JsonValue,
   type MemoryCitation,
+  type ModelToolCallArguments,
+  type ModelToolCallHistory,
   type PrivilegedTurnStartRequest,
   type RequestUserInputRequest,
   type RequestUserInputQuestion,
@@ -38,6 +47,7 @@ import {
   type ThreadItem,
   type ThreadItemDelta,
   type ThreadItemOutputReference,
+  type ThreadImageArtifactReference,
   type ThreadNodeReferenceContent,
   type ThreadSource,
   type ThreadStatus,
@@ -229,7 +239,7 @@ export function decodeThreadItem(value: unknown): ThreadItem {
     case 'commandExecution':
       exactKeys(record, [
         'type', 'id', 'provenance', 'command', 'description', 'cwd', 'processId', 'status', 'commandActions',
-        'aggregatedOutput', 'exitCode', 'durationMs', 'outputRef',
+        'aggregatedOutput', 'exitCode', 'durationMs', 'outputRef', 'modelCall',
       ], 'item');
       result = {
         ...base,
@@ -239,6 +249,7 @@ export function decodeThreadItem(value: unknown): ThreadItem {
         processId: nullableString(record.processId, 'item.processId'),
         status: itemExecutionStatus(record.status, 'item.status'),
         outputRef: decodeThreadItemOutputReference(record.outputRef),
+        modelCall: decodeModelToolCallHistory(record.modelCall),
         // `?? null` so Threads persisted before the field existed still decode.
         description: nullableString(record.description ?? null, 'item.description', true),
         commandActions: arrayValue(record.commandActions, 'item.commandActions').map(decodeCommandAction),
@@ -248,19 +259,21 @@ export function decodeThreadItem(value: unknown): ThreadItem {
       };
       break;
     case 'fileChange':
-      exactKeys(record, ['type', 'id', 'provenance', 'changes', 'status', 'outputRef'], 'item');
+      exactKeys(record, ['type', 'id', 'provenance', 'changes', 'status', 'outputRef', 'modelCall'], 'item');
       result = {
         ...base,
         type,
         changes: arrayValue(record.changes, 'item.changes').map(decodeFileChange),
         status: itemExecutionStatus(record.status, 'item.status'),
         outputRef: decodeThreadItemOutputReference(record.outputRef),
+        modelCall: decodeModelToolCallHistory(record.modelCall),
       };
       break;
     case 'mcpToolCall':
       exactKeys(record, [
         'type', 'id', 'provenance', 'server', 'tool', 'status', 'arguments', 'pluginId', 'result',
         'error', 'durationMs', 'outputRef',
+        'modelCall',
       ], 'item');
       result = {
         ...base,
@@ -269,6 +282,7 @@ export function decodeThreadItem(value: unknown): ThreadItem {
         tool: stringValue(record.tool, 'item.tool'),
         status: itemExecutionStatus(record.status, 'item.status'),
         outputRef: decodeThreadItemOutputReference(record.outputRef),
+        modelCall: decodeModelToolCallHistory(record.modelCall),
         arguments: jsonValue(record.arguments, 'item.arguments'),
         pluginId: nullableString(record.pluginId, 'item.pluginId'),
         result: record.result === null ? null : jsonValue(record.result, 'item.result'),
@@ -280,6 +294,7 @@ export function decodeThreadItem(value: unknown): ThreadItem {
       exactKeys(record, [
         'type', 'id', 'provenance', 'namespace', 'tool', 'arguments', 'status', 'contentItems',
         'success', 'durationMs', 'outputRef',
+        'modelCall',
       ], 'item');
       result = {
         ...base,
@@ -289,6 +304,7 @@ export function decodeThreadItem(value: unknown): ThreadItem {
         arguments: jsonValue(record.arguments, 'item.arguments'),
         status: itemExecutionStatus(record.status, 'item.status'),
         outputRef: decodeThreadItemOutputReference(record.outputRef),
+        modelCall: decodeModelToolCallHistory(record.modelCall),
         contentItems: record.contentItems === null
           ? null
           : arrayValue(record.contentItems, 'item.contentItems').map(decodeDynamicToolOutput),
@@ -300,6 +316,7 @@ export function decodeThreadItem(value: unknown): ThreadItem {
       exactKeys(record, [
         'type', 'id', 'provenance', 'tool', 'status', 'senderThreadId', 'receiverThreadIds', 'prompt',
         'model', 'reasoningEffort', 'agentsStates', 'outputRef',
+        'modelCall',
       ], 'item');
       const states = recordValue(record.agentsStates, 'item.agentsStates');
       const decodedStates: Record<string, SubagentExecutionState> = {};
@@ -328,6 +345,7 @@ export function decodeThreadItem(value: unknown): ThreadItem {
         ),
         status: itemExecutionStatus(record.status, 'item.status'),
         outputRef: decodeThreadItemOutputReference(record.outputRef),
+        modelCall: decodeModelToolCallHistory(record.modelCall),
         senderThreadId: uuidV7(record.senderThreadId, 'item.senderThreadId'),
         receiverThreadIds: arrayValue(record.receiverThreadIds, 'item.receiverThreadIds')
           .map((entry, index) => uuidV7(entry, `item.receiverThreadIds[${index}]`)),
@@ -350,13 +368,16 @@ export function decodeThreadItem(value: unknown): ThreadItem {
       };
       break;
     case 'webSearch':
-      exactKeys(record, ['type', 'id', 'provenance', 'query', 'status', 'results', 'error', 'outputRef'], 'item');
+      exactKeys(record, [
+        'type', 'id', 'provenance', 'query', 'status', 'results', 'error', 'outputRef', 'modelCall',
+      ], 'item');
       result = {
         ...base,
         type,
         query: stringValue(record.query, 'item.query'),
         status: itemExecutionStatus(record.status, 'item.status'),
         outputRef: decodeThreadItemOutputReference(record.outputRef),
+        modelCall: decodeModelToolCallHistory(record.modelCall),
         results: arrayValue(record.results, 'item.results').map((entry, index) => {
           const item = recordValue(entry, `item.results[${index}]`);
           exactKeys(item, ['title', 'url', 'snippet'], `item.results[${index}]`);
@@ -1791,7 +1812,7 @@ function decodeUserContent(value: unknown): ThreadUserContent {
       ...(record.note === undefined ? {} : { note: stringValue(record.note, 'userContent.note', true) }),
     });
   }
-  exactKeys(record, ['type', 'id', 'name', 'mimeType', 'sizeBytes', 'source', 'promptImage', 'extractedText'], 'userContent');
+  exactKeys(record, ['type', 'id', 'name', 'mimeType', 'sizeBytes', 'source', 'artifactRef', 'extractedText'], 'userContent');
   const decodedSource = decodeThreadFileSource(record.source, 'userContent.source');
   return deepFreeze<ThreadAttachmentContent>({
     type,
@@ -1800,9 +1821,9 @@ function decodeUserContent(value: unknown): ThreadUserContent {
     mimeType: stringValue(record.mimeType, 'userContent.mimeType'),
     sizeBytes: nonNegativeInteger(record.sizeBytes, 'userContent.sizeBytes'),
     source: decodedSource,
-    ...(record.promptImage === undefined
+    ...(record.artifactRef === undefined
       ? {}
-      : { promptImage: decodeThreadResourceReference(record.promptImage, 'userContent.promptImage') }),
+      : { artifactRef: decodeThreadImageArtifactReference(record.artifactRef, 'userContent.artifactRef') }),
     ...(record.extractedText === undefined
       ? {}
       : { extractedText: stringValue(record.extractedText, 'userContent.extractedText', true) }),
@@ -1838,6 +1859,63 @@ function decodeThreadFileSource(value: unknown, field: string): ThreadFileSource
   }
   exactKeys(source, ['kind', 'ref'], field);
   return deepFreeze({ kind, ref: decodeThreadResourceReference(source.ref, `${field}.ref`) });
+}
+
+export function decodeThreadImageArtifactReference(
+  value: unknown,
+  field = 'threadImageArtifactReference',
+): ThreadImageArtifactReference {
+  const record = recordValue(value, field);
+  exactKeys(record, ['id', 'createdAt', 'retention', 'original', 'observation', 'geometry'], field);
+  const id = stringValue(record.id, `${field}.id`);
+  if (!SHA_256_PATTERN.test(id)) fail(`${field}.id`, 'expected a lowercase SHA-256 digest');
+  const retention = enumValue(record.retention, IMAGE_ARTIFACT_RETENTIONS, `${field}.retention`);
+  const original = record.original === null ? null : decodeThreadFileSource(record.original, `${field}.original`);
+  const observation = decodeImageResourceReference(record.observation, `${field}.observation`);
+  if (retention === 'external' && original?.kind !== 'localFile') {
+    fail(`${field}.original`, 'external artifacts require a local-file original');
+  }
+  if ((retention === 'durable' || retention === 'tiered') && original?.kind !== 'threadPayload') {
+    fail(`${field}.original`, `${retention} artifacts require a Thread-owned original`);
+  }
+  if (retention === 'observationOnly' && original !== null) {
+    fail(`${field}.original`, 'observation-only artifacts cannot carry an original');
+  }
+  if (original?.kind === 'threadPayload') {
+    assertImageResourceReference(original.ref, `${field}.original.ref`);
+  }
+  const createdAt = finiteNumber(record.createdAt, `${field}.createdAt`);
+  if (createdAt < 0) fail(`${field}.createdAt`, 'expected a non-negative timestamp');
+  return deepFreeze({
+    id,
+    createdAt,
+    retention,
+    original,
+    observation,
+    geometry: decodeImageArtifactGeometry(record.geometry, `${field}.geometry`),
+  });
+}
+
+function decodeImageArtifactGeometry(value: unknown, field: string): ImageArtifactGeometry {
+  const record = recordValue(value, field);
+  exactKeys(record, [
+    'sourceWidth',
+    'sourceHeight',
+    'observationWidth',
+    'observationHeight',
+    'observationToSource',
+  ], field);
+  const matrix = arrayValue(record.observationToSource, `${field}.observationToSource`);
+  if (matrix.length !== 6) fail(`${field}.observationToSource`, 'expected a six-value affine matrix');
+  return deepFreeze({
+    sourceWidth: positiveInteger(record.sourceWidth, `${field}.sourceWidth`),
+    sourceHeight: positiveInteger(record.sourceHeight, `${field}.sourceHeight`),
+    observationWidth: positiveInteger(record.observationWidth, `${field}.observationWidth`),
+    observationHeight: positiveInteger(record.observationHeight, `${field}.observationHeight`),
+    observationToSource: matrix.map((entry, index) => (
+      finiteNumber(entry, `${field}.observationToSource[${index}]`)
+    )) as unknown as ImageArtifactGeometry['observationToSource'],
+  });
 }
 
 export function decodeThreadContextPayloadReference(
@@ -2084,7 +2162,7 @@ export function decodeThreadContextPayload(value: unknown): ThreadContextPayload
       exactKeys(record, [
         'schemaVersion', 'kind', 'skillCatalogHash', 'announcedSkills', 'activeSkills',
         'roleCatalogHash', 'announcedRoles', 'userViewBaselineRef',
-        'additionalContextBaselineRef', 'activeObservations',
+        'additionalContextBaselineRef', 'activeObservations', 'degradations',
       ], 'contextPayload');
       return decodeCompactionRestoredState(record, kind);
     case 'compactionInstructions': {
@@ -2097,6 +2175,13 @@ export function decodeThreadContextPayload(value: unknown): ThreadContextPayload
       requireUnique(entries.map((entry) => entry.key), 'contextPayload.entries', 'keys');
       return deepFreeze({ schemaVersion: 1, kind, entries });
     }
+    case 'toolCallArguments':
+      exactKeys(record, ['schemaVersion', 'kind', 'value'], 'contextPayload');
+      return deepFreeze({
+        schemaVersion: 1,
+        kind,
+        value: jsonValue(record.value, 'contextPayload.value'),
+      });
     default:
       return assertNever(kind);
   }
@@ -2117,10 +2202,20 @@ function decodeCompactionRestoredState(
       entry,
       `contextPayload.activeObservations[${index}]`,
     ));
+  const degradations = arrayValue(record.degradations, 'contextPayload.degradations')
+    .map((entry, index) => decodeContextDegradationCheckpoint(
+      entry,
+      `contextPayload.degradations[${index}]`,
+    ));
   requireUnique(announcedSkills.map((entry) => entry.name), 'contextPayload.announcedSkills', 'Skill names');
   requireUnique(activeSkills.map((entry) => entry.name), 'contextPayload.activeSkills', 'Skill names');
   requireUnique(announcedRoles.map((entry) => entry.name), 'contextPayload.announcedRoles', 'Role names');
   requireUnique(activeObservations.map((entry) => entry.key), 'contextPayload.activeObservations', 'keys');
+  requireUnique(
+    degradations.map((entry) => JSON.stringify([entry.code, entry.source, entry.reference])),
+    'contextPayload.degradations',
+    'entries',
+  );
   return deepFreeze({
     schemaVersion: 1,
     kind,
@@ -2147,6 +2242,7 @@ function decodeCompactionRestoredState(
           'contextPayload.additionalContextBaselineRef',
         ),
     activeObservations,
+    degradations,
   });
 }
 
@@ -2386,6 +2482,22 @@ function decodeActiveObservationCheckpoint(value: unknown, path: string) {
       'toolOutputProjection',
       `${path}.projectionRef`,
     ),
+  };
+}
+
+function decodeContextDegradationCheckpoint(value: unknown, path: string) {
+  const record = recordValue(value, path);
+  exactKeys(record, ['code', 'source', 'reference'], path);
+  return {
+    code: enumValue(record.code, [
+      'payloadUnavailable',
+      'payloadInvalid',
+      'journalDiscontinuity',
+      'checkpointMismatch',
+      'projectionConflict',
+    ], `${path}.code`),
+    source: nonEmptyTrimmedString(record.source, `${path}.source`),
+    reference: nonEmptyTrimmedString(record.reference, `${path}.reference`),
   };
 }
 
@@ -2855,7 +2967,8 @@ function decodeTurnDiagnosticsActivities(
         const executionPath = `${path}.executions[${executionIndex}]`;
         const execution = recordValue(entry, executionPath);
         exactKeys(execution, [
-          'callId', 'toolName', 'itemId', 'startedAt', 'completedAt', 'status',
+          'callId', 'toolName', 'itemId', 'admissionDisposition', 'canonicalIdentity',
+          'schemaDigest', 'startedAt', 'completedAt', 'status',
         ], executionPath);
         const startedAt = nonNegativeNumber(execution.startedAt, `${executionPath}.startedAt`);
         const completedAt = execution.completedAt === null
@@ -2872,6 +2985,17 @@ function decodeTurnDiagnosticsActivities(
           callId: stringValue(execution.callId, `${executionPath}.callId`),
           toolName: stringValue(execution.toolName, `${executionPath}.toolName`),
           itemId: nullableString(execution.itemId, `${executionPath}.itemId`),
+          admissionDisposition: enumValue(
+            execution.admissionDisposition,
+            ['replayable', 'redactedReplay', 'evidenceOnly'],
+            `${executionPath}.admissionDisposition`,
+          ),
+          canonicalIdentity: execution.canonicalIdentity === null
+            ? null
+            : decodeModelToolIdentity(execution.canonicalIdentity, `${executionPath}.canonicalIdentity`),
+          schemaDigest: execution.schemaDigest === null
+            ? null
+            : sha256(execution.schemaDigest, `${executionPath}.schemaDigest`),
           startedAt,
           completedAt,
           status,
@@ -3273,6 +3397,120 @@ function decodeThreadItemOutputReference(
   });
 }
 
+function decodeModelToolCallHistory(value: unknown): ModelToolCallHistory {
+  const record = recordValue(value, 'item.modelCall');
+  const disposition = enumValue(
+    record.disposition,
+    ['replayable', 'redactedReplay', 'evidenceOnly'],
+    'item.modelCall.disposition',
+  );
+  if (disposition === 'replayable') {
+    exactKeys(record, [
+      'disposition', 'identity', 'providerName', 'arguments', 'schemaDigest',
+    ], 'item.modelCall');
+    return deepFreeze({
+      disposition,
+      identity: decodeModelToolIdentity(record.identity, 'item.modelCall.identity'),
+      providerName: boundedUtf8String(
+        record.providerName,
+        'item.modelCall.providerName',
+        MAX_MODEL_TOOL_PROVIDER_NAME_BYTES,
+      ),
+      arguments: decodeModelToolCallArguments(record.arguments, 'item.modelCall.arguments'),
+      schemaDigest: sha256(record.schemaDigest, 'item.modelCall.schemaDigest'),
+    });
+  }
+  if (disposition === 'redactedReplay') {
+    exactKeys(record, [
+      'disposition', 'identity', 'providerName', 'redactedArguments', 'redactedPaths', 'schemaDigest',
+    ], 'item.modelCall');
+    const redactedPaths = stringArray(record.redactedPaths, 'item.modelCall.redactedPaths');
+    if (redactedPaths.length === 0) fail('item.modelCall.redactedPaths', 'expected at least one JSON pointer');
+    requireUnique(redactedPaths, 'item.modelCall.redactedPaths', 'JSON pointers');
+    for (const [index, pointer] of redactedPaths.entries()) {
+      if (!isJsonPointer(pointer)) {
+        fail(`item.modelCall.redactedPaths[${index}]`, 'expected an RFC 6901 JSON pointer');
+      }
+    }
+    return deepFreeze({
+      disposition,
+      identity: decodeModelToolIdentity(record.identity, 'item.modelCall.identity'),
+      providerName: boundedUtf8String(
+        record.providerName,
+        'item.modelCall.providerName',
+        MAX_MODEL_TOOL_PROVIDER_NAME_BYTES,
+      ),
+      redactedArguments: decodeModelToolCallArguments(
+        record.redactedArguments,
+        'item.modelCall.redactedArguments',
+      ),
+      redactedPaths,
+      schemaDigest: sha256(record.schemaDigest, 'item.modelCall.schemaDigest'),
+    });
+  }
+  exactKeys(record, [
+    'disposition', 'identity', 'providerName', 'redactedArgumentsSummary', 'reason', 'correction',
+  ], 'item.modelCall');
+  const providerName = boundedUtf8String(
+    record.providerName,
+    'item.modelCall.providerName',
+    MAX_MODEL_TOOL_PROVIDER_NAME_BYTES,
+  );
+  const redactedArgumentsSummary = jsonValue(
+    record.redactedArgumentsSummary,
+    'item.modelCall.redactedArgumentsSummary',
+  );
+  if (serializedJsonBytes(redactedArgumentsSummary) > MAX_MODEL_TOOL_EVIDENCE_SUMMARY_BYTES) {
+    fail('item.modelCall.redactedArgumentsSummary', 'exceeds the evidence summary budget');
+  }
+  const correction = boundedUtf8String(
+    record.correction,
+    'item.modelCall.correction',
+    MAX_MODEL_TOOL_CORRECTION_BYTES,
+  );
+  return deepFreeze({
+    disposition,
+    identity: record.identity === null
+      ? null
+      : decodeModelToolIdentity(record.identity, 'item.modelCall.identity'),
+    providerName,
+    redactedArgumentsSummary,
+    reason: enumValue(record.reason, MODEL_TOOL_CALL_EVIDENCE_REASONS, 'item.modelCall.reason'),
+    correction,
+  });
+}
+
+function decodeModelToolIdentity(value: unknown, path: string) {
+  const record = recordValue(value, path);
+  exactKeys(record, ['namespace', 'name'], path);
+  return deepFreeze({
+    namespace: nullableString(record.namespace, `${path}.namespace`),
+    name: stringValue(record.name, `${path}.name`),
+  });
+}
+
+function decodeModelToolCallArguments(value: unknown, path: string): ModelToolCallArguments {
+  const record = recordValue(value, path);
+  const storage = enumValue(record.storage, ['inline', 'payload'], `${path}.storage`);
+  if (storage === 'inline') {
+    exactKeys(record, ['storage', 'value'], path);
+    const decoded = jsonValue(record.value, `${path}.value`);
+    if (serializedJsonBytes(decoded) > MAX_INLINE_MODEL_TOOL_ARGUMENT_BYTES) {
+      fail(`${path}.value`, 'exceeds the inline model-tool argument budget');
+    }
+    return deepFreeze({ storage, value: decoded });
+  }
+  exactKeys(record, ['storage', 'ref'], path);
+  return deepFreeze({
+    storage,
+    ref: expectContextPayloadKind(
+      decodeThreadContextPayloadReference(record.ref, `${path}.ref`),
+      'toolCallArguments',
+      `${path}.ref`,
+    ),
+  });
+}
+
 function decodeRequiredThreadItemOutputReference(value: unknown, field: string): ThreadItemOutputReference {
   const ref = decodeThreadItemOutputReference(value, field);
   if (!ref) fail(field, 'expected an output reference');
@@ -3311,21 +3549,10 @@ function decodeDynamicToolOutput(value: unknown): DynamicToolOutputContent {
     return deepFreeze({ type, text: stringValue(record.text, 'dynamicToolOutput.text', true) });
   }
   if (type === 'image') {
-    const source = decodeThreadFileSource(record.source, 'dynamicToolOutput.source');
-    if (source.kind === 'localFile') {
-      exactKeys(record, ['type', 'source', 'promptImage', 'alt'], 'dynamicToolOutput');
-      return deepFreeze({
-        type,
-        source,
-        promptImage: decodeImageResourceReference(record.promptImage, 'dynamicToolOutput.promptImage'),
-        ...(record.alt === undefined ? {} : { alt: stringValue(record.alt, 'dynamicToolOutput.alt', true) }),
-      });
-    }
-    exactKeys(record, ['type', 'source', 'alt'], 'dynamicToolOutput');
-    assertImageResourceReference(source.ref, 'dynamicToolOutput.source.ref');
+    exactKeys(record, ['type', 'artifactRef', 'alt'], 'dynamicToolOutput');
     return deepFreeze({
       type,
-      source,
+      artifactRef: decodeThreadImageArtifactReference(record.artifactRef, 'dynamicToolOutput.artifactRef'),
       ...(record.alt === undefined ? {} : { alt: stringValue(record.alt, 'dynamicToolOutput.alt', true) }),
     });
   }
@@ -3408,6 +3635,28 @@ function stringArray(value: unknown, path: string): string[] {
 function stringValue(value: unknown, path: string, allowEmpty = false): string {
   if (typeof value !== 'string' || (!allowEmpty && value.length === 0)) fail(path, 'expected a string');
   return value;
+}
+
+function boundedUtf8String(value: unknown, path: string, maxBytes: number): string {
+  const decoded = stringValue(value, path);
+  if (new TextEncoder().encode(decoded).byteLength > maxBytes) fail(path, 'exceeds the UTF-8 byte budget');
+  return decoded;
+}
+
+function serializedJsonBytes(value: JsonValue): number {
+  return new TextEncoder().encode(JSON.stringify(value)).byteLength;
+}
+
+function isJsonPointer(value: string): boolean {
+  if (value === '') return true;
+  if (!value.startsWith('/')) return false;
+  for (let index = 0; index < value.length; index += 1) {
+    if (value[index] !== '~') continue;
+    const escape = value[index + 1];
+    if (escape !== '0' && escape !== '1') return false;
+    index += 1;
+  }
+  return true;
 }
 
 function nonEmptyTrimmedString(value: unknown, path: string): string {

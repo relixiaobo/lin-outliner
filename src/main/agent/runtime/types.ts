@@ -1,6 +1,7 @@
 import type { EffectiveThreadConfiguration } from '../../../core/agent/configuration';
 import type {
   Thread,
+  JsonValue,
   ContextCursor,
   ThreadContextPayload,
   ContextEvidenceThreadItem,
@@ -9,6 +10,7 @@ import type {
   ThreadContextPayloadReference,
   ThreadItem,
   ThreadItemOutputReference,
+  ThreadImageArtifactReference,
   ThreadResourceReference,
   ThreadUserContent,
   Turn,
@@ -21,6 +23,31 @@ import type {
 } from '../../../core/agent/protocol';
 import type { ItemRecorder } from './ItemRecorder';
 import type { TokenBudgetUsage } from './kernel/types';
+
+export interface ImagePixelDimensions {
+  readonly width: number;
+  readonly height: number;
+}
+
+export interface PreparedOutputImageObservation {
+  readonly bytes: Uint8Array;
+  readonly mimeType: string;
+  readonly sourceDimensions: ImagePixelDimensions;
+  readonly observationDimensions: ImagePixelDimensions;
+}
+
+export type OutputImageObservationNormalizer = (input: {
+  readonly bytes: Uint8Array;
+  readonly mimeType: string;
+  readonly signal?: AbortSignal;
+}) => Promise<PreparedOutputImageObservation>;
+
+export interface PersistedOutputImageObservation {
+  readonly observation: ThreadResourceReference;
+  readonly observationBytes: Uint8Array;
+  readonly sourceDimensions: ImagePixelDimensions;
+  readonly observationDimensions: ImagePixelDimensions;
+}
 
 export interface SteeredTurnInput {
   readonly items: readonly ThreadItem[];
@@ -43,10 +70,16 @@ export interface TurnExecutionContext {
   readContext(ref: ThreadContextPayloadReference): Promise<ThreadContextPayload | null>;
   readOutput(ref: ThreadItemOutputReference): Promise<string | null>;
   resolveResourceObservationPath(ref: ThreadResourceReference): Promise<string | null>;
+  resolveImageArtifactPath(artifact: ThreadImageArtifactReference): Promise<string | null>;
   readResource(ref: ThreadResourceReference): Promise<Buffer | null>;
   persistOutputImage(
-    dataBase64: string,
+    bytes: Uint8Array,
     mimeType: string,
+  ): Promise<PersistedOutputImageObservation>;
+  persistOutputResource(
+    bytes: Uint8Array,
+    mimeType: string,
+    fileName: string,
   ): Promise<ThreadResourceReference>;
   persistOutputText(
     itemId: string,
@@ -54,6 +87,7 @@ export interface TurnExecutionContext {
     mimeType: ThreadItemOutputReference['mimeType'],
     summary: string,
   ): Promise<ThreadItemOutputReference>;
+  persistToolCallArguments(value: JsonValue): Promise<ThreadContextPayloadReference>;
   persistContextEvidence(
     payload: Extract<ThreadContextPayload, { readonly kind: ContextEvidenceKind }>,
     summary: string,

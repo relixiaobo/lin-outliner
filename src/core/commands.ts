@@ -121,8 +121,6 @@ export const AGENT_COMMANDS = [
   // a path to store, and unbinding drops the pointer without touching files.
   'agent_pick_skill_directory',
   'agent_reveal_skill_directory',
-  'agent_accept_skill',
-  'agent_revoke_skill_acceptance',
   'agent_undo_skill_agent_edit',
   'agent_managed_skill_catalog',
   'agent_managed_skill_discover',

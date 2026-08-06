@@ -1,5 +1,6 @@
 import { lstat,realpath,stat } from 'node:fs/promises';
 import { decodeTurn } from '../../../core/agent/codec';
+import { modelCallArgumentSource } from '../../../core/agent/modelCallHistory';
 import type {
 Thread,
 ThreadAttachmentContent,
@@ -7,9 +8,11 @@ ThreadContextPayloadReference,
 ThreadContextReadRequest,
 ThreadContextReadResponse,
 ThreadId,
+ThreadItem,
 ThreadItemOutputReadRequest,
 ThreadItemOutputReadResponse,
 ThreadItemOutputReference,
+ThreadImageArtifactReference,
 ThreadResourceReference,
 ThreadTurnDetailsReadRequest,
 ThreadTurnDetailsReadResponse,
@@ -25,13 +28,16 @@ assertContextPayloadDependencies,
 itemContextPayloadReferences,
 itemResourceReferences,
 resourceReferenceKey,
+scanThreadItemResourceUsage,
 } from '../context/contextDependencies';
 import { assertCanonicalUserContent } from '../context/userContentIntegrity';
 import {
 referencesSameResourceFile,
+type ThreadImageRetentionInventory,
 } from '../persistence/ToolPayloadStore';
 import type {
 ResolvedThreadAttachmentFile,
+ResolvedThreadImageArtifactFile,
 ResolvedThreadResourceFile,
 ThreadUserContentResolutionContext,
 } from '../ThreadService';
@@ -65,13 +71,20 @@ export class ThreadResourceOps {
     const turn = this.core.readTurn(request.threadId, request.turnId);
     if (!turn) return { context: null };
     const item = turn.items.find((candidate) => candidate.id === request.itemId);
-    if (item?.type !== 'contextEvidence' || item.payloadRef.id !== request.contextId) {
-      return { context: null };
+    if (!item) return { context: null };
+    if (item.type === 'contextEvidence') {
+      if (item.payloadRef.id !== request.contextId) return { context: null };
+      const payload = await this.core.payloads.readContext(request.threadId, item.payloadRef);
+      if (!payload) return { context: null };
+      assertContextPayloadDependencies(item, payload);
+      return { context: { ref: item.payloadRef, payload } };
     }
-    const payload = await this.core.payloads.readContext(request.threadId, item.payloadRef);
-    if (!payload) return { context: null };
-    assertContextPayloadDependencies(item, payload);
-    return { context: { ref: item.payloadRef, payload } };
+    if (!('modelCall' in item) || item.modelCall.disposition === 'evidenceOnly') return { context: null };
+    const source = modelCallArgumentSource(item.modelCall);
+    if (source.storage !== 'payload' || source.ref.id !== request.contextId) return { context: null };
+    const payload = await this.core.payloads.readContext(request.threadId, source.ref);
+    if (!payload || payload.kind !== 'toolCallArguments') return { context: null };
+    return { context: { ref: source.ref, payload } };
   }
   async readTurnDetails(request: ThreadTurnDetailsReadRequest): Promise<ThreadTurnDetailsReadResponse> {
     const thread = this.core.requireThread(request.threadId).thread;
@@ -201,43 +214,67 @@ export class ThreadResourceOps {
     if (matches.length === 0) return null;
     const attachment = matches[0]!;
     if (matches.some((candidate) => !attachmentSourcesEqual(candidate, attachment))) return null;
-    const storedPath = attachment.source.kind === 'localFile'
-      ? attachment.source.path
-      : await this.detachedResourceObservationPath(
-          threadId,
-          `attachment:${attachmentId}`,
-          attachment.source.ref,
-        );
+    const detachedIdentity = attachment.artifactRef
+      ? `attachment-image:${attachmentId}`
+      : `attachment:${attachmentId}`;
+    const storedPath = attachment.artifactRef
+      ? await this.detachedImageArtifactObservationPath(threadId, detachedIdentity, attachment.artifactRef)
+      : attachment.source.kind === 'localFile'
+        ? attachment.source.path
+        : await this.detachedResourceObservationPath(threadId, detachedIdentity, attachment.source.ref);
     if (!storedPath) return null;
-    if (attachment.source.kind === 'threadPayload') {
+    const detached = !!attachment.artifactRef || attachment.source.kind === 'threadPayload';
+    if (detached) {
       const storedStats = await lstat(storedPath).catch(() => null);
       if (!storedStats?.isFile() || storedStats.isSymbolicLink() || storedStats.nlink !== 1) {
-        await this.discardDetachedResourceObservation(threadId, `attachment:${attachmentId}`);
+        await this.discardDetachedResourceObservation(threadId, detachedIdentity);
         return null;
       }
     }
     const canonicalPath = await realpath(storedPath).catch(() => null);
     if (!canonicalPath) {
-      if (attachment.source.kind === 'threadPayload') {
-        await this.discardDetachedResourceObservation(threadId, `attachment:${attachmentId}`);
-      }
+      if (detached) await this.discardDetachedResourceObservation(threadId, detachedIdentity);
       return null;
     }
-    if (attachment.source.kind === 'threadPayload' && canonicalPath !== storedPath) {
-      await this.discardDetachedResourceObservation(threadId, `attachment:${attachmentId}`);
+    if (detached && canonicalPath !== storedPath) {
+      await this.discardDetachedResourceObservation(threadId, detachedIdentity);
       return null;
     }
-    if (attachment.source.kind === 'localFile' && canonicalPath !== attachment.source.path) return null;
+    if (!attachment.artifactRef && attachment.source.kind === 'localFile' && canonicalPath !== attachment.source.path) {
+      return null;
+    }
     const fileStats = await stat(canonicalPath).catch(() => null);
     const entryKind = fileStats?.isFile() ? 'file' : fileStats?.isDirectory() ? 'directory' : null;
     if (!fileStats || !entryKind) {
-      if (attachment.source.kind === 'threadPayload') {
-        await this.discardDetachedResourceObservation(threadId, `attachment:${attachmentId}`);
-      }
+      if (detached) await this.discardDetachedResourceObservation(threadId, detachedIdentity);
       return null;
     }
-    // Managed copies remain available to Preview/Open/Reveal until scratch TTL cleanup.
+    // Detached copies remain available to Preview/Open/Reveal until scratch cleanup.
     return { attachment, entryKind, path: canonicalPath, stats: fileStats };
+  }
+  async resolveImageArtifactFile(
+    threadId: ThreadId,
+    artifact: ThreadImageArtifactReference,
+  ): Promise<ResolvedThreadImageArtifactFile | null> {
+    this.core.requireThread(threadId);
+    const matches = (await this.threadImageArtifactReferences(threadId))
+      .filter((candidate) => candidate.id === artifact.id);
+    const canonical = matches[0];
+    if (!canonical || matches.some((candidate) => JSON.stringify(candidate) !== JSON.stringify(canonical))) return null;
+    const identity = `image-artifact:${canonical.id}`;
+    const storedPath = await this.detachedImageArtifactObservationPath(threadId, identity, canonical);
+    if (!storedPath) return null;
+    const storedStats = await lstat(storedPath).catch(() => null);
+    if (!storedStats?.isFile() || storedStats.isSymbolicLink() || storedStats.nlink !== 1) {
+      await this.discardDetachedResourceObservation(threadId, identity);
+      return null;
+    }
+    const canonicalPath = await realpath(storedPath).catch(() => null);
+    if (!canonicalPath || canonicalPath !== storedPath) {
+      await this.discardDetachedResourceObservation(threadId, identity);
+      return null;
+    }
+    return { artifact: canonical, entryKind: 'file', path: canonicalPath, stats: storedStats };
   }
   async resolveThreadResourceFile(
     threadId: ThreadId,
@@ -303,6 +340,34 @@ export class ThreadResourceOps {
     }
   }
 
+  private async detachedImageArtifactObservationPath(
+    threadId: ThreadId,
+    identity: string,
+    artifact: ThreadImageArtifactReference,
+  ): Promise<string | null> {
+    const key = `${threadId}\0${identity}`;
+    let entry = this.detachedResourceObservations.get(key);
+    if (!entry) {
+      const observation = this.createResourceObservation(threadId);
+      entry = { observation, path: observation.resolveArtifactPath(artifact) };
+      this.detachedResourceObservations.set(key, entry);
+    }
+    try {
+      const resolved = await entry.path;
+      if (!resolved && this.detachedResourceObservations.get(key) === entry) {
+        this.detachedResourceObservations.delete(key);
+        await entry.observation.dispose();
+      }
+      return resolved;
+    } catch (error) {
+      if (this.detachedResourceObservations.get(key) === entry) {
+        this.detachedResourceObservations.delete(key);
+        await entry.observation.dispose();
+      }
+      throw error;
+    }
+  }
+
   private async discardDetachedResourceObservation(
     threadId: ThreadId,
     identity: string,
@@ -329,6 +394,19 @@ export class ThreadResourceOps {
   }
   threadResourceReferences(threadId: ThreadId): ThreadResourceReference[] {
     return this.core.allTurns(threadId).flatMap((turn) => turn.items.flatMap(itemResourceReferences));
+  }
+  async threadImageArtifactReferences(threadId: ThreadId): Promise<readonly ThreadImageArtifactReference[]> {
+    return (await this.scanResourceUsage(
+      threadId,
+      this.core.allTurns(threadId).flatMap((turn) => turn.items),
+    )).artifacts;
+  }
+  async threadImageRetentionInventory(threadId: ThreadId): Promise<ThreadImageRetentionInventory> {
+    const usage = await this.scanResourceUsage(
+      threadId,
+      this.core.allTurns(threadId).flatMap((turn) => turn.items),
+    );
+    return { artifacts: usage.artifacts, protectedResources: usage.genericResources };
   }
   threadContextPayloadReferences(threadId: ThreadId): ThreadContextPayloadReference[] {
     return this.core.allTurns(threadId).flatMap((turn) => turn.items.flatMap(itemContextPayloadReferences));
@@ -376,6 +454,13 @@ export class ThreadResourceOps {
     ));
     await Promise.all(unique.map((ref) => this.core.payloads.deleteResource(threadId, ref)));
   }
+
+  private scanResourceUsage(threadId: ThreadId, items: readonly ThreadItem[]) {
+    return scanThreadItemResourceUsage(
+      items,
+      (ref) => this.core.payloads.readContext(threadId, ref),
+    );
+  }
 }
 
 function attachmentSourcesEqual(
@@ -395,6 +480,5 @@ function attachmentSourcesEqual(
   } else {
     return false;
   }
-  if (!left.promptImage || !right.promptImage) return left.promptImage === right.promptImage;
-  return resourceReferenceKey(left.promptImage) === resourceReferenceKey(right.promptImage);
+  return left.artifactRef?.id === right.artifactRef?.id;
 }

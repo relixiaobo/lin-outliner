@@ -14,8 +14,12 @@ import type {
   Usage,
 } from '@earendil-works/pi-ai';
 import type { Static, TSchema } from 'typebox';
-import type { TurnError } from '../../../../core/agent/protocol';
+import type { ModelToolIdentity, TurnError } from '../../../../core/agent/protocol';
 import type { ModelGateway } from './ModelGateway';
+import type {
+  ToolCallAdmissionDecision,
+  ToolCallAdmissionRequest,
+} from '../toolCallHistory';
 
 export type {
   Api,
@@ -68,6 +72,7 @@ export type AgentToolUpdateCallback<T = any> = (partialResult: AgentToolResult<T
 
 export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = any> extends Tool<TParameters> {
   label: string;
+  readonly canonicalIdentity?: ModelToolIdentity;
   prepareArguments?: (args: unknown) => Static<TParameters>;
   execute: (
     toolCallId: string,
@@ -99,12 +104,18 @@ export type KernelEvent =
   | { type: 'message_start'; message: AgentMessage }
   | { type: 'message_update'; message: AgentMessage; assistantMessageEvent: AssistantMessageEvent }
   | { type: 'message_end'; message: AgentMessage }
-  | { type: 'tool_execution_start'; toolCallId: string; toolName: string; args: any }
+  | {
+      type: 'tool_call_admission';
+      toolCallId: string;
+      providerToolCallId: string;
+      toolName: string;
+      decision: ToolCallAdmissionDecision;
+    }
+  | { type: 'tool_execution_start'; toolCallId: string; toolName: string }
   | {
       type: 'tool_execution_update';
       toolCallId: string;
       toolName: string;
-      args: any;
       partialResult: any;
     }
   | {
@@ -156,6 +167,7 @@ export interface KernelAgentOptions {
   retryOptions?: RetryPolicyOptions;
   transformContext?: () => Promise<Message[]>;
   recoverContextOverflow?: () => Promise<Message[] | null>;
+  admitToolCall?: (request: ToolCallAdmissionRequest) => Promise<ToolCallAdmissionDecision>;
   getApiKey?: (providerId: string) => Promise<string | undefined> | string | undefined;
   sessionId?: string;
   providerOptions?: SimpleStreamOptions;

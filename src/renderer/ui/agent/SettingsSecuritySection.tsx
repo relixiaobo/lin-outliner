@@ -5,15 +5,15 @@ import { InsetGroup, InsetRow } from './SettingsInsetList';
 
 interface SettingsSecuritySectionProps {
   blocks: readonly string[];
+  blockErrors: ReadonlyMap<string, string>;
   onRemoveBlock: (rule: string) => void;
 }
 
 /**
- * The Security category. It edits the capability draft the parent owns and the
- * footer Save commits, so it holds no state of its own — the removal handler is
- * passed in.
+ * The Security category. Each removal commits immediately in the parent, so this
+ * component only renders the current rules and their row-owned failure state.
  */
-export function SettingsSecuritySection({ blocks, onRemoveBlock }: SettingsSecuritySectionProps) {
+export function SettingsSecuritySection({ blocks, blockErrors, onRemoveBlock }: SettingsSecuritySectionProps) {
   const t = useT();
 
   function renderCapabilityRuleRows(
@@ -21,9 +21,10 @@ export function SettingsSecuritySection({ blocks, onRemoveBlock }: SettingsSecur
     emptyLabel: string,
     actionLabel: string,
   ) {
-    if (rules.length === 0) return <InsetRow disabled label={emptyLabel} />;
+    if (rules.length === 0) return <InsetRow empty label={emptyLabel} />;
     return rules.map((rule) => (
       <InsetRow
+        feedback={blockErrors.get(rule) ? <span role="alert">{blockErrors.get(rule)}</span> : undefined}
         key={rule}
         label={capabilityRuleLabel(rule, t)}
         sublabel={<span className="inset-row-code">{rule}</span>}
@@ -43,16 +44,29 @@ export function SettingsSecuritySection({ blocks, onRemoveBlock }: SettingsSecur
 
   return (
     <section className="agent-settings-section settings-security-section" aria-label={t.settings.security.sectionAriaLabel}>
-      <InsetGroup ariaLabel={t.settings.security.accessAriaLabel} label={t.settings.security.accessGroup}>
+      {/* The boundary is a FOOTNOTE, not a group. It was a section header over a
+          row whose label named a thing you cannot set and whose sublabel was a
+          paragraph — settings furniture wrapped around prose. It explains what
+          Full Access means, so it belongs under the row that says Full Access. */}
+      <InsetGroup
+        ariaLabel={t.settings.security.accessAriaLabel}
+        footnote={t.settings.security.fullAccessBoundaryNote}
+        id="agent-access"
+        label={t.settings.security.accessGroup}
+      >
         <InsetRow
           label={t.settings.security.accessModeLabel}
           sublabel={t.settings.security.fullAccessSublabel}
-          trailing={t.settings.security.fullAccessLabel}
+          trailing={<span className="inset-row-value">{t.settings.security.fullAccessLabel}</span>}
           wrap
         />
       </InsetGroup>
 
-      <InsetGroup ariaLabel={t.settings.security.blocksAriaLabel} label={t.settings.security.blocksGroup}>
+      <InsetGroup
+        ariaLabel={t.settings.security.blocksAriaLabel}
+        id="blocks"
+        label={t.settings.security.blocksGroup}
+      >
         {renderCapabilityRuleRows(
           blocks,
           t.settings.security.noBlocks,
@@ -60,18 +74,6 @@ export function SettingsSecuritySection({ blocks, onRemoveBlock }: SettingsSecur
         )}
       </InsetGroup>
 
-      <InsetGroup
-        ariaLabel={t.settings.security.systemBoundaryAriaLabel}
-        footnote={t.settings.security.fullAccessBoundaryNote}
-        label={t.settings.security.systemBoundaryGroup}
-      >
-        <InsetRow
-          className="settings-system-boundary-row"
-          label={t.settings.security.fullAccessBoundaryLabel}
-          sublabel={t.settings.security.fullAccessBoundarySublabel}
-          wrap
-        />
-      </InsetGroup>
     </section>
   );
 }

@@ -18,7 +18,7 @@ test.describe('agent settings window', () => {
     await expect(settings.getByRole('heading', { name: 'Settings' })).toBeVisible();
     await expect(settings.locator('.settings-rail')).toBeVisible();
     await expect(settings.locator('.settings-content')).toHaveAttribute('aria-busy', 'true');
-    await expect(settings.getByRole('button', { name: 'Providers', exact: true })).toBeVisible();
+    await expect(settings.getByRole('button', { name: 'Agent', exact: true })).toBeVisible();
     await expect(settings.locator('.agent-settings-empty', { hasText: 'Loading' })).toHaveCount(0);
   });
 
@@ -27,7 +27,7 @@ test.describe('agent settings window', () => {
     await expect(settings.getByRole('heading', { name: 'Settings' })).toBeVisible();
     // The category rail floats off the content base (its own elevated panel).
     await expect(settings.locator('.settings-rail')).toBeVisible();
-    await expect(settings.getByRole('button', { name: 'Providers', exact: true })).toBeVisible();
+    await expect(settings.getByRole('button', { name: 'Agent', exact: true })).toBeVisible();
     await expect(settings.locator('.settings-nav-hint')).toHaveCount(0);
     // Frameless window: a top drag strip stands in for the native title bar (the
     // OS traffic lights overlay it), so there is no separate title-bar row.
@@ -39,32 +39,67 @@ test.describe('agent settings window', () => {
     await expect(settings.getByRole('button', { name: 'Close' })).toHaveCount(0);
   });
 
-  test('navigates categories with the back / forward toolbar arrows', async ({ page }) => {
+  test('navigates categories and pages with the back / forward toolbar arrows', async ({ page }) => {
     const settings = await openSettings(page);
     const back = settings.getByRole('button', { name: 'Back' });
     const forward = settings.getByRole('button', { name: 'Forward' });
-    // At rest (Providers, no history) both arrows are inert, like System Settings.
+    // At rest (General, no history) both arrows are inert, like System Settings.
     await expect(back).toBeDisabled();
     await expect(forward).toBeDisabled();
 
-    // Visiting another category records history, so back becomes available. The
-    // toolbar title names the pane; assert the content by its grouped inset list,
-    // symmetric with the Providers check below.
-    await settings.getByRole('button', { name: /^Security/ }).click();
-    await expect(settings.getByRole('list', { name: 'System boundary' })).toBeVisible();
+    await settings.getByRole('button', { name: 'Agent', exact: true }).click();
+    await expect(settings.getByRole('list', { name: 'Agent access' })).toBeVisible();
     await expect(back).toBeEnabled();
     await expect(forward).toBeDisabled();
 
-    // Back returns to Providers and arms forward.
     await back.click();
-    await expect(settings.getByRole('list', { name: 'Providers to add' })).toBeVisible();
+    await expect(settings.getByRole('list', { name: 'Diagnostics' })).toBeVisible();
     await expect(back).toBeDisabled();
     await expect(forward).toBeEnabled();
 
-    // Forward replays the visit.
     await forward.click();
-    await expect(settings.getByRole('list', { name: 'System boundary' })).toBeVisible();
+    await expect(settings.getByRole('list', { name: 'Agent access' })).toBeVisible();
     await expect(forward).toBeDisabled();
+
+    // The arrows now walk into pages too, which is the reason they stopped being
+    // permanently-disabled chrome: with one route type they could only ever
+    // duplicate the rail beside them.
+    await settings.getByRole('button', { name: /^Model services/ }).click();
+    await expect(settings.getByRole('list', { name: 'Providers to add' })).toBeVisible();
+    await expect(settings.getByRole('heading', { name: 'Model services' })).toBeVisible();
+    await back.click();
+    await expect(settings.getByRole('list', { name: 'Agent access' })).toBeVisible();
+  });
+
+  test('shows public release notes and copies the running version information', async ({ page }) => {
+    const settings = await openSettings(page, '&category=general/about');
+
+    await expect(settings.getByRole('heading', { name: 'About' })).toBeVisible();
+    await expect(settings.getByText('Version 0.1.0', { exact: true })).toBeVisible();
+    const releaseNotes = settings.getByRole('list', { name: 'What’s new' });
+    await expect(releaseNotes).toBeVisible();
+    const releaseDisclosure = releaseNotes.getByRole('button', { name: /Release notes.*0\.1\.0 development/ });
+    await expect(releaseDisclosure).toHaveAttribute('aria-expanded', 'false');
+    await expect(releaseNotes.getByRole('heading', { name: 'Fixed' })).toHaveCount(0);
+    await releaseDisclosure.click();
+    await expect(releaseDisclosure).toHaveAttribute('aria-expanded', 'true');
+    await expect(releaseNotes.getByRole('heading', { name: 'Fixed' }).first()).toBeVisible();
+    await expect(releaseNotes.getByRole('heading', { name: 'Internal' })).toHaveCount(0);
+    await expect(releaseNotes.getByLabel('Release notes version')).toHaveCount(0);
+    const releaseNotesRegion = releaseNotes.getByRole('region', { name: /Release notes for 0\.1\.0 development/ });
+    await expect(releaseNotesRegion).toHaveAttribute('tabindex', '0');
+    const releaseNotesGeometry = await releaseNotesRegion.evaluate((element) => ({
+      clientHeight: element.clientHeight,
+      scrollHeight: element.scrollHeight,
+      viewportHeight: window.innerHeight,
+    }));
+    expect(releaseNotesGeometry.clientHeight).toBeLessThanOrEqual(
+      Math.min(480, releaseNotesGeometry.viewportHeight * 0.5) + 1,
+    );
+    expect(releaseNotesGeometry.scrollHeight).toBeGreaterThan(releaseNotesGeometry.clientHeight);
+
+    await settings.getByRole('button', { name: 'Copy version info' }).click();
+    await expect.poll(() => clipboardText(page)).toContain('Tenon 0.1.0\ndarwin arm64');
   });
 
   test('keeps scrolled content below the fixed toolbar chrome', async ({ page }) => {
@@ -80,6 +115,22 @@ test.describe('agent settings window', () => {
     });
     const scrolledContentBox = await settings.locator('.settings-content').boundingBox();
     expect(scrolledContentBox!.y).toBeCloseTo(contentBox!.y, 1);
+  });
+
+  // The Memory group raised a red alert on every run until the mock grew the
+  // memory channels: an unhandled invoke throws, MemorySettingsGroup catches it
+  // into the shared alert, and its 5s poll re-fired it forever. Nothing asserted
+  // the pane was error-free, so it went unnoticed — including by the
+  // design-system probes, which photograph it and pass regardless. The wait
+  // covers the poll, so a regression cannot hide in the gap before it fires.
+  // Memory lives in Agent now, so that is where this belongs.
+  test('renders the Agent pane without raising an error', async ({ page }) => {
+    const settings = await openSettings(page);
+    await settings.getByRole('button', { name: 'Agent', exact: true }).click();
+    await expect(settings.getByRole('list', { name: 'Memory' })).toBeVisible();
+    await expect(settings.getByRole('alert')).toHaveCount(0);
+    await page.waitForTimeout(5_500);
+    await expect(settings.getByRole('alert')).toHaveCount(0);
   });
 
   test('uses a flat settings pop-up button for select controls', async ({ page }) => {
@@ -126,64 +177,58 @@ test.describe('agent settings window', () => {
     });
   }
 
+  // A project Skill row exposes its source and enable state without inventing an
+  // approval step that does not exist in the runtime.
   for (const colorScheme of ['light', 'dark'] as const) {
-    test(`shows workspace skill pending acceptance without overlap in ${colorScheme} mode`, async ({ page }) => {
+    test(`keeps a workspace skill row readable in ${colorScheme} mode`, async ({ page }) => {
       await page.emulateMedia({ colorScheme });
       const settings = await openSettings(page);
-      await settings.getByRole('button', { name: 'Skills', exact: true }).click();
+      await openSkillsPage(settings);
 
       const row = settings.locator('.inset-row', { hasText: '/workspace-review' });
       await expect(row).toBeVisible();
       await expect(row.locator('.settings-chip', { hasText: 'project' })).toBeVisible();
-      const workspaceChip = row.locator('.settings-chip', { hasText: 'Workspace · not accepted' });
-      await expect(workspaceChip).toBeVisible();
-      const acceptButton = row.getByRole('button', { name: 'Accept workspace-review for automatic use' });
-      await expect(acceptButton).toBeVisible();
+      await expect(row.getByRole('button', { name: /Accept/ })).toHaveCount(0);
 
+      const toggle = row.getByRole('switch');
+      await expect(toggle).toBeVisible();
       const rowBox = await row.boundingBox();
-      const chipBox = await workspaceChip.boundingBox();
-      const buttonBox = await acceptButton.boundingBox();
+      const toggleBox = await toggle.boundingBox();
       expect(rowBox).not.toBeNull();
-      expect(chipBox).not.toBeNull();
-      expect(buttonBox).not.toBeNull();
-      expect(chipBox!.x + chipBox!.width).toBeLessThan(buttonBox!.x);
-      expect(buttonBox!.x + buttonBox!.width).toBeLessThanOrEqual(rowBox!.x + rowBox!.width);
+      expect(toggleBox).not.toBeNull();
+      expect(toggleBox!.x + toggleBox!.width).toBeLessThanOrEqual(rowBox!.x + rowBox!.width);
     });
   }
 
   test('defaults to Full Access with truthful host and credential scope', async ({ page }) => {
     const settings = await openSettings(page);
-    await settings.getByRole('button', { name: /^Security/ }).click();
+    await settings.getByRole('button', { name: 'Agent', exact: true }).click();
     const filesystemRow = settings.locator('.inset-row', { hasText: 'Filesystem' }).first();
     await expect(filesystemRow.locator('.inset-row-trailing')).toHaveText('Full Access');
-    await expect(settings.getByRole('list', { name: 'System boundary' })).toContainText('macOS account');
-    await expect(settings.getByText(/same filesystem access as Tenon/)).toBeVisible();
-    await expect(settings.getByText(/including Tenon data and stored provider credentials/)).toBeVisible();
+    // The boundary is a footnote under the row it explains, not a group of its
+    // own: a section header over a row whose label named something you cannot set
+    // and whose sublabel was a paragraph.
+    await expect(settings.getByRole('list', { name: 'System boundary' })).toHaveCount(0);
+    await expect(settings.getByText(/whatever your macOS account reaches/)).toBeVisible();
+    await expect(settings.getByText(/including Tenon.s own data and stored provider credentials/)).toBeVisible();
     await expect(settings.getByRole('list', { name: 'Your blocks' })).toContainText('No explicit blocks.');
     await expect(settings.getByText('Restricted', { exact: true })).toHaveCount(0);
     await expect(settings.getByRole('button', { name: /Choose Folder/ })).toHaveCount(0);
 
-    const modeRowMetrics = await settings.locator('.settings-system-boundary-row').evaluate((row) => {
-      const sublabel = row.querySelector<HTMLElement>('.inset-row-sublabel');
-      if (!sublabel) {
-        return null;
-      }
-      const sublabelBox = sublabel.getBoundingClientRect();
-      return {
-        sublabelHeight: sublabelBox.height,
-        sublabelWidth: sublabelBox.width,
-      };
-    });
-    expect(modeRowMetrics).not.toBeNull();
-    expect(modeRowMetrics!.sublabelWidth).toBeGreaterThanOrEqual(300);
-    expect(modeRowMetrics!.sublabelHeight).toBeLessThan(48);
+    // What this guarded was that the boundary prose stays readable rather than
+    // getting squeezed into a column. It is a footnote now, so that is what gets
+    // measured.
+    const footnoteWidth = await settings.locator('.inset-group-footnote').first().evaluate(
+      (note) => note.getBoundingClientRect().width,
+    );
+    expect(footnoteWidth).toBeGreaterThanOrEqual(300);
   });
 
   for (const colorScheme of ['light', 'dark'] as const) {
     test(`keeps the Full Access status contained without overlap in ${colorScheme} mode`, async ({ page }) => {
       await page.emulateMedia({ colorScheme });
       const settings = await openSettings(page);
-      await settings.getByRole('button', { name: /^Security/ }).click();
+      await settings.getByRole('button', { name: 'Agent', exact: true }).click();
       const row = settings.locator('.inset-row', { hasText: 'Filesystem' }).first();
       const status = row.locator('.inset-row-trailing');
       await expect(status).toHaveText('Full Access');
@@ -212,15 +257,18 @@ test.describe('agent settings window', () => {
     const settings = await openSettings(page, '', {
       capabilityBlocks: ['Command(git push origin main)', 'Action(git.publish_remote)'],
     });
-    await settings.getByRole('button', { name: /^Security/ }).click();
+    await settings.getByRole('button', { name: 'Agent', exact: true }).click();
     const blocks = settings.getByRole('list', { name: 'Your blocks' });
     await expect(blocks).toContainText('Command(git push origin main)');
 
+    // Removal commits on the row. There is no footer Save anywhere in this window
+    // any more: the drafts it collected are gone, and with them the footer that
+    // appeared per-category while the draft it committed was global.
     await blocks.locator('.inset-row', { hasText: 'Command(git push origin main)' }).getByRole('button', { name: 'Remove' }).click();
     await expect(blocks).not.toContainText('Command(git push origin main)');
     await expect(blocks).toContainText('Action(git.publish_remote)');
+    await expect(settings.getByRole('button', { name: 'Save', exact: true })).toHaveCount(0);
 
-    await settings.getByRole('button', { name: 'Save', exact: true }).click();
     await expect.poll(async () => {
       const updateCall = (await commandCalls(page)).find((call) => call.cmd === 'agent_apply_capability_settings_patch');
       return updateCall?.args.patch;
@@ -232,17 +280,26 @@ test.describe('agent settings window', () => {
 
   test('groups providers by configuration state and reads status on each row', async ({ page }) => {
     const settings = await openSettings(page);
+    await openServicesPage(settings);
     const configured = settings.getByRole('list', { name: 'Configured providers' });
     await expect(configured).toBeVisible();
     await expect(settings.getByRole('list', { name: 'Providers to add' })).toBeVisible();
     await expect(configured).toContainText('CC Switch');
     // On-row status rides the row's accessible name (avatar + name + status).
+    // "Add key" and "Needs key" collapsed into one state: they differed only by
+    // whether a config row had been materialized, which is not a fact about the
+    // user's situation.
     await expect(settings.getByRole('button', { name: 'OpenAI, Active' })).toBeVisible();
-    await expect(settings.getByRole('button', { name: 'Anthropic, Add key' })).toBeVisible();
+    await expect(settings.getByRole('button', { name: 'Anthropic, Needs key' })).toBeVisible();
+    // And the status is now readable, not only announced: until this pane shared
+    // one status model with the config window, which connection was Active was
+    // visible in that window and nowhere else.
+    await expect(configured.getByText('Active')).toBeVisible();
   });
 
   test('shows the row actions menu only when there is more than one action', async ({ page }) => {
     const settings = await openSettings(page);
+    await openServicesPage(settings);
     // The active, configured OpenAI has multiple actions → a ⋯ menu.
     await expect(settings.getByRole('button', { name: 'OpenAI actions' })).toBeVisible();
     // Unconfigured Anthropic's only action is "Configure", which is exactly what
@@ -252,6 +309,7 @@ test.describe('agent settings window', () => {
 
   test('toggles a configured provider without removing the connection row', async ({ page }) => {
     const settings = await openSettings(page);
+    await openServicesPage(settings);
     const openaiSwitch = settings.getByRole('switch', { name: 'Enable or disable OpenAI' });
     await expect(openaiSwitch).toHaveAttribute('aria-checked', 'true');
 
@@ -265,6 +323,7 @@ test.describe('agent settings window', () => {
         providerId: 'openai',
         enabled: false,
       },
+      probeConnection: false,
     });
     await expect(openaiSwitch).toHaveAttribute('aria-checked', 'false');
     await expect(settings.getByRole('button', { name: 'OpenAI, Disabled' })).toBeVisible();
@@ -280,6 +339,7 @@ test.describe('agent settings window', () => {
         providerId: 'openai',
         enabled: true,
       },
+      probeConnection: false,
     });
     await expect(openaiSwitch).toHaveAttribute('aria-checked', 'true');
     await expect(settings.getByText('Provider enabled')).toBeVisible();
@@ -287,6 +347,7 @@ test.describe('agent settings window', () => {
 
   test('enables detected CC Switch directly from the provider list', async ({ page }) => {
     const settings = await openSettings(page);
+    await openServicesPage(settings);
     const ccSwitch = settings.getByRole('switch', { name: 'Enable or disable CC Switch' });
     await expect(ccSwitch).toHaveAttribute('aria-checked', 'false');
 
@@ -301,6 +362,7 @@ test.describe('agent settings window', () => {
         baseUrl: 'https://registry.example.com/v1',
         enabled: true,
       },
+      probeConnection: false,
     });
     await expect(settings.getByRole('button', { name: 'CC Switch, Ready' })).toBeVisible();
     await expect(settings.getByRole('switch', { name: 'Enable or disable CC Switch' })).toHaveAttribute('aria-checked', 'true');
@@ -308,6 +370,7 @@ test.describe('agent settings window', () => {
 
   test('refreshes enabled CC Switch models from the provider row', async ({ page }) => {
     const settings = await openSettings(page);
+    await openServicesPage(settings);
     await settings.getByRole('switch', { name: 'Enable or disable CC Switch' }).click();
     await expect(settings.getByRole('button', { name: 'CC Switch, Ready' })).toBeVisible();
 
@@ -323,6 +386,7 @@ test.describe('agent settings window', () => {
 
   test('opens a provider config window when its row is clicked (not an in-app modal)', async ({ page }) => {
     const settings = await openSettings(page);
+    await openServicesPage(settings);
     await settings.getByRole('button', { name: 'OpenAI, Active' }).click();
     // Clicking a row asks the main process to open the native config window — it
     // does NOT layer a dialog inside the settings window.
@@ -335,9 +399,10 @@ test.describe('agent settings window', () => {
 
   test('a single-action row exposes a Configure button that opens the config window', async ({ page }) => {
     const settings = await openSettings(page);
+    await openServicesPage(settings);
     // The lone "Configure" action is a real trailing button (the macOS Wi-Fi
     // "Connect" idiom), revealed on row hover — not just decorative hint text.
-    await settings.getByRole('button', { name: 'Anthropic, Add key' }).hover();
+    await settings.getByRole('button', { name: 'Anthropic, Needs key' }).hover();
     const configure = settings.getByRole('button', { name: 'Configure Anthropic' });
     await expect(configure).toBeVisible();
     await configure.click();
@@ -349,6 +414,7 @@ test.describe('agent settings window', () => {
 
   test('has no provider search and opens the custom-provider window from the last row', async ({ page }) => {
     const settings = await openSettings(page);
+    await openServicesPage(settings);
     // Native System Settings (Wi-Fi) has no list search; custom providers are added
     // from the last row of the add-provider list, which opens the config window in
     // custom mode.
@@ -363,7 +429,12 @@ test.describe('agent settings window', () => {
 });
 
 test.describe('provider config windows', () => {
-  test('shows provider config fields before provider settings finish loading', async ({ page }) => {
+  // The skeleton used to draw an API-key field and a base URL unconditionally,
+  // then resolve into something else entirely: a managed-credential provider has
+  // no key field at all, and an OAuth provider resolves to a sign-in surface. It
+  // showed people a form that vanished. Which shape is right is not knowable
+  // until the settings land, so it names the provider and waits.
+  test('does not guess the form shape before provider settings load', async ({ page }) => {
     await installElectronMock(page, { providerSettingsDelayMs: 1_000 });
     await page.goto('/?surface=provider-config&provider=openai&mode=configure');
 
@@ -371,13 +442,16 @@ test.describe('provider config windows', () => {
     await expect(config).toBeVisible();
     await expect(config).toHaveAttribute('aria-busy', 'true');
     await expect(config.getByRole('heading', { name: 'OpenAI' })).toBeVisible();
-    await expect(config.getByLabel('API key')).toBeVisible();
-    await expect(config.getByLabel('API key')).toBeDisabled();
-    await expect(config.getByLabel('Base URL')).toBeVisible();
+    await expect(config.getByLabel('API key')).toHaveCount(0);
+    await expect(config.getByLabel('Base URL')).toHaveCount(0);
+    // A way out exists throughout; a Save that cannot yet know what it would
+    // commit does not.
     await expect(config.getByRole('button', { name: 'Cancel' })).toBeVisible();
-    await expect(config.getByRole('button', { name: 'Validate' })).toBeDisabled();
-    await expect(config.getByRole('button', { name: 'Save', exact: true })).toBeDisabled();
+    await expect(config.getByRole('button', { name: 'Save', exact: true })).toHaveCount(0);
     await expect(config.locator('.agent-settings-empty', { hasText: 'Loading' })).toHaveCount(0);
+
+    // And it resolves into the real form rather than staying a shell.
+    await expect(config.getByLabel('API key')).toBeVisible();
   });
 
   test('renders the saved connection — connection only, no model/reasoning controls', async ({ page }) => {
@@ -435,6 +509,7 @@ test.describe('provider config windows', () => {
         providerId: 'anthropic',
         enabled: true,
       },
+      probeConnection: true,
     });
   });
 
@@ -489,6 +564,7 @@ test.describe('provider config windows', () => {
       return calls.findLast((call) => call.cmd === 'agent_upsert_provider_config')?.args;
     }).toMatchObject({
       provider: { providerId: 'my-proxy', enabled: true },
+      probeConnection: true,
     });
   });
 
@@ -506,9 +582,23 @@ test.describe('provider config windows', () => {
         baseUrl: 'http://localhost:1234/v1',
         enabled: true,
       },
+      probeConnection: true,
     });
   });
 });
+
+/** Agent → Model services. Providers stopped being a rail category. */
+async function openServicesPage(settings: Locator): Promise<void> {
+  await settings.getByRole('button', { name: 'Agent', exact: true }).click();
+  await settings.getByRole('button', { name: /^Model services/ }).click();
+  await expect(settings.getByRole('list', { name: 'Providers to add' })).toBeVisible();
+}
+
+/** Agent → Skills. */
+async function openSkillsPage(settings: Locator): Promise<void> {
+  await settings.getByRole('button', { name: 'Agent', exact: true }).click();
+  await settings.getByRole('button', { name: /^Skills/ }).click();
+}
 
 async function openSettings(page: Page, extraQuery = '', options: Parameters<typeof installElectronMock>[1] = {}): Promise<Locator> {
   await installElectronMock(page, options);

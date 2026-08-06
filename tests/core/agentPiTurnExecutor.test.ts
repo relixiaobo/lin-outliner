@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import type {
   AgentEvent,
   AgentTool,
@@ -15,7 +15,10 @@ import type {
   ContextEvidenceThreadItem,
   ThreadContextPayload,
   ThreadContextPayloadReference,
+  ThreadFileSource,
+  ThreadImageArtifactReference,
   ThreadItem,
+  ThreadResourceReference,
   Turn,
   TurnDiagnosticsPayload,
 } from '../../src/core/agent/protocol';
@@ -41,14 +44,29 @@ import { uuidV7 } from '../../src/main/agent/uuid';
 import {
   MAX_TOOL_PAYLOAD_IMAGE_BASE64_CHARS,
   MAX_TOOL_PAYLOAD_IMAGE_BYTES,
+  ThreadResourceQuotaError,
 } from '../../src/main/agent/persistence/ToolPayloadStore';
 import { NativeAgentRuntime } from '../../src/main/agent/runtime/kernel/NativeAgentRuntime';
 import { PiModelGateway } from '../../src/main/agent/runtime/kernel/ModelGateway';
+import { createImageArtifactReference } from '../../src/main/agent/imageArtifacts';
+import {
+  persistToolCallAdmission,
+  transientToolCallAdmission,
+} from '../../src/main/agent/runtime/toolCallHistory';
+import {
+  replayableModelCall,
+  TEST_TOOL_SCHEMA_DIGEST,
+  toolAdmissionEvent,
+} from '../fixtures/agentToolCallHistory';
 
 const NATIVE_KERNEL_GOLDEN = JSON.parse(readFileSync(
   new URL('./fixtures/nativeTurnKernel.golden.json', import.meta.url),
   'utf8',
 )) as { itemDiagnostics: unknown };
+const ONE_PIXEL_PNG_BYTES = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lP1j0wAAAABJRU5ErkJggg==',
+  'base64',
+);
 
 describe('PiTurnExecutor event normalization', () => {
   test('serializes stream events and records authoritative message and command Items', async () => {
@@ -63,12 +81,7 @@ describe('PiTurnExecutor event normalization', () => {
       assistantMessageEvent: { type: 'text_delta', delta: 'Done' },
     } as AgentEvent);
     normalizer.handle({ type: 'message_end', message: assistant });
-    normalizer.handle({
-      type: 'tool_execution_start',
-      toolCallId: 'call-bash-1',
-      toolName: 'bash',
-      args: { command: 'pwd' },
-    });
+    normalizer.handle(toolAdmissionEvent('call-bash-1', 'bash', { command: 'pwd' }));
     normalizer.handle({
       type: 'tool_execution_end',
       toolCallId: 'call-bash-1',
@@ -111,16 +124,136 @@ describe('PiTurnExecutor event normalization', () => {
     expect(normalizer.stopReason).toBe('stop');
   });
 
+  test('keeps admitted and rejected bash cwd host-owned while preserving canonical dispositions', async () => {
+    const fixture = createContext();
+    const normalizer = new PiEventNormalizer(fixture.context);
+    normalizer.handle(toolAdmissionEvent(
+      'call-bash-valid',
+      'bash',
+      { command: 'pwd', description: 'Print the working directory' },
+    ));
+    normalizer.handle({
+      type: 'tool_execution_end',
+      toolCallId: 'call-bash-valid',
+      toolName: 'bash',
+      result: { content: [{ type: 'text', text: fixture.context.thread.cwd }], details: { data: { exitCode: 0 } } },
+      isError: false,
+    });
+    normalizer.handle({
+      type: 'tool_call_admission',
+      toolCallId: 'call-bash-invalid',
+      providerToolCallId: 'call-bash-invalid',
+      toolName: 'bash',
+      decision: {
+        execute: false,
+        displayArguments: { command: 'pwd', cwd: '/model-supplied' },
+        modelCall: {
+          disposition: 'evidenceOnly',
+          identity: { namespace: null, name: 'bash' },
+          providerName: 'bash',
+          redactedArgumentsSummary: { command: 'pwd', cwd: '/model-supplied' },
+          reason: 'invalidArguments',
+          correction: 'Use the active schema.',
+        },
+      },
+    });
+    normalizer.handle({
+      type: 'tool_execution_end',
+      toolCallId: 'call-bash-invalid',
+      toolName: 'bash',
+      result: { content: [{ type: 'text', text: 'Unexpected property: cwd' }], details: {} },
+      isError: true,
+    });
+    await normalizer.flush();
+
+    expect(fixture.recorder.orderedItems()).toMatchObject([
+      {
+        type: 'commandExecution',
+        id: 'call-bash-valid',
+        command: 'pwd',
+        description: 'Print the working directory',
+        cwd: fixture.context.thread.cwd,
+        status: 'completed',
+        modelCall: {
+          disposition: 'replayable',
+          arguments: {
+            storage: 'inline',
+            value: { command: 'pwd', description: 'Print the working directory' },
+          },
+        },
+      },
+      {
+        type: 'commandExecution',
+        id: 'call-bash-invalid',
+        command: 'pwd',
+        cwd: fixture.context.thread.cwd,
+        status: 'failed',
+        modelCall: {
+          disposition: 'evidenceOnly',
+          reason: 'invalidArguments',
+          redactedArgumentsSummary: { command: 'pwd', cwd: '/model-supplied' },
+        },
+      },
+    ]);
+    expect(fixture.recorder.orderedItems().every((item) => (
+      item.type !== 'commandExecution' || item.cwd !== '/model-supplied'
+    ))).toBe(true);
+  });
+
+  test('uses bounded redacted evidence identity for an unresolved provider tool', async () => {
+    const fixture = createContext();
+    const secret = 'abcdefghijklmnop';
+    const rawProviderName = `missing_Authorization: Bearer ${secret}`;
+    let observedToolName = '';
+    const normalizer = new PiEventNormalizer(fixture.context, {
+      started: (execution) => { observedToolName = execution.toolName; },
+    });
+    const decision = transientToolCallAdmission({
+      toolCallId: 'unknown-call',
+      providerName: rawProviderName,
+      outcome: {
+        type: 'rejected',
+        identity: null,
+        redactedArguments: { authorization: '[redacted]' },
+        reason: 'unresolvedTool',
+        correction: 'Choose an exposed tool.',
+      },
+    });
+    normalizer.handle({
+      type: 'tool_call_admission',
+      toolCallId: 'unknown-call',
+      providerToolCallId: 'unknown-call',
+      toolName: rawProviderName,
+      decision,
+    });
+    normalizer.handle({
+      type: 'tool_execution_end',
+      toolCallId: 'unknown-call',
+      toolName: rawProviderName,
+      result: { content: [{ type: 'text', text: 'Tool is not exposed by the active registry.' }], details: {} },
+      isError: true,
+    });
+    await normalizer.flush();
+
+    const serialized = JSON.stringify({ items: fixture.recorder.orderedItems(), observedToolName });
+    expect(serialized).not.toContain(secret);
+    expect(serialized).toContain('[redacted secret-like content]');
+    expect(fixture.recorder.orderedItems()[0]).toMatchObject({
+      type: 'dynamicToolCall',
+      status: 'failed',
+      modelCall: { disposition: 'evidenceOnly', identity: null },
+    });
+  });
+
   test('uses the provider call id for collaboration control-plane identity', async () => {
     const fixture = createContext();
     const childThreadId = uuidV7(1_720_000_001_000);
     const normalizer = new PiEventNormalizer(fixture.context);
-    normalizer.handle({
-      type: 'tool_execution_start',
-      toolCallId: 'call-collab-1',
-      toolName: 'collaboration__spawn_agent',
-      args: { task_name: 'worker', message: 'Inspect it' },
-    });
+    normalizer.handle(toolAdmissionEvent(
+      'call-collab-1',
+      'collaboration__spawn_agent',
+      { task_name: 'worker', message: 'Inspect it' },
+    ));
     normalizer.handle({
       type: 'tool_execution_end',
       toolCallId: 'call-collab-1',
@@ -153,12 +286,7 @@ describe('PiTurnExecutor event normalization', () => {
     const fixture = createContext();
     const childThreadId = uuidV7(1_720_000_001_100);
     const normalizer = new PiEventNormalizer(fixture.context);
-    normalizer.handle({
-      type: 'tool_execution_start',
-      toolCallId: 'call-collab-wait',
-      toolName: 'collaboration__wait_agent',
-      args: {},
-    });
+    normalizer.handle(toolAdmissionEvent('call-collab-wait', 'collaboration__wait_agent', {}));
     normalizer.handle({
       type: 'tool_execution_end',
       toolCallId: 'call-collab-wait',
@@ -209,12 +337,11 @@ describe('PiTurnExecutor event normalization', () => {
     const fixture = createContext();
     const childThreadId = uuidV7(1_720_000_001_200);
     const normalizer = new PiEventNormalizer(fixture.context);
-    normalizer.handle({
-      type: 'tool_execution_start',
-      toolCallId: 'call-collab-send',
-      toolName: 'collaboration__send_message',
-      args: { target: '/root/worker', message: 'Continue' },
-    });
+    normalizer.handle(toolAdmissionEvent(
+      'call-collab-send',
+      'collaboration__send_message',
+      { target: '/root/worker', message: 'Continue' },
+    ));
     normalizer.handle({
       type: 'tool_execution_end',
       toolCallId: 'call-collab-send',
@@ -253,12 +380,11 @@ describe('PiTurnExecutor event normalization', () => {
       started: (execution) => observed.push({ phase: 'started', ...execution }),
       completed: (execution) => observed.push({ phase: 'completed', ...execution }),
     });
-    normalizer.handle({
-      type: 'tool_execution_start',
-      toolCallId: 'call-plan-1',
-      toolName: 'update_plan',
-      args: { plan: [{ step: 'Implement', status: 'in_progress' }] },
-    });
+    normalizer.handle(toolAdmissionEvent(
+      'call-plan-1',
+      'update_plan',
+      { plan: [{ step: 'Implement', status: 'in_progress' }] },
+    ));
     normalizer.handle({
       type: 'tool_execution_end',
       toolCallId: 'call-plan-1',
@@ -394,13 +520,19 @@ describe('PiTurnExecutor event normalization', () => {
     expect(await serializeUserContent(input, resources)).toEqual(content);
   });
 
-  test('encodes only the persisted prompt image at the provider boundary', async () => {
-    const promptImage = {
+  test('encodes only the persisted image observation at the provider boundary', async () => {
+    const observation = {
       id: 'c'.repeat(64),
       mimeType: 'image/png',
-      byteLength: 8,
+      byteLength: ONE_PIXEL_PNG_BYTES.byteLength,
       fileName: 'prompt.png',
     };
+    const artifactRef = imageArtifact(
+      { kind: 'localFile', path: '/outside/source.png' },
+      observation,
+      { width: 4_000, height: 2_000 },
+      { width: 2_000, height: 1_000 },
+    );
     const content = await serializeUserContent([{
       type: 'attachment',
       id: 'attachment-image',
@@ -408,10 +540,11 @@ describe('PiTurnExecutor event normalization', () => {
       mimeType: 'image/png',
       sizeBytes: 4096,
       source: { kind: 'localFile', path: '/outside/source.png' },
-      promptImage,
+      artifactRef,
     }], {
-      readResource: async (ref) => ref.id === promptImage.id ? Buffer.from('snapshot') : null,
+      readResource: async (ref) => ref.id === observation.id ? ONE_PIXEL_PNG_BYTES : null,
       resolveResourceObservationPath: async () => null,
+      resolveImageArtifactPath: async () => '/outside/source.png',
     });
 
     expect(content).toEqual([
@@ -422,40 +555,114 @@ describe('PiTurnExecutor event normalization', () => {
       },
       {
         type: 'text',
-        text: '[Attachment image: source.png, image/png, 4096 bytes]\nReadable path: /outside/source.png\nThe following image is the immutable prompt snapshot for this attachment.',
+        text: [
+          '[Attachment image: source.png, image/png, 4096 bytes]',
+          `Artifact: ${artifactRef.id}`,
+          'Readable path: /outside/source.png',
+          'Image geometry: observation=2000x1000; source=4000x2000',
+          'Source pixels per observation pixel: x=2, y=2',
+          'Observation-to-source matrix: [2, 0, 0, 2, 0, 0]',
+          'The following image is the immutable model observation for this attachment.',
+        ].join('\n'),
       },
       {
         type: 'image',
-        data: Buffer.from('snapshot').toString('base64'),
+        data: ONE_PIXEL_PNG_BYTES.toString('base64'),
         mimeType: 'image/png',
       },
     ]);
   });
 
-  test('rejects non-canonical image attachment shapes instead of projecting a file fallback', async () => {
-    await expect(serializeUserContent([{
+  test('keeps an image observation when its readable path cannot be materialized', async () => {
+    const observation = {
+      id: 'f'.repeat(64),
+      mimeType: 'image/png',
+      byteLength: ONE_PIXEL_PNG_BYTES.byteLength,
+      fileName: 'prompt.png',
+    };
+    const artifactRef = imageArtifact(
+      { kind: 'localFile', path: '/outside/source.png' },
+      observation,
+    );
+    const warningLog = spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const content = await serializeUserContent([{
+        type: 'attachment',
+        id: 'attachment-image',
+        name: 'source.png',
+        mimeType: 'image/png',
+        sizeBytes: 4096,
+        source: { kind: 'localFile', path: '/outside/source.png' },
+        artifactRef,
+      }], {
+        readResource: async () => ONE_PIXEL_PNG_BYTES,
+        resolveResourceObservationPath: async () => null,
+        resolveImageArtifactPath: async () => {
+          throw new Error('ENOSPC');
+        },
+      });
+
+      expect(content).toEqual(expect.arrayContaining([
+        { type: 'text', text: '[Image attachment: source.png; readable path unavailable]' },
+        {
+          type: 'image',
+          data: ONE_PIXEL_PNG_BYTES.toString('base64'),
+          mimeType: 'image/png',
+        },
+      ]));
+      expect(JSON.stringify(content)).not.toContain('[Unavailable image attachment:');
+      expect(warningLog).toHaveBeenCalledWith(
+        '[agent][context-projection] image artifact path unavailable',
+        expect.objectContaining({ artifactId: artifactRef.id, surface: 'user-attachment' }),
+      );
+    } finally {
+      warningLog.mockRestore();
+    }
+  });
+
+  test('degrades non-canonical attachment shapes without blocking provider projection', async () => {
+    const missingSnapshot = await serializeUserContent([{
       type: 'attachment',
       id: 'missing-prompt-image',
       name: 'source.png',
       mimeType: 'image/png',
       sizeBytes: 4096,
       source: { kind: 'localFile', path: '/outside/source.png' },
-    }], fixtureResources())).rejects.toThrow('missing its prompt snapshot');
+    }], fixtureResources());
+    expect(missingSnapshot).toContainEqual({
+      type: 'text',
+      text: '[Attachment image artifact unavailable or corrupt: source.png]',
+    });
 
-    await expect(serializeUserContent([{
+    const unexpectedSnapshot = await serializeUserContent([{
       type: 'attachment',
       id: 'unexpected-prompt-image',
       name: 'report.pdf',
       mimeType: 'application/pdf',
       sizeBytes: 512,
       source: { kind: 'localFile', path: '/workspace/report.pdf' },
-      promptImage: {
-        id: 'e'.repeat(64),
-        mimeType: 'image/png',
-        byteLength: 8,
-        fileName: 'prompt.png',
-      },
-    }], fixtureResources())).rejects.toThrow('Non-image attachment cannot carry a prompt image');
+      artifactRef: imageArtifact(
+        { kind: 'localFile', path: '/workspace/report.pdf' },
+        {
+          id: 'e'.repeat(64),
+          mimeType: 'image/png',
+          byteLength: ONE_PIXEL_PNG_BYTES.byteLength,
+          fileName: 'prompt.png',
+        },
+      ),
+    }], {
+      ...fixtureResources(),
+      resolveImageArtifactPath: async () => '/workspace/report.pdf',
+    });
+    expect(unexpectedSnapshot).toContainEqual({
+      type: 'text',
+      text: [
+        '[Attachment: report.pdf, application/pdf, 512 bytes]',
+        'Readable path: /workspace/report.pdf',
+        'Use file_read with this path to inspect the attachment.',
+      ].join('\n'),
+    });
+    expect(JSON.stringify(unexpectedSnapshot)).not.toContain('prompt.png');
   });
 
   test('adds one deterministic intent for attachment and Node-only input', async () => {
@@ -475,17 +682,23 @@ describe('PiTurnExecutor event normalization', () => {
         mimeType: 'image/png',
         sizeBytes: 8,
         source: { kind: 'localFile', path: '/workspace/diagram.png' },
-        promptImage: {
-          id: 'd'.repeat(64),
-          mimeType: 'image/png',
-          byteLength: 8,
-          fileName: 'diagram.png',
-        },
+        artifactRef: imageArtifact(
+          { kind: 'localFile', path: '/workspace/diagram.png' },
+          {
+            id: 'd'.repeat(64),
+            mimeType: 'image/png',
+            byteLength: ONE_PIXEL_PNG_BYTES.byteLength,
+            fileName: 'diagram.png',
+          },
+        ),
       },
       { type: 'nodeReference', nodeId: 'node-1' },
     ], {
-      readResource: async () => Buffer.from('snapshot'),
+      readResource: async () => ONE_PIXEL_PNG_BYTES,
       resolveResourceObservationPath: async () => null,
+      resolveImageArtifactPath: async (artifact) => artifact.original?.kind === 'localFile'
+        ? artifact.original.path
+        : null,
     });
 
     expect(content[0]).toEqual({
@@ -496,7 +709,7 @@ describe('PiTurnExecutor event normalization', () => {
       'Please review the attached files, attached images and referenced Outliner Nodes.',
       '[[file:report.pdf^%2Fworkspace%2Freport.pdf]][[file:diagram.png^%2Fworkspace%2Fdiagram.png]][[node:node-1^node-1]]',
       '[Attachment: report.pdf, application/pdf, 10 bytes]\nReadable path: /workspace/report.pdf\nUse file_read with this path to inspect the attachment.',
-      '[Attachment image: diagram.png, image/png, 8 bytes]\nReadable path: /workspace/diagram.png\nThe following image is the immutable prompt snapshot for this attachment.',
+      expect.stringContaining('[Attachment image: diagram.png, image/png, 8 bytes]\nArtifact: '),
     ]);
     expect(content.filter((part) => part.type === 'image')).toHaveLength(1);
   });
@@ -670,6 +883,39 @@ describe('PiTurnExecutor event normalization', () => {
       },
     });
     expect(fixture.diagnosticsErrors).toEqual([failure]);
+  });
+
+  test('keeps the provider request alive when diagnostics capture fails', async () => {
+    const fixture = createContext();
+    let payloadHookError: unknown = null;
+    const executor = new PiTurnExecutor({
+      resolveRuntimeSettings: async () => runtimeSettings(),
+      resolveRuntime: async () => runtimeSelection(),
+      createTools: async () => [],
+      createGateway: (hooks) => ({
+        stream: ({ model }) => {
+          const stream = createAssistantMessageEventStream();
+          const message = assistantMessage([{ type: 'text', text: 'Completed without diagnostics.' }]);
+          queueMicrotask(async () => {
+            try {
+              await hooks.onPayload?.({ model: model.id }, model);
+            } catch (error) {
+              payloadHookError = error;
+            }
+            emitAssistantMessage(stream, message);
+          });
+          return stream;
+        },
+      }),
+    });
+
+    const result = await executor.execute(fixture.context);
+
+    expect(payloadHookError).toBeNull();
+    expect(result).toMatchObject({ status: 'completed', execution: { diagnosticsRef: null } });
+    expect(fixture.diagnosticsPayloads).toEqual([]);
+    expect(fixture.diagnosticsErrors).toHaveLength(1);
+    expect(String(fixture.diagnosticsErrors[0])).toContain('missing the provider context');
   });
 
   test('keeps late steering diagnostics undelivered when no provider call consumes it', async () => {
@@ -995,6 +1241,7 @@ describe('PiTurnExecutor event normalization', () => {
           outputRefs: [],
         });
       },
+      createTools: async () => [historyTestTool('bash')],
       createAgent: (options) => ({
         state: { errorMessage: undefined },
         subscribe: () => () => undefined,
@@ -1021,6 +1268,7 @@ describe('PiTurnExecutor event normalization', () => {
             processId: null,
             status: 'completed',
             outputRef: null,
+            modelCall: replayableModelCall('bash', { command: 'pwd' }),
             commandActions: [],
             aggregatedOutput: '/workspace',
             exitCode: 0,
@@ -1247,6 +1495,7 @@ describe('PiTurnExecutor event normalization', () => {
         outputRef,
         projectionRef: projectionItem.payloadRef,
       }],
+      degradations: [],
     });
     const compactTurnId = uuidV7(1_719_990_100_000);
     const compactItemId = uuidV7(1_719_990_100_001);
@@ -1493,6 +1742,7 @@ describe('PiTurnExecutor event normalization', () => {
           userViewBaselineRef: null,
           additionalContextBaselineRef: null,
           activeObservations: [],
+          degradations: [],
         });
         const id = fixture.recorder.createItemId();
         const item = {
@@ -1890,7 +2140,7 @@ describe('PiTurnExecutor event normalization', () => {
 
   test('replays tool images from Thread-owned snapshots at the next provider boundary', async () => {
     const fixture = createContext();
-    const imageBytes = Buffer.from('provider-visible-image');
+    const imageBytes = ONE_PIXEL_PNG_BYTES;
     const imageBase64 = imageBytes.toString('base64');
     const imageRef = {
       id: 'c'.repeat(64),
@@ -1901,17 +2151,24 @@ describe('PiTurnExecutor event normalization', () => {
     let persistedImage: Buffer | null = null;
     let listener: ((event: AgentEvent) => void | Promise<void>) | null = null;
     const providerContexts: Message[][] = [];
+    const persistOutputImage = async (bytes: Uint8Array) => {
+      persistedImage = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+      return {
+        observation: imageRef,
+        observationBytes: persistedImage,
+        sourceDimensions: { width: 1, height: 1 },
+        observationDimensions: { width: 1, height: 1 },
+      };
+    };
     const context: TurnExecutionContext = {
       ...fixture.context,
-      persistOutputImage: async (dataBase64) => {
-        persistedImage = Buffer.from(dataBase64, 'base64');
-        return imageRef;
-      },
+      persistOutputImage,
       readResource: async (ref) => ref.id === imageRef.id ? persistedImage : null,
     };
     const executor = new PiTurnExecutor({
       resolveRuntimeSettings: async () => runtimeSettings(),
       resolveRuntime: async () => runtimeSelection(),
+      createTools: async () => [historyTestTool('file_read')],
       createAgent: (options) => ({
         state: { errorMessage: undefined },
         subscribe: (next) => {
@@ -1922,12 +2179,11 @@ describe('PiTurnExecutor event normalization', () => {
         steer: () => undefined,
         prompt: async () => {
           providerContexts.push(await options.transformContext!([]));
-          await listener!({
-            type: 'tool_execution_start',
-            toolCallId: 'call-image',
-            toolName: 'file_read',
-            args: { file_path: '/workspace/diagram.png' },
-          });
+          await listener!(toolAdmissionEvent(
+            'call-image',
+            'file_read',
+            { file_path: '/workspace/diagram.png' },
+          ));
           await listener!({
             type: 'tool_execution_end',
             toolCallId: 'call-image',
@@ -1954,8 +2210,11 @@ describe('PiTurnExecutor event normalization', () => {
       type: 'dynamicToolCall',
       contentItems: [{
         type: 'image',
-        source: { kind: 'localFile', path: '/workspace/diagram.png' },
-        promptImage: imageRef,
+        artifactRef: expect.objectContaining({
+          retention: 'external',
+          original: { kind: 'localFile', path: '/workspace/diagram.png' },
+          observation: imageRef,
+        }),
       }],
     });
     expect(fixture.recorder.orderedItems()[1]).toMatchObject({
@@ -1969,6 +2228,177 @@ describe('PiTurnExecutor event normalization', () => {
       data: imageBase64,
       mimeType: 'image/png',
     }]));
+  });
+
+  test('records generated artifacts matched by explicit preview index', async () => {
+    const fixture = createContext();
+    const imageBase64 = ONE_PIXEL_PNG_BYTES.toString('base64');
+    const missingPreviewPath = '/scratch/generated-images/turn/image-0.png';
+    const previewedPath = '/scratch/generated-images/turn/image-1.png';
+    const observation = {
+      id: createHash('sha256').update(ONE_PIXEL_PNG_BYTES).digest('hex'),
+      mimeType: 'image/png',
+      byteLength: ONE_PIXEL_PNG_BYTES.byteLength,
+      fileName: 'tool-output.png',
+    };
+    const generatedArtifact = createImageArtifactReference({
+      createdAt: 1,
+      retention: 'tiered',
+      original: {
+        kind: 'threadPayload',
+        ref: {
+          id: 'f'.repeat(64),
+          mimeType: 'image/png',
+          byteLength: ONE_PIXEL_PNG_BYTES.byteLength,
+          fileName: 'original.png',
+        },
+      },
+      observation,
+      sourceDimensions: { width: 1, height: 1 },
+      observationDimensions: { width: 1, height: 1 },
+    });
+    const images = [{
+      providerIndex: 1,
+      path: missingPreviewPath,
+      mimeType: 'image/png',
+      byteLength: 12_000_000,
+    }, {
+      providerIndex: 2,
+      path: previewedPath,
+      mimeType: 'image/png',
+      byteLength: 13_000_000,
+      previewIndex: 0,
+      artifactRef: generatedArtifact,
+    }];
+    const normalizer = new PiEventNormalizer({
+      ...fixture.context,
+      readResource: async (ref) => ref.id === observation.id ? ONE_PIXEL_PNG_BYTES : null,
+    });
+    normalizer.handle(toolAdmissionEvent(
+      'call-generate-image',
+      'generate_image',
+      { prompt: 'A red square' },
+    ));
+    normalizer.handle({
+      type: 'tool_execution_end',
+      toolCallId: 'call-generate-image',
+      toolName: 'generate_image',
+      result: {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            ok: true,
+            data: { images },
+          }),
+        }, {
+          type: 'image',
+          data: imageBase64,
+          mimeType: 'image/png',
+        }],
+        details: {
+          ok: true,
+          tool: 'generate_image',
+          version: 1,
+          status: 'success',
+          data: {
+            providerId: 'openai',
+            modelId: 'gpt-image-2',
+            modelName: 'GPT Image 2',
+            images,
+          },
+        },
+      },
+      isError: false,
+    });
+    await normalizer.flush();
+
+    const item = fixture.recorder.orderedItems()[0];
+    const persistedItem = JSON.stringify(item);
+    expect(persistedItem).not.toContain(missingPreviewPath);
+    expect(persistedItem).not.toContain(previewedPath);
+    expect(item).toMatchObject({
+      type: 'dynamicToolCall',
+      tool: 'generate_image',
+      contentItems: expect.arrayContaining([{
+        type: 'image',
+        artifactRef: generatedArtifact,
+      }]),
+    });
+    if (item?.type !== 'dynamicToolCall' || !item.outputRef) {
+      throw new Error('Expected generated image output reference');
+    }
+    const persistedOutput = await fixture.context.readOutput(item.outputRef);
+    expect(persistedOutput).not.toContain(missingPreviewPath);
+    expect(persistedOutput).not.toContain(previewedPath);
+    expect(persistedOutput).toContain('Use the adjacent readable path');
+  });
+
+  test('preserves namespaced generate_image text at both persistence boundaries', async () => {
+    const fixture = createContext();
+    const pluginPreview = ONE_PIXEL_PNG_BYTES.toString('base64');
+    const pluginText = JSON.stringify({
+      ok: true,
+      data: {
+        images: [{
+          path: 'https://plugin.example/image-1',
+          id: 'plugin-image-1',
+          caption: 'Plugin-owned caption',
+        }],
+      },
+      instructions: 'Keep plugin fields.',
+    });
+    const normalizer = new PiEventNormalizer(fixture.context);
+    normalizer.handle(toolAdmissionEvent(
+      'call-plugin-image',
+      'myplugin__generate_image',
+      { prompt: 'A plugin image' },
+    ));
+    normalizer.handle({
+      type: 'tool_execution_end',
+      toolCallId: 'call-plugin-image',
+      toolName: 'myplugin__generate_image',
+      result: {
+        content: [
+          { type: 'text', text: pluginText },
+          { type: 'image', data: pluginPreview, mimeType: 'image/png' },
+        ],
+        details: {
+          ok: true,
+          tool: 'generate_image',
+          data: {
+            images: [{
+              id: 'plugin-image-1',
+              path: '/plugin-owned/path.png',
+              previewIndex: 0,
+            }],
+          },
+        },
+      },
+      isError: false,
+    });
+    await normalizer.flush();
+
+    const item = fixture.recorder.orderedItems()[0];
+    expect(JSON.stringify(item)).not.toContain('/plugin-owned/path.png');
+    expect(item).toMatchObject({
+      type: 'dynamicToolCall',
+      namespace: 'myplugin',
+      tool: 'generate_image',
+      contentItems: [
+        { type: 'text', text: pluginText },
+        {
+          type: 'image',
+          artifactRef: expect.objectContaining({
+            retention: 'observationOnly',
+            original: null,
+          }),
+        },
+      ],
+    });
+    if (item?.type !== 'dynamicToolCall' || !item.outputRef) {
+      throw new Error('Expected namespaced image output reference');
+    }
+    expect(await fixture.context.readOutput(item.outputRef)).toContain(pluginText);
   });
 
   test('runs internal Memory Turns with only their exact prompt and model runtime', async () => {
@@ -2111,6 +2541,7 @@ describe('PiTurnExecutor event normalization', () => {
             processId: null,
             status: 'completed',
             outputRef: null,
+            modelCall: replayableModelCall('bash', { command: 'pwd' }),
             commandActions: [],
             aggregatedOutput: '/workspace',
             exitCode: 0,
@@ -2126,6 +2557,7 @@ describe('PiTurnExecutor event normalization', () => {
             tool: 'search',
             status: 'completed',
             outputRef: null,
+            modelCall: replayableModelCall('docs__search', { query: 'Thread' }),
             arguments: { query: 'Thread' },
             pluginId: null,
             result: { matches: 2 },
@@ -2146,7 +2578,7 @@ describe('PiTurnExecutor event normalization', () => {
       stopReason: 'toolUse',
       content: [
         { type: 'text', text: 'Checking.' },
-        { type: 'toolCall', id: 'call-1', name: 'bash', arguments: { command: 'pwd', cwd: '/workspace' } },
+        { type: 'toolCall', id: 'call-1', name: 'bash', arguments: { command: 'pwd' } },
       ],
     });
     expect(messages[2]).toMatchObject({ role: 'toolResult', toolCallId: 'call-1', content: [{ text: '/workspace' }] });
@@ -2164,16 +2596,30 @@ describe('PiTurnExecutor event normalization', () => {
     expect(JSON.stringify(messages)).not.toContain('Need documentation');
   });
 
-  test('bounds persisted tool projections and stores typed image sources instead of base64', async () => {
+  test('bounds persisted tool projections and stores image artifacts instead of base64', async () => {
     const fixture = createContext();
     const normalizer = new PiEventNormalizer(fixture.context);
     const oversized = 'x'.repeat(MAX_PERSISTED_TOOL_OUTPUT_CHARS * 3);
-    const fileImageBase64 = Buffer.from('file-image-secret').toString('base64');
+    const fileImageBase64 = ONE_PIXEL_PNG_BYTES.toString('base64');
+    const largeArguments = { file_path: '/workspace/large.png', echoed: oversized };
     normalizer.handle({
-      type: 'tool_execution_start',
+      type: 'tool_call_admission',
       toolCallId: 'call-file-1',
+      providerToolCallId: 'call-file-1',
       toolName: 'file_read',
-      args: { file_path: '/workspace/large.png', echoed: oversized },
+      decision: await persistToolCallAdmission({
+        toolCallId: 'call-file-1',
+        providerName: 'file_read',
+        outcome: {
+          type: 'admitted',
+          identity: { namespace: null, name: 'file_read' },
+          arguments: largeArguments,
+          redactedArguments: largeArguments,
+          redactedPaths: [],
+          schemaDigest: TEST_TOOL_SCHEMA_DIGEST,
+          redactedArgumentsReplayable: true,
+        },
+      }, fixture.context.persistToolCallArguments),
     });
     normalizer.handle({
       type: 'tool_execution_end',
@@ -2194,12 +2640,7 @@ describe('PiTurnExecutor event normalization', () => {
       },
       isError: false,
     });
-    normalizer.handle({
-      type: 'tool_execution_start',
-      toolCallId: 'call-bash-2',
-      toolName: 'bash',
-      args: { command: 'produce output' },
-    });
+    normalizer.handle(toolAdmissionEvent('call-bash-2', 'bash', { command: 'produce output' }));
     normalizer.handle({
       type: 'tool_execution_end',
       toolCallId: 'call-bash-2',
@@ -2207,12 +2648,7 @@ describe('PiTurnExecutor event normalization', () => {
       result: { content: [{ type: 'text', text: oversized }], details: { data: { exitCode: 0 } } },
       isError: false,
     });
-    normalizer.handle({
-      type: 'tool_execution_start',
-      toolCallId: 'call-images-3',
-      toolName: 'inspect_images',
-      args: {},
-    });
+    normalizer.handle(toolAdmissionEvent('call-images-3', 'inspect_images', {}));
     normalizer.handle({
       type: 'tool_execution_end',
       toolCallId: 'call-images-3',
@@ -2220,19 +2656,14 @@ describe('PiTurnExecutor event normalization', () => {
       result: {
         content: Array.from({ length: MAX_PERSISTED_TOOL_OUTPUT_IMAGES + 5 }, (_, index) => ({
           type: 'image' as const,
-          data: Buffer.from(`image-${index}`).toString('base64'),
+          data: pngFixture(index + 1, 1).toString('base64'),
           mimeType: 'image/png',
         })),
       },
       isError: false,
     });
-    const nearLimitImage = 'A'.repeat(Math.floor(MAX_TOOL_PAYLOAD_IMAGE_BYTES / 3) * 4);
-    normalizer.handle({
-      type: 'tool_execution_start',
-      toolCallId: 'call-image-budget-4',
-      toolName: 'inspect_large_images',
-      args: {},
-    });
+    const nearLimitImage = pngFixture(1, 1, MAX_TOOL_PAYLOAD_IMAGE_BYTES - 1).toString('base64');
+    normalizer.handle(toolAdmissionEvent('call-image-budget-4', 'inspect_large_images', {}));
     normalizer.handle({
       type: 'tool_execution_end',
       toolCallId: 'call-image-budget-4',
@@ -2259,12 +2690,15 @@ describe('PiTurnExecutor event normalization', () => {
       type: 'dynamicToolCall',
       contentItems: [
         { type: 'text' },
-        {
-          type: 'image',
-          source: { kind: 'localFile', path: '/workspace/large.png' },
-          promptImage: { id: 'b'.repeat(64) },
-        },
+        { type: 'image' },
       ],
+    });
+    if (fileRead?.type !== 'dynamicToolCall' || fileRead.contentItems?.[1]?.type !== 'image') {
+      throw new Error('Expected persisted file_read image artifact.');
+    }
+    expect(fileRead.contentItems[1].artifactRef).toMatchObject({
+      original: { kind: 'localFile', path: '/workspace/large.png' },
+      observation: { id: expect.any(String) },
     });
     expect(JSON.stringify(fileRead)).not.toContain(fileImageBase64);
     expect(JSON.stringify((fileRead as Extract<typeof fileRead, { type: 'dynamicToolCall' }>).arguments).length)
@@ -2277,7 +2711,9 @@ describe('PiTurnExecutor event normalization', () => {
     const imageContent = (images as Extract<typeof images, { type: 'dynamicToolCall' }>).contentItems!;
     const persistedImages = imageContent.filter((content) => content.type === 'image');
     expect(persistedImages).toHaveLength(MAX_PERSISTED_TOOL_OUTPUT_IMAGES);
-    expect(persistedImages.every((content) => content.source.kind === 'threadPayload')).toBe(true);
+    expect(persistedImages.every((content) => (
+      content.artifactRef.retention === 'observationOnly' && content.artifactRef.original === null
+    ))).toBe(true);
     expect(imageContent.at(-1)).toMatchObject({
       type: 'json',
       value: { imagesOmitted: 5, reasons: { countLimit: 5 } },
@@ -2298,15 +2734,62 @@ describe('PiTurnExecutor event normalization', () => {
     expect(JSON.stringify([images, budgetedImages])).not.toContain(nearLimitImage.slice(0, 100));
   });
 
+  test('keeps file identity fields when canonical arguments are payload-backed', async () => {
+    const fixture = createContext();
+    const normalizer = new PiEventNormalizer(fixture.context);
+    const argumentsValue = {
+      file_path: '/workspace/report.md',
+      content: 'x'.repeat(MAX_PERSISTED_TOOL_ARGUMENT_CHARS * 2),
+    };
+    const decision = await persistToolCallAdmission({
+      toolCallId: 'large-file-write',
+      providerName: 'file_write',
+      outcome: {
+        type: 'admitted',
+        identity: { namespace: null, name: 'file_write' },
+        arguments: argumentsValue,
+        redactedArguments: argumentsValue,
+        redactedPaths: [],
+        schemaDigest: TEST_TOOL_SCHEMA_DIGEST,
+        redactedArgumentsReplayable: true,
+      },
+    }, fixture.context.persistToolCallArguments);
+    normalizer.handle({
+      type: 'tool_call_admission',
+      toolCallId: 'large-file-write',
+      providerToolCallId: 'large-file-write',
+      toolName: 'file_write',
+      decision,
+    });
+    normalizer.handle({
+      type: 'tool_execution_end',
+      toolCallId: 'large-file-write',
+      toolName: 'file_write',
+      result: { content: [{ type: 'text', text: 'written' }], details: {} },
+      isError: false,
+    });
+    await normalizer.flush();
+
+    expect(fixture.recorder.orderedItems()[0]).toMatchObject({
+      type: 'fileChange',
+      changes: [{ path: '/workspace/report.md', kind: 'add' }],
+      modelCall: {
+        disposition: 'replayable',
+        arguments: { storage: 'payload' },
+      },
+    });
+  });
+
   test('never persists inline image bytes as text and reports snapshot quota omission', async () => {
     const fixture = createContext();
-    const imageBase64 = Buffer.from('small-image-bytes').toString('base64');
+    const imageBase64 = ONE_PIXEL_PNG_BYTES.toString('base64');
     let completeOutput = '';
+    const persistOutputImage = async () => {
+      throw new ThreadResourceQuotaError();
+    };
     const context: TurnExecutionContext = {
       ...fixture.context,
-      persistOutputImage: async () => {
-        throw new Error('Managed attachment exceeds the Thread storage quota.');
-      },
+      persistOutputImage,
       persistOutputText: async (_itemId, text, mimeType, summary) => {
         completeOutput = text;
         return {
@@ -2318,12 +2801,7 @@ describe('PiTurnExecutor event normalization', () => {
       },
     };
     const normalizer = new PiEventNormalizer(context);
-    normalizer.handle({
-      type: 'tool_execution_start',
-      toolCallId: 'call-quota-image',
-      toolName: 'inspect_image',
-      args: {},
-    });
+    normalizer.handle(toolAdmissionEvent('call-quota-image', 'inspect_image', {}));
     normalizer.handle({
       type: 'tool_execution_end',
       toolCallId: 'call-quota-image',
@@ -2503,6 +2981,60 @@ describe('PiTurnExecutor provider payload', () => {
     expect(JSON.stringify(providerContexts[1])).toContain('Foreign commentary');
     expect(JSON.stringify(providerContexts[1])).toContain('mismatch-call');
     expect(JSON.stringify(providerContexts[1])).not.toContain('[Reasoning]');
+  });
+
+  test('keeps one signed assistant batch and emits rejected-call evidence after its results', async () => {
+    const fixture = createContext();
+    const providerContexts: Message[][] = [];
+    const signature = openAIReasoningSignature('rs_mixed_evidence');
+    let providerCalls = 0;
+    const executor = new PiTurnExecutor({
+      resolveRuntime: async () => runtimeSelection(),
+      resolveRuntimeSettings: async () => runtimeSettings(),
+      createTools: async () => [historyTestTool('first_tool'), historyTestTool('third_tool')],
+      createGateway: (hooks) => new PiModelGateway({
+        ...hooks,
+        streamSimple: (_model, providerContext) => {
+          providerContexts.push(structuredClone(providerContext.messages));
+          providerCalls += 1;
+          const message = providerCalls === 1
+            ? reasoningAssistantMessage(
+                'One signed thought owns the complete mixed batch.',
+                signature,
+                5,
+                [
+                  { type: 'toolCall', id: 'mixed-first', name: 'first_tool', arguments: {} },
+                  { type: 'toolCall', id: 'mixed-rejected', name: 'missing_tool', arguments: {} },
+                  { type: 'toolCall', id: 'mixed-third', name: 'third_tool', arguments: {} },
+                ],
+              )
+            : assistantMessage([{ type: 'text', text: 'Continued after the mixed batch.' }]);
+          const stream = createAssistantMessageEventStream();
+          queueMicrotask(() => emitAssistantMessage(stream, message));
+          return stream;
+        },
+      }),
+    });
+
+    await expect(executor.execute(fixture.context)).resolves.toMatchObject({ status: 'completed' });
+
+    const replay = providerContexts[1] ?? [];
+    const assistantSegments = replay.filter((message): message is AssistantMessage => (
+      message.role === 'assistant' && message.content.some((part) => part.type === 'toolCall')
+    ));
+    expect(assistantSegments).toHaveLength(1);
+    expect(assistantSegments.map((message) => outboundThinkingSignatures([message]))).toEqual([
+      [signature],
+    ]);
+    expect(assistantSegments.map((message) => message.content.flatMap((part) => (
+      part.type === 'toolCall' ? [part.name] : []
+    )))).toEqual([['first_tool', 'third_tool']]);
+    const evidenceIndex = replay.findIndex((message) => JSON.stringify(message).includes('unresolvedTool'));
+    const lastToolResultIndex = replay.reduce((last, message, index) => (
+      message.role === 'toolResult' ? index : last
+    ), -1);
+    expect(evidenceIndex).toBeGreaterThan(lastToolResultIndex);
+    expect(JSON.stringify(replay)).toContain('unresolvedTool');
   });
 
   test('retries payload preparation without same-identity thinking when its signature is unrecognised', async () => {
@@ -2765,6 +3297,178 @@ describe('PiTurnExecutor provider payload', () => {
     expect(providerCalls).toBe(2);
   });
 
+  test('uses raw environment credentials only for the live Turn and redacted history afterward', async () => {
+    const fixture = createContext();
+    const secret = `sk-proj-${'A'.repeat(74)}T3BlbkFJ${'B'.repeat(74)}`;
+    const environmentSecret = 'hunter2hunter2hunter2';
+    const command = `OPENAI_API_KEY=${secret} PGPASSWORD=${environmentSecret} curl https://api.openai.com/v1/models`;
+    const executions: unknown[] = [];
+    const bash = {
+      name: 'bash',
+      label: 'Run command',
+      description: 'Run a shell command.',
+      parameters: {
+        type: 'object',
+        additionalProperties: false,
+        properties: { command: { type: 'string' } },
+        required: ['command'],
+      },
+      execute: async (_callId: string, args: unknown) => {
+        executions.push(args);
+        return { content: [{ type: 'text' as const, text: 'request completed' }], details: {} };
+      },
+    } as AgentTool;
+    const providerContexts: Message[][] = [];
+    let providerCalls = 0;
+    const runtime = runtimeSelection();
+    const executor = new PiTurnExecutor({
+      resolveRuntime: async () => runtime,
+      resolveRuntimeSettings: async () => runtimeSettings(),
+      createTools: async () => [bash],
+      createGateway: (hooks) => new PiModelGateway({
+        ...hooks,
+        streamSimple: (_model, providerContext) => {
+          providerCalls += 1;
+          providerContexts.push([...providerContext.messages]);
+          const stream = createAssistantMessageEventStream();
+          const message: AssistantMessage = providerCalls === 1
+            ? {
+                ...assistantMessage([{
+                  type: 'toolCall',
+                  id: 'secret-call',
+                  name: 'bash',
+                  arguments: { command },
+                }]),
+                stopReason: 'toolUse',
+              }
+            : assistantMessage([{ type: 'text', text: 'Done' }]);
+          queueMicrotask(() => {
+            stream.push({ type: 'done', reason: message.stopReason as 'stop' | 'toolUse', message });
+            stream.end(message);
+          });
+          return stream;
+        },
+      }),
+    });
+
+    await expect(executor.execute(fixture.context)).resolves.toMatchObject({ status: 'completed' });
+
+    expect(executions).toEqual([{ command }]);
+    expect(JSON.stringify(providerContexts[1])).toContain(secret);
+    expect(JSON.stringify(providerContexts[1])).toContain(environmentSecret);
+    expect(JSON.stringify(fixture.recorder.orderedItems())).not.toContain(secret);
+    expect(JSON.stringify(fixture.recorder.orderedItems())).not.toContain(environmentSecret);
+    expect(fixture.recorder.orderedItems()).toContainEqual(expect.objectContaining({
+      type: 'commandExecution',
+      modelCall: expect.objectContaining({ disposition: 'redactedReplay' }),
+    }));
+
+    const historical = await new CanonicalContextProjector(runtime.model, fixture.context).projectTurns([{
+      ...fixture.context.turn,
+      items: fixture.recorder.orderedItems(),
+    }]);
+    expect(JSON.stringify(historical)).not.toContain(secret);
+    expect(JSON.stringify(historical)).not.toContain(environmentSecret);
+    expect(JSON.stringify(historical)).toContain('[redacted secret-like content]');
+    expect(JSON.stringify(historical)).toContain('replay notice');
+  });
+
+  test('persists unique canonical Items when one provider batch repeats a call id', async () => {
+    const fixture = createContext();
+    const duplicatedId = 'provider-duplicate-id';
+    const executions: Array<{ readonly callId: string; readonly args: unknown }> = [];
+    const strictTool = {
+      name: 'strict_tool',
+      label: 'Strict tool',
+      description: 'Accepts one required string value.',
+      parameters: {
+        type: 'object',
+        additionalProperties: false,
+        properties: { value: { type: 'string' } },
+        required: ['value'],
+      },
+      execute: async (callId: string, args: unknown) => {
+        executions.push({ callId, args });
+        return { content: [{ type: 'text' as const, text: 'valid pair completed' }], details: {} };
+      },
+    } as AgentTool;
+    const providerContexts: Message[][] = [];
+    let providerCalls = 0;
+    const executor = new PiTurnExecutor({
+      resolveRuntime: async () => runtimeSelection(),
+      resolveRuntimeSettings: async () => runtimeSettings(),
+      createTools: async () => [strictTool],
+      createGateway: (hooks) => new PiModelGateway({
+        ...hooks,
+        streamSimple: (model, providerContext, options = {}) => {
+          providerCalls += 1;
+          providerContexts.push([...providerContext.messages]);
+          const stream = createAssistantMessageEventStream();
+          const message: AssistantMessage = providerCalls === 1
+            ? {
+                ...assistantMessage([
+                  {
+                    type: 'toolCall',
+                    id: duplicatedId,
+                    name: strictTool.name,
+                    arguments: { invalid: true },
+                  },
+                  {
+                    type: 'toolCall',
+                    id: duplicatedId,
+                    name: strictTool.name,
+                    arguments: { value: 'valid' },
+                  },
+                ]),
+                stopReason: 'toolUse',
+              }
+            : assistantMessage([{ type: 'text', text: 'Done' }]);
+          queueMicrotask(async () => {
+            await options.onPayload?.({ model: model.id, input: providerContext.messages }, model);
+            stream.push({ type: 'done', reason: message.stopReason as 'stop' | 'toolUse', message });
+            stream.end(message);
+          });
+          return stream;
+        },
+      }),
+    });
+
+    await expect(executor.execute(fixture.context)).resolves.toMatchObject({ status: 'completed' });
+
+    const items = fixture.recorder.orderedItems().filter((item) => (
+      item.type === 'dynamicToolCall' && item.tool === strictTool.name
+    ));
+    expect(items).toHaveLength(2);
+    expect(new Set(items.map((item) => item.id)).size).toBe(2);
+    const rejected = items.find((item) => item.modelCall.disposition === 'evidenceOnly');
+    const admitted = items.find((item) => item.modelCall.disposition === 'replayable');
+    expect(rejected).toMatchObject({ id: duplicatedId, status: 'failed', success: false });
+    expect(admitted).toMatchObject({ status: 'completed', success: true });
+    expect(admitted?.id).not.toBe(duplicatedId);
+    expect(executions).toEqual([{ callId: admitted?.id, args: { value: 'valid' } }]);
+
+    const replay = providerContexts[1] ?? [];
+    const replayCalls = replay.flatMap((message) => (
+      message.role === 'assistant'
+        ? message.content.filter((part) => part.type === 'toolCall')
+        : []
+    ));
+    const replayResults = replay.filter((message) => message.role === 'toolResult');
+    expect(JSON.stringify(replay)).toContain('invalidArguments');
+    expect(replayCalls).toHaveLength(1);
+    expect(replayResults).toHaveLength(1);
+    expect(replayCalls[0]?.id).toBe(admitted?.id);
+    expect(replayResults[0]?.role === 'toolResult' ? replayResults[0].toolCallId : null)
+      .toBe(admitted?.id);
+
+    const executionBatch = fixture.diagnosticsPayloads[0]?.activities.find((activity) => (
+      activity.type === 'toolExecutionBatch'
+    ));
+    expect(executionBatch?.type === 'toolExecutionBatch'
+      ? executionBatch.executions.map((execution) => execution.callId)
+      : []).toEqual(items.map((item) => item.id));
+  });
+
   test('matches the native kernel Item and diagnostics golden', async () => {
     const fixture = createContext();
     let callCount = 0;
@@ -3014,6 +3718,21 @@ function createContext(): {
   const recorder = new ItemRecorder(threadId, turnId, [], async (notification) => {
     notifications.push(notification);
   });
+  const persistOutputImage = async (input: Uint8Array, mimeType: string) => {
+    const bytes = Buffer.from(input.buffer, input.byteOffset, input.byteLength);
+    const dimensions = imageDimensions(bytes);
+    return {
+      observation: {
+        id: createHash('sha256').update(bytes).digest('hex'),
+        mimeType,
+        byteLength: bytes.byteLength,
+        fileName: 'tool-output.png',
+      },
+      observationBytes: bytes,
+      sourceDimensions: dimensions,
+      observationDimensions: dimensions,
+    };
+  };
   const context: TurnExecutionContext = {
     thread,
     turn,
@@ -3033,17 +3752,32 @@ function createContext(): {
     readContext: async () => null,
     readOutput: async (ref) => outputPayloads.get(ref.id) ?? null,
     resolveResourceObservationPath: async () => null,
+    resolveImageArtifactPath: async () => null,
     readResource: async () => null,
-    persistOutputImage: async () => ({
-      id: 'b'.repeat(64),
-      mimeType: 'image/png',
-      byteLength: 12,
-      fileName: 'tool-output.png',
+    persistOutputImage,
+    persistOutputResource: async (bytes, mimeType, fileName) => ({
+      id: createHash('sha256').update(bytes).digest('hex'),
+      mimeType,
+      byteLength: bytes.byteLength,
+      fileName,
     }),
     persistOutputText: async (_itemId, text, mimeType, summary) => {
       const id = createHash('sha256').update(text).digest('hex');
       outputPayloads.set(id, text);
       return { id, mimeType, byteLength: Buffer.byteLength(text, 'utf8'), summary };
+    },
+    persistToolCallArguments: async (value) => {
+      const payload = { schemaVersion: 1 as const, kind: 'toolCallArguments' as const, value };
+      const serialized = JSON.stringify(payload);
+      const id = createHash('sha256').update(serialized).digest('hex');
+      contextPayloads.set(id, payload);
+      return {
+        id,
+        mimeType: 'application/vnd.tenon.agent-context+json',
+        byteLength: Buffer.byteLength(serialized),
+        schemaVersion: 1,
+        kind: 'toolCallArguments',
+      };
     },
     persistContextEvidence: async (payload, summary) => {
       const serialized = JSON.stringify(payload);
@@ -3130,7 +3864,39 @@ function fixtureResources() {
   return {
     readResource: async () => null,
     resolveResourceObservationPath: async () => null,
+    resolveImageArtifactPath: async () => null,
   };
+}
+
+function imageArtifact(
+  original: ThreadFileSource | null,
+  observation: ThreadResourceReference,
+  sourceDimensions = { width: 1, height: 1 },
+  observationDimensions = { width: 1, height: 1 },
+): ThreadImageArtifactReference {
+  return createImageArtifactReference({
+    createdAt: 1,
+    retention: original?.kind === 'localFile' ? 'external' : 'observationOnly',
+    original,
+    observation,
+    sourceDimensions,
+    observationDimensions,
+  });
+}
+
+function pngFixture(width = 1, height = 1, byteLength = ONE_PIXEL_PNG_BYTES.byteLength): Buffer {
+  const bytes = Buffer.alloc(Math.max(byteLength, ONE_PIXEL_PNG_BYTES.byteLength));
+  ONE_PIXEL_PNG_BYTES.copy(bytes);
+  bytes.writeUInt32BE(width, 16);
+  bytes.writeUInt32BE(height, 20);
+  return bytes;
+}
+
+function imageDimensions(bytes: Buffer): { width: number; height: number } {
+  if (bytes.byteLength < 24 || bytes.toString('ascii', 1, 4) !== 'PNG') {
+    throw new Error('Test image is not a PNG fixture.');
+  }
+  return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
 }
 
 function testTool(name: string, description: string): AgentTool {
@@ -3143,6 +3909,16 @@ function testTool(name: string, description: string): AgentTool {
       additionalProperties: false,
       properties: {},
     },
+    execute: async () => ({ content: [{ type: 'text', text: 'ok' }], details: {} }),
+  } as AgentTool;
+}
+
+function historyTestTool(name: string): AgentTool {
+  return {
+    name,
+    label: name,
+    description: `${name} history fixture`,
+    parameters: { type: 'object', additionalProperties: true },
     execute: async () => ({ content: [{ type: 'text', text: 'ok' }], details: {} }),
   } as AgentTool;
 }

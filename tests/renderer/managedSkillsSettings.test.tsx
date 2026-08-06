@@ -58,24 +58,25 @@ describe('Skill library — managed sources', () => {
     // The per-group "no managed skills" state is gone: there is one list-level
     // empty state now, because managed skills are rows in the one library list.
     expect(rendered.document.body.textContent).toContain('No skills yet.');
-    expect(rendered.document.body.textContent).toContain('Public repository or skill URL');
+    expect(rendered.document.body.textContent).toContain('Install from GitHub');
   });
 
-  test('reviews a recommended pinned commit, installs disabled, and enables separately', async () => {
+  // The premise of this case changed, not its selectors: installing used to leave
+  // the Skill off and say so only in a notice rendered behind the still-open
+  // dialog, so a user installed something, saw "Installed", and found it did
+  // nothing. Installing now enables — and because enabling is what puts a Skill's
+  // text into the model's context, the review shows that text rather than a file
+  // list.
+  test('reviews a recommended pinned commit, shows what it will tell the model, and installs enabled', async () => {
     let installed = false;
-    let enabled = false;
     const calls: string[] = [];
     const rendered = renderComponent(async (command) => {
       calls.push(command);
       if (command === 'agent_managed_skill_catalog') return catalog(installed);
-      if (command === 'agent_managed_skill_list') return installed ? [managedSkill(enabled)] : [];
+      if (command === 'agent_managed_skill_list') return installed ? [managedSkill(true)] : [];
       if (command === 'agent_managed_skill_discover') return discovery();
       if (command === 'agent_managed_skill_install') {
         installed = true;
-        return managedSkill(false);
-      }
-      if (command === 'agent_managed_skill_set_enabled') {
-        enabled = true;
         return managedSkill(true);
       }
       throw new Error(`Unexpected command: ${command}`);
@@ -94,6 +95,10 @@ describe('Skill library — managed sources', () => {
     expect(rendered.document.body.textContent).toContain('aaaaaaaaaaaa');
     expect(rendered.document.body.textContent).toContain('scripts/run.py');
     expect(rendered.document.body.textContent).toContain('Recommended');
+    // The consent moment shows the instruction, which is what install-enables
+    // rests on — the executable-bit boundary is about execution, not this.
+    expect(rendered.document.body.textContent).toContain('What this skill tells the model');
+    expect(rendered.document.body.textContent).toContain('Read a PDF and summarize it.');
 
     const reviewInstall = buttons(rendered.document).filter((button) => button.textContent?.trim() === 'Install').at(-1);
     if (!reviewInstall) throw new Error('Missing reviewed install button');
@@ -103,18 +108,80 @@ describe('Skill library — managed sources', () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(rendered.document.body.textContent).toContain('Disabled');
-    expect(rendered.document.body.textContent).toContain('demo-skill installed disabled');
+    expect(rendered.document.body.textContent).toContain('demo-skill installed and enabled.');
+    // No second toggle stands between the install and the model.
+    expect(calls).not.toContain('agent_managed_skill_set_enabled');
+    expect(
+      rendered.document.querySelector('[role="switch"][aria-label="Enable demo-skill"]')?.getAttribute('aria-checked'),
+    ).toBe('true');
+  });
 
-    const enableSwitch = rendered.document.querySelector<HTMLButtonElement>('[role="switch"][aria-label="Enable demo-skill"]');
-    if (!enableSwitch) throw new Error('Missing managed skill enable switch');
-    expect(enableSwitch.getAttribute('aria-checked')).toBe('false');
+  test('clears a legacy disabledSkills entry after installing the same name', async () => {
+    let installed = false;
+    const persisted: Array<[string, boolean]> = [];
+    const rendered = renderComponent(async (command) => {
+      if (command === 'agent_managed_skill_catalog') return catalog(installed);
+      if (command === 'agent_managed_skill_list') return installed ? [managedSkill(true)] : [];
+      if (command === 'agent_managed_skill_discover') return discovery();
+      if (command === 'agent_managed_skill_install') {
+        installed = true;
+        return managedSkill(true);
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    }, 'en', {
+      disabledSkills: ['demo-skill'],
+      onPersistSkillDisabled: async (name, disabled) => {
+        persisted.push([name, disabled]);
+        return true;
+      },
+    });
+    await flush();
+    await openAcquisition(rendered);
+
+    const catalogInstall = buttons(rendered.document).find((button) => button.textContent?.trim() === 'Install');
+    if (!catalogInstall) throw new Error('Missing catalog install button');
     await act(async () => {
-      enableSwitch.click();
+      catalogInstall.click();
+      await Promise.resolve();
       await Promise.resolve();
     });
-    expect(calls).toContain('agent_managed_skill_set_enabled');
-    expect(rendered.document.querySelector('[role="switch"][aria-label="Enable demo-skill"]')?.getAttribute('aria-checked')).toBe('true');
+    const reviewInstall = buttons(rendered.document).filter((button) => button.textContent?.trim() === 'Install').at(-1);
+    if (!reviewInstall) throw new Error('Missing reviewed install button');
+    await act(async () => {
+      reviewInstall.click();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(persisted).toEqual([['demo-skill', false]]);
+  });
+
+  test('does not offer installation when the SKILL.md review is truncated', async () => {
+    const calls: string[] = [];
+    const rendered = renderComponent(async (command) => {
+      calls.push(command);
+      if (command === 'agent_managed_skill_catalog') return catalog(false);
+      if (command === 'agent_managed_skill_list') return [];
+      if (command === 'agent_managed_skill_discover') return discovery({ skillBodyTruncated: true });
+      throw new Error(`Unexpected command: ${command}`);
+    });
+    await flush();
+    await openAcquisition(rendered);
+
+    const catalogInstall = buttons(rendered.document).find((button) => button.textContent?.trim() === 'Install');
+    if (!catalogInstall) throw new Error('Missing catalog install button');
+    await act(async () => {
+      catalogInstall.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(rendered.document.body.textContent).toContain('too large to review in full');
+    const reviewInstall = buttons(rendered.document).filter((button) => button.textContent?.trim() === 'Install').at(-1);
+    expect(reviewInstall?.disabled).toBe(true);
+    reviewInstall?.click();
+    expect(calls).not.toContain('agent_managed_skill_install');
   });
 
   test('renders update-available, modified, recommended, and unverified states without collapsing rows', async () => {
@@ -143,6 +210,34 @@ describe('Skill library — managed sources', () => {
     // managed skill. The old fifth was the installed group's "check for
     // updates" row, which no longer exists as a list row.
     expect(rendered.document.querySelectorAll('.inset-row')).toHaveLength(4);
+  });
+
+  // Every failure of the GitHub flow rendered into page flow, underneath the
+  // acquire dialog's dimming backdrop, so the primary error path of the panel was
+  // invisible: the button returned from "Resolving…" to "Add" and nothing else
+  // happened. The alert belongs inside whichever surface is on top.
+  test('shows a discovery failure inside the acquire dialog, not behind it', async () => {
+    const rendered = renderComponent(async (command) => {
+      if (command === 'agent_managed_skill_catalog') return catalog(false);
+      if (command === 'agent_managed_skill_list') return [];
+      if (command === 'agent_managed_skill_discover') return managedFailure('github_not_found');
+      throw new Error(`Unexpected command: ${command}`);
+    });
+    await flush();
+    await openAcquisition(rendered);
+
+    // Catalog Install resolves through the same discovery call the GitHub field
+    // uses, so it exercises the identical failure path without driving an input.
+    const catalogInstall = buttons(rendered.document).find((button) => button.textContent?.trim() === 'Install');
+    if (!catalogInstall) throw new Error('Missing catalog install button');
+    await act(async () => {
+      catalogInstall.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const dialogAlert = rendered.document.querySelector('.skill-acquire-dialog [role="alert"]');
+    expect(dialogAlert?.textContent).toContain('The GitHub repository, ref, or skill path was not found.');
   });
 
   test('shows install validation failures inside the active review dialog', async () => {
@@ -264,6 +359,10 @@ describe('Skill library — managed sources', () => {
 function renderComponent(
   invoke: (command: string, args?: Record<string, unknown>) => Promise<unknown>,
   locale: Locale = 'en',
+  options: {
+    disabledSkills?: string[];
+    onPersistSkillDisabled?: (skillName: string, disabled: boolean) => Promise<boolean>;
+  } = {},
 ): Rendered {
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
   installDomGlobals(window);
@@ -289,9 +388,10 @@ function renderComponent(
     <I18nProvider>
       <SettingsSkillLibrarySection
         additionalSkillDirectories={[]}
-        disabledSkills={[]}
+        disabledSkills={options.disabledSkills ?? []}
         onDirectoriesChange={async (next) => next}
-        onPersistSkillDisabled={async () => undefined}
+        onPersistSkillDisabled={options.onPersistSkillDisabled ?? (async () => true)}
+        onSkillCountChange={() => undefined}
         onUpdateCountChange={() => undefined}
         onApplied={async () => undefined}
         onError={() => undefined}
@@ -376,7 +476,9 @@ function catalog(installed: boolean): ManagedSkillCatalogView {
   };
 }
 
-function discovery(): ManagedSkillDiscoveryView {
+function discovery(
+  candidateOverrides: Partial<ManagedSkillDiscoveryView['candidates'][number]> = {},
+): ManagedSkillDiscoveryView {
   return {
     id: 'discovery',
     repository: 'https://github.com/public/repo',
@@ -391,6 +493,8 @@ function discovery(): ManagedSkillDiscoveryView {
       subdirectory: 'skills/demo-skill',
       compatibility: { status: 'unknown', appVersion: '0.1.0' },
       scripts: ['scripts/run.py'],
+      skillBody: '---\nname: demo-skill\n---\n\nRead a PDF and summarize it.',
+      ...candidateOverrides,
     }],
   };
 }
@@ -400,6 +504,7 @@ function managedSkill(enabled: boolean): ManagedSkillView {
     id: 'demo-skill',
     name: 'demo-skill',
     description: 'Recommended demo skill.',
+    userInvocable: true,
     repository: 'https://github.com/public/repo',
     subdirectory: 'skills/demo-skill',
     trackingRef: 'main',

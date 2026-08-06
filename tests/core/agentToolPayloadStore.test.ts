@@ -1,14 +1,16 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, truncate, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, truncate, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   MAX_TOOL_PAYLOAD_IMAGE_BASE64_CHARS,
+  ThreadResourceQuotaError,
   ToolPayloadStore,
   measureToolPayloadImage,
 } from '../../src/main/agent/persistence/ToolPayloadStore';
 import { MAX_THREAD_MANAGED_ATTACHMENT_BYTES } from '../../src/core/agentAttachmentLimits';
 import { uuidV7 } from '../../src/main/agent/uuid';
+import { createImageArtifactReference } from '../../src/main/agent/imageArtifacts';
 
 const roots: string[] = [];
 
@@ -391,6 +393,92 @@ describe('Agent tool payload store', () => {
     expect(second).toEqual({ ref: first.ref, created: false });
   });
 
+  test('stores generated originals outside the bounded tool-image transport limit', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-tool-payloads-'));
+    roots.push(root);
+    const store = new ToolPayloadStore(root);
+    const threadId = uuidV7(1_720_000_000_000);
+    const bytes = Buffer.alloc(10 * 1024 * 1024 + 1, 1);
+
+    const original = await store.writeResource(threadId, bytes, 'image/png', 'generated-original.png');
+
+    expect(original.byteLength).toBe(bytes.byteLength);
+    await expect(store.writeImage(threadId, bytes.toString('base64'), 'image/png'))
+      .rejects.toThrow('imageByteLimit');
+  });
+
+  test('reclaims old tiered originals above the soft watermark while preserving durable renditions', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-tool-payloads-'));
+    roots.push(root);
+    const now = 10_000;
+    const store = retentionTestStore(root, now);
+    const threadId = uuidV7(1_720_000_000_000);
+    const tieredOriginal = await store.writeResource(threadId, Buffer.alloc(12, 1), 'image/png', 'tiered.png');
+    const tieredObservation = await store.writeResource(threadId, Buffer.alloc(5, 2), 'image/png', 'tiered-observation.png');
+    const durableOriginal = await store.writeResource(threadId, Buffer.alloc(10, 3), 'image/png', 'durable.png');
+    const durableObservation = await store.writeResource(threadId, Buffer.alloc(5, 4), 'image/png', 'durable-observation.png');
+    store.setImageRetentionInventoryProvider(() => ({
+      artifacts: [
+        imageArtifact('tiered', tieredOriginal, tieredObservation, now - 2_000),
+        imageArtifact('durable', durableOriginal, durableObservation, now - 2_000),
+      ],
+      protectedResources: [],
+    }));
+
+    const trigger = await store.writeResource(threadId, Buffer.from([5]), 'application/octet-stream', 'trigger.bin');
+
+    expect(await store.readResource(threadId, tieredOriginal)).toBeNull();
+    expect(await store.readResource(threadId, tieredObservation)).not.toBeNull();
+    expect(await store.readResource(threadId, durableOriginal)).not.toBeNull();
+    expect(await store.readResource(threadId, durableObservation)).not.toBeNull();
+    expect(await store.readResource(threadId, trigger)).toEqual(Buffer.from([5]));
+  });
+
+  test('uses hard-pressure order: tiered originals, then least-recently-used observations', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-tool-payloads-'));
+    roots.push(root);
+    const now = 10_000;
+    const store = retentionTestStore(root, now);
+    const threadId = uuidV7(1_720_000_000_000);
+    const protectedResource = await store.writeResource(threadId, Buffer.alloc(19, 1), 'application/octet-stream', 'protected.bin');
+    const tieredOriginal = await store.writeResource(threadId, Buffer.alloc(5, 2), 'image/png', 'tiered.png');
+    const oldObservation = await store.writeResource(threadId, Buffer.alloc(8, 3), 'image/png', 'old.png');
+    const recentObservation = await store.writeResource(threadId, Buffer.alloc(8, 4), 'image/png', 'recent.png');
+    await setResourceAccessTime(root, threadId, oldObservation, 1_000);
+    await setResourceAccessTime(root, threadId, recentObservation, 2_000);
+    store.setImageRetentionInventoryProvider(() => ({
+      artifacts: [
+        imageArtifact('tiered', tieredOriginal, recentObservation, now - 500),
+        observationOnlyArtifact(oldObservation, now - 500),
+      ],
+      protectedResources: [protectedResource],
+    }));
+
+    const incoming = await store.writeResource(threadId, Buffer.alloc(10, 5), 'application/octet-stream', 'incoming.bin');
+
+    expect(await store.readResource(threadId, tieredOriginal)).toBeNull();
+    expect(await store.readResource(threadId, oldObservation)).toBeNull();
+    expect(await store.readResource(threadId, recentObservation)).not.toBeNull();
+    expect(await store.readResource(threadId, protectedResource)).not.toBeNull();
+    expect(await store.readResource(threadId, incoming)).not.toBeNull();
+  });
+
+  test('persists rendition access time without changing resource bytes', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-tool-payloads-'));
+    roots.push(root);
+    const now = Date.now() + 60_000;
+    const store = retentionTestStore(root, now, 0);
+    const threadId = uuidV7(1_720_000_000_000);
+    const ref = await store.writeResource(threadId, Buffer.from('observation'), 'image/png', 'observation.png');
+    await setResourceAccessTime(root, threadId, ref, now - 30_000);
+
+    await store.useResourcePath(threadId, ref, async () => undefined);
+
+    const file = await stat(resourcePath(root, threadId, ref));
+    expect(file.atimeMs).toBeCloseTo(now, -2);
+    expect(await store.readResource(threadId, ref)).toEqual(Buffer.from('observation'));
+  });
+
   test('removes incomplete staged uploads on failure and startup', async () => {
     const root = await mkdtemp(join(tmpdir(), 'tenon-tool-payloads-'));
     roots.push(root);
@@ -450,7 +538,7 @@ describe('Agent tool payload store', () => {
     expect(await store.readResource(threadId, ref)).toEqual(Buffer.from('canonical'));
   });
 
-  test('applies the Thread quota to direct resource writes', async () => {
+  test('applies a typed Thread quota error to direct resource writes', async () => {
     const root = await mkdtemp(join(tmpdir(), 'tenon-tool-payloads-'));
     roots.push(root);
     const store = new ToolPayloadStore(root);
@@ -461,7 +549,7 @@ describe('Agent tool payload store', () => {
     await truncate(existingPath, MAX_THREAD_MANAGED_ATTACHMENT_BYTES - 1);
 
     await expect(store.writeResource(threadId, Buffer.from('xx'), 'application/octet-stream', 'next.bin'))
-      .rejects.toThrow('Thread storage quota');
+      .rejects.toBeInstanceOf(ThreadResourceQuotaError);
   });
 
   test('serializes concurrent upload reservations against the Thread quota', async () => {
@@ -590,3 +678,69 @@ describe('Agent tool payload store', () => {
       .rejects.toThrow('conflicts with an existing resource');
   });
 });
+
+function retentionTestStore(
+  root: string,
+  now: number,
+  resourceAccessTouchIntervalMs = 60 * 60 * 1000,
+): ToolPayloadStore {
+  return new ToolPayloadStore(root, {
+    now: () => now,
+    imageRetention: {
+      targetBytes: 20,
+      softBytes: 30,
+      hardBytes: 40,
+      minOriginalAgeMs: 1_000,
+    },
+    resourceAccessTouchIntervalMs,
+  });
+}
+
+function imageArtifact(
+  retention: 'durable' | 'tiered',
+  original: Awaited<ReturnType<ToolPayloadStore['writeResource']>>,
+  observation: Awaited<ReturnType<ToolPayloadStore['writeResource']>>,
+  createdAt: number,
+) {
+  return createImageArtifactReference({
+    createdAt,
+    retention,
+    original: { kind: 'threadPayload', ref: original },
+    observation,
+    sourceDimensions: { width: 2, height: 2 },
+    observationDimensions: { width: 1, height: 1 },
+  });
+}
+
+function observationOnlyArtifact(
+  observation: Awaited<ReturnType<ToolPayloadStore['writeResource']>>,
+  createdAt: number,
+) {
+  return createImageArtifactReference({
+    createdAt,
+    retention: 'observationOnly',
+    original: null,
+    observation,
+    sourceDimensions: { width: 1, height: 1 },
+    observationDimensions: { width: 1, height: 1 },
+  });
+}
+
+function resourcePath(
+  root: string,
+  threadId: string,
+  ref: Awaited<ReturnType<ToolPayloadStore['writeResource']>>,
+): string {
+  return join(root, threadId, 'resources', ref.id, ref.fileName);
+}
+
+async function setResourceAccessTime(
+  root: string,
+  threadId: string,
+  ref: Awaited<ReturnType<ToolPayloadStore['writeResource']>>,
+  atimeMs: number,
+): Promise<void> {
+  const path = resourcePath(root, threadId, ref);
+  const file = await stat(path);
+  await utimes(path, new Date(atimeMs), file.mtime);
+}

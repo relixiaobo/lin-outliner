@@ -9,8 +9,7 @@
   min-width: 0;
   min-height: calc(var(--panel-content-top) + var(--control-size-md));
   align-items: center;
-  /* leading (back + origin) · path · trailing (close). The trailing column is auto so
-     it collapses to nothing when no close is rendered (single pane). */
+  /* leading (back + origin) · path · trailing (pane actions + close). */
   grid-template-columns: auto minmax(0, 1fr) auto;
   gap: var(--space-2);
   margin: 0 0 calc(var(--space-lg) + var(--space-2));
@@ -54,6 +53,7 @@
 .panel-breadcrumb-origin,
 .panel-breadcrumb-button,
 .panel-breadcrumb-ellipsis,
+.panel-breadcrumb-trailing,
 .panel-breadcrumb-close,
 .outline-panel-close {
   -webkit-app-region: no-drag;
@@ -74,16 +74,27 @@
   -webkit-app-region: no-drag;
 }
 
-/* Trailing close: a no-drag descendant of the breadcrumb drag region (so its click is
-   reliably carved out on macOS) sitting in the trailing grid column, hugging the right
-   --panel-content-x inset (the breadcrumb's own right padding) so it aligns with content. */
+/* Pane-specific actions and Close share the trailing grid column. Keeping this group
+   outside the fit-content reorder handle leaves the middle-column whitespace available
+   for window dragging without pulling the actions next to the title. */
+.panel-breadcrumb-trailing,
+.panel-breadcrumb-actions {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.panel-breadcrumb-trailing {
+  justify-self: end;
+  gap: var(--space-2);
+}
+
 .panel-breadcrumb-close {
   display: inline-flex;
   width: var(--control-size-md);
   height: var(--control-size-md);
   align-items: center;
   justify-content: center;
-  justify-self: end;
   border-radius: var(--radius-pill);
   color: color-mix(in srgb, var(--text-primary) 42%, transparent);
 }

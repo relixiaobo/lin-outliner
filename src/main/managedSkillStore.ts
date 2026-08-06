@@ -20,7 +20,7 @@ import {
   type ValidatedManagedSkill,
 } from './managedSkillValidation';
 
-const INDEX_SCHEMA_VERSION = 1;
+const INDEX_SCHEMA_VERSION = 2;
 const PRIVATE_DIRECTORY_MODE = process.platform === 'win32' ? undefined : 0o700;
 const PRIVATE_FILE_MODE = process.platform === 'win32' ? undefined : 0o600;
 const IMMUTABLE_DIRECTORY_MODE = process.platform === 'win32' ? undefined : 0o500;
@@ -36,6 +36,7 @@ export interface ManagedSkillStoredVersion {
   fileCount: number;
   totalBytes: number;
   description: string;
+  userInvocable: boolean;
   compatibility: ManagedSkillCompatibilityView;
   scripts: string[];
   version?: string;
@@ -69,7 +70,7 @@ export interface ManagedSkillRecord {
 }
 
 export interface ManagedSkillIndex {
-  schemaVersion: 1;
+  schemaVersion: 2;
   skills: ManagedSkillRecord[];
 }
 
@@ -97,8 +98,42 @@ export class ManagedSkillStore {
     await ensureNormalDirectory(this.controlRoot, PRIVATE_DIRECTORY_MODE);
     await ensureNormalDirectory(this.contentRoot, PRIVATE_DIRECTORY_MODE);
     await ensureNormalDirectory(this.stagingRoot, PRIVATE_DIRECTORY_MODE);
+    await this.healUnreadableIndex();
     await this.pruneStaging();
     await this.pruneOrphanVersions();
+  }
+
+  /**
+   * Move an index this build cannot decode aside, once, at startup.
+   *
+   * Decoding stays fail-closed — the index admits records into the store, so a
+   * half-read one must not enter it — but that verdict used to be permanent: every
+   * later read threw the same error, so the runtime roots, the Skill library, and
+   * every install stayed broken with no way back short of deleting the file by
+   * hand. Pre-release we do not migrate formats (AGENTS.md), so the heal is to
+   * quarantine and start empty: `pruneOrphanVersions` then reaps the content, and
+   * the skills are reinstallable. Renamed rather than deleted, so a schema break
+   * never destroys the record of what was installed.
+   */
+  private async healUnreadableIndex(): Promise<void> {
+    let raw: string;
+    try {
+      raw = await readFile(this.indexPath, 'utf8');
+    } catch {
+      // No index yet, or a fault that is not about this file's content. Neither
+      // is a corrupt index, and neither may trigger a quarantine.
+      return;
+    }
+    try {
+      parseManagedSkillIndex(JSON.parse(raw));
+    } catch (error) {
+      const quarantinePath = `${this.indexPath}.unreadable-${Date.now()}`;
+      await rename(this.indexPath, quarantinePath);
+      console.warn(
+        `Managed skill index could not be read (${error instanceof Error ? error.message : String(error)}); `
+        + `moved to ${quarantinePath}. Managed skills must be reinstalled.`,
+      );
+    }
   }
 
   async readIndex(): Promise<ManagedSkillIndex> {
@@ -170,6 +205,7 @@ export class ManagedSkillStore {
           fileCount: skill.fileCount,
           totalBytes: skill.totalBytes,
           description: skill.description,
+          userInvocable: skill.userInvocable,
           compatibility: skill.compatibility,
           scripts: skill.scripts,
         });
@@ -300,6 +336,7 @@ export function storedVersionFromValidated(
     fileCount: skill.fileCount,
     totalBytes: skill.totalBytes,
     description: skill.description,
+    userInvocable: skill.userInvocable,
     compatibility: skill.compatibility,
     scripts: [...skill.scripts],
     ...(skill.version ? { version: skill.version } : {}),
@@ -393,6 +430,7 @@ function parseStoredVersion(value: unknown): ManagedSkillStoredVersion {
     fileCount: requiredNumber(value.fileCount, 'version.fileCount'),
     totalBytes: requiredNumber(value.totalBytes, 'version.totalBytes'),
     description: requiredString(value.description, 'version.description'),
+    userInvocable: requiredBoolean(value.userInvocable, 'version.userInvocable'),
     compatibility: {
       status: compatibilityStatus,
       appVersion: requiredString(value.compatibility.appVersion, 'compatibility.appVersion'),
@@ -528,6 +566,11 @@ function boundedOptionalString(value: unknown): string | undefined {
 
 function requiredNumber(value: unknown, field: string): number {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) throw new Error(`Managed skill index field ${field} is invalid.`);
+  return value;
+}
+
+function requiredBoolean(value: unknown, field: string): boolean {
+  if (typeof value !== 'boolean') throw new Error(`Managed skill index field ${field} is invalid.`);
   return value;
 }
 

@@ -1,4 +1,5 @@
-import type { ThreadResourceReference } from './agent/protocol';
+import { decodeThreadImageArtifactReference } from './agent/codec';
+import type { ThreadImageArtifactReference, ThreadResourceReference } from './agent/protocol';
 import { MAX_MANAGED_ATTACHMENT_BYTES } from './agentAttachmentLimits';
 import { safeAttachmentFileName } from './agentAttachmentPaths';
 
@@ -14,6 +15,7 @@ export type PreviewTarget =
       threadId?: string;
       attachmentId?: string;
       resourceRef?: ThreadResourceReference;
+      imageArtifactRef?: ThreadImageArtifactReference;
     }
   | {
       kind: 'asset';
@@ -95,6 +97,9 @@ export function previewTargetKey(target: PreviewTarget): string {
         const ref = target.resourceRef;
         return `local-file:thread-resource:${target.threadId}:${ref.id}:${ref.mimeType}:${ref.byteLength}:${ref.fileName}`;
       }
+      if (target.threadId && target.imageArtifactRef) {
+        return `local-file:thread-image-artifact:${target.threadId}:${target.imageArtifactRef.id}`;
+      }
       return `local-file:${target.entryKind}:${target.path}`;
     case 'asset':
       return `asset:${target.assetId}`;
@@ -117,7 +122,17 @@ export function previewTargetFromUnknown(value: unknown): PreviewTarget | null {
       resourceRef = threadResourceReferenceFromUnknown(value.resourceRef) ?? undefined;
       if (!resourceRef) return null;
     }
-    const scopedIdentityCount = Number(Boolean(attachmentId)) + Number(Boolean(resourceRef));
+    let imageArtifactRef: ThreadImageArtifactReference | undefined;
+    if (value.imageArtifactRef !== undefined) {
+      try {
+        imageArtifactRef = decodeThreadImageArtifactReference(value.imageArtifactRef, 'previewTarget.imageArtifactRef');
+      } catch {
+        return null;
+      }
+    }
+    const scopedIdentityCount = Number(Boolean(attachmentId))
+      + Number(Boolean(resourceRef))
+      + Number(Boolean(imageArtifactRef));
     if (threadId ? scopedIdentityCount !== 1 : scopedIdentityCount !== 0) return null;
     return {
       kind: 'local-file',
@@ -126,6 +141,7 @@ export function previewTargetFromUnknown(value: unknown): PreviewTarget | null {
       ...(label ? { label } : {}),
       ...(threadId && attachmentId ? { threadId, attachmentId } : {}),
       ...(threadId && resourceRef ? { threadId, resourceRef } : {}),
+      ...(threadId && imageArtifactRef ? { threadId, imageArtifactRef } : {}),
     };
   }
   if (value.kind === 'asset') {

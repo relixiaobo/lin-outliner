@@ -25,6 +25,7 @@ import { officeOwnershipFileInfo } from '../../../core/officeFiles';
 import type {
   RequestUserInputAnswer,
   RequestUserInputRequest,
+  JsonValue,
   ProviderRetryStatus,
   ThreadAttachmentContent,
   ThreadConfigurationSummary,
@@ -36,6 +37,11 @@ import type {
   Turn,
 } from '../../../core/agent/protocol';
 import type { ThreadGoal } from '../../../core/agent/goal';
+import {
+  boundedToolArgumentsForDisplay,
+  modelCallDisplayArguments,
+  modelCallDisplayName,
+} from '../../../core/agent/modelCallHistory';
 import type { AgentProviderSettingsView, AgentSlashCommandView } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
 import { useI18n, useT } from '../../i18n/I18nProvider';
@@ -108,6 +114,7 @@ import {
   projectSubagentsForTurn,
   type SubagentTurnProjection,
 } from '../subagentPresentation';
+import { classifyNewThreadCommand } from '../threadComposerCommands';
 
 interface ThreadViewProps {
   readonly composerEnabled: boolean;
@@ -130,8 +137,11 @@ interface ThreadViewProps {
   readonly waitingOnUserInput: boolean;
   readonly providerRetry: { readonly turnId: string; readonly status: ProviderRetryStatus } | null;
   readonly plan: ActiveTurnPlan | null;
+  readonly threadCreationBlocked: boolean;
+  readonly threadCreationPending: boolean;
   readonly onEditUserMessage: (turn: Turn, content: readonly ThreadUserContent[]) => Promise<void>;
   readonly onContinueInNewChat: (turn: Turn) => Promise<void>;
+  readonly onCreateThread: () => Promise<boolean>;
   readonly onInterrupt: () => Promise<void>;
   /** Stop one delegated child from the card, or the child Thread view header. */
   readonly onInterruptThread: (threadId: string) => Promise<void>;
@@ -140,6 +150,7 @@ interface ThreadViewProps {
   readonly onOpenThread: (threadId: string) => Promise<void>;
   readonly onOpenTurnDetails: (turn: Turn) => void;
   readonly onReadToolOutput: (turnId: string, item: ThreadToolItem) => Promise<string | null>;
+  readonly onReadToolArguments: (turnId: string, item: ThreadToolItem) => Promise<JsonValue | null>;
   readonly onSend: (content: readonly ThreadUserContent[]) => Promise<Turn | null>;
   readonly onSubmitUserInput: (answers: readonly RequestUserInputAnswer[]) => Promise<void>;
 }
@@ -166,6 +177,8 @@ const EMPTY_COMPOSER_DRAFT: ThreadComposerDraft = {
   fileRefs: [],
   text: '',
 };
+
+type NewThreadValidation = 'providerRequired' | 'structuredContent' | null;
 
 interface ThreadScrollSnapshot {
   readonly follow: boolean;
@@ -333,14 +346,18 @@ export function ThreadView({
   inputRequest,
   waitingOnUserInput,
   providerRetry,
+  threadCreationBlocked,
+  threadCreationPending,
   onEditUserMessage,
   onContinueInNewChat,
+  onCreateThread,
   onInterrupt,
   onInterruptThread,
   onConfigurationChange,
   onOpenNodeReference,
   onOpenThread,
   onOpenTurnDetails,
+  onReadToolArguments,
   onReadToolOutput,
   onSend,
   onSubmitUserInput,
@@ -352,6 +369,8 @@ export function ThreadView({
   const [sending, setSending] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [newThreadValidation, setNewThreadValidation] = useState<NewThreadValidation>(null);
+  const [failedThreadCreationFocusToken, setFailedThreadCreationFocusToken] = useState(0);
   const [attachments, setAttachments] = useState<ThreadAttachmentContent[]>([]);
   const [recentLocalFiles, setRecentLocalFiles] = useState<ThreadComposerLocalFileCandidate[]>([]);
   const [follow, setFollow] = useState(initialScrollSnapshot?.follow ?? true);
@@ -387,6 +406,7 @@ export function ThreadView({
   const attachmentSourceKeysRef = useRef(new Map<string, string>());
   const draftRef = useRef<ThreadComposerDraft>(EMPTY_COMPOSER_DRAFT);
   const handledFocusTokenRef = useRef(0);
+  const handledFailedThreadCreationFocusTokenRef = useRef(0);
   const sendingRef = useRef(false);
   const measuredTurnHeights = useMemo(() => cachedTurnHeights(threadId), [threadId]);
   const [measureVersion, setMeasureVersion] = useState(0);
@@ -424,6 +444,25 @@ export function ThreadView({
   const hasUsableProvider = Boolean(providerSettings?.providers.some(
     (provider) => isProviderUsable(providerSettings, provider),
   ));
+  const newThreadCommandState = classifyNewThreadCommand(draft);
+  const newThreadAction = newThreadCommandState !== 'ordinary';
+  const composerActionDisabled = !hasDraft
+    || sending
+    || threadCreationPending
+    || (newThreadCommandState === 'ready' ? threadCreationBlocked : false)
+    || (newThreadCommandState === 'ordinary' ? providerBlocksSend : false);
+  const composerActionLabel = newThreadAction
+    ? t.agent.thread.new
+    : activeTurn ? t.agent.thread.steer : t.agent.thread.send;
+  const composerActionTitle = (
+    (newThreadCommandState === 'ready' && threadCreationBlocked)
+    || (newThreadCommandState === 'ordinary' && providerBlocksSend)
+  ) ? t.agent.thread.providerRequired : composerActionLabel;
+  const newThreadValidationMessage = newThreadValidation === 'structuredContent'
+    ? t.agent.composer.newThreadStructuredContentError
+    : newThreadValidation === 'providerRequired'
+      ? t.agent.thread.providerRequired
+      : null;
   const virtualLayout = useMemo(
     () => buildVirtualTurnLayout(turns, measuredTurnHeights),
     [measureVersion, measuredTurnHeights, turns],
@@ -917,6 +956,21 @@ export function ThreadView({
     return () => window.cancelAnimationFrame(frame);
   }, [composerFocusToken, waitingForInput]);
 
+  useEffect(() => {
+    if (failedThreadCreationFocusToken <= 0
+      || handledFailedThreadCreationFocusTokenRef.current >= failedThreadCreationFocusToken
+      || threadCreationPending
+      || waitingForInput) return undefined;
+    handledFailedThreadCreationFocusTokenRef.current = failedThreadCreationFocusToken;
+    const frame = window.requestAnimationFrame(() => composerRef.current?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [failedThreadCreationFocusToken, threadCreationPending, waitingForInput]);
+
+  useEffect(() => {
+    if (threadCreationBlocked) return;
+    setNewThreadValidation((current) => current === 'providerRequired' ? null : current);
+  }, [threadCreationBlocked]);
+
   useEffect(() => onThreadComposerNodeReferenceRequest((request) => {
     if (!composerEnabled) return;
     composerRef.current?.insertNodeReference({ nodeId: request.nodeId, title: request.title });
@@ -939,10 +993,27 @@ export function ThreadView({
   async function submit() {
     const currentDraft = draftRef.current;
     if (!composerEnabled
-      || providerBlocksSend
       || currentDraft.empty
       || sending
+      || threadCreationPending
       || waitingForInput) return;
+    const commandState = classifyNewThreadCommand(currentDraft);
+    if (commandState === 'blockedByStructuredContent') {
+      setNewThreadValidation('structuredContent');
+      return;
+    }
+    if (commandState === 'ready') {
+      if (threadCreationBlocked) {
+        setNewThreadValidation('providerRequired');
+        return;
+      }
+      setNewThreadValidation(null);
+      const created = await onCreateThread();
+      if (!created) setFailedThreadCreationFocusToken((token) => token + 1);
+      return;
+    }
+    setNewThreadValidation(null);
+    if (providerBlocksSend) return;
     const submittedContent = threadContentFromDraft(currentDraft, attachmentsRef.current);
     const submittedAttachments = submittedContent.filter(
       (content): content is ThreadAttachmentContent => content.type === 'attachment',
@@ -1259,6 +1330,12 @@ export function ThreadView({
   function handleDraftChange(next: ThreadComposerDraft) {
     draftRef.current = next;
     setDraft(next);
+    const nextCommandState = classifyNewThreadCommand(next);
+    setNewThreadValidation((current) => {
+      if (current === 'structuredContent' && nextCommandState === 'blockedByStructuredContent') return current;
+      if (current === 'providerRequired' && nextCommandState === 'ready' && threadCreationBlocked) return current;
+      return null;
+    });
     if (sendingRef.current) return;
     const referencedIds = new Set(next.fileRefs.map((ref) => ref.attachmentId));
     const current = attachmentsRef.current;
@@ -1356,6 +1433,7 @@ export function ThreadView({
                         onOpenNodeReference={onOpenNodeReference}
                         onOpenThread={onOpenThread}
                         onOpenTurnDetails={onOpenTurnDetails}
+                        onReadToolArguments={onReadToolArguments}
                         onReadToolOutput={onReadToolOutput}
                         latchedReasoning={latchedReasoning}
                         threadId={threadId}
@@ -1425,12 +1503,17 @@ export function ThreadView({
           <div className="thread-composer-main" hidden={waitingForInput}>
               {dragActive ? <div className="thread-composer-drop-overlay">{t.agent.thread.dropFilesToAttach}</div> : null}
               {error ? <p className="thread-inline-error" role="status">{error}</p> : null}
+              {newThreadValidationMessage ? (
+                <p className="thread-inline-error" role="status">
+                  {newThreadValidationMessage}
+                </p>
+              ) : null}
               <ThreadComposerEditor
-                allowFileReferences={!activeTurn && !providerBlocksSend && !waitingForInput}
-                allowNodeReferences={!waitingForInput}
+                allowFileReferences={!activeTurn && !providerBlocksSend && !waitingForInput && !threadCreationPending}
+                allowNodeReferences={!waitingForInput && !threadCreationPending}
                 allowSlashCommands
                 currentNodeId={null}
-                disabled={waitingForInput}
+                disabled={waitingForInput || threadCreationPending}
                 index={index}
                 isStreaming={Boolean(activeTurn)}
                 onChange={handleDraftChange}
@@ -1455,7 +1538,11 @@ export function ThreadView({
                   type="file"
                 />
                 <IconButton
-                  disabled={providerBlocksSend || Boolean(activeTurn) || attachments.length >= MAX_ATTACHMENTS || sending}
+                  disabled={providerBlocksSend
+                    || Boolean(activeTurn)
+                    || attachments.length >= MAX_ATTACHMENTS
+                    || sending
+                    || threadCreationPending}
                   icon={AttachmentIcon}
                   label={t.agent.thread.addAttachment}
                   onClick={() => void addPickedFiles()}
@@ -1469,6 +1556,7 @@ export function ThreadView({
                     configuration={configuration}
                     disabled={Boolean(activeTurn)
                       || sending
+                      || threadCreationPending
                       || (providerSettingsLoaded && !hasUsableProvider)}
                     onChange={async (next) => {
                       setError(null);
@@ -1492,13 +1580,11 @@ export function ThreadView({
                   />
                 ) : (
                   <IconButton
-                    disabled={providerBlocksSend || !hasDraft || sending}
+                    disabled={composerActionDisabled}
                     icon={SendIcon}
-                    label={activeTurn ? t.agent.thread.steer : t.agent.thread.send}
+                    label={composerActionLabel}
                     onClick={() => void submit()}
-                    title={providerBlocksSend
-                      ? t.agent.thread.providerRequired
-                      : activeTurn ? t.agent.thread.steer : t.agent.thread.send}
+                    title={composerActionTitle}
                     variant="composerAction"
                   />
                 )}
@@ -1566,6 +1652,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
   onOpenNodeReference,
   onOpenThread,
   onOpenTurnDetails,
+  onReadToolArguments,
   onReadToolOutput,
   threadId,
   threadCwd,
@@ -1585,6 +1672,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
   readonly onOpenNodeReference: ThreadNodeReferenceOpenHandler;
   readonly onOpenThread: (threadId: string) => Promise<void>;
   readonly onOpenTurnDetails: (turn: Turn) => void;
+  readonly onReadToolArguments: (turnId: string, item: ThreadToolItem) => Promise<JsonValue | null>;
   readonly onReadToolOutput: (turnId: string, item: ThreadToolItem) => Promise<string | null>;
   readonly threadId: string;
   readonly threadCwd: string;
@@ -1642,10 +1730,19 @@ const ThreadTurnView = memo(function ThreadTurnView({
     (item: ThreadToolItem) => onReadToolOutput(turn.id, item),
     [onReadToolOutput, turn.id],
   );
+  const readToolArguments = useCallback(
+    (item: ThreadToolItem) => onReadToolArguments(turn.id, item),
+    [onReadToolArguments, turn.id],
+  );
   const copyTurn = useCallback(async () => {
-    const text = await buildTurnCopyText(turn, readToolOutput, t.agent.thread.resourceLimitReached);
+    const text = await buildTurnCopyText(
+      turn,
+      readToolArguments,
+      readToolOutput,
+      t.agent.thread.resourceLimitReached,
+    );
     if (text) await navigator.clipboard.writeText(text);
-  }, [readToolOutput, t.agent.thread.resourceLimitReached, turn]);
+  }, [readToolArguments, readToolOutput, t.agent.thread.resourceLimitReached, turn]);
   const handleResponseContextMenu = useCallback(async (event: MouseEvent<HTMLElement>) => {
     event.preventDefault();
     const action = await window.lin?.showThreadMessageContextMenu?.({
@@ -1683,6 +1780,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
       onOpenNodeReference={onOpenNodeReference}
       onOpenTurnDetails={standaloneContextBoundary ? () => onOpenTurnDetails(turn) : undefined}
       onOpenThread={onOpenThread}
+      onReadToolArguments={readToolArguments}
       onReadToolOutput={readToolOutput}
       showMessageActions={showMessageActions}
       streaming={turn.status === 'inProgress' && turn.items.at(-1)?.id === item.id}
@@ -1715,6 +1813,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
                   items={group.items}
                   key={group.items[0]?.id}
                   onOpenThread={onOpenThread}
+                  onReadToolArguments={readToolArguments}
                   onReadToolOutput={readToolOutput}
                   subagents={subagents.byThreadId}
                   threadId={threadId}
@@ -1996,8 +2095,9 @@ function hasTurnCopyContent(turn: Turn): boolean {
   ) || isThreadToolItem(item)) || Boolean(turn.error?.message);
 }
 
-async function buildTurnCopyText(
+export async function buildTurnCopyText(
   turn: Turn,
+  readToolArguments: (item: ThreadToolItem) => Promise<JsonValue | null>,
   readToolOutput: (item: ThreadToolItem) => Promise<string | null>,
   resourceLimitMessage: string,
 ): Promise<string> {
@@ -2009,7 +2109,8 @@ async function buildTurnCopyText(
       continue;
     }
     if (!isThreadToolItem(item)) continue;
-    parts.push(`\`\`\`tool ${toolCopyName(item)}\n${toolCopyArguments(item)}\n\`\`\``);
+    const argumentsValue = await readToolArguments(item);
+    parts.push(`\`\`\`tool ${toolCopyName(item)}\n${toolCopyArguments(item, argumentsValue)}\n\`\`\``);
     const output = item.type === 'collabAgentToolCall'
       ? projectedToolOutput(item)
       : await readToolOutput(item) ?? projectedToolOutput(item);
@@ -2025,33 +2126,22 @@ async function buildTurnCopyText(
 }
 
 function toolCopyName(item: ThreadToolItem): string {
-  switch (item.type) {
-    case 'commandExecution': return 'bash';
-    case 'fileChange': return 'file_change';
-    case 'mcpToolCall': return `${item.server}.${item.tool}`;
-    case 'dynamicToolCall': return [item.namespace, item.tool].filter(Boolean).join('.');
-    case 'collabAgentToolCall': return `collaboration.${item.tool}`;
-    case 'webSearch': return 'web_search';
-    default: return assertNever(item);
-  }
+  return modelCallDisplayName(item.modelCall);
 }
 
-function toolCopyArguments(item: ThreadToolItem): string {
-  switch (item.type) {
-    case 'commandExecution': return jsonText({ command: item.command, cwd: item.cwd });
-    case 'fileChange': return jsonText({ changes: item.changes });
-    case 'mcpToolCall':
-    case 'dynamicToolCall': return jsonText(item.arguments);
-    case 'collabAgentToolCall': return jsonText({
-      tool: item.tool,
-      prompt: item.prompt,
-      model: item.model,
-      reasoningEffort: item.reasoningEffort,
-      receiverThreadIds: item.receiverThreadIds,
-    });
-    case 'webSearch': return jsonText({ query: item.query });
-    default: return assertNever(item);
+function toolCopyArguments(item: ThreadToolItem, argumentsValue: JsonValue | null): string {
+  if (argumentsValue !== null) {
+    if (item.modelCall.disposition !== 'evidenceOnly') {
+      const source = item.modelCall.disposition === 'replayable'
+        ? item.modelCall.arguments
+        : item.modelCall.redactedArguments;
+      if (source.storage === 'payload') {
+        return jsonText(boundedToolArgumentsForDisplay(argumentsValue));
+      }
+    }
+    return jsonText(argumentsValue);
   }
+  return jsonText(modelCallDisplayArguments(item.modelCall));
 }
 
 function projectedToolOutput(item: ThreadToolItem): string {

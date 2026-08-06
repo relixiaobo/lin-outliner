@@ -34,12 +34,12 @@ describe('agent skill provenance store', () => {
 
     await Promise.all([
       first.save('/workspace/.agents/skills/a/SKILL.md', { agentHash: 'agent-a' }),
-      second.save('/workspace/.agents/skills/b/SKILL.md', { acceptedHash: 'accepted-b' }),
+      second.save('/workspace/.agents/skills/b/SKILL.md', { agentHash: 'agent-b' }),
     ]);
 
     expect(await createAgentSkillProvenanceStore().load()).toEqual({
       '/workspace/.agents/skills/a/SKILL.md': { agentHash: 'agent-a' },
-      '/workspace/.agents/skills/b/SKILL.md': { acceptedHash: 'accepted-b' },
+      '/workspace/.agents/skills/b/SKILL.md': { agentHash: 'agent-b' },
     });
   });
 

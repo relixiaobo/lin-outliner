@@ -129,7 +129,7 @@ export const en = {
     providers: {
       connectedGroup: 'Configured',
       connectedAriaLabel: 'Configured providers',
-      availableGroup: 'Add Providers',
+      availableGroup: 'Add providers',
       availableAriaLabel: 'Providers to add',
       imageGenerationGroup: 'Image generation',
       imageGenerationAriaLabel: 'Image generation settings',
@@ -155,6 +155,7 @@ export const en = {
       setActiveNotice: 'Provider set as active',
       enabledNotice: 'Provider enabled',
       disabledNotice: 'Provider disabled',
+      toggleFailed: ({ name }: { name: string }) => `Could not update ${name}. Try again.`,
       defaultImageModelSavedNotice: 'Default image model saved',
       modelsRefreshedNotice: 'Provider models refreshed',
       removedNotice: 'Provider removed',
@@ -170,27 +171,28 @@ export const en = {
         unsupported: 'Unsupported',
         notDetected: 'Not detected',
         active: 'Active',
+        keyRejected: 'Key rejected',
+        // Qualifies a good state rather than replacing it: a probe that could not
+        // reach the provider says nothing about the credential.
+        uncheckableSuffix: ({ status }: { status: string }) => `${status}, couldn't check`,
       },
     },
     security: {
       sectionAriaLabel: 'Security',
-      accessGroup: 'Agent Access',
+      accessGroup: 'Agent access',
       accessAriaLabel: 'Agent access',
       accessModeLabel: 'Filesystem',
       fullAccessLabel: 'Full Access',
       fullAccessSublabel: 'Processes and file tools can read and modify everything available to your macOS account.',
-      blocksGroup: 'Your Blocks',
+      blocksGroup: 'Your blocks',
       blocksAriaLabel: 'Your blocks',
       noBlocks: 'No explicit blocks.',
       commandBlockLabel: 'Command block',
       actionBlockLabel: 'Action block',
       unknownBlockLabel: 'Block rule',
       removeRule: 'Remove',
-      systemBoundaryGroup: 'System Boundary',
-      systemBoundaryAriaLabel: 'System boundary',
-      fullAccessBoundaryLabel: 'macOS account',
-      fullAccessBoundarySublabel: 'The agent has the same filesystem access as Tenon, including Tenon data and stored provider credentials.',
-      fullAccessBoundaryNote: 'Native TCC, administrator authorization, Keychain controls, and service sign-in still apply.',
+      removeFailed: 'Could not remove this block. Try again.',
+      fullAccessBoundaryNote: 'The agent reaches whatever your macOS account reaches, including Tenon\u2019s own data and stored provider credentials. Native TCC, administrator authorization, Keychain controls, and service sign-in still apply.',
     },
     skills: {
       sectionAriaLabel: 'Skills',
@@ -219,6 +221,9 @@ export const en = {
       // "Unbind", never "remove"/"delete": Tenon points at the directory, so
       // this drops the pointer and leaves the user's files untouched.
       localUnbind: 'Unbind directory',
+      localUnbindConfirmTitle: 'Unbind this directory?',
+      localUnbindConfirmMessage: ({ directory, count }: { directory: string; count: number }) =>
+        `${count === 1 ? '1 skill' : `${count} skills`} from ${directory} will disappear from your library. The files themselves are not touched.`,
       localUnboundNotice: ({ directory }: { directory: string }) =>
         `Unbound ${directory}. Its files were not changed.`,
       localDirectoryEmpty: 'No skills found in this directory.',
@@ -235,15 +240,10 @@ export const en = {
         `Tenon reads at most ${count} skill directories. Unbind one before adding another.`,
       localDirectoryActions: ({ directory }: { directory: string }) => `${directory} actions`,
       toggleSkill: ({ name }: { name: string }) => `Toggle ${name}`,
-      pendingChip: 'Pending acceptance',
-      pendingWorkspaceChip: 'Workspace · not accepted',
-      acceptedChip: 'Accepted',
-      acceptButton: 'Accept',
-      acceptSkill: ({ name }: { name: string }) => `Accept ${name} for automatic use`,
-      revokeAcceptance: 'Revoke acceptance',
+      toggleFailed: ({ name }: { name: string }) => `Could not update ${name}. Try again.`,
       undoAgentEdit: 'Undo last agent edit',
       rowActionsAriaLabel: ({ name }: { name: string }) => `${name} actions`,
-      managedCatalogGroup: 'Linlab Catalog',
+      managedCatalogGroup: 'Linlab catalog',
       managedCatalogAriaLabel: 'Linlab recommended skills',
       managedCatalogLoading: 'Loading recommendations…',
       managedCatalogUnavailable: 'Catalog unavailable',
@@ -255,8 +255,6 @@ export const en = {
       managedUnverified: 'Unverified',
       managedInstalledChip: 'Installed',
       managedNameTaken: 'Already in your library',
-      managedNameTakenHint: ({ name }: { name: string }) =>
-        `You already have a skill named ${name}, so this one cannot be installed alongside it.`,
       managedInstall: 'Install',
       managedInstalling: 'Installing…',
       managedResolving: 'Resolving…',
@@ -296,7 +294,7 @@ export const en = {
       managedContentHash: 'Content hash',
       managedCompatibility: 'Compatibility',
       managedCompatibilityUnknown: 'Unknown',
-      managedTrust: 'Distribution',
+      managedDistribution: 'Distribution',
       managedScripts: 'Scripts',
       managedNoScripts: 'None',
       managedChangedFiles: 'Changed files',
@@ -306,7 +304,10 @@ export const en = {
       managedUninstallTitle: 'Uninstall managed skill?',
       managedUninstallMessage: ({ name }: { name: string }) => `Remove ${name} and its retained local versions?`,
       managedPreviousMissing: 'The previous version is no longer available.',
-      managedInstalledNotice: ({ name }: { name: string }) => `${name} installed disabled`,
+      managedInstalledNotice: ({ name }: { name: string }) => `${name} installed and enabled.`,
+      managedSkillBodyLabel: 'What this skill tells the model',
+      managedSkillBodyTruncated: 'Shortened — open the repository to read the rest.',
+      managedSkillBodyTooLargeToInstall: 'This SKILL.md is too large to review in full, so it cannot be installed.',
       managedEnabledNotice: ({ name }: { name: string }) => `${name} enabled`,
       managedDisabledNotice: ({ name }: { name: string }) => `${name} disabled`,
       managedUpdatedNotice: ({ name }: { name: string }) => `${name} updated`,
@@ -357,11 +358,61 @@ export const en = {
     railTitle: 'Settings',
     loading: 'Loading...',
     categoriesAriaLabel: 'Settings categories',
+    agent: {
+      capabilitiesAriaLabel: 'Agent capabilities',
+      noServiceConnected: 'No model service connected',
+      skillCount: ({ count }: { count: number }) => (count === 1 ? '1 skill' : `${count} skills`),
+    },
+    preview: {
+      sectionAriaLabel: 'Preview',
+      translationGroup: 'Translation',
+      translationAriaLabel: 'Translation preferences',
+      // The same four preferences the Languages popover writes. Both surfaces read
+      // one store, so a change in either is a change in both.
+      targetLanguageLabel: 'Translate to',
+      targetLanguageSublabel: 'The language webpages, captions, and books are translated into.',
+      autoTranslateUrlsLabel: 'Translate webpages automatically',
+      autoTranslateUrlsSublabel: 'Translate every webpage preview as it opens, without asking.',
+      autoTranslateEpubsLabel: 'Translate books automatically',
+      autoTranslateEpubsSublabel: 'Translate EPUB books as you read them. Separate from webpages, because a book is sent to a provider a chapter at a time.',
+      modelLabel: 'Translation model',
+      modelSublabel: 'Which model translates. Follows the Agent’s model unless you pick one.',
+      websitesGroup: 'Websites',
+      websitesAriaLabel: 'Website data',
+    },
+    about: {
+      sectionAriaLabel: 'About',
+      rowLabel: 'About Tenon',
+      version: 'Version',
+      copyVersionInfo: 'Copy version info',
+      copiedNotice: 'Version info copied.',
+      copyFailed: 'Could not copy version info.',
+      whatsNewGroup: 'What’s new',
+      releaseLabel: 'Release',
+      releasePickerLabel: 'Release notes version',
+      releaseNotesLabel: 'Release notes',
+      developmentReleaseLabel: ({ version }: { version: string }) => `${version} development`,
+      releaseNotesAriaLabel: ({ version }: { version: string }) => `Release notes for ${version}`,
+      releaseNotesUnavailable: 'Release notes are unavailable.',
+      supportGroup: 'Support',
+      helpAction: 'Tenon Help',
+      reportIssueAction: 'Report an issue',
+      legalGroup: 'Legal',
+      privacyNote: 'Diagnostics stay on this Mac. Tenon never uploads them.',
+      license: 'Tenon license',
+    },
+    // `hint` is gone with the four old categories: it was defined and translated
+    // in both locales for a rail that never rendered it, and an e2e case asserted
+    // its absence.
     categories: {
-      general: { label: 'General', hint: 'Appearance & Theme' },
-      providers: { label: 'Providers', hint: 'Connections & API keys' },
-      security: { label: 'Security', hint: 'Full Access, blocks & system boundary' },
-      skills: { label: 'Skills', hint: 'Extension Capabilities' },
+      general: { label: 'General' },
+      agent: { label: 'Agent' },
+      preview: { label: 'Preview' },
+    },
+    pages: {
+      services: 'Model services',
+      skills: 'Skills',
+      about: 'About',
     },
     general: {
       appearanceGroup: 'Appearance',
@@ -372,9 +423,6 @@ export const en = {
       themeDark: 'Dark',
       languageLabel: 'Language',
       languageSublabel: 'Choose the display language for menus and the interface.',
-      notificationsGroup: 'Notifications',
-      osNotificationsLabel: 'System notifications',
-      osNotificationsSublabel: 'Show a system notification when a background Turn finishes or needs input while the app is in the background. Off by default.',
       memoryGroup: 'Memory',
       memoryLabel: 'Use Memory',
       memorySublabel: 'Use and update durable Memory stored as editable Nodes in Daily Notes.',
@@ -406,7 +454,7 @@ export const en = {
       websiteDataUnavailable: 'Website data is unavailable in this window.',
       websiteDataClearFailed: 'Could not clear website data.',
       websiteDataClearedNotice: 'Website data cleared.',
-      translationDataGroup: 'Translation Data',
+      translationDataGroup: 'Translation data',
       translationDataLabel: 'Saved translations',
       translationDataSublabel: 'Translations saved locally for webpages, captions, and EPUB books.',
       translationDataClearAction: 'Clear…',
@@ -529,6 +577,7 @@ export const en = {
       retryBlockTranslation: 'Retry translation',
       translationNotConfigured: 'Select an available model or configure one in Settings before translating.',
       translationFailed: "Some content couldn't be translated.",
+      preferenceSaveFailed: "This translation preference couldn't be saved.",
       openInSplitPane: 'Open in split pane',
       openWithDefault: 'Open with default app',
     },
@@ -1486,6 +1535,8 @@ commandPalette: {
       slashCommandsLabel: 'Thread slash commands',
       compactCommandDescription: 'Replace earlier context with a durable summary',
       clearCommandDescription: 'Start a new context epoch without deleting history',
+      newThreadCommandDescription: 'Start a new Thread',
+      newThreadStructuredContentError: 'Remove attachments and references before starting a new Thread.',
       mentionSuggestionsLabel: 'Thread reference suggestions',
       noCommands: 'No commands',
       searchingFiles: 'Searching files...',
@@ -1508,6 +1559,10 @@ commandPalette: {
       reasoningHint: 'Higher effort means more thorough responses, but takes longer.',
       effortDefault: 'Default',
       modelHeading: 'Model',
+      // Deliberately not "best available": the selection follows the newest model
+      // of THIS connection and never switches provider, so this stays true whether
+      // one or several providers are connected.
+      modelAlwaysNewest: 'Always newest',
       showAllModels: ({ count }: { count: number }) => `Show all (${count})`,
       showFewerModels: 'Show less',
       reasoningLevels: {
@@ -1578,6 +1633,11 @@ commandPalette: {
 
   providerConfig: {
     activeChip: 'Active',
+    statusAriaLabel: 'Connection status',
+    checkedJustNow: 'Checked just now',
+    checkedMinutesAgo: ({ count }: { count: number }) => `Checked ${count} minute${count === 1 ? '' : 's'} ago`,
+    checkedHoursAgo: ({ count }: { count: number }) => `Checked ${count} hour${count === 1 ? '' : 's'} ago`,
+    checkedDaysAgo: ({ count }: { count: number }) => `Checked ${count} day${count === 1 ? '' : 's'} ago`,
     learnMore: 'Learn more',
     providerIdLabel: 'Provider ID',
     providerIdPlaceholder: 'my-provider',
@@ -1606,7 +1666,7 @@ commandPalette: {
     save: 'Save',
     saving: 'Saving…',
   },
-  // The per-provider OAuth sign-in surface (Anthropic / GitHub Copilot / OpenAI Codex).
+  // The provider-owned OAuth sign-in surface.
   providerOAuth: {
     activeChip: 'Active',
     connected: 'Connected',
@@ -1660,6 +1720,18 @@ commandPalette: {
       },
       'openai-codex': {
         hint: 'Sign in with your ChatGPT Plus or Pro subscription.',
+      },
+      'kimi-coding': {
+        hint: 'Sign in with your Kimi Code subscription.',
+      },
+      openrouter: {
+        hint: 'Sign in with OpenRouter to connect your account.',
+      },
+      radius: {
+        hint: 'Sign in with Radius to load your gateway model catalog.',
+      },
+      xai: {
+        hint: 'Sign in with your SuperGrok or X subscription.',
       },
     },
   },

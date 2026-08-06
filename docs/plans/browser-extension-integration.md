@@ -71,8 +71,17 @@ normalization, and `create_capture` do not become browser-control APIs.
 When the user explicitly captures an already-visible URL Preview, the capture
 pipeline may ask the read-only Preview reader for bounded body or selection
 content. If no eligible Preview is selected, capture continues through its
-existing URL/title, clipboard, screenshot, or manual fallbacks. It does not open
-a Preview or external browser invisibly.
+existing fallbacks. It does not open a Preview or external browser invisibly.
+
+**This reader is the deferred SECOND rich-extraction source**, behind the
+main-process static URL reader (`file-preview.md`) that `unified-command-surface.md`
+approved as the primary backend. It earns its cost only for pages a static fetch
+cannot read — JS-rendered, or signed in inside Tenon's own Preview partition.
+
+The fallback chain is **structured read → URL + title → clipboard → manual entry**
+(`unified-command-surface.md` D10). Only the first two exist today; there is no
+screenshot tier, and none is planned — it would require a Screen Recording (TCC)
+grant for a fallback-of-a-fallback.
 
 ### Safety And Data
 
@@ -83,17 +92,23 @@ a Preview or external browser invisibly.
 - Guest identity and read state are ephemeral and discarded when the Preview is
   destroyed.
 - Clearing URL Preview website data remains the user's global Settings action.
-- Browser Control safety and user-browser authorization live exclusively in
-  `agent-browser-control.md`.
+- Browser Control safety and user-browser authorization lived in
+  `agent-browser-control.md`, **superseded 2026-08-03** — Browser Pilot ships
+  through the managed-Skill catalog instead, so that authority is the Skill's,
+  not Tenon's. Archived at `docs/plans/archive/agent-browser-control.md`.
 
 ### Relationship To Current Modules
 
-- `src/main/context/contextCapture.ts` keeps the `PageContentExtractor` seam.
+- `src/main/context/contextCapture.ts` keeps `PageContentExtractor` as an **ambient
+  metadata** seam. Explicit reading — including this plan's Preview reader — goes
+  through `ExplicitPageReader`, invoked only after the user picks an action; the
+  ambient seam runs on every hotkey press and must never touch the network.
 - `src/core/preview.ts` remains URL Preview target and navigation authority.
 - `docs/spec/workspace-layout.md` remains the authority for the shipped URL
   Preview session and sandbox.
-- `agent-browser-control.md` is an independent Browser Pilot CLI integration and
-  consumes none of this plan's interfaces.
+- `docs/plans/archive/agent-browser-control.md` was an independent Browser Pilot
+  CLI integration and consumed none of this plan's interfaces; it is superseded
+  and this plan never depended on it.
 - Current specs change only when this complete feature ships.
 
 ## Open Questions
@@ -109,6 +124,7 @@ a Preview or external browser invisibly.
 
 - Define Preview guest identity and destruction handling in Electron main.
 - Define the minimal read-only `PreviewContentReader` contract.
-- Ratify the explicit rich-capture UX before adapting `PageContentExtractor`.
+- Ratify the explicit rich-capture UX before implementing `ExplicitPageReader`'s
+  Preview-backed variant.
 - Add security tests proving the reader cannot mutate a page, address an
   external browser, or expose raw session credentials.

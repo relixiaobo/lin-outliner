@@ -6,7 +6,6 @@ import { localGatewayProviderDefinition } from '../../../core/localGatewayProvid
 import { useT } from '../../i18n/I18nProvider';
 import {
   formatProviderName,
-  OAUTH_API_KEY_FALLBACK,
   oauthSignInInfo,
   providerAuthInfo,
   PROVIDER_DOCS_URL,
@@ -15,11 +14,13 @@ import {
   providerHasCredential,
   resolveUsableActiveProvider,
 } from './providerCatalog';
+import { OAUTH_API_KEY_FALLBACK } from './providerOAuthCapabilities';
 import { ProviderConfigForm, type ProviderConfigDraft } from './ProviderConfigForm';
+import { providerCheckedAtText, resolveProviderStatus } from './providerStatus';
+import { buildProviderChoices } from './settingsProviderModel';
 import { ProviderOAuthForm } from './ProviderOAuthForm';
 import { Button } from '../primitives/Button';
 import { ErrorState } from '../primitives/FeedbackState';
-import { Input } from '../primitives/Input';
 
 // Root rendered in the dedicated per-provider config window (?surface=provider-config),
 // a modal child of the settings window. It fetches its own provider settings, derives
@@ -88,8 +89,20 @@ export function ProviderConfigWindow() {
   // Auth class comes from main (`authKind`), falling back to the configured view's
   // descriptor for a provider with no catalog row. Custom providers are always api-key.
   const authKind = isCustom ? 'api-key' : (catalog?.authKind ?? existing?.auth?.authKind ?? 'api-key');
-  const showOAuth = authKind === 'oauth' && !useApiKey;
+  const showOAuth = authKind === 'oauth' && !hasStoredKey && !useApiKey;
   const oauthInfo = oauthSignInInfo(providerId, t);
+  // The same status the list row shows, derived from the same model — this page
+  // used to show none of the ten states the list computed, so a row that said
+  // "Needs key" opened a window that never mentioned it.
+  const choice = settings.providers.length || settings.availableProviders.length
+    ? buildProviderChoices(settings, providerId, new Map(
+      settings.availableProviders.map((provider) => [provider.providerId, provider]),
+    )).find((candidate) => candidate.providerId === providerId)
+    : undefined;
+  const status = choice ? resolveProviderStatus(choice) : undefined;
+  const checkedAt = existing?.connectionCheck
+    ? providerCheckedAtText(existing.connectionCheck.at, Date.now(), t)
+    : undefined;
   const initialBaseUrl = existing?.baseUrl
     ?? (localGatewayProviderDefinition(providerId) ? catalog?.defaultBaseUrl ?? '' : '');
 
@@ -97,8 +110,10 @@ export function ProviderConfigWindow() {
     const pid = draft.providerId.trim() || providerId;
     const result = await api.agentTestProviderConnection({
       providerId: pid,
-      baseUrl: draft.baseUrl.trim() || undefined,
-      apiKey: draft.apiKey.trim() || undefined,
+      // Empty is meaningful: test the provider's official endpoint after the
+      // user clears a previously stored custom Base URL.
+      baseUrl: draft.baseUrl.trim(),
+      ...(draft.apiKey.trim() ? { apiKey: draft.apiKey.trim() } : {}),
     });
     return { success: result.success, message: result.message };
   }
@@ -120,7 +135,7 @@ export function ProviderConfigWindow() {
       providerId: pid,
       baseUrl: draft.baseUrl.trim() || null,
       enabled: existing?.enabled ?? true,
-    });
+    }, { probeConnection: true });
     await window.lin?.notifySettingsChanged?.();
   }
 
@@ -173,8 +188,10 @@ export function ProviderConfigWindow() {
         defaultBaseUrl={catalog?.defaultBaseUrl}
         description={isCustom ? t.providerCatalog.openAiCompatible : providerDescription(catalog, t)}
         docsUrl={docsUrl}
+        checkedAt={checkedAt}
         hasCredential={hasCredential}
         hasStoredKey={hasStoredKey}
+        status={status}
         initial={{
           providerId,
           baseUrl: initialBaseUrl,
@@ -215,6 +232,12 @@ function ProviderConfigLoadingShell({
     ? t.providerCatalog.customProvider
     : (providerId ? formatProviderName(providerId) : t.window.providerConfigTitle);
 
+  // Deliberately NOT a mock of the form. The old skeleton always drew an API-key
+  // field and a base URL, but a managed-credential provider (Bedrock, Vertex)
+  // resolves to a note with no key field at all, and an OAuth provider resolves
+  // to a completely different sign-in surface — so the skeleton showed people a
+  // form that then vanished or transformed. Which shape is right is not known
+  // until the settings arrive, so this waits rather than guessing.
   return (
     <>
       <header className="settings-sheet-head">
@@ -229,57 +252,13 @@ function ProviderConfigLoadingShell({
         </div>
       </header>
 
-      <div className="settings-sheet-body provider-config-loading-body" aria-busy="true">
-        <div className="inset-card" role="group">
-          {isCustom ? (
-            <label className="settings-sheet-row">
-              <span className="settings-sheet-row-label">{t.providerConfig.providerIdLabel}</span>
-              <Input
-                className="settings-sheet-row-input"
-                disabled
-                label={t.providerConfig.providerIdLabel}
-                placeholder={t.providerConfig.providerIdPlaceholder}
-                value=""
-                variant="bare"
-              />
-            </label>
-          ) : null}
-          <label className="settings-sheet-row">
-            <span className="settings-sheet-row-label">{t.providerConfig.apiKeyLabel}</span>
-            <Input
-              className="settings-sheet-row-input"
-              disabled
-              label={t.providerConfig.apiKeyLabel}
-              placeholder={t.common.loading}
-              value=""
-              variant="bare"
-            />
-          </label>
-          <label className="settings-sheet-row">
-            <span className="settings-sheet-row-label">{t.providerConfig.baseUrlLabel}</span>
-            <Input
-              className="settings-sheet-row-input"
-              disabled
-              label={t.providerConfig.baseUrlLabel}
-              placeholder={t.common.loading}
-              value=""
-              variant="bare"
-            />
-          </label>
-        </div>
-      </div>
+      <div className="settings-sheet-body provider-config-loading-body" aria-busy="true" />
 
       <div className="settings-sheet-actions">
         <div className="settings-sheet-actions-left" />
         <div className="settings-sheet-actions-right">
           <Button onClick={onClose} variant="ghost">
             {t.providerConfig.cancel}
-          </Button>
-          <Button disabled variant="secondary">
-            {t.providerConfig.validate}
-          </Button>
-          <Button disabled variant="primary">
-            {t.providerConfig.save}
           </Button>
         </div>
       </div>

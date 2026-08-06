@@ -13,6 +13,10 @@
   color: var(--text-primary);
 }
 
+/* The header shares the top-strip centreline but is NOT a native drag region.
+   Its box overlaps the fixed agent toggle from the sibling WindowChrome tree;
+   marking both regions draggable makes macOS consume the toggle click before
+   React receives it. The right window-chrome zone owns dragging here. */
 .thread-dock-header {
   position: relative;
   display: flex;
@@ -26,13 +30,7 @@
     calc(var(--chrome-right-zone-width) - var(--layout-gap))
     0
     calc(var(--rail-pad) + (var(--chrome-control-height) - var(--icon-size-md)) / 2 - var(--space-2));
-  -webkit-app-region: drag;
   user-select: none;
-}
-
-.thread-dock-header button,
-.thread-dock-header input {
-  -webkit-app-region: no-drag;
 }
 
 .thread-dock-title-button {
@@ -129,14 +127,8 @@
 
 .thread-title-chevron {
   flex: 0 0 auto;
-  opacity: 0;
-  transition: opacity var(--motion-fast), transform var(--motion-fast);
-}
-
-.thread-dock-title-button:hover .thread-title-chevron,
-.thread-dock-title-button:focus-visible .thread-title-chevron,
-.thread-dock-title-button[aria-expanded='true'] .thread-title-chevron {
   opacity: 0.72;
+  transition: transform var(--motion-fast);
 }
 
 .thread-title-chevron.is-open {
@@ -2641,6 +2633,20 @@ button.thread-inline-activity:focus-visible,
   color: var(--text-faint);
 }
 
+/* Where a model comes from, or what "always newest" currently resolves to.
+   Secondary to the model name, which leads the row. */
+.thread-composer-model-item-origin {
+  min-width: 0;
+  flex: 0 1 auto;
+  margin-left: var(--space-2);
+  overflow: hidden;
+  color: var(--text-faint);
+  font-size: var(--font-meta);
+  line-height: var(--line-ui-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .thread-composer-model-check,
 .thread-composer-model-item-caret {
   display: inline-flex;
@@ -2685,15 +2691,6 @@ button.thread-inline-activity:focus-visible,
 .thread-composer-model-group {
   display: flex;
   flex-direction: column;
-}
-
-.thread-composer-model-group-label {
-  padding: var(--space-1) var(--space-3);
-  color: var(--text-faint);
-  font-size: var(--font-meta);
-  line-height: var(--line-meta-tight);
-  letter-spacing: 0;
-  text-transform: uppercase;
 }
 
 .thread-composer-spacer {

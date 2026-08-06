@@ -10,13 +10,47 @@ Entries reference the pull request that introduced them.
 
 Nothing yet. `main` is at `0.1.0`; add entries here and they move under the next tag.
 
-## [0.1.0] - 2026-08-03
+## [0.1.0] - 2026-08-06
 
 First tagged release. Everything below shipped to `main` before this tag and had been
 accumulating under `[Unreleased]` across 21 duplicate category sections, which made "what
 changed in this release" unanswerable; the sections are merged, no entry was edited.
 
 ### Added
+
+- **Agent images are durable, inspectable artifacts (PR #490, codex-2)** —
+  generated images, user image attachments, and image-producing tools now share
+  one immutable artifact identity with separate source-quality and bounded model
+  renditions. Chat models receive only a normalized observation (at most 2,000 px
+  per edge and 4.5 MiB) plus exact source-to-observation geometry, while Preview,
+  editing, copy, export, and file tools prefer the original and fall back to the
+  observation through one stable materialized path. History, forks, and inherited
+  context preserve the artifact while tolerating missing renditions, so one lost
+  image no longer kills the surrounding Turn. Generated originals remain durable
+  until storage pressure reclaims tiered originals before observations under the
+  Thread's 5/6/8 GiB retention policy; external, user-owned, and ordinary Thread
+  resources stay protected.
+
+- **`/new` starts a Thread without leaving the composer (PR #486, codex-2)** —
+  typing `/new` and pressing Enter creates an empty Thread and selects it, so
+  starting a fresh conversation no longer means reaching for the Thread list.
+  The completion is offered in the slash menu like any other command, but once
+  the token is typed in full the menu gets out of the way: a slash command that
+  takes no argument (`/new`, `/clear` — the ones whose `insertText` carries no
+  trailing space) closes its own trigger on an exact match and submits on the
+  first Enter, while argument-taking commands like `/compact` keep their menu
+  open. Casing variants are treated as an unfinished token, so `/New` offers the
+  completion rather than being sent to the model as a message. `/new` is gated on
+  any usable provider rather than the current Thread's own send gate, and when no
+  provider is configured it says so inline instead of doing nothing; a failed
+  creation keeps both the draft and the Thread you were in, and returns focus to
+  the composer once it is editable again. Runtime command names are reserved, so
+  a user Skill named `new` no longer renders a duplicate, uninvocable row.
+  Leaving for a new Thread never interrupts the one you left: a Thread whose own
+  Turn is still running now carries the same background-work dot the Thread list
+  already showed for working descendants — but a Thread merely parked on a
+  question does not, because that state needs you to come back, not to be told it
+  is busy.
 
 - **A Subagent is a place you can go, and every delegated child says what it is
   doing (PR #471, cc-2)** — child Threads leave the conversation history
@@ -94,7 +128,6 @@ changed in this release" unanswerable; the sections are merged, no entry was edi
   and pane content is pointer-shielded during the drag so previews cannot
   swallow it. Sizes, per-pane history, and the active pane are untouched; the
   agent-visible pane `order` renumbers to match.
-
 
 - **Agent Full Access (PR #410, codex-2)** — the Main Agent, delegated Runs,
   Dream, and Skills now use one host-account filesystem model: typed file tools
@@ -669,7 +702,6 @@ changed in this release" unanswerable; the sections are merged, no entry was edi
   iframe sandbox + external-link gate verified against foliate's iframe model); typecheck + build +
   `test:core` 1062 + `test:renderer` 617 + EPUB e2e (inline reader, capped bytes, wheel section-advance)
   green on `59c9afa5`. Packaged-CSP runtime smoke left as a confirmatory follow-up.
-
 
 - **Dream date-window scheduling + derived cursor (PR #328, codex-2)** — the second PR of
   `dream-channel-and-memory-retire`. Memory Dream's scope moves from the opaque seq-watermark to
@@ -1647,7 +1679,6 @@ changed in this release" unanswerable; the sections are merged, no entry was edi
   (`useDismissibleOverlay`, `state/persistence.ts`) replacing three duplicated
   copies. Empty-state hint copy updated (en + zh-Hans).
 
-
 - **Multi-agent Channels: membership, @-routing, and peer replies (PR #179, M3-A)** — a conversation
   can now hold multiple agent members and run them as an IM group chat. Membership is event-sourced
   (`member.added`/`member.removed`; the conversation-index/meta folds consume membership events only)
@@ -2392,6 +2423,48 @@ changed in this release" unanswerable; the sections are merged, no entry was edi
 
 ### Changed
 
+- **Settings, reorganized around what you are actually setting (PR #488, cc-2)** —
+  Settings is now General, Agent, and Reading, with About, the Skill Library, and
+  Add Service as their own routed pages instead of one long scroll. Changes apply
+  the moment you make them: there is no Save button to forget, a write that fails
+  says so in place and puts the old value back, and a slow response can no longer
+  land on top of a newer choice you already made. A connection's status now
+  reflects a real, bounded check rather than a guess — and it stays put, so a
+  connection you verified still reads as verified after its sign-in quietly
+  refreshes in the background or you flip its switch off and on. Managed Skills
+  install, enable, and roll back truthfully, and a Skill whose files are broken
+  no longer takes the rest of your Skills down with it. Reading preferences —
+  page translation, URL translation, and language — stay consistent with each
+  other, and a failed write is visible and retryable. What's New starts collapsed,
+  scrolls within itself, and shows the section matching the version you are
+  running, with a version picker for the rest.
+  runtime moved to pi-ai 0.83, which brings the current model catalog and the
+  provider-owned sign-in flow. Signing in is now the provider's own flow rather
+  than one shared script, so device codes, pasted codes, and account pickers all
+  behave the way that provider actually works — and a connection you configured
+  with an API key still opens on its key, not on a sign-in sheet that hides it.
+  Providers whose model list is only known after you connect (Radius, and any
+  future one like it) now fill in: their models load at launch from what was
+  saved last time, refresh when you add a key or sign in, and can be refreshed
+  on demand from the connection's ⋯ menu. Refreshing one connection refreshes
+  only that one. Testing a connection no longer writes anything down — a key you
+  typed but never saved leaves no trace in your model list. Enterprise GitHub
+  Copilot reaches its own host again, on Threads and on page translation.
+
+- **Pick a model, not a provider (PR #478, cc-2)** — the Thread's model control
+  is now one flat list of models across your connections. The model name leads
+  each row; the connection it comes from appears only as a small secondary
+  label, and only when more than one is listed. Connections still bound how many
+  models each contributes, so a long catalog stays collapsed behind its own
+  "show all" (which now says whose models it expands) and a model you have
+  pinned stays visible even when it falls outside that window. The list leads
+  with **Always newest**, which follows your connection's newest model instead
+  of pinning one — choosing it never moves the Thread to a different connection,
+  and it names the model it would switch you to. A pinned model is shown exactly
+  as stored: the pill and the check mark always name the model that will
+  actually run, so you can no longer be shown one model while another answers
+  the turn.
+
 - **You can see what your agents are doing, and stop them (PR #472, cc-2)** — a
   delegating Turn now carries a live card in its process block: one line per
   child agent with a readable name, its status, and elapsed time, so a
@@ -2522,7 +2595,6 @@ changed in this release" unanswerable; the sections are merged, no entry was edi
   what actually ran; when there is none, the label strips heredoc bodies,
   `cd X &&` scaffolding, and the thread's own working-directory prefix. Four
   icons were re-picked (file delete, `web_fetch`, MCP vs unknown tool, skill).
-
 
 - **pi-ai / pi-agent-core upgraded `0.80.3 -> 0.80.6` (PR #390, codex)** —
   adopts the refreshed upstream model catalog and exposes `max` as a distinct
@@ -2703,7 +2775,6 @@ changed in this release" unanswerable; the sections are merged, no entry was edi
   their `UNTIL`; the `withinUntil` short-circuit was sound only for the forward search, fixed to `continue` in
   the past direction with a covering test. Verified: typecheck clean, `test:core` 1056/0, `test:renderer`
   606/0.
-
 
 - **Agent transcript rebuilt to 1:1 Codex desktop-client message flow (PR #312, `message-flow-rebuild`)** —
   the agent process rendering is rebuilt as one typed-stream → render-group splitter → nested collapse model,
@@ -3359,7 +3430,6 @@ changed in this release" unanswerable; the sections are merged, no entry was edi
   Dream skips delegation ledgers missing their `run.started` boundary. E2E
   316/316 green; visual verification light + dark passed.
 
-
 - **Outliner focus and selection shortcut polish (PR #186)** — entering a regular
   node page now places edit focus at the start of the first visible body row (the
   trailing draft when the page is empty; search pages such as Recents stay
@@ -3578,7 +3648,6 @@ changed in this release" unanswerable; the sections are merged, no entry was edi
   audit record can no longer contradict itself (e.g. a runtime denial is no longer logged as `user_once`).
   Gate: typecheck + `test:core` 662/0 + `test:renderer` 356/0 + 7-angle high-effort review → 7 findings, all
   fixed before merge (29dd688) with regression tests. ([#154](https://github.com/relixiaobo/lin-outliner/pull/154))
-
 
 - **Workspace tree rows are text-only (PR #146)** — the navigation tree no longer renders a per-node icon
   (neither a node's own emoji nor the fixed fallback glyph the system roots Daily notes / Library / Schema /
@@ -4029,7 +4098,6 @@ changed in this release" unanswerable; the sections are merged, no entry was edi
   `agent-progress`, `agent-pi-mono-implementation`, `agent-event-log-rendering`; plan
   `agent-self-modification` updated to record M1 shipped-then-removed.
 
-
 - **`file_convert` tool removed — redundant with `bash` (PR #331, cc-2)** — the typed `file_convert`
   local tool added no capability over `bash`: both spawned the same converter binaries
   (`soffice`/`libreoffice`, `pdftoppm`, macOS `sips`) through the **same process environment**
@@ -4068,6 +4136,74 @@ changed in this release" unanswerable; the sections are merged, no entry was edi
 
 ### Fixed
 
+- **Agent tool history now replays what actually ran (PR #483, codex-3)** — the
+  model no longer learns schema-invalid calls from UI records that invented a
+  `cwd`, omitted valid arguments, or guessed file-operation shapes. Every admitted
+  call now freezes its exact canonical arguments and identity before execution;
+  later requests, context compaction, forks, transcripts, diagnostics, and tool
+  details all read that same record. Large arguments remain exact through
+  Thread-owned payloads, while missing or corrupt inspection data becomes bounded
+  evidence instead of breaking the Turn. Calls containing recognized credentials
+  still execute once with their original values in the active Turn, but only a
+  marked, structure-preserving redacted call and its real result survive into
+  durable history. Rejected and truncated calls produce typed correction evidence,
+  and stopping a Turn prevents the rest of either sequential, parallel, or
+  truncated batches from being admitted.
+
+- **The reading column is centered again when scrollbars take space (PR #479,
+  codex)** — the outliner panel reserved its scrollbar gutter with
+  `scrollbar-gutter: stable`, which reserves the inline-end edge only. With
+  overlay scrollbars (the macOS default) that costs nothing, but with
+  Appearance → "Show scroll bars: Always", on Windows, or on a CI runner, the
+  gutter is permanently reserved and the 720px reading column sat ~5–6px left of
+  the pane's visual center in every wide single-pane window. It is now
+  `stable both-edges`, so the gutters are symmetric and the column centers against
+  the panel's visible border box. The four e2e guards that had failed every CI
+  macOS sample while never failing locally are fixed with it: three of them
+  measured material and HUD colors while GitHub's macOS images forced
+  `prefers-reduced-transparency: reduce`, flipping the `a11y.css` override block
+  underneath them, so the suite gained `tests/e2e/emulatedMedia.ts` — Playwright's
+  own `emulateMedia` cannot set that preference, so the helper pins all five
+  visual preferences over CDP and verifies they applied. The guards now assert
+  against the visible border box and pin the computed `scrollbar-gutter`, and the
+  token probe throws when a token is missing instead of silently inheriting a
+  false match.
+
+- **Preview header actions stay beside Close in split layouts (PR #484, codex)** —
+  with more than one pane open, an EPUB or URL preview pulled its Translate and
+  More controls up next to the filename while the `×` sat alone at the far right.
+  The pane-reorder work had narrowed the breadcrumb's drag-to-reorder handle to the
+  crumb content, and the preview actions — rendered as breadcrumb children — went
+  inside that fit-content wrapper with it. The shared pane breadcrumb now has a
+  trailing-actions slot outside the reorder handle, so pane actions and Close share
+  the right-hand column while the empty header space between the crumbs and that
+  group stays window-drag. One drag detail the fix also closes: the 4px gap between
+  the two icon buttons belonged to the window drag region even though both buttons
+  opted out, so a press landing a couple of pixels off started a window drag instead
+  of hitting the button — a control opting out of the drag region is not enough, its
+  group's gaps have to as well. The regression test reads that gap from the layout
+  token rather than a hardcoded tolerance.
+
+- **The agent toggle collapses the dock again (PR #481, codex-2)** — clicking the
+  fixed top-right toggle did nothing in the real macOS window, though it worked in
+  every browser-based test. `.thread-dock-header` declared
+  `-webkit-app-region: drag` from a sibling DOM subtree whose box extends under the
+  toggle, and macOS consumed the press as title-bar drag before React ever saw a
+  click. Electron only carves a `no-drag` control out of a drag region reliably when
+  that control is a DOM *descendant* of the region — a rule `shell.css` already
+  documented and this file was quietly contradicting. Dragging goes back to the right
+  window-chrome zone, which owns it. One deliberate trade: with the dock open, the
+  ~290px of header band to the left of that zone no longer drags the window or
+  double-click-zooms; restoring it needs an inner spacer bounded to the header's
+  content box, recorded in the plan as a follow-up. The Thread-list trigger also drops
+  its redundant leading agent glyph and now shows its chevron at rest instead of only
+  on hover, so it reads as a list trigger without being pointed at. The regression
+  guard is geometric rather than selector-pinned: no element carrying
+  `app-region: drag` outside the window-chrome subtrees may intersect the toggle's
+  box, so the next overlapping element gets caught too. Native macOS click
+  verification remains outstanding — Chromium ignores app regions, so no
+  browser-based test can prove this class of bug fixed.
+
 - **Closing a menu in the agent panel no longer bounces your focus to the
   composer (PR #475, cc-2)** — opening the model-and-reasoning menu and pressing
   Escape put focus back on the trigger, as it should, and then a frame later the
@@ -4080,7 +4216,6 @@ changed in this release" unanswerable; the sections are merged, no entry was edi
   open-and-close cycle, decided at click time. One consequence: clicking a trigger
   to close its own open menu leaves focus on the trigger, which is what native
   menus do and what keyboard users need.
-
 
 - **A long conversation no longer loses the ability to delegate (PR #471,
   cc-2)** — the descendant token pool was keyed on the parent Thread, so spend
@@ -4114,7 +4249,6 @@ changed in this release" unanswerable; the sections are merged, no entry was edi
   asynchronous tool-output read holds it only until the read lands (bounded at
   three seconds, so a lost reply cannot latch scrolling), and wheel, pointer,
   touch, or keyboard input still cancels it immediately.
-
 
 - **Agent panel focus hand-back (PR #449, cc, fast-track)** — a mouse click in
   the thread view that nothing claims now returns focus to the composer
@@ -4338,7 +4472,6 @@ changed in this release" unanswerable; the sections are merged, no entry was edi
   different runs remain invisible turn boundaries. Verified with targeted
   renderer coverage, full renderer tests, typecheck, docs check, and diff check.
 
-
 - **Outliner row-start Enter insertion (direct main, fast-track)** — pressing
   `Enter` at the start of a non-empty row now creates and focuses a previous
   sibling instead of splitting the row or moving the row text under an expanded
@@ -4479,7 +4612,6 @@ changed in this release" unanswerable; the sections are merged, no entry was edi
   `resolveUserDataDir` cases). Note: a pre-existing `…/lin-outliner` (756M, from older builds) is
   intentionally left in place pending a separate cleanup decision (PM-ratified 2026-06-25: Tenon is
   authoritative).
-
 
 - **Manual "Dream now" pre-checks for new evidence and advises when there is nothing new (PR #320, cc-2)** —
   a manual Dream over too little new evidence used to be a wasted model round-trip that just no-ops. A new
@@ -4845,7 +4977,6 @@ changed in this release" unanswerable; the sections are merged, no entry was edi
   typecheck + `test:core` 766/0; the packaged first-⌘Q outcome still needs a one-time manual eyeball on the
   `.dmg`. ([#170](https://github.com/relixiaobo/lin-outliner/pull/170))
 
-
 - **Page-header icon stays visible in dark mode (PR #148)** — the neutral system-page header icons
   (Library / Schema / Trash / Saved searches), rendered in a `.panel-header-icon` chip styled with
   `mix-blend-mode: multiply` (tuned for a light backdrop), crushed to near-black on the dark content base
@@ -5210,6 +5341,95 @@ changed in this release" unanswerable; the sections are merged, no entry was edi
 
 ### Internal
 
+- **Unified command surface contract refinement (PR #491, codex, plan-only)** —
+  makes the plan's noun/verb boundary structural: result rows, chips, and parameter
+  candidates are objects, while the active subject resolves separately typed action
+  variants. Subject results and object-valued arguments now use distinct main-owned
+  admission generations, with each argument generation scoped to its exact action,
+  subject, and parameter slot so a renderer cannot substitute a same-identity ref
+  from another membership domain. The launcher now opens before ambient context
+  resolves; a main-owned transition bound to the current `openSeq` and monotonic
+  revision installs late context without clearing input/results or stealing an
+  explicit selection. Three review passes closed seven lifecycle and admission
+  findings before merge at final head `7fe07d70`. This changes the design contract
+  only; product behaviour is unchanged and both implementation PRs remain unclaimed.
+
+- **The unified command surface now starts from one action registry (PR #485, cc,
+  plan-only)** — replaces the former `Target × Verb`, habit-learning, and
+  reversibility-tier design with two independently complete implementation PRs
+  split where the compiler and a differential test can judge the contract. PR 1
+  moves the full node context menu onto compiling core invocation/evaluation/
+  presentation/request/effect contracts, preserves its behaviour against the old
+  path as an oracle, and fixes the *Move to* picker that currently limits unranked
+  document-order matches. PR 2 renders the registry as the searchable command
+  surface, adds capture and agent handoff, and retires the old global `Cmd+K`
+  palette. Main owns action admission, confirmation/execution phases, replay and
+  delivery outcomes; renderers may name an action but cannot author its effects.
+  Capture lands in Today, there is no browser extension or screenshot tier, and a
+  future rich-page reader is an explicit post-choice main API rather than a network
+  implementation on the ambient hotkey path. Fifteen review rounds closed the
+  cross-renderer lifecycle, confirmation, result-delivery, retrieval-order, and
+  runtime-binding contradictions before implementation; both feature PRs remain
+  unclaimed. The source edits in this plan are comment-only and do not change
+  behaviour.
+
+- **Generated images as durable Thread resources plan (PR #489, cc-2, plan-only)**
+  — boards the tool-agnostic artifact work `agent-browser-control` left behind
+  when it closed as `superseded`, with generated images as the first complete
+  consumer. `generate_image` writes bytes into the agent scratch root and returns
+  a path relative to a root the model is never told about, which produces three
+  defects from one cause: the model **never sees its own output** (the tool
+  passes no tool-result `extraContent`, so no image content item is ever created
+  — and `toolImagePath`'s `generate_image` branch, which only runs inside the
+  branch that image would have triggered, is therefore unreachable dead code);
+  the model **cannot act on that output**, because `file_write` is text-only
+  while `file_read` and `bash` resolve relative paths against the workdir, so
+  "generate an image and put it in Downloads" fails — and worse, sometimes
+  half-works by stumbling into `../agent-scratch/…` until `LIN_AGENT_LOCAL_ROOT`
+  moves the workdir; and history holds a durable reference into a directory the
+  code itself declares ephemeral, which is why `pruneAgentScratch` carries a
+  `generated-images` exemption. The plan has the producer persist → resolve a
+  turn-scoped observation path → emit the bytes as `extraContent`, exactly as
+  `file_read` does, with the executor's second write a content-addressed no-op.
+  Dependency tracking already flows through `contentItems`, so **no
+  `protocol.ts` / `codec.ts` change**; `markdownImage` is retired rather than
+  re-schemed, keeping `referenceMarkup.ts` out entirely. Its one piece of real
+  plumbing moves all five image gates — count, per-image 10 MB, per-call 20 MB,
+  mime shape, thread quota — behind a single call-scoped admission call both
+  sides consult, so an image cannot be admitted producer-side, published to the
+  model, and then dropped executor-side into an orphaned resource with a dead
+  path. Caps degrade (persist what fits, report the rest) rather than fail
+  closed. Four gate rounds, every claim traced to the call that actually runs:
+  the first version routed through a `resourceRefs` field tool items do not
+  have, and the gate's own counter — that the bytes were already persisted —
+  was equally wrong, because the executor branch holding that write never fires
+  for this tool. Success signal at implementation: the `pruneAgentScratch`
+  special case disappears. Lands after PR #483.
+
+- **Canonical tool-call history plan (PR #482, codex-3, plan-only)** — boards the
+  fix for a defect that made the agent teach itself to fail. Tool history is
+  currently reverse-engineered from the presentation Item rather than recorded:
+  `ContextProjector.historyToolArguments()` turns a `commandExecution` into
+  `{ command, cwd }`, inventing a `cwd` the strict `bash` schema rejects and
+  dropping the valid `description`, and turns a `fileChange` into a fabricated
+  `{ changes }` no file schema accepts. Because `tool_execution_start` fires
+  before `prepareToolCall` validates, and `startedToolItem` lets a raw
+  `input.cwd` outrank the Thread's own working directory, the model's rejected
+  argument was persisted as the audit record and replayed to it as a worked
+  example — one packaged-task run spent 64 pre-execution rejections and ~$2.17
+  going around that loop. The plan makes the admitted call the sole authority:
+  an immutable `modelCall` envelope per tool Item with three dispositions
+  (`replayable` / `redactedReplay` / `evidenceOnly`), a kernel admission event
+  ahead of execution-start, validation against the live registry before every
+  submission, and pair-level preflight that degrades to typed evidence instead
+  of throwing on the user path. Secret-bearing arguments replay redacted behind
+  an atomic marker, which closes an existing leak — commands are persisted with
+  bounding only today — without the model concluding that a command it actually
+  ran never happened. Gate review ran three rounds: the causal chain, the
+  `cwd` precedence, a projector that degraded arguments while still throwing on
+  result payloads, and a compaction rule that could strip a redaction marker off
+  the call it qualified. Implementation ships as one complete PR.
+
 - **Collaboration tool handlers live in their own domain (PR #456, codex-2)** —
   `ToolRuntime` carried the implementation of the collaboration tools as well as
   the dispatch for every tool; the handlers moved verbatim into
@@ -5243,8 +5463,6 @@ changed in this release" unanswerable; the sections are merged, no entry was edi
   environments made to agree. Also fixed `trace: 'on-first-retry'` sitting
   alongside an unset `retries`, which meant Playwright traces had never once been
   captured.
-
-
 
 - **The built-in import Skill is named for what it is (PR #474, codex)** — the
   Skill was called `data-cleanup`, after a category, while everything it
@@ -5619,7 +5837,6 @@ changed in this release" unanswerable; the sections are merged, no entry was edi
   review found no reportable issues. Verified with typecheck, the full Core
   suite (1689 pass), docs check, current-`main` merge-tree, and diff check.
 
-
 - **agent turn render projection — extract message-flow semantics (PR #316, codex-2)** —
   behavior-preserving refactor of the agent transcript renderer. A new pure `agentTurnProjection`
   module (`projectAssistantTurn` → `AgentTurnProcessProjection`) sits between the
@@ -5850,7 +6067,6 @@ changed in this release" unanswerable; the sections are merged, no entry was edi
   (`agent_list/update/forget_memory` IPC + renderer-mock support); marked the M1 "Profile UI" and
   "visual verification" checklist items done; archived the completed `agent-tool-permissions-hardening` plan
   (`status: done`) and repointed its references. ([#156](https://github.com/relixiaobo/lin-outliner/pull/156))
-
 
 - **Agent M1 memory v1 landed (PR #152)** — first M1 slice: an event-sourced, per-agent durable memory layer.
   Adds a `memory` agent tool (list/remember/update/forget), three IPC commands

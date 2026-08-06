@@ -7,6 +7,7 @@ import type {
   KernelAgentOptions,
   Message,
 } from './types';
+import { rewriteAssistantToolCallHistory } from '../toolCallHistory';
 
 type MutableAgentState = { -readonly [Key in keyof AgentState]: AgentState[Key] };
 
@@ -22,6 +23,9 @@ export class NativeAgentRuntime {
   ) => Promise<void> | void>();
   private steeringQueue: KernelSteeringMessage[] = [];
   private activeRun?: ActiveRun;
+  private readonly toolResultHistoryDecisions = new Map<string, boolean[]>();
+  private pendingAssistantAdmissionSource?: AssistantMessage;
+  private pendingAssistantAdmissions: Array<Extract<AgentEvent, { readonly type: 'tool_call_admission' }>> = [];
 
   constructor(private readonly options: KernelAgentOptions) {
     this.mutableState = {
@@ -88,6 +92,9 @@ export class NativeAgentRuntime {
       this.mutableState.isStreaming = false;
       this.mutableState.streamingMessage = undefined;
       this.mutableState.pendingToolCalls = new Set();
+      this.toolResultHistoryDecisions.clear();
+      this.pendingAssistantAdmissionSource = undefined;
+      this.pendingAssistantAdmissions = [];
       this.activeRun = undefined;
     }
   }
@@ -124,7 +131,21 @@ export class NativeAgentRuntime {
         break;
       case 'message_end':
         this.mutableState.streamingMessage = undefined;
-        this.mutableState.messages.push(event.message);
+        if (event.message.role === 'assistant') {
+          this.pendingAssistantAdmissionSource = event.message;
+          this.pendingAssistantAdmissions = [];
+        }
+        if (event.message.role !== 'toolResult' || this.consumeToolResultHistoryDecision(event.message.toolCallId)) {
+          this.mutableState.messages.push(event.message);
+        }
+        break;
+      case 'tool_call_admission':
+        this.recordToolResultHistoryDecision(
+          event.toolCallId,
+          event.decision.execute,
+        );
+        this.pendingAssistantAdmissions.push(event);
+        this.updateLiveAssistantToolCalls();
         break;
       case 'tool_execution_start': {
         const pending = new Set(this.mutableState.pendingToolCalls);
@@ -153,5 +174,31 @@ export class NativeAgentRuntime {
     for (const listener of this.listeners) {
       await listener(event, signal);
     }
+  }
+
+  private updateLiveAssistantToolCalls(): void {
+    let index = this.mutableState.messages.length - 1;
+    while (index >= 0 && this.mutableState.messages[index]?.role !== 'assistant') index -= 1;
+    const message = this.mutableState.messages[index];
+    const source = this.pendingAssistantAdmissionSource;
+    if (!message || message.role !== 'assistant' || !source) return;
+    this.mutableState.messages[index] = rewriteAssistantToolCallHistory(
+      source,
+      this.pendingAssistantAdmissions,
+    );
+  }
+
+  private recordToolResultHistoryDecision(toolCallId: string, include: boolean): void {
+    const decisions = this.toolResultHistoryDecisions.get(toolCallId) ?? [];
+    decisions.push(include);
+    this.toolResultHistoryDecisions.set(toolCallId, decisions);
+  }
+
+  private consumeToolResultHistoryDecision(toolCallId: string): boolean {
+    const decisions = this.toolResultHistoryDecisions.get(toolCallId);
+    if (!decisions || decisions.length === 0) return true;
+    const include = decisions.shift()!;
+    if (decisions.length === 0) this.toolResultHistoryDecisions.delete(toolCallId);
+    return include;
   }
 }

@@ -1,6 +1,8 @@
 import { expect, type Page } from '@playwright/test';
 import type { TranslationLanguage } from '../../src/core/translationLanguage';
 import type { UrlPageTranslationPreferences } from '../../src/core/urlPageTranslation';
+import type { ManagedSkillCatalogEntryView, ManagedSkillView } from '../../src/core/types';
+import type { AppInfo } from '../../src/core/errorObservability';
 
 export const ids = {
   workspace: 'workspace',
@@ -39,6 +41,8 @@ interface MockFixtureOptions {
   tableRowCount?: number;
   /** Adds an OAuth sign-in provider (GitHub Copilot) to the catalog for the OAuth specs. */
   oauthProvider?: boolean;
+  /** Adds an OAuth-capable OpenRouter connection backed by a stored API key. */
+  oauthApiKeyProvider?: boolean;
   /** Preloads user blocklist rules for settings/security specs. */
   capabilityBlocks?: string[];
   /** Delays initial workspace restoration so startup chrome can be asserted before data arrives. */
@@ -55,10 +59,24 @@ interface MockFixtureOptions {
   agentTurnFailure?: boolean | string;
   /** Rejects turn/start before accepting a Turn. */
   agentTurnStartReject?: boolean | string;
+  /** Leaves accepted mock Turns active so background-work flows can be tested. */
+  agentTurnStaysActive?: boolean;
   /** Holds each pathless attachment chunk long enough to exercise upload cancellation. */
   attachmentUploadDelayMs?: number;
   /** Starts with the configured language-model provider disabled and uncredentialed. */
   agentProviderUsable?: boolean;
+  /** Seeds the global Memory switch; defaults to enabled. */
+  memoryFeatureMode?: 'enabled' | 'disabled';
+  /** Seeds the Memory status line's freshness, backlog, error, and stray-node count. */
+  memoryLastSuccessfulRunAt?: number | null;
+  memoryLastError?: string | null;
+  memoryPendingJobs?: number;
+  memoryStrayTaggedNodeCount?: number;
+  /** Installs managed Skills; empty by default, since the pane must be right with none. */
+  managedSkills?: ManagedSkillView[];
+  /** Seeds the Linlab catalog rows and its freshness state. */
+  managedCatalogEntries?: ManagedSkillCatalogEntryView[];
+  managedCatalogStatus?: 'fresh' | 'cached' | 'unavailable';
 }
 
 type E2EWindow = Window & {
@@ -76,6 +94,8 @@ type E2EWindow = Window & {
     }) => { id: string };
     /** Flips a mock Thread between idle and active, as a Turn boundary would. */
     setMockThreadActive: (threadId: string, active: boolean) => void;
+    /** Applies one delayed or failed outcome to the next thread/start call. */
+    setNextThreadStartBehavior: (behavior: { delayMs?: number; error?: string }) => void;
     emitDocumentEvent: (event: unknown) => void;
     emitOAuthEvent: (envelope: unknown) => void;
     resolveOAuthLogin: (providerId: string) => void;
@@ -103,6 +123,7 @@ type E2EWindow = Window & {
     openSettings?: (target?: unknown) => Promise<void>;
     closeProviderConfig?: () => Promise<void>;
     notifySettingsChanged?: () => Promise<void>;
+    appInfo?: () => Promise<AppInfo>;
     onSettingsChanged?: (listener: () => void) => () => void;
     onSettingsNavigate?: (listener: (target: unknown) => void) => () => void;
     openLocalFile?: (options: { path: string; threadId?: string; attachmentId?: string }) => Promise<{ opened: boolean }>;
@@ -323,6 +344,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       videoDurationMs?: number;
     }>();
     const calls: Array<{ cmd: string; args: Record<string, unknown> }> = [];
+    let nextThreadStartBehavior: { delayMs: number; error: string | null } | null = null;
     const attachmentUploads = new Map<string, {
       threadId: string;
       attachmentId: string;
@@ -349,6 +371,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     const providerApiKeys = new Map<string, string>(
       options.agentProviderUsable === false ? [] : [['openai', 'sk-openai-saved']],
     );
+    if (options.oauthApiKeyProvider) providerApiKeys.set('openrouter', 'sk-or-saved');
     // An in-flight sign-in's resolve/reject, keyed by providerId. The spec drives
     // the event stream (emitOAuthEvent) and completes it (resolveOAuthLogin), so
     // the flow is fully deterministic — no real provider, timers, or network.
@@ -477,10 +500,62 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         ],
       });
     }
+    if (options.oauthApiKeyProvider) {
+      agentSettings.providers.push({
+        providerId: 'openrouter',
+        baseUrl: '',
+        enabled: true,
+        hasApiKey: true,
+        hasEnvApiKey: false,
+        auth: {
+          authKind: 'oauth',
+          credentialed: true,
+          hasStoredKey: true,
+        },
+      });
+      agentSettings.availableProviders.push({
+        providerId: 'openrouter',
+        authKind: 'oauth',
+        hasEnvApiKey: false,
+        envKeyNames: [],
+        defaultBaseUrl: 'https://openrouter.ai/api/v1',
+        models: [{
+          id: 'openai/gpt-5.4',
+          name: 'GPT-5.4',
+          reasoning: true,
+          supportedThinkingLevels: ['off', 'low', 'medium', 'high'],
+          contextWindow: 256_000,
+          maxTokens: 8192,
+        }],
+      });
+    }
     const agentCapabilities = {
       blocks: [...(options.capabilityBlocks ?? [])] as string[],
       diagnostics: [] as Array<{ ruleValue: string; code: string; message: string }>,
     };
+    // The Memory group polls `memory_settings_get` on an interval for as long as
+    // its pane is mounted. Without a branch for it the mock's unhandled-invoke
+    // throw became a red alert on the pane every few seconds — including in the
+    // design-system probes, which were photographing that banner rather than the
+    // pane. Deterministic: no timers, no worker, and the counters only move when
+    // a spec drives them.
+    const memorySettings = {
+      status: {
+        featureMode: options.memoryFeatureMode ?? 'enabled',
+        featureModeGeneration: 1,
+        resetEpoch: 0,
+        memoryVisibilityGeneration: 1,
+        lastSuccessfulRunAt: options.memoryLastSuccessfulRunAt ?? null,
+        lastError: options.memoryLastError ?? null,
+        pendingJobs: options.memoryPendingJobs ?? 0,
+        strayTaggedNodeCount: options.memoryStrayTaggedNodeCount ?? 0,
+      },
+      thread: null as { threadId: string; mode: string } | null,
+    };
+    // Managed Skills default to none installed and an empty catalog: the pane has
+    // to be correct in that state, and a spec that wants rows opts into them.
+    const managedSkills = (options.managedSkills ?? []).map((skill) => ({ ...skill }));
+    const managedCatalogEntries = options.managedCatalogEntries ?? [];
     const agentSkills = [{
       name: 'workspace-review',
       source: 'project',
@@ -490,8 +565,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       hasUserSpecifiedDescription: true,
       userInvocable: true,
       modelInvocable: true,
-      ratified: false,
-      accepted: false,
       canUndoLastAgentEdit: false,
       contentHash: 'hash-workspace-review-v1',
       allowedTools: [],
@@ -1650,6 +1723,12 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         thread.updatedAt = ++now;
         emitAgentCoreNotification({ type: 'thread/status/changed', threadId, status: clone(thread.status) });
       },
+      setNextThreadStartBehavior: (behavior) => {
+        nextThreadStartBehavior = {
+          delayMs: Math.max(0, behavior.delayMs ?? 0),
+          error: behavior.error ?? null,
+        };
+      },
       emitDocumentEvent,
       emitOAuthEvent,
       resolveOAuthLogin,
@@ -1662,6 +1741,15 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     win.lin = {
       initialTranslationLanguage: translationLanguage,
       initialUrlPageTranslationPreferences: clone(translationPreferences),
+      appInfo: async () => ({
+        name: 'Tenon',
+        version: '0.1.0',
+        platform: 'darwin',
+        arch: 'arm64',
+        electron: '39.0.0',
+        chrome: '142.0.0',
+        node: '22.0.0',
+      }),
       automationRequest: async <T,>(method: string, input: Record<string, unknown> = {}): Promise<T> => {
         calls.push({ cmd: `automation/${method}`, args: clone(input) });
         if (method === 'list') return clone({ data: mockAutomations }) as T;
@@ -1903,6 +1991,10 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           return clone({ thread: input.includeTurns ? { ...thread, turns: mockTurns.get(thread.id) ?? [] } : thread }) as T;
         }
         if (method === 'thread/start') {
+          const behavior = nextThreadStartBehavior;
+          nextThreadStartBehavior = null;
+          if (behavior?.delayMs) await delay(behavior.delayMs);
+          if (behavior?.error) throw new Error(behavior.error);
           const thread = createMockThread(input);
           emitAgentCoreNotification({ type: 'thread/started', threadId: thread.id, thread });
           return clone({ thread }) as T;
@@ -2296,6 +2388,11 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
               item: { ...responseItem, text: '' },
               startedAt: startedAt + 1,
             });
+          }
+          if (options.agentTurnStaysActive) {
+            return clone({ turn: activeTurn, acceptedItemId: userItemId, deduplicated: false }) as T;
+          }
+          if (!options.agentTurnFailure) {
             emitAgentCoreNotification({
               type: 'item/completed',
               threadId: thread.id,
@@ -2690,6 +2787,61 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         if (cmd === 'agent_get_capability_settings') {
           return clone(agentCapabilities) as T;
         }
+        if (cmd === 'memory_settings_get') {
+          return clone(memorySettings) as T;
+        }
+        if (cmd === 'memory_feature_mode_set') {
+          memorySettings.status.featureMode = String(args.mode ?? 'enabled');
+          memorySettings.status.featureModeGeneration += 1;
+          return clone(memorySettings) as T;
+        }
+        if (cmd === 'memory_open') {
+          memorySettings.status.memoryVisibilityGeneration += 1;
+          return clone(memorySettings) as T;
+        }
+        if (cmd === 'memory_reset') {
+          memorySettings.status.resetEpoch += 1;
+          memorySettings.status.lastSuccessfulRunAt = null;
+          memorySettings.status.lastError = null;
+          memorySettings.status.pendingJobs = 0;
+          memorySettings.status.strayTaggedNodeCount = 0;
+          return clone(memorySettings) as T;
+        }
+        // Managed-Skill channels. `managedCommand` unwraps an { ok, value } /
+        // { ok, error } envelope, so these return that shape rather than the view
+        // directly — a bare view would surface as `undefined` at the call site
+        // instead of failing loudly.
+        if (cmd === 'agent_managed_skill_list') {
+          return { ok: true, value: clone(managedSkills) } as T;
+        }
+        if (cmd === 'agent_managed_skill_catalog') {
+          return {
+            ok: true,
+            value: { status: options.managedCatalogStatus ?? 'fresh', entries: clone(managedCatalogEntries) },
+          } as T;
+        }
+        if (cmd === 'agent_managed_skill_check_updates') {
+          return { ok: true, value: clone(managedSkills) } as T;
+        }
+        if (cmd === 'agent_managed_skill_set_enabled') {
+          const skill = managedSkills.find((candidate) => candidate.id === String(args.skillId ?? ''));
+          if (!skill) return { ok: false, error: { code: 'skill_missing', message: 'Managed skill is no longer installed.' } } as T;
+          skill.enabled = args.enabled === true;
+          skill.status = skill.enabled ? 'enabled' : 'installed-disabled';
+          return { ok: true, value: clone(skill) } as T;
+        }
+        if (cmd === 'agent_managed_skill_uninstall') {
+          const index = managedSkills.findIndex((candidate) => candidate.id === String(args.skillId ?? ''));
+          if (index >= 0) managedSkills.splice(index, 1);
+          return { ok: true, value: clone(managedSkills) } as T;
+        }
+        if (cmd === 'agent_update_image_generation_settings') {
+          const settings = (args.settings ?? {}) as { defaultModel?: string | null };
+          agentSettings.imageGeneration = settings.defaultModel
+            ? { defaultModel: settings.defaultModel }
+            : {};
+          return clone(agentSettings) as T;
+        }
         if (cmd === 'agent_list_all_skills') {
           if (options.agentSkillsDelayMs) await delay(options.agentSkillsDelayMs);
           const skills = args.userInvocableOnly === true
@@ -2698,25 +2850,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             ))
             : agentSkills;
           return clone(skills) as T;
-        }
-        if (cmd === 'agent_accept_skill') {
-          const skillName = String(args.skillName ?? '');
-          const expectedHash = String(args.expectedHash ?? '');
-          const skill = agentSkills.find((item) => item.name === skillName);
-          if (skill && skill.contentHash === expectedHash) {
-            skill.ratified = true;
-            skill.accepted = true;
-          }
-          return clone(agentSkills) as T;
-        }
-        if (cmd === 'agent_revoke_skill_acceptance') {
-          const skillName = String(args.skillName ?? '');
-          const skill = agentSkills.find((item) => item.name === skillName);
-          if (skill) {
-            skill.ratified = false;
-            skill.accepted = false;
-          }
-          return clone(agentSkills) as T;
         }
         if (cmd === 'agent_apply_capability_settings_patch') {
           const patch = args.patch as {
@@ -3787,6 +3920,16 @@ export async function emitAgentCoreNotification(page: Page, notification: unknow
     const win = window as E2EWindow;
     win.__LIN_E2E__?.emitAgentCoreNotification(nextNotification);
   }, notification);
+}
+
+export async function setNextThreadStartBehavior(
+  page: Page,
+  behavior: { delayMs?: number; error?: string },
+) {
+  await page.evaluate((nextBehavior) => {
+    const win = window as E2EWindow;
+    win.__LIN_E2E__?.setNextThreadStartBehavior(nextBehavior);
+  }, behavior);
 }
 
 // Push one main->renderer OAuth login event (device-code / auth / progress /

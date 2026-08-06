@@ -53,6 +53,7 @@ ThreadDescendantsResponse,
 ThreadListResponse,
 ThreadReadRequest,
 ThreadReadResponse,
+ThreadImageArtifactReference,
 ThreadResourceReference,
 ThreadRollbackRequest,
 ThreadStartRequest,
@@ -97,6 +98,7 @@ ThreadMetadataStore
 } from './persistence/ThreadMetadataStore';
 import { ToolPayloadStore } from './persistence/ToolPayloadStore';
 import type {
+OutputImageObservationNormalizer,
 ThreadNameGenerator,
 TurnExecutor
 } from './runtime/types';
@@ -159,6 +161,7 @@ export interface ThreadServiceOptions {
     cwd: string,
   ) => RoleCatalogContextPayload | Promise<RoleCatalogContextPayload>;
   readonly resolveSubagentTokenBudget?: () => number | null | Promise<number | null>;
+  readonly normalizeOutputImage?: OutputImageObservationNormalizer;
   readonly beforeInitialTurnAdmission?: () => void | Promise<void>;
   readonly now?: () => number;
 }
@@ -199,6 +202,13 @@ export interface ResolvedThreadResourceFile {
   readonly path: string;
   readonly stats: Stats;
   readonly ref: ThreadResourceReference;
+}
+
+export interface ResolvedThreadImageArtifactFile {
+  readonly artifact: ThreadImageArtifactReference;
+  readonly entryKind: 'file';
+  readonly path: string;
+  readonly stats: Stats;
 }
 
 export interface FeatureRootThreadInput {
@@ -334,6 +344,9 @@ export class ThreadService implements ThreadServiceExtensionHost {
       options.attachmentScratchRoot,
       options.resolveUserContent ?? ((content) => content),
     );
+    options.stores.payloads.setImageRetentionInventoryProvider((threadId) => (
+      this.resourceOps.threadImageRetentionInventory(threadId)
+    ));
     this.turnLifecycle = new TurnLifecycle(
       this.core,
       this.resourceOps,
@@ -361,12 +374,14 @@ export class ThreadService implements ThreadServiceExtensionHost {
       this.resolveSkillAdmission,
       this.resolveRoleCatalog,
       { addUsage: (...args) => this.goals.addUsage(...args) },
+      options.normalizeOutputImage,
       this.now,
       (message) => new ThreadBusyError(message),
       (error) => error instanceof ThreadBusyError,
     );
     this.collaboration = new SubagentCollaboration(
       this.core,
+      this.resourceOps,
       {
         createThread: (...args) => this.catalogOps.createThread(...args),
         deleteThread: (threadId) => this.catalogOps.deleteThread(threadId),
@@ -678,6 +693,12 @@ export class ThreadService implements ThreadServiceExtensionHost {
     threadId: ThreadId,
     ref: ThreadResourceReference,
   ): Promise<ResolvedThreadResourceFile | null> { return this.resourceOps.resolveThreadResourceFile(threadId, ref); }
+  async resolveImageArtifactFile(
+    threadId: ThreadId,
+    artifact: ThreadImageArtifactReference,
+  ): Promise<ResolvedThreadImageArtifactFile | null> {
+    return this.resourceOps.resolveImageArtifactFile(threadId, artifact);
+  }
   listItems(request: ThreadItemsListRequest): ThreadItemsListResponse { return this.catalogOps.listItems(request); }
   listThreads(request: ThreadListRequest = {}): ThreadListResponse { return this.catalogOps.listThreads(request); }
   listThreadDescendants(request: ThreadDescendantsRequest): ThreadDescendantsResponse {

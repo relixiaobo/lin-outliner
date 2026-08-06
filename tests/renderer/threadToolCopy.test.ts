@@ -8,7 +8,9 @@ import {
   threadToolItemSegments,
   type ThreadToolItem,
 } from '../../src/renderer/agent/components/items/ThreadItemView';
+import { buildTurnCopyText } from '../../src/renderer/agent/components/ThreadView';
 import type { DocumentIndex } from '../../src/renderer/state/document';
+import { replayableModelCall } from '../fixtures/agentToolCallHistory';
 
 /**
  * The exhaustive tool-copy table. Every tool a run can produce appears here with
@@ -42,6 +44,10 @@ function dynamic(
     contentItems: null,
     success: status === 'failed' ? false : true,
     durationMs: 1,
+    modelCall: replayableModelCall(
+      options.namespace ? `${options.namespace}__${tool}` : tool,
+      args as never,
+    ),
   };
 }
 
@@ -65,6 +71,10 @@ function shell(
     aggregatedOutput: null,
     exitCode: status === 'failed' ? 2 : 0,
     durationMs: 1,
+    modelCall: replayableModelCall('bash', {
+      command,
+      ...(description ? { description } : {}),
+    }),
   };
 }
 
@@ -85,6 +95,7 @@ function collab(
     model: null,
     reasoningEffort: null,
     agentsStates: {},
+    modelCall: replayableModelCall(`collaboration__${tool}`, {}),
   };
 }
 
@@ -95,6 +106,11 @@ function changes(...paths: readonly string[]): ThreadToolItem {
     status: 'completed',
     outputRef: null,
     changes: paths.map((path) => ({ path, kind: 'update' as const })),
+    modelCall: replayableModelCall('file_edit', {
+      file_path: paths[0] ?? '/w/unknown',
+      old_string: 'before',
+      new_string: 'after',
+    }),
   };
 }
 
@@ -145,6 +161,7 @@ describe('every built-in tool says what it did, not which API was called', () =>
     ['web search item', {
       ...base('web-1'), type: 'webSearch', status: 'completed', outputRef: null,
       query: 'epub', results: [], error: null,
+      modelCall: replayableModelCall('web_search', { query: 'epub' }),
     }, 'Searched the web for "epub"'],
     ['spawn_agent', collab('spawn_agent'), 'Started an agent'],
     ['send_message', collab('send_message'), 'Messaged an agent'],
@@ -187,6 +204,7 @@ describe('a tool with no usable argument degrades to an honest generic', () => {
       ...base('mcp-1'), type: 'mcpToolCall', status: 'completed', outputRef: null,
       server: 'files', tool: 'read', arguments: {}, pluginId: null, result: null,
       error: null, durationMs: null,
+      modelCall: replayableModelCall('files__read', {}),
     }, labels)).toBe('Used files.read');
   });
 });
@@ -254,6 +272,125 @@ describe('node subjects prefer the title over the id', () => {
 });
 
 describe('review regressions — each of these shipped broken once', () => {
+  test('copy turn resolves payload-backed arguments instead of copying the storage stub', async () => {
+    const ref = {
+      id: 'e'.repeat(64),
+      mimeType: 'application/vnd.tenon.agent-context+json' as const,
+      byteLength: 64,
+      schemaVersion: 1 as const,
+      kind: 'toolCallArguments' as const,
+    };
+    const item = {
+      ...dynamic('plugin_call', {}, 'completed', { namespace: 'plugin' }),
+      modelCall: {
+        ...replayableModelCall('plugin__plugin_call', {}),
+        arguments: { storage: 'payload' as const, ref },
+      },
+    };
+    const turn = {
+      id: 'turn-copy',
+      items: [item],
+      itemsView: 'full' as const,
+      provenance: { originThreadId: 't', originTurnId: 'turn-copy', trigger: { kind: 'user' as const } },
+      status: 'completed' as const,
+      error: null,
+      startedAt: 1,
+      completedAt: 2,
+      durationMs: 1,
+    };
+
+    const copied = await buildTurnCopyText(
+      turn,
+      async () => ({ query: 'exact payload-backed query' }),
+      async () => null,
+      'Resource limit reached.',
+    );
+
+    expect(copied).toContain('exact payload-backed query');
+    expect(copied).not.toContain('storedArguments');
+    expect(copied).not.toContain(ref.id);
+  });
+
+  test('copy turn bounds a large payload-backed argument before formatting it', async () => {
+    const ref = {
+      id: 'e'.repeat(64),
+      mimeType: 'application/vnd.tenon.agent-context+json' as const,
+      byteLength: 1_000_000,
+      schemaVersion: 1 as const,
+      kind: 'toolCallArguments' as const,
+    };
+    const item = {
+      ...dynamic('file_write', {}, 'completed'),
+      modelCall: {
+        ...replayableModelCall('file_write', {}),
+        arguments: { storage: 'payload' as const, ref },
+      },
+    };
+    const turn = {
+      id: 'turn-copy-large',
+      items: [item],
+      itemsView: 'full' as const,
+      provenance: { originThreadId: 't', originTurnId: 'turn-copy-large', trigger: { kind: 'user' as const } },
+      status: 'completed' as const,
+      error: null,
+      startedAt: 1,
+      completedAt: 2,
+      durationMs: 1,
+    };
+
+    const copied = await buildTurnCopyText(
+      turn,
+      async () => ({ content: 'x'.repeat(1_000_000), path: '/workspace/large.txt' }),
+      async () => null,
+      'Resource limit reached.',
+    );
+
+    expect(copied).toContain('"truncated": true');
+    expect(copied.length).toBeLessThan(33_000);
+  });
+
+  test('copy turn uses typed unavailable arguments for a payload-backed file change', async () => {
+    const ref = {
+      id: 'f'.repeat(64),
+      mimeType: 'application/vnd.tenon.agent-context+json' as const,
+      byteLength: 128_000,
+      schemaVersion: 1 as const,
+      kind: 'toolCallArguments' as const,
+    };
+    const item = {
+      ...changes('/w/presentation-only.ts'),
+      modelCall: {
+        ...replayableModelCall('file_edit', {}),
+        arguments: { storage: 'payload' as const, ref },
+      },
+    };
+    const turn = {
+      id: 'turn-copy-unavailable-file-change',
+      items: [item],
+      itemsView: 'full' as const,
+      provenance: {
+        originThreadId: 't',
+        originTurnId: 'turn-copy-unavailable-file-change',
+        trigger: { kind: 'user' as const },
+      },
+      status: 'completed' as const,
+      error: null,
+      startedAt: 1,
+      completedAt: 2,
+      durationMs: 1,
+    };
+
+    const copied = await buildTurnCopyText(
+      turn,
+      async () => null,
+      async () => null,
+      'Resource limit reached.',
+    );
+
+    expect(copied).toContain('"unavailable": "stored tool arguments"');
+    expect(copied).not.toContain('/w/presentation-only.ts');
+  });
+
   test('a search query is never resolved as if it were a node id', () => {
     // `'nodeSearch'.startsWith('node')` sent queries through title resolution,
     // so a query equal to a node uuid rendered as that node's title.

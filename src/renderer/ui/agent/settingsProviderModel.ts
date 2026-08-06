@@ -1,25 +1,17 @@
 import type {
   AgentProviderCapabilityModelOption,
+  AgentProviderConfigView,
   AgentProviderOption,
   AgentProviderSettingsView,
 } from '../../api/types';
-import type { Messages } from '../../../core/i18n';
 import { composeProviderQualifiedModel } from '../../../core/agentModelId';
 import {
-  LOCAL_GATEWAY_PROVIDER_REGISTRY,
-  isLocalGatewayProviderId,
   isQuickEnableProviderId,
   isRefreshableLocalGatewayProviderId,
 } from '../../../core/localGatewayProviders';
-import { formatProviderName, providerHasCredential, resolveUsableActiveProvider } from './providerCatalog';
-
-export const PREFERRED_PROVIDER_ORDER = [
-  'anthropic',
-  'openai',
-  ...LOCAL_GATEWAY_PROVIDER_REGISTRY.map((provider) => provider.providerId),
-  'google',
-  'openrouter',
-];
+import { providerHasCredential, resolveUsableActiveProvider } from './providerUsability';
+import { formatProviderName } from './providerNames';
+import { preferredProviderIndex } from './providerOrder';
 
 export interface ProviderChoice {
   providerId: string;
@@ -33,6 +25,7 @@ export interface ProviderChoice {
   quickEnable?: boolean;
   defaultBaseUrl?: string;
   canRefreshModels?: boolean;
+  connectionCheck?: AgentProviderConfigView['connectionCheck'];
 }
 
 export interface ProviderRowHandlers {
@@ -75,7 +68,14 @@ export function buildProviderChoices(
       connectionStatus: providerCatalog?.connectionStatus,
       connectionStatusMessage: providerCatalog?.connectionStatusMessage,
       defaultBaseUrl: providerCatalog?.defaultBaseUrl,
-      canRefreshModels: isRefreshableLocalGatewayProviderId(provider.providerId) && provider.enabled,
+      canRefreshModels: provider.enabled && (
+        isRefreshableLocalGatewayProviderId(provider.providerId)
+        || Boolean(providerCatalog?.modelsRefreshable)
+        || Boolean(providerCatalog?.capabilities?.some((capability) => capability.refreshable))
+      ),
+      // Only a configured row can carry a probe verdict: the check runs against a
+      // credential Tenon stored, and a catalog row has none to check.
+      connectionCheck: provider.connectionCheck,
     });
   }
 
@@ -168,21 +168,6 @@ function compareProviderChoices(left: ProviderChoice, right: ProviderChoice): nu
   });
 }
 
-// Module-level helper (can't call useT) — the caller passes `t` in.
-export function providerStatusLabel(provider: ProviderChoice, t: Messages): string {
-  const s = t.settings.providers.status;
-  if (provider.connectionStatus === 'proxy-required') return s.proxyRequired;
-  if (provider.connectionStatus === 'unsupported') return s.unsupported;
-  if (provider.connectionStatus === 'not-detected') return s.notDetected;
-  if (!provider.configured && provider.detected) return s.detected;
-  if (!provider.configured) return provider.hasCredential ? s.ready : s.addKey;
-  if (!provider.enabled) return s.disabled;
-  if (isLocalGatewayProviderId(provider.providerId) && !provider.hasCredential) return s.unavailable;
-  if (!provider.hasCredential) return s.needsKey;
-  return provider.active ? s.active : s.ready;
-}
-
-export function preferredProviderIndex(providerId: string): number {
-  const index = PREFERRED_PROVIDER_ORDER.indexOf(providerId);
-  return index >= 0 ? index : PREFERRED_PROVIDER_ORDER.length;
-}
+// Status derivation and phrasing now live in `providerStatus.ts`, shared by the
+// list row and the per-provider config window so one connection cannot be
+// described two ways.

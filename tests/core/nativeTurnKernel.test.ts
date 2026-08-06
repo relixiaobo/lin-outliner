@@ -14,6 +14,7 @@ import type {
   ModelGatewayRequest,
 } from '../../src/main/agent/runtime/kernel/ModelGateway';
 import { PiModelGateway } from '../../src/main/agent/runtime/kernel/ModelGateway';
+import { persistToolCallAdmission } from '../../src/main/agent/runtime/toolCallHistory';
 import type {
   AgentEvent,
   AgentTool,
@@ -175,8 +176,10 @@ describe('native turn kernel parity', () => {
 
     expect(executionOrder).toEqual(['sequential', 'parallel']);
     expect(sequentialEvents.map(eventLabel).filter((label) => label.startsWith('tool_'))).toEqual([
+      'tool_call_admission:one',
       'tool_execution_start:one',
       'tool_execution_end:one',
+      'tool_call_admission:two',
       'tool_execution_start:two',
       'tool_execution_end:two',
     ]);
@@ -199,6 +202,12 @@ describe('native turn kernel parity', () => {
     await truncatedRuntime.prompt(USER);
 
     expect(truncatedExecuted).toBe(false);
+    expect(truncatedEvents.find((event) => event.type === 'tool_call_admission')).toMatchObject({
+      decision: {
+        execute: false,
+        modelCall: { disposition: 'evidenceOnly', reason: 'truncatedArguments' },
+      },
+    });
     const truncatedEnd = truncatedEvents.find((event) => (
       event.type === 'tool_execution_end' && event.toolCallId === 'cut'
     ));
@@ -207,6 +216,294 @@ describe('native turn kernel parity', () => {
       isError: true,
       result: { content: [{ text: expect.stringContaining('output token limit') }] },
     });
+  });
+
+  test('stops admitting a truncated batch after cancellation', async () => {
+    const gateway = new ScriptedGateway([
+      () => terminalStream(assistant([
+        { type: 'toolCall', id: 'cut-one', name: 'cut', arguments: { partial: true } },
+        { type: 'toolCall', id: 'cut-two', name: 'cut', arguments: { partial: true } },
+      ], 'length')),
+    ]);
+    const runtime = createRuntime(gateway, { tools: [tool('cut')] });
+    const events: AgentEvent[] = [];
+    runtime.subscribe((event) => {
+      events.push(event);
+      if (event.type === 'tool_call_admission' && event.toolCallId === 'cut-one') runtime.abort();
+    });
+
+    await runtime.prompt(USER);
+
+    expect(events.filter((event) => event.type === 'tool_call_admission').map((event) => event.toolCallId))
+      .toEqual(['cut-one']);
+    expect(events.filter((event) => event.type === 'tool_execution_end').map((event) => event.toolCallId))
+      .toEqual(['cut-one']);
+    expect(JSON.stringify(runtime.state.messages)).not.toContain('cut-two');
+  });
+
+  test('replaces one schema-invalid bash call with correction evidence before the next request', async () => {
+    let executed = false;
+    const bash = parameterTool('bash', {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        command: { type: 'string' },
+        description: { type: 'string' },
+      },
+      required: ['command'],
+    }, async () => {
+      executed = true;
+      return toolResult('must not execute');
+    });
+    const gateway = new ScriptedGateway([
+      () => terminalStream(assistant([{
+        type: 'toolCall',
+        id: 'invalid-cwd',
+        name: 'bash',
+        arguments: { command: 'pwd', cwd: '/model-supplied' },
+      }], 'toolUse')),
+      () => terminalStream(assistant([{ type: 'text', text: 'corrected' }])),
+    ]);
+    const runtime = createRuntime(gateway, { tools: [bash] });
+    const events: AgentEvent[] = [];
+    runtime.subscribe((event) => events.push(event));
+
+    await runtime.prompt(USER);
+
+    expect(executed).toBe(false);
+    expect(gateway.requests).toHaveLength(2);
+    const replay = gateway.requests[1]!.context.messages;
+    expect(replay.some((message) => message.role === 'toolResult')).toBe(false);
+    expect(replay.flatMap((message) => (
+      typeof message.content === 'string' ? [] : message.content.filter((part) => part.type === 'toolCall')
+    ))).toEqual([]);
+    expect(replay.map(messageText).join('\n')).toContain('"reason":"invalidArguments"');
+    expect(replay.map(messageText).join('\n')).toContain('"cwd":"/model-supplied"');
+    expect(runtime.state.messages.map(messageText).join('\n'))
+      .toContain('"identity":{"namespace":null,"name":"bash"}');
+    expect(events.filter((event) => event.type === 'tool_call_admission')).toEqual([
+      expect.objectContaining({
+        decision: expect.objectContaining({
+          execute: false,
+          modelCall: expect.objectContaining({ disposition: 'evidenceOnly', reason: 'invalidArguments' }),
+        }),
+      }),
+    ]);
+    expect(events.some((event) => event.type === 'tool_execution_start')).toBe(false);
+  });
+
+  test('does not let a rejected call id suppress a later admitted result with the same id', async () => {
+    const reusedCallId = 'provider-reused-id';
+    const executions: unknown[] = [];
+    const strictTool = parameterTool('strict_tool', {
+      type: 'object',
+      additionalProperties: false,
+      properties: { value: { type: 'string' } },
+      required: ['value'],
+    }, async (_id, args) => {
+      executions.push(args);
+      return toolResult('later call completed');
+    });
+    const gateway = new ScriptedGateway([
+      () => terminalStream(assistant([{
+        type: 'toolCall',
+        id: reusedCallId,
+        name: 'strict_tool',
+        arguments: { invalid: true },
+      }], 'toolUse')),
+      () => terminalStream(assistant([{
+        type: 'toolCall',
+        id: reusedCallId,
+        name: 'strict_tool',
+        arguments: { value: 'valid' },
+      }], 'toolUse')),
+      () => terminalStream(assistant([{ type: 'text', text: 'done' }])),
+    ]);
+    const runtime = createRuntime(gateway, { tools: [strictTool] });
+
+    await runtime.prompt(USER);
+
+    expect(executions).toEqual([{ value: 'valid' }]);
+    const canonicalCalls = runtime.state.messages.flatMap((message) => (
+      message.role === 'assistant'
+        ? message.content.filter((part) => part.type === 'toolCall')
+        : []
+    ));
+    const results = runtime.state.messages.filter((message) => message.role === 'toolResult');
+    expect(canonicalCalls).toHaveLength(1);
+    expect(results).toHaveLength(1);
+    expect(canonicalCalls[0]?.id).not.toBe(reusedCallId);
+    expect(results[0]?.role === 'toolResult' ? results[0].toolCallId : null).toBe(canonicalCalls[0]?.id);
+    expect(JSON.stringify(runtime.state.messages)).toContain('later call completed');
+  });
+
+  test('heals duplicate ids within one mixed admission batch without losing the valid pair', async () => {
+    const duplicatedId = 'same-batch-id';
+    const executions: unknown[] = [];
+    const strictTool = parameterTool('strict_tool', {
+      type: 'object',
+      additionalProperties: false,
+      properties: { value: { type: 'string' } },
+      required: ['value'],
+    }, async (_id, args) => {
+      executions.push(args);
+      return toolResult('valid pair completed');
+    });
+    const gateway = new ScriptedGateway([
+      () => terminalStream(assistant([
+        { type: 'toolCall', id: duplicatedId, name: 'strict_tool', arguments: { invalid: true } },
+        { type: 'toolCall', id: duplicatedId, name: 'strict_tool', arguments: { value: 'valid' } },
+      ], 'toolUse')),
+      () => terminalStream(assistant([{ type: 'text', text: 'done' }])),
+    ]);
+    const runtime = createRuntime(gateway, { tools: [strictTool] });
+    const admissionIds: string[] = [];
+    runtime.subscribe((event) => {
+      if (event.type === 'tool_call_admission') admissionIds.push(event.toolCallId);
+    });
+
+    await runtime.prompt(USER);
+
+    expect(executions).toEqual([{ value: 'valid' }]);
+    expect(admissionIds).toHaveLength(2);
+    expect(new Set(admissionIds).size).toBe(2);
+    const replay = gateway.requests[1]!.context.messages;
+    const replayCalls = replay.flatMap((message) => (
+      message.role === 'assistant'
+        ? message.content.filter((part) => part.type === 'toolCall')
+        : []
+    ));
+    const replayResults = replay.filter((message) => message.role === 'toolResult');
+    expect(replay.map(messageText).join('\n')).toContain('"reason":"invalidArguments"');
+    expect(replayCalls).toHaveLength(1);
+    expect(replayResults).toHaveLength(1);
+    expect(replayResults[0]?.role === 'toolResult' ? replayResults[0].toolCallId : null)
+      .toBe(replayCalls[0]?.id);
+  });
+
+  test('executes a secret-bearing call once and keeps its raw arguments only in the live Turn exchange', async () => {
+    const secret = 'abcdefghijklmnop';
+    const command = `curl -H "Authorization: Bearer ${secret}" https://example.test`;
+    const executedArguments: unknown[] = [];
+    const bash = parameterTool('bash', {
+      type: 'object',
+      additionalProperties: false,
+      properties: { command: { type: 'string' } },
+      required: ['command'],
+    }, async (_id, args) => {
+      executedArguments.push(args);
+      return toolResult('request completed');
+    });
+    const gateway = new ScriptedGateway([
+      () => terminalStream(assistant([{
+        type: 'toolCall', id: 'secret-call', name: 'bash', arguments: { command },
+      }], 'toolUse')),
+      () => terminalStream(assistant([{ type: 'text', text: 'done' }])),
+    ]);
+    const runtime = createRuntime(gateway, { tools: [bash] });
+    let admission: Extract<AgentEvent, { readonly type: 'tool_call_admission' }> | null = null;
+    runtime.subscribe((event) => {
+      if (event.type === 'tool_call_admission') admission = event;
+    });
+
+    await runtime.prompt(USER);
+
+    expect(executedArguments).toEqual([{ command }]);
+    const replay = gateway.requests[1]!.context.messages;
+    const serializedReplay = JSON.stringify(replay);
+    expect(serializedReplay).toContain(secret);
+    expect(serializedReplay).not.toContain('redacted after execution');
+    expect(replay.map((message) => message.role)).toEqual(['user', 'assistant', 'toolResult']);
+    const replayAssistant = replay[1];
+    expect(replayAssistant?.role).toBe('assistant');
+    if (replayAssistant?.role !== 'assistant') throw new Error('Expected replay assistant message.');
+    expect(replayAssistant.content.map((part) => part.type)).toEqual(['toolCall']);
+    expect(admission).toMatchObject({
+      decision: { modelCall: { disposition: 'redactedReplay' } },
+    });
+    expect(JSON.stringify(admission)).not.toContain(secret);
+  });
+
+  test('keeps payload-backed history exact across NativeAgentRuntime prompts', async () => {
+    const largeValue = 'x'.repeat(40_000);
+    const largeTool = parameterTool('large_tool', {
+      type: 'object',
+      additionalProperties: false,
+      properties: { value: { type: 'string' } },
+      required: ['value'],
+    }, async () => toolResult('stored'));
+    const gateway = new ScriptedGateway([
+      () => terminalStream(assistant([{
+        type: 'toolCall', id: 'large-call', name: 'large_tool', arguments: { value: largeValue },
+      }], 'toolUse')),
+      () => terminalStream(assistant([{ type: 'text', text: 'first prompt complete' }])),
+      () => terminalStream(assistant([{ type: 'text', text: 'second prompt complete' }])),
+    ]);
+    const runtime = createRuntime(gateway, {
+      tools: [largeTool],
+      admitToolCall: (request) => persistToolCallAdmission(request, async () => ({
+        id: 'a'.repeat(64),
+        mimeType: 'application/vnd.tenon.agent-context+json',
+        byteLength: 40_200,
+        schemaVersion: 1,
+        kind: 'toolCallArguments',
+      })),
+    });
+
+    await runtime.prompt(USER);
+    await runtime.prompt({ role: 'user', content: 'Continue', timestamp: 2 });
+
+    for (const request of [gateway.requests[1]!, gateway.requests[2]!]) {
+      const replayed = request.context.messages.flatMap((message) => (
+        typeof message.content === 'string'
+          ? []
+          : message.content.filter((part) => part.type === 'toolCall')
+      ));
+      expect(replayed).toMatchObject([{
+        id: 'large-call',
+        name: 'large_tool',
+        arguments: { value: largeValue },
+      }]);
+      expect(JSON.stringify(replayed)).not.toContain('storedArguments');
+      expect(JSON.stringify(replayed)).not.toContain('truncated');
+    }
+  });
+
+  test('keeps cancellation after admission distinct from validation and skips every side effect', async () => {
+    let executions = 0;
+    const gateway = new ScriptedGateway([() => terminalStream(assistant([
+      { type: 'toolCall', id: 'cancel-one', name: 'first', arguments: {} },
+      { type: 'toolCall', id: 'cancel-two', name: 'second', arguments: {} },
+    ], 'toolUse'))]);
+    const runtime = createRuntime(gateway, {
+      tools: [
+        tool('first', undefined, async () => { executions += 1; return toolResult('first'); }),
+        tool('second', undefined, async () => { executions += 1; return toolResult('second'); }),
+      ],
+    });
+    const events: AgentEvent[] = [];
+    runtime.subscribe((event) => {
+      events.push(event);
+      if (event.type === 'tool_call_admission' && event.toolCallId === 'cancel-one') runtime.abort();
+    });
+
+    await runtime.prompt(USER);
+
+    expect(executions).toBe(0);
+    expect(gateway.requests).toHaveLength(1);
+    expect(events.filter((event) => event.type === 'tool_call_admission')).toMatchObject([
+      { toolCallId: 'cancel-one', decision: { execute: true, modelCall: { disposition: 'replayable' } } },
+    ]);
+    expect(events.some((event) => event.type === 'tool_execution_start')).toBe(false);
+    expect(events.filter((event) => event.type === 'tool_execution_end')).toMatchObject([
+      { toolCallId: 'cancel-one', isError: true, result: { content: [{ text: 'Operation aborted' }] } },
+    ]);
+    expect(runtime.state.messages.flatMap((message) => (
+      message.role === 'assistant'
+        ? message.content.filter((part) => part.type === 'toolCall').map((part) => part.id)
+        : []
+    ))).toEqual(['cancel-one']);
+    expect(JSON.stringify(runtime.state.messages)).not.toContain('invalidArguments');
   });
 
   test('polls steering before the first call and after an in-flight call only', async () => {
@@ -492,6 +789,7 @@ function createRuntime(
     transformContext?: KernelAgentOptions['transformContext'];
     getApiKey?: KernelAgentOptions['getApiKey'];
     providerOptions?: KernelAgentOptions['providerOptions'];
+    admitToolCall?: KernelAgentOptions['admitToolCall'];
     remainingTokenBudget?: KernelAgentOptions['remainingTokenBudget'];
     onBudgetWarning?: KernelAgentOptions['onBudgetWarning'];
   } = {},
@@ -508,6 +806,7 @@ function createRuntime(
     transformContext: overrides.transformContext,
     getApiKey: overrides.getApiKey,
     providerOptions: overrides.providerOptions,
+    admitToolCall: overrides.admitToolCall,
     remainingTokenBudget: overrides.remainingTokenBudget,
     onBudgetWarning: overrides.onBudgetWarning,
   });
@@ -593,6 +892,20 @@ function tool(
   };
 }
 
+function parameterTool(
+  name: string,
+  parameters: Record<string, unknown>,
+  execute: AgentTool['execute'],
+): AgentTool {
+  return {
+    name,
+    label: name,
+    description: name,
+    parameters: parameters as any,
+    execute,
+  };
+}
+
 function toolResult(text: string) {
   return { content: [{ type: 'text' as const, text }], details: { text } };
 }
@@ -604,7 +917,11 @@ function eventLabel(event: AgentEvent): string {
       ? `${event.type}:${event.message.role}:${event.message.toolCallId}`
       : `${event.type}:${event.message.role}`;
   }
-  if (event.type === 'tool_execution_start' || event.type === 'tool_execution_end') {
+  if (
+    event.type === 'tool_call_admission'
+    || event.type === 'tool_execution_start'
+    || event.type === 'tool_execution_end'
+  ) {
     return `${event.type}:${event.toolCallId}`;
   }
   return event.type;

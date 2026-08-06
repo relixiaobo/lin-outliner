@@ -4,6 +4,7 @@ import {
   canAddPreviewTargetToOutline,
   ingestPreviewTargetToAsset,
 } from '../../src/renderer/ui/preview/previewIngest';
+import { createImageArtifactReference } from '../../src/main/agent/imageArtifacts';
 
 const resourceRef = {
   id: 'b'.repeat(64),
@@ -63,5 +64,40 @@ describe('preview ingest', () => {
 
     expect(canAddPreviewTargetToOutline(target)).toBe(false);
     expect(await ingestPreviewTargetToAsset(target)).toBeNull();
+  });
+
+  test('ingests an image artifact through its normalized Preview path', async () => {
+    const calls: Array<{ command: string; args: Record<string, unknown> | undefined }> = [];
+    (globalThis as { window?: unknown }).window = {
+      lin: {
+        invoke: (command: string, args?: Record<string, unknown>) => {
+          calls.push({ command, args });
+          return Promise.resolve(asset);
+        },
+      },
+    };
+    const artifactRef = createImageArtifactReference({
+      createdAt: 1,
+      retention: 'observationOnly',
+      original: null,
+      observation: resourceRef,
+      sourceDimensions: { width: 1, height: 1 },
+      observationDimensions: { width: 1, height: 1 },
+    });
+    const materializedPath = '/tmp/agent-scratch/provider-thread/image-artifact/image';
+    const target = {
+      kind: 'local-file' as const,
+      path: materializedPath,
+      entryKind: 'file' as const,
+      threadId: 'thread-1',
+      imageArtifactRef: artifactRef,
+    };
+
+    expect(canAddPreviewTargetToOutline(target)).toBe(true);
+    expect(await ingestPreviewTargetToAsset(target)).toEqual(asset);
+    expect(calls).toEqual([{
+      command: 'ingest_local_file',
+      args: { path: materializedPath },
+    }]);
   });
 });

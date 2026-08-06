@@ -12,9 +12,6 @@ import {
   type UrlPageTranslationRequest,
 } from '../../src/core/urlPageTranslation';
 
-const TEST_OAUTH_PROVIDER_IDS = ['anthropic', 'github-copilot', 'openai-codex'] as const;
-const testOAuthProviders = () => TEST_OAUTH_PROVIDER_IDS.map((id) => ({ id, name: id }));
-
 mock.module('electron', () => ({
   app: { getPath: () => '/tmp/tenon-page-translation-test' },
   BrowserWindow: class {
@@ -25,11 +22,6 @@ mock.module('electron', () => ({
   session: {
     fromPartition: () => ({ clearStorageData: async () => undefined }),
   },
-}));
-
-mock.module('@earendil-works/pi-ai/oauth', () => ({
-  getOAuthProvider: () => undefined,
-  getOAuthProviders: testOAuthProviders,
 }));
 
 const {

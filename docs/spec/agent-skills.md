@@ -23,6 +23,20 @@ Skill definitions. A resource-backed built-in may separately expose its normaliz
 bundle directory as a live read locator. Mutable Skills resolve to their real
 `SKILL.md` files.
 
+**One failing source never takes out the registry (A12).** A registry load that
+throws clears every loaded Skill, built-ins included, so the managed source — the
+only one behind a user-writable JSON index — is loaded defensively: a managed
+index that cannot be decoded degrades to "no managed skills", and a managed root
+missing a readable `SKILL.md` drops that row alone. Otherwise one unreadable index
+costs the user every Skill they have: no slash commands, no library, and a throw
+on any turn that touches Skills.
+
+Decoding that index stays fail-closed — it admits records into the store — but the
+verdict is no longer permanent. `ManagedSkillStore.initialize()` moves an index it
+cannot decode aside (renamed, never deleted) and starts empty, after which the
+orphan-version prune reaps its content and the Skills are reinstallable. Pre-release
+we do not migrate formats, so a schema break is a reinstall, not a broken app.
+
 ## Format
 
 YAML frontmatter may define description, usage guidance, allowed tools,
@@ -115,7 +129,9 @@ Access capability evaluation. A Skill never bypasses explicit blocks.
 The reducer reconstructs catalog state and the latest active inline invocation for each
 canonical name from Thread-owned payload Items. It validates any existing compaction
 checkpoint against full prior catalog entries and invocation payload references and
-fails closed rather than inventing display metadata from a sparse checkpoint.
+records a typed degradation rather than inventing display metadata from a sparse or
+unavailable checkpoint. The affected catalog or invocation is omitted until a later
+baseline restores it; the provider request, compaction, fork, and delegation continue.
 
 The provider projector selects the latest context epoch and replaces compacted raw
 history with the summary plus validated checkpoint. It restores the exact active inline
@@ -152,12 +168,18 @@ required. The Skill tool is the only model-facing result channel for that isolat
 child; collaboration listing and waiting exclude it. Failed or interrupted outcomes
 are labeled as partial evidence rather than being described as completed.
 
-## Authoring And Trust
+## Authoring And Provenance
 
-Mutable Skill edits are ordinary file mutations. Provenance records accepted
-content hashes separately from current bytes. A later model edit clears the
-accepted hash; a user edit remains usable but no longer claims the prior accepted
-version.
+Mutable Skill edits are ordinary file mutations. Provenance records which bytes
+the agent wrote and the one version preceding that write, so a model edit can be
+undone; it records nothing about approval. There is no accept-before-use gate: a
+per-Skill ratification step is an approval policy, which
+[agent-tool-permissions.md](./agent-tool-permissions.md) states Tenon does not
+have. A Skill is usable as soon as it exists and is enabled.
+
+Model-authored Skill content is rejected only when a high-confidence credential
+signature or private-key header is present. Ambiguous secret-like prose passes
+unchanged so the authoring guard does not become a general content block.
 
 Undo restores only the version immediately preceding the latest model write and
 is refused after a subsequent user edit. Built-ins and configured immutable
@@ -212,11 +234,9 @@ restores its executable mode and fails the build when the resource is absent.
 
 Agent settings control additional directories and disabled Skill identities.
 Changes apply to newly assembled tool catalogs and to active per-Turn Skill
-runtimes through a catalog refresh. Accept, revoke, and undo actions refresh every
-active runtime from persisted provenance; undo also reloads the restored bytes and
-appends a catalog delta before the next provider request when the content hash changed.
-An unchanged trust-only catalog comparison emits no Item. Settings never rewrite
-Thread history.
+runtimes through a catalog refresh. Undo also reloads the restored bytes and
+appends a catalog delta before the next provider request when the content hash
+changed. Settings never rewrite Thread history.
 
 ### The Skill library
 
@@ -224,12 +244,15 @@ The Skills category is **one list over every source** — `built-in`, `user`,
 `project`, a bound local directory, and `managed` — sorted by the name the user
 reads. Provenance is an attribute of a row (a source chip), never a section: a
 user thinks "my Skills", so the page is not split by where a Skill came from.
-Each row carries the `/name`, the description, a source chip, its trust or status
-chips, an enable toggle, and its source-specific actions in the row disclosure:
+Each row carries its name, the description, a source chip, its status chips, an
+enable toggle, and its source-specific actions in the row disclosure. The name
+takes the `/name` slash form only where typing it works — a Skill declaring
+`user-invocable: false` is model-only, and showing the slash form advertises a
+command the composer filters out:
 
 | Source | Row actions |
 |---|---|
-| `user`, `project`, local | show in Finder, accept, revoke acceptance, undo agent edit |
+| `user`, `project`, local | show in Finder, undo agent edit, unbind directory |
 | local directory | unbind directory |
 | `managed` | check update, preview update, apply, rollback, uninstall |
 | `built-in` | enable toggle only, plus Finder when resource-backed |
@@ -252,6 +275,19 @@ Managed rows are read from the managed index rather than the loaded catalog, so 
 Skill that is installed but not activated still appears — installed-but-off is a
 state the user owns and must be able to see and reverse.
 
+The count shown one level up follows that same library, not only the currently
+loaded runtime catalog: every non-managed runtime Skill plus every managed-index
+record counts. A disabled, incompatible, or integrity-blocked managed Skill still
+exists in the user's library and must not disappear from the total. Library
+refreshes report the new count back to the category row.
+
+Managed frontmatter treats `user-invocable` as a strict boolean and defaults it
+to `true`; strings and numbers are invalid rather than truthy aliases. The value
+is stored with both the active and previous immutable versions, projected on
+every managed row, and therefore follows update and rollback. The managed index
+schema is version 2 and fails closed on the old shape; this pre-release format has
+no compatibility reader.
+
 ### One enable predicate, two writers
 
 "On" has one meaning — *available to the model right now*:
@@ -268,10 +304,16 @@ activation flag alone.
 
 The two **stores** stay separate on purpose. `disabledSkills` is a user setting
 keyed by name; the activation flag is per-installed-record and participates in
-install / rollback / uninstall, which is what makes "install, but do not enable
-yet" possible. Merging them would put managed lifecycle state into settings, or
-settings into an index that does not own the Skills they describe. The toggle
-routes by source; what it *means* never branches on source.
+install / rollback / uninstall, which is what makes "installed but switched off" a
+state the record can hold at all. It is not the default: installing a Skill
+enables it, because a Skill that installs into a do-nothing state reads as broken,
+and the review dialog — which shows the source, the commit, the scripts, the
+description and the SKILL.md body — is where consent is given. Consent covers the
+instruction because enabling is what puts a Skill's text in front of the model;
+the inertness boundary below is about execution and does not reach it. Merging
+them would put managed lifecycle state into settings, or settings into an index
+that does not own the Skills they describe. The toggle routes by source; what it
+*means* never branches on source.
 
 ### Acquisition behind `+`
 
@@ -283,6 +325,18 @@ carries an icon-only `+` (B6) whose menu has two entries:
    existing compatibility/integrity review still gates the install.
 2. **Add Local Directory** — a native directory picker appending to
    `additionalSkillDirectories`.
+
+The install review shows the candidate description and the complete bounded
+`SKILL.md` body before enabling it. Discovery marks a body that exceeded the
+review bound; that candidate's Install action is disabled, and main repeats the
+check before any candidate download so a stale or bypassed renderer cannot admit
+instructions the user could not review in full.
+
+Because refusing what cannot be shown decides which Skills are installable at
+all, the review bound is **not** the update diff's bound and is sized well past
+any hand-written `SKILL.md` — a diff is a reading aid that may be skimmed, a
+review body is consent. It stays bounded only because validation admits a 1 MiB
+file and the dialog has to render whatever discovery returns.
 
 The panel is a dialog-class surface: opaque `--bg-elevated` at
 `--overlay-shadow-level-2`, matching `.confirm-dialog`. Translucent material is

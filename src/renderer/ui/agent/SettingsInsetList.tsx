@@ -1,4 +1,5 @@
 import { memo, type ReactNode } from 'react';
+import { ChevronDownIcon, ChevronRightIcon, ICON_SIZE } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { cx } from '../primitives/cx';
 
@@ -24,13 +25,18 @@ interface InsetGroupProps {
   footnote?: ReactNode;
   /** Accessible name for the list region; falls back to `label`. */
   ariaLabel?: string;
+  /**
+   * Anchor name, so a deep link can land on this group rather than at the top of
+   * a long pane. Deliberately a stable slug the link carries, not a generated id.
+   */
+  id?: string;
   className?: string;
   children: ReactNode;
 }
 
-export function InsetGroup({ label, headerAction, footnote, ariaLabel, className, children }: InsetGroupProps) {
+export function InsetGroup({ label, headerAction, footnote, ariaLabel, id, className, children }: InsetGroupProps) {
   return (
-    <div className={cx('inset-group', className)}>
+    <div className={cx('inset-group', className)} data-settings-anchor={id}>
       {/* Without an action the header keeps its original single-element shape, so
           adding this slot cannot disturb the panes that do not use it. */}
       {headerAction ? (
@@ -68,11 +74,36 @@ interface InsetRowProps {
    *  to turn it back on (e.g. a disabled agent, whose enable toggle lives in the
    *  detail view it links to). Distinct from `disabled`, which blocks the click. */
   dimmed?: boolean;
+  /**
+   * The row states an absence ("No blocks", "No skills yet") rather than being a
+   * row that is switched off. `disabled` was standing in for this, which gates
+   * nothing on a non-interactive row and only greyed it — so an absence read as a
+   * disabled entry named after itself, beside `dimmed` rows that mean something
+   * else entirely.
+   */
+  empty?: boolean;
   /** When provided, the row's main area is a button; otherwise it is static
    *  (for rows whose only interactive control lives in `trailing`). */
   onSelect?: () => void;
+  /**
+   * Marks a row that opens another page, with the chevron the design system had
+   * styled and nothing rendered. Without it a row that navigates and a row that
+   * merely states something look identical, so nothing told the user which rows
+   * are doors.
+   */
+  drillsDown?: boolean;
+  /** A count worth surfacing one level up, e.g. Skills with updates waiting. */
+  badge?: number;
+  /** What the badge means, since a bare digit announces as a bare digit. */
+  badgeLabel?: string;
+  /** An in-place disclosure keeps its expanded state on the row button. */
+  disclosure?: 'collapsed' | 'expanded';
+  ariaControls?: string;
   ariaLabel?: string;
   className?: string;
+  /** Row-owned feedback, kept outside the row's button so live-region semantics
+   *  remain available to assistive technology. */
+  feedback?: ReactNode;
 }
 
 // Memoized so a selection change in a long provider/skill list only re-renders
@@ -86,9 +117,16 @@ export const InsetRow = memo(function InsetRow({
   selected = false,
   disabled = false,
   dimmed = false,
+  empty = false,
   onSelect,
+  drillsDown = false,
+  badge,
+  badgeLabel,
+  disclosure,
+  ariaControls,
   ariaLabel,
   className,
+  feedback,
 }: InsetRowProps) {
   const body = (
     <>
@@ -97,17 +135,39 @@ export const InsetRow = memo(function InsetRow({
         <span className="inset-row-label">{label}</span>
         {sublabel ? <span className="inset-row-sublabel">{sublabel}</span> : null}
       </span>
+      {badge !== undefined ? (
+        // Labelled on a <span> role=status rather than via aria-label on a generic
+        // element, where ARIA forbids naming and screen readers announce the digit
+        // alone.
+        <span className="inset-row-badge" role="status" aria-label={badgeLabel}>{badge}</span>
+      ) : null}
+      {drillsDown ? (
+        <span className="settings-drilldown-chevron" aria-hidden="true">
+          <ChevronRightIcon size={ICON_SIZE.menu} strokeWidth={1.75} />
+        </span>
+      ) : null}
+      {disclosure ? (
+        <span className="settings-drilldown-chevron" aria-hidden="true">
+          {disclosure === 'expanded' ? (
+            <ChevronDownIcon size={ICON_SIZE.menu} strokeWidth={1.75} />
+          ) : (
+            <ChevronRightIcon size={ICON_SIZE.menu} strokeWidth={1.75} />
+          )}
+        </span>
+      ) : null}
     </>
   );
 
   return (
     <div
-      className={cx('inset-row', selected && 'is-selected', (disabled || dimmed) && 'is-disabled', className)}
+      className={cx('inset-row', selected && 'is-selected', (disabled || dimmed) && 'is-disabled', empty && 'is-empty', className)}
       role="listitem"
     >
       {onSelect ? (
         <ButtonControl
+          aria-controls={ariaControls}
           aria-current={selected ? 'true' : undefined}
+          aria-expanded={disclosure ? disclosure === 'expanded' : undefined}
           aria-label={ariaLabel}
           className="inset-row-main"
           disabled={disabled}
@@ -119,6 +179,7 @@ export const InsetRow = memo(function InsetRow({
         <div className="inset-row-main is-static">{body}</div>
       )}
       {trailing ? <div className="inset-row-trailing">{trailing}</div> : null}
+      {feedback ? <div className="inset-row-feedback">{feedback}</div> : null}
     </div>
   );
 });

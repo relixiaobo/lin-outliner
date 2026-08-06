@@ -1018,7 +1018,9 @@ test.describe('cursor affordances', () => {
     // a per-row `⋯` actions trigger, and the provider sheet's buttons. None is a
     // content hyperlink, so every one must keep the native arrow cursor (B10).
     await installElectronMock(page);
-    await page.goto('/?surface=settings');
+    // The provider rows this checks live on the Model services page now, not on
+    // whatever Settings happens to open with.
+    await page.goto('/?surface=settings&category=agent/services');
     const settings = page.locator('.settings-window');
     await expect(settings.locator('.inset-row-main').first()).toBeVisible();
 

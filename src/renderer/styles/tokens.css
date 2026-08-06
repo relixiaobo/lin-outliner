@@ -331,6 +331,17 @@
   --icon-size-sm: 14px;
   --icon-size-md: 16px;
   --icon-size-lg: 18px;
+  --icon-size-xl: 22px;
+  /* Settings row furniture: the avatar/tile a provider row leads with, and the
+     larger one the config window's header uses. Named because they were written
+     out by hand in eight places, which is how a ladder stops being one. */
+  --settings-tile-size: 22px;
+  --settings-tile-size-lg: 38px;
+  --settings-row-min-height: 34px;
+  --settings-badge-size: 18px;
+  --settings-field-label-width: 92px;
+  --settings-menu-item-height: 30px;
+  --settings-scroll-cap: 260px;
   --switch-mark-height: var(--icon-size-lg);
   --switch-mark-thumb-size: var(--icon-size-sm);
   --switch-mark-inset: var(--space-1);
@@ -384,6 +395,9 @@
      wider utility cap for two-column control grids. */
   --reading-max: 720px;
   --settings-content-max-width: 920px;
+  /* Width an overlay scrollbar needs to sit beside content instead of over it.
+     macOS draws it ~9px idle and wider while hovered. */
+  --scrollbar-lane: 14px;
   --panel-content-max: var(--reading-max);
   --resize-cursor: ew-resize;
   --resize-cursor-y: ns-resize;

@@ -2,7 +2,15 @@ import type { TSchema } from 'typebox';
 import { resolveChildConfiguration,type AgentRole,type EffectiveThreadConfiguration,type ReasoningEffort } from '../../../core/agent/configuration';
 import type { ContextCursor,ContextEvidenceKind,InheritedContextPayload,JsonValue,Thread,ThreadContextPayload,ThreadContextPayloadReference,ThreadId,ThreadItem,ThreadItemOutputReference,ThreadResourceReference,ThreadUserContent,Turn,TurnId } from '../../../core/agent/protocol';
 import { modelToolContract } from '../../../core/agent/tools';
-import { contextPayloadReferenceKey,itemContextPayloadReferences,itemOutputReferences,itemResourceReferences,outputReferenceKey,resourceReferenceKey } from '../context/contextDependencies';
+import {
+  contextPayloadReferenceKey,
+  itemOutputReferences,
+  itemRequiredContextPayloadReferences,
+  itemResourceReferences,
+  itemToolArgumentPayloadReferences,
+  outputReferenceKey,
+  resourceReferenceKey,
+} from '../context/contextDependencies';
 import { cursorFor } from '../context/ContextEpoch';
 import { reduceRoleContext } from '../context/RoleContextReducer';
 import { reduceSkillContext } from '../context/SkillContextReducer';
@@ -21,6 +29,7 @@ import { uuidV7 } from '../uuid';
 import { appendSubagentTranscript,rebuildSubagentTranscript,removeSubagentTranscript,subagentTranscriptPath,subagentTranscriptSize,sweepOrphanTranscripts } from './SubagentTranscriptArtifact';
 import type { ThreadCatalogOps } from './ThreadCatalogOps';
 import { ThreadCore } from './ThreadCore';
+import type { ThreadResourceOps } from './ThreadResourceOps';
 import { renderTranscript,renderTurn,type TranscriptPayloadReader } from './TranscriptRenderer';
 import type { TurnLifecycle } from './TurnLifecycle';
 
@@ -81,6 +90,7 @@ export class SubagentCollaboration {
   private readonly discardedTranscripts = new Set<ThreadId>();
   constructor(
     private readonly core: ThreadCore,
+    private readonly resourceOps: ThreadResourceOps,
     private readonly catalog: SubagentCatalog,
     private readonly turnLifecycle: TurnLifecycle,
     private readonly subagentBudgets: SubagentRequestLedger,
@@ -363,28 +373,39 @@ export class SubagentCollaboration {
       targetThreadId: ThreadId,
       payload: InheritedContextPayload,
     ): Promise<StagedContextEvidence> {
-      const contextRefs = uniqueContextReferences(payload.turns.flatMap((turn) => (
-        turn.items.flatMap(itemContextPayloadReferences)
+      const requiredContextRefs = uniqueContextReferences(payload.turns.flatMap((turn) => (
+        turn.items.flatMap(itemRequiredContextPayloadReferences)
       )));
+      const requiredContextKeys = new Set(requiredContextRefs.map(contextPayloadReferenceKey));
+      const toolArgumentRefs = uniqueContextReferences(payload.turns.flatMap((turn) => (
+        turn.items.flatMap(itemToolArgumentPayloadReferences)
+      )));
+      const contextRefs = uniqueContextReferences([...requiredContextRefs, ...toolArgumentRefs]);
       const resourceRefs = uniqueResourceReferences(payload.turns.flatMap((turn) => (
         turn.items.flatMap(itemResourceReferences)
       )));
       const outputRefs = uniqueOutputReferences(payload.turns.flatMap((turn) => (
         turn.items.flatMap(itemOutputReferences)
       )));
-      for (const ref of contextRefs) {
+      for (const ref of requiredContextRefs) {
         if (!await this.core.payloads.copyContextToThread(sourceThreadId, targetThreadId, ref)) {
-          throw new Error(`Missing inherited context payload: ${ref.id}`);
+          console.warn(`[agent] Child retained unavailable inherited context payload: ${ref.id}`);
+        }
+      }
+      for (const ref of toolArgumentRefs) {
+        if (requiredContextKeys.has(contextPayloadReferenceKey(ref))) continue;
+        if (!await this.core.payloads.copyContextToThread(sourceThreadId, targetThreadId, ref)) {
+          console.warn(`[agent] Child inherited unavailable tool-call arguments: ${ref.id}`);
         }
       }
       for (const ref of resourceRefs) {
         if (!await this.core.payloads.copyResourceToThread(sourceThreadId, targetThreadId, ref)) {
-          throw new Error(`Missing inherited managed resource: ${ref.id}`);
+          console.warn(`[agent] Child retained unavailable inherited managed resource: ${ref.id}`);
         }
       }
       for (const ref of outputRefs) {
         if (!await this.core.payloads.copyTextToThread(sourceThreadId, targetThreadId, ref)) {
-          throw new Error(`Missing inherited tool output: ${ref.id}`);
+          console.warn(`[agent] Child inherited unavailable tool output: ${ref.id}`);
         }
       }
       const payloadRef = await this.core.payloads.writeContext(targetThreadId, payload);
@@ -962,6 +983,7 @@ export class SubagentCollaboration {
 
   private transcriptReader(threadId: ThreadId): TranscriptPayloadReader {
       return {
+        readContext: (ref) => this.core.payloads.readContext(threadId, ref),
         readOutput: (ref) => this.core.payloads.readTextReference(threadId, ref),
         readDiagnostics: (ref) => this.core.payloads.readTurnDiagnostics(threadId, ref),
       };
@@ -1145,34 +1167,25 @@ async function expandForContextDependencies(
 ): Promise<number> {
   let start = expandForCompactionCursors(turns, initialStart);
   for (;;) {
-    try {
-      const selected = turns.slice(start);
-      await Promise.all([
-        reduceSkillContext(selected, readContext),
-        reduceRoleContext(selected, readContext),
-      ]);
-      return start;
-    } catch (error) {
-      const kind = catalogJournalBoundaryKind(error);
-      if (start === 0 || kind === null) throw error;
-      const preceding = previousCatalogStateTurn(turns, start, kind);
-      if (preceding < 0) throw error;
-      start = expandForCompactionCursors(turns, preceding);
-    }
+    const selected = turns.slice(start);
+    const [skills, roles] = await Promise.all([
+      reduceSkillContext(selected, readContext),
+      reduceRoleContext(selected, readContext),
+    ]);
+    const kind = skills.degradations.some((entry) => (
+      entry.code === 'journalDiscontinuity' && entry.source === 'skillCatalog'
+    ))
+      ? 'skillCatalog' as const
+      : roles.degradations.some((entry) => (
+          entry.code === 'journalDiscontinuity' && entry.source === 'roleCatalog'
+        ))
+        ? 'roleCatalog' as const
+        : null;
+    if (start === 0 || kind === null) return start;
+    const preceding = previousCatalogStateTurn(turns, start, kind);
+    if (preceding < 0) return start;
+    start = expandForCompactionCursors(turns, preceding);
   }
-}
-
-function catalogJournalBoundaryKind(
-  error: unknown,
-): Extract<ContextEvidenceKind, 'skillCatalog' | 'roleCatalog'> | null {
-  if (!(error instanceof Error)) return null;
-  if (error.message === 'Skill catalog journal does not continue from the canonical catalog hash.') {
-    return 'skillCatalog';
-  }
-  if (error.message === 'Role catalog journal does not continue from the canonical catalog hash.') {
-    return 'roleCatalog';
-  }
-  return null;
 }
 
 function previousCatalogStateTurn(

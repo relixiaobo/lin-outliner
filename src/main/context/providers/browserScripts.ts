@@ -2,13 +2,14 @@
 //
 // Capture is basic-info only today: `activeTabScript` reads a browser's active tab
 // URL + title (no JS injection, no "Allow JavaScript from Apple Events" toggle). The
-// in-page DOM scrapers that used to live here were removed in favor of the planned
-// browser extension / CDP backend (see contextCapture.ts + docs/plans/
-// browser-extension-integration.md).
+// in-page DOM scrapers that used to live here were removed; no extension or CDP
+// backend is planned (see contextCapture.ts + docs/plans/unified-command-surface.md).
 //
-// The `*Raw` interfaces stay as the backend-neutral CONTRACT: the shape a future
-// `PageContentExtractor` (extension/CDP) produces and the normalizer + per-provider
-// enrichers consume. They are not produced by anything today.
+// The `*Raw` interfaces stay as the backend-neutral CONTRACT: the shape an ambient
+// `PageContentExtractor` would produce and the normalizer + per-provider enrichers
+// consume. They are not produced by anything today, and no extension or CDP backend
+// is planned — network page reading is a separate explicit API invoked after the
+// user picks an action (docs/plans/unified-command-surface.md).
 
 export type BrowserFamily = 'chromium' | 'safari';
 

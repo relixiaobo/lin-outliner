@@ -36,24 +36,15 @@ const BLOCKED_OPEN_EXTENSIONS = new Set([
   '.wflow',
   '.workflow',
 ]);
-// Relative preview references are only for app-owned generated images. Ordinary
-// local-file previews stay absolute so model-authored text cannot broaden file discovery.
-const GENERATED_IMAGE_RELATIVE_ROOT = 'generated-images';
-
 export interface TrustedLocalFileReference {
   entryKind: 'file' | 'directory';
   path: string;
   stats: Stats;
 }
 
-export interface TrustedLocalFileReferenceOptions {
-  relativeGeneratedImageRoots?: readonly string[];
-}
-
 export async function resolveTrustedLocalFileReference(
   value: unknown,
   allowedRoots: readonly string[],
-  options: TrustedLocalFileReferenceOptions = {},
 ): Promise<TrustedLocalFileReference | null> {
   if (typeof value !== 'string' || value.length === 0) return null;
   if (value.includes('\0')) return null;
@@ -61,20 +52,8 @@ export async function resolveTrustedLocalFileReference(
   const trustedRoots = await trustedRootRealPaths(allowedRoots);
   if (trustedRoots.length === 0) return null;
 
-  let candidatePaths: string[];
-  let containmentRoots: readonly string[];
-  if (path.isAbsolute(value)) {
-    candidatePaths = [path.resolve(value)];
-    containmentRoots = trustedRoots;
-  } else if (isAllowedRelativeLocalFileReference(value)) {
-    const trustedGeneratedImageRoots = await trustedRootRealPaths(options.relativeGeneratedImageRoots ?? []);
-    candidatePaths = trustedGeneratedImageRoots.map((root) => path.resolve(root, value));
-    containmentRoots = trustedGeneratedImageRoots;
-  } else {
-    candidatePaths = [];
-    containmentRoots = [];
-  }
-  if (candidatePaths.length === 0) return null;
+  if (!path.isAbsolute(value)) return null;
+  const candidatePaths = [path.resolve(value)];
 
   for (const candidatePath of candidatePaths) {
     let candidateRealPath: string;
@@ -89,7 +68,7 @@ export async function resolveTrustedLocalFileReference(
     const entryKind = candidateStats.isDirectory() ? 'directory' : candidateStats.isFile() ? 'file' : null;
     if (!entryKind) continue;
 
-    for (const trustedRoot of containmentRoots) {
+    for (const trustedRoot of trustedRoots) {
       if (isPathInside(trustedRoot, candidateRealPath)) {
         return {
           entryKind,
@@ -127,9 +106,4 @@ async function trustedRootRealPaths(roots: readonly string[]): Promise<string[]>
     if (trustedRoot) trustedRoots.push(trustedRoot);
   }
   return trustedRoots;
-}
-
-function isAllowedRelativeLocalFileReference(value: string): boolean {
-  const normalized = path.normalize(value.trim());
-  return normalized === GENERATED_IMAGE_RELATIVE_ROOT || normalized.startsWith(`${GENERATED_IMAGE_RELATIVE_ROOT}${path.sep}`);
 }

@@ -10,12 +10,10 @@ import { PRIVATE_JSON_FILE_OPTIONS, readJsonOrDefault, updateJsonFile } from '..
 const AGENT_SKILL_PROVENANCE_FILE = 'agent-skill-provenance.json';
 
 /**
- * userData-backed trust store for skills, keyed by resolved skill file path. Each
- * record holds the last agent-written content hash (provenance), the hash the user
- * explicitly accepted (trust), and at most one previous version for single-step undo.
- * The skill registry derives ratification from it; see the derivation in
- * `addLoadedSkill`. Legacy plain-string values (pre-acceptance format) are dropped on
- * load — pre-release, no migration.
+ * userData-backed provenance store for Skills, keyed by resolved Skill file path.
+ * Each record holds the last agent-written content hash and at most one previous
+ * version for single-step Undo. Unsupported legacy values are dropped on load;
+ * pre-release, no migration.
  */
 export function createAgentSkillProvenanceStore(): AgentSkillProvenanceStore {
   return {
@@ -55,10 +53,9 @@ function parseProvenanceRecord(value: unknown): AgentSkillProvenanceRecord | nul
   const raw = value as Record<string, unknown>;
   const record: AgentSkillProvenanceRecord = {};
   if (typeof raw.agentHash === 'string') record.agentHash = raw.agentHash;
-  if (typeof raw.acceptedHash === 'string') record.acceptedHash = raw.acceptedHash;
   const previous = parsePreviousVersion(raw.previousVersion);
   if (previous) record.previousVersion = previous;
-  return record.agentHash || record.acceptedHash || record.previousVersion ? record : null;
+  return record.agentHash || record.previousVersion ? record : null;
 }
 
 function parsePreviousVersion(value: unknown): AgentSkillPreviousVersion | null {

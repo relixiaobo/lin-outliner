@@ -73,8 +73,15 @@ import { epubPreviewTranslationCacheSourceId } from './previewTranslationCache';
 import { useUrlPageTranslation } from './useUrlPageTranslation';
 import { useTranslationLanguagePreference } from './translationLanguagePreference';
 import { useUrlPageTranslationPreferences } from './urlPageTranslationPreferences';
+import { reportPreviewPreferenceWriteError } from './previewPreferenceErrors';
+import {
+  translationModelGroups,
+  translationModelName,
+  translationProviderName,
+} from './translationModelChoices';
 import type { UrlPageTranslationStatus } from './urlPageTranslationController';
 import { isProviderUsable } from '../agent/providerUsability';
+import { beginKeyedMutation, isCurrentKeyedMutation } from '../keyedMutationGeneration';
 
 const PANEL_BREADCRUMB_ORIGIN_ICON_SIZE = 13;
 
@@ -88,7 +95,7 @@ interface FilePreviewPanelProps {
   nodeId?: NodeId;
   onBack: () => void;
   onClose: () => void;
-  onError?: (message: string) => void;
+  onError?: (message: string | null) => void;
   onOpenTarget: (target: PreviewTarget, options?: FilePreviewNavigationOptions) => void;
   onRoot: (nodeId: NodeId, options?: NavigateRootOptions) => void;
   onScrollPositionChange?: (scrollTop: number) => void;
@@ -142,12 +149,27 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
   const [translationPopoverOpen, setTranslationPopoverOpen] = useState(false);
   const translationTriggerRef = useRef<HTMLButtonElement | null>(null);
   const translationDismissRefs = useMemo(() => [translationTriggerRef], []);
+  const preferenceMutationGenerationsRef = useRef(new Map<string, number>());
   const closeTranslationPopover = useCallback(() => setTranslationPopoverOpen(false), []);
   const handleTranslationError = useCallback((error: 'invalid-response' | 'not-configured' | 'provider-error') => {
     props.onError?.(error === 'not-configured'
       ? previewLabels.translationNotConfigured
       : previewLabels.translationFailed);
   }, [previewLabels.translationFailed, previewLabels.translationNotConfigured, props.onError]);
+  const persistPreference = useCallback((preference: string, action: () => Promise<void>) => {
+    const generation = beginKeyedMutation(preferenceMutationGenerationsRef.current, preference);
+    props.onError?.(null);
+    void action().catch((error) => {
+      reportPreviewPreferenceWriteError(preference, error);
+      if (isCurrentKeyedMutation(
+        preferenceMutationGenerationsRef.current,
+        preference,
+        generation,
+      )) {
+        props.onError?.(previewLabels.preferenceSaveFailed);
+      }
+    });
+  }, [previewLabels.preferenceSaveFailed, props.onError]);
   const urlTranslation = useUrlPageTranslation({
     active: looseUrlPreview,
     autoTranslate: translationPreferences.autoTranslateUrls,
@@ -195,7 +217,9 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
   const displayTitle = looseUrlPreview ? urlPageMetadata.title ?? title : title;
   const canOpen = state.status === 'ready' && canOpenPreviewSource(state.source);
   const canReveal = state.status === 'ready' && canRevealPreviewSource(state.source);
-  const canAdd = canAddPreviewTargetToOutline(props.target);
+  const addTarget = state.status === 'ready' && canAddPreviewTargetToOutline(state.source.target)
+    ? state.source.target
+    : null;
   const {
     mainPanelRef,
     requestTitleDockMeasure,
@@ -375,13 +399,13 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
         ...(canReveal
           ? [{ key: 'reveal', label: previewLabels.reveal, icon: FolderIcon, run: revealOriginal }]
           : []),
-        ...(canAdd
+        ...(addTarget
           ? [{
               key: 'add',
               label: previewLabels.addToOutline,
               icon: AddChildIcon,
               run: () => {
-                void requestAddPreviewTargetToOutline({ panelId: props.panelId, target: props.target });
+                void requestAddPreviewTargetToOutline({ panelId: props.panelId, target: addTarget });
               },
             }]
           : []),
@@ -418,9 +442,12 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
   const automaticTranslationEnabled = looseUrlPreview
     ? translationPreferences.autoTranslateUrls
     : translationPreferences.autoTranslateEpubs;
+  const automaticTranslationIntentRef = useRef(automaticTranslationEnabled);
+  automaticTranslationIntentRef.current = automaticTranslationEnabled;
   const setAutomaticTranslation = looseUrlPreview
     ? translationPreferences.setAutoTranslateUrls
     : translationPreferences.setAutoTranslateEpubs;
+  const automaticTranslationPreference = looseUrlPreview ? 'auto-translate-urls' : 'auto-translate-epubs';
   const translationControl = activeTranslation ? (
     <>
       <ButtonControl
@@ -454,15 +481,48 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
           dismissIgnoreRefs={translationDismissRefs}
           language={translationLanguage.language}
           model={translationPreferences.translationModel}
-          onAutoTranslateChange={setAutomaticTranslation}
+          onAutoTranslateChange={() => {
+            const enabled = !automaticTranslationIntentRef.current;
+            automaticTranslationIntentRef.current = enabled;
+            persistPreference(
+              automaticTranslationPreference,
+              () => setAutomaticTranslation(enabled),
+            );
+          }}
           onClose={closeTranslationPopover}
-          onLanguageChange={translationLanguage.setLanguage}
-          onModelChange={translationPreferences.setTranslationModel}
+          onLanguageChange={(language) => {
+            persistPreference('translation-language', () => translationLanguage.setLanguage(language));
+          }}
+          onModelChange={(model) => {
+            persistPreference('translation-model', () => translationPreferences.setTranslationModel(model));
+          }}
           onToggle={() => {
             activeTranslation.toggle();
             setTranslationPopoverOpen(false);
           }}
           status={translationStatus}
+        />
+      ) : null}
+    </>
+  ) : null;
+  const headerMenuActions = readerMode
+    ? readerMenuActions
+    : looseUrlOpenAction
+      ? [{
+          key: 'open',
+          label: looseUrlOpenAction.label,
+          icon: OpenIcon,
+          run: looseUrlOpenAction.run,
+        }]
+      : [];
+  const headerActions = translationControl || headerMenuActions.length > 0 ? (
+    <>
+      {translationControl}
+      {headerMenuActions.length > 0 ? (
+        <FilePreviewHeaderMenu
+          actions={headerMenuActions}
+          ariaLabel={previewLabels.actions}
+          meta={meta}
         />
       ) : null}
     </>
@@ -509,6 +569,7 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
         previousPageLabel={t.nodePanel.previousPage}
         showClose={props.showClose}
         stickyRef={stickyBreadcrumbRef}
+        trailingActions={headerActions}
         titleDocked={titleDocked}
       >
         {readerMode ? (
@@ -518,14 +579,6 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
                 {displayTitle}
               </span>
             </span>
-            {translationControl}
-            {readerMenuActions.length > 0 ? (
-              <FilePreviewHeaderMenu
-                actions={readerMenuActions}
-                ariaLabel={previewLabels.actions}
-                meta={meta}
-              />
-            ) : null}
           </>
         ) : fileRoot ? (
           <>
@@ -558,7 +611,6 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
                 </span>
               );
             })}
-            {translationControl}
           </>
         ) : looseUrlPreview ? (
           <>
@@ -567,19 +619,6 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
                 {displayTitle}
               </span>
             </span>
-            {translationControl}
-            {looseUrlOpenAction ? (
-              <FilePreviewHeaderMenu
-                actions={[{
-                  key: 'open',
-                  label: looseUrlOpenAction.label,
-                  icon: OpenIcon,
-                  run: looseUrlOpenAction.run,
-                }]}
-                ariaLabel={previewLabels.actions}
-                meta={meta}
-              />
-            ) : null}
           </>
         ) : (
           <>
@@ -589,19 +628,6 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
                 <span className="file-preview-path-label">{segment.label}</span>
               </span>
             ))}
-            {translationControl}
-            {looseUrlOpenAction ? (
-              <FilePreviewHeaderMenu
-                actions={[{
-                  key: 'open',
-                  label: looseUrlOpenAction.label,
-                  icon: OpenIcon,
-                  run: looseUrlOpenAction.run,
-                }]}
-                ariaLabel={previewLabels.actions}
-                meta={meta}
-              />
-            ) : null}
           </>
         )}
       </PanelStickyBreadcrumb>
@@ -837,48 +863,9 @@ function TranslationPopover({
   );
 }
 
-interface TranslationModelGroup {
-  providerId: string;
-  models: Array<{ label: string; value: string }>;
-}
 
-function translationModelGroups(settings: AgentProviderSettingsView | null): TranslationModelGroup[] {
-  if (!settings) return [];
-  const providers = [...settings.providers].sort((left, right) => {
-    if (left.providerId === settings.activeProviderId) return -1;
-    if (right.providerId === settings.activeProviderId) return 1;
-    return left.providerId.localeCompare(right.providerId);
-  });
-  return providers.flatMap((provider) => {
-    if (!isProviderUsable(settings, provider)) return [];
-    const models = settings.availableProviders
-      .find((entry) => entry.providerId === provider.providerId)
-      ?.models.map((model) => ({
-        label: model.name,
-        value: composeProviderQualifiedModel(provider.providerId, model.id),
-      })) ?? [];
-    return models.length > 0 ? [{ providerId: provider.providerId, models }] : [];
-  });
-}
 
-function translationModelName(model: string): string {
-  const separator = model.indexOf('/');
-  return separator >= 0 ? model.slice(separator + 1) : model;
-}
 
-function translationProviderName(providerId: string): string {
-  const tokens: Record<string, string> = {
-    ai: 'AI',
-    api: 'API',
-    github: 'GitHub',
-    openai: 'OpenAI',
-  };
-  return providerId
-    .split(/[-_]/u)
-    .filter(Boolean)
-    .map((part) => tokens[part] ?? `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
-    .join(' ');
-}
 
 function translationShortcutLabel(): string {
   return typeof navigator !== 'undefined' && /Mac|iPhone|iPad/u.test(navigator.platform)

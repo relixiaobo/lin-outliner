@@ -25,10 +25,27 @@ if (start === -1) {
 }
 const rest = lines.slice(start + 1);
 const end = rest.findIndex((line) => line.startsWith('## ['));
-const body = (end === -1 ? rest : rest.slice(0, end)).join('\n').trim();
+let body = (end === -1 ? rest : rest.slice(0, end)).join('\n').trim();
 if (!body) {
   console.error(`The ${version} section is empty.`);
   process.exit(1);
+}
+
+// GitHub rejects release bodies over 125,000 characters. The 0.1.0 section —
+// the project's entire pre-release history — is ~500KB, so an oversized section
+// becomes a summary that points at the section instead of failing the publish.
+const MAX_BODY_CHARS = 100_000;
+if (body.length > MAX_BODY_CHARS) {
+  const bodyLines = body.split('\n');
+  const entryCount = bodyLines.filter((line) => line.startsWith('- **')).length;
+  const categories = bodyLines
+    .filter((line) => line.startsWith('### '))
+    .map((line) => line.slice(4).trim());
+  body = [
+    `This release's changelog section is larger than a GitHub release body allows`,
+    `(${entryCount} entries across ${categories.join(', ')}), so the full notes live in`,
+    `[CHANGELOG.md](https://github.com/relixiaobo/lin-outliner/blob/v${version}/CHANGELOG.md).`,
+  ].join('\n');
 }
 
 // The build is unsigned and un-notarized (`mac.identity: null`), so first launch
