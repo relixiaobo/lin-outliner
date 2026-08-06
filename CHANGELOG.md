@@ -84,6 +84,15 @@ Entries reference the pull request that introduced them.
   tree unless a coordinated history rewrite is ever deemed worth it. The packaged
   app never shipped it (`build.files` packs only `out/**`).
 
+- **One path-containment predicate for managed skill storage (main-agent)** —
+  `safeChildPath` hand-rolled the `path.relative` / `startsWith('..')` /
+  `isAbsolute` triple that `isPathInside` already exports, which #492 had just
+  removed from its two copies in `browserPilotHost.ts`. It now calls the shared
+  helper, with an explicit root-equality guard because `isPathInside` admits the
+  root itself and a child path that resolves back to the root is not a child.
+  Behaviour is unchanged; the point is that the next correction to a path-escape
+  guard has one fewer place to be missed.
+
 - **Open the 0.2.0 train; seed user-register release notes (main-agent)** —
   `package.json` dials to `0.2.0` after the v0.1.0 publication. `[0.1.0]` gains
   a user-language welcome note as its opening block (its engineering provenance
