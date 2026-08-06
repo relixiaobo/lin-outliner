@@ -129,7 +129,7 @@ test('agent local tool process env includes configured, standard, and bundled ri
   }
 });
 
-test('agent local tool process env puts a host-managed command directory first', () => {
+test('agent local tool process env keeps the explicit override ahead of a host-managed command directory', () => {
   const managedBin = path.join(tmpdir(), 'tenon-browser-pilot-bin');
   const extraPath = path.join(tmpdir(), 'lin-extra-tools');
   const env = buildAgentLocalToolProcessEnv({
@@ -144,11 +144,33 @@ test('agent local tool process env puts a host-managed command directory first',
   });
 
   expect(env.PATH?.split(path.delimiter).slice(0, 3)).toEqual([
-    managedBin,
     extraPath,
+    managedBin,
     '/external/bin',
   ]);
   expect(env.BROWSER_PILOT_CLIENT_KEY).toBe('tenon.test-key');
+});
+
+posixBashProcessTest('a host environment failure does not block an unrelated bash command', async () => {
+  await withWorkspace(async (workspaceRoot) => {
+    const workspace = createAgentLocalWorkspaceContext(
+      workspaceRoot,
+      undefined,
+      undefined,
+      async () => { throw new Error('optional host failed'); },
+    );
+    const bash = createLocalTools({ workspace }).find((tool) => tool.name === 'bash')!;
+    const originalWarn = console.warn;
+    console.warn = () => undefined;
+    try {
+      const result = await (bash.execute as any)('provider-failure', { command: 'printf shell-ok' });
+      const envelope = result.details as ToolEnvelope<BashData>;
+      expect(envelope.ok).toBe(true);
+      expect(envelope.data?.stdout).toBe('shell-ok');
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
 });
 
 posixBashProcessTest('foreground and background bash receive the same host process environment', async () => {

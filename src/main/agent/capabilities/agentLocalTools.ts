@@ -2061,7 +2061,12 @@ async function registerBackgroundTask(
 }
 
 async function buildWorkspaceShellProcessEnv(workspace: WorkspaceContext): Promise<NodeJS.ProcessEnv> {
-  const host = await workspace.processEnvironment?.();
+  let host: AgentShellProcessEnvironment | undefined;
+  try {
+    host = await workspace.processEnvironment?.();
+  } catch (error) {
+    console.warn('[agent] shell environment provider failed; continuing with the ordinary tool environment', error);
+  }
   return buildAgentLocalToolProcessEnv({
     env: host?.env,
     leadingToolPathSegments: host?.leadingToolPathSegments,

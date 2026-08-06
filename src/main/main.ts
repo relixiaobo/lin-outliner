@@ -81,7 +81,8 @@ import {
 } from './managedSkillService';
 import { ManagedSkillStore } from './managedSkillStore';
 import { DEFAULT_MANAGED_SKILLS } from './managedSkillDefaults';
-import { BrowserPilotHost } from './browserPilotHost';
+import { BROWSER_PILOT_MANAGED_SKILL_ID, BrowserPilotHost } from './browserPilotHost';
+import { ManagedSkillShellEnvironmentRegistry } from './managedSkillShellEnvironment';
 import { AgentImportService } from './agent/capabilities/agentImportService';
 import { AgentImportApiServer } from './agent/capabilities/agentImportApi';
 import { configureTenonImportRuntime } from './tenonImportRuntime';
@@ -450,6 +451,7 @@ const browserPilotHost = new BrowserPilotHost({
   scratchRoot: agentScratchRoot,
 });
 const managedSkillStore = new ManagedSkillStore(resolvedUserDataDir);
+let managedSkillShellEnvironment: ManagedSkillShellEnvironmentRegistry | null = null;
 let skillRuntime!: AgentSkillRuntime;
 const turnSkillRuntimes = new Map<string, AgentSkillRuntime>();
 const turnSkillRuntimeInitializations = new Map<string, Promise<AgentSkillRuntime>>();
@@ -457,6 +459,7 @@ const managedSkillService: ManagedSkillService = new ManagedSkillService({
   appVersion: app.getVersion(),
   store: managedSkillStore,
   onChanged: async (): Promise<void> => {
+    managedSkillShellEnvironment?.invalidate();
     await Promise.all(
       [skillRuntime, ...turnSkillRuntimes.values()].map((runtime) => runtime.notifySkillContentWritten([])),
     );
@@ -471,6 +474,15 @@ const managedSkillService: ManagedSkillService = new ManagedSkillService({
     ));
     return conflict ? { source: conflict.source, location: conflict.skillFile } : null;
   },
+});
+managedSkillShellEnvironment = new ManagedSkillShellEnvironmentRegistry({
+  activeSkillIds: async () => new Set(
+    (await managedSkillService.activeRuntimeRoots()).map((root) => root.id),
+  ),
+  contributors: [{
+    skillId: BROWSER_PILOT_MANAGED_SKILL_ID,
+    processEnvironment: (threadId, turnId) => browserPilotHost.processEnvironment(threadId, turnId),
+  }],
 });
 // An available Skill update should be visible without going looking for it, but
 // nothing about that is urgent enough to spend the launch path on. So: one
@@ -652,7 +664,7 @@ threadService = ThreadService.open(
           localRoot: agentLocalFileRoot,
           scratchRoot: agentScratchRoot,
           signal,
-          processEnvironment: () => browserPilotHost.processEnvironment(thread.id, turnId),
+          processEnvironment: () => managedSkillShellEnvironment!.processEnvironment(thread.id, turnId),
         }),
       });
       const settings = await getAgentRuntimeSettings();
@@ -700,7 +712,7 @@ function skillRuntimeForTurn(context: Parameters<ToolRuntime['createTools']>[0])
       localRoot: agentLocalFileRoot,
       scratchRoot: agentScratchRoot,
       signal,
-      processEnvironment: () => browserPilotHost.processEnvironment(context.thread.id, context.turn.id),
+      processEnvironment: () => managedSkillShellEnvironment!.processEnvironment(context.thread.id, context.turn.id),
     }),
     executeIsolatedSkill: async ({
       skill,
@@ -772,6 +784,7 @@ async function prepareSkillRuntimeForTurn(
     if (turnSkillRuntimeInitializations.get(context.turn.id) === initialization) {
       turnSkillRuntimeInitializations.delete(context.turn.id);
       turnSkillRuntimes.delete(context.turn.id);
+      managedSkillShellEnvironment?.clearTurn(context.turn.id);
     }
     throw error;
   }
@@ -806,7 +819,7 @@ function localWorkspaceForTurn(context: Parameters<ToolRuntime['createTools']>[0
     agentLocalFileRoot,
     agentScratchRoot,
     skillRuntimeForTurn(context),
-    () => browserPilotHost.processEnvironment(context.thread.id, context.turn.id),
+    () => managedSkillShellEnvironment!.processEnvironment(context.thread.id, context.turn.id),
   );
 }
 
@@ -875,6 +888,7 @@ threadService.subscribe((notification) => {
   if (notification.type === 'turn/completed') {
     turnSkillRuntimes.delete(notification.turnId);
     turnSkillRuntimeInitializations.delete(notification.turnId);
+    managedSkillShellEnvironment?.clearTurn(notification.turnId);
   }
   if (notification.type === 'turn/completed' || notification.type === 'thread/status/changed') {
     automationService.wake();

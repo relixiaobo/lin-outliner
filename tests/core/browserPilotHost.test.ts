@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { lstat, mkdir, mkdtemp, realpath, rm, symlink } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -65,6 +65,26 @@ describe('Browser Pilot host environment', () => {
     expect(browserPilotClientKey('installation-secret', 'thread-2')).not.toBe(key);
   });
 
+  test('retries installation identity loading after a transient failure', async () => {
+    const root = await temporaryRoot();
+    let attempts = 0;
+    const host = new BrowserPilotHost({
+      userDataRoot: path.join(root, 'user-data'),
+      scratchRoot: path.join(root, 'scratch'),
+      loadInstallationId: async () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error('temporary read failure');
+        return 'recovered-installation-id';
+      },
+    });
+
+    await expect(host.processEnvironment('thread-1', 'turn-1')).rejects.toThrow('temporary read failure');
+    const recovered = await host.processEnvironment('thread-1', 'turn-2');
+    await host.processEnvironment('thread-1', 'turn-3');
+    expect(recovered.env?.[BROWSER_PILOT_CLIENT_KEY_ENV]).toBeDefined();
+    expect(attempts).toBe(2);
+  });
+
   test('rejects unsafe execution identities before creating output paths', async () => {
     const root = await temporaryRoot();
     await expect(prepareBrowserPilotOutputDirectory(root, '../thread', 'turn-1'))
@@ -85,6 +105,64 @@ describe('Browser Pilot host environment', () => {
     await expect(prepareBrowserPilotOutputDirectory(scratchRoot, 'thread-1', 'turn-1'))
       .rejects.toThrow('not a normal directory');
     expect(await lstat(outside)).toBeDefined();
+  });
+
+  symlinkTest('refuses unmanaged entries in the host-managed command directory', async () => {
+    const root = await temporaryRoot();
+    const userDataRoot = path.join(root, 'user-data');
+    const binDirectory = path.join(userDataRoot, 'browser-pilot', 'bin');
+    await mkdir(binDirectory, { recursive: true });
+    await writeFile(path.join(binDirectory, 'node'), '#!/bin/sh\n', 'utf8');
+    const host = new BrowserPilotHost({
+      userDataRoot,
+      scratchRoot: path.join(root, 'scratch'),
+      loadInstallationId: async () => 'installation-id',
+    });
+
+    await expect(host.processEnvironment('thread-1', 'turn-1'))
+      .rejects.toThrow('contains an unmanaged entry');
+  });
+
+  symlinkTest('accepts command links into the host-managed versions directory', async () => {
+    const root = await temporaryRoot();
+    const userDataRoot = path.join(root, 'user-data');
+    const installRoot = path.join(userDataRoot, 'browser-pilot');
+    const executable = path.join(installRoot, 'versions', '0.6.1-darwin-arm64', 'browser-pilot');
+    const binDirectory = path.join(installRoot, 'bin');
+    await mkdir(path.dirname(executable), { recursive: true });
+    await mkdir(binDirectory, { recursive: true });
+    await writeFile(executable, '#!/bin/sh\n', 'utf8');
+    await symlink(executable, path.join(binDirectory, 'bp'));
+    const host = new BrowserPilotHost({
+      userDataRoot,
+      scratchRoot: path.join(root, 'scratch'),
+      loadInstallationId: async () => 'installation-id',
+    });
+
+    const environment = await host.processEnvironment('thread-1', 'turn-1');
+    expect(environment.leadingToolPathSegments).toEqual([binDirectory]);
+  });
+
+  symlinkTest('refuses command links through a substituted versions directory', async () => {
+    const root = await temporaryRoot();
+    const userDataRoot = path.join(root, 'user-data');
+    const installRoot = path.join(userDataRoot, 'browser-pilot');
+    const outsideVersions = path.join(root, 'outside-versions');
+    const executable = path.join(outsideVersions, '0.6.1-darwin-arm64', 'browser-pilot');
+    const binDirectory = path.join(installRoot, 'bin');
+    await mkdir(path.dirname(executable), { recursive: true });
+    await mkdir(binDirectory, { recursive: true });
+    await writeFile(executable, '#!/bin/sh\n', 'utf8');
+    await symlink(outsideVersions, path.join(installRoot, 'versions'), 'dir');
+    await symlink(executable, path.join(binDirectory, 'bp'));
+    const host = new BrowserPilotHost({
+      userDataRoot,
+      scratchRoot: path.join(root, 'scratch'),
+      loadInstallationId: async () => 'installation-id',
+    });
+
+    await expect(host.processEnvironment('thread-1', 'turn-1'))
+      .rejects.toThrow('versions path is not a normal directory');
   });
 });
 

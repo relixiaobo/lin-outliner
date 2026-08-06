@@ -92,7 +92,7 @@ export interface ManagedSkillDefaultBootstrapOptions {
 
 export interface ManagedSkillDefaultBootstrapResult {
   id: string;
-  status: 'installed' | 'preserved' | 'normalized' | 'opted-out' | 'name-conflict' | 'failed';
+  status: 'installed' | 'preserved' | 'opted-out' | 'name-conflict' | 'failed';
   error?: ManagedSkillErrorView;
 }
 
@@ -798,26 +798,7 @@ export class ManagedSkillService {
   ): Promise<ManagedSkillDefaultBootstrapResult | null> {
     const before = await this.options.store.readIndex();
     const existing = before.skills.find((record) => record.name === manifest.name || record.id === manifest.id);
-    if (existing) {
-      if (!isOfficialDefaultRecord(existing, manifest) || !manifest.legacyTrackingRefs.includes(existing.origin.trackingRef)) {
-        return { id: manifest.id, status: 'preserved' };
-      }
-      const normalized: ManagedSkillRecord = {
-        ...existing,
-        origin: { ...existing.origin, trackingRef: manifest.trackingRef },
-      };
-      try {
-        await this.options.store.updateIndex((index) => ({
-          ...index,
-          skills: index.skills.map((record) => record.id === existing.id ? normalized : record),
-        }));
-        await this.options.onChanged?.();
-      } catch (error) {
-        await this.restoreIndex(before);
-        throw error;
-      }
-      return { id: manifest.id, status: 'normalized' };
-    }
+    if (existing) return { id: manifest.id, status: 'preserved' };
     if (await this.options.store.hasDefaultOptOut(manifest.id)) {
       return { id: manifest.id, status: 'opted-out' };
     }
@@ -1026,7 +1007,6 @@ export class ManagedSkillService {
 
   private async readyForUse(): Promise<void> {
     await this.ready;
-    if (this.defaultBootstrapPromise) await this.defaultBootstrapPromise;
   }
 
   private defaultManifestForRecord(record: ManagedSkillRecord): ManagedSkillDefaultManifest | null {
@@ -1265,7 +1245,6 @@ function isOfficialDefaultRecord(
 ): boolean {
   return record.id === manifest.id
     && record.name === manifest.name
-    && record.catalogId === manifest.catalogId
     && record.origin.owner === manifest.owner
     && record.origin.repo === manifest.repo
     && record.origin.repository === manifest.repository

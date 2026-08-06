@@ -34,6 +34,30 @@ describe('managed skill store', () => {
     }
   });
 
+  test('quarantines an unreadable default policy without re-enabling product defaults', async () => {
+    const root = await temporaryRoot();
+    const store = new ManagedSkillStore(root);
+    await mkdir(path.dirname(store.defaultPolicyPath), { recursive: true });
+    await writeFile(store.defaultPolicyPath, '{not valid json', 'utf8');
+
+    await store.initialize();
+
+    const quarantined = (await readdir(path.dirname(store.defaultPolicyPath)))
+      .filter((entry) => entry.startsWith('default-policy.json.unreadable-'));
+    expect(quarantined).toHaveLength(1);
+    expect(await readFile(path.join(path.dirname(store.defaultPolicyPath), quarantined[0]!), 'utf8'))
+      .toBe('{not valid json');
+    expect(await store.hasDefaultOptOut('browser-pilot')).toBe(true);
+    expect(await store.hasDefaultOptOut('another-product-default')).toBe(true);
+
+    await store.recordDefaultOptOut('browser-pilot');
+    expect(JSON.parse(await readFile(store.defaultPolicyPath, 'utf8'))).toEqual({
+      schemaVersion: 1,
+      optOuts: ['browser-pilot'],
+    });
+    expect(await store.hasDefaultOptOut('future-product-default')).toBe(true);
+  });
+
   test('promotes validated bytes into a content-addressed immutable version', async () => {
     const root = await temporaryRoot();
     const store = new ManagedSkillStore(root);

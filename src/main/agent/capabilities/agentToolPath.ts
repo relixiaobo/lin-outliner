@@ -25,8 +25,8 @@ export interface AgentToolPathOptions {
 
 export function buildAgentToolPathValue(options: AgentToolPathOptions = {}): string {
   const segments = [
-    ...(options.leadingSegments ?? []),
     ...pathSegments(options.extraToolPath ?? process.env[EXTRA_TOOL_PATH_ENV]),
+    ...(options.leadingSegments ?? []),
     ...pathSegments(options.processPath ?? process.env.PATH),
     ...(options.defaultToolPathSegments ?? DEFAULT_AGENT_TOOL_PATH_SEGMENTS),
     ...(options.trailingSegments ?? []),

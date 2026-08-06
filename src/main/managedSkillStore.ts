@@ -107,6 +107,7 @@ export class ManagedSkillStore {
     await ensureNormalDirectory(this.contentRoot, PRIVATE_DIRECTORY_MODE);
     await ensureNormalDirectory(this.stagingRoot, PRIVATE_DIRECTORY_MODE);
     await this.healUnreadableIndex();
+    await this.healUnreadableDefaultPolicy();
     await this.pruneStaging();
     await this.pruneOrphanVersions();
   }
@@ -140,6 +141,30 @@ export class ManagedSkillStore {
       console.warn(
         `Managed skill index could not be read (${error instanceof Error ? error.message : String(error)}); `
         + `moved to ${quarantinePath}. Managed skills must be reinstalled.`,
+      );
+    }
+  }
+
+  /**
+   * Quarantine an unreadable opt-out file while retaining a conservative marker.
+   * A quarantined policy suppresses every product default until the user explicitly
+   * installs it, so recovery can never turn corruption into silent re-enablement.
+   */
+  private async healUnreadableDefaultPolicy(): Promise<void> {
+    let raw: string;
+    try {
+      raw = await readFile(this.defaultPolicyPath, 'utf8');
+    } catch {
+      return;
+    }
+    try {
+      parseManagedSkillDefaultPolicy(JSON.parse(raw));
+    } catch (error) {
+      const quarantinePath = `${this.defaultPolicyPath}.unreadable-${Date.now()}`;
+      await rename(this.defaultPolicyPath, quarantinePath);
+      console.warn(
+        `Managed skill default policy could not be read (${error instanceof Error ? error.message : String(error)}); `
+        + `moved to ${quarantinePath}. Product defaults remain opted out.`,
       );
     }
   }
@@ -178,12 +203,18 @@ export class ManagedSkillStore {
   async hasDefaultOptOut(skillId: string): Promise<boolean> {
     assertSafeSkillId(skillId);
     await ensureNormalDirectory(this.controlRoot, PRIVATE_DIRECTORY_MODE);
+    if (await this.hasQuarantinedDefaultPolicy()) return true;
     const policy = await readJsonOrDefault(
       this.defaultPolicyPath,
       emptyDefaultPolicy(),
       parseManagedSkillDefaultPolicy,
     );
     return policy.optOuts.includes(skillId);
+  }
+
+  private async hasQuarantinedDefaultPolicy(): Promise<boolean> {
+    const prefix = `${path.basename(this.defaultPolicyPath)}.unreadable-`;
+    return (await readdir(this.controlRoot)).some((entry) => entry.startsWith(prefix));
   }
 
   async recordDefaultOptOut(skillId: string): Promise<void> {

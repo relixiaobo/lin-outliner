@@ -67,55 +67,6 @@ describe('managed skill service', () => {
     expect(update).toMatchObject({ status: 'update-available', updateCommit: 'b'.repeat(40) });
   });
 
-  test('normalizes only an official legacy default while preserving its state', async () => {
-    const root = await temporaryRoot();
-    const store = new ManagedSkillStore(root);
-    const skill = fixture('Existing Browser Pilot instructions.', 'browser-pilot');
-    const manifest = defaultManifest(skill);
-    const active = storedVersionFromValidated(manifest.initialCommit, 100, skill);
-    await store.initialize();
-    await store.installValidatedContent(manifest.id, skill);
-    await store.replaceIndex({
-      schemaVersion: 2,
-      skills: [{
-        id: manifest.id,
-        name: manifest.name,
-        origin: {
-          owner: manifest.owner,
-          repo: manifest.repo,
-          repository: manifest.repository,
-          subdirectory: manifest.subdirectory,
-          trackingRef: 'main',
-        },
-        recommended: true,
-        catalogId: manifest.catalogId,
-        catalogCompatibilityRange: manifest.catalogCompatibilityRange,
-        enabled: false,
-        active,
-        diagnostic: { code: 'rolled_back', message: 'Kept diagnostic.', at: 200 },
-      }],
-    });
-    const github = new DefaultFakeGitHub(skill);
-    const service = new ManagedSkillService({
-      appVersion: '0.1.0',
-      store,
-      github: github as unknown as ManagedSkillGitHubClient,
-    });
-
-    expect(await service.bootstrapDefaults([manifest])).toEqual([{
-      id: manifest.id,
-      status: 'normalized',
-    }]);
-    expect(github.discoverInputs).toEqual([]);
-    const [record] = (await store.readIndex()).skills;
-    expect(record).toMatchObject({
-      enabled: false,
-      active,
-      diagnostic: { code: 'rolled_back', message: 'Kept diagnostic.', at: 200 },
-      origin: { trackingRef: 'skill-stable' },
-    });
-  });
-
   test('preserves a non-official same-name owner without downloading the default', async () => {
     const root = await temporaryRoot();
     const store = new ManagedSkillStore(root);
@@ -190,6 +141,87 @@ describe('managed skill service', () => {
     }]);
     expect(restartedGitHub.discoverInputs).toEqual([]);
     expect(await restarted.list()).toEqual([]);
+  });
+
+  test('opts out an official Browser Pilot installed directly from its repository URL', async () => {
+    const root = await temporaryRoot();
+    const store = new ManagedSkillStore(root);
+    const skill = fixture('Browser Pilot URL install.', 'browser-pilot');
+    const manifest = defaultManifest(skill);
+    const github = new DefaultFakeGitHub(skill);
+    const service = new ManagedSkillService({
+      appVersion: '0.1.0',
+      store,
+      github: github as unknown as ManagedSkillGitHubClient,
+    });
+
+    const discovery = await service.discover({ sourceUrl: manifest.repository });
+    const installed = await service.install({
+      discoveryId: discovery.id,
+      candidateId: discovery.candidates[0]!.id,
+      expectedCommit: discovery.resolvedCommit,
+    });
+    expect(installed).toMatchObject({
+      id: manifest.id,
+      recommended: false,
+      subdirectory: manifest.subdirectory,
+    });
+    expect((await store.readIndex()).skills[0]?.catalogId).toBeUndefined();
+    expect(await service.bootstrapDefaults([manifest])).toEqual([{
+      id: manifest.id,
+      status: 'preserved',
+    }]);
+
+    expect(await service.uninstall({
+      skillId: installed.id,
+      expectedActiveHash: installed.active.contentHash,
+    })).toEqual([]);
+    expect(await store.hasDefaultOptOut(manifest.id)).toBe(true);
+
+    const restartedGitHub = new DefaultFakeGitHub(skill);
+    const restarted = new ManagedSkillService({
+      appVersion: '0.1.0',
+      store: new ManagedSkillStore(root),
+      github: restartedGitHub as unknown as ManagedSkillGitHubClient,
+    });
+    expect(await restarted.bootstrapDefaults([manifest])).toEqual([{
+      id: manifest.id,
+      status: 'opted-out',
+    }]);
+    expect(restartedGitHub.discoverInputs).toEqual([]);
+  });
+
+  test('does not block Skill reads while default acquisition is pending', async () => {
+    const root = await temporaryRoot();
+    const skill = fixture('Deferred Browser Pilot acquisition.', 'browser-pilot');
+    const manifest = defaultManifest(skill);
+    const github = new DefaultFakeGitHub(skill);
+    let releaseDiscovery!: () => void;
+    let reportDiscoveryStarted!: () => void;
+    const discoveryGate = new Promise<void>((resolve) => { releaseDiscovery = resolve; });
+    const discoveryStarted = new Promise<void>((resolve) => { reportDiscoveryStarted = resolve; });
+    github.discoveryGate = discoveryGate;
+    github.onDiscoveryStarted = reportDiscoveryStarted;
+    const service = new ManagedSkillService({
+      appVersion: '0.1.0',
+      store: new ManagedSkillStore(root),
+      github: github as unknown as ManagedSkillGitHubClient,
+    });
+
+    const bootstrap = service.bootstrapDefaults([manifest]);
+    await discoveryStarted;
+    try {
+      expect(await Promise.race([
+        Promise.all([service.list(), service.activeRuntimeRoots()]),
+        new Promise<never>((_, reject) => setTimeout(
+          () => reject(new Error('Skill reads waited for default acquisition.')),
+          200,
+        )),
+      ])).toEqual([[], []]);
+    } finally {
+      releaseDiscovery();
+    }
+    expect(await bootstrap).toEqual([{ id: manifest.id, status: 'installed' }]);
   });
 
   test('stops default uninstall when its opt-out cannot be persisted', async () => {
@@ -1167,6 +1199,8 @@ class DefaultFakeGitHub {
   }> = [];
   readonly trackingRefs: string[] = [];
   trackingCommit = 'a'.repeat(40);
+  discoveryGate: Promise<void> | null = null;
+  onDiscoveryStarted: (() => void) | null = null;
 
   constructor(private readonly skill: ValidatedManagedSkill) {}
 
@@ -1175,6 +1209,9 @@ class DefaultFakeGitHub {
     trackingRef?: string;
     subdirectory?: string;
   }): Promise<ManagedSkillGitHubDiscovery> {
+    this.onDiscoveryStarted?.();
+    await this.discoveryGate;
+    const subdirectory = input.subdirectory ?? 'plugin/skills/browser-pilot';
     this.discoverInputs.push({
       ...(input.trackingRef ? { trackingRef: input.trackingRef } : {}),
       ...(input.subdirectory ? { subdirectory: input.subdirectory } : {}),
@@ -1184,7 +1221,7 @@ class DefaultFakeGitHub {
         owner: 'relixiaobo',
         repo: 'browser-pilot',
         repository: input.sourceUrl,
-        subdirectory: input.subdirectory ?? '',
+        subdirectory,
         trackingRef: input.trackingRef ?? 'main',
         commit: 'a'.repeat(40),
       },
@@ -1193,7 +1230,7 @@ class DefaultFakeGitHub {
           id: 'browser-pilot-candidate',
           name: this.skill.name,
           description: this.skill.description,
-          subdirectory: input.subdirectory ?? '',
+          subdirectory,
           compatibility: this.skill.compatibility,
           scripts: [...this.skill.scripts],
         },
@@ -1317,7 +1354,6 @@ function defaultManifest(skill: ValidatedManagedSkill): ManagedSkillDefaultManif
     repository: 'https://github.com/relixiaobo/browser-pilot',
     subdirectory: 'plugin/skills/browser-pilot',
     trackingRef: 'skill-stable',
-    legacyTrackingRefs: ['main'],
     initialCommit: 'a'.repeat(40),
     expectedContentHash: skill.contentHash,
     catalogCompatibilityRange: '>=0.1.0 <1.0.0',

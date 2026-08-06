@@ -225,11 +225,12 @@ never as code loaded into the host.
 
 Browser Pilot is the only product-default managed Skill. It is not a built-in,
 and neither its Skill bytes nor its executable are packaged in Tenon. Main starts
-one best-effort acquisition attempt per launch, while the first Skill-registry
-read joins that same promise so it cannot observe a half-published record. The
-ordinary managed validator downloads an immutable reviewed commit, verifies the
-complete subtree hash, publishes the record atomically, and executes none of the
-Skill content.
+one best-effort acquisition attempt per launch in the background. Skill-library
+reads and Turn runtime admission wait only for local store initialization, never
+for this GitHub work; they see either the prior/absent record or the atomically
+published complete record. Publication refreshes the live registries for later
+Turns. The ordinary managed validator downloads an immutable reviewed commit,
+verifies the complete subtree hash, and executes none of the Skill content.
 
 The current first-install seed is Browser Pilot Skill v0.6.1 at commit
 `853e95d26acec49bcb60d8dac3bb8e5060491727`, with subtree hash
@@ -242,14 +243,16 @@ Skill's `compatibility.json` is authoritative for its accepted CLI range and the
 exact tested CLI version installed when provisioning is needed, so a future
 stable release requires no permanent Tenon-side CLI pin.
 
-Bootstrap preserves any existing same-name owner. It changes only an official
-catalog record still tracking the former `main` ref, rebinding that ref to
-`skill-stable` while preserving enabled state, versions, diagnostics, and
-rollback data. A private default-policy record makes uninstall durable: opt-out
-is written before the managed record is removed, and a failed opt-out write
-stops uninstall. Disable keeps the record and does not opt out. Acquisition,
-validation, conflict, storage, or notification failure publishes no partial
-record and may retry once on the next launch.
+Bootstrap preserves any existing same-name or same-ID record without migration or
+metadata rewriting. A private default-policy record makes uninstall durable:
+opt-out is written before an official-origin Browser Pilot record is removed,
+whether that record came from default acquisition, the catalog, or a direct
+repository URL. A failed opt-out write stops uninstall. If the policy cannot be
+decoded, Tenon quarantines its bytes and conservatively treats every product
+default as opted out; it never converts corruption into silent re-enablement.
+Disable keeps the record and does not opt out. Acquisition, validation, conflict,
+storage, or notification failure publishes no partial record and may retry once
+on the next launch.
 
 The first relevant Agent task runs the active Skill's mandatory preflight
 through ordinary `bash`. It reuses a compatible `bp` command or lazily installs

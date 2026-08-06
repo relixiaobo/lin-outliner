@@ -7,7 +7,6 @@ export interface ManagedSkillDefaultManifest {
   repository: string;
   subdirectory: string;
   trackingRef: string;
-  legacyTrackingRefs: readonly string[];
   initialCommit: string;
   expectedContentHash: string;
   catalogCompatibilityRange: string;
@@ -26,7 +25,6 @@ export const DEFAULT_MANAGED_SKILLS: readonly ManagedSkillDefaultManifest[] = [{
   repository: 'https://github.com/relixiaobo/browser-pilot',
   subdirectory: 'plugin/skills/browser-pilot',
   trackingRef: 'skill-stable',
-  legacyTrackingRefs: ['main'],
   initialCommit: '853e95d26acec49bcb60d8dac3bb8e5060491727',
   expectedContentHash: 'bea2163ac5d51d8b0ec2b0c7d119dd23904079b0086bee087752eeef6aa86b6d',
   catalogCompatibilityRange: '>=0.1.0 <1.0.0',

@@ -112,19 +112,34 @@ Skill catalog snapshot.
   filesystem, and PATH failures stop the browser task and never fall through to
   npm. Intel Mac remains unsupported by Browser Pilot.
 - **DEC-7:** Tenon gives the upstream installer a durable, app-owned command
-  location and makes that location the first Agent tool path:
+  location and contributes it ahead of the ordinary Agent tool path while
+  preserving the explicit operator override:
 
   ```text
   BROWSER_PILOT_INSTALL_ROOT = join(userData, "browser-pilot")
   BROWSER_PILOT_BIN_DIR = join(BROWSER_PILOT_INSTALL_ROOT, "bin")
-  PATH = BROWSER_PILOT_BIN_DIR + delimiter + existingAgentToolPath
+  PATH = LIN_AGENT_EXTRA_TOOL_PATH
+       + BROWSER_PILOT_BIN_DIR
+       + inheritedProcessPath
+       + standardFallbacks
   ```
 
-  Both installer variables are present in Skill-shell, foreground `bash`, and
-  background `bash` environments. Tenon does not edit the user's shell startup
-  files or system PATH. A compatible user-installed command remains reusable when
-  the dedicated directory is empty; after managed installation, the dedicated
-  command wins over an incompatible unmanaged command elsewhere on PATH.
+  While Browser Pilot is active and its contribution validates, both installer
+  variables are present in Skill-shell, foreground `bash`, and background `bash`
+  environments. Tenon does not edit the user's shell startup files or system
+  PATH. A compatible user-installed command remains reusable when the dedicated
+  directory is empty; after managed installation, the dedicated command wins over
+  an incompatible unmanaged command elsewhere on the ordinary PATH.
+  `LIN_AGENT_EXTRA_TOOL_PATH` remains first as the deliberate operator override.
+- **DEC-8:** Host shell context is a generic registry keyed by active managed
+  Skill IDs, not an unconditional Browser Pilot hook. The registry resolves and
+  memoizes contributors once per Turn and shares the result across Skill-shell,
+  foreground `bash`, and background `bash`. Active-root lookup and individual
+  contributor failures are isolated and logged; ordinary shell execution remains
+  available. Before Browser Pilot contributes its bin directory, Tenon admits
+  only an absent/empty directory or owned `bp` and `browser-pilot` links/shims
+  resolving inside the managed `versions` root. Installation identity is cached
+  only after a successful read, so a transient failure is retryable later.
 - **CON-1:** Installing a managed Skill remains inert. Default acquisition may
   download, validate, and store instruction/support bytes, including non-
   executable installer scripts, but it never executes Skill content or installs
@@ -158,15 +173,18 @@ catalog entries must not inherit default behavior.
 
 Tenon keeps a small private opt-out record beside the managed index. It answers
 only whether automatic acquisition of a named product default has been declined;
-it is not a second activation store and is never exposed to the model.
+it is not a second activation store and is never exposed to the model. An
+unreadable policy is quarantined rather than replaced: the quarantine marker
+conservatively suppresses every current and future product default, while later
+explicit opt-out writes may create a fresh valid policy without removing that
+marker.
 
 The one-attempt-per-launch bootstrap applies these business rules in order:
 
-- **BR-1:** If a `browser-pilot` managed record already exists, preserve its
-  active/previous versions, content hashes, diagnostics, and enabled state. A
-  prior manual disable is authoritative. An official catalog record that still
-  carries the former `main` tracking ref is rebound to `skill-stable` metadata
-  only; an arbitrary manual source or ref is not rewritten.
+- **BR-1:** If a `browser-pilot` managed record already exists by ID or name,
+  preserve its origin, tracking ref, active/previous versions, content hashes,
+  diagnostics, and enabled state without migration. A prior manual disable is
+  authoritative.
 - **BR-2:** If `browser-pilot` is in the default opt-out record, do nothing.
 - **BR-3:** If a built-in, user, project, local-directory, or other managed Skill
   owns the same canonical name, preserve that owner and do not download another
@@ -179,22 +197,27 @@ The one-attempt-per-launch bootstrap applies these business rules in order:
   notification failure publishes no partial record, does not mark opt-out, and
   does not block app launch or unrelated Agent work. The next launch may retry
   once.
-- **BR-6:** Successful uninstall writes opt-out before removing the index record.
-  Disable preserves the record. Explicit manual install remains allowed without
-  clearing opt-out, so a later uninstall remains final.
+- **BR-6:** Successful uninstall of an official-origin Browser Pilot record writes
+  opt-out before removing the index record, including records installed directly
+  from the official repository URL without catalog metadata. Disable preserves
+  the record. Explicit manual install remains allowed without clearing opt-out,
+  so a later uninstall remains final.
 
 The bootstrap begins asynchronously during Agent-service startup and does not
-block first paint. The first Skill-registry load joins the same bounded bootstrap
-promise so a concurrent first Turn cannot snapshot the registry between content
-promotion and index publication. Failure degrades to the ordinary catalog/manual
-install path rather than failing Turn admission.
+block first paint, Skill-library reads, runtime-root discovery, or Turn admission.
+Those paths wait only for local store initialization and may observe the default
+as absent while GitHub work is pending. Content-addressed promotion plus atomic
+index publication prevents a half-published record; registry refresh makes a
+successful acquisition available to later Turns. Failure degrades to the
+ordinary catalog/manual install path.
 
-Uninstalling the product-default record writes the opt-out before removing the
-managed index entry. If that write fails, uninstall stops before changing the
-active record. A successful uninstall therefore cannot be reversed by the next
-launch. Disabling retains the installed record and needs no opt-out. A later
-explicit user install is allowed, but it does not erase the opt-out; a subsequent
-uninstall remains final until the user explicitly installs again.
+Uninstalling an official-origin record writes the opt-out before removing the
+managed index entry, regardless of whether default bootstrap, catalog discovery,
+or direct URL discovery installed it. If that write fails, uninstall stops before
+changing the active record. A successful uninstall therefore cannot be reversed
+by the next launch. Disabling retains the installed record and needs no opt-out.
+A later explicit user install is allowed, but it does not erase the opt-out; a
+subsequent uninstall remains final until the user explicitly installs again.
 
 ### FLOW-1: First Default Acquisition
 
@@ -261,9 +284,11 @@ BROWSER_PILOT_OUTPUT_DIR = join(agentScratchRoot, "browser-pilot", threadId, tur
 ```
 
 - The durable install root and bin directory are shared by all Threads in one
-  isolated Tenon `userData`; the bin directory is prepended to their Agent PATH.
-  Tenon does not set `BROWSER_PILOT_HOME`, so protocol-compatible installations
-  continue to reuse Browser Pilot's normal per-user service.
+  isolated Tenon `userData`. While the managed Skill is active, a per-Turn
+  registry contributes the validated bin directory after
+  `LIN_AGENT_EXTRA_TOOL_PATH` and before the inherited/default Agent PATH. Tenon
+  does not set `BROWSER_PILOT_HOME`, so protocol-compatible installations continue
+  to reuse Browser Pilot's normal per-user service.
 - One Thread reuses its client key across Turns; root Threads, forks, child
   Threads, isolated-Skill Threads, and concurrent independent Threads receive
   distinct keys.
@@ -272,9 +297,10 @@ BROWSER_PILOT_OUTPUT_DIR = join(agentScratchRoot, "browser-pilot", threadId, tur
 - The Turn output directory is created and canonicalized before an Agent shell
   process starts. Browser Pilot rejects explicit output escapes while the
   variable is present; Tenon's normal file capabilities govern later reads.
-- Every Skill-shell, foreground, and background `bash` process in the Turn
-  receives the same Browser Pilot environment. Retry recovery therefore preserves
-  command resolution, client state, and output scope.
+- Every Skill-shell, foreground, and background `bash` process in the Turn reuses
+  one memoized Browser Pilot environment. If the Skill is inactive or its host
+  contribution fails validation, Browser Pilot variables and paths are omitted
+  while ordinary shell execution remains available.
 - Tenon does not set a task-wide `BROWSER_PILOT_REQUEST_ID`; operation request IDs
   remain Browser Pilot's per-command concern.
 - Turn completion leaves Browser Pilot client/browser state intact. Scratch TTL
@@ -309,9 +335,10 @@ shell seams:
   default identity, and bootstrap orchestration inputs;
 - `src/main/managedSkillStore.ts` and `src/main/managedSkillService.ts`: private
   opt-out state, idempotent default acquisition, ordinary install validation,
-  narrow official-origin rebinding, atomic publication, and uninstall ordering;
-- `src/main/main.ts`: start/join bootstrap, refresh registries, derive the durable
-  install paths and per-Thread identity, and bind Turn output roots;
+  conservative policy quarantine, atomic publication, and uninstall ordering;
+- `src/main/main.ts` and `src/main/managedSkillShellEnvironment.ts`: start the
+  detached bootstrap, refresh registries, select active contributors, derive the
+  durable install paths and per-Thread identity, and memoize Turn output roots;
 - `src/main/agent/capabilities/agentToolPath.ts`, `agentToolProcess.ts`,
   `agentLocalTools.ts`, and `agentSkillShell.ts`: prepend the dedicated command
   directory and carry the host-owned Browser Pilot environment into Skill-shell,
@@ -356,37 +383,42 @@ environment, but owns neither installer nor executable bytes.
       the reviewed commit/hash; no built-in definition or packaged Skill copy
       exists.
 - [ ] **AC-2:** An existing enabled or disabled managed record preserves its
-      active/previous versions, content hashes, diagnostics, and user choice. Only
-      an official catalog record's obsolete `main` tracking ref is rebound to
-      `skill-stable`; arbitrary manual origins and refs remain unchanged.
+      origin, tracking ref, active/previous versions, content hashes, diagnostics,
+      and user choice without migration or metadata rewriting.
 - [ ] **AC-3:** A user/project/local/built-in name owner prevents default
       acquisition without being replaced, rewritten, or disabled.
 - [ ] **AC-4:** Network, compatibility, validation, hash, storage, or notification
       failure publishes no partial record, does not mark opt-out, does not block
-      first paint or unrelated Agent work, and performs no unbounded same-launch
-      retry.
+      first paint, Skill reads, Turn admission, or unrelated Agent work, and
+      performs no unbounded same-launch retry.
 - [ ] **AC-5:** Disable persists across restart. Successful uninstall records
       opt-out before removing the active record, and later launches do not
-      reacquire it. Explicit manual installation remains possible.
-- [ ] **AC-6:** The catalog, new default records, and normalized existing official
-      records track `skill-stable`; update checks do not auto-download or
-      auto-apply a later Skill version, and preview/apply/rollback retain their
-      existing integrity guarantees.
+      reacquire it. The rule also covers an official-origin record installed from
+      a direct URL without catalog metadata. Explicit manual installation remains
+      possible. An unreadable policy is quarantined and suppresses all defaults
+      instead of resetting to empty.
+- [ ] **AC-6:** The catalog and newly acquired default records track
+      `skill-stable`; existing records are not rewritten. Update checks do not
+      auto-download or auto-apply a later Skill version, and
+      preview/apply/rollback retain their existing integrity guarantees.
 - [ ] **AC-7:** A compatible existing `bp` outside Tenon's dedicated directory
       causes no install. An incompatible legacy command in `~/.local/bin`,
       Homebrew, or another external directory is neither overwritten, moved, nor
       deleted: on Apple Silicon the active Skill's exact native installer targets
       Tenon's dedicated root/bin, validates the published SHA-256, preserves a
       complete versioned release, resolves the initial v0.6.1 CLI ahead of that
-      legacy command, and never follows GitHub `latest` or npm `@latest`. No
-      Node.js/npm is required for that initial native release.
+      legacy command when no explicit extra-path override is set, and never
+      follows GitHub `latest` or npm `@latest`. `LIN_AGENT_EXTRA_TOOL_PATH` remains
+      first. No Node.js/npm is required for that initial native release.
 - [ ] **AC-8:** Only the declared unsupported-platform exit code permits the exact
       Node.js 22+/npm fallback. An unmanaged `bp` or `browser-pilot` entry inside
       Tenon's dedicated bin directory produces `command_conflict` and is not
       overwritten. That conflict, download, checksum, extraction, filesystem,
       PATH, and incompatible post-install failures never fall through to npm and
       produce bounded, actionable task failure without corrupting, disabling, or
-      updating the managed Skill record.
+      updating the managed Skill record. Tenon admits the dedicated bin into PATH
+      only when every entry is an owned command resolving inside managed versions;
+      rejection omits the contribution without disabling unrelated `bash`.
 - [ ] **AC-9:** The same Thread receives one stable client key across Turns;
       root, fork, child, isolated, and concurrent Threads receive distinct keys.
       Keys and injected environment values never enter durable/model-visible
@@ -394,7 +426,9 @@ environment, but owns neither installer nor executable bytes.
 - [ ] **AC-10:** Each Turn receives a canonical private output directory under
       Agent scratch; foreground/background shell calls agree on it, traversal or
       symlink escape is rejected, file tools can consume valid outputs, and TTL
-      cleanup reclaims them.
+      cleanup reclaims them. The environment is built once per Turn only while the
+      managed Skill is active; contributor or installation-ID load failure is
+      isolated, and a failed identity load remains retryable on a later Turn.
 - [ ] **AC-11:** Skill and tool ceilings, explicit disablement, capability blocks,
       Chrome connection authorization, and user-owned tab lifetime remain
       unchanged. No Browser Pilot-native model/tool/runtime surface is added, and
