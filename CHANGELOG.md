@@ -221,7 +221,21 @@ Tracks `main`; not yet tagged for release. `package.json` is at `0.1.0`.
 
 ### Changed
 
-- **Connections keep up with their providers (PR #487, codex-4)** — the model
+- **Settings, reorganized around what you are actually setting (PR #488, cc-2)** —
+  Settings is now General, Agent, and Reading, with About, the Skill Library, and
+  Add Service as their own routed pages instead of one long scroll. Changes apply
+  the moment you make them: there is no Save button to forget, a write that fails
+  says so in place and puts the old value back, and a slow response can no longer
+  land on top of a newer choice you already made. A connection's status now
+  reflects a real, bounded check rather than a guess — and it stays put, so a
+  connection you verified still reads as verified after its sign-in quietly
+  refreshes in the background or you flip its switch off and on. Managed Skills
+  install, enable, and roll back truthfully, and a Skill whose files are broken
+  no longer takes the rest of your Skills down with it. Reading preferences —
+  page translation, URL translation, and language — stay consistent with each
+  other, and a failed write is visible and retryable. What's New starts collapsed,
+  scrolls within itself, and shows the section matching the version you are
+  running, with a version picker for the rest.
   runtime moved to pi-ai 0.83, which brings the current model catalog and the
   provider-owned sign-in flow. Signing in is now the provider's own flow rather
   than one shared script, so device codes, pasted codes, and account pickers all

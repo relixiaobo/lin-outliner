@@ -20,7 +20,7 @@ lives in `docs/plans/<topic>.md` (terminal plans in `docs/plans/archive/`). The
 |-------|-------|---------------|--------------|
 | main | `lin-outliner/` | `main` | Review / merge / integration |
 | Claude Code | `lin-outliner-cc/` | — | idle (authored `unified-command-surface` #485, plan only — both implementation PRs unclaimed; shipped channel-working-indicator #280, file-presentation-redesign #285, file-link-native-color #293, agent-deck-click-refocus #449, pane-reorder #452) |
-| Claude Code 2 | `lin-outliner-cc-2/` | — | idle (authored `generated-image-resources` #489, implemented by Codex 2 in #490; shipped #461, #463, #467, #468, #471, #472, #478 — `agent-run-presentation-consistency`, `agent-subagent-interaction`, and `agent-model-first-picker` all complete) |
+| Claude Code 2 | `lin-outliner-cc-2/` | — | idle (shipped `settings-redesign` #488; authored `generated-image-resources` #489, implemented by Codex 2 in #490; shipped #461, #463, #467, #468, #471, #472, #478 — `agent-run-presentation-consistency`, `agent-subagent-interaction`, and `agent-model-first-picker` all complete) |
 | Codex | `lin-outliner-codex/` | — | idle (refined the `unified-command-surface` contract #491; authored Codex agent restructure plans #423 and Browser Control plans #442/#443; shipped agent-transcript-disclosure-anchor #469, agent-ledger-portability #405, issue-event-persistence #407, renderer-noop-command-outcome #411, single-delivery-projection-routing #412, core-sparse-transactions #413, main-document-read-model #414, rich-text-editor-patch-runtime #415, agent-node-create-read-model #416, definition-create-read-model #417, renderer-formatting-cache #418, diagnostic-log-coalescing #419, renderer-delta-reducer-surface #420, search-query-complexity-budget #421, panel-date-navigation-index #422, system-reference-values-overlay #424, field-name-reuse-candidate-index #426, tag-selector-active-tag-index #427, red-e2e-on-main #464, preview-header-action-alignment #484) |
 | Codex 2 | `lin-outliner-codex-2/` | — | idle (shipped github-managed-skills #406, agent-full-access-default #410, native-turn-kernel #445, pi-ai import containment #447, threadservice-decomposition #451, toolruntime-handler-contribution #456, agent-subagent-status-truth #466, agent-dock-header-interactions #481, agent-new-thread-slash-command #486, generated-image-resources #490) |
 | Codex 3 | `lin-outliner-codex-3/` | — | idle (shipped agent-context-integrity #440, #441, #444 — plan complete; thread-completion-layout-stability #448; agent-canonical-tool-call-history #483) |
@@ -1019,6 +1019,20 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
 Small unclaimed items split off from shipped PRs — fast-track each when a clone is free; none block
 anything.
 
+- **docs-check-substring-orphan-rule** (P3, *fast-track, no plan file*) — `docs:check`'s
+  C2 orphan-plan rule (`scripts/docs-check.ts`) tests `tasks.includes(slug)`, a raw
+  substring match against the whole board. So a plan whose slug is a substring of any
+  other text on the board is silently considered "on the board": `settings-redesign`
+  was satisfied by a historical `native-settings-redesign` mention and its plan file
+  sat entirely off the board through the whole build, with the guard green the whole
+  time (caught by hand while merging #488). Match the slug as a real board reference —
+  the `docs/plans/<slug>.md` link form C1 already parses — rather than by substring.
+  This is a B11-shaped defect: a guard that reports green for a condition it never
+  actually checked is worse than no guard, because the board is what dev agents read
+  at plan time to self-check for collisions. Also worth a look while there: C2 keys off
+  slug text, so the same weakness applies to any short slug (`performance`,
+  `preview-*`) that occurs incidentally in prose.
+
 - **#208 review follow-ups** (P3, *fast-track, no plan file*) — non-blocking items surfaced by
   `/code-review high` on #208: **F7** add a core test pinning the agent `get_backlinks` projection
   shape (`core.backlinks()` field-hosted-ref: `sourceId` = owner node, kind `field`); **F8** confirm +
@@ -1100,6 +1114,53 @@ anything.
   the first real check surfaces.
 
 ## Recently completed
+
+- **settings-redesign** (cc-2, PR #488, merged 2026-08-06) — `done`; archived at
+  `docs/plans/archive/settings-redesign.md`, design folded into
+  `docs/spec/design-system/surfaces.md`, `docs/spec/agent-skills.md`, and
+  `docs/spec/agent-tool-permissions.md`. Settings is reorganized into General /
+  Agent / Reading with routed About, Skill Library, and Add Service pages;
+  mutations apply immediately and generation-safely, so a failed write restores the
+  last persisted value in place and a stale async completion can no longer overwrite
+  a newer choice. Provider status now reflects a bounded connection probe, concurrent
+  checks are protected from stale results, and configuration actions stay on the
+  correct native window route. Managed-skill install, auto-enable, trust, provenance,
+  rollback, and validation were corrected, and File Preview preferences stay
+  consistent across URL translation, page translation, and language writes. The PR
+  also establishes the **release-train contract** (recorded in the plan):
+  `package.json.version` names the current train, work accumulates under
+  `[Unreleased]`, the release commit freezes `[x.y.z] - YYYY-MM-DD` and takes tag
+  `vX.Y.Z`. Release *automation* and the main-owned board/changelog workflow remain
+  boarded separately in #480.
+  **Gate: `/code-review high`** — 20 candidates verified, 0 refuted, 10 reported
+  (5 correctness, 5 cleanup), all addressed in `be8bd69d` before merge. The three
+  worth carrying, because each was a correct-sounding invariant enforced at the wrong
+  boundary (A12): the managed-skill index schema bump `v1→v2` had **no heal path**, and
+  because `SkillRegistry.ensureLoaded`'s catch clears *every* source, one unreadable
+  managed index would have left users with no skills at all — not even built-ins. It
+  now quarantines the index (renamed, never deleted) and degrades to "no managed
+  skills". Second, `modifyPiCredential` is pi's `modify` hook for **token refresh as
+  well as login**, so invalidating unconditionally erased a provider's verdict roughly
+  hourly *and* made it unrecordable — pressing Test on an expired token refreshed it
+  mid-probe and bumped the generation the probe had captured. Only a changed endpoint,
+  api key, or refresh token counts now. Third, the enable switch fell through to the
+  catalog's default Base URL for a row storing none, which main read as an endpoint
+  change: flipping the switch dropped a good verdict and wrote in a URL the user never
+  entered. Also fixed: a ~250-line SKILL.md had become uninstallable because install
+  shared the *update diff's* 240-line bound, and every recorded verdict rendered
+  "Checked expired" because a past timestamp was routed through the OAuth *expiry*
+  formatter. Cleanup collapsed six hand-written serial-queue copies into
+  `src/core/serialMutationQueue.ts`, two optimistic-preference stores into one, and
+  the duplicated skill-count formula into `skillLibraryCount.ts`.
+  Post-merge verification at `be8bd69d`: typecheck, `test:core` (1756/0), `test:renderer`
+  (1039/0), and `docs:check` all green.
+  **Not done, deliberately:** the shell and the Skill Library still fetch the same two
+  skill lists independently — only the count *formula* was deduplicated, which was the
+  half that could silently disagree; the residual is one extra IPC call on pane open.
+  Worth knowing for the next board reader: `docs:check`'s orphan-plan rule (C2) is a
+  **substring** match, so `settings-redesign` was silently satisfied by the unrelated
+  historical `native-settings-redesign` entry and this plan sat off the board while
+  the guard stayed green — boarded below as `docs-check-substring-orphan-rule`.
 
 - **ci-macos-layout-and-material-red** (codex, PR #479, merged 2026-08-03, *fast-track, no
   plan file*) — the four tests that failed **every** CI macOS sample and had **never** failed
