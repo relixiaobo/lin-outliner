@@ -2154,9 +2154,11 @@ test.describe('canonical agent Thread surface', () => {
     // The card owns the per-child presentation while the child is alive.
     const skillLine = parentTurn.locator('.thread-delegation-line');
     await expect(skillLine).toHaveCount(1);
-    await expect(skillLine.locator('.thread-delegation-line-name')).toHaveText('skill_research_ab12cd34ef56');
+    // The child record carries no name here, so this also covers the fallback:
+    // the address alone still yields the Skill's name, never its suffix.
+    await expect(skillLine.locator('.thread-delegation-line-name')).toHaveText('research');
     await expect(skillLine.locator('.thread-delegation-line-status')).toContainText(/Running · \d+[smhd]/u);
-    const skillRow = skillLine.getByRole('button', { name: new RegExp(`Open Subagent Thread ${fixture.taskPath}`, 'u') });
+    const skillRow = skillLine.getByRole('button', { name: /Open Subagent Thread research/u });
     // No wait is in flight, so the divider must not claim to be waiting on it.
     await expect(parentTurn.locator('.thread-process-title')).toContainText(/Working for \d+[smhd]/u);
 
