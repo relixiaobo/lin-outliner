@@ -174,3 +174,22 @@ enforced implicitly (visibility, ordering, lifetime, reachability) and restate
 each as an explicit condition or test at the new location. A relocation diff
 that only moves markup is the suspicious kind: the code it deletes includes
 every guarantee the old coordinates were carrying.
+
+## Brevity is a guard; lengthening a lifetime disarms it
+
+The Thread scroll restore ran exactly once, at mount, and cleared itself before
+writing. That one fact was load-bearing for code that never mentioned it: the
+restore needed no `hasPendingAnchor()` check because no disclosure could be open
+that early; the send path could clear four other pieces of scroll state and skip
+the restore because it was already dead; routing the write through the shared
+`synchronizeScrollPosition` was safe because there was no *later* position for an
+intermediate write to overwrite. #499 made the restore converge across layout
+passes instead — a strictly better behaviour — and all three assumptions became
+defects at once, in code the diff never touched. Half the findings at the gate
+were that one change wearing different clothes.
+
+So when you extend how long something lives — a one-shot into a retry loop, a
+mount-time effect into a recurring one, a request into a subscription — enumerate
+what its brevity was standing in for. Every sibling that skipped a guard, relied
+on an ordering, or shared a write path chose that against the old lifetime, and
+none of them appear in the diff that changed it.
