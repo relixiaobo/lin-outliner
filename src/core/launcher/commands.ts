@@ -96,7 +96,7 @@ export function getStaticLauncherCommands(): LauncherCommandView[] {
 
 /**
  * Render an Electron accelerator (e.g. `CommandOrControl+Shift+Space`) as macOS
- * key symbols (`⌘⇧␣`). Both the launcher footer (its identity zone teaches the
+ * key symbols (`⌘⇧Space`). Both the launcher footer (its identity zone teaches the
  * summon keystroke) and Settings → General render the registered accelerator
  * through this one formatter. Unknown tokens pass through verbatim so a non-mac
  * accelerator still reads sensibly.
@@ -113,7 +113,10 @@ export function formatHotkey(accelerator: string | null): string | null {
     option: '⌥',
     alt: '⌥',
     shift: '⇧',
-    space: '␣',
+    // Spelled out, not `␣` (U+2423): that glyph renders as a bare underline at
+    // meta size and reads as an underscore, which teaches the wrong key — and
+    // teaching the key is the only reason these hints exist.
+    space: 'Space',
     enter: '↵',
     return: '↵',
     escape: 'esc',

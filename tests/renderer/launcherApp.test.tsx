@@ -252,7 +252,7 @@ describe('LauncherApp footer', () => {
   test('at rest the status zone is the identity: the app mark plus the formatted hotkey', async () => {
     const r = await renderLauncher();
     expect(statusText(r)).toContain(APP_NAME);
-    expect(statusText(r)).toContain('⌘⇧␣');
+    expect(statusText(r)).toContain('⌘⇧Space');
   });
 
   test('no hotkey registered → the identity renders without one (nothing to teach)', async () => {

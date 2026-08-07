@@ -6,7 +6,7 @@ import { formatHotkey } from '../../src/core/launcher/commands';
 
 describe('formatHotkey', () => {
   test('renders an Electron accelerator as macOS key symbols', () => {
-    expect(formatHotkey('CommandOrControl+Shift+Space')).toBe('⌘⇧␣');
+    expect(formatHotkey('CommandOrControl+Shift+Space')).toBe('⌘⇧Space');
     expect(formatHotkey('Option+Enter')).toBe('⌥↵');
   });
   test('passes unknown tokens through and handles null', () => {

@@ -58,7 +58,7 @@ describe('Settings → General: global launcher hotkey', () => {
     const r = await renderGeneral('CommandOrControl+Shift+Space');
     const text = shortcutsGroupText(r);
     expect(text).toContain('Global launcher');
-    expect(text).toContain('⌘⇧␣');
+    expect(text).toContain('⌘⇧Space');
     expect(text).not.toContain('Not available');
   });
 
