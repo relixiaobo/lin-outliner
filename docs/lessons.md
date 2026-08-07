@@ -193,3 +193,23 @@ mount-time effect into a recurring one, a request into a subscription — enumer
 what its brevity was standing in for. Every sibling that skipped a guard, relied
 on an ordering, or shared a write path chose that against the old lifetime, and
 none of them appear in the diff that changed it.
+
+## "The hypothesis is disproved" requires proving the change was live
+
+Diagnosing the launcher's missing IME candidate window cost three wrong
+conclusions in a row, and the same flaw produced all three. Lowering the window
+level was the first fix tried; the app was hot-reloaded rather than restarted,
+the main-process change never took effect, the test came back negative, and the
+hypothesis was recorded as **disproved**. Reasoning then moved on to an
+architectural story — Electron's `nonactivatingPanel` on a plain `NSWindow`, a
+trade-off against the launcher's whole reason for being — and that story was
+written onto the board as work needing a PM decision. It was fiction. The
+original hypothesis had been right, and a clean restart plus one line closed it.
+
+Two rules. **Before treating a negative result as evidence, prove the change was
+running** — a fresh process, a version marker, something observable; a
+hot-reloaded main process is not a restarted one. And **when a diagnosis starts
+requiring architecture to explain a symptom, suspect the diagnosis**: the tell
+here was a sliver of the highlighted first candidate escaping past the panel's
+left edge, which said "drawn, positioned correctly, behind" and ruled out every
+input-context theory at a glance. Cheap observation beats expensive theory.
