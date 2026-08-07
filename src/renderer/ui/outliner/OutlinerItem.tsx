@@ -2511,10 +2511,10 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
           // selection (its own selected-ness is unchanged), so props.ui.selectedIds
           // can be stale here. The context menu's batch actions ("N nodes: …")
           // need the current full set. uiRef is refreshed every NodePanel render.
+          panelId={props.panelId}
           selectedIds={props.uiRef.current.selectedIds}
           index={props.index}
           isPinned={props.isNodePinned(drillDownId)}
-          run={props.run}
           onRoot={props.onRoot}
           onTogglePin={props.onTogglePin}
           onEditDescription={() => {

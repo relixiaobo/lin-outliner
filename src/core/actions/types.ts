@@ -8,7 +8,7 @@
 
 import type { ExternalContext } from '../launcher/context';
 import type { Locale } from '../locale';
-import type { NodeId } from '../types';
+import type { FocusHint, NodeId } from '../types';
 import type { ActionEffectPlan, AppSurface, ViewSection } from './bindings';
 
 /** Every static label the surface can search or render, in BOTH locales. */
@@ -504,7 +504,13 @@ export type ExecutionFailure =
   | { kind: 'invocationStale' };
 
 export type ActionExecutionResult =
-  | { status: 'completed' }
+  /**
+   * `focus` is the last executed command's focus hint. Commands still return
+   * `CommandResult.focus` and the caret still lands where they say; the only
+   * change is that main now forwards it instead of the renderer reading its own
+   * command reply.
+   */
+  | { status: 'completed'; focus?: FocusHint }
   | { status: 'failed'; atStep: number; reason: ExecutionFailure }
   /** A missing ack does NOT prove the step did not run. */
   | { status: 'indeterminate'; atStep: number; reason: 'ackTimeout' | 'rendererGone' };

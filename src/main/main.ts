@@ -193,6 +193,7 @@ import {
   isPreviewCommand,
   type AgentCommand,
   type AssetCommand,
+  type DocumentCommand,
   type PreviewCommand,
 } from '../core/commands';
 import { oauthLoginManager } from './agent/capabilities/agentOAuthManager';
@@ -247,6 +248,24 @@ import {
   showLauncherWindow,
 } from './launcher/launcherWindow';
 import { registerLauncherHotkey, unregisterLauncherHotkeys } from './launcher/launcherHotkey';
+import { ActionInvocationService, type RendererStepAck } from './actionInvocationService';
+import type { EffectStep } from '../core/actions/bindings';
+import {
+  ACTION_EVENT_CHANNEL,
+  ACTION_OPEN_CHANNEL,
+  ACTION_PARAMETER_QUERY_CHANNEL,
+  ACTION_REQUEST_CHANNEL,
+  ACTION_STEP_ACK_CHANNEL,
+  ACTION_STEP_ACK_TIMEOUT_MS,
+  ACTION_STEP_CHANNEL,
+  type ActionStepAck,
+} from '../core/actions/transport';
+import type {
+  ActionRequest,
+  InvocationEvent,
+  InvocationSeed,
+  ParameterObjectQueryRequest,
+} from '../core/actions/types';
 import {
   getStaticLauncherCommands,
   LAUNCHER_CONTEXT_CHANNEL,
@@ -2121,7 +2140,102 @@ async function resolveLocalFileOperation(
   return requestedPath === attachment.path ? attachment : null;
 }
 
+// ---------------------------------------------------------------------------
+// The action seam (docs/plans/unified-command-surface.md D1b)
+// ---------------------------------------------------------------------------
+
+// Renderer steps in flight, by one-shot token. Main emits a renderer step only
+// after the preceding main step succeeded, and waits for this ack before the
+// next one — without it main cannot know a renderer step failed.
+const pendingActionStepAcks = new Map<string, (ack: ActionStepAck) => void>();
+
+async function routeActionRendererStep(
+  step: EffectStep,
+  invocationRef: string,
+): Promise<RendererStepAck> {
+  const target = mainWindow?.webContents;
+  if (!target || target.isDestroyed()) return { status: 'gone' };
+  const token = randomUUID();
+  return new Promise<RendererStepAck>((resolve) => {
+    const timer = setTimeout(() => {
+      pendingActionStepAcks.delete(token);
+      // A missing ack does NOT prove the step did not run.
+      resolve({ status: 'timeout' });
+    }, ACTION_STEP_ACK_TIMEOUT_MS);
+    pendingActionStepAcks.set(token, (ack) => {
+      clearTimeout(timer);
+      pendingActionStepAcks.delete(token);
+      resolve(ack.status === 'ok' ? { status: 'ok' } : { status: 'reported', code: ack.code });
+    });
+    try {
+      target.send(ACTION_STEP_CHANNEL, { token, invocationRef, step });
+    } catch {
+      clearTimeout(timer);
+      pendingActionStepAcks.delete(token);
+      resolve({ status: 'notDelivered' });
+    }
+  });
+}
+
+const actionInvocationService = new ActionInvocationService({
+  projection: () => documentService.liveProjection(),
+  // Deliberately NO `sourceWebContentsId`: the renderer no longer applies the
+  // command result itself, so it must receive the projection-changed event
+  // rather than have it suppressed as its own echo.
+  runCommand: (command, args) => documentService.handle(
+    command as DocumentCommand,
+    args,
+    { origin: 'user', command },
+  ),
+  searchNodes: (query, limit) => documentService.searchNodeHits(query, limit),
+  executeRendererStep: routeActionRendererStep,
+  activateAppSurface: async (surface) => {
+    if (surface === 'settings') {
+      openSettingsWindow();
+      return;
+    }
+    if (!mainWindow || mainWindow.isDestroyed()) createWindow();
+    else focusMainWindow();
+  },
+  writeClipboard: (text) => clipboard.writeText(text),
+  untitled: () => getMessages(effectiveLocale()).common.untitled,
+  now: () => Date.now(),
+});
+
 function registerIpc() {
+  // Every action channel is main-renderer only. The seed carries renderer FACTS
+  // — anchored row, selection, panel identity, pin and expansion — and main
+  // constructs the objects, mints the refs and owns the lifetime.
+  ipcMain.handle(ACTION_OPEN_CHANNEL, (event, raw: unknown) => {
+    assertMainRenderer(event, 'Action invocations');
+    const seed = sanitizeInvocationSeed(raw);
+    if (!seed) return null;
+    return actionInvocationService.openFromSeed(seed, {
+      webContentsId: event.sender.id,
+      renderGeneration: event.sender.getProcessId(),
+    });
+  });
+
+  ipcMain.handle(ACTION_PARAMETER_QUERY_CHANNEL, (event, request: ParameterObjectQueryRequest) => {
+    assertMainRenderer(event, 'Action invocations');
+    return actionInvocationService.queryParameterObjects(request, event.sender.id);
+  });
+
+  ipcMain.handle(ACTION_REQUEST_CHANNEL, (event, request: ActionRequest) => {
+    assertMainRenderer(event, 'Action invocations');
+    return actionInvocationService.request(request, event.sender.id);
+  });
+
+  ipcMain.handle(ACTION_EVENT_CHANNEL, (event, invocationEvent: InvocationEvent) => {
+    assertMainRenderer(event, 'Action invocations');
+    return actionInvocationService.event(invocationEvent, event.sender.id);
+  });
+
+  ipcMain.handle(ACTION_STEP_ACK_CHANNEL, (event, ack: ActionStepAck) => {
+    assertMainRenderer(event, 'Action invocations');
+    pendingActionStepAcks.get(ack?.token ?? '')?.(ack);
+  });
+
   ipcMain.handle(AUTOMATION_REQUEST_CHANNEL, async (event, method: unknown, input: unknown) => {
     if (!mainWindow || event.sender !== mainWindow.webContents) {
       throw new Error('Automations are available only to the main application window.');
@@ -2741,6 +2855,32 @@ async function handleMemoryCommand(command: string, args: Record<string, unknown
 function requiredNonEmptyString(value: unknown, field: string): string {
   if (typeof value !== 'string' || !value.trim()) throw new Error(`${field} must be a non-empty string`);
   return value;
+}
+
+/**
+ * A seed is raw FACTS, never a finished invocation: main validates the ids and
+ * builds the objects itself. Anything malformed is rejected outright rather
+ * than partially trusted.
+ */
+function sanitizeInvocationSeed(raw: unknown): InvocationSeed | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const seed = raw as Record<string, unknown>;
+  const anchorNodeId = typeof seed.anchorNodeId === 'string' ? seed.anchorNodeId : null;
+  const visualRowId = typeof seed.visualRowId === 'string' ? seed.visualRowId : null;
+  const panelId = typeof seed.panelId === 'string' ? seed.panelId : null;
+  if (!anchorNodeId || !visualRowId || panelId === null) return null;
+  const selectedIds = Array.isArray(seed.selectedIds)
+    ? seed.selectedIds.filter((id): id is string => typeof id === 'string')
+    : [];
+  return {
+    from: 'mainRenderer',
+    anchorNodeId,
+    visualRowId,
+    panelId,
+    selectedIds,
+    isPinned: seed.isPinned === true,
+    rowExpanded: seed.rowExpanded === true,
+  };
 }
 
 function assertMainRenderer(event: IpcMainInvokeEvent, capability: string): void {

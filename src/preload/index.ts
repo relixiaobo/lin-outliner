@@ -1,4 +1,24 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
+import {
+  ACTION_EVENT_CHANNEL,
+  ACTION_OPEN_CHANNEL,
+  ACTION_PARAMETER_QUERY_CHANNEL,
+  ACTION_REQUEST_CHANNEL,
+  ACTION_STEP_ACK_CHANNEL,
+  ACTION_STEP_CHANNEL,
+  type ActionStepAck,
+  type ActionStepEnvelope,
+} from '../core/actions/transport';
+import type {
+  ActionRequest,
+  ActionRequestResult,
+  InvocationEvent,
+  InvocationEventResult,
+  InvocationOpened,
+  InvocationSeed,
+  ParameterObjectQueryRequest,
+  ParameterObjectQueryResult,
+} from '../core/actions/types';
 import { decodeAgentCoreNotification, decodeAgentCoreResponse } from '../core/agent/codec';
 import type {
   AgentCoreMethod,
@@ -419,6 +439,28 @@ const api = {
     return () => {
       ipcRenderer.removeListener(LAUNCHER_NAVIGATE_TO_NODE_CHANNEL, handler);
     };
+  },
+  // The action seam. A renderer may NAME an action — action id, invocation ref,
+  // subject ref, typed arguments — and nothing else; main re-evaluates and
+  // executes. Effect plans travel main -> renderer only.
+  actions: {
+    open: (seed: InvocationSeed) =>
+      ipcRenderer.invoke(ACTION_OPEN_CHANNEL, seed) as Promise<InvocationOpened | null>,
+    queryParameters: (request: ParameterObjectQueryRequest) =>
+      ipcRenderer.invoke(ACTION_PARAMETER_QUERY_CHANNEL, request) as Promise<ParameterObjectQueryResult>,
+    request: (request: ActionRequest) =>
+      ipcRenderer.invoke(ACTION_REQUEST_CHANNEL, request) as Promise<ActionRequestResult>,
+    event: (event: InvocationEvent) =>
+      ipcRenderer.invoke(ACTION_EVENT_CHANNEL, event) as Promise<InvocationEventResult>,
+    onStep: (listener: (envelope: ActionStepEnvelope) => ActionStepAck) => {
+      const handler = (_event: Electron.IpcRendererEvent, envelope: ActionStepEnvelope) => {
+        void ipcRenderer.invoke(ACTION_STEP_ACK_CHANNEL, listener(envelope));
+      };
+      ipcRenderer.on(ACTION_STEP_CHANNEL, handler);
+      return () => {
+        ipcRenderer.removeListener(ACTION_STEP_CHANNEL, handler);
+      };
+    },
   },
   // Dedicated launcher window bridge (the prewarmed global launcher).
   launcher: {
