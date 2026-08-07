@@ -23,14 +23,17 @@ Open PRs and claims — the PR queue, not this snapshot, is authoritative.
 
 - **Approved and unclaimed, top of queue:** the two `unified-command-surface`
   implementation PRs (design merged #485, refined #491) — see Backlog top.
-- **Approved and unclaimed, small (PM-directed 2026-08-06, plan authored by
-  main from the launcher review):** `launcher-interaction-hardening` — ONE PR:
-  shipped-launcher correctness (IME guard, show→context race, error
-  copy/presentation), the D6a footer implemented early, sidebar Search entry
-  with the real shortcut hint, and the Settings launcher-hotkey row incl. the
-  silent-registration-failure state; see
+- **Built, Draft PR #497, awaiting the visual gate:**
+  `launcher-interaction-hardening` — shipped-launcher correctness (IME guard,
+  show→context race, error copy/presentation), the D6a footer implemented early,
+  sidebar Search entry with the real shortcut hint, and the Settings
+  launcher-hotkey row incl. the silent-registration-failure state; see
   `docs/plans/launcher-interaction-hardening.md`. (The separate
   `command-surface-discoverability` draft was merged into it, 2026-08-06.)
+  Built by **main** at the PM's direction rather than a dev clone — a deliberate
+  flow exception, recorded here so the board is not read as normal practice.
+  typecheck/renderer/core/docs all pass; light + dark verification is the one
+  gate step still owed.
 
 ## Backlog
 
