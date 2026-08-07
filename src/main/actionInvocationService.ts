@@ -39,11 +39,11 @@ import {
   planFor,
   resolveActionsForObjectSet,
   resolveFamily,
+  tagTargetIds,
 } from '../core/actions/registry';
 import {
   commonTagIdsForTargets,
   contentTargetIdsForRows,
-  nodeRowFacetsForId,
   selectionRootIds,
 } from '../core/actions/rowFacets';
 import type {
@@ -55,6 +55,7 @@ import type {
   ActionRequest,
   ActionRequestResult,
   ActionResolveContext,
+  InvocationRecord,
   ActionExecutionResult,
   ArgumentObjectGeneration,
   ArgumentSlot,
@@ -62,7 +63,6 @@ import type {
   InvocationEvent,
   InvocationEventResult,
   InvocationOpened,
-  InvocationPhase,
   InvocationRef,
   InvocationSeed,
   ObjectPresentation,
@@ -109,15 +109,13 @@ interface Challenge {
   expiresAt: number;
 }
 
-interface Record_ {
+/**
+ * The contract's `InvocationRecord` plus the parts only main ever sees. Reusing
+ * the declared type rather than restating it is what keeps the contract
+ * load-bearing instead of decorative.
+ */
+interface Record_ extends InvocationRecord {
   ref: InvocationRef;
-  invocation: ActionInvocation;
-  origin: 'main' | 'mainRenderer';
-  attestation?: { webContentsId: number; renderGeneration: number };
-  consumableBy: number;
-  openSeq: number | null;
-  phase: InvocationPhase;
-  expiresAt: number;
   /** Every object main minted for this invocation, by ref. */
   objects: Map<ObjectRef, SurfaceObject>;
   /** Main-owned monotonic counter; request ids are never trusted. */
@@ -174,6 +172,9 @@ export class ActionInvocationService {
 
     const invocation: ActionInvocation = {
       fixedObjects,
+      // Position selects the subject: predicates that ask where the user
+      // clicked read this, never the first member of the live selection.
+      anchorObjectRef: anchor.objectRef,
       argumentGenerations: [],
       draftText: '',
       view: [{
@@ -213,9 +214,13 @@ export class ActionInvocationService {
     objects: Map<ObjectRef, SurfaceObject>,
   ): SurfaceObject | null {
     const selected = new Set(seed.selectedIds);
+    // The shipped rule: a live multi-selection containing the anchored row IS
+    // the batch subject, even when collapsing to roots yields ONE id. Selecting
+    // a parent and its child and trashing must trash the parent's whole
+    // subtree, not just the child that was right-clicked.
     if (!selected.has(seed.anchorNodeId) || selected.size <= 1) return null;
     const roots = selectionRootIds([...selected], projection.byId);
-    if (roots.length <= 1) return null;
+    if (roots.length === 0) return null;
     // Selection members keep the shipped SINGLE-HOP content target; only the
     // anchored row resolves a reference chain. Preserving that asymmetry is
     // what makes the differential proof pass rather than "look close".
@@ -259,11 +264,21 @@ export class ActionInvocationService {
     ];
   }
 
+  /**
+   * Memoized on the projection OBJECT: every keystroke in a parameter picker
+   * builds a resolve context, and rebuilding a whole-document index per call
+   * makes the picker's cost scale with the document instead of the query.
+   * `Core.projection()` returns a new object per revision, so identity is the
+   * correct invalidation key.
+   */
+  private cachedProjection: { source: DocumentProjection; value: ActionProjection } | null = null;
+
   private actionProjection(): ActionProjection {
     const projection = this.host.projection();
+    if (this.cachedProjection?.source === projection) return this.cachedProjection.value;
     const byId = new Map<NodeId, NodeProjection>();
     for (const node of projection.nodes) byId.set(node.id, node);
-    return {
+    const value: ActionProjection = {
       byId,
       trashId: projection.trashId,
       todayId: projection.todayId,
@@ -271,6 +286,8 @@ export class ActionInvocationService {
       schemaId: projection.schemaId,
       searchesId: projection.searchesId,
     };
+    this.cachedProjection = { source: projection, value };
+    return value;
   }
 
   private contextFor(record: Record_): ActionResolveContext {
@@ -367,12 +384,7 @@ export class ActionInvocationService {
       const moving = eligibleMoveToIds(context, subject);
       const { byId, trashId } = context.projection;
       const candidateIds = query
-        // Admission runs BEFORE the limit: the ranked kernel is asked for a
-        // generous set, admission filters it, and only then is it limited.
-        ? this.host.searchNodes(query, CANDIDATE_FETCH_LIMIT)
-          .map((hit: SearchHit) => hit.nodeId)
-          .filter((id) => admitsMoveToDestination({ candidateId: id, moving, byId, trashId }))
-          .slice(0, CANDIDATE_LIMIT)
+        ? this.rankedMoveToCandidates(query, moving, context)
         : moveToEmptyQueryOrder({
           nodes: this.host.projection().nodes,
           moving,
@@ -396,7 +408,9 @@ export class ActionInvocationService {
         byId: context.projection.byId,
         trashId: context.projection.trashId,
       });
-      const targets = this.tagTargetsFor(context, subject);
+      // The registry owns this derivation; a second copy here drifted, and did
+      // (it KEPT ids whose facets resolve to null, the inverse of the rule).
+      const targets = tagTargetIds(context, subject);
       const candidates = rankTagCandidates({
         index,
         query: request.query,
@@ -417,6 +431,7 @@ export class ActionInvocationService {
             },
             iconId: 'supertag',
             typeLabel: objectTypeLabel('node'),
+            backingNodeId: candidate.tag.id,
           });
           continue;
         }
@@ -442,16 +457,42 @@ export class ActionInvocationService {
     return { objects, items };
   }
 
-  private tagTargetsFor(context: ActionResolveContext, subject: SurfaceObject): NodeId[] {
-    if (subject.kind === 'node') {
-      return [nodeIdForFacet(subject.content, context.projection)];
-    }
-    if (subject.kind !== 'nodeSelection') return [];
-    const rowIds = subject.nodes
-      .map((node) => (node.row.by === 'id' ? node.row.nodeId : null))
-      .filter((id): id is NodeId => id !== null)
-      .filter((id) => nodeRowFacetsForId(id, context.projection.byId)?.actionPolicy.tag !== 'disabled');
-    return contentTargetIdsForRows(rowIds, context.projection.byId);
+  /**
+   * Rank with the shared kernel WITHOUT letting it narrow the destination set.
+   *
+   * The kernel's `isSearchCandidate` drops system containers (Library, Schema,
+   * Saved searches, Daily notes) and every node whose type is not one of a
+   * small set — all of which the shipped picker offered, because it scanned the
+   * projection by substring. Routing the query through the kernel alone would
+   * therefore have traded one hidden-destination defect for another. So the
+   * POOL stays the admitted projection (admission before limiting, D5) and the
+   * kernel supplies ORDER over the nodes it has an opinion about; the rest keep
+   * document order behind them.
+   */
+  private rankedMoveToCandidates(
+    query: string,
+    moving: readonly NodeId[],
+    context: ActionResolveContext,
+  ): NodeId[] {
+    const { byId, trashId } = context.projection;
+    const rank = new Map<NodeId, number>();
+    this.host.searchNodes(query, CANDIDATE_FETCH_LIMIT).forEach((hit: SearchHit, index) => {
+      if (!rank.has(hit.nodeId)) rank.set(hit.nodeId, index);
+    });
+    const normalized = query.toLowerCase();
+    const admitted: { nodeId: NodeId; rank: number; order: number }[] = [];
+    this.host.projection().nodes.forEach((node, order) => {
+      if (!admitsMoveToDestination({ candidateId: node.id, moving, byId, trashId })) return;
+      const ranked = rank.get(node.id);
+      const matches = ranked !== undefined
+        || nodeText(node, context.untitled).toLowerCase().includes(normalized);
+      if (!matches) return;
+      admitted.push({ nodeId: node.id, rank: ranked ?? Number.MAX_SAFE_INTEGER, order });
+    });
+    admitted.sort((left, right) => (
+      left.rank !== right.rank ? left.rank - right.rank : left.order - right.order
+    ));
+    return admitted.slice(0, CANDIDATE_LIMIT).map((entry) => entry.nodeId);
   }
 
   private replaceArgumentGeneration(record: Record_, next: ArgumentObjectGeneration): void {

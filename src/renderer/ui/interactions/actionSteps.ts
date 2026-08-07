@@ -86,3 +86,36 @@ export function installActionFocusSink(sink: (focus: FocusHint | null) => void):
 export function applyActionFocus(focus: FocusHint | null | undefined): void {
   if (focus) focusSink?.(focus);
 }
+
+// A failed or half-applied plan has to be as visible as it was when every menu
+// action ran through `useCommandRunner`, whose `catch` set the error banner.
+// Same app-level sink shape as the focus hint, for the same reason.
+let errorSink: ((message: string | null) => void) | null = null;
+
+export function installActionErrorSink(sink: (message: string | null) => void): () => void {
+  errorSink = sink;
+  return () => {
+    if (errorSink === sink) errorSink = null;
+  };
+}
+
+export function reportActionError(message: string | null): void {
+  errorSink?.(message);
+}
+
+/**
+ * The candidate list a parameter picker may act on with Enter.
+ *
+ * The picker is debounced and answered over IPC, so the rendered list can
+ * belong to older text than what the user has typed. Enter must never commit
+ * that list: before the picker went async this derivation was synchronous and
+ * `items[0]` always matched the query. Returns null when the list is stale, so
+ * the key is swallowed rather than applying something the user never saw.
+ */
+export function candidateForEnter<T>(
+  candidates: { query: string; items: readonly T[] },
+  query: string,
+): T | null {
+  if (candidates.query !== query) return null;
+  return candidates.items[0] ?? null;
+}

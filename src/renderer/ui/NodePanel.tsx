@@ -801,6 +801,7 @@ export function NodePanel(props: NodePanelProps) {
             selectedIds={props.ui.selectedIds}
             index={props.index}
             isPinned={props.isNodePinned(resolvedRootId)}
+            isNodePinned={props.isNodePinned}
             onRoot={props.onRoot}
             onTogglePin={props.onTogglePin}
             onEditDescription={() => {

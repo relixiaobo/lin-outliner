@@ -2515,6 +2515,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
           selectedIds={props.uiRef.current.selectedIds}
           index={props.index}
           isPinned={props.isNodePinned(drillDownId)}
+          isNodePinned={props.isNodePinned}
           onRoot={props.onRoot}
           onTogglePin={props.onTogglePin}
           onEditDescription={() => {

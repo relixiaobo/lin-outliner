@@ -110,6 +110,14 @@ export interface ObjectPresentation {
   subtitle?: PresentedName;
   iconId: IconId;
   typeLabel: LocalizedNames;
+  /**
+   * PRESENTATION ONLY — the document node this row depicts, so a view can
+   * resolve per-node visuals (a tag's colour) by identity instead of matching
+   * on rendered text, which collides across same-named nodes. It is never an
+   * admission token: only an `ObjectRef` from a current membership domain can
+   * name a subject or an argument.
+   */
+  backingNodeId?: NodeId;
 }
 
 /** `mainList` is deliberately not a value: an action is never a main-list row. */
@@ -286,6 +294,14 @@ export interface WorkspaceFact {
 export interface ActionInvocation {
   /** Menu anchors + resolved ambient chip. */
   fixedObjects: readonly SurfaceObject[];
+  /**
+   * The object POSITION selected — the right-clicked row. Anchoring is why the
+   * menu projection survives, so predicates that ask "where did the user
+   * click?" (in Trash? the Trash root?) must read this and not the first
+   * member of whatever selection happens to be live. Absent for openings with
+   * no anchor, such as the launcher.
+   */
+  anchorObjectRef?: ObjectRef;
   /** Node/system/app/draft results (launcher main list). */
   resultGeneration?: ObjectResultGeneration;
   argumentGenerations: readonly ArgumentObjectGeneration[];
@@ -532,28 +548,8 @@ export type ActionRequestResult =
   | ActionExecutionResult;
 
 // ---------------------------------------------------------------------------
-// 5. REGISTRY DEFINITION (main/core side only — never crosses the seam)
+// 5. EVALUATION CONTEXT (main/core side only — never crosses the seam)
 // ---------------------------------------------------------------------------
-
-/** Which object kinds a family accepts as its subject, and in what order. */
-export type SubjectKindPrecedence = readonly SurfaceObjectKind[];
-
-export interface ActionDefinition<K extends ActionId = ActionId> {
-  actionId: K;
-  subjectKinds: SubjectKindPrecedence;
-  surfaces: readonly ActionSurface[];
-  aliases: readonly string[];
-  /**
-   * Resolve zero or more presentations for one subject object. Returning an
-   * empty array means `absent`: no row at all.
-   */
-  resolve(context: ActionResolveContext, subject: SurfaceObject): readonly ActionPresentation[];
-  /**
-   * Build the ordered effect plan for a re-validated request. Returning null
-   * means the action no longer applies and the request is `reEvaluated`.
-   */
-  plan(context: ActionResolveContext, subject: SurfaceObject, args: ActionArguments[K]): ActionEffectPlan | null;
-}
 
 /** Everything an action may read: the document plus main-owned invocation facts. */
 export interface ActionResolveContext {

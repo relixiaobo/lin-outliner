@@ -25,6 +25,7 @@ import { BatchTagSelector } from './outliner/BatchTagSelector';
 import { ButtonControl } from './primitives/ButtonControl';
 import type { NavigateRootOptions, TriggerState } from './shared';
 import {
+  installActionErrorSink,
   installActionFocusSink,
   installActionStepListener,
 } from './interactions/actionSteps';
@@ -82,6 +83,7 @@ export function App() {
   // commands' focus hint so the caret still lands where the command says.
   useEffect(() => installActionStepListener(), []);
   useEffect(() => installActionFocusSink(setPendingFocus), []);
+  useEffect(() => installActionErrorSink(setError), []);
 
   const recordNodeLanding = useCallback((nodeId: NodeId) => {
     const timers = nodeAccessTimersRef.current;

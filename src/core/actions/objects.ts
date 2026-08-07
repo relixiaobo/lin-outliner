@@ -67,14 +67,6 @@ export function nodeSelectionObject(
   return { kind: 'nodeSelection', objectRef: mintRef(), nodes };
 }
 
-export const SYSTEM_NODE_KEYS: readonly SystemNodeKey[] = [
-  'today',
-  'library',
-  'schema',
-  'savedSearches',
-  'trash',
-];
-
 /** A system node object still resolves to a real document node id. */
 export function systemNodeId(key: SystemNodeKey, projection: ActionProjection): NodeId {
   switch (key) {
@@ -84,11 +76,6 @@ export function systemNodeId(key: SystemNodeKey, projection: ActionProjection): 
     case 'savedSearches': return projection.searchesId;
     case 'trash': return projection.trashId;
   }
-}
-
-export function systemNodeObject(key: SystemNodeKey, mintRef: RefMinter): NodeObject {
-  const ref: NodeObjectRef = { by: 'system', key };
-  return { kind: 'node', objectRef: mintRef(), row: ref, content: ref, canonicalSurface: ref };
 }
 
 /** Resolve a node facet to a document id. `today` may not exist yet — see `open`. */
@@ -145,6 +132,7 @@ export function presentObject(
         name: { source: 'literal', value: nodeText(projection.byId.get(contentId), untitled) },
         iconId: 'node',
         typeLabel: objectTypeLabel('node'),
+        backingNodeId: contentId,
       };
     }
     case 'nodeSelection':

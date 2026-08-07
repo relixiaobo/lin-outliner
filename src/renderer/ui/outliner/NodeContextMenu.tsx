@@ -13,6 +13,7 @@ import { ACTION_FAMILY_NAMES, nameFor } from '../../../core/actions/names';
 import { MENU_GROUP } from '../../../core/actions/registry';
 import type {
   ActionPresentation,
+  ActionRequestResult,
   ArgumentSlot,
   ChallengeToken,
   ConfirmationSpec,
@@ -26,7 +27,12 @@ import { requestSendNodeReferenceToThreadComposer } from '../../agent/agentRevea
 import type { NodeId, NodeProjection } from '../../api/types';
 import { useI18n, useT } from '../../i18n/I18nProvider';
 import type { DocumentIndex, ToolbarDropdownSection } from '../../state/document';
-import { applyActionFocus, registerActionStepHandlers } from '../interactions/actionSteps';
+import {
+  applyActionFocus,
+  candidateForEnter,
+  registerActionStepHandlers,
+  reportActionError,
+} from '../interactions/actionSteps';
 import { isImeComposingEvent } from '../interactions/imeKeyboard';
 import { ChevronRightIcon, CheckIcon, ICON_SIZE, MoveToIcon, SupertagIcon } from '../icons';
 import { Button } from '../primitives/Button';
@@ -53,6 +59,7 @@ interface NodeContextMenuProps {
   selectedIds: Set<NodeId>;
   index: DocumentIndex;
   isPinned: boolean;
+  isNodePinned: (nodeId: NodeId) => boolean;
   onRoot: (nodeId: NodeId, options?: NavigateRootOptions) => void;
   onTogglePin: (nodeId: NodeId) => void;
   onEditDescription: () => void;
@@ -81,7 +88,13 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
   const [opening, setOpening] = useState<InvocationOpened | null>(null);
   const [mode, setMode] = useState<MenuMode>({ kind: 'main' });
   const [query, setQuery] = useState('');
-  const [candidates, setCandidates] = useState<readonly ObjectPresentation[]>([]);
+  // The query the candidates were resolved FOR. Enter must never commit a list
+  // that belongs to older text: the picker is debounced and answered over IPC,
+  // so `candidates` lags what the user has typed by up to a round trip.
+  const [candidates, setCandidates] = useState<{
+    query: string;
+    items: readonly ObjectPresentation[];
+  }>({ query: '', items: [] });
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirmation | null>(null);
   const invocationRef = useRef<InvocationRef | null>(null);
   const releaseHandlersRef = useRef<(() => void) | null>(null);
@@ -119,6 +132,13 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
 
   const onCloseRef = useRef(props.onClose);
   onCloseRef.current = props.onClose;
+  const closedRef = useRef(false);
+  /** The menu closes when the action is chosen; the request settles later. */
+  const closeOnce = () => {
+    if (closedRef.current) return;
+    closedRef.current = true;
+    onCloseRef.current();
+  };
   /** Release the step handlers once nothing can still route a step to them. */
   const releaseHandlersIfIdle = () => {
     if (!unmountedRef.current || inFlightRef.current > 0) return;
@@ -126,6 +146,7 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
     releaseHandlersRef.current = null;
   };
   const handlersRef = useRef({
+    isNodePinned: props.isNodePinned,
     onRoot: props.onRoot,
     onTogglePin: props.onTogglePin,
     onEditDescription: props.onEditDescription,
@@ -133,6 +154,7 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
     onOpenViewSection: props.onOpenViewSection,
   });
   handlersRef.current = {
+    isNodePinned: props.isNodePinned,
     onRoot: props.onRoot,
     onTogglePin: props.onTogglePin,
     onEditDescription: props.onEditDescription,
@@ -140,10 +162,24 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
     onOpenViewSection: props.onOpenViewSection,
   };
 
+  // Unmount ONLY. The seed effect below re-runs whenever the selection or pin
+  // state changes while the menu is open, so its cleanup cannot stand in for
+  // unmount — doing that tore the step handlers down mid-menu.
+  useEffect(() => () => {
+    unmountedRef.current = true;
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     void window.lin?.actions?.open(seed).then((result) => {
-      if (cancelled || !result) return;
+      if (cancelled) return;
+      if (!result) {
+        // Main refused the opening (the anchored row is gone). Render nothing,
+        // but tell the owner so its `contextMenu` state clears — otherwise the
+        // surface is dead until the next right-click.
+        closeOnce();
+        return;
+      }
       invocationRef.current = result.invocationRef;
       // The handlers outlive this component on purpose: the menu closes the
       // moment an action is chosen, while its plan is still crossing the seam.
@@ -151,8 +187,15 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
       releaseHandlersRef.current = registerActionStepHandlers(result.invocationRef, {
         navigate: (nodeId, inPlace) => handlersRef.current.onRoot(nodeId, { newPane: !inPlace }),
         workspace: (op, nodeId) => {
-          if (op === 'openSplitPane') handlersRef.current.onRoot(nodeId, { newPane: true });
-          else handlersRef.current.onTogglePin(nodeId);
+          if (op === 'openSplitPane') {
+            handlersRef.current.onRoot(nodeId, { newPane: true });
+            return;
+          }
+          // The registry resolved a DESIRED END STATE, so honour it: pin state
+          // can change between the menu opening and this step arriving, and a
+          // blind toggle would then undo what the user asked for.
+          const pinned = handlersRef.current.isNodePinned(nodeId);
+          if (op === 'pin' ? !pinned : pinned) handlersRef.current.onTogglePin(nodeId);
         },
         reveal: (target) => {
           if (target.surface === 'description') handlersRef.current.onEditDescription();
@@ -168,10 +211,11 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
         },
       });
       setOpening(result);
+    }).catch(() => {
+      if (!cancelled) closeOnce();
     });
     return () => {
       cancelled = true;
-      unmountedRef.current = true;
       const ref = invocationRef.current;
       if (ref) void window.lin?.actions?.event({ kind: 'abandoned', invocationRef: ref });
       // A plan's renderer legs arrive from MAIN, one round trip per step after
@@ -220,9 +264,18 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
         });
         return;
       }
-      if (result?.status === 'completed') applyActionFocus(result.focus);
+      if (result?.status === 'completed') {
+        applyActionFocus(result.focus);
+        reportActionError(null);
+      } else {
+        // Anything that is not a completion is a failure the user must see: a
+        // rejected command, an unacked renderer step, a half-applied plan, or a
+        // subject that went stale. Closing the menu silently is what the
+        // shipped `useCommandRunner` path never did.
+        reportActionError(actionFailureMessage(result, t));
+      }
       setPendingConfirm(null);
-      onCloseRef.current();
+      closeOnce();
     } finally {
       inFlightRef.current -= 1;
       releaseHandlersIfIdle();
@@ -248,7 +301,7 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
       return;
     }
     // An action carrying `confirm` keeps the menu open until it resolves.
-    if (!presentation.confirm) onCloseRef.current();
+    if (!presentation.confirm) closeOnce();
     void runRequest(presentation, presentation.binding.arguments);
   };
 
@@ -258,7 +311,7 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
   const latestRequestRef = useRef<string | null>(null);
   useEffect(() => {
     if (!parameterSlot) {
-      setCandidates([]);
+      setCandidates({ query: '', items: [] });
       return;
     }
     const ref = invocationRef.current;
@@ -277,7 +330,7 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
         // Drop anything that is not the latest request for this slot.
         if (cancelled || latestRequestRef.current !== requestId) return;
         if (result.status !== 'ready') return;
-        setCandidates(result.items);
+        setCandidates({ query, items: result.items });
       });
     }, query ? CANDIDATE_DEBOUNCE_MS : 0);
     return () => {
@@ -380,7 +433,7 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
     const args = mode.slot.parameterId === 'tag'
       ? { tag: candidate.objectRef }
       : { destination: candidate.objectRef };
-    onCloseRef.current();
+    closeOnce();
     void runRequest(presentation, args);
   };
 
@@ -402,13 +455,18 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
           if (isImeComposingEvent(event)) return;
           if (event.key !== 'Enter') return;
           if (parameterMode.slot.parameterId !== 'tag') return;
-          const first = candidates[0];
-          if (!first) return;
+          const first = candidateForEnter(candidates, query);
+          if (!first) {
+            // Stale or empty: swallow the key rather than applying a candidate
+            // resolved for text the user has already moved on from.
+            event.preventDefault();
+            return;
+          }
           event.preventDefault();
           pickCandidate(first);
         }}
       />
-      {candidates.map((candidate) => (
+      {candidates.items.map((candidate) => (
         <MenuItem
           key={candidate.objectRef}
           className="node-context-item"
@@ -461,7 +519,7 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
           onConfirm={() => {
             const pending = pendingConfirm;
             setPendingConfirm(null);
-            onCloseRef.current();
+            closeOnce();
             void runRequest(
               pending.presentation,
               pending.presentation.binding.state === 'ready'
@@ -475,6 +533,23 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
     </>,
     document.body,
   );
+}
+
+/** Say what went wrong, in the same place the shipped command runner did. */
+function actionFailureMessage(
+  result: ActionRequestResult | undefined,
+  t: ReturnType<typeof useT>,
+): string {
+  const generic = t.shell.commandFailed;
+  if (!result) return generic;
+  if (result.status === 'failed') {
+    const reason = result.reason;
+    if (reason.kind === 'commandRejected' || reason.kind === 'rendererReported') return reason.code;
+    return generic;
+  }
+  if (result.status === 'indeterminate') return generic;
+  if (result.status === 'stale' || result.status === 'reEvaluated') return t.shell.commandStale;
+  return generic;
 }
 
 function isDangerAction(action: ActionPresentation): boolean {
@@ -516,7 +591,9 @@ function candidateIcon(
 ) {
   if (mode.slot.parameterId !== 'tag') return <MoveToIcon size={ICON_SIZE.menu} />;
   if (candidate.kind === 'draft') return <SupertagIcon size={ICON_SIZE.menu} />;
-  const tag = tagNodeForCandidate(candidate.objectRef, candidate, index);
+  // By IDENTITY, not by rendered label: two tags can share a name and differ in
+  // colour, and an untitled tag renders a fallback that matches nothing.
+  const tag = candidate.backingNodeId ? index.byId.get(candidate.backingNodeId) : undefined;
   return (
     <span
       className="tag-selector-hash"
@@ -528,18 +605,3 @@ function candidateIcon(
   );
 }
 
-/**
- * The candidate presentation carries the tag's literal name, not its id — the
- * ref is opaque by design. Resolve the colour by name from the live index.
- */
-function tagNodeForCandidate(
-  _ref: ObjectRef,
-  candidate: ObjectPresentation,
-  index: DocumentIndex,
-): NodeProjection | undefined {
-  if (candidate.name.source !== 'literal') return undefined;
-  const label = candidate.name.value;
-  return index.projection.nodes.find(
-    (node) => node.type === 'tagDef' && node.content.text === label,
-  );
-}

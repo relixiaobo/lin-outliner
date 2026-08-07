@@ -600,6 +600,10 @@ export const en = {
   shell: {
     startupError: ({ error }: { error: string }) => `Startup failed: ${error}`,
     errorDismiss: 'Dismiss error',
+    // A menu/panel action that did not complete. The specific cases carry the
+    // rejecting command's own message; these cover the rest.
+    commandFailed: 'That action did not complete.',
+    commandStale: 'That action no longer applies — try again.',
     sidebar: {
       ariaLabel: 'Primary navigation',
       // The topmost row: an action (opens the command surface), not a nav target.
@@ -928,58 +932,15 @@ commandPalette: {
     contextMenu: {
       nodeActions: 'Node actions',
       openInSplitPane: 'Open in split pane',
-      moveTo: 'Move to',
-      moveNode: 'Move node',
       back: 'Back',
-      sendToComposer: 'Send to composer',
-      // `prefix` carries the batch-selection label (e.g. "3 nodes · "); empty for
-      // a single node.
-      duplicate: ({ prefix }: { prefix: string }) => `${prefix}Duplicate`,
-      moveUp: ({ prefix }: { prefix: string }) => `${prefix}Move up`,
-      moveDown: ({ prefix }: { prefix: string }) => `${prefix}Move down`,
-      toggleDone: ({ prefix }: { prefix: string }) => `${prefix}Toggle done`,
-      markDonePrefixed: ({ prefix }: { prefix: string }) => `${prefix}Mark done`,
-      markNotDonePrefixed: ({ prefix }: { prefix: string }) => `${prefix}Mark not done`,
-      addTag: ({ prefix }: { prefix: string }) => `${prefix}Add tag`,
-      trash: ({ prefix }: { prefix: string }) => `${prefix}Trash`,
-      restore: 'Restore',
-      deleteForever: ({ prefix }: { prefix: string }) => `${prefix}Delete forever`,
-      deleteForeverTitle: 'Delete forever?',
-      deleteForeverTitleMultiple: ({ count }: { count: number }) => `Delete ${count} nodes forever?`,
-      deleteForeverMessage: 'This permanently deletes the node and its children. You cannot restore it from Trash.',
-      deleteForeverMessageMultiple: 'This permanently deletes the selected nodes and their children. You cannot restore them from Trash.',
-      deleteForeverConfirm: 'Delete forever',
-      emptyTrash: 'Empty Trash',
-      emptyTrashTitle: 'Empty Trash?',
-      emptyTrashMessage: 'This permanently deletes every node in Trash. You cannot restore them afterward.',
-      emptyTrashConfirm: 'Empty Trash',
-      hideViewToolbar: 'Hide view toolbar',
-      showViewToolbar: 'Show view toolbar',
-      viewAs: 'View as',
-      viewOutline: 'Outline',
-      viewTable: 'Table',
-      filterBy: 'Filter by',
-      sortBy: 'Sort by',
-      groupBy: 'Group by',
-      display: 'Display',
-      addDescription: 'Add description',
-      editDescription: 'Edit description',
-      copyText: 'Copy text',
-      copyNodeId: 'Copy node id',
       openNode: 'Open',
       pinNode: 'Pin',
       unpinNode: 'Unpin',
       // Tag submode + the batch tag selector.
-      addTagTitle: 'Add tag',
-      tagNameLabel: 'Tag name',
-      tagNamePlaceholder: 'tag name',
       searchOrCreateTag: 'Search or create tag',
       noTags: 'No tags',
       // TODO plural via Intl
       applyTagToNodes: (count: number) => `Apply tag to ${count} node${count > 1 ? 's' : ''}`,
-      // Move submode.
-      nodeNameLabel: 'Node name',
-      nodeNamePlaceholder: 'node name',
       // Shared Done labels (also used by the lone Done checkbox control).
       markDone: 'Mark done',
       markNotDone: 'Mark not done',

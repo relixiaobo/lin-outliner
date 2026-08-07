@@ -298,12 +298,6 @@ const TAG_PARAMETER = {
 // The registry
 // ---------------------------------------------------------------------------
 
-export interface RegistryHost {
-  /** PR 2 supplies the captured page; PR 1 has none, so `capture` is absent. */
-  externalContext?(contextId: string): unknown | null;
-  newCaptureId?(): string;
-}
-
 function viewFactFor(
   context: ActionResolveContext,
   subject: SurfaceObject,
@@ -601,7 +595,7 @@ function resolveSetDone(
 
 // --- addTag -----------------------------------------------------------------
 
-function tagTargetIds(context: ActionResolveContext, subject: SurfaceObject): NodeId[] {
+export function tagTargetIds(context: ActionResolveContext, subject: SurfaceObject): NodeId[] {
   const rows = subjectRows(subject);
   if (!rows) return [];
   const eligibleRows = facetsFor(rows.rowIds, context.projection.byId)
@@ -969,17 +963,36 @@ function rowIdOf(subject: SurfaceObject): NodeId | null {
   return subject.row.by === 'id' ? subject.row.nodeId : null;
 }
 
+/**
+ * Trash-ness is a fact about WHERE THE USER CLICKED, not about whichever row
+ * happens to sort first in the live selection. The shipped menu read the
+ * anchored row, and it has to stay that way: a selection whose first root is
+ * trashed would otherwise hide *Move to Trash* and offer *Delete forever* —
+ * permanent, unrecoverable — for a node the user did not right-click.
+ */
+function anchorRowId(
+  context: ActionResolveContext,
+  subject: SurfaceObject,
+): NodeId | null {
+  const anchorRef = context.invocation.anchorObjectRef;
+  const anchor = anchorRef ? context.objectFor(anchorRef) : null;
+  if (anchor && anchor.kind === 'node') return rowIdOf(anchor);
+  // No anchored opening (the launcher): fall back to the subject's own row.
+  return rowIdOf(subject) ?? subjectRows(subject)?.rowIds[0] ?? null;
+}
+
 function isTrashRoot(context: ActionResolveContext, subject: SurfaceObject): boolean {
-  const rowId = rowIdOf(subject);
+  const rowId = anchorRowId(context, subject);
   if (rowId !== null) return rowId === context.projection.trashId;
-  return subject.kind === 'node' && systemKeyForFacet(subject.row) === 'trash';
+  const anchorRef = context.invocation.anchorObjectRef;
+  const anchor = anchorRef ? context.objectFor(anchorRef) : subject;
+  return anchor?.kind === 'node' && systemKeyForFacet(anchor.row) === 'trash';
 }
 
 function isInTrash(context: ActionResolveContext, subject: SurfaceObject): boolean {
-  const rows = subjectRows(subject);
-  const anchorRowId = rows?.rowIds[0];
-  if (anchorRowId === undefined) return false;
-  return nodeIsInSubtree(context.projection.byId, anchorRowId, context.projection.trashId);
+  const rowId = anchorRowId(context, subject);
+  if (rowId === null) return false;
+  return nodeIsInSubtree(context.projection.byId, rowId, context.projection.trashId);
 }
 
 // ---------------------------------------------------------------------------
@@ -1401,17 +1414,5 @@ const PLANNERS: { [K in ActionId]?: Planner<K> } = {
 const CAPTURE_STEP_REF = stepRef('capture');
 
 const TAG_STEP_REF = stepRef('tag');
-
-/** Convenience for callers that hold a projection rather than a context. */
-export function actionProjectionFrom(params: {
-  byId: ReadonlyMap<NodeId, NodeProjection>;
-  trashId: NodeId;
-  todayId: NodeId;
-  libraryId: NodeId;
-  schemaId: NodeId;
-  searchesId: NodeId;
-}): ActionProjection {
-  return params;
-}
 
 export { canonicalSurfaceId, contentTargetId };

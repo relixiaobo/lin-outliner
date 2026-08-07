@@ -1595,9 +1595,15 @@ function createWindow() {
 
   mainWindow.on('closed', () => {
     pageTranslationService.dispose();
+    actionInvocationService.invalidateRenderer(mainWindow?.webContents.id ?? -1);
     mainWindow = null;
   });
   mainWindow.webContents.on('did-start-loading', () => pageTranslationService.dispose());
+  // A reload invalidates the renderer's ATTESTATIONS rather than leaving a
+  // stale `view`/`workspace` bit admissible against the reloaded surface.
+  mainWindow.webContents.on('did-start-navigation', (_event, _url, _isInPlace, isMainFrame) => {
+    if (isMainFrame) actionInvocationService.invalidateRenderer(mainWindow!.webContents.id);
+  });
   // A launcher "open node" that had to spin up the main window — or that arrived
   // during a renderer reload — waits for the renderer to load before the navigate
   // can land. `on` (not `once`) so it re-arms across reloads (dev HMR full reload,
@@ -2216,24 +2222,34 @@ function registerIpc() {
     });
   });
 
-  ipcMain.handle(ACTION_PARAMETER_QUERY_CHANNEL, (event, request: ParameterObjectQueryRequest) => {
+  ipcMain.handle(ACTION_PARAMETER_QUERY_CHANNEL, (event, raw: unknown) => {
     assertMainRenderer(event, 'Action invocations');
+    const request = sanitizeParameterQuery(raw);
+    if (!request) return null;
     return actionInvocationService.queryParameterObjects(request, event.sender.id);
   });
 
-  ipcMain.handle(ACTION_REQUEST_CHANNEL, (event, request: ActionRequest) => {
+  ipcMain.handle(ACTION_REQUEST_CHANNEL, (event, raw: unknown) => {
     assertMainRenderer(event, 'Action invocations');
+    const request = sanitizeActionRequest(raw);
+    // A malformed request is not "stale" — it never named anything.
+    if (!request) return { status: 'stale', reason: 'invocation' };
     return actionInvocationService.request(request, event.sender.id);
   });
 
-  ipcMain.handle(ACTION_EVENT_CHANNEL, (event, invocationEvent: InvocationEvent) => {
+  ipcMain.handle(ACTION_EVENT_CHANNEL, (event, raw: unknown) => {
     assertMainRenderer(event, 'Action invocations');
+    const invocationEvent = sanitizeInvocationEvent(raw);
+    if (!invocationEvent) return { status: 'spent' };
     return actionInvocationService.event(invocationEvent, event.sender.id);
   });
 
-  ipcMain.handle(ACTION_STEP_ACK_CHANNEL, (event, ack: ActionStepAck) => {
+  ipcMain.handle(ACTION_STEP_ACK_CHANNEL, (event, raw: unknown) => {
     assertMainRenderer(event, 'Action invocations');
-    pendingActionStepAcks.get(ack?.token ?? '')?.(ack);
+    const ack = raw as ActionStepAck | undefined;
+    if (typeof ack?.token !== 'string') return;
+    if (ack.status !== 'ok' && ack.status !== 'reported') return;
+    pendingActionStepAcks.get(ack.token)?.(ack);
   });
 
   ipcMain.handle(AUTOMATION_REQUEST_CHANNEL, async (event, method: unknown, input: unknown) => {
@@ -2881,6 +2897,67 @@ function sanitizeInvocationSeed(raw: unknown): InvocationSeed | null {
     isPinned: seed.isPinned === true,
     rowExpanded: seed.rowExpanded === true,
   };
+}
+
+/**
+ * Inbound action messages are bounded shapes, not free-form objects: main
+ * re-derives everything else. Anything malformed is refused outright rather
+ * than half-trusted.
+ */
+function sanitizeParameterQuery(raw: unknown): ParameterObjectQueryRequest | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const value = raw as Record<string, unknown>;
+  const slot = value.slot as Record<string, unknown> | undefined;
+  if (
+    typeof value.invocationRef !== 'string'
+    || typeof value.requestId !== 'string'
+    || typeof value.query !== 'string'
+    || typeof slot !== 'object' || slot === null
+    || typeof slot.actionId !== 'string'
+    || typeof slot.subjectRef !== 'string'
+    || typeof slot.parameterId !== 'string'
+  ) return null;
+  return {
+    invocationRef: value.invocationRef as ParameterObjectQueryRequest['invocationRef'],
+    openSeq: typeof value.openSeq === 'number' ? value.openSeq : null,
+    slot: slot as unknown as ParameterObjectQueryRequest['slot'],
+    requestId: value.requestId as ParameterObjectQueryRequest['requestId'],
+    // Bounded: the query is a search string, never a payload.
+    query: value.query.slice(0, 512),
+  };
+}
+
+function sanitizeActionRequest(raw: unknown): ActionRequest | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const value = raw as Record<string, unknown>;
+  if (
+    typeof value.actionId !== 'string'
+    || typeof value.invocationRef !== 'string'
+    || typeof value.subjectRef !== 'string'
+    || typeof value.arguments !== 'object' || value.arguments === null
+  ) return null;
+  if (value.challenge !== undefined && typeof value.challenge !== 'string') return null;
+  return raw as ActionRequest;
+}
+
+function sanitizeInvocationEvent(raw: unknown): InvocationEvent | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const value = raw as Record<string, unknown>;
+  if (typeof value.invocationRef !== 'string') return null;
+  switch (value.kind) {
+    case 'confirmationCancelled':
+      return typeof value.challenge === 'string' ? (raw as InvocationEvent) : null;
+    case 'objectRemoved':
+      return typeof value.objectRef === 'string' ? (raw as InvocationEvent) : null;
+    case 'selectionMemberRemoved':
+      return typeof value.selectionRef === 'string' && typeof value.memberRef === 'string'
+        ? (raw as InvocationEvent)
+        : null;
+    case 'abandoned':
+      return raw as InvocationEvent;
+    default:
+      return null;
+  }
 }
 
 function assertMainRenderer(event: IpcMainInvokeEvent, capability: string): void {

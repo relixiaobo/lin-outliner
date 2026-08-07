@@ -379,6 +379,60 @@ describe('parameter object generations', () => {
   });
 });
 
+describe('the anchored row, not the selection order', () => {
+  test('a trashed row earlier in the selection cannot turn Remove into Delete forever', async () => {
+    const h = harness();
+    const today = h.core.projection().todayId;
+    const trashed = h.core.createNode(today, null, 'Trashed').focus!.nodeId;
+    h.core.trashNode(trashed);
+    const live = h.core.createNode(today, null, 'Live').focus!.nodeId;
+
+    // Selection order puts the TRASHED row first; the user right-clicks the
+    // LIVE one. Reading the selection's first root would offer permanent
+    // deletion for a node that is not in Trash.
+    const opened = open(h, live, [trashed, live]);
+    const labels = opened.menuActions.map((action) => action.names.en);
+    expect(labels).toContain('2 nodes: Move to Trash');
+    expect(labels.some((label) => label.includes('Delete forever'))).toBe(false);
+    expect(labels).not.toContain('Restore');
+  });
+
+  test('right-clicking a trashed row still offers Restore and Delete forever', () => {
+    const h = harness();
+    const today = h.core.projection().todayId;
+    const trashed = h.core.createNode(today, null, 'Trashed').focus!.nodeId;
+    h.core.trashNode(trashed);
+    const labels = open(h, trashed).menuActions.map((action) => action.names.en);
+    expect(labels).toContain('Restore');
+    expect(labels).toContain('Delete forever');
+  });
+});
+
+describe('selection scope', () => {
+  test('a selection that collapses to ONE root still acts on that root', async () => {
+    const h = harness();
+    const today = h.core.projection().todayId;
+    const parent = h.core.createNode(today, null, 'Parent').focus!.nodeId;
+    const child = h.core.createNode(parent, null, 'Child').focus!.nodeId;
+
+    // Select the parent and its child, then right-click the CHILD: collapsing
+    // to roots yields [parent], and the shipped menu trashed the parent's whole
+    // subtree rather than just the right-clicked child.
+    const opened = open(h, child, [parent, child]);
+    const remove = opened.menuActions.find((action) => action.actionId === 'remove')!;
+    const result = await h.service.request({
+      actionId: 'remove',
+      invocationRef: opened.invocationRef,
+      subjectRef: remove.subjectRef,
+      arguments: {},
+    }, SENDER);
+    expect(result.status).toBe('completed');
+    expect(h.commands).toEqual([
+      { command: 'batch_trash_nodes', args: { nodeIds: [parent] } },
+    ]);
+  });
+});
+
 describe('Move to retrieval convergence', () => {
   test('admission runs BEFORE the limit, so a valid ranked destination survives', () => {
     const core = Core.new();
@@ -416,6 +470,31 @@ describe('Move to retrieval convergence', () => {
     }));
     // The defect this fixes, stated as a fact about the old order.
     expect(naive.includes(valid)).toBe(false);
+  });
+
+  test('a system container is still reachable by name', () => {
+    const h = harness();
+    const today = h.core.projection().todayId;
+    const moving = h.core.createNode(today, null, 'Moving').focus!.nodeId;
+    const opened = open(h, moving);
+    const slot: ArgumentSlot = {
+      actionId: 'move',
+      subjectRef: opened.menuActions.find((action) => action.actionId === 'move')!.subjectRef,
+      parameterId: 'destination',
+    };
+    const result = h.service.queryParameterObjects({
+      invocationRef: opened.invocationRef,
+      openSeq: null,
+      slot,
+      requestId: 'r1' as RequestId,
+      query: 'Library',
+    }, SENDER);
+    expect(result.status).toBe('ready');
+    if (result.status !== 'ready') return;
+    // The ranked kernel drops system containers; routing the query through it
+    // ALONE would have traded one hidden-destination defect for another.
+    expect(result.items.map((item) => item.backingNodeId))
+      .toContain(h.core.projection().libraryId);
   });
 
   test('an empty query returns candidates rather than nothing', () => {
