@@ -788,9 +788,21 @@ placed by the saved offset first, which brings the row into range. A bounded
 attempt count releases a Thread whose geometry cannot satisfy the anchor at all,
 at the nearest reachable offset, so viewport or history changes settle rather
 than rewrite the offset on every layout pass. Empty history never replaces the
-saved snapshot with a top clamp. User scrolling takes ownership and cancels the
-pending restore. A failed send restores the pre-send position, anchor, and follow
-state. A followed Thread resumes at the bottom and records no anchor.
+saved snapshot with a top clamp.
+
+A restore outlives its first application, so it yields where every other writer
+of the scroll position yields. User scrolling takes ownership and cancels it; an
+activated disclosure holds the position the reader just asked for and the restore
+waits without spending an attempt; sending cancels it outright, because asking
+for the end of the conversation outranks a position that was left. While one is
+pending, follow is not re-derived and the snapshot is not re-cached from the
+geometry it is passing through — an intermediate offset clamped near an unsettled
+maximum reads as bottom-follow and would hand the transcript to the bottom pin.
+The settling attempt releases the request before its own write, so the position
+it lands on is what both are taken from. A failed send restores the pre-send
+position, anchor, and follow state. A followed Thread resumes at the bottom and
+records no anchor. A Thread left without a final scroll event — its position
+moved by content growth alone — still records that position as it unmounts.
 
 The Turn is what the restore aims at because a scroll offset does not survive a
 remount on its own: `content-visibility: auto` gives every Turn the reader has

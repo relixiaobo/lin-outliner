@@ -80,15 +80,31 @@ anchor, the fallback offset, and an attempt count.
    the anchor (content removed, viewport resized) settles at the nearest
    reachable offset instead of rewriting `scrollTop` on every layout pass.
 
-Every existing release condition still holds: user scroll takes ownership and
-cancels the pending restore, and the jump-to-latest control clears it.
+Because the request now outlives its first application, it has to yield where
+every other writer of the scroll position yields. User scroll takes ownership and
+cancels it; the jump-to-latest control clears it; an activated disclosure anchor
+makes it wait without spending an attempt; and a send cancels it, since asking
+for the end of the conversation outranks a position that was left. While one is
+pending, follow is not re-derived and the snapshot is not re-cached from the
+geometry it is passing through: a clamped intermediate offset reads as
+bottom-follow and would hand the transcript to the bottom pin, and an anchor read
+mid-flight overwrites the snapshot the restore is aiming at. The settling attempt
+releases the request before its own write, so the final position still reaches
+both.
+
+The anchor search keys on row *tops*. A virtualized row is placed at its layout
+slot, so tops stay ordered even on the frame a Turn renders taller than the
+estimate it was given and its bottom overlaps the next row's.
 
 The failed-send path records the anchor alongside the offset it already
 captures, so restoring the pre-send viewport goes through the same correction.
 
-The unmount snapshot only overwrites the cached one while the scroll container
-is still connected; a detached container reports zero for every rect and would
-otherwise replace a good snapshot with a top clamp.
+The last position is captured from a **layout** cleanup. React detaches host refs
+and the DOM node before passive cleanups run for a deleted subtree, so a passive
+one sees a null ref and records nothing — which is what the existing unmount
+capture had always been doing. Everything the reader did with the scrollbar is
+already cached by then; what this adds is a position moved by content growth that
+never produced a scroll event of its own.
 
 ## Verification
 
