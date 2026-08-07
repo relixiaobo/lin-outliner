@@ -1936,7 +1936,7 @@ test.describe('canonical agent Thread surface', () => {
 
     const parentTitle = await page.locator('.thread-dock-title').innerText();
 
-    await page.getByRole('button', { name: 'Open Subagent Thread /root/research' }).click();
+    await page.getByRole('button', { name: 'Open Subagent Thread research' }).click();
     await expect(page.locator('.thread-dock-title')).toHaveText('Research child');
     await expect(page.getByRole('textbox', { name: 'Message this Thread' })).toHaveCount(0);
 
@@ -2564,8 +2564,8 @@ test.describe('canonical agent Thread surface', () => {
       expect(cardPaint.background).toBe(cardPaint.fill1);
       expect(cardPaint.status).toBe(cardPaint.textTertiary);
       expect(cardPaint.ink).toBe(colorScheme === 'dark' ? '255 255 255' : '0 0 0');
-      const researchRow = parentTurn.getByRole('button', { name: /Open Subagent Thread \/root\/research/u });
-      const auditRow = parentTurn.getByRole('button', { name: /Open Subagent Thread \/root\/audit/u });
+      const researchRow = parentTurn.getByRole('button', { name: /Open Subagent Thread research/u });
+      const auditRow = parentTurn.getByRole('button', { name: /Open Subagent Thread audit/u });
 
       await page.evaluate(({ child, parentThreadId, startedAt }) => {
         const target = window as Window & {
@@ -4075,7 +4075,7 @@ test.describe('canonical agent Thread surface', () => {
 
     // Select before seeding: notifications for a Thread whose Turns are not yet
     // loaded are dropped, and selecting reloads them.
-    await page.getByRole('button', { name: 'Open Subagent Thread /root/plan_child' }).click();
+    await page.getByRole('button', { name: 'Open Subagent Thread plan_child' }).click();
     await page.evaluate((threadId) => {
       const target = window as Window & {
         __LIN_E2E__?: { emitAgentCoreNotification: (n: unknown) => void };
