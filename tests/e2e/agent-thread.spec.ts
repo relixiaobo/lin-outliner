@@ -128,11 +128,13 @@ async function captureReadingAnchor(page: Page, fraction: number): Promise<Readi
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     }
     const viewportTop = element.getBoundingClientRect().top;
-    const row = Array.from(element.querySelectorAll<HTMLElement>('[data-thread-turn-row]'))
-      .find((candidate) => {
-        const bounds = candidate.getBoundingClientRect();
-        return bounds.top <= viewportTop && bounds.bottom > viewportTop;
-      });
+    const rows = Array.from(element.querySelectorAll<HTMLElement>('[data-thread-turn-row]'));
+    // The same predicate production anchors on: the last row starting at or
+    // above the viewport top. Requiring a row to straddle it would find nothing
+    // whenever the offset lands in the 12px gap between two rows.
+    const row = rows.filter((candidate) => (
+      candidate.getBoundingClientRect().top <= viewportTop
+    )).at(-1) ?? rows[0];
     const turnId = row?.dataset.threadTurnRow;
     if (!row || !turnId) throw new Error('Missing reading anchor');
     return { offset: row.getBoundingClientRect().top - viewportTop, turnId };
@@ -5304,6 +5306,36 @@ test.describe('canonical agent Thread surface', () => {
     await expect(page.locator('.thread-dock-title')).toContainText('Tall history');
 
     await expectReadingAnchorRestored(page, anchor);
+  });
+
+  test('lets a send after a restore reach the end instead of being pulled back', async ({ page }) => {
+    await createNewThread(page);
+    await renameSelectedThread(page, 'Tall history');
+    await seedTallFlowTranscript(page, 12);
+    const anchor = await captureReadingAnchor(page, 0.6);
+
+    await createNewThread(page);
+    await page.getByRole('button', { name: 'Show Threads' }).click();
+    await page.getByRole('dialog', { name: 'Threads' })
+      .locator('.thread-list-select')
+      .filter({ hasText: 'Tall history' })
+      .click();
+    await expectReadingAnchorRestored(page, anchor);
+
+    // The restore owns the position until the reader acts. Sending is the reader
+    // acting: the new message anchors at the transcript top, and no restore that
+    // outlived its arrival gets to pull the transcript back up behind it.
+    await page.getByRole('textbox', { name: 'Message this Thread' }).fill('Anchor this send.');
+    await page.getByRole('button', { name: 'Send' }).click();
+    const sent = page.locator('.thread-user-message').filter({ hasText: 'Anchor this send.' });
+    await expect(sent).toBeVisible();
+    await expect.poll(() => sent.evaluate((element) => {
+      const scroller = element.closest('.thread-transcript');
+      if (!(scroller instanceof HTMLElement)) throw new Error('Missing transcript');
+      const topInset = Number.parseFloat(getComputedStyle(scroller).paddingTop) || 0;
+      return Math.abs(element.getBoundingClientRect().top - scroller.getBoundingClientRect().top - topInset);
+    })).toBeLessThanOrEqual(2);
+    await expect(page.locator(`[data-thread-turn-row="${anchor.turnId}"]`)).not.toBeInViewport();
   });
 
   test('returns from a Subagent to the same place in the parent conversation', async ({ page }) => {

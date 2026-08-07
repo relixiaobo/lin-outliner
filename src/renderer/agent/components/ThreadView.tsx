@@ -288,13 +288,24 @@ function readTranscriptAnchor(scroll: HTMLElement): TranscriptAnchor | null {
     const middle = Math.floor((low + high) / 2);
     const row = rows[middle]!;
     const bounds = row.getBoundingClientRect();
-    if (bounds.bottom > viewportTop) {
+    // Row *tops* are what the search may rely on. A virtualized row is placed at
+    // its layout slot, so tops stay ordered even on the frame a Turn renders
+    // taller than the estimate it was given — its bottom overlaps the next row's
+    // and bottoms are momentarily unsorted.
+    if (bounds.top <= viewportTop) {
       const turnId = row.dataset.threadTurnRow;
       if (turnId) anchor = { offset: bounds.top - viewportTop, turnId };
-      high = middle - 1;
-    } else low = middle + 1;
+      low = middle + 1;
+    } else high = middle - 1;
   }
-  return anchor;
+  if (anchor) return anchor;
+  // Every row starts below the viewport top: the reader is above the transcript,
+  // on the goal header or the leading gap. The first row still fixes the view.
+  const first = rows[0]!;
+  const firstTurnId = first.dataset.threadTurnRow;
+  return firstTurnId
+    ? { offset: first.getBoundingClientRect().top - viewportTop, turnId: firstTurnId }
+    : null;
 }
 
 function estimateTurnHeight(turn: Turn): number {
@@ -598,6 +609,16 @@ export function ThreadView({
 
   const synchronizeScrollPosition = useCallback((element: HTMLDivElement) => {
     synchronizedScrollTopRef.current = element.scrollTop;
+    // A pending restore is still travelling toward the saved position, and the
+    // geometry it passes through is not the reader's. Deriving follow from it
+    // hands the transcript to the bottom pin the moment an unsettled maximum
+    // clamps the write near the end; re-caching from it overwrites the very
+    // snapshot the restore is aiming at. The settling attempt clears the request
+    // before its write, so the final position still lands in both.
+    if (scrollRestoreRef.current) {
+      updateScrollMetrics(element);
+      return;
+    }
     const nextFollow = isTranscriptFollowing(element);
     setFollowValue(nextFollow);
     cacheThreadScrollSnapshot(threadId, {
@@ -739,6 +760,11 @@ export function ThreadView({
     const request = scrollRestoreRef.current;
     const scroll = scrollRef.current;
     if (!request || !scroll || turnCountRef.current === 0) return;
+    // An activated disclosure holds the position the reader just asked for. The
+    // restore now outlives its first application, so it has to yield here like
+    // every other writer of scrollTop — and without spending an attempt, since
+    // nothing about the restore was tried.
+    if (hasPendingAnchor()) return;
     const maximumTop = Math.max(0, scroll.scrollHeight - scroll.clientHeight);
     const anchor = request.anchor;
     const anchorRow = anchor
@@ -766,7 +792,7 @@ export function ThreadView({
       ? null
       : { ...request, attempts, scrollHeight: scroll.scrollHeight };
     setProgrammaticScrollTop(scroll, nextTop);
-  }, [setProgrammaticScrollTop]);
+  }, [hasPendingAnchor, setProgrammaticScrollTop]);
 
   const scheduleBottomPin = useCallback((replayAfterAnchor = false) => {
     if (!followRef.current) {
@@ -1044,19 +1070,26 @@ export function ThreadView({
     }
     cancelPendingVirtualScrollAdjustment();
     setDisclosureAnchorRunway(0);
+  }, [cancelPendingVirtualScrollAdjustment, setDisclosureAnchorRunway]);
+
+  /**
+   * The reader's last position, taken while the transcript is still mounted.
+   * React detaches host refs and the DOM node before passive cleanups run for a
+   * deleted subtree, so this has to be a layout cleanup: from a passive one the
+   * ref is already null and nothing is ever recorded. Everything the reader did
+   * with the scrollbar is already cached by then; what this adds is the position
+   * after changes that moved the transcript without a scroll event of their own.
+   */
+  useLayoutEffect(() => () => {
     const scroll = scrollRef.current;
-    // A detached container reports zero for its scroll offset and every rect, so
-    // reading one here would replace a good snapshot with a top clamp. The last
-    // synchronized position is already cached and is the honest one.
-    if (scroll?.isConnected && !scrollRestoreRef.current) {
-      const follow = isTranscriptFollowing(scroll);
-      cacheThreadScrollSnapshot(threadId, {
-        anchor: follow ? null : readTranscriptAnchor(scroll),
-        follow,
-        top: scroll.scrollTop,
-      });
-    }
-  }, [cancelPendingVirtualScrollAdjustment, setDisclosureAnchorRunway, threadId]);
+    if (!scroll?.isConnected || scrollRestoreRef.current) return;
+    const follow = isTranscriptFollowing(scroll);
+    cacheThreadScrollSnapshot(threadId, {
+      anchor: follow ? null : readTranscriptAnchor(scroll),
+      follow,
+      top: scroll.scrollTop,
+    });
+  }, [threadId]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -1179,6 +1212,12 @@ export function ThreadView({
     cancelPendingAnchor();
     clearSendAnchorSpacer();
     setDisclosureAnchorRunway(0);
+    // Sending is the reader asking to be at the end of the conversation. A
+    // restore that never settled — its anchored Turn rolled back, or simply
+    // outside a virtual window when the layout passes stopped — would otherwise
+    // fire on the layout pass this send causes and pull them back up, releasing
+    // follow on the way so the reply streams away below the fold.
+    scrollRestoreRef.current = null;
     pendingSendScrollRef.current = pendingSend;
     setFollowValue(true);
     if (scroll) setProgrammaticScrollTop(scroll, scroll.scrollHeight);
@@ -1209,11 +1248,6 @@ export function ThreadView({
         updateSendAnchorSpacer(previousViewport.spacer);
         setDisclosureAnchorRunway(previousViewport.disclosureRunway);
         setFollowValue(previousViewport.follow);
-        cacheThreadScrollSnapshot(threadId, {
-          anchor: previousViewport.anchor,
-          follow: previousViewport.follow,
-          top: previousViewport.top,
-        });
         if (previousViewport.spacer) {
           scrollRestoreRef.current = {
             anchor: previousViewport.anchor,
@@ -1225,6 +1259,14 @@ export function ThreadView({
           scrollRestoreRef.current = null;
           setProgrammaticScrollTop(currentScroll, previousViewport.top);
         }
+        // Last, so it wins: the write above re-reads the anchor from a transcript
+        // that has not finished shedding the failed send, and what the reader had
+        // before the send is what the next return should aim at.
+        cacheThreadScrollSnapshot(threadId, {
+          anchor: previousViewport.anchor,
+          follow: previousViewport.follow,
+          top: previousViewport.top,
+        });
       }
       if (draftRef.current.empty && editorSnapshot) composerRef.current?.restore(editorSnapshot);
       updateAttachments((current) => uniqueAttachments([...submittedAttachments, ...current]));
@@ -1540,13 +1582,18 @@ export function ThreadView({
             }
             reconcileDisclosureAnchorRunway(scroll);
             synchronizedScrollTopRef.current = scroll.scrollTop;
-            const nextFollow = isTranscriptFollowing(scroll);
-            setFollowValue(nextFollow);
-            cacheThreadScrollSnapshot(threadId, {
-              anchor: nextFollow ? null : readTranscriptAnchor(scroll),
-              follow: nextFollow,
-              top: scroll.scrollTop,
-            });
+            if (!scrollRestoreRef.current) {
+              const nextFollow = isTranscriptFollowing(scroll);
+              setFollowValue(nextFollow);
+              cacheThreadScrollSnapshot(threadId, {
+                // Per scroll event this path stays within the layout reads the
+                // follow check already makes: the anchor from the last frame is
+                // carried forward, and the frame-level path re-reads it (A9).
+                anchor: nextFollow ? null : threadScrollSnapshots.get(threadId)?.anchor ?? null,
+                follow: nextFollow,
+                top: scroll.scrollTop,
+              });
+            }
             scheduleScrollMetrics(scroll);
           }}
           onTouchMove={cancelPendingVirtualScrollAdjustment}
@@ -1792,9 +1839,9 @@ function ThreadTranscriptTurnShell({
         // The placeholder a skipped Turn occupies. Feeding the measured height
         // back keeps a remounted transcript the same height it was, so a
         // restored position still points at the content it was taken from.
-        ...(measuredHeight
-          ? { '--thread-turn-intrinsic-size': `${measuredHeight}px` }
-          : {}),
+        ...(measuredHeight === undefined
+          ? {}
+          : { '--thread-turn-intrinsic-size': `${measuredHeight}px` }),
       } as CSSProperties}
     >
       {children}
