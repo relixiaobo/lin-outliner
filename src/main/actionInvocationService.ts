@@ -490,9 +490,16 @@ export class ActionInvocationService {
 
     const context = this.contextFor(record);
     const presentations = resolveFamily(context, request.actionId, subject);
+    const suppliedParameters = new Set(
+      objectValuedArguments(request.actionId, request.arguments).map(([parameterId]) => parameterId),
+    );
     const match = presentations.find((presentation) => (
       presentation.binding.state === 'ready'
-      && hashArguments(presentation.binding.arguments) === hashArguments(request.arguments)
+        // A direct variant matches only its own exact arguments.
+        ? hashArguments(presentation.binding.arguments) === hashArguments(request.arguments)
+        // A parameterized variant is named by filling its declared slot; the
+        // ref itself was already proved against that slot's ready generation.
+        : suppliedParameters.has(presentation.binding.parameter.parameterId)
     ));
     if (!match) {
       const fallback = presentations[0];
@@ -538,8 +545,10 @@ export class ActionInvocationService {
         && challenge.argumentsHash === hashArguments(request.arguments);
       record.challenge = null;
       if (!valid) {
+        // A revoked, expired or cross-action token is dead: the record returns
+        // to `live` and NOTHING runs. Redeeming after cancel lands here.
         record.phase = 'live';
-        return { status: 'stale', reason: 'subject' };
+        return { status: 'stale', reason: 'invocation' };
       }
     }
 
