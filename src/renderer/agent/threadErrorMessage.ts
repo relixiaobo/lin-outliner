@@ -1,8 +1,24 @@
 import {
   SUBAGENT_BUDGET_EXHAUSTED_ERROR_CODE,
+  SUBAGENT_STRUCTURAL_LIMIT_ERROR_CODE,
   normalizeTurnErrorCode,
   type TurnError,
 } from '../../core/agent/protocol';
+
+/**
+ * Whether running the same request again could end differently.
+ *
+ * A runtime failure or a host restart is circumstance. A budget exhaustion is
+ * too: the pool belongs to the request, so a new user Turn delegates against a
+ * fresh grant — restating the need is the recovery path the budget design names
+ * (`docs/spec/agent-subagent-threads.md`). A structural limit is not: depth and
+ * the direct-child count are Thread-lifetime by design, so the next attempt
+ * meets the same wall, and offering a way out that isn't one wastes the user's
+ * time twice.
+ */
+export function isRetryableTurnError(error: TurnError | null): boolean {
+  return error?.code !== SUBAGENT_STRUCTURAL_LIMIT_ERROR_CODE;
+}
 
 const ERROR_PREVIEW_MAX = 280;
 

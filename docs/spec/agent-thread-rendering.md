@@ -377,6 +377,19 @@ stops animating under reduced-motion preferences. A failed or interrupted Turn
 with partial response prose keeps its process presentation neutral because the
 response tail already owns the terminal error or stopped state.
 
+A FAILED last Turn leads its action row with **Retry**, which re-sends that
+Turn's own request unchanged through the same rollback-and-send path Edit uses.
+The user did not cause the failure, and without this the only way forward is to
+edit their own message — which frames a crash as something they mistyped, and is
+unavailable outright for a message carrying more than one text part. It is
+offered only on the last Turn, because that path rolls back exactly one Turn, and
+only where running the same request again could end differently: a runtime
+failure or host restart is circumstance, and an exhausted Subagent budget is
+request-scoped, so a new user Turn delegates against a fresh grant. A structural
+limit is excluded — depth and the direct-child count are Thread-lifetime, so the
+next attempt meets the same wall. An interrupted Turn is excluded too: the user
+stopped it, and neither Retry nor Regenerate is offered for a decision they made.
+
 Unknown Item kinds are protocol errors, not generic fallback cards. Item status
 comes from the Item itself; the renderer never infers completion from missing
 events.
@@ -390,7 +403,7 @@ reference markers render through the same inline reference and preview surfaces
 as the outliner; Cmd/Ctrl-click preserves new-pane navigation, and HTTP links use
 the app preview route. User messages retain Copy and, for the latest terminal
 Turn only, Edit; final agent messages retain Copy, Continue in new chat, and
-Details. User messages that exceed five reading lines retain the established
+Details, preceded by Retry on a failed last Turn. User messages that exceed five reading lines retain the established
 measured Show more / Show less disclosure instead of
 growing the transcript without bound.
 

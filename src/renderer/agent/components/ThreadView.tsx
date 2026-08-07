@@ -58,6 +58,7 @@ import {
   ICON_SIZE,
   InfoIcon,
   LoaderIcon,
+  RefreshIcon,
   SendIcon,
   StopIcon,
   WarningIcon,
@@ -85,7 +86,7 @@ import {
   type ThreadDisclosureState,
   type ThreadToolItem,
 } from './items/ThreadItemView';
-import { userFacingAgentError } from '../threadErrorMessage';
+import { isRetryableTurnError, userFacingAgentError } from '../threadErrorMessage';
 import { clickInstalledFocusTarget, composerRefocusDecision } from '../composerRefocus';
 import {
   setThreadDisclosureOverride,
@@ -1622,6 +1623,7 @@ export function ThreadView({
                       <ThreadTurnView
                         onInterruptThread={onInterruptThread}
                         canEditUserMessage={turn.id === editableTurnId && turn.status !== 'inProgress'}
+                        isLastTurn={turnIndex === turns.length - 1}
                         expandState={expandState}
                         index={index}
                         onEditUserMessage={onEditUserMessage}
@@ -1850,6 +1852,7 @@ function ThreadTranscriptTurnShell({
 
 const ThreadTurnView = memo(function ThreadTurnView({
   canEditUserMessage,
+  isLastTurn,
   expandState,
   index,
   latchedReasoning,
@@ -1872,6 +1875,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
   readonly canEditUserMessage: boolean;
   readonly expandState: ThreadDisclosureState;
   readonly index: DocumentIndex;
+  readonly isLastTurn: boolean;
   /** Reasoning Item ids that have been open by default this session. */
   readonly latchedReasoning: Set<string>;
   /** Reasoning Item ids first observed while their Turn was live. */
@@ -1953,11 +1957,30 @@ const ThreadTurnView = memo(function ThreadTurnView({
     else if (action === 'continueInNewChat') await continueInNewChat();
     else if (action === 'details') onOpenTurnDetails(turn);
   }, [continueInNewChat, copyTurn, onOpenTurnDetails, turn]);
+  /**
+   * Running the same request again, for a Turn where that could go differently.
+   *
+   * A failure the user did not cause has no exit today: the only way forward is
+   * to hover their OWN message and edit it, which frames a crash as something
+   * they mistyped — and is unavailable outright for a message with more than one
+   * text part. Retry re-sends this Turn's request unchanged, through the same
+   * rollback-and-send path Edit uses, so the failed Turn does not linger as a
+   * dead branch and the question is not asked twice.
+   *
+   * Only the last Turn: that path rolls back exactly one Turn, so offering it
+   * further up would roll back somebody else's.
+   */
+  const retryContent = useMemo(() => {
+    if (!isLastTurn || turn.status !== 'failed' || !isRetryableTurnError(turn.error)) return null;
+    const request = turn.items.find((item) => item.type === 'userMessage');
+    return request?.content ?? null;
+  }, [isLastTurn, turn]);
   const responseTail = standaloneContextBoundary ? null : (
     <ThreadResponseTail
       onCopy={copyTurn}
       onContinueInNewChat={continueInNewChat}
       onOpenDetails={() => onOpenTurnDetails(turn)}
+      onRetry={retryContent ? () => onEditUserMessage(turn, retryContent) : null}
       // The process divider states the terminal status when there is no
       // response Item — but only if a process block renders at all. Without
       // one, suppressing it here would erase the status from the Turn.
@@ -2048,12 +2071,15 @@ function ThreadResponseTail({
   onCopy,
   onContinueInNewChat,
   onOpenDetails,
+  onRetry,
   statusOwnedElsewhere,
   turn,
 }: {
   readonly onCopy: () => Promise<void>;
   readonly onContinueInNewChat: () => Promise<void>;
   readonly onOpenDetails: () => void;
+  /** Present only where running the same request again could go differently. */
+  readonly onRetry: (() => Promise<void>) | null;
   readonly statusOwnedElsewhere: boolean;
   readonly turn: Turn;
 }) {
@@ -2082,6 +2108,15 @@ function ThreadResponseTail({
       <div className="thread-response-footer">
         {streaming ? <ThreadStreamingIndicator /> : (
           <div className="thread-message-actions thread-response-actions">
+            {onRetry ? (
+              <IconButton
+                icon={RefreshIcon}
+                iconSize={ICON_SIZE.menu}
+                label={t.agent.thread.retryTurn}
+                onClick={() => void onRetry()}
+                variant="message"
+              />
+            ) : null}
             <ThreadMessageCopyButton
               iconSize={ICON_SIZE.menu}
               label={t.agent.message.copyMessage}

@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test';
-import { threadErrorMessage, userFacingAgentError } from '../../src/renderer/agent/threadErrorMessage';
+import { threadErrorMessage, userFacingAgentError,
+  isRetryableTurnError,
+} from '../../src/renderer/agent/threadErrorMessage';
 
 describe('threadErrorMessage', () => {
   test('extracts a readable message from a provider JSON error', () => {
@@ -34,5 +36,18 @@ describe('threadErrorMessage', () => {
     }
     expect(userFacingAgentError('Token budget exhausted mid-Turn (12 of 10 tokens)', translated))
       .toBe('Token budget exhausted mid-Turn (12 of 10 tokens)');
+  });
+});
+
+describe('retryable Turn errors', () => {
+  test('offers a way out only where the same request could end differently', () => {
+    // Circumstance: worth running again.
+    expect(isRetryableTurnError({ message: 'boom', code: 'runtime_failure' })).toBe(true);
+    expect(isRetryableTurnError({ message: 'restarted', code: 'host_restart' })).toBe(true);
+    // Spend is request-scoped: a new user Turn delegates against a fresh grant,
+    // so restating the need is the recovery path the budget design names.
+    expect(isRetryableTurnError({ message: 'spent', code: 'subagent_budget_exhausted' })).toBe(true);
+    // Topology is Thread-lifetime: the next attempt meets the same wall.
+    expect(isRetryableTurnError({ message: 'too deep', code: 'subagent_structural_limit' })).toBe(false);
   });
 });
