@@ -232,6 +232,11 @@ in Today"); there the label IS the information.
 A slim hint bar, divider-free, with two zones (the anatomy ratified in
 `unified-command-surface.md` D6a):
 
+The launcher entry loads `button.css` / `input.css` alongside its own sheet: it
+renders the shared `Button` and `Input` primitives, and without their styles the
+classes resolve to nothing and the browser's default control chrome shows
+through.
+
 - **Left — identity and status.** At rest, the app mark plus the formatted summon
   hotkey as quiet meta text (not a key chip). During execution the same zone
   carries the status: a failure (`--status-danger`), or "Saving…" while a capture
