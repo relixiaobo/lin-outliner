@@ -150,6 +150,15 @@ describe('every built-in tool says what it did, not which API was called', () =>
     ['node_read', dynamic('node_read', { node_id: 'node-a' }), 'Read "node-a"'],
     ['node_search', dynamic('node_search', { query: 'epub' }), 'Searched for "epub"'],
     ['web_search', dynamic('web_search', { query: 'epub parser' }), 'Searched the web for "epub parser"'],
+    // The Item's own fallback for a query the model omitted is the empty
+    // string; quoting it would name nothing.
+    ['web_search blank', {
+      ...dynamic('web_search', { query: '' }),
+      type: 'webSearch' as const,
+      query: '',
+      results: [],
+      error: null,
+    }, 'Searched the web'],
     ['web_fetch', dynamic('web_fetch', { url: 'https://example.com/a' }), 'Fetched https://example.com/a'],
     ['skill', dynamic('skill', { skill: 'dataviz' }), 'Used the dataviz skill'],
     ['request_user_input', dynamic('request_user_input', { question: 'which?' }), 'Asked a question'],

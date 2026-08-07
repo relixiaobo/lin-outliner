@@ -499,6 +499,44 @@ describe('Codex Agent Core protocol codec', () => {
     expect(decodeThreadItem({ ...search, query: '' })).toMatchObject({ type: 'webSearch', query: '' });
   });
 
+  test('keeps a web search Item readable when the backend returns an untitled result', () => {
+    const search = JSON.parse(encodeThreadItem(
+      allItems.find((item) => item.type === 'webSearch')!,
+    )) as Record<string, unknown>;
+
+    // Not the model's words and not this system's data: one blank field from a
+    // search backend must not take the completed Item — and its Turn — down.
+    expect(decodeThreadItem({
+      ...search,
+      results: [{ title: '', url: '', snippet: 'body' }],
+    })).toMatchObject({ type: 'webSearch', results: [{ title: '', url: '' }] });
+  });
+
+  test('keeps a command Item readable when the model sent a blank command', () => {
+    const command = JSON.parse(encodeThreadItem(
+      allItems.find((item) => item.type === 'commandExecution')!,
+    )) as Record<string, unknown>;
+
+    // A call that will fail belongs in the tool's own result, not in a Turn
+    // that dies at admission with nothing recorded.
+    expect(decodeThreadItem({ ...command, command: '' })).toMatchObject({
+      type: 'commandExecution',
+      command: '',
+    });
+  });
+
+  test('keeps a file change readable when its recorded path is empty', () => {
+    const change = JSON.parse(encodeThreadItem(
+      allItems.find((item) => item.type === 'fileChange')!,
+    )) as Record<string, unknown>;
+    const changes = (change.changes as Array<Record<string, unknown>>);
+
+    expect(decodeThreadItem({
+      ...change,
+      changes: [{ ...changes[0], path: '' }],
+    })).toMatchObject({ type: 'fileChange', changes: [{ path: '' }] });
+  });
+
   test('keeps a collaboration Item readable when an optional string is empty', () => {
     const collab = JSON.parse(encodeThreadItem(
       allItems.find((item) => item.type === 'collabAgentToolCall')!,

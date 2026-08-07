@@ -360,15 +360,25 @@ information to relate the bounded observation to the admitted source-image pixel
 The runtime does not inspect, validate, convert, or rewrite later tool arguments.
 
 An OPTIONAL string tool argument the model leaves blank means "not specified", and
-is recorded as `null` rather than as an empty string. The canonical Item codec
-correspondingly tolerates an empty value in every optional display string a tool
-argument can reach — a Subagent spawn's `model` and `reasoningEffort`, a command's
-`description`, a prompt, a web search's `query`, whose own producer falls back to
-the empty string when the model omits it. This is the A12 line drawn at the decode
-boundary: fail closed on data that would corrupt the store, not on a blank optional
-string that means nothing either way. Refusing one cost an entire Turn — the Item
-is decoded before it is recorded, so the run died with nothing on disk to explain
-why.
+is recorded as `null` rather than as an empty string: a Subagent spawn's `model`,
+`reasoningEffort`, and `message`, and a file change's path, which is named
+`(unknown path)` when blank exactly as when absent.
+
+The canonical Item codec correspondingly tolerates an empty value in every Item
+string a tool call can put one in. Some are not optional and cannot be `null` —
+a web search's `query` and a command's `command` are required by their schemas,
+and their producers write `''` when the model omits or blanks the argument, so a
+decode that refuses empty could never read what the producer writes. Others are
+not the model's words at all: a web result's `title` and `url` come from the
+search backend, which no part of this system controls.
+
+This is the A12 line drawn at the decode boundary: fail closed on data that would
+corrupt the store, never on a blank string that means nothing either way.
+Refusing one cost an entire Turn — an Item is decoded before it is recorded, so
+the run died with nothing on disk to explain why. Where a blank value would leave
+a user surface naming nothing, the surface falls back to its subject-less copy
+rather than quoting an empty string.
+
 Event admission, the payload store, and the canonical Item codec independently
 require an image MIME type; invalid MIME metadata produces a structured omission
 instead of a provider image block.

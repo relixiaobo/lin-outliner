@@ -1642,7 +1642,7 @@ function itemSummary(item: ThreadItem): string {
     case 'dynamicToolCall': return [item.namespace, item.tool].filter(Boolean).join('.');
     case 'collabAgentToolCall': return item.tool;
     case 'subAgentActivity': return item.agentPath;
-    case 'webSearch': return item.query;
+    case 'webSearch': return item.query || item.type;
     case 'imageView': return item.path;
     case 'contextEvidence': return item.summary;
     case 'contextReset': return item.type;

@@ -1000,7 +1000,7 @@ function startedToolItem(
       status: 'inProgress',
       senderThreadId: context.thread.id,
       receiverThreadIds: [],
-      prompt: typeof input.message === 'string' ? boundedText(input.message, MAX_PERSISTED_TOOL_STRING_CHARS) : null,
+      prompt: optionalToolArgumentText(input.message),
       model: optionalToolArgumentText(input.model),
       reasoningEffort: optionalToolArgumentText(input.reasoning_effort),
       agentsStates: {},
@@ -1032,11 +1032,9 @@ function startedToolItem(
   }
   if (identity.namespace === null && isFileMutationTool(identity.name)) {
     const input = isRecord(args) ? args : {};
-    const path = typeof input.path === 'string'
-      ? input.path
-      : typeof input.file_path === 'string'
-        ? input.file_path
-        : '(unknown path)';
+    const path = optionalToolArgumentText(input.path)
+      ?? optionalToolArgumentText(input.file_path)
+      ?? '(unknown path)';
     return {
       ...base,
       type: 'fileChange',

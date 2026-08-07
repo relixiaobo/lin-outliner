@@ -266,6 +266,18 @@ describe('PiTurnExecutor event normalization', () => {
     });
   });
 
+  test('names a blank file path unknown, the same as an absent one', async () => {
+    const fixture = createContext();
+    const normalizer = new PiEventNormalizer(fixture.context);
+    normalizer.handle(toolAdmissionEvent('call-blank-path', 'file_write', { path: '   ', content: 'x' }));
+    await normalizer.flush();
+
+    expect(fixture.recorder.orderedItems()[0]).toMatchObject({
+      type: 'fileChange',
+      changes: [{ path: '(unknown path)' }],
+    });
+  });
+
   test('uses the provider call id for collaboration control-plane identity', async () => {
     const fixture = createContext();
     const childThreadId = uuidV7(1_720_000_001_000);

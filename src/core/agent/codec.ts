@@ -244,7 +244,11 @@ export function decodeThreadItem(value: unknown): ThreadItem {
       result = {
         ...base,
         type,
-        command: stringValue(record.command, 'item.command'),
+        // What the model asked for, verbatim. A `bash` call with an empty
+        // command is a call that will fail — in the tool's own result, where
+        // the model can read it — not a Turn that dies at admission with
+        // nothing recorded.
+        command: stringValue(record.command, 'item.command', true),
         cwd: stringValue(record.cwd, 'item.cwd'),
         processId: nullableString(record.processId, 'item.processId'),
         status: itemExecutionStatus(record.status, 'item.status'),
@@ -403,8 +407,13 @@ export function decodeThreadItem(value: unknown): ThreadItem {
           const item = recordValue(entry, `item.results[${index}]`);
           exactKeys(item, ['title', 'url', 'snippet'], `item.results[${index}]`);
           return {
-            title: stringValue(item.title, `item.results[${index}].title`),
-            url: stringValue(item.url, `item.results[${index}].url`),
+            // A search backend's own strings, and the producer admits any string
+            // it sends. One untitled row must not make the completed Item
+            // undecodable — `ItemRecorder.completed` decodes before it writes,
+            // so that throws out of the tool and kills the Turn, on data nobody
+            // here controls.
+            title: stringValue(item.title, `item.results[${index}].title`, true),
+            url: stringValue(item.url, `item.results[${index}].url`, true),
             ...(item.snippet === undefined
               ? {}
               : { snippet: stringValue(item.snippet, `item.results[${index}].snippet`, true) }),
@@ -3555,7 +3564,10 @@ function decodeFileChange(value: unknown): FileUpdateChange {
   const kind = enumValue(record.kind, ['add', 'delete', 'update', 'move'], 'fileChange.kind');
   if (kind === 'move' && record.movedTo === undefined) fail('fileChange.movedTo', 'move requires a destination');
   return deepFreeze({
-    path: stringValue(record.path, 'fileChange.path'),
+    // The producer names a blank path `(unknown path)`, so nothing new writes
+    // an empty one; tolerated on read only so an Item already carrying one
+    // stays readable rather than taking its Thread down with it.
+    path: stringValue(record.path, 'fileChange.path', true),
     kind,
     ...(record.diff === undefined ? {} : { diff: stringValue(record.diff, 'fileChange.diff', true) }),
     ...(record.movedTo === undefined ? {} : { movedTo: stringValue(record.movedTo, 'fileChange.movedTo') }),
