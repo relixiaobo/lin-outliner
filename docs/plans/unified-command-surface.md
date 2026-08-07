@@ -1809,10 +1809,13 @@ JSX it rewrites anyway. What is **still PR 2's** in this bar, stated so the
 
 **There is no interim empty-query Enter wait to delete.** Earlier revisions of
 this section told PR 2 to remove that stopgap; it was **withdrawn at the review
-gate rather than shipped**, so PR 2 inherits nothing for the show→context race.
-Closing that race at its source — the synchronous invocation open, pending ambient
-slot and synchronous `draftText` admission (D1a/D1b) — is PR 2's own work, not a
-cleanup of someone else's.
+gate rather than shipped**. The shipped authority says so itself —
+`spec/launcher.md:148`: *"A renderer-side wait was built and then removed"*, and
+`:157-158`: *"The race is that plan's to close (D6a); the launcher does not carry
+a stopgap for it."* So PR 2 inherits nothing here. Closing that race at its
+source — the synchronous invocation open, pending ambient slot and synchronous
+`draftText` admission (D1a/D1b) — is PR 2's own work, not a cleanup of someone
+else's, and it retires that spec section (step 13).
 
 ### D7 — Hidden without a subject; shown with a reason when a predicate fails
 
@@ -2170,27 +2173,35 @@ self-check); the earlier "no locale file" claim is no longer true.
    (`useWorkspaceKeyboard.ts:521-565`) — which a command-only effect does not
    preserve. Tests must cover nested and transcluded panes. **Not in scope unless
    explicitly ratified**; the plan does not smuggle it in through a field.
-12. **Retire the in-app palette — and all six of its consumers.** Deleting
+12. **Retire the in-app palette — and every consumer of it.** Deleting
    `CommandPalette.tsx` alone does not compile, and deleting the `global.command_palette`
-   binding alone silently breaks a surface #497 just shipped. The full set, derived
-   from `rg 'command_palette|CommandPalette'` and re-derived at implementation start:
+   binding alone silently breaks a surface #497 just shipped. The work queue is
+   `rg -n 'command_palette|CommandPalette' src tests docs` — **the whole tree, not
+   `src/renderer/ui/`**, which is how an earlier revision of this table lost the
+   handler that actually opens the palette. Re-derive it at implementation start;
+   as of 2026-08-07 it is:
 
    | Site | What it is | What PR 2 does |
    |---|---|---|
    | `src/renderer/ui/CommandPalette.tsx` | the surface | delete |
    | `src/renderer/ui/App.tsx:9`, `:681-690` | mount + `ui.commandOpen` + `commandRestoreFocusRef` | delete the mount and the UI state it exists for |
-   | `src/renderer/ui/interactions/shortcutRegistry.ts:139` | `global.command_palette` (`⌘K`) | delete — the keystroke lives on inside the panel as *Actions* |
+   | **`src/renderer/ui/useWorkspaceKeyboard.ts:220`** | `matchesShortcutEvent(event, 'global.command_palette')` → `setCommandOpen(true)` — **the handler the binding actually fires**, and the only keyboard path that sets `commandOpen` | delete with the binding; without this the `App.tsx` row leaves a caller of deleted state |
+   | `src/renderer/ui/interactions/shortcutRegistry.ts:48`, `:139` | the `ShortcutId` union member **and** the `⌘K` definition | delete both — the keystroke lives on inside the panel as *Actions*. Deleting `:139` without `:48` leaves a dead type; deleting `:48` is what makes every stale caller fail to typecheck, which is the point |
    | `src/renderer/ui/Sidebar.tsx:137` | the sidebar *Search* row's `formatShortcutHint('global.command_palette')` | **retarget to the launcher summon binding**, so the hint re-derives from the surviving shortcut instead of resolving to nothing |
-   | `src/renderer/ui/interactions/slashCommands.ts:67-73` | the `/`-menu entry, incl. its stale `shortcutHint: 'Cmd+K'` | **keep the entry, retarget it to summon the launcher** (decision below); drop the hard-coded hint |
+   | **`tests/renderer/sidebarSearchRow.test.tsx:133`** | the existing guard: rebind the registry entry, assert the row's hint follows it — written precisely so a hard-coded `⌘K` cannot survive | retarget to the summon binding. It is the guard on the behaviour this step's headline decision changes, so it must keep failing for a hard-coded hint |
+   | `src/renderer/ui/interactions/slashCommands.ts:67-73` | the `/`-menu entry, incl. its stale `shortcutHint: 'Cmd+K'` and its hard-coded English `label` | **keep the entry, retarget it to summon the launcher** (ratified below); drop the hard-coded hint |
+   | **`src/core/i18n/messages/en.ts:941`, `zh-Hans.ts:865`** | `slashLabels.command_palette` — the row's display label in both catalogs | re-copy per D8 in both locales |
+   | **`tests/renderer/rowInteractions.test.ts:1315`** | asserts `filterSlashCommands('')`'s id list ends with `command_palette` | survives a label-only change; update if the id is renamed |
    | `src/renderer/ui/NodePanel.tsx:549`, `src/renderer/ui/outliner/OutlinerItem.tsx:1208` | the two `/`-menu execution branches that set `commandOpen` | summon the launcher instead |
-   | `src/renderer/ui/outliner/SlashCommandMenu.tsx:39` + the three `enabledSlashCommandIds` lists | the entry's icon and its per-surface enablement | unchanged if the entry survives; deleted with it if not |
+   | `src/renderer/ui/outliner/SlashCommandMenu.tsx:39` + the three `enabledSlashCommandIds` lists | the entry's icon and its per-surface enablement | unchanged, since the entry survives |
 
-   **Decision — the `/`-menu entry is retargeted, not deleted.** It and the sidebar
-   *Search* row answer the same need: a mouse-first or menu-first user who never
-   learned the keystroke. D3 retires the `⌘K` *binding*, not the in-app entry
-   points to the surface; deleting the entry would remove an entry point while the
-   plan's own D6a argues the panel must *teach* its keystroke. Its label follows
-   D8 (the object/verb rule) rather than remaining *Command palette*.
+   **Ratified (PM, 2026-08-07) — the `/`-menu entry is retargeted, not deleted.**
+   It and the sidebar *Search* row answer the same need: a mouse-first or
+   menu-first user who never learned the keystroke. D3 retires the `⌘K`
+   *binding*, not the in-app entry points to the surface; deleting the entry would
+   remove an entry point while the plan's own D6a argues the panel must *teach*
+   its keystroke. Its label is re-copied under D8 (the object/verb rule) in both
+   locales rather than remaining *Command palette*.
 
    **The old menu oracle is not deleted here — PR 1's final step already removed
    it** once equivalence was proven.
@@ -2205,12 +2216,16 @@ self-check); the earlier "no locale file" claim is no longer true.
      selector from the guard is a B11 *narrowing* of the exception set, not a
      relaxation: the launcher panel is a different tier (vibrant system glass,
      `design-system.md:185`), so it does not inherit the entry.
-   - **`spec/launcher.md`.** Its *Footer* and *"Action labels are verbs"*
-     sections currently ratify the as-built compound labels *Capture page to
+   - **`spec/launcher.md`, three sections.** *Footer* and *"Action labels are
+     verbs"* currently ratify the as-built compound labels *Capture page to
      Today* / *New node in Today*, which D6/D8 replace with an object row plus a
      verb (*Capture* / *Create node*). AC-03's locale guard rejects those exact
      strings, so leaving the spec as-is puts a shipped authority in direct
-     conflict with a shipped guard.
+     conflict with a shipped guard. **And *"Known gap: Enter before the context
+     lands"* (`:141-158`) retires by the same argument** — it documents the
+     show→context race as knowingly unmitigated and says outright that *"the race
+     is that plan's to close (D6a); the launcher does not carry a stopgap for
+     it."* PR 2 closes it, so the section describes a gap that no longer exists.
    - **`spec/workspace-layout.md`.** The palette is load-bearing in its focus and
      overlay model, not just prose: the Search row (`:970`), the ensure-first
      Today path (`:1102`), `focusedSurface = 'overlay'` (`:1037`), and the
@@ -2218,13 +2233,22 @@ self-check); the earlier "no locale file" claim is no longer true.
      as the launcher summon must be re-stated there, including the sidebar row's
      shortcut source (`:133`).
    - **`spec/ui-behavior.md:765`, `:809`** name the palette in the `Dialog`
-     inventory and the combobox a11y contract; the design-system docs use "in-app
-     command palette" as the *example* of the opaque elevated tier
+     inventory and the combobox a11y contract, and
+     **`design-system/components.md:23`** names `CommandPalette.tsx` as a surface
+     consumer of the dialog shell — three inventories of a component that will not
+     exist. **`design-system.md:143`** lists the file in the *Editor and commands*
+     row of the file inventory.
+   - **The design-system rules survive; their examples do not.** The docs use
+     "in-app command palette" as the *example* of the opaque elevated tier
      (`design-system/foundations.md:307,310,316,350`,
-     `design-system/components.md:74`, `design-system/surfaces.md:223`). Those
-     rules survive — the tier still has dialogs in it — so they need the example
-     repointed, not the rule rewritten. `design-system/calibration-audit.md`
-     CA55/CA56 are historical records and stay as written.
+     `design-system/components.md:74`, `design-system/surfaces.md:223`) — the tier
+     still has dialogs in it, so the example is repointed, not the rule rewritten.
+     Same for **`design-system.md:185`**, whose exception row scopes itself as
+     *"in-app command palettes remain opaque elevated surfaces"*: step 13 cites
+     that line as **evidence** the launcher is a different tier, and the clause
+     itself goes stale once there is no in-app palette to contrast with.
+     `design-system/calibration-audit.md` CA55/CA56 are historical records and
+     stay as written.
 
 **The ordering constraint that used to sit here is discharged.** PR 2 was
 sequenced behind #483 (composer files) and #488 (locale catalogs, `main.ts`,
@@ -2480,12 +2504,14 @@ factoring only), `src/preload/index.ts`, a new minimal
 composer path and both locale catalogs. **Plus the palette's consumers, which
 earlier drafts of this list omitted and step 12 now enumerates:** `App.tsx`,
 `Sidebar.tsx`, `NodePanel.tsx`, `outliner/OutlinerItem.tsx`,
-`outliner/SlashCommandMenu.tsx`, `interactions/slashCommands.ts`,
-`interactions/shortcutRegistry.ts`, `styles/overlay-palette.css`,
-`styles/popover-command.css`, `tests/e2e/typography-tokens.spec.ts`, and the spec
-set in step 13. That omission is the reason step 12 is now a derived table rather
-than a sentence: `rg 'command_palette|CommandPalette'` is the work queue (A11),
-not a remembered list. No currently open PR touches
+`outliner/SlashCommandMenu.tsx`, `useWorkspaceKeyboard.ts`,
+`interactions/slashCommands.ts`, `interactions/shortcutRegistry.ts`,
+`core/i18n/messages/{en,zh-Hans}.ts`, `styles/overlay-palette.css`,
+`styles/popover-command.css`, `tests/e2e/typography-tokens.spec.ts`,
+`tests/renderer/sidebarSearchRow.test.tsx`, `tests/renderer/rowInteractions.test.ts`,
+and the spec set in step 13. That omission is the reason step 12 is now a derived
+table rather than a sentence — and the reason its query is scoped `src tests docs`
+rather than one directory: the queue comes from `rg` (A11), not from memory. No currently open PR touches
 `electron.vite.config.ts`; the PR 2 Draft claim must name it explicitly and re-run
 the ownership/collision check before editing it.
 
