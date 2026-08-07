@@ -99,8 +99,9 @@ the command-surface follow-ups (`launcher-capture-destinations` / `launcher-ai-a
 into `unified-command-surface` (D1/D4/D5) and the resolver track superseded — all archived. The
 capture-pipeline tracks below stay separate (orthogonal to the surface).
 
-- **unified-command-surface** (P2, **in-progress — design contract merged #485 and
-  refined #491; implementation unclaimed**) — put **one core action registry** behind every
+- **unified-command-surface** (P2, **in-progress — design contract merged #485,
+  refined #491, re-anchored to the tree #501; implementation unclaimed**) — put
+  **one core action registry** behind every
   outline-node action. The context menu becomes its filtered anchored view; the
   launcher becomes its searchable view and the only globally summoned command
   surface. Shape (b) ships as two independent complete features: PR 1 proves the

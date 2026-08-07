@@ -213,3 +213,31 @@ requiring architecture to explain a symptom, suspect the diagnosis**: the tell
 here was a sliver of the highlighted first candidate escaping past the panel's
 left edge, which said "drawn, positioned correctly, behind" and ruled out every
 input-context theory at a glance. Cheap observation beats expensive theory.
+
+## A derived list must carry its query, and the query's scope is part of the claim
+
+A plan step said "delete the in-app command palette". Re-anchoring it turned that
+sentence into a table of consumers, on the correct reasoning that deleting the
+component alone would not compile — and the table was introduced as derived from
+`rg 'command_palette|CommandPalette'`, citing A11. It was still missing the
+handler that actually opens the palette, the two renderer tests guarding the
+behaviour, the shortcut union member that makes every stale caller fail to
+typecheck, and both locale entries. The query had been run over one directory,
+`src/renderer/ui/`; the misses lived in `useWorkspaceKeyboard.ts`, `tests/`, and
+`src/core/i18n/`. A second pass, after those were added, still carried "the three
+`enabledSlashCommandIds` lists" — a remembered count, where the tree has two.
+
+The failure is not sloppiness, and re-deriving "at implementation start" does not
+cover it: by then the list has been read as authoritative for weeks, and the
+reader has no way to tell a transcription from a recollection. What separates the
+two is recoverable only if the artifact says which command produced it, at what
+scope. A9 asks for measurement before a trade; this is the same discipline for
+enumeration.
+
+So when a document claims a list is derived: **write the command into the
+document, scope it to the whole tree rather than the directory you happened to be
+reading, and transcribe all of its output — including the hits that need no
+action.** A hit deliberately marked "no change" is evidence the query was read; a
+hit that is simply absent is indistinguishable from one that was never seen. And
+never carry a bare count in prose — name the sites, so the number cannot drift
+away from them.

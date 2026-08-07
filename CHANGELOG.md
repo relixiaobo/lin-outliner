@@ -143,6 +143,23 @@ Entries reference the pull request that introduced them.
 
 ### Internal
 
+- **Re-anchored the `unified-command-surface` plan against the shipped tree
+  (cc-2, PR #501)** — five PRs had merged since the plan was last refined, one of
+  which (#497) rewrote the very launcher files it cites, so ten `file:line`
+  references had drifted and three passages described a surface that no longer
+  existed. Every citation in the plan now resolves, and `types.ts` is
+  disambiguated to `core/types.ts` (two files share the basename). Three
+  corrections were substantive: the plan claimed the shipped launcher had no IME
+  guard (#497 shipped one) and told PR 2 to delete an interim empty-query Enter
+  wait that was withdrawn at that gate rather than shipped, so PR 2 inherits no
+  stopgap for the show→context race; and the one-sentence step retiring the
+  in-app command palette became a derived table of every consumer, because
+  deleting the component alone does not compile. At the gate the table was
+  checked against its own `rg` query and was still missing the handler that
+  actually opens the palette, the two renderer tests guarding it, the shortcut
+  union member, and both locale entries — all now listed, with the query written
+  into the plan at whole-tree scope. No design decision changed; the retargeted
+  (not deleted) `/`-menu entry is recorded as PM-ratified.
 - **Removed a stray agent test deliverable from the repo root (main-agent)** —
   `美国政府限制外国人使用Fable5事件分析.pptx`, a 26KB deck the in-app agent
   produced on 2026-06-15 while the inline-deliverable-preview feature was being
