@@ -1810,9 +1810,9 @@ JSX it rewrites anyway. What is **still PR 2's** in this bar, stated so the
 **There is no interim empty-query Enter wait to delete.** Earlier revisions of
 this section told PR 2 to remove that stopgap; it was **withdrawn at the review
 gate rather than shipped**. The shipped authority says so itself —
-`spec/launcher.md:148`: *"A renderer-side wait was built and then removed"*, and
-`:157-158`: *"The race is that plan's to close (D6a); the launcher does not carry
-a stopgap for it."* So PR 2 inherits nothing here. Closing that race at its
+`spec/launcher.md:148-149`: *"A renderer-side wait was built and then removed"*,
+and `:156-157`: *"The race is that plan's to close (D6a); the launcher does not
+carry a stopgap for it."* So PR 2 inherits nothing here. Closing that race at its
 source — the synchronous invocation open, pending ambient slot and synchronous
 `draftText` admission (D1a/D1b) — is PR 2's own work, not a cleanup of someone
 else's, and it retires that spec section (step 13).
@@ -2193,7 +2193,8 @@ self-check); the earlier "no locale file" claim is no longer true.
    | **`src/core/i18n/messages/en.ts:941`, `zh-Hans.ts:865`** | `slashLabels.command_palette` — the row's display label in both catalogs | re-copy per D8 in both locales |
    | **`tests/renderer/rowInteractions.test.ts:1315`** | asserts `filterSlashCommands('')`'s id list ends with `command_palette` | survives a label-only change; update if the id is renamed |
    | `src/renderer/ui/NodePanel.tsx:549`, `src/renderer/ui/outliner/OutlinerItem.tsx:1208` | the two `/`-menu execution branches that set `commandOpen` | summon the launcher instead |
-   | `src/renderer/ui/outliner/SlashCommandMenu.tsx:39` + the three `enabledSlashCommandIds` lists | the entry's icon and its per-surface enablement | unchanged, since the entry survives |
+   | `src/renderer/ui/outliner/SlashCommandMenu.tsx:39` + the **two** `enabledSlashCommandIds` lists (`NodePanel.tsx:708`, `OutlinerItem.tsx:2494`) | the entry's icon and its per-surface enablement | unchanged, since the entry survives |
+   | `src/renderer/ui/App.tsx:383` | a comment — *"mirrors the in-app `CommandPalette` jump"* — describing the panel-jump path by analogy to a component that will not exist | re-word to describe the behaviour directly |
 
    **Ratified (PM, 2026-08-07) — the `/`-menu entry is retargeted, not deleted.**
    It and the sidebar *Search* row answer the same need: a mouse-first or
