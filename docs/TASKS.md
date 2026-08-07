@@ -23,17 +23,7 @@ Open PRs and claims — the PR queue, not this snapshot, is authoritative.
 
 - **Approved and unclaimed, top of queue:** the two `unified-command-surface`
   implementation PRs (design merged #485, refined #491) — see Backlog top.
-- **Built, Draft PR #497, awaiting the visual gate:**
-  `launcher-interaction-hardening` — shipped-launcher correctness (IME guard,
-  show→context race, error copy/presentation), the D6a footer implemented early,
-  sidebar Search entry with the real shortcut hint, and the Settings
-  launcher-hotkey row incl. the silent-registration-failure state; see
-  `docs/plans/launcher-interaction-hardening.md`. (The separate
-  `command-surface-discoverability` draft was merged into it, 2026-08-06.)
-  Built by **main** at the PM's direction rather than a dev clone — a deliberate
-  flow exception, recorded here so the board is not read as normal practice.
-  typecheck/renderer/core/docs all pass; light + dark verification is the one
-  gate step still owed.
+
 
 ## Backlog
 
@@ -126,19 +116,18 @@ capture-pipeline tracks below stay separate (orthogonal to the surface).
   hotkey taught in-surface, first-open = the furnished empty-query list with no
   onboarding chrome, flat list reaffirmed — plus the IME composition guard as a
   hard requirement (AC-16). PR 2 keeps the guard and CSS that
-  `launcher-interaction-hardening` ships early, deletes its interim empty-query
-  Enter wait, and retargets the hardening plan's sidebar Search row in its
-  step 12 sweep.
-- **launcher-interaction-hardening** (P1, **approved 2026-08-06, unclaimed**) —
-  ONE PR on the *shipped* surface, scoped to survive `unified-command-surface`
-  PR 2: IME composition guard (P0 for CJK input), interim renderer-only fix for
-  the show→context Enter race, error copy/presentation split, D6a footer
-  implemented early (verb labels, identity/status zone with the summon hotkey),
-  row focus retention, dead empty-state removal, sidebar **Search** entry
-  (registry-derived `⌘K` hint), and the Settings → General launcher-hotkey row
-  incl. the silent-registration-failure state (`formatHotkey` moves to core).
-  See `docs/plans/launcher-interaction-hardening.md`. (The
-  `command-surface-discoverability` draft merged in, 2026-08-06 — archived.)
+  `launcher-interaction-hardening` shipped (#497) and retargets its sidebar
+  Search row in the step 12 sweep. The interim empty-query Enter wait was
+  withdrawn before merge, so PR 2 inherits **no** stopgap for the show→context
+  race — closing it at the source is part of PR 2's job, not a cleanup.
+- **launcher-interaction-hardening** (**done — PR #497**) — IME composition guard
+  plus the window-level fix that stopped the launcher covering the candidate
+  window (CJK input was unusable on both counts), the D6a footer, sidebar
+  **Search** entry, and the Settings launcher-hotkey row. The interim
+  show→context Enter wait in the plan was **withdrawn** at the review gate rather
+  than shipped; that race is `unified-command-surface` PR 2's to close at its
+  source. Design folded into `spec/launcher.md` + `spec/workspace-layout.md`;
+  plan archived.
 - **launcher-provider-expansion** (P2) — capture provider breadth: which URLs/apps
   classify into which source `kind` + capture framing (Tier A browser web apps
   classifiable now; Tier B native macOS apps later). Orthogonal to the command

@@ -12,6 +12,15 @@ Entries reference the pull request that introduced them.
 
 ### Added
 
+- **Search has a visible home in the sidebar (PR #497, main)** — a Search row now
+  leads the sidebar and opens the command palette, showing its real shortcut
+  beside it (derived from the shortcut registry, so a rebind carries through).
+  Search had been fused into keyboard-only surfaces, so a mouse-first user could
+  not find it at all. Settings → General gains a read-only Shortcuts row naming
+  the global launcher's registered accelerator — including the case where every
+  candidate shortcut was taken, which previously left the launcher unreachable
+  with no indication anywhere.
+
 - **Browser Pilot arrives already installed (PR #492, codex-4)** — the Skill that
   lets the agent drive Chrome is acquired and enabled on launch instead of
   waiting to be found in the catalog, while staying an ordinary `managed` Skill
@@ -54,6 +63,24 @@ Entries reference the pull request that introduced them.
   means deleting and re-pushing it.
 
 ### Fixed
+
+- **Chinese, Japanese and Korean input works in the launcher (PR #497, main)** —
+  two separate defects made it unusable. Committing a candidate with Enter fired
+  the highlighted row instead of the IME (capturing half-typed text, or opening
+  the main window and dismissing the launcher); the launcher now leaves Enter,
+  the arrows and Escape to an active composition, as the in-app palette already
+  did. And the launcher covered the candidate window outright — it was pinned at
+  the `pop-up-menu` window level, where macOS also presents candidates — so there
+  was no list to choose from. It now floats below that level and still above
+  ordinary windows.
+- **The launcher footer reads as a hint bar, not a stray button (PR #497, main)** —
+  the shared control styles were never loaded in the launcher bundle, so the
+  action hint rendered with the browser's default button chrome. It now carries
+  the app mark and summon hotkey on the left, and the action verb plus `↵` on the
+  right; a command row no longer restates its own title there ("Open main window"
+  appeared twice on screen). Save failures and progress moved out of the
+  clickable control into a status zone, and the dev-only "restart the dev app"
+  failure line no longer reaches packaged builds.
 
 - **The agent process timeline reads as one compact sequence (PR #493, codex-3)** —
   reasoning rows now share the timeline's own spacing instead of adding their
