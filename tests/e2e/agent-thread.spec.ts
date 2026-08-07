@@ -1988,7 +1988,7 @@ test.describe('canonical agent Thread surface', () => {
     await expect(composer).toHaveText('Keep this draft.');
   });
 
-  test('opens a Subagent from the transcript, offers a way back, and keeps it out of the list', async ({ page }) => {
+  test('reads a Subagent in a drawer over its parent, and leaves the parent where it was', async ({ page }) => {
     await createNewThread(page);
     await page.evaluate(async () => {
       const target = window as Window & {
@@ -2039,21 +2039,24 @@ test.describe('canonical agent Thread surface', () => {
     });
 
     const parentTitle = await page.locator('.thread-dock-title').innerText();
+    const trigger = page.getByRole('button', { name: 'Open Subagent Thread research' });
 
-    await page.getByRole('button', { name: 'Open Subagent Thread research' }).click();
-    await expect(page.locator('.thread-dock-title')).toHaveText('Research child');
-    await expect(page.getByRole('textbox', { name: 'Message this Thread' })).toHaveCount(0);
-
-    // The header gains a way back out of a child — without costing the list,
-    // which is the only route to create, rename, details, and delete.
-    const back = page.getByRole('button', { name: `Back to ${parentTitle}` });
-    await expect(back).toBeVisible();
+    await trigger.click();
+    const drawer = page.getByRole('dialog', { name: 'Subagent Research child' });
+    await expect(drawer).toBeVisible();
+    // The parent is not navigated away from — it is still the conversation the
+    // dock is titled with, and still the one the composer talks to.
+    await expect(page.locator('.thread-dock-title')).toHaveText(parentTitle);
+    await expect(drawer.getByRole('textbox', { name: 'Message this Thread' })).toHaveCount(0);
+    await expect(drawer).toContainText('Driven by this conversation');
     // A settled child offers no Stop; there is no Turn to stop.
-    await expect(page.getByRole('button', { name: 'Stop this Subagent' })).toHaveCount(0);
-    await page.getByRole('button', { name: 'Show Threads' }).click();
-    await expect(page.getByRole('dialog', { name: 'Threads' })).toBeVisible();
+    await expect(drawer.getByRole('button', { name: /^Stop / })).toHaveCount(0);
+
+    // Escape closes it, and focus returns to the row that opened it, so the
+    // gesture and its inverse are symmetric for the keyboard too.
     await page.keyboard.press('Escape');
-    await back.click();
+    await expect(drawer).toHaveCount(0);
+    await expect(trigger).toBeFocused();
     await expect(page.locator('.thread-dock-title')).toHaveText(parentTitle);
 
     // A child is an execution artifact, not a conversation: never a list row.
@@ -2063,6 +2066,161 @@ test.describe('canonical agent Thread surface', () => {
     // Only the two root conversations this test created.
     await expect(list.locator('.thread-list-row')).toHaveCount(2);
     await expect(list.locator('.thread-list-row small').filter({ hasText: 'Subagent' })).toHaveCount(0);
+  });
+
+  test('keeps the parent transcript exactly where it was, and swaps in a grandchild without stacking', async ({ page }) => {
+    await createNewThread(page);
+    const fixture = await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(m: string, i?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitAgentCoreNotification: (n: unknown) => void };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<Record<string, unknown>> }>('thread/list', {});
+      const root = response?.data[0];
+      if (!root) throw new Error('Mock root Thread not found');
+      const parentThreadId = String(root.id);
+      const child = {
+        ...root,
+        id: '01910000-0000-7000-8000-00000000ea01',
+        parentThreadId,
+        agentNickname: null,
+        agentRole: 'worker',
+        name: 'research',
+        source: 'collaboration',
+        threadSource: 'subagent',
+        status: { type: 'idle' },
+      };
+      const grandchild = {
+        ...child,
+        id: '01910000-0000-7000-8000-00000000ea02',
+        parentThreadId: child.id,
+        name: 'audit',
+      };
+      for (const thread of [child, grandchild]) {
+        target.__LIN_E2E__?.emitAgentCoreNotification({ type: 'thread/started', threadId: thread.id, thread });
+      }
+      const provenance = (threadId: string, turnId: string, itemId: string) => ({
+        originThreadId: threadId, originTurnId: turnId, originItemId: itemId,
+      });
+      // Enough parent Turns that the transcript scrolls at all.
+      for (let index = 0; index < 12; index += 1) {
+        const turnId = `01910000-0000-7000-8000-0000000eb0${index.toString(16)}`;
+        const itemId = `01910000-0000-7000-8000-0000000ec0${index.toString(16)}`;
+        target.__LIN_E2E__?.emitAgentCoreNotification({
+          type: 'turn/completed',
+          threadId: parentThreadId,
+          turnId,
+          turn: {
+            id: turnId,
+            items: index === 11
+              ? [{
+                  id: itemId,
+                  type: 'subAgentActivity',
+                  provenance: provenance(parentThreadId, turnId, itemId),
+                  kind: 'completed',
+                  agentThreadId: child.id,
+                  agentPath: '/root/research',
+                  error: null,
+                  spawnItemId: null,
+                }]
+              : [{
+                  id: itemId,
+                  type: 'agentMessage',
+                  provenance: provenance(parentThreadId, turnId, itemId),
+                  phase: 'final',
+                  text: `Answer ${index}\n\nwith enough body to give the transcript some height.`,
+                }],
+            itemsView: 'full',
+            provenance: { originThreadId: parentThreadId, originTurnId: turnId, trigger: { kind: 'user' } },
+            status: 'completed',
+            error: null,
+            startedAt: 1,
+            completedAt: 2,
+            durationMs: 1,
+          },
+        });
+      }
+      // The child's own transcript: a Turn a delegation started, so its "user"
+      // message is the task the parent wrote. Seeded as canonical history, not
+      // pushed as a notification — the drawer LOADS the child from the host.
+      const childTurnId = '01910000-0000-7000-8000-00000000ed01';
+      target.__LIN_E2E__?.setMockThreadTurns(child.id, [
+        {
+          id: childTurnId,
+          items: [
+            {
+              id: '01910000-0000-7000-8000-00000000ed02',
+              type: 'userMessage',
+              provenance: provenance(child.id, childTurnId, '01910000-0000-7000-8000-00000000ed02'),
+              content: [{ type: 'text', text: 'Investigate the deployment story.' }],
+            },
+            {
+              id: '01910000-0000-7000-8000-00000000ed03',
+              type: 'subAgentActivity',
+              provenance: provenance(child.id, childTurnId, '01910000-0000-7000-8000-00000000ed03'),
+              kind: 'completed',
+              agentThreadId: grandchild.id,
+              agentPath: '/root/research/audit',
+              error: null,
+              spawnItemId: null,
+            },
+          ],
+          itemsView: 'full',
+          provenance: {
+            originThreadId: child.id,
+            originTurnId: childTurnId,
+            trigger: { kind: 'subagent', parentThreadId, parentItemId: 'spawn' },
+          },
+          status: 'completed',
+          error: null,
+          startedAt: 1,
+          completedAt: 2,
+          durationMs: 1,
+        },
+      ]);
+      return { parentThreadId };
+    });
+
+    // Scrolled by hand, so the transcript stops following the tail the way it
+    // would for a reader who scrolled up to re-read something.
+    const scroll = page.locator('.thread-transcript');
+    await scroll.hover();
+    await page.mouse.wheel(0, -600);
+    await expect.poll(async () => scroll.evaluate((element) => element.scrollTop))
+      .toBeLessThan(await scroll.evaluate((element) => element.scrollHeight - element.clientHeight));
+    // Proof the reader is genuinely off the tail: the jump-to-latest affordance
+    // only exists when the transcript has stopped following.
+    await expect(page.getByRole('button', { name: 'Jump to latest' })).toBeVisible();
+
+    await page.getByRole('button', { name: 'Open Subagent Thread research' }).click();
+    const drawer = page.getByRole('dialog', { name: 'Subagent research' });
+    await expect(drawer).toBeVisible();
+    // Read once the drawer is up — clicking a row scrolls it into view like any
+    // click would, and that is the reader's own doing. What the drawer promises
+    // is that nothing MOVES from here while it is open or as it closes.
+    const parentScroll = page.locator('.thread-dock .thread-transcript');
+    const before = await parentScroll.evaluate((element) => element.scrollTop);
+
+    // The task came from the parent: named as such, and never the reader's own
+    // right-hand bubble with an edit affordance on it.
+    await expect(drawer.locator('.thread-delegated-task')).toContainText('Task from this conversation');
+    await expect(drawer.locator('.thread-delegated-task')).toContainText('Investigate the deployment story.');
+    await expect(drawer.locator('.thread-user-message')).toHaveCount(0);
+
+    // Depth 2 swaps the drawer's contents and offers one step back — never a
+    // second drawer over the first.
+    await drawer.getByRole('button', { name: 'Open Subagent Thread audit' }).click();
+    const inner = page.getByRole('dialog', { name: 'Subagent audit' });
+    await expect(inner).toBeVisible();
+    await expect(page.getByRole('dialog', { name: /^Subagent / })).toHaveCount(1);
+    await inner.getByRole('button', { name: 'Back to research' }).click();
+    await expect(page.getByRole('dialog', { name: 'Subagent research' })).toBeVisible();
+
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('dialog', { name: /^Subagent / })).toHaveCount(0);
+    // The promise the drawer exists to make: the parent was never scrolled,
+    // because it was never unmounted.
+    expect(await parentScroll.evaluate((element) => element.scrollTop)).toBe(before);
   });
 
   test('browses and cleans up Subagents from parent Thread Details', async ({ page }) => {
@@ -2141,9 +2299,15 @@ test.describe('canonical agent Thread surface', () => {
     await expect(details.getByRole('button', { name: 'Open live worker' })).toBeVisible();
     await expect(details.getByRole('button', { name: 'Open queued worker' })).toBeVisible();
 
+    // Details is a browse surface, so its rows land in the same drawer the
+    // transcript rows do — and the dock still names the parent conversation.
     await details.getByRole('button', { name: 'Open live worker' }).click();
-    await expect(page.locator('.thread-dock-title')).toHaveText('live worker');
-    await expect(page.getByRole('textbox', { name: 'Message this Thread' })).toHaveCount(0);
+    const drawer = page.getByRole('dialog', { name: 'Subagent live worker' });
+    await expect(drawer).toBeVisible();
+    // The child is read-only; the composer that stays on screen is the
+    // parent's, still addressed to the parent.
+    await expect(drawer.getByRole('textbox', { name: 'Message this Thread' })).toHaveCount(0);
+    await expect(drawer.getByRole('button', { name: 'Stop live worker' })).toBeVisible();
   });
   test('shows a live row for an isolated Skill child while its skill call is in flight', async ({ page }) => {
     await createNewThread(page);
@@ -2268,8 +2432,9 @@ test.describe('canonical agent Thread surface', () => {
     await expect(parentTurn.locator('.thread-process-title')).toContainText(/Working for \d+[smhd]/u);
 
     await skillRow.click();
-    await expect(page.getByRole('button', { name: /^Back to / })).toBeVisible();
-    await expect(page.getByRole('textbox', { name: 'Message this Thread' })).toHaveCount(0);
+    const drawer = page.getByRole('dialog', { name: /^Subagent / });
+    await expect(drawer).toBeVisible();
+    await expect(drawer.getByRole('textbox', { name: 'Message this Thread' })).toHaveCount(0);
   });
 
 
@@ -4377,8 +4542,11 @@ test.describe('canonical agent Thread surface', () => {
       });
     }, childThreadId);
 
-    await expect(page.getByRole('textbox', { name: 'Message this Thread' })).toHaveCount(0);
-    const pill = page.locator('.thread-plan-progress-summary');
+    // The child is read in a drawer, and the drawer is the composer-less
+    // surface: the parent's composer stays behind it, still the parent's.
+    const drawer = page.getByRole('dialog', { name: /^Subagent / });
+    await expect(drawer.getByRole('textbox', { name: 'Message this Thread' })).toHaveCount(0);
+    const pill = drawer.locator('.thread-plan-progress-summary');
     await expect(pill).toHaveText('2/2 · Cross-check the citations');
 
     // With no composer to return to, Escape must still land focus somewhere
@@ -5505,7 +5673,7 @@ test.describe('canonical agent Thread surface', () => {
     await expect(page.locator(`[data-thread-turn-row="${anchor.turnId}"]`)).not.toBeInViewport();
   });
 
-  test('returns from a Subagent to the same place in the parent conversation', async ({ page }) => {
+  test('reads a Subagent without moving the parent conversation at all', async ({ page }) => {
     await createNewThread(page);
     await renameSelectedThread(page, 'Parent history');
     await seedTallFlowTranscript(page, 12);
@@ -5530,11 +5698,19 @@ test.describe('canonical agent Thread surface', () => {
     await page.getByRole('dialog', { name: 'Thread Details' })
       .getByRole('button', { name: 'Open research worker' })
       .click();
-    await expect(page.locator('.thread-dock-title')).toHaveText('research worker');
 
-    await page.getByRole('button', { name: 'Back to Parent history' }).click();
+    // The child is read over the parent, not instead of it: the dock is still
+    // titled with the conversation the reader is in, and the composer still
+    // belongs to it. Every entry point lands in the same drawer.
+    const drawer = page.getByRole('dialog', { name: 'Subagent research worker' });
+    await expect(drawer).toBeVisible();
     await expect(page.locator('.thread-dock-title')).toHaveText('Parent history');
 
+    await page.keyboard.press('Escape');
+    await expect(drawer).toHaveCount(0);
+    // The reading position survives because there is nothing to restore — the
+    // transcript underneath was never unmounted, which is the whole point of
+    // reading a child here rather than navigating to it.
     await expectReadingAnchorRestored(page, anchor);
   });
 });

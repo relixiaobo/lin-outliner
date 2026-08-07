@@ -12,7 +12,6 @@ import {
   ICON_SIZE,
   ScheduledIcon,
   SettingsIcon,
-  StopIcon,
   WarningIcon,
 } from '../../ui/icons';
 import { Button } from '../../ui/primitives/Button';
@@ -23,6 +22,7 @@ import { IconButton } from '../../ui/primitives/IconButton';
 import { ResizeHandle } from '../../ui/primitives/ResizeHandle';
 import { ThreadList } from './ThreadList';
 import { ThreadDetailsDialog } from './ThreadDetailsDialog';
+import { SubagentDrawer } from './SubagentDrawer';
 import { ThreadView } from './ThreadView';
 import { resolveUsableActiveProvider } from '../../ui/agent/providerUsability';
 import type { ThreadNodeReferenceOpenHandler } from '../threadReferences';
@@ -70,11 +70,18 @@ export function ThreadDock({
   const [providerSettingsLoaded, setProviderSettingsLoaded] = useState(false);
   const [providerError, setProviderError] = useState<string | null>(null);
   const [composerFocusToken, setComposerFocusToken] = useState(0);
+  /**
+   * The delegated children being read, innermost last. Delegation is capped at
+   * depth 2, so this holds at most a child and its own child — one back step,
+   * never a stack of drawers.
+   */
+  const [subagentStack, setSubagentStack] = useState<readonly string[]>([]);
   const [slashCommands, setSlashCommands] = useState<AgentSlashCommandView[]>([]);
   const renameTitleId = useId();
   const renameInputRef = useRef<HTMLInputElement | null>(null);
   const threadListAnchorRef = useRef<HTMLButtonElement | null>(null);
   const creatingRef = useRef(false);
+  const subagentTriggerRef = useRef<HTMLElement | null>(null);
   const autoCreateAttemptedRef = useRef(false);
   const providerSettingsRequestRef = useRef(0);
   const slashCommandsRequestRef = useRef(0);
@@ -91,18 +98,22 @@ export function ThreadDock({
     () => snapshot.threads.filter((candidate) => candidate.parentThreadId === null),
     [snapshot.threads],
   );
-  const parentThread = thread?.parentThreadId ? threadsById.get(thread.parentThreadId) ?? null : null;
+  const openSubagentId = subagentStack[subagentStack.length - 1] ?? null;
+  const openSubagentThread = openSubagentId
+    ? threadsById.get(openSubagentId) ?? null
+    : null;
+  /** What Back returns to: the child one level out, never the root conversation. */
+  const outerSubagent = subagentStack.length > 1
+    ? threadsById.get(subagentStack[subagentStack.length - 2]!) ?? null
+    : null;
   /**
    * Stop reaches a user's own conversations only, so the affordance appears
    * only where the host would honour it. An automation's Subagent is running
    * work under a feature root: offering a Stop there would refuse and then
    * report live work as finished.
    */
-  const stoppableChild = surface === 'thread'
-    && thread !== null
-    && thread.parentThreadId !== null
-    && thread.status.type === 'active'
-    && lineageRoot(thread, threadsById)?.threadSource === 'user';
+  const stoppableChild = openSubagentThread !== null
+    && lineageRoot(openSubagentThread, threadsById)?.threadSource === 'user';
   /**
    * "This conversation has background work running" — either the unselected
    * root itself is active, or one of its descendants is. The selected root's
@@ -206,9 +217,6 @@ export function ThreadDock({
   }, [refreshProviderSettings, refreshSlashCommands]);
 
   const title = useMemo(() => thread?.name || thread?.preview || t.agent.thread.untitled, [t, thread]);
-  const parentThreadTitle = parentThread
-    ? parentThread.name || parentThread.preview || t.agent.thread.untitled
-    : null;
 
   /**
    * Every transcript and details link goes through here: `openThreadById`
@@ -229,11 +237,35 @@ export function ThreadDock({
     }
   }, [t]);
 
+  /**
+   * A delegated child opens IN the conversation that delegated it, not instead
+   * of it: the dock never navigates to a child, so there is no way to end up
+   * somewhere you did not choose to go and no trip back to plan.
+   */
+  const openSubagent = useCallback((threadId: string) => {
+    setActionError(null);
+    setListOpen(false);
+    setSubagentStack((stack) => {
+      // Remember what opened the drawer so closing hands focus back to it. The
+      // overlay's own fallback reads `document.activeElement` at mount, which a
+      // row that re-rendered in between no longer reliably is.
+      if (stack.length === 0 && document.activeElement instanceof HTMLElement) {
+        subagentTriggerRef.current = document.activeElement;
+      }
+      return stack[stack.length - 1] === threadId ? stack : [...stack, threadId];
+    });
+  }, []);
+
+  const closeSubagent = useCallback(() => setSubagentStack([]), []);
+  const popSubagent = useCallback(() => setSubagentStack((stack) => stack.slice(0, -1)), []);
+
+  /** Selecting a root conversation from the list or an Automation. */
   const openThread = useCallback(async (threadId: string) => {
     setActionError(null);
     try {
       await threadStore.openThreadById(threadId);
       setListOpen(false);
+      setSubagentStack([]);
     } catch {
       setActionError(t.agent.thread.threadUnavailable);
     }
@@ -319,28 +351,10 @@ export function ThreadDock({
       <div className="thread-dock">
         <header className="thread-dock-header">
           {surface === 'thread' ? (
-            // A child Thread is entered from a parent transcript, so it gains a
-            // crumb back out — but never at the cost of the list: that button is
-            // the only route to create, details, rename, and delete, and it is
-            // the child's own name that carries it, so no Thread is unnamed and
-            // no view is a dead end.
+            // The dock's title is always a conversation the user started. A
+            // delegated child is read in a drawer over this one, so the header
+            // never has to describe somewhere the user did not navigate to.
             <div className="thread-dock-breadcrumb">
-              {thread?.parentThreadId ? (
-                <>
-                  <button
-                    aria-label={parentThreadTitle
-                      ? t.agent.thread.backToParent({ name: parentThreadTitle })
-                      : t.agent.thread.backToParentFallback}
-                    className="thread-dock-title-button thread-dock-back"
-                    onClick={() => void openThread(thread.parentThreadId!)}
-                    type="button"
-                  >
-                    <BackIcon className="thread-dock-title-leading" size={ICON_SIZE.menu} />
-                    <span className="thread-dock-back-label">{parentThreadTitle ?? t.agent.thread.title}</span>
-                  </button>
-                  <span aria-hidden className="thread-dock-breadcrumb-separator">/</span>
-                </>
-              ) : null}
               <button
                 aria-expanded={listOpen}
                 aria-label={t.agent.thread.list}
@@ -367,16 +381,6 @@ export function ThreadDock({
               <span className="thread-dock-title">{t.agent.automations.title}</span>
             </button>
           )}
-          {stoppableChild ? (
-            <IconButton
-              className="thread-dock-surface-action"
-              icon={StopIcon}
-              label={t.agent.thread.stopThisSubagent}
-              onClick={() => void interruptThread(thread!.id)}
-              strokeWidth={1.7}
-              variant="chrome"
-            />
-          ) : null}
           {surface === 'thread' ? (
             <IconButton
               className="thread-dock-surface-action"
@@ -433,7 +437,7 @@ export function ThreadDock({
               onInterrupt={() => threadStore.interrupt(thread.id)}
               onInterruptThread={interruptThread}
               onOpenNodeReference={onOpenNodeReference}
-              onOpenThread={openThread}
+              onOpenThread={async (threadId) => openSubagent(threadId)}
               onOpenTurnDetails={(turn) => onOpenTurnDetails(thread.id, turn.id)}
               onReadToolOutput={(turnId, item) => threadStore.readItemOutput(thread.id, turnId, item)}
               onReadToolArguments={(turnId, item) => threadStore.readToolArguments(thread.id, turnId, item)}
@@ -520,9 +524,33 @@ export function ThreadDock({
           </form>
         </Dialog>
       ) : null}
+      {openSubagentId ? (
+        <SubagentDrawer
+          index={index}
+          key={openSubagentId}
+          onBack={subagentStack.length > 1 ? popSubagent : null}
+          onClose={closeSubagent}
+          onInterruptThread={interruptThread}
+          onOpenNodeReference={onOpenNodeReference}
+          onOpenSubagent={openSubagent}
+          restoreFocus={() => subagentTriggerRef.current}
+          onOpenTurnDetails={onOpenTurnDetails}
+          parentName={outerSubagent
+            ? outerSubagent.name || outerSubagent.agentNickname || t.agent.thread.untitled
+            : null}
+          snapshot={snapshot}
+          stoppable={stoppableChild}
+          threadId={openSubagentId}
+        />
+      ) : null}
       {detailsTarget ? (
         <ThreadDetailsDialog
-          onOpenThread={openThread}
+          onOpenThread={async (threadId) => {
+            // Details is a browse surface for children, so its rows land in the
+            // same drawer every other entry point does.
+            setDetailsTarget(null);
+            openSubagent(threadId);
+          }}
           onClose={() => setDetailsTarget(null)}
           thread={detailsTarget}
           turns={snapshot.turnsByThread.get(detailsTarget.id) ?? []}

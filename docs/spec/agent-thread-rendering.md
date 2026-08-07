@@ -28,13 +28,31 @@ running and does not receive that indicator. The selected root's own foreground
 Turn does not duplicate its status in the list. This is also the only place a
 fire-and-forget child is visible after its parent Turn ended.
 
-A selected child Thread gains a back affordance naming its parent, ahead of the
-list affordance rather than in place of it: the Thread list is the only route to
-create, rename, details, and delete, so no view may be without it. Lineage
-deeper than one level collapses to the immediate parent. Every child link —
-transcript row, Thread Details row, back affordance — resolves through the
-catalog-recovering open path, and a Thread that is genuinely gone surfaces the
-dock's transient failure copy instead of throwing behind a bare call.
+**A child Thread is never a navigation destination.** It is read in a drawer
+that rises from the dock's bottom edge over the conversation that delegated it,
+leaving a dimmed band of the parent above: the dock's title, its list, and its
+composer keep belonging to the conversation the user chose, and the drawer
+closes on Escape, on the scrim, or on its own close control, returning focus to
+the control that opened it. Because the parent is never unmounted, its reading
+position is not restored on the way back — it was never left. This is the same
+judgement the Thread list already makes by not listing children: an execution
+artifact of a Turn is opened, not travelled to, and arriving somewhere the user
+did not choose to go reads as being moved rather than as opening something.
+
+Every entry point — a transcript delegation row, a Thread Details row — lands in
+that one drawer, through the catalog-recovering open path; a Thread that is
+genuinely gone surfaces the dock's transient failure copy instead of throwing
+behind a bare call. The drawer carries the child's name, the delegated form's
+glyph, Stop while its Turn is active and its lineage root is a user Thread, and
+a standing note where a composer would be, since the absence of one is a
+contract and not an omission. Delegation is capped at depth two, so a delegation
+row INSIDE the drawer swaps its contents and offers one step back rather than
+stacking a second drawer.
+
+A Turn started by a delegation owns no message the user wrote: its `userMessage`
+is the task the parent authored, so it renders as a neutral, origin-labelled
+block rather than the reader's own right-aligned bubble, and offers no edit
+affordance. The evidence is the Turn's own trigger, not a view flag.
 
 Parent Thread Details lists the descendant subtree newest-activity first with a
 readable name, status, and last activity; the read names the subtree while the
@@ -292,7 +310,7 @@ form's own glyph and shares the type ramp and resting colour of the tool rows
 around it: a delegation is one more thing the Turn did, not an event announced in
 its own vocabulary. Every delegated form gets one — an isolated Skill child is
 delegated work too — and membership is the Turn's projection rather than a second
-split by source. A child Thread view's header exposes the same Stop while its
+split by source. The drawer that reads a child exposes the same Stop while its
 Turn is active. Like every delegation surface the row speaks time and status
 only: no token quantity reaches its text, its title, or its accessible labels,
 and a failure carries the same bounded, code-classified copy the tool rows use.

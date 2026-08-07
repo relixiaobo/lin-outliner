@@ -97,28 +97,6 @@
   gap: var(--space-1);
 }
 
-.thread-dock-back {
-  flex: 0 1 auto;
-  max-width: 160px;
-}
-
-.thread-dock-back-label {
-  min-width: 0;
-  overflow: hidden;
-  color: inherit;
-  font-size: var(--font-ui-md);
-  font-weight: 400;
-  line-height: var(--line-ui-md);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.thread-dock-breadcrumb-separator {
-  flex: 0 0 auto;
-  color: var(--text-tertiary);
-  font-size: var(--font-ui-md);
-  line-height: var(--line-ui-md);
-}
 
 .thread-dock-breadcrumb .thread-dock-title {
   flex: 0 1 auto;
@@ -3052,4 +3030,106 @@
   .thread-tool-inProgress > .thread-tool-activity-toggle .thread-disclosure-status svg {
     animation: none;
   }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   SUBAGENT DRAWER (SubagentDrawer.tsx). A delegated child is read IN the
+   conversation that delegated it: the drawer rises from the dock's bottom edge
+   and leaves a dimmed band of the parent transcript above it, so the reader can
+   see they never left. Scoped to the dock rather than the window — this is not
+   a modal about the app, it is a detail view of one Turn's work.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.subagent-drawer-scrim {
+  position: absolute;
+  z-index: var(--z-modal);
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  background: var(--overlay-backdrop);
+}
+
+/* Opaque content base, not a chrome material (B5): what is inside is a
+   transcript, and a translucent one would read the parent's text through it. */
+.subagent-drawer {
+  display: flex;
+  min-height: 0;
+  max-height: 86%;
+  flex-direction: column;
+  border-top-left-radius: var(--radius-lg);
+  border-top-right-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-rail);
+  animation: subagent-drawer-rise var(--motion-slow);
+}
+
+@keyframes subagent-drawer-rise {
+  from { transform: translateY(12%); }
+  to { transform: translateY(0); }
+}
+
+.subagent-drawer-header {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-2);
+  border-bottom: 1px solid var(--separator);
+  padding: var(--space-3) var(--space-4);
+}
+
+.subagent-drawer-glyph {
+  flex: 0 0 auto;
+  color: var(--text-soft);
+}
+
+.subagent-drawer-title {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  color: var(--text-strong);
+  font-size: var(--font-ui-sm);
+  line-height: var(--line-ui-sm-tight);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Where the composer would be. Not an input: the sentence explains the absence
+   rather than leaving a reader to wonder why they cannot type. */
+.subagent-drawer-note {
+  flex: 0 0 auto;
+  margin: 0;
+  border-top: 1px solid var(--separator);
+  padding: var(--space-3) var(--space-4);
+  color: var(--text-tertiary);
+  font-size: var(--font-ui-2xs);
+  line-height: var(--line-ui-2xs);
+}
+
+/* The task the PARENT wrote. Left-aligned and neutral, because the right-hand
+   bubble means "you said this" and the reader never said it. */
+.thread-delegated-task {
+  display: flex;
+  max-width: 100%;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-2);
+  border-left: 2px solid var(--separator);
+  padding-left: var(--space-4);
+}
+
+.thread-delegated-task-origin {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: var(--font-ui-2xs);
+  line-height: var(--line-ui-2xs);
+}
+
+.thread-delegated-task-body {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  line-height: var(--line-content);
 }

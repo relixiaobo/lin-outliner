@@ -1262,9 +1262,12 @@ commandPalette: {
       copiedFromFork: 'Forked history',
       openSubagentThread: ({ id }: { id: string }) => `Open Subagent Thread ${id}`,
       retryTurn: 'Retry',
+      subagentDrawer: ({ name }: { name: string }) => `Subagent ${name}`,
+      closeSubagent: 'Close Subagent',
+      subagentReadOnly: 'Driven by this conversation. You can stop it at any time.',
+      taskFromParent: 'Task from this conversation',
       stopUnavailable: 'That work already finished.',
       stopSubagent: ({ name }: { name: string }) => `Stop ${name}`,
-      stopThisSubagent: 'Stop this Subagent',
       subagentStatuses: {
         pendingInit: 'Starting',
         running: 'Running',

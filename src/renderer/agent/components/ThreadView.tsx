@@ -1998,6 +1998,11 @@ const ThreadTurnView = memo(function ThreadTurnView({
     <ThreadItemView
       agentResponseTail={item.id === responseItem?.id ? responseTail : null}
       canEditUserMessage={canEditUserMessage && showMessageActions}
+      // Canonical evidence, not a view flag: a Turn a delegation started owns
+      // no message the reader wrote. Read defensively — a Turn that reaches the
+      // renderer without provenance is a bad record, and A12 says the transcript
+      // degrades rather than blanking on one.
+      delegatedTask={turn.provenance?.trigger?.kind === 'subagent'}
       defaultReasoningExpanded={reasoningExpandedByDefault(turn, item)}
       expandState={expandState}
       index={index}

@@ -118,6 +118,13 @@ interface ThreadItemViewProps {
   readonly onOpenNodeReference: ThreadNodeReferenceOpenHandler;
   readonly onOpenTurnDetails?: () => void;
   readonly onOpenThread: (threadId: string) => Promise<void>;
+  /**
+   * This Turn was started by a delegation, so its "user" message is the task the
+   * parent wrote — words the reader never said. Rendering it as their own
+   * message is the single biggest reason a child transcript reads as someone
+   * else's conversation you were dropped into.
+   */
+  readonly delegatedTask?: boolean;
   /** Absent where no Stop belongs — a read-only or historical rendering. */
   readonly onInterruptThread?: (threadId: string) => Promise<void>;
   readonly onReadToolArguments: (item: ThreadToolItem) => Promise<JsonValue | null>;
@@ -307,6 +314,7 @@ export function ThreadToolActivityGroup({
 
 function UserMessageItem({
   canEditUserMessage,
+  delegatedTask,
   expandState,
   index,
   item,
@@ -316,7 +324,10 @@ function UserMessageItem({
   threadId,
 }: Omit<ThreadItemViewProps, 'item'> & { readonly item: UserMessageThreadItem }) {
   const t = useT();
-  const textEditable = canEditUserContentText(item.content);
+  // A delegated task is not the reader's message: it is neither theirs to edit
+  // nor theirs to have said, so it drops the bubble and the edit affordance and
+  // says where it came from instead.
+  const textEditable = !delegatedTask && canEditUserContentText(item.content);
   const textParts = item.content.flatMap((content) => content.type === 'text' ? [content.text] : []);
   const copyText = userMessageCopyText(item.content, index);
   const [editing, setEditing] = useState(false);
@@ -334,6 +345,23 @@ function UserMessageItem({
     }
   }
 
+  if (delegatedTask) {
+    return (
+      <article className="thread-item thread-delegated-task">
+        <p className="thread-delegated-task-origin">{t.agent.thread.taskFromParent}</p>
+        <div className="thread-delegated-task-body">
+          {renderUserContent(
+            item.content,
+            index,
+            onOpenNodeReference,
+            threadId,
+            item.id,
+            expandState,
+          )}
+        </div>
+      </article>
+    );
+  }
   return (
     <article className="thread-item thread-user-message">
       {editing ? (
