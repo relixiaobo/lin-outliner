@@ -1001,10 +1001,8 @@ function startedToolItem(
       senderThreadId: context.thread.id,
       receiverThreadIds: [],
       prompt: typeof input.message === 'string' ? boundedText(input.message, MAX_PERSISTED_TOOL_STRING_CHARS) : null,
-      model: typeof input.model === 'string' ? boundedText(input.model, MAX_PERSISTED_TOOL_STRING_CHARS) : null,
-      reasoningEffort: typeof input.reasoning_effort === 'string'
-        ? boundedText(input.reasoning_effort, MAX_PERSISTED_TOOL_STRING_CHARS)
-        : null,
+      model: optionalToolArgumentText(input.model),
+      reasoningEffort: optionalToolArgumentText(input.reasoning_effort),
       agentsStates: {},
     };
   }
@@ -1660,6 +1658,19 @@ function boundedJsonValue(
     originalChars: encoded.length,
     preview: boundedText(encoded, previewBudget),
   };
+}
+
+/**
+ * An optional string tool argument the model left blank means "not specified".
+ *
+ * A provider that fills an omitted parameter with `""` — rather than omitting
+ * the key — otherwise produces an Item that cannot be decoded, and the decode
+ * runs before the Item is recorded, so the whole Turn fails with nothing on
+ * disk to explain it. Blank is absence, and absence is `null`.
+ */
+function optionalToolArgumentText(value: unknown): string | null {
+  if (typeof value !== 'string' || value.trim().length === 0) return null;
+  return boundedText(value, MAX_PERSISTED_TOOL_STRING_CHARS);
 }
 
 function boundedText(value: string, maxChars: number): string {

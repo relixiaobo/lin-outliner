@@ -489,6 +489,29 @@ describe('Codex Agent Core protocol codec', () => {
     expect(() => decodeThreadItem(activity)).toThrow('item.error');
   });
 
+  test('keeps a web search Item readable when the model omitted its query', () => {
+    const search = JSON.parse(encodeThreadItem(
+      allItems.find((item) => item.type === 'webSearch')!,
+    )) as Record<string, unknown>;
+
+    // The producer's fallback for an absent query IS the empty string, so a
+    // decode that refuses it can never read what the producer writes.
+    expect(decodeThreadItem({ ...search, query: '' })).toMatchObject({ type: 'webSearch', query: '' });
+  });
+
+  test('keeps a collaboration Item readable when an optional string is empty', () => {
+    const collab = JSON.parse(encodeThreadItem(
+      allItems.find((item) => item.type === 'collabAgentToolCall')!,
+    )) as Record<string, unknown>;
+
+    // Empty is not corrupt: it must not cost the reader the whole Thread.
+    expect(decodeThreadItem({ ...collab, model: '', reasoningEffort: '' })).toMatchObject({
+      type: 'collabAgentToolCall',
+      model: '',
+      reasoningEffort: '',
+    });
+  });
+
   test('reads a Subagent activity persisted before it carried a spawn reference', () => {
     // Additive and nullable: a delegation already on disk must still decode, or
     // the Thread's transcript fails to load until its userData is wiped by hand

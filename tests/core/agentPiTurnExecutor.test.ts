@@ -245,6 +245,27 @@ describe('PiTurnExecutor event normalization', () => {
     });
   });
 
+  test('reads a blank optional collaboration argument as absent', async () => {
+    // A provider that fills an omitted optional parameter with "" rather than
+    // omitting the key: the empty string reached the Item, the Item failed to
+    // decode, and the Turn died before anything was recorded.
+    const fixture = createContext();
+    const normalizer = new PiEventNormalizer(fixture.context);
+    normalizer.handle(toolAdmissionEvent(
+      'call-collab-blank',
+      'collaboration__spawn_agent',
+      { task_name: 'beijing', message: 'Check the weather', model: '', reasoning_effort: '   ' },
+    ));
+    await normalizer.flush();
+
+    expect(fixture.recorder.orderedItems()[0]).toMatchObject({
+      type: 'collabAgentToolCall',
+      prompt: 'Check the weather',
+      model: null,
+      reasoningEffort: null,
+    });
+  });
+
   test('uses the provider call id for collaboration control-plane identity', async () => {
     const fixture = createContext();
     const childThreadId = uuidV7(1_720_000_001_000);

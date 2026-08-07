@@ -350,8 +350,13 @@ export function decodeThreadItem(value: unknown): ThreadItem {
         receiverThreadIds: arrayValue(record.receiverThreadIds, 'item.receiverThreadIds')
           .map((entry, index) => uuidV7(entry, `item.receiverThreadIds[${index}]`)),
         prompt: nullableString(record.prompt, 'item.prompt', true),
-        model: nullableString(record.model, 'item.model'),
-        reasoningEffort: nullableString(record.reasoningEffort, 'item.reasoningEffort'),
+        // Empty is tolerated here for the same reason it always was on `prompt`:
+        // these are optional display strings, and an Item already carrying one
+        // must stay readable. Rejecting it makes a whole Thread undecodable over
+        // a value that means nothing either way (A12 — fail closed on corrupt
+        // data, not on a blank optional string).
+        model: nullableString(record.model, 'item.model', true),
+        reasoningEffort: nullableString(record.reasoningEffort, 'item.reasoningEffort', true),
         agentsStates: decodedStates,
       };
       break;
@@ -386,7 +391,11 @@ export function decodeThreadItem(value: unknown): ThreadItem {
       result = {
         ...base,
         type,
-        query: stringValue(record.query, 'item.query'),
+        // The producer's own fallback for a call with no query is `''`, and the
+        // field is not nullable, so refusing empty here made a `web_search`
+        // whose argument the model omitted undecodable — the same shape that
+        // killed a Turn on `collabAgentToolCall.model`.
+        query: stringValue(record.query, 'item.query', true),
         status: itemExecutionStatus(record.status, 'item.status'),
         outputRef: decodeThreadItemOutputReference(record.outputRef),
         modelCall: decodeModelToolCallHistory(record.modelCall),

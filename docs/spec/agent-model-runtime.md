@@ -358,6 +358,17 @@ provider text identifies the artifact and reports source size, observation size,
 scale factors, and the observation-to-source affine matrix. This gives the model enough
 information to relate the bounded observation to the admitted source-image pixel plane.
 The runtime does not inspect, validate, convert, or rewrite later tool arguments.
+
+An OPTIONAL string tool argument the model leaves blank means "not specified", and
+is recorded as `null` rather than as an empty string. The canonical Item codec
+correspondingly tolerates an empty value in every optional display string a tool
+argument can reach — a Subagent spawn's `model` and `reasoningEffort`, a command's
+`description`, a prompt, a web search's `query`, whose own producer falls back to
+the empty string when the model omits it. This is the A12 line drawn at the decode
+boundary: fail closed on data that would corrupt the store, not on a blank optional
+string that means nothing either way. Refusing one cost an entire Turn — the Item
+is decoded before it is recorded, so the run died with nothing on disk to explain
+why.
 Event admission, the payload store, and the canonical Item codec independently
 require an image MIME type; invalid MIME metadata produces a structured omission
 instead of a provider image block.
