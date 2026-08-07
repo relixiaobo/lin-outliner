@@ -134,3 +134,24 @@ The shape to reach for is a registry keyed by what is actually active, where eac
 contributor is additive, failure-isolated, and ordered behind the user's own
 overrides. A12 says invariants on the user path must degrade rather than throw;
 this is its constructive half — the arrangement that makes degrading possible.
+
+## An e2e failure is not evidence until the harness is isolated per clone
+
+Chasing three "regressions" on #497 cost an hour and none of them existed.
+`playwright.config.ts` serves the renderer on a fixed port (5174) with
+`reuseExistingServer: !CI`, and eight clones share that port — so the run
+attached to a dev server already listening from **another clone**, and every
+comparison was measuring that clone's renderer, which its own agent was
+editing and hot-reloading underneath. A second false failure came from a
+`git worktree add` whose `node_modules` was stale: same source as `main`, and
+a PDF-preview assertion failed reproducibly until `bun install` ran in the
+worktree. Both produced *reproducible* failures, which is what made them
+convincing — flakiness is not the only thing that survives a re-run.
+
+So before attributing any e2e failure to a diff: run with a per-clone
+`PLAYWRIGHT_PORT`, `bun install` in the worktree, and reproduce the failure on
+the base commit **under identical batch composition** — the same specs, the
+same parallelism. A test that fails in a 570-test run and passes alone has told
+you about load, not about the change. The suite is deliberately `retries: 0` so
+instability stays visible; that visibility is only worth something if the
+harness underneath it is not shared.
