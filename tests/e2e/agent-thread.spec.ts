@@ -81,6 +81,107 @@ async function seedOverflowingTranscript(page: Page): Promise<void> {
 }
 
 /**
+ * A conversation tall enough to scroll but under the virtualization threshold —
+ * the flow-layout transcript nearly every real conversation is, where a saved
+ * pixel offset does not survive a remount on its own.
+ */
+async function seedTallFlowTranscript(page: Page, turnCount: number): Promise<void> {
+  await page.evaluate(async (count) => {
+    const target = window as Window & {
+      lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+    };
+    const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+    const threadId = response?.data[0]?.id;
+    if (!threadId) throw new Error('Mock Thread not found');
+    for (let index = 0; index < count; index += 1) {
+      const text = Array.from(
+        { length: 30 },
+        (_, line) => `Tall message ${index + 1} line ${line + 1} with enough words to wrap across the transcript.`,
+      ).join('\n\n');
+      await target.lin?.agentCoreRequest('turn/start', {
+        threadId,
+        input: [{ type: 'text', text }],
+        clientUserMessageId: `tall-${index + 1}`,
+      });
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    }
+  }, turnCount);
+  await expect(page.locator('.thread-transcript-turns')).toHaveAttribute('data-virtualized', 'false');
+}
+
+interface ReadingAnchor {
+  readonly offset: number;
+  readonly turnId: string;
+}
+
+/** Where the reader is: the Turn at the top of the viewport, and its offset. */
+async function captureReadingAnchor(page: Page, fraction: number): Promise<ReadingAnchor> {
+  const transcript = page.locator('.thread-transcript');
+  await expect.poll(() => transcript.evaluate((element) => (
+    element.scrollHeight - element.clientHeight
+  ))).toBeGreaterThan(400);
+  return transcript.evaluate(async (element, ratio) => {
+    const maximum = Math.max(0, element.scrollHeight - element.clientHeight);
+    element.scrollTop = Math.floor(maximum * ratio);
+    element.dispatchEvent(new Event('scroll'));
+    for (let frame = 0; frame < 8; frame += 1) {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    }
+    const viewportTop = element.getBoundingClientRect().top;
+    const row = Array.from(element.querySelectorAll<HTMLElement>('[data-thread-turn-row]'))
+      .find((candidate) => {
+        const bounds = candidate.getBoundingClientRect();
+        return bounds.top <= viewportTop && bounds.bottom > viewportTop;
+      });
+    const turnId = row?.dataset.threadTurnRow;
+    if (!row || !turnId) throw new Error('Missing reading anchor');
+    return { offset: row.getBoundingClientRect().top - viewportTop, turnId };
+  }, fraction);
+}
+
+/**
+ * The anchored Turn is back where it was — and stays there. Settling for one
+ * frame is not enough: a transcript that agrees on arrival and is then pushed
+ * by rows rendering above it has still lost the reader's place.
+ */
+async function expectReadingAnchorRestored(page: Page, anchor: ReadingAnchor): Promise<void> {
+  const row = page.locator(`[data-thread-turn-row="${anchor.turnId}"]`);
+  await expect(row).toHaveCount(1);
+  const drift = (element: HTMLElement, expected: number) => {
+    const scroller = element.closest('.thread-transcript');
+    if (!(scroller instanceof HTMLElement)) throw new Error('Missing transcript');
+    return Math.abs(
+      element.getBoundingClientRect().top - scroller.getBoundingClientRect().top - expected,
+    );
+  };
+  await expect.poll(() => row.evaluate(drift, anchor.offset)).toBeLessThanOrEqual(2);
+  const frameDrifts = await row.evaluate(async (element, expected) => {
+    const scroller = element.closest('.thread-transcript');
+    if (!(scroller instanceof HTMLElement)) throw new Error('Missing transcript');
+    const drifts: number[] = [];
+    for (let frame = 0; frame < 16; frame += 1) {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      drifts.push(Math.abs(
+        element.getBoundingClientRect().top - scroller.getBoundingClientRect().top - expected,
+      ));
+    }
+    return drifts;
+  }, anchor.offset);
+  expect(Math.max(...frameDrifts)).toBeLessThanOrEqual(2);
+}
+
+async function renameSelectedThread(page: Page, name: string): Promise<void> {
+  await openSelectedThreadActions(page);
+  await page.getByRole('menu', { name: 'Thread actions' })
+    .getByRole('menuitem', { name: 'Rename Thread' })
+    .click();
+  const dialog = page.getByRole('dialog', { name: 'Rename Thread' });
+  await dialog.getByRole('textbox', { name: 'Rename Thread' }).fill(name);
+  await dialog.getByRole('button', { name: 'Save' }).click();
+  await expect(page.locator('.thread-dock-title')).toContainText(name);
+}
+
+/**
  * One settled Turn holding three consecutive command Items — completed, failed
  * with no exit code, and interrupted — so the counted activity group and each
  * member row can be inspected for their own status treatment.
@@ -5186,6 +5287,56 @@ test.describe('canonical agent Thread surface', () => {
     expect(clampedRestore.maximum).toBeLessThan(savedNearBottom);
     expect(Math.abs(clampedRestore.top - clampedRestore.maximum)).toBeLessThanOrEqual(2);
     await page.setViewportSize(originalViewport);
+  });
+
+  test('returns a flow-layout Thread to the Turn it was left on', async ({ page }) => {
+    await createNewThread(page);
+    await renameSelectedThread(page, 'Tall history');
+    await seedTallFlowTranscript(page, 12);
+    const anchor = await captureReadingAnchor(page, 0.6);
+
+    await createNewThread(page);
+    await page.getByRole('button', { name: 'Show Threads' }).click();
+    await page.getByRole('dialog', { name: 'Threads' })
+      .locator('.thread-list-select')
+      .filter({ hasText: 'Tall history' })
+      .click();
+    await expect(page.locator('.thread-dock-title')).toContainText('Tall history');
+
+    await expectReadingAnchorRestored(page, anchor);
+  });
+
+  test('returns from a Subagent to the same place in the parent conversation', async ({ page }) => {
+    await createNewThread(page);
+    await renameSelectedThread(page, 'Parent history');
+    await seedTallFlowTranscript(page, 12);
+    await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: {
+          createMockSubagentThread: (input: { parentThreadId: string; name: string }) => { id: string };
+        };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+      const parentThreadId = response?.data[0]?.id;
+      if (!parentThreadId) throw new Error('Mock Thread not found');
+      target.__LIN_E2E__?.createMockSubagentThread({ parentThreadId, name: 'research worker' });
+    });
+    const anchor = await captureReadingAnchor(page, 0.6);
+
+    await openSelectedThreadActions(page);
+    await page.getByRole('menu', { name: 'Thread actions' })
+      .getByRole('menuitem', { name: 'Thread Details' })
+      .click();
+    await page.getByRole('dialog', { name: 'Thread Details' })
+      .getByRole('button', { name: 'Open research worker' })
+      .click();
+    await expect(page.locator('.thread-dock-title')).toHaveText('research worker');
+
+    await page.getByRole('button', { name: 'Back to Parent history' }).click();
+    await expect(page.locator('.thread-dock-title')).toHaveText('Parent history');
+
+    await expectReadingAnchorRestored(page, anchor);
   });
 });
 

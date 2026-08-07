@@ -778,13 +778,28 @@ shrinks as real response content replaces that runway, and is removed when no
 runway remains or the reader jumps to the latest content. Spacer-only runway does
 not count as unread content for the Jump to latest control.
 
-Each Thread keeps an ephemeral scroll snapshot across Thread switches. Returning
-to a Thread waits for non-empty loaded history, then restores the prior position
-or the nearest reachable offset when viewport or history changes made the exact
-offset unavailable; empty history never replaces the saved snapshot with a top
-clamp. User scrolling takes ownership and cancels the pending restore. A failed
-send restores the pre-send position and follow state. A followed Thread continues
-at the bottom. Threads above forty Turns reuse the established
+Each Thread keeps an ephemeral scroll snapshot across Thread switches, recording
+the Turn at the top of the viewport and its offset there rather than a scroll
+offset alone. Returning to a Thread waits for non-empty loaded history, then puts
+that Turn back at that offset, correcting after each layout pass until the
+anchored row agrees and the transcript has stopped growing. An anchored Turn that
+is not rendered yet — a virtual transcript whose window has not reached it — is
+placed by the saved offset first, which brings the row into range. A bounded
+attempt count releases a Thread whose geometry cannot satisfy the anchor at all,
+at the nearest reachable offset, so viewport or history changes settle rather
+than rewrite the offset on every layout pass. Empty history never replaces the
+saved snapshot with a top clamp. User scrolling takes ownership and cancels the
+pending restore. A failed send restores the pre-send position, anchor, and follow
+state. A followed Thread resumes at the bottom and records no anchor.
+
+The Turn is what the restore aims at because a scroll offset does not survive a
+remount on its own: `content-visibility: auto` gives every Turn the reader has
+not rendered its placeholder height, so a flow-layout transcript rebuilds shorter
+than it was and the same offset lands further along the conversation. A Turn that
+has been measured therefore carries its own measured height as that placeholder,
+which reproduces the geometry the reader left; Turns never rendered in this
+session keep the nominal fallback, and the anchor covers them. Threads above
+forty Turns reuse the established
 measured-row virtual transcript with viewport overscan; terminal offscreen Turns
 do not remain mounted. When a row fully above the viewport replaces an estimate
 with a measurement, its height delta is applied after the virtual container

@@ -55,6 +55,15 @@ elements — rows are in document order, so their edges are monotonic and the
 search costs about six rect reads rather than one per row. It is skipped while
 follow is active: a followed Thread resumes at the bottom and needs no anchor.
 
+**A measured Turn carries its own placeholder height.** The per-Thread measured
+height cache already survives the remount, and measurements already exclude
+`content-visibility`-skipped subtrees, so every value in it is a real rendered
+height. Feeding it back as that Turn's `contain-intrinsic-size` makes the
+remounted transcript rebuild at the height the reader left, so the anchor has
+stable geometry to correct against instead of a layout that keeps growing under
+it. Turns never rendered in this session keep the nominal fallback; the anchor is
+what covers them.
+
 **The restore converges instead of firing once.** A pending restore keeps the
 anchor, the fallback offset, and an attempt count.
 
@@ -64,7 +73,10 @@ anchor, the fallback offset, and an attempt count.
 2. If it is not (a virtualized Thread whose rendered window does not yet reach
    it), place by the fallback offset — which brings the row into range — and
    keep the request alive for the next layout pass.
-3. An attempt cap releases the request so a Thread whose geometry cannot satisfy
+3. Agreement alone does not release it — the transcript must also have stopped
+   growing. A restore that settles on the first agreement and is then pushed by
+   rows rendering above it has still lost the reader's place.
+4. An attempt cap releases the request so a Thread whose geometry cannot satisfy
    the anchor (content removed, viewport resized) settles at the nearest
    reachable offset instead of rewriting `scrollTop` on every layout pass.
 
