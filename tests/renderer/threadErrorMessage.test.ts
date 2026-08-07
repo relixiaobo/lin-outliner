@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { threadErrorMessage, userFacingAgentError,
-  isRetryableTurnError,
+  isRetryableTurn,
 } from '../../src/renderer/agent/threadErrorMessage';
 
 describe('threadErrorMessage', () => {
@@ -39,15 +39,32 @@ describe('threadErrorMessage', () => {
   });
 });
 
-describe('retryable Turn errors', () => {
+describe('retryable Turns', () => {
+  const failed = (error: { message: string; code?: string } | null) => (
+    { status: 'failed' as const, error } as Parameters<typeof isRetryableTurn>[0]
+  );
+
   test('offers a way out only where the same request could end differently', () => {
-    // Circumstance: worth running again.
-    expect(isRetryableTurnError({ message: 'boom', code: 'runtime_failure' })).toBe(true);
-    expect(isRetryableTurnError({ message: 'restarted', code: 'host_restart' })).toBe(true);
+    // Circumstance: worth running again — including with nothing recorded to
+    // argue it away.
+    expect(isRetryableTurn(failed({ message: 'boom', code: 'runtime_failure' }))).toBe(true);
+    expect(isRetryableTurn(failed(null))).toBe(true);
     // Spend is request-scoped: a new user Turn delegates against a fresh grant,
     // so restating the need is the recovery path the budget design names.
-    expect(isRetryableTurnError({ message: 'spent', code: 'subagent_budget_exhausted' })).toBe(true);
+    expect(isRetryableTurn(failed({ message: 'spent', code: 'subagent_budget_exhausted' }))).toBe(true);
     // Topology is Thread-lifetime: the next attempt meets the same wall.
-    expect(isRetryableTurnError({ message: 'too deep', code: 'subagent_structural_limit' })).toBe(false);
+    expect(isRetryableTurn(failed({ message: 'too deep', code: 'subagent_structural_limit' }))).toBe(false);
+  });
+
+  test('separates a host that died from a user who pressed Stop', () => {
+    // Both are recorded as interrupts, and only one of them was a decision.
+    expect(isRetryableTurn({
+      status: 'interrupted',
+      error: { message: 'Turn interrupted by host restart', code: 'host_restart' },
+    })).toBe(true);
+    expect(isRetryableTurn({ status: 'interrupted', error: null })).toBe(false);
+    // Nothing to run again while it is still running.
+    expect(isRetryableTurn({ status: 'inProgress', error: null })).toBe(false);
+    expect(isRetryableTurn({ status: 'completed', error: null })).toBe(false);
   });
 });

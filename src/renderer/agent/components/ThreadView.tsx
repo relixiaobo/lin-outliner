@@ -86,7 +86,7 @@ import {
   type ThreadDisclosureState,
   type ThreadToolItem,
 } from './items/ThreadItemView';
-import { isRetryableTurnError, userFacingAgentError } from '../threadErrorMessage';
+import { isRetryableTurn, userFacingAgentError } from '../threadErrorMessage';
 import { clickInstalledFocusTarget, composerRefocusDecision } from '../composerRefocus';
 import {
   setThreadDisclosureOverride,
@@ -1623,6 +1623,7 @@ export function ThreadView({
                       <ThreadTurnView
                         onInterruptThread={onInterruptThread}
                         canEditUserMessage={turn.id === editableTurnId && turn.status !== 'inProgress'}
+                        composerEnabled={composerEnabled}
                         isLastTurn={turnIndex === turns.length - 1}
                         expandState={expandState}
                         index={index}
@@ -1852,6 +1853,7 @@ function ThreadTranscriptTurnShell({
 
 const ThreadTurnView = memo(function ThreadTurnView({
   canEditUserMessage,
+  composerEnabled,
   isLastTurn,
   expandState,
   index,
@@ -1873,6 +1875,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
   waitingOnUserInput,
 }: {
   readonly canEditUserMessage: boolean;
+  readonly composerEnabled: boolean;
   readonly expandState: ThreadDisclosureState;
   readonly index: DocumentIndex;
   readonly isLastTurn: boolean;
@@ -1971,10 +1974,13 @@ const ThreadTurnView = memo(function ThreadTurnView({
    * further up would roll back somebody else's.
    */
   const retryContent = useMemo(() => {
-    if (!isLastTurn || turn.status !== 'failed' || !isRetryableTurnError(turn.error)) return null;
+    // The same condition the composer uses: rollback is available only on a
+    // persistent root user Thread, so anywhere the user cannot type they must
+    // not be offered a button that can only fail.
+    if (!composerEnabled || !isLastTurn || !isRetryableTurn(turn)) return null;
     const request = turn.items.find((item) => item.type === 'userMessage');
     return request?.content ?? null;
-  }, [isLastTurn, turn]);
+  }, [composerEnabled, isLastTurn, turn]);
   const responseTail = standaloneContextBoundary ? null : (
     <ThreadResponseTail
       onCopy={copyTurn}
@@ -2085,6 +2091,8 @@ function ThreadResponseTail({
 }) {
   const t = useT();
   const [usageHoverOpen, setUsageHoverOpen] = useState(false);
+  const [retrying, setRetrying] = useState(false);
+  const [retryError, setRetryError] = useState<string | null>(null);
   const detailsButtonRef = useRef<HTMLButtonElement | null>(null);
   const streaming = turn.status === 'inProgress';
   const interrupted = turn.status === 'interrupted' && !statusOwnedElsewhere;
@@ -2099,6 +2107,12 @@ function ThreadResponseTail({
           <span>{errorText}</span>
         </div>
       ) : null}
+      {retryError ? (
+        <div className="thread-response-error" role="alert">
+          <WarningIcon size={ICON_SIZE.menu} />
+          <span>{retryError}</span>
+        </div>
+      ) : null}
       {!streaming && interrupted ? (
         <div className="thread-response-stopped">
           <StopIcon aria-hidden size={ICON_SIZE.menu} />
@@ -2110,10 +2124,26 @@ function ThreadResponseTail({
           <div className="thread-message-actions thread-response-actions">
             {onRetry ? (
               <IconButton
+                disabled={retrying}
                 icon={RefreshIcon}
                 iconSize={ICON_SIZE.menu}
                 label={t.agent.thread.retryTurn}
-                onClick={() => void onRetry()}
+                // Latched, because the rollback that precedes the re-send is a
+                // round trip during which this Turn and this button stay
+                // mounted. A second click inside that window rolls back the
+                // Turn BEFORE this one — a successful one, permanently — and
+                // then sends the same request twice.
+                onClick={() => {
+                  if (retrying) return;
+                  setRetrying(true);
+                  setRetryError(null);
+                  void onRetry()
+                    // Reported, never swallowed: a Thread the host left in an
+                    // error state refuses the rollback, and a Retry that
+                    // silently does nothing is worse than one that says why.
+                    .catch((error: unknown) => setRetryError(errorMessage(error)))
+                    .finally(() => setRetrying(false));
+                }}
                 variant="message"
               />
             ) : null}
