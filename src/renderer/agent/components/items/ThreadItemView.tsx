@@ -1271,6 +1271,10 @@ function toolItemAct(
     case 'collabAgentToolCall':
       return collaborationAct(item.tool, running, labels);
     case 'webSearch': {
+      // The Item's own fallback for a call the model made without a query is
+      // the empty string, and `Searching the web for ""` names nothing. The
+      // subject-less copy already exists for exactly this.
+      if (!item.query.trim()) return running ? labels.searchingWebActivity : labels.searchedWebActivity;
       const query = quoteSubject(item.query);
       return running ? labels.searchingWeb({ query }) : labels.searchedWeb({ query });
     }

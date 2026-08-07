@@ -5654,6 +5654,8 @@ test.describe('terminal Thread history actions', () => {
     expect(await actions.getByRole('button').evaluateAll((buttons) => (
       buttons.map((button) => button.getAttribute('aria-label'))
     ))).toEqual([
+      // A failure the user did not cause leads with the way out of it.
+      'Retry',
       'Copy message',
       'Continue in new chat',
       'Details',

@@ -58,6 +58,7 @@ import {
   ICON_SIZE,
   InfoIcon,
   LoaderIcon,
+  RefreshIcon,
   SendIcon,
   StopIcon,
   WarningIcon,
@@ -85,7 +86,7 @@ import {
   type ThreadDisclosureState,
   type ThreadToolItem,
 } from './items/ThreadItemView';
-import { userFacingAgentError } from '../threadErrorMessage';
+import { isRetryableTurn, userFacingAgentError } from '../threadErrorMessage';
 import { clickInstalledFocusTarget, composerRefocusDecision } from '../composerRefocus';
 import {
   setThreadDisclosureOverride,
@@ -1622,6 +1623,8 @@ export function ThreadView({
                       <ThreadTurnView
                         onInterruptThread={onInterruptThread}
                         canEditUserMessage={turn.id === editableTurnId && turn.status !== 'inProgress'}
+                        composerEnabled={composerEnabled}
+                        isLastTurn={turnIndex === turns.length - 1}
                         expandState={expandState}
                         index={index}
                         onEditUserMessage={onEditUserMessage}
@@ -1850,6 +1853,8 @@ function ThreadTranscriptTurnShell({
 
 const ThreadTurnView = memo(function ThreadTurnView({
   canEditUserMessage,
+  composerEnabled,
+  isLastTurn,
   expandState,
   index,
   latchedReasoning,
@@ -1870,8 +1875,10 @@ const ThreadTurnView = memo(function ThreadTurnView({
   waitingOnUserInput,
 }: {
   readonly canEditUserMessage: boolean;
+  readonly composerEnabled: boolean;
   readonly expandState: ThreadDisclosureState;
   readonly index: DocumentIndex;
+  readonly isLastTurn: boolean;
   /** Reasoning Item ids that have been open by default this session. */
   readonly latchedReasoning: Set<string>;
   /** Reasoning Item ids first observed while their Turn was live. */
@@ -1953,11 +1960,33 @@ const ThreadTurnView = memo(function ThreadTurnView({
     else if (action === 'continueInNewChat') await continueInNewChat();
     else if (action === 'details') onOpenTurnDetails(turn);
   }, [continueInNewChat, copyTurn, onOpenTurnDetails, turn]);
+  /**
+   * Running the same request again, for a Turn where that could go differently.
+   *
+   * A failure the user did not cause has no exit today: the only way forward is
+   * to hover their OWN message and edit it, which frames a crash as something
+   * they mistyped — and is unavailable outright for a message with more than one
+   * text part. Retry re-sends this Turn's request unchanged, through the same
+   * rollback-and-send path Edit uses, so the failed Turn does not linger as a
+   * dead branch and the question is not asked twice.
+   *
+   * Only the last Turn: that path rolls back exactly one Turn, so offering it
+   * further up would roll back somebody else's.
+   */
+  const retryContent = useMemo(() => {
+    // The same condition the composer uses: rollback is available only on a
+    // persistent root user Thread, so anywhere the user cannot type they must
+    // not be offered a button that can only fail.
+    if (!composerEnabled || !isLastTurn || !isRetryableTurn(turn)) return null;
+    const request = turn.items.find((item) => item.type === 'userMessage');
+    return request?.content ?? null;
+  }, [composerEnabled, isLastTurn, turn]);
   const responseTail = standaloneContextBoundary ? null : (
     <ThreadResponseTail
       onCopy={copyTurn}
       onContinueInNewChat={continueInNewChat}
       onOpenDetails={() => onOpenTurnDetails(turn)}
+      onRetry={retryContent ? () => onEditUserMessage(turn, retryContent) : null}
       // The process divider states the terminal status when there is no
       // response Item — but only if a process block renders at all. Without
       // one, suppressing it here would erase the status from the Turn.
@@ -2048,17 +2077,22 @@ function ThreadResponseTail({
   onCopy,
   onContinueInNewChat,
   onOpenDetails,
+  onRetry,
   statusOwnedElsewhere,
   turn,
 }: {
   readonly onCopy: () => Promise<void>;
   readonly onContinueInNewChat: () => Promise<void>;
   readonly onOpenDetails: () => void;
+  /** Present only where running the same request again could go differently. */
+  readonly onRetry: (() => Promise<void>) | null;
   readonly statusOwnedElsewhere: boolean;
   readonly turn: Turn;
 }) {
   const t = useT();
   const [usageHoverOpen, setUsageHoverOpen] = useState(false);
+  const [retrying, setRetrying] = useState(false);
+  const [retryError, setRetryError] = useState<string | null>(null);
   const detailsButtonRef = useRef<HTMLButtonElement | null>(null);
   const streaming = turn.status === 'inProgress';
   const interrupted = turn.status === 'interrupted' && !statusOwnedElsewhere;
@@ -2073,6 +2107,12 @@ function ThreadResponseTail({
           <span>{errorText}</span>
         </div>
       ) : null}
+      {retryError ? (
+        <div className="thread-response-error" role="alert">
+          <WarningIcon size={ICON_SIZE.menu} />
+          <span>{retryError}</span>
+        </div>
+      ) : null}
       {!streaming && interrupted ? (
         <div className="thread-response-stopped">
           <StopIcon aria-hidden size={ICON_SIZE.menu} />
@@ -2082,6 +2122,31 @@ function ThreadResponseTail({
       <div className="thread-response-footer">
         {streaming ? <ThreadStreamingIndicator /> : (
           <div className="thread-message-actions thread-response-actions">
+            {onRetry ? (
+              <IconButton
+                disabled={retrying}
+                icon={RefreshIcon}
+                iconSize={ICON_SIZE.menu}
+                label={t.agent.thread.retryTurn}
+                // Latched, because the rollback that precedes the re-send is a
+                // round trip during which this Turn and this button stay
+                // mounted. A second click inside that window rolls back the
+                // Turn BEFORE this one — a successful one, permanently — and
+                // then sends the same request twice.
+                onClick={() => {
+                  if (retrying) return;
+                  setRetrying(true);
+                  setRetryError(null);
+                  void onRetry()
+                    // Reported, never swallowed: a Thread the host left in an
+                    // error state refuses the rollback, and a Retry that
+                    // silently does nothing is worse than one that says why.
+                    .catch((error: unknown) => setRetryError(errorMessage(error)))
+                    .finally(() => setRetrying(false));
+                }}
+                variant="message"
+              />
+            ) : null}
             <ThreadMessageCopyButton
               iconSize={ICON_SIZE.menu}
               label={t.agent.message.copyMessage}

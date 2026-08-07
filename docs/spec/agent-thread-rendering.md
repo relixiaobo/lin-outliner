@@ -377,6 +377,30 @@ stops animating under reduced-motion preferences. A failed or interrupted Turn
 with partial response prose keeps its process presentation neutral because the
 response tail already owns the terminal error or stopped state.
 
+A last Turn the user did not end leads its action row with **Retry**, which
+re-sends that Turn's own request unchanged through the same rollback-and-send
+path Edit uses. Without it the only way forward is to edit their own message —
+which frames a crash as something they mistyped, and is unavailable outright for
+a message carrying more than one text part.
+
+It is offered only where the action can actually run and could end differently.
+Only on the last Turn, because that path rolls back exactly one. Only where the
+composer is enabled, since rollback is available only on a persistent root user
+Thread — anywhere the user cannot type, a Retry could only fail. A failure
+qualifies, including one with no recorded error; an exhausted Subagent budget
+qualifies because spend is request-scoped, so a new user Turn delegates against a
+fresh grant. A structural limit does not — depth and the direct-child count are
+Thread-lifetime, so the next attempt meets the same wall. An interrupt qualifies
+ONLY when the host restarted under the Turn: that is recorded as an interrupt but
+was nobody's decision, unlike a user pressing Stop, which keeps its ruling that
+neither Retry nor Regenerate is offered for a choice they made.
+
+Retry is latched while it runs — the rollback is a round trip during which the
+Turn and its button stay mounted, and a second click inside that window would
+roll back the PRECEDING Turn — and a refusal is reported in place rather than
+swallowed, so a Thread the host left in an error state says so instead of
+presenting a button that does nothing.
+
 Unknown Item kinds are protocol errors, not generic fallback cards. Item status
 comes from the Item itself; the renderer never infers completion from missing
 events.
@@ -390,7 +414,7 @@ reference markers render through the same inline reference and preview surfaces
 as the outliner; Cmd/Ctrl-click preserves new-pane navigation, and HTTP links use
 the app preview route. User messages retain Copy and, for the latest terminal
 Turn only, Edit; final agent messages retain Copy, Continue in new chat, and
-Details. User messages that exceed five reading lines retain the established
+Details, preceded by Retry on a last Turn the user did not end. User messages that exceed five reading lines retain the established
 measured Show more / Show less disclosure instead of
 growing the transcript without bound.
 

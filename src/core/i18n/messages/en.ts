@@ -1261,6 +1261,7 @@ commandPalette: {
       reconnecting: ({ attempt, maxRetries }: { attempt: number; maxRetries: number }) => `Reconnecting ${attempt}/${maxRetries}`,
       copiedFromFork: 'Forked history',
       openSubagentThread: ({ id }: { id: string }) => `Open Subagent Thread ${id}`,
+      retryTurn: 'Retry',
       stopUnavailable: 'That work already finished.',
       stopSubagent: ({ name }: { name: string }) => `Stop ${name}`,
       stopThisSubagent: 'Stop this Subagent',
