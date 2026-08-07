@@ -40,6 +40,7 @@ Read these in order when changing Agent Core:
 | --- | --- |
 | [`architecture.md`](architecture.md) | Electron process boundaries, document ownership, persistence, and security posture. |
 | [`commands.md`](commands.md) | Document command surface and mutation routing. |
+| [`action-registry.md`](action-registry.md) | The object/action model, the main-owned action seam, the action catalog, and parameter candidate policies. |
 | [`ui-behavior.md`](ui-behavior.md) | Outliner editing, selection, navigation, drag, menus, and interaction rules. |
 | [`outliner-parity-matrix.md`](outliner-parity-matrix.md) | Detailed parity evidence for outliner behavior. |
 | [`workspace-layout.md`](workspace-layout.md) | Workspace panes, navigation history, rails, and layout persistence. |
