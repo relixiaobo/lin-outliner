@@ -5676,6 +5676,11 @@ describe('ThreadService', () => {
     expect(isolated.thread.parentThreadId).toBe(root.id);
     expect(isolated.thread.threadSource).toBe('subagent');
     expect(isolated.thread.source).toBe('agent.skill');
+    // The task path keeps the uniqueness suffix that makes it an address; the
+    // Thread keeps the Skill's name, which is the part a reader is owed.
+    expect(isolated.taskPath).toMatch(/^\/root\/skill_research_[0-9a-f]{12}$/);
+    expect(isolated.thread.name).toBe('research');
+    expect(isolated.thread.agentNickname).toBe('research');
     expect(fixture.executor.contexts[2]?.configuration.tools).toEqual([]);
     fixture.executor.finish(2);
     await fixture.service.waitForIdle(isolated.thread.id);

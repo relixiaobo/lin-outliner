@@ -225,7 +225,27 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
   subtree deletion drops the whole subtree's entries; a child's absence from a
   root-only list is not evidence about the child
 - Subagent rows use task-path identity first, then nickname, Role, and finally a
-  shortened Thread id. Running copy is `Started subagent <name>` plus elapsed
+  shortened Thread id — except where the task path is not a name. An isolated
+  Skill's segment is `skill_<slug>_<12 hex>`, an address whose suffix
+  distinguishes two runs of one Skill and whose slug has already folded case and
+  spaces away; such a segment yields to the recorded Skill name, and falls back
+  to the slug alone when no Thread record survives to carry it. The Skill name is
+  therefore what every user surface shows — the row, its title and accessible
+  label, the child's own header, and Thread Details — while the address stays
+  internal to host routing, built and parsed from one shared definition so the
+  two processes cannot drift. The rule is selected by the resolved delegation
+  form, not by the address shape: a collaboration `task_name` is model-chosen and
+  may legitimately carry that shape, and it keeps its full name because that is
+  the identity `list_agents` and `send_message` address it by. The child Thread's
+  `source` decides the form; only when no record survives does the address stand
+  in as evidence, which is also what keeps a deleted Skill child out of the
+  collaboration set the wait count is derived from.
+- Display names are unique within a Turn. Two runs of one Skill would otherwise
+  render two identically-named rows, the address suffix that told them apart
+  being exactly what the row stops showing; repeats are numbered in canonical
+  order, so the visible row, its title, and the accessible name a screen-reader
+  user selects a button from all disambiguate together.
+  Running copy is `Started subagent <name>` plus elapsed
   time when known; idle remains distinct from completed. A failed row exposes a
   bounded user-facing error and tints its glyph and label with
   `--status-danger`; interrupted and unavailable rows stay muted. These colours

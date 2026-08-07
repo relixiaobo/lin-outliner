@@ -1085,15 +1085,13 @@ function SubagentActivityItem({
   const error = presentation.status === 'errored' && presentation.error
     ? userFacingAgentError(presentation.error, t.agent.thread.resourceLimitReached)
     : null;
-  const openLabel = t.agent.thread.openSubagentThread({
-    id: presentation.taskPath ?? presentation.displayName,
-  });
+  const openLabel = t.agent.thread.openSubagentThread({ id: presentation.displayName });
   return (
     <button
       aria-label={`${openLabel}. ${label}${error ? `. ${error}` : ''}`}
       className={`thread-item thread-inline-activity thread-subagent-${presentation.status}`}
       onClick={() => void onOpenThread(item.agentThreadId)}
-      title={error ?? presentation.taskPath ?? label}
+      title={error ?? label}
       type="button"
     >
       <AgentIcon size={ICON_SIZE.menu} />

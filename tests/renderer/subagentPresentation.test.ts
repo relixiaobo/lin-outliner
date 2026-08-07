@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type {
   SubAgentActivityThreadItem,
+  SubagentExecutionState,
   Thread,
   ThreadItem,
   Turn,
@@ -112,12 +113,98 @@ describe('Subagent parent-Turn presentation projection', () => {
     // Both are live delegated children and both get a row...
     expect(projection.activeThreadIds).toEqual(expect.arrayContaining([CHILD_ID, SKILL_CHILD_ID]));
     expect(projection.byThreadId.get(SKILL_CHILD_ID)).toMatchObject({
-      displayName: 'skill_research_ab12cd34ef56',
+      displayName: 'research',
       form: 'isolatedSkill',
       status: 'running',
     });
     // ...but only the collaboration child is what the wait is blocked on.
     expect(projection.byThreadId.get(CHILD_ID)?.form).toBe('collaboration');
+  });
+
+  test('names an isolated Skill child by its recorded Skill name, not its address', () => {
+    const skillStarted: SubAgentActivityThreadItem = {
+      ...activity('activity-skill-started', 'started', null),
+      agentThreadId: SKILL_CHILD_ID,
+      agentPath: '/root/skill_data_viz_ab12cd34ef56',
+    };
+    const projection = projectSubagentsForTurn(
+      parentTurn([skillStarted]),
+      new Map([[SKILL_CHILD_ID, { ...skillChildThread(), agentNickname: 'Data Viz' }]]),
+      new Map(),
+    );
+
+    // The slug folded case and spaces away; the Thread record did not.
+    expect(projection.byThreadId.get(SKILL_CHILD_ID)?.displayName).toBe('Data Viz');
+  });
+
+  test('strips the address suffix when the Skill child is gone and only its path survives', () => {
+    const skillStarted: SubAgentActivityThreadItem = {
+      ...activity('activity-skill-started', 'started', null),
+      agentThreadId: SKILL_CHILD_ID,
+      agentPath: '/root/skill_research_ab12cd34ef56',
+    };
+    const projection = projectSubagentsForTurn(parentTurn([skillStarted]), new Map(), new Map());
+
+    // No Thread record left to carry the name, and no form to consult either —
+    // the shape of the address is the only thing to go on.
+    expect(projection.byThreadId.get(SKILL_CHILD_ID)).toMatchObject({
+      displayName: 'research',
+      status: 'notFound',
+    });
+  });
+
+  test('leaves a collaboration task name that merely looks addressed alone', () => {
+    // A model-chosen task_name may legitimately carry this exact shape, hex tail
+    // and all. The child Thread's own source is what decides, so the row keeps
+    // the identity `list_agents` and `send_message` address it by.
+    const skillShaped = '/root/skill_audit_0123456789ab';
+    const item = collaborationItem('spawn-item', 'spawn_agent', 'completed', CHILD_ID, {
+      status: 'completed',
+      taskPath: skillShaped,
+      nickname: 'Researcher',
+      role: 'worker',
+    });
+    const projection = projectSubagentsForTurn(
+      parentTurn([item]),
+      new Map([[CHILD_ID, childThread({ type: 'idle' })]]),
+      new Map(),
+    );
+
+    expect(projection.byThreadId.get(CHILD_ID)).toMatchObject({
+      displayName: 'skill_audit_0123456789ab',
+      form: 'collaboration',
+    });
+  });
+
+  test('reads the form from the address when the child record is gone', () => {
+    const skillStarted: SubAgentActivityThreadItem = {
+      ...activity('activity-skill-started', 'started', null),
+      agentThreadId: SKILL_CHILD_ID,
+      agentPath: '/root/skill_research_ab12cd34ef56',
+    };
+    const projection = projectSubagentsForTurn(parentTurn([skillStarted]), new Map(), new Map());
+
+    // Defaulting a dead Skill child to collaboration counted it into the set
+    // `Waiting on N subagents` is derived from — work no wait blocks on.
+    expect(projection.byThreadId.get(SKILL_CHILD_ID)?.form).toBe('isolatedSkill');
+    expect(projection.collaborationThreadIds).toEqual([]);
+  });
+
+  test('numbers repeated names so two runs of one Skill are tellable apart', () => {
+    const first: SubAgentActivityThreadItem = {
+      ...activity('activity-first', 'started', null),
+      agentThreadId: SKILL_CHILD_ID,
+      agentPath: '/root/skill_research_ab12cd34ef56',
+    };
+    const second: SubAgentActivityThreadItem = {
+      ...activity('activity-second', 'started', null),
+      agentThreadId: 'thread-skill-child-2',
+      agentPath: '/root/skill_research_ff99aa11bb22',
+    };
+    const projection = projectSubagentsForTurn(parentTurn([first, second]), new Map(), new Map());
+
+    expect([...projection.byThreadId.values()].map((entry) => entry.displayName))
+      .toEqual(['research (1)', 'research (2)']);
   });
 
   test('leaves a Skill child out of the wait-time direct-child expansion', () => {
@@ -241,6 +328,7 @@ function collaborationItem(
   tool: 'spawn_agent' | 'list_agents' | 'wait_agent',
   status: 'inProgress' | 'completed',
   receiverThreadId?: string,
+  state?: SubagentExecutionState,
 ): Extract<ThreadItem, { type: 'collabAgentToolCall' }> {
   return {
     id,
@@ -255,7 +343,7 @@ function collaborationItem(
     model: null,
     reasoningEffort: null,
     agentsStates: receiverThreadId ? {
-      [receiverThreadId]: {
+      [receiverThreadId]: state ?? {
         status: 'completed',
         taskPath: '/root/research',
         nickname: 'Researcher',

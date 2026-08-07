@@ -9,6 +9,7 @@ import type {
   Turn,
   TurnError,
 } from '../../core/agent/protocol';
+import { isolatedSkillNameFromTaskName } from '../../core/agent/subagentTaskPath';
 import { userFacingAgentErrorRecord } from './threadErrorMessage';
 
 export type SubagentPresentationStatus = SubagentExecutionStatus | 'idle';
@@ -112,11 +113,12 @@ export function projectSubagentsForTurn(
     const nickname = snapshot?.nickname ?? thread?.agentNickname ?? null;
     const role = snapshot?.role ?? thread?.agentRole ?? null;
     const live = livePresentationState(turn, activity ?? null, thread ?? null, latestTurn ?? null);
+    const form = delegationForm(thread ?? null, taskPath);
     byThreadId.set(threadId, {
       agentThreadId: threadId,
-      displayName: subagentDisplayName(taskPath, nickname, role, threadId),
+      displayName: subagentDisplayName(taskPath, nickname, role, threadId, form),
       error: live.error,
-      form: delegationForm(thread ?? null),
+      form,
       nickname,
       role,
       startedAt: live.startedAt,
@@ -124,6 +126,7 @@ export function projectSubagentsForTurn(
       taskPath,
     });
   }
+  disambiguateDisplayNames(byThreadId);
 
   const seenActivities = new Set<ThreadId>();
   const items = turn.items.filter((item) => {
@@ -157,11 +160,14 @@ export function collaborationThreadIds(
 
 export function presentationFromActivity(item: SubAgentActivityThreadItem): SubagentPresentation {
   const status = item.kind === 'started' ? 'running' : item.kind;
+  // No catalog to consult from a lone Item, so the address is the evidence —
+  // the same rule the projection falls back to for a child with no record.
+  const form = delegationForm(null, item.agentPath);
   return {
     agentThreadId: item.agentThreadId,
-    displayName: subagentDisplayName(item.agentPath, null, null, item.agentThreadId),
+    displayName: subagentDisplayName(item.agentPath, null, null, item.agentThreadId, form),
     error: item.error,
-    form: 'collaboration',
+    form,
     nickname: null,
     role: null,
     startedAt: null,
@@ -179,9 +185,9 @@ export function presentationFromSnapshot(
   const role = state?.role ?? null;
   return {
     agentThreadId: threadId,
-    displayName: subagentDisplayName(taskPath, nickname, role, threadId),
-    error: null,
     // A persisted collaboration snapshot only ever records collaboration children.
+    displayName: subagentDisplayName(taskPath, nickname, role, threadId, 'collaboration'),
+    error: null,
     form: 'collaboration',
     nickname,
     role,
@@ -264,12 +270,45 @@ function livePresentationState(
 }
 
 /**
- * An unknown Thread reads as collaboration: that is the pre-existing meaning of
- * a row whose child is no longer in the catalog, and the form only ever narrows
- * counts, never widens them.
+ * Two runs of one Skill inside a Turn produce two rows with the same name — the
+ * address suffix that told them apart is exactly what the row stops rendering.
+ * Numbering the repeats in canonical order restores that for every consumer at
+ * once: the visible row, its title, and the accessible name a screen-reader
+ * user picks a button from. Unique names are untouched, so the common row keeps
+ * reading as the bare Skill name.
  */
-function delegationForm(thread: Thread | null): SubagentDelegationForm {
-  return thread?.source === 'agent.skill' ? 'isolatedSkill' : 'collaboration';
+function disambiguateDisplayNames(byThreadId: Map<ThreadId, SubagentPresentation>): void {
+  const counts = new Map<string, number>();
+  for (const entry of byThreadId.values()) {
+    counts.set(entry.displayName, (counts.get(entry.displayName) ?? 0) + 1);
+  }
+  const seen = new Map<string, number>();
+  for (const [threadId, entry] of byThreadId) {
+    if ((counts.get(entry.displayName) ?? 0) < 2) continue;
+    const ordinal = (seen.get(entry.displayName) ?? 0) + 1;
+    seen.set(entry.displayName, ordinal);
+    byThreadId.set(threadId, { ...entry, displayName: `${entry.displayName} (${ordinal})` });
+  }
+}
+
+/**
+ * The child Thread's own `source` decides the form. When the record is gone the
+ * address is the only surviving evidence, and reading it beats the previous
+ * unconditional `collaboration`: that made a deleted Skill child count into
+ * `collaborationThreadIds`, inflating `Waiting on N subagents` with work no
+ * wait was ever blocked on.
+ *
+ * Shape is evidence, not proof — a model-chosen collaboration `task_name` could
+ * coincide with it — which is exactly why a live record always wins.
+ */
+function delegationForm(thread: Thread | null, taskPath: string | null): SubagentDelegationForm {
+  if (thread) return thread.source === 'agent.skill' ? 'isolatedSkill' : 'collaboration';
+  return taskPath !== null && isolatedSkillSlug(taskPath) !== null ? 'isolatedSkill' : 'collaboration';
+}
+
+function isolatedSkillSlug(taskPath: string): string | null {
+  const taskName = taskPath.split('/').filter(Boolean).at(-1)?.trim();
+  return taskName ? isolatedSkillNameFromTaskName(taskName) : null;
 }
 
 function turnOwnsItem(turn: Turn, itemId: string): boolean {
@@ -296,13 +335,28 @@ function mergeSnapshot(
   };
 }
 
+/**
+ * An isolated Skill's task-path segment is an address, not a name, so it yields
+ * to the recorded Skill name (or, with no record left, to the slug alone).
+ * Gated on the resolved FORM rather than on the address shape: a collaboration
+ * child whose model-chosen `task_name` happens to look like the address keeps
+ * its task name, which is the identity `list_agents` and `send_message` use and
+ * therefore the only one a reader can correlate a row with.
+ */
 function subagentDisplayName(
   taskPath: string | null,
   nickname: string | null,
   role: string | null,
   threadId: ThreadId,
+  form: SubagentDelegationForm,
 ): string {
   const taskName = taskPath?.split('/').filter(Boolean).at(-1)?.trim();
+  const skillSlug = form === 'isolatedSkill' && taskName
+    ? isolatedSkillNameFromTaskName(taskName)
+    : null;
+  // The recorded Skill name outranks the slug: spawn stores it verbatim, so
+  // `Data Viz` survives there while the address only kept `data_viz`.
+  if (skillSlug) return nickname?.trim() || skillSlug;
   if (taskName) return taskName;
   if (nickname?.trim()) return nickname.trim();
   if (role?.trim()) return role.trim();

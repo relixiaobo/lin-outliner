@@ -2,6 +2,7 @@ import type { TSchema } from 'typebox';
 import { resolveChildConfiguration,type AgentRole,type EffectiveThreadConfiguration,type ReasoningEffort } from '../../../core/agent/configuration';
 import type { ContextCursor,ContextEvidenceKind,InheritedContextPayload,JsonValue,Thread,ThreadContextPayload,ThreadContextPayloadReference,ThreadId,ThreadItem,ThreadItemOutputReference,ThreadResourceReference,ThreadUserContent,Turn,TurnId } from '../../../core/agent/protocol';
 import { modelToolContract } from '../../../core/agent/tools';
+import { isolatedSkillIdentity, isolatedSkillTaskName } from '../../../core/agent/subagentTaskPath';
 import {
   contextPayloadReferenceKey,
   itemOutputReferences,
@@ -249,7 +250,7 @@ export class SubagentCollaboration {
             const toolCeiling = input.allowedTools === undefined ? null : Object.freeze([...new Set(input.allowedTools)]);
             const configuration = this.applyToolCeiling(resolvedConfiguration, toolCeiling);
             const thread = await this.catalog.createThread({
-              name: input.taskPath.split('/').at(-1) ?? 'Subagent',
+              name: input.displayName ?? input.taskPath.split('/').at(-1) ?? 'Subagent',
               ephemeral: parent.thread.ephemeral,
               source: input.childKind === 'isolatedSkill' ? 'agent.skill' : 'collaboration',
               threadSource: 'subagent',
@@ -421,14 +422,20 @@ export class SubagentCollaboration {
   async spawnIsolatedSkillThread(input: SpawnIsolatedSkillThreadInput): Promise<SpawnChildThreadResult> {
       this.turnLifecycle.requireActiveTurn(input.parentThreadId, input.parentTurnId);
       const parentPath = this.taskPathForThread(input.parentThreadId) ?? '/root';
-      const skillSlug = input.skillName.toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '') || 'skill';
-      const identity = uuidV7(this.now()).replace(/-/g, '').slice(-12);
+      const taskName = isolatedSkillTaskName(input.skillName, isolatedSkillIdentity(uuidV7(this.now())));
       return this.spawnChild({
         parentThreadId: input.parentThreadId,
         parentTurnId: input.parentTurnId,
         parentItemId: input.parentItemId,
         prompt: input.prompt,
-        taskPath: `${parentPath}/skill_${skillSlug}_${identity}`,
+        taskPath: `${parentPath}/${taskName}`,
+        // The task path is a session address; the Skill's own name is what a
+        // reader is owed. Recorded on the Thread and as the nickname so the
+        // child is named the same in its own header, in Thread Details, and in
+        // the parent's delegation row — including after the slug has folded
+        // case and spaces away.
+        displayName: input.skillName,
+        nickname: input.skillName,
         role: input.readOnly ? 'explorer' : 'worker',
         allowedTools: input.allowedTools,
         childKind: 'isolatedSkill',
