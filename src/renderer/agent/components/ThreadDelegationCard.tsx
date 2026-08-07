@@ -68,10 +68,10 @@ function DelegationLine({
   return (
     <li className={`thread-delegation-line thread-subagent-${presentation.status}`}>
       <button
-        aria-label={`${t.agent.thread.openSubagentThread({ id: presentation.taskPath ?? name })}. ${statusWithDuration}${error ? `. ${error}` : ''}`}
+        aria-label={`${t.agent.thread.openSubagentThread({ id: name })}. ${statusWithDuration}${error ? `. ${error}` : ''}`}
         className="thread-delegation-line-open"
         onClick={() => void onOpenThread(presentation.agentThreadId)}
-        title={error ?? presentation.taskPath ?? name}
+        title={error ?? name}
         type="button"
       >
         <AgentIcon aria-hidden size={ICON_SIZE.menu} />

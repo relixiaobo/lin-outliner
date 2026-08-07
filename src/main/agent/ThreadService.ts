@@ -233,6 +233,13 @@ export interface SpawnChildThreadInput {
   readonly parentItemId: string;
   readonly prompt: string;
   readonly taskPath: string;
+  /**
+   * What the child is called for a human reader. Defaults to the task path's
+   * last segment, which is the readable answer for a collaboration child and
+   * the WRONG one for an isolated Skill, whose segment carries a uniqueness
+   * suffix that is host addressing rather than a name.
+   */
+  readonly displayName?: string;
   readonly role?: string;
   readonly nickname?: string;
   readonly model?: string;

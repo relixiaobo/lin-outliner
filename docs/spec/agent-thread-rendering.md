@@ -225,7 +225,16 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
   subtree deletion drops the whole subtree's entries; a child's absence from a
   root-only list is not evidence about the child
 - Subagent rows use task-path identity first, then nickname, Role, and finally a
-  shortened Thread id. Running copy is `Started subagent <name>` plus elapsed
+  shortened Thread id — except where the task path is not a name. An isolated
+  Skill's segment is `skill_<slug>_<12 hex>`, an address whose suffix
+  distinguishes two runs of one Skill and whose slug has already folded case and
+  spaces away; such a segment yields to the recorded Skill name, and falls back
+  to the slug alone when no Thread record survives to carry it. The Skill name is
+  therefore what every user surface shows — the row, its title and accessible
+  label, the child's own header, and Thread Details — while the address stays
+  internal to host routing. The suffix shape, not the delegation form, selects
+  this rule: a deleted child is known only through its activity Item's path.
+  Running copy is `Started subagent <name>` plus elapsed
   time when known; idle remains distinct from completed. A failed row exposes a
   bounded user-facing error and tints its glyph and label with
   `--status-danger`; interrupted and unavailable rows stay muted. These colours

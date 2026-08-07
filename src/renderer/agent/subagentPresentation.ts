@@ -296,6 +296,18 @@ function mergeSnapshot(
   };
 }
 
+/**
+ * An isolated Skill's task-path segment is `skill_<slug>_<12 hex>`: the suffix
+ * exists so two runs of one Skill get distinct session addresses, and the slug
+ * has already folded case and spaces away. Neither is a name, so a row that
+ * renders the segment renders twelve characters no reader can use.
+ *
+ * Matched by shape rather than by the delegation form, because the case that
+ * needs it most has no form left to consult: once the child Thread is deleted,
+ * its activity Item's `agentPath` is the only surviving identity.
+ */
+const ISOLATED_SKILL_TASK_NAME = /^skill_(.+)_[0-9a-f]{12}$/;
+
 function subagentDisplayName(
   taskPath: string | null,
   nickname: string | null,
@@ -303,6 +315,10 @@ function subagentDisplayName(
   threadId: ThreadId,
 ): string {
   const taskName = taskPath?.split('/').filter(Boolean).at(-1)?.trim();
+  const skillSlug = taskName?.match(ISOLATED_SKILL_TASK_NAME)?.[1];
+  // The recorded Skill name outranks the slug: spawn stores it verbatim, so
+  // `Data Viz` survives there while the address only kept `data_viz`.
+  if (skillSlug) return nickname?.trim() || skillSlug;
   if (taskName) return taskName;
   if (nickname?.trim()) return nickname.trim();
   if (role?.trim()) return role.trim();

@@ -249,7 +249,7 @@ export class SubagentCollaboration {
             const toolCeiling = input.allowedTools === undefined ? null : Object.freeze([...new Set(input.allowedTools)]);
             const configuration = this.applyToolCeiling(resolvedConfiguration, toolCeiling);
             const thread = await this.catalog.createThread({
-              name: input.taskPath.split('/').at(-1) ?? 'Subagent',
+              name: input.displayName ?? input.taskPath.split('/').at(-1) ?? 'Subagent',
               ephemeral: parent.thread.ephemeral,
               source: input.childKind === 'isolatedSkill' ? 'agent.skill' : 'collaboration',
               threadSource: 'subagent',
@@ -429,6 +429,13 @@ export class SubagentCollaboration {
         parentItemId: input.parentItemId,
         prompt: input.prompt,
         taskPath: `${parentPath}/skill_${skillSlug}_${identity}`,
+        // The task path is a session address; the Skill's own name is what a
+        // reader is owed. Recorded on the Thread and as the nickname so the
+        // child is named the same in its own header, in Thread Details, and in
+        // the parent's delegation row — including after the slug has folded
+        // case and spaces away.
+        displayName: input.skillName,
+        nickname: input.skillName,
         role: input.readOnly ? 'explorer' : 'worker',
         allowedTools: input.allowedTools,
         childKind: 'isolatedSkill',

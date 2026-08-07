@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type {
   SubAgentActivityThreadItem,
+  SubagentExecutionState,
   Thread,
   ThreadItem,
   Turn,
@@ -112,12 +113,56 @@ describe('Subagent parent-Turn presentation projection', () => {
     // Both are live delegated children and both get a row...
     expect(projection.activeThreadIds).toEqual(expect.arrayContaining([CHILD_ID, SKILL_CHILD_ID]));
     expect(projection.byThreadId.get(SKILL_CHILD_ID)).toMatchObject({
-      displayName: 'skill_research_ab12cd34ef56',
+      displayName: 'research',
       form: 'isolatedSkill',
       status: 'running',
     });
     // ...but only the collaboration child is what the wait is blocked on.
     expect(projection.byThreadId.get(CHILD_ID)?.form).toBe('collaboration');
+  });
+
+  test('names an isolated Skill child by its recorded Skill name, not its address', () => {
+    const skillStarted: SubAgentActivityThreadItem = {
+      ...activity('activity-skill-started', 'started', null),
+      agentThreadId: SKILL_CHILD_ID,
+      agentPath: '/root/skill_data_viz_ab12cd34ef56',
+    };
+    const projection = projectSubagentsForTurn(
+      parentTurn([skillStarted]),
+      new Map([[SKILL_CHILD_ID, { ...skillChildThread(), agentNickname: 'Data Viz' }]]),
+      new Map(),
+    );
+
+    // The slug folded case and spaces away; the Thread record did not.
+    expect(projection.byThreadId.get(SKILL_CHILD_ID)?.displayName).toBe('Data Viz');
+  });
+
+  test('strips the address suffix when the Skill child is gone and only its path survives', () => {
+    const skillStarted: SubAgentActivityThreadItem = {
+      ...activity('activity-skill-started', 'started', null),
+      agentThreadId: SKILL_CHILD_ID,
+      agentPath: '/root/skill_research_ab12cd34ef56',
+    };
+    const projection = projectSubagentsForTurn(parentTurn([skillStarted]), new Map(), new Map());
+
+    // No Thread record left to carry the name, and no form to consult either —
+    // the shape of the address is the only thing to go on.
+    expect(projection.byThreadId.get(SKILL_CHILD_ID)).toMatchObject({
+      displayName: 'research',
+      status: 'notFound',
+    });
+  });
+
+  test('leaves a collaboration task name that merely looks addressed alone', () => {
+    const item = collaborationItem('spawn-item', 'spawn_agent', 'completed', CHILD_ID, {
+      status: 'completed',
+      taskPath: '/root/skill_research_notactually',
+      nickname: null,
+      role: 'worker',
+    });
+    const projection = projectSubagentsForTurn(parentTurn([item]), new Map(), new Map());
+
+    expect(projection.byThreadId.get(CHILD_ID)?.displayName).toBe('skill_research_notactually');
   });
 
   test('leaves a Skill child out of the wait-time direct-child expansion', () => {
@@ -241,6 +286,7 @@ function collaborationItem(
   tool: 'spawn_agent' | 'list_agents' | 'wait_agent',
   status: 'inProgress' | 'completed',
   receiverThreadId?: string,
+  state?: SubagentExecutionState,
 ): Extract<ThreadItem, { type: 'collabAgentToolCall' }> {
   return {
     id,
@@ -255,7 +301,7 @@ function collaborationItem(
     model: null,
     reasoningEffort: null,
     agentsStates: receiverThreadId ? {
-      [receiverThreadId]: {
+      [receiverThreadId]: state ?? {
         status: 'completed',
         taskPath: '/root/research',
         nickname: 'Researcher',
