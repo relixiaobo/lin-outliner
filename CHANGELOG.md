@@ -31,6 +31,28 @@ Entries reference the pull request that introduced them.
   acquisition is off the turn-admission path, so a slow or captive network delays
   the Skill, not the user's first message.
 
+### Changed
+
+- **What's New speaks to users, not to maintainers (PR #494, cc-2)** — Settings →
+  About shows the running release's short user note rather than the engineering
+  changelog's `Added`/`Fixed`/`Internal` ledger, and the release picker is gone:
+  one card, headed with the version, ending in a "Full changelog" row that opens
+  that section on GitHub. The GitHub Release body is the same note plus the same
+  link, lifted by `scripts/release-notes.ts` through the parser the pane uses, so
+  the two user surfaces cannot describe one release differently — and the entries
+  stay one click away instead of being reprinted or, as before, buried under
+  hundreds of lines. The note is everything a section writes above its first
+  category heading, so no amount of category detail (`Internal` included) can
+  reach a user surface by accident.
+- **A release cannot publish notes that are missing or nonsense (PR #494, cc-2)** —
+  `release-notes.ts` refuses four ways: no section for the version, a section with
+  no note, a note that is still the `[Unreleased]` train line (the shape the
+  natural freeze motion carries down into the released section), and `Unreleased`
+  itself. `.github/workflows/release.yml` documents all four and directs the
+  release-cutter to run the script as a pre-flight — the workflow runs it after
+  the `v*` push, where a failure lands with the tag already public and recovery
+  means deleting and re-pushing it.
+
 ### Fixed
 
 - **The agent process timeline reads as one compact sequence (PR #493, codex-3)** —

@@ -23,7 +23,6 @@ Open PRs and claims — the PR queue, not this snapshot, is authoritative.
 
 - **Approved and unclaimed, top of queue:** the two `unified-command-surface`
   implementation PRs (design merged #485, refined #491) — see Backlog top.
-- **Claimed:** `whats-new-user-notes` — cc-2, PR #494.
 - **Approved and unclaimed, small (PM-directed 2026-08-06, plan authored by
   main from the launcher review):** `launcher-interaction-hardening` — ONE PR:
   shipped-launcher correctness (IME guard, show→context race, error
@@ -479,12 +478,6 @@ archived `done` (see Recently completed). Remaining active work:
   catalog of nodex features lin deliberately **will not** port, with reasons;
   companion to the active plans. Current-code parity status lives in
   `docs/spec/outliner-parity-matrix.md`. See `docs/plans/reference/nodex-parity-decisions.md`.
-- **whats-new-user-notes** (P2, build-ready, **PM-ratified 2026-08-06**) — the
-  What's New pane renders a short user-register note per release instead of the
-  engineering changelog, and `[0.1.0]`'s note is a product welcome rather than a
-  change record. Renderer + `release-notes.ts` + spec/tests in one PR; the
-  welcome text, the AGENTS freeze rule, and the `0.2.0` dial are main-owned and
-  landed separately. See `docs/plans/whats-new-user-notes.md`.
 - **macos-liquid-glass-icon** — `shelved` (PM, 2026-08-06): shipping the true
   Liquid Glass `.icon` makes Xcode 26 (`actool`) a hard dependency on every
   packaging machine, and the icon still needs a real Icon Composer design pass;
@@ -681,6 +674,14 @@ and the merged PR, distilled rules in [`lessons.md`](lessons.md). Everything
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
 
+- **whats-new-user-notes** (cc-2, PR #494, merged 2026-08-07) — the What's New
+  pane and the GitHub Release body both carry a release's short user note instead
+  of the engineering changelog, parsed by one shared reader so the two surfaces
+  cannot disagree; each links out to the full section rather than reprinting it.
+  `release-notes.ts` refuses to publish a missing note, the `[Unreleased]` train
+  line, or `Unreleased` itself, and `release.yml` now documents all four guards
+  plus the pre-flight that keeps them from firing after the tag is public. Plan
+  archived: `docs/plans/archive/whats-new-user-notes.md`.
 - **default-managed-browser-pilot** (codex-4, PR #492, merged 2026-08-06) —
   Browser Pilot is acquired and enabled by default as an ordinary managed Skill,
   with a durable opt-out that survives uninstall, the `bp` CLI installed on first

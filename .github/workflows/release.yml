@@ -2,13 +2,22 @@
 #
 # The project shipped ~450 changelog entries and 300+ merged pull requests without
 # ever publishing a build, so "how do I get this" had no answer. This is that
-# answer: tag, and a `.dmg` appears on the Releases page with the changelog
-# section for that version as its body.
+# answer: tag, and a `.dmg` appears on the Releases page with that version's user
+# note as its body, followed by a link to the section's full entry list.
 #
 # The notes come from CHANGELOG.md rather than being written here. Two
 # descriptions of one release drift, and the one nobody edits is the one users
-# read. `scripts/release-notes.ts` exits non-zero when the version has no
-# section, so a release with empty notes fails instead of publishing blank.
+# read. `scripts/release-notes.ts` reads it through the same parser the in-app
+# What's New pane uses, so the two user surfaces cannot disagree about what a
+# release says. It exits non-zero four ways — no section for the version, a
+# section with no note above its first `###`, a note that is still the
+# `[Unreleased]` train line, and `Unreleased` itself — because a release whose
+# notes would be empty or nonsense is a mistake worth stopping for.
+#
+# RUN `bun scripts/release-notes.ts <version>` BEFORE PUSHING THE TAG. Those four
+# guards fire in the `Compose release notes` step below, which the `v*` push is
+# what triggers — so a failure here lands with the tag already public and recovery
+# means deleting and re-pushing it. As a pre-flight it costs a second.
 #
 # The build is unsigned and un-notarized (`mac.identity: null`). That is a
 # standing decision, not an accident — signing needs an Apple Developer account —
