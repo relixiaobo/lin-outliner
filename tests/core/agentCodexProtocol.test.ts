@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  isolatedSkillIdentity,
+  isolatedSkillNameFromTaskName,
+  isolatedSkillTaskName,
+} from '../../src/core/agent/subagentTaskPath';
+import {
   AgentProtocolCodecError,
   createLocalItemProvenance,
   createLocalTurnProvenance,
@@ -428,6 +433,27 @@ const thread: Thread = {
   historyMode: 'paginated',
   turns: [completedTurn],
 };
+
+describe('isolated Skill task addressing', () => {
+  test('round-trips a Skill name through the address both processes share', () => {
+    const identity = isolatedSkillIdentity('01910000-0000-7000-8000-00000000ab12');
+    const taskName = isolatedSkillTaskName('Data Viz', identity);
+
+    expect(taskName).toBe(`skill_data_viz_${identity}`);
+    expect(identity).toHaveLength(12);
+    // The renderer strips exactly what main built: the two sides cannot drift
+    // apart without this test failing, which is the point of sharing the format.
+    expect(isolatedSkillNameFromTaskName(taskName)).toBe('data_viz');
+  });
+
+  test('falls back to a usable slug and rejects a segment that is not an address', () => {
+    const identity = isolatedSkillIdentity('01910000-0000-7000-8000-00000000ab12');
+
+    expect(isolatedSkillTaskName('!!!', identity)).toBe(`skill_skill_${identity}`);
+    expect(isolatedSkillNameFromTaskName('research')).toBeNull();
+    expect(isolatedSkillNameFromTaskName('skill_research_nothexnothex')).toBeNull();
+  });
+});
 
 describe('Codex Agent Core protocol codec', () => {
   test('round-trips and freezes the canonical Thread graph', () => {

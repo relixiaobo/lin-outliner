@@ -232,8 +232,19 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
   to the slug alone when no Thread record survives to carry it. The Skill name is
   therefore what every user surface shows — the row, its title and accessible
   label, the child's own header, and Thread Details — while the address stays
-  internal to host routing. The suffix shape, not the delegation form, selects
-  this rule: a deleted child is known only through its activity Item's path.
+  internal to host routing, built and parsed from one shared definition so the
+  two processes cannot drift. The rule is selected by the resolved delegation
+  form, not by the address shape: a collaboration `task_name` is model-chosen and
+  may legitimately carry that shape, and it keeps its full name because that is
+  the identity `list_agents` and `send_message` address it by. The child Thread's
+  `source` decides the form; only when no record survives does the address stand
+  in as evidence, which is also what keeps a deleted Skill child out of the
+  collaboration set the wait count is derived from.
+- Display names are unique within a Turn. Two runs of one Skill would otherwise
+  render two identically-named rows, the address suffix that told them apart
+  being exactly what the row stops showing; repeats are numbered in canonical
+  order, so the visible row, its title, and the accessible name a screen-reader
+  user selects a button from all disambiguate together.
   Running copy is `Started subagent <name>` plus elapsed
   time when known; idle remains distinct from completed. A failed row exposes a
   bounded user-facing error and tints its glyph and label with
