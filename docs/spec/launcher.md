@@ -47,7 +47,7 @@ navigation commands.
   `beforeFocus` hook, then `show()` + `focus()` and send `LAUNCHER_SHOWN_CHANNEL`.
   The captured context lands **after** that, over `LAUNCHER_CONTEXT_CHANNEL`, so
   the window is already interactive before the top row becomes the capture row.
-  The renderer covers that window with an **interim** wait, below.
+  Enter in that gap runs whatever row is showing — see *Known gap* below.
 - **Dismiss.** The hotkey toggles; Esc, clicking away (window `blur`), running a
   command, capturing, or opening a node all hide it. Every hide routes through
   `dismissLauncher()` in `main.ts`, which also forgets the captured context and
@@ -129,21 +129,23 @@ footer's primary hint `preventDefault` on `mousedown`, so clicking a row never
 blurs the always-focused input — visible on the capture-failure path, where the
 launcher stays open for a retry.
 
-### The empty-query Enter wait (INTERIM)
+### Known gap: Enter before the context lands
 
-The context arrives after the window takes focus, so the golden path — hotkey →
-immediate Enter — would otherwise run *Open main window* instead of capturing the
-page the user summoned the launcher over. An Enter with an **empty** query, before
-this open's context has landed, therefore waits for it (600 ms cap) and then acts
-on the current top row; the footer status zone shows "Capturing…" meanwhile. On
-timeout it runs the top row as it stands, so Enter is never dead. The wait is
-single-shot per open, and a **typed query never waits** — typed text always has a
-valid immediate action.
+Enter is **synchronous** — it runs the row that is showing. Between the window
+becoming interactive and the captured context arriving, the top row is still a
+command row, so a hotkey → immediate Enter can run *Open main window* instead of
+capturing the page the user summoned the launcher over.
 
-This is a renderer-only mitigation owned by
-[`../plans/launcher-interaction-hardening.md`](../plans/launcher-interaction-hardening.md),
-**explicitly interim**: `unified-command-surface.md` PR 2's synchronous
-invocation open + pending ambient slot is the authoritative fix and deletes it.
+This is knowingly unmitigated **here**. A renderer-side wait was built and then
+removed: holding Enter across an await opens a window in which the user can
+dismiss the launcher, click a different row, re-open it, or keep typing, and the
+resumed continuation knows none of it — it fired actions the user had cancelled,
+turned one intent into two actions, and captured half-typed text. Guarding all of
+that in the renderer reproduces, badly, the generation/lifecycle bookkeeping that
+[`../plans/unified-command-surface.md`](../plans/unified-command-surface.md) PR 2
+introduces properly: its invocation opens synchronously with a pending ambient
+slot, so the top row is never the wrong subject and the gap does not exist. The
+race is that plan's to close (D6a); the launcher does not carry a stopgap for it.
 
 ## Capture (basic-info only)
 
@@ -232,8 +234,9 @@ A slim hint bar, divider-free, with two zones (the anatomy ratified in
 
 - **Left — identity and status.** At rest, the app mark plus the formatted summon
   hotkey as quiet meta text (not a key chip). During execution the same zone
-  carries the status, in priority order: failure (`--status-danger`), then
-  "Saving…", then the interim "Capturing…".
+  carries the status: a failure (`--status-danger`), or "Saving…" while a capture
+  is in flight. The live region wraps the status text only — the identity is
+  permanent content and must not be announced when a status clears.
 - **Right — the primary hint.** The active row's action label plus the `↵` chip.
   It is a real button (click = Enter, `mousedown` preventDefault) styled as a
   hint, not a control: meta type, secondary ink, no control-height bulk. It states

@@ -7,13 +7,11 @@ import type { ExternalContext } from '../../src/core/launcher/context';
 import { APP_NAME } from '../../src/core/brand';
 
 // Component tests for the launcher's effectful interaction fixes (re-entrancy lock,
-// capture routing, the IME guard, the interim show→context wait, and the footer's
+// capture routing, the IME guard, synchronous Enter, and the footer's
 // status/hint split). The pure selection/list logic is covered in
 // launcherModel.test.ts; here we drive the real component through a mocked
 // `window.lin.launcher`.
 
-/** Must stay >= the component's CONTEXT_WAIT_MS (600ms) for the timeout path. */
-const CONTEXT_WAIT_MS = 600;
 
 interface LauncherMockOptions {
   hotkey?: string | null;
@@ -220,41 +218,33 @@ describe('LauncherApp IME composition guard', () => {
   });
 });
 
-describe('LauncherApp show→context race (interim guard)', () => {
-  test('a blind Enter waits for the context and then captures, not "Open main window"', async () => {
+// The show→context race is deliberately NOT mitigated in this renderer — a
+// renderer-side wait was removed after review (cancelled actions still fired,
+// one intent ran two actions, half-typed text got captured). Enter therefore
+// stays synchronous; `unified-command-surface` PR 2 fixes the race at its source.
+describe('LauncherApp Enter is synchronous', () => {
+  test('Enter acts on the row that is showing, with no deferred continuation', async () => {
     const r = await renderLauncher();
     await act(async () => { r.mock.triggerShown(); });
 
-    // Nothing has arrived yet: the top row is still Open main window.
     expect(rows(r)[0]?.querySelector('.launcher-row-title')?.textContent).toBe('Open main window');
     await pressKey(r, 'Enter');
-    expect(r.mock.calls.executeCommand).toHaveLength(0);
-    expect(statusText(r)).toContain('Capturing…');
+    expect(r.mock.calls.executeCommand).toEqual(['open-main']);
 
+    // A context arriving afterwards must not retro-fire a second action.
     await act(async () => { r.mock.pushContext(webpageContext()); });
-    expect(r.mock.calls.createContextCapture).toHaveLength(1);
-    expect(r.mock.calls.executeCommand).toHaveLength(0);
-  });
-
-  test('when the context never arrives the wait times out and runs the top row (never a dead Enter)', async () => {
-    const r = await renderLauncher();
-    await act(async () => { r.mock.triggerShown(); });
-
-    await pressKey(r, 'Enter');
-    expect(r.mock.calls.executeCommand).toHaveLength(0);
-
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, CONTEXT_WAIT_MS + 100)); });
+    expect(r.mock.calls.createContextCapture).toHaveLength(0);
     expect(r.mock.calls.executeCommand).toEqual(['open-main']);
   });
 
-  test('a context that already arrived means Enter does not wait at all', async () => {
+  test('with the context already in, Enter captures the page', async () => {
     const r = await renderLauncher();
     await act(async () => { r.mock.triggerShown(); });
     await act(async () => { r.mock.pushContext(webpageContext()); });
 
     await pressKey(r, 'Enter');
     expect(r.mock.calls.createContextCapture).toHaveLength(1);
-    expect(statusText(r)).not.toContain('Capturing…');
+    expect(r.mock.calls.executeCommand).toHaveLength(0);
   });
 });
 

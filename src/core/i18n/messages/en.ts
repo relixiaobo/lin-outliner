@@ -118,10 +118,9 @@ export const en = {
     error: {
       saveFailed: 'Save failed.',
     },
-    // In-flight hints shown in the footer's status zone (never inside the
-    // primary action hint): saving a capture, and waiting for the page context.
+    // In-flight hint shown in the footer's status zone, never inside the
+    // primary action hint.
     saving: 'Saving…',
-    capturing: 'Capturing…',
   },
   // The settings window: rail chrome, categories, and the General pane.
   settings: {

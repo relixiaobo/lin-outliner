@@ -96,7 +96,6 @@ export const zhHans: PartialMessages = {
       saveFailed: '保存失败。',
     },
     saving: '保存中…',
-    capturing: '捕获中…',
   },
   settings: {
     providers: {

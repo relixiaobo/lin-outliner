@@ -89,33 +89,37 @@ if (isImeComposingEvent(event)) return;
   therefore does NOT hide the window mid-composition; a second Escape after
   composition ends still hides.
 
-### D2 — Interim guard for the show→context race
+### D2 — WITHDRAWN: no renderer-side guard for the show→context race
 
-Renderer-only, and deliberately minimal:
+*Withdrawn 2026-08-07 after the `/code-review high` gate on PR #497. Recorded
+rather than deleted, because the reasoning is what stops it being re-proposed.*
 
-- Track `contextPending`: set `true` on `onShown`, cleared by the first
-  `onContext` for that open. Hold a promise (resolved by `onContext`) in a ref.
-- On Enter **with an empty trimmed query** while `contextPending`: await
-  `Promise.race([contextArrival, timeout(600ms)])`, then re-derive the current
-  top row (from latest state, not the stale closure) and run it. The footer
-  status zone (D3) shows a `capturing` hint while waiting; the wait is
-  single-shot and re-entrancy stays behind the existing `runningRef`.
-- Non-empty-query Enter does not wait: typed text always has a valid immediate
-  action (capture-note), and delaying every Enter would punish the common typing
-  path to cover a rarer ambiguity.
-- If the wait times out (capture failed or is genuinely slow), run the top row
-  as-is — identical to today's behavior, never a dead Enter (A12).
-- Mark the block with a comment naming `unified-command-surface` PR 2 as its
-  replacement, so the PR 2 sweep deletes it with the rest of the model.
+The plan called for a bounded renderer-side wait: an empty-query Enter would hold
+up to 600 ms for the in-flight capture, then act on the current top row. It was
+built, and the review found **five** correctness defects in it, all from one
+cause — an async continuation with no identity and no cancellation. During the
+wait the user can dismiss the launcher, click a different row, toggle it off and
+on, or keep typing; the continuation observes none of that and resumes anyway. It
+fired actions the user had cancelled, ran a second action alongside a clicked
+row, acted on a *later* open's pre-context list, and captured half-typed text.
+
+Making it correct needs an open-generation token captured before the await and
+revalidated after, plus routing every other action path through the same guard —
+which is a small, badly-placed copy of the invocation lifecycle
+`unified-command-surface` PR 2 introduces properly. Paying that cost for a
+mitigation that PR 2 deletes is a bad trade, so the race stays open and stays
+PR 2's to close (its D6a). `docs/spec/launcher.md` records it as a known gap.
+
+**Enter is therefore synchronous, as it shipped.** The rest of this plan is
+unaffected: D2 was the only element that introduced asynchrony.
 
 ### D3 — Error copy and error/busy presentation
 
 - **Copy:** delete `saveFailedRestart` (en + zh-Hans). Both capture failure
   branches show the generic `saveFailed`; log the exception detail to the
   renderer console for the dev loop instead.
-- **Presentation:** the footer gains a left-aligned status zone,
-  `<span class="launcher-actionbar-status" role="status">`, which carries busy
-  ("Saving…", new "Capturing…" from D2) and error text. Error text uses
+- **Presentation:** the footer gains a left-aligned status zone which carries busy
+  ("Saving…") and error text. Error text uses
   `--status-danger` (status color carrying status meaning — B4-compliant) at
   meta size; busy text stays `--text-secondary`.
 - The right-side primary hint always shows the action label — never an error,
@@ -257,9 +261,8 @@ the PR threads before starting.
 - `bun run typecheck`; extend `tests/renderer/launcherApp.test.tsx`:
   - composing keydown (`keyCode: 229` / `key: 'Process'`) for Enter, arrows,
     and Escape → no action fired, selection unmoved, no hide call;
-  - empty-query Enter while context pending → action deferred until the context
-    resolves (fake timers), and runs the capture row, not the command row;
-    timeout path runs the current top row;
+  - Enter is synchronous: it runs the row that is showing, and a context
+    arriving afterwards never retro-fires a second action (D2 withdrawn);
   - capture failure → status zone shows `saveFailed`, primary hint still shows
     the action label;
   - `run-command` primary label is the verb, not the command title;

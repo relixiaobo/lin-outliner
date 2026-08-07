@@ -110,7 +110,7 @@ exports[`settings page DOM renders the general category byte-stably 1`] = `
               <div class="inset-row-main is-static">
                 <span class="inset-row-text is-wrap">
                   <span class="inset-row-label">Global launcher</span>
-                  <span class="inset-row-sublabel">Summon the launcher from any app to capture, search, or run a command.</span>
+                  <span class="inset-row-sublabel">Not available — the candidate shortcuts are in use by other apps. Quit the conflicting app and relaunch Tenon.</span>
                 </span>
               </div>
             </div>

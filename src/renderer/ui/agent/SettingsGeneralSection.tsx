@@ -60,15 +60,25 @@ export function SettingsGeneralSection({ onError, onNotice, onOpenPage }: Settin
     return () => { active = false; };
   }, []);
 
-  // Same best-effort read for the launcher's registered accelerator: a missing
-  // bridge leaves the row in its in-flight state rather than claiming a failure.
+  // The launcher's registered accelerator. A failed or absent bridge resolves to
+  // `null` — the same "no keystroke to show" state as a failed registration —
+  // rather than staying `undefined` forever, which would leave the row claiming
+  // the launcher has a shortcut while showing none: the exact silent failure
+  // this row exists to eliminate.
   useEffect(() => {
     let active = true;
-    void window.lin?.getLauncherHotkey?.()
+    const read = window.lin?.getLauncherHotkey?.();
+    if (!read) {
+      setLauncherHotkey(null);
+      return;
+    }
+    void read
       .then((accelerator) => {
         if (active) setLauncherHotkey(accelerator);
       })
-      .catch(() => { /* leave the row unresolved */ });
+      .catch(() => {
+        if (active) setLauncherHotkey(null);
+      });
     return () => { active = false; };
   }, []);
 
