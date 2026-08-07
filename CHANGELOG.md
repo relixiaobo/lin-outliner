@@ -42,6 +42,19 @@ Entries reference the pull request that introduced them.
 
 ### Changed
 
+- **A delegated subagent is one row, named like a person (PRs #498 + #500, cc)** —
+  handing work to a Skill no longer renders a machine address
+  (`skill_research_ab12cd34ef56`) and a separate delegation card below the
+  transcript. The child's real name appears in one row inside the process
+  timeline, exactly where the delegating call sat: running, the row shows the
+  skill glyph, a spinner, elapsed time and a per-child Stop; settled, it shows
+  the outcome and how long the child took (`Completed · 3m 12s`), read from the
+  child's own Turn. Two runs of the same Skill are numbered apart so the rows —
+  and their tooltips and accessible names — stay distinguishable. A settled
+  Turn's timeline still folds, but never over a child that is still running:
+  the fold waits until nothing inside it is live and stoppable. Old thread
+  histories decode unchanged — the new delegation field is additive-tolerant,
+  so no data wipe accompanies the upgrade.
 - **What's New speaks to users, not to maintainers (PR #494, cc-2)** — Settings →
   About shows the running release's short user note rather than the engineering
   changelog's `Added`/`Fixed`/`Internal` ledger, and the release picker is gone:
@@ -64,6 +77,14 @@ Entries reference the pull request that introduced them.
 
 ### Fixed
 
+- **Coming back to a Thread lands where you were reading (PR #499, cc-2)** —
+  opening a Subagent page, Automations, or another Thread and returning used to
+  drop the reader somewhere else in the transcript: the snapshot recorded a
+  pixel offset, but unrendered Turns rebuild at a 180px placeholder height, so
+  the transcript came back shorter and the offset pointed past where the reader
+  was. The snapshot now records the Turn being read plus its offset, measured
+  Turns carry their real height through the rebuild, and the restore corrects
+  itself against that anchor until the layout settles.
 - **Chinese, Japanese and Korean input works in the launcher (PR #497, main)** —
   two separate defects made it unusable. Committing a candidate with Enter fired
   the highlighted row instead of the IME (capturing half-typed text, or opening

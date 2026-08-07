@@ -666,6 +666,25 @@ and the merged PR, distilled rules in [`lessons.md`](lessons.md). Everything
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
 
+- **subagent-ux-unification** (cc, PRs #498 + #500, merged 2026-08-07) — a
+  delegated child is one row in its delegating Turn's process timeline, named
+  like a person: PR A resolves the name from the child's `source` (never the
+  raw `skill_<slug>_<12hex>` address; the shape lives once, in
+  `src/core/agent/subagentTaskPath.ts`) and numbers same-Skill repeats apart;
+  PR B retires the delegation card for that one row — live it carries status,
+  spinner and Stop and holds the Turn's fold open, settled it carries the span
+  its own Turn recorded (`Completed · 3m 12s`). The high-effort gate reported
+  nine findings (six correctness — incl. `spawnItemId` fail-closed decode that
+  would have broken packaged-app thread histories, and the fold closing over a
+  live child); all nine fixed and re-verified before merge. Light + dark visual
+  gate passed. Plan archived: `docs/plans/archive/subagent-ux-unification.md`.
+- **thread-scroll-anchor-restore** (cc-2, PR #499, merged 2026-08-07) —
+  returning to a Thread restores the Turn being read, not a stale pixel offset:
+  the snapshot records the anchor Turn + offset (binary search over rendered
+  rows), measured Turns feed their real height into `contain-intrinsic-size` so
+  a remounted flow-layout transcript rebuilds at the height the reader left,
+  and the restore converges against the anchor instead of firing once. Plan
+  archived: `docs/plans/archive/thread-scroll-anchor-restore.md`.
 - **whats-new-user-notes** (cc-2, PR #494, merged 2026-08-07) — the What's New
   pane and the GitHub Release body both carry a release's short user note instead
   of the engineering changelog, parsed by one shared reader so the two surfaces

@@ -155,3 +155,22 @@ same parallelism. A test that fails in a 570-test run and passes alone has told
 you about load, not about the change. The suite is deliberately `retries: 0` so
 instability stays visible; that visibility is only worth something if the
 harness underneath it is not shared.
+
+## An invariant enforced by placement moves with the content, or it vanishes
+
+The delegation card guaranteed that a live subagent child was always visible —
+not through any condition, but by *where it rendered*: outside the process
+timeline's fold gate. When #500 moved the card's content into the timeline,
+the guarantee silently moved out of existence: a settled Turn's fold defaults
+closed, and it closed over a running child's status and the only Stop that
+reached it. Nothing in the diff deleted a check, because there was no check —
+the position was the check. The gate caught it; the fix restated the invariant
+as an explicit condition (`a Turn with a live child is not collapsible`) plus
+an e2e that drives the exact fire-and-forget shape.
+
+So when moving content across a structural boundary — a fold, a portal, a
+list virtualization window, an early return — enumerate what the old position
+enforced implicitly (visibility, ordering, lifetime, reachability) and restate
+each as an explicit condition or test at the new location. A relocation diff
+that only moves markup is the suspicious kind: the code it deletes includes
+every guarantee the old coordinates were carrying.
