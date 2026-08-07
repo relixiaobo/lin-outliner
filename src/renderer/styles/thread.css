@@ -693,9 +693,13 @@
   stop-color: var(--accent-strong);
 }
 
+/* A Turn that has been measured before carries its own placeholder height, so a
+   remounted transcript reproduces the geometry the reader left instead of
+   collapsing every unrendered Turn to one nominal row. Turns never rendered in
+   this session fall back to the nominal height. */
 @supports (content-visibility: auto) {
   .thread-turn {
-    contain-intrinsic-size: auto 180px;
+    contain-intrinsic-size: auto var(--thread-turn-intrinsic-size, 180px);
     content-visibility: auto;
   }
 }
