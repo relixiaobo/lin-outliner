@@ -113,6 +113,24 @@ PR 2's to close (its D6a). `docs/spec/launcher.md` records it as a known gap.
 **Enter is therefore synchronous, as it shipped.** The rest of this plan is
 unaffected: D2 was the only element that introduced asynchrony.
 
+### D2b — ADDED: the IME candidate window was covered by the launcher
+
+*Added 2026-08-07 from the #497 visual pass. The IME guard (D1) stops a
+composition key from firing an action; it does nothing about seeing the
+candidates, and without those CJK input is still unusable — you cannot pick a
+word you cannot see. The two halves only add up to working input together, which
+is why this landed here rather than as a follow-up.*
+
+The launcher pinned `alwaysOnTop` at `'pop-up-menu'`; macOS presents the
+candidate window at about that same level, so the continually re-asserted panel
+covered it. The tell was a sliver of the highlighted first candidate escaping
+past the panel's left edge — the window was always there, correctly positioned,
+and simply behind. `'floating'` sits below the candidate window and still above
+ordinary app windows; the all-Spaces / over-fullscreen behavior comes from
+`setVisibleOnAllWorkspaces`, not from the level.
+
+Pre-existing, not introduced here.
+
 ### D3 — Error copy and error/busy presentation
 
 - **Copy:** delete `saveFailedRestart` (en + zh-Hans). Both capture failure

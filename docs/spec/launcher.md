@@ -21,7 +21,7 @@ navigation commands.
 - **Prewarmed singleton.** Created hidden at startup and shown/hidden on the
   hotkey — never recreated, so the hotkey-to-visible path is a native `show()`.
   `backgroundThrottling: false` keeps the hidden renderer painting-ready.
-- **macOS NSPanel** (`type: 'panel'`, `alwaysOnTop` at `'pop-up-menu'`): a
+- **macOS NSPanel** (`type: 'panel'`, `alwaysOnTop` at `'floating'`): a
   non-activating floating overlay that can take key focus for typing without
   activating the app. It joins all Spaces (incl. other apps' full-screen) via
   `setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true,
@@ -30,7 +30,16 @@ navigation commands.
   **hides the macOS dock icon** (and the ⌘Tab entry) — electron#26350;
   `skipTransformProcessType: true` is Electron's purpose-built option to suppress
   that transform, so the **dock icon + ⌘Tab entry survive** while the launcher
-  floats over fullscreen. The behavior is toggled **only while visible** — set on
+  floats over fullscreen.
+  The level is `'floating'`, **not** `'pop-up-menu'`: macOS presents the
+  **input-method candidate window** at about the pop-up-menu level, so a launcher
+  pinned there sat at the same level and — `alwaysOnTop` continually re-asserting
+  the front — covered it. A CJK user saw the composition underline with no
+  candidate list to choose from (only a sliver of the highlighted first candidate
+  escaped past the panel's left edge), which made Chinese/Japanese/Korean input
+  unusable. `'floating'` still sits above ordinary app windows, and the
+  all-Spaces / over-fullscreen behavior comes from `setVisibleOnAllWorkspaces`,
+  not from this level. The behavior is toggled **only while visible** — set on
   `show`, cleared on `hide`. (The separate "first ⌘Q needs two presses" bug is NOT
   caused by the launcher — it is the app's `before-quit` flush handler in
   `main.ts`, which now `process.exit(0)`s after the flush instead of re-issuing a

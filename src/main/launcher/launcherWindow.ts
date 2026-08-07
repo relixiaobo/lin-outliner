@@ -92,7 +92,17 @@ export function createLauncherWindow(deps: LauncherWindowDeps): BrowserWindow {
 
   deps.harden(win.webContents);
   // Float above normal windows, including other apps' full-screen spaces.
-  win.setAlwaysOnTop(true, 'pop-up-menu');
+  //
+  // `floating` (NSFloatingWindowLevel), NOT `pop-up-menu`: macOS presents the
+  // input-method candidate window at about the pop-up-menu level, so a launcher
+  // pinned there sits at the same level and — because `alwaysOnTop` keeps
+  // re-asserting the front — covers it. The symptom is a CJK user seeing the
+  // composition underline in the input with no candidate list to pick from,
+  // except for a sliver of the highlighted first candidate escaping past the
+  // panel's left edge. `floating` still sits above ordinary app windows, and the
+  // over-fullscreen/all-Spaces behavior comes from `setVisibleOnAllWorkspaces`
+  // below, not from this level.
+  win.setAlwaysOnTop(true, 'floating');
   // NOTE: the all-Spaces / over-fullscreen float (setVisibleOnAllWorkspaces) is
   // deliberately NOT set here at creation — it is toggled on show and cleared on
   // hide (see show/hide). The all-Spaces collection behavior transforms the app's
