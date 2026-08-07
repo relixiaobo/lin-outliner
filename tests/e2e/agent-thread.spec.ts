@@ -2784,7 +2784,9 @@ test.describe('canonical agent Thread surface', () => {
         });
       }, { child: fixture.children[1]!, parentThreadId: fixture.parentThreadId, startedAt: fixture.startedAt });
 
-      await expect(auditRow.locator('.thread-delegation-row-status')).toHaveText('Failed');
+      // A settled row states its own Turn's span, failures included.
+      await expect(auditRow.locator('.thread-delegation-row-status'))
+        .toHaveText(/^Failed · \d+[smhd]/u);
       await expect(auditRow).toContainText('Task reached the system resource limit. Results have been preserved.');
       await expect(auditRow).not.toContainText('9876');
       await expect(auditRow).not.toContainText('9000');
