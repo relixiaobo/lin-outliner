@@ -365,6 +365,9 @@ export class SubagentCollaboration {
         result.taskPath,
         'started',
         null,
+        // The call that delegated: this row stands in for it, so the reader
+        // sees one delegation at the position where it was decided.
+        input.parentItemId,
       );
       return result;
     }
@@ -1003,6 +1006,7 @@ export class SubagentCollaboration {
       agentPath: string,
       kind: PendingSubagentActivity['kind'],
       error: Turn['error'],
+      spawnItemId: string | null,
     ): Promise<void> {
       await this.turnLifecycle.recordSubagentActivity(
         ownerThreadId,
@@ -1012,6 +1016,7 @@ export class SubagentCollaboration {
         kind,
         error,
         this.now(),
+        spawnItemId,
       );
     }
   queueChildTurnActivity(thread: Thread, turn: Turn): void {
@@ -1055,6 +1060,10 @@ export class SubagentCollaboration {
             activity.agentPath,
             activity.kind,
             activity.error,
+            // A terminal activity can be flushed into a later parent Turn,
+            // where the delegating call is not among the Items. Claiming a slot
+            // there would suppress an unrelated row.
+            null,
           );
         }
       } catch (error) {
@@ -1376,5 +1385,8 @@ function subagentActivityItem(
     agentThreadId: activity.agentThreadId,
     agentPath: activity.agentPath,
     error: activity.error,
+    // Materialized from the queue, so this is always a terminal activity: see
+    // the flush path for why those claim nothing.
+    spawnItemId: null,
   };
 }

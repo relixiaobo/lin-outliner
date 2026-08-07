@@ -66,7 +66,6 @@ import { IconButton } from '../../ui/primitives/IconButton';
 import { ButtonControl } from '../../ui/primitives/ButtonControl';
 import { ThreadGoalView } from './ThreadGoalView';
 import { ThreadComposerModelControl } from './ThreadComposerModelControl';
-import { ThreadDelegationCard } from './ThreadDelegationCard';
 import { UserInputRequest } from './UserInputRequest';
 import {
   ThreadComposerEditor,
@@ -1913,18 +1912,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
     () => projectSubagentsForTurn(turn, threadsById, latestTurnByThread),
     [latestTurnByThread, threadsById, turn],
   );
-  // While the card is up it IS the per-child presentation, so the projected
-  // activity rows would say the same thing twice. They come back as the
-  // post-hoc rendering the moment the last child of this Turn settles.
-  const cardIsLive = subagents.activeThreadIds.length > 0;
-  const contentBlocks = groupTurnContent({
-    ...turn,
-    items: cardIsLive
-      ? subagents.items.filter((item) => (
-          item.type !== 'subAgentActivity' || !subagents.byThreadId.has(item.agentThreadId)
-        ))
-      : subagents.items,
-  });
+  const contentBlocks = groupTurnContent({ ...turn, items: subagents.items });
   // `groupTurnContent` omits the process block entirely for a Turn with no
   // process Items, so "no response Item" alone does not mean a divider exists
   // to own the terminal status.
@@ -1988,6 +1976,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
       key={item.id}
       onAgentMessageContextMenu={item.id === responseItem?.id ? handleResponseContextMenu : undefined}
       onEditUserMessage={editUserMessage}
+      onInterruptThread={onInterruptThread}
       onOpenNodeReference={onOpenNodeReference}
       onOpenTurnDetails={standaloneContextBoundary ? () => onOpenTurnDetails(turn) : undefined}
       onOpenThread={onOpenThread}
@@ -2010,7 +1999,6 @@ const ThreadTurnView = memo(function ThreadTurnView({
               hasFinalResponse={responseItem !== null}
               index={index}
               items={block.items}
-              onInterruptThread={onInterruptThread}
               onOpenThread={onOpenThread}
               waitingOnUserInput={waitingOnUserInput}
               key={`process:${block.items[0]?.id ?? turn.id}`}
@@ -2398,7 +2386,6 @@ function latestUserMessageTurnId(turns: readonly Turn[]): string | null {
 }
 
 function ThreadProcessBlock({
-  onInterruptThread,
   onOpenThread,
   children,
   expandState,
@@ -2414,7 +2401,6 @@ function ThreadProcessBlock({
   readonly hasFinalResponse: boolean;
   readonly index: DocumentIndex;
   readonly items: readonly ThreadItem[];
-  readonly onInterruptThread: (threadId: string) => Promise<void>;
   readonly onOpenThread: (threadId: string) => Promise<void>;
   readonly subagents: SubagentTurnProjection;
   readonly turn: Turn;
@@ -2425,10 +2411,16 @@ function ThreadProcessBlock({
   const expanded = expandState.isExpanded(disclosureId, false);
   const blockedOnUser = turn.status === 'inProgress' && waitingOnUserInput;
   const liveElapsedMs = useTurnElapsedMs(turn);
+  // A Turn can settle while a child it spawned keeps running — the
+  // fire-and-forget shape the protocol supports, where terminal activity lands
+  // in a LATER Turn. The fold defaults to closed, so folding here would hide a
+  // live delegation's status, its elapsed time, and the only Stop that reaches
+  // it. Work that is still happening and still stoppable is not history yet.
   const collapsible = turn.status === 'completed'
     && hasFinalResponse
     && turn.durationMs !== null
-    && items.length > 0;
+    && items.length > 0
+    && subagents.activeThreadIds.length === 0;
   const terminalResponseOwnsStatus = hasFinalResponse
     && (turn.status === 'failed' || turn.status === 'interrupted');
   const summary = threadProcessSummary(
@@ -2460,11 +2452,6 @@ function ThreadProcessBlock({
         </div>
       )}
       {terminalResponseOwnsStatus ? null : <div aria-hidden className="thread-process-rule" />}
-      <ThreadDelegationCard
-        onInterruptThread={onInterruptThread}
-        onOpenThread={onOpenThread}
-        subagents={subagents}
-      />
       {terminalResponseOwnsStatus && timelineVisible ? (
         // The response tail owns the terminal status, but the timeline still
         // needs a name — otherwise it is an unlabelled list of rows.

@@ -54,6 +54,7 @@ import {
   QuestionToolIcon,
   RestoreIcon,
   SkillIcon,
+  StopIcon,
   TerminalIcon,
   WebFetchToolIcon,
   WebSearchToolIcon,
@@ -117,6 +118,8 @@ interface ThreadItemViewProps {
   readonly onOpenNodeReference: ThreadNodeReferenceOpenHandler;
   readonly onOpenTurnDetails?: () => void;
   readonly onOpenThread: (threadId: string) => Promise<void>;
+  /** Absent where no Stop belongs — a read-only or historical rendering. */
+  readonly onInterruptThread?: (threadId: string) => Promise<void>;
   readonly onReadToolArguments: (item: ThreadToolItem) => Promise<JsonValue | null>;
   readonly onReadToolOutput: (item: ThreadToolItem) => Promise<string | null>;
 }
@@ -1069,35 +1072,71 @@ function toolDetail(
   }
 }
 
+/**
+ * One delegated child, for its whole life: the same row, in the same slot,
+ * while it runs and after it settles. It reads name-first with the status as a
+ * trailing segment — the shape the tool rows beside it already use — so a
+ * delegation is scanned as one more thing the Turn did rather than as an event
+ * announced in its own vocabulary.
+ *
+ * Live it also carries the two affordances only a running child can offer: a
+ * spinner, and a Stop that reaches this child alone. Interrupting from here
+ * leaves the request open (the delegator may legitimately delegate again); the
+ * composer's Stop is the one that closes it.
+ */
 function SubagentActivityItem({
   item,
+  onInterruptThread,
   onOpenThread,
   subagents,
 }: {
   readonly item: Extract<ThreadItem, { type: 'subAgentActivity' }>;
+  readonly onInterruptThread?: (threadId: string) => Promise<void>;
   readonly onOpenThread: (threadId: string) => Promise<void>;
   readonly subagents?: ReadonlyMap<string, SubagentPresentation>;
 }) {
   const t = useT();
   const presentation = subagents?.get(item.agentThreadId) ?? presentationFromActivity(item);
   const elapsedMs = useSubagentElapsedMs(presentation);
-  const label = subagentActivityLabel(presentation, elapsedMs, t);
+  const name = presentation.displayName;
+  const status = subagentStatusLabel(presentation, elapsedMs, t);
   const error = presentation.status === 'errored' && presentation.error
     ? userFacingAgentError(presentation.error, t.agent.thread.resourceLimitReached)
     : null;
-  const openLabel = t.agent.thread.openSubagentThread({ id: presentation.displayName });
+  const openLabel = t.agent.thread.openSubagentThread({ id: name });
+  const FormIcon = presentation.form === 'isolatedSkill' ? SkillIcon : AgentIcon;
+  // Only where there is a Turn to stop: a child that has not started one yet
+  // has nothing `turn/interrupt` can address.
+  const running = presentation.status === 'running' && onInterruptThread !== undefined;
   return (
-    <button
-      aria-label={`${openLabel}. ${label}${error ? `. ${error}` : ''}`}
-      className={`thread-item thread-inline-activity thread-subagent-${presentation.status}`}
-      onClick={() => void onOpenThread(item.agentThreadId)}
-      title={error ?? label}
-      type="button"
-    >
-      <AgentIcon size={ICON_SIZE.menu} />
-      <span className="thread-subagent-label">{label}</span>
-      {error ? <small className="thread-subagent-error">{error}</small> : null}
-    </button>
+    <div className={`thread-item thread-delegation-row thread-subagent-${presentation.status}`}>
+      <button
+        aria-label={`${openLabel}. ${status}${error ? `. ${error}` : ''}`}
+        className="thread-delegation-row-open"
+        onClick={() => void onOpenThread(item.agentThreadId)}
+        title={error ?? `${name} · ${status}`}
+        type="button"
+      >
+        <FormIcon aria-hidden size={ICON_SIZE.rowGlyph} />
+        <span className="thread-delegation-row-name">{name}</span>
+        <span className="thread-delegation-row-status">{status}</span>
+      </button>
+      {presentation.status === 'running' ? (
+        <LoaderIcon aria-hidden className="thread-delegation-row-spinner" size={ICON_SIZE.rowGlyph} />
+      ) : null}
+      {running ? (
+        <IconButton
+          icon={StopIcon}
+          iconSize={ICON_SIZE.tiny}
+          label={t.agent.thread.stopSubagent({ name })}
+          onClick={() => void onInterruptThread(presentation.agentThreadId)}
+          variant="message"
+        />
+      ) : null}
+      {/* Its own line, wrapping in full: a failure the row had to truncate is a
+          failure the reader cannot act on. */}
+      {error ? <small className="thread-delegation-row-error">{error}</small> : null}
+    </div>
   );
 }
 
@@ -1134,19 +1173,23 @@ function SubagentStateItem({
   );
 }
 
-function subagentActivityLabel(
+/**
+ * Time and status, never a token quantity — the delegation surfaces owe the
+ * user no budget judgement (Delegation Contract §3), and that holds for the
+ * title and accessible label this feeds as much as for the visible text.
+ */
+function subagentStatusLabel(
   presentation: SubagentPresentation,
   elapsedMs: number | null,
   t: Messages,
 ): string {
-  const name = presentation.displayName;
-  if (presentation.status === 'running' && elapsedMs !== null && elapsedMs >= 1_000) {
-    return t.agent.thread.subagentActivity.runningFor({
-      name,
-      duration: formatSubagentDuration(elapsedMs),
-    });
-  }
-  return t.agent.thread.subagentActivity[presentation.status]({ name });
+  const status = t.agent.thread.subagentStatuses[presentation.status];
+  // Running children measure from their start; a settled one has no clock left,
+  // so its own Turn's recorded span is the only duration there is.
+  const durationMs = elapsedMs ?? presentation.durationMs;
+  return durationMs !== null && durationMs >= 1_000
+    ? `${status} · ${formatSubagentDuration(durationMs)}`
+    : status;
 }
 
 

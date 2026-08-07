@@ -2025,6 +2025,7 @@ test.describe('canonical agent Thread surface', () => {
             agentThreadId: child.id,
             agentPath: '/root/research',
             error: null,
+            spawnItemId: null,
           }],
           itemsView: 'full',
           provenance: { originThreadId: root.id, originTurnId: turnId, trigger: { kind: 'user' } },
@@ -2219,6 +2220,7 @@ test.describe('canonical agent Thread surface', () => {
               agentThreadId: childId,
               agentPath: taskPath,
               error: null,
+              spawnItemId: null,
             },
             {
               id: skillItemId,
@@ -2254,13 +2256,13 @@ test.describe('canonical agent Thread surface', () => {
     });
 
     const parentTurn = page.locator(`[data-thread-turn-row="${fixture.parentTurnId}"]`);
-    // The card owns the per-child presentation while the child is alive.
-    const skillLine = parentTurn.locator('.thread-delegation-line');
+    // One row per delegated child, live, in the delegating call's slot.
+    const skillLine = parentTurn.locator('.thread-delegation-row');
     await expect(skillLine).toHaveCount(1);
     // The child record carries no name here, so this also covers the fallback:
     // the address alone still yields the Skill's name, never its suffix.
-    await expect(skillLine.locator('.thread-delegation-line-name')).toHaveText('research');
-    await expect(skillLine.locator('.thread-delegation-line-status')).toContainText(/Running · \d+[smhd]/u);
+    await expect(skillLine.locator('.thread-delegation-row-name')).toHaveText('research');
+    await expect(skillLine.locator('.thread-delegation-row-status')).toContainText(/Running · \d+[smhd]/u);
     const skillRow = skillLine.getByRole('button', { name: /Open Subagent Thread research/u });
     // No wait is in flight, so the divider must not claim to be waiting on it.
     await expect(parentTurn.locator('.thread-process-title')).toContainText(/Working for \d+[smhd]/u);
@@ -2271,7 +2273,7 @@ test.describe('canonical agent Thread surface', () => {
   });
 
 
-  test('shows a live delegation card, stops one child from it, and hands back to the rows', async ({ page }) => {
+  test('keeps one live row per child, stops one from its row, and leaves the rest running', async ({ page }) => {
     await createNewThread(page);
     const fixture = await page.evaluate(async () => {
       const target = window as Window & {
@@ -2354,6 +2356,7 @@ test.describe('canonical agent Thread surface', () => {
             agentThreadId: child.id,
             agentPath: child.taskPath,
             error: null,
+            spawnItemId: null,
           })),
           itemsView: 'full',
           provenance: { originThreadId: parentThreadId, originTurnId: parentTurnId, trigger: { kind: 'user' } },
@@ -2367,21 +2370,19 @@ test.describe('canonical agent Thread surface', () => {
       return { children, parentThreadId, parentTurnId };
     });
 
-    // Live: one card, one line per child, and the per-child rows stand down.
+    // Live: one row per child, in the timeline, with no second presentation.
     const parentTurn = page.locator(`[data-thread-turn-row="${fixture.parentTurnId}"]`);
-    const card = parentTurn.locator('.thread-delegation-card');
-    await expect(card).toBeVisible();
-    await expect(card.locator('.thread-delegation-line')).toHaveCount(2);
-    await expect(card.locator('.thread-delegation-line-status').first()).toContainText(/Running · \d+[smhd]/u);
-    await expect(parentTurn.locator('.thread-inline-activity')).toHaveCount(0);
+    const rows = parentTurn.locator('.thread-delegation-row');
+    await expect(rows).toHaveCount(2);
+    await expect(rows.locator('.thread-delegation-row-status').first()).toContainText(/Running · \d+[smhd]/u);
 
-    // Stop one child from its line; the other keeps running.
-    await card.getByRole('button', { name: 'Stop research' }).click();
-    await expect(card.locator('.thread-delegation-line.thread-subagent-interrupted')).toHaveCount(1);
-    await expect(card.getByRole('button', { name: 'Stop audit' })).toBeVisible();
-    await expect(card.getByRole('button', { name: 'Stop research' })).toHaveCount(0);
+    // Stop one child from its row; the other keeps running.
+    await parentTurn.getByRole('button', { name: 'Stop research' }).click();
+    await expect(parentTurn.locator('.thread-delegation-row.thread-subagent-interrupted')).toHaveCount(1);
+    await expect(parentTurn.getByRole('button', { name: 'Stop audit' })).toBeVisible();
+    await expect(parentTurn.getByRole('button', { name: 'Stop research' })).toHaveCount(0);
 
-    // With the last child settled the card stands down and the rows return.
+    // The last child settles in place: same rows, same slots, new status.
     await page.evaluate((child) => {
       const target = window as Window & {
         __LIN_E2E__?: { emitAgentCoreNotification: (n: unknown) => void };
@@ -2408,8 +2409,160 @@ test.describe('canonical agent Thread surface', () => {
       });
     }, { ...fixture.children[1]!, parentThreadId: fixture.parentThreadId });
 
-    await expect(card).toHaveCount(0);
-    await expect(parentTurn.locator('.thread-inline-activity')).toHaveCount(2);
+    await expect(rows).toHaveCount(2);
+    await expect(parentTurn.locator('.thread-delegation-row.thread-subagent-completed')).toHaveCount(1);
+    await expect(parentTurn.getByRole('button', { name: /^Stop / })).toHaveCount(0);
+  });
+
+  test('never folds a settled Turn over a child that is still running', async ({ page }) => {
+    await createNewThread(page);
+    const fixture = await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(m: string, i?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitAgentCoreNotification: (n: unknown) => void };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<Record<string, unknown>> }>('thread/list', {});
+      const root = response?.data[0];
+      if (!root) throw new Error('Mock root Thread not found');
+      const parentThreadId = String(root.id);
+      const parentTurnId = '01910000-0000-7000-8000-00000000fc01';
+      const activityId = '01910000-0000-7000-8000-00000000fc03';
+      const answerId = '01910000-0000-7000-8000-00000000fc04';
+      const childId = '01910000-0000-7000-8000-00000000fc10';
+      const childTurnId = '01910000-0000-7000-8000-00000000fc11';
+      const startedAt = Date.now() - 6_000;
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'thread/started',
+        threadId: childId,
+        thread: {
+          ...root,
+          id: childId,
+          parentThreadId,
+          agentNickname: null,
+          agentRole: 'worker',
+          name: 'research',
+          source: 'collaboration',
+          threadSource: 'subagent',
+          status: { type: 'active', activeFlags: [] },
+          updatedAt: startedAt,
+        },
+      });
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/started',
+        threadId: childId,
+        turnId: childTurnId,
+        turn: {
+          id: childTurnId,
+          items: [],
+          itemsView: 'full',
+          provenance: {
+            originThreadId: childId,
+            originTurnId: childTurnId,
+            trigger: { kind: 'subagent', parentThreadId, parentItemId: activityId },
+          },
+          status: 'inProgress',
+          error: null,
+          startedAt,
+          completedAt: null,
+          durationMs: null,
+        },
+      });
+      const provenance = (itemId: string) => ({
+        originThreadId: parentThreadId,
+        originTurnId: parentTurnId,
+        originItemId: itemId,
+      });
+      const parentItems = [
+            {
+              id: activityId,
+              type: 'subAgentActivity',
+              provenance: provenance(activityId),
+              kind: 'started',
+              agentThreadId: childId,
+              agentPath: '/root/research',
+              error: null,
+              // This test's subject is the fold, not the stand-in: the call that
+              // delegated is out of scope here and covered elsewhere.
+              spawnItemId: null,
+            },
+            {
+              id: answerId,
+              type: 'agentMessage',
+              provenance: provenance(answerId),
+              phase: 'final',
+              text: 'Delegated and answered.',
+            },
+      ];
+      const parentTurn = (status: string, settled: boolean) => ({
+        id: parentTurnId,
+        items: parentItems,
+        itemsView: 'full',
+        provenance: { originThreadId: parentThreadId, originTurnId: parentTurnId, trigger: { kind: 'user' } },
+        status,
+        error: null,
+        startedAt,
+        completedAt: settled ? Date.now() : null,
+        durationMs: settled ? 6_000 : null,
+      });
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/started',
+        threadId: parentThreadId,
+        turnId: parentTurnId,
+        turn: parentTurn('inProgress', false),
+      });
+      // The parent answers and settles while its child keeps working — the
+      // fire-and-forget shape whose terminal activity lands in a LATER Turn.
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/completed',
+        threadId: parentThreadId,
+        turnId: parentTurnId,
+        turn: parentTurn('completed', true),
+      });
+      return { activityId, childId, childTurnId, parentThreadId, parentTurnId };
+    });
+
+    // The fold defaults to closed, so folding here would hide the only signal
+    // that a subagent is still burning time and the only Stop that reaches it.
+    const parentTurn = page.locator(`[data-thread-turn-row="${fixture.parentTurnId}"]`);
+    const row = parentTurn.locator('.thread-delegation-row');
+    await expect(row).toBeVisible();
+    await expect(row.locator('.thread-delegation-row-status')).toContainText(/Running/u);
+    await expect(parentTurn.getByRole('button', { name: 'Stop research' })).toBeVisible();
+    await expect(parentTurn.locator('.thread-process-toggle')).toHaveCount(0);
+
+    // Once it settles the Turn is ordinary history again, and folds.
+    await page.evaluate((child) => {
+      const target = window as Window & {
+        __LIN_E2E__?: { emitAgentCoreNotification: (n: unknown) => void };
+      };
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/completed',
+        threadId: child.childId,
+        turnId: child.childTurnId,
+        turn: {
+          id: child.childTurnId,
+          items: [],
+          itemsView: 'full',
+          provenance: {
+            originThreadId: child.childId,
+            originTurnId: child.childTurnId,
+            trigger: { kind: 'subagent', parentThreadId: child.parentThreadId, parentItemId: child.activityId },
+          },
+          status: 'completed',
+          error: null,
+          startedAt: Date.now() - 192_000,
+          completedAt: Date.now(),
+          durationMs: 192_000,
+        },
+      });
+    }, fixture);
+
+    // Ordinary history now: the Turn folds, and the row is behind the fold with
+    // the settled span its own Turn recorded rather than a clock it no longer has.
+    await expect(parentTurn.locator('.thread-process-toggle')).toHaveCount(1);
+    await expect(row).toHaveCount(0);
+    await parentTurn.locator('.thread-process-toggle').click();
+    await expect(row.locator('.thread-delegation-row-status')).toHaveText('Completed · 3m 12s');
   });
 
   test('sends the composer Stop against the delegating Turn that owns the request', async ({ page }) => {
@@ -2477,6 +2630,7 @@ test.describe('canonical agent Thread surface', () => {
             agentThreadId: childId,
             agentPath: '/root/research',
             error: null,
+            spawnItemId: null,
           }],
           itemsView: 'full',
           provenance: { originThreadId: parentThreadId, originTurnId: parentTurnId, trigger: { kind: 'user' } },
@@ -2490,7 +2644,7 @@ test.describe('canonical agent Thread surface', () => {
       return { parentThreadId, parentTurnId };
     });
 
-    await expect(page.locator('.thread-delegation-card')).toBeVisible();
+    await expect(page.locator('.thread-delegation-row')).toBeVisible();
     await page.getByRole('button', { name: 'Interrupt Turn' }).click();
 
     // The host closes the request from this pair; the renderer's job is to
@@ -2595,6 +2749,7 @@ test.describe('canonical agent Thread surface', () => {
                 agentThreadId: child.id,
                 agentPath: child.taskPath,
                 error: null,
+                spawnItemId: null,
               })),
               {
                 id: waitItemId,
@@ -2633,15 +2788,16 @@ test.describe('canonical agent Thread surface', () => {
       const parentTurn = page.locator(`[data-thread-turn-row="${fixture.parentTurnId}"]`);
       await expect(parentTurn.locator('.thread-process-title'))
         .toContainText(/Waiting on 2 subagents · \d+[smhd]/u);
-      // While children are alive the card carries the per-child lines; the
-      // activity rows are its post-hoc form and return when the last settles.
-      const card = parentTurn.locator('.thread-delegation-card');
-      await expect(card.locator('.thread-delegation-line')).toHaveCount(2);
-      await expect(card.locator('.thread-delegation-line-status').first())
+      const rows = parentTurn.locator('.thread-delegation-row');
+      await expect(rows).toHaveCount(2);
+      await expect(rows.locator('.thread-delegation-row-status').first())
         .toContainText(/Running · \d+[smhd]/u);
-      // Every colour comes from the ink tokens, so the card follows the scheme
-      // instead of carrying a hardcoded surface that only works in light.
-      const cardPaint = await card.evaluate((element) => {
+      // Every colour comes from the ink tokens, so the row follows the scheme
+      // instead of carrying a hardcoded value that only works in light. The row
+      // also has to share the tool rows' type ramp: it is one more thing the
+      // Turn did, and rendering it at content size made it the loudest line in
+      // a timeline of quiet ones.
+      const rowPaint = await rows.first().evaluate((element) => {
         const root = getComputedStyle(document.documentElement);
         const probe = document.createElement('span');
         document.body.append(probe);
@@ -2649,26 +2805,28 @@ test.describe('canonical agent Thread surface', () => {
           probe.style.color = `var(${token})`;
           return getComputedStyle(probe).color;
         };
-        const style = getComputedStyle(element);
-        const status = element.querySelector('.thread-delegation-line-status');
+        const sibling = element.closest('.thread-process-timeline')?.querySelector('.thread-tool-toggle');
+        const status = element.querySelector('.thread-delegation-row-status');
         const paint = {
-          background: style.backgroundColor,
-          fill1: resolve('--fill-1'),
+          fontSize: getComputedStyle(element).fontSize,
           ink: root.getPropertyValue('--ink').trim(),
+          siblingFontSize: sibling ? getComputedStyle(sibling).fontSize : '',
           status: status ? getComputedStyle(status).color : '',
+          text: getComputedStyle(element).color,
+          textSoft: resolve('--text-soft'),
           textTertiary: resolve('--text-tertiary'),
         };
         probe.remove();
         return paint;
       });
-      // The assertion is that the card follows the ink tokens, not what those
+      // The assertion is that the row follows the ink tokens, not what those
       // tokens currently are: pinning the literals here would fail an E2E in
       // this file for a change made in `tokens.css`.
-      expect(cardPaint.background).toBe(cardPaint.fill1);
-      expect(cardPaint.status).toBe(cardPaint.textTertiary);
-      expect(cardPaint.ink).toBe(colorScheme === 'dark' ? '255 255 255' : '0 0 0');
-      const researchRow = parentTurn.getByRole('button', { name: /Open Subagent Thread research/u });
-      const auditRow = parentTurn.getByRole('button', { name: /Open Subagent Thread audit/u });
+      expect(rowPaint.text).toBe(rowPaint.textSoft);
+      expect(rowPaint.status).toBe(rowPaint.textTertiary);
+      expect(rowPaint.fontSize).toBe(rowPaint.siblingFontSize);
+      expect(rowPaint.ink).toBe(colorScheme === 'dark' ? '255 255 255' : '0 0 0');
+      const auditRow = parentTurn.locator('.thread-delegation-row', { hasText: 'audit' });
 
       await page.evaluate(({ child, parentThreadId, startedAt }) => {
         const target = window as Window & {
@@ -2698,7 +2856,7 @@ test.describe('canonical agent Thread surface', () => {
 
       await expect(parentTurn.locator('.thread-process-title'))
         .toContainText(/Waiting on 1 subagent ·/u);
-      await expect(card.locator('.thread-delegation-line.thread-subagent-completed')).toHaveCount(1);
+      await expect(parentTurn.locator('.thread-delegation-row.thread-subagent-completed')).toHaveCount(1);
 
       await page.evaluate(({ child, parentThreadId, startedAt }) => {
         const target = window as Window & {
@@ -2729,16 +2887,22 @@ test.describe('canonical agent Thread surface', () => {
         });
       }, { child: fixture.children[1]!, parentThreadId: fixture.parentThreadId, startedAt: fixture.startedAt });
 
-      await expect(auditRow).toContainText('Subagent audit failed');
+      // A settled row states its own Turn's span, failures included.
+      await expect(auditRow.locator('.thread-delegation-row-status'))
+        .toHaveText(/^Failed · \d+[smhd]/u);
       await expect(auditRow).toContainText('Task reached the system resource limit. Results have been preserved.');
       await expect(auditRow).not.toContainText('9876');
       await expect(auditRow).not.toContainText('9000');
-      await expect(auditRow.locator('.thread-subagent-error')).toHaveCSS('white-space', 'normal');
-      expect(await auditRow.locator('.thread-subagent-error').evaluate((element) => (
+      await expect(auditRow.locator('.thread-delegation-row-error')).toHaveCSS('white-space', 'normal');
+      expect(await auditRow.locator('.thread-delegation-row-error').evaluate((element) => (
         element.scrollWidth <= element.clientWidth
       ))).toBe(true);
-      await auditRow.hover();
-      expect(await auditRow.locator('.thread-subagent-label').evaluate((element) => {
+      // The status colour survives hover: pointing at a failed delegation must
+      // not repaint it neutral, which is what a hover rule that did not exempt
+      // the status states would do. Polled because the row shares the tool
+      // rows' colour transition, so a single read can land mid-interpolation.
+      await auditRow.locator('.thread-delegation-row-open').hover();
+      await expect.poll(async () => auditRow.locator('.thread-delegation-row-name').evaluate((element) => {
         const probe = document.createElement('span');
         probe.style.color = 'var(--status-danger)';
         document.body.append(probe);
@@ -4163,6 +4327,7 @@ test.describe('canonical agent Thread surface', () => {
             agentThreadId: thread.id,
             agentPath: '/root/plan_child',
             error: null,
+            spawnItemId: null,
           }],
           itemsView: 'full',
           provenance: { originThreadId: parent.id, originTurnId: parentTurnId, trigger: { kind: 'user' } },

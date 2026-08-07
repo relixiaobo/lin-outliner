@@ -1063,6 +1063,17 @@ export interface SubAgentActivityThreadItem extends ThreadItemBase {
   readonly agentThreadId: ThreadId;
   readonly agentPath: string;
   readonly error: TurnError | null;
+  /**
+   * The tool call that delegated this work — the `skill` call or the
+   * collaboration spawn call — so one delegation renders as one row at its
+   * cause's position instead of a tool row and a child row saying the same
+   * thing in two vocabularies.
+   *
+   * Recorded on the spawn-time `started` Item only. A terminal activity is
+   * `null` because it can be flushed into a LATER parent Turn, where the
+   * delegating call is not among the Items and nothing may be claimed.
+   */
+  readonly spawnItemId: string | null;
 }
 
 export interface WebSearchResult {

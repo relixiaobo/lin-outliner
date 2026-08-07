@@ -105,10 +105,22 @@ fallbacks, core + renderer tests. Spec: the naming sentence in
 **Protocol widening (coordinated, pre-release no-migration):**
 `subAgentActivity` gains `spawnItemId: string | null` — the Item id of the
 tool call that delegated (the `skill` call or the collaboration spawn call).
-The recorder has it at spawn (`recordSubagentActivity` receives
-`parentItemId`), and the spawn edge already stores it for terminal enqueue.
-Exact-key codec update in `src/core/agent/codec.ts`; wipe `~/.lin-outliner-*`
-dev userData; no legacy reader.
+Only the spawn-time `started` Item carries it; terminal Items record `null`, and
+decode treats an absent key as `null` — the no-migration policy covers dev
+userData, not the packaged app's daily-use data, which no release step wipes.
+That is not a shortcut: the projection already keeps the FIRST activity per
+child as the rendered row, so the started Item's slot is the one that decides
+placement, and a terminal activity flushed into a *later* parent Turn must not
+claim a row in a Turn whose spawn call is elsewhere. It also keeps the change
+off the persistence layer — `spawn_edges` stores no Item id, so carrying it to
+the terminal enqueue would mean a new column for a value nothing reads.
+
+A collaboration spawn row could instead be matched through its existing
+`receiverThreadIds`, but an isolated Skill's `skill` tool call carries no child
+reference at all; one field that both forms record beats one field plus a
+form-specific path. Exact-key codec update in `src/core/agent/codec.ts`; no dev-userData wipe is
+needed, since an additive nullable field is the one shape this store already
+tolerates on read (`commandExecution.description`).
 
 **Projection merges cause and child.** `projectSubagentsForTurn` suppresses a
 tool-call row claimed by a child's `spawnItemId` and renders the delegation row
@@ -141,8 +153,12 @@ tool row and the collaboration spawn row); `wait_agent` rows are untouched
   (danger/muted) layer on top unchanged.
 - **Hover affordance (B6):** the row's text deepens on hover/focus-visible; no
   fill box, no layout change (B7).
-- **Delegation rows never fold into activity groups**, live or settled — each
-  is a first-class click-into-child affordance (`groupTurnContent` exemption).
+- **Delegation rows never fold into activity groups** — already true by
+  construction (`groupTurnItems` aggregates only adjacent `isThreadToolItem`
+  runs, which a `subAgentActivity` is not), so this needs a guard test rather
+  than an exemption. What does change is where the split falls: the row lands at
+  the delegating call's slot, and the suppressed tool row no longer separates
+  the runs on either side of it.
 - **Stop glyph:** replace the Lucide outline `Square` mapped as `StopIcon`
   (`icons.ts`) with a filled-square stop glyph, matching the composer's stop
   affordance, everywhere StopIcon is used. An outlined square alone reads as

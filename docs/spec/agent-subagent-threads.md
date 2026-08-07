@@ -96,8 +96,8 @@ control for a live one. The
 top-level spawner's own Turns never debit or gate against the pool it opened; a capped
 child member is covered by its own membership.
 
-**Stop closes the request.** A user Stop — from the composer, from a card line,
-or from a child Thread's header — settles the addressed Turn and every member of
+**Stop closes the request.** A user Stop — from the composer, from a delegation
+row, or from a child Thread's header — settles the addressed Turn and every member of
 that request which is a descendant of the addressed Thread, then marks the
 request closed. Addressed at the delegating Turn that owns the request that
 predicate is every member, so the composer needs no separate rule; addressed at
@@ -293,7 +293,15 @@ preserved; they never render token counts. `Turn.error.code` accepts only
 ## History And Activity
 
 Spawning records a `collabAgentToolCall` in the sender and a
-`subAgentActivity` `started` Item in the sender's active Turn. Child terminal
+`subAgentActivity` `started` Item in the sender's active Turn. That started Item
+carries `spawnItemId`, the id of the tool call that delegated — the `skill` call
+or the collaboration spawn call — so the renderer can present one delegation as
+one row at its cause's position. Terminal activity records `null` there: it can
+be flushed into a later parent Turn, where the delegating call is not among the
+Items and naming one would claim an unrelated row. The field is additive and
+nullable on decode: an activity persisted before it existed reads as `null`
+rather than failing, because the no-migration policy covers dev userData and not
+the packaged app's daily-use data, which no release step wipes. Child terminal
 status queues a parent-scoped `completed`, `interrupted`, or `errored` activity
 Item bound to the exact child Turn; the Item copies that Turn's complete typed
 `TurnError`, while a started or successful activity carries `error: null`.
@@ -540,7 +548,7 @@ consumed. The token budget is a system fail-safe — a circuit breaker sized at
 definitely-anomalous, not an allocation. The test is **not whether a number is
 visible but whether anyone is asked to decide on it**: a user states a need and
 never reasons in tokens, so no product surface may require a token judgement of
-them — delegation rows, cards, failure copy, and the Turn Details reading flow
+them — delegation rows, failure copy, and the Turn Details reading flow
 speak time and status first and money at most, and the budget has no product
 settings UI. Token-denominated surfaces are the ones where nobody is deciding:
 model-facing tools, warning steering, and typed errors as system internals, and

@@ -592,7 +592,7 @@ describe('ThreadItemView tool row status presentation', () => {
 });
 
 describe('ThreadItemView Subagent status presentation', () => {
-  test('uses the ratified running copy and appends live elapsed time', async () => {
+  test('reads name-first with live elapsed time, and offers Stop only while running', async () => {
     const item: ThreadItem = {
       ...base('subagent-running'),
       type: 'subAgentActivity',
@@ -600,23 +600,92 @@ describe('ThreadItemView Subagent status presentation', () => {
       agentThreadId: 'thread-child',
       agentPath: '/root/research',
       error: null,
+      spawnItemId: null,
     };
     const rendered = renderItem(item, {
+      onInterruptThread: async () => undefined,
       subagents: new Map([['thread-child', {
         agentThreadId: 'thread-child',
         displayName: 'research',
+        durationMs: null,
         error: null,
+        form: 'collaboration' as const,
         nickname: null,
         role: null,
         startedAt: Date.now() - 5_000,
-        status: 'running',
+        status: 'running' as const,
         taskPath: '/root/research',
       }]]),
     });
     await flush();
 
-    expect(rendered.document.querySelector('.thread-inline-activity')?.textContent)
-      .toMatch(/^Started subagent research · [4-6]s$/u);
+    const row = rendered.document.querySelector('.thread-delegation-row');
+    expect(row?.querySelector('.thread-delegation-row-name')?.textContent).toBe('research');
+    expect(row?.querySelector('.thread-delegation-row-status')?.textContent)
+      .toMatch(/^Running · [4-6]s$/u);
+    expect(row?.querySelector('[aria-label="Stop research"]')).not.toBeNull();
+  });
+
+  test('states the settled span from the child Turn, not from a clock it no longer has', async () => {
+    const item: ThreadItem = {
+      ...base('subagent-settled'),
+      type: 'subAgentActivity',
+      kind: 'completed',
+      agentThreadId: 'thread-child',
+      agentPath: '/root/research',
+      error: null,
+      spawnItemId: null,
+    };
+    const rendered = renderItem(item, {
+      subagents: new Map([['thread-child', {
+        agentThreadId: 'thread-child',
+        displayName: 'research',
+        durationMs: 192_000,
+        error: null,
+        form: 'collaboration' as const,
+        nickname: null,
+        role: null,
+        startedAt: null,
+        status: 'completed' as const,
+        taskPath: '/root/research',
+      }]]),
+    });
+    await flush();
+
+    expect(rendered.document.querySelector('.thread-delegation-row-status')?.textContent)
+      .toBe('Completed · 3m 12s');
+  });
+
+  test('drops Stop once the child settles, keeping the row in place', async () => {
+    const item: ThreadItem = {
+      ...base('subagent-done'),
+      type: 'subAgentActivity',
+      kind: 'completed',
+      agentThreadId: 'thread-child',
+      agentPath: '/root/research',
+      error: null,
+      spawnItemId: null,
+    };
+    const rendered = renderItem(item, {
+      onInterruptThread: async () => undefined,
+      subagents: new Map([['thread-child', {
+        agentThreadId: 'thread-child',
+        displayName: 'research',
+        durationMs: null,
+        error: null,
+        form: 'collaboration' as const,
+        nickname: null,
+        role: null,
+        startedAt: null,
+        status: 'completed' as const,
+        taskPath: '/root/research',
+      }]]),
+    });
+    await flush();
+
+    const row = rendered.document.querySelector('.thread-delegation-row');
+    expect(row?.querySelector('.thread-delegation-row-status')?.textContent).toBe('Completed');
+    expect(row?.querySelector('[aria-label="Stop research"]')).toBeNull();
   });
 
   test('renders a budget failure with product copy and no token quantities in visible or accessible text', async () => {
@@ -630,15 +699,19 @@ describe('ThreadItemView Subagent status presentation', () => {
         message: 'Token budget exhausted (1234 of 1000 tokens)',
         code: 'subagent_budget_exhausted',
       },
+      spawnItemId: null,
     };
     const rendered = renderItem(item);
     await flush();
 
-    const row = rendered.document.querySelector<HTMLButtonElement>('.thread-inline-activity');
+    const row = rendered.document.querySelector<HTMLElement>('.thread-delegation-row');
+    const open = row?.querySelector<HTMLButtonElement>('.thread-delegation-row-open');
     expect(row?.className).toContain('thread-subagent-errored');
-    expect(row?.textContent).toContain('Subagent research failed');
-    expect(row?.textContent).toContain('Task reached the system resource limit. Results have been preserved.');
-    expect(`${row?.textContent} ${row?.ariaLabel} ${row?.title}`).not.toMatch(/token|\d/u);
+    expect(row?.textContent).toContain('research');
+    expect(row?.querySelector('.thread-delegation-row-status')?.textContent).toBe('Failed');
+    expect(row?.querySelector('.thread-delegation-row-error')?.textContent)
+      .toBe('Task reached the system resource limit. Results have been preserved.');
+    expect(`${row?.textContent} ${open?.ariaLabel} ${open?.title}`).not.toMatch(/token|\d/u);
   });
 
   test('keeps collaboration snapshots in sanitized result JSON without loading raw model output', async () => {
@@ -805,6 +878,7 @@ interface RenderItemOptions {
     readonly clientWidth: number;
     readonly scrollWidth: number;
   };
+  readonly onInterruptThread?: (threadId: string) => Promise<void>;
   readonly streaming?: boolean;
   readonly subagents?: ReadonlyMap<string, SubagentPresentation>;
 }
@@ -824,6 +898,7 @@ function renderItem(item: ThreadItem, options: RenderItemOptions = {}): {
         holdAnchorUntilSettled={next.holdAnchorUntilSettled ?? options.holdAnchorUntilSettled ?? (() => null)}
         initiallyExpanded={(next.expanded ?? options.expanded) === true}
         item={nextItem}
+        onInterruptThread={options.onInterruptThread}
         onReadToolArguments={onReadToolArguments}
         onReadToolOutput={onReadToolOutput}
         streaming={(next.streaming ?? options.streaming) === true}
@@ -914,6 +989,7 @@ function ThreadItemProbe({
   onReadToolArguments,
   streaming,
   subagents,
+  onInterruptThread,
 }: {
   readonly expandState?: ThreadDisclosureState;
   readonly holdAnchorUntilSettled: ThreadDisclosureState['holdAnchorUntilSettled'];
@@ -921,6 +997,7 @@ function ThreadItemProbe({
   readonly item: ThreadItem;
   readonly onReadToolOutput: (item: ThreadToolItem) => Promise<string | null>;
   readonly onReadToolArguments: (item: ThreadToolItem) => Promise<import('../../src/core/agent/protocol').JsonValue | null>;
+  readonly onInterruptThread?: (threadId: string) => Promise<void>;
   readonly streaming: boolean;
   readonly subagents?: ReadonlyMap<string, SubagentPresentation>;
 }) {
@@ -940,6 +1017,7 @@ function ThreadItemProbe({
       index={buildIndex(emptyProjection())}
       item={item}
       onEditUserMessage={async () => undefined}
+      onInterruptThread={onInterruptThread}
       onOpenNodeReference={() => undefined}
       onOpenThread={async () => undefined}
       onReadToolArguments={onReadToolArguments}

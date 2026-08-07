@@ -213,8 +213,16 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
   records which form it describes: a wait counts only collaboration children,
   and a collaboration tool row is accountable only for those, so a Skill child
   is never counted as work the parent is waiting for. Within one parent Turn,
-  all `subAgentActivity` Items for the same
-  child collapse into one presentation row at the first Item's position. A
+  all `subAgentActivity` Items for the same child collapse into one presentation
+  row. That row stands in for the tool call that delegated the work — the
+  `skill` call or the collaboration spawn call, named by the spawn-time Item's
+  `spawnItemId` — and takes its canonical slot, so one delegation is one row at
+  the position where it was decided and never above the reasoning that produced
+  it. The delegating row is suppressed in the projection, not at the leaf, so
+  nothing upstream keeps counting or grouping a row the reader cannot see; the
+  raw tool exchange stays in Turn Diagnostics. Only the spawn-time Item claims a
+  slot: a terminal activity flushed into a later parent Turn names no call there
+  and keeps the first Item's own position. A
   terminal activity Item is authoritative; otherwise the row combines the
   Thread catalog with the latest canonical child `turn/started` or
   `turn/completed` DTO retained by `threadStore`, even when that child's paged
@@ -245,12 +253,19 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
   being exactly what the row stops showing; repeats are numbered in canonical
   order, so the visible row, its title, and the accessible name a screen-reader
   user selects a button from all disambiguate together.
-  Running copy is `Started subagent <name>` plus elapsed
-  time when known; idle remains distinct from completed. A failed row exposes a
-  bounded user-facing error and tints its glyph and label with
+- A row reads name first, then its status as a trailing segment — the status
+  vocabulary plus elapsed time when known; idle remains distinct from completed.
+  A running child measures from its start; a settled one has no clock left, so
+  the duration is the one its own Turn recorded, and a row left with only a
+  terminal Item after a reload states the status alone rather than inventing a
+  span.
+  The name ellipsizes and the status never does, so a row can never truncate
+  away the outcome it is reporting. A failed row exposes a
+  bounded user-facing error on its own wrapping line and tints its glyph and label with
   `--status-danger`; interrupted and unavailable rows stay muted. These colours
-  survive hover and focus, and every status is also named in text and accessible
-  labels
+  survive hover and focus — the hover treatment exempts them rather than
+  repainting a failure neutral — and every status is also named in text and
+  accessible labels
 - persisted collaboration result snapshots contain, per child, `status`,
   `taskPath`, `nickname`, and `role`. Spawn and wait rows render those identities
   through the same live projection instead of treating the persisted status as
@@ -267,23 +282,37 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
   feature Turn exposes Turn Diagnostics from that boundary and does not synthesize an empty
   response row with Copy or Continue-in-New-Chat actions
 
-While at least one child spawned by a Turn is still alive, that Turn's process
-block carries a live delegation card: one line per delegated child, in canonical
-order, with a readable name, live status, elapsed time, and a terminal glyph as
-each settles. The card is the per-child presentation for as long as it is up, so
-the projected activity rows for those children stand down and return as the
-post-hoc rendering once the last child settles. Every delegated form is listed —
-an isolated Skill child is delegated work too — and membership is the Turn's
-projection rather than a second split by source. Each running line exposes Stop,
-and so does the header of a child Thread view while its Turn is active. Like
-every delegation surface the card speaks time and status only: no token quantity
-reaches its text, its title, or its accessible labels, and a failed line carries
-the same bounded, code-classified copy the rows use. There is no dock-level
-agents panel; cross-thread awareness is the Thread list's activity indicator.
+A delegated child has ONE presentation for its whole life: the delegation row
+in its Turn's process timeline, in the delegating call's canonical slot. It does
+not change surface, shape, or position when the child settles — live it carries a
+spinner and a Stop that interrupts that child alone, and settled it keeps the
+same slot and states the outcome, so the post-hoc rendering IS the live row
+rather than a second thing the reader has to re-find. It carries the delegated
+form's own glyph and shares the type ramp and resting colour of the tool rows
+around it: a delegation is one more thing the Turn did, not an event announced in
+its own vocabulary. Every delegated form gets one — an isolated Skill child is
+delegated work too — and membership is the Turn's projection rather than a second
+split by source. A child Thread view's header exposes the same Stop while its
+Turn is active. Like every delegation surface the row speaks time and status
+only: no token quantity reaches its text, its title, or its accessible labels,
+and a failure carries the same bounded, code-classified copy the tool rows use.
+There is no dock-level agents panel and no Turn-level delegation card;
+cross-thread awareness is the Thread list's activity indicator.
+
+Superseded (PM 2026-08-07): the earlier shape pinned a live card above the
+timeline and stood the per-child rows down while it was up. It gave one
+delegation two presentations in two positions and two visual languages, and put
+the card above the reasoning that produced the delegation. "No dock-level agents
+panel" stands unchanged; "the card replaces the rows" does not.
 
 A completed Turn with a final answer and known duration folds its process Items
 under the established `Worked for ...` disclosure while leaving the answer
-outside the fold. Live and resultless process timelines remain visible; a live
+outside the fold — unless a child it delegated is still running. The fold
+defaults to closed, and a live delegation's status, elapsed time, and per-child
+Stop live inside it, so a Turn that settled while its child kept working (the
+fire-and-forget shape whose terminal activity lands in a later Turn) stays
+unfolded until that child settles. Work still happening and still stoppable is
+not history yet. Live and resultless process timelines remain visible; a live
 timeline uses the established `Working` / `Working for ...` status row even
 before its first process Item arrives. When `collaboration.wait_agent` is the
 only in-progress tool and at least one projected child remains active, that row

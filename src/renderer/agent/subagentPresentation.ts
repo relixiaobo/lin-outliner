@@ -25,6 +25,13 @@ export type SubagentDelegationForm = 'collaboration' | 'isolatedSkill';
 export interface SubagentPresentation {
   readonly agentThreadId: ThreadId;
   readonly displayName: string;
+  /**
+   * How long the child's own Turn took, once it has one and the renderer knows
+   * it. A running child measures from `startedAt` instead; a settled one has no
+   * clock left to read, so without this a finished row could only ever say
+   * `Completed` and never `Completed · 3m 12s`.
+   */
+  readonly durationMs: number | null;
   readonly error: TurnError | null;
   readonly form: SubagentDelegationForm;
   readonly nickname: string | null;
@@ -117,6 +124,7 @@ export function projectSubagentsForTurn(
     byThreadId.set(threadId, {
       agentThreadId: threadId,
       displayName: subagentDisplayName(taskPath, nickname, role, threadId, form),
+      durationMs: live.durationMs,
       error: live.error,
       form,
       nickname,
@@ -128,21 +136,64 @@ export function projectSubagentsForTurn(
   }
   disambiguateDisplayNames(byThreadId);
 
-  const seenActivities = new Set<ThreadId>();
-  const items = turn.items.filter((item) => {
-    if (item.type !== 'subAgentActivity') return true;
-    if (seenActivities.has(item.agentThreadId)) return false;
-    seenActivities.add(item.agentThreadId);
-    return true;
-  });
   return {
     activeThreadIds: [...byThreadId.values()]
       .filter((entry) => entry.status === 'pendingInit' || entry.status === 'running')
       .map((entry) => entry.agentThreadId),
     byThreadId,
     collaborationThreadIds: collaborationThreadIds(byThreadId),
-    items,
+    items: delegationCollapsedItems(turn, activities),
   };
+}
+
+/**
+ * One delegation, one row, at the position where it was decided.
+ *
+ * A delegated child otherwise reaches the reader twice in two vocabularies: the
+ * tool call that delegated (`Used the research skill`) and the child's own
+ * activity row, which is the same event named differently. The activity row is
+ * the one that can carry live status, elapsed time, a Stop, and a way into the
+ * child, so it stands in for the call and takes its canonical slot — the slot
+ * being the delegating call's, so the row can never precede the reasoning that
+ * produced it.
+ *
+ * Collapsing here rather than in the leaf renderer is deliberate: everything
+ * upstream reasons over this list, so a row hidden at the paint step would still
+ * be counted, grouped, and adjacency-checked as present.
+ */
+function delegationCollapsedItems(
+  turn: Turn,
+  activities: ReadonlyMap<ThreadId, ActivityEvidence>,
+): readonly ThreadItem[] {
+  const itemIds = new Set(turn.items.map((item) => item.id));
+  const standsInFor = new Map<string, ThreadId>();
+  for (const [threadId, evidence] of activities) {
+    // Only the spawn-time activity claims a call, and only within the Turn that
+    // holds it: a terminal activity flushed into a later Turn names nothing here.
+    const claim = evidence.first.spawnItemId;
+    if (claim !== null && itemIds.has(claim)) standsInFor.set(claim, threadId);
+  }
+  const relocated = new Set(standsInFor.values());
+
+  const seenActivities = new Set<ThreadId>();
+  const items: ThreadItem[] = [];
+  for (const item of turn.items) {
+    if (item.type === 'subAgentActivity') {
+      if (seenActivities.has(item.agentThreadId)) continue;
+      seenActivities.add(item.agentThreadId);
+      if (relocated.has(item.agentThreadId)) continue;
+      items.push(item);
+      continue;
+    }
+    const standIn = standsInFor.get(item.id);
+    if (standIn !== undefined) {
+      items.push(activities.get(standIn)!.first);
+      seenActivities.add(standIn);
+      continue;
+    }
+    items.push(item);
+  }
+  return items;
 }
 
 /**
@@ -166,6 +217,7 @@ export function presentationFromActivity(item: SubAgentActivityThreadItem): Suba
   return {
     agentThreadId: item.agentThreadId,
     displayName: subagentDisplayName(item.agentPath, null, null, item.agentThreadId, form),
+    durationMs: null,
     error: item.error,
     form,
     nickname: null,
@@ -187,6 +239,7 @@ export function presentationFromSnapshot(
     agentThreadId: threadId,
     // A persisted collaboration snapshot only ever records collaboration children.
     displayName: subagentDisplayName(taskPath, nickname, role, threadId, 'collaboration'),
+    durationMs: null,
     error: null,
     form: 'collaboration',
     nickname,
@@ -227,9 +280,13 @@ function livePresentationState(
   activity: ActivityEvidence | null,
   thread: Thread | null,
   latestTurn: Turn | null,
-): Pick<SubagentPresentation, 'error' | 'startedAt' | 'status'> {
+): Pick<SubagentPresentation, 'durationMs' | 'error' | 'startedAt' | 'status'> {
   if (activity?.terminal) {
+    // A terminal Item records the outcome, not the clock. Where the child's own
+    // Turn DTO is still around it supplies the duration below; after a reload
+    // that leaves only this Item, the row honestly says the status alone.
     return {
+      durationMs: durationFromTurn(latestTurn, activity.terminal.agentThreadId),
       error: activity.terminal.error,
       startedAt: null,
       status: activity.terminal.kind === 'started' ? 'running' : activity.terminal.kind,
@@ -240,7 +297,7 @@ function livePresentationState(
     && turnOwnsItem(parentTurn, latestTurn.provenance.trigger.parentItemId);
   const latestCanDriveLiveState = parentTurn.status === 'inProgress' || latestBelongsToParent;
   if (latestCanDriveLiveState && latestTurn?.status === 'inProgress') {
-    return { error: null, startedAt: latestTurn.startedAt, status: 'running' };
+    return { durationMs: null, error: null, startedAt: latestTurn.startedAt, status: 'running' };
   }
 
   const terminalIsCurrent = latestCanDriveLiveState
@@ -249,17 +306,18 @@ function livePresentationState(
   if (terminalIsCurrent && latestTurn) return terminalTurnPresentation(latestTurn);
 
   if (!thread) {
-    return { error: null, startedAt: null, status: 'notFound' };
+    return { durationMs: null, error: null, startedAt: null, status: 'notFound' };
   }
   switch (thread.status.type) {
     case 'active':
-      return { error: null, startedAt: null, status: 'running' };
+      return { durationMs: null, error: null, startedAt: null, status: 'running' };
     case 'idle':
-      return { error: null, startedAt: null, status: 'idle' };
+      return { durationMs: null, error: null, startedAt: null, status: 'idle' };
     case 'notLoaded':
-      return { error: null, startedAt: null, status: 'pendingInit' };
+      return { durationMs: null, error: null, startedAt: null, status: 'pendingInit' };
     case 'systemError':
       return {
+        durationMs: null,
         error: thread.status.message
           ? { message: thread.status.message, code: 'runtime_failure' }
           : null,
@@ -267,6 +325,12 @@ function livePresentationState(
         status: 'errored',
       };
   }
+}
+
+/** The child Turn's own recorded span, when the DTO in hand is that child's. */
+function durationFromTurn(turn: Turn | null, agentThreadId: ThreadId): number | null {
+  if (!turn || turn.provenance.originThreadId !== agentThreadId) return null;
+  return turn.durationMs;
 }
 
 /**
@@ -317,10 +381,11 @@ function turnOwnsItem(turn: Turn, itemId: string): boolean {
 
 function terminalTurnPresentation(
   turn: Turn,
-): Pick<SubagentPresentation, 'error' | 'startedAt' | 'status'> {
-  if (turn.status === 'failed') return { error: turn.error, startedAt: null, status: 'errored' };
-  if (turn.status === 'interrupted') return { error: turn.error, startedAt: null, status: 'interrupted' };
-  return { error: null, startedAt: null, status: 'completed' };
+): Pick<SubagentPresentation, 'durationMs' | 'error' | 'startedAt' | 'status'> {
+  const settled = { durationMs: turn.durationMs, startedAt: null };
+  if (turn.status === 'failed') return { ...settled, error: turn.error, status: 'errored' };
+  if (turn.status === 'interrupted') return { ...settled, error: turn.error, status: 'interrupted' };
+  return { ...settled, error: null, status: 'completed' };
 }
 
 function mergeSnapshot(

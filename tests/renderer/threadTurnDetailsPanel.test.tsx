@@ -121,6 +121,7 @@ describe('ThreadTurnDetailsPanel', () => {
               code: 'subagent_budget_exhausted',
               detail: 'Internal receipt: 9876 tokens used',
             },
+            spawnItemId: null,
           },
         ],
       },

@@ -347,6 +347,7 @@ function completedTurn(diagnosticsRef: TurnDiagnosticsPayloadReference | null = 
       agentThreadId: 'thread-grandchild',
       agentPath: '/root/audit/parser',
       error: null,
+      spawnItemId: null,
     },
     {
       type: 'contextCompaction',
