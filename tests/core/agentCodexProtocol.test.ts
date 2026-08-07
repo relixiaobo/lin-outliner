@@ -256,6 +256,7 @@ const allItems: readonly ThreadItem[] = [
     agentThreadId: CHILD_THREAD_ID,
     agentPath: '/root/inspect_tests',
     error: null,
+    spawnItemId: 'item-9',
   },
   {
     type: 'webSearch',

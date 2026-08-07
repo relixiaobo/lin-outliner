@@ -357,7 +357,11 @@ export function decodeThreadItem(value: unknown): ThreadItem {
       break;
     }
     case 'subAgentActivity':
-      exactKeys(record, ['type', 'id', 'provenance', 'kind', 'agentThreadId', 'agentPath', 'error'], 'item');
+      exactKeys(
+        record,
+        ['type', 'id', 'provenance', 'kind', 'agentThreadId', 'agentPath', 'error', 'spawnItemId'],
+        'item',
+      );
       result = {
         ...base,
         type,
@@ -365,6 +369,11 @@ export function decodeThreadItem(value: unknown): ThreadItem {
         agentThreadId: uuidV7(record.agentThreadId, 'item.agentThreadId'),
         agentPath: stringValue(record.agentPath, 'item.agentPath'),
         error: decodeTurnError(record.error, 'item.error'),
+        // An Item id, decoded the way every other Item-id reference is
+        // (`provenance.originItemId`, `turn.trigger.parentItemId`): as a string.
+        spawnItemId: record.spawnItemId === null
+          ? null
+          : stringValue(record.spawnItemId, 'item.spawnItemId'),
       };
       break;
     case 'webSearch':

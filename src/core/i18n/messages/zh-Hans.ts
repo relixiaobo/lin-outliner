@@ -1173,7 +1173,6 @@ commandPalette: {
       copiedFromFork: '派生历史',
       openSubagentThread: ({ id }) => `打开子智能体线程 ${id}`,
       stopUnavailable: '该工作已经结束。',
-      delegationCard: '委派中的工作',
       stopSubagent: ({ name }: { name: string }) => `停止 ${name}`,
       stopThisSubagent: '停止该子 Agent',
       subagentStatuses: {
@@ -1184,16 +1183,6 @@ commandPalette: {
         completed: '已完成',
         errored: '失败',
         notFound: '未找到',
-      },
-      subagentActivity: {
-        pendingInit: ({ name }) => `正在启动子智能体 ${name}`,
-        running: ({ name }) => `已启动子智能体 ${name}`,
-        runningFor: ({ name, duration }) => `已启动子智能体 ${name} · ${duration}`,
-        idle: ({ name }) => `子智能体 ${name} 空闲`,
-        interrupted: ({ name }) => `子智能体 ${name} 已中断`,
-        completed: ({ name }) => `子智能体 ${name} 已完成`,
-        errored: ({ name }) => `子智能体 ${name} 失败`,
-        notFound: ({ name }) => `子智能体 ${name} 不可用`,
       },
       goal: '目标',
       goalStatuses: {

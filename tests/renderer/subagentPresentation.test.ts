@@ -207,6 +207,55 @@ describe('Subagent parent-Turn presentation projection', () => {
       .toEqual(['research (1)', 'research (2)']);
   });
 
+  test('renders one delegation at the slot of the call that delegated it', () => {
+    const skillCall = skillToolCall('skill-call');
+    const started = activity('activity-started', 'started', null, 'skill-call');
+    const turn = parentTurn([reasoning('reasoning-before'), skillCall, started]);
+    const projection = projectSubagentsForTurn(
+      turn,
+      new Map([[CHILD_ID, childThread({ type: 'active', activeFlags: [] })]]),
+      new Map(),
+    );
+
+    // The tool call is gone and the row took its place: one delegation, named
+    // once, at the position where the model decided on it.
+    expect(projection.items.map((item) => item.id)).toEqual([
+      'reasoning-before',
+      'activity-started',
+    ]);
+  });
+
+  test('keeps the delegation row where the delegating call is not in this Turn', () => {
+    // A fire-and-forget child settling into a later parent Turn: its terminal
+    // activity names no call here, so it must not claim an unrelated Item.
+    const skillCall = skillToolCall('unrelated-call');
+    const settled = activity('activity-completed', 'completed', null);
+    const projection = projectSubagentsForTurn(
+      parentTurn([skillCall, settled]),
+      new Map(),
+      new Map(),
+    );
+
+    expect(projection.items.map((item) => item.id)).toEqual([
+      'unrelated-call',
+      'activity-completed',
+    ]);
+  });
+
+  test('collapses a started/terminal pair onto the delegating call exactly once', () => {
+    const skillCall = skillToolCall('skill-call');
+    const started = activity('activity-started', 'started', null, 'skill-call');
+    const done = activity('activity-completed', 'completed', null, null);
+    const projection = projectSubagentsForTurn(
+      parentTurn([skillCall, started, done]),
+      new Map(),
+      new Map(),
+    );
+
+    expect(projection.items.map((item) => item.id)).toEqual(['activity-started']);
+    expect(projection.byThreadId.get(CHILD_ID)?.status).toBe('completed');
+  });
+
   test('leaves a Skill child out of the wait-time direct-child expansion', () => {
     const wait = collaborationItem('wait-item', 'wait_agent', 'inProgress');
     const projection = projectSubagentsForTurn(
@@ -311,6 +360,7 @@ function activity(
   id: string,
   kind: SubAgentActivityThreadItem['kind'],
   error: SubAgentActivityThreadItem['error'],
+  spawnItemId: string | null = null,
 ): SubAgentActivityThreadItem {
   return {
     id,
@@ -320,6 +370,24 @@ function activity(
     agentThreadId: CHILD_ID,
     agentPath: '/root/research',
     error,
+    spawnItemId,
+  };
+}
+
+function skillToolCall(id: string): ThreadItem {
+  return {
+    id,
+    provenance: { originThreadId: PARENT_ID, originTurnId: 'turn-parent', originItemId: id },
+    type: 'dynamicToolCall',
+    namespace: null,
+    tool: 'skill',
+    arguments: { name: 'research' },
+    modelCall: null,
+    contentItems: null,
+    status: 'inProgress',
+    success: null,
+    durationMs: null,
+    outputRef: null,
   };
 }
 

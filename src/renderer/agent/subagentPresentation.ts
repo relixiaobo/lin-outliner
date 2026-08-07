@@ -128,21 +128,64 @@ export function projectSubagentsForTurn(
   }
   disambiguateDisplayNames(byThreadId);
 
-  const seenActivities = new Set<ThreadId>();
-  const items = turn.items.filter((item) => {
-    if (item.type !== 'subAgentActivity') return true;
-    if (seenActivities.has(item.agentThreadId)) return false;
-    seenActivities.add(item.agentThreadId);
-    return true;
-  });
   return {
     activeThreadIds: [...byThreadId.values()]
       .filter((entry) => entry.status === 'pendingInit' || entry.status === 'running')
       .map((entry) => entry.agentThreadId),
     byThreadId,
     collaborationThreadIds: collaborationThreadIds(byThreadId),
-    items,
+    items: delegationCollapsedItems(turn, activities),
   };
+}
+
+/**
+ * One delegation, one row, at the position where it was decided.
+ *
+ * A delegated child otherwise reaches the reader twice in two vocabularies: the
+ * tool call that delegated (`Used the research skill`) and the child's own
+ * activity row, which is the same event named differently. The activity row is
+ * the one that can carry live status, elapsed time, a Stop, and a way into the
+ * child, so it stands in for the call and takes its canonical slot — the slot
+ * being the delegating call's, so the row can never precede the reasoning that
+ * produced it.
+ *
+ * Collapsing here rather than in the leaf renderer is deliberate: everything
+ * upstream reasons over this list, so a row hidden at the paint step would still
+ * be counted, grouped, and adjacency-checked as present.
+ */
+function delegationCollapsedItems(
+  turn: Turn,
+  activities: ReadonlyMap<ThreadId, ActivityEvidence>,
+): readonly ThreadItem[] {
+  const itemIds = new Set(turn.items.map((item) => item.id));
+  const standsInFor = new Map<string, ThreadId>();
+  for (const [threadId, evidence] of activities) {
+    // Only the spawn-time activity claims a call, and only within the Turn that
+    // holds it: a terminal activity flushed into a later Turn names nothing here.
+    const claim = evidence.first.spawnItemId;
+    if (claim !== null && itemIds.has(claim)) standsInFor.set(claim, threadId);
+  }
+  const relocated = new Set(standsInFor.values());
+
+  const seenActivities = new Set<ThreadId>();
+  const items: ThreadItem[] = [];
+  for (const item of turn.items) {
+    if (item.type === 'subAgentActivity') {
+      if (seenActivities.has(item.agentThreadId)) continue;
+      seenActivities.add(item.agentThreadId);
+      if (relocated.has(item.agentThreadId)) continue;
+      items.push(item);
+      continue;
+    }
+    const standIn = standsInFor.get(item.id);
+    if (standIn !== undefined) {
+      items.push(activities.get(standIn)!.first);
+      seenActivities.add(standIn);
+      continue;
+    }
+    items.push(item);
+  }
+  return items;
 }
 
 /**

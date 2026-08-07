@@ -1603,96 +1603,107 @@
   white-space: nowrap;
 }
 
-/* What this Turn delegated, while it is still happening. Content inside the
-   process block, so it stays on the opaque base — a material here would claim
-   chrome status for something that is part of the transcript (B5). */
-.thread-delegation-card {
-  display: grid;
-  gap: var(--space-3);
-  margin-bottom: var(--space-4);
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-sm);
-  background: var(--fill-1);
-}
-
-.thread-delegation-card-heading {
-  color: var(--text-tertiary);
-  font-size: var(--font-ui-2xs);
-  line-height: var(--line-ui-2xs);
-}
-
-.thread-delegation-lines {
-  display: grid;
-  gap: var(--space-2);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.thread-delegation-line {
-  display: grid;
+/* One delegated child, live and settled alike, at the slot of the call that
+   delegated it. It sits in the process timeline among the tool rows, so it
+   takes their meta type ramp and soft base colour rather than the transcript's
+   content size — the row is one more thing the Turn did, not an announcement.
+   Content inside the process block, so it stays on the opaque base: a material
+   here would claim chrome status for part of the transcript (B5). */
+.thread-delegation-row {
+  display: flex;
   min-width: 0;
+  flex-wrap: wrap;
   align-items: center;
-  grid-template-columns: minmax(0, 1fr) auto;
   gap: var(--space-2);
+  color: var(--text-soft);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
 }
 
-.thread-delegation-line-open {
-  display: grid;
-  width: 100%;
+.thread-delegation-row-open {
+  display: flex;
   min-width: 0;
+  max-width: min(100%, 520px);
+  flex: 0 1 auto;
   align-items: center;
-  grid-template-columns: auto minmax(0, 1fr) auto;
   gap: var(--space-3);
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--text-secondary);
+  color: inherit;
   font: inherit;
-  font-size: var(--font-ui-sm);
-  line-height: var(--line-ui-sm-tight);
   text-align: left;
+  transition: color var(--motion-fast);
 }
 
-.thread-delegation-line-name,
-.thread-delegation-line-status {
+/* B6: colour deepens, no box — and the row must LOOK openable, which the card
+   line never did. Without a hover state the only cue that a delegation can be
+   inspected was the cursor, which this app does not change for non-links.
+   Scoped to a row that is still neutral: a status colour survives hover and
+   focus, so pointing at a failed delegation must not paint the failure away. */
+.thread-delegation-row:not(.thread-subagent-errored, .thread-subagent-interrupted, .thread-subagent-notFound)
+  .thread-delegation-row-open:hover,
+.thread-delegation-row:not(.thread-subagent-errored, .thread-subagent-interrupted, .thread-subagent-notFound)
+  .thread-delegation-row-open:focus-visible {
+  color: var(--text-strong);
+}
+
+.thread-delegation-row-name {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.thread-delegation-line-status {
+/* The name ellipsizes; the status never does. A row whose "· Failed" truncated
+   away would assert that the delegation succeeded. */
+.thread-delegation-row-status {
+  flex: 0 0 auto;
   color: var(--text-tertiary);
-  font-size: var(--font-ui-2xs);
 }
 
-/* B6: an icon-only chrome control signals state by colour, not by a box. The
-   variant classes are ancestor-scoped by convention, so the card scopes its
-   own — without this the glyph sat at full-strength primary with no hover. */
-.thread-delegation-line .icon-button {
+.thread-delegation-row-spinner {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+}
+
+.thread-delegation-row .icon-button {
   display: inline-flex;
   width: 22px;
   height: 22px;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: center;
   padding: 0;
   color: var(--text-soft);
 }
 
-.thread-delegation-line .icon-button:hover:not(:disabled),
-.thread-delegation-line .icon-button:focus-visible:not(:disabled) {
+.thread-delegation-row .icon-button:hover:not(:disabled),
+.thread-delegation-row .icon-button:focus-visible:not(:disabled) {
   color: var(--text-strong);
 }
 
-.thread-delegation-line.thread-subagent-errored .thread-delegation-line-open,
-.thread-delegation-line.thread-subagent-errored .thread-delegation-line-status {
+.thread-delegation-row.thread-subagent-errored .thread-delegation-row-open,
+.thread-delegation-row.thread-subagent-errored .thread-delegation-row-status {
   color: var(--status-danger);
 }
 
-.thread-delegation-line.thread-subagent-interrupted .thread-delegation-line-open,
-.thread-delegation-line.thread-subagent-interrupted .thread-delegation-line-status {
+.thread-delegation-row.thread-subagent-interrupted .thread-delegation-row-open,
+.thread-delegation-row.thread-subagent-interrupted .thread-delegation-row-status,
+.thread-delegation-row.thread-subagent-notFound .thread-delegation-row-open,
+.thread-delegation-row.thread-subagent-notFound .thread-delegation-row-status {
   color: var(--text-tertiary);
+}
+
+/* A full second line under the name: the status segment stays short and
+   unshrinkable, so the reason has to live somewhere it can wrap whole. */
+.thread-delegation-row-error {
+  flex: 1 0 100%;
+  min-width: 0;
+  padding-left: calc(var(--icon-size-xs) + var(--space-3));
+  overflow-wrap: anywhere;
+  color: var(--status-danger);
+  white-space: normal;
 }
 
 .thread-agent-state.thread-subagent-errored > button,
@@ -1884,16 +1895,6 @@
   color: var(--text-secondary);
 }
 
-button.thread-inline-activity {
-  width: 100%;
-  border: 0;
-  background: transparent;
-  font: inherit;
-  padding: 0;
-  text-align: left;
-}
-
-button.thread-inline-activity:hover,
 .thread-agent-states li > button:hover {
   color: var(--text-strong);
 }
@@ -1907,7 +1908,6 @@ button.thread-inline-activity:hover,
   color: var(--text-faint);
 }
 
-button.thread-inline-activity:focus-visible,
 .thread-agent-states li > button:focus-visible {
   box-shadow: var(--focus-ring-shadow);
 }
@@ -1918,56 +1918,6 @@ button.thread-inline-activity:focus-visible,
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.thread-subagent-label {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.thread-inline-activity.thread-subagent-errored {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: start;
-  row-gap: var(--space-1);
-}
-
-.thread-inline-activity.thread-subagent-errored > svg,
-.thread-inline-activity.thread-subagent-errored > .thread-subagent-label,
-.thread-subagent-error {
-  color: var(--status-danger);
-}
-
-.thread-inline-activity.thread-subagent-errored > .thread-subagent-label {
-  overflow: visible;
-  text-overflow: clip;
-  white-space: normal;
-}
-
-.thread-inline-activity.thread-subagent-interrupted > svg,
-.thread-inline-activity.thread-subagent-interrupted > .thread-subagent-label,
-.thread-inline-activity.thread-subagent-notFound > svg,
-.thread-inline-activity.thread-subagent-notFound > .thread-subagent-label {
-  color: var(--text-faint);
-}
-
-.thread-subagent-error {
-  grid-column: 2;
-  min-width: 0;
-  max-width: none;
-  overflow-wrap: anywhere;
-  white-space: normal;
-}
-
-.thread-inline-activity .thread-subagent-error {
-  margin-left: 0;
-}
-
-.thread-inline-activity small {
-  margin-left: auto;
-  color: var(--text-tertiary);
 }
 
 .thread-attachment {

@@ -1262,7 +1262,6 @@ commandPalette: {
       copiedFromFork: 'Forked history',
       openSubagentThread: ({ id }: { id: string }) => `Open Subagent Thread ${id}`,
       stopUnavailable: 'That work already finished.',
-      delegationCard: 'Delegated work',
       stopSubagent: ({ name }: { name: string }) => `Stop ${name}`,
       stopThisSubagent: 'Stop this Subagent',
       subagentStatuses: {
@@ -1273,16 +1272,6 @@ commandPalette: {
         completed: 'Completed',
         errored: 'Failed',
         notFound: 'Not found',
-      },
-      subagentActivity: {
-        pendingInit: ({ name }: { name: string }) => `Starting subagent ${name}`,
-        running: ({ name }: { name: string }) => `Started subagent ${name}`,
-        runningFor: ({ name, duration }: { name: string; duration: string }) => `Started subagent ${name} · ${duration}`,
-        idle: ({ name }: { name: string }) => `Subagent ${name} idle`,
-        interrupted: ({ name }: { name: string }) => `Subagent ${name} interrupted`,
-        completed: ({ name }: { name: string }) => `Subagent ${name} completed`,
-        errored: ({ name }: { name: string }) => `Subagent ${name} failed`,
-        notFound: ({ name }: { name: string }) => `Subagent ${name} unavailable`,
       },
       goal: 'Goal',
       goalStatuses: {

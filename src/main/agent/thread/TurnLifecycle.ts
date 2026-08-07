@@ -86,6 +86,7 @@ export class TurnLifecycle {
     kind: PendingSubagentActivity['kind'],
     error: Turn['error'],
     completedAt: number,
+    spawnItemId: string | null,
   ): Promise<void> {
     const active = this.requireActiveTurn(ownerThreadId, ownerTurnId);
     const id = active.recorder.createItemId();
@@ -97,6 +98,7 @@ export class TurnLifecycle {
       agentThreadId,
       agentPath,
       error,
+      spawnItemId,
     }, completedAt);
   }
   async waitForIdle(threadId: ThreadId): Promise<void> {
