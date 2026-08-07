@@ -84,6 +84,9 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
   const [candidates, setCandidates] = useState<readonly ObjectPresentation[]>([]);
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirmation | null>(null);
   const invocationRef = useRef<InvocationRef | null>(null);
+  const releaseHandlersRef = useRef<(() => void) | null>(null);
+  const inFlightRef = useRef(0);
+  const unmountedRef = useRef(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const menuAnchor = useMemo(() => overlayAnchorFromPoint(props.x, props.y), [props.x, props.y]);
   const menuStyle = useAnchoredOverlay(menuRef, {
@@ -116,6 +119,12 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
 
   const onCloseRef = useRef(props.onClose);
   onCloseRef.current = props.onClose;
+  /** Release the step handlers once nothing can still route a step to them. */
+  const releaseHandlersIfIdle = () => {
+    if (!unmountedRef.current || inFlightRef.current > 0) return;
+    releaseHandlersRef.current?.();
+    releaseHandlersRef.current = null;
+  };
   const handlersRef = useRef({
     onRoot: props.onRoot,
     onTogglePin: props.onTogglePin,
@@ -133,13 +142,13 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
 
   useEffect(() => {
     let cancelled = false;
-    let unregister: (() => void) | null = null;
     void window.lin?.actions?.open(seed).then((result) => {
       if (cancelled || !result) return;
       invocationRef.current = result.invocationRef;
-      // The handlers outlive this component on purpose: the menu closes before
-      // its plan settles, and these callbacks only push workspace UI state.
-      unregister = registerActionStepHandlers(result.invocationRef, {
+      // The handlers outlive this component on purpose: the menu closes the
+      // moment an action is chosen, while its plan is still crossing the seam.
+      // They only push workspace UI state, so they stay valid after unmount.
+      releaseHandlersRef.current = registerActionStepHandlers(result.invocationRef, {
         navigate: (nodeId, inPlace) => handlersRef.current.onRoot(nodeId, { newPane: !inPlace }),
         workspace: (op, nodeId) => {
           if (op === 'openSplitPane') handlersRef.current.onRoot(nodeId, { newPane: true });
@@ -162,12 +171,14 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
     });
     return () => {
       cancelled = true;
+      unmountedRef.current = true;
       const ref = invocationRef.current;
       if (ref) void window.lin?.actions?.event({ kind: 'abandoned', invocationRef: ref });
-      // Steps are dispatched before the record is abandoned, so release the
-      // handler on the next tick rather than racing the in-flight plan.
-      const release = unregister;
-      if (release) setTimeout(release, 0);
+      // A plan's renderer legs arrive from MAIN, one round trip per step after
+      // each preceding main step succeeds — arbitrarily later than this
+      // unmount. So the handler is released when the request settles, not on a
+      // timer that would silently drop every reveal.
+      releaseHandlersIfIdle();
     };
   }, [seed]);
 
@@ -192,24 +203,30 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
   ) => {
     const ref = invocationRef.current;
     if (!ref) return;
-    const result = await window.lin?.actions?.request({
-      actionId: presentation.actionId,
-      invocationRef: ref,
-      subjectRef: presentation.subjectRef,
-      arguments: args,
-      ...(challenge ? { challenge } : {}),
-    } as never);
-    if (result?.status === 'confirmationRequired') {
-      setPendingConfirm({
-        challenge: result.challenge,
-        confirm: result.confirm,
-        presentation: result.presentation,
-      });
-      return;
+    inFlightRef.current += 1;
+    try {
+      const result = await window.lin?.actions?.request({
+        actionId: presentation.actionId,
+        invocationRef: ref,
+        subjectRef: presentation.subjectRef,
+        arguments: args,
+        ...(challenge ? { challenge } : {}),
+      } as never);
+      if (result?.status === 'confirmationRequired') {
+        setPendingConfirm({
+          challenge: result.challenge,
+          confirm: result.confirm,
+          presentation: result.presentation,
+        });
+        return;
+      }
+      if (result?.status === 'completed') applyActionFocus(result.focus);
+      setPendingConfirm(null);
+      onCloseRef.current();
+    } finally {
+      inFlightRef.current -= 1;
+      releaseHandlersIfIdle();
     }
-    if (result?.status === 'completed') applyActionFocus(result.focus);
-    setPendingConfirm(null);
-    onCloseRef.current();
   };
 
   const activate = (presentation: ActionPresentation) => {
