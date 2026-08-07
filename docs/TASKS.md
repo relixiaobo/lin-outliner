@@ -579,6 +579,21 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
 Small unclaimed items split off from shipped PRs — fast-track each when a clone is free; none block
 anything.
 
+- **thread-system-error-is-a-dead-end** (P2, *fast-track, no plan file*, filed 2026-08-07 at the
+  #503 gate) — a Turn that fails through `failActiveTurn` leaves the Thread in `systemError`
+  (`TurnLifecycle.ts:1443`/`:1493`), and nothing clears that status. Both `rollbackThread`
+  (`ThreadCatalogOps.ts:446`) and `acceptTurn` (`TurnLifecycle.ts:213`) require `idle`, so the
+  conversation is stuck outright: Retry is refused *and* a new message is refused, with no way back
+  short of starting another Thread. #503 made the refusal visible rather than silent; the status
+  itself is a main-process defect and needs its own fix — decide what clears `systemError` (a new
+  user Turn, an explicit dismissal, or never entering it for a per-Turn failure at all).
+- **rollback-prunes-resources-the-resend-still-references** (P3, *fast-track, no plan file*, filed
+  2026-08-07 at the #503 gate) — `rollbackThread` calls `pruneUnreferencedResources`
+  (`ThreadCatalogOps.ts:502`) after removing the Turn, then `rollbackAndSend` re-sends the recorded
+  content verbatim, including an attachment reference whose only referent was the Turn just
+  removed. Pre-existing on the Edit path; #503's Retry makes it one click away on the failure case,
+  where an attachment is most likely to still matter. Prune after the re-send, or carry the
+  re-sent content's references into the prune's reference set.
 - **#208 review follow-ups** (P3, *fast-track, no plan file*) — non-blocking items surfaced by
   `/code-review high` on #208: **F7** add a core test pinning the agent `get_backlinks` projection
   shape (`core.backlinks()` field-hosted-ref: `sourceId` = owner node, kind `field`); **F8** confirm +
@@ -667,6 +682,18 @@ and the merged PR, distilled rules in [`lessons.md`](lessons.md). Everything
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
 
+- **collab-blank-tool-argument** (cc, PR #503, merged 2026-08-07, *fast-track, no
+  plan file*) — two halves of one incident, bundled at the PM's direction: a
+  blank optional tool argument (`model: ""` from the provider) killed the Turn at
+  decode-before-record with nothing on disk, and a failed Turn had no way out but
+  editing your own message. The blank-string class was closed across every Item a
+  tool call writes — including a web result whose *backend* sends an empty title,
+  which killed the completed Item — and a failed last Turn now leads with Retry.
+  The gate ran twice: round 1 found the fix had stopped at one instance of the
+  class (four more live), round 2 found four defects in the Retry affordance
+  including a double-click that permanently deleted the *preceding* successful
+  Turn; all nine fixed and re-verified. Light + dark visual gate passed. Two
+  follow-ups filed below.
 - **subagent-ux-unification** (cc, PRs #498 + #500, merged 2026-08-07) — a
   delegated child is one row in its delegating Turn's process timeline, named
   like a person: PR A resolves the name from the child's `source` (never the

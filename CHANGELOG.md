@@ -40,6 +40,23 @@ Entries reference the pull request that introduced them.
   acquisition is off the turn-admission path, so a slow or captive network delays
   the Skill, not the user's first message.
 
+- **A failed Turn has a way out that is not editing your own message (PR #503,
+  cc)** — a crash you did not cause offered Copy, Continue in new chat and
+  Details, none of which run the request again; the only recovery was to hover
+  your *own* message and press Edit, which frames a system failure as a typo,
+  sits across the transcript from the error, and is unavailable outright for a
+  message carrying more than one text part. A last Turn you did not end now leads
+  its action row with **Retry**, re-sending that Turn's request unchanged through
+  the same rollback-and-send path Edit uses — the question is not asked twice and
+  the dead Turn does not linger. It appears only where it could actually work: on
+  the last Turn, on Threads where you can type at all, and for failures that
+  could go differently — a runtime failure, an exhausted Subagent budget (spend
+  is request-scoped, so a new Turn delegates against a fresh grant), or a host
+  that restarted under the Turn. A structural depth limit is excluded, because
+  the next attempt meets the same wall, and so is a Turn you stopped yourself.
+  The button latches while it runs and reports a refusal in place rather than
+  doing nothing quietly.
+
 ### Changed
 
 - **A delegated subagent is one row, named like a person (PRs #498 + #500, cc)** —
@@ -140,6 +157,19 @@ Entries reference the pull request that introduced them.
   new assertion fails on any exemption path that no longer resolves — so the next
   move reports the stale entry instead of the residue it silently stopped
   covering. `plans/reference/` is still not exempt as a directory.
+- **A blank tool argument no longer kills the Turn (PR #503, cc)** — asking for
+  three parallel Subagents failed with `item.model: expected a string` and left
+  **nothing on disk to explain it**: no collaboration Item, no child Thread, no
+  diagnostics. The provider had filled an optional argument with `""` instead of
+  omitting it, and the Item is decoded *before* it is recorded, so the run died
+  without a trace. A blank optional argument is now recorded as "not specified",
+  and the decode tolerates an empty value in every Item string a tool call can
+  put one in. The whole class was closed rather than the one instance: a blank
+  `bash` command, a blank file path (named `(unknown path)`, as an absent one
+  already was), a web search with no query, and — the case that depended on no
+  provider quirk at all — a search result whose *backend* sent an empty title or
+  URL, which killed the Turn at completion. Tool input that the model can
+  usefully be told to correct, such as a blank choice label, is still refused.
 
 ### Internal
 

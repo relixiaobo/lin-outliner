@@ -241,3 +241,28 @@ action.** A hit deliberately marked "no change" is evidence the query was read; 
 hit that is simply absent is indistinguishable from one that was never seen. And
 never carry a bare count in prose — name the sites, so the number cannot drift
 away from them.
+
+## A second caller inherits the function, not the call site's guards
+
+A failed Turn got a Retry button, implemented — correctly, and deliberately —
+through `rollbackAndSend`, the same path the existing Edit affordance uses. The
+call was right. Everything around the call was missing. Edit latches itself while
+the round trip is in flight; Retry did not, and because `rollbackAndSend` awaits
+an IPC before it touches any state, the failed Turn and its button stayed mounted
+for the whole window — so a second click rolled back the *preceding, successful*
+Turn, permanently, and then sent the same request twice. Edit is offered only
+where the composer is enabled, which is the condition `rollbackThread` actually
+enforces; Retry was gated on the Turn alone, so it rendered on Subagent Threads
+and did nothing at all when clicked. Edit surfaces a rejection; Retry passed the
+promise to a bare `void`, which turned two separate refusals into a dead button.
+
+Three defects, one shape: the reasoning stopped at "this is the right function to
+call". But the safety of an action is almost never in the function — it is in the
+enablement condition, the in-flight latch, and the error path, and none of those
+travel with an import. The existing call site is the specification for all three,
+and it is sitting right there, already reviewed.
+
+So when you add a second caller to an existing mutation path: **diff your call
+site against the existing one — enablement condition, in-flight guard, error
+handling — and justify each difference explicitly.** "I reused the same path" is
+a statement about one line. Reuse the guards or say why they do not apply.
