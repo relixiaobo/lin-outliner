@@ -93,7 +93,7 @@ does not need them to build.
   non-goals exclude extensions.
 
   **It is a separate API, not the ambient seam.** `captureExternalContext` runs on
-  *every* hotkey press (`main.ts:1618-1634`), so nominating `PageContentExtractor`
+  *every* hotkey press (`main.ts:1717-1733`), so nominating `PageContentExtractor`
   as the reader's home would fetch whatever page is in front of the user before they
   chose anything — one silent outbound request per summon. So the reader gets its
   own explicit entry point:
@@ -508,7 +508,7 @@ interface ActionEffectPlan {
 // TypeScript erases it.
 export const ACTION_BINDINGS = {
   // PRODUCERS: which commands yield a bindable value, and WHERE it lives in the
-  // real `CommandResult`. Commands return `focus?: FocusHint` (`types.ts:653-661`)
+  // real `CommandResult`. Commands return `focus?: FocusHint` (`core/types.ts:658-661`)
   // — there is no `result.focusNodeId` anywhere, so the extraction path is stated
   // rather than assumed. `create_tag` and `create_capture` both return `focus(id)`,
   // and `documentService` forwards `result.focus`.
@@ -519,7 +519,7 @@ export const ACTION_BINDINGS = {
   },
   // CONSUMERS: exact arg paths that may hold a step reference. Paths, rather than
   // top-level field names, express the real `create_capture.input.destinationParentId`
-  // shape. They remain explicit because `NodeId` IS `string` (`types.ts:30-33`).
+  // shape. They remain explicit because `NodeId` IS `string` (`core/types.ts:31`).
   consumes: {
     create_capture:  [['input', 'destinationParentId']],
     apply_tag:       [['nodeId'], ['tagId']],
@@ -946,7 +946,7 @@ A missing or invalid binding at use is an executor failure
 (`{ kind: 'bindingUnresolved' }`), not undefined behaviour.
 
 **Which *paths* accept a reference is an explicit allow-list, not a structural
-rule**, because `NodeId` is literally `string` (`types.ts:30-33`). "Replace every
+rule**, because `NodeId` is literally `string` (`core/types.ts:31`). "Replace every
 `NodeId` with `Bound<NodeId>`" would also open `create_tag.name`, while a top-level
 field list cannot reach the real nested
 `create_capture.input.destinationParentId`. A property-name heuristic would be a
@@ -962,7 +962,7 @@ thing.
 
 **The producer path is stated, not assumed.** Commands do not return a
 `focusNodeId`. They return `CommandResult` with `focus?: FocusHint`
-(`types.ts:653-661`); `create_tag` yields `focus(id)` (`core.ts:1918-1924`),
+(`core/types.ts:658-661`); `create_tag` yields `focus(id)` (`core.ts:1918-1924`),
 `create_capture` yields the new capture through `focus(id)`
 (`core.ts:1106-1131`), and `documentService` forwards `result.focus`. An executor
 that stored either result and looked for `result.focusNodeId` would hit
@@ -1222,8 +1222,8 @@ renderer-local would leave the ref admissible. The named object events avoid bot
 failures.
 
 **Every explicit dismiss path is phase-aware.** Today Esc goes straight to
-`launcher.hide()` (`LauncherApp.tsx:170-175`) and every hide bumps `launcherOpenSeq`
-(`main.ts:1585-1595`) — which, mid-plan, would either invalidate the ref between two
+`launcher.hide()` (`LauncherApp.tsx:189-193`) and every hide bumps `launcherOpenSeq`
+(`main.ts:1685-1694`) — which, mid-plan, would either invalidate the ref between two
 steps or destroy the only surface that was going to report the outcome. So while a
 record is `executing`, Esc and the global toggle **mark dismiss-after-settlement**
 rather than hiding, alongside the blur guard that is already armed. Before
@@ -1420,9 +1420,12 @@ stage.
 ### D3 — The command surface searches objects; its action panel searches the registry
 
 - **`Cmd+Shift+Space` summons everywhere; the global `Cmd+K` binding retires.**
-  Delete
-  `global.command_palette` (`shortcutRegistry.ts:139`) and the `Cmd+K` hint on the
-  `/` menu's palette row (`slashCommands.ts:71`).
+  Delete `global.command_palette` (`shortcutRegistry.ts:139`) and the hard-coded
+  `Cmd+K` hint on the `/` menu's palette row (`slashCommands.ts:71`). **The
+  binding retires; the in-app entry points do not** — the `/`-menu row and the
+  sidebar *Search* row are retargeted to summon this panel, since a surface that
+  teaches its own keystroke (D6a) must still be reachable by someone who has not
+  learned it. Step 12 enumerates every call site.
 - **One rendered surface: the existing launcher panel.** `CommandPalette.tsx` is
   deleted. The launcher already covers most of it (node search, open in the main
   window, free-text node creation into Today) but **is not yet a superset**: the
@@ -1584,7 +1587,7 @@ over the fix actually working.
 
 The async burden that avoided is real but **already solved next door** — the
 launcher's shipped 120 ms debounce plus stale-response suppression
-(`LauncherApp.tsx:74-96`) is the pattern to reuse, not reinvent. PR 1 therefore
+(`LauncherApp.tsx:26`, `:84-104`) is the pattern to reuse, not reinvent. PR 1 therefore
 carries, for this path:
 
 - **debounce** on keystrokes;
@@ -1730,19 +1733,22 @@ pre-existing data, so those objects never receive a mutating blind-Enter primary
 
 Added 2026-08-06 (PM-directed, from the systematic launcher review). D6 fixes the
 semantic slots; this section fixes the panel's visible anatomy so PR 2 and the
-pre-PR-2 hardening pass (`launcher-interaction-hardening.md`) implement **one**
-visual language. Token/material authority remains `design-system.md`; nothing here
-introduces a non-token value.
+pre-PR-2 hardening pass (`archive/launcher-interaction-hardening.md`, shipped
+**#497**) implement **one** visual language. Token/material authority remains
+`design-system.md`; nothing here introduces a non-token value. **This anatomy is
+now largely as-built** — `spec/launcher.md` → *Footer* is its authority; what
+remains for PR 2 is named at the end of this section.
 
-**The action bar is a slim hint bar, never a button row.** The shipped bar's one
-element is a bottom-right ghost button restating the selected row's full title —
-the list says *Open main window* and the button repeats it. That dies with the
-compound rows. The bar has two zones:
+**The action bar is a slim hint bar, never a button row.** When this was written
+the bar's one element was a bottom-right ghost button restating the selected
+row's full title — the list said *Open main window* and the button repeated it.
+#497 replaced it with the two zones below; the compound rows themselves die in
+PR 2 (D6). The bar has two zones:
 
 - **Left — identity + status.** At rest: the app mark plus the **formatted summon
   hotkey** (`formatHotkey`, e.g. `⌘⇧␣`) in `--text-tertiary` at `--font-meta`.
-  This is deliberate, not decoration: with the sidebar *Search* row
-  (`launcher-interaction-hardening.md` D7) a mouse-first user reaches this panel
+  This is deliberate, not decoration: with the sidebar *Search* row (shipped in
+  #497 — `Sidebar.tsx:137`) a mouse-first user reaches this panel
   without ever knowing the keystroke, and the identity slot is where the panel
   teaches it (the Raycast identity slot, put to work). During execution the zone
   carries the busy text, then D9's outcome for the dwell — success confirmation in
@@ -1779,19 +1785,37 @@ composition is active (`isImeComposingEvent`, the shipped palette guard —
 `imeKeyboard.ts`), Enter, ArrowUp/Down and Escape belong to the IME: the panel
 neither runs an action, moves activity, opens the action panel, nor dismisses.
 The guard applies to the main input, the `Actions ⌘K` panel, parameter pickers,
-and any text input a confirmation carries. The shipped launcher has **no** such
-guard — committing a pinyin candidate with Enter fires the active row — and this
-plan's own contract tests would not have caught it; AC-16 exists so the new
-surface cannot regress it. `launcher-interaction-hardening.md` ships the guard on
-the current surface first; PR 2 carries it forward.
+and any text input a confirmation carries. The launcher had **no** such guard
+when this was written — committing a pinyin candidate with Enter fired the active
+row — and this plan's own contract tests would not have caught it;
+`launcher-interaction-hardening` shipped it on the current surface in **#497**
+(`LauncherApp.tsx:184-188`). PR 2 carries it forward into every new input, and
+AC-16 exists so the new surface cannot regress it.
 
-**Inherited from the pre-PR-2 hardening pass.** That plan implements this bar
-anatomy early on the shipped surface (same classes and tokens in `launcher.css`),
-so PR 2 inherits the CSS and replaces only the JSX it rewrites anyway. PR 2 also
-**deletes** that plan's interim empty-query Enter wait — superseded by the
-synchronous invocation open, pending ambient slot and synchronous `draftText`
-admission (D1a/D1b) — and replaces its hand-wired status zone with D9's result
-state.
+**Inherited from the pre-PR-2 hardening pass (#497, merged 2026-08-07).** That
+plan implemented this bar anatomy early on the shipped surface (same classes and
+tokens in `styles/launcher.css`), so PR 2 inherits the CSS and replaces only the
+JSX it rewrites anyway. What is **still PR 2's** in this bar, stated so the
+"inherited" claim cannot be read as "already done":
+
+- the **`Actions ⌘K` control** in the right cluster — #497 shipped only the
+  primary hint;
+- the primary label's **source**: today it comes from the item's own
+  `LauncherItemAction`, and it must come from the registry's resolved
+  `ActionPresentation` for the active object (D6/D8);
+- the **status zone's content**: #497 hand-wired "Saving…" / the failure line for
+  the capture path only; D9's result state replaces it for every action, and owns
+  the dwell and the blur guard behind it.
+
+**There is no interim empty-query Enter wait to delete.** Earlier revisions of
+this section told PR 2 to remove that stopgap; it was **withdrawn at the review
+gate rather than shipped**. The shipped authority says so itself —
+`spec/launcher.md:148-149`: *"A renderer-side wait was built and then removed"*,
+and `:156-157`: *"The race is that plan's to close (D6a); the launcher does not
+carry a stopgap for it."* So PR 2 inherits nothing here. Closing that race at its
+source — the synchronous invocation open, pending ambient slot and synchronous
+`draftText` admission (D1a/D1b) — is PR 2's own work, not a cleanup of someone
+else's, and it retires that spec section (step 13).
 
 ### D7 — Hidden without a subject; shown with a reason when a predicate fails
 
@@ -1870,7 +1894,7 @@ One rule, not a capture special case.
 **One window lifecycle, because two earlier decisions contradicted each other.**
 "Focus returns immediately" plus "confirm inside the panel" cannot both hold: the
 launcher routes `blur` straight to `dismissLauncher()`
-(`launcherWindow.ts:108-114`), so returning focus at commit destroys the very
+(`launcherWindow.ts:118-124`), so returning focus at commit destroys the very
 surface meant to show the confirmation — precisely in the background case the
 signal exists for. The lifecycle is therefore explicit:
 
@@ -1880,7 +1904,7 @@ signal exists for. The lifecycle is therefore explicit:
    renderer step can never acknowledge), leaving no committed step to enter the
    state *from*; and any destination step that focuses the main window would trip
    the launcher's shipped `blur → dismissLauncher()` handler
-   (`launcherWindow.ts:108-114`) and destroy the panel before its outcome could be
+   (`launcherWindow.ts:118-124`) and destroy the panel before its outcome could be
    rendered. The guard is main-owned because that handler is.
 2. The guard is **held through settlement**, then the panel shows the outcome for a
    bounded dwell.
@@ -1976,7 +2000,7 @@ forever* and *Empty Trash* keep their dialog in both views — they are outside
   was explicitly chosen, per D4. This is the brownfield requirement inherited from
   `launcher:createContextCapture({ note })`, not a new shortcut.
 - **Success is visible.** Capture currently resets and hides with no confirmation
-  (`LauncherApp.tsx:121-127`) — when Tenon is in the background the user gets no
+  (`LauncherApp.tsx:131-138`) — when Tenon is in the background the user gets no
   evidence at all. Show a brief confirmation before dismissing.
 - **One optional user tag object at capture time.** Findability comes from tags and
   search, not from location. (The capture-kind tag `#article`/`#video` → `#capture`
@@ -1999,13 +2023,14 @@ forever* and *Empty Trash* keep their dialog in both views — they are outside
   one of `ThreadUserContent`'s three kinds (`text` / `attachment` / `nodeReference`)
   — and it should not become one. It enters through the channel the runtime already
   has for exactly this: a renderer-supplied **`additionalContext` entry**, rendered
-  inside `<system-reminder><context-evidence>` by `ContextProjector.ts:742-749`,
+  inside `<system-reminder><context-evidence>` by
+  `ContextProjector.projectAdditionalContext` (`ContextProjector.ts:746-760`),
   under the `additionalContext` evidence kind.
 
   Three properties make this the right channel rather than a workaround:
 
   - **No protocol change.** `RendererTurnStartRequest.additionalContext` already
-    exists (`protocol.ts:1271`), so this plan stays a *consumer* of
+    exists (`protocol.ts:1379-1381`), so this plan stays a *consumer* of
     `agent-data-model`'s contract and does not edit an authority file.
   - **Untrusted by construction.** That field's type forces every renderer-supplied
     entry to `kind: 'untrusted'`. Web page text can therefore never arrive with
@@ -2125,9 +2150,9 @@ self-check); the earlier "no locale file" claim is no longer true.
    `ArrowDown`/click protects an explicitly selected result, and `ArrowUp`/`Esc`
    returns to the chip. Add optional-primary Enter behavior, focus completion and
    result signal (D4/D9). Render the D6a bar anatomy (identity/status zone,
-   hint cluster) inheriting the hardening pass's CSS, carry the IME composition
-   guard into every panel input, and delete the hardening pass's interim
-   empty-query Enter wait (D6a).
+   hint cluster) inheriting #497's CSS, add the `Actions ⌘K` control, source the
+   primary label from the resolved `ActionPresentation`, and carry the IME
+   composition guard into every new panel input (D6a).
 9. Close the capture loop with a resolver-installed Today argument object, optional
    tag candidates in their own argument generations, nested `create_capture`
    binding/producer, `Send to Agent`, and its `PendingComposerContext`. Preserve
@@ -2148,15 +2173,89 @@ self-check); the earlier "no locale file" claim is no longer true.
    (`useWorkspaceKeyboard.ts:521-565`) — which a command-only effect does not
    preserve. Tests must cover nested and transcluded panes. **Not in scope unless
    explicitly ratified**; the plan does not smuggle it in through a field.
-12. Delete `CommandPalette.tsx`, the global `Cmd+K` binding (`shortcutRegistry.ts:139`
-   — the keystroke lives on inside the panel as *Actions*), and the stale `/`-menu
-   hint. **The old menu oracle is not deleted here — PR 1's final step already
-   removed it** once equivalence was proven.
+12. **Retire the in-app palette — and every consumer of it.** Deleting
+   `CommandPalette.tsx` alone does not compile, and deleting the `global.command_palette`
+   binding alone silently breaks a surface #497 just shipped. The work queue is
+   `rg -n 'command_palette|CommandPalette' src tests docs` — **the whole tree, not
+   `src/renderer/ui/`**, which is how an earlier revision of this table lost the
+   handler that actually opens the palette. Re-derive it at implementation start;
+   as of 2026-08-07 it is:
 
-**Sequenced after #483 and #488**, since the capture handoff touches `ThreadView` /
-`ThreadDock` / `threadStore`, while the object/action presentations touch both locale
-catalogs and main-side wiring. Re-derive the open-PR file sets at implementation
-start; PR numbers are evidence, not a permanent dependency declaration.
+   | Site | What it is | What PR 2 does |
+   |---|---|---|
+   | `src/renderer/ui/CommandPalette.tsx` | the surface | delete |
+   | `src/renderer/ui/App.tsx:9`, `:681-690` | mount + `ui.commandOpen` + `commandRestoreFocusRef` | delete the mount and the UI state it exists for |
+   | **`src/renderer/ui/useWorkspaceKeyboard.ts:220`** | `matchesShortcutEvent(event, 'global.command_palette')` → `setCommandOpen(true)` — **the handler the binding actually fires**, and the only keyboard path that sets `commandOpen` | delete with the binding; without this the `App.tsx` row leaves a caller of deleted state |
+   | `src/renderer/ui/interactions/shortcutRegistry.ts:48`, `:139` | the `ShortcutId` union member **and** the `⌘K` definition | delete both — the keystroke lives on inside the panel as *Actions*. Deleting `:139` without `:48` leaves a dead type; deleting `:48` is what makes every stale caller fail to typecheck, which is the point |
+   | `src/renderer/ui/Sidebar.tsx:137` | the sidebar *Search* row's `formatShortcutHint('global.command_palette')` | **retarget to the launcher summon binding**, so the hint re-derives from the surviving shortcut instead of resolving to nothing |
+   | **`tests/renderer/sidebarSearchRow.test.tsx:133`** | the existing guard: rebind the registry entry, assert the row's hint follows it — written precisely so a hard-coded `⌘K` cannot survive | retarget to the summon binding. It is the guard on the behaviour this step's headline decision changes, so it must keep failing for a hard-coded hint |
+   | `src/renderer/ui/interactions/slashCommands.ts:67-73` | the `/`-menu entry, incl. its stale `shortcutHint: 'Cmd+K'` and its hard-coded English `label` | **keep the entry, retarget it to summon the launcher** (ratified below); drop the hard-coded hint |
+   | **`src/core/i18n/messages/en.ts:941`, `zh-Hans.ts:865`** | `slashLabels.command_palette` — the row's display label in both catalogs | re-copy per D8 in both locales |
+   | **`tests/renderer/rowInteractions.test.ts:1315`** | asserts `filterSlashCommands('')`'s id list ends with `command_palette` | survives a label-only change; update if the id is renamed |
+   | `src/renderer/ui/NodePanel.tsx:549`, `src/renderer/ui/outliner/OutlinerItem.tsx:1208` | the two `/`-menu execution branches that set `commandOpen` | summon the launcher instead |
+   | `src/renderer/ui/outliner/SlashCommandMenu.tsx:39` + the **two** `enabledSlashCommandIds` lists (`NodePanel.tsx:708`, `OutlinerItem.tsx:2494`) | the entry's icon and its per-surface enablement | unchanged, since the entry survives |
+   | `src/renderer/ui/App.tsx:383` | a comment — *"mirrors the in-app `CommandPalette` jump"* — describing the panel-jump path by analogy to a component that will not exist | re-word to describe the behaviour directly |
+
+   **Ratified (PM, 2026-08-07) — the `/`-menu entry is retargeted, not deleted.**
+   It and the sidebar *Search* row answer the same need: a mouse-first or
+   menu-first user who never learned the keystroke. D3 retires the `⌘K`
+   *binding*, not the in-app entry points to the surface; deleting the entry would
+   remove an entry point while the plan's own D6a argues the panel must *teach*
+   its keystroke. Its label is re-copied under D8 (the object/verb rule) in both
+   locales rather than remaining *Command palette*.
+
+   **The old menu oracle is not deleted here — PR 1's final step already removed
+   it** once equivalence was proven.
+13. **The palette's CSS, guards and spec entries go with it (A6/B11).** Retiring a
+   shipped surface is not just a component deletion, and the deletions must be
+   made deliberately rather than discovered as red tests:
+
+   - **CSS + guard.** `.command-palette` exists in two sheets
+     (`styles/overlay-palette.css:12`, `styles/popover-command.css:31`) and is
+     named in **three** places in `tests/e2e/typography-tokens.spec.ts`
+     (`:125`, `:135`, `:1139` — the level-2 opaque-overlay guard). Removing the
+     selector from the guard is a B11 *narrowing* of the exception set, not a
+     relaxation: the launcher panel is a different tier (vibrant system glass,
+     `design-system.md:185`), so it does not inherit the entry.
+   - **`spec/launcher.md`, three sections.** *Footer* and *"Action labels are
+     verbs"* currently ratify the as-built compound labels *Capture page to
+     Today* / *New node in Today*, which D6/D8 replace with an object row plus a
+     verb (*Capture* / *Create node*). AC-03's locale guard rejects those exact
+     strings, so leaving the spec as-is puts a shipped authority in direct
+     conflict with a shipped guard. **And *"Known gap: Enter before the context
+     lands"* (`:141-158`) retires by the same argument** — it documents the
+     show→context race as knowingly unmitigated and says outright that *"the race
+     is that plan's to close (D6a); the launcher does not carry a stopgap for
+     it."* PR 2 closes it, so the section describes a gap that no longer exists.
+   - **`spec/workspace-layout.md`.** The palette is load-bearing in its focus and
+     overlay model, not just prose: the Search row (`:970`), the ensure-first
+     Today path (`:1102`), `focusedSurface = 'overlay'` (`:1037`), and the
+     `kind: 'command_palette'` overlay discriminant (`:1058`). Whatever survives
+     as the launcher summon must be re-stated there, including the sidebar row's
+     shortcut source (`:133`).
+   - **`spec/ui-behavior.md:765`, `:809`** name the palette in the `Dialog`
+     inventory and the combobox a11y contract, and
+     **`design-system/components.md:23`** names `CommandPalette.tsx` as a surface
+     consumer of the dialog shell — three inventories of a component that will not
+     exist. **`design-system.md:143`** lists the file in the *Editor and commands*
+     row of the file inventory.
+   - **The design-system rules survive; their examples do not.** The docs use
+     "in-app command palette" as the *example* of the opaque elevated tier
+     (`design-system/foundations.md:307,310,316,350`,
+     `design-system/components.md:74`, `design-system/surfaces.md:223`) — the tier
+     still has dialogs in it, so the example is repointed, not the rule rewritten.
+     Same for **`design-system.md:185`**, whose exception row scopes itself as
+     *"in-app command palettes remain opaque elevated surfaces"*: step 13 cites
+     that line as **evidence** the launcher is a different tier, and the clause
+     itself goes stale once there is no in-app palette to contrast with.
+     `design-system/calibration-audit.md` CA55/CA56 are historical records and
+     stay as written.
+
+**The ordering constraint that used to sit here is discharged.** PR 2 was
+sequenced behind #483 (composer files) and #488 (locale catalogs, `main.ts`,
+`preload/index.ts`); both merged on 2026-08-05/06, and so did #490, #480 and #497.
+Re-derive the open-PR file sets at implementation start anyway — PR numbers are
+evidence, not a permanent dependency declaration.
 
 ### Why the split moved here
 
@@ -2189,8 +2288,14 @@ and a differential test can judge them instead.
   `ObjectPresentation`, every action request binds
   `subjectRef + actionId + typed arguments`, and no
   `ActionPresentation` or legacy `LauncherItem.kind: 'command'` enters the main
-  object list. Locale guards reject compound row titles such as *Go to Today*,
-  *Open Settings*, *Capture page to Today* and *New node in Today*. A query with one
+  object list. Locale guards reject the compound strings *Go to Today*,
+  *Open Settings*, *Capture page to Today* and *New node in Today* **in both roles
+  — as a row title and as an action label**. The last two are worth stating
+  precisely because they ship today as *action labels*
+  (`spec/launcher.md` → *"Action labels are verbs"* exempts them as the case where
+  "the label IS the information"); D6/D8 removes the exemption by splitting each
+  into an object row plus a verb, so step 13 must retire that spec sentence in the
+  same change or the guard and the spec contradict each other. A query with one
   or more object matches yields no draft; a no-match query yields exactly one draft
   object titled with the entered text, *New node* as its type label, and *Create
   node* as its primary action.
@@ -2297,7 +2402,9 @@ and a differential test can judge them instead.
   no-match case explicitly selects its draft and asserts `create(draft, Today)`
   creates a plain node without capture provenance.
 - **AC-15 — Full verification.** Light + dark visual verification (UI diff); `typecheck`, `test:core`,
-  `test:renderer`, `test:e2e`, `docs:check`.
+  `test:renderer`, `test:e2e`, `docs:check`. For PR 2 this includes the step-13
+  spec and guard edits **in the same PR** (A6): a green suite reached by leaving
+  `spec/launcher.md` describing a surface the PR just deleted is not a pass.
 - **AC-16 — Composition guard and bar presentation (D6a).** Renderer fixtures: a
   composing keydown (`isComposing` / `key: 'Process'` / `keyCode: 229`) for Enter,
   ArrowUp/Down and Escape fires no action, moves no activity, opens no panel and
@@ -2340,15 +2447,17 @@ only pin state remains in `workspace`. Two presentation decisions are also close
 
 ## Related plans
 
-- `launcher-interaction-hardening.md` — the ONE pre-PR-2 PR on the *shipped*
-  surface (the discoverability plan was merged into it 2026-08-06):
-  correctness (IME guard, dev-only error copy, interim empty-query Enter
-  wait), the D6a bar anatomy implemented early, the sidebar *Search* row and
-  the Settings hotkey display. PR 2 keeps the guard and the CSS, deletes the
-  interim wait, replaces the hand-wired status zone with D9's result state
-  (D6a), and — when it retires the global `Cmd+K` (D3) — retargets the sidebar
-  row to the panel summon so its hint re-derives from the remaining binding; the
-  single-call-site design makes that a two-line change inside step 12's sweep.
+- `archive/launcher-interaction-hardening.md` — **shipped as #497 (2026-08-07)**;
+  it was the ONE pre-PR-2 PR on the *shipped* surface (the discoverability plan
+  was merged into it 2026-08-06). Landed: the IME guard, the window-level fix for
+  the CJK candidate window, dev-only error copy, the D6a bar anatomy, the sidebar
+  *Search* row and the Settings hotkey display. **Its interim empty-query Enter
+  wait was withdrawn at the review gate, not shipped** — so PR 2 has nothing to
+  delete there and owns the show→context race at its source (D6a). PR 2 keeps the
+  guard and the CSS, adds `Actions ⌘K`, replaces the hand-wired status zone with
+  D9's result state (D6a), and — when it retires the global `Cmd+K` (D3) —
+  retargets the sidebar row to the panel summon so its hint re-derives from the
+  remaining binding (`Sidebar.tsx:137`, one call site, inside step 12's sweep).
 - `floating-toolbar-polish.md` — its *Destination policy* question is answered by
   the same ruling as D9 (Today, no special bucket); its `#` selection-extract is a
   registry action once the registry exists.
@@ -2374,22 +2483,15 @@ only pin state remains in `workspace`. Two presentation decisions are also close
 
 ## Collision self-check
 
-Re-run at the start of each PR. As of 2026-08-05:
+Re-run at the start of each PR — with `gh pr list` + `gh api …/files --paginate`.
+(The `--paginate` matters: the default page returns 30 files, which is why an
+earlier sweep read #483 as touching only `ThreadView`.)
 
-**Both implementation PRs overlap open work, re-derived with `gh pr list` +
-`gh api …/files --paginate`.** (The `--paginate` matters: the default page returns
-30 files, which is why an earlier sweep read #483 as touching only `ThreadView`.)
-
-**The snapshot below is evidence, not the contract — open PRs move.** The binding
-instruction is the ordering/rebase rule, and the inventory is re-derived at
-implementation start.
-
-| PR | Overlaps | Handling |
-|---|---|---|
-| [#483](https://github.com/relixiaobo/lin-outliner/pull/483) *(open)* | **`ThreadView.tsx`**, **`ThreadDock.tsx`**, **`threadStore.ts`** — the `PendingComposerContext` path PR 2 needs | PR 2 lands after it and rebases; PR 1 has no overlap |
-| [#488](https://github.com/relixiaobo/lin-outliner/pull/488) *(open)* | **both locale catalogs**, **`src/main/main.ts`**, **`src/preload/index.ts`**, plus infrastructure-owned `src/core/commands.ts` / `src/core/types.ts` | PR 1 and PR 2 land after it; neither changes the two protocol files, but PR 2 also rebases the preload split after its app-bridge change |
-| [#490](https://github.com/relixiaobo/lin-outliner/pull/490) *(open draft)* | **`src/main/main.ts`** only; generated-image behavior is otherwise disjoint | additive file overlap for both PRs; re-check and rebase whichever lands second |
-| [#480](https://github.com/relixiaobo/lin-outliner/pull/480) *(open)* | none (`AGENTS.md`, release workflow/scripts, `CHANGELOG.md`) | no overlap; dev agents do not touch its main-owned files |
+**As of 2026-08-07 there are no open PRs, so neither implementation PR is
+blocked or ordered behind anything.** Every PR the previous snapshot ordered
+against has merged: #483 (2026-08-05), #490 (2026-08-05), #488 and #480
+(2026-08-06), #497 (2026-08-07). An empty radar is a fact about one moment, not a
+standing permission — re-derive before opening each Draft PR.
 
 PR 1 touches `src/core/actions/` (new), moved predicates under
 `src/renderer/ui/interactions/`, `NodeContextMenu.tsx`, both locale catalogs and
@@ -2400,7 +2502,17 @@ PR 2 additionally touches `src/renderer/ui/CommandPalette.tsx` (deleted),
 `src/main/context/contextCapture.ts`, `src/core/launcher/sources.ts` (capture-template
 factoring only), `src/preload/index.ts`, a new minimal
 `src/preload/launcher.ts`, infrastructure-owned `electron.vite.config.ts`, the
-composer path and both locale catalogs. No currently open PR touches
+composer path and both locale catalogs. **Plus the palette's consumers, which
+earlier drafts of this list omitted and step 12 now enumerates:** `App.tsx`,
+`Sidebar.tsx`, `NodePanel.tsx`, `outliner/OutlinerItem.tsx`,
+`outliner/SlashCommandMenu.tsx`, `useWorkspaceKeyboard.ts`,
+`interactions/slashCommands.ts`, `interactions/shortcutRegistry.ts`,
+`core/i18n/messages/{en,zh-Hans}.ts`, `styles/overlay-palette.css`,
+`styles/popover-command.css`, `tests/e2e/typography-tokens.spec.ts`,
+`tests/renderer/sidebarSearchRow.test.tsx`, `tests/renderer/rowInteractions.test.ts`,
+and the spec set in step 13. That omission is the reason step 12 is now a derived
+table rather than a sentence — and the reason its query is scoped `src tests docs`
+rather than one directory: the queue comes from `rg` (A11), not from memory. No currently open PR touches
 `electron.vite.config.ts`; the PR 2 Draft claim must name it explicitly and re-run
 the ownership/collision check before editing it.
 
@@ -2423,7 +2535,7 @@ line wrong:
 
 | Action | Entry points | Shared | Not shared |
 |---|---|---|---|
-| Apply a tag | 3 (`#` trigger popover — which is `TagSelector`'s only renderer — node context menu, batch selector) | candidate list + ranking (`ui/interactions/tagSelector.ts`) | **apply**: three implementations (`TagSelector.tsx:41-50`, `BatchTagSelector.tsx:89-93`, `NodeContextMenu.tsx:250-258`) |
+| Apply a tag | 3 (`#` trigger popover — which is `TagSelector`'s only renderer — node context menu, batch selector) | candidate list + ranking (`ui/interactions/tagSelector.ts`) | **apply**: three implementations (`TagSelector.tsx:43-52`, `BatchTagSelector.tsx:89-93`, `NodeContextMenu.tsx:250-258`) |
 | Find a node | 4 | — | **three rankings** |
 
 Read the tag row carefully, because it cuts the other way from how it was first
