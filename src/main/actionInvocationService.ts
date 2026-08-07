@@ -10,7 +10,6 @@
 //
 // See `docs/plans/unified-command-surface.md` D1a/D1b.
 
-import { randomUUID } from 'node:crypto';
 import {
   admitsMoveToDestination,
   buildTagCandidateIndex,
@@ -126,8 +125,11 @@ interface Record_ {
   challenge: Challenge | null;
 }
 
+// Web Crypto rather than `node:crypto`, so this module is isomorphic: the
+// e2e harness runs the REAL service in the page instead of maintaining a second
+// implementation of the registry that could drift from it.
 function mintRef<T extends string>(): T {
-  return randomUUID() as T;
+  return globalThis.crypto.randomUUID() as T;
 }
 
 function hashArguments(args: unknown): string {

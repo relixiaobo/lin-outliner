@@ -179,7 +179,10 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
     surfaceRef: menuRef,
     onClose: props.onClose,
     kind: mode.kind === 'main' ? 'menu' : 'dialog',
-    focusKey: mode.kind,
+    // The surface does not exist until the opening resolves, so the focus-in
+    // effect must re-run then — otherwise the menu never takes focus and Escape
+    // is never captured.
+    focusKey: opening ? mode.kind : 'pending',
   });
 
   const runRequest = async (
