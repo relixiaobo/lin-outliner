@@ -1,3 +1,12 @@
+import {
+  isSyntheticSystemValueId,
+  nodeRowFacetsFor,
+  resolveReferenceChainTargetId,
+  type NodeRowAction,
+  type NodeRowActionPolicy,
+  type NodeRowFacets,
+  type NodeRowKind,
+} from '../../core/actions/rowFacets';
 import type { NodeId, NodeProjection } from '../api/types';
 import {
   buildOutlinerRows,
@@ -6,41 +15,17 @@ import {
   visibleAuthoredTableFieldIds,
   type OutlinerRowItem,
 } from './outlinerRows';
-import {
-  isSyntheticSystemReferenceId,
-  systemReferenceValueIds,
-} from './systemReferenceRows';
+import { systemReferenceValueIds } from './systemReferenceRows';
 
-export type SelectableRowKind =
-  | 'content'
-  | 'fieldEntry'
-  | 'fieldValue'
-  | 'syntheticSystemValue';
+// Row applicability derives from the projection alone and is shared with the
+// core action registry (`core/actions/rowFacets.ts`); the pane root is the one
+// renderer-owned addition, and only the keyboard-only outdent path reads it.
+export type SelectableRowKind = NodeRowKind;
+export type SelectableRowAction = NodeRowAction;
+export type SelectableRowActionPolicy = NodeRowActionPolicy;
 
-export type SelectableRowAction =
-  | 'node-trash'
-  | 'field-value-remove'
-  | 'node-reorder'
-  | 'node-clone'
-  | 'target-node'
-  | 'disabled';
-
-export interface SelectableRowActionPolicy {
-  delete: Extract<SelectableRowAction, 'node-trash' | 'field-value-remove' | 'disabled'>;
-  move: Extract<SelectableRowAction, 'node-reorder' | 'disabled'>;
-  duplicate: Extract<SelectableRowAction, 'node-clone' | 'disabled'>;
-  tag: Extract<SelectableRowAction, 'target-node' | 'disabled'>;
-  checkbox: Extract<SelectableRowAction, 'target-node' | 'disabled'>;
-}
-
-export interface SelectableRow {
-  id: NodeId;
-  parentId: NodeId | null;
+export interface SelectableRow extends NodeRowFacets {
   panelRootId: NodeId;
-  kind: SelectableRowKind;
-  stored: boolean;
-  mutable: boolean;
-  actionPolicy: SelectableRowActionPolicy;
 }
 
 export interface SelectableRowsOptions {
@@ -53,30 +38,6 @@ interface SelectableRowVisitor {
   afterRow?: (parentId: NodeId, rowId: NodeId) => void;
   afterScope?: (parentId: NodeId) => void;
 }
-
-const DISABLED_POLICY: SelectableRowActionPolicy = {
-  delete: 'disabled',
-  move: 'disabled',
-  duplicate: 'disabled',
-  tag: 'disabled',
-  checkbox: 'disabled',
-};
-
-const NODE_POLICY: SelectableRowActionPolicy = {
-  delete: 'node-trash',
-  move: 'node-reorder',
-  duplicate: 'node-clone',
-  tag: 'target-node',
-  checkbox: 'target-node',
-};
-
-const FIELD_VALUE_POLICY: SelectableRowActionPolicy = {
-  delete: 'field-value-remove',
-  move: 'node-reorder',
-  duplicate: 'node-clone',
-  tag: 'target-node',
-  checkbox: 'target-node',
-};
 
 export function buildSelectableRows(
   panelRootId: NodeId,
@@ -229,25 +190,10 @@ export function selectableChildParentId(
   const node = byId.get(rowId);
   if (!node) return null;
   if (node.type !== 'reference' || !node.targetId) return rowId;
-  return resolveSelectableReferenceTargetId(node.targetId, byId);
+  return resolveReferenceChainTargetId(node.targetId, byId);
 }
 
-export function resolveSelectableReferenceTargetId(
-  targetId: NodeId,
-  byId: Map<NodeId, NodeProjection>,
-): NodeId | null {
-  let currentId: NodeId | undefined = targetId;
-  const visited = new Set<NodeId>();
-  while (currentId) {
-    if (visited.has(currentId)) return null;
-    visited.add(currentId);
-    const current = byId.get(currentId);
-    if (!current) return null;
-    if (current.type !== 'reference') return current.id;
-    currentId = current.targetId;
-  }
-  return null;
-}
+export { resolveReferenceChainTargetId as resolveSelectableReferenceTargetId };
 
 function selectableRowFor(params: {
   id: NodeId;
@@ -255,40 +201,8 @@ function selectableRowFor(params: {
   panelRootId: NodeId;
   byId: Map<NodeId, NodeProjection>;
 }): SelectableRow {
-  const node = params.byId.get(params.id);
-  const parent = params.parentId ? params.byId.get(params.parentId) : undefined;
-  const synthetic = isSyntheticSystemValueId(params.id);
-  const kind = selectableRowKind(params.id, node, parent);
-  const stored = Boolean(node) && !synthetic;
-  const mutable = stored && !(node?.locked ?? true);
   return {
-    id: params.id,
-    parentId: params.parentId,
+    ...nodeRowFacetsFor({ id: params.id, parentId: params.parentId, byId: params.byId }),
     panelRootId: params.panelRootId,
-    kind,
-    stored,
-    mutable,
-    actionPolicy: actionPolicyFor(kind, mutable),
   };
-}
-
-function selectableRowKind(
-  id: NodeId,
-  node: NodeProjection | undefined,
-  parent: NodeProjection | undefined,
-): SelectableRowKind {
-  if (isSyntheticSystemValueId(id)) return 'syntheticSystemValue';
-  if (parent?.type === 'fieldEntry') return 'fieldValue';
-  if (node?.type === 'fieldEntry') return 'fieldEntry';
-  return 'content';
-}
-
-function actionPolicyFor(kind: SelectableRowKind, mutable: boolean): SelectableRowActionPolicy {
-  if (!mutable || kind === 'syntheticSystemValue') return DISABLED_POLICY;
-  if (kind === 'fieldValue') return FIELD_VALUE_POLICY;
-  return NODE_POLICY;
-}
-
-function isSyntheticSystemValueId(id: NodeId): boolean {
-  return isSyntheticSystemReferenceId(id);
 }

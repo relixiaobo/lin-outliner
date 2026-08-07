@@ -495,6 +495,106 @@ export const en = {
     untitled: 'Untitled',
     loading: 'Loading…',
   },
+  // The unified command surface: one object model, one action registry. Object
+  // names are nouns, action names are verbs, and neither fuses the other into a
+  // compound phrase (`unified-command-surface.md` D8). Every string here is
+  // searched in BOTH locales regardless of the active UI language, so a user who
+  // thinks in English command names can find them in a Chinese interface.
+  actions: {
+    // Right-aligned type label on an object row, and the chip's kind.
+    objectTypes: {
+      node: 'Node',
+      nodeSelection: 'Selection',
+      externalPage: 'Page',
+      draftNode: 'New node',
+      draftTag: 'New tag',
+      appSurface: 'App',
+    },
+    // Object names. These are the rows; their activation is a separate action.
+    objects: {
+      today: 'Today',
+      library: 'Library',
+      schema: 'Schema',
+      savedSearches: 'Saved searches',
+      trash: 'Trash',
+      mainWindow: 'Main window',
+      settings: 'Settings',
+    },
+    // Batch prefix carried by the shipped menu labels for a multi-row subject.
+    // It counts rows; it never interpolates a subject title.
+    batchPrefix: ({ count }: { count: number }) => `${count} nodes: `,
+    // Action family and resolved-variant names.
+    names: {
+      open: 'Open',
+      openInSplitPane: 'Open in split pane',
+      pin: 'Pin',
+      unpin: 'Unpin',
+      sendToAgent: 'Send to Agent',
+      duplicate: 'Duplicate',
+      moveUp: 'Move up',
+      moveDown: 'Move down',
+      moveTo: 'Move to',
+      markDone: 'Mark done',
+      markNotDone: 'Mark not done',
+      addTag: 'Add tag',
+      viewAs: 'View as',
+      viewOutline: 'Outline',
+      viewTable: 'Table',
+      showViewToolbar: 'Show view toolbar',
+      hideViewToolbar: 'Hide view toolbar',
+      editFilters: 'Edit filters',
+      editSorting: 'Edit sorting',
+      editGrouping: 'Edit grouping',
+      editDisplayedFields: 'Edit displayed fields',
+      editDescription: 'Edit description',
+      copyText: 'Copy text',
+      copyNodeId: 'Copy node ID',
+      // `remove` names the intent; row policy resolves which of these it is.
+      moveToTrash: 'Move to Trash',
+      removeFieldValue: 'Remove field value',
+      removeFieldValues: 'Remove field values',
+      removeSelectedItems: 'Remove selected items',
+      restore: 'Restore',
+      deleteForever: 'Delete forever',
+      emptyTrash: 'Empty Trash',
+      capture: 'Capture',
+      createNode: 'Create node',
+    },
+    // Shown beside a rejected action in the searchable panel; the anchored menu
+    // keeps its shipped disabled row instead.
+    rejections: {
+      noEligibleRows: 'unavailable for this selection',
+      immutable: 'this row cannot be changed',
+      inTrash: 'unavailable in Trash',
+      notInTrash: 'only available in Trash',
+      trashEmpty: 'Trash is empty',
+      alreadyInState: 'already in that state',
+    },
+    // Object-valued parameter pickers.
+    parameters: {
+      moveDestination: {
+        title: 'Move to',
+        inputLabel: 'Node name',
+        placeholder: 'node name',
+      },
+      tag: {
+        title: 'Add tag',
+        inputLabel: 'Tag name',
+        placeholder: 'tag name',
+      },
+      createTag: ({ name }: { name: string }) => `Create ${name}`,
+    },
+    confirm: {
+      deleteForeverTitle: 'Delete forever?',
+      deleteForeverTitleMultiple: ({ count }: { count: number }) => `Delete ${count} nodes forever?`,
+      deleteForeverMessage: 'This permanently deletes the node and its children. You cannot restore it from Trash.',
+      deleteForeverMessageMultiple: 'This permanently deletes the selected nodes and their children. You cannot restore them from Trash.',
+      deleteForeverConfirm: 'Delete forever',
+      emptyTrashTitle: 'Empty Trash?',
+      emptyTrashMessage: 'This permanently deletes every node in Trash. You cannot restore them afterward.',
+      emptyTrashConfirm: 'Empty Trash',
+    },
+  },
   // The always-visible app shell: window chrome, sidebar, workspace canvas, panels,
   // and the agent dock frame (B1 migration).
   shell: {

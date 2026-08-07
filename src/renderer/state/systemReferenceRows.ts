@@ -1,3 +1,4 @@
+import { SYNTHETIC_SYSTEM_REFERENCE_PREFIX } from '../../core/actions/rowFacets';
 import {
   DAY_FIELD,
   OWNER_FIELD,
@@ -20,12 +21,10 @@ export function isNodeReferenceSystemField(systemFieldId: string): boolean {
 }
 
 export function syntheticSystemReferenceId(entryId: NodeId, targetId: NodeId): NodeId {
-  return `sysref:${entryId}:${targetId}`;
+  return `${SYNTHETIC_SYSTEM_REFERENCE_PREFIX}${entryId}:${targetId}`;
 }
 
-export function isSyntheticSystemReferenceId(id: NodeId): boolean {
-  return id.startsWith('sysref:');
-}
+export { isSyntheticSystemValueId as isSyntheticSystemReferenceId } from '../../core/actions/rowFacets';
 
 export function systemReferenceTargets(
   owner: NodeProjection | undefined,
