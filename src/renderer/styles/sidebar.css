@@ -156,6 +156,17 @@
   opacity: 0.72;
 }
 
+/* The Search row's keystroke hint: quiet meta text pinned to the row's end, NOT
+   a .kbd chip box — sidebar rows keep their flat look and the chip treatment
+   stays in overlays. Always visible; teaching the keystroke is the point. */
+.sidebar-nav-hint {
+  margin-left: auto;
+  padding-left: var(--space-2);
+  color: var(--text-tertiary);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+}
+
 .sidebar-nav-icon {
   width: var(--sidebar-tree-icon-size);
   height: var(--sidebar-tree-icon-size);

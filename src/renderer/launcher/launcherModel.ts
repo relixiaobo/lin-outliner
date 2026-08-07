@@ -136,7 +136,11 @@ export function buildLauncherItems(args: {
     items.push({
       kind: 'command',
       command,
-      actions: [{ id: 'run-command', label: command.title }],
+      // The generic verb, not the command title: the row already names the
+      // target, so restating it made the list say "Open main window" and the
+      // footer repeat it. Capture rows keep their descriptive labels — there the
+      // label IS the information.
+      actions: [{ id: 'run-command', label: t.launcher.actions.open }],
     });
   }
   return items;
@@ -258,33 +262,4 @@ export function remediationForContext(context: ExternalContext | null, t: Messag
     };
   }
   return null;
-}
-
-/**
- * Render an Electron accelerator (e.g. `CommandOrControl+Shift+Space`) as macOS
- * key symbols (`⌘⇧␣`) for the action bar. Unknown tokens pass through verbatim so
- * a non-mac accelerator still reads sensibly.
- */
-export function formatHotkey(accelerator: string | null): string | null {
-  if (!accelerator) return null;
-  const symbols: Record<string, string> = {
-    commandorcontrol: '⌘',
-    cmdorctrl: '⌘',
-    command: '⌘',
-    cmd: '⌘',
-    control: '⌃',
-    ctrl: '⌃',
-    option: '⌥',
-    alt: '⌥',
-    shift: '⇧',
-    space: '␣',
-    enter: '↵',
-    return: '↵',
-    escape: 'esc',
-    tab: '⇥',
-  };
-  return accelerator
-    .split('+')
-    .map((part) => symbols[part.trim().toLowerCase()] ?? part.trim())
-    .join('');
 }

@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { ThemeMode } from '../../../core/theme';
+import { APP_NAME } from '../../../core/brand';
+import { formatHotkey } from '../../../core/launcher/commands';
 import { SUPPORTED_LOCALES, type Locale } from '../../../core/locale';
 import { useI18n } from '../../i18n/I18nProvider';
 import { Button } from '../primitives/Button';
@@ -31,6 +33,10 @@ export function SettingsGeneralSection({ onError, onNotice, onOpenPage }: Settin
   // (nativeTheme.themeSource) and persists, so there is no Save step.
   const [themeMode, setThemeMode] = useState<ThemeMode>('system');
   const [diagnosticsBusy, setDiagnosticsBusy] = useState<null | 'reveal' | 'export'>(null);
+  // The accelerator the global launcher registered under. `null` means no
+  // candidate was free — the launcher is then unreachable, which is exactly the
+  // fact this row exists to surface. Undefined while the read is in flight.
+  const [launcherHotkey, setLauncherHotkey] = useState<string | null | undefined>(undefined);
   // Display language: the picker reads/writes the shared i18n context (seeded before
   // first paint, broadcast across windows), so it applies instantly like the theme.
   const { locale, t, setLocale } = useI18n();
@@ -51,6 +57,28 @@ export function SettingsGeneralSection({ onError, onNotice, onOpenPage }: Settin
         if (active) setThemeMode(mode);
       })
       .catch(() => { /* keep the default */ });
+    return () => { active = false; };
+  }, []);
+
+  // The launcher's registered accelerator. A failed or absent bridge resolves to
+  // `null` — the same "no keystroke to show" state as a failed registration —
+  // rather than staying `undefined` forever, which would leave the row claiming
+  // the launcher has a shortcut while showing none: the exact silent failure
+  // this row exists to eliminate.
+  useEffect(() => {
+    let active = true;
+    const read = window.lin?.getLauncherHotkey?.();
+    if (!read) {
+      setLauncherHotkey(null);
+      return;
+    }
+    void read
+      .then((accelerator) => {
+        if (active) setLauncherHotkey(accelerator);
+      })
+      .catch(() => {
+        if (active) setLauncherHotkey(null);
+      });
     return () => { active = false; };
   }, []);
 
@@ -133,6 +161,22 @@ export function SettingsGeneralSection({ onError, onNotice, onOpenPage }: Settin
               ))}
             </SelectControl>
           )}
+          wrap
+        />
+      </InsetGroup>
+      <InsetGroup ariaLabel={t.settings.general.shortcutsGroup} label={t.settings.general.shortcutsGroup}>
+        {/* Read-only: main registers the first free candidate accelerator. When
+            none was free the launcher is unreachable, so the row says so — as
+            quiet secondary copy in the sublabel, not a red banner: it is
+            informational, not destructive. */}
+        <InsetRow
+          label={t.settings.general.launcherHotkeyLabel}
+          sublabel={launcherHotkey === null
+            ? t.settings.general.launcherHotkeyUnavailable({ app: APP_NAME })
+            : t.settings.general.launcherHotkeySublabel}
+          trailing={launcherHotkey
+            ? <span className="inset-row-value">{formatHotkey(launcherHotkey)}</span>
+            : undefined}
           wrap
         />
       </InsetGroup>

@@ -125,10 +125,17 @@ tools, using the active pane as default context.
 
 Sidebar dock:
 
-The navigation surface on the left side. It exposes global entry points such as
-Today, Library, Recents, and Schema, followed by pinned nodes and the current
-workspace root outline. Recents is a saved search node rather than bespoke
-sidebar logic. Pinned nodes are renderer workspace chrome, not document state:
+The navigation surface on the left side. Its first row is Search, which opens the
+in-app command palette; it sits above Today because search is the universal entry
+point, and it exists so the surface is reachable without keyboard-only knowledge.
+Search is an action, not a nav target, so it is its own row rather than an entry
+in the nav-target record. Its right-aligned keystroke hint is derived from the
+shortcut registry (`formatShortcutHint('global.command_palette')`), never
+hardcoded, so a rebind carries through; the hint is quiet meta text rather than a
+key chip, and is `aria-hidden` so the row's accessible name stays "Search". Below
+it the rail exposes the global entry points Today, Library, Recents, and Schema,
+followed by pinned nodes and the current workspace root outline. Recents is a
+saved search node rather than bespoke sidebar logic. Pinned nodes are renderer workspace chrome, not document state:
 they are persisted in localStorage under
 `lin-outliner:workspace-layout:v3:pinned`, sanitized against the live projection
 on restore, and can be toggled from the outliner row context menu or from a
@@ -960,6 +967,7 @@ layout changes.
 
 Sidebar responsibilities:
 
+- The Search row, opening the command palette.
 - Global navigation entries.
 - Workspace roots (all root sections shown; none hidden).
 - Search and library entry points.

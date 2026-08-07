@@ -12,6 +12,7 @@ import {
   OpenIcon,
   PinIcon,
   RecentsIcon,
+  SearchIcon,
   SettingsIcon,
   SupertagIcon,
 } from './icons';
@@ -28,6 +29,7 @@ import { useT } from '../i18n/I18nProvider';
 import { isNodeInTrash } from './interactions/nodeLocation';
 import { OUTLINER_NODE_DRAG_MIME, PINNED_NODE_REORDER_MIME } from './interactions/dragDrop';
 import { MAX_OUTLINE_INDENT_DEPTH } from './workspaceResponsiveLayout';
+import { formatShortcutHint } from './interactions/shortcutRegistry';
 
 const primaryNavItems = [
   { key: 'today', icon: CalendarIcon },
@@ -43,6 +45,8 @@ interface SidebarProps {
   onNavigateToday: (options?: NavigateRootOptions) => void;
   onNavigateRoot: (nodeId: NodeId) => void;
   onOpenPanel: (nodeId: NodeId) => void;
+  /** Opens the command surface — the mouse-reachable entry point to search. */
+  onOpenSearch: () => void;
   onOpenSettings: () => void;
   onResizeKeyDown: (event: ReactKeyboardEvent<HTMLButtonElement>) => void;
   onResizeReset: () => void;
@@ -130,6 +134,7 @@ export function Sidebar(props: SidebarProps) {
     )) ?? [];
   const rootLabel = rootNode ? textOf(rootNode) || t.common.untitled : '';
   const rootActive = rootNode ? props.rootId === rootNode.id : false;
+  const searchShortcutHint = formatShortcutHint('global.command_palette');
 
   const renderWorkspaceTree = (nodeId: NodeId, depth = 0, parentPath: readonly NodeId[] = []) => {
     const node = props.index.byId.get(nodeId);
@@ -211,6 +216,21 @@ export function Sidebar(props: SidebarProps) {
       <div className="rail-top" aria-hidden="true" />
       <div className="sidebar-scroll">
         <nav className="sidebar-primary-nav">
+        {/* Search leads the group (the universal entry point), but it is an
+            ACTION, not a nav target — so it is its own row rather than a
+            pseudo-entry forced into the navTargets record below. The hint is
+            derived from the shortcut registry so a rebind carries through; it is
+            aria-hidden, leaving the row's accessible name just "Search". */}
+        <ButtonControl
+          className="sidebar-nav-item"
+          onClick={props.onOpenSearch}
+        >
+          <SearchIcon className="sidebar-nav-icon" size={ICON_SIZE.toolbar} strokeWidth={1.8} />
+          <span>{t.shell.sidebar.search}</span>
+          {searchShortcutHint ? (
+            <span aria-hidden="true" className="sidebar-nav-hint">{searchShortcutHint}</span>
+          ) : null}
+        </ButtonControl>
         {primaryNavItems.map((item) => {
           const target = navTargets[item.key];
           const active = target === props.rootId;

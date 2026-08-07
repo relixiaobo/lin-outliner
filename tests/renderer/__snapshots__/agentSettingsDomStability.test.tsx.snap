@@ -104,6 +104,19 @@ exports[`settings page DOM renders the general category byte-stably 1`] = `
           </div>
         </div>
         <div class="inset-group">
+          <div class="inset-group-header">Shortcuts</div>
+          <div role="list" class="inset-card" aria-label="Shortcuts">
+            <div role="listitem" class="inset-row">
+              <div class="inset-row-main is-static">
+                <span class="inset-row-text is-wrap">
+                  <span class="inset-row-label">Global launcher</span>
+                  <span class="inset-row-sublabel">Not available — the candidate shortcuts are in use by other apps. Quit the conflicting app and relaunch Tenon.</span>
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="inset-group">
           <div class="inset-group-header">Diagnostics</div>
           <div role="list" class="inset-card" aria-label="Diagnostics">
             <div role="listitem" class="inset-row">

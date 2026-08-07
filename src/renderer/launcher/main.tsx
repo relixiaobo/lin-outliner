@@ -12,6 +12,15 @@ import '../styles/theme-dark.css';
 // wins): it honors prefers-contrast / reduced-transparency / reduced-motion by
 // re-pointing tokens, so the launcher gets B8 compliance for free.
 import '../styles/a11y.css';
+// The shared primitives the launcher actually renders (Button, Input) carry their
+// styles in these sheets. Without them the classes resolve to nothing and the
+// browser's DEFAULT control chrome shows through — which is why the footer's
+// action hint rendered as a bordered UA button (a grey box in dark, an outlined
+// box in light) no matter what launcher.css said about it. ~4KB of pure CSS: the
+// "stay light" rule for this bundle is about the editor graph (ProseMirror /
+// Shiki / markdown), not about the design system its own controls need.
+import '../styles/button.css';
+import '../styles/input.css';
 import '../styles/launcher.css';
 
 // Dedicated launcher renderer entry. Kept deliberately separate from the main

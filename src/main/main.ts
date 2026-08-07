@@ -2390,6 +2390,10 @@ function registerIpc() {
   // flip all windows at once — no per-window broadcast needed. We mirror the stored
   // mode (not the resolved scheme) so the settings control reflects the user's pick.
   ipcMain.handle('lin:get-theme', (): ThemeMode => nativeTheme.themeSource);
+  // Read-only view of the accelerator the launcher hotkey registered under (null
+  // when every candidate was taken), so Settings → General can state it. No args,
+  // no mutation: registration stays main's.
+  ipcMain.handle('lin:launcher-hotkey', (): string | null => launcherHotkeyAccelerator);
   ipcMain.handle('lin:set-theme', (_event, mode: unknown): void => {
     if (!isThemeMode(mode)) return;
     nativeTheme.themeSource = mode;

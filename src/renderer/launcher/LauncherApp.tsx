@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { LauncherInitialState, LauncherNodeMatch } from '../../core/launcher/commands';
+import { formatHotkey, type LauncherInitialState, type LauncherNodeMatch } from '../../core/launcher/commands';
 import type { ExternalContext } from '../../core/launcher/context';
 import { buildLauncherItems, deriveActiveIndex, primaryActionLabel, remediationForContext, rowKey, rowView, stepActiveKey } from './launcherModel';
 import type { LauncherItem, LauncherItemAction } from './launcherModel';
@@ -7,8 +7,8 @@ import { iconForItem, LauncherInputIcon, LauncherRemediationIcon } from './launc
 import { useT } from '../i18n/I18nProvider';
 import { APP_NAME } from '../../core/brand';
 import { Button } from '../ui/primitives/Button';
-import { EmptyState } from '../ui/primitives/FeedbackState';
 import { Input } from '../ui/primitives/Input';
+import { isImeComposingEvent } from '../ui/interactions/imeKeyboard';
 
 // Raycast-style launcher: ONE always-focused input that is simultaneously a
 // command filter, a live node search, AND a live capture draft (no "pick New
@@ -24,6 +24,16 @@ import { Input } from '../ui/primitives/Input';
 
 /** Debounce (ms) before querying the document for inline node matches. */
 const NODE_SEARCH_DEBOUNCE_MS = 120;
+
+// NOTE: the show→context race (hotkey → immediate Enter can run *Open main
+// window* before the captured page arrives) is deliberately NOT mitigated here.
+// A renderer-side wait was tried and removed: holding Enter across an await
+// opens a window in which the user can dismiss, click another row, re-open, or
+// keep typing, and the resumed continuation knows none of it — it fired
+// cancelled actions, doubled actions, and captured half-typed text. The fix
+// belongs where the ambiguity is created: `unified-command-surface` PR 2 opens
+// its invocation synchronously with a pending ambient slot, so the top row is
+// never the wrong subject. See that plan's D6a.
 
 export function LauncherApp() {
   const t = useT();
@@ -44,7 +54,6 @@ export function LauncherApp() {
   const [context, setContext] = useState<ExternalContext | null>(null);
   // Inline node search results for the current query (fetched from main, debounced).
   const [nodes, setNodes] = useState<LauncherNodeMatch[]>([]);
-
   const reset = useCallback(() => {
     setQuery('');
     setActiveKey(null);
@@ -157,8 +166,11 @@ export function LauncherApp() {
         } else if (action.id === 'capture-note' && item.kind === 'capture-note' && item.text) {
           finish(await launcher.createCapture({ title: item.text }), launcher);
         }
-      } catch {
-        setError(t.launcher.error.saveFailedRestart);
+      } catch (caught) {
+        // One generic, shippable failure line for the user; the detail is a dev
+        // concern and belongs in the renderer console, not in the footer.
+        console.error('[launcher] capture failed', caught);
+        setError(t.launcher.error.saveFailed);
       } finally {
         setBusy(false);
       }
@@ -169,6 +181,11 @@ export function LauncherApp() {
 
   const onKeyDown = useCallback(
     (event: React.KeyboardEvent) => {
+      // While an IME composition is active, Enter/arrows/Escape belong to the
+      // IME — committing a pinyin candidate with Enter must not fire the active
+      // row (capturing half-typed text or opening the main window), arrows must
+      // not move the selection, and Escape must not hide the window.
+      if (isImeComposingEvent(event)) return;
       if (event.key === 'Escape') {
         event.preventDefault();
         void window.lin?.launcher?.hide();
@@ -188,7 +205,15 @@ export function LauncherApp() {
     [activeItem, activeIndex, navItems, runAction],
   );
 
-  const primaryLabel = busy ? t.launcher.saving : error ?? primaryActionLabel(activeItem);
+  // The primary hint states the ACTION only — never an error, never "Saving…".
+  // Busy and failure text live in the footer's status zone (left), so the error
+  // is not buried inside a clickable control with no status styling.
+  const primaryLabel = primaryActionLabel(activeItem);
+  const statusText = error ?? (busy ? t.launcher.saving : null);
+  // At rest the status zone carries the identity: the app mark plus the summon
+  // hotkey, which is how a user who arrived by mouse (sidebar Search) learns the
+  // keystroke. `state.hotkey` is null when no candidate accelerator was free.
+  const hotkey = formatHotkey(state?.hotkey ?? null);
   // A quiet "saved, but here's how to capture more" hint when the active tab could
   // not be read at all (Automation denied) — the Lazy-style remediation prompt.
   const remediation = useMemo(() => remediationForContext(context, t, APP_NAME), [context, t]);
@@ -236,11 +261,29 @@ export function LauncherApp() {
               onClick={() => void runAction(item, item.actions[0])}
             />
           ))}
-          {navItems.length === 0 ? <EmptyState className="launcher-empty" size="inline" title={t.launcher.emptyState} /> : null}
         </div>
       </div>
 
+      {/* Two zones (unified-command-surface D6a): identity/status left, the
+          primary hint right. */}
       <div className="launcher-actionbar">
+        {/* The live region wraps the STATUS ONLY. Putting the identity inside it
+            would announce the app name and hotkey to a screen reader every time a
+            status cleared — the branding is permanent content, not an update. */}
+        <span className="launcher-actionbar-status">
+          {statusText ? null : (
+            <>
+              <span className="launcher-actionbar-mark">{APP_NAME}</span>
+              {hotkey ? <span className="launcher-actionbar-hotkey">{hotkey}</span> : null}
+            </>
+          )}
+          <span
+            className={error ? 'launcher-actionbar-error' : 'launcher-actionbar-busy'}
+            role="status"
+          >
+            {statusText}
+          </span>
+        </span>
         {/* The primary hint doubles as a button (Raycast): click runs Enter.
             preventDefault on mousedown keeps the always-on input focused. */}
         <span className="launcher-actionbar-hints">
@@ -284,6 +327,9 @@ function LauncherRow(props: {
       aria-selected={active}
       className={['launcher-row', active ? 'is-active' : ''].filter(Boolean).join(' ')}
       onMouseEnter={onHover}
+      // Matches the footer button: a row click never blurs the always-focused
+      // input (visible on the capture-error path, where the launcher stays open).
+      onMouseDown={(event) => event.preventDefault()}
       onClick={onClick}
     >
       <LauncherRowIcon item={item} />

@@ -21,7 +21,7 @@ navigation commands.
 - **Prewarmed singleton.** Created hidden at startup and shown/hidden on the
   hotkey — never recreated, so the hotkey-to-visible path is a native `show()`.
   `backgroundThrottling: false` keeps the hidden renderer painting-ready.
-- **macOS NSPanel** (`type: 'panel'`, `alwaysOnTop` at `'pop-up-menu'`): a
+- **macOS NSPanel** (`type: 'panel'`, `alwaysOnTop` at `'floating'`): a
   non-activating floating overlay that can take key focus for typing without
   activating the app. It joins all Spaces (incl. other apps' full-screen) via
   `setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true,
@@ -30,7 +30,16 @@ navigation commands.
   **hides the macOS dock icon** (and the ⌘Tab entry) — electron#26350;
   `skipTransformProcessType: true` is Electron's purpose-built option to suppress
   that transform, so the **dock icon + ⌘Tab entry survive** while the launcher
-  floats over fullscreen. The behavior is toggled **only while visible** — set on
+  floats over fullscreen.
+  The level is `'floating'`, **not** `'pop-up-menu'`: macOS presents the
+  **input-method candidate window** at about the pop-up-menu level, so a launcher
+  pinned there sat at the same level and — `alwaysOnTop` continually re-asserting
+  the front — covered it. A CJK user saw the composition underline with no
+  candidate list to choose from (only a sliver of the highlighted first candidate
+  escaped past the panel's left edge), which made Chinese/Japanese/Korean input
+  unusable. `'floating'` still sits above ordinary app windows, and the
+  all-Spaces / over-fullscreen behavior comes from `setVisibleOnAllWorkspaces`,
+  not from this level. The behavior is toggled **only while visible** — set on
   `show`, cleared on `hide`. (The separate "first ⌘Q needs two presses" bug is NOT
   caused by the launcher — it is the app's `before-quit` flush handler in
   `main.ts`, which now `process.exit(0)`s after the flush instead of re-issuing a
@@ -45,6 +54,9 @@ navigation commands.
 - **Show sequence** (`showLauncherWindow`): `showInactive()` first (so the
   previously-frontmost app keeps focus while context is read), run the
   `beforeFocus` hook, then `show()` + `focus()` and send `LAUNCHER_SHOWN_CHANNEL`.
+  The captured context lands **after** that, over `LAUNCHER_CONTEXT_CHANNEL`, so
+  the window is already interactive before the top row becomes the capture row.
+  Enter in that gap runs whatever row is showing — see *Known gap* below.
 - **Dismiss.** The hotkey toggles; Esc, clicking away (window `blur`), running a
   command, capturing, or opening a node all hide it. Every hide routes through
   `dismissLauncher()` in `main.ts`, which also forgets the captured context and
@@ -73,6 +85,18 @@ Registers the first free accelerator of `LIN_LAUNCHER_HOTKEY` (env) →
 the renderer via `launcher:getInitialState().hotkey` (or `null` if none was free).
 Released on quit.
 
+The registered accelerator is **shown**, in two places, both formatted by
+`formatHotkey` (`src/core/launcher/commands.ts` — one formatter, two surfaces):
+
+- the launcher footer's identity zone, so a user who arrived by mouse (the
+  sidebar's Search row) learns the keystroke;
+- **Settings → General → Shortcuts**, a read-only "Global launcher" row fed by
+  `window.lin.getLauncherHotkey()` over `ipcMain.handle('lin:launcher-hotkey')`.
+  When registration failed (`null` — every candidate is taken by another app) the
+  row states that, quietly, in secondary text with the fix ("Quit the conflicting
+  app and relaunch Tenon"), and the footer simply shows no keystroke. Registration
+  itself stays main's; neither surface can rebind.
+
 ## The modeless model (`src/renderer/launcher/`)
 
 ONE always-focused input is simultaneously a **command filter**, a **live node
@@ -99,6 +123,38 @@ no disabled "coming soon" placeholders. Selection is tracked by row **identity**
 (not index), resets to the top row on typing, scrolls into view on arrow nav, and
 is single-shot (a re-entrancy lock prevents double-fire). The input is an ARIA
 combobox over the result `listbox` (`aria-activedescendant` follows selection).
+The list is never empty — a query always synthesizes a capture row and an empty
+query always lists the static commands — so there is no empty state.
+
+**Composition keys never drive the launcher.** While an IME composition is
+active (`isImeComposingEvent`, the shared guard in
+`src/renderer/ui/interactions/imeKeyboard.ts`), Enter, ArrowUp/Down and Escape
+belong to the IME: committing a pinyin candidate with Enter does not run the
+active row, arrows do not move the selection, and Escape does not hide the
+window. A second Escape after the composition ends still hides.
+
+**The input keeps focus through every click.** Both the result rows and the
+footer's primary hint `preventDefault` on `mousedown`, so clicking a row never
+blurs the always-focused input — visible on the capture-failure path, where the
+launcher stays open for a retry.
+
+### Known gap: Enter before the context lands
+
+Enter is **synchronous** — it runs the row that is showing. Between the window
+becoming interactive and the captured context arriving, the top row is still a
+command row, so a hotkey → immediate Enter can run *Open main window* instead of
+capturing the page the user summoned the launcher over.
+
+This is knowingly unmitigated **here**. A renderer-side wait was built and then
+removed: holding Enter across an await opens a window in which the user can
+dismiss the launcher, click a different row, re-open it, or keep typing, and the
+resumed continuation knows none of it — it fired actions the user had cancelled,
+turned one intent into two actions, and captured half-typed text. Guarding all of
+that in the renderer reproduces, badly, the generation/lifecycle bookkeeping that
+[`../plans/unified-command-surface.md`](../plans/unified-command-surface.md) PR 2
+introduces properly: its invocation opens synchronously with a pending ambient
+slot, so the top row is never the wrong subject and the gap does not exist. The
+race is that plan's to close (D6a); the launcher does not carry a stopgap for it.
 
 ## Capture (basic-info only)
 
@@ -174,6 +230,33 @@ Settings** — both runnable. AI, capture destinations (Inbox / picker), and
 navigation (Go to Today / Library, recents) are deferred to the split plans and
 will appear here when they work, never as disabled rows.
 
+**Action labels are verbs; the footer never restates a row title.** A command
+row's action label is the generic verb ("Open") — the row title already names the
+target, so restating it made the list say *Open main window* and the footer repeat
+it. Capture rows keep their descriptive labels ("Capture page to Today", "New node
+in Today"); there the label IS the information.
+
+## Footer
+
+A slim hint bar, divider-free, with two zones (the anatomy ratified in
+`unified-command-surface.md` D6a):
+
+The launcher entry loads `button.css` / `input.css` alongside its own sheet: it
+renders the shared `Button` and `Input` primitives, and without their styles the
+classes resolve to nothing and the browser's default control chrome shows
+through.
+
+- **Left — identity and status.** At rest, the app mark plus the formatted summon
+  hotkey as quiet meta text (not a key chip). During execution the same zone
+  carries the status: a failure (`--status-danger`), or "Saving…" while a capture
+  is in flight. The live region wraps the status text only — the identity is
+  permanent content and must not be announced when a status clears.
+- **Right — the primary hint.** The active row's action label plus the `↵` chip.
+  It is a real button (click = Enter, `mousedown` preventDefault) styled as a
+  hint, not a control: meta type, secondary ink, no control-height bulk. It states
+  the **action only** — never an error, never "Saving…" — and is disabled while a
+  save is in flight.
+
 ## IPC surface
 
 - Renderer → main (`ipcMain.handle`): `launcher:getInitialState`, `launcher:hide`,
@@ -181,6 +264,8 @@ will appear here when they work, never as disabled rows.
   `launcher:createContextCapture`, `launcher:searchNodes`, `launcher:openNode`.
 - Main → launcher renderer: `LAUNCHER_SHOWN_CHANNEL`, `LAUNCHER_CONTEXT_CHANNEL`.
 - Main → main renderer: `LAUNCHER_NAVIGATE_TO_NODE_CHANNEL`.
+- Settings renderer → main: `lin:launcher-hotkey` (read-only, no args) for the
+  Settings row above.
 
 The channel constants and serializable view types live in
 `src/core/launcher/commands.ts`; the capture data model in
