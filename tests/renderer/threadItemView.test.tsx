@@ -607,6 +607,7 @@ describe('ThreadItemView Subagent status presentation', () => {
       subagents: new Map([['thread-child', {
         agentThreadId: 'thread-child',
         displayName: 'research',
+        durationMs: null,
         error: null,
         form: 'collaboration' as const,
         nickname: null,
@@ -625,6 +626,36 @@ describe('ThreadItemView Subagent status presentation', () => {
     expect(row?.querySelector('[aria-label="Stop research"]')).not.toBeNull();
   });
 
+  test('states the settled span from the child Turn, not from a clock it no longer has', async () => {
+    const item: ThreadItem = {
+      ...base('subagent-settled'),
+      type: 'subAgentActivity',
+      kind: 'completed',
+      agentThreadId: 'thread-child',
+      agentPath: '/root/research',
+      error: null,
+      spawnItemId: null,
+    };
+    const rendered = renderItem(item, {
+      subagents: new Map([['thread-child', {
+        agentThreadId: 'thread-child',
+        displayName: 'research',
+        durationMs: 192_000,
+        error: null,
+        form: 'collaboration' as const,
+        nickname: null,
+        role: null,
+        startedAt: null,
+        status: 'completed' as const,
+        taskPath: '/root/research',
+      }]]),
+    });
+    await flush();
+
+    expect(rendered.document.querySelector('.thread-delegation-row-status')?.textContent)
+      .toBe('Completed · 3m 12s');
+  });
+
   test('drops Stop once the child settles, keeping the row in place', async () => {
     const item: ThreadItem = {
       ...base('subagent-done'),
@@ -640,6 +671,7 @@ describe('ThreadItemView Subagent status presentation', () => {
       subagents: new Map([['thread-child', {
         agentThreadId: 'thread-child',
         displayName: 'research',
+        durationMs: null,
         error: null,
         form: 'collaboration' as const,
         nickname: null,

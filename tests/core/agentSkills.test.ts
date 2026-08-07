@@ -1187,7 +1187,7 @@ describe('agent skills', () => {
   });
 
   test('reports an interrupted isolated child as partial evidence, not as a failed call', async () => {
-    // The user can Stop an isolated Skill child from the delegation card. Its
+    // The user can Stop an isolated Skill child from its delegation row. Its
     // Turn settles as `interrupted`, which is terminal — so the parent's call
     // does not fail; it returns what the child produced, framed as partial.
     const root = await createSkillFixture('stoppable', {

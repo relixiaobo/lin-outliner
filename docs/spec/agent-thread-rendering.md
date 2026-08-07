@@ -255,6 +255,10 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
   user selects a button from all disambiguate together.
 - A row reads name first, then its status as a trailing segment — the status
   vocabulary plus elapsed time when known; idle remains distinct from completed.
+  A running child measures from its start; a settled one has no clock left, so
+  the duration is the one its own Turn recorded, and a row left with only a
+  terminal Item after a reload states the status alone rather than inventing a
+  span.
   The name ellipsizes and the status never does, so a row can never truncate
   away the outcome it is reporting. A failed row exposes a
   bounded user-facing error on its own wrapping line and tints its glyph and label with
@@ -303,7 +307,12 @@ panel" stands unchanged; "the card replaces the rows" does not.
 
 A completed Turn with a final answer and known duration folds its process Items
 under the established `Worked for ...` disclosure while leaving the answer
-outside the fold. Live and resultless process timelines remain visible; a live
+outside the fold — unless a child it delegated is still running. The fold
+defaults to closed, and a live delegation's status, elapsed time, and per-child
+Stop live inside it, so a Turn that settled while its child kept working (the
+fire-and-forget shape whose terminal activity lands in a later Turn) stays
+unfolded until that child settles. Work still happening and still stoppable is
+not history yet. Live and resultless process timelines remain visible; a live
 timeline uses the established `Working` / `Working for ...` status row even
 before its first process Item arrives. When `collaboration.wait_agent` is the
 only in-progress tool and at least one projected child remains active, that row

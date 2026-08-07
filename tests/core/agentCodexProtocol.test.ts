@@ -489,6 +489,18 @@ describe('Codex Agent Core protocol codec', () => {
     expect(() => decodeThreadItem(activity)).toThrow('item.error');
   });
 
+  test('reads a Subagent activity persisted before it carried a spawn reference', () => {
+    // Additive and nullable: a delegation already on disk must still decode, or
+    // the Thread's transcript fails to load until its userData is wiped by hand
+    // — and the packaged app's daily-use data has no wipe step.
+    const legacy = JSON.parse(encodeThreadItem(
+      allItems.find((item) => item.type === 'subAgentActivity')!,
+    )) as Record<string, unknown>;
+    delete legacy.spawnItemId;
+
+    expect(decodeThreadItem(legacy)).toMatchObject({ type: 'subAgentActivity', spawnItemId: null });
+  });
+
   test('reads a command Item persisted before it carried a description', () => {
     // The field is additive: Threads already on disk decode with a null
     // description rather than failing, so no dev-data wipe is needed.

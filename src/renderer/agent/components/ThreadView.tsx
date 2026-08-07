@@ -2244,10 +2244,16 @@ function ThreadProcessBlock({
   const expanded = expandState.isExpanded(disclosureId, false);
   const blockedOnUser = turn.status === 'inProgress' && waitingOnUserInput;
   const liveElapsedMs = useTurnElapsedMs(turn);
+  // A Turn can settle while a child it spawned keeps running — the
+  // fire-and-forget shape the protocol supports, where terminal activity lands
+  // in a LATER Turn. The fold defaults to closed, so folding here would hide a
+  // live delegation's status, its elapsed time, and the only Stop that reaches
+  // it. Work that is still happening and still stoppable is not history yet.
   const collapsible = turn.status === 'completed'
     && hasFinalResponse
     && turn.durationMs !== null
-    && items.length > 0;
+    && items.length > 0
+    && subagents.activeThreadIds.length === 0;
   const terminalResponseOwnsStatus = hasFinalResponse
     && (turn.status === 'failed' || turn.status === 'interrupted');
   const summary = threadProcessSummary(

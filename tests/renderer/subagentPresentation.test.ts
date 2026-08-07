@@ -256,6 +256,35 @@ describe('Subagent parent-Turn presentation projection', () => {
     expect(projection.byThreadId.get(CHILD_ID)?.status).toBe('completed');
   });
 
+  test('carries the settled child Turn duration, since a finished row has no clock', () => {
+    const started = activity('activity-started', 'started', null);
+    const done = childTurn('child-done', 'completed', 100, 'spawn-item', 192_100);
+    const projection = projectSubagentsForTurn(
+      parentTurn([started]),
+      new Map([[CHILD_ID, childThread({ type: 'idle' })]]),
+      new Map([[CHILD_ID, done]]),
+    );
+
+    expect(projection.byThreadId.get(CHILD_ID)).toMatchObject({
+      status: 'completed',
+      durationMs: done.durationMs,
+    });
+  });
+
+  test('reports no duration where only the terminal Item survived the reload', () => {
+    const projection = projectSubagentsForTurn(
+      parentTurn([activity('activity-done', 'completed', null)]),
+      new Map(),
+      new Map(),
+    );
+
+    // Better a row that says `Completed` than one inventing a span it never saw.
+    expect(projection.byThreadId.get(CHILD_ID)).toMatchObject({
+      status: 'completed',
+      durationMs: null,
+    });
+  });
+
   test('leaves a Skill child out of the wait-time direct-child expansion', () => {
     const wait = collaborationItem('wait-item', 'wait_agent', 'inProgress');
     const projection = projectSubagentsForTurn(

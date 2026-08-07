@@ -298,7 +298,10 @@ carries `spawnItemId`, the id of the tool call that delegated — the `skill` ca
 or the collaboration spawn call — so the renderer can present one delegation as
 one row at its cause's position. Terminal activity records `null` there: it can
 be flushed into a later parent Turn, where the delegating call is not among the
-Items and naming one would claim an unrelated row. Child terminal
+Items and naming one would claim an unrelated row. The field is additive and
+nullable on decode: an activity persisted before it existed reads as `null`
+rather than failing, because the no-migration policy covers dev userData and not
+the packaged app's daily-use data, which no release step wipes. Child terminal
 status queues a parent-scoped `completed`, `interrupted`, or `errored` activity
 Item bound to the exact child Turn; the Item copies that Turn's complete typed
 `TurnError`, while a started or successful activity carries `error: null`.

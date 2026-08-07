@@ -2,9 +2,9 @@ import { useEffect, useState } from 'react';
 import type { SubagentPresentation } from '../subagentPresentation';
 
 /**
- * Live elapsed for one delegated child, shared by the transcript row and the
- * delegation card so both read the same clock rather than inventing a second.
- * Only a running child with a plausible epoch start ticks.
+ * Live elapsed for one delegated child. Only a running child with a plausible
+ * epoch start ticks; a settled one has no clock left to read, and its row falls
+ * back to the duration its own Turn recorded.
  */
 export function useSubagentElapsedMs(presentation: SubagentPresentation): number | null {
   const [now, setNow] = useState(() => Date.now());

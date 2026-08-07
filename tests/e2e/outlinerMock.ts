@@ -2445,7 +2445,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           } else {
             // A child Thread whose Turns reached the renderer as notifications
             // rather than through this mock's history: the host still settles
-            // the addressed Turn, which is what the delegation card reads.
+            // the addressed Turn, which is what the delegation row reads.
             const completedAt = ++now;
             emitAgentCoreNotification({
               type: 'turn/completed',

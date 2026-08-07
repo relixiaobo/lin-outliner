@@ -2153,7 +2153,7 @@ test.describe('canonical agent Thread surface', () => {
     });
 
     const parentTurn = page.locator(`[data-thread-turn-row="${fixture.parentTurnId}"]`);
-    // The card owns the per-child presentation while the child is alive.
+    // One row per delegated child, live, in the delegating call's slot.
     const skillLine = parentTurn.locator('.thread-delegation-row');
     await expect(skillLine).toHaveCount(1);
     // The child record carries no name here, so this also covers the fallback:
@@ -2309,6 +2309,157 @@ test.describe('canonical agent Thread surface', () => {
     await expect(rows).toHaveCount(2);
     await expect(parentTurn.locator('.thread-delegation-row.thread-subagent-completed')).toHaveCount(1);
     await expect(parentTurn.getByRole('button', { name: /^Stop / })).toHaveCount(0);
+  });
+
+  test('never folds a settled Turn over a child that is still running', async ({ page }) => {
+    await createNewThread(page);
+    const fixture = await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(m: string, i?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitAgentCoreNotification: (n: unknown) => void };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<Record<string, unknown>> }>('thread/list', {});
+      const root = response?.data[0];
+      if (!root) throw new Error('Mock root Thread not found');
+      const parentThreadId = String(root.id);
+      const parentTurnId = '01910000-0000-7000-8000-00000000fc01';
+      const activityId = '01910000-0000-7000-8000-00000000fc03';
+      const answerId = '01910000-0000-7000-8000-00000000fc04';
+      const childId = '01910000-0000-7000-8000-00000000fc10';
+      const childTurnId = '01910000-0000-7000-8000-00000000fc11';
+      const startedAt = Date.now() - 6_000;
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'thread/started',
+        threadId: childId,
+        thread: {
+          ...root,
+          id: childId,
+          parentThreadId,
+          agentNickname: null,
+          agentRole: 'worker',
+          name: 'research',
+          source: 'collaboration',
+          threadSource: 'subagent',
+          status: { type: 'active', activeFlags: [] },
+          updatedAt: startedAt,
+        },
+      });
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/started',
+        threadId: childId,
+        turnId: childTurnId,
+        turn: {
+          id: childTurnId,
+          items: [],
+          itemsView: 'full',
+          provenance: {
+            originThreadId: childId,
+            originTurnId: childTurnId,
+            trigger: { kind: 'subagent', parentThreadId, parentItemId: activityId },
+          },
+          status: 'inProgress',
+          error: null,
+          startedAt,
+          completedAt: null,
+          durationMs: null,
+        },
+      });
+      const provenance = (itemId: string) => ({
+        originThreadId: parentThreadId,
+        originTurnId: parentTurnId,
+        originItemId: itemId,
+      });
+      const parentItems = [
+            {
+              id: activityId,
+              type: 'subAgentActivity',
+              provenance: provenance(activityId),
+              kind: 'started',
+              agentThreadId: childId,
+              agentPath: '/root/research',
+              error: null,
+              // This test's subject is the fold, not the stand-in: the call that
+              // delegated is out of scope here and covered elsewhere.
+              spawnItemId: null,
+            },
+            {
+              id: answerId,
+              type: 'agentMessage',
+              provenance: provenance(answerId),
+              phase: 'final',
+              text: 'Delegated and answered.',
+            },
+      ];
+      const parentTurn = (status: string, settled: boolean) => ({
+        id: parentTurnId,
+        items: parentItems,
+        itemsView: 'full',
+        provenance: { originThreadId: parentThreadId, originTurnId: parentTurnId, trigger: { kind: 'user' } },
+        status,
+        error: null,
+        startedAt,
+        completedAt: settled ? Date.now() : null,
+        durationMs: settled ? 6_000 : null,
+      });
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/started',
+        threadId: parentThreadId,
+        turnId: parentTurnId,
+        turn: parentTurn('inProgress', false),
+      });
+      // The parent answers and settles while its child keeps working — the
+      // fire-and-forget shape whose terminal activity lands in a LATER Turn.
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/completed',
+        threadId: parentThreadId,
+        turnId: parentTurnId,
+        turn: parentTurn('completed', true),
+      });
+      return { activityId, childId, childTurnId, parentThreadId, parentTurnId };
+    });
+
+    // The fold defaults to closed, so folding here would hide the only signal
+    // that a subagent is still burning time and the only Stop that reaches it.
+    const parentTurn = page.locator(`[data-thread-turn-row="${fixture.parentTurnId}"]`);
+    const row = parentTurn.locator('.thread-delegation-row');
+    await expect(row).toBeVisible();
+    await expect(row.locator('.thread-delegation-row-status')).toContainText(/Running/u);
+    await expect(parentTurn.getByRole('button', { name: 'Stop research' })).toBeVisible();
+    await expect(parentTurn.locator('.thread-process-toggle')).toHaveCount(0);
+
+    // Once it settles the Turn is ordinary history again, and folds.
+    await page.evaluate((child) => {
+      const target = window as Window & {
+        __LIN_E2E__?: { emitAgentCoreNotification: (n: unknown) => void };
+      };
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/completed',
+        threadId: child.childId,
+        turnId: child.childTurnId,
+        turn: {
+          id: child.childTurnId,
+          items: [],
+          itemsView: 'full',
+          provenance: {
+            originThreadId: child.childId,
+            originTurnId: child.childTurnId,
+            trigger: { kind: 'subagent', parentThreadId: child.parentThreadId, parentItemId: child.activityId },
+          },
+          status: 'completed',
+          error: null,
+          startedAt: Date.now() - 192_000,
+          completedAt: Date.now(),
+          durationMs: 192_000,
+        },
+      });
+    }, fixture);
+
+    // Ordinary history now: the Turn folds, and the row is behind the fold with
+    // the settled span its own Turn recorded rather than a clock it no longer has.
+    await expect(parentTurn.locator('.thread-process-toggle')).toHaveCount(1);
+    await expect(row).toHaveCount(0);
+    await parentTurn.locator('.thread-process-toggle').click();
+    await expect(row.locator('.thread-delegation-row-status')).toHaveText('Completed · 3m 12s');
   });
 
   test('sends the composer Stop against the delegating Turn that owns the request', async ({ page }) => {

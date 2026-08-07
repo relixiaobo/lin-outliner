@@ -734,7 +734,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
   ): Promise<TurnSteerResponse> { return this.turnLifecycle.steerTurn(request, deliveryFailureMode); }
   /**
    * The user pressed Stop. One entry point for both affordances — the composer
-   * and a per-child Stop on the delegation card — because they differ only in
+   * and a per-child Stop on a delegation row — because they differ only in
    * which (Thread, Turn) is addressed.
    *
    * Stop closes the REQUEST: it settles the addressed Turn and every member of

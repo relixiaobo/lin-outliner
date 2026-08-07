@@ -1885,7 +1885,6 @@
   color: var(--text-soft);
 }
 
-.thread-inline-activity,
 .thread-compaction,
 .thread-image-view {
   display: flex;
@@ -1912,7 +1911,6 @@
   box-shadow: var(--focus-ring-shadow);
 }
 
-.thread-inline-activity code,
 .thread-image-view code {
   min-width: 0;
   overflow: hidden;

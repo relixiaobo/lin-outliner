@@ -1184,8 +1184,11 @@ function subagentStatusLabel(
   t: Messages,
 ): string {
   const status = t.agent.thread.subagentStatuses[presentation.status];
-  return elapsedMs !== null && elapsedMs >= 1_000
-    ? `${status} · ${formatSubagentDuration(elapsedMs)}`
+  // Running children measure from their start; a settled one has no clock left,
+  // so its own Turn's recorded span is the only duration there is.
+  const durationMs = elapsedMs ?? presentation.durationMs;
+  return durationMs !== null && durationMs >= 1_000
+    ? `${status} · ${formatSubagentDuration(durationMs)}`
     : status;
 }
 

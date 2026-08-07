@@ -369,11 +369,14 @@ export function decodeThreadItem(value: unknown): ThreadItem {
         agentThreadId: uuidV7(record.agentThreadId, 'item.agentThreadId'),
         agentPath: stringValue(record.agentPath, 'item.agentPath'),
         error: decodeTurnError(record.error, 'item.error'),
-        // An Item id, decoded the way every other Item-id reference is
+        // Additive and nullable, so an Item written before it existed decodes
+        // as null rather than failing: requiring the key would make every
+        // delegation already on disk unreadable, and the pre-release
+        // no-migration policy covers dev userData — not the packaged app's
+        // daily-use data, which no release step wipes. An Item id otherwise,
+        // decoded the way every other Item-id reference is
         // (`provenance.originItemId`, `turn.trigger.parentItemId`): as a string.
-        spawnItemId: record.spawnItemId === null
-          ? null
-          : stringValue(record.spawnItemId, 'item.spawnItemId'),
+        spawnItemId: nullableString(record.spawnItemId ?? null, 'item.spawnItemId'),
       };
       break;
     case 'webSearch':

@@ -105,7 +105,9 @@ fallbacks, core + renderer tests. Spec: the naming sentence in
 **Protocol widening (coordinated, pre-release no-migration):**
 `subAgentActivity` gains `spawnItemId: string | null` — the Item id of the
 tool call that delegated (the `skill` call or the collaboration spawn call).
-Only the spawn-time `started` Item carries it; terminal Items record `null`.
+Only the spawn-time `started` Item carries it; terminal Items record `null`, and
+decode treats an absent key as `null` — the no-migration policy covers dev
+userData, not the packaged app's daily-use data, which no release step wipes.
 That is not a shortcut: the projection already keeps the FIRST activity per
 child as the rendered row, so the started Item's slot is the one that decides
 placement, and a terminal activity flushed into a *later* parent Turn must not
@@ -116,8 +118,9 @@ the terminal enqueue would mean a new column for a value nothing reads.
 A collaboration spawn row could instead be matched through its existing
 `receiverThreadIds`, but an isolated Skill's `skill` tool call carries no child
 reference at all; one field that both forms record beats one field plus a
-form-specific path. Exact-key codec update in `src/core/agent/codec.ts`; wipe
-`~/.lin-outliner-*` dev userData; no legacy reader.
+form-specific path. Exact-key codec update in `src/core/agent/codec.ts`; no dev-userData wipe is
+needed, since an additive nullable field is the one shape this store already
+tolerates on read (`commandExecution.description`).
 
 **Projection merges cause and child.** `projectSubagentsForTurn` suppresses a
 tool-call row claimed by a child's `spawnItemId` and renders the delegation row
