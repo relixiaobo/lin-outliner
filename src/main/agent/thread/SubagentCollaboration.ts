@@ -18,6 +18,7 @@ import { reduceSkillContext } from '../context/SkillContextReducer';
 import {
   cappedChildPoolId,
   MAX_SUBAGENT_DEPTH,
+  MIN_SUBAGENT_TOKEN_CAP,
   MAX_SUBAGENT_SPAWNS_PER_THREAD,
   requestPoolIdForTurn,
   type SubagentRequestLedger,
@@ -166,7 +167,16 @@ export class SubagentCollaboration {
             ? {}
             : { reasoningEffort: optionalReasoningEffort(input.reasoning_effort) }),
           ...(optionalString(input.fork_turns) === undefined ? {} : { forkTurns: optionalString(input.fork_turns) }),
-          ...(input.max_total_tokens === undefined ? {} : { maxTotalTokens: input.max_total_tokens as number }),
+          // Raised to the floor when the MODEL names a cap. A cap is a circuit
+          // breaker sized at definitely-anomalous, and a model guessing at one
+          // guesses low — caps in the thousands starved children mid-answer and
+          // handed the parent a refusal instead of the work it delegated.
+          // Anything under the floor describes no real budget, so it becomes
+          // one. A programmatic caller is asking for a specific number and is
+          // left alone.
+          ...(input.max_total_tokens === undefined
+            ? {}
+            : { maxTotalTokens: Math.max(input.max_total_tokens as number, MIN_SUBAGENT_TOKEN_CAP) }),
         });
         return {
           task_name: result.taskPath,

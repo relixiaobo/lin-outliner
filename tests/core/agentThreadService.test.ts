@@ -36,7 +36,12 @@ import { defaultEffectiveThreadConfiguration } from '../../src/main/agent/AgentC
 import { SubagentDepthLimitError, SubagentSpawnLimitError } from '../../src/main/agent/SubagentStructuralLimitError';
 import { GoalStore } from '../../src/main/agent/extensions/goal/GoalStore';
 import { RolloutStore } from '../../src/main/agent/persistence/RolloutStore';
-import { cappedChildPoolId, SubagentRequestLedger, requestPoolIdForTurn } from '../../src/main/agent/persistence/SubagentRequestLedger';
+import {
+  cappedChildPoolId,
+  MIN_SUBAGENT_TOKEN_CAP,
+  SubagentRequestLedger,
+  requestPoolIdForTurn,
+} from '../../src/main/agent/persistence/SubagentRequestLedger';
 import { ThreadHistoryProjectionStore } from '../../src/main/agent/persistence/ThreadHistoryProjectionStore';
 import { ThreadMetadataStore } from '../../src/main/agent/persistence/ThreadMetadataStore';
 import { ToolPayloadStore } from '../../src/main/agent/persistence/ToolPayloadStore';
@@ -5933,14 +5938,21 @@ describe('ThreadService', () => {
     await fixture.executor.waitUntilWaiting(1);
     expect(spawned.details).toMatchObject({ task_name: '/root/helper' });
     const childId = (spawned.details as { thread_id: string }).thread_id;
+    // The model named a cap far below the floor, so the floor is what it gets:
+    // a breaker sized at definitely-anomalous, not the model's guess.
     expect(fixture.stores.subagentBudgets.readMember(childId)).toMatchObject({
-      tokenCap: 7,
+      tokenCap: MIN_SUBAGENT_TOKEN_CAP,
       tokensUsed: 0,
     });
     expect((await fixture.service.request('goal/get', { threadId: childId })).goal).toBeNull();
     const listed = await executeTool(tools, 'collaboration__list_agents', 'list-item', {});
     expect(listed.details).toMatchObject({
-      result: [{ taskPath: '/root/helper', status: 'running', tokensUsed: 0, tokenBudget: 7 }],
+      result: [{
+        taskPath: '/root/helper',
+        status: 'running',
+        tokensUsed: 0,
+        tokenBudget: MIN_SUBAGENT_TOKEN_CAP,
+      }],
       capabilityAudit: { behavior: 'allow' },
     });
     await executeTool(tools, 'update_goal', 'goal-update', { status: 'complete' });
@@ -5951,7 +5963,12 @@ describe('ThreadService', () => {
     expect(waited.details).toMatchObject({
       reason: 'terminal',
       updates: [{ threadId: childId, status: 'completed', result: 'Done' }],
-      agents: [{ threadId: childId, status: 'completed', tokensUsed: 7, tokenBudget: 7 }],
+      agents: [{
+        threadId: childId,
+        status: 'completed',
+        tokensUsed: 7,
+        tokenBudget: MIN_SUBAGENT_TOKEN_CAP,
+      }],
       capabilityAudit: { behavior: 'allow' },
     });
     fixture.executor.finish(0);

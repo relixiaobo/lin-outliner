@@ -357,7 +357,21 @@ while its optional original remains available to file-oriented consumers. The ad
 provider text identifies the artifact and reports source size, observation size, both
 scale factors, and the observation-to-source affine matrix. This gives the model enough
 information to relate the bounded observation to the admitted source-image pixel plane.
-The runtime does not inspect, validate, convert, or rewrite later tool arguments.
+The runtime does not inspect, validate, convert, or rewrite later tool arguments,
+with one exception at the delegation boundary: a model-named `max_total_tokens`
+is raised to a fixed floor. A per-child cap is a circuit breaker sized at
+definitely-anomalous, not an allocation, and a model guessing at one guesses low
+— caps in the thousands starved children mid-answer and handed the parent a
+refusal instead of the work it delegated. A programmatic caller naming a cap is
+asking for a specific number and is left alone.
+
+A tool result that reports its OWN failure is delivered to the model as an
+ordinary result, not raised as a host error: the envelope carries guidance
+written for the model to act on. The host therefore requires no success-only
+evidence from one — a refused Skill invocation records no invocation, because
+none ran. Demanding it turned every refusal (an unknown Skill name, a disabled
+one, an exhausted child budget) into a dead Turn, and the guidance never reached
+the model that needed it.
 
 An OPTIONAL string tool argument the model leaves blank means "not specified", and
 is recorded as `null` rather than as an empty string: a Subagent spawn's `model`,

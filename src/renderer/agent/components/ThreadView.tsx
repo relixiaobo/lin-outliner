@@ -149,6 +149,14 @@ interface ThreadViewProps {
   readonly onOpenNodeReference: ThreadNodeReferenceOpenHandler;
   readonly onOpenThread: (threadId: string) => Promise<void>;
   readonly onOpenTurnDetails: (turn: Turn) => void;
+  /** Turn Details for a delegated child, read inside its own run detail. */
+  readonly onOpenSubagentTurnDetails?: (threadId: string, turnId: string) => void;
+  /**
+   * Present only INSIDE a Subagent run detail. A delegation row there swaps
+   * that container's contents instead of opening a second one inside it —
+   * nesting would put a scroll region inside a scroll region.
+   */
+  readonly onSubagentDrill?: (threadId: string) => void;
   readonly onReadToolOutput: (turnId: string, item: ThreadToolItem) => Promise<string | null>;
   readonly onReadToolArguments: (turnId: string, item: ThreadToolItem) => Promise<JsonValue | null>;
   readonly onSend: (content: readonly ThreadUserContent[]) => Promise<Turn | null>;
@@ -423,6 +431,8 @@ export function ThreadView({
   onConfigurationChange,
   onOpenNodeReference,
   onOpenThread,
+  onOpenSubagentTurnDetails,
+  onSubagentDrill,
   onOpenTurnDetails,
   onReadToolArguments,
   onReadToolOutput,
@@ -1629,6 +1639,8 @@ export function ThreadView({
                         index={index}
                         onEditUserMessage={onEditUserMessage}
                         onContinueInNewChat={onContinueInNewChat}
+                        onOpenSubagentTurnDetails={onOpenSubagentTurnDetails}
+                        onSubagentDrill={onSubagentDrill}
                         onOpenNodeReference={onOpenNodeReference}
                         onOpenThread={onOpenThread}
                         onOpenTurnDetails={onOpenTurnDetails}
@@ -1864,6 +1876,8 @@ const ThreadTurnView = memo(function ThreadTurnView({
   onInterruptThread,
   onOpenNodeReference,
   onOpenThread,
+  onOpenSubagentTurnDetails,
+  onSubagentDrill,
   onOpenTurnDetails,
   onReadToolArguments,
   onReadToolOutput,
@@ -1888,6 +1902,13 @@ const ThreadTurnView = memo(function ThreadTurnView({
   readonly onInterruptThread: (threadId: string) => Promise<void>;
   readonly onOpenNodeReference: ThreadNodeReferenceOpenHandler;
   readonly onOpenThread: (threadId: string) => Promise<void>;
+  readonly onOpenSubagentTurnDetails?: (threadId: string, turnId: string) => void;
+  /**
+   * Present only INSIDE a Subagent run detail. A delegation row there swaps
+   * that container's contents instead of opening a second one inside it —
+   * nesting would put a scroll region inside a scroll region.
+   */
+  readonly onSubagentDrill?: (threadId: string) => void;
   readonly onOpenTurnDetails: (turn: Turn) => void;
   readonly onReadToolArguments: (turnId: string, item: ThreadToolItem) => Promise<JsonValue | null>;
   readonly onReadToolOutput: (turnId: string, item: ThreadToolItem) => Promise<string | null>;
@@ -2012,6 +2033,8 @@ const ThreadTurnView = memo(function ThreadTurnView({
       onEditUserMessage={editUserMessage}
       onInterruptThread={onInterruptThread}
       onOpenNodeReference={onOpenNodeReference}
+      onOpenSubagentTurnDetails={onOpenSubagentTurnDetails}
+      onSubagentDrill={onSubagentDrill}
       onOpenTurnDetails={standaloneContextBoundary ? () => onOpenTurnDetails(turn) : undefined}
       onOpenThread={onOpenThread}
       onReadToolArguments={readToolArguments}

@@ -3033,81 +3033,94 @@
 }
 
 /* ════════════════════════════════════════════════════════════════════════════
-   SUBAGENT DRAWER (SubagentDrawer.tsx). A delegated child is read IN the
-   conversation that delegated it: the drawer rises from the dock's bottom edge
-   and leaves a dimmed band of the parent transcript above it, so the reader can
-   see they never left. Scoped to the dock rather than the window — this is not
-   a modal about the app, it is a detail view of one Turn's work.
+   SUBAGENT RUN DETAIL (SubagentRunDetail.tsx). A delegated child expands in
+   place, like every other process row, into a BOUNDED box with its own scroll.
+   Delegated work is unbounded — a child runs for minutes, a grandchild longer —
+   and letting it push the timeline open would move the reader's place every
+   time they looked at something. Fixed height keeps the outer transcript still.
    ════════════════════════════════════════════════════════════════════════════ */
 
-.subagent-drawer-scrim {
-  position: absolute;
-  z-index: var(--z-modal);
-  inset: 0;
+.thread-subagent-detail {
   display: flex;
+  min-width: 0;
+  /* Tall enough to read a Turn, short enough to leave the conversation around
+     it. Viewport-relative so a short window is not swallowed whole. */
+  height: min(55vh, 420px);
+  flex: 1 0 100%;
   flex-direction: column;
-  justify-content: flex-end;
-  background: var(--overlay-backdrop);
-}
-
-/* Opaque content base, not a chrome material (B5): what is inside is a
-   transcript, and a translucent one would read the parent's text through it. */
-.subagent-drawer {
-  display: flex;
-  min-height: 0;
-  max-height: 86%;
-  flex-direction: column;
-  border-top-left-radius: var(--radius-lg);
-  border-top-right-radius: var(--radius-lg);
+  margin-top: var(--space-2);
+  border: 1px solid var(--separator);
+  border-radius: var(--radius-sm);
   background: var(--bg-elevated);
-  box-shadow: var(--shadow-rail);
-  animation: subagent-drawer-rise var(--motion-slow);
+  /* Its own scroll lives inside; nothing escapes to chain with the transcript. */
+  overflow: hidden;
+  overscroll-behavior: contain;
 }
 
-@keyframes subagent-drawer-rise {
-  from { transform: translateY(12%); }
-  to { transform: translateY(0); }
-}
-
-.subagent-drawer-header {
+.thread-subagent-detail-header {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
   gap: var(--space-2);
   border-bottom: 1px solid var(--separator);
-  padding: var(--space-3) var(--space-4);
+  padding: var(--space-2) var(--space-3);
 }
 
-.subagent-drawer-glyph {
+.thread-subagent-detail-glyph {
   flex: 0 0 auto;
   color: var(--text-soft);
 }
 
-.subagent-drawer-title {
+/* Depth is said out loud here — a grandchild replaces the contents and this
+   names the way back — rather than drawn as indentation the reader measures. */
+.thread-subagent-detail-title {
   min-width: 0;
   flex: 1 1 auto;
   overflow: hidden;
   color: var(--text-strong);
-  font-size: var(--font-ui-sm);
-  line-height: var(--line-ui-sm-tight);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* Where the composer would be. Not an input: the sentence explains the absence
+.thread-subagent-detail-body {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+}
+
+.thread-subagent-detail-empty {
+  margin: 0;
+  padding: var(--space-5);
+  color: var(--text-tertiary);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+}
+
+/* Where a composer would be. Not an input: the sentence explains the absence
    rather than leaving a reader to wonder why they cannot type. */
-.subagent-drawer-note {
+.thread-subagent-detail-note {
   flex: 0 0 auto;
   margin: 0;
   border-top: 1px solid var(--separator);
-  padding: var(--space-3) var(--space-4);
+  padding: var(--space-2) var(--space-3);
   color: var(--text-tertiary);
   font-size: var(--font-ui-2xs);
   line-height: var(--line-ui-2xs);
 }
 
-/* The task the PARENT wrote. Left-aligned and neutral, because the right-hand
-   bubble means "you said this" and the reader never said it. */
+/* B7: the chevron turns, the row does not move. */
+.thread-delegation-row-chevron {
+  flex: 0 0 auto;
+  transition: transform var(--motion-fast);
+}
+
+.thread-delegation-row-chevron.is-expanded {
+  transform: rotate(90deg);
+}
+
 .thread-delegated-task {
   display: flex;
   max-width: 100%;

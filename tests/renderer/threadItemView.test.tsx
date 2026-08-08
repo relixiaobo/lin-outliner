@@ -656,6 +656,45 @@ describe('ThreadItemView Subagent status presentation', () => {
       .toBe('Completed · 3m 12s');
   });
 
+  test('opens the run detail in place, without covering or moving the transcript', async () => {
+    const item: ThreadItem = {
+      ...base('subagent-expand'),
+      type: 'subAgentActivity',
+      kind: 'completed',
+      agentThreadId: 'thread-child',
+      agentPath: '/root/research',
+      error: null,
+      spawnItemId: null,
+    };
+    const rendered = renderItem(item, {
+      subagents: new Map([['thread-child', {
+        agentThreadId: 'thread-child',
+        displayName: 'research',
+        durationMs: null,
+        error: null,
+        form: 'collaboration' as const,
+        nickname: null,
+        role: null,
+        startedAt: null,
+        status: 'completed' as const,
+        taskPath: '/root/research',
+      }]]),
+    });
+    await flush();
+
+    // Collapsed by default and announced as a disclosure, the way every other
+    // process row in this timeline opens.
+    const toggle = rendered.document.querySelector<HTMLElement>('.thread-delegation-row-open');
+    expect(toggle?.getAttribute('aria-expanded')).toBe('false');
+    expect(rendered.document.querySelector('.thread-subagent-detail')).toBeNull();
+
+    act(() => toggle?.click());
+    await flush();
+
+    expect(toggle?.getAttribute('aria-expanded')).toBe('true');
+    expect(rendered.document.querySelector('.thread-subagent-detail')).not.toBeNull();
+  });
+
   test('drops Stop once the child settles, keeping the row in place', async () => {
     const item: ThreadItem = {
       ...base('subagent-done'),
