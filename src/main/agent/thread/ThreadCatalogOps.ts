@@ -499,8 +499,18 @@ export class ThreadCatalogOps {
         if (projectionError) throw projectionError;
         // The rollback marker is already durable. Orphan cleanup is retried at startup
         // and must not turn a committed rollback into a reported operation failure.
+        //
+        // RESOURCES are deliberately not among these. A rollback exists to be
+        // followed by a re-send of the very content just removed — Edit does it,
+        // and Retry does it on the failure case, where an attachment is most
+        // likely to still matter — and the re-sent content carries the same
+        // attachment references. Reclaiming them against the surviving history
+        // deletes the payload the next call is about to reference, leaving the
+        // resent message pointing at nothing. The other three belong to the Turn
+        // that went away and nothing re-sends them. Startup sweeps all four for
+        // every known Thread, so a resource orphaned by a rollback with no
+        // re-send is reclaimed there rather than leaked.
         await Promise.all([
-          this.core.payloads.pruneUnreferencedResources(thread.id, this.resourceOps.threadResourceReferences(thread.id)),
           this.core.payloads.pruneUnreferencedContexts(thread.id, this.resourceOps.threadContextPayloadReferences(thread.id)),
           this.core.payloads.pruneUnreferencedTurnDiagnostics(
             thread.id,

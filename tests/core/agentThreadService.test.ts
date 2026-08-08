@@ -4032,6 +4032,56 @@ describe('ThreadService', () => {
     await reopened.service.close();
   });
 
+  test('keeps an attachment a rollback is about to re-send', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-thread-service-'));
+    roots.push(root);
+    const stores = createStores(root);
+    const executor = new ControlledExecutor();
+    let attachmentRef: ThreadResourceReference | null = null;
+    const service = new ThreadService({
+      stores,
+      executor,
+      attachmentScratchRoot: join(root, 'agent-scratch'),
+      transcriptRoot: subagentTranscriptRoot(join(root, 'app-data')),
+      resolveUserContent: async (content, context) => {
+        const written = await stores.payloads.writeResourceWithStatus(
+          context.threadId,
+          Buffer.from('diagram bytes'),
+          'image/png',
+          'diagram.png',
+        );
+        attachmentRef = written.ref;
+        if (written.created) context.recordCreatedResource(written.ref);
+        return content;
+      },
+    });
+    await service.initialize();
+    const thread = (await service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: root,
+    })).thread;
+
+    await service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Look at this' }],
+    });
+    await executor.waitUntilWaiting(0);
+    executor.finish(0);
+    await service.waitForIdle(thread.id);
+    const ref = attachmentRef!;
+    expect(await stores.payloads.readResource(thread.id, ref)).toEqual(Buffer.from('diagram bytes'));
+
+    // Edit and Retry both roll back and then re-send the very content that was
+    // removed, references and all. Reclaiming against the surviving history
+    // here would delete the payload the next call is about to reference.
+    await service.rollbackThread({ threadId: thread.id, numTurns: 1 });
+
+    expect(await stores.payloads.readResource(thread.id, ref)).toEqual(Buffer.from('diagram bytes'));
+    await service.close();
+  });
+
   test('rolls back only newly created resources when content admission fails', async () => {
     const root = await mkdtemp(join(tmpdir(), 'tenon-thread-service-'));
     roots.push(root);
