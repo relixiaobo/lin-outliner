@@ -397,7 +397,7 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
   },
   {
     "name": "file_read",
-    "description": "Reads a local file.\\nUse an absolute file_path when known; relative paths resolve from the Thread working directory.\\nBy default, it reads up to 2000 lines starting from the beginning of the file.\\nYou can optionally specify a line offset and limit, especially for long files.\\nThis tool can read text files, images, PDFs, rich documents converted to Markdown, and Jupyter notebooks. PDFs are read as extracted text by default; use pages when page images or layout inspection are needed. It can only read files, not directories.\\nUse this before file_edit or before rewriting an existing file with file_write.",
+    "description": "Reads a local file.\\nUse an absolute file_path when known; relative paths resolve from the Thread working directory.\\nBy default, it reads up to 2000 lines starting from the beginning of the file.\\nYou can optionally specify a line offset and limit, especially for long files.\\nThis tool can read text files, images, PDFs, rich documents converted to Markdown, and Jupyter notebooks. It can only read files, not directories.\\nFor PDF files only, use pages when page images or layout inspection are needed. For text pagination, use offset and limit. A pages value on a non-PDF file is ignored with a warning.\\nUse this before file_edit or before rewriting an existing file with file_write.",
     "parameters": {
       "type": "object",
       "additionalProperties": false,
@@ -423,7 +423,7 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
         },
         "pages": {
           "type": "string",
-          "description": "Page range for PDF files, for example \\"1-5\\", \\"3\\", or \\"10-20\\". Only applicable to PDF files. Maximum 20 pages per request."
+          "description": "PDF FILES ONLY. Page range for PDF layout inspection, for example \\"1-5\\", \\"3\\", or \\"10-20\\". Never use for text, images, Office documents, notebooks, or other non-PDF files; use offset and limit to paginate text. Maximum 20 pages per request."
         }
       }
     }

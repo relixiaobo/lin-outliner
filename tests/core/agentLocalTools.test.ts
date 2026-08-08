@@ -401,6 +401,39 @@ describe('agent local tools', () => {
     });
   });
 
+  test('file_read ignores non-PDF pages and keeps the warning on cached reads', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const filePath = path.join(workspaceRoot, 'notes.txt');
+      await writeFile(filePath, 'alpha\nbeta\n', 'utf8');
+      const fileRead = createLocalTools({ localRoot: workspaceRoot })
+        .find((tool) => tool.name === 'file_read')!;
+      const expectedWarning = 'Ignored the pages parameter because it only applies to PDF files. The file was read normally; use offset and limit to paginate text files.';
+
+      const firstResult = await (fileRead.execute as any)('non-pdf-pages-first', {
+        file_path: filePath,
+        pages: '1-5',
+      });
+      const first = firstResult.details as ToolEnvelope<{
+        type: 'text';
+        file: { content: string };
+      }>;
+      expect(first.ok).toBe(true);
+      expect(first.data?.file.content).toBe('alpha\nbeta');
+      expect(first.warnings).toEqual([expectedWarning]);
+      expect(JSON.parse((firstResult.content[0] as { text: string }).text).warnings).toEqual([expectedWarning]);
+
+      const cachedResult = await (fileRead.execute as any)('non-pdf-pages-cached', {
+        file_path: filePath,
+        pages: '1-5',
+      });
+      const cached = cachedResult.details as ToolEnvelope;
+      expect(cached.ok).toBe(true);
+      expect(cached.status).toBe('unchanged');
+      expect(cached.warnings).toEqual([expectedWarning]);
+      expect(JSON.parse((cachedResult.content[0] as { text: string }).text).warnings).toEqual([expectedWarning]);
+    });
+  });
+
   test('file_read follows symlinks outside the workdir under Full Access', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const outsideRoot = await mkdtemp(path.join(tmpdir(), 'lin-local-tools-outside-'));
@@ -741,7 +774,9 @@ describe('agent local tools', () => {
     const bashStop = tools.find((tool) => tool.name === 'bash_stop')!;
 
     expect(fileRead.description).toContain('relative paths resolve from the Thread working directory');
+    expect(fileRead.description).toContain('For PDF files only');
     expect(JSON.stringify(fileRead.parameters)).toContain('The line number to start reading from');
+    expect(JSON.stringify(fileRead.parameters)).toContain('PDF FILES ONLY');
     expect(JSON.stringify(fileRead.parameters)).toContain('Maximum 20 pages per request');
     expect(fileEdit.description).toContain('Performs exact string replacements in files');
     expect(fileEdit.description).not.toContain('notebook_edit');

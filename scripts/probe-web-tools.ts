@@ -1,6 +1,8 @@
 import { app } from 'electron';
+import { createServer, type Server } from 'node:http';
 
-import { createAgentTools, isToolEnvelope, type ToolEnvelope } from '../src/main/agent/capabilities/agentTools';
+import { createAgentTools } from '../src/main/agent/capabilities/agentTools';
+import { isToolEnvelope, type ToolEnvelope } from '../src/main/agent/capabilities/agentToolEnvelope';
 
 interface ProbeResult {
   name: string;
@@ -42,6 +44,11 @@ interface WebSearchProbeData {
   }>;
 }
 
+interface LocalWebFixture {
+  url: string;
+  close: () => Promise<void>;
+}
+
 const results: ProbeResult[] = [];
 const tools = createAgentTools();
 const DEFAULT_TOOL_TIMEOUT_MS = 30_000;
@@ -50,44 +57,23 @@ const SEARCH_TOOL_TIMEOUT_MS = 85_000;
 async function main(): Promise<number> {
   await app.whenReady();
 
-  await runProbe('web_fetch read example.com', async () => {
-    const envelope = await executeTool<WebFetchProbeData>('web_fetch', {
-      url: 'https://example.com/',
-      max_chars: 5_000,
-    });
-    assertOk(envelope);
-    if (!envelope.data?.content?.includes('Example Domain')) {
-      throw new Error(`expected fetched content to include Example Domain; got ${preview(envelope.data?.content ?? '')}`);
-    }
-    return `status=${envelope.data.statusCode} chars=${envelope.data.content.length}`;
-  });
-
-  await runProbe('web_fetch metadata example.com', async () => {
-    const envelope = await executeTool<WebFetchProbeData>('web_fetch', {
-      url: 'https://example.com/',
-      format: 'metadata',
-    });
-    assertOk(envelope);
-    const title = envelope.data?.title ?? envelope.data?.metadata?.title ?? '';
-    if (!title.includes('Example Domain')) {
-      throw new Error(`expected metadata title to include Example Domain; got ${title || '<empty>'}`);
-    }
-    return `title="${title}" finalUrl=${envelope.data?.finalUrl ?? ''}`;
-  });
-
-  await runProbe('web_fetch find example.com', async () => {
-    const envelope = await executeTool<WebFetchProbeData>('web_fetch', {
-      url: 'https://example.com/',
-      query: 'Example Domain',
-      context: 80,
-      head_limit: 3,
-    });
-    assertOk(envelope);
-    if (!envelope.data?.totalMatches) {
-      throw new Error('expected at least one query match');
-    }
-    return `matches=${envelope.data.totalMatches} returned=${envelope.data.returnedMatches ?? 0}`;
-  });
+  const fixture = await startLocalWebFixture();
+  try {
+    await runWebFetchProbes(
+      'local fixture',
+      fixture.url,
+      'Tenon Web Fetch Probe',
+      'deterministic local page',
+    );
+  } finally {
+    await fixture.close();
+  }
+  await runWebFetchProbes(
+    'example.com',
+    'https://example.com/',
+    'Example Domain',
+    'documentation examples',
+  );
 
   await runProbe('web_search Google SERP', async () => {
     const envelope = await executeTool<WebSearchProbeData>(
@@ -120,6 +106,97 @@ async function main(): Promise<number> {
 
   printSummary();
   return results.some((result) => result.verdict === 'FAIL') ? 1 : 0;
+}
+
+async function runWebFetchProbes(
+  label: string,
+  url: string,
+  expectedTitle: string,
+  contentNeedle: string,
+): Promise<void> {
+  await runProbe(`web_fetch read ${label}`, async () => {
+    const envelope = await executeTool<WebFetchProbeData>('web_fetch', {
+      url,
+      max_chars: 5_000,
+    });
+    assertOk(envelope);
+    if (!envelope.data?.content?.includes(contentNeedle)) {
+      throw new Error(`expected fetched content to include ${contentNeedle}; got ${preview(envelope.data?.content ?? '')}`);
+    }
+    return `status=${envelope.data.statusCode} chars=${envelope.data.content.length}`;
+  });
+
+  await runProbe(`web_fetch metadata ${label}`, async () => {
+    const envelope = await executeTool<WebFetchProbeData>('web_fetch', {
+      url,
+      format: 'metadata',
+    });
+    assertOk(envelope);
+    const title = envelope.data?.title ?? envelope.data?.metadata?.title ?? '';
+    if (!title.includes(expectedTitle)) {
+      throw new Error(`expected metadata title to include ${expectedTitle}; got ${title || '<empty>'}`);
+    }
+    return `title="${title}" finalUrl=${envelope.data?.finalUrl ?? ''}`;
+  });
+
+  await runProbe(`web_fetch find ${label}`, async () => {
+    const envelope = await executeTool<WebFetchProbeData>('web_fetch', {
+      url,
+      query: contentNeedle,
+      context: 80,
+      head_limit: 3,
+    });
+    assertOk(envelope);
+    if (!envelope.data?.totalMatches) {
+      throw new Error('expected at least one query match');
+    }
+    return `matches=${envelope.data.totalMatches} returned=${envelope.data.returnedMatches ?? 0}`;
+  });
+}
+
+async function startLocalWebFixture(): Promise<LocalWebFixture> {
+  const html = [
+    '<!doctype html><html lang="en"><head><title>Tenon Web Fetch Probe</title></head>',
+    '<body><main><article><h1>Tenon Web Fetch Probe</h1>',
+    '<p>This deterministic local page exercises the real Electron Session.fetch request path.</p>',
+    '<p>Readable content, metadata, and find mode must all survive request construction.</p>',
+    '</article></main></body></html>',
+  ].join('');
+  const server = createServer((_request, response) => {
+    response.writeHead(200, {
+      'content-type': 'text/html; charset=utf-8',
+      'content-length': Buffer.byteLength(html),
+    });
+    response.end(html);
+  });
+
+  await listenOnLoopback(server);
+  const address = server.address();
+  if (!address || typeof address === 'string') {
+    await closeServer(server);
+    throw new Error('local web fixture did not expose a TCP address');
+  }
+  return {
+    url: `http://127.0.0.1:${address.port}/`,
+    close: () => closeServer(server),
+  };
+}
+
+function listenOnLoopback(server: Server): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const onError = (error: Error) => reject(error);
+    server.once('error', onError);
+    server.listen(0, '127.0.0.1', () => {
+      server.off('error', onError);
+      resolve();
+    });
+  });
+}
+
+function closeServer(server: Server): Promise<void> {
+  return new Promise((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  });
 }
 
 async function runProbe(
@@ -213,7 +290,5 @@ void main()
     return 1;
   })
   .then((exitCode) => {
-    app.quit();
-    setTimeout(() => process.exit(exitCode), 250).unref();
-    process.exitCode = exitCode;
+    app.exit(exitCode);
   });
