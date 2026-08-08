@@ -132,6 +132,25 @@ Entries reference the pull request that introduced them.
   its trigger as an origin-labelled block instead of the reader's own message
   bubble, with no edit affordance.
 
+- **One place to look when something you just did did not work (PR #508, cc)** —
+  an outliner command, a pane operation and an agent dock action all failed the
+  same way from your side, but the message landed in the bottom-right corner,
+  which is the agent dock's territory, so a failed *outline* edit read as the
+  agent failing. Failures now report to one notice anchored to the window, top
+  centre below the chrome band, and it leaves on its own instead of sitting there
+  as clutter. The dock's own strip narrows to what it really owns — a provider
+  that is not configured, a thread list that failed to load — the conditions that
+  persist and cannot be dismissed. The card is click-through, so reporting a
+  failure never swallows the click you make next on the rows underneath, and
+  resting the pointer anywhere over it — or tabbing to its close button — waits
+  until you are done reading, then restarts the full countdown rather than handing
+  back the sliver that was left. Dismissing with the keyboard returns you to where
+  you were in the outline. Repeating an action that fails identically now restarts
+  the countdown instead of leaving the retry to inherit the tail of the first
+  attempt, a failure you have not read yet is no longer erased by the next
+  keystroke or by starting an unrelated dock action, and a failure while the app
+  is still loading is reported as itself rather than as "failed to start".
+
 ### Fixed
 
 - **Coming back to a Thread lands where you were reading (PR #499, cc-2)** —

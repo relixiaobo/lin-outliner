@@ -671,6 +671,19 @@ and the merged PR, distilled rules in [`lessons.md`](lessons.md). Everything
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
 
+- **error-feedback-unification** (cc, PR #508, merged 2026-08-08 — plan archived at
+  [docs/plans/archive/error-feedback-unification.md](plans/archive/error-feedback-unification.md))
+  — every action failure in the app now reports to one window-anchored notice instead of a
+  bottom-right toast in the dock's territory, and the dock strip narrows to conditions that
+  persist. `/code-review high` found ten, all fixed before merge: three faces of one root
+  cause — three mechanisms sharing one slot where `null` meant both "cleared" and "about to
+  report", so a sequence derived from that slot collapsed to 1 and never restarted the
+  countdown, a successful keystroke erased an unread failure, and starting a dock action wiped
+  one raised elsewhere — plus a top-centre card that ate clicks meant for the outline rows and
+  a `left: 50%` shrink-to-fit box that could never reach its declared width cap. The narrowed
+  hover-hold offered in the first fix (only the 22px close control) was sent back by PM
+  decision rather than accepted: the card stays click-through AND holds from anywhere over it,
+  via a rect hit test on a document-level `pointermove`.
 - **rollback-prunes-resources-the-resend-still-references** (cc, PR #507, merged
   2026-08-08, *fast-track, no plan file*) — the other follow-up filed at the #503 gate,
   fixed: a rollback reclaimed against the surviving history, deleting the attachment

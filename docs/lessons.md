@@ -409,3 +409,39 @@ The narrower trap worth naming: passing when run alone and passing beside one
 neighbour proves nothing about global hygiene. Cross-file pollution only appears
 at suite scale, so a test that touches a global is not verified until the whole
 suite has run with it in place.
+
+## Consolidating local channels into one shared slot makes harmless writes destructive
+
+Four surfaces each had their own error string; they were merged into one app-wide
+notice. Each old caller opened its action with a pre-emptive clear, and the
+command runner cleared on success — both correct while the slot was local,
+because the only thing being erased was that surface's own last message. Against
+a shared slot the identical lines delete *another* surface's still-unread report:
+starting a dock action wiped an outliner failure, and because commands run on
+ordinary keystrokes, typing one character erased a message the user was mid-read.
+Nothing in the diff looked wrong; the lines had not changed at all.
+
+The same consolidation broke the sequence that restarts the auto-dismiss
+countdown, which derived its number from the slot it was about to overwrite. That
+is equivalent only if the slot is usually occupied — and a slot that every clear
+empties is usually empty, so nearly every notice was numbered 1 and a repeat was
+indistinguishable from the notice already on screen, which is the one case the
+sequence existed to catch.
+
+Two rules generalise. **When N private channels become one shared channel, every
+existing write is a new decision** — audit the writes the merge did not touch, not
+just the ones it did, because scope is what changed underneath them. And in a
+shared slot **reporting is not clearing, and succeeding is not clearing**: a
+caller states what happened to it and never speculatively empties the slot first;
+dismissal, expiry, and supersession own the lifecycle. **Derive nothing from the
+state you are about to overwrite** — carry the monotonic counter on the caller's
+side, where it does not vanish with the value.
+
+The gate's other half: a notice re-anchored over the content it reports about
+becomes an obstruction, and the fix that makes it click-through silently costs the
+hover affordance that pauses it, since `:hover` requires taking the pointer that
+was just given up. Both halves are only reachable together — the card stays
+click-through and the hold becomes a rect hit test — and the first shape shipped
+would have satisfied "hover holds" while leaving the reader a 22px target to aim
+for. When a fix removes an element's ability to receive events, check what else
+was riding on it.
