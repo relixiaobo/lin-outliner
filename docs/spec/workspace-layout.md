@@ -1060,6 +1060,41 @@ interface OverlayState {
 }
 ```
 
+## Notification Layer
+
+**Where a failure is stated depends on what kind of thing it is.** Three layers,
+and the rule that sorts them:
+
+- **The result of one action is a notification.** A menu or palette command that
+  rejected, a pane operation that failed, an agent dock action that could not
+  complete — all report to `.action-notice`, the app's single notice, through
+  `reportActionError` (`src/renderer/ui/interactions/actionSteps.ts`).
+- **A condition that persists belongs to the surface it describes.** A provider
+  that is not configured and a thread list that failed to load render in the
+  dock's `.thread-dock-error` strip; a field's validation error renders beside
+  the field; a startup failure that leaves no app to notify over renders in the
+  startup panel. None of these is dismissible, because dismissing one would hide
+  a state that is still true.
+- **A part of a record belongs in the record.** A failed Turn, tool row,
+  delegation row, or automation run renders inside the transcript or run view
+  that contains it.
+
+The notice is anchored to the **window**: horizontally centred, below
+`--chrome-height` so it clears the pane breadcrumb that owns the centre of the
+title-bar band. The anchor is load-bearing rather than cosmetic. It previously
+sat in the bottom-right corner, which is the agent dock's territory, and every
+failure in the app therefore read as the agent failing. It belongs to no column,
+and the guard in `tests/renderer/actionNoticeCss.test.ts` keeps it there.
+
+It carries **one message at a time** — a newer failure replaces an older one —
+and **dismisses itself** after `ACTION_NOTICE_TIMEOUT_MS`, holding while the
+pointer rests on it and restarting the full countdown when the pointer leaves.
+Repeating an action that fails identically restarts the countdown: the notice is
+sequenced (`nextActionNotice`), so a retry is a new notice rather than the tail
+of the previous one. Messages do not carry a source label; toast traffic is the
+action the user just performed, so the source is self-evident, and the rare
+message about background work names its own subject.
+
 ## Suggested Shell State
 
 ```ts

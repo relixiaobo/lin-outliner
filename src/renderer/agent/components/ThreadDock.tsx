@@ -26,6 +26,7 @@ import { ThreadList } from './ThreadList';
 import { ThreadDetailsDialog } from './ThreadDetailsDialog';
 import { ThreadView } from './ThreadView';
 import { resolveUsableActiveProvider } from '../../ui/agent/providerUsability';
+import { reportActionError } from '../../ui/interactions/actionSteps';
 import type { ThreadNodeReferenceOpenHandler } from '../threadReferences';
 import { runtimeSlashCommands, slashCommandsFromSkills } from '../threadComposerCommands';
 
@@ -62,7 +63,6 @@ export function ThreadDock({
   const [listOpen, setListOpen] = useState(false);
   const [surface, setSurface] = useState<'thread' | 'automations'>('thread');
   const [creating, setCreating] = useState(false);
-  const [actionError, setActionError] = useState<string | null>(null);
   const [renameTarget, setRenameTarget] = useState<Thread | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<Thread | null>(null);
@@ -207,11 +207,11 @@ export function ThreadDock({
    * is worse than one that says so.
    */
   const interruptThread = useCallback(async (threadId: string) => {
-    setActionError(null);
+    reportActionError(null);
     try {
       await threadStore.interruptThread(threadId);
     } catch {
-      setActionError(t.agent.thread.stopUnavailable);
+      reportActionError(t.agent.thread.stopUnavailable);
     }
   }, [t]);
 
@@ -222,7 +222,7 @@ export function ThreadDock({
    * rows land in the same place the transcript rows do.
    */
   const openSubagent = useCallback((childThreadId: string) => {
-    setActionError(null);
+    reportActionError(null);
     setListOpen(false);
     const parentThreadId = snapshot.selectedThreadId;
     if (!parentThreadId) return;
@@ -232,7 +232,7 @@ export function ThreadDock({
     // than the ancestor that happens to be reachable.
     const path = lineagePathFromRoot(childThreadId, parentThreadId, threadsById);
     if (!path) {
-      setActionError(t.agent.thread.threadUnavailable);
+      reportActionError(t.agent.thread.threadUnavailable);
       return;
     }
     const [rowThreadId] = path;
@@ -243,7 +243,7 @@ export function ThreadDock({
       turn.items.some((item) => item.type === 'subAgentActivity' && item.agentThreadId === rowThreadId)
     ));
     if (!hostTurn) {
-      setActionError(t.agent.thread.threadUnavailable);
+      reportActionError(t.agent.thread.threadUnavailable);
       return;
     }
     setThreadDisclosureOverride(parentThreadId, `process:${hostTurn.id}`, true);
@@ -258,12 +258,12 @@ export function ThreadDock({
 
   /** Selecting a root conversation from the list or an Automation. */
   const openThread = useCallback(async (threadId: string) => {
-    setActionError(null);
+    reportActionError(null);
     try {
       await threadStore.openThreadById(threadId);
       setListOpen(false);
     } catch {
-      setActionError(t.agent.thread.threadUnavailable);
+      reportActionError(t.agent.thread.threadUnavailable);
     }
   }, [t]);
 
@@ -271,14 +271,14 @@ export function ThreadDock({
     if (creatingRef.current || providerBlocksCreation) return false;
     creatingRef.current = true;
     setCreating(true);
-    setActionError(null);
+    reportActionError(null);
     try {
       await threadStore.createThread();
       setListOpen(false);
       setComposerFocusToken((token) => token + 1);
       return true;
     } catch (error) {
-      setActionError(errorMessage(error));
+      reportActionError(errorMessage(error));
       return false;
     } finally {
       creatingRef.current = false;
@@ -329,11 +329,11 @@ export function ThreadDock({
   }
 
   async function runAction(action: () => Promise<void>) {
-    setActionError(null);
+    reportActionError(null);
     try {
       await action();
     } catch (error) {
-      setActionError(errorMessage(error));
+      reportActionError(errorMessage(error));
     }
   }
 
@@ -391,10 +391,15 @@ export function ThreadDock({
             />
           ) : null}
         </header>
-        {actionError || providerError || snapshot.error ? (
+        {/* Conditions only. A provider that is not configured and a thread list
+            that failed to load describe THIS surface and persist until they are
+            resolved, so they are stated here and cannot be dismissed. A failed
+            action is not a condition: it goes to the app's one notice, the same
+            place an outliner or pane failure goes. */}
+        {providerError || snapshot.error ? (
           <div className="thread-dock-error" role="alert">
             <WarningIcon size={ICON_SIZE.menu} />
-            <span>{actionError ?? providerError ?? snapshot.error}</span>
+            <span>{providerError ?? snapshot.error}</span>
           </div>
         ) : null}
         {surface === 'thread' && snapshot.loading ? <p className="thread-empty-copy">{t.agent.thread.loading}</p> : null}

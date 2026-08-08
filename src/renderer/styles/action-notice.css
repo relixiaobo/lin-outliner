@@ -1,0 +1,56 @@
+/* The app's one action-failure notice. Anchored to the WINDOW, not to the region
+   that raised it: centred horizontally so it belongs to no column (the right
+   edge is the agent dock's, and a notice parked there reads as the agent
+   failing), and pushed below --chrome-height so it clears the pane breadcrumb,
+   which owns the centre of the title-bar band and reaches the top. */
+.action-notice {
+  position: fixed;
+  top: calc(var(--chrome-height) + var(--layout-gap));
+  left: 50%;
+  z-index: var(--z-toast);
+  display: grid;
+  max-width: 480px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--space-5);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  box-shadow: var(--overlay-shadow-level-1);
+  color: var(--status-danger);
+  padding: var(--space-5) var(--space-6);
+  font-size: var(--font-ui-sm);
+  /* The keyframes carry the centring offset because they animate `transform`;
+     a static translateX here would be overwritten for the whole animation. */
+  animation: action-notice-enter var(--motion-slow);
+  transform: translateX(-50%);
+}
+
+/* Arrives from above, the direction it is anchored to — so the eye is led to
+   the top of the window rather than the motion reading as a stray element.
+   The a11y baseline collapses the duration under prefers-reduced-motion. */
+@keyframes action-notice-enter {
+  from {
+    opacity: 0;
+    transform: translate(-50%, calc(-1 * var(--space-4)));
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(-50%);
+  }
+}
+
+.action-notice-close {
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-pill);
+  color: var(--text-secondary);
+}
+
+.action-notice-close:hover {
+  background: var(--row-hover);
+  color: var(--text-primary);
+}

@@ -110,13 +110,22 @@ labels" and "single slot" are recorded above as deliberate.
 
 ## Verification
 
-- Renderer test: timer lifecycle (auto-dismiss, hover pause, replacement
-  reset); dock transient failure reaches the global sink while provider/load
-  state stays in the dock strip.
-- E2E: an outliner action failure shows the toast top-center and it
-  auto-dismisses; a dock Stop failure lands in the same toast; the toast never
-  overlaps the composer or dock header (geometry assertion); reduced-motion
-  path renders without animation.
+- Renderer test (`actionNotice.test.tsx`): the timer lifecycle — it dismisses
+  itself, it holds while hovered and restarts on leave, it survives host
+  re-renders that hand it a fresh callback, and an identical repeated failure
+  restarts the countdown rather than inheriting the previous one's remainder.
+  `window.setTimeout` is stubbed rather than faked, so the assertions can be
+  about how many timers exist and with what delay.
+- Guard test (`actionNoticeCss.test.ts`): the anchor. This is the actual
+  regression risk — a notice that drifts back to an edge still "looks fine" in
+  review while reintroducing the reported bug — so the guard pins centred-on-
+  window, forbids `right`/`bottom` on the notice, requires it to clear
+  `--chrome-height`, and requires every keyframe to carry the centring offset.
+- **No E2E was added, deliberately.** Producing a real action failure in E2E
+  would require a test-only failure hook in production code, which is a worse
+  trade than the coverage is worth; the anchor and the lifecycle are both
+  pinned above. The existing `outliner-triggers` assertion that no notice
+  appears on a successful path is retargeted to the new class.
 - `bun run typecheck`, `bun run test:core`, `bun run test:renderer`, focused
   `PLAYWRIGHT_PORT=<free> bun run test:e2e`, `bun run docs:check`; specs in the
   same change (A6). Light + dark visual pass at the gate.

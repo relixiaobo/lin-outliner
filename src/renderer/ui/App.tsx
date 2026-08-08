@@ -9,7 +9,7 @@ import { buildRendererUserViewHints } from './agent/userViewContext';
 import { CommandPalette } from './CommandPalette';
 import { Sidebar } from './Sidebar';
 import { WindowChrome } from './WindowChrome';
-import { CloseIcon, ICON_SIZE } from './icons';
+import { ActionNotice, nextActionNotice, type ActionNoticeState } from './ActionNotice';
 import {
   clearFocusState,
   cursorAll,
@@ -22,7 +22,6 @@ import {
 } from './focus/focusModel';
 import { useDragSelection } from './interactions/dragSelection';
 import { BatchTagSelector } from './outliner/BatchTagSelector';
-import { ButtonControl } from './primitives/ButtonControl';
 import type { NavigateRootOptions, TriggerState } from './shared';
 import {
   installActionErrorSink,
@@ -65,7 +64,11 @@ export function App() {
   const agentRailState: ThreadRailState = agentOpen ? 'open' : 'collapsed';
   const [sidebarExpandedIds, setSidebarExpandedIds] = useState<Set<NodeId>>(() => new Set());
   const [pendingFocus, setPendingFocus] = useState<FocusHint | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<ActionNoticeState | null>(null);
+  const setError = useCallback((message: string | null) => {
+    setNotice((current) => nextActionNotice(current, message));
+  }, []);
+  const dismissNotice = useCallback(() => setNotice(null), []);
   const [trigger, setTrigger] = useState<TriggerState>(null);
   const [dragId, setDragId] = useState<NodeId | null>(null);
   const indexRef = useRef(index);
@@ -578,10 +581,13 @@ export function App() {
           onToggleAgent={toggleAgentRail}
           onToggleSidebar={() => setSidebarOpen((open) => !open)}
         />
-        <div className="app-shell app-startup-shell" aria-busy={error ? undefined : 'true'}>
-          {error ? (
+        {/* Before the projection arrives there is no app to notify over, so a
+            failure is stated in place and stays: nothing here is dismissible,
+            because nothing the user could do has succeeded yet. */}
+        <div className="app-shell app-startup-shell" aria-busy={notice ? undefined : 'true'}>
+          {notice ? (
             <div className="loading-panel" role="alert">
-              {t.shell.startupError({ error })}
+              {t.shell.startupError({ error: notice.message })}
             </div>
           ) : null}
         </div>
@@ -702,13 +708,10 @@ export function App() {
         />
       )}
 
-      {error && (
-        <div className="error">
-          <span>{error}</span>
-          <ButtonControl className="error-close-button" aria-label={t.shell.errorDismiss} onClick={() => setError(null)}>
-            <CloseIcon size={ICON_SIZE.menu} />
-          </ButtonControl>
-        </div>
+      {/* Keyed by sequence so a fresh notice remounts: the hover-hold that keeps
+          one on screen must not carry over to the next. */}
+      {notice && (
+        <ActionNotice key={notice.seq} message={notice.message} onDismiss={dismissNotice} />
       )}
 
       <InlineFilePreviewLayer />
