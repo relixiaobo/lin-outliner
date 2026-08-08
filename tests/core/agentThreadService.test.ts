@@ -4032,6 +4032,81 @@ describe('ThreadService', () => {
     await reopened.service.close();
   });
 
+  test('keeps an attachment a rollback is about to re-send, and drops true garbage', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-thread-service-'));
+    roots.push(root);
+    const stores = createStores(root);
+    const executor = new ControlledExecutor();
+    let attachmentRef: ThreadResourceReference | null = null;
+    const service = new ThreadService({
+      stores,
+      executor,
+      attachmentScratchRoot: join(root, 'agent-scratch'),
+      transcriptRoot: subagentTranscriptRoot(join(root, 'app-data')),
+      resolveUserContent: async (content, context) => {
+        // A real managed attachment: the resolved content REFERENCES the
+        // payload, so the re-send below actually has to resolve it.
+        const written = await stores.payloads.writeResourceWithStatus(
+          context.threadId,
+          Buffer.from('notes bytes'),
+          'text/plain',
+          'notes.txt',
+        );
+        attachmentRef = written.ref;
+        if (written.created) context.recordCreatedResource(written.ref);
+        return [...content, {
+          type: 'attachment' as const,
+          id: written.ref.id,
+          name: 'notes.txt',
+          mimeType: 'text/plain',
+          sizeBytes: written.ref.byteLength,
+          source: { kind: 'threadPayload' as const, ref: written.ref },
+        }];
+      },
+    });
+    await service.initialize();
+    const thread = (await service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: root,
+    })).thread;
+
+    const sent = await service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Look at this' }],
+    });
+    await executor.waitUntilWaiting(0);
+    executor.finish(0);
+    await service.waitForIdle(thread.id);
+    const ref = attachmentRef!;
+    const resent = service.readThread({ threadId: thread.id, includeTurns: true })
+      .thread.turns!.find((turn) => turn.id === sent.turn.id)!
+      .items.find((item) => item.type === 'userMessage')!.content;
+
+    // Garbage nothing ever referenced, written while the Turn was live.
+    const orphan = await stores.payloads.writeResource(thread.id, Buffer.from('orphan'), 'text/plain', 'orphan.txt');
+
+    await service.rollbackThread({ threadId: thread.id, numTurns: 1 });
+
+    // The attachment survives the rollback...
+    expect(await stores.payloads.readResource(thread.id, ref)).toEqual(Buffer.from('notes bytes'));
+    // ...and re-sending the very content that was removed resolves it, which is
+    // what Edit and Retry do. Pruning against the surviving history alone left
+    // this throwing `Managed attachment payload is unavailable or corrupt`.
+    const again = await service.startRendererTurn({ threadId: thread.id, input: resent });
+    expect(again.turn.id).not.toBe(sent.turn.id);
+    await executor.waitUntilWaiting(1);
+    executor.finish(1);
+    await service.waitForIdle(thread.id);
+
+    // True garbage still goes: no re-send can reach what neither the surviving
+    // history nor the removed Turns referenced, and those bytes otherwise count
+    // against the resource quota with no way to reclaim them.
+    expect(await stores.payloads.readResource(thread.id, orphan)).toBeNull();
+    await service.close();
+  });
+
   test('rolls back only newly created resources when content admission fails', async () => {
     const root = await mkdtemp(join(tmpdir(), 'tenon-thread-service-'));
     roots.push(root);
