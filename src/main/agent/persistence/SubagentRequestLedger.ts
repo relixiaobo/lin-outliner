@@ -2,13 +2,15 @@ import type { ThreadId, TurnId } from '../../../core/agent/protocol';
 import type { SqliteDatabase } from './sqlite';
 
 /**
- * The smallest per-child cap a spawn can actually impose.
+ * The smallest per-child cap a model can actually impose.
  *
  * `max_total_tokens` is a circuit breaker sized at definitely-anomalous, not an
  * allocation — but it is model-chosen, and a model guessing at one guesses low.
  * Caps in the thousands starved children mid-answer and handed the parent a
- * refusal instead of the work it delegated. Anything under this floor describes
- * no real budget, so a spawn is raised to it.
+ * refusal instead of the work it delegated. A cap below this describes no real
+ * budget and is DROPPED, which returns the child to its request's shared pool;
+ * raising it instead would give every capped child a private pool of this size
+ * and step over the `subagentTokenBudget` the user configured.
  */
 export const MIN_SUBAGENT_TOKEN_CAP = 1_000_000;
 

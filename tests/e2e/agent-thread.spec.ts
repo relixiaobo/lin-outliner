@@ -2245,6 +2245,7 @@ test.describe('canonical agent Thread surface', () => {
             active?: boolean;
             queuedWork?: boolean;
           }) => { id: string };
+          emitAgentCoreNotification: (notification: unknown) => void;
         };
       };
       const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
@@ -2252,8 +2253,42 @@ test.describe('canonical agent Thread surface', () => {
       if (!parentThreadId) throw new Error('Mock Thread not found');
       const finished = target.__LIN_E2E__?.createMockSubagentThread({ parentThreadId, name: 'finished worker' });
       (window as Window & { __LIN_E2E_FINISHED_ID__?: string }).__LIN_E2E_FINISHED_ID__ = finished?.id;
-      target.__LIN_E2E__?.createMockSubagentThread({ parentThreadId, name: 'live worker', active: true });
+      const live = target.__LIN_E2E__?.createMockSubagentThread({
+        parentThreadId,
+        name: 'live worker',
+        active: true,
+      });
       target.__LIN_E2E__?.createMockSubagentThread({ parentThreadId, name: 'queued worker', queuedWork: true });
+      // A child is read from the delegation row that spawned it, which is what
+      // production records for every delegated form — so the Turn that
+      // delegated has to carry one here too.
+      const turnId = '01910000-0000-7000-8000-00000000f101';
+      const itemId = '01910000-0000-7000-8000-00000000f102';
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/completed',
+        threadId: parentThreadId,
+        turnId,
+        turn: {
+          id: turnId,
+          items: [{
+            id: itemId,
+            type: 'subAgentActivity',
+            provenance: { originThreadId: parentThreadId, originTurnId: turnId, originItemId: itemId },
+            kind: 'started',
+            agentThreadId: live!.id,
+            agentPath: '/root/live_worker',
+            error: null,
+            spawnItemId: null,
+          }],
+          itemsView: 'full',
+          provenance: { originThreadId: parentThreadId, originTurnId: turnId, trigger: { kind: 'user' } },
+          status: 'completed',
+          error: null,
+          startedAt: 1,
+          completedAt: 2,
+          durationMs: 1,
+        },
+      });
     });
 
     // A live descendant is the only thing the list says about children now.
@@ -2309,8 +2344,14 @@ test.describe('canonical agent Thread surface', () => {
     await expect(details.getByRole('button', { name: 'Open live worker' })).toBeVisible();
     await expect(details.getByRole('button', { name: 'Open queued worker' })).toBeVisible();
 
-    // Details is a browse surface, so its rows land in the same drawer the
-    // transcript rows do — and the dock still names the parent conversation.
+    // Details is a browse surface, so its rows land where the transcript rows
+    // do — including opening the process fold the row sits inside, which a
+    // settled Turn keeps shut. Expanding only the leaf would write a key
+    // nothing reads, and nothing would appear on screen.
+    await details.getByRole('button', { name: 'Open live worker' }).click();
+    const detail = page.locator('.thread-subagent-detail');
+    await expect(detail).toBeVisible();
+    await expect(detail.locator('.thread-subagent-detail-title')).toHaveText('live worker');
   });
   test('shows a live row for an isolated Skill child while its skill call is in flight', async ({ page }) => {
     await createNewThread(page);

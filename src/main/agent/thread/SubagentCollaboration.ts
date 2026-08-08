@@ -167,16 +167,9 @@ export class SubagentCollaboration {
             ? {}
             : { reasoningEffort: optionalReasoningEffort(input.reasoning_effort) }),
           ...(optionalString(input.fork_turns) === undefined ? {} : { forkTurns: optionalString(input.fork_turns) }),
-          // Raised to the floor when the MODEL names a cap. A cap is a circuit
-          // breaker sized at definitely-anomalous, and a model guessing at one
-          // guesses low — caps in the thousands starved children mid-answer and
-          // handed the parent a refusal instead of the work it delegated.
-          // Anything under the floor describes no real budget, so it becomes
-          // one. A programmatic caller is asking for a specific number and is
-          // left alone.
-          ...(input.max_total_tokens === undefined
+          ...(SubagentCollaboration.modelTokenCap(input.max_total_tokens) === undefined
             ? {}
-            : { maxTotalTokens: Math.max(input.max_total_tokens as number, MIN_SUBAGENT_TOKEN_CAP) }),
+            : { maxTotalTokens: SubagentCollaboration.modelTokenCap(input.max_total_tokens) }),
         });
         return {
           task_name: result.taskPath,
@@ -499,6 +492,29 @@ export class SubagentCollaboration {
       return result;
     }
 
+  /**
+   * A model-named `max_total_tokens`, or nothing when it names no real budget.
+   *
+   * A cap is a circuit breaker sized at definitely-anomalous, and a model
+   * guessing at one guesses low — caps in the thousands starved children
+   * mid-answer and handed the parent a refusal instead of the work it delegated.
+   * Below the floor the cap is DROPPED rather than raised to it, because any cap
+   * detaches the child into its own pool: raising it would hand each capped
+   * child a private million-token budget and step straight over the
+   * `subagentTokenBudget` the user configured. Dropping it puts the child back
+   * in the request's shared pool, which is the only ceiling the user set.
+   *
+   * Validated first, so a malformed argument still teaches the model what it
+   * sent: a floor applied before the check would swallow `0`, `1.5` and `"5000"`
+   * and answer every one of them with a million.
+   */
+  private static modelTokenCap(value: unknown): number | undefined {
+      if (value === undefined) return undefined;
+      if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1) {
+        throw new Error('max_total_tokens must be a positive integer');
+      }
+      return value < MIN_SUBAGENT_TOKEN_CAP ? undefined : value;
+    }
   private childTokenCap(maxTotalTokens: number | undefined): number | null {
       if (maxTotalTokens !== undefined) {
         if (!Number.isSafeInteger(maxTotalTokens) || maxTotalTokens < 1) {

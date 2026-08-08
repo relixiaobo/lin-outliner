@@ -139,7 +139,14 @@ children have no composer, so recovery from exhaustion is parent respawn or synt
 plus the preserved transcript artifact.
 
 `collaboration.spawn_agent` also accepts optional `max_total_tokens` as a positive safe
-integer. It is a per-child cap on that Thread's own contribution inside the shared pool,
+integer, honoured only at or above a fixed 1,000,000 floor. A smaller value is
+DROPPED, not raised: any honoured cap detaches the child into its own pool, so
+raising a small one would hand every capped child a private million-token budget
+and step over the `subagentTokenBudget` the user configured. Dropping it returns
+the child to the request's shared pool, which is the ceiling the user actually
+set. The value is validated before the floor is considered, so a malformed
+argument still teaches the model what it sent. A model guessing at a cap guesses
+low, and caps in the thousands starved children mid-answer. It is a per-child cap on that Thread's own contribution inside the shared pool,
 not a grant, reservation, nested pool, or refundable allocation. Omitting it creates no
 child-local cap. When no ancestor pool exists, an explicit cap creates a pool of that
 size anchored at the new child; its descendants join the same pool. Collaboration and

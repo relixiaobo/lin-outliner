@@ -236,14 +236,25 @@ export function ThreadDock({
       return;
     }
     const [rowThreadId] = path;
-    if (path.length > 1) requestSubagentDrill(rowThreadId!, path);
+    // The row lives inside its Turn's process fold, and a settled Turn folds
+    // shut by default — expanding only the leaf writes a key nothing reads and
+    // nothing appears on screen. Open the fold that contains it too.
+    const hostTurn = (snapshot.turnsByThread.get(parentThreadId) ?? []).find((turn) => (
+      turn.items.some((item) => item.type === 'subAgentActivity' && item.agentThreadId === rowThreadId)
+    ));
+    if (!hostTurn) {
+      setActionError(t.agent.thread.threadUnavailable);
+      return;
+    }
+    setThreadDisclosureOverride(parentThreadId, `process:${hostTurn.id}`, true);
     setThreadDisclosureOverride(parentThreadId, `subagent:${rowThreadId}`, true);
+    if (path.length > 1) requestSubagentDrill(rowThreadId!, path);
     requestAnimationFrame(() => {
       document
         .querySelector(`[data-thread-disclosure-id="subagent:${CSS.escape(rowThreadId!)}"]`)
         ?.scrollIntoView({ block: 'center' });
     });
-  }, [snapshot.selectedThreadId, t, threadsById]);
+  }, [snapshot.selectedThreadId, snapshot.turnsByThread, t, threadsById]);
 
   /** Selecting a root conversation from the list or an Automation. */
   const openThread = useCallback(async (threadId: string) => {

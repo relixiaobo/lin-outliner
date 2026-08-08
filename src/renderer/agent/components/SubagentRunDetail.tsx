@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Thread, ThreadId, Turn } from '../../../core/agent/protocol';
 import type { DocumentIndex } from '../../state/document';
 import { useT } from '../../i18n/I18nProvider';
 import { AgentIcon, BackIcon, ICON_SIZE, SkillIcon, StopIcon } from '../../ui/icons';
 import { IconButton } from '../../ui/primitives/IconButton';
 import type { ThreadNodeReferenceOpenHandler } from '../threadReferences';
-import { consumeSubagentDrill } from '../store/subagentDrillIntent';
+import { consumeSubagentDrill, subscribeSubagentDrill } from '../store/subagentDrillIntent';
 import { threadStore, useThreadStore } from '../store/threadStore';
 import { ThreadView } from './ThreadView';
 
@@ -45,11 +45,13 @@ export function SubagentRunDetail({
   const t = useT();
   const snapshot = useThreadStore();
   // A request from Thread Details names a child deeper than this row; the path
-  // it carried is this container's opening state, consumed once.
+  // it carried is this container's state, consumed once — on mount if the row
+  // opened for it, and on arrival if the row was already open.
   const [stack, setStack] = useState<readonly ThreadId[]>(
     () => consumeSubagentDrill(rootThreadId) ?? [rootThreadId],
   );
   const loadedRef = useRef<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const threadId = stack[stack.length - 1] ?? rootThreadId;
   const thread = snapshot.threads.find((candidate) => candidate.id === threadId) ?? null;
   const outer = stack.length > 1
@@ -60,11 +62,28 @@ export function SubagentRunDetail({
     [snapshot.threads],
   );
 
+  useEffect(() => subscribeSubagentDrill(() => {
+    const path = consumeSubagentDrill(rootThreadId);
+    if (path) setStack(path);
+  }), [rootThreadId]);
+
   useEffect(() => {
     if (loadedRef.current === threadId) return;
     loadedRef.current = threadId;
-    void threadStore.ensureThreadHistory(threadId).catch(() => undefined);
+    setLoadError(null);
+    // Reported, not swallowed: the load is what fills the container, so a
+    // rejection that only cleared a flag would leave "Loading…" on screen for
+    // good, with the unavailable state it was written for unreachable.
+    void threadStore.ensureThreadHistory(threadId).catch((error: unknown) => {
+      if (loadedRef.current !== threadId) return;
+      loadedRef.current = null;
+      setLoadError(errorMessage(error));
+    });
   }, [threadId]);
+
+  const drillTo = useCallback((target: ThreadId) => {
+    setStack((current) => (current[current.length - 1] === target ? current : [...current, target]));
+  }, []);
 
   const turns = snapshot.turnsByThread.get(threadId);
   const name = subagentName(thread, t.agent.thread.untitled);
@@ -102,10 +121,14 @@ export function SubagentRunDetail({
           />
         ) : null}
       </header>
-      {turns === undefined ? (
+      {loadError !== null ? (
+        <p className="thread-subagent-detail-empty" role="alert">{loadError}</p>
+      ) : thread === null && turns === undefined ? (
         <p className="thread-subagent-detail-empty">{t.agent.thread.loading}</p>
       ) : thread === null ? (
         <p className="thread-subagent-detail-empty">{t.agent.thread.threadUnavailable}</p>
+      ) : turns === undefined ? (
+        <p className="thread-subagent-detail-empty">{t.agent.thread.loading}</p>
       ) : (
         <div className="thread-subagent-detail-body" key={threadId}>
           <ThreadView
@@ -126,11 +149,12 @@ export function SubagentRunDetail({
             onInterrupt={noop}
             {...(onInterruptThread ? { onInterruptThread } : { onInterruptThread: noop })}
             onOpenNodeReference={onOpenNodeReference}
-            onOpenThread={noop}
-            // A grandchild replaces these contents instead of nesting under them.
-            onSubagentDrill={(target) => {
-              setStack((current) => (current[current.length - 1] === target ? current : [...current, target]));
-            }}
+            // Every route to a grandchild swaps these contents: the delegation
+            // row AND the child links inside an expanded collaboration tool
+            // call, which reach the same Thread by another path. One of them
+            // silently doing nothing reads as a broken app, not a disabled one.
+            onOpenThread={async (target) => drillTo(target)}
+            onSubagentDrill={drillTo}
             onOpenTurnDetails={(turn: Turn) => onOpenTurnDetails?.(threadId, turn.id)}
             onReadToolArguments={(turnId, item) => threadStore.readToolArguments(threadId, turnId, item)}
             onReadToolOutput={(turnId, item) => threadStore.readItemOutput(threadId, turnId, item)}
@@ -162,6 +186,10 @@ export function SubagentRunDetail({
 async function noop(): Promise<void> { return undefined; }
 async function noSend(): Promise<null> { return null; }
 async function noFallback(): Promise<boolean> { return false; }
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
 
 function subagentName(thread: Thread | null, fallback: string): string {
   return thread?.name || thread?.agentNickname || thread?.preview || fallback;

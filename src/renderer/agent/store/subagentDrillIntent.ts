@@ -14,10 +14,22 @@ import type { ThreadId } from '../../../core/agent/protocol';
  * own child, not the target of a request the reader already followed.
  */
 const intents = new Map<ThreadId, readonly ThreadId[]>();
+const listeners = new Set<() => void>();
+
+/**
+ * Consumers subscribe because a row may ALREADY be expanded when the request
+ * arrives: relying on the container's first render would drop that request and
+ * leave the stale path behind to hijack the next expand of the same row.
+ */
+export function subscribeSubagentDrill(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
 
 /** `path` starts at the row being expanded and ends at the child to show. */
 export function requestSubagentDrill(rowThreadId: ThreadId, path: readonly ThreadId[]): void {
   intents.set(rowThreadId, path);
+  for (const listener of listeners) listener();
 }
 
 export function consumeSubagentDrill(rowThreadId: ThreadId): readonly ThreadId[] | null {
@@ -30,4 +42,5 @@ export function consumeSubagentDrill(rowThreadId: ThreadId): readonly ThreadId[]
 /** Test seam: intents outlive a render, so a suite must be able to clear them. */
 export function resetSubagentDrillIntents(): void {
   intents.clear();
+  listeners.clear();
 }

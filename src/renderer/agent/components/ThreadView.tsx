@@ -154,7 +154,10 @@ interface ThreadViewProps {
   /**
    * Present only INSIDE a Subagent run detail. A delegation row there swaps
    * that container's contents instead of opening a second one inside it —
-   * nesting would put a scroll region inside a scroll region.
+   * nesting would put a scroll region inside a scroll region. Its presence is
+   * also what makes this view EMBEDDED: a control that cannot act on a child
+   * Thread is hidden, which is a narrower thing than "has no composer" — an
+   * Automation transcript has no composer and can still be forked.
    */
   readonly onSubagentDrill?: (threadId: string) => void;
   readonly onReadToolOutput: (turnId: string, item: ThreadToolItem) => Promise<string | null>;
@@ -280,13 +283,28 @@ function cacheThreadScrollSnapshot(threadId: string, snapshot: ThreadScrollSnaps
 }
 
 /**
+ * This transcript's OWN Turn rows.
+ *
+ * A Subagent run detail renders a full ThreadView inside one of these rows, and
+ * that inner view emits Turn rows of its own — scrolled independently, so their
+ * tops are neither this transcript's nor monotonic in document order, which is
+ * the precondition the anchor search below depends on. Left in, a child's row
+ * could be cached as the parent's reading anchor and restored against a row
+ * clipped inside a fixed-height box.
+ */
+function ownTranscriptRows(scroll: HTMLElement): HTMLElement[] {
+  return [...scroll.querySelectorAll<HTMLElement>('[data-thread-turn-row]')]
+    .filter((row) => !row.closest('.thread-subagent-detail'));
+}
+
+/**
  * The first Turn row whose bottom is still below the viewport top — the one the
  * reader sees at the top of the transcript. Rows are laid out in document order,
  * so their edges are monotonic and a binary search costs about six rect reads
  * instead of one per row on a path that runs per scroll event.
  */
 function readTranscriptAnchor(scroll: HTMLElement): TranscriptAnchor | null {
-  const rows = scroll.querySelectorAll<HTMLElement>('[data-thread-turn-row]');
+  const rows = ownTranscriptRows(scroll);
   if (rows.length === 0) return null;
   const viewportTop = scroll.getBoundingClientRect().top;
   let low = 0;
@@ -778,7 +796,7 @@ export function ThreadView({
     const maximumTop = Math.max(0, scroll.scrollHeight - scroll.clientHeight);
     const anchor = request.anchor;
     const anchorRow = anchor
-      ? scroll.querySelector<HTMLElement>(`[data-thread-turn-row="${CSS.escape(anchor.turnId)}"]`)
+      ? ownTranscriptRows(scroll).find((row) => row.dataset.threadTurnRow === anchor.turnId) ?? null
       : null;
     // The anchored row carries the reading position; the saved offset is only
     // how we get near enough for a virtualized Thread to render that row.
@@ -2006,7 +2024,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
   }, [composerEnabled, isLastTurn, turn]);
   const responseTail = standaloneContextBoundary ? null : (
     <ThreadResponseTail
-      canContinueInNewChat={composerEnabled}
+      canContinueInNewChat={onSubagentDrill === undefined}
       onCopy={copyTurn}
       onContinueInNewChat={continueInNewChat}
       onOpenDetails={() => onOpenTurnDetails(turn)}

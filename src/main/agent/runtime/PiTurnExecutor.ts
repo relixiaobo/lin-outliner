@@ -970,7 +970,15 @@ export async function persistCompletedToolContext(
   // never reached the model that needed it.
   if (skillToolRefused(result)) return;
   const invocation = skillInvocationEvidence(result);
-  if (!invocation) throw new Error('Completed Skill tool result is missing invocation evidence.');
+  if (!invocation) {
+    // Recorded, not thrown. This is a bookkeeping side effect the user never
+    // sees, and it runs inside tool completion — throwing kills the Turn and
+    // discards assistant work already produced, which is exactly the failure
+    // the refusal case above was written to remove (A12: fail closed at
+    // write/decode boundaries, degrade on the user path).
+    console.error('[agent] Completed Skill tool result is missing invocation evidence');
+    return;
+  }
   await context.persistContextEvidence(invocation, `Invoked Skill: ${invocation.displayName}`);
 }
 
