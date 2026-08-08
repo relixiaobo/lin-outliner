@@ -500,17 +500,25 @@ export class ThreadCatalogOps {
         // The rollback marker is already durable. Orphan cleanup is retried at startup
         // and must not turn a committed rollback into a reported operation failure.
         //
-        // RESOURCES are deliberately not among these. A rollback exists to be
-        // followed by a re-send of the very content just removed — Edit does it,
-        // and Retry does it on the failure case, where an attachment is most
-        // likely to still matter — and the re-sent content carries the same
-        // attachment references. Reclaiming them against the surviving history
-        // deletes the payload the next call is about to reference, leaving the
-        // resent message pointing at nothing. The other three belong to the Turn
-        // that went away and nothing re-sends them. Startup sweeps all four for
-        // every known Thread, so a resource orphaned by a rollback with no
-        // re-send is reclaimed there rather than leaked.
+        // RESOURCES are reclaimed against the surviving history PLUS the Turns
+        // just removed. A rollback exists to be followed by a re-send of the
+        // very content it removed — Edit does it, and Retry does it on the
+        // failure case, where an attachment is most likely to still matter — so
+        // a payload the omitted Turns referenced is one the next call is about
+        // to reference again, and deleting it leaves the resent message pointing
+        // at nothing. What neither set references is true garbage no re-send can
+        // reach, and reclaiming it here keeps those bytes out of the resource
+        // quota, which counts every byte on disk but can only ever offer
+        // surviving history as reclaim candidates.
+        //
+        // The other three belong to the Turn that went away and nothing re-sends
+        // them. Startup sweeps all four for every known Thread.
+        const resurrectable = [
+          ...this.resourceOps.threadResourceReferences(thread.id),
+          ...omitted.flatMap((turn) => turn.items.flatMap(itemResourceReferences)),
+        ];
         await Promise.all([
+          this.core.payloads.pruneUnreferencedResources(thread.id, resurrectable),
           this.core.payloads.pruneUnreferencedContexts(thread.id, this.resourceOps.threadContextPayloadReferences(thread.id)),
           this.core.payloads.pruneUnreferencedTurnDiagnostics(
             thread.id,

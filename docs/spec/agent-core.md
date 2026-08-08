@@ -461,14 +461,16 @@ codec boundary. A newly written tool image that
 no terminal Item references is reclaimed at Turn finalization; startup reconciliation
 handles crash leftovers.
 
-A history rollback reclaims contexts, Turn diagnostics, and tool text outputs,
-but NOT resources. A rollback exists to be followed by a re-send of the content
-it removed — that is what Edit and Retry do — and the re-sent content carries the
-same attachment references, so reclaiming against the surviving history would
-delete a payload one call ahead of its use and leave the resent message pointing
-at nothing. Startup sweeps all four categories for every known Thread, so a
-resource orphaned by a rollback that is never followed by a re-send is reclaimed
-there rather than leaked. Every
+A history rollback reclaims contexts, Turn diagnostics, and tool text outputs
+against the surviving history, and resources against the surviving history PLUS
+the Turns it removed. A rollback exists to be followed by a re-send of the
+content it removed — that is what Edit and Retry do — so a payload the omitted
+Turns referenced is one the next call is about to reference again, and deleting
+it leaves the resent message pointing at nothing. What neither set references is
+garbage no re-send can reach, and it is reclaimed here: the resource quota counts
+every byte on disk while offering only surviving history as reclaim candidates,
+so bytes left behind would push a Thread toward its limits with no way to free
+them. Every
 resource operation requires each managed path component to be a physical directory;
 symbolic-link substitution
 fails closed, including during quota scans, startup cleanup, and garbage

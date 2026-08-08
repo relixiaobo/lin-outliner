@@ -4032,7 +4032,7 @@ describe('ThreadService', () => {
     await reopened.service.close();
   });
 
-  test('keeps an attachment a rollback is about to re-send', async () => {
+  test('keeps an attachment a rollback is about to re-send, and drops true garbage', async () => {
     const root = await mkdtemp(join(tmpdir(), 'tenon-thread-service-'));
     roots.push(root);
     const stores = createStores(root);
@@ -4044,15 +4044,24 @@ describe('ThreadService', () => {
       attachmentScratchRoot: join(root, 'agent-scratch'),
       transcriptRoot: subagentTranscriptRoot(join(root, 'app-data')),
       resolveUserContent: async (content, context) => {
+        // A real managed attachment: the resolved content REFERENCES the
+        // payload, so the re-send below actually has to resolve it.
         const written = await stores.payloads.writeResourceWithStatus(
           context.threadId,
-          Buffer.from('diagram bytes'),
-          'image/png',
-          'diagram.png',
+          Buffer.from('notes bytes'),
+          'text/plain',
+          'notes.txt',
         );
         attachmentRef = written.ref;
         if (written.created) context.recordCreatedResource(written.ref);
-        return content;
+        return [...content, {
+          type: 'attachment' as const,
+          id: written.ref.id,
+          name: 'notes.txt',
+          mimeType: 'text/plain',
+          sizeBytes: written.ref.byteLength,
+          source: { kind: 'threadPayload' as const, ref: written.ref },
+        }];
       },
     });
     await service.initialize();
@@ -4063,7 +4072,7 @@ describe('ThreadService', () => {
       cwd: root,
     })).thread;
 
-    await service.startRendererTurn({
+    const sent = await service.startRendererTurn({
       threadId: thread.id,
       input: [{ type: 'text', text: 'Look at this' }],
     });
@@ -4071,14 +4080,30 @@ describe('ThreadService', () => {
     executor.finish(0);
     await service.waitForIdle(thread.id);
     const ref = attachmentRef!;
-    expect(await stores.payloads.readResource(thread.id, ref)).toEqual(Buffer.from('diagram bytes'));
+    const resent = service.readThread({ threadId: thread.id, includeTurns: true })
+      .thread.turns!.find((turn) => turn.id === sent.turn.id)!
+      .items.find((item) => item.type === 'userMessage')!.content;
 
-    // Edit and Retry both roll back and then re-send the very content that was
-    // removed, references and all. Reclaiming against the surviving history
-    // here would delete the payload the next call is about to reference.
+    // Garbage nothing ever referenced, written while the Turn was live.
+    const orphan = await stores.payloads.writeResource(thread.id, Buffer.from('orphan'), 'text/plain', 'orphan.txt');
+
     await service.rollbackThread({ threadId: thread.id, numTurns: 1 });
 
-    expect(await stores.payloads.readResource(thread.id, ref)).toEqual(Buffer.from('diagram bytes'));
+    // The attachment survives the rollback...
+    expect(await stores.payloads.readResource(thread.id, ref)).toEqual(Buffer.from('notes bytes'));
+    // ...and re-sending the very content that was removed resolves it, which is
+    // what Edit and Retry do. Pruning against the surviving history alone left
+    // this throwing `Managed attachment payload is unavailable or corrupt`.
+    const again = await service.startRendererTurn({ threadId: thread.id, input: resent });
+    expect(again.turn.id).not.toBe(sent.turn.id);
+    await executor.waitUntilWaiting(1);
+    executor.finish(1);
+    await service.waitForIdle(thread.id);
+
+    // True garbage still goes: no re-send can reach what neither the surviving
+    // history nor the removed Turns referenced, and those bytes otherwise count
+    // against the resource quota with no way to reclaim them.
+    expect(await stores.payloads.readResource(thread.id, orphan)).toBeNull();
     await service.close();
   });
 
