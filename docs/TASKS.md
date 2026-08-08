@@ -583,14 +583,6 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
 Small unclaimed items split off from shipped PRs — fast-track each when a clone is free; none block
 anything.
 
-- **thread-system-error-is-a-dead-end** (P2, *fast-track, no plan file*, filed 2026-08-07 at the
-  #503 gate) — a Turn that fails through `failActiveTurn` leaves the Thread in `systemError`
-  (`TurnLifecycle.ts:1443`/`:1493`), and nothing clears that status. Both `rollbackThread`
-  (`ThreadCatalogOps.ts:446`) and `acceptTurn` (`TurnLifecycle.ts:213`) require `idle`, so the
-  conversation is stuck outright: Retry is refused *and* a new message is refused, with no way back
-  short of starting another Thread. #503 made the refusal visible rather than silent; the status
-  itself is a main-process defect and needs its own fix — decide what clears `systemError` (a new
-  user Turn, an explicit dismissal, or never entering it for a per-Turn failure at all).
 - **rollback-prunes-resources-the-resend-still-references** (P3, *fast-track, no plan file*, filed
   2026-08-07 at the #503 gate) — `rollbackThread` calls `pruneUnreferencedResources`
   (`ThreadCatalogOps.ts:502`) after removing the Turn, then `rollbackAndSend` re-sends the recorded
@@ -686,6 +678,18 @@ and the merged PR, distilled rules in [`lessons.md`](lessons.md). Everything
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
 
+- **thread-system-error-is-a-dead-end** (cc, PR #506, merged 2026-08-08,
+  *fast-track, no plan file*) — the follow-up filed at the #503 gate, fixed: a Turn
+  dying on the launch path left the Thread in a persisted `systemError` that
+  nothing ever cleared, and since both admission and rollback require `idle`, one
+  crash bricked that conversation for good. Failure now lives only on the Turn,
+  the Thread returns to idle, and Threads already carrying the status are healed
+  when they load. The gate found two — the stale branch of `failActiveTurn` still
+  named the Thread's status after ownership had passed to a newly admitted Turn
+  (`idle` fails open where `systemError` at least failed closed), and Thread
+  Details' "failed" label became unreachable once nothing wrote the status,
+  listing a crashed child as Idle — both fixed, with the new race guard verified
+  to fail against the pre-fix code.
 - **collab-blank-tool-argument** (cc, PR #503, merged 2026-08-07, *fast-track, no
   plan file*) — two halves of one incident, bundled at the PM's direction: a
   blank optional tool argument (`model: ""` from the provider) killed the Turn at

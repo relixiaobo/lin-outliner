@@ -223,6 +223,22 @@ Entries reference the pull request that introduced them.
   child inside the shared `subagentTokenBudget` the user configured, since any
   honoured cap moves a child into a private pool of its own. A programmatic
   caller naming a cap is still left alone.
+- **A failed Turn no longer ends the conversation (PR #506, cc)** — a Turn that
+  died on the launch path left the Thread in `systemError`, and nothing in the
+  app ever cleared it. That status persists, and both rollback and Turn admission
+  accept only an idle Thread, so a single crash locked the conversation out of
+  retrying **and** out of receiving a new message — permanently, across restarts,
+  with no way forward but abandoning it and starting another. #503 made that
+  refusal visible; this is the state behind it. The failure is now recorded only
+  where it belongs — on the Turn, `failed` and carrying its `TurnError` — and the
+  Thread returns to idle, as the sibling failure path always did; a Thread
+  already carrying the status from an earlier version is healed when it loads, so
+  conversations bricked by the old behavior come back. Thread Details reads a
+  child's failure from that child's latest Turn instead of its Thread status, so
+  a Subagent whose Turn died is no longer listed as Idle. And a Turn that no
+  longer owns its Thread writes no Thread status at all: completion releases the
+  Thread before its tail of naming, usage accounting and extension hooks
+  finishes, so a new Turn can already be running when a late failure arrives.
 
 ### Internal
 

@@ -325,3 +325,31 @@ the number and you may have quietly changed which ceiling applies. Dropping the
 cap returns the child to the pool the user configured, which is both the safer
 default and the honest one: the system enforces the bound the user set, not one
 the model guessed at and we then overruled.
+
+## Do not record a per-attempt failure in the field that gates the next attempt
+
+`failActiveTurn` wrote `systemError` on the THREAD when a TURN died. It reads as
+diligence — the failure is real, so say so at both levels — and it was a
+permanent lockout, because Thread status is not a label there, it is the gate:
+rollback and Turn admission both accept only `idle`. Nothing ever cleared the
+status, and it persisted, so one crash ended that conversation for good — retry
+refused, a new message refused, across restarts, with no way out but abandoning
+it. The information was never missing: the Turn was already `failed` and already
+carried its `TurnError`.
+
+The tell is not "this status is wrong" — it was accurate. The tell is that **the
+field is load-bearing for the next action, and the code that writes the failure
+is not the code that would clear it.** A state a failure path can enter and no
+success path can leave is a trapdoor. Whoever adds the write owes an answer to
+"what clears this, and does that still run after the thing that just failed?" —
+and if there is none, record the failure where its lifetime already matches the
+failure: on the attempt, not on the container.
+
+The same change carried a second rule worth keeping: **ownership of a shared
+field ends before the owner's code does.** Turn completion releases the Thread —
+drops the active Turn, sets the status — and *then* runs an awaited tail of
+naming, usage accounting and extension hooks. A new Turn can be admitted during
+that window, so a throw from the tail was writing status for a Thread it no
+longer owned. A component that has handed off a lock must stop naming that
+lock's state, even on its own error path: check ownership and return, rather than
+"restoring" what someone else now controls.
