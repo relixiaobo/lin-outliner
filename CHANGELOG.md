@@ -239,6 +239,21 @@ Entries reference the pull request that introduced them.
   longer owns its Thread writes no Thread status at all: completion releases the
   Thread before its tail of naming, usage accounting and extension hooks
   finishes, so a new Turn can already be running when a late failure arrives.
+- **Editing or retrying a message keeps the image attached to it (PR #507, cc)** —
+  both actions roll the Turn back and then re-send the very content that was
+  removed, references and all, but the rollback reclaimed every payload the
+  *surviving* history no longer pointed at. The attachment's only referent was the
+  Turn that had just gone away, so its bytes were deleted one call ahead of their
+  use and the re-sent message failed with `Managed attachment payload is
+  unavailable or corrupt` — most likely on Retry, where the failure being retried
+  is often about the image. A rollback now reclaims resources against the
+  surviving history **plus the Turns it removed**: what those Turns referenced is
+  what the re-send is about to reference again, and what neither set references is
+  garbage no re-send can reach, so it still goes rather than lingering against the
+  Thread's resource quota — which counts every byte on disk but can only ever
+  offer surviving history as reclaim candidates, so leftover bytes would push a
+  Thread toward tiering away live originals, or refuse the next attachment
+  outright, until the app restarted.
 
 ### Internal
 

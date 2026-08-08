@@ -583,13 +583,6 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
 Small unclaimed items split off from shipped PRs — fast-track each when a clone is free; none block
 anything.
 
-- **rollback-prunes-resources-the-resend-still-references** (P3, *fast-track, no plan file*, filed
-  2026-08-07 at the #503 gate) — `rollbackThread` calls `pruneUnreferencedResources`
-  (`ThreadCatalogOps.ts:502`) after removing the Turn, then `rollbackAndSend` re-sends the recorded
-  content verbatim, including an attachment reference whose only referent was the Turn just
-  removed. Pre-existing on the Edit path; #503's Retry makes it one click away on the failure case,
-  where an attachment is most likely to still matter. Prune after the re-send, or carry the
-  re-sent content's references into the prune's reference set.
 - **#208 review follow-ups** (P3, *fast-track, no plan file*) — non-blocking items surfaced by
   `/code-review high` on #208: **F7** add a core test pinning the agent `get_backlinks` projection
   shape (`core.backlinks()` field-hosted-ref: `sourceId` = owner node, kind `field`); **F8** confirm +
@@ -678,6 +671,14 @@ and the merged PR, distilled rules in [`lessons.md`](lessons.md). Everything
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
 
+- **rollback-prunes-resources-the-resend-still-references** (cc, PR #507, merged
+  2026-08-08, *fast-track, no plan file*) — the other follow-up filed at the #503 gate,
+  fixed: a rollback reclaimed against the surviving history, deleting the attachment
+  the re-send that always follows it was about to reference. Resources are now
+  reclaimed against the surviving history plus the Turns removed. The gate's one
+  finding was the first shape of the fix — holding resources back entirely traded the
+  defect for a smaller one, because orphan bytes count against the resource quota with
+  no in-session way to free them — and the guard test was verified red on both halves.
 - **thread-system-error-is-a-dead-end** (cc, PR #506, merged 2026-08-08,
   *fast-track, no plan file*) — the follow-up filed at the #503 gate, fixed: a Turn
   dying on the launch path left the Thread in a persisted `systemError` that

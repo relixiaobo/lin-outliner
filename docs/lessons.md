@@ -353,3 +353,31 @@ that window, so a throw from the tail was writing status for a Thread it no
 longer owned. A component that has handed off a lock must stop naming that
 lock's state, even on its own error path: check ownership and return, rather than
 "restoring" what someone else now controls.
+
+## Deferring a cleanup is safe only if nothing between here and the restart counts what you left
+
+The rollback in `ThreadCatalogOps` deleted an attachment its own caller was about
+to re-send, and the first fix was to stop reclaiming resources there entirely:
+startup already sweeps every Thread, so nothing leaks — the bytes just wait. That
+reasoning is right about *leaking* and wrong about *cost*, because it checked only
+whether the garbage would eventually be freed, not who reads the space in the
+meantime. The Thread's resource quota counts every byte on disk, while its reclaim
+candidates can only ever come from surviving history — so bytes with no live
+reference are simultaneously charged and unreclaimable. Enough of them and the
+quota tiers away full-resolution originals of *live* history chasing a target the
+garbage made unreachable, or refuses the next attachment outright, until the app
+restarts.
+
+The general shape: **"a later sweep will get it" answers the leak question, not
+the accounting question.** Before withholding a cleanup, find every consumer of
+the resource being left behind and ask what each of them does while it sits there
+— a quota, a capacity check, a count, a scan cost. When one of them charges for
+garbage it cannot collect, the deferral is not free; it has converted a leak into
+pressure on live data.
+
+The fix that survived is also the reusable one: instead of retaining everything
+or reclaiming against the survivors, reclaim against **the survivors plus the
+thing being removed**. What the removed content referenced is exactly what a
+re-send can resurrect; what neither set references is garbage nothing can reach.
+When an operation exists to be undone or replayed, its cleanup's reference set is
+the union of both sides of the transition, not just the side that remains.
