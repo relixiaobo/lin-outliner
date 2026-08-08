@@ -91,6 +91,31 @@ Entries reference the pull request that introduced them.
   release-cutter to run the script as a pre-flight — the workflow runs it after
   the `v*` push, where a failure lands with the tag already public and recovery
   means deleting and re-pushing it.
+- **Every node action now comes from one core registry (PR #504, cc-2)** — the
+  context menu is no longer a place where the menu's own code decides what a node
+  can do. It is a filtered, anchored view of a single action registry in
+  `src/core/actions/`, and the renderer may *name* an action — action id,
+  invocation ref, subject ref, typed arguments — but never construct the effect:
+  main validates the naming against the latest projection, mints the objects, and
+  runs the plan itself. Two user-visible changes ride along. *Move to* stops
+  letting invalid descendants consume the candidate limit and hide a valid ranked
+  destination, and a mixed selection's *Toggle done* becomes convergent *Mark
+  done* / *Mark not done*, changing only the nodes not already in the requested
+  state. Action copy is normalized in both locales, and the tag picker's *Create
+  X* row is localized rather than hard-coded English. The branch carried a
+  differential parity oracle — the shipped menu kept in the tree and compared
+  against the registry over six real document states — and the review gate still
+  found ten defects underneath it, every one in a state the oracle never entered:
+  the anchored row had been replaced by "the first selection root", which could
+  offer and then execute *permanent deletion* on a node the user had not
+  right-clicked; a rejected or half-applied plan closed the menu with no error
+  where the shipped `useCommandRunner` path had shown a banner; routing *Move to*
+  through the search kernel silently dropped system containers from the
+  destination set; the tag picker's Enter could commit a debounced candidate
+  resolved for text the user had already moved past; an explicit `pin` degraded
+  into a blind toggle; tag colours resolved by label text instead of node id; and
+  a refused opening left the surface dead until the next right-click. All ten are
+  fixed with regression tests before this landed.
 
 ### Fixed
 

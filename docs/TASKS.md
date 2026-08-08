@@ -100,14 +100,18 @@ into `unified-command-surface` (D1/D4/D5) and the resolver track superseded — 
 capture-pipeline tracks below stay separate (orthogonal to the surface).
 
 - **unified-command-surface** (P2, **in-progress — design contract merged #485,
-  refined #491, re-anchored to the tree #501; implementation unclaimed**) — put
+  refined #491, re-anchored to the tree #501; PR 1 merged #504 (cc-2), PR 2
+  unclaimed**) — put
   **one core action registry** behind every
   outline-node action. The context menu becomes its filtered anchored view; the
   launcher becomes its searchable view and the only globally summoned command
   surface. Shape (b) ships as two independent complete features: PR 1 proves the
   existing menu against the registry and fixes *Move to* retrieval, then PR 2 adds
   the command/capture surface, agent handoff, and declared native-confirmation
-  change. The full contract, security/lifecycle state machines, verification, and
+  change. PR 1 shipped the registry, main-owned admission and the three approved
+  deltas; the `/code-review high` gate found ten defects the branch's own parity
+  oracle could not reach, all fixed with regression tests before merge (see the
+  CHANGELOG entry and `docs/lessons.md`). The full contract, security/lifecycle state machines, verification, and
   build ordering live in `docs/plans/unified-command-surface.md`; its retrieval
   dependency shipped in #111. This replaces the earlier `Target × Verb`, habit
   learning, and reversibility-tier framing rather than extending it.

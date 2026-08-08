@@ -266,3 +266,38 @@ So when you add a second caller to an existing mutation path: **diff your call
 site against the existing one — enablement condition, in-flight guard, error
 handling — and justify each difference explicitly.** "I reused the same path" is
 a statement about one line. Reuse the guards or say why they do not apply.
+
+## A parity oracle proves parity only over the states it enters
+
+Moving the node context menu onto a core action registry (#504) was done about as
+carefully as a reimplementation can be: the shipped menu stayed in the tree as a
+live oracle, and a differential test rendered both paths over six real document
+states and demanded equality outside an explicitly approved delta list. The
+oracle was real, it ran, and it was deleted only after its verdict had been
+frozen into goldens. The review gate then found ten defects under it — including
+one that could offer, and on confirmation execute, *permanent deletion* on a node
+the user had not right-clicked.
+
+Not one of them was a case the oracle got wrong. Every one lived in a state the
+oracle never entered. It compared two menus that opened successfully, so a
+refused opening — which rendered nothing and never called `onClose`, leaving the
+surface dead — was outside it. It compared *presentations*, so a plan that came
+back `failed` or `stale` and closed the menu with no banner was outside it. It
+rendered a selection, but never one whose first member was not the anchored row,
+so reading "the anchor" off `rowIds[0]` looked identical. It never typed into an
+async picker fast enough for a debounced list to lag the query. The old code
+reached these states through machinery — a `catch` in the shared command runner,
+a synchronous `useMemo`, an unconditional render — that the new code was not
+obliged to reproduce, because nothing in the ordinary states depended on it.
+
+The seductive part is that a differential oracle *feels* exhaustive in a way a
+hand-written assertion does not: it compares everything, so surely it compares
+enough. It does not. It compares everything about the inputs you hand it, and the
+inputs you naturally hand it are the ones where both implementations work.
+
+So when you replace an implementation behind an oracle: **enumerate the states
+the OLD code only reached on failure — rejection, staleness, a vanished subject,
+an in-flight async answer, a collection whose order is incidental — and write a
+case for each before deleting the oracle.** The parity you can demonstrate is the
+easy half; the half that bites is the guarantees the old code made without ever
+being asked to demonstrate them.
