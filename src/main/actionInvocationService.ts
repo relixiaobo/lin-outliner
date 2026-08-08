@@ -338,6 +338,31 @@ export class ActionInvocationService {
     const revision = record.ambient.revision + 1;
     if (params.resolution.kind === 'none') {
       record.ambient = { requestId: record.ambient.requestId, revision, state: 'none' };
+    } else if (params.resolution.kind === 'inApp') {
+      // A validated seed becomes INPUT to this transition, never a second
+      // invocation and never a renderer-authored membership patch: main builds
+      // the node/selection objects itself, exactly as it does for a menu.
+      const projection = this.actionProjection();
+      const seed = params.resolution.seed;
+      if (!projection.byId.has(seed.anchorNodeId)) {
+        record.ambient = { requestId: record.ambient.requestId, revision, state: 'none' };
+      } else {
+        const mint = () => mintRef<ObjectRef>();
+        const anchor = nodeObjectForRow(seed.anchorNodeId, projection.byId, mint);
+        record.objects.set(anchor.objectRef, anchor);
+        const selection = this.selectionObjectFor(seed, projection, mint, record.objects);
+        const ambient = selection ?? anchor;
+        record.invocation = {
+          ...record.invocation,
+          fixedObjects: [...record.invocation.fixedObjects, ambient],
+        };
+        record.ambient = {
+          requestId: record.ambient.requestId,
+          revision,
+          state: 'resolved',
+          objectRef: ambient.objectRef,
+        };
+      }
     } else if (params.resolution.kind === 'externalPage') {
       const page: SurfaceObject = {
         kind: 'externalPage',

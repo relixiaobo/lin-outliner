@@ -258,6 +258,9 @@ import {
 import type { EffectStep } from '../core/actions/bindings';
 import {
   ACTION_AMBIENT_CHANGED_CHANNEL,
+  ACTION_AMBIENT_SEED_REQUEST_CHANNEL,
+  ACTION_AMBIENT_SEED_RESPONSE_CHANNEL,
+  ACTION_AMBIENT_SEED_TIMEOUT_MS,
   ACTION_EVENT_CHANNEL,
   ACTION_OBJECT_QUERY_CHANNEL,
   ACTION_OPEN_CHANNEL,
@@ -1713,6 +1716,41 @@ let accessibilityPrompted = false;
  * (those target the browser by name, so focus having moved is fine) and push the
  * result to the renderer.
  */
+// In-flight in-app seed requests, by one-shot token.
+const pendingAmbientSeeds = new Map<string, (seed: unknown) => void>();
+
+/**
+ * Ask the MAIN renderer what the user had focused. It is the only surface that
+ * knows, and the answer is sender-checked and re-validated on the way in — main
+ * builds the object itself rather than accepting a finished one. No answer
+ * inside the window means no chip; the summon never waits on it.
+ */
+async function requestInAppAmbientSeed(openSeq: number): Promise<InvocationSeed | null> {
+  const target = liveWindow(mainWindow)?.webContents;
+  if (!target || target.isDestroyed()) return null;
+  const token = randomUUID();
+  const raw = await new Promise<unknown>((resolve) => {
+    const timer = setTimeout(() => {
+      pendingAmbientSeeds.delete(token);
+      resolve(null);
+    }, ACTION_AMBIENT_SEED_TIMEOUT_MS);
+    pendingAmbientSeeds.set(token, (seed) => {
+      clearTimeout(timer);
+      pendingAmbientSeeds.delete(token);
+      resolve(seed);
+    });
+    try {
+      target.send(ACTION_AMBIENT_SEED_REQUEST_CHANNEL, { token });
+    } catch {
+      clearTimeout(timer);
+      pendingAmbientSeeds.delete(token);
+      resolve(null);
+    }
+  });
+  if (openSeq !== launcherOpenSeq) return null;
+  return sanitizeInvocationSeed(raw);
+}
+
 async function toggleLauncher(): Promise<void> {
   const win = getLauncherWindow();
   if (win?.isVisible()) {
@@ -1742,6 +1780,21 @@ async function toggleLauncher(): Promise<void> {
     });
     launcherInvocationRef = opened.invocationRef;
     launcherContents.send(ACTION_OPENED_CHANNEL, opened);
+  }
+  // In-app summon must not read external context. When Tenon itself was
+  // frontmost there is no page to capture — the ambient object is what the user
+  // had focused, which only the main renderer can attest. Asking IT rather than
+  // classifying ourselves as `unknown-app` and capturing nothing.
+  if (front.app?.name === APP_NAME) {
+    const seeded = await requestInAppAmbientSeed(openSeq);
+    if (launcherContents && !launcherContents.isDestroyed() && launcherInvocationRef) {
+      launcherContents.send(ACTION_AMBIENT_CHANGED_CHANNEL, actionInvocationService.resolveAmbient({
+        invocationRef: launcherInvocationRef,
+        openSeq,
+        resolution: seeded ? { kind: 'inApp', seed: seeded } : { kind: 'none' },
+      }));
+    }
+    return;
   }
   try {
     const context = await captureExternalContext({
@@ -2298,6 +2351,14 @@ function registerIpc() {
     const invocationEvent = sanitizeInvocationEvent(raw);
     if (!invocationEvent) return { status: 'spent' };
     return actionInvocationService.event(invocationEvent, event.sender.id);
+  });
+
+  ipcMain.handle(ACTION_AMBIENT_SEED_RESPONSE_CHANNEL, (event, raw: unknown) => {
+    // Only the main renderer may answer, and only a request main issued.
+    assertMainRenderer(event, 'Action invocations');
+    const response = raw as { token?: unknown; seed?: unknown } | undefined;
+    if (typeof response?.token !== 'string') return;
+    pendingAmbientSeeds.get(response.token)?.(response.seed ?? null);
   });
 
   ipcMain.handle(ACTION_STEP_ACK_CHANNEL, (event, raw: unknown) => {

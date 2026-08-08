@@ -247,3 +247,90 @@ describe('capture(page)', () => {
     expect(change.fixedItems[0]?.primaryAction).toBeUndefined();
   });
 });
+
+describe('the in-app ambient object', () => {
+  test('a validated seed becomes a node chip, built by MAIN', () => {
+    const h = harness();
+    const today = h.core.projection().todayId;
+    const focused = h.core.createNode(today, null, 'Focused').focus!.nodeId;
+    const opened = h.service.openLauncher({ openSeq: 1, consumerId: LAUNCHER });
+    const change = h.service.resolveAmbient({
+      invocationRef: opened.invocationRef,
+      openSeq: 1,
+      resolution: {
+        kind: 'inApp',
+        seed: {
+          from: 'mainRenderer',
+          anchorNodeId: focused,
+          visualRowId: focused,
+          panelId: 'panel-0',
+          selectedIds: [],
+          isPinned: false,
+          rowExpanded: false,
+        },
+      },
+    });
+    expect(change.status).toBe('updated');
+    if (change.status !== 'updated') return;
+    const chip = change.fixedItems[0]!;
+    expect(chip.object.kind).toBe('node');
+    expect(chip.object.name).toEqual({ source: 'literal', value: 'Focused' });
+    // A node's primary is `open`, not a mutation: an ambient node must never
+    // occupy a blind-Enter slot with something that changes existing data.
+    expect(chip.primaryAction?.actionId).toBe('open');
+  });
+
+  test('a multi-selection becomes ONE aggregate chip with no primary action', () => {
+    const h = harness();
+    const today = h.core.projection().todayId;
+    const first = h.core.createNode(today, null, 'First').focus!.nodeId;
+    const second = h.core.createNode(today, null, 'Second').focus!.nodeId;
+    const opened = h.service.openLauncher({ openSeq: 1, consumerId: LAUNCHER });
+    const change = h.service.resolveAmbient({
+      invocationRef: opened.invocationRef,
+      openSeq: 1,
+      resolution: {
+        kind: 'inApp',
+        seed: {
+          from: 'mainRenderer',
+          anchorNodeId: first,
+          visualRowId: first,
+          panelId: 'panel-0',
+          selectedIds: [first, second],
+          isPinned: false,
+          rowExpanded: false,
+        },
+      },
+    });
+    if (change.status !== 'updated') throw new Error('expected the chip');
+    expect(change.fixedItems).toHaveLength(1);
+    expect(change.fixedItems[0]!.object.kind).toBe('nodeSelection');
+    // Enter is INERT for a selection — it has no safe canonical activation, and
+    // the model does not invent "open the first one" to fill the slot.
+    expect(change.fixedItems[0]!.primaryAction).toBeUndefined();
+  });
+
+  test('a seed naming a node that is gone records `none`', () => {
+    const h = harness();
+    const opened = h.service.openLauncher({ openSeq: 1, consumerId: LAUNCHER });
+    const change = h.service.resolveAmbient({
+      invocationRef: opened.invocationRef,
+      openSeq: 1,
+      resolution: {
+        kind: 'inApp',
+        seed: {
+          from: 'mainRenderer',
+          anchorNodeId: 'node:gone',
+          visualRowId: 'node:gone',
+          panelId: 'panel-0',
+          selectedIds: [],
+          isPinned: false,
+          rowExpanded: false,
+        },
+      },
+    });
+    if (change.status !== 'updated') throw new Error('expected a resolution');
+    expect(change.ambientState).toBe('none');
+    expect(change.fixedItems).toEqual([]);
+  });
+});

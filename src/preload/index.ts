@@ -1,5 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import {
+  ACTION_AMBIENT_SEED_REQUEST_CHANNEL,
+  ACTION_AMBIENT_SEED_RESPONSE_CHANNEL,
   ACTION_EVENT_CHANNEL,
   ACTION_OPEN_CHANNEL,
   ACTION_PARAMETER_QUERY_CHANNEL,
@@ -435,6 +437,19 @@ const api = {
   // subject ref, typed arguments — and nothing else; main re-evaluates and
   // executes. Effect plans travel main -> renderer only.
   actions: {
+    /** Main asks what the user had focused; the app shell answers. */
+    onAmbientSeedRequest: (respond: (token: string) => unknown) => {
+      const handler = (_event: Electron.IpcRendererEvent, request: { token: string }) => {
+        void ipcRenderer.invoke(ACTION_AMBIENT_SEED_RESPONSE_CHANNEL, {
+          token: request.token,
+          seed: respond(request.token),
+        });
+      };
+      ipcRenderer.on(ACTION_AMBIENT_SEED_REQUEST_CHANNEL, handler);
+      return () => {
+        ipcRenderer.removeListener(ACTION_AMBIENT_SEED_REQUEST_CHANNEL, handler);
+      };
+    },
     open: (seed: InvocationSeed) =>
       ipcRenderer.invoke(ACTION_OPEN_CHANNEL, seed) as Promise<InvocationOpened | null>,
     queryParameters: (request: ParameterObjectQueryRequest) =>

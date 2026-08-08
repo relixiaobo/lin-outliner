@@ -77,6 +77,8 @@ export function App() {
   const [trigger, setTrigger] = useState<TriggerState>(null);
   const [dragId, setDragId] = useState<NodeId | null>(null);
   const indexRef = useRef(index);
+  const uiStateRef = useRef(ui);
+  uiStateRef.current = ui;
   const run = useCommandRunner(applyProjectionUpdate, setPendingFocus, setError);
   const nodeAccessTimersRef = useRef<Map<NodeId, number>>(new Map());
 
@@ -91,7 +93,6 @@ export function App() {
   useEffect(() => installActionStepListener(), []);
   useEffect(() => installActionFocusSink(setPendingFocus), []);
   useEffect(() => installActionErrorSink(setError), []);
-
   const recordNodeLanding = useCallback((nodeId: NodeId) => {
     const timers = nodeAccessTimersRef.current;
     const pendingTimer = timers.get(nodeId);
@@ -211,6 +212,23 @@ export function App() {
   panelCountFitsRef.current = panelCountFitsCapacity;
   reflowPanelCountRef.current = reflowRailsForPanelCount;
   const { isNodePinned, pinNodeAtIndex, pinnedNodeIds, togglePin } = useWorkspacePinnedNodes(index?.byId ?? null);
+  // An in-app summon has no page to capture; the ambient object is what the
+  // user had focused, and this renderer is the only surface that knows. It
+  // answers with raw FACTS — main validates the ids and builds the object.
+  useEffect(() => window.lin?.actions?.onAmbientSeedRequest?.(() => {
+    const state = uiStateRef.current;
+    const anchorNodeId = state.selectedId ?? state.focusedId;
+    if (!anchorNodeId) return null;
+    return {
+      from: 'mainRenderer',
+      anchorNodeId,
+      visualRowId: anchorNodeId,
+      panelId: activePanelId ?? '',
+      selectedIds: [...state.selectedIds],
+      isPinned: isNodePinned(anchorNodeId),
+      rowExpanded: state.expanded.has(anchorNodeId),
+    };
+  }) ?? (() => undefined), [activePanelId, isNodePinned]);
   // Fallback for LAUNCHER-originated plans: that invocation has no surface in
   // this renderer to register handlers, but its navigate / pin / composer legs
   // still land here. `reveal` is deliberately absent — only an anchored opening

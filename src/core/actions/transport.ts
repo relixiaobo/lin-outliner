@@ -16,6 +16,10 @@ export const ACTION_EVENT_CHANNEL = 'action:event';
 export const ACTION_OPENED_CHANNEL = 'action:opened';
 /** main -> launcher: the authoritative replacement ambient presentation. */
 export const ACTION_AMBIENT_CHANGED_CHANNEL = 'action:ambientChanged';
+/** main -> MAIN renderer: what did the user have focused? */
+export const ACTION_AMBIENT_SEED_REQUEST_CHANNEL = 'action:ambientSeedRequest';
+/** MAIN renderer -> main: the answer, sender-checked. */
+export const ACTION_AMBIENT_SEED_RESPONSE_CHANNEL = 'action:ambientSeedResponse';
 /** main -> renderer */
 export const ACTION_STEP_CHANNEL = 'action:step';
 /** renderer -> main */
@@ -33,3 +37,16 @@ export type ActionStepAck =
 
 /** Main gives up waiting for an ack after this; the result is INDETERMINATE. */
 export const ACTION_STEP_ACK_TIMEOUT_MS = 5_000;
+
+export interface AmbientSeedRequest {
+  token: string;
+}
+
+export interface AmbientSeedResponse {
+  token: string;
+  /** Raw renderer FACTS or null — main validates and builds the object. */
+  seed: unknown;
+}
+
+/** The in-app answer must not hold the summon open; no answer means no chip. */
+export const ACTION_AMBIENT_SEED_TIMEOUT_MS = 250;
