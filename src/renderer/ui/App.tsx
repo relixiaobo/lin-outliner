@@ -227,6 +227,9 @@ export function App() {
       selectedIds: [...state.selectedIds],
       isPinned: isNodePinned(anchorNodeId),
       rowExpanded: state.expanded.has(anchorNodeId),
+      // Outdent is defined relative to the pane the user is acting from, and
+      // only this renderer knows which one that is.
+      ...(state.selectionRootId ? { selectionRootId: state.selectionRootId } : {}),
     };
   }) ?? (() => undefined), [activePanelId, isNodePinned]);
   // Fallback for LAUNCHER-originated plans: that invocation has no surface in

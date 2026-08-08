@@ -9,6 +9,14 @@
 export const LAUNCHER_SHOWN_CHANNEL = 'launcher:shown';
 
 /**
+ * Marks the launcher window's preload role. Main passes it through
+ * `webPreferences.additionalArguments`, so it is fixed before any page script
+ * runs. One preload BUNDLE serves both windows — two rollup entries emit a
+ * shared chunk a sandboxed preload cannot `require`.
+ */
+export const LAUNCHER_PRELOAD_ROLE_ARG = '--lin-preload-role=launcher';
+
+/**
  * Main → launcher-renderer event: the capture-degraded remediation hint for this
  * open, or null when capture was clean. Main derives it from its own warnings —
  * the locked-down renderer never receives the raw `ExternalContext`.

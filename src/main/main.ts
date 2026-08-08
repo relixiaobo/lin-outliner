@@ -1697,6 +1697,10 @@ let launcherInvocationRef: InvocationRef | null = null;
 function dismissLauncher(): void {
   hideLauncherWindow();
   launcherContext = null;
+  // EVERY dismissal releases the invocation, not just the Escape path the
+  // renderer owns: otherwise a click-away leaves a live, consumable record —
+  // and its object refs executable — for the full TTL.
+  actionInvocationService.releaseOpening(launcherInvocationRef);
   launcherInvocationRef = null;
   launcherOpenSeq++;
 }
@@ -1716,6 +1720,22 @@ let accessibilityPrompted = false;
  * (those target the browser by name, so focus having moved is fine) and push the
  * result to the renderer.
  */
+/** Resolve once the main renderer can receive steps, or give up. */
+async function waitForMainRendererLoad(): Promise<boolean> {
+  const contents = mainWindow?.webContents;
+  if (!contents || contents.isDestroyed()) return false;
+  if (!contents.isLoading()) return true;
+  return new Promise<boolean>((resolve) => {
+    const timer = setTimeout(() => resolve(false), MAIN_RENDERER_LOAD_TIMEOUT_MS);
+    contents.once('did-finish-load', () => {
+      clearTimeout(timer);
+      resolve(true);
+    });
+  });
+}
+
+const MAIN_RENDERER_LOAD_TIMEOUT_MS = 8_000;
+
 // In-flight in-app seed requests, by one-shot token.
 const pendingAmbientSeeds = new Map<string, (seed: unknown) => void>();
 
@@ -2207,18 +2227,30 @@ async function routeActionRendererStep(
   step: EffectStep,
   invocationRef: string,
 ): Promise<RendererStepAck> {
-  // A navigate can arrive from the LAUNCHER, whose whole point is working when
-  // the main window is closed. Reuse the shipped deferred-navigate path — bring
-  // the window up and flush on `did-finish-load` — instead of reporting `gone`
-  // for the one case the surface exists to serve.
+  // The launcher's whole point is working when the main window is closed, so a
+  // missing window is a case to SERVE, not to report `gone` for. A navigate
+  // reuses the shipped deferred path; anything else brings the window up and
+  // waits for its renderer before dispatching.
   if (step.on === 'mainRenderer' && step.kind === 'navigate' && typeof step.nodeId === 'string') {
     if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isLoading()) {
       navigateMainToNode(step.nodeId);
       return { status: 'ok' };
     }
   }
+  if (step.on === 'mainRenderer' && (!mainWindow || mainWindow.isDestroyed())) {
+    createWindow();
+    const ready = await waitForMainRendererLoad();
+    if (!ready) return { status: 'gone' };
+  }
   const target = mainWindow?.webContents;
   if (!target || target.isDestroyed()) return { status: 'gone' };
+  // The launcher is a NON-ACTIVATING panel, so summoning it never brings Tenon
+  // forward. A step that lands the user somewhere must therefore focus the
+  // window itself — the deleted `launcher:openNode` always did, and without it
+  // the navigation happens invisibly behind whatever app they were in.
+  if (step.on === 'mainRenderer' && (step.kind === 'navigate' || step.kind === 'workspace')) {
+    focusMainWindow();
+  }
   const token = randomUUID();
   return new Promise<RendererStepAck>((resolve) => {
     const timer = setTimeout(() => {
@@ -2957,6 +2989,7 @@ function sanitizeInvocationSeed(raw: unknown): InvocationSeed | null {
     selectedIds,
     isPinned: seed.isPinned === true,
     rowExpanded: seed.rowExpanded === true,
+    ...(typeof seed.selectionRootId === 'string' ? { selectionRootId: seed.selectionRootId } : {}),
   };
 }
 
@@ -4367,7 +4400,7 @@ if (!app.requestSingleInstanceLock()) {
     scheduleManagedSkillUpdateCheck();
     // Prewarm the hidden launcher window and bind the global toggle hotkey.
     const launcherWindow = createLauncherWindow({
-      preloadPath: join(__dirname, '../preload/launcher.cjs'),
+      preloadPath: join(__dirname, '../preload/index.cjs'),
       devUrl: RENDERER_DEV_ORIGIN ? `${RENDERER_DEV_ORIGIN}/launcher.html` : null,
       packagedHtmlPath: join(__dirname, '../renderer/launcher.html'),
       harden: hardenWebContents,

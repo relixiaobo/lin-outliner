@@ -1,4 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
+import { buildLauncherPreloadApi } from './launcher';
+import { LAUNCHER_PRELOAD_ROLE_ARG } from '../core/launcher/commands';
 import {
   ACTION_AMBIENT_SEED_REQUEST_CHANNEL,
   ACTION_AMBIENT_SEED_RESPONSE_CHANNEL,
@@ -499,6 +501,18 @@ const api = {
     ipcRenderer.invoke('lin:attachment-resource/discard', input) as Promise<{ discarded: boolean }>,
 };
 
-contextBridge.exposeInMainWorld('lin', api);
+/**
+ * Which bridge this window gets. Passed by main as an `additionalArguments`
+ * flag, so it is fixed before any page script runs and cannot be influenced by
+ * the renderer.
+ */
+function isLauncherWindow(): boolean {
+  return process.argv.includes(LAUNCHER_PRELOAD_ROLE_ARG);
+}
+
+// One exposure per window. The launcher gets its own narrow API and never the
+// generic command surface; the page cannot re-run this file, so it cannot
+// reach what was not exposed to it.
+contextBridge.exposeInMainWorld('lin', isLauncherWindow() ? buildLauncherPreloadApi() : api);
 
 export type LinApi = typeof api;

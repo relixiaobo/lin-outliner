@@ -379,6 +379,12 @@ export interface InvocationSeed {
   panelId: string;
   isPinned: boolean;
   rowExpanded: boolean;
+  /**
+   * The pane root the user is acting from. Renderer-owned: the same node
+   * appears under several roots and main cannot recover the chosen one.
+   * `outdent` is defined relative to it.
+   */
+  selectionRootId?: NodeId;
 }
 
 // ---------------------------------------------------------------------------
@@ -611,6 +617,12 @@ export type ActionExecutionResult =
   | { status: 'indeterminate'; atStep: number; reason: 'ackTimeout' | 'rendererGone' };
 
 export type ActionRequestResult =
+  /**
+   * The user declined the confirmation. A deliberate cancel is NOT a failure
+   * and must never be reported as one — it is only distinguishable from a dead
+   * invocation if it says so.
+   */
+  | { status: 'cancelled' }
   /** Current subject, changed args/state. */
   | { status: 'reEvaluated'; presentation: ActionPresentation }
   | {

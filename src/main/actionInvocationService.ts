@@ -74,6 +74,7 @@ import type {
   InvocationEvent,
   InvocationEventResult,
   InvocationOpened,
+  InvocationPhase,
   InvocationRef,
   InvocationSeed,
   ObjectPresentation,
@@ -82,6 +83,8 @@ import type {
   ParameterObjectQueryResult,
   ReadyActionPresentation,
   SurfaceObject,
+  ViewFact,
+  WorkspaceFact,
 } from '../core/actions/types';
 import type { ExternalContext } from '../core/launcher/context';
 import type { DocumentProjection, FocusHint, NodeId, NodeProjection, SearchHit } from '../core/types';
@@ -116,6 +119,11 @@ export interface ActionInvocationHost {
    */
   confirmNatively?(spec: ConfirmationSpec): Promise<boolean>;
   writeClipboard(text: string): void;
+  /**
+   * Whether a `reveal` step can land — true only for a surface that owns the
+   * panel the row lives in. The anchored menu does; the launcher does not.
+   */
+  canRevealInMainRenderer?(): boolean;
   /** The active locale's untitled fallback — part of `copy`'s parity. */
   untitled(): string;
   now(): number;
@@ -196,13 +204,8 @@ export class ActionInvocationService {
       anchorObjectRef: anchor.objectRef,
       argumentGenerations: [],
       draftText: '',
-      view: [{
-        objectRef: anchor.objectRef,
-        panelId: seed.panelId,
-        visualRowId: seed.visualRowId,
-        rowExpanded: seed.rowExpanded,
-      }],
-      workspace: [{ objectRef: anchor.objectRef, isPinned: seed.isPinned }],
+      view: viewFactsFor(seed, anchor, selection),
+      workspace: workspaceFactsFor(seed, anchor, selection),
     };
 
     const record: Record_ = {
@@ -352,9 +355,20 @@ export class ActionInvocationService {
         record.objects.set(anchor.objectRef, anchor);
         const selection = this.selectionObjectFor(seed, projection, mint, record.objects);
         const ambient = selection ?? anchor;
+        // The facts the renderer JUST attested must land with the object, or
+        // the ambient chip silently offers fewer actions than the same node
+        // reached through the right-click menu (no Pin, no view families).
         record.invocation = {
           ...record.invocation,
           fixedObjects: [...record.invocation.fixedObjects, ambient],
+          view: [
+            ...(record.invocation.view ?? []),
+            ...viewFactsFor(seed, anchor, selection),
+          ],
+          workspace: [
+            ...(record.invocation.workspace ?? []),
+            ...workspaceFactsFor(seed, anchor, selection),
+          ],
         };
         record.ambient = {
           requestId: record.ambient.requestId,
@@ -535,7 +549,7 @@ export class ActionInvocationService {
     const actions = resolveActionsForObjectSet(context, [object], {
       order: ACTION_PANEL_ORDER,
       surface: 'actionPanel',
-    });
+    }).filter((action) => this.surfaceCanRun(context, object, action));
     const primaryId = primaryActionFor(object);
     const primary = primaryId
       ? actions.find((action) => (
@@ -554,6 +568,33 @@ export class ActionInvocationService {
       ...(primary ? { primaryAction: primary } : {}),
       actions,
     };
+  }
+
+  /**
+   * An action is only offered where it can actually RUN. A searchable panel
+   * that lists `Move to` with no parameter picker, or `Edit description` on a
+   * surface with no reveal handler, is a dead end that reports a generic
+   * failure every time — worse than not showing it, because the user cannot
+   * tell it from a real error.
+   */
+  private surfaceCanRun(
+    context: ActionResolveContext,
+    object: SurfaceObject,
+    action: ActionPresentation,
+  ): boolean {
+    // A parameter still to pick needs a picker; only the anchored menu has one.
+    if (action.binding.state === 'needsParameter') return false;
+    const plan = planFor(context, action.actionId, object, action.binding.arguments as never);
+    if (!plan) return action.evaluation.status !== 'applicable';
+    return plan.steps.every((step) => this.canExecuteStep(step));
+  }
+
+  /** Whether this host can carry a step for a surface with no anchored view. */
+  private canExecuteStep(step: EffectStep): boolean {
+    if (step.on !== 'mainRenderer') return true;
+    // `reveal` needs the panel that owns the row; a launcher-originated plan
+    // has none, and the fallback handlers deliberately do not fake one.
+    return step.kind !== 'reveal' || this.host.canRevealInMainRenderer?.() === true;
   }
 
   /** Fixed objects plus the one `ready` result generation — nothing else. */
@@ -877,10 +918,17 @@ export class ActionInvocationService {
       // the acceptance, main executes — a token would put the deciding artefact
       // back in the hands the sheet exists to bypass.
       record.phase = 'confirming';
-      const accepted = await this.host.confirmNatively?.(match.confirm) ?? false;
-      if (!accepted) {
+      // No sheet host at all is a MISCONFIGURATION, not a user decision: fail
+      // closed, and do not tell the user they cancelled something they never
+      // saw.
+      if (!this.host.confirmNatively) {
         record.phase = 'live';
         return { status: 'stale', reason: 'invocation' };
+      }
+      if (!await this.host.confirmNatively(match.confirm)) {
+        // Back to `live`: the user declined this once, not forever.
+        record.phase = 'live';
+        return { status: 'cancelled' };
       }
       // Revalidate at acceptance, exactly as flow A does at redemption.
       const revalidated = resolveFamily(this.contextFor(record), request.actionId, subject)
@@ -898,11 +946,9 @@ export class ActionInvocationService {
         return { status: 'reEvaluated', presentation: revalidated };
       }
       record.phase = 'executing';
-      try {
-        return await this.executePlan(nativePlan, record.ref);
-      } finally {
-        record.phase = 'spent';
-      }
+      const nativeResult = await this.executePlan(nativePlan, record.ref);
+      record.phase = settledPhase(nativeResult);
+      return nativeResult;
     }
 
     const plan = planFor(context, request.actionId, subject, request.arguments as never);
@@ -911,11 +957,12 @@ export class ActionInvocationService {
     // Claimed on ENTERING `executing`, before step 0 is dispatched — a second
     // submit against a claimed record is rejected.
     record.phase = 'executing';
-    try {
-      return await this.executePlan(plan, record.ref);
-    } finally {
-      record.phase = 'spent';
-    }
+    const result = await this.executePlan(plan, record.ref);
+    // Only a COMPLETED action spends the invocation. The surface deliberately
+    // stays open after a failure, and a `spent` record makes that still-visible
+    // panel permanently inert — no search, no retry, just more generic errors.
+    record.phase = settledPhase(result);
+    return result;
   }
 
   private validateArguments(record: Record_, request: ActionRequest): ActionRequestResult | null {
@@ -1098,6 +1145,20 @@ export class ActionInvocationService {
     return record;
   }
 
+  /**
+   * Release the invocation for an opening that is over. Every dismissal path —
+   * blur, click-away, hotkey toggle-off — has to reach this, or the record
+   * stays `live` and launcher-consumable for its full TTL and the refs from a
+   * superseded opening remain executable.
+   */
+  releaseOpening(invocationRef: InvocationRef | null): void {
+    if (!invocationRef) return;
+    const record = this.records.get(invocationRef);
+    if (!record || record.phase === 'executing') return;
+    record.phase = 'spent';
+    this.records.delete(invocationRef);
+  }
+
   /** A reload invalidates an attestation rather than leaving a stale bit live. */
   invalidateRenderer(webContentsId: number): void {
     for (const [ref, record] of this.records) {
@@ -1134,6 +1195,42 @@ function primaryActionFor(object: SurfaceObject): ActionId | null {
     case 'nodeSelection':
       return null;
   }
+}
+
+/**
+ * The attested facts, for EVERY object the seed produced. A selection subject
+ * needs them as much as the anchor does — `outdent` and the view families
+ * resolve against whichever object the family accepts, so attaching them to the
+ * anchor alone silently removed those actions from a batch.
+ */
+function viewFactsFor(
+  seed: InvocationSeed,
+  anchor: SurfaceObject,
+  selection: SurfaceObject | null,
+): ViewFact[] {
+  const fact = {
+    panelId: seed.panelId,
+    visualRowId: seed.visualRowId,
+    rowExpanded: seed.rowExpanded,
+    ...(seed.selectionRootId ? { selectionRootId: seed.selectionRootId } : {}),
+  };
+  const facts: ViewFact[] = [{ objectRef: anchor.objectRef, ...fact }];
+  if (selection) facts.push({ objectRef: selection.objectRef, ...fact });
+  return facts;
+}
+
+function workspaceFactsFor(
+  seed: InvocationSeed,
+  anchor: SurfaceObject,
+  selection: SurfaceObject | null,
+): WorkspaceFact[] {
+  const facts: WorkspaceFact[] = [{ objectRef: anchor.objectRef, isPinned: seed.isPinned }];
+  if (selection) facts.push({ objectRef: selection.objectRef, isPinned: seed.isPinned });
+  return facts;
+}
+
+function settledPhase(result: ActionExecutionResult): InvocationPhase {
+  return result.status === 'completed' ? 'spent' : 'live';
 }
 
 function errorCode(error: unknown): string {

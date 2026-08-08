@@ -3,16 +3,23 @@
 // The shipped launcher loaded the shared app preload, which exposes the generic
 // `window.lin.invoke` — so a compromised launcher renderer could call
 // `get_projection` and `delete_node` directly, bypassing every invocation check
-// the action seam performs. This bundle is least privilege: the full app bridge
-// is simply not here to acquire, and navigating or reloading this renderer
-// cannot obtain it.
+// the action seam performs. This is what that window gets instead.
 //
-// It is not the only defence. Main also registers capabilities against the real
-// `webContents` and rejects `lin:invoke` from this sender BEFORE dispatch — that
-// gate stays authoritative if this file is ever widened by accident. See
-// `docs/plans/unified-command-surface.md` D1b.
+// It is a MODULE, not a second rollup entry, and that is load-bearing: two
+// preload entries make rollup emit a shared chunk that both bundles `require`,
+// and a SANDBOXED preload's `require` is a polyfill limited to
+// electron/events/timers/url. Splitting them left `window.lin` undefined in
+// every window — no document, no IPC, no agent — and no renderer test can see
+// it, because none of them load an Electron preload. One entry, one bundle, and
+// the role decides which API is exposed.
+//
+// The security property is unchanged and does not rest on the split anyway: the
+// page cannot re-run the preload, so it cannot reach an API that was not
+// exposed to it, and main registers capabilities against the real `webContents`
+// and rejects `lin:invoke` from this sender BEFORE dispatch. That gate is the
+// authoritative defence. See `docs/plans/unified-command-surface.md` D1b.
 
-import { contextBridge, ipcRenderer } from 'electron';
+import { ipcRenderer } from 'electron';
 import {
   ACTION_AMBIENT_CHANGED_CHANNEL,
   ACTION_EVENT_CHANNEL,
@@ -121,4 +128,6 @@ const launcherApi = {
 
 export type LauncherPreloadApi = typeof launcherApi;
 
-contextBridge.exposeInMainWorld('lin', launcherApi);
+export function buildLauncherPreloadApi(): LauncherPreloadApi {
+  return launcherApi;
+}

@@ -1,3 +1,4 @@
+import { LAUNCHER_PRELOAD_ROLE_ARG } from '../../core/launcher/commands';
 import { BrowserWindow, screen } from 'electron';
 import { LAUNCHER_SHOWN_CHANNEL } from '../../core/launcher/commands';
 import { applyMacWindowCorner } from '../nativeWindowCorner';
@@ -81,6 +82,11 @@ export function createLauncherWindow(deps: LauncherWindowDeps): BrowserWindow {
     vibrancy: 'hud',
     webPreferences: {
       preload: deps.preloadPath,
+      // The preload is shared with the app windows (one bundle — a split emits
+      // a chunk a sandboxed preload cannot require); this flag is what makes it
+      // expose the launcher's narrow API instead of the app bridge. Fixed
+      // before any page script runs.
+      additionalArguments: [LAUNCHER_PRELOAD_ROLE_ARG],
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,

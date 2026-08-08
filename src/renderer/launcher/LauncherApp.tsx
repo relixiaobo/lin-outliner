@@ -57,6 +57,14 @@ export function LauncherApp() {
   // Activity is tracked by generation-scoped ref, not an index: a late result
   // set then cannot leave the highlight on a row that no longer exists.
   const [explicitRef, setExplicitRef] = useState<ObjectRef | null>(null);
+  // The query the CURRENT results were resolved for. Enter must never run a
+  // generation older than the typed text: the shipped launcher built its
+  // capture/draft row synchronously, so acting early meant "run what is
+  // showing", and here it would mean "run what is stale".
+  const [resultsQuery, setResultsQuery] = useState('');
+  // Enter pressed while the list was stale: run it the moment the matching
+  // generation lands, so the keystroke is never silently dropped either.
+  const [pendingEnter, setPendingEnter] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [remediation, setRemediation] = useState<LauncherRemediation | null>(null);
@@ -64,6 +72,7 @@ export function LauncherApp() {
   // The `Actions ⌘K` panel for the active object, and its own query.
   const [actionsOpen, setActionsOpen] = useState(false);
   const [actionQuery, setActionQuery] = useState('');
+  const [activeActionIndex, setActiveActionIndex] = useState(0);
   const latestRequestRef = useRef<string | null>(null);
   // Ambient revision guard: only a matching opening with a STRICTLY NEWER
   // revision may change the chip, so a delayed push cannot resurrect one the
@@ -102,6 +111,7 @@ export function LauncherApp() {
     const offOpened = bridge.actions?.onOpened?.((next) => {
       setOpening(next);
       setResults(next.resultItems);
+      setResultsQuery('');
       setFixedItems(next.fixedItems);
       ambientRevisionRef.current = next.ambient?.revision ?? -1;
     }) ?? (() => undefined);
@@ -137,6 +147,7 @@ export function LauncherApp() {
         if (cancelled || latestRequestRef.current !== requestId) return;
         if (!result || result.status !== 'ready') return;
         setResults(result.resultItems);
+        setResultsQuery(query);
       });
     }, query ? OBJECT_QUERY_DEBOUNCE_MS : 0);
     return () => {
@@ -147,6 +158,7 @@ export function LauncherApp() {
 
   useEffect(() => {
     setError(null);
+    setPendingEnter(false);
   }, [query]);
 
   // Typing is PAYLOAD admission, not result selection — so it does not count as
@@ -157,15 +169,32 @@ export function LauncherApp() {
     () => navigableItems({ fixedItems, resultItems: results }),
     [fixedItems, results],
   );
+  /** True while the debounce/round trip means the list predates the input. */
+  const resultsStale = resultsQuery !== query;
+
+  useEffect(() => { setActiveActionIndex(0); }, [actionQuery]);
   const activeRef = useMemo(
     () => resolveActiveRef({ items, explicitRef }),
     [items, explicitRef],
   );
   const activeItem = items.find((item) => item.object.objectRef === activeRef);
+  const panelActions = useMemo(
+    () => (activeItem ? filterActions(activeItem.actions, actionQuery) : []),
+    [activeItem, actionQuery],
+  );
 
   useEffect(() => {
     activeRowRef.current?.scrollIntoView({ block: 'nearest' });
   }, [activeRef]);
+
+  useEffect(() => {
+    if (!pendingEnter || resultsStale) return;
+    setPendingEnter(false);
+    void runPrimary(items.find((item) => item.object.objectRef === activeRef));
+    // `runPrimary` is stable enough for this one-shot flush; re-running on every
+    // identity change would fire it twice.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingEnter, resultsStale]);
 
   /**
    * Run an action by NAMING it. Nothing about the effect is decided here: main
@@ -190,6 +219,8 @@ export function LauncherApp() {
         void launcherBridge()?.launcher.hide?.();
         return;
       }
+      // A deliberate cancel is not a failure — say nothing and stay put.
+      if (result?.status === 'cancelled') return;
       // Anything else is a failure the user must see: the panel stays open and
       // the status zone says so, rather than closing as if it had worked.
       setError(t.launcher.error.saveFailed);
@@ -201,6 +232,23 @@ export function LauncherApp() {
       runningRef.current = false;
     }
   }, [invocationRef, reset, t]);
+
+  /**
+   * The panel's filter input is `autoFocus`ed, so closing it must hand focus
+   * BACK — otherwise it falls to `document.body`, the keydown handler on the
+   * `.launcher` div stops seeing anything, and the whole surface goes dead.
+   */
+  const closeActionsPanel = useCallback(() => {
+    setActionsOpen(false);
+    setActionQuery('');
+    inputRef.current?.focus();
+  }, []);
+
+  const openActionsPanel = useCallback(() => {
+    setActionsOpen(true);
+    setActionQuery('');
+    setActiveActionIndex(0);
+  }, []);
 
   const runPrimary = useCallback(
     (item: SurfaceItemPresentation | undefined) => runAction(item?.primaryAction),
@@ -227,17 +275,16 @@ export function LauncherApp() {
         // The global ⌘K summon retires; the keystroke is RELOCATED to "show this
         // object's actions" inside the surface (D6).
         event.preventDefault();
-        if (activeItem) {
-          setActionsOpen((open) => !open);
-          setActionQuery('');
-        }
+        if (!activeItem) return;
+        if (actionsOpen) closeActionsPanel();
+        else openActionsPanel();
         return;
       }
       if (event.key === 'Escape') {
         event.preventDefault();
         // Escape precedence: subpanel -> active result -> launcher.
         if (actionsOpen) {
-          setActionsOpen(false);
+          closeActionsPanel();
           return;
         }
         if (explicitRef && fixedItems.length > 0) {
@@ -250,7 +297,24 @@ export function LauncherApp() {
         void launcherBridge()?.launcher.hide?.();
         return;
       }
-      if (actionsOpen) return;
+      if (actionsOpen) {
+        // The panel is keyboard-first too: arrows move, Enter runs. Returning
+        // early here made every action it exposes mouse-only.
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+          event.preventDefault();
+          setActiveActionIndex((index) => {
+            const next = index + (event.key === 'ArrowDown' ? 1 : -1);
+            return Math.min(Math.max(next, 0), Math.max(panelActions.length - 1, 0));
+          });
+          return;
+        }
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          const action = panelActions[activeActionIndex];
+          if (action) void runAction(action);
+        }
+        return;
+      }
       if (event.key === 'ArrowUp' && explicitRef && indexOfRef(items, explicitRef) === 0) {
         // ArrowUp from the first row returns to the chip without clearing input.
         event.preventDefault();
@@ -265,10 +329,21 @@ export function LauncherApp() {
         setExplicitRef(stepActiveRef(items, activeRef, -1));
       } else if (event.key === 'Enter') {
         event.preventDefault();
+        // A stale list means the user has typed since these rows were resolved.
+        // Running now would fire the PREVIOUS generation's primary — the empty
+        // query's Today row, or a capture with an empty note. Flush instead.
+        if (resultsStale) {
+          setPendingEnter(true);
+          return;
+        }
         void runPrimary(activeItem);
       }
     },
-    [actionsOpen, activeItem, activeRef, explicitRef, fixedItems, invocationRef, items, runPrimary],
+    [
+      actionsOpen, activeActionIndex, activeItem, activeRef, closeActionsPanel,
+      explicitRef, fixedItems, invocationRef, items, openActionsPanel,
+      panelActions, resultsStale, runAction, runPrimary,
+    ],
   );
 
   const primaryLabel = primaryActionLabel(activeItem, locale);
@@ -318,13 +393,14 @@ export function LauncherApp() {
               onChange={(event) => setActionQuery(event.target.value)}
               variant="bare"
             />
-            {filterActions(activeItem.actions, actionQuery).map((action) => (
+            {panelActions.map((action, index) => (
               <div
                 key={`${action.actionId}:${nameFor(action.names, locale)}`}
                 role="option"
-                aria-selected={false}
+                aria-selected={index === activeActionIndex}
+                className={index === activeActionIndex ? 'launcher-row is-active' : 'launcher-row'}
+                onMouseEnter={() => setActiveActionIndex(index)}
                 aria-disabled={action.evaluation.status !== 'applicable'}
-                className="launcher-row"
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => void runAction(action)}
               >
@@ -397,7 +473,7 @@ export function LauncherApp() {
             <Button
               className="launcher-actionbar-item launcher-actionbar-actions"
               onMouseDown={(event) => event.preventDefault()}
-              onClick={() => { setActionsOpen((open) => !open); setActionQuery(''); }}
+              onClick={() => (actionsOpen ? closeActionsPanel() : openActionsPanel())}
               size="sm"
               variant="ghost"
             >
@@ -461,6 +537,11 @@ function LauncherRow(props: {
 
 function LauncherRowIcon({ item }: { item: SurfaceItemPresentation }) {
   const { object } = item;
+  // A node's icon is DATA, not a fixed glyph: show the node's own emoji when it
+  // has one, and the outliner bullet otherwise.
+  if (object.emoji) {
+    return <span className="launcher-row-emoji" aria-hidden="true">{object.emoji}</span>;
+  }
   if (object.kind === 'node' && object.name.source === 'literal') {
     return <span className="launcher-row-bullet" aria-hidden="true" />;
   }

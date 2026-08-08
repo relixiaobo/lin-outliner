@@ -51,6 +51,8 @@ interface NodeContextMenuProps {
   targetId: NodeId;
   visualRowId: NodeId;
   panelId: string;
+  /** The pane root this row is being acted on from; `outdent` needs it. */
+  selectionRootId: NodeId;
   viewToolbarVisibleInRow: boolean;
   openId: NodeId;
   selectedIds: Set<NodeId>;
@@ -108,6 +110,7 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
     anchorNodeId: props.node.id,
     visualRowId: props.visualRowId,
     panelId: props.panelId,
+    selectionRootId: props.selectionRootId,
     selectedIds: [...props.selectedIds],
     isPinned: props.isPinned,
     rowExpanded: props.viewToolbarVisibleInRow,
@@ -116,6 +119,7 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
     props.node.id,
     props.panelId,
     props.selectedIds,
+    props.selectionRootId,
     props.viewToolbarVisibleInRow,
     props.visualRowId,
   ]);
@@ -240,11 +244,12 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
         // Succeeding is not a reason to erase someone else's failure: the notice
         // is app-wide, so clearing here would delete a report this action never
         // made. It expires on its own.
-      } else {
+      } else if (result?.status !== 'cancelled') {
         // Anything that is not a completion is a failure the user must see: a
         // rejected command, an unacked renderer step, a half-applied plan, or a
-        // subject that went stale. Closing the menu silently is what the
-        // shipped `useCommandRunner` path never did.
+        // subject that went stale. A deliberate CANCEL is none of those — the
+        // user declined the sheet, and reporting that as an error would be a
+        // banner for doing exactly what they meant.
         reportActionError(actionFailureMessage(result, t));
       }
       closeOnce();

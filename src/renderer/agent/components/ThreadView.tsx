@@ -46,8 +46,12 @@ import type { AgentProviderSettingsView, AgentSlashCommandView } from '../../api
 import type { DocumentIndex } from '../../state/document';
 import { useI18n, useT } from '../../i18n/I18nProvider';
 import {
+  acknowledgeThreadComposerContext,
   acknowledgeThreadComposerNodeReferenceRequest,
+  onThreadComposerContextRequest,
   onThreadComposerNodeReferenceRequest,
+  pendingComposerContexts,
+  type PendingComposerContext,
 } from '../agentReveal';
 import {
   AttachmentIcon,
@@ -1169,6 +1173,22 @@ export function ThreadView({
     setNewThreadValidation((current) => current === 'providerRequired' ? null : current);
   }, [threadCreationBlocked]);
 
+  // A staged page must be VISIBLE and removable. Without this it rode whatever
+  // message the user sent next, in any thread, with nothing on screen to say so
+  // and no way to take it back short of sending something.
+  const [stagedContexts, setStagedContexts] = useState<PendingComposerContext[]>(
+    () => pendingComposerContexts(),
+  );
+  useEffect(() => onThreadComposerContextRequest(() => {
+    setStagedContexts(pendingComposerContexts());
+  }), []);
+  // Staging belongs to the thread it was staged into. Switching threads drops
+  // it rather than silently carrying an unrelated page into the next turn.
+  useEffect(() => {
+    for (const context of pendingComposerContexts()) acknowledgeThreadComposerContext(context.key);
+    setStagedContexts([]);
+  }, [threadId]);
+
   useEffect(() => onThreadComposerNodeReferenceRequest((request) => {
     if (!composerEnabled) return;
     composerRef.current?.insertNodeReference({ nodeId: request.nodeId, title: request.title });
@@ -1739,6 +1759,26 @@ export function ThreadView({
                 <p className="thread-inline-error" role="status">
                   {newThreadValidationMessage}
                 </p>
+              ) : null}
+              {stagedContexts.length > 0 ? (
+                <ul className="thread-composer-contexts" aria-label={t.agent.composer.stagedContextsLabel}>
+                  {stagedContexts.map((context) => (
+                    <li key={context.key} className="thread-composer-context">
+                      <span className="thread-composer-context-label">{context.label}</span>
+                      <button
+                        type="button"
+                        className="thread-composer-context-remove"
+                        aria-label={t.agent.composer.removeStagedContext({ label: context.label })}
+                        onClick={() => {
+                          acknowledgeThreadComposerContext(context.key);
+                          setStagedContexts(pendingComposerContexts());
+                        }}
+                      >
+                        ×
+                      </button>
+                    </li>
+                  ))}
+                </ul>
               ) : null}
               <ThreadComposerEditor
                 allowFileReferences={!activeTurn && !providerBlocksSend && !waitingForInput && !threadCreationPending}

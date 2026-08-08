@@ -715,6 +715,7 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
           viewToolbarVisibleInRow={false}
           openId={drillDownId}
           panelId={props.panelId}
+          selectionRootId={props.selectionRootId}
           selectedIds={props.ui.selectedIds}
           index={props.index}
           isPinned={props.isNodePinned(drillDownId)}

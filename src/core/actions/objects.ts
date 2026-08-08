@@ -144,7 +144,9 @@ export function presentObject(
         kind: 'node',
         name: { source: 'literal', value: nodeText(node, untitled) },
         ...(parent ? { subtitle: { source: 'literal' as const, value: nodeText(parent, untitled) } } : {}),
-        ...(node?.icon ? { emoji: node.icon } : {}),
+        // Only a real emoji icon: an image / generated icon identifier is not
+        // an emoji, and emitting it as one renders the raw id.
+        ...(node?.icon && node.iconKind === 'emoji' ? { emoji: node.icon } : {}),
         iconId: 'node',
         typeLabel: objectTypeLabel('node'),
         backingNodeId: contentId,

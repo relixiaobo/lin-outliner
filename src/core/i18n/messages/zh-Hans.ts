@@ -1521,6 +1521,8 @@ commandPalette: {
         xhigh: 'XHigh',
         max: 'Max',
       },
+      stagedContextsLabel: '附带的上下文',
+      removeStagedContext: ({ label }: { label: string }) => `移除 ${label}`,
       steerPlaceholder: '引导当前轮次...',
     },
     message: {

@@ -14,6 +14,7 @@ import {
   onThreadComposerContextRequest,
   onThreadComposerNodeReferenceRequest,
   pendingComposerAdditionalContext,
+  pendingComposerContexts,
   requestSendContextToThreadComposer,
 } from '../../src/renderer/agent/agentReveal';
 import { stageComposerObject } from '../../src/renderer/ui/interactions/actionSteps';
@@ -63,6 +64,17 @@ describe('staging a page onto the composer', () => {
     stageComposerObject({ kind: 'externalPage', contextId: 'ctx-1', label: 'A', value: 'A' });
     const [key] = Object.keys(pendingComposerAdditionalContext());
     acknowledgeThreadComposerContext(key!);
+    expect(pendingComposerAdditionalContext()).toEqual({});
+  });
+
+  test('staged contexts are enumerable, so a surface can SHOW and un-stage them', () => {
+    stageComposerObject({ kind: 'externalPage', contextId: 'ctx-1', label: 'An Example Article', value: 'v' });
+    // The hazard this closes: with no way to list them, a staged page rode
+    // whatever message the user sent next, in any thread, invisibly.
+    const staged = pendingComposerContexts();
+    expect(staged.map((context) => context.label)).toEqual(['An Example Article']);
+    acknowledgeThreadComposerContext(staged[0]!.key);
+    expect(pendingComposerContexts()).toEqual([]);
     expect(pendingComposerAdditionalContext()).toEqual({});
   });
 

@@ -85,10 +85,19 @@ neither and stays available.
 
 Two windows reach the seam and they are not equally trusted.
 
-The launcher loads its OWN preload (`src/preload/launcher.ts`), which is its
-entire bridge: the generic `window.lin.invoke` surface is simply not there to
-acquire, so navigating or reloading that renderer cannot obtain it. That is
-least privilege, not the gate.
+The launcher window gets a narrow bridge (`src/preload/launcher.ts`): the
+generic `window.lin.invoke` surface is never exposed to it, and the page cannot
+re-run the preload, so it cannot reach an API it was not given.
+
+That module is built into the ONE preload bundle and selected by a role flag
+main passes through `additionalArguments`. It is deliberately not a second
+rollup entry: two entries emit a shared chunk that both bundles `require`, and a
+sandboxed preload's `require` is a polyfill limited to
+electron/events/timers/url — which left `window.lin` undefined in *every*
+window while every test stayed green, because no renderer test loads a preload.
+`tests/core/preloadBundle.test.ts` guards it.
+
+Exposure is least privilege; it is not the gate.
 
 The gate is `src/main/rendererCapabilities.ts`: capabilities are registered
 against the real `webContents` at window creation and dropped when it is
@@ -113,23 +122,27 @@ state and a launcher attempt to supply them is rejected rather than merged.
 
 `live -> confirming -> executing -> spent`. The invocation is **claimed on
 entering `executing`, before step 0 is dispatched**, so a second submit against
-a claimed record is rejected.
+a claimed record is rejected. Only a COMPLETED action spends it: a surface that
+stays open after a failure must still be able to search and retry, and a spent
+record makes that still-visible panel inert.
 
-A confirmed action has two legs and main owns both:
+Confirmation is a **main-owned phase**, not a boolean a caller can assert, and
+there is deliberately **no token**. Main raises its own native sheet, observes
+the acceptance, revalidates the subject and arguments, and executes. A token
+would put the deciding artefact back in the hands the sheet exists to bypass —
+a compromised renderer that merely *receives* one can redeem it silently.
 
-1. a request without a challenge responds `confirmationRequired` with the token
-   **and the authoritative copy, subject and arguments the dialog must show**,
-   so the dialog cannot describe one thing while the token authorises another;
-2. **the challenge-bearing request IS the acceptance**, committing atomically
-   after the token, subject and arguments re-resolve to the same set.
+Two consequences the surfaces must honour:
 
-Cancelling emits `confirmationCancelled`; the record returns to `live` and the
-challenge dies with it. A dead token is refused (`stale`), never silently
-re-prompted.
+- **A decline is `cancelled`, not `stale`.** It is a deliberate user decision,
+  and reporting it as a failure puts an error banner on screen for doing exactly
+  what was asked.
+- **A missing sheet host is `stale`, not `cancelled`.** No host means no
+  confirmation, so nothing runs — but the user never saw a sheet, so they are
+  not told they cancelled one.
 
-The security claim is stated exactly: the challenge closes first-request
-commits, replay, and subject/argument substitution between the legs. It does not
-prove a human saw anything.
+*Delete forever* and *Empty Trash* carry `confirm` today; both are outside
+`Cmd+Z`'s reach, which is why they get a sheet at all.
 
 ## Effect plans
 

@@ -1641,6 +1641,10 @@ commandPalette: {
         xhigh: 'XHigh',
         max: 'Max',
       },
+      // Context staged onto the composer from the command surface — it must be
+      // visible and removable, never an invisible rider on the next message.
+      stagedContextsLabel: 'Attached context',
+      removeStagedContext: ({ label }: { label: string }) => `Remove ${label}`,
       steerPlaceholder: 'Steer the active Turn...',
     },
     message: {

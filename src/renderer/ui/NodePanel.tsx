@@ -799,6 +799,7 @@ export function NodePanel(props: NodePanelProps) {
             viewToolbarVisibleInRow={true}
             openId={resolvedRootId}
             panelId={props.panelId}
+            selectionRootId={resolvedRootId}
             selectedIds={props.ui.selectedIds}
             index={props.index}
             isPinned={props.isNodePinned(resolvedRootId)}

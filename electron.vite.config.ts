@@ -17,15 +17,13 @@ export default defineConfig({
   preload: {
     build: {
       rollupOptions: {
-        // Two preload bundles. `index` is the app bridge (main window, Settings,
-        // provider config). `launcher` is the locked-down launcher's ENTIRE
-        // bridge and deliberately omits the generic `lin:invoke` surface, so a
-        // compromised launcher renderer cannot acquire it by reloading — see
-        // docs/spec/action-registry.md.
-        input: {
-          index: 'src/preload/index.ts',
-          launcher: 'src/preload/launcher.ts',
-        },
+        // ONE preload entry, deliberately. Two entries make rollup emit a
+        // shared chunk that both bundles `require`, and a sandboxed preload's
+        // `require` is a polyfill limited to electron/events/timers/url — which
+        // left `window.lin` undefined in every window. The bundle exposes the
+        // app bridge or the launcher's narrow one depending on the role flag
+        // main passes; see docs/spec/action-registry.md.
+        input: 'src/preload/index.ts',
         external: ['electron'],
         output: {
           entryFileNames: '[name].cjs',

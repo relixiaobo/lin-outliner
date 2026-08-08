@@ -33,7 +33,7 @@ const railRevealListeners = new Set<ThreadRailRevealListener>();
 const composerReferenceListeners = new Set<ThreadComposerNodeReferenceListener>();
 const composerContextListeners = new Set<ComposerContextListener>();
 const pendingComposerReferences: ThreadComposerNodeReferenceRequest[] = [];
-const pendingComposerContexts = new Map<string, PendingComposerContext>();
+const pendingComposerContexts_ = new Map<string, PendingComposerContext>();
 
 export function requestRevealThreadRail(): void {
   for (const listener of railRevealListeners) listener();
@@ -72,25 +72,30 @@ export function acknowledgeThreadComposerNodeReferenceRequest(
  * duplicates into the next turn.
  */
 export function requestSendContextToThreadComposer(context: PendingComposerContext): void {
-  pendingComposerContexts.set(context.key, context);
+  pendingComposerContexts_.set(context.key, context);
   requestRevealThreadRail();
   for (const listener of composerContextListeners) listener(context);
 }
 
 export function onThreadComposerContextRequest(listener: ComposerContextListener): () => void {
   composerContextListeners.add(listener);
-  for (const context of [...pendingComposerContexts.values()]) listener(context);
+  for (const context of [...pendingComposerContexts_.values()]) listener(context);
   return () => composerContextListeners.delete(listener);
 }
 
 export function acknowledgeThreadComposerContext(key: string): void {
-  pendingComposerContexts.delete(key);
+  pendingComposerContexts_.delete(key);
+}
+
+/** The staged contexts, for a surface that must show and un-stage them. */
+export function pendingComposerContexts(): PendingComposerContext[] {
+  return [...pendingComposerContexts_.values()];
 }
 
 /** The staged untrusted contexts, as the protocol's `additionalContext` map. */
 export function pendingComposerAdditionalContext(): Record<string, { value: string; kind: 'untrusted' }> {
   const entries: Record<string, { value: string; kind: 'untrusted' }> = {};
-  for (const [key, context] of pendingComposerContexts) {
+  for (const [key, context] of pendingComposerContexts_) {
     entries[key] = { value: context.value, kind: 'untrusted' };
   }
   return entries;

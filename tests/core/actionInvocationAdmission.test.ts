@@ -198,11 +198,14 @@ describe('the native confirmation sheet (flow B)', () => {
       arguments: {},
     };
     const first = await h.service.request(request, SENDER);
-    expect(first).toEqual({ status: 'stale', reason: 'invocation' });
+    // A deliberate cancel is NOT a failure, and must be distinguishable from a
+    // dead invocation — otherwise both surfaces show an error banner for doing
+    // exactly what the user asked.
+    expect(first).toEqual({ status: 'cancelled' });
     expect(h.commands).toEqual([]);
     // The record is live again, so the user can simply try once more.
     const second = await h.service.request(request, SENDER);
-    expect(second).toEqual({ status: 'stale', reason: 'invocation' });
+    expect(second).toEqual({ status: 'cancelled' });
   });
 
   test('a renderer cannot advance it by supplying a challenge', async () => {
@@ -214,8 +217,9 @@ describe('the native confirmation sheet (flow B)', () => {
       arguments: {},
       challenge: 'forged' as never,
     }, SENDER);
-    // A forged token does not skip the sheet: flow B never consults one.
-    expect(result).toEqual({ status: 'stale', reason: 'invocation' });
+    // A forged token does not skip the sheet: flow B never consults one, so
+    // the user still decided — and still declined.
+    expect(result).toEqual({ status: 'cancelled' });
     expect(h.commands).toEqual([]);
   });
 
@@ -231,7 +235,8 @@ describe('the native confirmation sheet (flow B)', () => {
       subjectRef: subjectRefOf(opened, 'deleteForever'),
       arguments: {},
     }, SENDER);
-    // Fail CLOSED: no confirmation host means no confirmation, means no delete.
+    // Fail CLOSED, and do NOT claim the user cancelled a sheet they never saw:
+    // a missing host is a misconfiguration, not a decision.
     expect(result).toEqual({ status: 'stale', reason: 'invocation' });
     expect(h.commands).toEqual([]);
   });

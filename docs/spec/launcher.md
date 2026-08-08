@@ -265,9 +265,10 @@ through.
 
 ## IPC surface
 
-The launcher loads its OWN preload (`src/preload/launcher.ts`) — the generic
-`lin:invoke` surface is not in that bundle, and main additionally refuses it for
-this sender before dispatch. See [`action-registry.md`](action-registry.md) →
+The launcher window is given a narrow bridge (`src/preload/launcher.ts`, built
+into the single preload bundle and selected by a role flag): the generic
+`lin:invoke` surface is never exposed to it, and main additionally refuses it
+for this sender before dispatch. See [`action-registry.md`](action-registry.md) →
 *Renderer capabilities*.
 
 - Launcher renderer → main: `launcher:getInitialState`, `launcher:hide`, and the
