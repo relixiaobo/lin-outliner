@@ -889,7 +889,14 @@ export class ThreadCatalogOps {
       if (record.nameOrigin === 'automatic' && this.core.allTurns(threadId).length === 0) {
         this.clearAutomaticThreadName(threadId);
       }
-      if (record.thread.status.type === 'active') await this.turnLifecycle.setStatus(threadId, { type: 'idle' });
+      // `active` is a Turn that did not survive the process. `systemError` is a
+      // lock a previous version left behind and nothing ever released: it
+      // persists, and both rollback and Turn admission refuse anything but
+      // `idle`, so the conversation stayed dead across restarts. Healing it here
+      // is what gives those Threads back — nothing writes the status any more.
+      if (record.thread.status.type === 'active' || record.thread.status.type === 'systemError') {
+        await this.turnLifecycle.setStatus(threadId, { type: 'idle' });
+      }
     }
 
   private async finalizeHistoryRollbackHooks(

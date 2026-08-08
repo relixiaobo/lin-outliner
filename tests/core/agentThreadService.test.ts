@@ -2153,6 +2153,134 @@ describe('ThreadService', () => {
     await fixture.service.close();
   });
 
+  test('never lets a finished Turn name the status of the Turn that replaced it', async () => {
+    // Completion releases the Thread BEFORE its tail runs, so a new Turn can be
+    // admitted while the old one is still finishing. The tail here blocks until
+    // exactly that has happened, then throws: a throw from a Turn that no longer
+    // owns the Thread must not stamp a status over the Turn that does.
+    let releaseTail: () => void = () => undefined;
+    let markReached: () => void = () => undefined;
+    const tailReached = new Promise<void>((resolve) => { markReached = resolve; });
+    const tailHeld = new Promise<void>((resolve) => { releaseTail = resolve; });
+    let tailPending = true;
+    const extensions = new ExtensionRegistry();
+    extensions.register({
+      id: 'blocking-turn-tail',
+      onTurnStopped: async () => {
+        if (!tailPending) return;
+        tailPending = false;
+        markReached();
+        await tailHeld;
+        throw new Error('tail failed after the Thread was released');
+      },
+    });
+    const fixture = await createFixture(extensions);
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+
+    await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'First' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    fixture.executor.finish(0);
+    await tailReached;
+
+    // The Thread was released, so a second Turn takes it.
+    const second = await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Second' }],
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    releaseTail();
+    // Let the first Turn's failure path run to completion. Waiting for idle
+    // here would wait on the SECOND Turn, which is exactly the one still going.
+    for (let tick = 0; tick < 4; tick += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // The first Turn's failure must not have claimed the Thread back.
+    expect(fixture.service.readThread({ threadId: thread.id }).thread.status)
+      .toEqual({ type: 'active', activeFlags: [] });
+    fixture.executor.finish(1);
+    await fixture.service.waitForIdle(thread.id);
+    expect(second.turn.id).toBeTruthy();
+  });
+
+  test('heals a Thread an earlier version left locked in systemError', async () => {
+    const fixture = await createFixture();
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    // The state that version wrote and never cleared. It persists, so the
+    // conversation stayed dead across restarts — this is what gives it back.
+    fixture.stores.metadata.setStatus(
+      thread.id,
+      { type: 'systemError', message: 'left behind by an earlier version' },
+      Date.now(),
+    );
+    await fixture.service.close();
+
+    const reopened = await openFixture(fixture.root, new ControlledExecutor(), fixture.clock);
+    await reopened.service.initialize();
+
+    expect(reopened.service.readThread({ threadId: thread.id }).thread.status).toEqual({ type: 'idle' });
+    const resumed = await reopened.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Still usable' }],
+    });
+    expect(resumed.turn.id).toBeTruthy();
+    await reopened.service.close();
+  });
+
+  test('leaves the Thread usable after a Turn dies on the launch path', async () => {
+    const extensions = new ExtensionRegistry();
+    let failNext = true;
+    extensions.register({
+      id: 'failing-turn-start',
+      onTurnStarted: () => {
+        if (!failNext) return;
+        failNext = false;
+        throw new Error('turn start hook failed');
+      },
+    });
+    const fixture = await createFixture(extensions);
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+
+    const failed = await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'This Turn dies before it runs' }],
+    });
+    await fixture.service.waitForIdle(thread.id);
+
+    // The Turn carries the failure, which is where it belongs...
+    const turns = fixture.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns!;
+    expect(turns.find((turn) => turn.id === failed.turn.id)?.status).toBe('failed');
+    // ...and the Thread is not locked by it. It used to be left in
+    // `systemError`, which nothing cleared and which both rollback and Turn
+    // admission refuse — one failure here ended the conversation for good.
+    expect(fixture.service.readThread({ threadId: thread.id }).thread.status).toEqual({ type: 'idle' });
+
+    const next = await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'And the conversation continues' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    expect(next.turn.id).not.toBe(failed.turn.id);
+    fixture.executor.finish(0);
+    await fixture.service.waitForIdle(thread.id);
+  });
+
   test('keeps a committed admission authoritative when notification observers fail', async () => {
     const extensions = new ExtensionRegistry();
     let observerFailures = 0;
