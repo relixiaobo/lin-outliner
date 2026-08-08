@@ -23,7 +23,6 @@ import type {
   ObjectRef,
   RequestId,
 } from '../../../core/actions/types';
-import { requestSendNodeReferenceToThreadComposer } from '../../agent/agentReveal';
 import type { NodeId, NodeProjection } from '../../api/types';
 import { useI18n, useT } from '../../i18n/I18nProvider';
 import type { DocumentIndex, ToolbarDropdownSection } from '../../state/document';
@@ -32,6 +31,7 @@ import {
   candidateForEnter,
   registerActionStepHandlers,
   reportActionError,
+  stageComposerObject,
 } from '../interactions/actionSteps';
 import { isImeComposingEvent } from '../interactions/imeKeyboard';
 import { ChevronRightIcon, CheckIcon, ICON_SIZE, MoveToIcon, SupertagIcon } from '../icons';
@@ -203,12 +203,9 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
             handlersRef.current.onRevealViewToolbar(target.visualRowId, target.nodeId);
           } else handlersRef.current.onOpenViewSection(target.nodeId, target.section);
         },
-        composerHandoff: (object) => {
-          requestSendNodeReferenceToThreadComposer({
-            nodeId: object.nodeId,
-            title: object.title,
-          });
-        },
+        // One staging path for both object kinds; the menu never stages a page,
+        // but routing through the shared helper keeps the two from drifting.
+        composerHandoff: (object) => stageComposerObject(object),
       });
       setOpening(result);
     }).catch(() => {

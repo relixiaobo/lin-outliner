@@ -1,4 +1,8 @@
 import { useSyncExternalStore } from 'react';
+import {
+  acknowledgeThreadComposerContext,
+  pendingComposerAdditionalContext,
+} from '../agentReveal';
 import type { ThreadGoal } from '../../../core/agent/goal';
 import type {
   AgentCoreNotification,
@@ -270,6 +274,13 @@ export class ThreadStore {
     const threadId = this.snapshot.selectedThreadId;
     if (!threadId || content.length === 0) return null;
     const active = findLastInProgressTurn(this.turns(threadId));
+    // Contexts staged onto the composer (the command surface's page handoff)
+    // ride along as UNTRUSTED additional context — the only kind a renderer may
+    // author — and are cleared once the turn has taken them, so a later turn
+    // does not silently re-send a page the user has moved on from.
+    const additionalContext = pendingComposerAdditionalContext();
+    const stagedKeys = Object.keys(additionalContext);
+    const withContext = stagedKeys.length > 0 ? { additionalContext } : {};
     if (active) {
       await this.client.agentCoreRequest('turn/steer', {
         threadId,
@@ -277,7 +288,9 @@ export class ThreadStore {
         input: content,
         clientUserMessageId: crypto.randomUUID(),
         ...(userView ? { userView } : {}),
+        ...withContext,
       });
+      for (const key of stagedKeys) acknowledgeThreadComposerContext(key);
       return null;
     } else {
       const response = await this.client.agentCoreRequest('turn/start', {
@@ -285,7 +298,9 @@ export class ThreadStore {
         input: content,
         clientUserMessageId: crypto.randomUUID(),
         ...(userView ? { userView } : {}),
+        ...withContext,
       });
+      for (const key of stagedKeys) acknowledgeThreadComposerContext(key);
       return response.turn;
     }
   }

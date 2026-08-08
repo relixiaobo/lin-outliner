@@ -27,6 +27,8 @@ import {
   installActionErrorSink,
   installActionFocusSink,
   installActionStepListener,
+  installDefaultActionStepHandlers,
+  stageComposerObject,
 } from './interactions/actionSteps';
 import { useCommandRunner } from './shared';
 import { createAssetNode } from './interactions/attachmentIngest';
@@ -211,6 +213,18 @@ export function App() {
   panelCountFitsRef.current = panelCountFitsCapacity;
   reflowPanelCountRef.current = reflowRailsForPanelCount;
   const { isNodePinned, pinNodeAtIndex, pinnedNodeIds, togglePin } = useWorkspacePinnedNodes(index?.byId ?? null);
+  // Fallback for LAUNCHER-originated plans: that invocation has no surface in
+  // this renderer to register handlers, but its navigate / pin / composer legs
+  // still land here. `reveal` is deliberately absent — only an anchored opening
+  // carries the view facts one needs.
+  useEffect(() => installDefaultActionStepHandlers({
+    navigate: (nodeId) => setActivePanelRoot(nodeId),
+    workspace: (op, nodeId) => {
+      if (op === 'openSplitPane') setActivePanelRoot(nodeId, { newPane: true });
+      else if (op === 'pin' ? !isNodePinned(nodeId) : isNodePinned(nodeId)) togglePin(nodeId);
+    },
+    composerHandoff: (object) => stageComposerObject(object),
+  }), [isNodePinned, setActivePanelRoot, togglePin]);
   const agentUserView = useMemo(() => index ? buildRendererUserViewHints({
     activePanelId,
     panels,

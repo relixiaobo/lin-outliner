@@ -146,7 +146,10 @@ export type AppSurface = 'mainWindow' | 'settings';
 /** The object staged into the agent composer by `sendToAgent`. */
 export type ComposerObject =
   | { kind: 'node'; nodeId: NodeId; title: string }
-  | { kind: 'externalPage'; contextId: string };
+  // A page is not a document node, so it is staged as one UNTRUSTED context
+  // entry — the only kind a renderer may author — rather than a reference.
+  // Main resolves the value; the renderer never reads the captured context.
+  | { kind: 'externalPage'; contextId: string; label: string; value: string };
 
 export type EffectStep =
   | CommandStep

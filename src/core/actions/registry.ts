@@ -8,6 +8,7 @@
 // provenance model, irreversible boundary or confirmation contract is a
 // different action. Internal core commands do not define this product taxonomy.
 
+import type { ExternalContext } from '../launcher/context';
 import { buildContextCaptureInput, buildManualNoteInput } from '../launcher/sources';
 import { parseIsoLocalDateParts, todayIsoLocalDate } from '../localDate';
 import { nodeIsInSubtree } from '../treeUtils';
@@ -1013,6 +1014,26 @@ function resolveCreate(
   })];
 }
 
+/**
+ * What the composer shows for a staged page, and what the model actually sees.
+ * Deliberately basic-info only: title, where it came from, and the canonical
+ * link. Page BODY extraction is a separate, explicitly-invoked reader — the
+ * ambient hotkey path never fetches.
+ */
+function externalPageLabel(context: ExternalContext): string {
+  return context.source?.title || context.browser?.tabTitle || context.app.name || 'Page';
+}
+
+function externalPageContextValue(context: ExternalContext): string {
+  const url = context.source?.canonicalUrl ?? context.source?.url ?? context.browser?.url;
+  return [
+    `Title: ${externalPageLabel(context)}`,
+    context.browser?.hostname ? `Site: ${context.browser.hostname}` : null,
+    url ? `URL: ${url}` : null,
+    `App: ${context.app.name}`,
+  ].filter(Boolean).join('\n');
+}
+
 // --- shared predicates ------------------------------------------------------
 
 function rowIdOf(subject: SurfaceObject): NodeId | null {
@@ -1150,10 +1171,17 @@ const PLANNERS: { [K in ActionId]?: Planner<K> } = {
 
   sendToAgent: (context, subject) => {
     if (subject.kind === 'externalPage') {
+      const external = context.externalContext?.(subject.contextId);
+      if (!external) return null;
       return stayAtDestination([{
         on: 'mainRenderer',
         kind: 'composerHandoff',
-        object: { kind: 'externalPage', contextId: subject.contextId },
+        object: {
+          kind: 'externalPage',
+          contextId: subject.contextId,
+          label: externalPageLabel(external),
+          value: externalPageContextValue(external),
+        },
         draftText: context.invocation.draftText,
       }]);
     }
