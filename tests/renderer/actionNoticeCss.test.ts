@@ -34,10 +34,26 @@ describe('action notice anchor guards', () => {
     // `transform` is animated, so a keyframe that forgets translateX(-50%)
     // parks the notice half a width off centre for the whole animation.
     const keyframes = /@keyframes action-notice-enter \{(.*?)\n\}/s.exec(noticeCss)?.[1] ?? '';
-    expect(keyframes).not.toBe('');
-    for (const step of keyframes.split(/\n\s*\n/)) {
-      expect(step).toMatch(/translate(?:X)?\(-50%/);
-    }
+    // Matched as blocks rather than split on blank lines: reformatting the
+    // keyframes without the blank line would collapse them into one "step",
+    // and the loop would then pass on a single offset anywhere inside.
+    const steps = [...keyframes.matchAll(/(?:from|to|\d+%)\s*\{[^}]*\}/g)].map(([step]) => step);
+    expect(steps.length).toBeGreaterThanOrEqual(2);
+    for (const step of steps) expect(step).toMatch(/translate(?:X)?\(-50%/);
+  });
+
+  test('never eats a click meant for the content underneath', () => {
+    // It floats over the outline pane's first rows. Only the close control
+    // takes the pointer; the card is transparent to it.
+    expect(noticeCss).toMatch(/\.action-notice \{[^}]*pointer-events:\s*none;/s);
+    expect(noticeCss).toMatch(/\.action-notice-close \{[^}]*pointer-events:\s*auto;/s);
+  });
+
+  test('can actually reach its declared width cap', () => {
+    // With `left` set and `right` auto, a shrink-to-fit box may only use the
+    // space from `left` to the edge, so `max-width` alone caps at half the
+    // window and a long message wraps into a tall column.
+    expect(noticeCss).toMatch(/\.action-notice \{[^}]*width:\s*max-content;/s);
   });
 });
 

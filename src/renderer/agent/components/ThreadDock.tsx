@@ -207,7 +207,6 @@ export function ThreadDock({
    * is worse than one that says so.
    */
   const interruptThread = useCallback(async (threadId: string) => {
-    reportActionError(null);
     try {
       await threadStore.interruptThread(threadId);
     } catch {
@@ -222,7 +221,6 @@ export function ThreadDock({
    * rows land in the same place the transcript rows do.
    */
   const openSubagent = useCallback((childThreadId: string) => {
-    reportActionError(null);
     setListOpen(false);
     const parentThreadId = snapshot.selectedThreadId;
     if (!parentThreadId) return;
@@ -258,7 +256,6 @@ export function ThreadDock({
 
   /** Selecting a root conversation from the list or an Automation. */
   const openThread = useCallback(async (threadId: string) => {
-    reportActionError(null);
     try {
       await threadStore.openThreadById(threadId);
       setListOpen(false);
@@ -271,7 +268,6 @@ export function ThreadDock({
     if (creatingRef.current || providerBlocksCreation) return false;
     creatingRef.current = true;
     setCreating(true);
-    reportActionError(null);
     try {
       await threadStore.createThread();
       setListOpen(false);
@@ -329,7 +325,6 @@ export function ThreadDock({
   }
 
   async function runAction(action: () => Promise<void>) {
-    reportActionError(null);
     try {
       await action();
     } catch (error) {

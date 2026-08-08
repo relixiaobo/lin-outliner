@@ -83,6 +83,23 @@ persistent conditions: `providerError` and `snapshot.error` (surface states,
 with the existing empty-state/settings affordances). The strip's markup stays
 for those two; only the transient feeder moves.
 
+**Clearing follows from the slot being shared.** Once one slot serves every
+surface, the two habits a per-surface error state permitted both become bugs: a
+caller nulling the slot before it tries (six such calls in the dock, one in the
+node menu) erases a report from somewhere else that the user is mid-read, and a
+command clearing on success does the same on every ordinary keystroke. Both go;
+reporting replaces whatever is there, and dismissal/expiry/supersession own the
+rest. Sequencing is a caller-side monotonic counter for the same reason — the
+shared slot is empty far more often than not, so a sequence derived from it
+would restart at 1 nearly every time and a repeat would be indistinguishable
+from the notice already on screen.
+
+**Not obstruction.** Anchored over the content column, the card is
+`pointer-events: none` with the close control opting back in: reporting a
+failure must not swallow the user's next click. The hold therefore lives on that
+control — where a reader's pointer goes anyway — and on its focus, so the
+countdown cannot unmount the button under a keyboard user mid-Tab.
+
 **The timer.** Owned by the toast component, not the callers: replacement
 resets it, hover pauses it, close clears it. No caller-side timeout knowledge —
 the current `ATTACHMENT_ERROR_TIMEOUT_MS` pattern in `ThreadView` stays local
@@ -111,16 +128,22 @@ labels" and "single slot" are recorded above as deliberate.
 ## Verification
 
 - Renderer test (`actionNotice.test.tsx`): the timer lifecycle — it dismisses
-  itself, it holds while hovered and restarts on leave, it survives host
-  re-renders that hand it a fresh callback, and an identical repeated failure
-  restarts the countdown rather than inheriting the previous one's remainder.
-  `window.setTimeout` is stubbed rather than faked, so the assertions can be
-  about how many timers exist and with what delay.
-- Guard test (`actionNoticeCss.test.ts`): the anchor. This is the actual
-  regression risk — a notice that drifts back to an edge still "looks fine" in
-  review while reintroducing the reported bug — so the guard pins centred-on-
-  window, forbids `right`/`bottom` on the notice, requires it to clear
-  `--chrome-height`, and requires every keyframe to carry the centring offset.
+  itself, holds on pointer and on focus and restarts on leave, keeps a hold
+  across a replacement, survives host re-renders that hand it a fresh callback,
+  restarts on an unheld replacement, carries a caller-side sequence, and says
+  nothing when the message is blank. `window.setTimeout` is stubbed rather than
+  faked, so the assertions can be about how many timers exist and with what
+  delay.
+- Renderer test (`commandRunnerNoop.test.tsx`, `contextMenuLifecycle.test.tsx`):
+  neither a successful command nor a completed menu action clears the notice.
+- Guard test (`actionNoticeCss.test.ts`): the anchor and the geometry. This is
+  the actual regression risk — a notice that drifts back to an edge still
+  "looks fine" in review while reintroducing the reported bug — so the guard
+  pins centred-on-window, forbids `right`/`bottom` on the notice, requires it to
+  clear `--chrome-height`, requires the click-through/opt-back-in pair, requires
+  an intrinsic width so the declared cap is reachable, and requires every
+  keyframe block to carry the centring offset (matched as blocks, not split on
+  a blank line that reformatting could remove).
 - **No E2E was added, deliberately.** Producing a real action failure in E2E
   would require a test-only failure hook in production code, which is a worse
   trade than the coverage is worth; the anchor and the lifecycle are both

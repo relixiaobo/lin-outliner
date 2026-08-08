@@ -598,7 +598,6 @@ export const en = {
   // The always-visible app shell: window chrome, sidebar, workspace canvas, panels,
   // and the agent dock frame (B1 migration).
   shell: {
-    startupError: ({ error }: { error: string }) => `Startup failed: ${error}`,
     errorDismiss: 'Dismiss error',
     // A menu/panel action that did not complete. The specific cases carry the
     // rejecting command's own message; these cover the rest.

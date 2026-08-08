@@ -266,7 +266,9 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
       }
       if (result?.status === 'completed') {
         applyActionFocus(result.focus);
-        reportActionError(null);
+        // Succeeding is not a reason to erase someone else's failure: the notice
+        // is app-wide, so clearing here would delete a report this action never
+        // made. It expires on its own.
       } else {
         // Anything that is not a completion is a failure the user must see: a
         // rejected command, an unacked renderer step, a half-applied plan, or a

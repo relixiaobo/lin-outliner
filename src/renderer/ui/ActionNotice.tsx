@@ -35,22 +35,36 @@ export interface ActionNoticeState {
  * countdown. Compared by value, the second attempt would inherit whatever was
  * left of the first one's and could vanish the instant it arrived — the user
  * would see their retry produce no feedback at all.
+ *
+ * The counter is the CALLER's and only ever climbs. Deriving it from the slot
+ * being overwritten looks equivalent and is not: the slot is empty far more
+ * often than not, so nearly every notice would be numbered 1, and a repeat of
+ * the message already on screen would be indistinguishable from it — which is
+ * precisely the case this exists to catch.
  */
-export function nextActionNotice(
-  current: ActionNoticeState | null,
-  message: string | null,
-): ActionNoticeState | null {
-  return message === null ? null : { message, seq: (current?.seq ?? 0) + 1 };
+export function nextActionNotice(message: string | null, seq: number): ActionNoticeState | null {
+  // Blank is nothing to say, not something to say blankly: `new Error()` yields
+  // an empty message, and a card with no text and a lone close button is worse
+  // than staying quiet.
+  const text = message?.trim() ?? '';
+  return text === '' ? null : { message: text, seq };
 }
 
 export function ActionNotice({
   message,
   onDismiss,
+  seq,
 }: {
   readonly message: string;
   readonly onDismiss: () => void;
+  /** Changing this restarts the countdown; see `nextActionNotice`. */
+  readonly seq: number;
 }) {
   const t = useT();
+  // Held ACROSS notices rather than reset per notice: this component is not
+  // keyed on `seq`, because remounting would drop a hold the user is currently
+  // relying on — the pointer resting on the control does not move, so no fresh
+  // enter event would arrive to re-establish it.
   const [held, setHeld] = useState(false);
   // The timer must not depend on the callback's identity. This renders inside
   // the app shell, which re-renders on every keystroke in the outliner; an
@@ -58,25 +72,45 @@ export function ActionNotice({
   // notice would never leave.
   const dismissRef = useRef(onDismiss);
   dismissRef.current = onDismiss;
+  // Where focus was before the notice took it, so dismissing the control does
+  // not strand the user at <body> with their place in the outline lost.
+  const focusOriginRef = useRef<Element | null>(null);
 
   useEffect(() => {
     if (held) return undefined;
     const timer = window.setTimeout(() => dismissRef.current(), ACTION_NOTICE_TIMEOUT_MS);
     return () => window.clearTimeout(timer);
-  }, [held]);
+  }, [held, seq]);
+
+  const dismiss = () => {
+    const origin = focusOriginRef.current;
+    focusOriginRef.current = null;
+    onDismiss();
+    if (origin instanceof HTMLElement && origin.isConnected) origin.focus();
+  };
 
   return (
-    <div
-      className="action-notice"
-      onMouseEnter={() => setHeld(true)}
-      onMouseLeave={() => setHeld(false)}
-      role="alert"
-    >
+    <div className="action-notice" role="alert">
       <span>{message}</span>
+      {/* The control is the only part that takes the pointer (the card itself
+          is click-through), so hovering it is the whole of "hovering the
+          notice" — and it is also what a reader reaches for, which is exactly
+          when the text must not be yanked away.
+
+          Focus holds too: without it the countdown would unmount the button
+          under a keyboard user's focus ring mid-Tab, dropping them to <body>
+          with no way back. */}
       <ButtonControl
         aria-label={t.shell.errorDismiss}
         className="action-notice-close"
-        onClick={onDismiss}
+        onBlur={() => setHeld(false)}
+        onClick={dismiss}
+        onFocus={(event) => {
+          focusOriginRef.current = event.relatedTarget;
+          setHeld(true);
+        }}
+        onMouseEnter={() => setHeld(true)}
+        onMouseLeave={() => setHeld(false)}
       >
         <CloseIcon size={ICON_SIZE.menu} />
       </ButtonControl>

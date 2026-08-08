@@ -65,8 +65,10 @@ export function App() {
   const [sidebarExpandedIds, setSidebarExpandedIds] = useState<Set<NodeId>>(() => new Set());
   const [pendingFocus, setPendingFocus] = useState<FocusHint | null>(null);
   const [notice, setNotice] = useState<ActionNoticeState | null>(null);
+  const noticeSeqRef = useRef(0);
   const setError = useCallback((message: string | null) => {
-    setNotice((current) => nextActionNotice(current, message));
+    noticeSeqRef.current += 1;
+    setNotice(nextActionNotice(message, noticeSeqRef.current));
   }, []);
   const dismissNotice = useCallback(() => setNotice(null), []);
   const [trigger, setTrigger] = useState<TriggerState>(null);
@@ -581,16 +583,16 @@ export function App() {
           onToggleAgent={toggleAgentRail}
           onToggleSidebar={() => setSidebarOpen((open) => !open)}
         />
-        {/* Before the projection arrives there is no app to notify over, so a
-            failure is stated in place and stays: nothing here is dismissible,
-            because nothing the user could do has succeeded yet. */}
-        <div className="app-shell app-startup-shell" aria-busy={notice ? undefined : 'true'}>
-          {notice ? (
-            <div className="loading-panel" role="alert">
-              {t.shell.startupError({ error: notice.message })}
-            </div>
-          ) : null}
-        </div>
+        {/* Still loading, and the keyboard and preview bridges are already live
+            above this branch — so a command CAN fail here. It is reported as
+            what it is: this branch used to relabel any action failure as
+            "startup failed", which named the wrong culprit and, having no
+            timer, left that accusation on screen until the projection landed.
+            There is no startup-failure channel to report from. */}
+        <div className="app-shell app-startup-shell" aria-busy="true" />
+        {notice && (
+          <ActionNotice message={notice.message} onDismiss={dismissNotice} seq={notice.seq} />
+        )}
       </div>
     );
   }
@@ -708,10 +710,8 @@ export function App() {
         />
       )}
 
-      {/* Keyed by sequence so a fresh notice remounts: the hover-hold that keeps
-          one on screen must not carry over to the next. */}
       {notice && (
-        <ActionNotice key={notice.seq} message={notice.message} onDismiss={dismissNotice} />
+        <ActionNotice message={notice.message} onDismiss={dismissNotice} seq={notice.seq} />
       )}
 
       <InlineFilePreviewLayer />

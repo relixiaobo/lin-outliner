@@ -536,7 +536,6 @@ export const zhHans: PartialMessages = {
     },
   },
   shell: {
-    startupError: ({ error }) => `启动失败：${error}`,
     errorDismiss: '关闭错误',
     commandFailed: '该操作未能完成。',
     commandStale: '该操作已不再适用，请重试。',

@@ -1072,9 +1072,11 @@ and the rule that sorts them:
 - **A condition that persists belongs to the surface it describes.** A provider
   that is not configured and a thread list that failed to load render in the
   dock's `.thread-dock-error` strip; a field's validation error renders beside
-  the field; a startup failure that leaves no app to notify over renders in the
-  startup panel. None of these is dismissible, because dismissing one would hide
-  a state that is still true.
+  the field. Neither is dismissible, because dismissing one would hide a state
+  that is still true. The pre-projection shell is a *loading* state and reports
+  no failure of its own: it has no startup-failure channel, and an action that
+  fails while it is up (the keyboard and preview bridges are already live) is
+  reported as the action failure it is, not relabelled as a failure to start.
 - **A part of a record belongs in the record.** A failed Turn, tool row,
   delegation row, or automation run renders inside the transcript or run view
   that contains it.
@@ -1086,14 +1088,35 @@ sat in the bottom-right corner, which is the agent dock's territory, and every
 failure in the app therefore read as the agent failing. It belongs to no column,
 and the guard in `tests/renderer/actionNoticeCss.test.ts` keeps it there.
 
+Because it floats over the outline pane's first rows, the card is
+**click-through** (`pointer-events: none`); only its close control takes the
+pointer. Reporting a failure must not swallow the click the user makes next. Its
+width is intrinsic (`width: max-content`) rather than `left` plus `max-width`
+alone, which would cap a fixed shrink-to-fit box at half the window.
+
 It carries **one message at a time** — a newer failure replaces an older one —
-and **dismisses itself** after `ACTION_NOTICE_TIMEOUT_MS`, holding while the
-pointer rests on it and restarting the full countdown when the pointer leaves.
-Repeating an action that fails identically restarts the countdown: the notice is
-sequenced (`nextActionNotice`), so a retry is a new notice rather than the tail
-of the previous one. Messages do not carry a source label; toast traffic is the
-action the user just performed, so the source is self-evident, and the rare
-message about background work names its own subject.
+and **dismisses itself** after `ACTION_NOTICE_TIMEOUT_MS`. It holds while the
+pointer rests on its control or while that control has focus, and restarts the
+full countdown on leave; the focus hold is what stops the countdown from
+unmounting the button under a keyboard user mid-Tab. The hold outlives a
+replacement, because a pointer already resting there does not move to announce
+itself again.
+
+**Reporting is not clearing, and succeeding is not clearing.** A caller reports
+a failure; it never pre-emptively nulls the slot before trying, and a command
+that succeeds does not clear a notice it did not raise — the slot is app-wide,
+so both would delete another surface's still-unread report (and commands run on
+ordinary keystrokes). Dismissal, expiry, and supersession own the lifecycle. A
+blank message is treated as nothing to report rather than an empty card.
+
+Sequencing is the caller's monotonic counter (`nextActionNotice`), never derived
+from the slot being overwritten: the slot is empty far more often than not, so a
+derived sequence would restart at 1 almost every time and a repeat of the
+message already on screen would be indistinguishable from it — leaving the
+countdown running instead of restarted, which is the one case sequencing exists
+for. Messages do not carry a source label; traffic is the action the user just
+performed, so the source is self-evident, and the rare message about background
+work names its own subject.
 
 ## Suggested Shell State
 

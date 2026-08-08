@@ -178,7 +178,6 @@ export function useCommandRunner(
       // A no-op is renderer-local: nothing crossed the command boundary, so there
       // is no projection, focus, or local pre-apply work to commit.
       if (isCommandRunnerNoopResult(result)) {
-        setError(null);
         return result ?? COMMAND_RUNNER_NOOP;
       }
       // A mutation returns a `CommandResult` (an `update` to fold in); an explicit
@@ -196,7 +195,11 @@ export function useCommandRunner(
           setFocus(null);
         }));
       }
-      setError(null);
+      // No clear on success. `setError` writes the app-wide notice, which any
+      // surface may have raised, so clearing here would delete a failure this
+      // command has nothing to do with — and it fires on every keystroke that
+      // runs a command, which would erase a report the user is still reading.
+      // The notice expires on its own.
       return result;
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

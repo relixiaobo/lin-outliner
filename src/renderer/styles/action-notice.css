@@ -8,8 +8,18 @@
   top: calc(var(--chrome-height) + var(--layout-gap));
   left: 50%;
   z-index: var(--z-toast);
+  /* Announcement, not obstruction. It floats over the first rows of the outline
+     pane, and a click meant for a row must reach the row — otherwise reporting a
+     failure would swallow the user's next action for six seconds. Only the close
+     control takes the pointer. */
+  pointer-events: none;
   display: grid;
-  max-width: 480px;
+  /* `width` must be intrinsic: with `left` set and `right` auto, a shrink-to-fit
+     box may only use the space from `left` to the edge — half the window — so
+     `max-width` alone would cap at 50vw and a long message would wrap into a
+     tall column that narrows twice as fast as the window does. */
+  width: max-content;
+  max-width: min(480px, calc(100vw - 2 * var(--layout-gap)));
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: start;
   gap: var(--space-5);
@@ -41,6 +51,7 @@
 }
 
 .action-notice-close {
+  pointer-events: auto;
   display: inline-flex;
   width: 22px;
   height: 22px;
