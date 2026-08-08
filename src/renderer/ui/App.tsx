@@ -9,7 +9,7 @@ import { buildRendererUserViewHints } from './agent/userViewContext';
 import { CommandPalette } from './CommandPalette';
 import { Sidebar } from './Sidebar';
 import { WindowChrome } from './WindowChrome';
-import { CloseIcon, ICON_SIZE } from './icons';
+import { ActionNotice, nextActionNotice, type ActionNoticeState } from './ActionNotice';
 import {
   clearFocusState,
   cursorAll,
@@ -22,7 +22,6 @@ import {
 } from './focus/focusModel';
 import { useDragSelection } from './interactions/dragSelection';
 import { BatchTagSelector } from './outliner/BatchTagSelector';
-import { ButtonControl } from './primitives/ButtonControl';
 import type { NavigateRootOptions, TriggerState } from './shared';
 import {
   installActionErrorSink,
@@ -65,7 +64,13 @@ export function App() {
   const agentRailState: ThreadRailState = agentOpen ? 'open' : 'collapsed';
   const [sidebarExpandedIds, setSidebarExpandedIds] = useState<Set<NodeId>>(() => new Set());
   const [pendingFocus, setPendingFocus] = useState<FocusHint | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<ActionNoticeState | null>(null);
+  const noticeSeqRef = useRef(0);
+  const setError = useCallback((message: string | null) => {
+    noticeSeqRef.current += 1;
+    setNotice(nextActionNotice(message, noticeSeqRef.current));
+  }, []);
+  const dismissNotice = useCallback(() => setNotice(null), []);
   const [trigger, setTrigger] = useState<TriggerState>(null);
   const [dragId, setDragId] = useState<NodeId | null>(null);
   const indexRef = useRef(index);
@@ -578,13 +583,16 @@ export function App() {
           onToggleAgent={toggleAgentRail}
           onToggleSidebar={() => setSidebarOpen((open) => !open)}
         />
-        <div className="app-shell app-startup-shell" aria-busy={error ? undefined : 'true'}>
-          {error ? (
-            <div className="loading-panel" role="alert">
-              {t.shell.startupError({ error })}
-            </div>
-          ) : null}
-        </div>
+        {/* Still loading, and the keyboard and preview bridges are already live
+            above this branch — so a command CAN fail here. It is reported as
+            what it is: this branch used to relabel any action failure as
+            "startup failed", which named the wrong culprit and, having no
+            timer, left that accusation on screen until the projection landed.
+            There is no startup-failure channel to report from. */}
+        <div className="app-shell app-startup-shell" aria-busy="true" />
+        {notice && (
+          <ActionNotice message={notice.message} onDismiss={dismissNotice} seq={notice.seq} />
+        )}
       </div>
     );
   }
@@ -702,13 +710,8 @@ export function App() {
         />
       )}
 
-      {error && (
-        <div className="error">
-          <span>{error}</span>
-          <ButtonControl className="error-close-button" aria-label={t.shell.errorDismiss} onClick={() => setError(null)}>
-            <CloseIcon size={ICON_SIZE.menu} />
-          </ButtonControl>
-        </div>
+      {notice && (
+        <ActionNotice message={notice.message} onDismiss={dismissNotice} seq={notice.seq} />
       )}
 
       <InlineFilePreviewLayer />

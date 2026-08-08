@@ -60,7 +60,10 @@ describe('useCommandRunner no-op outcome', () => {
     });
 
     expect(result).toBe(commandRunnerNoop());
-    expect(calls).toEqual(['setError:null']);
+    // Nothing, not `setError:null`. The error slot is the app-wide notice, and
+    // a no-op here has no standing to erase a failure some other surface
+    // raised and the user may still be reading.
+    expect(calls).toEqual([]);
   });
 
   test('aborts without clearing an error set by a nested runner', async () => {
@@ -83,5 +86,23 @@ describe('useCommandRunner no-op outcome', () => {
 
     expect(result).toBe(null);
     expect(calls).toEqual(['setError:stale command']);
+  });
+
+  test('does not clear the notice when a command succeeds', async () => {
+    // Commands run on ordinary keystrokes. Clearing on success would delete a
+    // report the user is mid-read the moment they carry on typing — and the
+    // report almost never belongs to the command that would be clearing it.
+    const calls: string[] = [];
+    const { run } = renderCommandRunner({
+      applyProjectionUpdate: () => calls.push('applyProjectionUpdate'),
+      setFocus: () => calls.push('setFocus'),
+      setError: (message) => calls.push(`setError:${message ?? 'null'}`),
+    });
+
+    await act(async () => {
+      await run(async () => ({ update: { kind: 'full', revision: 1, projection: {} } } as never));
+    });
+
+    expect(calls).toEqual(['applyProjectionUpdate', 'setFocus']);
   });
 });

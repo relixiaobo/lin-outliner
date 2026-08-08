@@ -1060,6 +1060,72 @@ interface OverlayState {
 }
 ```
 
+## Notification Layer
+
+**Where a failure is stated depends on what kind of thing it is.** Three layers,
+and the rule that sorts them:
+
+- **The result of one action is a notification.** A menu or palette command that
+  rejected, a pane operation that failed, an agent dock action that could not
+  complete — all report to `.action-notice`, the app's single notice, through
+  `reportActionError` (`src/renderer/ui/interactions/actionSteps.ts`).
+- **A condition that persists belongs to the surface it describes.** A provider
+  that is not configured and a thread list that failed to load render in the
+  dock's `.thread-dock-error` strip; a field's validation error renders beside
+  the field. Neither is dismissible, because dismissing one would hide a state
+  that is still true. The pre-projection shell is a *loading* state and reports
+  no failure of its own: it has no startup-failure channel, and an action that
+  fails while it is up (the keyboard and preview bridges are already live) is
+  reported as the action failure it is, not relabelled as a failure to start.
+- **A part of a record belongs in the record.** A failed Turn, tool row,
+  delegation row, or automation run renders inside the transcript or run view
+  that contains it.
+
+The notice is anchored to the **window**: horizontally centred, below
+`--chrome-height` so it clears the pane breadcrumb that owns the centre of the
+title-bar band. The anchor is load-bearing rather than cosmetic. It previously
+sat in the bottom-right corner, which is the agent dock's territory, and every
+failure in the app therefore read as the agent failing. It belongs to no column,
+and the guard in `tests/renderer/actionNoticeCss.test.ts` keeps it there.
+
+Because it floats over the outline pane's first rows, the card is
+**click-through** (`pointer-events: none`); only its close control takes the
+pointer. Reporting a failure must not swallow the click the user makes next. Its
+width is intrinsic (`width: max-content`) rather than `left` plus `max-width`
+alone, which would cap a fixed shrink-to-fit box at half the window.
+
+It carries **one message at a time** — a newer failure replaces an older one —
+and **dismisses itself** after `ACTION_NOTICE_TIMEOUT_MS`. It holds while the
+pointer rests anywhere over the card or while its close control has focus, and
+restarts the **full** countdown on leave rather than handing back the remainder.
+Because the card is click-through it receives no hover events of its own, so the
+pointer hold is a hit test against its rect from a document-level `pointermove`
+that lives exactly as long as the notice does. Restricting the hold to the close
+control would satisfy "hover holds" in name only: a reader's pointer rests on
+the text, and a 22px target is one you have to aim for. The rect is cached and
+re-measured on resize, on a message change, and on `animationend` — the entry
+animation moves the card, so measuring once at mount would leave the region
+offset by the animation's travel. The focus hold is orthogonal and is what stops
+the countdown from unmounting the button under a keyboard user mid-Tab. Both
+holds outlive a replacement, because a pointer already resting there does not
+move to announce itself again.
+
+**Reporting is not clearing, and succeeding is not clearing.** A caller reports
+a failure; it never pre-emptively nulls the slot before trying, and a command
+that succeeds does not clear a notice it did not raise — the slot is app-wide,
+so both would delete another surface's still-unread report (and commands run on
+ordinary keystrokes). Dismissal, expiry, and supersession own the lifecycle. A
+blank message is treated as nothing to report rather than an empty card.
+
+Sequencing is the caller's monotonic counter (`nextActionNotice`), never derived
+from the slot being overwritten: the slot is empty far more often than not, so a
+derived sequence would restart at 1 almost every time and a repeat of the
+message already on screen would be indistinguishable from it — leaving the
+countdown running instead of restarted, which is the one case sequencing exists
+for. Messages do not carry a source label; traffic is the action the user just
+performed, so the source is self-evident, and the rare message about background
+work names its own subject.
+
 ## Suggested Shell State
 
 ```ts

@@ -78,13 +78,16 @@ describe('context menu lifecycle', () => {
     expect(h.errors[0]).toBeTruthy();
   });
 
-  test('a completed action clears any previous error', async () => {
+  test('a completed action reports nothing at all, and clears nothing', async () => {
+    // It used to clear, back when the error state was the outliner's own. The
+    // notice is now app-wide, so clearing on success would delete a failure
+    // raised somewhere else that the user may still be reading.
     const h = await harness({
       request: async (): Promise<ActionRequestResult> => ({ status: 'completed' }),
     });
     await h.render();
     await clickMenuItem(h, 'Copy text');
-    expect(h.errors).toEqual([null]);
+    expect(h.errors).toEqual([]);
   });
 });
 

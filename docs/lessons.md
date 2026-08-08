@@ -381,3 +381,31 @@ thing being removed**. What the removed content referenced is exactly what a
 re-send can resurrect; what neither set references is garbage nothing can reach.
 When an operation exists to be undone or replayed, its cleanup's reference set is
 the union of both sides of the transition, not just the side that remains.
+
+## A stub on a shared global outlives the test that installed it
+
+A new test replaced `window.setTimeout` so it could assert how many timers a
+component set and with what delay — a stub, not a fake clock, because the
+assertions were about the *calls*, not about advancing time. Run alone, and run
+next to a neighbouring file, it passed. Run as part of the suite, 55 tests failed
+in files that had nothing to do with the change, and the suite went from 4
+seconds to 278.
+
+The renderer suite shares one process, and `globalThis.window` is assigned per
+file and simply left there. So the stub did not end with the test: every later
+test that waited on a timer waited on a clock that had stopped. The failures
+surfaced far from the cause, in unrelated files, which is exactly the shape that
+invites blaming flakiness or the neighbouring change.
+
+Two things generalise. **Anything installed onto a shared global needs its undo
+wired to the same lifecycle that installed it** — return a restore function from
+the installer and run it in cleanup, rather than trusting the next file to
+overwrite what you left. And **a suite's wall-clock time is a diagnostic
+signal**: a run that grows by two orders of magnitude while failing is not a
+suite that got harder, it is something waiting on a thing that will never
+happen. Read the duration before reading the failures.
+
+The narrower trap worth naming: passing when run alone and passing beside one
+neighbour proves nothing about global hygiene. Cross-file pollution only appears
+at suite scale, so a test that touches a global is not verified until the whole
+suite has run with it in place.

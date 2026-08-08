@@ -1433,7 +1433,7 @@ test.describe('outliner trigger parity', () => {
     });
     if (!nestedFieldId) throw new Error('missing nested field');
     await expect(row(page, nestedFieldId).locator('.field-name-input')).toBeFocused();
-    await expect(page.locator('.error')).toHaveCount(0);
+    await expect(page.locator('.action-notice')).toHaveCount(0);
   });
 
   test('> in an existing field value row converts that value row into a nested field', async ({ page }) => {
