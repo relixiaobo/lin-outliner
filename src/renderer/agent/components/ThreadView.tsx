@@ -149,6 +149,17 @@ interface ThreadViewProps {
   readonly onOpenNodeReference: ThreadNodeReferenceOpenHandler;
   readonly onOpenThread: (threadId: string) => Promise<void>;
   readonly onOpenTurnDetails: (turn: Turn) => void;
+  /** Turn Details for a delegated child, read inside its own run detail. */
+  readonly onOpenSubagentTurnDetails?: (threadId: string, turnId: string) => void;
+  /**
+   * Present only INSIDE a Subagent run detail. A delegation row there swaps
+   * that container's contents instead of opening a second one inside it —
+   * nesting would put a scroll region inside a scroll region. Its presence is
+   * also what makes this view EMBEDDED: a control that cannot act on a child
+   * Thread is hidden, which is a narrower thing than "has no composer" — an
+   * Automation transcript has no composer and can still be forked.
+   */
+  readonly onSubagentDrill?: (threadId: string) => void;
   readonly onReadToolOutput: (turnId: string, item: ThreadToolItem) => Promise<string | null>;
   readonly onReadToolArguments: (turnId: string, item: ThreadToolItem) => Promise<JsonValue | null>;
   readonly onSend: (content: readonly ThreadUserContent[]) => Promise<Turn | null>;
@@ -272,13 +283,28 @@ function cacheThreadScrollSnapshot(threadId: string, snapshot: ThreadScrollSnaps
 }
 
 /**
+ * This transcript's OWN Turn rows.
+ *
+ * A Subagent run detail renders a full ThreadView inside one of these rows, and
+ * that inner view emits Turn rows of its own — scrolled independently, so their
+ * tops are neither this transcript's nor monotonic in document order, which is
+ * the precondition the anchor search below depends on. Left in, a child's row
+ * could be cached as the parent's reading anchor and restored against a row
+ * clipped inside a fixed-height box.
+ */
+function ownTranscriptRows(scroll: HTMLElement): HTMLElement[] {
+  return [...scroll.querySelectorAll<HTMLElement>('[data-thread-turn-row]')]
+    .filter((row) => !row.closest('.thread-subagent-detail'));
+}
+
+/**
  * The first Turn row whose bottom is still below the viewport top — the one the
  * reader sees at the top of the transcript. Rows are laid out in document order,
  * so their edges are monotonic and a binary search costs about six rect reads
  * instead of one per row on a path that runs per scroll event.
  */
 function readTranscriptAnchor(scroll: HTMLElement): TranscriptAnchor | null {
-  const rows = scroll.querySelectorAll<HTMLElement>('[data-thread-turn-row]');
+  const rows = ownTranscriptRows(scroll);
   if (rows.length === 0) return null;
   const viewportTop = scroll.getBoundingClientRect().top;
   let low = 0;
@@ -423,6 +449,8 @@ export function ThreadView({
   onConfigurationChange,
   onOpenNodeReference,
   onOpenThread,
+  onOpenSubagentTurnDetails,
+  onSubagentDrill,
   onOpenTurnDetails,
   onReadToolArguments,
   onReadToolOutput,
@@ -768,7 +796,7 @@ export function ThreadView({
     const maximumTop = Math.max(0, scroll.scrollHeight - scroll.clientHeight);
     const anchor = request.anchor;
     const anchorRow = anchor
-      ? scroll.querySelector<HTMLElement>(`[data-thread-turn-row="${CSS.escape(anchor.turnId)}"]`)
+      ? ownTranscriptRows(scroll).find((row) => row.dataset.threadTurnRow === anchor.turnId) ?? null
       : null;
     // The anchored row carries the reading position; the saved offset is only
     // how we get near enough for a virtualized Thread to render that row.
@@ -1622,13 +1650,17 @@ export function ThreadView({
                     >
                       <ThreadTurnView
                         onInterruptThread={onInterruptThread}
-                        canEditUserMessage={turn.id === editableTurnId && turn.status !== 'inProgress'}
+                        canEditUserMessage={composerEnabled
+                          && turn.id === editableTurnId
+                          && turn.status !== 'inProgress'}
                         composerEnabled={composerEnabled}
                         isLastTurn={turnIndex === turns.length - 1}
                         expandState={expandState}
                         index={index}
                         onEditUserMessage={onEditUserMessage}
                         onContinueInNewChat={onContinueInNewChat}
+                        onOpenSubagentTurnDetails={onOpenSubagentTurnDetails}
+                        onSubagentDrill={onSubagentDrill}
                         onOpenNodeReference={onOpenNodeReference}
                         onOpenThread={onOpenThread}
                         onOpenTurnDetails={onOpenTurnDetails}
@@ -1864,6 +1896,8 @@ const ThreadTurnView = memo(function ThreadTurnView({
   onInterruptThread,
   onOpenNodeReference,
   onOpenThread,
+  onOpenSubagentTurnDetails,
+  onSubagentDrill,
   onOpenTurnDetails,
   onReadToolArguments,
   onReadToolOutput,
@@ -1888,6 +1922,13 @@ const ThreadTurnView = memo(function ThreadTurnView({
   readonly onInterruptThread: (threadId: string) => Promise<void>;
   readonly onOpenNodeReference: ThreadNodeReferenceOpenHandler;
   readonly onOpenThread: (threadId: string) => Promise<void>;
+  readonly onOpenSubagentTurnDetails?: (threadId: string, turnId: string) => void;
+  /**
+   * Present only INSIDE a Subagent run detail. A delegation row there swaps
+   * that container's contents instead of opening a second one inside it —
+   * nesting would put a scroll region inside a scroll region.
+   */
+  readonly onSubagentDrill?: (threadId: string) => void;
   readonly onOpenTurnDetails: (turn: Turn) => void;
   readonly onReadToolArguments: (turnId: string, item: ThreadToolItem) => Promise<JsonValue | null>;
   readonly onReadToolOutput: (turnId: string, item: ThreadToolItem) => Promise<string | null>;
@@ -1983,6 +2024,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
   }, [composerEnabled, isLastTurn, turn]);
   const responseTail = standaloneContextBoundary ? null : (
     <ThreadResponseTail
+      canContinueInNewChat={onSubagentDrill === undefined}
       onCopy={copyTurn}
       onContinueInNewChat={continueInNewChat}
       onOpenDetails={() => onOpenTurnDetails(turn)}
@@ -2007,6 +2049,8 @@ const ThreadTurnView = memo(function ThreadTurnView({
       onEditUserMessage={editUserMessage}
       onInterruptThread={onInterruptThread}
       onOpenNodeReference={onOpenNodeReference}
+      onOpenSubagentTurnDetails={onOpenSubagentTurnDetails}
+      onSubagentDrill={onSubagentDrill}
       onOpenTurnDetails={standaloneContextBoundary ? () => onOpenTurnDetails(turn) : undefined}
       onOpenThread={onOpenThread}
       onReadToolArguments={readToolArguments}
@@ -2074,6 +2118,7 @@ function isStandaloneContextBoundaryTurn(turn: Turn): boolean {
 }
 
 function ThreadResponseTail({
+  canContinueInNewChat,
   onCopy,
   onContinueInNewChat,
   onOpenDetails,
@@ -2081,6 +2126,12 @@ function ThreadResponseTail({
   statusOwnedElsewhere,
   turn,
 }: {
+  /**
+   * Forking a Thread starts a conversation, which a read-only embedded view
+   * cannot do. Hidden rather than disabled: a control that never works is not a
+   * control, and the row keeps its height from the actions that remain.
+   */
+  readonly canContinueInNewChat: boolean;
   readonly onCopy: () => Promise<void>;
   readonly onContinueInNewChat: () => Promise<void>;
   readonly onOpenDetails: () => void;
@@ -2153,13 +2204,15 @@ function ThreadResponseTail({
               onCopy={onCopy}
               text=""
             />
-            <IconButton
-              icon={GitForkIcon}
-              iconSize={ICON_SIZE.menu}
-              label={t.agent.thread.continueInNewChat}
-              onClick={() => void onContinueInNewChat()}
-              variant="message"
-            />
+            {canContinueInNewChat ? (
+              <IconButton
+                icon={GitForkIcon}
+                iconSize={ICON_SIZE.menu}
+                label={t.agent.thread.continueInNewChat}
+                onClick={() => void onContinueInNewChat()}
+                variant="message"
+              />
+            ) : null}
             <span className="thread-response-details-anchor">
               <IconButton
                 icon={InfoIcon}

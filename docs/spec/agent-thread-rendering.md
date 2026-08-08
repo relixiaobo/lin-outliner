@@ -28,19 +28,51 @@ running and does not receive that indicator. The selected root's own foreground
 Turn does not duplicate its status in the list. This is also the only place a
 fire-and-forget child is visible after its parent Turn ended.
 
-A selected child Thread gains a back affordance naming its parent, ahead of the
-list affordance rather than in place of it: the Thread list is the only route to
-create, rename, details, and delete, so no view may be without it. Lineage
-deeper than one level collapses to the immediate parent. Every child link —
-transcript row, Thread Details row, back affordance — resolves through the
-catalog-recovering open path, and a Thread that is genuinely gone surfaces the
-dock's transient failure copy instead of throwing behind a bare call.
+**A child Thread is never a navigation destination, and never a surface of its
+own.** It is read by expanding its delegation row, the same disclosure gesture
+every other process row answers to — an execution artifact of a Turn is opened,
+not travelled to, and an overlay that arrives over the conversation is a second
+opening gesture for the one thing that already had one. Nothing is covered and
+nothing is navigated away from: the dock keeps its title, its list, and its
+composer, all still the conversation the user chose.
+
+The expanded container has a FIXED height with its own scroll. Delegated work is
+unbounded — a child runs for minutes and a grandchild longer — so letting it push
+the timeline open would move the reader's place every time they looked at
+something. The row that was opened does not move: the container grows below it,
+so there is no reading position to lose and none to restore. Scrolling is
+contained, so the inner region never chains into the transcript's.
+
+A GRANDCHILD replaces the container's contents rather than nesting inside them,
+and the header keeps a crumb naming the container it came from — a swap replaces
+everything at once, so without one it reads as a jump with nothing left to
+orient against. Nesting would put a scroll region inside a
+scroll region, which fights at the boundary, and would draw depth as indentation
+the reader has to measure. Delegation is capped at depth two, so that header is
+never more than one step. The container carries the child's name, the delegated
+form's glyph, Stop while its Turn is active and its lineage root is a user
+Thread, and a standing note where a composer would be, since the absence of one
+is a contract rather than an omission.
+
+Inside the container the transcript renders EXACTLY as the main conversation
+does — same message stream, same bubbles, same rows — because it is the same
+thing: a request and the work it produced. What differs is only what cannot act
+there. A read-only embedded view has no composer, and it drops Edit and Continue
+in new chat, since neither can run against a child Thread; they are hidden
+rather than disabled, because a control that never works is not a control, and
+the actions that remain hold the row's height. Copy and Turn Details stay,
+because both work.
 
 Parent Thread Details lists the descendant subtree newest-activity first with a
 readable name, status, and last activity; the read names the subtree while the
 Thread catalog keeps each status current, so a child that starts or stops while
-the dialog is open does not go stale. Each row opens that child, and each can be
-deleted. A bulk action removes finished Subagents, which means Threads whose
+the dialog is open does not go stale. Each row opens that child where it is read — by expanding its
+delegation row in the transcript — and each can be deleted. Only the
+conversation's own children have a row here, so a request for a grandchild
+carries its lineage: the row that exists is expanded and the container opens
+already drilled to the child that was named, rather than to the ancestor that
+happened to be reachable. That request describes one navigation and is consumed
+on arrival, so reopening the same row later shows that row's own child. A bulk action removes finished Subagents, which means Threads whose
 whole subtree has stopped: a finished parent with a running child is never
 swept, because deletion cascades, and neither is a child holding queued work,
 because idle is not finished — work already handed to it has not run yet. Both
@@ -292,7 +324,7 @@ form's own glyph and shares the type ramp and resting colour of the tool rows
 around it: a delegation is one more thing the Turn did, not an event announced in
 its own vocabulary. Every delegated form gets one — an isolated Skill child is
 delegated work too — and membership is the Turn's projection rather than a second
-split by source. A child Thread view's header exposes the same Stop while its
+split by source. The container that reads a child exposes the same Stop while its
 Turn is active. Like every delegation surface the row speaks time and status
 only: no token quantity reaches its text, its title, or its accessible labels,
 and a failure carries the same bounded, code-classified copy the tool rows use.

@@ -1323,9 +1323,9 @@ commandPalette: {
       copiedFromFork: 'Forked history',
       openSubagentThread: ({ id }: { id: string }) => `Open Subagent Thread ${id}`,
       retryTurn: 'Retry',
+      subagentReadOnly: 'Driven by this conversation. You can stop it at any time.',
       stopUnavailable: 'That work already finished.',
       stopSubagent: ({ name }: { name: string }) => `Stop ${name}`,
-      stopThisSubagent: 'Stop this Subagent',
       subagentStatuses: {
         pendingInit: 'Starting',
         running: 'Running',

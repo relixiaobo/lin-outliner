@@ -151,11 +151,29 @@ export class ThreadStore {
   }
 
   async openThreadById(threadId: ThreadId): Promise<void> {
-    if (!this.snapshot.threads.some((thread) => thread.id === threadId)) {
-      const response = await this.client.agentCoreRequest('thread/read', { threadId, includeTurns: false });
-      this.patch({ threads: sortThreads(upsertById(this.snapshot.threads, response.thread)) });
-    }
+    await this.ensureThreadRecord(threadId);
     await this.selectThread(threadId);
+  }
+
+  /**
+   * Load a Thread's history WITHOUT making it the selected conversation.
+   *
+   * A delegated child is read in place, inside its parent conversation, so the
+   * parent stays selected and mounted: its transcript keeps the scroll position
+   * the reader left it at, with no snapshot to restore and nothing to re-anchor.
+   * Live notifications already reach any Thread whose history is loaded — they
+   * gate on `turnsByThread`, not on selection — so the child streams while the
+   * parent is still the conversation the composer talks to.
+   */
+  async ensureThreadHistory(threadId: ThreadId): Promise<void> {
+    await this.ensureThreadRecord(threadId);
+    await this.loadTurns(threadId);
+  }
+
+  private async ensureThreadRecord(threadId: ThreadId): Promise<void> {
+    if (this.snapshot.threads.some((thread) => thread.id === threadId)) return;
+    const response = await this.client.agentCoreRequest('thread/read', { threadId, includeTurns: false });
+    this.patch({ threads: sortThreads(upsertById(this.snapshot.threads, response.thread)) });
   }
 
   /**

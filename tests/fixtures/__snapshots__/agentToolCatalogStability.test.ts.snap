@@ -130,7 +130,7 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
   },
   {
     "name": "collaboration__spawn_agent",
-    "description": "Create a child Thread, resolve its Agent Role, and start its first Turn. Descendants share one fixed-grant host pool; max_total_tokens caps this child and creates its pool when no ancestor pool exists.",
+    "description": "Create a child Thread, resolve its Agent Role, and start its first Turn. Descendants share one fixed-grant host pool; max_total_tokens caps this child only at 1000000 or above, and a smaller value is ignored rather than starving it.",
     "parameters": {
       "type": "object",
       "properties": {
@@ -144,7 +144,7 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
         },
         "max_total_tokens": {
           "type": "number",
-          "description": "Optional per-child token cap. It shares an ancestor pool or creates one when none exists."
+          "description": "Optional per-child token cap, honoured only at 1000000 or above; a smaller value is ignored and the child shares the request pool. It creates its own pool when honoured and no ancestor pool exists."
         },
         "fork_turns": {
           "type": "string",

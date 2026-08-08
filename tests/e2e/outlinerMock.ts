@@ -92,6 +92,12 @@ type E2EWindow = Window & {
       active?: boolean;
       queuedWork?: boolean;
     }) => { id: string };
+    /**
+     * Seeds a Thread's canonical history. A drawer or a selection READS history
+     * from the host, so a Turn only pushed as a notification is replaced by the
+     * server's answer the moment anything loads that Thread.
+     */
+    setMockThreadTurns: (threadId: string, turns: readonly unknown[]) => void;
     /** Flips a mock Thread between idle and active, as a Turn boundary would. */
     setMockThreadActive: (threadId: string, active: boolean) => void;
     /** Applies one delayed or failed outcome to the next thread/start call. */
@@ -1726,6 +1732,9 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       projection,
       clipboardText: () => clipboardText,
       emitAgentCoreNotification,
+      setMockThreadTurns: (threadId, turns) => {
+        mockTurns.set(threadId, clone(turns) as MockTurn[]);
+      },
       createMockSubagentThread: ({ parentThreadId, name, active, queuedWork }) => {
         const parent = threadById(parentThreadId);
         const thread = createMockThread({ name });

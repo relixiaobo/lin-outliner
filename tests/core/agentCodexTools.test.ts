@@ -44,7 +44,9 @@ describe('Codex Agent Core model-tool contract', () => {
       properties: {
         max_total_tokens: {
           type: 'number',
-          description: 'Optional per-child token cap. It shares an ancestor pool or creates one when none exists.',
+          // The floor is part of the contract the model reads: a smaller cap is
+          // ignored, so a model that names one is told rather than surprised.
+          description: 'Optional per-child token cap, honoured only at 1000000 or above; a smaller value is ignored and the child shares the request pool. It creates its own pool when honoured and no ancestor pool exists.',
         },
       },
       required: ['task_name', 'message'],

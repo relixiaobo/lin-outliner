@@ -36,7 +36,12 @@ import { defaultEffectiveThreadConfiguration } from '../../src/main/agent/AgentC
 import { SubagentDepthLimitError, SubagentSpawnLimitError } from '../../src/main/agent/SubagentStructuralLimitError';
 import { GoalStore } from '../../src/main/agent/extensions/goal/GoalStore';
 import { RolloutStore } from '../../src/main/agent/persistence/RolloutStore';
-import { cappedChildPoolId, SubagentRequestLedger, requestPoolIdForTurn } from '../../src/main/agent/persistence/SubagentRequestLedger';
+import {
+  cappedChildPoolId,
+  MIN_SUBAGENT_TOKEN_CAP,
+  SubagentRequestLedger,
+  requestPoolIdForTurn,
+} from '../../src/main/agent/persistence/SubagentRequestLedger';
 import { ThreadHistoryProjectionStore } from '../../src/main/agent/persistence/ThreadHistoryProjectionStore';
 import { ThreadMetadataStore } from '../../src/main/agent/persistence/ThreadMetadataStore';
 import { ToolPayloadStore } from '../../src/main/agent/persistence/ToolPayloadStore';
@@ -5868,6 +5873,51 @@ describe('ThreadService', () => {
     await fixture.service.close();
   });
 
+  test('honours a model cap at the floor and refuses a malformed one', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const active = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Delegate with a cap' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    const context = fixture.executor.contexts[0]!;
+    const tools = fixture.service.collaborationToolContributions({
+      threadId: root.id,
+      turnId: active.turn.id,
+    });
+
+    // At or above the floor the model's number stands, and the child is capped
+    // in a pool of its own.
+    await recordCollaborationSpawnBoundary(context, 'capped-item');
+    const capped = await executeTool(tools, 'collaboration__spawn_agent', 'capped-item', {
+      task_name: 'capped',
+      message: 'Work with a real budget',
+      fork_turns: 'none',
+      max_total_tokens: MIN_SUBAGENT_TOKEN_CAP,
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    const cappedId = (capped.details as { thread_id: string }).thread_id;
+    expect(fixture.stores.subagentBudgets.readMember(cappedId)).toMatchObject({
+      tokenCap: MIN_SUBAGENT_TOKEN_CAP,
+    });
+
+    // Malformed is still refused rather than answered with the floor: the model
+    // has to learn what it sent.
+    await recordCollaborationSpawnBoundary(context, 'bad-item');
+    await expect(executeTool(tools, 'collaboration__spawn_agent', 'bad-item', {
+      task_name: 'bad',
+      message: 'Work',
+      fork_turns: 'none',
+      max_total_tokens: 0,
+    })).rejects.toThrow('max_total_tokens must be a positive integer');
+  });
+
   test('exposes canonical control tools and executes plan, Goal, and collaboration paths', async () => {
     const fixture = await createFixture();
     const notifications: AgentCoreNotification[] = [];
@@ -5933,14 +5983,17 @@ describe('ThreadService', () => {
     await fixture.executor.waitUntilWaiting(1);
     expect(spawned.details).toMatchObject({ task_name: '/root/helper' });
     const childId = (spawned.details as { thread_id: string }).thread_id;
+    // The model named a cap far below the floor, which is no budget at all: it
+    // is dropped, so the child stays inside the request's shared pool instead of
+    // being handed a private one that would escape the configured ceiling.
     expect(fixture.stores.subagentBudgets.readMember(childId)).toMatchObject({
-      tokenCap: 7,
+      tokenCap: null,
       tokensUsed: 0,
     });
     expect((await fixture.service.request('goal/get', { threadId: childId })).goal).toBeNull();
     const listed = await executeTool(tools, 'collaboration__list_agents', 'list-item', {});
     expect(listed.details).toMatchObject({
-      result: [{ taskPath: '/root/helper', status: 'running', tokensUsed: 0, tokenBudget: 7 }],
+      result: [{ taskPath: '/root/helper', status: 'running', tokensUsed: 0 }],
       capabilityAudit: { behavior: 'allow' },
     });
     await executeTool(tools, 'update_goal', 'goal-update', { status: 'complete' });
@@ -5951,7 +6004,7 @@ describe('ThreadService', () => {
     expect(waited.details).toMatchObject({
       reason: 'terminal',
       updates: [{ threadId: childId, status: 'completed', result: 'Done' }],
-      agents: [{ threadId: childId, status: 'completed', tokensUsed: 7, tokenBudget: 7 }],
+      agents: [{ threadId: childId, status: 'completed', tokensUsed: 7 }],
       capabilityAudit: { behavior: 'allow' },
     });
     fixture.executor.finish(0);

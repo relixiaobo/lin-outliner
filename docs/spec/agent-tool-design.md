@@ -249,7 +249,9 @@ that starts a delegated tree. All descendants, including isolated Skill children
 that pool; the top-level spawner's own Turns do not. The grant is fixed when the pool is
 created, so setting changes apply only to new trees. `collaboration.spawn_agent` accepts optional
 `max_total_tokens` as a positive safe-integer cap on that child's own contribution inside
-the pool. With no ancestor pool, that explicit cap creates a pool of the same size on the
+the pool, honoured only at or above a 1,000,000 floor — a smaller value is dropped rather
+than raised, because an honoured cap detaches the child into its own pool and raising a
+small one would step over the user's configured `subagentTokenBudget`. With no ancestor pool, that explicit cap creates a pool of the same size on the
 child; descendants join it. It creates no nested reservation or refund. Neither pool nor
 cap occupies or modifies a Goal slot.
 

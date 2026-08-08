@@ -245,6 +245,40 @@ describe('PiTurnExecutor event normalization', () => {
     });
   });
 
+  test('lets a refused Skill result reach the model instead of killing the Turn', async () => {
+    const fixture = createContext();
+    const normalizer = new PiEventNormalizer(fixture.context);
+    normalizer.handle(toolAdmissionEvent('call-skill', 'skill', { skill: 'research', args: 'weather' }));
+    normalizer.handle({
+      type: 'tool_execution_end',
+      toolCallId: 'call-skill',
+      toolName: 'skill',
+      result: {
+        // The shape a refusal actually takes: an ordinary result whose envelope
+        // reports its own failure and carries guidance written for the model.
+        content: [{ type: 'text', text: 'Subagent token budget exhausted; the child refuses new work.' }],
+        details: {
+          ok: false,
+          tool: 'skill',
+          status: 'error',
+          error: { code: 'subagent_budget_exhausted', message: 'exhausted' },
+          data: { success: false, skill: 'research' },
+          instructions: 'Interrupt, review its output, or spawn a fresh child.',
+        },
+      },
+      isError: false,
+    });
+
+    // No invocation evidence, because no Skill ran — and no throw, because the
+    // whole point of the envelope is that the model gets to read it.
+    await normalizer.flush();
+    expect(fixture.recorder.orderedItems()[0]).toMatchObject({
+      type: 'dynamicToolCall',
+      tool: 'skill',
+      status: 'completed',
+    });
+  });
+
   test('reads a blank optional collaboration argument as absent', async () => {
     // A provider that fills an omitted optional parameter with "" rather than
     // omitting the key: the empty string reached the Item, the Item failed to

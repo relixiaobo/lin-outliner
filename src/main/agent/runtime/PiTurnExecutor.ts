@@ -962,9 +962,30 @@ export async function persistCompletedToolContext(
     || item.namespace !== null
     || item.tool !== 'skill'
   ) return;
+  // A refusal has no invocation to record, because no Skill ran. The envelope
+  // carries a message written FOR THE MODEL to act on — an unknown Skill name,
+  // a disabled one, an exhausted child budget — and it is delivered as an
+  // ordinary result precisely so the model can read it and adapt. Demanding
+  // evidence here turned every one of those into a dead Turn, and the guidance
+  // never reached the model that needed it.
+  if (skillToolRefused(result)) return;
   const invocation = skillInvocationEvidence(result);
-  if (!invocation) throw new Error('Completed Skill tool result is missing invocation evidence.');
+  if (!invocation) {
+    // Recorded, not thrown. This is a bookkeeping side effect the user never
+    // sees, and it runs inside tool completion — throwing kills the Turn and
+    // discards assistant work already produced, which is exactly the failure
+    // the refusal case above was written to remove (A12: fail closed at
+    // write/decode boundaries, degrade on the user path).
+    console.error('[agent] Completed Skill tool result is missing invocation evidence');
+    return;
+  }
   await context.persistContextEvidence(invocation, `Invoked Skill: ${invocation.displayName}`);
+}
+
+/** A `skill` result that reports its own failure, rather than a malformed one. */
+function skillToolRefused(result: unknown): boolean {
+  const details = toolDetails(result);
+  return isRecord(details) && details.ok === false;
 }
 
 function skillInvocationEvidence(result: unknown): SkillInvocationContextPayload | null {

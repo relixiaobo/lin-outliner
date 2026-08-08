@@ -6,13 +6,14 @@ import type { DocumentIndex } from '../../state/document';
 import { api } from '../../api/client';
 import { useT } from '../../i18n/I18nProvider';
 import { threadStore, useThreadStore } from '../store/threadStore';
+import { setThreadDisclosureOverride } from '../store/threadDisclosureStore';
+import { requestSubagentDrill } from '../store/subagentDrillIntent';
 import {
   BackIcon,
   ChevronDownIcon,
   ICON_SIZE,
   ScheduledIcon,
   SettingsIcon,
-  StopIcon,
   WarningIcon,
 } from '../../ui/icons';
 import { Button } from '../../ui/primitives/Button';
@@ -91,18 +92,6 @@ export function ThreadDock({
     () => snapshot.threads.filter((candidate) => candidate.parentThreadId === null),
     [snapshot.threads],
   );
-  const parentThread = thread?.parentThreadId ? threadsById.get(thread.parentThreadId) ?? null : null;
-  /**
-   * Stop reaches a user's own conversations only, so the affordance appears
-   * only where the host would honour it. An automation's Subagent is running
-   * work under a feature root: offering a Stop there would refuse and then
-   * report live work as finished.
-   */
-  const stoppableChild = surface === 'thread'
-    && thread !== null
-    && thread.parentThreadId !== null
-    && thread.status.type === 'active'
-    && lineageRoot(thread, threadsById)?.threadSource === 'user';
   /**
    * "This conversation has background work running" — either the unselected
    * root itself is active, or one of its descendants is. The selected root's
@@ -206,9 +195,6 @@ export function ThreadDock({
   }, [refreshProviderSettings, refreshSlashCommands]);
 
   const title = useMemo(() => thread?.name || thread?.preview || t.agent.thread.untitled, [t, thread]);
-  const parentThreadTitle = parentThread
-    ? parentThread.name || parentThread.preview || t.agent.thread.untitled
-    : null;
 
   /**
    * Every transcript and details link goes through here: `openThreadById`
@@ -229,6 +215,48 @@ export function ThreadDock({
     }
   }, [t]);
 
+  /**
+   * A delegated child is read where it was delegated: this expands its row in
+   * the parent transcript and brings it into view, rather than opening a
+   * surface of its own. Thread Details is a browse surface for children, so its
+   * rows land in the same place the transcript rows do.
+   */
+  const openSubagent = useCallback((childThreadId: string) => {
+    setActionError(null);
+    setListOpen(false);
+    const parentThreadId = snapshot.selectedThreadId;
+    if (!parentThreadId) return;
+    // Only the conversation's OWN children have a row here; a grandchild's row
+    // lives inside its parent's run detail. Walk up to the row that exists and
+    // carry the rest of the path, so Details opens the child it named rather
+    // than the ancestor that happens to be reachable.
+    const path = lineagePathFromRoot(childThreadId, parentThreadId, threadsById);
+    if (!path) {
+      setActionError(t.agent.thread.threadUnavailable);
+      return;
+    }
+    const [rowThreadId] = path;
+    // The row lives inside its Turn's process fold, and a settled Turn folds
+    // shut by default — expanding only the leaf writes a key nothing reads and
+    // nothing appears on screen. Open the fold that contains it too.
+    const hostTurn = (snapshot.turnsByThread.get(parentThreadId) ?? []).find((turn) => (
+      turn.items.some((item) => item.type === 'subAgentActivity' && item.agentThreadId === rowThreadId)
+    ));
+    if (!hostTurn) {
+      setActionError(t.agent.thread.threadUnavailable);
+      return;
+    }
+    setThreadDisclosureOverride(parentThreadId, `process:${hostTurn.id}`, true);
+    setThreadDisclosureOverride(parentThreadId, `subagent:${rowThreadId}`, true);
+    if (path.length > 1) requestSubagentDrill(rowThreadId!, path);
+    requestAnimationFrame(() => {
+      document
+        .querySelector(`[data-thread-disclosure-id="subagent:${CSS.escape(rowThreadId!)}"]`)
+        ?.scrollIntoView({ block: 'center' });
+    });
+  }, [snapshot.selectedThreadId, snapshot.turnsByThread, t, threadsById]);
+
+  /** Selecting a root conversation from the list or an Automation. */
   const openThread = useCallback(async (threadId: string) => {
     setActionError(null);
     try {
@@ -319,28 +347,10 @@ export function ThreadDock({
       <div className="thread-dock">
         <header className="thread-dock-header">
           {surface === 'thread' ? (
-            // A child Thread is entered from a parent transcript, so it gains a
-            // crumb back out — but never at the cost of the list: that button is
-            // the only route to create, details, rename, and delete, and it is
-            // the child's own name that carries it, so no Thread is unnamed and
-            // no view is a dead end.
+            // The dock's title is always a conversation the user started. A
+            // delegated child is read in a drawer over this one, so the header
+            // never has to describe somewhere the user did not navigate to.
             <div className="thread-dock-breadcrumb">
-              {thread?.parentThreadId ? (
-                <>
-                  <button
-                    aria-label={parentThreadTitle
-                      ? t.agent.thread.backToParent({ name: parentThreadTitle })
-                      : t.agent.thread.backToParentFallback}
-                    className="thread-dock-title-button thread-dock-back"
-                    onClick={() => void openThread(thread.parentThreadId!)}
-                    type="button"
-                  >
-                    <BackIcon className="thread-dock-title-leading" size={ICON_SIZE.menu} />
-                    <span className="thread-dock-back-label">{parentThreadTitle ?? t.agent.thread.title}</span>
-                  </button>
-                  <span aria-hidden className="thread-dock-breadcrumb-separator">/</span>
-                </>
-              ) : null}
               <button
                 aria-expanded={listOpen}
                 aria-label={t.agent.thread.list}
@@ -367,16 +377,6 @@ export function ThreadDock({
               <span className="thread-dock-title">{t.agent.automations.title}</span>
             </button>
           )}
-          {stoppableChild ? (
-            <IconButton
-              className="thread-dock-surface-action"
-              icon={StopIcon}
-              label={t.agent.thread.stopThisSubagent}
-              onClick={() => void interruptThread(thread!.id)}
-              strokeWidth={1.7}
-              variant="chrome"
-            />
-          ) : null}
           {surface === 'thread' ? (
             <IconButton
               className="thread-dock-surface-action"
@@ -433,7 +433,8 @@ export function ThreadDock({
               onInterrupt={() => threadStore.interrupt(thread.id)}
               onInterruptThread={interruptThread}
               onOpenNodeReference={onOpenNodeReference}
-              onOpenThread={openThread}
+              onOpenSubagentTurnDetails={onOpenTurnDetails}
+              onOpenThread={async (threadId) => openSubagent(threadId)}
               onOpenTurnDetails={(turn) => onOpenTurnDetails(thread.id, turn.id)}
               onReadToolOutput={(turnId, item) => threadStore.readItemOutput(thread.id, turnId, item)}
               onReadToolArguments={(turnId, item) => threadStore.readToolArguments(thread.id, turnId, item)}
@@ -522,7 +523,12 @@ export function ThreadDock({
       ) : null}
       {detailsTarget ? (
         <ThreadDetailsDialog
-          onOpenThread={openThread}
+          onOpenThread={async (threadId) => {
+            // Details is a browse surface for children, so its rows land in the
+            // same drawer every other entry point does.
+            setDetailsTarget(null);
+            openSubagent(threadId);
+          }}
           onClose={() => setDetailsTarget(null)}
           thread={detailsTarget}
           turns={snapshot.turnsByThread.get(detailsTarget.id) ?? []}
@@ -555,6 +561,29 @@ export function ThreadDock({
 }
 
 /** The Thread a lineage roots at, or null when an ancestor is not in the catalog. */
+/**
+ * The chain from the conversation's own child down to `targetId`, or null when
+ * the target is not in this conversation's subtree at all.
+ */
+function lineagePathFromRoot(
+  targetId: string,
+  rootThreadId: string,
+  threadsById: ReadonlyMap<string, Thread>,
+): readonly string[] | null {
+  const path: string[] = [];
+  const seen = new Set<string>();
+  let current: string | null = targetId;
+  while (current !== null && !seen.has(current)) {
+    seen.add(current);
+    const thread: Thread | undefined = threadsById.get(current);
+    if (!thread) return null;
+    path.unshift(current);
+    if (thread.parentThreadId === rootThreadId) return path;
+    current = thread.parentThreadId;
+  }
+  return null;
+}
+
 function lineageRoot(thread: Thread, threadsById: ReadonlyMap<string, Thread>): Thread | null {
   const visited = new Set<string>();
   let current: Thread = thread;

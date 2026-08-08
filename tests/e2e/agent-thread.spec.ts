@@ -1988,7 +1988,7 @@ test.describe('canonical agent Thread surface', () => {
     await expect(composer).toHaveText('Keep this draft.');
   });
 
-  test('opens a Subagent from the transcript, offers a way back, and keeps it out of the list', async ({ page }) => {
+  test('expands a Subagent run in place, like every other process row', async ({ page }) => {
     await createNewThread(page);
     await page.evaluate(async () => {
       const target = window as Window & {
@@ -2039,22 +2039,35 @@ test.describe('canonical agent Thread surface', () => {
     });
 
     const parentTitle = await page.locator('.thread-dock-title').innerText();
+    const trigger = page.getByRole('button', { name: /^Open Subagent Thread research/u });
 
-    await page.getByRole('button', { name: 'Open Subagent Thread research' }).click();
-    await expect(page.locator('.thread-dock-title')).toHaveText('Research child');
-    await expect(page.getByRole('textbox', { name: 'Message this Thread' })).toHaveCount(0);
+    // Collapsed until asked, and announced as a disclosure — the same gesture
+    // every other row in this timeline answers to.
+    await expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    const detail = page.locator('.thread-subagent-detail');
+    await expect(detail).toHaveCount(0);
 
-    // The header gains a way back out of a child — without costing the list,
-    // which is the only route to create, rename, details, and delete.
-    const back = page.getByRole('button', { name: `Back to ${parentTitle}` });
-    await expect(back).toBeVisible();
-    // A settled child offers no Stop; there is no Turn to stop.
-    await expect(page.getByRole('button', { name: 'Stop this Subagent' })).toHaveCount(0);
-    await page.getByRole('button', { name: 'Show Threads' }).click();
-    await expect(page.getByRole('dialog', { name: 'Threads' })).toBeVisible();
-    await page.keyboard.press('Escape');
-    await back.click();
+    await trigger.click();
+    await expect(detail).toBeVisible();
+    await expect(trigger).toHaveAttribute('aria-expanded', 'true');
+    // Nothing was navigated to and nothing was covered: the dock still names
+    // the conversation the user chose, and its composer still belongs to it.
     await expect(page.locator('.thread-dock-title')).toHaveText(parentTitle);
+    await expect(detail.getByRole('textbox', { name: 'Message this Thread' })).toHaveCount(0);
+    await expect(detail).toContainText('Driven by this conversation');
+    // A settled child offers no Stop; there is no Turn to stop.
+    await expect(detail.getByRole('button', { name: /^Stop / })).toHaveCount(0);
+
+    // The container is BOUNDED and scrolls itself, so opening it cannot push
+    // the transcript around however long the child ran.
+    expect(await detail.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return { bounded: element.getBoundingClientRect().height <= 421, contained: style.overscrollBehavior };
+    })).toMatchObject({ bounded: true });
+
+    await trigger.click();
+    await expect(detail).toHaveCount(0);
+    await expect(trigger).toHaveAttribute('aria-expanded', 'false');
 
     // A child is an execution artifact, not a conversation: never a list row.
     await page.getByRole('button', { name: 'Show Threads' }).click();
@@ -2063,6 +2076,161 @@ test.describe('canonical agent Thread surface', () => {
     // Only the two root conversations this test created.
     await expect(list.locator('.thread-list-row')).toHaveCount(2);
     await expect(list.locator('.thread-list-row small').filter({ hasText: 'Subagent' })).toHaveCount(0);
+  });
+
+  test('swaps a grandchild into the same container, never nesting a second scroll region', async ({ page }) => {
+    await createNewThread(page);
+    const fixture = await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(m: string, i?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitAgentCoreNotification: (n: unknown) => void };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<Record<string, unknown>> }>('thread/list', {});
+      const root = response?.data[0];
+      if (!root) throw new Error('Mock root Thread not found');
+      const parentThreadId = String(root.id);
+      const child = {
+        ...root,
+        id: '01910000-0000-7000-8000-00000000ea01',
+        parentThreadId,
+        agentNickname: null,
+        agentRole: 'worker',
+        name: 'research',
+        source: 'collaboration',
+        threadSource: 'subagent',
+        status: { type: 'idle' },
+      };
+      const grandchild = {
+        ...child,
+        id: '01910000-0000-7000-8000-00000000ea02',
+        parentThreadId: child.id,
+        name: 'audit',
+      };
+      for (const thread of [child, grandchild]) {
+        target.__LIN_E2E__?.emitAgentCoreNotification({ type: 'thread/started', threadId: thread.id, thread });
+      }
+      const provenance = (threadId: string, turnId: string, itemId: string) => ({
+        originThreadId: threadId, originTurnId: turnId, originItemId: itemId,
+      });
+      // Enough parent Turns that the transcript scrolls at all.
+      for (let index = 0; index < 12; index += 1) {
+        const turnId = `01910000-0000-7000-8000-0000000eb0${index.toString(16)}`;
+        const itemId = `01910000-0000-7000-8000-0000000ec0${index.toString(16)}`;
+        target.__LIN_E2E__?.emitAgentCoreNotification({
+          type: 'turn/completed',
+          threadId: parentThreadId,
+          turnId,
+          turn: {
+            id: turnId,
+            items: index === 11
+              ? [{
+                  id: itemId,
+                  type: 'subAgentActivity',
+                  provenance: provenance(parentThreadId, turnId, itemId),
+                  kind: 'completed',
+                  agentThreadId: child.id,
+                  agentPath: '/root/research',
+                  error: null,
+                  spawnItemId: null,
+                }]
+              : [{
+                  id: itemId,
+                  type: 'agentMessage',
+                  provenance: provenance(parentThreadId, turnId, itemId),
+                  phase: 'final',
+                  text: `Answer ${index}\n\nwith enough body to give the transcript some height.`,
+                }],
+            itemsView: 'full',
+            provenance: { originThreadId: parentThreadId, originTurnId: turnId, trigger: { kind: 'user' } },
+            status: 'completed',
+            error: null,
+            startedAt: 1,
+            completedAt: 2,
+            durationMs: 1,
+          },
+        });
+      }
+      // The child's own transcript: a Turn a delegation started, so its "user"
+      // message is the task the parent wrote. Seeded as canonical history, not
+      // pushed as a notification — the drawer LOADS the child from the host.
+      const childTurnId = '01910000-0000-7000-8000-00000000ed01';
+      target.__LIN_E2E__?.setMockThreadTurns(child.id, [
+        {
+          id: childTurnId,
+          items: [
+            {
+              id: '01910000-0000-7000-8000-00000000ed02',
+              type: 'userMessage',
+              provenance: provenance(child.id, childTurnId, '01910000-0000-7000-8000-00000000ed02'),
+              content: [{ type: 'text', text: 'Investigate the deployment story.' }],
+            },
+            {
+              id: '01910000-0000-7000-8000-00000000ed03',
+              type: 'subAgentActivity',
+              provenance: provenance(child.id, childTurnId, '01910000-0000-7000-8000-00000000ed03'),
+              kind: 'completed',
+              agentThreadId: grandchild.id,
+              agentPath: '/root/research/audit',
+              error: null,
+              spawnItemId: null,
+            },
+          ],
+          itemsView: 'full',
+          provenance: {
+            originThreadId: child.id,
+            originTurnId: childTurnId,
+            trigger: { kind: 'subagent', parentThreadId, parentItemId: 'spawn' },
+          },
+          status: 'completed',
+          error: null,
+          startedAt: 1,
+          completedAt: 2,
+          durationMs: 1,
+        },
+      ]);
+      return { parentThreadId };
+    });
+
+    // Scrolled by hand, so the transcript stops following the tail the way it
+    // would for a reader who scrolled up to re-read something.
+    const scroll = page.locator('.thread-transcript');
+    await scroll.hover();
+    await page.mouse.wheel(0, -600);
+    await expect.poll(async () => scroll.evaluate((element) => element.scrollTop))
+      .toBeLessThan(await scroll.evaluate((element) => element.scrollHeight - element.clientHeight));
+    // Proof the reader is genuinely off the tail: the jump-to-latest affordance
+    // only exists when the transcript has stopped following.
+    await expect(page.getByRole('button', { name: 'Jump to latest' })).toBeVisible();
+
+    await page.getByRole('button', { name: /^Open Subagent Thread research/u }).click();
+    const detail = page.locator('.thread-subagent-detail');
+    await expect(detail).toBeVisible();
+
+    // A child transcript reads exactly like the main chat — same message stream,
+    // same bubble — because it is the same thing: one request and the work it
+    // produced. What differs is only what cannot act here: no composer, and no
+    // Edit or Continue-in-new-chat, since neither can run on a child Thread.
+    await expect(detail.locator('.thread-user-message')).toContainText('Investigate the deployment story.');
+    await expect(detail.getByRole('button', { name: 'Edit message' })).toHaveCount(0);
+    await expect(detail.getByRole('button', { name: 'Continue in new chat' })).toHaveCount(0);
+
+    const outerHeight = await detail.evaluate((element) => element.getBoundingClientRect().height);
+
+    // Depth 2 REPLACES these contents and names the way back. A second box
+    // inside this one would put a scroll region inside a scroll region, which
+    // fights the trackpad at the boundary and draws depth as indentation.
+    await detail.getByRole('button', { name: /^Open Subagent Thread audit/u }).click();
+    await expect(detail).toHaveCount(1);
+    await expect(detail.locator('.thread-subagent-detail-title')).toHaveText('audit');
+    // Same box, same height: swapping cannot move the transcript around it.
+    expect(await detail.evaluate((element) => element.getBoundingClientRect().height)).toBe(outerHeight);
+
+    // The crumb keeps the way back visible by name, so the swap has something
+    // to orient against rather than reading as a jump.
+    await expect(detail.locator('.thread-subagent-detail-crumb')).toHaveText('research');
+    await detail.locator('.thread-subagent-detail-crumb').click();
+    await expect(detail.locator('.thread-subagent-detail-title')).toHaveText('research');
+    await expect(detail.locator('.thread-subagent-detail-crumb')).toHaveCount(0);
   });
 
   test('browses and cleans up Subagents from parent Thread Details', async ({ page }) => {
@@ -2077,6 +2245,7 @@ test.describe('canonical agent Thread surface', () => {
             active?: boolean;
             queuedWork?: boolean;
           }) => { id: string };
+          emitAgentCoreNotification: (notification: unknown) => void;
         };
       };
       const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
@@ -2084,8 +2253,42 @@ test.describe('canonical agent Thread surface', () => {
       if (!parentThreadId) throw new Error('Mock Thread not found');
       const finished = target.__LIN_E2E__?.createMockSubagentThread({ parentThreadId, name: 'finished worker' });
       (window as Window & { __LIN_E2E_FINISHED_ID__?: string }).__LIN_E2E_FINISHED_ID__ = finished?.id;
-      target.__LIN_E2E__?.createMockSubagentThread({ parentThreadId, name: 'live worker', active: true });
+      const live = target.__LIN_E2E__?.createMockSubagentThread({
+        parentThreadId,
+        name: 'live worker',
+        active: true,
+      });
       target.__LIN_E2E__?.createMockSubagentThread({ parentThreadId, name: 'queued worker', queuedWork: true });
+      // A child is read from the delegation row that spawned it, which is what
+      // production records for every delegated form — so the Turn that
+      // delegated has to carry one here too.
+      const turnId = '01910000-0000-7000-8000-00000000f101';
+      const itemId = '01910000-0000-7000-8000-00000000f102';
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/completed',
+        threadId: parentThreadId,
+        turnId,
+        turn: {
+          id: turnId,
+          items: [{
+            id: itemId,
+            type: 'subAgentActivity',
+            provenance: { originThreadId: parentThreadId, originTurnId: turnId, originItemId: itemId },
+            kind: 'started',
+            agentThreadId: live!.id,
+            agentPath: '/root/live_worker',
+            error: null,
+            spawnItemId: null,
+          }],
+          itemsView: 'full',
+          provenance: { originThreadId: parentThreadId, originTurnId: turnId, trigger: { kind: 'user' } },
+          status: 'completed',
+          error: null,
+          startedAt: 1,
+          completedAt: 2,
+          durationMs: 1,
+        },
+      });
     });
 
     // A live descendant is the only thing the list says about children now.
@@ -2141,9 +2344,14 @@ test.describe('canonical agent Thread surface', () => {
     await expect(details.getByRole('button', { name: 'Open live worker' })).toBeVisible();
     await expect(details.getByRole('button', { name: 'Open queued worker' })).toBeVisible();
 
+    // Details is a browse surface, so its rows land where the transcript rows
+    // do — including opening the process fold the row sits inside, which a
+    // settled Turn keeps shut. Expanding only the leaf would write a key
+    // nothing reads, and nothing would appear on screen.
     await details.getByRole('button', { name: 'Open live worker' }).click();
-    await expect(page.locator('.thread-dock-title')).toHaveText('live worker');
-    await expect(page.getByRole('textbox', { name: 'Message this Thread' })).toHaveCount(0);
+    const detail = page.locator('.thread-subagent-detail');
+    await expect(detail).toBeVisible();
+    await expect(detail.locator('.thread-subagent-detail-title')).toHaveText('live worker');
   });
   test('shows a live row for an isolated Skill child while its skill call is in flight', async ({ page }) => {
     await createNewThread(page);
@@ -2268,8 +2476,9 @@ test.describe('canonical agent Thread surface', () => {
     await expect(parentTurn.locator('.thread-process-title')).toContainText(/Working for \d+[smhd]/u);
 
     await skillRow.click();
-    await expect(page.getByRole('button', { name: /^Back to / })).toBeVisible();
-    await expect(page.getByRole('textbox', { name: 'Message this Thread' })).toHaveCount(0);
+    const detail = page.locator('.thread-subagent-detail');
+    await expect(detail).toBeVisible();
+    await expect(detail.getByRole('textbox', { name: 'Message this Thread' })).toHaveCount(0);
   });
 
 
@@ -4377,8 +4586,11 @@ test.describe('canonical agent Thread surface', () => {
       });
     }, childThreadId);
 
-    await expect(page.getByRole('textbox', { name: 'Message this Thread' })).toHaveCount(0);
-    const pill = page.locator('.thread-plan-progress-summary');
+    // The child's run detail is the composer-less surface; the parent's
+    // composer stays on screen, still the parent's.
+    const detail = page.locator('.thread-subagent-detail');
+    await expect(detail.getByRole('textbox', { name: 'Message this Thread' })).toHaveCount(0);
+    const pill = detail.locator('.thread-plan-progress-summary');
     await expect(pill).toHaveText('2/2 · Cross-check the citations');
 
     // With no composer to return to, Escape must still land focus somewhere
@@ -5505,7 +5717,7 @@ test.describe('canonical agent Thread surface', () => {
     await expect(page.locator(`[data-thread-turn-row="${anchor.turnId}"]`)).not.toBeInViewport();
   });
 
-  test('returns from a Subagent to the same place in the parent conversation', async ({ page }) => {
+  test('reads a Subagent without moving the parent conversation at all', async ({ page }) => {
     await createNewThread(page);
     await renameSelectedThread(page, 'Parent history');
     await seedTallFlowTranscript(page, 12);
@@ -5514,28 +5726,60 @@ test.describe('canonical agent Thread surface', () => {
         lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
         __LIN_E2E__?: {
           createMockSubagentThread: (input: { parentThreadId: string; name: string }) => { id: string };
+          emitAgentCoreNotification: (notification: unknown) => void;
         };
       };
       const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
       const parentThreadId = response?.data[0]?.id;
       if (!parentThreadId) throw new Error('Mock Thread not found');
-      target.__LIN_E2E__?.createMockSubagentThread({ parentThreadId, name: 'research worker' });
+      const child = target.__LIN_E2E__?.createMockSubagentThread({ parentThreadId, name: 'research worker' });
+      // The delegation row is where a child is read, so the Turn that delegated
+      // it has to carry one — which is what production records for every form.
+      const turnId = '01910000-0000-7000-8000-00000000ef01';
+      const itemId = '01910000-0000-7000-8000-00000000ef02';
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/completed',
+        threadId: parentThreadId,
+        turnId,
+        turn: {
+          id: turnId,
+          items: [{
+            id: itemId,
+            type: 'subAgentActivity',
+            provenance: { originThreadId: parentThreadId, originTurnId: turnId, originItemId: itemId },
+            kind: 'completed',
+            agentThreadId: child!.id,
+            agentPath: '/root/research_worker',
+            error: null,
+            spawnItemId: null,
+          }],
+          itemsView: 'full',
+          provenance: { originThreadId: parentThreadId, originTurnId: turnId, trigger: { kind: 'user' } },
+          status: 'completed',
+          error: null,
+          startedAt: 1,
+          completedAt: 2,
+          durationMs: 1,
+        },
+      });
     });
-    const anchor = await captureReadingAnchor(page, 0.6);
+    // Reading a child is a disclosure in the transcript, so the conversation is
+    // never left: the dock still names it and the composer still belongs to it.
+    const row = page.locator('[data-thread-disclosure-id^="subagent:"]').first();
+    const detail = page.locator('.thread-subagent-detail');
+    const rowTop = () => row.evaluate((element) => Math.round(element.getBoundingClientRect().top));
 
-    await openSelectedThreadActions(page);
-    await page.getByRole('menu', { name: 'Thread actions' })
-      .getByRole('menuitem', { name: 'Thread Details' })
-      .click();
-    await page.getByRole('dialog', { name: 'Thread Details' })
-      .getByRole('button', { name: 'Open research worker' })
-      .click();
-    await expect(page.locator('.thread-dock-title')).toHaveText('research worker');
-
-    await page.getByRole('button', { name: 'Back to Parent history' }).click();
+    await row.click();
+    await expect(detail).toBeVisible();
     await expect(page.locator('.thread-dock-title')).toHaveText('Parent history');
+    const openedAt = await rowTop();
 
-    await expectReadingAnchorRestored(page, anchor);
+    await row.click();
+    await expect(detail).toHaveCount(0);
+    // The invariant this shape exists for: the row you opened does not move
+    // under you, opening or closing. A bounded container grows BELOW its row,
+    // so there is no reading position to lose and none to restore.
+    expect(await rowTop()).toBe(openedAt);
   });
 });
 

@@ -60,6 +60,7 @@ import {
   WebSearchToolIcon,
 } from '../../../ui/icons';
 import { ReadOnlyCodeBlock } from '../../../ui/editor/CodeBlockSurface';
+import { SubagentRunDetail } from '../SubagentRunDetail';
 import { IconButton } from '../../../ui/primitives/IconButton';
 import { ButtonControl } from '../../../ui/primitives/ButtonControl';
 import { canEditUserContentText, replaceUserContentText } from '../../threadInput';
@@ -120,6 +121,10 @@ interface ThreadItemViewProps {
   readonly onOpenThread: (threadId: string) => Promise<void>;
   /** Absent where no Stop belongs — a read-only or historical rendering. */
   readonly onInterruptThread?: (threadId: string) => Promise<void>;
+  /** Turn Details for a Thread other than this one — a delegated child's. */
+  readonly onOpenSubagentTurnDetails?: (threadId: string, turnId: string) => void;
+  /** Present only inside a run detail: swap that container, do not nest one. */
+  readonly onSubagentDrill?: (threadId: string) => void;
   readonly onReadToolArguments: (item: ThreadToolItem) => Promise<JsonValue | null>;
   readonly onReadToolOutput: (item: ThreadToolItem) => Promise<string | null>;
 }
@@ -1085,14 +1090,22 @@ function toolDetail(
  * composer's Stop is the one that closes it.
  */
 function SubagentActivityItem({
+  expandState,
+  index,
   item,
   onInterruptThread,
-  onOpenThread,
+  onOpenNodeReference,
+  onOpenSubagentTurnDetails,
+  onSubagentDrill,
   subagents,
 }: {
+  readonly expandState: ThreadDisclosureState;
+  readonly index: DocumentIndex;
   readonly item: Extract<ThreadItem, { type: 'subAgentActivity' }>;
   readonly onInterruptThread?: (threadId: string) => Promise<void>;
-  readonly onOpenThread: (threadId: string) => Promise<void>;
+  readonly onOpenNodeReference: ThreadNodeReferenceOpenHandler;
+  readonly onOpenSubagentTurnDetails?: (threadId: string, turnId: string) => void;
+  readonly onSubagentDrill?: (threadId: string) => void;
   readonly subagents?: ReadonlyMap<string, SubagentPresentation>;
 }) {
   const t = useT();
@@ -1108,34 +1121,58 @@ function SubagentActivityItem({
   // Only where there is a Turn to stop: a child that has not started one yet
   // has nothing `turn/interrupt` can address.
   const running = presentation.status === 'running' && onInterruptThread !== undefined;
+  const disclosureId = `subagent:${item.agentThreadId}`;
+  // Inside a run detail this row drills that container instead of opening one
+  // of its own: one viewport, one scroll region, depth said in the header.
+  const drill = onSubagentDrill;
+  const expanded = drill === undefined && expandState.isExpanded(disclosureId, false);
   return (
     <div className={`thread-item thread-delegation-row thread-subagent-${presentation.status}`}>
-      <button
+      <div className="thread-delegation-row-line">
+      <ButtonControl
+        {...(drill ? {} : { 'aria-expanded': expanded })}
         aria-label={`${openLabel}. ${status}${error ? `. ${error}` : ''}`}
         className="thread-delegation-row-open"
-        onClick={() => void onOpenThread(item.agentThreadId)}
+        data-thread-disclosure-id={disclosureId}
+        onClick={(event) => (drill
+          ? drill(item.agentThreadId)
+          : expandState.toggle(disclosureId, expanded, event.currentTarget))}
         title={error ?? `${name} · ${status}`}
-        type="button"
       >
+        <ChevronRightIcon
+          aria-hidden
+          className={`thread-delegation-row-chevron${expanded ? ' is-expanded' : ''}`}
+          size={ICON_SIZE.rowGlyph}
+        />
         <FormIcon aria-hidden size={ICON_SIZE.rowGlyph} />
         <span className="thread-delegation-row-name">{name}</span>
         <span className="thread-delegation-row-status">{status}</span>
-      </button>
-      {presentation.status === 'running' ? (
-        <LoaderIcon aria-hidden className="thread-delegation-row-spinner" size={ICON_SIZE.rowGlyph} />
-      ) : null}
-      {running ? (
-        <IconButton
-          icon={StopIcon}
-          iconSize={ICON_SIZE.tiny}
-          label={t.agent.thread.stopSubagent({ name })}
-          onClick={() => void onInterruptThread(presentation.agentThreadId)}
-          variant="message"
-        />
-      ) : null}
+      </ButtonControl>
+        {presentation.status === 'running' ? (
+          <LoaderIcon aria-hidden className="thread-delegation-row-spinner" size={ICON_SIZE.rowGlyph} />
+        ) : null}
+        {running ? (
+          <IconButton
+            icon={StopIcon}
+            iconSize={ICON_SIZE.tiny}
+            label={t.agent.thread.stopSubagent({ name })}
+            onClick={() => void onInterruptThread(presentation.agentThreadId)}
+            variant="message"
+          />
+        ) : null}
+      </div>
       {/* Its own line, wrapping in full: a failure the row had to truncate is a
           failure the reader cannot act on. */}
       {error ? <small className="thread-delegation-row-error">{error}</small> : null}
+      {expanded ? (
+        <SubagentRunDetail
+          index={index}
+          {...(onInterruptThread ? { onInterruptThread } : {})}
+          onOpenNodeReference={onOpenNodeReference}
+          {...(onOpenSubagentTurnDetails ? { onOpenTurnDetails: onOpenSubagentTurnDetails } : {})}
+          rootThreadId={item.agentThreadId}
+        />
+      ) : null}
     </div>
   );
 }

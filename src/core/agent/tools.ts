@@ -295,7 +295,7 @@ const automationUpdateToolSchema: JsonSchema = {
 const spawnAgentSchema = objectSchema({
   task_name: stringSchema('Lowercase task name using letters, digits, and underscores.'),
   message: stringSchema('Initial plain-text task for the new Subagent.'),
-  max_total_tokens: numberSchema('Optional per-child token cap. It shares an ancestor pool or creates one when none exists.'),
+  max_total_tokens: numberSchema('Optional per-child token cap, honoured only at 1000000 or above; a smaller value is ignored and the child shares the request pool. It creates its own pool when honoured and no ancestor pool exists.'),
   fork_turns: stringSchema('Use none, all, or a positive integer string. Defaults to all.'),
   agent_type: stringSchema('Agent Role override. Omit unless explicitly requested.'),
   model: stringSchema('Model override. Omit unless an explicit override is needed.'),
@@ -334,7 +334,7 @@ const collaborationTerminalOutcomeSchema = objectSchema({
 const collaborationToolContracts: readonly ModelToolContract[] = [
   {
     identity: { namespace: COLLABORATION_NAMESPACE, name: 'spawn_agent' },
-    description: 'Create a child Thread, resolve its Agent Role, and start its first Turn. Descendants share one fixed-grant host pool; max_total_tokens caps this child and creates its pool when no ancestor pool exists.',
+    description: 'Create a child Thread, resolve its Agent Role, and start its first Turn. Descendants share one fixed-grant host pool; max_total_tokens caps this child only at 1000000 or above, and a smaller value is ignored rather than starving it.',
     scope: 'anyThread',
     schemaOwner: 'core',
     inputSchema: spawnAgentSchema,
