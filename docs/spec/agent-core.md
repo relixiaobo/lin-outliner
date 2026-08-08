@@ -253,7 +253,17 @@ Starting a Turn follows this order:
 6. Return acceptance before starting model side effects.
 7. Execute the Turn and persist Item events as they occur.
 8. Finish every remaining open Item, persist the terminal Turn, and set the
-   Thread back to `idle` or `systemError`.
+   Thread back to `idle` — including when the Turn failed, and including a
+   failure on the launch path before the Turn ever ran.
+
+A failed Turn is recorded on the TURN: `failed` status plus its `TurnError`. The
+Thread does not also carry the failure, because Thread status is what admission
+and rollback gate on — `systemError` said the same thing in a field that is a
+lock, nothing ever cleared it, and it persists, so a single failure ended a
+conversation for good: retry refused, a new message refused, across restarts.
+Nothing writes that status now, and a Thread loaded carrying one from an earlier
+version is healed to `idle` alongside the `active` a lost process leaves behind.
+The status remains in the protocol so persisted records stay readable.
 
 `/compact [instructions]` and `/clear` are reserved renderer commands handled before
 Skill routing. They require an idle Thread and create completed feature-triggered Turns
