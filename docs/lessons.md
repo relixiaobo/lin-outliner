@@ -301,3 +301,27 @@ an in-flight async answer, a collection whose order is incidental — and write 
 case for each before deleting the oracle.** The parity you can demonstrate is the
 easy half; the half that bites is the guarantees the old code made without ever
 being asked to demonstrate them.
+
+## Raising a bound you cannot honour is not a floor — drop it instead
+
+`max_total_tokens` is a per-child token cap the model may name, and models guess
+low: a cap of 2,500 starved children mid-answer and handed the parent a refusal
+instead of the delegated work. The fix looked obvious — clamp the model's number
+UP to a floor it can actually survive — and it was strictly worse than doing
+nothing. A cap is not just a number here; **naming one changes where the child is
+accounted**. Any honoured cap detaches the child from the turn's shared request
+pool into a private pool of its own, sized at the cap. So raising 5,000 to
+1,000,000 did not make one child safer; it handed each of up to sixteen children
+a private million, outside the `subagentTokenBudget` the user may have set to
+100,000. The setting that existed to bound spend was silently bypassed by the
+change meant to make bounding safer, and the clamp also ran *before* validation,
+so `0`, `1.5` and `"5000"` all became a legal million instead of teaching the
+model what it had sent.
+
+The general shape: when a caller's constraint arrives too small to honour, you
+can refuse it, or you can ignore it — but **do not silently widen it, because a
+constraint's value and its enforcement scope are often the same decision**. Widen
+the number and you may have quietly changed which ceiling applies. Dropping the
+cap returns the child to the pool the user configured, which is both the safer
+default and the honest one: the system enforces the bound the user set, not one
+the model guessed at and we then overruled.

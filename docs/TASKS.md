@@ -698,18 +698,25 @@ older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
   including a double-click that permanently deleted the *preceding* successful
   Turn; all nine fixed and re-verified. Light + dark visual gate passed. Two
   follow-ups filed below.
-- **subagent-ux-unification** (cc, PRs #498 + #500, merged 2026-08-07) — a
-  delegated child is one row in its delegating Turn's process timeline, named
+- **subagent-ux-unification** (cc, PRs #498 + #500 + #502, merged 2026-08-08) —
+  a delegated child is one row in its delegating Turn's process timeline, named
   like a person: PR A resolves the name from the child's `source` (never the
   raw `skill_<slug>_<12hex>` address; the shape lives once, in
   `src/core/agent/subagentTaskPath.ts`) and numbers same-Skill repeats apart;
   PR B retires the delegation card for that one row — live it carries status,
   spinner and Stop and holds the Turn's fold open, settled it carries the span
-  its own Turn recorded (`Completed · 3m 12s`). The high-effort gate reported
-  nine findings (six correctness — incl. `spawnItemId` fail-closed decode that
-  would have broken packaged-app thread histories, and the fold closing over a
-  live child); all nine fixed and re-verified before merge. Light + dark visual
-  gate passed. Plan archived: `docs/plans/archive/subagent-ux-unification.md`.
+  its own Turn recorded (`Completed · 3m 12s`); PR C makes that row a disclosure
+  onto a bounded, own-scrolling container, so a child is read where it was
+  delegated instead of swapping the dock to a Thread the user never chose. The
+  high-effort gates reported nine findings on A+B (six correctness — incl.
+  `spawnItemId` fail-closed decode that would have broken packaged-app thread
+  histories, and the fold closing over a live child) and ten on C (incl. a
+  `max_total_tokens` floor that raised a model's cap into a private pool and so
+  bypassed the user's `subagentTokenBudget`, and three drill paths that rendered
+  a control and did nothing); all nineteen fixed and re-verified before merge.
+  Light + dark visual gate passed for each. The board had recorded this plan
+  `done` at A+B while C was still unbuilt; corrected here. Plan archived:
+  `docs/plans/archive/subagent-ux-unification.md`.
 - **thread-scroll-anchor-restore** (cc-2, PR #499, merged 2026-08-07) —
   returning to a Thread restores the Turn being read, not a stale pixel offset:
   the snapshot records the anchor Turn + offset (binary search over rendered

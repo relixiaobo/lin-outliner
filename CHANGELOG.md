@@ -117,6 +117,21 @@ Entries reference the pull request that introduced them.
   a refused opening left the surface dead until the next right-click. All ten are
   fixed with regression tests before this landed.
 
+- **A Subagent is read where it was delegated (PR #502, cc)** — opening a child
+  used to swap the whole dock: the title became a Thread the user never chose and
+  the composer silently changed conversations. The delegation row now opens the
+  way every other process row opens — as a disclosure — and what it reveals is a
+  bounded container with its own scroll, not a surface. The row that was opened
+  does not move, because the container grows below it, so there is no reading
+  position to lose and none to restore, and scrolling never chains into the
+  transcript's. A grandchild replaces the container's contents rather than
+  nesting a second scroll region, with the header naming the way back; depth is
+  capped at two. Thread Details still opens a child and now carries the lineage
+  of the one it meant, opening the process fold the row sits inside rather than
+  writing a disclosure key nothing reads. A Turn started by a delegation renders
+  its trigger as an origin-labelled block instead of the reader's own message
+  bubble, with no edit affordance.
+
 ### Fixed
 
 - **Coming back to a Thread lands where you were reading (PR #499, cc-2)** —
@@ -195,6 +210,19 @@ Entries reference the pull request that introduced them.
   provider quirk at all — a search result whose *backend* sent an empty title or
   URL, which killed the Turn at completion. Tool input that the model can
   usefully be told to correct, such as a blank choice label, is still refused.
+- **A Skill refusal no longer kills the Turn, and a delegated child is not
+  starved by its own cap (PR #502, cc)** — three parallel Subagents all died with
+  `Completed Skill tool result is missing invocation evidence.`: a refused
+  `skill` result carries a message written for the model to act on, but the
+  bookkeeping that records *which* Skill ran demanded evidence of an invocation
+  that never happened, and threw. The refusal now reaches the model, and the
+  remaining evidence gap logs instead of ending the Turn. Separately, a model
+  naming a small `max_total_tokens` for a child was starving it mid-answer and
+  handing the parent a refusal instead of the delegated work; a cap the child
+  could not survive is now dropped rather than honoured — which also keeps that
+  child inside the shared `subagentTokenBudget` the user configured, since any
+  honoured cap moves a child into a private pool of its own. A programmatic
+  caller naming a cap is still left alone.
 
 ### Internal
 
