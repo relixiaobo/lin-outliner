@@ -94,5 +94,7 @@ export function PopoverEmpty({ children }: { children: ReactNode }) {
 }
 
 export function PopoverBulletIcon() {
-  return <span className="command-item-bullet" />;
+  // `command-item-bullet` had no rule left once the palette sheet went; the
+  // popover tier's own bullet is what this always should have used.
+  return <span className="popover-node-bullet" />;
 }

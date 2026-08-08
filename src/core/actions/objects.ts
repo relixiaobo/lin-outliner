@@ -13,6 +13,7 @@ import type {
   LocalizedNames,
   NodeObject,
   NodeObjectRef,
+  IconId,
   ObjectPresentation,
   ObjectRef,
   SurfaceObject,
@@ -20,6 +21,7 @@ import type {
 } from './types';
 
 export type RefMinter = () => ObjectRef;
+
 
 /** Semantic target of a row: a reference resolves through its whole chain. */
 export function contentTargetId(
@@ -100,6 +102,14 @@ export function nodeText(
   return node.content.text || untitled;
 }
 
+const SYSTEM_OBJECT_ICONS: Record<SystemNodeKey, IconId> = {
+  today: 'node',
+  library: 'library',
+  schema: 'schema',
+  savedSearches: 'savedSearches',
+  trash: 'trash',
+};
+
 const SYSTEM_OBJECT_NAMES: Record<SystemNodeKey, LocalizedNames> = {
   today: objectName('today'),
   library: objectName('library'),
@@ -108,10 +118,18 @@ const SYSTEM_OBJECT_NAMES: Record<SystemNodeKey, LocalizedNames> = {
   trash: objectName('trash'),
 };
 
+/** How main describes a captured page to the surface, without shipping context. */
+export interface ExternalPageDescription {
+  title: string;
+  /** Where it is from — a hostname or app name. */
+  subtitle?: string;
+}
+
 export function presentObject(
   object: SurfaceObject,
   projection: ActionProjection,
   untitled: string,
+  describeExternalPage?: (contextId: string) => ExternalPageDescription | null,
 ): ObjectPresentation {
   switch (object.kind) {
     case 'node': {
@@ -121,15 +139,27 @@ export function presentObject(
           objectRef: object.objectRef,
           kind: 'node',
           name: { source: 'localized', values: SYSTEM_OBJECT_NAMES[systemKey] },
-          iconId: 'node',
+          // Each system node reads as ITSELF; one generic glyph for all five
+          // makes the empty-query list a column of identical rows.
+          iconId: SYSTEM_OBJECT_ICONS[systemKey],
           typeLabel: objectTypeLabel('node'),
         };
       }
       const contentId = nodeIdForFacet(object.content, projection);
+      const node = projection.byId.get(contentId);
+      // The parent's text disambiguates same-named nodes, which is the whole
+      // reason the shipped launcher row carried a subtitle.
+      const parent = node?.parentId ? projection.byId.get(node.parentId) : undefined;
       return {
         objectRef: object.objectRef,
         kind: 'node',
-        name: { source: 'literal', value: nodeText(projection.byId.get(contentId), untitled) },
+        name: { source: 'literal', value: nodeText(node, untitled) },
+        // No subtitle at all for a parent with no text — the deleted matcher
+        // omitted it, and a literal "Untitled" is noise, not disambiguation.
+        ...(parent?.content.text ? { subtitle: { source: 'literal' as const, value: parent.content.text } } : {}),
+        // Only a real emoji icon: an image / generated icon identifier is not
+        // an emoji, and emitting it as one renders the raw id.
+        ...(node?.icon && node.iconKind === 'emoji' ? { emoji: node.icon } : {}),
         iconId: 'node',
         typeLabel: objectTypeLabel('node'),
         backingNodeId: contentId,
@@ -143,14 +173,21 @@ export function presentObject(
         iconId: 'node',
         typeLabel: objectTypeLabel('nodeSelection'),
       };
-    case 'externalPage':
+    case 'externalPage': {
+      // The chip is the same object presentation a result row uses, rendered
+      // compactly — not a second "attached context" concept.
+      const described = describeExternalPage?.(object.contextId);
       return {
         objectRef: object.objectRef,
         kind: 'externalPage',
-        name: { source: 'literal', value: object.contextId },
+        name: { source: 'literal', value: described?.title ?? untitled },
+        ...(described?.subtitle
+          ? { subtitle: { source: 'literal' as const, value: described.subtitle } }
+          : {}),
         iconId: 'open',
         typeLabel: objectTypeLabel('externalPage'),
       };
+    }
     case 'draft':
       return {
         objectRef: object.objectRef,
@@ -167,7 +204,9 @@ export function presentObject(
           source: 'localized',
           values: objectName(object.surface === 'settings' ? 'settings' : 'mainWindow'),
         },
-        iconId: 'open',
+        // By DISCRIMINANT. Comparing the English display string never matched
+        // under a non-English locale, so the row got the wrong icon.
+        iconId: object.surface === 'settings' ? 'settings' : 'mainWindow',
         typeLabel: objectTypeLabel('appSurface'),
       };
   }

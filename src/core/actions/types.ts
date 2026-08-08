@@ -23,7 +23,6 @@ export type ObjectRef = string & { readonly __brand: 'ObjectRef' };
 export type InvocationRef = string & { readonly __brand: 'InvocationRef' };
 export type RequestId = string & { readonly __brand: 'RequestId' };
 export type AmbientRequestId = string & { readonly __brand: 'AmbientRequestId' };
-export type ChallengeToken = string & { readonly __brand: 'ChallengeToken' };
 export type ExternalContextId = string & { readonly __brand: 'ExternalContextId' };
 
 // ---------------------------------------------------------------------------
@@ -92,11 +91,16 @@ export type IconId =
   | 'moveDown'
   | 'moveTo'
   | 'moveUp'
+  | 'library'
+  | 'mainWindow'
   | 'node'
   | 'outline'
   | 'open'
   | 'pin'
   | 'restore'
+  | 'savedSearches'
+  | 'schema'
+  | 'settings'
   | 'showToolbar'
   | 'sortAsc'
   | 'supertag'
@@ -110,6 +114,11 @@ export interface ObjectPresentation {
   subtitle?: PresentedName;
   iconId: IconId;
   typeLabel: LocalizedNames;
+  /**
+   * The node's OWN emoji, when it has one. A node's icon is data, not a fixed
+   * glyph, so it is carried rather than derived from `iconId`.
+   */
+  emoji?: string;
   /**
    * PRESENTATION ONLY — the document node this row depicts, so a view can
    * resolve per-node visuals (a tag's colour) by identity instead of matching
@@ -147,6 +156,11 @@ export const ACTION_IDS = [
   'emptyTrash',
   'capture',
   'create',
+  // Keyboard-only until now. Exposed to the SEARCHABLE surface as a declared
+  // addition (PM, 2026-08-08) — never to the anchored menu, which would break
+  // PR 1's differential after the fact.
+  'indent',
+  'outdent',
 ] as const;
 
 export type ActionId = typeof ACTION_IDS[number];
@@ -177,6 +191,8 @@ export interface ActionArguments {
   emptyTrash: Record<string, never>;
   capture: { destination: ObjectRef; tag?: ObjectRef };
   create: { destination: ObjectRef };
+  indent: Record<string, never>;
+  outdent: Record<string, never>;
 }
 
 /** Which object-valued parameter slots a family owns (`never` = none). */
@@ -200,6 +216,8 @@ export interface ObjectParameterId {
   emptyTrash: never;
   capture: 'destination' | 'tag';
   create: 'destination';
+  indent: never;
+  outdent: never;
 }
 
 /** Arguments already known when a parameter still has to be picked. */
@@ -223,6 +241,8 @@ export interface ActionArgumentSeed {
   emptyTrash: Record<string, never>;
   capture: { destination: ObjectRef };
   create: { destination: ObjectRef };
+  indent: Record<string, never>;
+  outdent: Record<string, never>;
 }
 
 /**
@@ -284,6 +304,13 @@ export interface ViewFact {
   panelId: string;
   visualRowId: NodeId;
   rowExpanded: boolean;
+  /**
+   * The pane root the user is acting from. Main CANNOT recover it: the same
+   * node appears under different roots, and the authoritative value is
+   * renderer-owned. `outdent` is defined relative to it, so a surface without
+   * an attested root simply does not offer the action.
+   */
+  selectionRootId?: NodeId;
 }
 
 export interface WorkspaceFact {
@@ -357,6 +384,12 @@ export interface InvocationSeed {
   panelId: string;
   isPinned: boolean;
   rowExpanded: boolean;
+  /**
+   * The pane root the user is acting from. Renderer-owned: the same node
+   * appears under several roots and main cannot recover the chosen one.
+   * `outdent` is defined relative to it.
+   */
+  selectionRootId?: NodeId;
 }
 
 // ---------------------------------------------------------------------------
@@ -393,8 +426,13 @@ export type ActionArgumentBinding<K extends ActionId> =
   | { state: 'ready'; arguments: ActionArguments[K] }
   | { state: 'needsParameter'; seed: ActionArgumentSeed[K]; parameter: ParameterSpec<K> };
 
+/**
+ * Confirmation is a MAIN-OWNED phase, not a boolean a caller can assert. Main
+ * raises its own sheet, observes the acceptance and executes; there is
+ * deliberately no token, because a token would put the deciding artefact back
+ * in the hands the sheet exists to bypass.
+ */
 export interface ConfirmationSpec {
-  style: 'rendererDialog' | 'native';
   title: LocalizedNames;
   message: LocalizedNames;
   confirmLabel: LocalizedNames;
@@ -446,8 +484,6 @@ export type ActionRequest = {
     invocationRef: InvocationRef;
     subjectRef: ObjectRef;
     arguments: ActionArguments[K];
-    /** Minted by main; single-use. */
-    challenge?: ChallengeToken;
   }
 }[ActionId];
 
@@ -461,6 +497,61 @@ export interface InvocationOpened {
   resultItems: readonly SurfaceItemPresentation[];
   menuActions: readonly ActionPresentation[];
 }
+
+/**
+ * The only way a launcher search generation enters the invocation. Main first
+ * installs an empty `pending` generation — invalidating every prior result ref
+ * — and then installs fresh objects only if this request is still current.
+ */
+export interface ObjectQueryRequest {
+  invocationRef: InvocationRef;
+  openSeq: number;
+  requestId: RequestId;
+  query: string;
+}
+
+export type ObjectQueryResult =
+  | {
+    status: 'ready';
+    invocationRef: InvocationRef;
+    openSeq: number;
+    requestId: RequestId;
+    generation: number;
+    resultItems: readonly SurfaceItemPresentation[];
+  }
+  | {
+    status: 'superseded';
+    invocationRef: InvocationRef;
+    openSeq: number;
+    requestId: RequestId;
+    generation: number;
+  };
+
+/**
+ * Main owns the ambient transition. External capture resolves in main; an
+ * in-app seed first passes its sender/id checks. Neither renderer may post a
+ * finished object, and main pushes only the authoritative replacement.
+ */
+export type AmbientContextResolution =
+  | { kind: 'externalPage'; contextId: ExternalContextId }
+  | { kind: 'inApp'; seed: InvocationSeed }
+  | { kind: 'none' };
+
+export type AmbientContextChanged =
+  | {
+    status: 'updated';
+    invocationRef: InvocationRef;
+    openSeq: number;
+    revision: number;
+    ambientState: 'resolved' | 'none';
+    fixedItems: readonly SurfaceItemPresentation[];
+  }
+  | {
+    status: 'superseded';
+    invocationRef: InvocationRef;
+    openSeq: number;
+    requestId: AmbientRequestId;
+  };
 
 /** Argument rows use the same object shape but a slot-scoped generation. */
 export interface ParameterObjectQueryRequest {
@@ -493,7 +584,6 @@ export type ParameterObjectQueryResult =
  * decides whether it is legal in the current phase.
  */
 export type InvocationEvent =
-  | { kind: 'confirmationCancelled'; invocationRef: InvocationRef; challenge: ChallengeToken }
   | { kind: 'objectRemoved'; invocationRef: InvocationRef; objectRef: ObjectRef }
   | {
     kind: 'selectionMemberRemoved';
@@ -532,13 +622,12 @@ export type ActionExecutionResult =
   | { status: 'indeterminate'; atStep: number; reason: 'ackTimeout' | 'rendererGone' };
 
 export type ActionRequestResult =
-  | {
-    status: 'confirmationRequired';
-    challenge: ChallengeToken;
-    confirm: ConfirmationSpec;
-    /** Authoritative copy + subject + args for the dialog. */
-    presentation: ReadyActionPresentation;
-  }
+  /**
+   * The user declined the confirmation. A deliberate cancel is NOT a failure
+   * and must never be reported as one — it is only distinguishable from a dead
+   * invocation if it says so.
+   */
+  | { status: 'cancelled' }
   /** Current subject, changed args/state. */
   | { status: 'reEvaluated'; presentation: ActionPresentation }
   | {

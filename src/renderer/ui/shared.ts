@@ -1,3 +1,4 @@
+import { parentIdsEmptiedByOutdent as coreParentIdsEmptiedByOutdent } from '../../core/actions/outlineStructure';
 import { useCallback } from 'react';
 import { flushSync } from 'react-dom';
 import type {
@@ -8,7 +9,6 @@ import type {
   NodeId,
   NodeProjection,
 } from '../api/types';
-import { isInternalConfigNode } from '../../core/configSchema';
 import { FIELD_TYPE_CONFIG_OPTIONS } from './fields/fieldTypeRegistry';
 import { measureRender } from './outliner/renderProbe';
 
@@ -106,41 +106,15 @@ export function textOf(node: NodeProjection | undefined, fallback = ''): string 
   return node.content.text || fallback;
 }
 
-export function outlinerChildren(
-  node: NodeProjection | undefined,
-  byId: Map<NodeId, NodeProjection>,
-): NodeId[] {
-  if (!node) return [];
-  return node.children.filter((childId) => {
-    const child = byId.get(childId);
-    if (!child || isInternalConfigNode(child)) return false;
-    return !['queryCondition', 'viewDef', 'sortRule', 'filterRule', 'displayField'].includes(child.type ?? '');
-  });
-}
+export { outlineChildIds as outlinerChildren } from '../../core/actions/outlineStructure';
 
+/** The shipped `Set` shape over the core derivation. */
 export function parentIdsEmptiedByOutdent(
   nodeIds: readonly NodeId[],
   byId: Map<NodeId, NodeProjection>,
   rootId?: NodeId | null,
 ): Set<NodeId> {
-  const movedIds = new Set(nodeIds);
-  const candidateParentIds = new Set<NodeId>();
-  for (const nodeId of nodeIds) {
-    const parentId = byId.get(nodeId)?.parentId;
-    if (!parentId || parentId === rootId) continue;
-    const parent = byId.get(parentId);
-    if (!parent?.parentId) continue;
-    candidateParentIds.add(parentId);
-  }
-
-  const emptiedParentIds = new Set<NodeId>();
-  for (const parentId of candidateParentIds) {
-    const children = outlinerChildren(byId.get(parentId), byId);
-    if (children.length > 0 && children.every((childId) => movedIds.has(childId))) {
-      emptiedParentIds.add(parentId);
-    }
-  }
-  return emptiedParentIds;
+  return new Set(coreParentIdsEmptiedByOutdent(nodeIds, byId, rootId));
 }
 
 export function collapseExpandedParentIds(

@@ -327,6 +327,20 @@ body {
   text-overflow: ellipsis;
 }
 
+/* The relocated ⌘K. Same hint treatment as the primary (D6a): the bar is a hint
+ * bar, never a button row, so the two read as one cluster rather than one
+ * styled control beside a plain one. */
+.launcher-actionbar-actions {
+  min-width: 0;
+  min-height: 0;
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+  font-weight: 500;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
 .launcher-actionbar-item:disabled .launcher-kbd {
   color: var(--text-tertiary);
 }
@@ -344,4 +358,39 @@ body {
   font-size: var(--font-ui-2xs);
   line-height: var(--line-ui-2xs);
   font-weight: 500;
+}
+
+/* The action panel's own filter input: the same bare treatment as the main
+ * input, inset to sit inside the results body rather than replacing the header
+ * (the header keeps naming the OBJECT search). */
+.launcher-actions-search {
+  width: 100%;
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--font-ui-md);
+  line-height: var(--line-ui-md);
+}
+
+/* Dropping the ambient chip. An icon-only chrome control signals by COLOR, not
+ * a box (B6), and never changes layout on hover (B7). It only appears on the
+ * fixed rows, so results cannot be "removed" — they are replaced by the next
+ * generation instead. */
+.launcher-row-remove {
+  flex-shrink: 0;
+  margin-left: var(--space-2);
+  padding: 0 var(--space-1);
+  border: 0;
+  background: none;
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+  color: var(--text-tertiary);
+}
+
+.launcher-row-remove:hover,
+.launcher-row-remove:focus-visible {
+  color: var(--text-primary);
+}
+
+.launcher-row-remove:focus-visible {
+  box-shadow: var(--focus-ring-shadow);
+  border-radius: var(--radius-sm);
 }

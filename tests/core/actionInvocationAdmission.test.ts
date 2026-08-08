@@ -163,101 +163,110 @@ describe('invocation admission', () => {
   });
 });
 
-describe('the confirmation protocol', () => {
-  function trashedFixture() {
-    const h = harness();
+describe('the native confirmation sheet (flow B)', () => {
+  function nativeHarness(accept: boolean) {
+    const confirmations: unknown[] = [];
+    const h = harness({ confirmNatively: async (spec) => { confirmations.push(spec); return accept; } });
     const today = h.core.projection().todayId;
     const nodeId = h.core.createNode(today, null, 'Gone').focus!.nodeId;
     h.core.trashNode(nodeId);
-    return { h, opened: open(h, nodeId) };
+    return { h, confirmations, opened: open(h, nodeId) };
   }
 
-  test('the first request returns a challenge and no effect', async () => {
-    const { h, opened } = trashedFixture();
+  test('accepting runs the plan, and NO token was ever minted', async () => {
+    const { h, confirmations, opened } = nativeHarness(true);
     const result = await h.service.request({
       actionId: 'deleteForever',
       invocationRef: opened.invocationRef,
       subjectRef: subjectRefOf(opened, 'deleteForever'),
       arguments: {},
     }, SENDER);
-    expect(result.status).toBe('confirmationRequired');
-    expect(h.commands).toEqual([]);
-    if (result.status !== 'confirmationRequired') return;
-    // The response carries the authoritative copy the dialog must show, so it
-    // cannot describe one thing while the token authorises another.
-    expect(result.confirm.confirmLabel.en).toBe('Delete forever');
-    expect(result.presentation.actionId).toBe('deleteForever');
-  });
-
-  test('the challenge-bearing request IS the acceptance', async () => {
-    const { h, opened } = trashedFixture();
-    const subjectRef = subjectRefOf(opened, 'deleteForever');
-    const first = await h.service.request({
-      actionId: 'deleteForever',
-      invocationRef: opened.invocationRef,
-      subjectRef,
-      arguments: {},
-    }, SENDER);
-    if (first.status !== 'confirmationRequired') throw new Error('expected a challenge');
-    const second = await h.service.request({
-      actionId: 'deleteForever',
-      invocationRef: opened.invocationRef,
-      subjectRef,
-      arguments: {},
-      challenge: first.challenge,
-    }, SENDER);
-    expect(second.status).toBe('completed');
+    expect(result.status).toBe('completed');
+    expect(confirmations).toHaveLength(1);
+    // Nothing was handed back for a renderer to redeem — the sheet IS the
+    // decision, so a compromised renderer has nothing to replay.
+    expect('challenge' in result).toBe(false);
     expect(h.commands.map((entry) => entry.command)).toEqual(['delete_node']);
   });
 
-  test('redeeming after cancel fails, and nothing runs', async () => {
-    const { h, opened } = trashedFixture();
-    const subjectRef = subjectRefOf(opened, 'deleteForever');
-    const first = await h.service.request({
+  test('cancelling runs nothing and returns the record to live', async () => {
+    const { h, opened } = nativeHarness(false);
+    const request = {
+      actionId: 'deleteForever' as const,
+      invocationRef: opened.invocationRef,
+      subjectRef: subjectRefOf(opened, 'deleteForever'),
+      arguments: {},
+    };
+    const first = await h.service.request(request, SENDER);
+    // A deliberate cancel is NOT a failure, and must be distinguishable from a
+    // dead invocation — otherwise both surfaces show an error banner for doing
+    // exactly what the user asked.
+    expect(first).toEqual({ status: 'cancelled' });
+    expect(h.commands).toEqual([]);
+    // The record is live again, so the user can simply try once more.
+    const second = await h.service.request(request, SENDER);
+    expect(second).toEqual({ status: 'cancelled' });
+  });
+
+  test('a renderer cannot advance it by supplying a challenge', async () => {
+    const { h, opened } = nativeHarness(false);
+    const result = await h.service.request({
       actionId: 'deleteForever',
       invocationRef: opened.invocationRef,
-      subjectRef,
+      subjectRef: subjectRefOf(opened, 'deleteForever'),
       arguments: {},
+      challenge: 'forged' as never,
     }, SENDER);
-    if (first.status !== 'confirmationRequired') throw new Error('expected a challenge');
-    h.service.event({
-      kind: 'confirmationCancelled',
-      invocationRef: opened.invocationRef,
-      challenge: first.challenge,
-    }, SENDER);
-    const redeemed = await h.service.request({
-      actionId: 'deleteForever',
-      invocationRef: opened.invocationRef,
-      subjectRef,
-      arguments: {},
-      challenge: first.challenge,
-    }, SENDER);
-    // The token is dead, so the redemption is refused outright rather than
-    // silently re-prompting: nothing runs.
-    expect(redeemed).toEqual({ status: 'stale', reason: 'invocation' });
+    // A forged token does not skip the sheet: flow B never consults one, so
+    // the user still decided — and still declined.
+    expect(result).toEqual({ status: 'cancelled' });
     expect(h.commands).toEqual([]);
   });
 
-  test('a challenge minted for one action cannot commit another', async () => {
-    const { h, opened } = trashedFixture();
-    const first = await h.service.request({
+  test('closing the menu cannot kill the request the sheet is deciding', async () => {
+    // The menu closes as soon as the action is chosen, and its unmount sends
+    // `abandoned` — while main's native sheet is still on screen. Releasing the
+    // record there would delete it out from under a decision the user is about
+    // to accept.
+    let resolveSheet: ((accepted: boolean) => void) | null = null;
+    const h = harness({
+      confirmNatively: () => new Promise((resolve) => { resolveSheet = resolve; }),
+    });
+    const today = h.core.projection().todayId;
+    const nodeId = h.core.createNode(today, null, 'Gone').focus!.nodeId;
+    h.core.trashNode(nodeId);
+    const opened = open(h, nodeId);
+
+    const pending = h.service.request({
       actionId: 'deleteForever',
       invocationRef: opened.invocationRef,
       subjectRef: subjectRefOf(opened, 'deleteForever'),
       arguments: {},
     }, SENDER);
-    if (first.status !== 'confirmationRequired') throw new Error('expected a challenge');
-    const crossed = await h.service.request({
-      actionId: 'restore',
+    await Promise.resolve();
+    h.service.event({ kind: 'abandoned', invocationRef: opened.invocationRef }, SENDER);
+    resolveSheet!(true);
+
+    expect((await pending).status).toBe('completed');
+    expect(h.commands.map((entry) => entry.command)).toEqual(['delete_node']);
+  });
+
+  test('with no sheet available nothing runs', async () => {
+    const h = harness();
+    const today = h.core.projection().todayId;
+    const nodeId = h.core.createNode(today, null, 'Gone').focus!.nodeId;
+    h.core.trashNode(nodeId);
+    const opened = open(h, nodeId);
+    const result = await h.service.request({
+      actionId: 'deleteForever',
       invocationRef: opened.invocationRef,
-      subjectRef: subjectRefOf(opened, 'restore'),
+      subjectRef: subjectRefOf(opened, 'deleteForever'),
       arguments: {},
-      challenge: first.challenge,
     }, SENDER);
-    // `restore` carries no confirmation, so the token is simply ignored — and
-    // the delete it was minted for still has not run.
-    expect(crossed.status).toBe('completed');
-    expect(h.commands.map((entry) => entry.command)).toEqual(['restore_node']);
+    // Fail CLOSED, and do NOT claim the user cancelled a sheet they never saw:
+    // a missing host is a misconfiguration, not a decision.
+    expect(result).toEqual({ status: 'stale', reason: 'invocation' });
+    expect(h.commands).toEqual([]);
   });
 });
 

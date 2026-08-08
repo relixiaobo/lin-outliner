@@ -56,26 +56,55 @@ async function installLauncherMock(page: Page) {
     const win = window as typeof window & {
       lin?: Record<string, unknown>;
     };
+    // The launcher's OWN bridge. It cannot reach `lin:invoke`, and it never
+    // builds a result list: main pushes the opening it created for the summon.
+    const object = (ref: string, name: string, kind: string) => ({
+      objectRef: ref,
+      kind,
+      name: { source: 'localized', values: { en: name, 'zh-Hans': name } },
+      iconId: 'node',
+      typeLabel: { en: 'App', 'zh-Hans': 'App' },
+    });
+    const openAction = (ref: string) => ({
+      actionId: 'open',
+      subjectRef: ref,
+      names: { en: 'Open', 'zh-Hans': '打开' },
+      aliases: [],
+      iconId: 'open',
+      surfaces: ['actionPanel'],
+      evaluation: { status: 'applicable' },
+      binding: { state: 'ready', arguments: {} },
+    });
+    const opening = {
+      invocationRef: 'inv-e2e',
+      openSeq: 1,
+      ambient: { state: 'pending', revision: 0 },
+      fixedItems: [],
+      resultItems: [
+        { object: object('ref-today', 'Today', 'node'), primaryAction: openAction('ref-today'), actions: [openAction('ref-today')] },
+        { object: object('ref-main', 'Main window', 'appSurface'), primaryAction: openAction('ref-main'), actions: [openAction('ref-main')] },
+        { object: object('ref-settings', 'Settings', 'appSurface'), primaryAction: openAction('ref-settings'), actions: [openAction('ref-settings')] },
+      ],
+      menuActions: [],
+    };
     win.lin = {
       ...(win.lin ?? {}),
       launcher: {
-        getInitialState: async () => ({
-          commands: [
-            { id: 'open-main', title: 'Open main window' },
-            { id: 'open-settings', title: 'Open Settings' },
-          ],
-          hotkey: 'CommandOrControl+Shift+Space',
-        }),
+        getInitialState: async () => ({ hotkey: 'CommandOrControl+Shift+Space' }),
         onShown: () => () => {},
-        onContext: () => () => {},
+        onRemediation: () => () => {},
         hide: async () => {},
-        executeCommand: async () => ({ hide: true }),
-        createCapture: async () => ({ ok: true, nodeId: 'launcher-capture-e2e' }),
-        createContextCapture: async () => ({ ok: true, nodeId: 'launcher-context-capture-e2e' }),
-        searchNodes: async (query: string) => query.toLowerCase().includes('alpha')
-          ? [{ nodeId: 'node-alpha', title: 'Alpha', subtitle: '2026-05-13' }]
-          : [],
-        openNode: async () => {},
+      },
+      actions: {
+        onOpened: (cb: (next: unknown) => void) => {
+          setTimeout(() => cb(opening), 0);
+          return () => {};
+        },
+        onAmbientChanged: () => () => {},
+        queryObjects: async () => ({ status: 'superseded' }),
+        queryParameters: async () => ({ status: 'superseded' }),
+        request: async () => ({ status: 'completed' }),
+        event: async () => ({ status: 'spent' }),
       },
     };
   });
@@ -264,15 +293,6 @@ async function showTagContextMenu(page: Page) {
   await expect(menu.getByRole('menuitem', { name: 'Configure tag' })).toBeVisible();
 }
 
-async function showDeleteForeverConfirmDialog(page: Page) {
-  await invokeDocumentCommand(page, 'trash_node', { nodeId: ids.alpha });
-  await page.getByRole('button', { name: 'Trash', exact: true }).click();
-  await rowBody(page, ids.alpha).click({ button: 'right' });
-  await page.getByRole('menu', { name: 'Node actions' }).getByRole('menuitem', { name: 'Delete forever' }).click();
-  const dialog = page.getByRole('dialog', { name: 'Delete forever?' });
-  await dialog.waitFor({ state: 'visible' });
-  await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeFocused();
-}
 
 async function showSidebarContextMenu(page: Page) {
   await page.getByRole('button', { name: 'Open Root' }).click({ button: 'right' });
@@ -488,7 +508,10 @@ const surfaces: SurfaceCase[] = [
       await page.getByRole('dialog', { name: 'Tenon Launcher' }).waitFor({ state: 'visible' });
       const results = page.getByRole('listbox', { name: 'Results' });
       await results.waitFor({ state: 'visible' });
-      await expect(results.getByRole('option', { name: /Open main window/ })).toBeVisible();
+      // The row is the OBJECT — *Main window* — and its activation lives in the
+      // action bar. A row named "Open main window" fused the two (D6/D8).
+      await expect(results.getByRole('option', { name: /Main window/ })).toBeVisible();
+      await expect(results.getByRole('option', { name: /Open main window/ })).toHaveCount(0);
     },
   },
   {
@@ -553,15 +576,6 @@ const surfaces: SurfaceCase[] = [
     waitFor: '.provider-config-window',
     beforeProbe: async (page) => {
       await page.getByRole('button', { name: 'Save', exact: true }).waitFor({ state: 'visible' });
-    },
-  },
-  {
-    name: 'command palette overlay',
-    path: '/',
-    waitFor: `[data-node-id="${ids.alpha}"]`,
-    beforeProbe: async (page) => {
-      await page.keyboard.press('Meta+K');
-      await page.getByRole('dialog', { name: 'Command palette' }).waitFor({ state: 'visible' });
     },
   },
   {
@@ -702,12 +716,14 @@ const surfaces: SurfaceCase[] = [
     waitFor: `[data-node-id="${ids.alpha}"]`,
     beforeProbe: showTagContextMenu,
   },
-  {
-    name: 'delete forever confirm dialog',
-    path: '/',
-    waitFor: `[data-node-id="${ids.alpha}"]`,
-    beforeProbe: showDeleteForeverConfirmDialog,
-  },
+  // REMOVED: 'delete forever confirm dialog'. The outliner's permanent-delete
+  // confirmation is outside Cmd+Z's reach and is now nameable by a second,
+  // locked-down renderer, so it became main's OWN native sheet — which no
+  // page-level probe can render or measure. The `ConfirmDialog` primitive is
+  // still shipped and used by Settings, the Thread dock and Automations, but it
+  // no longer has a runtime token probe here. That is a deliberate narrowing of
+  // this guard's exception set, not a relaxation to make a test pass: re-add a
+  // probe when one of those consumers gets a deterministic path in this fixture.
   {
     name: 'sidebar context menu',
     path: '/',

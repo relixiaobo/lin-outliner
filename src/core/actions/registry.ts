@@ -8,7 +8,13 @@
 // provenance model, irreversible boundary or confirmation contract is a
 // different action. Internal core commands do not define this product taxonomy.
 
+import type { ExternalContext } from '../launcher/context';
 import { buildContextCaptureInput, buildManualNoteInput } from '../launcher/sources';
+import {
+  batchIndentNodeIds,
+  indentExpansionTargets,
+  parentIdsEmptiedByOutdent,
+} from './outlineStructure';
 import { parseIsoLocalDateParts, todayIsoLocalDate } from '../localDate';
 import { nodeIsInSubtree } from '../treeUtils';
 import type { NodeId, NodeProjection } from '../types';
@@ -38,6 +44,8 @@ import {
 import type {
   ActionArguments,
   ActionId,
+  ArgumentSlot,
+  ObjectParameterId,
   ActionPresentation,
   ActionProjection,
   ActionRejectionCode,
@@ -77,6 +85,36 @@ export const CONTEXT_MENU_ORDER: readonly ActionId[] = [
   'remove',
 ];
 
+/**
+ * Canonical order for the searchable `Actions ⌘K` panel. It is a DIFFERENT list
+ * from the menu's on purpose: the panel starts with activation (the thing a
+ * user most often wants from a found object) and may expose families the
+ * anchored menu deliberately does not.
+ */
+export const ACTION_PANEL_ORDER: readonly ActionId[] = [
+  'open',
+  'capture',
+  'create',
+  'openInSplitPane',
+  'setPinned',
+  'sendToAgent',
+  'duplicate',
+  'move',
+  'setDone',
+  'addTag',
+  'setViewMode',
+  'setViewToolbarVisible',
+  'editViewSection',
+  'editDescription',
+  'copy',
+  'emptyTrash',
+  'restore',
+  'deleteForever',
+  'remove',
+  'indent',
+  'outdent',
+];
+
 export const MENU_GROUP: Record<ActionId, number> = {
   open: 0,
   openInSplitPane: 1,
@@ -97,6 +135,9 @@ export const MENU_GROUP: Record<ActionId, number> = {
   remove: 6,
   capture: 0,
   create: 0,
+  // Never in the anchored menu; the group is unused for them.
+  indent: 0,
+  outdent: 0,
 };
 
 /** Surface exposure is registry metadata, never a view-owned allow-list. */
@@ -120,6 +161,10 @@ export const ACTION_SURFACES: Record<ActionId, readonly ActionSurface[]> = {
   emptyTrash: ['contextMenu', 'actionPanel'],
   capture: ['actionPanel'],
   create: ['actionPanel'],
+  // THE surface-exposure rule the ratification required: searchable only.
+  // Adding 'contextMenu' here would break PR 1's differential after the fact.
+  indent: ['actionPanel'],
+  outdent: ['actionPanel'],
 };
 
 /**
@@ -148,7 +193,58 @@ export const ACTION_SUBJECT_KINDS: Record<ActionId, readonly SurfaceObject['kind
   emptyTrash: ['node'],
   capture: ['externalPage'],
   create: ['draft'],
+  indent: ['nodeSelection', 'node'],
+  outdent: ['nodeSelection', 'node'],
 };
+
+/**
+ * The object-valued parameter slots each family OWNS. A parameter query cannot
+ * create a slot merely by naming one, and an OPTIONAL parameter (capture's tag)
+ * still has to be answerable even though the resolved presentation is already
+ * `ready` — so ownership is declared here rather than inferred from whether the
+ * current binding happens to be waiting on it.
+ *
+ * The value exists because types are erased and the admission check needs one
+ * at runtime; the mapped type is what stops it from becoming a SECOND source of
+ * truth. Each entry may only contain that family's own declared parameter ids,
+ * so a family whose `ObjectParameterId` is `never` can only be `[]`.
+ */
+export const ACTION_PARAMETER_IDS: {
+  [K in ActionId]: readonly ObjectParameterId[K][];
+} = {
+  open: [],
+  openInSplitPane: [],
+  setPinned: [],
+  sendToAgent: [],
+  duplicate: [],
+  move: ['destination'],
+  setDone: [],
+  addTag: ['tag'],
+  setViewMode: [],
+  setViewToolbarVisible: [],
+  editViewSection: [],
+  editDescription: [],
+  copy: [],
+  remove: [],
+  restore: [],
+  deleteForever: [],
+  emptyTrash: [],
+  capture: ['destination', 'tag'],
+  create: ['destination'],
+  indent: [],
+  outdent: [],
+};
+
+/**
+ * Whether a family declares the slot a request is naming. The widening to
+ * `readonly string[]` happens HERE, once: indexing the mapped type by a union
+ * of action ids collapses its element type, and the correlation that matters is
+ * on the authoring side, where the table is written.
+ */
+export function declaresParameter(slot: ArgumentSlot): boolean {
+  const declared: readonly string[] = ACTION_PARAMETER_IDS[slot.actionId];
+  return declared.includes(slot.parameterId);
+}
 
 /** Locale-independent search terms. Never action ids. */
 export const ACTION_ALIASES: Record<ActionId, readonly string[]> = {
@@ -171,6 +267,8 @@ export const ACTION_ALIASES: Record<ActionId, readonly string[]> = {
   emptyTrash: ['purge', 'clear trash'],
   capture: ['save', 'clip'],
   create: ['new', 'add'],
+  indent: ['nest', 'demote', 'tab'],
+  outdent: ['unnest', 'promote', 'untab'],
 };
 
 const ICONS: Record<string, IconId> = {
@@ -389,6 +487,8 @@ export function resolveFamily(
     case 'emptyTrash': return resolveEmptyTrash(context, subject);
     case 'capture': return resolveCapture(context, subject);
     case 'create': return resolveCreate(context, subject);
+    case 'indent': return resolveIndent(context, subject);
+    case 'outdent': return resolveOutdent(context, subject);
   }
 }
 
@@ -817,7 +917,6 @@ export function permanentDeleteIds(
 
 function deleteForeverConfirmation(count: number): ConfirmationSpec {
   return {
-    style: 'rendererDialog',
     title: count > 1
       ? confirmName((messages) => messages.deleteForeverTitleMultiple({ count }))
       : confirmName((messages) => messages.deleteForeverTitle),
@@ -863,7 +962,6 @@ function resolveEmptyTrash(
     rejection: 'trashEmpty',
     arguments: {},
     confirm: {
-      style: 'rendererDialog',
       title: confirmName((messages) => messages.emptyTrashTitle),
       message: confirmName((messages) => messages.emptyTrashMessage),
       confirmLabel: confirmName((messages) => messages.emptyTrashConfirm),
@@ -954,6 +1052,98 @@ function resolveCreate(
     eligible: subject.text.trim().length > 0,
     arguments: { destination },
   })];
+}
+
+/**
+ * What the composer shows for a staged page, and what the model actually sees.
+ * Deliberately basic-info only: title, where it came from, and the canonical
+ * link. Page BODY extraction is a separate, explicitly-invoked reader — the
+ * ambient hotkey path never fetches.
+ */
+export function externalPageLabel(context: ExternalContext): string {
+  return context.source?.title || context.browser?.tabTitle || context.app.name || 'Page';
+}
+
+function externalPageContextValue(context: ExternalContext): string {
+  const url = context.source?.canonicalUrl ?? context.source?.url ?? context.browser?.url;
+  return [
+    `Title: ${externalPageLabel(context)}`,
+    context.browser?.hostname ? `Site: ${context.browser.hostname}` : null,
+    url ? `URL: ${url}` : null,
+    `App: ${context.app.name}`,
+  ].filter(Boolean).join('\n');
+}
+
+// --- indent / outdent -------------------------------------------------------
+
+/**
+ * The rows a structural indent/outdent may act on. Both need MUTABLE, non-field
+ * rows; `outdent` additionally needs the pane root, because "can this row move
+ * out one level" is a question about the pane the user is looking at.
+ */
+function structuralRowIds(context: ActionResolveContext, subject: SurfaceObject): NodeId[] {
+  const rows = subjectRows(subject);
+  if (!rows) return [];
+  return facetsFor(rows.rowIds, context.projection.byId)
+    .filter((row) => row.mutable && row.kind !== 'fieldValue')
+    .map((row) => row.id);
+}
+
+/** The attested pane root for this subject, or null when none was supplied. */
+function selectionRootFor(
+  context: ActionResolveContext,
+  subject: SurfaceObject,
+): NodeId | null {
+  return viewFactFor(context, subject)?.selectionRootId ?? null;
+}
+
+function resolveIndent(
+  context: ActionResolveContext,
+  subject: SurfaceObject,
+): ActionPresentation[] {
+  const rows = subjectRows(subject);
+  if (!rows) return [];
+  const eligible = batchIndentNodeIds(structuralRowIds(context, subject), context.projection.byId);
+  return [present({
+    actionId: 'indent',
+    subjectRef: subject.objectRef,
+    names: withBatchPrefix(actionName('indent'), rows.cardinality),
+    iconId: 'moveTo',
+    eligible: eligible.length > 0,
+    arguments: {},
+  })];
+}
+
+function resolveOutdent(
+  context: ActionResolveContext,
+  subject: SurfaceObject,
+): ActionPresentation[] {
+  const rows = subjectRows(subject);
+  if (!rows) return [];
+  // ABSENT without an attested pane root: outdent is defined relative to a view
+  // that is not there, and main cannot recover which root the user chose — the
+  // same node can appear under several.
+  const selectionRootId = selectionRootFor(context, subject);
+  if (selectionRootId === null) return [];
+  const eligible = outdentRowIds(context, subject, selectionRootId);
+  return [present({
+    actionId: 'outdent',
+    subjectRef: subject.objectRef,
+    names: withBatchPrefix(actionName('outdent'), rows.cardinality),
+    iconId: 'moveTo',
+    eligible: eligible.length > 0,
+    arguments: {},
+  })];
+}
+
+function outdentRowIds(
+  context: ActionResolveContext,
+  subject: SurfaceObject,
+  selectionRootId: NodeId,
+): NodeId[] {
+  return structuralRowIds(context, subject).filter((id) => (
+    context.projection.byId.get(id)?.parentId !== selectionRootId
+  ));
 }
 
 // --- shared predicates ------------------------------------------------------
@@ -1093,10 +1283,17 @@ const PLANNERS: { [K in ActionId]?: Planner<K> } = {
 
   sendToAgent: (context, subject) => {
     if (subject.kind === 'externalPage') {
+      const external = context.externalContext?.(subject.contextId);
+      if (!external) return null;
       return stayAtDestination([{
         on: 'mainRenderer',
         kind: 'composerHandoff',
-        object: { kind: 'externalPage', contextId: subject.contextId },
+        object: {
+          kind: 'externalPage',
+          contextId: subject.contextId,
+          label: externalPageLabel(external),
+          value: externalPageContextValue(external),
+        },
         draftText: context.invocation.draftText,
       }]);
     }
@@ -1332,6 +1529,73 @@ const PLANNERS: { [K in ActionId]?: Planner<K> } = {
       command: 'delete_node',
       args: { nodeId },
     })));
+  },
+
+  indent: (context, subject) => {
+    const rows = subjectRows(subject);
+    const selectionRootId = selectionRootFor(context, subject);
+    if (!rows || selectionRootId === null) return null;
+    const byId = context.projection.byId;
+    const nodeIds = batchIndentNodeIds(structuralRowIds(context, subject), byId);
+    if (nodeIds.length === 0) return null;
+    // Expansion FIRST: the target is about to gain children, so expanding it
+    // early moves nothing on screen. Doing it after would hide the moved rows
+    // for a frame behind a collapsed parent.
+    const steps: EffectStep[] = [
+      { on: 'mainRenderer', kind: 'outlineIntent', intent: { kind: 'animateRowMovement' } },
+      {
+        on: 'mainRenderer',
+        kind: 'outlineIntent',
+        intent: { kind: 'expand', nodeIds: indentExpansionTargets(nodeIds, byId) },
+      },
+      {
+        on: 'mainRenderer',
+        kind: 'outlineIntent',
+        intent: {
+          kind: 'restoreSelection',
+          anchorId: rows.rowIds[0]!,
+          selectedIds: rows.rowIds,
+          selectionRootId,
+        },
+      },
+      { on: 'main', kind: 'command', command: 'batch_indent_nodes', args: { nodeIds } },
+    ];
+    return { steps, completion: 'restoreInvoker', focus: 'surfaceOwned' };
+  },
+
+  outdent: (context, subject) => {
+    const rows = subjectRows(subject);
+    const selectionRootId = selectionRootFor(context, subject);
+    if (!rows || selectionRootId === null) return null;
+    const byId = context.projection.byId;
+    const nodeIds = outdentRowIds(context, subject, selectionRootId);
+    if (nodeIds.length === 0) return null;
+    // Emptied parents are computed from the PRE-command tree but collapsed
+    // AFTER: collapsing one that still holds the rows would hide them for a
+    // frame and then show them again one level out.
+    const emptied = parentIdsEmptiedByOutdent(nodeIds, byId, selectionRootId);
+    const steps: EffectStep[] = [
+      { on: 'mainRenderer', kind: 'outlineIntent', intent: { kind: 'animateRowMovement' } },
+      {
+        on: 'mainRenderer',
+        kind: 'outlineIntent',
+        intent: {
+          kind: 'restoreSelection',
+          anchorId: rows.rowIds[0]!,
+          selectedIds: rows.rowIds,
+          selectionRootId,
+        },
+      },
+      { on: 'main', kind: 'command', command: 'batch_outdent_nodes', args: { nodeIds } },
+    ];
+    if (emptied.length > 0) {
+      steps.push({
+        on: 'mainRenderer',
+        kind: 'outlineIntent',
+        intent: { kind: 'collapse', nodeIds: emptied },
+      });
+    }
+    return { steps, completion: 'restoreInvoker', focus: 'surfaceOwned' };
   },
 
   capture: (context, subject, args) => {

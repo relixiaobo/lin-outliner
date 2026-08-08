@@ -21,7 +21,6 @@ function baseUi(patch: Partial<UiState> = {}): UiState {
     expanded: new Set<NodeId>(),
     expandedHiddenFields: new Set<string>(),
     editingDescriptionId: null,
-    commandOpen: false,
     batchTagSelectorOpen: false,
     toolbarDropdownRequest: null,
     ...patch,

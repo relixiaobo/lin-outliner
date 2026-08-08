@@ -86,7 +86,6 @@ function baseUiState(): UiState {
     expanded: new Set(),
     expandedHiddenFields: new Set(),
     editingDescriptionId: null,
-    commandOpen: false,
     batchTagSelectorOpen: false,
     toolbarDropdownRequest: null,
   };

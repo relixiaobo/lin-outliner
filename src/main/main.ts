@@ -249,10 +249,22 @@ import {
 } from './launcher/launcherWindow';
 import { registerLauncherHotkey, unregisterLauncherHotkeys } from './launcher/launcherHotkey';
 import { ActionInvocationService, type RendererStepAck } from './actionInvocationService';
+import {
+  APP_RENDERER_CAPABILITIES,
+  LAUNCHER_RENDERER_CAPABILITIES,
+  registerRendererCapabilities,
+  rendererHasCapability,
+} from './rendererCapabilities';
 import type { EffectStep } from '../core/actions/bindings';
 import {
+  ACTION_AMBIENT_CHANGED_CHANNEL,
+  ACTION_AMBIENT_SEED_REQUEST_CHANNEL,
+  ACTION_AMBIENT_SEED_RESPONSE_CHANNEL,
+  ACTION_AMBIENT_SEED_TIMEOUT_MS,
   ACTION_EVENT_CHANNEL,
+  ACTION_OBJECT_QUERY_CHANNEL,
   ACTION_OPEN_CHANNEL,
+  ACTION_OPENED_CHANNEL,
   ACTION_PARAMETER_QUERY_CHANNEL,
   ACTION_REQUEST_CHANNEL,
   ACTION_STEP_ACK_CHANNEL,
@@ -263,20 +275,18 @@ import {
 import type {
   ActionRequest,
   InvocationEvent,
+  InvocationRef,
   InvocationSeed,
+  ObjectQueryRequest,
   ParameterObjectQueryRequest,
 } from '../core/actions/types';
 import {
-  getStaticLauncherCommands,
-  LAUNCHER_CONTEXT_CHANNEL,
+  LAUNCHER_REMEDIATION_CHANNEL,
   LAUNCHER_NAVIGATE_TO_NODE_CHANNEL,
-  type LauncherCreateCaptureResult,
-  type LauncherExecuteResult,
   type LauncherInitialState,
-  type LauncherNodeMatch,
 } from '../core/launcher/commands';
-import { buildContextCaptureInput, buildManualNoteInput, isCaptureIntent } from '../core/launcher/sources';
-import { resolveLauncherNodeMatches } from '../core/launcher/nodeMatches';
+import { remediationForContext } from '../core/launcher/remediation';
+import { externalPageLabel } from '../core/actions/registry';
 import { rankTextSearchLabel } from '../core/textSearchAnalyzer';
 import { captureExternalContext } from './context/contextCapture';
 import { isAccessibilityTrusted, promptAccessibility } from './context/nativeBrowserTab';
@@ -1593,6 +1603,8 @@ function createWindow() {
     void mainWindow.loadFile(join(__dirname, '../renderer/index.html'));
   }
 
+  registerRendererCapabilities(mainWindow.webContents, APP_RENDERER_CAPABILITIES);
+
   mainWindow.on('closed', () => {
     pageTranslationService.dispose();
     actionInvocationService.invalidateRenderer(mainWindow?.webContents.id ?? -1);
@@ -1654,42 +1666,6 @@ function navigateMainToNode(nodeId: string): void {
   focusMainWindow();
 }
 
-/**
- * Resolve `search_nodes` hits into serializable matches for the launcher (which
- * can't read the document itself). Each match carries the node's single-line text
- * and its parent's text for disambiguation. Bounded to the top results.
- */
-async function searchLauncherNodes(query: string): Promise<LauncherNodeMatch[]> {
-  const q = query.trim();
-  if (!q) return [];
-  const hits = (await documentService.handle('search_nodes', { query: q })) as SearchHit[];
-  if (hits.length === 0) return [];
-  // Only the top hits are shown — resolve just those nodes (+ their parents, for
-  // the subtitle) by id, never materializing/mapping the whole-document projection
-  // on every debounced keystroke. Slice before lookup so work is bounded by the
-  // result limit, not the hit count.
-  const hitIds = hits.slice(0, LAUNCHER_NODE_RESULT_LIMIT).map((hit) => hit.nodeId);
-  const hitNodes = documentService.projectionNodesByIds(hitIds);
-  const parentIds = hitNodes
-    .map((node) => node.parentId)
-    .filter((id): id is string => Boolean(id));
-  const matchable = [...hitNodes, ...documentService.projectionNodesByIds(parentIds)].map((node) => ({
-    id: node.id,
-    text: node.content.text,
-    parentId: node.parentId,
-    icon: node.icon,
-    iconKind: node.iconKind,
-  }));
-  return resolveLauncherNodeMatches(
-    hitIds,
-    matchable,
-    LAUNCHER_NODE_RESULT_LIMIT,
-    getMessages(effectiveLocale()).common.untitled,
-  );
-}
-
-/** Max inline node results shown in the launcher (keeps the list scannable). */
-const LAUNCHER_NODE_RESULT_LIMIT = 8;
 
 // The accelerator the launcher hotkey actually registered under (or null if none
 // was free), surfaced to the launcher renderer so it can reflect/repair it later.
@@ -1705,6 +1681,10 @@ let launcherContext: ExternalContext | null = null;
 // open it belongs to and is dropped if the launcher was dismissed or re-opened
 // before it resolved — so a slow capture can never repopulate a stale/next open.
 let launcherOpenSeq = 0;
+// The invocation main created for the CURRENT launcher opening. Ambient
+// resolution names it explicitly so a capture that lands after a dismiss or a
+// re-open cannot install a page into the wrong opening.
+let launcherInvocationRef: InvocationRef | null = null;
 
 /**
  * Dismiss the launcher and forget its captured context. EVERY hide path routes
@@ -1715,6 +1695,11 @@ let launcherOpenSeq = 0;
 function dismissLauncher(): void {
   hideLauncherWindow();
   launcherContext = null;
+  // EVERY dismissal releases the invocation, not just the Escape path the
+  // renderer owns: otherwise a click-away leaves a live, consumable record —
+  // and its object refs executable — for the full TTL.
+  actionInvocationService.releaseOpening(launcherInvocationRef);
+  launcherInvocationRef = null;
   launcherOpenSeq++;
 }
 
@@ -1733,6 +1718,57 @@ let accessibilityPrompted = false;
  * (those target the browser by name, so focus having moved is fine) and push the
  * result to the renderer.
  */
+/** Resolve once the main renderer can receive steps, or give up. */
+async function waitForMainRendererLoad(): Promise<boolean> {
+  const contents = mainWindow?.webContents;
+  if (!contents || contents.isDestroyed()) return false;
+  if (!contents.isLoading()) return true;
+  return new Promise<boolean>((resolve) => {
+    const timer = setTimeout(() => resolve(false), MAIN_RENDERER_LOAD_TIMEOUT_MS);
+    contents.once('did-finish-load', () => {
+      clearTimeout(timer);
+      resolve(true);
+    });
+  });
+}
+
+const MAIN_RENDERER_LOAD_TIMEOUT_MS = 8_000;
+
+// In-flight in-app seed requests, by one-shot token.
+const pendingAmbientSeeds = new Map<string, (seed: unknown) => void>();
+
+/**
+ * Ask the MAIN renderer what the user had focused. It is the only surface that
+ * knows, and the answer is sender-checked and re-validated on the way in — main
+ * builds the object itself rather than accepting a finished one. No answer
+ * inside the window means no chip; the summon never waits on it.
+ */
+async function requestInAppAmbientSeed(openSeq: number): Promise<InvocationSeed | null> {
+  const target = liveWindow(mainWindow)?.webContents;
+  if (!target || target.isDestroyed()) return null;
+  const token = randomUUID();
+  const raw = await new Promise<unknown>((resolve) => {
+    const timer = setTimeout(() => {
+      pendingAmbientSeeds.delete(token);
+      resolve(null);
+    }, ACTION_AMBIENT_SEED_TIMEOUT_MS);
+    pendingAmbientSeeds.set(token, (seed) => {
+      clearTimeout(timer);
+      pendingAmbientSeeds.delete(token);
+      resolve(seed);
+    });
+    try {
+      target.send(ACTION_AMBIENT_SEED_REQUEST_CHANNEL, { token });
+    } catch {
+      clearTimeout(timer);
+      pendingAmbientSeeds.delete(token);
+      resolve(null);
+    }
+  });
+  if (openSeq !== launcherOpenSeq) return null;
+  return sanitizeInvocationSeed(raw);
+}
+
 async function toggleLauncher(): Promise<void> {
   const win = getLauncherWindow();
   if (win?.isVisible()) {
@@ -1750,6 +1786,34 @@ async function toggleLauncher(): Promise<void> {
   await showLauncherWindow(async () => {
     front.app = await getFrontmostApp();
   });
+  // The invocation is created SYNCHRONOUSLY for this open, with its ambient slot
+  // pending: the panel accepts input and can already act on the stable objects
+  // before external capture resolves. That is what closes the show->context race
+  // at its source rather than making the renderer wait.
+  const launcherContents = getLauncherWindow()?.webContents;
+  if (launcherContents && !launcherContents.isDestroyed()) {
+    const opened = actionInvocationService.openLauncher({
+      openSeq,
+      consumerId: launcherContents.id,
+    });
+    launcherInvocationRef = opened.invocationRef;
+    launcherContents.send(ACTION_OPENED_CHANNEL, opened);
+  }
+  // In-app summon must not read external context. When Tenon itself was
+  // frontmost there is no page to capture — the ambient object is what the user
+  // had focused, which only the main renderer can attest. Asking IT rather than
+  // classifying ourselves as `unknown-app` and capturing nothing.
+  if (front.app?.name === APP_NAME) {
+    const seeded = await requestInAppAmbientSeed(openSeq);
+    if (launcherContents && !launcherContents.isDestroyed() && launcherInvocationRef) {
+      launcherContents.send(ACTION_AMBIENT_CHANGED_CHANNEL, actionInvocationService.resolveAmbient({
+        invocationRef: launcherInvocationRef,
+        openSeq,
+        resolution: seeded ? { kind: 'inApp', seed: seeded } : { kind: 'none' },
+      }));
+    }
+    return;
+  }
   try {
     const context = await captureExternalContext({
       id: contextId,
@@ -1777,7 +1841,21 @@ async function toggleLauncher(): Promise<void> {
         warnings: context.warnings.map((w) => w.code),
       });
     }
-    getLauncherWindow()?.webContents.send(LAUNCHER_CONTEXT_CHANNEL, context);
+    // The raw ExternalContext no longer crosses to the locked-down renderer:
+    // main derives the one view it needs (the capture-degraded hint) and pushes
+    // that. The page itself arrives as an OBJECT through the action seam.
+    const contents = getLauncherWindow()?.webContents;
+    contents?.send(
+      LAUNCHER_REMEDIATION_CHANNEL,
+      remediationForContext(context, getMessages(effectiveLocale()), APP_NAME),
+    );
+    if (contents && launcherInvocationRef) {
+      contents.send(ACTION_AMBIENT_CHANGED_CHANNEL, actionInvocationService.resolveAmbient({
+        invocationRef: launcherInvocationRef,
+        openSeq,
+        resolution: { kind: 'externalPage', contextId: context.id as never },
+      }));
+    }
     // First browser capture without Accessibility → request it once (shows the
     // system prompt and registers the app in the Privacy list).
     if (!accessibilityPrompted && context.providerId === 'generic-webpage' && !isAccessibilityTrusted()) {
@@ -1786,23 +1864,6 @@ async function toggleLauncher(): Promise<void> {
     }
   } catch (error) {
     console.error('[launcher] context capture failed', error);
-  }
-}
-
-function executeLauncherCommand(id: unknown): LauncherExecuteResult {
-  switch (id) {
-    case 'open-main':
-      if (!mainWindow) createWindow();
-      focusMainWindow();
-      return { hide: true };
-    case 'open-settings':
-      openSettingsWindow();
-      return { hide: true };
-    default:
-      // Only open-main / open-settings ship today; AI, capture destinations, and
-      // navigation commands are deferred to follow-up plans and aren't registered
-      // yet. An unknown id just dismisses the launcher.
-      return { hide: true };
   }
 }
 
@@ -1881,6 +1942,9 @@ function openSettingsWindow(openTarget: SettingsOpenTarget = {}) {
   });
 
   const window = settingsWindow;
+  // Settings keeps the app preload, so it keeps the app capabilities its
+  // `api/client` path uses.
+  registerRendererCapabilities(window.webContents, APP_RENDERER_CAPABILITIES);
   hardenWebContents(window.webContents);
   attachNativeContextMenu(window.webContents);
   // Match the main window's custom native corner (MAC_WINDOW_CORNER_RADIUS) so the
@@ -2079,6 +2143,8 @@ function createConfigChildWindow(options: {
     },
   });
 
+  // Provider-config child windows likewise keep the app bridge.
+  registerRendererCapabilities(target.webContents, APP_RENDERER_CAPABILITIES);
   hardenWebContents(target.webContents);
   attachNativeContextMenu(target.webContents);
   applyMacWindowCorner(target, MAC_WINDOW_CORNER_RADIUS);
@@ -2159,8 +2225,30 @@ async function routeActionRendererStep(
   step: EffectStep,
   invocationRef: string,
 ): Promise<RendererStepAck> {
+  // The launcher's whole point is working when the main window is closed, so a
+  // missing window is a case to SERVE, not to report `gone` for. A navigate
+  // reuses the shipped deferred path; anything else brings the window up and
+  // waits for its renderer before dispatching.
+  if (step.on === 'mainRenderer' && step.kind === 'navigate' && typeof step.nodeId === 'string') {
+    if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isLoading()) {
+      navigateMainToNode(step.nodeId);
+      return { status: 'ok' };
+    }
+  }
+  if (step.on === 'mainRenderer' && (!mainWindow || mainWindow.isDestroyed())) {
+    createWindow();
+    const ready = await waitForMainRendererLoad();
+    if (!ready) return { status: 'gone' };
+  }
   const target = mainWindow?.webContents;
   if (!target || target.isDestroyed()) return { status: 'gone' };
+  // The launcher is a NON-ACTIVATING panel, so summoning it never brings Tenon
+  // forward. A step that lands the user somewhere must therefore focus the
+  // window itself — the deleted `launcher:openNode` always did, and without it
+  // the navigation happens invisibly behind whatever app they were in.
+  if (step.on === 'mainRenderer' && (step.kind === 'navigate' || step.kind === 'workspace')) {
+    focusMainWindow();
+  }
   const token = randomUUID();
   return new Promise<RendererStepAck>((resolve) => {
     const timer = setTimeout(() => {
@@ -2206,13 +2294,55 @@ const actionInvocationService = new ActionInvocationService({
   writeClipboard: (text) => clipboard.writeText(text),
   untitled: () => getMessages(effectiveLocale()).common.untitled,
   now: () => Date.now(),
+  // Main holds the authoritative captured context; the registry reads it, and
+  // only its PRESENTATION ever crosses to a renderer.
+  externalContext: (contextId) => (
+    launcherContext && launcherContext.id === contextId ? launcherContext : null
+  ),
+  describeExternalPage: (contextId) => {
+    const context = launcherContext && launcherContext.id === contextId ? launcherContext : null;
+    if (!context) return null;
+    // One derivation of the page's title, shared with the registry's own
+    // composer handoff — two copies drifted the moment either changed.
+    const subtitle = context.browser?.hostname ?? context.app.name;
+    return { title: externalPageLabel(context), ...(subtitle ? { subtitle } : {}) };
+  },
+  newCaptureId: () => `cap:${randomUUID()}`,
+  // Flow B. Main raises its own sheet and observes the answer; no token exists
+  // for a renderer to redeem. Parented to whichever window is in front so the
+  // sheet is modal to what the user is actually looking at — including the
+  // launcher, which is where the compromised-renderer threat lives.
+  confirmNatively: async (spec) => {
+    const locale = effectiveLocale();
+    // The same Cancel the in-app ConfirmDialog used, so the two confirmation
+    // styles do not disagree about what the escape hatch is called.
+    const strings = getMessages(locale).dialog;
+    const parent = liveWindow(getLauncherWindow())?.isVisible()
+      ? liveWindow(getLauncherWindow())
+      : liveWindow(mainWindow);
+    const response = await dialog.showMessageBox(parent ?? undefined as never, {
+      type: 'warning',
+      buttons: [spec.confirmLabel[locale] ?? spec.confirmLabel.en, strings.cancel],
+      defaultId: 1,
+      cancelId: 1,
+      message: spec.title[locale] ?? spec.title.en,
+      detail: spec.message[locale] ?? spec.message.en,
+    });
+    return response.response === 0;
+  },
 });
 
 function registerIpc() {
   // Every action channel is main-renderer only. The seed carries renderer FACTS
   // — anchored row, selection, panel identity, pin and expansion — and main
   // constructs the objects, mints the refs and owns the lifetime.
+  // Creating an invocation from a seed is ATTESTATION: only the main renderer
+  // can say which row was right-clicked, what is selected, and whether the row
+  // is pinned or expanded. The launcher has no such capability.
   ipcMain.handle(ACTION_OPEN_CHANNEL, (event, raw: unknown) => {
+    if (!rendererHasCapability(event.sender.id, 'actionAttestation')) {
+      throw new Error('This renderer may not attest invocation context.');
+    }
     assertMainRenderer(event, 'Action invocations');
     const seed = sanitizeInvocationSeed(raw);
     if (!seed) return null;
@@ -2222,15 +2352,22 @@ function registerIpc() {
     });
   });
 
+  ipcMain.handle(ACTION_OBJECT_QUERY_CHANNEL, (event, raw: unknown) => {
+    assertActionRequester(event);
+    const request = sanitizeObjectQuery(raw);
+    if (!request) return null;
+    return actionInvocationService.queryObjects(request, event.sender.id);
+  });
+
   ipcMain.handle(ACTION_PARAMETER_QUERY_CHANNEL, (event, raw: unknown) => {
-    assertMainRenderer(event, 'Action invocations');
+    assertActionRequester(event);
     const request = sanitizeParameterQuery(raw);
     if (!request) return null;
     return actionInvocationService.queryParameterObjects(request, event.sender.id);
   });
 
   ipcMain.handle(ACTION_REQUEST_CHANNEL, (event, raw: unknown) => {
-    assertMainRenderer(event, 'Action invocations');
+    assertActionRequester(event);
     const request = sanitizeActionRequest(raw);
     // A malformed request is not "stale" — it never named anything.
     if (!request) return { status: 'stale', reason: 'invocation' };
@@ -2238,13 +2375,22 @@ function registerIpc() {
   });
 
   ipcMain.handle(ACTION_EVENT_CHANNEL, (event, raw: unknown) => {
-    assertMainRenderer(event, 'Action invocations');
+    assertActionRequester(event);
     const invocationEvent = sanitizeInvocationEvent(raw);
     if (!invocationEvent) return { status: 'spent' };
     return actionInvocationService.event(invocationEvent, event.sender.id);
   });
 
+  ipcMain.handle(ACTION_AMBIENT_SEED_RESPONSE_CHANNEL, (event, raw: unknown) => {
+    // Only the main renderer may answer, and only a request main issued.
+    assertMainRenderer(event, 'Action invocations');
+    const response = raw as { token?: unknown; seed?: unknown } | undefined;
+    if (typeof response?.token !== 'string') return;
+    pendingAmbientSeeds.get(response.token)?.(response.seed ?? null);
+  });
+
   ipcMain.handle(ACTION_STEP_ACK_CHANNEL, (event, raw: unknown) => {
+    // Renderer steps only ever route to the MAIN renderer, so only it can ack.
     assertMainRenderer(event, 'Action invocations');
     const ack = raw as ActionStepAck | undefined;
     if (typeof ack?.token !== 'string') return;
@@ -2307,6 +2453,13 @@ function registerIpc() {
     });
   });
   ipcMain.handle('lin:invoke', async (event, command: string, args?: Record<string, unknown>) => {
+    // BEFORE dispatch, not inside it: the launcher must not reach
+    // `get_projection` or `delete_node` by any command name, and a renderer
+    // with no registered capabilities fails closed rather than inheriting the
+    // app's rights.
+    if (!rendererHasCapability(event.sender.id, 'appCommands')) {
+      throw new Error('This renderer may not invoke application commands.');
+    }
     const dispatch = () => {
       if (command.startsWith('memory_')) return handleMemoryCommand(command, args ?? {});
       if (isAgentCommand(command)) return handleAgentCommand(event, command, args ?? {});
@@ -2422,99 +2575,35 @@ function registerIpc() {
   });
   ipcMain.handle(LIN_CLEAR_URL_PREVIEW_DATA_CHANNEL, clearUrlPreviewWebsiteData);
   ipcMain.handle(LIN_CLEAR_PREVIEW_TRANSLATION_CACHE_CHANNEL, clearPreviewTranslationCache);
-  // Launcher window IPC (the prewarmed global launcher).
-  ipcMain.handle('launcher:hide', () => {
+  // Launcher window IPC (the prewarmed global launcher). Every handler below is
+  // sender-checked: `launcher:*` is the launcher's own bridge, and a non-launcher
+  // renderer naming these channels is refused rather than served.
+  function assertLauncherRenderer(event: IpcMainInvokeEvent): void {
+    if (!rendererHasCapability(event.sender.id, 'launcher')) {
+      throw new Error('The launcher bridge is available only to the launcher window.');
+    }
+  }
+
+  // The in-app entry points (the sidebar Search row, the `/`-menu row) summon
+  // the SAME panel the hotkey does. The ⌘K binding retires; the entry points do
+  // not — a surface that teaches its own keystroke must still be reachable by
+  // someone who has not learned it.
+  ipcMain.handle('lin:show-launcher', async (event) => {
+    assertMainRenderer(event, 'Summoning the command surface');
+    await toggleLauncher();
+  });
+  ipcMain.handle('launcher:hide', (event) => {
+    assertLauncherRenderer(event);
     dismissLauncher();
   });
-  ipcMain.handle('launcher:getInitialState', (): LauncherInitialState => ({
-    commands: getStaticLauncherCommands(),
-    hotkey: launcherHotkeyAccelerator,
-  }));
-  ipcMain.handle('launcher:executeCommand', (_event, id: unknown): LauncherExecuteResult =>
-    executeLauncherCommand(id));
-  // New node from the launcher: a plain typed note (no external source). Ensure
-  // today's date node, then create the node under it. NOT a capture — no sidecar.
-  ipcMain.handle('launcher:createCapture', async (_event, raw: unknown): Promise<LauncherCreateCaptureResult> => {
-    const payload = (raw ?? {}) as { title?: unknown; note?: unknown };
-    const title = typeof payload.title === 'string' ? payload.title.trim() : '';
-    if (!title) return { ok: false };
-    const note = typeof payload.note === 'string' ? payload.note : undefined;
-    try {
-      const now = new Date();
-      await documentService.handle('ensure_date_node', {
-        year: now.getFullYear(),
-        month: now.getMonth() + 1,
-        day: now.getDate(),
-      });
-      const input = buildManualNoteInput({
-        destinationParentId: documentService.todayId(),
-        title,
-        note,
-      });
-      const outcome = await documentService.handle('create_capture', { input }) as CommandResult;
-      return { ok: true, nodeId: outcome.focus?.nodeId };
-    } catch (error) {
-      console.error('[launcher] createCapture failed', error);
-      return { ok: false };
-    }
-  });
-  // Context capture: save what the user was looking at (the main-held authoritative
-  // ExternalContext for this open) under Today. The renderer supplies only an
-  // optional note/intent — never the source metadata — so it can't be tampered with.
-  ipcMain.handle('launcher:createContextCapture', async (_event, raw: unknown): Promise<LauncherCreateCaptureResult> => {
-    const context = launcherContext;
-    if (!context) return { ok: false };
-    const payload = (raw ?? {}) as { note?: unknown; intent?: unknown };
-    const note = typeof payload.note === 'string' ? payload.note : undefined;
-    // Validate against the known set — an out-of-enum string must not be persisted
-    // into the durable CaptureNodeMetadata (the renderer is across the seam).
-    const intent = isCaptureIntent(payload.intent) ? payload.intent : undefined;
-    try {
-      const now = new Date();
-      await documentService.handle('ensure_date_node', {
-        year: now.getFullYear(),
-        month: now.getMonth() + 1,
-        day: now.getDate(),
-      });
-      const captureId = `cap:${randomUUID()}`;
-      // Basic-info capture: the node carries title + URL + author only. Rich page
-      // content (body/selection/transcript) is not extracted today, and no browser
-      // extension or CDP backend is planned; when it lands it will be an explicit
-      // reader invoked after the user picks an action, never on the ambient hotkey
-      // path (docs/plans/unified-command-surface.md).
-      const input = buildContextCaptureInput({
-        context,
-        destinationParentId: documentService.todayId(),
-        captureId,
-        note,
-        intent,
-      });
-      const outcome = await documentService.handle('create_capture', { input }) as CommandResult;
-      if (!app.isPackaged) {
-        console.log('[launcher] capture saved', { nodeId: outcome.focus?.nodeId ?? null });
-      }
-      return { ok: true, nodeId: outcome.focus?.nodeId };
-    } catch (error) {
-      console.error('[launcher] createContextCapture failed', error);
-      return { ok: false };
-    }
-  });
-  // Inline node search: the launcher input queries the document directly (no
-  // "Search notes" command). Read-only; main enriches hits with node text.
-  ipcMain.handle('launcher:searchNodes', async (_event, raw: unknown): Promise<LauncherNodeMatch[]> => {
-    try {
-      return await searchLauncherNodes(typeof raw === 'string' ? raw : '');
-    } catch (error) {
-      console.error('[launcher] searchNodes failed', error);
-      return [];
-    }
+  // Bootstrap: only the summon accelerator, so the panel's identity zone can
+  // teach the keystroke. The result list is no longer a static command set —
+  // it is the object generation main installs on the invocation.
+  ipcMain.handle('launcher:getInitialState', (event): LauncherInitialState => {
+    assertLauncherRenderer(event);
+    return { hotkey: launcherHotkeyAccelerator };
   });
   // Open a node search result: bring up the main window and navigate to it.
-  ipcMain.handle('launcher:openNode', (_event, raw: unknown): void => {
-    if (typeof raw !== 'string' || !raw) return;
-    navigateMainToNode(raw);
-    dismissLauncher();
-  });
   // Appearance preference. Setting nativeTheme.themeSource rewrites
   // prefers-color-scheme in every renderer, so the @media rules in theme-dark.css
   // flip all windows at once — no per-window broadcast needed. We mirror the stored
@@ -2896,6 +2985,7 @@ function sanitizeInvocationSeed(raw: unknown): InvocationSeed | null {
     selectedIds,
     isPinned: seed.isPinned === true,
     rowExpanded: seed.rowExpanded === true,
+    ...(typeof seed.selectionRootId === 'string' ? { selectionRootId: seed.selectionRootId } : {}),
   };
 }
 
@@ -2904,6 +2994,23 @@ function sanitizeInvocationSeed(raw: unknown): InvocationSeed | null {
  * re-derives everything else. Anything malformed is refused outright rather
  * than half-trusted.
  */
+function sanitizeObjectQuery(raw: unknown): ObjectQueryRequest | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const value = raw as Record<string, unknown>;
+  if (
+    typeof value.invocationRef !== 'string'
+    || typeof value.openSeq !== 'number'
+    || typeof value.requestId !== 'string'
+    || typeof value.query !== 'string'
+  ) return null;
+  return {
+    invocationRef: value.invocationRef as ObjectQueryRequest['invocationRef'],
+    openSeq: value.openSeq,
+    requestId: value.requestId as ObjectQueryRequest['requestId'],
+    query: value.query.slice(0, 512),
+  };
+}
+
 function sanitizeParameterQuery(raw: unknown): ParameterObjectQueryRequest | null {
   if (typeof raw !== 'object' || raw === null) return null;
   const value = raw as Record<string, unknown>;
@@ -2945,8 +3052,6 @@ function sanitizeInvocationEvent(raw: unknown): InvocationEvent | null {
   const value = raw as Record<string, unknown>;
   if (typeof value.invocationRef !== 'string') return null;
   switch (value.kind) {
-    case 'confirmationCancelled':
-      return typeof value.challenge === 'string' ? (raw as InvocationEvent) : null;
     case 'objectRemoved':
       return typeof value.objectRef === 'string' ? (raw as InvocationEvent) : null;
     case 'selectionMemberRemoved':
@@ -2957,6 +3062,18 @@ function sanitizeInvocationEvent(raw: unknown): InvocationEvent | null {
       return raw as InvocationEvent;
     default:
       return null;
+  }
+}
+
+/**
+ * Naming an action, querying its parameters and reporting a lifecycle event are
+ * open to any renderer holding `actionRequests` — the launcher included. That
+ * is safe precisely because main re-evaluates the named tuple itself; it is not
+ * safe for `lin:invoke`, which is why that channel has its own gate.
+ */
+function assertActionRequester(event: IpcMainInvokeEvent): void {
+  if (!rendererHasCapability(event.sender.id, 'actionRequests')) {
+    throw new Error('This renderer may not request actions.');
   }
 }
 
@@ -4276,13 +4393,18 @@ if (!app.requestSingleInstanceLock()) {
     createWindow();
     scheduleManagedSkillUpdateCheck();
     // Prewarm the hidden launcher window and bind the global toggle hotkey.
-    createLauncherWindow({
+    const launcherWindow = createLauncherWindow({
       preloadPath: join(__dirname, '../preload/index.cjs'),
       devUrl: RENDERER_DEV_ORIGIN ? `${RENDERER_DEV_ORIGIN}/launcher.html` : null,
       packagedHtmlPath: join(__dirname, '../renderer/launcher.html'),
       harden: hardenWebContents,
       onBlurHide: dismissLauncher,
     });
+    // Least privilege at the seam, not only in the preload bundle: no
+    // `appCommands` (so `lin:invoke` is refused before dispatch) and no
+    // `actionAttestation` (so `view` / `workspace` facts stay the main
+    // renderer's to attest).
+    registerRendererCapabilities(launcherWindow.webContents, LAUNCHER_RENDERER_CAPABILITIES);
     // Tenon is a regular foreground app (dock icon + menu bar). In dev, launching
     // the binary straight from the terminal (not via LaunchServices) can leave the
     // app in macOS "accessory" activation policy (background-only → no dock icon, no

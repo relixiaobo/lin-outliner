@@ -9,46 +9,8 @@
   padding-top: 12vh;
 }
 
-.command-palette {
-  position: relative;
-  width: min(600px, calc(100vw - 32px));
-  overflow: hidden;
-  padding: 0;
-}
-
-.command-input {
-  width: 100%;
-  height: 40px;
-  border-bottom: 1px solid var(--separator);
-  color: var(--text-primary);
-  font-size: var(--font-ui-md);
-  padding: 0 var(--space-8);
-}
-
-.command-input::placeholder,
 .row-input::placeholder {
   color: var(--input-placeholder);
-}
-
-.command-list {
-  max-height: 360px;
-  overflow: auto;
-  padding: var(--space-3);
-}
-
-.command-action-bar {
-  display: flex;
-  height: 40px;
-  align-items: center;
-  justify-content: flex-end;
-  border-top: 1px solid var(--separator);
-  padding: 0 var(--space-6);
-}
-
-.command-action-button {
-  height: 26px;
-  color: var(--text-secondary);
-  font-size: var(--font-meta);
 }
 
 .kbd {

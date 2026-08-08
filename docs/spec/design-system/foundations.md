@@ -304,16 +304,16 @@ Rules:
 | --- | --- | --- |
 | Chrome material | sidebar rail, agent rail | Translucent rail material (`--material-sidebar`) over OS vibrancy. |
 | Elevated overlay | menus, popovers (`MenuSurface`) | Higher-opacity material (`--material-popover`) + level-1 shadow. Floats over content; not the same sheet as the rails. |
-| Opaque elevated | dialogs, in-app command palette | Opaque `--bg-elevated` + level-2 shadow. Never translucent — these own the user's focus over busy in-app content. |
+| Opaque elevated | dialogs | Opaque `--bg-elevated` + level-2 shadow. Never translucent — these own the user's focus over busy in-app content. |
 | System launcher | the global capture launcher (its own window) | Vibrant Spotlight/Raycast glass: OS `vibrancy` (`hud`) under a **transparent** CSS surface; functional fills + alpha-on-ink separators tint the glass, no second `backdrop-filter`. Native window shadow + custom 16px corner. Opaque `--bg-elevated` fallback under reduced-transparency / increased-contrast. |
 
-So `MenuSurface` uses `--material-popover`; a `Dialog`/in-app command palette uses
+So `MenuSurface` uses `--material-popover`; a `Dialog` uses
 `--bg-elevated`. Never glass-on-glass: an overlay opened over a rail steps up to
 the elevated-overlay tier rather than stacking another rail material.
 
 **The global launcher is the deliberate exception to the opaque-palette rule.**
 As a *system* overlay summoned over other apps and the desktop (the Spotlight /
-Raycast idiom), it IS vibrant glass, not the in-app opaque command palette. The
+Raycast idiom), it IS vibrant glass, not an opaque in-app dialog. The
 distinction is the backdrop: an in-app palette floats over our own busy content
 (opaque, to own focus); the system launcher floats over the OS, where glass is
 the native expectation. A `⌘K` menu opened inside it steps up to the opaque
@@ -347,7 +347,7 @@ Window material mapping:
 | Main app window | macOS `vibrancy: 'under-window'`; Windows `backgroundMaterial: 'mica'` when available | Root receives the detected `data-window-material`; rails and in-app material overlays use `--material-*` + `--material-backdrop` over the window material. |
 | Sidebar and agent rails | Same main-window material underneath | Floating CSS rail surfaces use `--material-sidebar`, `--material-backdrop`, and `--rail-surface-shadow`. |
 | Menus / popovers inside the app | Same main-window material underneath | CSS elevated-overlay tier: `--material-popover` + `--material-backdrop` + level-1 shadow. |
-| Dialogs / in-app command palette | Same main-window material underneath | Opaque `--bg-elevated` + level-2 shadow; never translucent. |
+| Dialogs | Same main-window material underneath | Opaque `--bg-elevated` + level-2 shadow; never translucent. |
 | Global launcher window | macOS `vibrancy: 'hud'` | Transparent launcher surface over HUD material; functional fills tint the glass, no second `backdrop-filter`. |
 | Settings and provider child windows | No OS material | Opaque preferences/config surfaces; Settings rail may reuse `--rail-surface-shadow` without material; no `data-window-material` glass contract. |
 
@@ -414,7 +414,7 @@ scale font size with viewport width.
 ### Elevation, Radius & Stroke
 
 - **Elevation:** two drop-shadow levels — level 1 (menus, popovers, tooltips) and
-  level 2 (dialogs, command palette). Shadows are pure drop shadows; floating
+  level 2 (dialogs). Shadows are pure drop shadows; floating
   surfaces carry no real outer border. Dark mode deepens them. Floating rails
   carry their own *soft, low* elevation plus a subtle edge ring
   (`--rail-surface-shadow`) — the softest tier (rail < level-1 menus < level-2

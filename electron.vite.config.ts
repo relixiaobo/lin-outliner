@@ -17,6 +17,12 @@ export default defineConfig({
   preload: {
     build: {
       rollupOptions: {
+        // ONE preload entry, deliberately. Two entries make rollup emit a
+        // shared chunk that both bundles `require`, and a sandboxed preload's
+        // `require` is a polyfill limited to electron/events/timers/url — which
+        // left `window.lin` undefined in every window. The bundle exposes the
+        // app bridge or the launcher's narrow one depending on the role flag
+        // main passes; see docs/spec/action-registry.md.
         input: 'src/preload/index.ts',
         external: ['electron'],
         output: {

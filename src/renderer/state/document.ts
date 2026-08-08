@@ -227,7 +227,6 @@ export interface UiState {
   expanded: Set<NodeId>;
   expandedHiddenFields: Set<string>;
   editingDescriptionId: NodeId | null;
-  commandOpen: boolean;
   batchTagSelectorOpen: boolean;
   toolbarDropdownRequest: ToolbarDropdownRequest | null;
 }
@@ -294,7 +293,6 @@ export function useUiState() {
     expanded: new Set<NodeId>(),
     expandedHiddenFields: new Set<string>(),
     editingDescriptionId: null,
-    commandOpen: false,
     batchTagSelectorOpen: false,
     toolbarDropdownRequest: null,
   });

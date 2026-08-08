@@ -15,15 +15,12 @@ import type {
   ActionPresentation,
   ActionRequestResult,
   ArgumentSlot,
-  ChallengeToken,
-  ConfirmationSpec,
   InvocationOpened,
   InvocationRef,
   ObjectPresentation,
   ObjectRef,
   RequestId,
 } from '../../../core/actions/types';
-import { requestSendNodeReferenceToThreadComposer } from '../../agent/agentReveal';
 import type { NodeId, NodeProjection } from '../../api/types';
 import { useI18n, useT } from '../../i18n/I18nProvider';
 import type { DocumentIndex, ToolbarDropdownSection } from '../../state/document';
@@ -32,11 +29,11 @@ import {
   candidateForEnter,
   registerActionStepHandlers,
   reportActionError,
+  stageComposerObject,
 } from '../interactions/actionSteps';
 import { isImeComposingEvent } from '../interactions/imeKeyboard';
 import { ChevronRightIcon, CheckIcon, ICON_SIZE, MoveToIcon, SupertagIcon } from '../icons';
 import { Button } from '../primitives/Button';
-import { ConfirmDialog } from '../primitives/ConfirmDialog';
 import { Input } from '../primitives/Input';
 import { MenuItem } from '../primitives/MenuItem';
 import { MenuSurface } from '../primitives/MenuSurface';
@@ -54,6 +51,8 @@ interface NodeContextMenuProps {
   targetId: NodeId;
   visualRowId: NodeId;
   panelId: string;
+  /** The pane root this row is being acted on from; `outdent` needs it. */
+  selectionRootId: NodeId;
   viewToolbarVisibleInRow: boolean;
   openId: NodeId;
   selectedIds: Set<NodeId>;
@@ -73,12 +72,6 @@ type MenuMode =
   | { kind: 'viewMode' }
   | { kind: 'parameter'; slot: ArgumentSlot; title: string; inputLabel: string; placeholder: string };
 
-interface PendingConfirmation {
-  challenge: ChallengeToken;
-  confirm: ConfirmationSpec;
-  presentation: ActionPresentation;
-}
-
 const CANDIDATE_DEBOUNCE_MS = 120;
 
 export function NodeContextMenu(props: NodeContextMenuProps) {
@@ -95,7 +88,6 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
     query: string;
     items: readonly ObjectPresentation[];
   }>({ query: '', items: [] });
-  const [pendingConfirm, setPendingConfirm] = useState<PendingConfirmation | null>(null);
   const invocationRef = useRef<InvocationRef | null>(null);
   const releaseHandlersRef = useRef<(() => void) | null>(null);
   const inFlightRef = useRef(0);
@@ -118,6 +110,7 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
     anchorNodeId: props.node.id,
     visualRowId: props.visualRowId,
     panelId: props.panelId,
+    selectionRootId: props.selectionRootId,
     selectedIds: [...props.selectedIds],
     isPinned: props.isPinned,
     rowExpanded: props.viewToolbarVisibleInRow,
@@ -126,6 +119,7 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
     props.node.id,
     props.panelId,
     props.selectedIds,
+    props.selectionRootId,
     props.viewToolbarVisibleInRow,
     props.visualRowId,
   ]);
@@ -203,12 +197,9 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
             handlersRef.current.onRevealViewToolbar(target.visualRowId, target.nodeId);
           } else handlersRef.current.onOpenViewSection(target.nodeId, target.section);
         },
-        composerHandoff: (object) => {
-          requestSendNodeReferenceToThreadComposer({
-            nodeId: object.nodeId,
-            title: object.title,
-          });
-        },
+        // One staging path for both object kinds; the menu never stages a page,
+        // but routing through the shared helper keeps the two from drifting.
+        composerHandoff: (object) => stageComposerObject(object),
       });
       setOpening(result);
     }).catch(() => {
@@ -226,10 +217,7 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
     };
   }, [seed]);
 
-  useDismissibleOverlay(menuRef, props.onClose, {
-    disabled: pendingConfirm !== null,
-    escape: false,
-  });
+  useDismissibleOverlay(menuRef, props.onClose, { escape: false });
   const { onKeyDown } = useMenuKeyboard({
     surfaceRef: menuRef,
     onClose: props.onClose,
@@ -240,11 +228,7 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
     focusKey: opening ? mode.kind : 'pending',
   });
 
-  const runRequest = async (
-    presentation: ActionPresentation,
-    args: unknown,
-    challenge?: ChallengeToken,
-  ) => {
+  const runRequest = async (presentation: ActionPresentation, args: unknown) => {
     const ref = invocationRef.current;
     if (!ref) return;
     inFlightRef.current += 1;
@@ -254,29 +238,20 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
         invocationRef: ref,
         subjectRef: presentation.subjectRef,
         arguments: args,
-        ...(challenge ? { challenge } : {}),
       } as never);
-      if (result?.status === 'confirmationRequired') {
-        setPendingConfirm({
-          challenge: result.challenge,
-          confirm: result.confirm,
-          presentation: result.presentation,
-        });
-        return;
-      }
       if (result?.status === 'completed') {
         applyActionFocus(result.focus);
         // Succeeding is not a reason to erase someone else's failure: the notice
         // is app-wide, so clearing here would delete a report this action never
         // made. It expires on its own.
-      } else {
+      } else if (result?.status !== 'cancelled') {
         // Anything that is not a completion is a failure the user must see: a
         // rejected command, an unacked renderer step, a half-applied plan, or a
-        // subject that went stale. Closing the menu silently is what the
-        // shipped `useCommandRunner` path never did.
+        // subject that went stale. A deliberate CANCEL is none of those — the
+        // user declined the sheet, and reporting that as an error would be a
+        // banner for doing exactly what they meant.
         reportActionError(actionFailureMessage(result, t));
       }
-      setPendingConfirm(null);
       closeOnce();
     } finally {
       inFlightRef.current -= 1;
@@ -302,8 +277,9 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
       setQuery('');
       return;
     }
-    // An action carrying `confirm` keeps the menu open until it resolves.
-    if (!presentation.confirm) closeOnce();
+    // Confirmation is main's own native sheet now, so the menu closes on the
+    // click either way — the sheet is what stays in front of the user.
+    closeOnce();
     void runRequest(presentation, presentation.binding.arguments);
   };
 
@@ -498,40 +474,6 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
             ? renderViewMode()
             : renderParameter(mode)}
       </MenuSurface>
-      {pendingConfirm ? (
-        <ConfirmDialog
-          danger={pendingConfirm.confirm.danger}
-          title={nameFor(pendingConfirm.confirm.title, locale)}
-          message={nameFor(pendingConfirm.confirm.message, locale)}
-          confirmLabel={nameFor(pendingConfirm.confirm.confirmLabel, locale)}
-          onCancel={() => {
-            const ref = invocationRef.current;
-            const challenge = pendingConfirm.challenge;
-            setPendingConfirm(null);
-            // Main learns the confirmation was declined, so the record returns
-            // to `live` and the challenge dies with it.
-            if (ref) {
-              void window.lin?.actions?.event({
-                kind: 'confirmationCancelled',
-                invocationRef: ref,
-                challenge,
-              });
-            }
-          }}
-          onConfirm={() => {
-            const pending = pendingConfirm;
-            setPendingConfirm(null);
-            closeOnce();
-            void runRequest(
-              pending.presentation,
-              pending.presentation.binding.state === 'ready'
-                ? pending.presentation.binding.arguments
-                : {},
-              pending.challenge,
-            );
-          }}
-        />
-      ) : null}
     </>,
     document.body,
   );

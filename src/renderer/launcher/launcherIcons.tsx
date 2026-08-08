@@ -1,32 +1,57 @@
-// View-layer icon mapping for launcher rows. Uses lucide-react, matching the app's
-// shared icon set (src/renderer/ui/icons.ts), so the launcher reads as the same
-// product. Kept OUT of the pure launcherModel so the model stays DOM/dependency-free.
+// View-layer icon mapping for launcher rows. Uses lucide-react, matching the
+// app's shared icon set (src/renderer/ui/icons.ts), so the launcher reads as the
+// same product. Kept OUT of the pure model so that stays DOM/dependency-free.
 //
-// Capture rows always use ONE uniform capture glyph (it's the same "Capture"
-// command regardless of what's being captured — page, video, note, …); the row
-// title/subtitle carry the specifics. A live frontmost-app icon (extracted in main
-// and pushed over IPC as a local PNG — never a remote fetch, the launcher renderer
-// is locked down) is a possible follow-up.
+// The registry names icons by `IconId` (it is core code and cannot hold
+// components); this is the launcher tier's single id -> component map.
 
-import { AppWindow, CirclePlus, Globe, Search, Settings, TriangleAlert } from 'lucide-react';
+import {
+  AppWindow,
+  CheckSquare,
+  Library,
+  Shapes,
+  CirclePlus,
+  Copy,
+  FileText,
+  Globe,
+  Hash,
+  List,
+  Pin,
+  Search,
+  Settings,
+  Table,
+  Trash2,
+  TriangleAlert,
+} from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import type { LauncherCommandId } from '../../core/launcher/commands';
-import type { LauncherItem } from './launcherModel';
+import type { IconId, ObjectPresentation } from '../../core/actions/types';
 
-const COMMAND_ICONS: Record<LauncherCommandId, LucideIcon> = {
-  'open-main': AppWindow,
-  'open-settings': Settings,
+const ICONS: Partial<Record<IconId, LucideIcon>> = {
+  checkbox: CheckSquare,
+  library: Library,
+  mainWindow: AppWindow,
+  savedSearches: Search,
+  schema: Shapes,
+  settings: Settings,
+  copy: Copy,
+  description: FileText,
+  node: List,
+  open: Globe,
+  outline: List,
+  pin: Pin,
+  supertag: Hash,
+  table: Table,
+  trash: Trash2,
 };
 
 /**
- * The leading Lucide glyph for a row. Node rows are NOT handled here — they render
- * their own emoji icon or a bullet directly (see LauncherRow), since a node's icon
- * is data (emoji), not a fixed glyph.
+ * The leading glyph for an object row. A node with its own emoji renders that
+ * instead (see LauncherRow) — a node's icon is data, not a fixed glyph.
  */
-export function iconForItem(item: LauncherItem): LucideIcon {
-  if (item.kind === 'capture-page' || item.kind === 'capture-note') return CirclePlus;
-  if (item.kind === 'command') return COMMAND_ICONS[item.command.id] ?? Globe;
-  return Globe; // node rows render their own icon/bullet, not this
+export function iconForObject(object: ObjectPresentation): LucideIcon {
+  if (object.kind === 'draft') return CirclePlus;
+  if (object.kind === 'externalPage') return CirclePlus;
+  return ICONS[object.iconId] ?? Globe;
 }
 
 /** The leading glyph shown in the input row. */

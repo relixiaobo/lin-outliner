@@ -33,7 +33,14 @@ import {
   nodeSelectionObject,
   nodeText,
   presentObject,
+  type ExternalPageDescription,
 } from '../core/actions/objects';
+import {
+  ACTION_PANEL_ORDER,
+  ACTION_PARAMETER_IDS,
+  declaresParameter,
+} from '../core/actions/registry';
+import { orderedResultObjects, systemNodeObject } from '../core/actions/surfaceObjects';
 import {
   eligibleMoveToIds,
   planFor,
@@ -55,30 +62,42 @@ import type {
   ActionRequest,
   ActionRequestResult,
   ActionResolveContext,
+  AmbientContextChanged,
+  AmbientContextResolution,
+  AmbientRequestId,
+  ExternalContextId,
   InvocationRecord,
+  ObjectQueryRequest,
+  ObjectQueryResult,
+  RequestId,
+  SurfaceItemPresentation,
   ActionExecutionResult,
   ArgumentObjectGeneration,
   ArgumentSlot,
-  ChallengeToken,
+  ConfirmationSpec,
   InvocationEvent,
   InvocationEventResult,
   InvocationOpened,
+  InvocationPhase,
   InvocationRef,
   InvocationSeed,
   ObjectPresentation,
   ObjectRef,
   ParameterObjectQueryRequest,
   ParameterObjectQueryResult,
-  ReadyActionPresentation,
   SurfaceObject,
+  ViewFact,
+  WorkspaceFact,
 } from '../core/actions/types';
+import type { ExternalContext } from '../core/launcher/context';
 import type { DocumentProjection, FocusHint, NodeId, NodeProjection, SearchHit } from '../core/types';
 
 /** How many ranked hits admission filters before the picker's own limit. */
 const CANDIDATE_FETCH_LIMIT = 200;
+/** How many ranked node hits the main list shows. */
+const LAUNCHER_RESULT_LIMIT = 8;
 const CANDIDATE_LIMIT = 10;
 const INVOCATION_TTL_MS = 5 * 60_000;
-const CHALLENGE_TTL_MS = 60_000;
 
 export type RendererStepAck =
   | { status: 'ok' }
@@ -95,18 +114,24 @@ export interface ActionInvocationHost {
   /** Route a renderer step to the MAIN renderer and wait for its ack. */
   executeRendererStep(step: EffectStep, invocationRef: InvocationRef): Promise<RendererStepAck>;
   activateAppSurface(surface: AppSurface): Promise<void>;
+  /**
+   * Raise main's OWN confirmation sheet and report the user's answer. No token
+   * is minted for this flow, so nothing can be handed to a renderer and nothing
+   * can be redeemed by one — which is the whole point.
+   */
+  confirmNatively?(spec: ConfirmationSpec): Promise<boolean>;
   writeClipboard(text: string): void;
   /** The active locale's untitled fallback — part of `copy`'s parity. */
   untitled(): string;
   now(): number;
-}
-
-interface Challenge {
-  token: ChallengeToken;
-  actionId: ActionId;
-  subjectRef: ObjectRef;
-  argumentsHash: string;
-  expiresAt: number;
+  /**
+   * The captured page main holds for an opening. The registry reads it; it
+   * never crosses to a renderer, which only ever sees the presentation.
+   */
+  externalContext?(contextId: ExternalContextId): ExternalContext | null;
+  describeExternalPage?(contextId: ExternalContextId): ExternalPageDescription | null;
+  /** Nondeterministic, so main mints it rather than the registry. */
+  newCaptureId?(): string;
 }
 
 /**
@@ -120,7 +145,6 @@ interface Record_ extends InvocationRecord {
   objects: Map<ObjectRef, SurfaceObject>;
   /** Main-owned monotonic counter; request ids are never trusted. */
   generation: number;
-  challenge: Challenge | null;
 }
 
 // Web Crypto rather than `node:crypto`, so this module is isomorphic: the
@@ -177,13 +201,8 @@ export class ActionInvocationService {
       anchorObjectRef: anchor.objectRef,
       argumentGenerations: [],
       draftText: '',
-      view: [{
-        objectRef: anchor.objectRef,
-        panelId: seed.panelId,
-        visualRowId: seed.visualRowId,
-        rowExpanded: seed.rowExpanded,
-      }],
-      workspace: [{ objectRef: anchor.objectRef, isPinned: seed.isPinned }],
+      view: viewFactsFor(seed, anchor, selection),
+      workspace: workspaceFactsFor(seed, anchor, selection),
     };
 
     const record: Record_ = {
@@ -200,11 +219,284 @@ export class ActionInvocationService {
       expiresAt: this.host.now() + INVOCATION_TTL_MS,
       objects,
       generation: 0,
-      challenge: null,
     };
     this.records.set(record.ref, record);
     this.sweep();
     return this.openingFor(record);
+  }
+
+  /**
+   * The launcher opening. Main creates the record SYNCHRONOUSLY for the new
+   * `openSeq`, installs the ready empty-query generation, and marks its one
+   * ambient slot `pending` — so the panel accepts input immediately and the
+   * stable objects are already legal subjects before the first keystroke, even
+   * though external capture has not resolved.
+   */
+  openLauncher(params: { openSeq: number; consumerId: number }): InvocationOpened {
+    const objects = new Map<ObjectRef, SurfaceObject>();
+    const mint = () => mintRef<ObjectRef>();
+    const resultObjects = orderedResultObjects({ query: '', nodeObjects: [], mintRef: mint });
+    for (const object of resultObjects) objects.set(object.objectRef, object);
+
+    const record: Record_ = {
+      ref: mintRef<InvocationRef>(),
+      invocation: {
+        fixedObjects: [],
+        argumentGenerations: [],
+        draftText: '',
+        resultGeneration: {
+          generation: 1,
+          requestId: 'initial' as RequestId,
+          state: 'ready',
+          objects: resultObjects,
+        },
+      },
+      // Main-origin records are first-class: out of app the main renderer may
+      // not even exist, and nothing here was attested by one.
+      origin: 'main',
+      consumableBy: params.consumerId,
+      openSeq: params.openSeq,
+      ambient: { requestId: mintRef<AmbientRequestId>(), revision: 0, state: 'pending' },
+      phase: 'live',
+      expiresAt: this.host.now() + INVOCATION_TTL_MS,
+      objects,
+      generation: 1,
+    };
+    this.records.set(record.ref, record);
+    this.installResolverDestinations(record, resultObjects);
+    this.sweep();
+    return this.openingFor(record);
+  }
+
+  /**
+   * `Today` is a BOUND DESTINATION OBJECT, not prose inside an action id. When
+   * `capture(page)` or `create(draft)` is presented, main installs it in that
+   * exact `destination` slot as a resolver-owned generation — which is why the
+   * same Today node can hold a main-list subject ref AND a capture-destination
+   * argument ref at once: same noun, different uses and lifetimes.
+   */
+  private installResolverDestinations(
+    record: Record_,
+    objects: readonly SurfaceObject[],
+  ): void {
+    for (const object of objects) {
+      const actionId = object.kind === 'externalPage'
+        ? 'capture' as const
+        : object.kind === 'draft' && object.purpose === 'node'
+          ? 'create' as const
+          : null;
+      if (!actionId) continue;
+      const slot = {
+        actionId,
+        subjectRef: object.objectRef,
+        parameterId: 'destination' as const,
+      };
+      // Drop the previous generation's Today object before minting another, or
+      // the ref map grows by one per keystroke for the life of the invocation.
+      const previous = record.invocation.argumentGenerations.find((generation) => (
+        generation.slot.actionId === slot.actionId
+        && generation.slot.subjectRef === slot.subjectRef
+        && generation.slot.parameterId === slot.parameterId
+      ));
+      for (const stale of previous?.objects ?? []) record.objects.delete(stale.objectRef);
+      const today = systemNodeObject('today', () => mintRef<ObjectRef>());
+      record.objects.set(today.objectRef, today);
+      this.replaceArgumentGeneration(record, {
+        slot,
+        generation: ++record.generation,
+        source: { kind: 'resolver' },
+        state: 'ready',
+        objects: [today],
+      });
+    }
+  }
+
+  /**
+   * Main owns this transition. External capture resolves in main; neither
+   * renderer may post a finished object, and main pushes only the authoritative
+   * replacement presentation.
+   *
+   * It preserves `draftText`, the current result generation and unrelated
+   * argument generations — so typing while capture is slow loses neither the
+   * text nor the results that later arrive.
+   */
+  resolveAmbient(params: {
+    invocationRef: InvocationRef;
+    openSeq: number;
+    resolution: AmbientContextResolution;
+  }): AmbientContextChanged {
+    const record = this.records.get(params.invocationRef);
+    const superseded = {
+      status: 'superseded' as const,
+      invocationRef: params.invocationRef,
+      openSeq: params.openSeq,
+      requestId: (record?.ambient?.requestId ?? '') as AmbientRequestId,
+    };
+    // A resolution for an old opening, or one arriving after execution claimed
+    // the record, changes no membership at all.
+    if (!record || record.openSeq !== params.openSeq || !record.ambient) return superseded;
+    if (record.phase !== 'live' && record.phase !== 'confirming') return superseded;
+
+    // Replacing an old ambient subject invalidates that ref and its argument
+    // slots; a confirmation naming it is revoked and the phase returns to live.
+    if (record.ambient.state === 'resolved') {
+      this.invalidateRefsFor(record, record.ambient.objectRef);
+      record.invocation = {
+        ...record.invocation,
+        fixedObjects: record.invocation.fixedObjects
+          .filter((object) => object.objectRef !== (record.ambient as { objectRef?: ObjectRef }).objectRef),
+      };
+    }
+
+    const revision = record.ambient.revision + 1;
+    if (params.resolution.kind === 'none') {
+      record.ambient = { requestId: record.ambient.requestId, revision, state: 'none' };
+    } else if (params.resolution.kind === 'inApp') {
+      // A validated seed becomes INPUT to this transition, never a second
+      // invocation and never a renderer-authored membership patch: main builds
+      // the node/selection objects itself, exactly as it does for a menu.
+      const projection = this.actionProjection();
+      const seed = params.resolution.seed;
+      if (!projection.byId.has(seed.anchorNodeId)) {
+        record.ambient = { requestId: record.ambient.requestId, revision, state: 'none' };
+      } else {
+        const mint = () => mintRef<ObjectRef>();
+        const anchor = nodeObjectForRow(seed.anchorNodeId, projection.byId, mint);
+        record.objects.set(anchor.objectRef, anchor);
+        const selection = this.selectionObjectFor(seed, projection, mint, record.objects);
+        const ambient = selection ?? anchor;
+        // The facts the renderer JUST attested must land with the object, or
+        // the ambient chip silently offers fewer actions than the same node
+        // reached through the right-click menu (no Pin, no view families).
+        record.invocation = {
+          ...record.invocation,
+          fixedObjects: [...record.invocation.fixedObjects, ambient],
+          view: [
+            ...(record.invocation.view ?? []),
+            ...viewFactsFor(seed, anchor, selection),
+          ],
+          workspace: [
+            ...(record.invocation.workspace ?? []),
+            ...workspaceFactsFor(seed, anchor, selection),
+          ],
+        };
+        record.ambient = {
+          requestId: record.ambient.requestId,
+          revision,
+          state: 'resolved',
+          objectRef: ambient.objectRef,
+        };
+      }
+    } else if (params.resolution.kind === 'externalPage') {
+      const page: SurfaceObject = {
+        kind: 'externalPage',
+        objectRef: mintRef<ObjectRef>(),
+        contextId: params.resolution.contextId,
+      };
+      record.objects.set(page.objectRef, page);
+      record.invocation = {
+        ...record.invocation,
+        fixedObjects: [...record.invocation.fixedObjects, page],
+      };
+      record.ambient = {
+        requestId: record.ambient.requestId,
+        revision,
+        state: 'resolved',
+        objectRef: page.objectRef,
+      };
+      this.installResolverDestinations(record, [page]);
+    }
+
+    const context = this.contextFor(record);
+    return {
+      status: 'updated',
+      invocationRef: record.ref,
+      openSeq: params.openSeq,
+      revision,
+      ambientState: record.ambient.state === 'resolved' ? 'resolved' : 'none',
+      fixedItems: record.invocation.fixedObjects.map((object) => this.itemFor(context, object)),
+    };
+  }
+
+  /**
+   * The main list's query. Main validates the opening, sanitizes and bounds the
+   * text, and atomically replaces the previous generation with an empty
+   * `pending` one BEFORE retrieval begins — that first transition invalidates
+   * every old result and draft ref. Fresh objects are installed only if the
+   * captured generation is still current.
+   */
+  queryObjects(request: ObjectQueryRequest, senderId: number): ObjectQueryResult {
+    const record = this.liveRecord(request.invocationRef, senderId);
+    const superseded = {
+      status: 'superseded' as const,
+      invocationRef: request.invocationRef,
+      openSeq: request.openSeq,
+      requestId: request.requestId,
+      generation: record?.generation ?? 0,
+    };
+    if (!record || record.openSeq !== request.openSeq) return superseded;
+
+    // `draftText` is admitted SYNCHRONOUSLY: it is payload, not selection, and
+    // type-then-immediate-Enter must see the latest text.
+    //
+    // Retrieval is synchronous today, so the generation is replaced ONCE,
+    // atomically. The two-phase pending/ready swap the contract describes is
+    // for an async retrieval path; writing it here produced a `pending` state
+    // nothing could observe and a staleness recheck that could never fire.
+    // Reinstate both the day this awaits.
+    const query = request.query.slice(0, 512);
+    const generation = ++record.generation;
+    const mint = () => mintRef<ObjectRef>();
+    let nodeObjects: SurfaceObject[] = [];
+    try {
+      nodeObjects = query.trim()
+        ? this.host.searchNodes(query.trim(), LAUNCHER_RESULT_LIMIT)
+          .map((hit) => nodeObjectForRow(hit.nodeId, this.actionProjection().byId, mint))
+        : [];
+    } catch {
+      // A failed search leaves only the stable objects — never the previous
+      // generation's rows, which this transition has already invalidated.
+      nodeObjects = [];
+    }
+    const resultObjects = orderedResultObjects({ query, nodeObjects, mintRef: mint });
+
+    for (const object of resultObjects) record.objects.set(object.objectRef, object);
+    this.replaceResultGeneration(record, {
+      generation,
+      requestId: request.requestId,
+      state: 'ready',
+      objects: resultObjects,
+    }, query);
+    this.installResolverDestinations(record, resultObjects);
+
+    const context = this.contextFor(record);
+    return {
+      status: 'ready',
+      invocationRef: record.ref,
+      openSeq: record.openSeq!,
+      requestId: request.requestId,
+      generation,
+      resultItems: resultObjects.map((object) => this.itemFor(context, object)),
+    };
+  }
+
+  private replaceResultGeneration(
+    record: Record_,
+    next: NonNullable<ActionInvocation['resultGeneration']>,
+    draftText: string,
+  ): void {
+    const previous = record.invocation.resultGeneration;
+    if (previous) {
+      // The transition invalidates every old result and draft ref.
+      for (const object of previous.objects) record.objects.delete(object.objectRef);
+      record.invocation = {
+        ...record.invocation,
+        argumentGenerations: record.invocation.argumentGenerations.filter((generation) => (
+          !previous.objects.some((object) => object.objectRef === generation.slot.subjectRef)
+        )),
+      };
+    }
+    record.invocation = { ...record.invocation, resultGeneration: next, draftText };
   }
 
   private selectionObjectFor(
@@ -243,16 +535,87 @@ export class ActionInvocationService {
   private openingFor(record: Record_): InvocationOpened {
     const context = this.contextFor(record);
     const currentObjects = this.currentObjects(record);
+    const generation = record.invocation.resultGeneration;
     return {
       invocationRef: record.ref,
       openSeq: record.openSeq,
-      fixedItems: record.invocation.fixedObjects.map((object) => ({
-        object: presentObject(object, context.projection, context.untitled),
-        actions: [],
-      })),
-      resultItems: [],
+      ...(record.ambient
+        ? { ambient: { state: record.ambient.state, revision: record.ambient.revision } }
+        : {}),
+      fixedItems: record.invocation.fixedObjects.map((object) => this.itemFor(context, object)),
+      resultItems: generation?.state === 'ready'
+        ? generation.objects.map((object) => this.itemFor(context, object))
+        : [],
       menuActions: resolveActionsForObjectSet(context, currentObjects, { surface: 'contextMenu' }),
     };
+  }
+
+  /**
+   * One object row: its presentation, the action the bar names for Enter, and
+   * the searchable `Actions ⌘K` list. The primary is an OBJECT CONTRACT, never
+   * learned behaviour — and a selection has none, because it has no safe
+   * canonical activation.
+   */
+  private itemFor(
+    context: ActionResolveContext,
+    object: SurfaceObject,
+  ): SurfaceItemPresentation {
+    const actions = resolveActionsForObjectSet(context, [object], {
+      order: ACTION_PANEL_ORDER,
+      surface: 'actionPanel',
+    }).filter((action) => this.surfaceCanRun(context, object, action));
+    const primaryId = primaryActionFor(object);
+    const primary = primaryId
+      ? actions.find((action) => (
+        action.actionId === primaryId && action.evaluation.status === 'applicable'
+      ))
+      : undefined;
+    return {
+      object: presentObject(
+        object,
+        context.projection,
+        context.untitled,
+        this.host.describeExternalPage
+          ? (contextId) => this.host.describeExternalPage!(contextId as ExternalContextId)
+          : undefined,
+      ),
+      ...(primary ? { primaryAction: primary } : {}),
+      actions,
+    };
+  }
+
+  /**
+   * An action is only offered where it can actually RUN. A searchable panel
+   * that lists `Move to` with no parameter picker, or `Edit description` on a
+   * surface with no reveal handler, is a dead end that reports a generic
+   * failure every time — worse than not showing it, because the user cannot
+   * tell it from a real error.
+   */
+  private surfaceCanRun(
+    context: ActionResolveContext,
+    object: SurfaceObject,
+    action: ActionPresentation,
+  ): boolean {
+    // A parameter still to pick needs a picker; only the anchored menu has one.
+    if (action.binding.state === 'needsParameter') return false;
+    const plan = planFor(context, action.actionId, object, action.binding.arguments as never);
+    if (!plan) return action.evaluation.status !== 'applicable';
+    return plan.steps.every((step) => this.canExecuteStep(step));
+  }
+
+  /**
+   * Whether a step can land on the SEARCHABLE surface. This is only consulted
+   * by `itemFor`, which builds the launcher panel — the anchored menu goes
+   * through the separate, unfiltered `menuActions`. A `reveal` needs the panel
+   * that owns the row, which a launcher-originated plan does not have.
+   *
+   * Stated as a flat rule rather than a host capability on purpose: an
+   * always-false optional callback is a trap, because the day the anchored menu
+   * routes through `itemFor` it would silently lose every reveal action.
+   */
+  private canExecuteStep(step: EffectStep): boolean {
+    if (step.on !== 'mainRenderer') return true;
+    return step.kind !== 'reveal';
   }
 
   /** Fixed objects plus the one `ready` result generation — nothing else. */
@@ -297,6 +660,10 @@ export class ActionInvocationService {
       invocation: record.invocation,
       objectFor: (ref) => record.objects.get(ref) ?? null,
       untitled: this.host.untitled(),
+      ...(this.host.externalContext
+        ? { externalContext: (contextId) => this.host.externalContext!(contextId) }
+        : {}),
+      ...(this.host.newCaptureId ? { newCaptureId: () => this.host.newCaptureId!() } : {}),
     };
   }
 
@@ -357,16 +724,20 @@ export class ActionInvocationService {
     };
   }
 
+  /**
+   * A request cannot create a slot by naming one. Ownership is two facts: the
+   * family DECLARES this parameter, and it actually resolves for this subject.
+   * Checking only "is the current binding waiting on it" would refuse capture's
+   * optional tag, whose presentation is already `ready`.
+   */
   private ownsParameterSlot(
     record: Record_,
     slot: ArgumentSlot,
     subject: SurfaceObject,
   ): boolean {
+    if (!declaresParameter(slot)) return false;
     const context = this.contextFor(record);
-    return resolveFamily(context, slot.actionId, subject).some((presentation) => (
-      presentation.binding.state === 'needsParameter'
-      && presentation.binding.parameter.parameterId === slot.parameterId
-    ));
+    return resolveFamily(context, slot.actionId, subject).length > 0;
   }
 
   private buildParameterCandidates(
@@ -401,7 +772,10 @@ export class ActionInvocationService {
       return { objects, items };
     }
 
-    if (request.slot.actionId === 'addTag' && request.slot.parameterId === 'tag') {
+    // Any action that owns a `tag` slot — `addTag` today, `capture` with an
+    // optional tag — answers from the same candidate policy. The slot, not the
+    // action id, is what the generation is keyed to.
+    if (request.slot.parameterId === 'tag') {
       const projection = this.host.projection();
       const index = buildTagCandidateIndex({
         nodes: projection.nodes,
@@ -505,11 +879,6 @@ export class ActionInvocationService {
       ...record.invocation,
       argumentGenerations: [...previous, next],
     };
-    // A challenge naming the replaced generation dies with it.
-    if (record.phase === 'confirming' && record.challenge?.actionId === next.slot.actionId) {
-      record.challenge = null;
-      record.phase = 'live';
-    }
   }
 
   // -------------------------------------------------------------------------
@@ -536,10 +905,21 @@ export class ActionInvocationService {
     const suppliedParameters = new Set(
       objectValuedArguments(request.actionId, request.arguments).map(([parameterId]) => parameterId),
     );
+    // Declared parameters are validated BY SLOT above, so they are excluded from
+    // the argument identity check: an optional tag added to an already-`ready`
+    // capture must not read as "different arguments" and re-evaluate away.
+    const withoutParameters = (args: unknown) => {
+      const declared: readonly string[] = ACTION_PARAMETER_IDS[request.actionId];
+      if (declared.length === 0 || typeof args !== 'object' || args === null) return args;
+      const rest: Record<string, unknown> = { ...(args as Record<string, unknown>) };
+      for (const parameterId of declared) delete rest[parameterId];
+      return rest;
+    };
+    const requestedIdentity = hashArguments(withoutParameters(request.arguments));
     const match = presentations.find((presentation) => (
       presentation.binding.state === 'ready'
-        // A direct variant matches only its own exact arguments.
-        ? hashArguments(presentation.binding.arguments) === hashArguments(request.arguments)
+        // A direct variant matches only its own exact non-parameter arguments.
+        ? hashArguments(withoutParameters(presentation.binding.arguments)) === requestedIdentity
         // A parameterized variant is named by filling its declared slot; the
         // ref itself was already proved against that slot's ready generation.
         : suppliedParameters.has(presentation.binding.parameter.parameterId)
@@ -554,45 +934,42 @@ export class ActionInvocationService {
       return { status: 'reEvaluated', presentation: match };
     }
 
-    if (match.confirm && !request.challenge) {
-      // Leg 1 is a RESPONSE, not a side effect: the token comes back with the
-      // authoritative copy, subject and arguments the dialog must show, so the
-      // dialog cannot describe one thing while the token authorises another.
-      const challenge: Challenge = {
-        token: mintRef<ChallengeToken>(),
-        actionId: request.actionId,
-        subjectRef: request.subjectRef,
-        argumentsHash: hashArguments(request.arguments),
-        expiresAt: this.host.now() + CHALLENGE_TTL_MS,
-      };
-      record.challenge = challenge;
-      record.phase = 'confirming';
-      return {
-        status: 'confirmationRequired',
-        challenge: challenge.token,
-        confirm: match.confirm,
-        presentation: match as ReadyActionPresentation,
-      };
-    }
-
     if (match.confirm) {
-      // The challenge-bearing request IS the acceptance, and it commits
-      // atomically after token + subject + argument revalidation.
-      const challenge = record.challenge;
-      const valid = challenge
-        && record.phase === 'confirming'
-        && challenge.token === request.challenge
-        && challenge.expiresAt > this.host.now()
-        && challenge.actionId === request.actionId
-        && challenge.subjectRef === request.subjectRef
-        && challenge.argumentsHash === hashArguments(request.arguments);
-      record.challenge = null;
-      if (!valid) {
-        // A revoked, expired or cross-action token is dead: the record returns
-        // to `live` and NOTHING runs. Redeeming after cancel lands here.
+      // Flow B has no legs and no token. Main raises the sheet, main observes
+      // the acceptance, main executes — a token would put the deciding artefact
+      // back in the hands the sheet exists to bypass.
+      record.phase = 'confirming';
+      // No sheet host at all is a MISCONFIGURATION, not a user decision: fail
+      // closed, and do not tell the user they cancelled something they never
+      // saw.
+      if (!this.host.confirmNatively) {
         record.phase = 'live';
         return { status: 'stale', reason: 'invocation' };
       }
+      if (!await this.host.confirmNatively(match.confirm)) {
+        // Back to `live`: the user declined this once, not forever.
+        record.phase = 'live';
+        return { status: 'cancelled' };
+      }
+      // Revalidate at acceptance, exactly as flow A does at redemption.
+      const revalidated = resolveFamily(this.contextFor(record), request.actionId, subject)
+        .find((presentation) => (
+          presentation.binding.state === 'ready'
+          && hashArguments(withoutParameters(presentation.binding.arguments)) === requestedIdentity
+        ));
+      if (!revalidated || revalidated.evaluation.status !== 'applicable') {
+        record.phase = 'live';
+        return { status: 'stale', reason: 'subject' };
+      }
+      const nativePlan = planFor(this.contextFor(record), request.actionId, subject, request.arguments as never);
+      if (!nativePlan) {
+        record.phase = 'live';
+        return { status: 'reEvaluated', presentation: revalidated };
+      }
+      record.phase = 'executing';
+      const nativeResult = await this.executePlan(nativePlan, record.ref);
+      record.phase = settledPhase(nativeResult);
+      return nativeResult;
     }
 
     const plan = planFor(context, request.actionId, subject, request.arguments as never);
@@ -601,11 +978,12 @@ export class ActionInvocationService {
     // Claimed on ENTERING `executing`, before step 0 is dispatched — a second
     // submit against a claimed record is rejected.
     record.phase = 'executing';
-    try {
-      return await this.executePlan(plan, record.ref);
-    } finally {
-      record.phase = 'spent';
-    }
+    const result = await this.executePlan(plan, record.ref);
+    // Only a COMPLETED action spends the invocation. The surface deliberately
+    // stays open after a failure, and a `spent` record makes that still-visible
+    // panel permanently inert — no search, no retry, just more generic errors.
+    record.phase = settledPhase(result);
+    return result;
   }
 
   private validateArguments(record: Record_, request: ActionRequest): ActionRequestResult | null {
@@ -701,7 +1079,11 @@ export class ActionInvocationService {
         reason: ack.status === 'gone' ? 'rendererGone' : 'ackTimeout',
       };
     }
-    return focus ? { status: 'completed', focus } : { status: 'completed' };
+    // `surfaceOwned` means the plan's own outline intents already placed the
+    // selection; forwarding the command's hint there would fight them.
+    return focus && plan.focus !== 'surfaceOwned'
+      ? { status: 'completed', focus }
+      : { status: 'completed' };
   }
 
   // -------------------------------------------------------------------------
@@ -712,12 +1094,6 @@ export class ActionInvocationService {
     const record = this.records.get(event.invocationRef);
     if (!record || record.consumableBy !== senderId) return { status: 'spent' };
     switch (event.kind) {
-      case 'confirmationCancelled':
-        if (record.phase === 'confirming' && record.challenge?.token === event.challenge) {
-          record.challenge = null;
-          record.phase = 'live';
-        }
-        return { status: 'updated', opening: this.openingFor(record) };
       case 'objectRemoved': {
         if (record.phase === 'executing' || record.phase === 'spent') return { status: 'spent' };
         record.invocation = {
@@ -725,6 +1101,15 @@ export class ActionInvocationService {
           fixedObjects: record.invocation.fixedObjects
             .filter((object) => object.objectRef !== event.objectRef),
         };
+        // Removing the ambient object advances MAIN's revision and leaves the
+        // slot at `none`, so an older context push cannot reattach the chip.
+        if (record.ambient?.state === 'resolved' && record.ambient.objectRef === event.objectRef) {
+          record.ambient = {
+            requestId: record.ambient.requestId,
+            revision: record.ambient.revision + 1,
+            state: 'none',
+          };
+        }
         this.invalidateRefsFor(record, event.objectRef);
         return { status: 'updated', opening: this.openingFor(record) };
       }
@@ -732,8 +1117,11 @@ export class ActionInvocationService {
         return this.removeSelectionMember(record, event.selectionRef, event.memberRef);
       case 'abandoned':
         // Reserved for closing the menu or panel; a UI lifetime event never
-        // invalidates an in-flight plan.
-        if (record.phase !== 'executing') {
+        // invalidates work in flight. `confirming` counts: the menu closes as
+        // soon as the action is chosen, while main's native sheet is still on
+        // screen deciding — releasing here would let the record be deleted out
+        // from under a request the user is about to accept.
+        if (record.phase !== 'executing' && record.phase !== 'confirming') {
           record.phase = 'spent';
           this.records.delete(record.ref);
         }
@@ -771,7 +1159,7 @@ export class ActionInvocationService {
     return { status: 'updated', opening: this.openingFor(record) };
   }
 
-  /** A removed/replaced subject takes its argument slots and challenge with it. */
+  /** A removed/replaced subject takes its argument slots with it. */
   private invalidateRefsFor(record: Record_, ref: ObjectRef): void {
     record.objects.delete(ref);
     record.invocation = {
@@ -779,10 +1167,6 @@ export class ActionInvocationService {
       argumentGenerations: record.invocation.argumentGenerations
         .filter((generation) => generation.slot.subjectRef !== ref),
     };
-    if (record.challenge?.subjectRef === ref) {
-      record.challenge = null;
-      if (record.phase === 'confirming') record.phase = 'live';
-    }
   }
 
   private liveRecord(ref: InvocationRef, senderId: number): Record_ | null {
@@ -792,6 +1176,20 @@ export class ActionInvocationService {
     // Queries and membership edits are admitted only in `live` / `confirming`.
     if (record.phase !== 'live' && record.phase !== 'confirming') return null;
     return record;
+  }
+
+  /**
+   * Release the invocation for an opening that is over. Every dismissal path —
+   * blur, click-away, hotkey toggle-off — has to reach this, or the record
+   * stays `live` and launcher-consumable for its full TTL and the refs from a
+   * superseded opening remain executable.
+   */
+  releaseOpening(invocationRef: InvocationRef | null): void {
+    if (!invocationRef) return;
+    const record = this.records.get(invocationRef);
+    if (!record || record.phase === 'executing') return;
+    record.phase = 'spent';
+    this.records.delete(invocationRef);
   }
 
   /** A reload invalidates an attestation rather than leaving a stale bit live. */
@@ -810,6 +1208,62 @@ export class ActionInvocationService {
       if (record.expiresAt <= now) this.records.delete(ref);
     }
   }
+}
+
+/**
+ * D6's fixed primary rule. `create(draft)` and `capture(page)` are safe blind
+ * Enter targets because the row reflects text the user just authored or a page
+ * they explicitly summoned over; an ambient node or selection mutation is not,
+ * so those objects never receive a mutating primary.
+ */
+function primaryActionFor(object: SurfaceObject): ActionId | null {
+  switch (object.kind) {
+    case 'node':
+    case 'appSurface':
+      return 'open';
+    case 'externalPage':
+      return 'capture';
+    case 'draft':
+      return object.purpose === 'node' ? 'create' : null;
+    case 'nodeSelection':
+      return null;
+  }
+}
+
+/**
+ * The attested facts, for EVERY object the seed produced. A selection subject
+ * needs them as much as the anchor does — `outdent` and the view families
+ * resolve against whichever object the family accepts, so attaching them to the
+ * anchor alone silently removed those actions from a batch.
+ */
+function viewFactsFor(
+  seed: InvocationSeed,
+  anchor: SurfaceObject,
+  selection: SurfaceObject | null,
+): ViewFact[] {
+  const fact = {
+    panelId: seed.panelId,
+    visualRowId: seed.visualRowId,
+    rowExpanded: seed.rowExpanded,
+    ...(seed.selectionRootId ? { selectionRootId: seed.selectionRootId } : {}),
+  };
+  const facts: ViewFact[] = [{ objectRef: anchor.objectRef, ...fact }];
+  if (selection) facts.push({ objectRef: selection.objectRef, ...fact });
+  return facts;
+}
+
+function workspaceFactsFor(
+  seed: InvocationSeed,
+  anchor: SurfaceObject,
+  selection: SurfaceObject | null,
+): WorkspaceFact[] {
+  const facts: WorkspaceFact[] = [{ objectRef: anchor.objectRef, isPinned: seed.isPinned }];
+  if (selection) facts.push({ objectRef: selection.objectRef, isPinned: seed.isPinned });
+  return facts;
+}
+
+function settledPhase(result: ActionExecutionResult): InvocationPhase {
+  return result.status === 'completed' ? 'spent' : 'live';
 }
 
 function errorCode(error: unknown): string {

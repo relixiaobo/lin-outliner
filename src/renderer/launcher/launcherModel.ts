@@ -1,265 +1,131 @@
-import type { LauncherCommandView, LauncherNodeMatch } from '../../core/launcher/commands';
-import type { ExternalContext } from '../../core/launcher/context';
-import type { Messages } from '../../core/i18n';
-
-// Pure derivation of the launcher's result list from (query, context, nodes,
-// commands). This is the heart of the Raycast-style model: ONE always-focused
-// input that is simultaneously a command filter, a live node search, AND a live
-// capture draft — no "pick New Capture first" mode, no separate "Search notes"
-// command (typing matches nodes inline; Enter on a match opens it). Every result
-// renders as ONE uniform command row (icon · title · subtitle · type), built by
-// `rowView` below. Kept pure + dependency-free so the interaction logic is
-// unit-tested without a DOM; the component maps action ids to IPC calls.
+// Pure derivation for the command surface's rows.
 //
-// Plan: docs/plans/lazy-like-global-launcher.md.
+// Every row is an OBJECT (`SurfaceItemPresentation`) main resolved for this
+// opening; what Enter does lives in the action bar, never in a compound row
+// title. The old `LauncherItem` union — with its `kind: 'command'` arm and its
+// *Capture page to Today* / *New node in Today* labels — is gone: those were an
+// app surface and a draft with their verb fused into the noun.
+//
+// Kept dependency-free so the interaction logic is unit-tested without a DOM.
 
-/**
- * An action runnable from a row. Every row currently has exactly one action
- * (`actions[0]`, what Enter runs); the array shape is kept for when secondary
- * actions return (Save to Inbox, Ask AI with source — see the follow-up plans).
- * There are no disabled/"coming soon" actions: an action exists only if it works
- * (so there is deliberately no `enabled` flag — reintroduce it with its first real
- * disabled-state consumer).
- */
-export interface LauncherItemAction {
-  /** Stable behavior id the component maps to an IPC call. */
-  id: 'capture-page' | 'capture-note' | 'open-node' | 'run-command';
-  label: string;
-}
+import { nameFor } from '../../core/actions/names';
+import type {
+  ActionPresentation,
+  ObjectPresentation,
+  ObjectRef,
+  PresentedName,
+  SurfaceItemPresentation,
+} from '../../core/actions/types';
+import type { Locale } from '../../core/locale';
 
-/** A navigable row. Capture/node rows are synthesized from the input; commands are static. */
-export type LauncherItem =
-  | {
-    kind: 'capture-page';
-    /** The page/source title (single line). */
-    title: string;
-    /** Where it's captured from, e.g. a hostname. */
-    subtitle: string;
-    /** Typed annotation attached to the page capture (the trimmed query), if any. */
-    note?: string;
-    actions: LauncherItemAction[];
-  }
-  | {
-    kind: 'capture-note';
-    /** The standalone note text (the trimmed query). */
-    text: string;
-    actions: LauncherItemAction[];
-  }
-  | {
-    kind: 'node';
-    /** The matched document node id (opened in the main window on Enter). */
-    nodeId: string;
-    /** The node's text (single line). */
-    title: string;
-    /** Where it lives — the parent node's text, for disambiguation. */
-    subtitle?: string;
-    /** The node's own emoji icon, when it has one (else the row shows a bullet). */
-    icon?: string;
-    actions: LauncherItemAction[];
-  }
-  | { kind: 'command'; command: LauncherCommandView; actions: LauncherItemAction[] };
-
-/** Commands whose title/subtitle match the query (all when the query is empty). */
-export function filterCommands(commands: readonly LauncherCommandView[], query: string): LauncherCommandView[] {
-  const q = query.trim().toLowerCase();
-  if (!q) return [...commands];
-  return commands.filter(
-    (c) => c.title.toLowerCase().includes(q) || (c.subtitle?.toLowerCase().includes(q) ?? false),
-  );
-}
-
-/**
- * Build the ordered result list. Capture rows come first (capture-first intent),
- * so the common path is hotkey → Enter. With a page context, typing annotates the
- * page (the typed text nests under the captured node as a child bullet; previewed
- * in the row subtitle), with a separate row to instead make the text its own new
- * node. Without a page context, typed text becomes a new node. Then matching nodes
- * (search results — opened on Enter), then commands; both are filtered/queried by
- * the same input. The whole list is flat (no section headers).
- */
-export function buildLauncherItems(args: {
-  query: string;
-  context: ExternalContext | null;
-  commands: readonly LauncherCommandView[];
-  nodes?: readonly LauncherNodeMatch[];
-  // Localized strings threaded in from the component — this is a pure helper that
-  // runs outside React, so it cannot call useT itself.
-  t: Messages;
-}): LauncherItem[] {
-  const { query, context, commands, nodes = [], t } = args;
-  const note = query.trim();
-  const items: LauncherItem[] = [];
-  const source = context?.source;
-
-  if (source) {
-    const where = context?.browser?.hostname ?? context?.app.name ?? t.launcher.rowView.currentPage;
-    // Provider-aware framing: a video reads as "Capture video …". The subtitle is
-    // just where it's from — the player position is deliberately not shown.
-    const isVideo = source.kind === 'video';
-    const noun = isVideo ? t.launcher.actions.nounVideo : t.launcher.actions.nounPage;
-    items.push({
-      kind: 'capture-page',
-      title: source.title,
-      subtitle: where,
-      note: note || undefined,
-      actions: [{ id: 'capture-page', label: t.launcher.actions.captureToToday({ noun }) }],
-    });
-    if (note) {
-      items.push({
-        kind: 'capture-note',
-        text: note,
-        actions: [{ id: 'capture-note', label: t.launcher.actions.newNodeInToday }],
-      });
-    }
-  } else if (note) {
-    items.push({
-      kind: 'capture-note',
-      text: note,
-      actions: [{ id: 'capture-note', label: t.launcher.actions.newNodeInToday }],
-    });
-  }
-
-  // Matching document nodes (the input IS the search — no separate command). Each
-  // opens in the main window on Enter.
-  for (const match of nodes) {
-    items.push({
-      kind: 'node',
-      nodeId: match.nodeId,
-      title: match.title,
-      subtitle: match.subtitle,
-      icon: match.icon,
-      actions: [{ id: 'open-node', label: t.launcher.actions.open }],
-    });
-  }
-
-  for (const command of filterCommands(commands, query)) {
-    items.push({
-      kind: 'command',
-      command,
-      // The generic verb, not the command title: the row already names the
-      // target, so restating it made the list say "Open main window" and the
-      // footer repeat it. Capture rows keep their descriptive labels — there the
-      // label IS the information.
-      actions: [{ id: 'run-command', label: t.launcher.actions.open }],
-    });
-  }
-  return items;
-}
-
-/**
- * The uniform per-row display (Raycast-style: one row shape for every result).
- * `typeLabel` is the right-aligned category — `Command` (capture rows are commands
- * too, alongside Open main window etc.) or `Node` (open a matched document node).
- */
-export interface LauncherRowView {
+/** The uniform per-row display: one row shape for every object. */
+export interface ObjectRowView {
   title: string;
   subtitle?: string;
+  /** Right-aligned category — the object's KIND, not its activation. */
   typeLabel: string;
 }
 
-/** Quote a single-line snippet for a subtitle (already single-line upstream). */
-function quoted(text: string): string {
-  return `“${text}”`;
+export function presentedText(name: PresentedName, locale: Locale): string {
+  return name.source === 'literal' ? name.value : nameFor(name.values, locale);
+}
+
+export function objectRowView(object: ObjectPresentation, locale: Locale): ObjectRowView {
+  return {
+    title: presentedText(object.name, locale),
+    ...(object.subtitle ? { subtitle: presentedText(object.subtitle, locale) } : {}),
+    typeLabel: nameFor(object.typeLabel, locale),
+  };
 }
 
 /**
- * Map a result item to its uniform row display. The capture-page row reads as a
- * clear "Capture" command (the page + any comment is the subtitle, NOT the headline
- * — the old design used the page title as the headline, which read like a search
- * result, not a command). The capture-note row reads as "New node" (it creates a
- * node from the typed text). Node matches keep the node text as the headline with
- * its parent as subtitle. Commands pass through (all are runnable — no disabled
- * "coming soon" state).
+ * What the action bar says Enter will do. It is the VERB for the active object
+ * — never the row's title, which is what made the shipped bar restate the row.
+ * Null when the object has no safe blind-Enter action, in which case the bar
+ * shows only the actions control.
  */
-export function rowView(item: LauncherItem, t: Messages): LauncherRowView {
-  if (item.kind === 'capture-page') {
-    const where = item.subtitle;
-    const subtitle = item.note
-      ? t.launcher.rowView.captureWithNote({ note: quoted(item.note), where })
-      : t.launcher.rowView.captureFromPage({ page: item.title, where });
-    return { title: t.launcher.rowView.captureTitle, subtitle, typeLabel: t.launcher.rowView.typeCommand };
-  }
-  if (item.kind === 'capture-note') {
-    return { title: t.launcher.rowView.newNodeTitle, subtitle: quoted(item.text), typeLabel: t.launcher.rowView.typeCommand };
-  }
-  if (item.kind === 'node') {
-    return { title: item.title, subtitle: item.subtitle, typeLabel: t.launcher.rowView.typeNode };
-  }
-  const { command } = item;
-  return { title: command.title, subtitle: command.subtitle, typeLabel: t.launcher.rowView.typeCommand };
-}
-
-/** A short, human label for what Enter will do on the active row (for the action bar). */
-export function primaryActionLabel(item: LauncherItem | undefined): string | null {
-  return item?.actions[0]?.label ?? null;
+export function primaryActionLabel(
+  item: SurfaceItemPresentation | undefined,
+  locale: Locale,
+): string | null {
+  const primary: ActionPresentation | undefined = item?.primaryAction;
+  return primary ? nameFor(primary.names, locale) : null;
 }
 
 /**
- * A stable identity per row — used as BOTH the React key and the selection key.
- * At most one capture-page / capture-note row exists per list, so the kind alone
- * is a stable id; commands and nodes key on their own id.
+ * The navigable sequence: the ambient chip (when one is attached) then the
+ * current result generation. Activity is tracked by `ObjectRef`, which is
+ * generation-scoped — so a late result set cannot leave the highlight on a row
+ * that no longer exists, and a replayed ref cannot address the old one.
  */
-export function rowKey(item: LauncherItem): string {
-  if (item.kind === 'command') return `cmd:${item.command.id}`;
-  if (item.kind === 'node') return `node:${item.nodeId}`;
-  return item.kind;
+export function navigableItems(params: {
+  fixedItems: readonly SurfaceItemPresentation[];
+  resultItems: readonly SurfaceItemPresentation[];
+}): SurfaceItemPresentation[] {
+  return [...params.fixedItems, ...params.resultItems];
+}
+
+export function indexOfRef(
+  items: readonly SurfaceItemPresentation[],
+  ref: ObjectRef | null,
+): number {
+  if (!ref) return -1;
+  return items.findIndex((item) => item.object.objectRef === ref);
 }
 
 /**
- * The index of the row matching `activeKey`, or 0 (the top row) when nothing is
- * selected or the selected row is gone. Selection is tracked by identity, not a
- * raw index, so an async list change can't leave the highlight on the wrong row.
+ * D6's fixed default activity, with no learned component:
+ *
+ * - a chip present before an explicit choice -> the chip is active;
+ * - a chip that RESOLVES LATE becomes active only while activity is still
+ *   implicit — typing alone is payload admission, not result selection, but
+ *   `ArrowDown` / a click / an open subpanel is an explicit choice the late
+ *   chip must not steal;
+ * - no chip -> the first current-generation result is active;
+ * - an explicitly chosen row survives while it is still in the generation.
+ *
+ * Returns the ref to render as active, or null when there is nothing to act on.
  */
-export function deriveActiveIndex(items: readonly LauncherItem[], activeKey: string | null): number {
-  if (activeKey) {
-    const found = items.findIndex((it) => rowKey(it) === activeKey);
-    if (found >= 0) return found;
-  }
-  return 0;
+export function resolveActiveRef(params: {
+  items: readonly SurfaceItemPresentation[];
+  explicitRef: ObjectRef | null;
+}): ObjectRef | null {
+  const explicitIndex = indexOfRef(params.items, params.explicitRef);
+  if (explicitIndex >= 0) return params.explicitRef;
+  return params.items[0]?.object.objectRef ?? null;
 }
 
-/**
- * The selection key after stepping `delta` rows from `currentIndex` (clamped to
- * the list bounds), or null when the list is empty. Drives ArrowUp/ArrowDown.
- */
-export function stepActiveKey(items: readonly LauncherItem[], currentIndex: number, delta: number): string | null {
+/** The ref after stepping `delta` rows, clamped; null when the list is empty. */
+export function stepActiveRef(
+  items: readonly SurfaceItemPresentation[],
+  currentRef: ObjectRef | null,
+  delta: number,
+): ObjectRef | null {
   if (items.length === 0) return null;
-  const next = Math.min(Math.max(currentIndex + delta, 0), items.length - 1);
-  return rowKey(items[next]!);
+  const current = Math.max(indexOfRef(items, currentRef), 0);
+  const next = Math.min(Math.max(current + delta, 0), items.length - 1);
+  return items[next]!.object.objectRef;
+}
+
+/** Stable React key. The ref is already generation-scoped and unique. */
+export function rowKey(item: SurfaceItemPresentation): string {
+  return item.object.objectRef;
 }
 
 /**
- * A capture-degraded-but-saved hint with the fix the user can act on. Surfaced as
- * a quiet banner so a partial capture (link only) explains how to unlock the full
- * one — the equivalent of Lazy's "noJXA" prompt. Capture still succeeds regardless.
+ * The searchable action list for the active object. Matches the family id, both
+ * locale names and the locale-independent aliases at once, so a user who thinks
+ * in English command names finds them in a Chinese interface (D8).
  */
-export interface LauncherRemediation {
-  kind: 'automation';
-  title: string;
-  detail: string;
-}
-
-/**
- * Derive the single relevant remediation from a captured context's warnings, or
- * null when capture was clean. Keyed on warning codes (not free text) so it stays
- * stable. Basic-info capture has one actionable failure: it couldn't read the
- * active tab at all (no AX, no Automation) → guide the user to grant Automation.
- * (The in-page-script toggle / multi-window / multi-instance hints went away with
- * the in-page extraction path; rich capture returns via the browser extension —
- * docs/plans/browser-extension-integration.md.)
- */
-export function remediationForContext(context: ExternalContext | null, t: Messages, app: string): LauncherRemediation | null {
-  if (!context) return null;
-  const codes = new Set(context.warnings.map((w) => w.code));
-  const browser = context.browser?.name ?? context.app.name ?? t.launcher.remediation.fallbackBrowser;
-
-  // Couldn't read the active tab at all → Automation access is denied.
-  if (codes.has('browser-tab-unavailable')) {
-    return {
-      kind: 'automation',
-      title: t.launcher.remediation.cannotReadTitle({ browser }),
-      detail: t.launcher.remediation.cannotReadDetail({ app, browser }),
-    };
-  }
-  return null;
+export function filterActions(
+  actions: readonly ActionPresentation[],
+  query: string,
+): ActionPresentation[] {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) return [...actions];
+  return actions.filter((action) => {
+    if (action.actionId.toLowerCase().includes(normalized)) return true;
+    if (action.aliases.some((alias) => alias.toLowerCase().includes(normalized))) return true;
+    return Object.values(action.names).some((name) => name.toLowerCase().includes(normalized));
+  });
 }

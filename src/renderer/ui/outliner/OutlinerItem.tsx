@@ -1212,7 +1212,8 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       } else {
         await applyTextWithoutTrigger();
       }
-      props.setUi((prev) => ({ ...prev, commandOpen: true }));
+      // The `/`-menu row summons the SAME panel the hotkey does.
+      void window.lin?.showLauncher?.();
       return commandRunnerNoop();
     }
 
@@ -2512,6 +2513,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
           // can be stale here. The context menu's batch actions ("N nodes: …")
           // need the current full set. uiRef is refreshed every NodePanel render.
           panelId={props.panelId}
+          selectionRootId={props.selectionRootId}
           selectedIds={props.uiRef.current.selectedIds}
           index={props.index}
           isPinned={props.isNodePinned(drillDownId)}

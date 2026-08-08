@@ -20,7 +20,7 @@ and non-goals; product behavior stays with the owning surface.
 | `MenuItem` | `MenuItem.tsx`, command/menu rows | Stable row contract for icon, label, metadata, active, disabled, selected, and danger states. See [Overlays](#overlays). |
 | `useAnchoredOverlay` / `AnchoredActionMenu` | `useAnchoredOverlay.ts`, `AnchoredActionMenu.tsx` | Viewport-aware anchored positioning, shared action-menu shell, and outside-dismissal wiring. Does not own menu contents or commands. See [Overlays](#overlays). |
 | `PopoverListbox` / `PopoverListItem` / `PopoverEmpty` | `PopoverList.tsx`, trigger/option/tag/reference/slash popovers | Listbox shell, option item structure, and empty-list state. Active index and filtering remain caller-owned. See [Overlays](#overlays). |
-| `Dialog` / `ConfirmDialog` | `Dialog.tsx`, `ConfirmDialog.tsx`, `CommandPalette.tsx` | Modal shell with label linkage, Escape handling, focus trap, initial focus, and focus restoration. `ConfirmDialog` is the confirmation wrapper over `Dialog`; `CommandPalette` is a surface consumer of the dialog shell. See [Overlays](#overlays). |
+| `Dialog` / `ConfirmDialog` | `Dialog.tsx`, `ConfirmDialog.tsx` | Modal shell with label linkage, Escape handling, focus trap, initial focus, and focus restoration. `ConfirmDialog` is the confirmation wrapper over `Dialog`. See [Overlays](#overlays). |
 | `Button` | `Button.tsx`, `styles/button.css` | Shared text/action button primitive. `primary` is the neutral filled-default idiom (`--surface-inverse` + `--bg-content`), `secondary` is neutral filled, `ghost` is transparent until hover, and `danger` carries danger text or a solid danger fill only for destructive confirmation. It owns visual state and default `type="button"`; callers own command behavior. See [Buttons And Icon Controls](#buttons-and-icon-controls). |
 | `ButtonControl` | `ButtonControl.tsx` | Low-level native button wrapper with default `type="button"` and ref forwarding. Use it for icon-only or highly custom controls whose visual contract is owned by the surrounding component. See [Buttons And Icon Controls](#buttons-and-icon-controls). |
 | `Input` / `Textarea` / `Field` | `Input.tsx`, `Textarea.tsx`, `Field.tsx`, `styles/input.css` | Shared form-control skin. `boxed` is the tokenized neutral control surface, `bare` inherits the surrounding inset-row focus model. `Field` is the single label/control wrapper: it can provide the default field stack, or accept caller layout classes for inset rows. Helper text, parsing, draft/commit behavior, and validation stay caller-owned. See [Form Controls](#form-controls). |
@@ -71,7 +71,7 @@ or selected affordance.
 - Menus/popovers use the level-1 elevated-overlay tier:
   `--material-popover`, `--material-backdrop`, level-1 shadow, and no real outer
   border.
-- Dialogs and the in-app command palette use the opaque elevated tier:
+- Dialogs use the opaque elevated tier:
   `--bg-elevated` plus level-2 shadow.
 - Menu rows reserve stable slots for icon, label, metadata, active/selected,
   disabled, and danger states. Row hover stays neutral.

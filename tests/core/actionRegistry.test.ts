@@ -6,6 +6,7 @@ import { ACTION_BINDINGS, readBoundValue } from '../../src/core/actions/bindings
 import {
   ACTION_SUBJECT_KINDS,
   ACTION_SURFACES,
+  CONTEXT_MENU_ORDER,
   planFor,
   resolveActionsForObjectSet,
   resolveFamily,
@@ -77,17 +78,29 @@ function newDocument(): { core: Core; today: NodeId } {
 }
 
 describe('the action catalog', () => {
-  test('contains exactly the 19 families, and none of the retired ids', () => {
+  test('contains exactly the ratified families, and none of the retired ids', () => {
     expect([...ACTION_IDS].sort()).toEqual([
       'addTag', 'capture', 'copy', 'create', 'deleteForever', 'duplicate',
       'editDescription', 'editViewSection', 'emptyTrash', 'move',
       'openInSplitPane', 'open', 'remove', 'restore', 'sendToAgent',
       'setDone', 'setPinned', 'setViewMode', 'setViewToolbarVisible',
+      // Ratified addition (PM, 2026-08-08): searchable only.
+      'indent', 'outdent',
     ].sort());
-    expect(ACTION_IDS).toHaveLength(19);
+    expect(ACTION_IDS).toHaveLength(21);
     const ids = new Set<string>(ACTION_IDS);
     for (const retired of ['moveToTrash', 'go', 'navigate', 'toggleDone', 'togglePin', 'run']) {
       expect(ids.has(retired)).toBe(false);
+    }
+  });
+
+  test('Indent and Outdent are searchable ONLY — never in the anchored menu', () => {
+    // Leaking them into the context menu would break PR 1's differential after
+    // the fact, which is exactly why the ratification required an explicit
+    // surface-exposure rule rather than a shared default.
+    for (const actionId of ['indent', 'outdent'] as const) {
+      expect(ACTION_SURFACES[actionId]).toEqual(['actionPanel']);
+      expect(CONTEXT_MENU_ORDER).not.toContain(actionId);
     }
   });
 

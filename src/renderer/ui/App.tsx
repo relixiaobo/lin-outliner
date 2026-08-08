@@ -6,7 +6,6 @@ import { parseIsoLocalDate, todayIsoLocalDate, type AssetMetadata, type FocusHin
 import { flattenVisibleRows, useProjectionStore, useUiState } from '../state/document';
 import { ThreadDock, type ThreadRailState } from '../agent/components/ThreadDock';
 import { buildRendererUserViewHints } from './agent/userViewContext';
-import { CommandPalette } from './CommandPalette';
 import { Sidebar } from './Sidebar';
 import { WindowChrome } from './WindowChrome';
 import { ActionNotice, nextActionNotice, type ActionNoticeState } from './ActionNotice';
@@ -21,12 +20,16 @@ import {
   focusTarget,
 } from './focus/focusModel';
 import { useDragSelection } from './interactions/dragSelection';
+import { animateOutlinerRowMovementAfterNextCommit } from './outliner/rowMoveAnimation';
+import { collapseExpandedParentIds } from './shared';
 import { BatchTagSelector } from './outliner/BatchTagSelector';
 import type { NavigateRootOptions, TriggerState } from './shared';
 import {
   installActionErrorSink,
   installActionFocusSink,
   installActionStepListener,
+  installDefaultActionStepHandlers,
+  stageComposerObject,
 } from './interactions/actionSteps';
 import { useCommandRunner } from './shared';
 import { createAssetNode } from './interactions/attachmentIngest';
@@ -74,9 +77,10 @@ export function App() {
   const [trigger, setTrigger] = useState<TriggerState>(null);
   const [dragId, setDragId] = useState<NodeId | null>(null);
   const indexRef = useRef(index);
+  const uiStateRef = useRef(ui);
+  uiStateRef.current = ui;
   const run = useCommandRunner(applyProjectionUpdate, setPendingFocus, setError);
   const nodeAccessTimersRef = useRef<Map<NodeId, number>>(new Map());
-  const commandRestoreFocusRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => () => {
     for (const timer of nodeAccessTimersRef.current.values()) window.clearTimeout(timer);
@@ -89,7 +93,6 @@ export function App() {
   useEffect(() => installActionStepListener(), []);
   useEffect(() => installActionFocusSink(setPendingFocus), []);
   useEffect(() => installActionErrorSink(setError), []);
-
   const recordNodeLanding = useCallback((nodeId: NodeId) => {
     const timers = nodeAccessTimersRef.current;
     const pendingTimer = timers.get(nodeId);
@@ -101,12 +104,10 @@ export function App() {
     timers.set(nodeId, timer);
   }, []);
 
-  const setCommandOpen = useCallback((commandOpen: boolean) => {
-    if (commandOpen && document.activeElement instanceof HTMLElement) {
-      commandRestoreFocusRef.current = document.activeElement;
-    }
-    setUi((prev) => ({ ...prev, commandOpen }));
-  }, [setUi]);
+  /** Summon the command surface — the one globally-summoned panel (D3). */
+  const showCommandSurface = useCallback(() => {
+    void window.lin?.showLauncher?.();
+  }, []);
 
   const focusNode = useCallback((nodeId: NodeId | null) => {
     setUi((prev) => {
@@ -211,6 +212,26 @@ export function App() {
   panelCountFitsRef.current = panelCountFitsCapacity;
   reflowPanelCountRef.current = reflowRailsForPanelCount;
   const { isNodePinned, pinNodeAtIndex, pinnedNodeIds, togglePin } = useWorkspacePinnedNodes(index?.byId ?? null);
+  // An in-app summon has no page to capture; the ambient object is what the
+  // user had focused, and this renderer is the only surface that knows. It
+  // answers with raw FACTS — main validates the ids and builds the object.
+  useEffect(() => window.lin?.actions?.onAmbientSeedRequest?.(() => {
+    const state = uiStateRef.current;
+    const anchorNodeId = state.selectedId ?? state.focusedId;
+    if (!anchorNodeId) return null;
+    return {
+      from: 'mainRenderer',
+      anchorNodeId,
+      visualRowId: anchorNodeId,
+      panelId: activePanelId ?? '',
+      selectedIds: [...state.selectedIds],
+      isPinned: isNodePinned(anchorNodeId),
+      rowExpanded: state.expanded.has(anchorNodeId),
+      // Outdent is defined relative to the pane the user is acting from, and
+      // only this renderer knows which one that is.
+      ...(state.selectionRootId ? { selectionRootId: state.selectionRootId } : {}),
+    };
+  }) ?? (() => undefined), [activePanelId, isNodePinned]);
   const agentUserView = useMemo(() => index ? buildRendererUserViewHints({
     activePanelId,
     panels,
@@ -397,7 +418,55 @@ export function App() {
   }, [ensureTodayNode, navigateRoot]);
 
   // The global launcher opened an inline node search result — navigate the active
-  // panel to it and focus it (mirrors the in-app CommandPalette jump).
+  // panel to it and focus it: the same in-place re-root a node row performs.
+  // Fallback for LAUNCHER-originated plans: that invocation has no surface in
+  // this renderer to register handlers, but its navigate / pin / composer legs
+  // still land here. `reveal` is deliberately absent — only an anchored opening
+  // carries the view facts one needs.
+  useEffect(() => installDefaultActionStepHandlers({
+    // The SAME landing the deleted `launcher:openNode` performed — file-preview
+    // handling, outliner restore and the access record all live in
+    // `navigateRoot`/`focusNode`. Raw `setActivePanelRoot` skipped every one.
+    navigate: (nodeId) => {
+      navigateRoot(nodeId as NodeId);
+      focusNode(nodeId as NodeId);
+    },
+    workspace: (op, nodeId) => {
+      if (op === 'openSplitPane') setActivePanelRoot(nodeId, { newPane: true });
+      else if (op === 'pin' ? !isNodePinned(nodeId) : isNodePinned(nodeId)) togglePin(nodeId);
+    },
+    composerHandoff: (object) => stageComposerObject(object),
+    // Structural commands from the searchable surface must keep the behaviour
+    // the keyboard path has: the selection survives and expansion follows the
+    // rows. The ORDER is the plan's — expansion before an indent, collapse
+    // after an outdent — so neither direction flashes.
+    outlineIntent: (intent) => {
+      if (intent.kind === 'animateRowMovement') {
+        animateOutlinerRowMovementAfterNextCommit();
+        return;
+      }
+      setUi((prev) => {
+        if (intent.kind === 'expand') {
+          const expanded = new Set(prev.expanded);
+          for (const nodeId of intent.nodeIds) expanded.add(nodeId);
+          return { ...prev, expanded };
+        }
+        if (intent.kind === 'collapse') {
+          return { ...prev, expanded: collapseExpandedParentIds(prev.expanded, new Set(intent.nodeIds)) };
+        }
+        return {
+          ...clearFocusState(prev),
+          focusedId: null,
+          selectedId: intent.anchorId,
+          selectedIds: new Set(intent.selectedIds),
+          selectionAnchorId: intent.anchorId,
+          selectionRootId: intent.selectionRootId,
+          selectionSource: 'global',
+        };
+      });
+    },
+  }), [focusNode, isNodePinned, navigateRoot, setActivePanelRoot, setUi, togglePin]);
+
   useEffect(() => window.lin?.onNavigateToNode?.((nodeId) => {
     navigateRoot(nodeId as NodeId);
     focusNode(nodeId as NodeId);
@@ -512,7 +581,6 @@ export function App() {
     requestEditFocus,
     rootId,
     run,
-    setCommandOpen,
     setError,
     setUi,
     ui,
@@ -625,7 +693,7 @@ export function App() {
           onNavigateToday={navigateToday}
           onNavigateRoot={navigateRoot}
           onOpenPanel={openRootInPanel}
-          onOpenSearch={() => setCommandOpen(true)}
+          onOpenSearch={showCommandSurface}
           onOpenSettings={() => {
             void window.lin?.openSettings();
           }}
@@ -697,18 +765,6 @@ export function App() {
         }))}
       />
 
-      {ui.commandOpen && (
-        <CommandPalette
-          projection={index.projection}
-          index={index}
-          onClose={() => setCommandOpen(false)}
-          onEnsureToday={ensureTodayNode}
-          onFocus={focusNode}
-          onRoot={navigateRoot}
-          restoreFocus={() => commandRestoreFocusRef.current}
-          run={run}
-        />
-      )}
 
       {notice && (
         <ActionNotice message={notice.message} onDismiss={dismissNotice} seq={notice.seq} />

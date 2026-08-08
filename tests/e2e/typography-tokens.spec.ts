@@ -122,7 +122,6 @@ const borderlessOverlaySurfaceSelectors = new Map([
   ['src/renderer/styles/confirm-dialog.css|.confirm-dialog', 'Confirm dialog level-2 surface.'],
   ['src/renderer/styles/file-preview.css|.document-outline-popover', 'Document outline popover.'],
   ['src/renderer/styles/inline-ref.css|.inline-file-preview-popover', 'Inline file hover preview popover.'],
-  ['src/renderer/styles/overlay-palette.css|.command-palette', 'Command palette layout surface.'],
   ['src/renderer/styles/outliner.css|.batch-tag-selector', 'Batch tag selector popover.'],
   ['src/renderer/styles/outliner.css|.node-context-menu', 'Node context menu.'],
   ['src/renderer/styles/outliner.css|.node-picker-popover', 'Node picker popover.'],
@@ -132,7 +131,6 @@ const borderlessOverlaySurfaceSelectors = new Map([
   ['src/renderer/styles/outliner.css|.view-toolbar-popover', 'View toolbar popover.'],
   ['src/renderer/styles/outliner.css|.view-toolbar-tooltip', 'View toolbar tooltip.'],
   ['src/renderer/styles/panel.css|.panel-date-popover', 'Panel date popover.'],
-  ['src/renderer/styles/popover-command.css|.command-palette', 'Command palette visual surface.'],
   ['src/renderer/styles/popover-command.css|.anchored-overlay-surface', 'Shared fixed-position anchored menu and picker surface.'],
   ['src/renderer/styles/popover-command.css|.trigger-popover', 'Trigger/reference/slash popover shell.'],
   ['src/renderer/styles/settings-providers.css|.settings-row-menu', 'Settings provider row menu.'],
@@ -1136,7 +1134,7 @@ test.describe('typography tokens', () => {
       // The settings dialogs belong to this tier too. The regex named two
       // selectors, so `.managed-skill-dialog` and `.managed-skill-update-dialog`
       // were correct only by luck, with nothing preventing a regression.
-      /(?:^|,\s*)(?:\.command-palette|\.confirm-dialog|\.managed-skill-dialog|\.managed-skill-update-dialog)(?:$|[\s,:])/,
+      /(?:^|,\s*)(?:\.confirm-dialog|\.managed-skill-dialog|\.managed-skill-update-dialog)(?:$|[\s,:])/,
       /\b(background(?:-color)?|(?:-webkit-)?backdrop-filter|box-shadow):\s*([^;]+);/g,
       (value, property) => {
         if (property === 'background' || property === 'background-color') return value === 'var(--bg-elevated)';

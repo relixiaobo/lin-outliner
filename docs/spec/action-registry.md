@@ -81,27 +81,68 @@ that needs one resolves `absent` where it does not exist — that is why *Pin*,
 have no row without a workspace or a view, while *Open in split pane* consumes
 neither and stays available.
 
+## Renderer capabilities
+
+Two windows reach the seam and they are not equally trusted.
+
+The launcher window gets a narrow bridge (`src/preload/launcher.ts`): the
+generic `window.lin.invoke` surface is never exposed to it, and the page cannot
+re-run the preload, so it cannot reach an API it was not given.
+
+That module is built into the ONE preload bundle and selected by a role flag
+main passes through `additionalArguments`. It is deliberately not a second
+rollup entry: two entries emit a shared chunk that both bundles `require`, and a
+sandboxed preload's `require` is a polyfill limited to
+electron/events/timers/url — which left `window.lin` undefined in *every*
+window while every test stayed green, because no renderer test loads a preload.
+`tests/core/preloadBundle.test.ts` guards it.
+
+Exposure is least privilege; it is not the gate.
+
+The gate is `src/main/rendererCapabilities.ts`: capabilities are registered
+against the real `webContents` at window creation and dropped when it is
+destroyed, and every inbound seam checks them. An unregistered renderer has
+none and fails closed.
+
+| Capability | Main window, Settings, provider config | Launcher |
+| --- | --- | --- |
+| `appCommands` (`lin:invoke`) | yes | **no** |
+| `launcher` (`launcher:*`) | no | yes |
+| `actionRequests` (name an action, query a parameter, report a lifecycle event) | yes | yes |
+| `actionAttestation` (create an invocation from a seed) | yes | **no** |
+
+`lin:invoke` checks `appCommands` **before dispatch**, so no command name —
+`get_projection`, `delete_node`, or any other — is reachable from the launcher.
+`actionRequests` is shared because its whole safety argument is that main
+re-evaluates the named tuple itself against the latest projection. Attestation
+is not shared, because `view` and `workspace` facts are the main renderer's to
+state and a launcher attempt to supply them is rejected rather than merged.
+
 ## Phases and confirmation
 
 `live -> confirming -> executing -> spent`. The invocation is **claimed on
 entering `executing`, before step 0 is dispatched**, so a second submit against
-a claimed record is rejected.
+a claimed record is rejected. Only a COMPLETED action spends it: a surface that
+stays open after a failure must still be able to search and retry, and a spent
+record makes that still-visible panel inert.
 
-A confirmed action has two legs and main owns both:
+Confirmation is a **main-owned phase**, not a boolean a caller can assert, and
+there is deliberately **no token**. Main raises its own native sheet, observes
+the acceptance, revalidates the subject and arguments, and executes. A token
+would put the deciding artefact back in the hands the sheet exists to bypass —
+a compromised renderer that merely *receives* one can redeem it silently.
 
-1. a request without a challenge responds `confirmationRequired` with the token
-   **and the authoritative copy, subject and arguments the dialog must show**,
-   so the dialog cannot describe one thing while the token authorises another;
-2. **the challenge-bearing request IS the acceptance**, committing atomically
-   after the token, subject and arguments re-resolve to the same set.
+Two consequences the surfaces must honour:
 
-Cancelling emits `confirmationCancelled`; the record returns to `live` and the
-challenge dies with it. A dead token is refused (`stale`), never silently
-re-prompted.
+- **A decline is `cancelled`, not `stale`.** It is a deliberate user decision,
+  and reporting it as a failure puts an error banner on screen for doing exactly
+  what was asked.
+- **A missing sheet host is `stale`, not `cancelled`.** No host means no
+  confirmation, so nothing runs — but the user never saw a sheet, so they are
+  not told they cancelled one.
 
-The security claim is stated exactly: the challenge closes first-request
-commits, replay, and subject/argument substitution between the legs. It does not
-prove a human saw anything.
+*Delete forever* and *Empty Trash* carry `confirm` today; both are outside
+`Cmd+Z`'s reach, which is why they get a sheet at all.
 
 ## Effect plans
 
@@ -158,8 +199,37 @@ irreversible boundary or confirmation contract is a different action.
 | `emptyTrash` | the Trash system node | none; confirmed |
 | `capture` | external page | Today is a bound destination object; optional tag |
 | `create` | node-purpose draft | Today is a bound destination object |
+| `indent` | node row or selection rows | none; **searchable surface only** |
+| `outdent` | node row or selection rows + attested pane root | none; **searchable surface only** |
 
 There is no `run` family: this release has no genuine command object to run.
+
+### Indent and Outdent are exposed, not inherited
+
+They were keyboard-only, and exposing them was ratified as a declared addition
+rather than allowed to fall out of the model. Three things had to be true:
+
+- **A surface-exposure rule.** `ACTION_SURFACES` gives them `actionPanel` alone.
+  Leaking them into the anchored menu would change that menu's set after its
+  differential proof had already passed.
+- **An attested pane root.** `outdent` is defined relative to the pane the user
+  is looking at, and main cannot recover it — the same node appears under
+  several roots. So `ViewFact.selectionRootId` is carried, and without it the
+  action resolves **absent**, not rejected.
+- **The shipped keyboard behaviour.** A command-only effect drops the selection
+  restoration and expansion adjustment the keyboard path performs, and the loss
+  is invisible until a user tries it. The plan therefore carries `outlineIntent`
+  steps, and their ORDER is chosen per direction:
+
+| Direction | Order | Why |
+| --- | --- | --- |
+| indent | expand target -> command | the target is about to gain children, so expanding it early moves nothing on screen |
+| outdent | command -> collapse emptied | collapsing a parent that still holds the rows would hide them for a frame and then show them again one level out |
+
+Selection restoration runs before the command in both (the ids survive), and
+the plan sets `focus: 'surfaceOwned'` so the command's focus hint does not fight
+the selection the intents just placed — the same reason the shipped keyboard
+path passes `applyFocus: false`.
 
 ### `remove` names the intent; row policy chooses the effect
 
