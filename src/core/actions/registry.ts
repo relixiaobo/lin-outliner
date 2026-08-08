@@ -178,6 +178,35 @@ export const ACTION_SUBJECT_KINDS: Record<ActionId, readonly SurfaceObject['kind
   create: ['draft'],
 };
 
+/**
+ * The object-valued parameter slots each family OWNS. A parameter query cannot
+ * create a slot merely by naming one, and an OPTIONAL parameter (capture's tag)
+ * still has to be answerable even though the resolved presentation is already
+ * `ready` — so ownership is declared here rather than inferred from whether the
+ * current binding happens to be waiting on it.
+ */
+export const ACTION_PARAMETER_IDS: Record<ActionId, readonly string[]> = {
+  open: [],
+  openInSplitPane: [],
+  setPinned: [],
+  sendToAgent: [],
+  duplicate: [],
+  move: ['destination'],
+  setDone: [],
+  addTag: ['tag'],
+  setViewMode: [],
+  setViewToolbarVisible: [],
+  editViewSection: [],
+  editDescription: [],
+  copy: [],
+  remove: [],
+  restore: [],
+  deleteForever: [],
+  emptyTrash: [],
+  capture: ['destination', 'tag'],
+  create: ['destination'],
+};
+
 /** Locale-independent search terms. Never action ids. */
 export const ACTION_ALIASES: Record<ActionId, readonly string[]> = {
   open: ['go', 'navigate', 'jump'],

@@ -35,7 +35,7 @@ import {
   presentObject,
   type ExternalPageDescription,
 } from '../core/actions/objects';
-import { ACTION_PANEL_ORDER } from '../core/actions/registry';
+import { ACTION_PANEL_ORDER, ACTION_PARAMETER_IDS } from '../core/actions/registry';
 import { orderedResultObjects, systemNodeObject } from '../core/actions/surfaceObjects';
 import {
   eligibleMoveToIds,
@@ -649,16 +649,20 @@ export class ActionInvocationService {
     };
   }
 
+  /**
+   * A request cannot create a slot by naming one. Ownership is two facts: the
+   * family DECLARES this parameter, and it actually resolves for this subject.
+   * Checking only "is the current binding waiting on it" would refuse capture's
+   * optional tag, whose presentation is already `ready`.
+   */
   private ownsParameterSlot(
     record: Record_,
     slot: ArgumentSlot,
     subject: SurfaceObject,
   ): boolean {
+    if (!ACTION_PARAMETER_IDS[slot.actionId].includes(slot.parameterId)) return false;
     const context = this.contextFor(record);
-    return resolveFamily(context, slot.actionId, subject).some((presentation) => (
-      presentation.binding.state === 'needsParameter'
-      && presentation.binding.parameter.parameterId === slot.parameterId
-    ));
+    return resolveFamily(context, slot.actionId, subject).length > 0;
   }
 
   private buildParameterCandidates(
@@ -693,7 +697,10 @@ export class ActionInvocationService {
       return { objects, items };
     }
 
-    if (request.slot.actionId === 'addTag' && request.slot.parameterId === 'tag') {
+    // Any action that owns a `tag` slot — `addTag` today, `capture` with an
+    // optional tag — answers from the same candidate policy. The slot, not the
+    // action id, is what the generation is keyed to.
+    if (request.slot.parameterId === 'tag') {
       const projection = this.host.projection();
       const index = buildTagCandidateIndex({
         nodes: projection.nodes,
@@ -828,10 +835,21 @@ export class ActionInvocationService {
     const suppliedParameters = new Set(
       objectValuedArguments(request.actionId, request.arguments).map(([parameterId]) => parameterId),
     );
+    // Declared parameters are validated BY SLOT above, so they are excluded from
+    // the argument identity check: an optional tag added to an already-`ready`
+    // capture must not read as "different arguments" and re-evaluate away.
+    const withoutParameters = (args: unknown) => {
+      const declared = ACTION_PARAMETER_IDS[request.actionId];
+      if (declared.length === 0 || typeof args !== 'object' || args === null) return args;
+      const rest: Record<string, unknown> = { ...(args as Record<string, unknown>) };
+      for (const parameterId of declared) delete rest[parameterId];
+      return rest;
+    };
+    const requestedIdentity = hashArguments(withoutParameters(request.arguments));
     const match = presentations.find((presentation) => (
       presentation.binding.state === 'ready'
-        // A direct variant matches only its own exact arguments.
-        ? hashArguments(presentation.binding.arguments) === hashArguments(request.arguments)
+        // A direct variant matches only its own exact non-parameter arguments.
+        ? hashArguments(withoutParameters(presentation.binding.arguments)) === requestedIdentity
         // A parameterized variant is named by filling its declared slot; the
         // ref itself was already proved against that slot's ready generation.
         : suppliedParameters.has(presentation.binding.parameter.parameterId)
