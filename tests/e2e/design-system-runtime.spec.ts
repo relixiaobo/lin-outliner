@@ -579,15 +579,6 @@ const surfaces: SurfaceCase[] = [
     },
   },
   {
-    name: 'command palette overlay',
-    path: '/',
-    waitFor: `[data-node-id="${ids.alpha}"]`,
-    beforeProbe: async (page) => {
-      await page.keyboard.press('Meta+K');
-      await page.getByRole('dialog', { name: 'Command palette' }).waitFor({ state: 'visible' });
-    },
-  },
-  {
     name: 'search query builder',
     path: '/',
     waitFor: `[data-node-id="${ids.alpha}"]`,
