@@ -3142,6 +3142,33 @@
 .thread-subagent-detail-empty {
   margin: 0;
   padding: var(--space-5);
+  color: var(--text-tertiary);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+}
+
+/* Where a composer would be. Not an input: the sentence explains the absence
+   rather than leaving a reader to wonder why they cannot type. */
+.thread-subagent-detail-note {
+  flex: 0 0 auto;
+  margin: 0;
+  border-top: 1px solid var(--separator);
+  padding: var(--space-2) var(--space-3);
+  color: var(--text-tertiary);
+  font-size: var(--font-ui-2xs);
+  line-height: var(--line-ui-2xs);
+}
+
+/* B7: the chevron turns, the row does not move. */
+.thread-delegation-row-chevron {
+  flex: 0 0 auto;
+  transition: transform var(--motion-fast);
+}
+
+.thread-delegation-row-chevron.is-expanded {
+  transform: rotate(90deg);
+}
+
 /* Context staged onto the composer from the command surface. A visible,
  * removable chip — the alternative was an invisible rider on the next message,
  * in whatever thread the user happened to be in. */
@@ -3182,28 +3209,6 @@
   color: var(--text-tertiary);
   font-size: var(--font-meta);
   line-height: var(--line-meta);
-}
-
-/* Where a composer would be. Not an input: the sentence explains the absence
-   rather than leaving a reader to wonder why they cannot type. */
-.thread-subagent-detail-note {
-  flex: 0 0 auto;
-  margin: 0;
-  border-top: 1px solid var(--separator);
-  padding: var(--space-2) var(--space-3);
-  color: var(--text-tertiary);
-  font-size: var(--font-ui-2xs);
-  line-height: var(--line-ui-2xs);
-}
-
-/* B7: the chevron turns, the row does not move. */
-.thread-delegation-row-chevron {
-  flex: 0 0 auto;
-  transition: transform var(--motion-fast);
-}
-
-.thread-delegation-row-chevron.is-expanded {
-  transform: rotate(90deg);
 }
 
 .thread-composer-context-remove:hover,
