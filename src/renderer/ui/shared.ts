@@ -9,7 +9,6 @@ import type {
   NodeId,
   NodeProjection,
 } from '../api/types';
-import { isInternalConfigNode } from '../../core/configSchema';
 import { FIELD_TYPE_CONFIG_OPTIONS } from './fields/fieldTypeRegistry';
 import { measureRender } from './outliner/renderProbe';
 

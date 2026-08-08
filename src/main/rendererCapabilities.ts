@@ -68,10 +68,6 @@ export function rendererHasCapability(
   return capabilitiesByWebContentsId.get(webContentsId)?.has(capability) === true;
 }
 
-export function forgetRendererCapabilities(webContentsId: number): void {
-  capabilitiesByWebContentsId.delete(webContentsId);
-}
-
 /** Test seam: the registry is process-global, so suites must be able to reset it. */
 export function resetRendererCapabilities(): void {
   capabilitiesByWebContentsId.clear();

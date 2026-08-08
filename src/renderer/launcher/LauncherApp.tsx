@@ -91,7 +91,14 @@ export function LauncherApp() {
     setFixedItems([]);
     setActionsOpen(false);
     setActionQuery('');
+    setPendingEnter(false);
     ambientRevisionRef.current = -1;
+    // The results and the opening they belong to go too. Leaving them rendered
+    // the PREVIOUS summon's rows against an invocation main has since released,
+    // so clicking one was a guaranteed error rather than merely stale.
+    setOpening(null);
+    setResults([]);
+    setResultsQuery('');
   }, []);
 
   useEffect(() => {
@@ -261,7 +268,9 @@ export function LauncherApp() {
     if (!actions || !invocationRef) return;
     const result = await actions.event({ kind: 'objectRemoved', invocationRef, objectRef });
     if (result?.status !== 'updated') return;
-    ambientRevisionRef.current += 1;
+    // Adopt MAIN's revision. Bumping a local counter fabricated a value main
+    // never issued, and the guard's whole job is to compare against main's.
+    if (result.opening.ambient) ambientRevisionRef.current = result.opening.ambient.revision;
     setFixedItems(result.opening.fixedItems);
     setExplicitRef(null);
   }, [invocationRef]);

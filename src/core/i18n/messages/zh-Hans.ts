@@ -74,22 +74,6 @@ export const zhHans: PartialMessages = {
     actionsAriaLabel: '所选项的操作',
     actionsPlaceholder: '搜索操作…',
     removeContext: '移除上下文',
-    actions: {
-      nounPage: '页面',
-      nounVideo: '视频',
-      captureToToday: ({ noun }) => `将${noun}捕获到今天`,
-      newNodeInToday: '在今天新建节点',
-      open: '打开',
-    },
-    rowView: {
-      captureTitle: '捕获',
-      newNodeTitle: '新建节点',
-      typeCommand: '命令',
-      typeNode: '节点',
-      currentPage: '当前页面',
-      captureWithNote: ({ note, where }) => `+ ${note} · ${where}`,
-      captureFromPage: ({ page, where }) => `${page} · ${where}`,
-    },
     remediation: {
       fallbackBrowser: '你的浏览器',
       cannotReadTitle: ({ browser }) => `无法读取 ${browser}`,
@@ -693,31 +677,6 @@ export const zhHans: PartialMessages = {
     tomorrow: ({ dayName }) => `明天，${dayName}`,
     yesterday: ({ dayName }) => `昨天，${dayName}`,
   },
-
-commandPalette: {
-  // Dialog + input
-  dialogLabel: '命令面板',
-  inputLabel: '搜索或新建',
-  inputPlaceholder: '搜索或新建',
-  // Group headings
-  headingNavigate: '导航',
-  headingNodes: '节点',
-  // Type labels (right-aligned meta on each row)
-  typeNavigate: '导航',
-  typeNode: '节点',
-  typeNewInToday: '在“今天”中新建',
-  // Navigation targets
-  navToday: '今天',
-  navLibrary: '资料库',
-  navSchema: '模式',
-  navSavedSearches: '已保存的搜索',
-  navTrash: '回收站',
-  // Action-bar verbs
-  actionCreate: '新建',
-  actionOpen: '打开',
-  // Dynamic: create-from-query row label
-  createLabel: ({ label }: { label: string }) => `新建“${label}”`,
-},
 
   // 中心大纲：视图工具栏（显示/分组/排序/筛选）、节点右键菜单、只读系统字段值，
   // 以及字段值编辑相关界面（选择器、弹出层、日期选择器、代码块、图片）。

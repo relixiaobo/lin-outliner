@@ -44,6 +44,8 @@ import {
 import type {
   ActionArguments,
   ActionId,
+  ArgumentSlot,
+  ObjectParameterId,
   ActionPresentation,
   ActionProjection,
   ActionRejectionCode,
@@ -201,8 +203,15 @@ export const ACTION_SUBJECT_KINDS: Record<ActionId, readonly SurfaceObject['kind
  * still has to be answerable even though the resolved presentation is already
  * `ready` — so ownership is declared here rather than inferred from whether the
  * current binding happens to be waiting on it.
+ *
+ * The value exists because types are erased and the admission check needs one
+ * at runtime; the mapped type is what stops it from becoming a SECOND source of
+ * truth. Each entry may only contain that family's own declared parameter ids,
+ * so a family whose `ObjectParameterId` is `never` can only be `[]`.
  */
-export const ACTION_PARAMETER_IDS: Record<ActionId, readonly string[]> = {
+export const ACTION_PARAMETER_IDS: {
+  [K in ActionId]: readonly ObjectParameterId[K][];
+} = {
   open: [],
   openInSplitPane: [],
   setPinned: [],
@@ -225,6 +234,17 @@ export const ACTION_PARAMETER_IDS: Record<ActionId, readonly string[]> = {
   indent: [],
   outdent: [],
 };
+
+/**
+ * Whether a family declares the slot a request is naming. The widening to
+ * `readonly string[]` happens HERE, once: indexing the mapped type by a union
+ * of action ids collapses its element type, and the correlation that matters is
+ * on the authoring side, where the table is written.
+ */
+export function declaresParameter(slot: ArgumentSlot): boolean {
+  const declared: readonly string[] = ACTION_PARAMETER_IDS[slot.actionId];
+  return declared.includes(slot.parameterId);
+}
 
 /** Locale-independent search terms. Never action ids. */
 export const ACTION_ALIASES: Record<ActionId, readonly string[]> = {
@@ -1040,7 +1060,7 @@ function resolveCreate(
  * link. Page BODY extraction is a separate, explicitly-invoked reader — the
  * ambient hotkey path never fetches.
  */
-function externalPageLabel(context: ExternalContext): string {
+export function externalPageLabel(context: ExternalContext): string {
   return context.source?.title || context.browser?.tabTitle || context.app.name || 'Page';
 }
 

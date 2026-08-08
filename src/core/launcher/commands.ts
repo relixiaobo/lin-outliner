@@ -37,17 +37,7 @@ export interface LauncherInitialState {
 }
 
 /** Bootstrap payload the launcher renderer requests on open. */
-export interface LauncherInitialState {
-  /** The accelerator that actually registered, or null if none did. */
-  hotkey: string | null;
-}
 
-/** Result of a manual New Capture → Today save. */
-export interface LauncherCreateCaptureResult {
-  ok: boolean;
-  /** The created capture node id, when ok. */
-  nodeId?: string;
-}
 
 /**
  * Render an Electron accelerator (e.g. `CommandOrControl+Shift+Space`) as macOS

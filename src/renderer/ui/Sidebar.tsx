@@ -30,7 +30,6 @@ import { useT } from '../i18n/I18nProvider';
 import { isNodeInTrash } from './interactions/nodeLocation';
 import { OUTLINER_NODE_DRAG_MIME, PINNED_NODE_REORDER_MIME } from './interactions/dragDrop';
 import { MAX_OUTLINE_INDENT_DEPTH } from './workspaceResponsiveLayout';
-import { formatShortcutHint } from './interactions/shortcutRegistry';
 
 const primaryNavItems = [
   { key: 'today', icon: CalendarIcon },

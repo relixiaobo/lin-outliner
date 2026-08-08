@@ -13,6 +13,7 @@ import type {
   LocalizedNames,
   NodeObject,
   NodeObjectRef,
+  IconId,
   ObjectPresentation,
   ObjectRef,
   SurfaceObject,
@@ -101,6 +102,14 @@ export function nodeText(
   return node.content.text || untitled;
 }
 
+const SYSTEM_OBJECT_ICONS: Record<SystemNodeKey, IconId> = {
+  today: 'node',
+  library: 'library',
+  schema: 'schema',
+  savedSearches: 'savedSearches',
+  trash: 'trash',
+};
+
 const SYSTEM_OBJECT_NAMES: Record<SystemNodeKey, LocalizedNames> = {
   today: objectName('today'),
   library: objectName('library'),
@@ -130,7 +139,9 @@ export function presentObject(
           objectRef: object.objectRef,
           kind: 'node',
           name: { source: 'localized', values: SYSTEM_OBJECT_NAMES[systemKey] },
-          iconId: 'node',
+          // Each system node reads as ITSELF; one generic glyph for all five
+          // makes the empty-query list a column of identical rows.
+          iconId: SYSTEM_OBJECT_ICONS[systemKey],
           typeLabel: objectTypeLabel('node'),
         };
       }
@@ -143,7 +154,9 @@ export function presentObject(
         objectRef: object.objectRef,
         kind: 'node',
         name: { source: 'literal', value: nodeText(node, untitled) },
-        ...(parent ? { subtitle: { source: 'literal' as const, value: nodeText(parent, untitled) } } : {}),
+        // No subtitle at all for a parent with no text — the deleted matcher
+        // omitted it, and a literal "Untitled" is noise, not disambiguation.
+        ...(parent?.content.text ? { subtitle: { source: 'literal' as const, value: parent.content.text } } : {}),
         // Only a real emoji icon: an image / generated icon identifier is not
         // an emoji, and emitting it as one renders the raw id.
         ...(node?.icon && node.iconKind === 'emoji' ? { emoji: node.icon } : {}),
@@ -191,7 +204,9 @@ export function presentObject(
           source: 'localized',
           values: objectName(object.surface === 'settings' ? 'settings' : 'mainWindow'),
         },
-        iconId: 'open',
+        // By DISCRIMINANT. Comparing the English display string never matched
+        // under a non-English locale, so the row got the wrong icon.
+        iconId: object.surface === 'settings' ? 'settings' : 'mainWindow',
         typeLabel: objectTypeLabel('appSurface'),
       };
   }

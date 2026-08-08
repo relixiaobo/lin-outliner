@@ -35,7 +35,11 @@ import {
   presentObject,
   type ExternalPageDescription,
 } from '../core/actions/objects';
-import { ACTION_PANEL_ORDER, ACTION_PARAMETER_IDS } from '../core/actions/registry';
+import {
+  ACTION_PANEL_ORDER,
+  ACTION_PARAMETER_IDS,
+  declaresParameter,
+} from '../core/actions/registry';
 import { orderedResultObjects, systemNodeObject } from '../core/actions/surfaceObjects';
 import {
   eligibleMoveToIds,
@@ -81,7 +85,6 @@ import type {
   ObjectRef,
   ParameterObjectQueryRequest,
   ParameterObjectQueryResult,
-  ReadyActionPresentation,
   SurfaceObject,
   ViewFact,
   WorkspaceFact,
@@ -95,7 +98,6 @@ const CANDIDATE_FETCH_LIMIT = 200;
 const LAUNCHER_RESULT_LIMIT = 8;
 const CANDIDATE_LIMIT = 10;
 const INVOCATION_TTL_MS = 5 * 60_000;
-const CHALLENGE_TTL_MS = 60_000;
 
 export type RendererStepAck =
   | { status: 'ok' }
@@ -119,11 +121,6 @@ export interface ActionInvocationHost {
    */
   confirmNatively?(spec: ConfirmationSpec): Promise<boolean>;
   writeClipboard(text: string): void;
-  /**
-   * Whether a `reveal` step can land — true only for a surface that owns the
-   * panel the row lives in. The anchored menu does; the launcher does not.
-   */
-  canRevealInMainRenderer?(): boolean;
   /** The active locale's untitled fallback — part of `copy`'s parity. */
   untitled(): string;
   now(): number;
@@ -289,10 +286,23 @@ export class ActionInvocationService {
           ? 'create' as const
           : null;
       if (!actionId) continue;
+      const slot = {
+        actionId,
+        subjectRef: object.objectRef,
+        parameterId: 'destination' as const,
+      };
+      // Drop the previous generation's Today object before minting another, or
+      // the ref map grows by one per keystroke for the life of the invocation.
+      const previous = record.invocation.argumentGenerations.find((generation) => (
+        generation.slot.actionId === slot.actionId
+        && generation.slot.subjectRef === slot.subjectRef
+        && generation.slot.parameterId === slot.parameterId
+      ));
+      for (const stale of previous?.objects ?? []) record.objects.delete(stale.objectRef);
       const today = systemNodeObject('today', () => mintRef<ObjectRef>());
       record.objects.set(today.objectRef, today);
       this.replaceArgumentGeneration(record, {
-        slot: { actionId, subjectRef: object.objectRef, parameterId: 'destination' },
+        slot,
         generation: ++record.generation,
         source: { kind: 'resolver' },
         state: 'ready',
@@ -426,25 +436,29 @@ export class ActionInvocationService {
     };
     if (!record || record.openSeq !== request.openSeq) return superseded;
 
-    // `draftText` is admitted SYNCHRONOUSLY, before any await: it is payload,
-    // not selection, and type-then-immediate-Enter must see the latest text
-    // even though results have not resolved yet.
+    // `draftText` is admitted SYNCHRONOUSLY: it is payload, not selection, and
+    // type-then-immediate-Enter must see the latest text.
+    //
+    // Retrieval is synchronous today, so the generation is replaced ONCE,
+    // atomically. The two-phase pending/ready swap the contract describes is
+    // for an async retrieval path; writing it here produced a `pending` state
+    // nothing could observe and a staleness recheck that could never fire.
+    // Reinstate both the day this awaits.
     const query = request.query.slice(0, 512);
     const generation = ++record.generation;
-    this.replaceResultGeneration(record, {
-      generation,
-      requestId: request.requestId,
-      state: 'pending',
-      objects: [],
-    }, query);
-
     const mint = () => mintRef<ObjectRef>();
-    const nodeObjects = query.trim()
-      ? this.host.searchNodes(query.trim(), LAUNCHER_RESULT_LIMIT)
-        .map((hit) => nodeObjectForRow(hit.nodeId, this.actionProjection().byId, mint))
-      : [];
+    let nodeObjects: SurfaceObject[] = [];
+    try {
+      nodeObjects = query.trim()
+        ? this.host.searchNodes(query.trim(), LAUNCHER_RESULT_LIMIT)
+          .map((hit) => nodeObjectForRow(hit.nodeId, this.actionProjection().byId, mint))
+        : [];
+    } catch {
+      // A failed search leaves only the stable objects — never the previous
+      // generation's rows, which this transition has already invalidated.
+      nodeObjects = [];
+    }
     const resultObjects = orderedResultObjects({ query, nodeObjects, mintRef: mint });
-    if (record.generation !== generation) return { ...superseded, generation: record.generation };
 
     for (const object of resultObjects) record.objects.set(object.objectRef, object);
     this.replaceResultGeneration(record, {
@@ -589,12 +603,19 @@ export class ActionInvocationService {
     return plan.steps.every((step) => this.canExecuteStep(step));
   }
 
-  /** Whether this host can carry a step for a surface with no anchored view. */
+  /**
+   * Whether a step can land on the SEARCHABLE surface. This is only consulted
+   * by `itemFor`, which builds the launcher panel — the anchored menu goes
+   * through the separate, unfiltered `menuActions`. A `reveal` needs the panel
+   * that owns the row, which a launcher-originated plan does not have.
+   *
+   * Stated as a flat rule rather than a host capability on purpose: an
+   * always-false optional callback is a trap, because the day the anchored menu
+   * routes through `itemFor` it would silently lose every reveal action.
+   */
   private canExecuteStep(step: EffectStep): boolean {
     if (step.on !== 'mainRenderer') return true;
-    // `reveal` needs the panel that owns the row; a launcher-originated plan
-    // has none, and the fallback handlers deliberately do not fake one.
-    return step.kind !== 'reveal' || this.host.canRevealInMainRenderer?.() === true;
+    return step.kind !== 'reveal';
   }
 
   /** Fixed objects plus the one `ready` result generation — nothing else. */
@@ -714,7 +735,7 @@ export class ActionInvocationService {
     slot: ArgumentSlot,
     subject: SurfaceObject,
   ): boolean {
-    if (!ACTION_PARAMETER_IDS[slot.actionId].includes(slot.parameterId)) return false;
+    if (!declaresParameter(slot)) return false;
     const context = this.contextFor(record);
     return resolveFamily(context, slot.actionId, subject).length > 0;
   }
@@ -888,7 +909,7 @@ export class ActionInvocationService {
     // the argument identity check: an optional tag added to an already-`ready`
     // capture must not read as "different arguments" and re-evaluate away.
     const withoutParameters = (args: unknown) => {
-      const declared = ACTION_PARAMETER_IDS[request.actionId];
+      const declared: readonly string[] = ACTION_PARAMETER_IDS[request.actionId];
       if (declared.length === 0 || typeof args !== 'object' || args === null) return args;
       const rest: Record<string, unknown> = { ...(args as Record<string, unknown>) };
       for (const parameterId of declared) delete rest[parameterId];
@@ -1080,6 +1101,15 @@ export class ActionInvocationService {
           fixedObjects: record.invocation.fixedObjects
             .filter((object) => object.objectRef !== event.objectRef),
         };
+        // Removing the ambient object advances MAIN's revision and leaves the
+        // slot at `none`, so an older context push cannot reattach the chip.
+        if (record.ambient?.state === 'resolved' && record.ambient.objectRef === event.objectRef) {
+          record.ambient = {
+            requestId: record.ambient.requestId,
+            revision: record.ambient.revision + 1,
+            state: 'none',
+          };
+        }
         this.invalidateRefsFor(record, event.objectRef);
         return { status: 'updated', opening: this.openingFor(record) };
       }
@@ -1087,8 +1117,11 @@ export class ActionInvocationService {
         return this.removeSelectionMember(record, event.selectionRef, event.memberRef);
       case 'abandoned':
         // Reserved for closing the menu or panel; a UI lifetime event never
-        // invalidates an in-flight plan.
-        if (record.phase !== 'executing') {
+        // invalidates work in flight. `confirming` counts: the menu closes as
+        // soon as the action is chosen, while main's native sheet is still on
+        // screen deciding — releasing here would let the record be deleted out
+        // from under a request the user is about to accept.
+        if (record.phase !== 'executing' && record.phase !== 'confirming') {
           record.phase = 'spent';
           this.records.delete(record.ref);
         }

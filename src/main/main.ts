@@ -285,8 +285,8 @@ import {
   LAUNCHER_NAVIGATE_TO_NODE_CHANNEL,
   type LauncherInitialState,
 } from '../core/launcher/commands';
-import { buildContextCaptureInput, buildManualNoteInput, isCaptureIntent } from '../core/launcher/sources';
 import { remediationForContext } from '../core/launcher/remediation';
+import { externalPageLabel } from '../core/actions/registry';
 import { rankTextSearchLabel } from '../core/textSearchAnalyzer';
 import { captureExternalContext } from './context/contextCapture';
 import { isAccessibilityTrusted, promptAccessibility } from './context/nativeBrowserTab';
@@ -1666,8 +1666,6 @@ function navigateMainToNode(nodeId: string): void {
   focusMainWindow();
 }
 
-/** Max inline node results shown in the launcher (keeps the list scannable). */
-const LAUNCHER_NODE_RESULT_LIMIT = 8;
 
 // The accelerator the launcher hotkey actually registered under (or null if none
 // was free), surfaced to the launcher renderer so it can reflect/repair it later.
@@ -2304,12 +2302,10 @@ const actionInvocationService = new ActionInvocationService({
   describeExternalPage: (contextId) => {
     const context = launcherContext && launcherContext.id === contextId ? launcherContext : null;
     if (!context) return null;
-    const title = context.source?.title
-      || context.browser?.tabTitle
-      || context.app.name
-      || getMessages(effectiveLocale()).common.untitled;
+    // One derivation of the page's title, shared with the registry's own
+    // composer handoff — two copies drifted the moment either changed.
     const subtitle = context.browser?.hostname ?? context.app.name;
-    return { title, ...(subtitle ? { subtitle } : {}) };
+    return { title: externalPageLabel(context), ...(subtitle ? { subtitle } : {}) };
   },
   newCaptureId: () => `cap:${randomUUID()}`,
   // Flow B. Main raises its own sheet and observes the answer; no token exists
@@ -3056,8 +3052,6 @@ function sanitizeInvocationEvent(raw: unknown): InvocationEvent | null {
   const value = raw as Record<string, unknown>;
   if (typeof value.invocationRef !== 'string') return null;
   switch (value.kind) {
-    case 'confirmationCancelled':
-      return typeof value.challenge === 'string' ? (raw as InvocationEvent) : null;
     case 'objectRemoved':
       return typeof value.objectRef === 'string' ? (raw as InvocationEvent) : null;
     case 'selectionMemberRemoved':

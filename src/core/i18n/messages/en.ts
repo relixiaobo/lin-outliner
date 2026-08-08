@@ -90,28 +90,6 @@ export const en = {
     actionsAriaLabel: 'Actions for the selected item',
     actionsPlaceholder: 'Search actions…',
     removeContext: 'Remove context',
-    // Result-row action labels (what Enter runs). `captureToToday` takes the
-    // provider-aware noun (page / video); nounPage/nounVideo are those nouns.
-    actions: {
-      nounPage: 'page',
-      nounVideo: 'video',
-      captureToToday: ({ noun }: { noun: string }) => `Capture ${noun} to Today`,
-      newNodeInToday: 'New node in Today',
-      open: 'Open',
-    },
-    // The uniform per-row display (title / subtitle / right-aligned type label).
-    rowView: {
-      captureTitle: 'Capture',
-      newNodeTitle: 'New node',
-      // The right-aligned category label on each row.
-      typeCommand: 'Command',
-      typeNode: 'Node',
-      // Fallback for where a capture comes from when no host/app name is known.
-      currentPage: 'current page',
-      // Capture-row subtitles. `note` arrives already quoted; `·` is the separator.
-      captureWithNote: ({ note, where }: { note: string; where: string }) => `+ ${note} · ${where}`,
-      captureFromPage: ({ page, where }: { page: string; where: string }) => `${page} · ${where}`,
-    },
     // The quiet "saved, but here's how to capture more" banner (Automation denied).
     remediation: {
       // Fallback used in the messages when the browser's name isn't known.
@@ -776,31 +754,6 @@ export const en = {
     tomorrow: ({ dayName }: { dayName: string }) => `Tomorrow, ${dayName}`,
     yesterday: ({ dayName }: { dayName: string }) => `Yesterday, ${dayName}`,
   },
-
-commandPalette: {
-  // Dialog + input
-  dialogLabel: 'Command palette',
-  inputLabel: 'Search or create',
-  inputPlaceholder: 'Search or create',
-  // Group headings
-  headingNavigate: 'Navigate',
-  headingNodes: 'Nodes',
-  // Type labels (right-aligned meta on each row)
-  typeNavigate: 'Navigate',
-  typeNode: 'Node',
-  typeNewInToday: 'New in Today',
-  // Navigation targets
-  navToday: 'Today',
-  navLibrary: 'Library',
-  navSchema: 'Schema',
-  navSavedSearches: 'Saved searches',
-  navTrash: 'Trash',
-  // Action-bar verbs
-  actionCreate: 'Create',
-  actionOpen: 'Open',
-  // Dynamic: create-from-query row label
-  createLabel: ({ label }: { label: string }) => `Create "${label}"`,
-},
 
   // The center outline: the per-view toolbar (display/group/sort/filter), the
   // node right-click context menu, read-only system-field values, and field-value

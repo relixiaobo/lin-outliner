@@ -232,47 +232,6 @@ export function App() {
       ...(state.selectionRootId ? { selectionRootId: state.selectionRootId } : {}),
     };
   }) ?? (() => undefined), [activePanelId, isNodePinned]);
-  // Fallback for LAUNCHER-originated plans: that invocation has no surface in
-  // this renderer to register handlers, but its navigate / pin / composer legs
-  // still land here. `reveal` is deliberately absent — only an anchored opening
-  // carries the view facts one needs.
-  useEffect(() => installDefaultActionStepHandlers({
-    navigate: (nodeId) => setActivePanelRoot(nodeId),
-    workspace: (op, nodeId) => {
-      if (op === 'openSplitPane') setActivePanelRoot(nodeId, { newPane: true });
-      else if (op === 'pin' ? !isNodePinned(nodeId) : isNodePinned(nodeId)) togglePin(nodeId);
-    },
-    composerHandoff: (object) => stageComposerObject(object),
-    // Structural commands from the searchable surface must keep the behaviour
-    // the keyboard path has: the selection survives and expansion follows the
-    // rows. The ORDER is the plan's — expansion before an indent, collapse
-    // after an outdent — so neither direction flashes.
-    outlineIntent: (intent) => {
-      if (intent.kind === 'animateRowMovement') {
-        animateOutlinerRowMovementAfterNextCommit();
-        return;
-      }
-      setUi((prev) => {
-        if (intent.kind === 'expand') {
-          const expanded = new Set(prev.expanded);
-          for (const nodeId of intent.nodeIds) expanded.add(nodeId);
-          return { ...prev, expanded };
-        }
-        if (intent.kind === 'collapse') {
-          return { ...prev, expanded: collapseExpandedParentIds(prev.expanded, new Set(intent.nodeIds)) };
-        }
-        return {
-          ...clearFocusState(prev),
-          focusedId: null,
-          selectedId: intent.anchorId,
-          selectedIds: new Set(intent.selectedIds),
-          selectionAnchorId: intent.anchorId,
-          selectionRootId: intent.selectionRootId,
-          selectionSource: 'global',
-        };
-      });
-    },
-  }), [isNodePinned, setActivePanelRoot, setUi, togglePin]);
   const agentUserView = useMemo(() => index ? buildRendererUserViewHints({
     activePanelId,
     panels,
@@ -460,6 +419,54 @@ export function App() {
 
   // The global launcher opened an inline node search result — navigate the active
   // panel to it and focus it: the same in-place re-root a node row performs.
+  // Fallback for LAUNCHER-originated plans: that invocation has no surface in
+  // this renderer to register handlers, but its navigate / pin / composer legs
+  // still land here. `reveal` is deliberately absent — only an anchored opening
+  // carries the view facts one needs.
+  useEffect(() => installDefaultActionStepHandlers({
+    // The SAME landing the deleted `launcher:openNode` performed — file-preview
+    // handling, outliner restore and the access record all live in
+    // `navigateRoot`/`focusNode`. Raw `setActivePanelRoot` skipped every one.
+    navigate: (nodeId) => {
+      navigateRoot(nodeId as NodeId);
+      focusNode(nodeId as NodeId);
+    },
+    workspace: (op, nodeId) => {
+      if (op === 'openSplitPane') setActivePanelRoot(nodeId, { newPane: true });
+      else if (op === 'pin' ? !isNodePinned(nodeId) : isNodePinned(nodeId)) togglePin(nodeId);
+    },
+    composerHandoff: (object) => stageComposerObject(object),
+    // Structural commands from the searchable surface must keep the behaviour
+    // the keyboard path has: the selection survives and expansion follows the
+    // rows. The ORDER is the plan's — expansion before an indent, collapse
+    // after an outdent — so neither direction flashes.
+    outlineIntent: (intent) => {
+      if (intent.kind === 'animateRowMovement') {
+        animateOutlinerRowMovementAfterNextCommit();
+        return;
+      }
+      setUi((prev) => {
+        if (intent.kind === 'expand') {
+          const expanded = new Set(prev.expanded);
+          for (const nodeId of intent.nodeIds) expanded.add(nodeId);
+          return { ...prev, expanded };
+        }
+        if (intent.kind === 'collapse') {
+          return { ...prev, expanded: collapseExpandedParentIds(prev.expanded, new Set(intent.nodeIds)) };
+        }
+        return {
+          ...clearFocusState(prev),
+          focusedId: null,
+          selectedId: intent.anchorId,
+          selectedIds: new Set(intent.selectedIds),
+          selectionAnchorId: intent.anchorId,
+          selectionRootId: intent.selectionRootId,
+          selectionSource: 'global',
+        };
+      });
+    },
+  }), [focusNode, isNodePinned, navigateRoot, setActivePanelRoot, setUi, togglePin]);
+
   useEffect(() => window.lin?.onNavigateToNode?.((nodeId) => {
     navigateRoot(nodeId as NodeId);
     focusNode(nodeId as NodeId);

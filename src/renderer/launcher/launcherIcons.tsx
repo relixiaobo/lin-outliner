@@ -8,6 +8,8 @@
 import {
   AppWindow,
   CheckSquare,
+  Library,
+  Shapes,
   CirclePlus,
   Copy,
   FileText,
@@ -26,6 +28,11 @@ import type { IconId, ObjectPresentation } from '../../core/actions/types';
 
 const ICONS: Partial<Record<IconId, LucideIcon>> = {
   checkbox: CheckSquare,
+  library: Library,
+  mainWindow: AppWindow,
+  savedSearches: Search,
+  schema: Shapes,
+  settings: Settings,
   copy: Copy,
   description: FileText,
   node: List,
@@ -42,13 +49,6 @@ const ICONS: Partial<Record<IconId, LucideIcon>> = {
  * instead (see LauncherRow) — a node's icon is data, not a fixed glyph.
  */
 export function iconForObject(object: ObjectPresentation): LucideIcon {
-  if (object.kind === 'appSurface') {
-    // The two app surfaces are distinguishable at a glance; the registry gives
-    // them the same generic `open` id because it names actions, not windows.
-    return object.name.source === 'localized' && object.name.values.en === 'Settings'
-      ? Settings
-      : AppWindow;
-  }
   if (object.kind === 'draft') return CirclePlus;
   if (object.kind === 'externalPage') return CirclePlus;
   return ICONS[object.iconId] ?? Globe;

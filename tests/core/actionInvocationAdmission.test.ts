@@ -223,6 +223,34 @@ describe('the native confirmation sheet (flow B)', () => {
     expect(h.commands).toEqual([]);
   });
 
+  test('closing the menu cannot kill the request the sheet is deciding', async () => {
+    // The menu closes as soon as the action is chosen, and its unmount sends
+    // `abandoned` — while main's native sheet is still on screen. Releasing the
+    // record there would delete it out from under a decision the user is about
+    // to accept.
+    let resolveSheet: ((accepted: boolean) => void) | null = null;
+    const h = harness({
+      confirmNatively: () => new Promise((resolve) => { resolveSheet = resolve; }),
+    });
+    const today = h.core.projection().todayId;
+    const nodeId = h.core.createNode(today, null, 'Gone').focus!.nodeId;
+    h.core.trashNode(nodeId);
+    const opened = open(h, nodeId);
+
+    const pending = h.service.request({
+      actionId: 'deleteForever',
+      invocationRef: opened.invocationRef,
+      subjectRef: subjectRefOf(opened, 'deleteForever'),
+      arguments: {},
+    }, SENDER);
+    await Promise.resolve();
+    h.service.event({ kind: 'abandoned', invocationRef: opened.invocationRef }, SENDER);
+    resolveSheet!(true);
+
+    expect((await pending).status).toBe('completed');
+    expect(h.commands.map((entry) => entry.command)).toEqual(['delete_node']);
+  });
+
   test('with no sheet available nothing runs', async () => {
     const h = harness();
     const today = h.core.projection().todayId;
