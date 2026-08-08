@@ -1056,7 +1056,7 @@ test.describe('canonical agent Thread surface', () => {
   test('sends an Outliner Node to the Thread as structured input', async ({ page }) => {
     await createNewThread(page);
     await rowBody(page, ids.alpha).click({ button: 'right' });
-    await page.getByRole('menuitem', { name: 'Send to composer' }).click();
+    await page.getByRole('menuitem', { name: 'Send to Agent' }).click();
 
     await expect(page.locator('.thread-composer-inline-ref')).toContainText('Alpha');
     await page.getByRole('button', { name: 'Send' }).click();
@@ -1074,7 +1074,7 @@ test.describe('canonical agent Thread surface', () => {
     const composer = page.getByRole('textbox', { name: 'Message this Thread' });
     await composer.fill('Before ');
     await rowBody(page, ids.alpha).click({ button: 'right' });
-    await page.getByRole('menuitem', { name: 'Send to composer' }).click();
+    await page.getByRole('menuitem', { name: 'Send to Agent' }).click();
     await composer.pressSequentially('after');
     await page.getByRole('button', { name: 'Send' }).click();
 

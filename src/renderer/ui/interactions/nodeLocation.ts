@@ -20,17 +20,4 @@ export function isNodeInSubtree(
   return false;
 }
 
-export function isDescendantOf(
-  byId: Map<NodeId, NodeProjection>,
-  nodeId: NodeId,
-  possibleAncestorId: NodeId,
-): boolean {
-  let current = byId.get(nodeId);
-  const visited = new Set<NodeId>();
-  while (current?.parentId && !visited.has(current.id)) {
-    if (current.parentId === possibleAncestorId) return true;
-    visited.add(current.id);
-    current = byId.get(current.parentId);
-  }
-  return false;
-}
+export { isDescendantOf } from '../../../core/actions/rowFacets';

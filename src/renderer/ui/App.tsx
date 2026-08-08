@@ -24,6 +24,11 @@ import { useDragSelection } from './interactions/dragSelection';
 import { BatchTagSelector } from './outliner/BatchTagSelector';
 import { ButtonControl } from './primitives/ButtonControl';
 import type { NavigateRootOptions, TriggerState } from './shared';
+import {
+  installActionErrorSink,
+  installActionFocusSink,
+  installActionStepListener,
+} from './interactions/actionSteps';
 import { useCommandRunner } from './shared';
 import { createAssetNode } from './interactions/attachmentIngest';
 import { ingestPreviewTargetToAsset, onAddPreviewTargetToOutlineRequest } from './preview/previewIngest';
@@ -72,6 +77,13 @@ export function App() {
     for (const timer of nodeAccessTimersRef.current.values()) window.clearTimeout(timer);
     nodeAccessTimersRef.current.clear();
   }, []);
+
+  // The action seam's renderer legs: main routes `mainRenderer` effect steps to
+  // this one listener and waits for its ack, and forwards the executed
+  // commands' focus hint so the caret still lands where the command says.
+  useEffect(() => installActionStepListener(), []);
+  useEffect(() => installActionFocusSink(setPendingFocus), []);
+  useEffect(() => installActionErrorSink(setError), []);
 
   const recordNodeLanding = useCallback((nodeId: NodeId) => {
     const timers = nodeAccessTimersRef.current;

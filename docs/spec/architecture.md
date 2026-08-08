@@ -97,6 +97,21 @@ React interaction
 No renderer module may directly mutate document state. UI changes that affect
 document content or tree structure must use commands.
 
+Surfaces that act on a presented object go through the **action seam** rather
+than assembling commands themselves — see [`action-registry.md`](action-registry.md):
+
+```txt
+right-click / summon
+  -> InvocationSeed (renderer FACTS, sender-checked)
+  -> main constructs the objects, mints the refs, owns the lifetime
+  -> ActionRequest { actionId, invocationRef, subjectRef, typed arguments }
+  -> main RE-EVALUATES against the latest projection
+  -> ordered ActionEffectPlan, executed BY main (renderer legs routed + acked)
+```
+
+A renderer may NAME an action; it may never author one. Effect plans travel
+main -> renderer only.
+
 The document service keeps command application and projection emission
 synchronous from the renderer's point of view, but it does not write the whole
 workspace snapshot after every bursty mutation. Text edits keep a 700 ms undo

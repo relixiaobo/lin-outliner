@@ -48,7 +48,7 @@ test.describe('new Thread composer slash command', () => {
     const initialThreadStarts = await callCount(page, 'thread/start');
     await composer.fill('/new');
     await rowBody(page, ids.alpha).click({ button: 'right' });
-    await page.getByRole('menuitem', { name: 'Send to composer' }).click();
+    await page.getByRole('menuitem', { name: 'Send to Agent' }).click();
     await expect(page.locator('.thread-composer-inline-ref')).toContainText('Alpha');
 
     await page.getByRole('button', { name: 'New Thread' }).click();

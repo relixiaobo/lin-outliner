@@ -251,7 +251,7 @@ async function showCodeBlockLanguageMenu(page: Page) {
 async function showRowContextMenu(page: Page) {
   await rowBody(page, ids.alpha).click({ button: 'right' });
   await page.getByRole('menu', { name: 'Node actions' }).waitFor({ state: 'visible' });
-  await expect(page.getByRole('menuitem', { name: 'Trash' })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: 'Move to Trash' })).toBeVisible();
 }
 
 async function showTagContextMenu(page: Page) {

@@ -1,52 +1,40 @@
-import { useMemo, useRef, useState, type ReactNode } from 'react';
+// The node context menu is an ANCHORED VIEW of the core action registry.
+//
+// Position selects the subject object, which is why this projection survives:
+// you can never mistake which node a right-click menu acts on. Everything it
+// renders is a resolved `ActionPresentation` main produced for that opening,
+// and everything it runs is an `ActionRequest` naming an action id, an
+// invocation ref, a subject ref and typed arguments — main re-evaluates and
+// executes. See `docs/plans/unified-command-surface.md` D2.
+
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { api } from '../../api/client';
+import { ACTION_FAMILY_NAMES, nameFor } from '../../../core/actions/names';
+import { MENU_GROUP } from '../../../core/actions/registry';
+import type {
+  ActionPresentation,
+  ActionRequestResult,
+  ArgumentSlot,
+  ChallengeToken,
+  ConfirmationSpec,
+  InvocationOpened,
+  InvocationRef,
+  ObjectPresentation,
+  ObjectRef,
+  RequestId,
+} from '../../../core/actions/types';
 import { requestSendNodeReferenceToThreadComposer } from '../../agent/agentReveal';
-import type { CommandResult, NodeId, NodeProjection } from '../../api/types';
+import type { NodeId, NodeProjection } from '../../api/types';
+import { useI18n, useT } from '../../i18n/I18nProvider';
 import type { DocumentIndex, ToolbarDropdownSection } from '../../state/document';
 import {
-  commonTagIdsForTargets,
-  resolveActiveNodeSelection,
-  targetIdsForRows,
-} from '../interactions/contextMenuSelection';
+  applyActionFocus,
+  candidateForEnter,
+  registerActionStepHandlers,
+  reportActionError,
+} from '../interactions/actionSteps';
 import { isImeComposingEvent } from '../interactions/imeKeyboard';
-import { isDescendantOf, isNodeInTrash } from '../interactions/nodeLocation';
-import { tagSelectorItemLabel, tagSelectorItems } from '../interactions/tagSelector';
-import { permanentDeleteCandidateIds, trashRootChildIds } from '../interactions/trashActions';
-import {
-  idsAllowedForDuplicate,
-  idsAllowedForMoveTo,
-  idsEnabledForSelectionAction,
-  runSelectionDelete,
-  runSelectionDuplicate,
-  runSelectionMove,
-} from '../interactions/selectionBatchActions';
-import {
-  AgentIcon,
-  CheckIcon,
-  CheckboxIcon,
-  ChevronRightIcon,
-  CopyIcon,
-  DescriptionIcon,
-  DuplicateIcon,
-  FieldIcon,
-  FilterIcon,
-  GroupIcon,
-  HideToolbarIcon,
-  ICON_SIZE,
-  MoveDownIcon,
-  MoveToIcon,
-  MoveUpIcon,
-  NodeReadToolIcon,
-  OpenIcon,
-  PinIcon,
-  RestoreIcon,
-  ShowToolbarIcon,
-  SortAscIcon,
-  SupertagIcon,
-  TableIcon,
-  TrashIcon,
-} from '../icons';
+import { ChevronRightIcon, CheckIcon, ICON_SIZE, MoveToIcon, SupertagIcon } from '../icons';
 import { Button } from '../primitives/Button';
 import { ConfirmDialog } from '../primitives/ConfirmDialog';
 import { Input } from '../primitives/Input';
@@ -55,10 +43,9 @@ import { MenuSurface } from '../primitives/MenuSurface';
 import { overlayAnchorFromPoint, useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 import { useDismissibleOverlay } from '../primitives/useDismissibleOverlay';
 import { useMenuKeyboard } from '../primitives/useMenuKeyboard';
-import { commandRunnerNoop, textOf, type CommandRunner, type NavigateRootOptions } from '../shared';
 import { resolveTagColor } from '../tags/tagColors';
-import { readViewConfig } from './row-model';
-import { useT } from '../../i18n/I18nProvider';
+import type { NavigateRootOptions } from '../shared';
+import { actionIcon } from './actionIcons';
 
 interface NodeContextMenuProps {
   x: number;
@@ -66,12 +53,13 @@ interface NodeContextMenuProps {
   node: NodeProjection;
   targetId: NodeId;
   visualRowId: NodeId;
+  panelId: string;
   viewToolbarVisibleInRow: boolean;
   openId: NodeId;
   selectedIds: Set<NodeId>;
   index: DocumentIndex;
   isPinned: boolean;
-  run: CommandRunner;
+  isNodePinned: (nodeId: NodeId) => boolean;
   onRoot: (nodeId: NodeId, options?: NavigateRootOptions) => void;
   onTogglePin: (nodeId: NodeId) => void;
   onEditDescription: () => void;
@@ -80,491 +68,415 @@ interface NodeContextMenuProps {
   onClose: () => void;
 }
 
-type PendingDeleteConfirmation =
-  | {
-    kind: 'deleteForever';
-    nodeIds: NodeId[];
-    title: string;
-    message: string;
-    confirmLabel: string;
-  };
+type MenuMode =
+  | { kind: 'main' }
+  | { kind: 'viewMode' }
+  | { kind: 'parameter'; slot: ArgumentSlot; title: string; inputLabel: string; placeholder: string };
 
-async function writeClipboardText(text: string): Promise<void> {
-  try {
-    await navigator.clipboard.writeText(text);
-  } catch {
-    const textarea = document.createElement('textarea');
-    textarea.value = text;
-    textarea.style.position = 'fixed';
-    textarea.style.left = '-9999px';
-    document.body.appendChild(textarea);
-    textarea.focus();
-    textarea.select();
-    document.execCommand('copy');
-    textarea.remove();
-  }
+interface PendingConfirmation {
+  challenge: ChallengeToken;
+  confirm: ConfirmationSpec;
+  presentation: ActionPresentation;
 }
+
+const CANDIDATE_DEBOUNCE_MS = 120;
 
 export function NodeContextMenu(props: NodeContextMenuProps) {
   const t = useT();
+  const { locale } = useI18n();
   const tc = t.outliner.contextMenu;
-  const [mode, setMode] = useState<'main' | 'tag' | 'move' | 'view'>('main');
+  const [opening, setOpening] = useState<InvocationOpened | null>(null);
+  const [mode, setMode] = useState<MenuMode>({ kind: 'main' });
   const [query, setQuery] = useState('');
-  const [pendingDelete, setPendingDelete] = useState<PendingDeleteConfirmation | null>(null);
+  // The query the candidates were resolved FOR. Enter must never commit a list
+  // that belongs to older text: the picker is debounced and answered over IPC,
+  // so `candidates` lags what the user has typed by up to a round trip.
+  const [candidates, setCandidates] = useState<{
+    query: string;
+    items: readonly ObjectPresentation[];
+  }>({ query: '', items: [] });
+  const [pendingConfirm, setPendingConfirm] = useState<PendingConfirmation | null>(null);
+  const invocationRef = useRef<InvocationRef | null>(null);
+  const releaseHandlersRef = useRef<(() => void) | null>(null);
+  const inFlightRef = useRef(0);
+  const unmountedRef = useRef(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const menuAnchor = useMemo(() => overlayAnchorFromPoint(props.x, props.y), [props.x, props.y]);
   const menuStyle = useAnchoredOverlay(menuRef, {
     anchorRect: menuAnchor,
-    layoutKey: `${mode}:${query.length}`,
+    layoutKey: `${mode.kind}:${query.length}:${opening ? 1 : 0}`,
     maxHeight: 440,
     placement: 'bottom-start',
-    width: mode === 'main' ? 240 : 280,
+    width: mode.kind === 'main' ? 240 : 280,
   });
-  const target = props.index.byId.get(props.targetId) ?? props.node;
-  const pinned = props.isPinned;
-  const view = readViewConfig(target, props.index.byId);
-  const viewToolbarVisibleInRow = view.toolbarVisible && props.viewToolbarVisibleInRow;
-  const trashId = props.index.projection.trashId;
-  const isTrashRoot = props.node.id === trashId;
-  const trashed = !isTrashRoot && isNodeInTrash(props.index, props.node.id);
-  const trashChildIds = useMemo(() => trashRootChildIds(props.index), [props.index]);
-  const emptyTrashDeleteIds = useMemo(
-    () => permanentDeleteCandidateIds({ ids: trashChildIds, index: props.index }),
-    [props.index, trashChildIds],
-  );
-  const activeSelection = useMemo(() => resolveActiveNodeSelection({
-    nodeId: props.node.id,
-    targetId: props.targetId,
-    selectedIds: props.selectedIds,
-    byId: props.index.byId,
-  }), [props.index.byId, props.node.id, props.selectedIds, props.targetId]);
-  const activeNodeIds = activeSelection.nodeIds;
-  const actionPanelRootId = activeNodeIds[0] ?? props.node.parentId ?? props.node.id;
-  const activeTargetRowIds = useMemo(
-    () => idsEnabledForSelectionAction({
-      ids: activeNodeIds,
-      action: 'tag',
-      panelRootId: actionPanelRootId,
-      byId: props.index.byId,
-    }),
-    [actionPanelRootId, activeNodeIds, props.index.byId],
-  );
-  const activeCheckboxRowIds = useMemo(
-    () => idsEnabledForSelectionAction({
-      ids: activeNodeIds,
-      action: 'checkbox',
-      panelRootId: actionPanelRootId,
-      byId: props.index.byId,
-    }),
-    [actionPanelRootId, activeNodeIds, props.index.byId],
-  );
-  const activeDeleteIds = useMemo(
-    () => idsEnabledForSelectionAction({
-      ids: activeNodeIds,
-      action: 'delete',
-      panelRootId: actionPanelRootId,
-      byId: props.index.byId,
-    }),
-    [actionPanelRootId, activeNodeIds, props.index.byId],
-  );
-  const activePermanentDeleteIds = useMemo(
-    () => permanentDeleteCandidateIds({ ids: activeNodeIds, index: props.index }),
-    [activeNodeIds, props.index],
-  );
-  const activeDuplicateIds = useMemo(
-    () => idsAllowedForDuplicate({
-      ids: activeNodeIds,
-      panelRootId: actionPanelRootId,
-      byId: props.index.byId,
-    }),
-    [actionPanelRootId, activeNodeIds, props.index.byId],
-  );
-  const activeMoveIds = useMemo(
-    () => idsEnabledForSelectionAction({
-      ids: activeNodeIds,
-      action: 'move',
-      panelRootId: actionPanelRootId,
-      byId: props.index.byId,
-    }),
-    [actionPanelRootId, activeNodeIds, props.index.byId],
-  );
-  const activeMoveToIds = useMemo(
-    () => idsAllowedForMoveTo({
-      ids: activeNodeIds,
-      panelRootId: actionPanelRootId,
-      byId: props.index.byId,
-    }),
-    [actionPanelRootId, activeNodeIds, props.index.byId],
-  );
-  const activeTargetIds = useMemo(
-    () => activeSelection.isBatch
-      ? targetIdsForRows(activeTargetRowIds, props.index.byId)
-      : activeTargetRowIds.length > 0 ? [props.targetId] : [],
-    [activeSelection.isBatch, activeTargetRowIds, props.index.byId, props.targetId],
-  );
-  const activeCheckboxTargetIds = useMemo(
-    () => activeSelection.isBatch
-      ? targetIdsForRows(activeCheckboxRowIds, props.index.byId)
-      : activeCheckboxRowIds.length > 0 ? [props.targetId] : [],
-    [activeCheckboxRowIds, activeSelection.isBatch, props.index.byId, props.targetId],
-  );
-  const activeLabelPrefix = activeSelection.labelPrefix;
-  const activeExistingTagIds = useMemo(
-    () => commonTagIdsForTargets(activeTargetIds, props.index.byId),
-    [activeTargetIds, props.index.byId],
-  );
-  const tagItems = useMemo(() => tagSelectorItems({
-    query,
-    index: props.index,
-    existingTagIds: activeExistingTagIds,
-    limit: 8,
-  }), [activeExistingTagIds, props.index, query]);
-  const moveTargets = useMemo(() => {
-    const normalized = query.trim().toLowerCase();
-    const activeNodeIdSet = new Set(activeMoveToIds);
-    return props.index.projection.nodes
-      .filter((node) => !activeNodeIdSet.has(node.id))
-      .filter((node) => node.type !== 'fieldEntry')
-      .filter((node) => activeMoveToIds.every((nodeId) => !isDescendantOf(props.index.byId, node.id, nodeId)))
-      .filter((node) => node.id !== props.index.projection.trashId)
-      .filter((node) => !normalized || textOf(node, t.common.untitled).toLowerCase().includes(normalized))
-      .slice(0, 10);
-  }, [activeMoveToIds, props.index, query, t.common.untitled]);
 
-  // Outside-pointer dismissal only — Escape is owned by `useMenuKeyboard` (below),
-  // which scopes it to the focused surface and keeps the in-menu keyboard model.
-  useDismissibleOverlay(menuRef, props.onClose, { disabled: pendingDelete !== null, escape: false });
-  // `main` is a true menu (roving Arrow/Home/End); the tag / move submodes are
-  // heterogeneous search popovers (focus-trap). The menu carries
-  // `data-preserve-selection`, so focusing an item never trips the
-  // selection-clearing path and the workspace keyboard handler stays out of the way.
+  // The seed carries renderer FACTS only. Main validates the ids, derives each
+  // node's row/content/canonical-surface facets plus the selection roots,
+  // constructs the object set, and mints the ref and lifetime.
+  const seed = useMemo(() => ({
+    from: 'mainRenderer' as const,
+    anchorNodeId: props.node.id,
+    visualRowId: props.visualRowId,
+    panelId: props.panelId,
+    selectedIds: [...props.selectedIds],
+    isPinned: props.isPinned,
+    rowExpanded: props.viewToolbarVisibleInRow,
+  }), [
+    props.isPinned,
+    props.node.id,
+    props.panelId,
+    props.selectedIds,
+    props.viewToolbarVisibleInRow,
+    props.visualRowId,
+  ]);
+
+  const onCloseRef = useRef(props.onClose);
+  onCloseRef.current = props.onClose;
+  const closedRef = useRef(false);
+  /** The menu closes when the action is chosen; the request settles later. */
+  const closeOnce = () => {
+    if (closedRef.current) return;
+    closedRef.current = true;
+    onCloseRef.current();
+  };
+  /** Release the step handlers once nothing can still route a step to them. */
+  const releaseHandlersIfIdle = () => {
+    if (!unmountedRef.current || inFlightRef.current > 0) return;
+    releaseHandlersRef.current?.();
+    releaseHandlersRef.current = null;
+  };
+  const handlersRef = useRef({
+    isNodePinned: props.isNodePinned,
+    onRoot: props.onRoot,
+    onTogglePin: props.onTogglePin,
+    onEditDescription: props.onEditDescription,
+    onRevealViewToolbar: props.onRevealViewToolbar,
+    onOpenViewSection: props.onOpenViewSection,
+  });
+  handlersRef.current = {
+    isNodePinned: props.isNodePinned,
+    onRoot: props.onRoot,
+    onTogglePin: props.onTogglePin,
+    onEditDescription: props.onEditDescription,
+    onRevealViewToolbar: props.onRevealViewToolbar,
+    onOpenViewSection: props.onOpenViewSection,
+  };
+
+  // Unmount ONLY. The seed effect below re-runs whenever the selection or pin
+  // state changes while the menu is open, so its cleanup cannot stand in for
+  // unmount — doing that tore the step handlers down mid-menu.
+  useEffect(() => () => {
+    unmountedRef.current = true;
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void window.lin?.actions?.open(seed).then((result) => {
+      if (cancelled) return;
+      if (!result) {
+        // Main refused the opening (the anchored row is gone). Render nothing,
+        // but tell the owner so its `contextMenu` state clears — otherwise the
+        // surface is dead until the next right-click.
+        closeOnce();
+        return;
+      }
+      invocationRef.current = result.invocationRef;
+      // The handlers outlive this component on purpose: the menu closes the
+      // moment an action is chosen, while its plan is still crossing the seam.
+      // They only push workspace UI state, so they stay valid after unmount.
+      releaseHandlersRef.current = registerActionStepHandlers(result.invocationRef, {
+        navigate: (nodeId, inPlace) => handlersRef.current.onRoot(nodeId, { newPane: !inPlace }),
+        workspace: (op, nodeId) => {
+          if (op === 'openSplitPane') {
+            handlersRef.current.onRoot(nodeId, { newPane: true });
+            return;
+          }
+          // The registry resolved a DESIRED END STATE, so honour it: pin state
+          // can change between the menu opening and this step arriving, and a
+          // blind toggle would then undo what the user asked for.
+          const pinned = handlersRef.current.isNodePinned(nodeId);
+          if (op === 'pin' ? !pinned : pinned) handlersRef.current.onTogglePin(nodeId);
+        },
+        reveal: (target) => {
+          if (target.surface === 'description') handlersRef.current.onEditDescription();
+          else if (target.surface === 'viewToolbar') {
+            handlersRef.current.onRevealViewToolbar(target.visualRowId, target.nodeId);
+          } else handlersRef.current.onOpenViewSection(target.nodeId, target.section);
+        },
+        composerHandoff: (object) => {
+          requestSendNodeReferenceToThreadComposer({
+            nodeId: object.nodeId,
+            title: object.title,
+          });
+        },
+      });
+      setOpening(result);
+    }).catch(() => {
+      if (!cancelled) closeOnce();
+    });
+    return () => {
+      cancelled = true;
+      const ref = invocationRef.current;
+      if (ref) void window.lin?.actions?.event({ kind: 'abandoned', invocationRef: ref });
+      // A plan's renderer legs arrive from MAIN, one round trip per step after
+      // each preceding main step succeeds — arbitrarily later than this
+      // unmount. So the handler is released when the request settles, not on a
+      // timer that would silently drop every reveal.
+      releaseHandlersIfIdle();
+    };
+  }, [seed]);
+
+  useDismissibleOverlay(menuRef, props.onClose, {
+    disabled: pendingConfirm !== null,
+    escape: false,
+  });
   const { onKeyDown } = useMenuKeyboard({
     surfaceRef: menuRef,
     onClose: props.onClose,
-    kind: mode === 'main' ? 'menu' : 'dialog',
-    // Switching submode swaps the body in place; without this, returning to `main`
-    // (the Back button unmounts) drops focus to the body and kills Escape/roving.
-    focusKey: mode,
+    kind: mode.kind === 'main' ? 'menu' : 'dialog',
+    // The surface does not exist until the opening resolves, so the focus-in
+    // effect must re-run then — otherwise the menu never takes focus and Escape
+    // is never captured.
+    focusKey: opening ? mode.kind : 'pending',
   });
 
-  const applyExistingTag = (tagId: NodeId) => {
-    if (activeTargetIds.length === 0) return;
-    void props.run(() => (
-      activeTargetIds.length > 1
-        ? api.batchApplyTag(activeTargetIds, tagId)
-        : api.applyTag(activeTargetIds[0]!, tagId)
-    ));
-    props.onClose();
-  };
-
-  const createAndApplyTag = (name: string) => {
-    if (activeTargetIds.length === 0) return;
-    void props.run(async () => {
-      const created = await api.createTag(name);
-      const tagId = created.focus?.nodeId;
-      if (!tagId) return created;
-      return activeTargetIds.length > 1
-        ? api.batchApplyTag(activeTargetIds, tagId)
-        : api.applyTag(activeTargetIds[0]!, tagId);
-    });
-    props.onClose();
-  };
-
-  const openViewSection = (section: ToolbarDropdownSection) => {
-    void props.run(() => api.setViewToolbarVisible(props.targetId, true)).then(() => {
-      props.onRevealViewToolbar(props.visualRowId, props.targetId);
-      props.onOpenViewSection(props.targetId, section);
-    });
-  };
-
-  const confirmDeleteForever = (nodeIds: NodeId[]) => {
-    if (nodeIds.length === 0) return;
-    setPendingDelete({
-      kind: 'deleteForever',
-      nodeIds,
-      title: nodeIds.length > 1 ? tc.deleteForeverTitleMultiple({ count: nodeIds.length }) : tc.deleteForeverTitle,
-      message: nodeIds.length > 1 ? tc.deleteForeverMessageMultiple : tc.deleteForeverMessage,
-      confirmLabel: tc.deleteForeverConfirm,
-    });
-  };
-
-  const confirmEmptyTrash = () => {
-    if (emptyTrashDeleteIds.length === 0) return;
-    setPendingDelete({
-      kind: 'deleteForever',
-      nodeIds: emptyTrashDeleteIds,
-      title: tc.emptyTrashTitle,
-      message: tc.emptyTrashMessage,
-      confirmLabel: tc.emptyTrashConfirm,
-    });
-  };
-
-  const runPendingDelete = async () => {
-    const pending = pendingDelete;
-    if (!pending) return;
-    setPendingDelete(null);
-    props.onClose();
-    for (const nodeId of pending.nodeIds) {
-      const result = await props.run(() => api.deleteNode(nodeId), { applyFocus: false });
-      if (!result) break;
+  const runRequest = async (
+    presentation: ActionPresentation,
+    args: unknown,
+    challenge?: ChallengeToken,
+  ) => {
+    const ref = invocationRef.current;
+    if (!ref) return;
+    inFlightRef.current += 1;
+    try {
+      const result = await window.lin?.actions?.request({
+        actionId: presentation.actionId,
+        invocationRef: ref,
+        subjectRef: presentation.subjectRef,
+        arguments: args,
+        ...(challenge ? { challenge } : {}),
+      } as never);
+      if (result?.status === 'confirmationRequired') {
+        setPendingConfirm({
+          challenge: result.challenge,
+          confirm: result.confirm,
+          presentation: result.presentation,
+        });
+        return;
+      }
+      if (result?.status === 'completed') {
+        applyActionFocus(result.focus);
+        reportActionError(null);
+      } else {
+        // Anything that is not a completion is a failure the user must see: a
+        // rejected command, an unacked renderer step, a half-applied plan, or a
+        // subject that went stale. Closing the menu silently is what the
+        // shipped `useCommandRunner` path never did.
+        reportActionError(actionFailureMessage(result, t));
+      }
+      setPendingConfirm(null);
+      closeOnce();
+    } finally {
+      inFlightRef.current -= 1;
+      releaseHandlersIfIdle();
     }
   };
 
-  const item = (
-    label: string,
-    icon: ReactNode,
-    onClick: () => void,
-    disabled = false,
-    options: { danger?: boolean; close?: boolean } = {},
-  ) => (
-    <MenuItem
-      className={`node-context-item ${options.danger ? 'is-danger' : ''}`}
-      disabled={disabled}
-      icon={icon}
-      label={label}
-      onClick={() => {
-        if (disabled) return;
-        onClick();
-        if (options.close !== false) props.onClose();
-      }}
-      role="menuitem"
-    />
-  );
+  const activate = (presentation: ActionPresentation) => {
+    if (presentation.evaluation.status !== 'applicable') return;
+    if (presentation.binding.state === 'needsParameter') {
+      const parameter = presentation.binding.parameter;
+      setMode({
+        kind: 'parameter',
+        slot: {
+          actionId: presentation.actionId,
+          subjectRef: presentation.subjectRef,
+          parameterId: parameter.parameterId,
+        } as ArgumentSlot,
+        title: nameFor(parameter.title, locale),
+        inputLabel: nameFor(parameter.inputLabel, locale),
+        placeholder: nameFor(parameter.placeholder, locale),
+      });
+      setQuery('');
+      return;
+    }
+    // An action carrying `confirm` keeps the menu open until it resolves.
+    if (!presentation.confirm) closeOnce();
+    void runRequest(presentation, presentation.binding.arguments);
+  };
 
-  const renderMain = () => (
-    <>
-      {item(tc.openInSplitPane, <OpenIcon size={ICON_SIZE.menu} />, () => props.onRoot(props.openId, { newPane: true }))}
-      {item(pinned ? tc.unpinNode : tc.pinNode, <PinIcon size={ICON_SIZE.menu} />, () => props.onTogglePin(props.openId))}
-      {item(tc.sendToComposer, <AgentIcon size={ICON_SIZE.menu} />, () => requestSendNodeReferenceToThreadComposer({
-        nodeId: props.targetId,
-        title: textOf(target, t.common.untitled),
-      }))}
-      {item(tc.duplicate({ prefix: activeLabelPrefix }), <DuplicateIcon size={ICON_SIZE.menu} />, () => void props.run(() => runSelectionDuplicate({
-        ids: activeDuplicateIds,
-        panelRootId: actionPanelRootId,
-        byId: props.index.byId,
-      })), activeDuplicateIds.length === 0)}
-      {item(tc.moveUp({ prefix: activeLabelPrefix }), <MoveUpIcon size={ICON_SIZE.menu} />, () => void props.run(() => runSelectionMove({
-        ids: activeMoveIds,
-        direction: 'up',
-        panelRootId: actionPanelRootId,
-        byId: props.index.byId,
-      })), activeMoveIds.length === 0)}
-      {item(tc.moveDown({ prefix: activeLabelPrefix }), <MoveDownIcon size={ICON_SIZE.menu} />, () => void props.run(() => runSelectionMove({
-        ids: activeMoveIds,
-        direction: 'down',
-        panelRootId: actionPanelRootId,
-        byId: props.index.byId,
-      })), activeMoveIds.length === 0)}
-      <MenuItem
-        className="node-context-item"
-        disabled={activeMoveToIds.length === 0}
-        icon={<MoveToIcon size={ICON_SIZE.menu} />}
-        label={tc.moveTo}
-        onClick={() => {
-          if (activeMoveToIds.length === 0) return;
-          setMode('move');
-          setQuery('');
-        }}
-        role="menuitem"
-      />
-      <div className="node-context-separator" role="separator" />
-      {item(
-        activeNodeIds.length > 1
-          ? tc.toggleDone({ prefix: activeLabelPrefix })
-          : target.completedAt
-            ? tc.markNotDonePrefixed({ prefix: activeLabelPrefix })
-            : tc.markDonePrefixed({ prefix: activeLabelPrefix }),
-        <CheckboxIcon size={ICON_SIZE.menu} />,
-        () => void props.run(() => activeCheckboxTargetIds.length > 1
-          ? api.batchToggleDone(activeCheckboxTargetIds)
-          : api.toggleDone(activeCheckboxTargetIds[0]!)),
-        activeCheckboxTargetIds.length === 0,
-      )}
-      <MenuItem
-        className="node-context-item"
-        disabled={activeTargetIds.length === 0}
-        icon={<SupertagIcon size={ICON_SIZE.menu} />}
-        label={tc.addTag({ prefix: activeLabelPrefix })}
-        onClick={() => {
-          if (activeTargetIds.length === 0) return;
-          setMode('tag');
-          setQuery('');
-        }}
-        role="menuitem"
-      />
-      <div className="node-context-separator" role="separator" />
-      <MenuItem
-        className="node-context-item"
-        icon={view.viewMode === 'table'
-          ? <TableIcon size={ICON_SIZE.menu} />
-          : <NodeReadToolIcon size={ICON_SIZE.menu} />}
-        label={tc.viewAs}
-        meta={<ChevronRightIcon size={ICON_SIZE.menu} />}
-        onClick={() => setMode('view')}
-        role="menuitem"
-      />
-      {item(
-        viewToolbarVisibleInRow ? tc.hideViewToolbar : tc.showViewToolbar,
-        viewToolbarVisibleInRow ? <HideToolbarIcon size={ICON_SIZE.menu} /> : <ShowToolbarIcon size={ICON_SIZE.menu} />,
-        () => void props.run(() => api.setViewToolbarVisible(props.targetId, !viewToolbarVisibleInRow)).then(() => {
-          if (!viewToolbarVisibleInRow) props.onRevealViewToolbar(props.visualRowId, props.targetId);
-          props.onClose();
-        }),
-      )}
-      {item(tc.filterBy, <FilterIcon size={ICON_SIZE.menu} />, () => openViewSection('filter'))}
-      {item(tc.sortBy, <SortAscIcon size={ICON_SIZE.menu} />, () => openViewSection('sort'))}
-      {view.viewMode !== 'table'
-        ? item(tc.groupBy, <GroupIcon size={ICON_SIZE.menu} />, () => openViewSection('group'))
-        : null}
-      {item(tc.display, <FieldIcon size={ICON_SIZE.menu} />, () => openViewSection('display'))}
-      <div className="node-context-separator" role="separator" />
-      {item(target.description ? tc.editDescription : tc.addDescription, <DescriptionIcon size={ICON_SIZE.menu} />, props.onEditDescription)}
-      <div className="node-context-separator" role="separator" />
-      {item(tc.copyText, <CopyIcon size={ICON_SIZE.menu} />, () => void writeClipboardText(textOf(target, t.common.untitled)))}
-      {item(tc.copyNodeId, <CopyIcon size={ICON_SIZE.menu} />, () => void writeClipboardText(props.targetId))}
-      <div className="node-context-separator" role="separator" />
-      {isTrashRoot
-        ? item(tc.emptyTrash, <TrashIcon size={ICON_SIZE.menu} />, confirmEmptyTrash, emptyTrashDeleteIds.length === 0, { close: false, danger: true })
-        : trashed
-          ? (
-            <>
-              {item(tc.restore, <RestoreIcon size={ICON_SIZE.menu} />, () => void props.run(() => api.restoreNode(props.node.id)))}
-              {item(
-                tc.deleteForever({ prefix: activeLabelPrefix }),
-                <TrashIcon size={ICON_SIZE.menu} />,
-                () => confirmDeleteForever(activePermanentDeleteIds),
-                activePermanentDeleteIds.length === 0,
-                { close: false, danger: true },
-              )}
-            </>
-          )
-        : item(tc.trash({ prefix: activeLabelPrefix }), <TrashIcon size={ICON_SIZE.menu} />, () => void props.run(() => runSelectionDelete({
-          ids: activeDeleteIds,
-          panelRootId: actionPanelRootId,
-          byId: props.index.byId,
-        })), activeDeleteIds.length === 0)}
-    </>
-  );
+  // --- parameter candidates (debounce + request identity + cancellation) -----
 
-  const renderTagMode = () => (
-    <>
-      <div className="node-context-subhead">
-        <Button onClick={() => setMode('main')} size="sm" variant="ghost">{tc.back}</Button>
-        <span>{tc.addTagTitle}</span>
-      </div>
-      <Input
-        className="node-context-search"
-        label={tc.tagNameLabel}
-        value={query}
-        placeholder={tc.tagNamePlaceholder}
-        autoFocus
-        onChange={(event) => setQuery(event.currentTarget.value)}
-        onKeyDown={(event) => {
-          if (isImeComposingEvent(event)) return;
-          if (event.key !== 'Enter') return;
-          const first = tagItems[0];
-          if (!first) return;
-          event.preventDefault();
-          if (first.type === 'existing') applyExistingTag(first.tag.id);
-          else createAndApplyTag(first.name);
-        }}
-      />
-      {tagItems.map((tagItem) => (
+  const parameterSlot = mode.kind === 'parameter' ? mode.slot : null;
+  const latestRequestRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!parameterSlot) {
+      setCandidates({ query: '', items: [] });
+      return;
+    }
+    const ref = invocationRef.current;
+    if (!ref) return;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      const requestId = `${Date.now()}:${Math.random()}` as RequestId;
+      latestRequestRef.current = requestId;
+      void window.lin?.actions?.queryParameters({
+        invocationRef: ref,
+        openSeq: null,
+        slot: parameterSlot,
+        requestId,
+        query,
+      }).then((result) => {
+        // Drop anything that is not the latest request for this slot.
+        if (cancelled || latestRequestRef.current !== requestId) return;
+        if (result.status !== 'ready') return;
+        setCandidates({ query, items: result.items });
+      });
+    }, query ? CANDIDATE_DEBOUNCE_MS : 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [parameterSlot, query]);
+
+  const menuActions = opening?.menuActions ?? [];
+  const viewModeActions = menuActions.filter((action) => action.actionId === 'setViewMode');
+
+  const modeLabel = mode.kind === 'main'
+    ? tc.nodeActions
+    : mode.kind === 'viewMode'
+      ? nameFor(ACTION_FAMILY_NAMES.setViewMode, locale)
+      : mode.title;
+
+  if (!opening) return null;
+
+  const renderMain = () => {
+    const rendered: React.ReactNode[] = [];
+    let previousGroup: number | null = null;
+    let viewModeRendered = false;
+    for (const action of menuActions) {
+      const group = MENU_GROUP[action.actionId];
+      if (action.actionId === 'setViewMode') {
+        if (viewModeRendered) continue;
+        viewModeRendered = true;
+        if (previousGroup !== null && group !== previousGroup) {
+          rendered.push(<div className="node-context-separator" key={`sep-${group}`} role="separator" />);
+        }
+        previousGroup = group;
+        rendered.push(
+          <MenuItem
+            key="setViewMode"
+            className="node-context-item"
+            icon={actionIcon(activeViewModeIcon(viewModeActions, props, props.index))}
+            label={nameFor(ACTION_FAMILY_NAMES.setViewMode, locale)}
+            meta={<ChevronRightIcon size={ICON_SIZE.menu} />}
+            onClick={() => setMode({ kind: 'viewMode' })}
+            role="menuitem"
+          />,
+        );
+        continue;
+      }
+      if (previousGroup !== null && group !== previousGroup) {
+        rendered.push(<div className="node-context-separator" key={`sep-${group}-${rendered.length}`} role="separator" />);
+      }
+      previousGroup = group;
+      const disabled = action.evaluation.status !== 'applicable';
+      rendered.push(
         <MenuItem
-          key={tagItem.type === 'existing' ? tagItem.tag.id : `create:${tagItem.name}`}
-          className="node-context-item"
-          icon={tagItem.type === 'existing'
-            ? (
-              <span
-                className="tag-selector-hash"
-                style={{ color: resolveTagColor(tagItem.tag, props.index.byId).text }}
-                aria-hidden="true"
-              >
-                #
-              </span>
-            )
-            : <SupertagIcon size={ICON_SIZE.menu} />}
-          label={tagSelectorItemLabel(tagItem)}
-          onClick={() => {
-            if (tagItem.type === 'existing') applyExistingTag(tagItem.tag.id);
-            else createAndApplyTag(tagItem.name);
-          }}
-        />
-      ))}
-    </>
-  );
-
-  const renderMoveMode = () => (
-    <>
-      <div className="node-context-subhead">
-        <Button onClick={() => setMode('main')} size="sm" variant="ghost">{tc.back}</Button>
-        <span>{tc.moveTo}</span>
-      </div>
-      <Input
-        className="node-context-search"
-        label={tc.nodeNameLabel}
-        value={query}
-        placeholder={tc.nodeNamePlaceholder}
-        autoFocus
-        onChange={(event) => setQuery(event.currentTarget.value)}
-      />
-      {moveTargets.map((targetNode) => (
-        <MenuItem
-          key={targetNode.id}
-          className="node-context-item"
-          icon={<MoveToIcon size={ICON_SIZE.menu} />}
-          label={textOf(targetNode) || t.common.untitled}
-          onClick={() => {
-            void props.run(async () => {
-              let lastResult: CommandResult | null = null;
-              for (const nodeId of activeMoveToIds) {
-                lastResult = await api.moveNode(nodeId, targetNode.id, null);
-              }
-              return lastResult ?? commandRunnerNoop();
-            });
-            props.onClose();
-          }}
-        />
-      ))}
-    </>
-  );
+          key={`${action.actionId}:${JSON.stringify(action.binding.state === 'ready' ? action.binding.arguments : 'parameter')}`}
+          className={`node-context-item ${isDangerAction(action) ? 'is-danger' : ''}`}
+          disabled={disabled}
+          icon={actionIcon(action.iconId)}
+          label={nameFor(action.names, locale)}
+          onClick={() => activate(action)}
+          role="menuitem"
+        />,
+      );
+    }
+    return <>{rendered}</>;
+  };
 
   const renderViewMode = () => (
     <>
       <div className="node-context-subhead">
-        <Button onClick={() => setMode('main')} size="sm" variant="ghost">{tc.back}</Button>
-        <span>{tc.viewAs}</span>
+        <Button onClick={() => setMode({ kind: 'main' })} size="sm" variant="ghost">{tc.back}</Button>
+        <span>{nameFor(ACTION_FAMILY_NAMES.setViewMode, locale)}</span>
       </div>
-      <MenuItem
-        active={view.viewMode !== 'table'}
-        className="node-context-item"
-        icon={<NodeReadToolIcon size={ICON_SIZE.menu} />}
-        label={tc.viewOutline}
-        meta={view.viewMode !== 'table' ? <CheckIcon size={ICON_SIZE.menu} /> : null}
-        onClick={() => {
-          void props.run(() => api.setViewMode(props.targetId, 'list'));
-          props.onClose();
-        }}
-      />
-      <MenuItem
-        active={view.viewMode === 'table'}
-        className="node-context-item"
-        icon={<TableIcon size={ICON_SIZE.menu} />}
-        label={tc.viewTable}
-        meta={view.viewMode === 'table' ? <CheckIcon size={ICON_SIZE.menu} /> : null}
-        onClick={() => {
-          void props.run(() => api.setViewMode(props.targetId, 'table'));
-          props.onClose();
-        }}
-      />
+      {viewModeActions.map((action) => {
+        const mode_ = action.binding.state === 'ready'
+          ? (action.binding.arguments as { mode: 'outline' | 'table' }).mode
+          : 'outline';
+        const active = mode_ === currentViewMode(props);
+        return (
+          <MenuItem
+            key={mode_}
+            active={active}
+            className="node-context-item"
+            icon={actionIcon(action.iconId)}
+            label={nameFor(action.names, locale)}
+            meta={active ? <CheckIcon size={ICON_SIZE.menu} /> : null}
+            onClick={() => activate(action)}
+          />
+        );
+      })}
     </>
   );
 
-  const modeLabel = mode === 'main' ? tc.nodeActions
-    : mode === 'tag' ? tc.addTagTitle
-      : mode === 'move' ? tc.moveNode
-        : tc.viewAs;
+  const pickCandidate = (candidate: ObjectPresentation) => {
+    if (mode.kind !== 'parameter') return;
+    const presentation = menuActions.find((action) => (
+      action.actionId === mode.slot.actionId
+      && action.subjectRef === mode.slot.subjectRef
+      && action.binding.state === 'needsParameter'
+    ));
+    if (!presentation) return;
+    const args = mode.slot.parameterId === 'tag'
+      ? { tag: candidate.objectRef }
+      : { destination: candidate.objectRef };
+    closeOnce();
+    void runRequest(presentation, args);
+  };
+
+  const renderParameter = (parameterMode: Extract<MenuMode, { kind: 'parameter' }>) => (
+    <>
+      <div className="node-context-subhead">
+        <Button onClick={() => setMode({ kind: 'main' })} size="sm" variant="ghost">{tc.back}</Button>
+        <span>{parameterMode.title}</span>
+      </div>
+      <Input
+        className="node-context-search"
+        label={parameterMode.inputLabel}
+        value={query}
+        placeholder={parameterMode.placeholder}
+        autoFocus
+        onChange={(event) => setQuery(event.currentTarget.value)}
+        onKeyDown={(event) => {
+          // While an IME composition is active, Enter belongs to the IME.
+          if (isImeComposingEvent(event)) return;
+          if (event.key !== 'Enter') return;
+          if (parameterMode.slot.parameterId !== 'tag') return;
+          const first = candidateForEnter(candidates, query);
+          if (!first) {
+            // Stale or empty: swallow the key rather than applying a candidate
+            // resolved for text the user has already moved on from.
+            event.preventDefault();
+            return;
+          }
+          event.preventDefault();
+          pickCandidate(first);
+        }}
+      />
+      {candidates.items.map((candidate) => (
+        <MenuItem
+          key={candidate.objectRef}
+          className="node-context-item"
+          icon={candidateIcon(candidate, parameterMode, props.index)}
+          label={candidateLabel(candidate, locale)}
+          onClick={() => pickCandidate(candidate)}
+        />
+      ))}
+    </>
+  );
 
   return createPortal(
     <>
@@ -573,30 +485,123 @@ export function NodeContextMenu(props: NodeContextMenuProps) {
         aria-label={modeLabel}
         className="node-context-menu"
         preserveSelection
-        role={mode === 'main' ? 'menu' : 'dialog'}
+        role={mode.kind === 'main' ? 'menu' : 'dialog'}
         style={menuStyle}
         onKeyDown={onKeyDown}
         onMouseDown={(event) => event.stopPropagation()}
       >
-        {mode === 'main'
+        {mode.kind === 'main'
           ? renderMain()
-          : mode === 'tag'
-            ? renderTagMode()
-            : mode === 'move'
-              ? renderMoveMode()
-              : renderViewMode()}
+          : mode.kind === 'viewMode'
+            ? renderViewMode()
+            : renderParameter(mode)}
       </MenuSurface>
-      {pendingDelete ? (
+      {pendingConfirm ? (
         <ConfirmDialog
-          danger
-          title={pendingDelete.title}
-          message={pendingDelete.message}
-          confirmLabel={pendingDelete.confirmLabel}
-          onCancel={() => setPendingDelete(null)}
-          onConfirm={() => void runPendingDelete()}
+          danger={pendingConfirm.confirm.danger}
+          title={nameFor(pendingConfirm.confirm.title, locale)}
+          message={nameFor(pendingConfirm.confirm.message, locale)}
+          confirmLabel={nameFor(pendingConfirm.confirm.confirmLabel, locale)}
+          onCancel={() => {
+            const ref = invocationRef.current;
+            const challenge = pendingConfirm.challenge;
+            setPendingConfirm(null);
+            // Main learns the confirmation was declined, so the record returns
+            // to `live` and the challenge dies with it.
+            if (ref) {
+              void window.lin?.actions?.event({
+                kind: 'confirmationCancelled',
+                invocationRef: ref,
+                challenge,
+              });
+            }
+          }}
+          onConfirm={() => {
+            const pending = pendingConfirm;
+            setPendingConfirm(null);
+            closeOnce();
+            void runRequest(
+              pending.presentation,
+              pending.presentation.binding.state === 'ready'
+                ? pending.presentation.binding.arguments
+                : {},
+              pending.challenge,
+            );
+          }}
         />
       ) : null}
     </>,
     document.body,
   );
 }
+
+/** Say what went wrong, in the same place the shipped command runner did. */
+function actionFailureMessage(
+  result: ActionRequestResult | undefined,
+  t: ReturnType<typeof useT>,
+): string {
+  const generic = t.shell.commandFailed;
+  if (!result) return generic;
+  if (result.status === 'failed') {
+    const reason = result.reason;
+    if (reason.kind === 'commandRejected' || reason.kind === 'rendererReported') return reason.code;
+    return generic;
+  }
+  if (result.status === 'indeterminate') return generic;
+  if (result.status === 'stale' || result.status === 'reEvaluated') return t.shell.commandStale;
+  return generic;
+}
+
+function isDangerAction(action: ActionPresentation): boolean {
+  return action.actionId === 'deleteForever' || action.actionId === 'emptyTrash';
+}
+
+function currentViewMode(props: NodeContextMenuProps): 'outline' | 'table' {
+  const target = props.index.byId.get(props.targetId) ?? props.node;
+  for (const childId of target.children ?? []) {
+    const child = props.index.byId.get(childId);
+    if (child?.type === 'viewDef') return child.viewMode === 'table' ? 'table' : 'outline';
+  }
+  return 'outline';
+}
+
+function activeViewModeIcon(
+  actions: readonly ActionPresentation[],
+  props: NodeContextMenuProps,
+  _index: DocumentIndex,
+): ActionPresentation['iconId'] {
+  const active = currentViewMode(props);
+  const match = actions.find((action) => (
+    action.binding.state === 'ready'
+    && (action.binding.arguments as { mode?: string }).mode === active
+  ));
+  return match?.iconId ?? 'outline';
+}
+
+function candidateLabel(candidate: ObjectPresentation, locale: Parameters<typeof nameFor>[1]): string {
+  return candidate.name.source === 'literal'
+    ? candidate.name.value
+    : nameFor(candidate.name.values, locale);
+}
+
+function candidateIcon(
+  candidate: ObjectPresentation,
+  mode: Extract<MenuMode, { kind: 'parameter' }>,
+  index: DocumentIndex,
+) {
+  if (mode.slot.parameterId !== 'tag') return <MoveToIcon size={ICON_SIZE.menu} />;
+  if (candidate.kind === 'draft') return <SupertagIcon size={ICON_SIZE.menu} />;
+  // By IDENTITY, not by rendered label: two tags can share a name and differ in
+  // colour, and an untitled tag renders a fallback that matches nothing.
+  const tag = candidate.backingNodeId ? index.byId.get(candidate.backingNodeId) : undefined;
+  return (
+    <span
+      className="tag-selector-hash"
+      style={tag ? { color: resolveTagColor(tag, index.byId).text } : undefined}
+      aria-hidden="true"
+    >
+      #
+    </span>
+  );
+}
+

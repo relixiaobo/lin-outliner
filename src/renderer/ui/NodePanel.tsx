@@ -797,10 +797,11 @@ export function NodePanel(props: NodePanelProps) {
             visualRowId={resolvedRootId}
             viewToolbarVisibleInRow={true}
             openId={resolvedRootId}
+            panelId={props.panelId}
             selectedIds={props.ui.selectedIds}
             index={props.index}
             isPinned={props.isNodePinned(resolvedRootId)}
-            run={props.run}
+            isNodePinned={props.isNodePinned}
             onRoot={props.onRoot}
             onTogglePin={props.onTogglePin}
             onEditDescription={() => {

@@ -1,4 +1,4 @@
-import { projectFieldConfig } from '../../../core/configProjection';
+import { canDuplicateRow } from '../../../core/actions/rowFacets';
 import type { NodeId, NodeProjection } from '../../api/types';
 import { api } from '../../api/client';
 import {
@@ -6,7 +6,6 @@ import {
   type SelectableRow,
   type SelectableRowActionPolicy,
 } from '../../state/selectableRows';
-import { isOptionsFieldType } from '../fields/fieldTypeRegistry';
 import { commandRunnerNoop, type CommandRunnerResult } from '../shared';
 
 export type SelectionCommandResult = CommandRunnerResult;
@@ -126,7 +125,7 @@ export function idsAllowedForDuplicate(params: {
       rowMap: params.rowMap,
     });
     if (!row || row.actionPolicy.duplicate !== 'node-clone') return false;
-    return canDuplicateSelectableRow(row, params.byId);
+    return canDuplicateRow(row, params.byId);
   });
 }
 
@@ -213,19 +212,4 @@ export async function runSelectionMove(params: {
   return params.direction === 'up'
     ? api.batchMoveNodesUp(moveIds)
     : api.batchMoveNodesDown(moveIds);
-}
-
-function canDuplicateSelectableRow(
-  row: SelectableRow,
-  byId: Map<NodeId, NodeProjection>,
-): boolean {
-  if (row.kind !== 'fieldValue') return true;
-  const valueNode = byId.get(row.id);
-  if (!valueNode || valueNode.type === 'reference') return false;
-  const fieldEntry = row.parentId ? byId.get(row.parentId) : undefined;
-  if (fieldEntry?.type !== 'fieldEntry') return false;
-  const fieldDef = fieldEntry.fieldDefId ? byId.get(fieldEntry.fieldDefId) : undefined;
-  const fieldType = fieldDef ? projectFieldConfig(byId, fieldDef).fieldType : undefined;
-  if (isOptionsFieldType(fieldType) || fieldType === 'checkbox') return false;
-  return true;
 }

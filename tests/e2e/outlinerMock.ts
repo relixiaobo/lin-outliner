@@ -221,7 +221,30 @@ export function e2eNodeInlineRef(offset: number, nodeId: string, displayName?: s
   };
 }
 
+// The real `ActionInvocationService`, bundled once per process for injection.
+// `addInitScript(fn)` serializes its function, so the service cannot be
+// imported from inside the fixture — but a second, hand-written action bridge
+// would be exactly the duplicate implementation this plan removes.
+let actionBridgeBundle: Promise<string> | null = null;
+
+function bundledActionBridge(): Promise<string> {
+  actionBridgeBundle ??= (async () => {
+    const esbuild = await import('esbuild');
+    const result = await esbuild.build({
+      entryPoints: [new URL('./actionBridgeEntry.ts', import.meta.url).pathname],
+      bundle: true,
+      format: 'iife',
+      platform: 'browser',
+      target: 'es2022',
+      write: false,
+    });
+    return result.outputFiles[0]!.text;
+  })();
+  return actionBridgeBundle;
+}
+
 export async function installElectronMock(page: Page, options: MockFixtureOptions = {}) {
+  await page.addInitScript({ content: await bundledActionBridge() });
   await page.addInitScript(({ ids, options }) => {
     type ReferenceTarget =
       | { kind: 'node'; nodeId: string }
@@ -3872,6 +3895,55 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         };
       },
     };
+
+    // The action seam runs the REAL main-side service in the page (bundled by
+    // `installElectronMock` from `actionBridgeEntry.ts`), so the e2e suite
+    // asserts the product's registry rather than a mock's opinion of it.
+    const actionStepListeners: Array<(envelope: unknown) => unknown> = [];
+    const bridgeFactory = (globalThis as unknown as {
+      __linActionBridgeFactory?: (host: {
+        projection: () => unknown;
+        runCommand: (command: string, args: Record<string, unknown>) => Promise<unknown>;
+        writeClipboard: (text: string) => void;
+        runRendererStep: (envelope: { invocationRef: string; step: unknown }) => void;
+      }) => Record<string, unknown>;
+    }).__linActionBridgeFactory;
+    if (bridgeFactory && win.lin) {
+      const bridge = bridgeFactory({
+        projection: () => projection(),
+        runCommand: async (command, args) => {
+          // Mirror the real main process: it does NOT tag the command with a
+          // source renderer, so the projection-changed event is delivered to
+          // the renderer instead of being suppressed as its own echo.
+          const result = await win.lin!.invoke<{ update?: unknown }>(command, args);
+          if (result && typeof result === 'object' && 'update' in result) {
+            emitDocumentEvent({
+              type: 'projection_changed',
+              origin: 'user',
+              update: result.update,
+              timestamp: Date.now(),
+            });
+          }
+          return result;
+        },
+        writeClipboard: (text) => { clipboardText = text; },
+        runRendererStep: ({ invocationRef, step }) => {
+          for (const listener of actionStepListeners) {
+            listener({ token: 'e2e', invocationRef, step });
+          }
+        },
+      });
+      (win.lin as unknown as { actions: unknown }).actions = {
+        ...bridge,
+        onStep: (listener: (envelope: unknown) => unknown) => {
+          actionStepListeners.push(listener);
+          return () => {
+            const index = actionStepListeners.indexOf(listener);
+            if (index >= 0) actionStepListeners.splice(index, 1);
+          };
+        },
+      };
+    }
   }, { ids, options });
 }
 

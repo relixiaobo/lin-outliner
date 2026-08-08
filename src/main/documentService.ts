@@ -947,10 +947,24 @@ export class DocumentService implements DocumentSystemHost {
   }
 
   private searchNodes(query: string) {
+    return this.searchNodeHits(query, 50);
+  }
+
+  /**
+   * Ranked text hits with an explicit limit. The action registry's candidate
+   * policies admit BEFORE limiting, so they ask for a generous set and filter
+   * it themselves rather than filtering an already-truncated result.
+   */
+  searchNodeHits(query: string, limit: number) {
     return this.nodeRetrieval.searchText(query, {
-      limit: 50,
+      limit,
       ...this.getTransientSearchOptions(),
     });
+  }
+
+  /** The live projection, for main-side readers that only ever read it. */
+  liveProjection(): DocumentProjection {
+    return this.core.projection();
   }
 
   private textSearchIndexForCoreMutation(): TextSearchIndex | undefined {

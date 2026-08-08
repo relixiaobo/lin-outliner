@@ -82,21 +82,9 @@ export function navigationTarget(
   return rows[from + (direction === 'down' ? 1 : -1)] ?? null;
 }
 
-export function selectedRootIds(
-  ids: NodeId[],
-  byId: Map<NodeId, NodeProjection>,
-  parentIdForRow: (id: NodeId) => NodeId | null | undefined = (id) => byId.get(id)?.parentId,
-): NodeId[] {
-  const selected = new Set(ids);
-  return ids.filter((id) => {
-    let parentId = parentIdForRow(id);
-    while (parentId) {
-      if (selected.has(parentId)) return false;
-      parentId = parentIdForRow(parentId);
-    }
-    return true;
-  });
-}
+// Selection-root collapsing is shared with the core action registry, so the
+// anchored menu and the searchable surface resolve the same subject set.
+export { selectionRootIds as selectedRootIds } from '../../../core/actions/rowFacets';
 
 export function appendText(content: RichText, text: string): RichText {
   return {
