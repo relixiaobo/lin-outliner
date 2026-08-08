@@ -181,6 +181,52 @@ before any directional/security-sensitive build.
   time (A7). #470 now asks whether to bind the parent instead, which is honest but not
   the feature. Give this its own seam: settle identity and ownership first, then the
   loading. Depends on `skill-path-ownership`.
+- **agent-episodic-transcripts** (P2, `draft` 2026-08-08 — see
+  [docs/plans/agent-episodic-transcripts.md](plans/agent-episodic-transcripts.md)) —
+  extend the subagent transcript artifact (#460) to every persistent Thread and
+  make past sessions discoverable: shape (b), two PRs — PR 1 gives standalone
+  Automation runs a `recentRuns` digest (status, outcome line, `transcriptPath`)
+  so a fresh run stops repeating its predecessor's failure; PR 2 adds the
+  all-Thread writer extension, a greppable index, discovery doctrine, and the
+  per-Thread privacy exclusion. Pull-based episodic memory over the existing
+  file tools; no new model tools, no second ledger. Out of the prime-agent
+  design study (2026-08-07/08).
+- **agent-doc-drift-notice** (P2, `draft` 2026-08-08 — see
+  [docs/plans/agent-doc-drift-notice.md](plans/agent-doc-drift-notice.md)) —
+  proactive staleness defense for the question-answering path: at Turn
+  admission (and on a fork's first Turn), if foreign-origin document edits
+  landed since the Thread's previous Turn, inject one bounded notice with the
+  origin-split counts and the intersection against nodes this Thread
+  previously touched. Shape (a), one PR. Complements reactive expected
+  revisions; out of the prime-agent design study (belief-maintenance pattern).
+- **agent-delegation-context-hygiene** (P3, `draft` 2026-08-08, fast-track, *no plan
+  file*) — teach delegation as context hygiene in the `collaboration.spawn_agent`
+  tool description: a When→Why menu (delegate context-heavy reconnaissance —
+  many-file reads, broad web research — so raw results stay out of the parent
+  Thread; conclusions return, details remain greppable in the child's
+  `transcriptPath`) plus the reverse clause (a single known lookup, edit, or
+  command runs inline). Verify by re-running the rollout tool-sequence
+  measurement after it ships: long reconnaissance runs should move off root
+  Threads. Out of the prime-agent design study.
+- **agent-goal-continuation-enrichment** (P3, `draft` 2026-08-08, fast-track, *no
+  plan file*) — the Goal continuation prompt today is one bare objective line
+  (`GoalExtension.ts:81`). Enrich it four ways in one small PR: a state line
+  (continuation count; budget used/remaining when a budget exists), a
+  completion-audit doctrine sentence (no completing from memory or partial
+  progress), exactly one flagged wrap-up continuation when the Goal turns
+  `budgetLimited` (progress / remaining / blockers / next step) instead of the
+  current silent stop, and objective escaping with data-not-instructions
+  framing. Out of the prime-agent design study.
+- **agent-hygiene-checks** (P3, `draft` 2026-08-08, fast-track, *no plan file*) —
+  small verification tails from the prime-agent design study: (1) per-Thread
+  auxiliary maps (collaboration mailbox, pending subagent activities, barrier
+  generations) provably cleaned on Thread deletion/terminal states; (2) the
+  `wait_agent` empty-final-text edge — what a parent sees when a child ends
+  with no assistant text (add a bounded fallback if the answer is "nothing");
+  (3) an untrusted-data framing audit of existing injection surfaces; (4) the
+  queued behavior-repetition notice (same action + same result ≥ 2 → one
+  bounded nudge; evidence: 100 identical `web_fetch` failures with 17
+  consecutive retries in the measured rollouts).
 - **agent-canonical-tool-call-history** (P1, `done` 2026-08-05; plan PR #482,
   implementation PR #483, codex-3) — the exact admitted call is now the sole authority
   for model-visible tool history. Immutable `modelCall` envelopes freeze exact replay,
