@@ -111,6 +111,11 @@ export interface ObjectPresentation {
   iconId: IconId;
   typeLabel: LocalizedNames;
   /**
+   * The node's OWN emoji, when it has one. A node's icon is data, not a fixed
+   * glyph, so it is carried rather than derived from `iconId`.
+   */
+  emoji?: string;
+  /**
    * PRESENTATION ONLY — the document node this row depicts, so a view can
    * resolve per-node visuals (a tag's colour) by identity instead of matching
    * on rendered text, which collides across same-named nodes. It is never an

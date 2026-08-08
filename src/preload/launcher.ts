@@ -34,9 +34,11 @@ import type {
   ParameterObjectQueryResult,
 } from '../core/actions/types';
 import {
+  LAUNCHER_REMEDIATION_CHANNEL,
   LAUNCHER_SHOWN_CHANNEL,
   type LauncherInitialState,
 } from '../core/launcher/commands';
+import type { LauncherRemediation } from '../core/launcher/remediation';
 import { DEFAULT_LOCALE, isLocale, LIN_LANGUAGE_CHANGED_CHANNEL, type Locale } from '../core/locale';
 
 /** The effective locale, resolved before first paint (same seam as the app). */
@@ -65,6 +67,17 @@ const launcherApi = {
     getInitialState: () =>
       ipcRenderer.invoke('launcher:getInitialState') as Promise<LauncherInitialState>,
     hide: () => ipcRenderer.invoke('launcher:hide') as Promise<void>,
+    // Main derives the capture-degraded hint from its own warnings and pushes
+    // only that view; the raw ExternalContext never reaches this renderer.
+    onRemediation: (listener: (remediation: LauncherRemediation | null) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, next: LauncherRemediation | null) => {
+        listener(next);
+      };
+      ipcRenderer.on(LAUNCHER_REMEDIATION_CHANNEL, handler);
+      return () => {
+        ipcRenderer.removeListener(LAUNCHER_REMEDIATION_CHANNEL, handler);
+      };
+    },
     onShown: (listener: () => void) => {
       const handler = () => listener();
       ipcRenderer.on(LAUNCHER_SHOWN_CHANNEL, handler);

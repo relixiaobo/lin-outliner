@@ -276,16 +276,12 @@ import type {
   ParameterObjectQueryRequest,
 } from '../core/actions/types';
 import {
-  getStaticLauncherCommands,
-  LAUNCHER_CONTEXT_CHANNEL,
+  LAUNCHER_REMEDIATION_CHANNEL,
   LAUNCHER_NAVIGATE_TO_NODE_CHANNEL,
-  type LauncherCreateCaptureResult,
-  type LauncherExecuteResult,
   type LauncherInitialState,
-  type LauncherNodeMatch,
 } from '../core/launcher/commands';
 import { buildContextCaptureInput, buildManualNoteInput, isCaptureIntent } from '../core/launcher/sources';
-import { resolveLauncherNodeMatches } from '../core/launcher/nodeMatches';
+import { remediationForContext } from '../core/launcher/remediation';
 import { rankTextSearchLabel } from '../core/textSearchAnalyzer';
 import { captureExternalContext } from './context/contextCapture';
 import { isAccessibilityTrusted, promptAccessibility } from './context/nativeBrowserTab';
@@ -1665,40 +1661,6 @@ function navigateMainToNode(nodeId: string): void {
   focusMainWindow();
 }
 
-/**
- * Resolve `search_nodes` hits into serializable matches for the launcher (which
- * can't read the document itself). Each match carries the node's single-line text
- * and its parent's text for disambiguation. Bounded to the top results.
- */
-async function searchLauncherNodes(query: string): Promise<LauncherNodeMatch[]> {
-  const q = query.trim();
-  if (!q) return [];
-  const hits = (await documentService.handle('search_nodes', { query: q })) as SearchHit[];
-  if (hits.length === 0) return [];
-  // Only the top hits are shown — resolve just those nodes (+ their parents, for
-  // the subtitle) by id, never materializing/mapping the whole-document projection
-  // on every debounced keystroke. Slice before lookup so work is bounded by the
-  // result limit, not the hit count.
-  const hitIds = hits.slice(0, LAUNCHER_NODE_RESULT_LIMIT).map((hit) => hit.nodeId);
-  const hitNodes = documentService.projectionNodesByIds(hitIds);
-  const parentIds = hitNodes
-    .map((node) => node.parentId)
-    .filter((id): id is string => Boolean(id));
-  const matchable = [...hitNodes, ...documentService.projectionNodesByIds(parentIds)].map((node) => ({
-    id: node.id,
-    text: node.content.text,
-    parentId: node.parentId,
-    icon: node.icon,
-    iconKind: node.iconKind,
-  }));
-  return resolveLauncherNodeMatches(
-    hitIds,
-    matchable,
-    LAUNCHER_NODE_RESULT_LIMIT,
-    getMessages(effectiveLocale()).common.untitled,
-  );
-}
-
 /** Max inline node results shown in the launcher (keeps the list scannable). */
 const LAUNCHER_NODE_RESULT_LIMIT = 8;
 
@@ -1799,7 +1761,13 @@ async function toggleLauncher(): Promise<void> {
         warnings: context.warnings.map((w) => w.code),
       });
     }
-    getLauncherWindow()?.webContents.send(LAUNCHER_CONTEXT_CHANNEL, context);
+    // The raw ExternalContext no longer crosses to the locked-down renderer:
+    // main derives the one view it needs (the capture-degraded hint) and pushes
+    // that. The ambient page OBJECT arrives through the action seam instead.
+    getLauncherWindow()?.webContents.send(
+      LAUNCHER_REMEDIATION_CHANNEL,
+      remediationForContext(context, getMessages(effectiveLocale()), APP_NAME),
+    );
     // First browser capture without Accessibility → request it once (shows the
     // system prompt and registers the app in the Privacy list).
     if (!accessibilityPrompted && context.providerId === 'generic-webpage' && !isAccessibilityTrusted()) {
@@ -1808,23 +1776,6 @@ async function toggleLauncher(): Promise<void> {
     }
   } catch (error) {
     console.error('[launcher] context capture failed', error);
-  }
-}
-
-function executeLauncherCommand(id: unknown): LauncherExecuteResult {
-  switch (id) {
-    case 'open-main':
-      if (!mainWindow) createWindow();
-      focusMainWindow();
-      return { hide: true };
-    case 'open-settings':
-      openSettingsWindow();
-      return { hide: true };
-    default:
-      // Only open-main / open-settings ship today; AI, capture destinations, and
-      // navigation commands are deferred to follow-up plans and aren't registered
-      // yet. An unknown id just dismisses the launcher.
-      return { hide: true };
   }
 }
 
@@ -2493,104 +2444,14 @@ function registerIpc() {
     assertLauncherRenderer(event);
     dismissLauncher();
   });
+  // Bootstrap: only the summon accelerator, so the panel's identity zone can
+  // teach the keystroke. The result list is no longer a static command set —
+  // it is the object generation main installs on the invocation.
   ipcMain.handle('launcher:getInitialState', (event): LauncherInitialState => {
     assertLauncherRenderer(event);
-    return {
-      commands: getStaticLauncherCommands(),
-      hotkey: launcherHotkeyAccelerator,
-    };
-  });
-  ipcMain.handle('launcher:executeCommand', (event, id: unknown): LauncherExecuteResult => {
-    assertLauncherRenderer(event);
-    return executeLauncherCommand(id);
-  });
-  // New node from the launcher: a plain typed note (no external source). Ensure
-  // today's date node, then create the node under it. NOT a capture — no sidecar.
-  ipcMain.handle('launcher:createCapture', async (event, raw: unknown): Promise<LauncherCreateCaptureResult> => {
-    assertLauncherRenderer(event);
-    const payload = (raw ?? {}) as { title?: unknown; note?: unknown };
-    const title = typeof payload.title === 'string' ? payload.title.trim() : '';
-    if (!title) return { ok: false };
-    const note = typeof payload.note === 'string' ? payload.note : undefined;
-    try {
-      const now = new Date();
-      await documentService.handle('ensure_date_node', {
-        year: now.getFullYear(),
-        month: now.getMonth() + 1,
-        day: now.getDate(),
-      });
-      const input = buildManualNoteInput({
-        destinationParentId: documentService.todayId(),
-        title,
-        note,
-      });
-      const outcome = await documentService.handle('create_capture', { input }) as CommandResult;
-      return { ok: true, nodeId: outcome.focus?.nodeId };
-    } catch (error) {
-      console.error('[launcher] createCapture failed', error);
-      return { ok: false };
-    }
-  });
-  // Context capture: save what the user was looking at (the main-held authoritative
-  // ExternalContext for this open) under Today. The renderer supplies only an
-  // optional note/intent — never the source metadata — so it can't be tampered with.
-  ipcMain.handle('launcher:createContextCapture', async (event, raw: unknown): Promise<LauncherCreateCaptureResult> => {
-    assertLauncherRenderer(event);
-    const context = launcherContext;
-    if (!context) return { ok: false };
-    const payload = (raw ?? {}) as { note?: unknown; intent?: unknown };
-    const note = typeof payload.note === 'string' ? payload.note : undefined;
-    // Validate against the known set — an out-of-enum string must not be persisted
-    // into the durable CaptureNodeMetadata (the renderer is across the seam).
-    const intent = isCaptureIntent(payload.intent) ? payload.intent : undefined;
-    try {
-      const now = new Date();
-      await documentService.handle('ensure_date_node', {
-        year: now.getFullYear(),
-        month: now.getMonth() + 1,
-        day: now.getDate(),
-      });
-      const captureId = `cap:${randomUUID()}`;
-      // Basic-info capture: the node carries title + URL + author only. Rich page
-      // content (body/selection/transcript) is not extracted today, and no browser
-      // extension or CDP backend is planned; when it lands it will be an explicit
-      // reader invoked after the user picks an action, never on the ambient hotkey
-      // path (docs/plans/unified-command-surface.md).
-      const input = buildContextCaptureInput({
-        context,
-        destinationParentId: documentService.todayId(),
-        captureId,
-        note,
-        intent,
-      });
-      const outcome = await documentService.handle('create_capture', { input }) as CommandResult;
-      if (!app.isPackaged) {
-        console.log('[launcher] capture saved', { nodeId: outcome.focus?.nodeId ?? null });
-      }
-      return { ok: true, nodeId: outcome.focus?.nodeId };
-    } catch (error) {
-      console.error('[launcher] createContextCapture failed', error);
-      return { ok: false };
-    }
-  });
-  // Inline node search: the launcher input queries the document directly (no
-  // "Search notes" command). Read-only; main enriches hits with node text.
-  ipcMain.handle('launcher:searchNodes', async (event, raw: unknown): Promise<LauncherNodeMatch[]> => {
-    assertLauncherRenderer(event);
-    try {
-      return await searchLauncherNodes(typeof raw === 'string' ? raw : '');
-    } catch (error) {
-      console.error('[launcher] searchNodes failed', error);
-      return [];
-    }
+    return { hotkey: launcherHotkeyAccelerator };
   });
   // Open a node search result: bring up the main window and navigate to it.
-  ipcMain.handle('launcher:openNode', (event, raw: unknown): void => {
-    assertLauncherRenderer(event);
-    if (typeof raw !== 'string' || !raw) return;
-    navigateMainToNode(raw);
-    dismissLauncher();
-  });
   // Appearance preference. Setting nativeTheme.themeSource rewrites
   // prefers-color-scheme in every renderer, so the @media rules in theme-dark.css
   // flip all windows at once — no per-window broadcast needed. We mirror the stored

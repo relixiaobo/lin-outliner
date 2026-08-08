@@ -127,10 +127,16 @@ export function presentObject(
         };
       }
       const contentId = nodeIdForFacet(object.content, projection);
+      const node = projection.byId.get(contentId);
+      // The parent's text disambiguates same-named nodes, which is the whole
+      // reason the shipped launcher row carried a subtitle.
+      const parent = node?.parentId ? projection.byId.get(node.parentId) : undefined;
       return {
         objectRef: object.objectRef,
         kind: 'node',
-        name: { source: 'literal', value: nodeText(projection.byId.get(contentId), untitled) },
+        name: { source: 'literal', value: nodeText(node, untitled) },
+        ...(parent ? { subtitle: { source: 'literal' as const, value: nodeText(parent, untitled) } } : {}),
+        ...(node?.icon ? { emoji: node.icon } : {}),
         iconId: 'node',
         typeLabel: objectTypeLabel('node'),
         backingNodeId: contentId,

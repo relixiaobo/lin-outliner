@@ -65,18 +65,7 @@ import {
   LIN_TRANSLATION_LANGUAGE_CHANGED_CHANNEL,
   type TranslationLanguage,
 } from '../core/translationLanguage';
-import {
-  LAUNCHER_CONTEXT_CHANNEL,
-  LAUNCHER_NAVIGATE_TO_NODE_CHANNEL,
-  LAUNCHER_SHOWN_CHANNEL,
-  type LauncherCommandId,
-  type LauncherCreateCaptureResult,
-  type LauncherExecuteResult,
-  type LauncherInitialState,
-  type LauncherNodeMatch,
-} from '../core/launcher/commands';
-import type { ExternalContext } from '../core/launcher/context';
-import type { CaptureIntent } from '../core/launcher/sources';
+import { LAUNCHER_NAVIGATE_TO_NODE_CHANNEL } from '../core/launcher/commands';
 import {
   LIN_APP_INFO_CHANNEL,
   LIN_EXPORT_DIAGNOSTICS_CHANNEL,
@@ -459,34 +448,6 @@ const api = {
       ipcRenderer.on(ACTION_STEP_CHANNEL, handler);
       return () => {
         ipcRenderer.removeListener(ACTION_STEP_CHANNEL, handler);
-      };
-    },
-  },
-  // Dedicated launcher window bridge (the prewarmed global launcher).
-  launcher: {
-    getInitialState: () => ipcRenderer.invoke('launcher:getInitialState') as Promise<LauncherInitialState>,
-    executeCommand: (id: LauncherCommandId) =>
-      ipcRenderer.invoke('launcher:executeCommand', id) as Promise<LauncherExecuteResult>,
-    createCapture: (payload: { title: string; note?: string }) =>
-      ipcRenderer.invoke('launcher:createCapture', payload) as Promise<LauncherCreateCaptureResult>,
-    createContextCapture: (payload: { note?: string; intent?: CaptureIntent } = {}) =>
-      ipcRenderer.invoke('launcher:createContextCapture', payload) as Promise<LauncherCreateCaptureResult>,
-    searchNodes: (query: string) =>
-      ipcRenderer.invoke('launcher:searchNodes', query) as Promise<LauncherNodeMatch[]>,
-    openNode: (nodeId: string) => ipcRenderer.invoke('launcher:openNode', nodeId) as Promise<void>,
-    hide: () => ipcRenderer.invoke('launcher:hide') as Promise<void>,
-    onShown: (listener: () => void) => {
-      const handler = () => listener();
-      ipcRenderer.on(LAUNCHER_SHOWN_CHANNEL, handler);
-      return () => {
-        ipcRenderer.removeListener(LAUNCHER_SHOWN_CHANNEL, handler);
-      };
-    },
-    onContext: (listener: (context: ExternalContext) => void) => {
-      const handler = (_event: unknown, context: ExternalContext) => listener(context);
-      ipcRenderer.on(LAUNCHER_CONTEXT_CHANNEL, handler);
-      return () => {
-        ipcRenderer.removeListener(LAUNCHER_CONTEXT_CHANNEL, handler);
       };
     },
   },

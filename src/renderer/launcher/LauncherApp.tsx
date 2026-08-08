@@ -1,222 +1,204 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { formatHotkey, type LauncherInitialState, type LauncherNodeMatch } from '../../core/launcher/commands';
-import type { ExternalContext } from '../../core/launcher/context';
-import { buildLauncherItems, deriveActiveIndex, primaryActionLabel, remediationForContext, rowKey, rowView, stepActiveKey } from './launcherModel';
-import type { LauncherItem, LauncherItemAction } from './launcherModel';
-import { iconForItem, LauncherInputIcon, LauncherRemediationIcon } from './launcherIcons';
-import { useT } from '../i18n/I18nProvider';
+import { formatHotkey, type LauncherInitialState } from '../../core/launcher/commands';
+import type { LauncherRemediation } from '../../core/launcher/remediation';
+import type {
+  InvocationOpened,
+  InvocationRef,
+  ObjectRef,
+  RequestId,
+  SurfaceItemPresentation,
+} from '../../core/actions/types';
+import {
+  navigableItems,
+  objectRowView,
+  primaryActionLabel,
+  resolveActiveRef,
+  rowKey,
+  stepActiveRef,
+} from './launcherModel';
+import { iconForObject, LauncherInputIcon, LauncherRemediationIcon } from './launcherIcons';
+import { useI18n, useT } from '../i18n/I18nProvider';
 import { APP_NAME } from '../../core/brand';
 import { Button } from '../ui/primitives/Button';
 import { Input } from '../ui/primitives/Input';
 import { isImeComposingEvent } from '../ui/interactions/imeKeyboard';
+import { launcherBridge } from './bridge';
 
-// Raycast-style launcher: ONE always-focused input that is simultaneously a
-// command filter, a live node search, AND a live capture draft (no "pick New
-// Capture first" mode, no separate "Search notes" command). The result list
-// (built purely in launcherModel) is a single flat list of uniform rows — capture
-// rows first so the common path is hotkey → Enter, then matching nodes, then
-// commands. A persistent action bar shows what Enter does. Every row has exactly
-// one action today; secondary actions (Save to Inbox, Ask AI with source) and
-// their ⌘K menu return with the follow-up plans (launcher-capture-destinations,
-// launcher-ai-actions) — nothing ships as a disabled "coming soon" placeholder.
+// The searchable OBJECT view of the action registry. One always-focused input
+// searches objects — nodes, the app's own surfaces, and a no-match draft — while
+// the action bar names what Enter does for the active one. A registry action is
+// never a row here, and no row fuses a destination into its title (D6/D8).
+//
+// The invocation is created by MAIN, synchronously, for each summon: this
+// renderer never opens one, and every action it runs is NAMED
+// (action id + invocation ref + subject ref + typed arguments) and re-evaluated
+// in main before anything happens.
 //
 // Hard rule for this subtree: stay light — no ProseMirror/Shiki/markdown/editor.
 
-/** Debounce (ms) before querying the document for inline node matches. */
-const NODE_SEARCH_DEBOUNCE_MS = 120;
-
-// NOTE: the show→context race (hotkey → immediate Enter can run *Open main
-// window* before the captured page arrives) is deliberately NOT mitigated here.
-// A renderer-side wait was tried and removed: holding Enter across an await
-// opens a window in which the user can dismiss, click another row, re-open, or
-// keep typing, and the resumed continuation knows none of it — it fired
-// cancelled actions, doubled actions, and captured half-typed text. The fix
-// belongs where the ambiguity is created: `unified-command-surface` PR 2 opens
-// its invocation synchronously with a pending ambient slot, so the top row is
-// never the wrong subject. See that plan's D6a.
+/** Debounce (ms) before asking main for the next object generation. */
+const OBJECT_QUERY_DEBOUNCE_MS = 120;
 
 export function LauncherApp() {
   const t = useT();
+  const { locale } = useI18n();
   const inputRef = useRef<HTMLInputElement>(null);
-  // Re-entrancy lock so a double Enter / Enter+click can't fire one action twice
-  // (open two windows, double-navigate, double-capture).
+  // Re-entrancy lock so a double Enter / Enter+click can't fire one action twice.
   const runningRef = useRef(false);
-  // The active row element, scrolled into view as keyboard selection moves.
   const activeRowRef = useRef<HTMLDivElement>(null);
   const [state, setState] = useState<LauncherInitialState | null>(null);
+  const [opening, setOpening] = useState<InvocationOpened | null>(null);
   const [query, setQuery] = useState('');
-  // Selection is tracked by row IDENTITY (key), not a raw index — an async list
-  // change (context / node results arriving) then can't leave the highlight on a
-  // different row than the user picked. activeIndex is DERIVED from it below.
-  const [activeKey, setActiveKey] = useState<string | null>(null);
+  const [results, setResults] = useState<readonly SurfaceItemPresentation[]>([]);
+  // Activity is tracked by generation-scoped ref, not an index: a late result
+  // set then cannot leave the highlight on a row that no longer exists.
+  const [explicitRef, setExplicitRef] = useState<ObjectRef | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [context, setContext] = useState<ExternalContext | null>(null);
-  // Inline node search results for the current query (fetched from main, debounced).
-  const [nodes, setNodes] = useState<LauncherNodeMatch[]>([]);
+  const [remediation, setRemediation] = useState<LauncherRemediation | null>(null);
+  const latestRequestRef = useRef<string | null>(null);
+
+  const invocationRef: InvocationRef | null = opening?.invocationRef ?? null;
+  const openSeq = opening?.openSeq ?? null;
+
   const reset = useCallback(() => {
     setQuery('');
-    setActiveKey(null);
+    setExplicitRef(null);
     setBusy(false);
     setError(null);
-    setNodes([]);
-    // A new open captures fresh context; drop the stale one until it arrives.
-    setContext(null);
+    setRemediation(null);
   }, []);
 
   useEffect(() => {
-    const launcher = window.lin?.launcher;
-    if (!launcher) return;
-    void launcher.getInitialState().then(setState);
-    const offShown = launcher.onShown(() => {
+    const bridge = launcherBridge();
+    if (!bridge?.launcher) return;
+    void bridge.launcher.getInitialState().then(setState);
+    const offShown = bridge.launcher.onShown(() => {
       reset();
       inputRef.current?.focus();
       inputRef.current?.select();
     });
-    const offContext = launcher.onContext((next) => setContext(next));
+    // Main pushes the opening it created for this summon. Its empty-query
+    // generation is already READY, so the panel paints furnished — the stable
+    // objects are legal subjects before the first keystroke.
+    const offOpened = bridge.actions.onOpened((next) => {
+      setOpening(next);
+      setResults(next.resultItems);
+    });
+    const offRemediation = bridge.launcher.onRemediation((next) => setRemediation(next));
     return () => {
       offShown();
-      offContext();
+      offOpened();
+      offRemediation();
     };
   }, [reset]);
 
-  // Inline node search: the input IS the search (no "Search notes" command). Query
-  // the document (in main) as the user types, debounced; clear when the input is
-  // empty so an idle launcher shows only capture + commands.
+  // Each input change asks main for the next generation. Accepting the request
+  // removes the previous one immediately, so the list can never render or submit
+  // a stale row; a late response is dropped by request identity.
   useEffect(() => {
-    const launcher = window.lin?.launcher;
-    const q = query.trim();
-    if (!launcher?.searchNodes || !q) {
-      setNodes([]);
-      return;
-    }
+    const actions = launcherBridge()?.actions;
+    if (!actions || !invocationRef || openSeq === null) return;
     let cancelled = false;
-    const timer = setTimeout(() => {
-      void launcher.searchNodes(q).then((matches) => {
-        if (!cancelled) setNodes(matches);
-      }).catch(() => {
-        if (!cancelled) setNodes([]);
+    const timer = window.setTimeout(() => {
+      const requestId = `${openSeq}:${query}:${Math.random()}` as RequestId;
+      latestRequestRef.current = requestId;
+      void actions.queryObjects({ invocationRef, openSeq, requestId, query }).then((result) => {
+        if (cancelled || latestRequestRef.current !== requestId) return;
+        if (!result || result.status !== 'ready') return;
+        setResults(result.resultItems);
       });
-    }, NODE_SEARCH_DEBOUNCE_MS);
+    }, query ? OBJECT_QUERY_DEBOUNCE_MS : 0);
     return () => {
       cancelled = true;
-      clearTimeout(timer);
+      window.clearTimeout(timer);
     };
-  }, [query]);
+  }, [invocationRef, openSeq, query]);
 
-  // One flat list of uniform rows (no section headers) — the order IS the
-  // navigable order, so keyboard selection matches what is shown on screen.
-  const navItems = useMemo<LauncherItem[]>(
-    () => buildLauncherItems({ query, context, commands: state?.commands ?? [], nodes, t }),
-    [query, context, state, nodes, t],
-  );
-
-  // Typing returns selection to the top row (capture-first) and clears any error.
   useEffect(() => {
-    setActiveKey(null);
     setError(null);
   }, [query]);
 
-  // activeIndex is DERIVED from the selected row's identity: follow that row as the
-  // list reorders, falling back to the top row when it's gone or nothing is picked.
-  const activeIndex = useMemo(() => deriveActiveIndex(navItems, activeKey), [navItems, activeKey]);
-  const activeItem = navItems[activeIndex];
+  const items = useMemo(
+    () => navigableItems({ fixedItems: opening?.fixedItems ?? [], resultItems: results }),
+    [opening, results],
+  );
+  const activeRef = useMemo(
+    () => resolveActiveRef({ items, explicitRef }),
+    [items, explicitRef],
+  );
+  const activeItem = items.find((item) => item.object.objectRef === activeRef);
 
-  // Keep the keyboard-selected row visible. `block: 'nearest'` is a no-op when the
-  // row is already on screen, so a hover-select of a visible row never scrolls.
   useEffect(() => {
     activeRowRef.current?.scrollIntoView({ block: 'nearest' });
-  }, [activeIndex]);
+  }, [activeRef]);
 
-  const finish = useCallback((result: { ok: boolean } | undefined, launcher: NonNullable<typeof window.lin>['launcher']) => {
-    if (result?.ok) {
-      reset();
-      void launcher.hide();
-    } else {
-      setError(t.launcher.error.saveFailed);
-    }
-  }, [reset, t]);
-
-  // Run a specific action of an item. Capture actions hit the launcher IPC; the
-  // page note is the trimmed query (ratified: page + note). The runningRef lock
-  // makes every branch single-shot (no double window-open / navigate / capture).
-  const runAction = useCallback(async (item: LauncherItem | undefined, action: LauncherItemAction | undefined) => {
-    const launcher = window.lin?.launcher;
-    if (!launcher || !item || !action || runningRef.current) return;
+  /**
+   * Run an action by NAMING it. Nothing about the effect is decided here: main
+   * re-evaluates the tuple against the latest projection and executes the plan.
+   */
+  const runPrimary = useCallback(async (item: SurfaceItemPresentation | undefined) => {
+    const actions = launcherBridge()?.actions;
+    const primary = item?.primaryAction;
+    if (!actions || !invocationRef || !primary || runningRef.current) return;
+    if (primary.evaluation.status !== 'applicable') return;
     runningRef.current = true;
+    setBusy(true);
+    setError(null);
     try {
-      if (action.id === 'run-command') {
-        if (item.kind !== 'command') return;
-        const result = await launcher.executeCommand(item.command.id);
-        if (result.hide) void launcher.hide();
-        return;
-      }
-      if (action.id === 'open-node') {
-        if (item.kind !== 'node') return;
-        // Opens the node in the main window; main also hides the launcher.
-        void launcher.openNode(item.nodeId);
+      const result = await actions.request({
+        actionId: primary.actionId,
+        invocationRef,
+        subjectRef: primary.subjectRef,
+        arguments: primary.binding.state === 'ready' ? primary.binding.arguments : {},
+      } as never);
+      if (result?.status === 'completed') {
         reset();
+        void launcherBridge()?.launcher.hide();
         return;
       }
-      setBusy(true);
-      setError(null);
-      try {
-        if (action.id === 'capture-page') {
-          finish(await launcher.createContextCapture({ note: item.kind === 'capture-page' ? item.note : undefined }), launcher);
-        } else if (action.id === 'capture-note' && item.kind === 'capture-note' && item.text) {
-          finish(await launcher.createCapture({ title: item.text }), launcher);
-        }
-      } catch (caught) {
-        // One generic, shippable failure line for the user; the detail is a dev
-        // concern and belongs in the renderer console, not in the footer.
-        console.error('[launcher] capture failed', caught);
-        setError(t.launcher.error.saveFailed);
-      } finally {
-        setBusy(false);
-      }
+      // Anything else is a failure the user must see: the panel stays open and
+      // the status zone says so, rather than closing as if it had worked.
+      setError(t.launcher.error.saveFailed);
+    } catch (caught) {
+      console.error('[launcher] action failed', caught);
+      setError(t.launcher.error.saveFailed);
     } finally {
+      setBusy(false);
       runningRef.current = false;
     }
-  }, [reset, finish, t]);
+  }, [invocationRef, reset, t]);
 
   const onKeyDown = useCallback(
     (event: React.KeyboardEvent) => {
       // While an IME composition is active, Enter/arrows/Escape belong to the
-      // IME — committing a pinyin candidate with Enter must not fire the active
-      // row (capturing half-typed text or opening the main window), arrows must
-      // not move the selection, and Escape must not hide the window.
+      // IME — committing a pinyin candidate must not fire the active row.
       if (isImeComposingEvent(event)) return;
       if (event.key === 'Escape') {
         event.preventDefault();
-        void window.lin?.launcher?.hide();
+        if (invocationRef) {
+          void launcherBridge()?.actions.event({ kind: 'abandoned', invocationRef });
+        }
+        void launcherBridge()?.launcher.hide();
         return;
       }
       if (event.key === 'ArrowDown') {
         event.preventDefault();
-        setActiveKey(stepActiveKey(navItems, activeIndex, 1));
+        setExplicitRef(stepActiveRef(items, activeRef, 1));
       } else if (event.key === 'ArrowUp') {
         event.preventDefault();
-        setActiveKey(stepActiveKey(navItems, activeIndex, -1));
+        setExplicitRef(stepActiveRef(items, activeRef, -1));
       } else if (event.key === 'Enter') {
         event.preventDefault();
-        void runAction(activeItem, activeItem?.actions[0]);
+        void runPrimary(activeItem);
       }
     },
-    [activeItem, activeIndex, navItems, runAction],
+    [activeItem, activeRef, invocationRef, items, runPrimary],
   );
 
-  // The primary hint states the ACTION only — never an error, never "Saving…".
-  // Busy and failure text live in the footer's status zone (left), so the error
-  // is not buried inside a clickable control with no status styling.
-  const primaryLabel = primaryActionLabel(activeItem);
+  const primaryLabel = primaryActionLabel(activeItem, locale);
   const statusText = error ?? (busy ? t.launcher.saving : null);
-  // At rest the status zone carries the identity: the app mark plus the summon
-  // hotkey, which is how a user who arrived by mouse (sidebar Search) learns the
-  // keystroke. `state.hotkey` is null when no candidate accelerator was free.
   const hotkey = formatHotkey(state?.hotkey ?? null);
-  // A quiet "saved, but here's how to capture more" hint when the active tab could
-  // not be read at all (Automation denied) — the Lazy-style remediation prompt.
-  const remediation = useMemo(() => remediationForContext(context, t, APP_NAME), [context, t]);
 
   return (
     <div className="launcher" role="dialog" aria-label={t.launcher.rootAriaLabel({ app: APP_NAME })} onKeyDown={onKeyDown}>
@@ -231,7 +213,7 @@ export function LauncherApp() {
           placeholder={t.launcher.placeholder}
           label={t.launcher.queryAriaLabel}
           role="combobox"
-          aria-expanded={navItems.length > 0}
+          aria-expanded={items.length > 0}
           aria-controls="launcher-results"
           aria-autocomplete="list"
           aria-activedescendant={activeItem ? `launcher-row-${rowKey(activeItem)}` : undefined}
@@ -251,25 +233,23 @@ export function LauncherApp() {
 
       <div id="launcher-results" className="launcher-body" role="listbox" aria-label={t.launcher.resultsAriaLabel}>
         <div className="launcher-body-inner">
-          {navItems.map((item, index) => (
+          {items.map((item) => (
             <LauncherRow
               key={rowKey(item)}
               item={item}
-              active={index === activeIndex}
-              rowRef={index === activeIndex ? activeRowRef : undefined}
-              onHover={() => setActiveKey(rowKey(item))}
-              onClick={() => void runAction(item, item.actions[0])}
+              active={item.object.objectRef === activeRef}
+              rowRef={item.object.objectRef === activeRef ? activeRowRef : undefined}
+              onHover={() => setExplicitRef(item.object.objectRef)}
+              onClick={() => void runPrimary(item)}
             />
           ))}
         </div>
       </div>
 
-      {/* Two zones (unified-command-surface D6a): identity/status left, the
-          primary hint right. */}
+      {/* Two zones (D6a): identity/status left, the hint cluster right. */}
       <div className="launcher-actionbar">
-        {/* The live region wraps the STATUS ONLY. Putting the identity inside it
-            would announce the app name and hotkey to a screen reader every time a
-            status cleared — the branding is permanent content, not an update. */}
+        {/* The live region wraps the STATUS ONLY — the branding is permanent
+            content, not an update to announce. */}
         <span className="launcher-actionbar-status">
           {statusText ? null : (
             <>
@@ -284,15 +264,13 @@ export function LauncherApp() {
             {statusText}
           </span>
         </span>
-        {/* The primary hint doubles as a button (Raycast): click runs Enter.
-            preventDefault on mousedown keeps the always-on input focused. */}
         <span className="launcher-actionbar-hints">
           {primaryLabel ? (
             <Button
               className="launcher-actionbar-item launcher-actionbar-primary"
               disabled={busy}
               onMouseDown={(event) => event.preventDefault()}
-              onClick={() => void runAction(activeItem, activeItem?.actions[0])}
+              onClick={() => void runPrimary(activeItem)}
               size="sm"
               variant="ghost"
             >
@@ -306,19 +284,19 @@ export function LauncherApp() {
   );
 }
 
-// One uniform row shape for every result (Raycast-style): leading glyph, a clear
-// title, a dimmed subtitle, and a right-aligned type label (Command / Node). The
-// presentation comes from the pure `rowView` so it stays testable.
+// One uniform row shape for every object: leading glyph, title, dimmed subtitle,
+// right-aligned TYPE label. The type label classifies the noun (Node, Page, App,
+// New node) — it never states the activation.
 function LauncherRow(props: {
-  item: LauncherItem;
+  item: SurfaceItemPresentation;
   active: boolean;
   rowRef?: React.Ref<HTMLDivElement>;
   onHover: () => void;
   onClick: () => void;
 }) {
-  const t = useT();
+  const { locale } = useI18n();
   const { item, active, rowRef, onHover, onClick } = props;
-  const { title, subtitle, typeLabel } = rowView(item, t);
+  const { title, subtitle, typeLabel } = objectRowView(item.object, locale);
   return (
     <div
       ref={rowRef}
@@ -327,8 +305,7 @@ function LauncherRow(props: {
       aria-selected={active}
       className={['launcher-row', active ? 'is-active' : ''].filter(Boolean).join(' ')}
       onMouseEnter={onHover}
-      // Matches the footer button: a row click never blurs the always-focused
-      // input (visible on the capture-error path, where the launcher stays open).
+      // A row click never blurs the always-focused input.
       onMouseDown={(event) => event.preventDefault()}
       onClick={onClick}
     >
@@ -340,13 +317,11 @@ function LauncherRow(props: {
   );
 }
 
-// A node shows its own emoji icon when it has one, else a bullet (the outliner
-// metaphor); every other row uses its fixed Lucide glyph.
-function LauncherRowIcon({ item }: { item: LauncherItem }) {
-  if (item.kind === 'node') {
-    if (item.icon) return <span className="launcher-row-emoji" aria-hidden="true">{item.icon}</span>;
+function LauncherRowIcon({ item }: { item: SurfaceItemPresentation }) {
+  const { object } = item;
+  if (object.kind === 'node' && object.name.source === 'literal') {
     return <span className="launcher-row-bullet" aria-hidden="true" />;
   }
-  const Icon = iconForItem(item);
+  const Icon = iconForObject(object);
   return <Icon className="launcher-row-icon" size={16} strokeWidth={1.75} aria-hidden="true" />;
 }
