@@ -13,15 +13,23 @@ interface Rendered {
   readonly document: Document;
   /** Every pending timer the component asked for, in order. */
   readonly timers: { readonly fire: () => void; readonly delay: number; cleared: boolean }[];
+  /** How many document-level move listeners are currently installed. */
+  readonly moveListeners: () => number;
   readonly rerender: (onDismiss: () => void) => void;
   /** A newer failure arriving in the same slot: new message, next sequence. */
   readonly replace: (message: string) => void;
   readonly window: Window;
 }
 
+/** The rect the stubbed layout reports for the card, so the tests can aim. */
+const CARD_RECT = { bottom: 100, left: 200, right: 500, top: 50 };
+/** Mutable so a test can move the card the way the entry animation does. */
+let cardRect = { ...CARD_RECT };
+
 const mounted: Rendered[] = [];
 afterEach(() => {
   while (mounted.length) mounted.pop()?.cleanup();
+  cardRect = { ...CARD_RECT };
 });
 
 describe('The app-wide action notice', () => {
@@ -51,26 +59,71 @@ describe('The app-wide action notice', () => {
     expect(dismissedBy).toBe('third');
   });
 
-  test('waits while the pointer is on its control, and restarts once it leaves', () => {
+  test('drops the countdown rather than resuming its remainder', () => {
     let dismissed = 0;
     const rendered = render(() => { dismissed += 1; });
-    // The card is click-through so it cannot eat a click meant for the outline
-    // underneath; its control is therefore the whole of its pointer surface,
-    // and reaching for the X is exactly when the text must not be yanked away.
-    const notice = rendered.document.querySelector('.action-notice-close');
 
-    hover(rendered, notice, true);
-    // Reading is not a reason to lose the text: the countdown is dropped, not
-    // paused-then-resumed, so the reader is never left with a sliver of it.
+    pointerMove(rendered, CARD_RECT.left + 20, CARD_RECT.top + 10);
     expect(rendered.timers[0]?.cleared).toBe(true);
-    expect(rendered.timers.filter((timer) => !timer.cleared)).toHaveLength(0);
 
-    hover(rendered, notice, false);
+    // Reading is not a reason to lose the text: leaving starts a FULL countdown
+    // rather than handing back whatever was left of the first one.
+    pointerMove(rendered, CARD_RECT.right + 40, CARD_RECT.top + 10);
     const live = rendered.timers.filter((timer) => !timer.cleared);
     expect(live).toHaveLength(1);
     expect(live[0]?.delay).toBe(ACTION_NOTICE_TIMEOUT_MS);
     act(() => live[0]?.fire());
     expect(dismissed).toBe(1);
+  });
+
+  test('waits while the pointer rests anywhere over the card, not just its control', () => {
+    // The card is click-through, so it receives no hover events of its own and
+    // the region has to be tested against its rect. Holding only on the 22px
+    // close control would satisfy "hover holds" while making it useless: a
+    // reader's pointer rests on the text, and a target that small is one you
+    // have to aim for.
+    const rendered = render(() => undefined);
+
+    pointerMove(rendered, CARD_RECT.left + 20, CARD_RECT.top + 10);
+    expect(rendered.timers.filter((timer) => !timer.cleared)).toHaveLength(0);
+
+    pointerMove(rendered, CARD_RECT.left - 40, CARD_RECT.top + 10);
+    const live = rendered.timers.filter((timer) => !timer.cleared);
+    expect(live).toHaveLength(1);
+    expect(live[0]?.delay).toBe(ACTION_NOTICE_TIMEOUT_MS);
+  });
+
+  test('remeasures when the entry animation stops moving it', () => {
+    // The card slides in, and `transform` moves its rect. Measuring once at
+    // mount catches it mid-slide, which would leave the hold region offset by
+    // the animation's travel for as long as the notice is up.
+    const rendered = render(() => undefined);
+    const settled = { bottom: 160, left: 200, right: 500, top: 110 };
+    cardRect = settled;
+
+    pointerMove(rendered, settled.left + 20, settled.top + 10);
+    expect(rendered.timers.filter((timer) => !timer.cleared)).toHaveLength(1);
+
+    act(() => {
+      rendered.document.querySelector('.action-notice')
+        ?.dispatchEvent(new rendered.window.Event('animationend', { bubbles: true }));
+    });
+    pointerMove(rendered, settled.left + 20, settled.top + 10);
+    expect(rendered.timers.filter((timer) => !timer.cleared)).toHaveLength(0);
+  });
+
+  test('watches for the pointer only while there is something to hold', () => {
+    // The listener is document-level, so one left behind per notice would
+    // accumulate silently and keep answering for a card that is gone.
+    const rendered = render(() => undefined);
+    expect(rendered.moveListeners()).toBe(1);
+
+    rendered.replace('A different failure.');
+    expect(rendered.moveListeners()).toBe(1);
+
+    rendered.cleanup();
+    expect(rendered.moveListeners()).toBe(0);
+    mounted.pop();
   });
 
   test('holds while its control has focus, so it cannot vanish under a Tab', () => {
@@ -92,7 +145,7 @@ describe('The app-wide action notice', () => {
     // arrives, so no fresh enter event would re-establish a hold that a
     // remount had thrown away — the hold must outlive the notice it began on.
     const rendered = render(() => undefined);
-    hover(rendered, rendered.document.querySelector('.action-notice-close'), true);
+    pointerMove(rendered, CARD_RECT.left + 20, CARD_RECT.top + 10);
     expect(rendered.timers.filter((timer) => !timer.cleared)).toHaveLength(0);
 
     rendered.replace('A different failure.');
@@ -136,7 +189,8 @@ describe('Notice sequencing', () => {
 function render(onDismiss: () => void): Rendered {
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
   const timers: Rendered['timers'] = [];
-  const restoreTimers = installDomGlobals(window, timers);
+  const moveListeners = new Set<EventListenerOrEventListenerObject>();
+  const restoreTimers = installDomGlobals(window, timers, moveListeners);
   const container = document.getElementById('root');
   if (!container) throw new Error('Missing root container');
   const root = createRoot(container);
@@ -155,6 +209,7 @@ function render(onDismiss: () => void): Rendered {
       restoreTimers();
     },
     document,
+    moveListeners: () => moveListeners.size,
     replace: (next: string) => {
       message = next;
       seq += 1;
@@ -171,19 +226,12 @@ function render(onDismiss: () => void): Rendered {
   return rendered;
 }
 
-/**
- * React synthesises enter/leave from delegated over/out events, so the raw
- * `mouseenter` a test would reach for never reaches the handler. With no
- * relatedTarget, React reads the pair as crossing the boundary — which is
- * exactly the case being tested.
- */
-function hover(rendered: Rendered, element: Element | null, entering: boolean) {
-  if (!element) throw new Error('Missing notice');
+/** A document-level move, which is where the hold is decided. */
+function pointerMove(rendered: Rendered, clientX: number, clientY: number) {
   act(() => {
-    element.dispatchEvent(new rendered.window.Event(entering ? 'mouseover' : 'mouseout', {
-      bubbles: true,
-      cancelable: true,
-    }));
+    const event = new rendered.window.Event('pointermove', { bubbles: true });
+    Object.assign(event, { clientX, clientY });
+    rendered.document.dispatchEvent(event);
   });
 }
 
@@ -204,12 +252,36 @@ function focus(rendered: Rendered, element: Element | null, entering: boolean) {
   });
 }
 
-function installDomGlobals(window: Window, timers: Rendered['timers']): () => void {
+function installDomGlobals(
+  window: Window,
+  timers: Rendered['timers'],
+  moveListeners: Set<EventListenerOrEventListenerObject>,
+): () => void {
   // Stubbed rather than faked wholesale: the assertions are about how MANY
   // timers the component sets and with what delay, which a clock that only
   // advances time cannot see.
   const realSetTimeout = window.setTimeout;
   const realClearTimeout = window.clearTimeout;
+  // linkedom has no layout, and the hold is a hit test against the card's rect,
+  // so the rect has to come from somewhere. Restored with the timers below —
+  // the same reason: this window outlives the file.
+  const { document } = window;
+  const realAdd = document.addEventListener.bind(document);
+  const realRemove = document.removeEventListener.bind(document);
+  document.addEventListener = (type: string, listener: EventListenerOrEventListenerObject, options?: unknown) => {
+    if (type === 'pointermove') moveListeners.add(listener);
+    realAdd(type, listener, options as never);
+  };
+  document.removeEventListener = (type: string, listener: EventListenerOrEventListenerObject, options?: unknown) => {
+    if (type === 'pointermove') moveListeners.delete(listener);
+    realRemove(type, listener, options as never);
+  };
+  const realRect = window.Element.prototype.getBoundingClientRect;
+  window.Element.prototype.getBoundingClientRect = function rect(this: Element) {
+    return this.classList?.contains('action-notice')
+      ? { ...cardRect, height: 50, width: 300, x: cardRect.left, y: cardRect.top, toJSON: () => cardRect } as DOMRect
+      : ({ bottom: 0, height: 0, left: 0, right: 0, top: 0, width: 0, x: 0, y: 0, toJSON: () => ({}) } as DOMRect);
+  };
   const setTimeoutStub = (handler: () => void, delay: number) => {
     const timer = { cleared: false, delay, fire: handler };
     timers.push(timer);
@@ -230,5 +302,7 @@ function installDomGlobals(window: Window, timers: Rendered['timers']): () => vo
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   return () => {
     Object.assign(window, { clearTimeout: realClearTimeout, setTimeout: realSetTimeout });
+    window.Element.prototype.getBoundingClientRect = realRect;
+    Object.assign(document, { addEventListener: realAdd, removeEventListener: realRemove });
   };
 }

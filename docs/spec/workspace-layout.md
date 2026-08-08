@@ -1096,11 +1096,19 @@ alone, which would cap a fixed shrink-to-fit box at half the window.
 
 It carries **one message at a time** — a newer failure replaces an older one —
 and **dismisses itself** after `ACTION_NOTICE_TIMEOUT_MS`. It holds while the
-pointer rests on its control or while that control has focus, and restarts the
-full countdown on leave; the focus hold is what stops the countdown from
-unmounting the button under a keyboard user mid-Tab. The hold outlives a
-replacement, because a pointer already resting there does not move to announce
-itself again.
+pointer rests anywhere over the card or while its close control has focus, and
+restarts the **full** countdown on leave rather than handing back the remainder.
+Because the card is click-through it receives no hover events of its own, so the
+pointer hold is a hit test against its rect from a document-level `pointermove`
+that lives exactly as long as the notice does. Restricting the hold to the close
+control would satisfy "hover holds" in name only: a reader's pointer rests on
+the text, and a 22px target is one you have to aim for. The rect is cached and
+re-measured on resize, on a message change, and on `animationend` — the entry
+animation moves the card, so measuring once at mount would leave the region
+offset by the animation's travel. The focus hold is orthogonal and is what stops
+the countdown from unmounting the button under a keyboard user mid-Tab. Both
+holds outlive a replacement, because a pointer already resting there does not
+move to announce itself again.
 
 **Reporting is not clearing, and succeeding is not clearing.** A caller reports
 a failure; it never pre-emptively nulls the slot before trying, and a command

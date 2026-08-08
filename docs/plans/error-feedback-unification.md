@@ -94,11 +94,17 @@ shared slot is empty far more often than not, so a sequence derived from it
 would restart at 1 nearly every time and a repeat would be indistinguishable
 from the notice already on screen.
 
-**Not obstruction.** Anchored over the content column, the card is
-`pointer-events: none` with the close control opting back in: reporting a
-failure must not swallow the user's next click. The hold therefore lives on that
-control — where a reader's pointer goes anyway — and on its focus, so the
-countdown cannot unmount the button under a keyboard user mid-Tab.
+**Not obstruction, and not a smaller hold either.** Anchored over the content
+column, the card is `pointer-events: none` with the close control opting back
+in: reporting a failure must not swallow the user's next click. Click-through
+costs the card its hover events, so the pointer hold becomes a hit test against
+its rect, driven by a document-level `pointermove` that lives as long as the
+notice. Both halves are required — narrowing the hold to the close control keeps
+the words "hover holds" while making them useless, since a reader's pointer
+rests on the text and a 22px target has to be aimed at. The rect is cached
+(fixed positioning) and invalidated on resize, message change, and
+`animationend`. Focus hold is separate and stands on its own: the countdown must
+not unmount the button under a keyboard user mid-Tab.
 
 **The timer.** Owned by the toast component, not the callers: replacement
 resets it, hover pauses it, close clears it. No caller-side timeout knowledge —
@@ -128,12 +134,14 @@ labels" and "single slot" are recorded above as deliberate.
 ## Verification
 
 - Renderer test (`actionNotice.test.tsx`): the timer lifecycle — it dismisses
-  itself, holds on pointer and on focus and restarts on leave, keeps a hold
-  across a replacement, survives host re-renders that hand it a fresh callback,
-  restarts on an unheld replacement, carries a caller-side sequence, and says
-  nothing when the message is blank. `window.setTimeout` is stubbed rather than
-  faked, so the assertions can be about how many timers exist and with what
-  delay.
+  itself; a `pointermove` anywhere over the card's rect holds and one outside
+  restarts a full countdown; focus holds; the hold survives a replacement; the
+  rect is re-measured when the entry animation ends; the move listener exists
+  only while a notice does; it survives host re-renders that hand it a fresh
+  callback; an unheld replacement restarts; the sequence is caller-side; and a
+  blank message says nothing. `window.setTimeout` and `getBoundingClientRect`
+  are stubbed rather than faked — the assertions are about how many timers
+  exist and where the hold region is, neither of which linkedom provides.
 - Renderer test (`commandRunnerNoop.test.tsx`, `contextMenuLifecycle.test.tsx`):
   neither a successful command nor a completed menu action clears the notice.
 - Guard test (`actionNoticeCss.test.ts`): the anchor and the geometry. This is

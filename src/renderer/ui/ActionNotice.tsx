@@ -61,11 +61,13 @@ export function ActionNotice({
   readonly seq: number;
 }) {
   const t = useT();
-  // Held ACROSS notices rather than reset per notice: this component is not
-  // keyed on `seq`, because remounting would drop a hold the user is currently
-  // relying on — the pointer resting on the control does not move, so no fresh
-  // enter event would arrive to re-establish it.
-  const [held, setHeld] = useState(false);
+  // Two independent reasons to wait, held ACROSS notices rather than reset per
+  // notice: this component is not keyed on `seq`, because remounting would drop
+  // a hold the user is currently relying on — a pointer already resting on the
+  // card does not move, so no fresh event would arrive to re-establish it.
+  const [pointerHeld, setPointerHeld] = useState(false);
+  const [focusHeld, setFocusHeld] = useState(false);
+  const held = pointerHeld || focusHeld;
   // The timer must not depend on the callback's identity. This renders inside
   // the app shell, which re-renders on every keystroke in the outliner; an
   // unmemoized `onDismiss` would restart the countdown on each one and the
@@ -75,12 +77,56 @@ export function ActionNotice({
   // Where focus was before the notice took it, so dismissing the control does
   // not strand the user at <body> with their place in the outline lost.
   const focusOriginRef = useRef<Element | null>(null);
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  const rectRef = useRef<DOMRect | null>(null);
 
   useEffect(() => {
     if (held) return undefined;
     const timer = window.setTimeout(() => dismissRef.current(), ACTION_NOTICE_TIMEOUT_MS);
     return () => window.clearTimeout(timer);
   }, [held, seq]);
+
+  /**
+   * Resting the pointer over the card waits, even though the card cannot
+   * receive the pointer.
+   *
+   * Being click-through is not negotiable — the card floats over the outline's
+   * first rows — but `:hover` and enter/leave events both need the element to
+   * take the pointer, so the region is tested against the card's rect instead.
+   * Restricting the hold to the close control would technically satisfy "hover
+   * holds" while making it useless: a reader's pointer rests on the TEXT, and a
+   * 22px target is one you have to aim for.
+   *
+   * The rect is cached because the card is `position: fixed` — it can only move
+   * when the window resizes, when the message changes its size, or when the
+   * entry animation's transform finishes (measuring at mount catches the card
+   * mid-slide and would leave the region permanently offset).
+   */
+  useEffect(() => {
+    const card = cardRef.current;
+    if (!card) return undefined;
+    const measure = () => { rectRef.current = card.getBoundingClientRect(); };
+    measure();
+    card.addEventListener('animationend', measure);
+    window.addEventListener('resize', measure);
+    return () => {
+      card.removeEventListener('animationend', measure);
+      window.removeEventListener('resize', measure);
+    };
+  }, [message, seq]);
+
+  // Bound to the notice's own lifetime: the listener exists only while there is
+  // something on screen to hold.
+  useEffect(() => {
+    const onPointerMove = (event: PointerEvent) => {
+      const rect = rectRef.current;
+      setPointerHeld(rect !== null
+        && event.clientX >= rect.left && event.clientX <= rect.right
+        && event.clientY >= rect.top && event.clientY <= rect.bottom);
+    };
+    document.addEventListener('pointermove', onPointerMove);
+    return () => document.removeEventListener('pointermove', onPointerMove);
+  }, []);
 
   const dismiss = () => {
     const origin = focusOriginRef.current;
@@ -90,27 +136,20 @@ export function ActionNotice({
   };
 
   return (
-    <div className="action-notice" role="alert">
+    <div className="action-notice" ref={cardRef} role="alert">
       <span>{message}</span>
-      {/* The control is the only part that takes the pointer (the card itself
-          is click-through), so hovering it is the whole of "hovering the
-          notice" — and it is also what a reader reaches for, which is exactly
-          when the text must not be yanked away.
-
-          Focus holds too: without it the countdown would unmount the button
-          under a keyboard user's focus ring mid-Tab, dropping them to <body>
-          with no way back. */}
+      {/* Focus is the other reason to wait, and it is not the pointer's: without
+          it the countdown would unmount this button under a keyboard user's
+          focus ring mid-Tab, dropping them to <body> with no way back. */}
       <ButtonControl
         aria-label={t.shell.errorDismiss}
         className="action-notice-close"
-        onBlur={() => setHeld(false)}
+        onBlur={() => setFocusHeld(false)}
         onClick={dismiss}
         onFocus={(event) => {
           focusOriginRef.current = event.relatedTarget;
-          setHeld(true);
+          setFocusHeld(true);
         }}
-        onMouseEnter={() => setHeld(true)}
-        onMouseLeave={() => setHeld(false)}
       >
         <CloseIcon size={ICON_SIZE.menu} />
       </ButtonControl>
