@@ -507,6 +507,7 @@ const PDF_TEXT_TRUNCATION_MARKER = '\n[PDF text truncated]';
 const PDF_TEXT_CAPTURE_CHARS = PDF_TEXT_MAX_CHARS + 1;
 const PDF_INFO_CACHE_EXTRACTOR = 'pdfinfo:v1';
 const PDF_TEXT_CACHE_EXTRACTOR = 'pdftotext-layout:v1';
+const NON_PDF_PAGES_WARNING = 'Ignored the pages parameter because it only applies to PDF files. The file was read normally; use offset and limit to paginate text files.';
 export const POPPLER_RECOVERY_INSTRUCTIONS = [
   'Poppler is required for PDF metadata, text extraction, page rendering, and conversion.',
   'Run bash to detect an available package manager and install Poppler.',
@@ -540,7 +541,7 @@ const FILE_READ_PARAMETERS = {
     file_path: { type: 'string', minLength: 1, description: 'An absolute path or a path relative to the Thread working directory.' },
     offset: { type: 'integer', minimum: 0, description: 'The line number to start reading from. Only provide if the file is too large to read at once.' },
     limit: { type: 'integer', minimum: 1, maximum: MAX_FILE_READ_LIMIT, description: 'The number of lines to read. Only provide if the file is too large to read at once.' },
-    pages: { type: 'string', description: `Page range for PDF files, for example "1-5", "3", or "10-20". Only applicable to PDF files. Maximum ${PDF_MAX_PAGES_PER_READ} pages per request.` },
+    pages: { type: 'string', description: `PDF FILES ONLY. Page range for PDF layout inspection, for example "1-5", "3", or "10-20". Never use for text, images, Office documents, notebooks, or other non-PDF files; use offset and limit to paginate text. Maximum ${PDF_MAX_PAGES_PER_READ} pages per request.` },
   },
 };
 
@@ -896,7 +897,8 @@ function createFileReadTool(
       'Use an absolute file_path when known; relative paths resolve from the Thread working directory.',
       `By default, it reads up to ${DEFAULT_FILE_READ_LIMIT} lines starting from the beginning of the file.`,
       'You can optionally specify a line offset and limit, especially for long files.',
-      'This tool can read text files, images, PDFs, rich documents converted to Markdown, and Jupyter notebooks. PDFs are read as extracted text by default; use pages when page images or layout inspection are needed. It can only read files, not directories.',
+      'This tool can read text files, images, PDFs, rich documents converted to Markdown, and Jupyter notebooks. It can only read files, not directories.',
+      'For PDF files only, use pages when page images or layout inspection are needed. For text pagination, use offset and limit. A pages value on a non-PDF file is ignored with a warning.',
       'Use this before file_edit or before rewriting an existing file with file_write.',
     ].join('\n'),
     parameters: FILE_READ_PARAMETERS,
@@ -923,9 +925,9 @@ function createFileReadTool(
           );
         }
         const ext = path.extname(filePath).toLowerCase();
-        if (params.pages !== undefined && ext !== '.pdf') {
-          throw new LocalToolFailure('invalid_args', 'The pages parameter is only valid for PDF files.', 'Remove pages or pass a .pdf file path.');
-        }
+        const nonPdfPagesWarnings = params.pages !== undefined && ext !== '.pdf'
+          ? [NON_PDF_PAGES_WARNING]
+          : undefined;
         const imageType = await imageMediaTypeForFile(filePath, IMAGE_MEDIA_TYPES.get(ext));
         if (imageType) {
           const observation = await readImageObservation(
@@ -948,7 +950,10 @@ function createFileReadTool(
           };
           await notifySuccessfulFileTouch(workspace, filePath);
           const visible = visibleFileRead(data);
-          return agentToolResult(successEnvelope('file_read', data, { metrics: metrics(started, data) }), visible, [{
+          return agentToolResult(successEnvelope('file_read', data, {
+            warnings: nonPdfPagesWarnings,
+            metrics: metrics(started, data),
+          }), visible, [{
             type: 'image',
             data: data.file.base64,
             mimeType: observation.mimeType,
@@ -1009,7 +1014,10 @@ function createFileReadTool(
           };
           await notifySuccessfulFileTouch(workspace, filePath);
           const visible = visibleFileRead(data);
-          return agentToolResult(successEnvelope('file_read', data, { metrics: metrics(started, data) }), visible);
+          return agentToolResult(successEnvelope('file_read', data, {
+            warnings: nonPdfPagesWarnings,
+            metrics: metrics(started, data),
+          }), visible);
         }
         if (ext === '.pptx') {
           const read = await ingestPptxFile(filePath, fileStat.size, signal);
@@ -1018,6 +1026,7 @@ function createFileReadTool(
           return agentToolResult(successEnvelope('file_read', read.data, {
             status: read.status,
             instructions: read.instructions,
+            warnings: nonPdfPagesWarnings,
             metrics: metrics(started, read.data),
           }), visible, read.content);
         }
@@ -1032,6 +1041,7 @@ function createFileReadTool(
           return agentToolResult(successEnvelope('file_read', read.data, {
             status: read.status,
             instructions: read.instructions,
+            warnings: nonPdfPagesWarnings,
             metrics: metrics(started, read.data),
           }), visible, read.content);
         }
@@ -1056,6 +1066,7 @@ function createFileReadTool(
           return agentToolResult(successEnvelope('file_read', data, {
             status: 'unchanged',
             instructions: 'The file is unchanged since the previous full file_read result. Use the earlier content already in context instead of reading it again.',
+            warnings: nonPdfPagesWarnings,
             metrics: metrics(started, data),
           }), visible);
         }
@@ -1099,6 +1110,7 @@ function createFileReadTool(
               : lineOffset > 0
                 ? 'Reached the end of the file. Read from offset 1 before editing it.'
                 : undefined,
+          warnings: nonPdfPagesWarnings,
           metrics: { ...metrics(started, data), truncated: partial },
         }), visible);
       } catch (error) {

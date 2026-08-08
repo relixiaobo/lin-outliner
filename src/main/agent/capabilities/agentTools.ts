@@ -35,8 +35,6 @@ import {
   MAX_FETCH_CHARS,
   MAX_SEARCH_LIMIT,
   WEB_FETCH_BROWSER_TIMEOUT_MS,
-  WEB_FETCH_CLIENT_HINT_PLATFORM,
-  WEB_FETCH_CLIENT_HINT_UA,
   WEB_FETCH_MAX_REDIRECTS,
   WEB_FETCH_RENDER_SETTLE_MS,
   WEB_FETCH_RETRY_DELAY_MS,
@@ -91,8 +89,11 @@ import {
   makeRedirectedHostHint,
   nextSecFetchSite,
   shouldTryBrowserFallbackForHttpFailure,
-  webFetchRefererForHop,
 } from './agentWebFetchFallback';
+import {
+  buildWebFetchHeaders,
+  type WebFetchRedirectContext,
+} from './agentWebFetchRequest';
 import {
   BING_IMAGES_RESULT_SELECTOR,
   DUCKDUCKGO_RESULT_SELECTOR,
@@ -699,14 +700,6 @@ async function fetchTextOnce(
   }
 }
 
-// State carried across a redirect hop so request headers can mirror a real
-// browser navigation: the referrer (the URL we are coming from) and the
-// chain-monotonic Sec-Fetch-Site value for the hop being made.
-interface WebFetchRedirectContext {
-  referrerUrl: string;
-  secFetchSite: 'same-origin' | 'cross-site';
-}
-
 async function fetchTextWithRedirects(
   currentUrl: string,
   startedUrl: string,
@@ -725,7 +718,7 @@ async function fetchTextWithRedirects(
     redirect: 'manual',
     credentials: 'omit',
     signal,
-    headers: buildFetchHeaders(currentUrl, redirect),
+    headers: buildWebFetchHeaders(currentUrl, redirect),
   });
 
   if (HTTP_REDIRECT_STATUSES.has(response.status)) {
@@ -814,37 +807,6 @@ async function fetchTextWithRedirects(
     body,
     ...(redirectedHostHint ? { redirectedHostHint } : {}),
   };
-}
-
-// Mirror the request headers a real Chrome navigation sends, computed per hop.
-// On the first request (no referrer) it is a fresh top-level navigation:
-// sec-fetch-site:none plus the user-gesture bit. On a redirect hop it carries a
-// Referer (the previous URL) and a redirect-consistent sec-fetch-site, so the
-// request never looks like an impossible brand-new top-level nav mid-chain.
-function buildFetchHeaders(currentUrl: string, redirect?: WebFetchRedirectContext): Record<string, string> {
-  const headers: Record<string, string> = {
-    'user-agent': WEB_FETCH_USER_AGENT,
-    accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.9,text/plain;q=0.8,image/avif,image/webp,*/*;q=0.8',
-    'accept-language': 'en-US,en;q=0.9',
-    'sec-ch-ua': WEB_FETCH_CLIENT_HINT_UA,
-    'sec-ch-ua-mobile': '?0',
-    'sec-ch-ua-platform': WEB_FETCH_CLIENT_HINT_PLATFORM,
-    'sec-fetch-dest': 'document',
-    'sec-fetch-mode': 'navigate',
-    'upgrade-insecure-requests': '1',
-  };
-  if (!redirect) {
-    headers['sec-fetch-site'] = 'none';
-    headers['sec-fetch-user'] = '?1';
-    return headers;
-  }
-  // Referer follows Chrome's strict-origin-when-cross-origin default (origin-only
-  // cross-origin, dropped on an https→http downgrade); sec-fetch-site is the
-  // chain-monotonic value computed at redirect time.
-  const referer = webFetchRefererForHop(redirect.referrerUrl, currentUrl);
-  if (referer) headers.referer = referer;
-  headers['sec-fetch-site'] = redirect.secFetchSite;
-  return headers;
 }
 
 function resolveRedirectUrl(baseUrl: string, location: string | null): string | null {

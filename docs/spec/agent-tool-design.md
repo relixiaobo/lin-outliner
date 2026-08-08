@@ -83,7 +83,11 @@ normalization path: it accepts at most 256 MiB of source data and emits at most
 2,000 px / 4.5 MiB of model input rather than base64-encoding the original file.
 PDF and rich-document reads retain their own page, byte, output, and timeout
 budgets; PDF source size is rejected before whole-file buffering, and rendered
-page images are normalized serially through the same bounded image path.
+page images are normalized serially through the same bounded image path. The
+`pages` selector is for PDF layout inspection only. If it is supplied for a
+non-PDF file, `file_read` ignores it, completes the normal type-specific read,
+and returns a warning; line-oriented reads use `offset` and `limit` for
+pagination. PDF page-range validation remains fail-closed.
 
 PPTX is a dedicated in-process OOXML route rather than a MarkItDown route. It
 indexes the ZIP central directory lazily and validates the package graph before
@@ -159,6 +163,14 @@ a later Turn.
 - `web_fetch`: HTTP retrieval with redirect, size, and content extraction limits
 - `generate_image`: configured image-provider generation
 - `data_import`: preview and commit a validated import pack
+
+`web_fetch` uses a credential-free Electron `Session.fetch` partition, follows
+redirects manually, and applies its byte, timeout, and extraction bounds before
+returning content. Requests present the configured Chrome user agent, client
+hints, and per-hop referrer/site headers, but Chromium owns `Sec-Fetch-Mode`:
+the runtime must not set the navigation-only `navigate` value on a Fetch API
+request. The real Electron probe exercises local read, metadata, and find modes
+so request-construction failures are detected without public-network access.
 
 `generate_image` separates the provider's original artifact from the bounded image shown
 to the model. It validates provider MIME/base64 against the 256 MiB source-image safety
