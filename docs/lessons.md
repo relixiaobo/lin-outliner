@@ -445,3 +445,33 @@ click-through and the hold becomes a rect hit test — and the first shape shipp
 would have satisfied "hover holds" while leaving the reader a 22px target to aim
 for. When a fix removes an element's ability to receive events, check what else
 was riding on it.
+
+## The build is a test surface the unit suites do not cover
+
+`unified-command-surface` PR 2 (#505) shipped two defects that `typecheck`,
+`test:core`, `test:renderer` and the **entire** Playwright suite all reported
+green on, and that a single `electron-vite build` caught immediately.
+
+The first was the worse one. Splitting the preload into two rollup entries makes
+rollup emit a shared chunk that both bundles `require()`, and a sandboxed
+preload's `require` is a polyfill limited to electron/events/timers/url. The
+result was `window.lin` undefined in **every** window — no document, no IPC, no
+agent, a completely dead app in both `dev:*` and the packaged build. Nothing in
+the test tree loads an Electron preload: the renderer specs drive the vite dev
+server in a browser, so the artifact that was broken is the one artifact no
+suite instantiates. The second arrived at rebase time: a textual conflict
+resolution spliced a new CSS block into the middle of another rule, leaving an
+unclosed block. Valid-looking CSS, green everywhere, and postcss said "Unclosed
+block" the first time anything actually compiled it.
+
+Both share a shape. Our fast checks read *source*; some failures only exist in
+the *artifact*. Type checking cannot see a bundler's chunking decision, and no
+amount of DOM testing compiles a stylesheet. The suites are not weak here — they
+are simply pointed at a different object than the one that ships.
+
+So: **when a change touches build configuration or any bundled asset — preload,
+CSS, entry points, chunking, packaging — run a real build before calling it
+green, and prefer a guard that asserts on the emitted artifact rather than on
+the source that produced it.** `tests/core/preloadBundle.test.ts` is the shape to
+copy: it pins the config *and*, when a build is present, reads the built bundle
+and fails on any `require()` a sandboxed preload could not resolve.

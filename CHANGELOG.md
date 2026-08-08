@@ -150,6 +150,28 @@ Entries reference the pull request that introduced them.
   attempt, a failure you have not read yet is no longer erased by the next
   keystroke or by starting an unrelated dock action, and a failure while the app
   is still loading is reported as itself rather than as "failed to start".
+- **The launcher becomes a command surface, not just a search box (PR #505,
+  cc-2)** — every row is now an *object*, and ⌘K stops being a way to summon the
+  launcher and becomes "show me what I can do with this one": a searchable,
+  keyboard-driven action list built from the same core registry the right-click
+  menu reads, so the two surfaces cannot drift into offering different things.
+  Summoning over a focused row picks up that row; summoning over a browser page
+  offers to capture it, send it to the agent, or file it — and the capture loop
+  runs through the registry rather than its own private IPC handlers. Indent and
+  Outdent join the searchable set. Permanent deletion now raises macOS's own
+  confirmation sheet instead of an in-app dialog, and declining it is silent
+  rather than reported as a failure. The in-app command palette is retired
+  outright, along with every style, message and constant it left behind. The
+  launcher's bridge is narrowed at the same time: the window that can be summoned
+  over any application no longer holds the generic invoke surface, only the
+  action seam, and main rejects anything else from that sender before dispatch.
+  The `/code-review xhigh` gate found fifteen defects, led by one that would have
+  shipped a completely dead app: splitting the preload into two bundles emitted a
+  shared chunk that a sandboxed preload cannot load, so `window.lin` was
+  undefined in every window — no document, no IPC, no agent — while typecheck,
+  both unit suites and the entire Playwright suite stayed green, because none of
+  them load an Electron preload. A guard now pins the preload to one bundle and
+  checks the emitted artifact.
 
 ### Fixed
 

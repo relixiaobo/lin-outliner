@@ -21,8 +21,7 @@ See `AGENTS.md` for the full workflow.
 
 Open PRs and claims — the PR queue, not this snapshot, is authoritative.
 
-- **Approved and unclaimed, top of queue:** the two `unified-command-surface`
-  implementation PRs (design merged #485, refined #491) — see Backlog top.
+_Nothing claimed right now._
 
 
 ## Backlog
@@ -37,14 +36,7 @@ unassigned — future dev is not pre-committed to any clone.
 **Top of queue (2026-06-23 re-prioritization).** The agent portfolio is done, so the frontier is
 product surface + polish. Ranked candidates, tagged by build-readiness:
 
-1. **`unified-command-surface`** (P2, **design contract merged #485 and refined
-   #491; implementation unclaimed**) — the largest remaining product item. Shape (b) is two independent
-   complete features: PR 1 makes the node context menu a view of the core action
-   registry and fixes *Move to* retrieval; PR 2 builds the searchable command
-   surface and capture loop on that proven foundation. The retrieval dependency
-   shipped in #111. Re-derive the open-PR inventory before either implementation;
-   PR 2 follows the ordering constraints recorded in the plan.
-2. **`performance` P3** (build-ready now, fast-track) — localized O(N) cleanups. #380 shipped
+1. **`performance` P3** (build-ready now, fast-track) — localized O(N) cleanups. #380 shipped
    reference-summary Trash set precomputation and default-panel row-model pruning; #413 shipped
    core sparse transaction/write-path hardening, bounded journal/undo metadata, sparse replication
    import, and yielding import cache/finalization; #414 shipped the main-side document read model
@@ -61,14 +53,14 @@ product surface + polish. Ranked candidates, tagged by build-readiness:
    #427 cached active tag selector candidates and the empty-query order per snapshot.
    Remaining localized
    cleanups are still tracked in `docs/plans/performance-optimization.md`; no design gate.
-3. **UI-quality Layer-3 remainder** (build-ready now, small) — `icon-semantics` (isolated) then
+2. **UI-quality Layer-3 remainder** (build-ready now, small) — `icon-semantics` (isolated) then
    `dark-mode-contrast-pass` (runs **last**, cross-cutting light+dark pass). `keyboard-a11y` shipped #273.
-4. **`anthropic-auth-clarity`** (P3, *needs a small one-pager*) — PM picked option B (segmented
+3. **`anthropic-auth-clarity`** (P3, *needs a small one-pager*) — PM picked option B (segmented
    API-key/Claude-Pro control); presentation-only, light/dark gate.
-5. **`agent-skills-authoring` security/curation tails** (P1 tail) — Skillify v2 body, preview/confirm,
+4. **`agent-skills-authoring` security/curation tails** (P1 tail) — Skillify v2 body, preview/confirm,
    and NL save-as-skill routing shipped (#230/#271); remaining tails are executable support-file
    ratify+sandbox and opt-in curation dry-run.
-6. **`file-preview` tail** (P2) — Office best-effort renderers and any later static URL-reader extraction.
+5. **`file-preview` tail** (P2) — Office best-effort renderers and any later static URL-reader extraction.
    Media streaming, direct URL preview, preview-first links, and sandboxed local HTML shipped in #345
    (EPUB #339/#344, PDF #227, web-native basics #210 already in).
 
@@ -99,32 +91,14 @@ the command-surface follow-ups (`launcher-capture-destinations` / `launcher-ai-a
 into `unified-command-surface` (D1/D4/D5) and the resolver track superseded — all archived. The
 capture-pipeline tracks below stay separate (orthogonal to the surface).
 
-- **unified-command-surface** (P2, **in-progress — design contract merged #485,
-  refined #491, re-anchored to the tree #501; PR 1 merged #504 (cc-2), PR 2
-  unclaimed**) — put
-  **one core action registry** behind every
-  outline-node action. The context menu becomes its filtered anchored view; the
-  launcher becomes its searchable view and the only globally summoned command
-  surface. Shape (b) ships as two independent complete features: PR 1 proves the
-  existing menu against the registry and fixes *Move to* retrieval, then PR 2 adds
-  the command/capture surface, agent handoff, and declared native-confirmation
-  change. PR 1 shipped the registry, main-owned admission and the three approved
-  deltas; the `/code-review high` gate found ten defects the branch's own parity
-  oracle could not reach, all fixed with regression tests before merge (see the
-  CHANGELOG entry and `docs/lessons.md`). The full contract, security/lifecycle state machines, verification, and
-  build ordering live in `docs/plans/unified-command-surface.md`; its retrieval
-  dependency shipped in #111. This replaces the earlier `Target × Verb`, habit
-  learning, and reversibility-tier framing rather than extending it.
-  **This is the launcher's final execution plan** (PM, 2026-08-06): the D6a
-  addendum (same date, main-authored from the launcher review) folds in the
-  presentation layer — bar anatomy with identity/status + hint cluster, summon
-  hotkey taught in-surface, first-open = the furnished empty-query list with no
-  onboarding chrome, flat list reaffirmed — plus the IME composition guard as a
-  hard requirement (AC-16). PR 2 keeps the guard and CSS that
-  `launcher-interaction-hardening` shipped (#497) and retargets its sidebar
-  Search row in the step 12 sweep. The interim empty-query Enter wait was
-  withdrawn before merge, so PR 2 inherits **no** stopgap for the show→context
-  race — closing it at the source is part of PR 2's job, not a cleanup.
+- **unified-command-surface** (**done — design #485, refined #491, re-anchored
+  #501; PR 1 #504, PR 2 #505, both cc-2**) — one core action registry behind
+  every outline-node action: the context menu is its filtered anchored view, the
+  launcher its searchable one, with main owning admission. The two gates found
+  ten and fifteen defects respectively — including a split preload that left
+  `window.lin` undefined in every window — all fixed before merge; see the
+  CHANGELOG entries and `lessons.md`. Design folded into
+  `spec/action-registry.md` + `spec/launcher.md`; plan archived.
 - **launcher-interaction-hardening** (**done — PR #497**) — IME composition guard
   plus the window-level fix that stopped the launcher covering the candidate
   window (CJK input was unusable on both counts), the D6a footer, sidebar
