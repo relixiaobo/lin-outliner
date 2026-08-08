@@ -126,11 +126,12 @@ tools, using the active pane as default context.
 Sidebar dock:
 
 The navigation surface on the left side. Its first row is Search, which opens the
-in-app command palette; it sits above Today because search is the universal entry
+command surface; it sits above Today because search is the universal entry
 point, and it exists so the surface is reachable without keyboard-only knowledge.
 Search is an action, not a nav target, so it is its own row rather than an entry
 in the nav-target record. Its right-aligned keystroke hint is derived from the
-shortcut registry (`formatShortcutHint('global.command_palette')`), never
+accelerator the global summon hotkey actually registered under (read from main,
+since it may have fallen back), never
 hardcoded, so a rebind carries through; the hint is quiet meta text rather than a
 key chip, and is `aria-hidden` so the row's accessible name stays "Search". Below
 it the rail exposes the global entry points Today, Library, Recents, and Schema,
@@ -180,7 +181,7 @@ Raised content layer
 Overlay layer
   -> menus
   -> popovers
-  -> command palette
+  -> command surface
   -> confirmations
   -> transient previews
 ```
@@ -888,7 +889,7 @@ Page-history Back/Forward (`Cmd+[` / `Cmd+]`) follows the active workspace pane'
 view history, including Turn Diagnostics and file previews. "Open the active root in
 a pane" (`Cmd+M`) requires the active view to be an outliner; while another view
 is active it no-ops rather than reaching across to another pane. Untargeted navigation
-(`navigateRoot` — sidebar plain click, command palette, "go to root") targets the
+(`navigateRoot` — sidebar plain click, command surface, "go to root") targets the
 active outliner pane if there is one, else an existing outliner pane, else opens
 one; it never replaces the whole canvas. Ambient UI that merely needs "the
 outliner the user is looking at" (sidebar root highlight, drag-selection scope)
@@ -967,7 +968,7 @@ layout changes.
 
 Sidebar responsibilities:
 
-- The Search row, opening the command palette.
+- The Search row, summoning the command surface (`lin:show-launcher`).
 - Global navigation entries.
 - Workspace roots (all root sections shown; none hidden).
 - Search and library entry points.
@@ -1034,8 +1035,10 @@ Examples:
   active pane.
 - Typing in the agent input sets `focusedSurface = 'agent'` but does not clear
   the active pane.
-- Opening the command palette sets `focusedSurface = 'overlay'` while retaining
-  the previous surface for restore.
+- Opening an overlay (a node context menu, a trigger popover) sets
+  `focusedSurface = 'overlay'` while retaining the previous surface for restore.
+  The command surface is NOT one of these — it is a separate window, so the app
+  shell's focus model is untouched when it is summoned.
 
 ## Overlay Layer
 
@@ -1044,7 +1047,6 @@ clipping and stacking conflicts.
 
 Overlay examples:
 
-- Command palette.
 - Node context menu.
 - Tag/reference trigger popovers.
 - Agent diff preview.
@@ -1055,7 +1057,7 @@ through a common overlay host.
 
 ```ts
 interface OverlayState {
-  kind: 'command_palette' | 'node_menu' | 'trigger' | 'diff_preview';
+  kind: 'node_menu' | 'trigger' | 'diff_preview';
   anchor?: OverlayAnchor;
 }
 ```
@@ -1165,9 +1167,10 @@ User clicks Today in sidebar
   -> agent remains mounted
 ```
 
-The in-app command palette uses the same ensure-first path for its Today item and
-for "New node in Today"; it must not rely on a stale renderer `projection.todayId`
-after a session crosses midnight.
+The command surface uses the same ensure-first path: `open` on the Today object
+runs `ensure_date_node` and navigates to the id that command RETURNS, so neither
+surface relies on a stale renderer `projection.todayId` after a session crosses
+midnight. See [`action-registry.md`](action-registry.md).
 
 Open node in a split pane:
 

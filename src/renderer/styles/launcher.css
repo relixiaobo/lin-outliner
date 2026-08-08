@@ -366,8 +366,8 @@ body {
 .launcher-actions-search {
   width: 100%;
   padding: var(--space-2) var(--space-4);
-  font-size: var(--font-body);
-  line-height: var(--line-body);
+  font-size: var(--font-ui-md);
+  line-height: var(--line-ui-md);
 }
 
 /* Dropping the ambient chip. An icon-only chrome control signals by COLOR, not

@@ -914,7 +914,7 @@ commandPalette: {
         code: '代码块',
         image: '图片',
         attachment: '附件',
-        command_palette: '命令面板',
+        command_palette: '搜索',
       },
       // 图片块工具栏 + 缺失状态。
       // 附件块工具栏 + 元数据标签。

@@ -1004,7 +1004,7 @@ commandPalette: {
         code: 'Code block',
         image: 'Image',
         attachment: 'Attachment',
-        command_palette: 'Command palette',
+        command_palette: 'Search',
       },
       // Image block toolbar + missing state.
       // Attachment block toolbar + metadata labels.

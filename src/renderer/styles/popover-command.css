@@ -28,12 +28,6 @@
   overscroll-behavior: contain;
 }
 
-.command-palette {
-  border-radius: var(--radius-overlay-sm);
-  background: var(--bg-elevated);
-  box-shadow: var(--overlay-shadow-level-2);
-}
-
 /* Groups the reuse popover into its "Fields" / "System fields" sections. */
 .popover-section-header {
   padding: var(--space-3) var(--space-4) var(--space-1);

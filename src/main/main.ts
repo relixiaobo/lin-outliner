@@ -2495,6 +2495,14 @@ function registerIpc() {
     }
   }
 
+  // The in-app entry points (the sidebar Search row, the `/`-menu row) summon
+  // the SAME panel the hotkey does. The ⌘K binding retires; the entry points do
+  // not — a surface that teaches its own keystroke must still be reachable by
+  // someone who has not learned it.
+  ipcMain.handle('lin:show-launcher', async (event) => {
+    assertMainRenderer(event, 'Summoning the command surface');
+    await toggleLauncher();
+  });
   ipcMain.handle('launcher:hide', (event) => {
     assertLauncherRenderer(event);
     dismissLauncher();

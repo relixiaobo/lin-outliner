@@ -65,10 +65,14 @@ export const SLASH_COMMANDS: readonly SlashCommandDefinition[] = [
     enabled: true,
   },
   {
+    // Retargeted, not deleted: this row and the sidebar Search row answer the
+    // same need — a menu-first user who never learned the keystroke. The ⌘K
+    // BINDING retires; the in-app entry points to the surface do not. Its hint
+    // is gone because the summon accelerator lives in main and is resolved at
+    // runtime, not hard-coded here.
     id: 'command_palette',
-    label: 'Command palette',
-    keywords: ['palette', 'search'],
-    shortcutHint: 'Cmd+K',
+    label: 'Search',
+    keywords: ['search', 'find', 'open', 'palette', 'command'],
     enabled: true,
   },
 ] as const;

@@ -119,7 +119,6 @@ interface UseWorkspaceKeyboardOptions {
   requestEditFocus: (nodeId: NodeId, parentId?: NodeId | null) => void;
   rootId: NodeId | null;
   run: CommandRunner;
-  setCommandOpen: (commandOpen: boolean) => void;
   setError: (message: string | null) => void;
   setUi: Dispatch<SetStateAction<UiState>>;
   ui: UiState;
@@ -135,7 +134,6 @@ export function useWorkspaceKeyboard({
   requestEditFocus,
   rootId,
   run,
-  setCommandOpen,
   setError,
   setUi,
   ui,
@@ -217,11 +215,6 @@ export function useWorkspaceKeyboard({
         return;
       }
       const targetIsEditable = shouldIgnoreSelectionKeyboardTarget(event.target);
-      if (matchesShortcutEvent(event, 'global.command_palette')) {
-        event.preventDefault();
-        setCommandOpen(true);
-        return;
-      }
       if (matchesShortcutEvent(event, 'global.open_agent_panel')) {
         event.preventDefault();
         onOpenPanel();
@@ -587,8 +580,7 @@ export function useWorkspaceKeyboard({
     requestEditFocus,
     rootId,
     run,
-    setCommandOpen,
-    setError,
+      setError,
     setUi,
     ui,
   ]);

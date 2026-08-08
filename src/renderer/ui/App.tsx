@@ -6,7 +6,6 @@ import { parseIsoLocalDate, todayIsoLocalDate, type AssetMetadata, type FocusHin
 import { flattenVisibleRows, useProjectionStore, useUiState } from '../state/document';
 import { ThreadDock, type ThreadRailState } from '../agent/components/ThreadDock';
 import { buildRendererUserViewHints } from './agent/userViewContext';
-import { CommandPalette } from './CommandPalette';
 import { Sidebar } from './Sidebar';
 import { WindowChrome } from './WindowChrome';
 import { ActionNotice, nextActionNotice, type ActionNoticeState } from './ActionNotice';
@@ -78,7 +77,6 @@ export function App() {
   const indexRef = useRef(index);
   const run = useCommandRunner(applyProjectionUpdate, setPendingFocus, setError);
   const nodeAccessTimersRef = useRef<Map<NodeId, number>>(new Map());
-  const commandRestoreFocusRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => () => {
     for (const timer of nodeAccessTimersRef.current.values()) window.clearTimeout(timer);
@@ -103,12 +101,10 @@ export function App() {
     timers.set(nodeId, timer);
   }, []);
 
-  const setCommandOpen = useCallback((commandOpen: boolean) => {
-    if (commandOpen && document.activeElement instanceof HTMLElement) {
-      commandRestoreFocusRef.current = document.activeElement;
-    }
-    setUi((prev) => ({ ...prev, commandOpen }));
-  }, [setUi]);
+  /** Summon the command surface — the one globally-summoned panel (D3). */
+  const showCommandSurface = useCallback(() => {
+    void window.lin?.showLauncher?.();
+  }, []);
 
   const focusNode = useCallback((nodeId: NodeId | null) => {
     setUi((prev) => {
@@ -411,7 +407,7 @@ export function App() {
   }, [ensureTodayNode, navigateRoot]);
 
   // The global launcher opened an inline node search result — navigate the active
-  // panel to it and focus it (mirrors the in-app CommandPalette jump).
+  // panel to it and focus it: the same in-place re-root a node row performs.
   useEffect(() => window.lin?.onNavigateToNode?.((nodeId) => {
     navigateRoot(nodeId as NodeId);
     focusNode(nodeId as NodeId);
@@ -526,7 +522,6 @@ export function App() {
     requestEditFocus,
     rootId,
     run,
-    setCommandOpen,
     setError,
     setUi,
     ui,
@@ -639,7 +634,7 @@ export function App() {
           onNavigateToday={navigateToday}
           onNavigateRoot={navigateRoot}
           onOpenPanel={openRootInPanel}
-          onOpenSearch={() => setCommandOpen(true)}
+          onOpenSearch={showCommandSurface}
           onOpenSettings={() => {
             void window.lin?.openSettings();
           }}
@@ -711,18 +706,6 @@ export function App() {
         }))}
       />
 
-      {ui.commandOpen && (
-        <CommandPalette
-          projection={index.projection}
-          index={index}
-          onClose={() => setCommandOpen(false)}
-          onEnsureToday={ensureTodayNode}
-          onFocus={focusNode}
-          onRoot={navigateRoot}
-          restoreFocus={() => commandRestoreFocusRef.current}
-          run={run}
-        />
-      )}
 
       {notice && (
         <ActionNotice message={notice.message} onDismiss={dismissNotice} seq={notice.seq} />

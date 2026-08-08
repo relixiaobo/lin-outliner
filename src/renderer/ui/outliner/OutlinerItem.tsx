@@ -1212,7 +1212,8 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       } else {
         await applyTextWithoutTrigger();
       }
-      props.setUi((prev) => ({ ...prev, commandOpen: true }));
+      // The `/`-menu row summons the SAME panel the hotkey does.
+      void window.lin?.showLauncher?.();
       return commandRunnerNoop();
     }
 

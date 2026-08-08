@@ -220,7 +220,7 @@ selection behavior.
 
 ### Menus, Popovers, And Dialogs
 
-Menus, popovers, tooltips, compact modal dialogs, and the command palette use the
+Menus, popovers, tooltips and compact modal dialogs use the
 shared overlay stack in [components.md → Overlays](./components.md#overlays).
 This surface only owns where product overlays appear and which command behavior
 they execute. Overlay positioning should render through a shell-level overlay

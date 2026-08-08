@@ -1,6 +1,7 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, DragEvent as ReactDragEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { formatHotkey } from '../../core/launcher/commands';
 import type { DocumentProjection, NodeId, NodeProjection } from '../api/types';
 import { resolveReferenceTargetId, type DocumentIndex } from '../state/document';
 import {
@@ -134,7 +135,10 @@ export function Sidebar(props: SidebarProps) {
     )) ?? [];
   const rootLabel = rootNode ? textOf(rootNode) || t.common.untitled : '';
   const rootActive = rootNode ? props.rootId === rootNode.id : false;
-  const searchShortcutHint = formatShortcutHint('global.command_palette');
+  // The hint re-derives from the accelerator the SUMMON hotkey actually
+  // registered under — resolved in main, since it may have fallen back — rather
+  // than a renderer binding that no longer exists.
+  const searchShortcutHint = useLauncherHotkeyHint();
 
   const renderWorkspaceTree = (nodeId: NodeId, depth = 0, parentPath: readonly NodeId[] = []) => {
     const node = props.index.byId.get(nodeId);
@@ -494,4 +498,20 @@ function nodeIconOf(node: NodeProjection) {
 
 function rootAvatar(node: NodeProjection, label: string) {
   return nodeIconOf(node) ?? Array.from(label.trim())[0]?.toUpperCase() ?? 'L';
+}
+
+/**
+ * The formatted summon accelerator, or null when none registered. Read from
+ * main because that is where the registration (and any fallback) happened.
+ */
+function useLauncherHotkeyHint(): string | null {
+  const [hint, setHint] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void window.lin?.getLauncherHotkey?.().then((accelerator) => {
+      if (!cancelled) setHint(formatHotkey(accelerator));
+    });
+    return () => { cancelled = true; };
+  }, []);
+  return hint;
 }

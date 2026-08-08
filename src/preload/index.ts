@@ -333,6 +333,8 @@ const api = {
   // no candidate was free. Read-only and argument-free: the registration itself
   // stays main's, this only lets Settings state the fact.
   getLauncherHotkey: () => ipcRenderer.invoke('lin:launcher-hotkey') as Promise<string | null>,
+  /** Summon the command surface from an in-app entry point. */
+  showLauncher: () => ipcRenderer.invoke('lin:show-launcher') as Promise<void>,
   clearUrlPreviewData: () =>
     ipcRenderer.invoke(LIN_CLEAR_URL_PREVIEW_DATA_CHANNEL) as Promise<ClearUrlPreviewDataResult>,
   clearPreviewTranslationCache: () =>

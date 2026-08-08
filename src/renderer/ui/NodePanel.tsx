@@ -548,7 +548,8 @@ export function NodePanel(props: NodePanelProps) {
 
     if (commandId === 'command_palette') {
       await clearTitleTriggerText();
-      props.setUi((prev) => ({ ...prev, commandOpen: true }));
+      // The `/`-menu row summons the SAME panel the hotkey does.
+      void window.lin?.showLauncher?.();
       return commandRunnerNoop();
     }
 

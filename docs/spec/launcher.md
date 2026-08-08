@@ -138,23 +138,19 @@ footer's primary hint `preventDefault` on `mousedown`, so clicking a row never
 blurs the always-focused input — visible on the capture-failure path, where the
 launcher stays open for a retry.
 
-### Known gap: Enter before the context lands
+### Enter is synchronous, and the top row is never the wrong subject
 
-Enter is **synchronous** — it runs the row that is showing. Between the window
-becoming interactive and the captured context arriving, the top row is still a
-command row, so a hotkey → immediate Enter can run *Open main window* instead of
-capturing the page the user summoned the launcher over.
+Enter runs the row that is showing. That is safe because main creates the
+invocation **synchronously** for each summon, with its empty-query generation
+already `ready` and its ambient slot `pending`: the stable objects are legal
+subjects before the first keystroke, and the page arrives later as its own chip
+rather than by reordering what Enter would hit.
 
-This is knowingly unmitigated **here**. A renderer-side wait was built and then
-removed: holding Enter across an await opens a window in which the user can
-dismiss the launcher, click a different row, re-open it, or keep typing, and the
-resumed continuation knows none of it — it fired actions the user had cancelled,
-turned one intent into two actions, and captured half-typed text. Guarding all of
-that in the renderer reproduces, badly, the generation/lifecycle bookkeeping that
-[`../plans/unified-command-surface.md`](../plans/unified-command-surface.md) PR 2
-introduces properly: its invocation opens synchronously with a pending ambient
-slot, so the top row is never the wrong subject and the gap does not exist. The
-race is that plan's to close (D6a); the launcher does not carry a stopgap for it.
+The earlier renderer-side wait for context was built and removed — holding Enter
+across an await opens a window in which the user can dismiss, click another row,
+re-open or keep typing, and the resumed continuation knows none of it. The fix
+belongs where the ambiguity is created, and it is now there. See
+[`action-registry.md`](action-registry.md).
 
 ## Capture (basic-info only)
 
@@ -180,12 +176,11 @@ Providers produced today (`selectSiteProvider`): `generic-webpage`, `youtube`
 The captured YouTube URL is the clean canonical `watch?v=<id>` (the `t`/`start`
 player-position anchor is stripped).
 
-`Enter` on a capture row calls `launcher:createContextCapture` /
-`launcher:createCapture`, which ensures today's date node and runs the
-`create_capture` document command under it. The main process holds the
-authoritative `ExternalContext`; the renderer supplies only an optional note (and
-intent — validated against the known `CaptureIntent` set at the seam before it
-reaches the durable sidecar), so it can't tamper with the saved source. A **page
+`Enter` on the page chip runs `capture(page)` through the action registry:
+`ensure_date_node` supplies `create_capture`'s destination as a BOUND reference,
+and the typed text rides along as the note. The main process holds the
+authoritative `ExternalContext` and the renderer never receives it — it names an
+action and main resolves the source itself, so there is nothing to tamper with. A **page
 capture** node carries a hidden `capture` provenance sidecar plus an outline
 projection (capture-kind tag + URL/Author/Published fields); a typed note nests
 **under** it as a child bullet (the outliner metaphor — "this source, and my note
@@ -205,36 +200,45 @@ remediation banner pointing at System Settings.
 ## Inline node search
 
 There is **no** "Search notes" command — typing IS the search. The renderer
-debounces (120ms) and calls `launcher:searchNodes`; main runs the `search_nodes`
-document command and resolves the top hits (limit 8) into `LauncherNodeMatch`
-views (single-line title + parent text + emoji icon), since the locked-down
-launcher renderer can't read the document. Resolution looks up only the hit nodes
+debounces (120ms) and calls `ObjectQueryRequest`; main runs the same ranked
+retrieval and returns the top hits (limit 8) as node OBJECTS whose presentation
+carries the single-line title, the parent's text as subtitle and the node's own
+emoji, since the locked-down launcher renderer can't read the document. Resolution looks up only the hit nodes
 (+ their parents) by id via `Core.projectionNodesByIds`, never materializing the
 whole-document projection per keystroke. `search_nodes` is a transient lookup
 surface. It uses the same document-derived reference-authority boost as saved
 searches, then opts into per-user personal access ranking; both affect ordering
 only and never change saved search rules or materialized saved-search results.
-`Enter` on a node calls
-`launcher:openNode` → `navigateMainToNode`, which brings up / creates the main
+`Enter` on a node runs `open`, whose renderer step routes through
+`navigateMainToNode`, which brings up / creates the main
 window and sends `LAUNCHER_NAVIGATE_TO_NODE_CHANNEL` so the main renderer runs
-`navigateRoot + focusNode` (the same jump the in-app command palette uses). A
+`navigateRoot + focusNode` (an in-place re-root of the active pane). A
 navigate that arrives before the main window's renderer has loaded is queued and
 flushed on each `did-finish-load` (re-armable, so it survives a renderer reload).
 Only the resulting main-window landing records human access after a short dwell;
 typing, hovering, selection movement, and raw search hits do not.
 
-## Commands
+## Objects, not commands
 
-`getStaticLauncherCommands()` ships only **Open main window** and **Open
-Settings** — both runnable. AI, capture destinations (Inbox / picker), and
-navigation (Go to Today / Library, recents) are deferred to the split plans and
-will appear here when they work, never as disabled rows.
+The result list is an **object** list. Every row is a `SurfaceItemPresentation`
+main resolved for the opening — five system nodes (Today, Library, Schema, Saved
+searches, Trash), two app surfaces (Main window, Settings), ranked node matches,
+the ambient page chip, and a single no-match draft — and what Enter does lives in
+the action bar, never in the row title.
 
-**Action labels are verbs; the footer never restates a row title.** A command
-row's action label is the generic verb ("Open") — the row title already names the
-target, so restating it made the list say *Open main window* and the footer repeat
-it. Capture rows keep their descriptive labels ("Capture page to Today", "New node
-in Today"); there the label IS the information.
+The legacy `LauncherCommandView` rows are gone: *Open main window* and *Open
+Settings* were app surfaces with their verb fused into the noun. The row is
+*Main window*; its action is *Open*. Locale guards reject the compound strings in
+BOTH roles — as a row title and as an action label.
+
+**Action labels are verbs, and the bar never restates a row title.** The primary
+label is the resolved `ActionPresentation` for the active object, so *Capture
+page to Today* and *New node in Today* are gone too: the page chip's action is
+*Capture* and the draft row's is *Create node*, with Today carried as a bound
+destination OBJECT rather than prose inside an action id.
+
+The catalog, the admission path and the candidate policies live in
+[`action-registry.md`](action-registry.md).
 
 ## Footer
 
@@ -251,18 +255,29 @@ through.
   carries the status: a failure (`--status-danger`), or "Saving…" while a capture
   is in flight. The live region wraps the status text only — the identity is
   permanent content and must not be announced when a status clears.
-- **Right — the primary hint.** The active row's action label plus the `↵` chip.
-  It is a real button (click = Enter, `mousedown` preventDefault) styled as a
-  hint, not a control: meta type, secondary ink, no control-height bulk. It states
-  the **action only** — never an error, never "Saving…" — and is disabled while a
-  save is in flight.
+- **Right — the hint cluster.** The active object's primary action label plus the
+  `↵` chip, then `Actions ⌘K`. Both are real buttons (click = the keystroke,
+  `mousedown` preventDefault) styled as hints, not controls: meta type, secondary
+  ink, no control-height bulk. The primary states the **action only** — never an
+  error, never "Saving…" — and is disabled while one is in flight. When the
+  active object has no safe blind-Enter action, the cluster shows only
+  `Actions ⌘K`.
 
 ## IPC surface
 
-- Renderer → main (`ipcMain.handle`): `launcher:getInitialState`, `launcher:hide`,
-  `launcher:executeCommand`, `launcher:createCapture`,
-  `launcher:createContextCapture`, `launcher:searchNodes`, `launcher:openNode`.
-- Main → launcher renderer: `LAUNCHER_SHOWN_CHANNEL`, `LAUNCHER_CONTEXT_CHANNEL`.
+The launcher loads its OWN preload (`src/preload/launcher.ts`) — the generic
+`lin:invoke` surface is not in that bundle, and main additionally refuses it for
+this sender before dispatch. See [`action-registry.md`](action-registry.md) →
+*Renderer capabilities*.
+
+- Launcher renderer → main: `launcher:getInitialState`, `launcher:hide`, and the
+  action seam (`action:objectQuery`, `action:parameterQuery`, `action:request`,
+  `action:event`). It cannot create an invocation from a seed.
+- Main → launcher renderer: `LAUNCHER_SHOWN_CHANNEL`, `ACTION_OPENED_CHANNEL`,
+  `ACTION_AMBIENT_CHANGED_CHANNEL`, `LAUNCHER_REMEDIATION_CHANNEL`. The raw
+  `ExternalContext` never crosses.
+- Main renderer → main: `lin:show-launcher`, so the sidebar Search row and the
+  `/`-menu row summon the same panel the hotkey does.
 - Main → main renderer: `LAUNCHER_NAVIGATE_TO_NODE_CHANNEL`.
 - Settings renderer → main: `lin:launcher-hotkey` (read-only, no args) for the
   Settings row above.
