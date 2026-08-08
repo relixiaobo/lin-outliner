@@ -875,7 +875,6 @@ export function permanentDeleteIds(
 
 function deleteForeverConfirmation(count: number): ConfirmationSpec {
   return {
-    style: 'rendererDialog',
     title: count > 1
       ? confirmName((messages) => messages.deleteForeverTitleMultiple({ count }))
       : confirmName((messages) => messages.deleteForeverTitle),
@@ -921,7 +920,6 @@ function resolveEmptyTrash(
     rejection: 'trashEmpty',
     arguments: {},
     confirm: {
-      style: 'rendererDialog',
       title: confirmName((messages) => messages.emptyTrashTitle),
       message: confirmName((messages) => messages.emptyTrashMessage),
       confirmLabel: confirmName((messages) => messages.emptyTrashConfirm),

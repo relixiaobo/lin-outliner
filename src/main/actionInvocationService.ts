@@ -70,7 +70,7 @@ import type {
   ActionExecutionResult,
   ArgumentObjectGeneration,
   ArgumentSlot,
-  ChallengeToken,
+  ConfirmationSpec,
   InvocationEvent,
   InvocationEventResult,
   InvocationOpened,
@@ -109,6 +109,12 @@ export interface ActionInvocationHost {
   /** Route a renderer step to the MAIN renderer and wait for its ack. */
   executeRendererStep(step: EffectStep, invocationRef: InvocationRef): Promise<RendererStepAck>;
   activateAppSurface(surface: AppSurface): Promise<void>;
+  /**
+   * Raise main's OWN confirmation sheet and report the user's answer. No token
+   * is minted for this flow, so nothing can be handed to a renderer and nothing
+   * can be redeemed by one — which is the whole point.
+   */
+  confirmNatively?(spec: ConfirmationSpec): Promise<boolean>;
   writeClipboard(text: string): void;
   /** The active locale's untitled fallback — part of `copy`'s parity. */
   untitled(): string;
@@ -123,14 +129,6 @@ export interface ActionInvocationHost {
   newCaptureId?(): string;
 }
 
-interface Challenge {
-  token: ChallengeToken;
-  actionId: ActionId;
-  subjectRef: ObjectRef;
-  argumentsHash: string;
-  expiresAt: number;
-}
-
 /**
  * The contract's `InvocationRecord` plus the parts only main ever sees. Reusing
  * the declared type rather than restating it is what keeps the contract
@@ -142,7 +140,6 @@ interface Record_ extends InvocationRecord {
   objects: Map<ObjectRef, SurfaceObject>;
   /** Main-owned monotonic counter; request ids are never trusted. */
   generation: number;
-  challenge: Challenge | null;
 }
 
 // Web Crypto rather than `node:crypto`, so this module is isomorphic: the
@@ -222,7 +219,6 @@ export class ActionInvocationService {
       expiresAt: this.host.now() + INVOCATION_TTL_MS,
       objects,
       generation: 0,
-      challenge: null,
     };
     this.records.set(record.ref, record);
     this.sweep();
@@ -265,7 +261,6 @@ export class ActionInvocationService {
       expiresAt: this.host.now() + INVOCATION_TTL_MS,
       objects,
       generation: 1,
-      challenge: null,
     };
     this.records.set(record.ref, record);
     this.installResolverDestinations(record, resultObjects);
@@ -439,15 +434,8 @@ export class ActionInvocationService {
   ): void {
     const previous = record.invocation.resultGeneration;
     if (previous) {
-      // The transition invalidates every old result and draft ref; a challenge
-      // that named one dies with it.
-      for (const object of previous.objects) {
-        record.objects.delete(object.objectRef);
-        if (record.challenge?.subjectRef === object.objectRef) {
-          record.challenge = null;
-          if (record.phase === 'confirming') record.phase = 'live';
-        }
-      }
+      // The transition invalidates every old result and draft ref.
+      for (const object of previous.objects) record.objects.delete(object.objectRef);
       record.invocation = {
         ...record.invocation,
         argumentGenerations: record.invocation.argumentGenerations.filter((generation) => (
@@ -804,11 +792,6 @@ export class ActionInvocationService {
       ...record.invocation,
       argumentGenerations: [...previous, next],
     };
-    // A challenge naming the replaced generation dies with it.
-    if (record.phase === 'confirming' && record.challenge?.actionId === next.slot.actionId) {
-      record.challenge = null;
-      record.phase = 'live';
-    }
   }
 
   // -------------------------------------------------------------------------
@@ -864,44 +847,36 @@ export class ActionInvocationService {
       return { status: 'reEvaluated', presentation: match };
     }
 
-    if (match.confirm && !request.challenge) {
-      // Leg 1 is a RESPONSE, not a side effect: the token comes back with the
-      // authoritative copy, subject and arguments the dialog must show, so the
-      // dialog cannot describe one thing while the token authorises another.
-      const challenge: Challenge = {
-        token: mintRef<ChallengeToken>(),
-        actionId: request.actionId,
-        subjectRef: request.subjectRef,
-        argumentsHash: hashArguments(request.arguments),
-        expiresAt: this.host.now() + CHALLENGE_TTL_MS,
-      };
-      record.challenge = challenge;
-      record.phase = 'confirming';
-      return {
-        status: 'confirmationRequired',
-        challenge: challenge.token,
-        confirm: match.confirm,
-        presentation: match as ReadyActionPresentation,
-      };
-    }
-
     if (match.confirm) {
-      // The challenge-bearing request IS the acceptance, and it commits
-      // atomically after token + subject + argument revalidation.
-      const challenge = record.challenge;
-      const valid = challenge
-        && record.phase === 'confirming'
-        && challenge.token === request.challenge
-        && challenge.expiresAt > this.host.now()
-        && challenge.actionId === request.actionId
-        && challenge.subjectRef === request.subjectRef
-        && challenge.argumentsHash === hashArguments(request.arguments);
-      record.challenge = null;
-      if (!valid) {
-        // A revoked, expired or cross-action token is dead: the record returns
-        // to `live` and NOTHING runs. Redeeming after cancel lands here.
+      // Flow B has no legs and no token. Main raises the sheet, main observes
+      // the acceptance, main executes — a token would put the deciding artefact
+      // back in the hands the sheet exists to bypass.
+      record.phase = 'confirming';
+      const accepted = await this.host.confirmNatively?.(match.confirm) ?? false;
+      if (!accepted) {
         record.phase = 'live';
         return { status: 'stale', reason: 'invocation' };
+      }
+      // Revalidate at acceptance, exactly as flow A does at redemption.
+      const revalidated = resolveFamily(this.contextFor(record), request.actionId, subject)
+        .find((presentation) => (
+          presentation.binding.state === 'ready'
+          && hashArguments(withoutParameters(presentation.binding.arguments)) === requestedIdentity
+        ));
+      if (!revalidated || revalidated.evaluation.status !== 'applicable') {
+        record.phase = 'live';
+        return { status: 'stale', reason: 'subject' };
+      }
+      const nativePlan = planFor(this.contextFor(record), request.actionId, subject, request.arguments as never);
+      if (!nativePlan) {
+        record.phase = 'live';
+        return { status: 'reEvaluated', presentation: revalidated };
+      }
+      record.phase = 'executing';
+      try {
+        return await this.executePlan(nativePlan, record.ref);
+      } finally {
+        record.phase = 'spent';
       }
     }
 
@@ -1022,12 +997,6 @@ export class ActionInvocationService {
     const record = this.records.get(event.invocationRef);
     if (!record || record.consumableBy !== senderId) return { status: 'spent' };
     switch (event.kind) {
-      case 'confirmationCancelled':
-        if (record.phase === 'confirming' && record.challenge?.token === event.challenge) {
-          record.challenge = null;
-          record.phase = 'live';
-        }
-        return { status: 'updated', opening: this.openingFor(record) };
       case 'objectRemoved': {
         if (record.phase === 'executing' || record.phase === 'spent') return { status: 'spent' };
         record.invocation = {
@@ -1081,7 +1050,7 @@ export class ActionInvocationService {
     return { status: 'updated', opening: this.openingFor(record) };
   }
 
-  /** A removed/replaced subject takes its argument slots and challenge with it. */
+  /** A removed/replaced subject takes its argument slots with it. */
   private invalidateRefsFor(record: Record_, ref: ObjectRef): void {
     record.objects.delete(ref);
     record.invocation = {
@@ -1089,10 +1058,6 @@ export class ActionInvocationService {
       argumentGenerations: record.invocation.argumentGenerations
         .filter((generation) => generation.slot.subjectRef !== ref),
     };
-    if (record.challenge?.subjectRef === ref) {
-      record.challenge = null;
-      if (record.phase === 'confirming') record.phase = 'live';
-    }
   }
 
   private liveRecord(ref: InvocationRef, senderId: number): Record_ | null {

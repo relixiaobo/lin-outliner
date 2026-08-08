@@ -2227,6 +2227,28 @@ const actionInvocationService = new ActionInvocationService({
     return { title, ...(subtitle ? { subtitle } : {}) };
   },
   newCaptureId: () => `cap:${randomUUID()}`,
+  // Flow B. Main raises its own sheet and observes the answer; no token exists
+  // for a renderer to redeem. Parented to whichever window is in front so the
+  // sheet is modal to what the user is actually looking at — including the
+  // launcher, which is where the compromised-renderer threat lives.
+  confirmNatively: async (spec) => {
+    const locale = effectiveLocale();
+    // The same Cancel the in-app ConfirmDialog used, so the two confirmation
+    // styles do not disagree about what the escape hatch is called.
+    const strings = getMessages(locale).dialog;
+    const parent = liveWindow(getLauncherWindow())?.isVisible()
+      ? liveWindow(getLauncherWindow())
+      : liveWindow(mainWindow);
+    const response = await dialog.showMessageBox(parent ?? undefined as never, {
+      type: 'warning',
+      buttons: [spec.confirmLabel[locale] ?? spec.confirmLabel.en, strings.cancel],
+      defaultId: 1,
+      cancelId: 1,
+      message: spec.title[locale] ?? spec.title.en,
+      detail: spec.message[locale] ?? spec.message.en,
+    });
+    return response.response === 0;
+  },
 });
 
 function registerIpc() {

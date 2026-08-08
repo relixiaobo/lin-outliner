@@ -23,7 +23,6 @@ export type ObjectRef = string & { readonly __brand: 'ObjectRef' };
 export type InvocationRef = string & { readonly __brand: 'InvocationRef' };
 export type RequestId = string & { readonly __brand: 'RequestId' };
 export type AmbientRequestId = string & { readonly __brand: 'AmbientRequestId' };
-export type ChallengeToken = string & { readonly __brand: 'ChallengeToken' };
 export type ExternalContextId = string & { readonly __brand: 'ExternalContextId' };
 
 // ---------------------------------------------------------------------------
@@ -398,8 +397,13 @@ export type ActionArgumentBinding<K extends ActionId> =
   | { state: 'ready'; arguments: ActionArguments[K] }
   | { state: 'needsParameter'; seed: ActionArgumentSeed[K]; parameter: ParameterSpec<K> };
 
+/**
+ * Confirmation is a MAIN-OWNED phase, not a boolean a caller can assert. Main
+ * raises its own sheet, observes the acceptance and executes; there is
+ * deliberately no token, because a token would put the deciding artefact back
+ * in the hands the sheet exists to bypass.
+ */
 export interface ConfirmationSpec {
-  style: 'rendererDialog' | 'native';
   title: LocalizedNames;
   message: LocalizedNames;
   confirmLabel: LocalizedNames;
@@ -451,8 +455,6 @@ export type ActionRequest = {
     invocationRef: InvocationRef;
     subjectRef: ObjectRef;
     arguments: ActionArguments[K];
-    /** Minted by main; single-use. */
-    challenge?: ChallengeToken;
   }
 }[ActionId];
 
@@ -553,7 +555,6 @@ export type ParameterObjectQueryResult =
  * decides whether it is legal in the current phase.
  */
 export type InvocationEvent =
-  | { kind: 'confirmationCancelled'; invocationRef: InvocationRef; challenge: ChallengeToken }
   | { kind: 'objectRemoved'; invocationRef: InvocationRef; objectRef: ObjectRef }
   | {
     kind: 'selectionMemberRemoved';
@@ -592,13 +593,6 @@ export type ActionExecutionResult =
   | { status: 'indeterminate'; atStep: number; reason: 'ackTimeout' | 'rendererGone' };
 
 export type ActionRequestResult =
-  | {
-    status: 'confirmationRequired';
-    challenge: ChallengeToken;
-    confirm: ConfirmationSpec;
-    /** Authoritative copy + subject + args for the dialog. */
-    presentation: ReadyActionPresentation;
-  }
   /** Current subject, changed args/state. */
   | { status: 'reEvaluated'; presentation: ActionPresentation }
   | {

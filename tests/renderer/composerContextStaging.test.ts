@@ -10,7 +10,9 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import {
   acknowledgeThreadComposerContext,
+  acknowledgeThreadComposerNodeReferenceRequest,
   onThreadComposerContextRequest,
+  onThreadComposerNodeReferenceRequest,
   pendingComposerAdditionalContext,
   requestSendContextToThreadComposer,
 } from '../../src/renderer/agent/agentReveal';
@@ -73,9 +75,16 @@ describe('staging a page onto the composer', () => {
   });
 
   test('a node still stages as a REFERENCE, not as untrusted context', () => {
+    const staged: { nodeId: string; title: string }[] = [];
+    const off = onThreadComposerNodeReferenceRequest((request) => staged.push(request));
     stageComposerObject({ kind: 'node', nodeId: 'n1', title: 'Alpha' });
+    off();
     // A document node the user can already read is not untrusted external
     // content; it keeps the shipped reference handoff.
+    expect(staged).toEqual([{ nodeId: 'n1', title: 'Alpha' }]);
     expect(pendingComposerAdditionalContext()).toEqual({});
+    // The reference queue is module state shared across test files, and the
+    // queued object is the one the helper constructed — hand THAT back.
+    for (const request of staged) acknowledgeThreadComposerNodeReferenceRequest(request);
   });
 });

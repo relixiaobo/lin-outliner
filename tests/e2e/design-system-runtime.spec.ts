@@ -293,15 +293,6 @@ async function showTagContextMenu(page: Page) {
   await expect(menu.getByRole('menuitem', { name: 'Configure tag' })).toBeVisible();
 }
 
-async function showDeleteForeverConfirmDialog(page: Page) {
-  await invokeDocumentCommand(page, 'trash_node', { nodeId: ids.alpha });
-  await page.getByRole('button', { name: 'Trash', exact: true }).click();
-  await rowBody(page, ids.alpha).click({ button: 'right' });
-  await page.getByRole('menu', { name: 'Node actions' }).getByRole('menuitem', { name: 'Delete forever' }).click();
-  const dialog = page.getByRole('dialog', { name: 'Delete forever?' });
-  await dialog.waitFor({ state: 'visible' });
-  await expect(dialog.getByRole('button', { name: 'Cancel' })).toBeFocused();
-}
 
 async function showSidebarContextMenu(page: Page) {
   await page.getByRole('button', { name: 'Open Root' }).click({ button: 'right' });
@@ -734,12 +725,14 @@ const surfaces: SurfaceCase[] = [
     waitFor: `[data-node-id="${ids.alpha}"]`,
     beforeProbe: showTagContextMenu,
   },
-  {
-    name: 'delete forever confirm dialog',
-    path: '/',
-    waitFor: `[data-node-id="${ids.alpha}"]`,
-    beforeProbe: showDeleteForeverConfirmDialog,
-  },
+  // REMOVED: 'delete forever confirm dialog'. The outliner's permanent-delete
+  // confirmation is outside Cmd+Z's reach and is now nameable by a second,
+  // locked-down renderer, so it became main's OWN native sheet — which no
+  // page-level probe can render or measure. The `ConfirmDialog` primitive is
+  // still shipped and used by Settings, the Thread dock and Automations, but it
+  // no longer has a runtime token probe here. That is a deliberate narrowing of
+  // this guard's exception set, not a relaxation to make a test pass: re-add a
+  // probe when one of those consumers gets a deterministic path in this fixture.
   {
     name: 'sidebar context menu',
     path: '/',
