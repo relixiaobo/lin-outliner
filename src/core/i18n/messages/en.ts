@@ -540,6 +540,8 @@ export const en = {
       moveUp: 'Move up',
       moveDown: 'Move down',
       moveTo: 'Move to',
+      indent: 'Indent',
+      outdent: 'Outdent',
       markDone: 'Mark done',
       markNotDone: 'Mark not done',
       addTag: 'Add tag',

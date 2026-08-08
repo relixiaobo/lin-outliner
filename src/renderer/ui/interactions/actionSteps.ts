@@ -6,7 +6,12 @@
 // the panel's own (`setUi`, `onRoot`, `onTogglePin`), and they stay valid after
 // the menu unmounts because the menu closes before its plan settles.
 
-import type { ComposerObject, EffectStep, RevealTarget } from '../../../core/actions/bindings';
+import type {
+  ComposerObject,
+  EffectStep,
+  OutlineIntent,
+  RevealTarget,
+} from '../../../core/actions/bindings';
 import type { ActionStepAck, ActionStepEnvelope } from '../../../core/actions/transport';
 import type { FocusHint } from '../../api/types';
 import {
@@ -16,12 +21,14 @@ import {
 
 export interface ActionStepHandlers {
   navigate(nodeId: string, inPlace: boolean): void;
+  /** Outline-state adjustments a structural command needs (D-series step 11). */
+  outlineIntent(intent: OutlineIntent): void;
   workspace(op: 'pin' | 'unpin' | 'openSplitPane', nodeId: string): void;
   reveal(target: RevealTarget): void;
   composerHandoff(object: ComposerObject, draftText: string): void;
 }
 
-const handlersByInvocation = new Map<string, ActionStepHandlers>();
+const handlersByInvocation = new Map<string, Partial<ActionStepHandlers>>();
 // A LAUNCHER invocation has no surface in this renderer to register handlers,
 // but its plan's renderer legs still land here. The app shell installs the
 // fallback so a step never dies for want of an owner.
@@ -38,7 +45,7 @@ export function installDefaultActionStepHandlers(
 
 export function registerActionStepHandlers(
   invocationRef: string,
-  handlers: ActionStepHandlers,
+  handlers: Partial<ActionStepHandlers>,
 ): () => void {
   handlersByInvocation.set(invocationRef, handlers);
   return () => {
@@ -77,6 +84,9 @@ function applyStep(step: EffectStep, handlers: Partial<ActionStepHandlers>): voi
       // Only an ANCHORED opening carries the view facts a reveal needs, so the
       // fallback genuinely cannot serve one — say so rather than pretend.
       required(handlers.reveal)(step.target);
+      return;
+    case 'outlineIntent':
+      required(handlers.outlineIntent)(step.intent);
       return;
     case 'composerHandoff':
       required(handlers.composerHandoff)(step.object, step.draftText);

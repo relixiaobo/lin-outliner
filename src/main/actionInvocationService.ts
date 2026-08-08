@@ -986,7 +986,11 @@ export class ActionInvocationService {
         reason: ack.status === 'gone' ? 'rendererGone' : 'ackTimeout',
       };
     }
-    return focus ? { status: 'completed', focus } : { status: 'completed' };
+    // `surfaceOwned` means the plan's own outline intents already placed the
+    // selection; forwarding the command's hint there would fight them.
+    return focus && plan.focus !== 'surfaceOwned'
+      ? { status: 'completed', focus }
+      : { status: 'completed' };
   }
 
   // -------------------------------------------------------------------------

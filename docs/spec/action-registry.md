@@ -186,8 +186,37 @@ irreversible boundary or confirmation contract is a different action.
 | `emptyTrash` | the Trash system node | none; confirmed |
 | `capture` | external page | Today is a bound destination object; optional tag |
 | `create` | node-purpose draft | Today is a bound destination object |
+| `indent` | node row or selection rows | none; **searchable surface only** |
+| `outdent` | node row or selection rows + attested pane root | none; **searchable surface only** |
 
 There is no `run` family: this release has no genuine command object to run.
+
+### Indent and Outdent are exposed, not inherited
+
+They were keyboard-only, and exposing them was ratified as a declared addition
+rather than allowed to fall out of the model. Three things had to be true:
+
+- **A surface-exposure rule.** `ACTION_SURFACES` gives them `actionPanel` alone.
+  Leaking them into the anchored menu would change that menu's set after its
+  differential proof had already passed.
+- **An attested pane root.** `outdent` is defined relative to the pane the user
+  is looking at, and main cannot recover it — the same node appears under
+  several roots. So `ViewFact.selectionRootId` is carried, and without it the
+  action resolves **absent**, not rejected.
+- **The shipped keyboard behaviour.** A command-only effect drops the selection
+  restoration and expansion adjustment the keyboard path performs, and the loss
+  is invisible until a user tries it. The plan therefore carries `outlineIntent`
+  steps, and their ORDER is chosen per direction:
+
+| Direction | Order | Why |
+| --- | --- | --- |
+| indent | expand target -> command | the target is about to gain children, so expanding it early moves nothing on screen |
+| outdent | command -> collapse emptied | collapsing a parent that still holds the rows would hide them for a frame and then show them again one level out |
+
+Selection restoration runs before the command in both (the ids survive), and
+the plan sets `focus: 'surfaceOwned'` so the command's focus hint does not fight
+the selection the intents just placed — the same reason the shipped keyboard
+path passes `applyFocus: false`.
 
 ### `remove` names the intent; row policy chooses the effect
 

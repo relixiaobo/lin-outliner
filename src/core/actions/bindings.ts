@@ -22,6 +22,8 @@ import type { NodeId, ViewMode } from '../types';
 export interface CommandArgs {
   batch_apply_tag: { nodeIds: readonly NodeId[]; tagId: NodeId };
   batch_duplicate_nodes: { nodeIds: readonly NodeId[] };
+  batch_indent_nodes: { nodeIds: readonly NodeId[] };
+  batch_outdent_nodes: { nodeIds: readonly NodeId[] };
   batch_move_nodes_down: { nodeIds: readonly NodeId[] };
   batch_move_nodes_up: { nodeIds: readonly NodeId[] };
   batch_toggle_done: { nodeIds: readonly NodeId[] };
@@ -151,6 +153,29 @@ export type ComposerObject =
   // Main resolves the value; the renderer never reads the captured context.
   | { kind: 'externalPage'; contextId: string; label: string; value: string };
 
+/**
+ * An outline-state adjustment the OWNING SURFACE must make so a structural
+ * command keeps the behaviour the keyboard path has: the selection survives,
+ * and expansion follows the rows.
+ *
+ * Order is load-bearing and is chosen per direction by the plan, not by a rule:
+ * an indent expands its target BEFORE the command (the target is about to gain
+ * children, so expanding it early moves nothing on screen), while an outdent
+ * collapses the emptied parents AFTER (collapsing one that still holds the rows
+ * would hide them for a frame and then show them again one level out).
+ */
+export type OutlineIntent =
+  | {
+    kind: 'restoreSelection';
+    anchorId: NodeId;
+    selectedIds: readonly NodeId[];
+    selectionRootId: NodeId;
+  }
+  | { kind: 'expand'; nodeIds: readonly NodeId[] }
+  | { kind: 'collapse'; nodeIds: readonly NodeId[] }
+  /** Arm the row-movement animation for the next commit. */
+  | { kind: 'animateRowMovement' };
+
 export type EffectStep =
   | CommandStep
   // `Bound<NodeId>` wherever a consumer legitimately reads a previous step's
@@ -171,6 +196,7 @@ export type EffectStep =
   // writes it itself: the locked-down launcher cannot read the document, and no
   // read-back IPC is added for something main already has.
   | { on: 'main'; kind: 'clipboard'; text: string }
+  | { on: 'mainRenderer'; kind: 'outlineIntent'; intent: OutlineIntent }
   | {
     on: 'mainRenderer';
     kind: 'composerHandoff';
@@ -183,6 +209,14 @@ export interface ActionEffectPlan {
   steps: readonly EffectStep[];
   /** D9 focus policy, per action. */
   completion: 'restoreInvoker' | 'stayAtDestination';
+  /**
+   * Who decides where the caret lands. `command` (the default) forwards the
+   * executed command's focus hint, which is what every ordinary action wants.
+   * `surfaceOwned` suppresses it because the plan's own outline intents already
+   * placed the selection — forwarding a hint there would fight them, which is
+   * exactly why the shipped keyboard path passes `applyFocus: false`.
+   */
+  focus?: 'command' | 'surfaceOwned';
 }
 
 /**

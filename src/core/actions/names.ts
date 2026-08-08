@@ -81,6 +81,8 @@ export const ACTION_FAMILY_NAMES: Record<ActionId, LocalizedNames> = {
   emptyTrash: actionName('emptyTrash'),
   capture: actionName('capture'),
   create: actionName('createNode'),
+  indent: actionName('indent'),
+  outdent: actionName('outdent'),
 };
 
 /** Pick the display string for a resolved name in the active locale. */

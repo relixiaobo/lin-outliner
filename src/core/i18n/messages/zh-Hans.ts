@@ -482,6 +482,8 @@ export const zhHans: PartialMessages = {
       moveUp: '上移',
       moveDown: '下移',
       moveTo: '移动到',
+      indent: '缩进',
+      outdent: '取消缩进',
       markDone: '标记为完成',
       markNotDone: '标记为未完成',
       addTag: '添加标签',

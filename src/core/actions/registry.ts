@@ -10,6 +10,11 @@
 
 import type { ExternalContext } from '../launcher/context';
 import { buildContextCaptureInput, buildManualNoteInput } from '../launcher/sources';
+import {
+  batchIndentNodeIds,
+  indentExpansionTargets,
+  parentIdsEmptiedByOutdent,
+} from './outlineStructure';
 import { parseIsoLocalDateParts, todayIsoLocalDate } from '../localDate';
 import { nodeIsInSubtree } from '../treeUtils';
 import type { NodeId, NodeProjection } from '../types';
@@ -104,6 +109,8 @@ export const ACTION_PANEL_ORDER: readonly ActionId[] = [
   'restore',
   'deleteForever',
   'remove',
+  'indent',
+  'outdent',
 ];
 
 export const MENU_GROUP: Record<ActionId, number> = {
@@ -126,6 +133,9 @@ export const MENU_GROUP: Record<ActionId, number> = {
   remove: 6,
   capture: 0,
   create: 0,
+  // Never in the anchored menu; the group is unused for them.
+  indent: 0,
+  outdent: 0,
 };
 
 /** Surface exposure is registry metadata, never a view-owned allow-list. */
@@ -149,6 +159,10 @@ export const ACTION_SURFACES: Record<ActionId, readonly ActionSurface[]> = {
   emptyTrash: ['contextMenu', 'actionPanel'],
   capture: ['actionPanel'],
   create: ['actionPanel'],
+  // THE surface-exposure rule the ratification required: searchable only.
+  // Adding 'contextMenu' here would break PR 1's differential after the fact.
+  indent: ['actionPanel'],
+  outdent: ['actionPanel'],
 };
 
 /**
@@ -177,6 +191,8 @@ export const ACTION_SUBJECT_KINDS: Record<ActionId, readonly SurfaceObject['kind
   emptyTrash: ['node'],
   capture: ['externalPage'],
   create: ['draft'],
+  indent: ['nodeSelection', 'node'],
+  outdent: ['nodeSelection', 'node'],
 };
 
 /**
@@ -206,6 +222,8 @@ export const ACTION_PARAMETER_IDS: Record<ActionId, readonly string[]> = {
   emptyTrash: [],
   capture: ['destination', 'tag'],
   create: ['destination'],
+  indent: [],
+  outdent: [],
 };
 
 /** Locale-independent search terms. Never action ids. */
@@ -229,6 +247,8 @@ export const ACTION_ALIASES: Record<ActionId, readonly string[]> = {
   emptyTrash: ['purge', 'clear trash'],
   capture: ['save', 'clip'],
   create: ['new', 'add'],
+  indent: ['nest', 'demote', 'tab'],
+  outdent: ['unnest', 'promote', 'untab'],
 };
 
 const ICONS: Record<string, IconId> = {
@@ -447,6 +467,8 @@ export function resolveFamily(
     case 'emptyTrash': return resolveEmptyTrash(context, subject);
     case 'capture': return resolveCapture(context, subject);
     case 'create': return resolveCreate(context, subject);
+    case 'indent': return resolveIndent(context, subject);
+    case 'outdent': return resolveOutdent(context, subject);
   }
 }
 
@@ -1032,6 +1054,78 @@ function externalPageContextValue(context: ExternalContext): string {
   ].filter(Boolean).join('\n');
 }
 
+// --- indent / outdent -------------------------------------------------------
+
+/**
+ * The rows a structural indent/outdent may act on. Both need MUTABLE, non-field
+ * rows; `outdent` additionally needs the pane root, because "can this row move
+ * out one level" is a question about the pane the user is looking at.
+ */
+function structuralRowIds(context: ActionResolveContext, subject: SurfaceObject): NodeId[] {
+  const rows = subjectRows(subject);
+  if (!rows) return [];
+  return facetsFor(rows.rowIds, context.projection.byId)
+    .filter((row) => row.mutable && row.kind !== 'fieldValue')
+    .map((row) => row.id);
+}
+
+/** The attested pane root for this subject, or null when none was supplied. */
+function selectionRootFor(
+  context: ActionResolveContext,
+  subject: SurfaceObject,
+): NodeId | null {
+  return viewFactFor(context, subject)?.selectionRootId ?? null;
+}
+
+function resolveIndent(
+  context: ActionResolveContext,
+  subject: SurfaceObject,
+): ActionPresentation[] {
+  const rows = subjectRows(subject);
+  if (!rows) return [];
+  const eligible = batchIndentNodeIds(structuralRowIds(context, subject), context.projection.byId);
+  return [present({
+    actionId: 'indent',
+    subjectRef: subject.objectRef,
+    names: withBatchPrefix(actionName('indent'), rows.cardinality),
+    iconId: 'moveTo',
+    eligible: eligible.length > 0,
+    arguments: {},
+  })];
+}
+
+function resolveOutdent(
+  context: ActionResolveContext,
+  subject: SurfaceObject,
+): ActionPresentation[] {
+  const rows = subjectRows(subject);
+  if (!rows) return [];
+  // ABSENT without an attested pane root: outdent is defined relative to a view
+  // that is not there, and main cannot recover which root the user chose — the
+  // same node can appear under several.
+  const selectionRootId = selectionRootFor(context, subject);
+  if (selectionRootId === null) return [];
+  const eligible = outdentRowIds(context, subject, selectionRootId);
+  return [present({
+    actionId: 'outdent',
+    subjectRef: subject.objectRef,
+    names: withBatchPrefix(actionName('outdent'), rows.cardinality),
+    iconId: 'moveTo',
+    eligible: eligible.length > 0,
+    arguments: {},
+  })];
+}
+
+function outdentRowIds(
+  context: ActionResolveContext,
+  subject: SurfaceObject,
+  selectionRootId: NodeId,
+): NodeId[] {
+  return structuralRowIds(context, subject).filter((id) => (
+    context.projection.byId.get(id)?.parentId !== selectionRootId
+  ));
+}
+
 // --- shared predicates ------------------------------------------------------
 
 function rowIdOf(subject: SurfaceObject): NodeId | null {
@@ -1415,6 +1509,73 @@ const PLANNERS: { [K in ActionId]?: Planner<K> } = {
       command: 'delete_node',
       args: { nodeId },
     })));
+  },
+
+  indent: (context, subject) => {
+    const rows = subjectRows(subject);
+    const selectionRootId = selectionRootFor(context, subject);
+    if (!rows || selectionRootId === null) return null;
+    const byId = context.projection.byId;
+    const nodeIds = batchIndentNodeIds(structuralRowIds(context, subject), byId);
+    if (nodeIds.length === 0) return null;
+    // Expansion FIRST: the target is about to gain children, so expanding it
+    // early moves nothing on screen. Doing it after would hide the moved rows
+    // for a frame behind a collapsed parent.
+    const steps: EffectStep[] = [
+      { on: 'mainRenderer', kind: 'outlineIntent', intent: { kind: 'animateRowMovement' } },
+      {
+        on: 'mainRenderer',
+        kind: 'outlineIntent',
+        intent: { kind: 'expand', nodeIds: indentExpansionTargets(nodeIds, byId) },
+      },
+      {
+        on: 'mainRenderer',
+        kind: 'outlineIntent',
+        intent: {
+          kind: 'restoreSelection',
+          anchorId: rows.rowIds[0]!,
+          selectedIds: rows.rowIds,
+          selectionRootId,
+        },
+      },
+      { on: 'main', kind: 'command', command: 'batch_indent_nodes', args: { nodeIds } },
+    ];
+    return { steps, completion: 'restoreInvoker', focus: 'surfaceOwned' };
+  },
+
+  outdent: (context, subject) => {
+    const rows = subjectRows(subject);
+    const selectionRootId = selectionRootFor(context, subject);
+    if (!rows || selectionRootId === null) return null;
+    const byId = context.projection.byId;
+    const nodeIds = outdentRowIds(context, subject, selectionRootId);
+    if (nodeIds.length === 0) return null;
+    // Emptied parents are computed from the PRE-command tree but collapsed
+    // AFTER: collapsing one that still holds the rows would hide them for a
+    // frame and then show them again one level out.
+    const emptied = parentIdsEmptiedByOutdent(nodeIds, byId, selectionRootId);
+    const steps: EffectStep[] = [
+      { on: 'mainRenderer', kind: 'outlineIntent', intent: { kind: 'animateRowMovement' } },
+      {
+        on: 'mainRenderer',
+        kind: 'outlineIntent',
+        intent: {
+          kind: 'restoreSelection',
+          anchorId: rows.rowIds[0]!,
+          selectedIds: rows.rowIds,
+          selectionRootId,
+        },
+      },
+      { on: 'main', kind: 'command', command: 'batch_outdent_nodes', args: { nodeIds } },
+    ];
+    if (emptied.length > 0) {
+      steps.push({
+        on: 'mainRenderer',
+        kind: 'outlineIntent',
+        intent: { kind: 'collapse', nodeIds: emptied },
+      });
+    }
+    return { steps, completion: 'restoreInvoker', focus: 'surfaceOwned' };
   },
 
   capture: (context, subject, args) => {

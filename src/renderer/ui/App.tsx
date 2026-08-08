@@ -20,6 +20,8 @@ import {
   focusTarget,
 } from './focus/focusModel';
 import { useDragSelection } from './interactions/dragSelection';
+import { animateOutlinerRowMovementAfterNextCommit } from './outliner/rowMoveAnimation';
+import { collapseExpandedParentIds } from './shared';
 import { BatchTagSelector } from './outliner/BatchTagSelector';
 import type { NavigateRootOptions, TriggerState } from './shared';
 import {
@@ -220,7 +222,36 @@ export function App() {
       else if (op === 'pin' ? !isNodePinned(nodeId) : isNodePinned(nodeId)) togglePin(nodeId);
     },
     composerHandoff: (object) => stageComposerObject(object),
-  }), [isNodePinned, setActivePanelRoot, togglePin]);
+    // Structural commands from the searchable surface must keep the behaviour
+    // the keyboard path has: the selection survives and expansion follows the
+    // rows. The ORDER is the plan's — expansion before an indent, collapse
+    // after an outdent — so neither direction flashes.
+    outlineIntent: (intent) => {
+      if (intent.kind === 'animateRowMovement') {
+        animateOutlinerRowMovementAfterNextCommit();
+        return;
+      }
+      setUi((prev) => {
+        if (intent.kind === 'expand') {
+          const expanded = new Set(prev.expanded);
+          for (const nodeId of intent.nodeIds) expanded.add(nodeId);
+          return { ...prev, expanded };
+        }
+        if (intent.kind === 'collapse') {
+          return { ...prev, expanded: collapseExpandedParentIds(prev.expanded, new Set(intent.nodeIds)) };
+        }
+        return {
+          ...clearFocusState(prev),
+          focusedId: null,
+          selectedId: intent.anchorId,
+          selectedIds: new Set(intent.selectedIds),
+          selectionAnchorId: intent.anchorId,
+          selectionRootId: intent.selectionRootId,
+          selectionSource: 'global',
+        };
+      });
+    },
+  }), [isNodePinned, setActivePanelRoot, setUi, togglePin]);
   const agentUserView = useMemo(() => index ? buildRendererUserViewHints({
     activePanelId,
     panels,

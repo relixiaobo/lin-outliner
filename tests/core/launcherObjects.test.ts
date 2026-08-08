@@ -234,6 +234,6 @@ describe('opening an app surface', () => {
 describe('the action panel order', () => {
   test('covers every family exactly once', () => {
     expect(new Set(ACTION_PANEL_ORDER).size).toBe(ACTION_PANEL_ORDER.length);
-    expect(ACTION_PANEL_ORDER).toHaveLength(19);
+    expect(ACTION_PANEL_ORDER).toHaveLength(21);
   });
 });

@@ -151,6 +151,11 @@ export const ACTION_IDS = [
   'emptyTrash',
   'capture',
   'create',
+  // Keyboard-only until now. Exposed to the SEARCHABLE surface as a declared
+  // addition (PM, 2026-08-08) — never to the anchored menu, which would break
+  // PR 1's differential after the fact.
+  'indent',
+  'outdent',
 ] as const;
 
 export type ActionId = typeof ACTION_IDS[number];
@@ -181,6 +186,8 @@ export interface ActionArguments {
   emptyTrash: Record<string, never>;
   capture: { destination: ObjectRef; tag?: ObjectRef };
   create: { destination: ObjectRef };
+  indent: Record<string, never>;
+  outdent: Record<string, never>;
 }
 
 /** Which object-valued parameter slots a family owns (`never` = none). */
@@ -204,6 +211,8 @@ export interface ObjectParameterId {
   emptyTrash: never;
   capture: 'destination' | 'tag';
   create: 'destination';
+  indent: never;
+  outdent: never;
 }
 
 /** Arguments already known when a parameter still has to be picked. */
@@ -227,6 +236,8 @@ export interface ActionArgumentSeed {
   emptyTrash: Record<string, never>;
   capture: { destination: ObjectRef };
   create: { destination: ObjectRef };
+  indent: Record<string, never>;
+  outdent: Record<string, never>;
 }
 
 /**
@@ -288,6 +299,13 @@ export interface ViewFact {
   panelId: string;
   visualRowId: NodeId;
   rowExpanded: boolean;
+  /**
+   * The pane root the user is acting from. Main CANNOT recover it: the same
+   * node appears under different roots, and the authoritative value is
+   * renderer-owned. `outdent` is defined relative to it, so a surface without
+   * an attested root simply does not offer the action.
+   */
+  selectionRootId?: NodeId;
 }
 
 export interface WorkspaceFact {
