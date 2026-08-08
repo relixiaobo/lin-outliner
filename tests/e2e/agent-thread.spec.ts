@@ -2206,11 +2206,13 @@ test.describe('canonical agent Thread surface', () => {
     const detail = page.locator('.thread-subagent-detail');
     await expect(detail).toBeVisible();
 
-    // The task came from the parent: named as such, and never the reader's own
-    // right-hand bubble with an edit affordance on it.
-    await expect(detail.locator('.thread-delegated-task')).toContainText('Task from this conversation');
-    await expect(detail.locator('.thread-delegated-task')).toContainText('Investigate the deployment story.');
-    await expect(detail.locator('.thread-user-message')).toHaveCount(0);
+    // A child transcript reads exactly like the main chat — same message stream,
+    // same bubble — because it is the same thing: one request and the work it
+    // produced. What differs is only what cannot act here: no composer, and no
+    // Edit or Continue-in-new-chat, since neither can run on a child Thread.
+    await expect(detail.locator('.thread-user-message')).toContainText('Investigate the deployment story.');
+    await expect(detail.getByRole('button', { name: 'Edit message' })).toHaveCount(0);
+    await expect(detail.getByRole('button', { name: 'Continue in new chat' })).toHaveCount(0);
 
     const outerHeight = await detail.evaluate((element) => element.getBoundingClientRect().height);
 
@@ -2223,8 +2225,12 @@ test.describe('canonical agent Thread surface', () => {
     // Same box, same height: swapping cannot move the transcript around it.
     expect(await detail.evaluate((element) => element.getBoundingClientRect().height)).toBe(outerHeight);
 
-    await detail.getByRole('button', { name: 'Back to research' }).click();
+    // The crumb keeps the way back visible by name, so the swap has something
+    // to orient against rather than reading as a jump.
+    await expect(detail.locator('.thread-subagent-detail-crumb')).toHaveText('research');
+    await detail.locator('.thread-subagent-detail-crumb').click();
     await expect(detail.locator('.thread-subagent-detail-title')).toHaveText('research');
+    await expect(detail.locator('.thread-subagent-detail-crumb')).toHaveCount(0);
   });
 
   test('browses and cleans up Subagents from parent Thread Details', async ({ page }) => {

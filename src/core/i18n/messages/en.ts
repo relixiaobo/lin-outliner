@@ -1263,7 +1263,6 @@ commandPalette: {
       openSubagentThread: ({ id }: { id: string }) => `Open Subagent Thread ${id}`,
       retryTurn: 'Retry',
       subagentReadOnly: 'Driven by this conversation. You can stop it at any time.',
-      taskFromParent: 'Task from this conversation',
       stopUnavailable: 'That work already finished.',
       stopSubagent: ({ name }: { name: string }) => `Stop ${name}`,
       subagentStatuses: {

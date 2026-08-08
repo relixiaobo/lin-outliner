@@ -119,13 +119,6 @@ interface ThreadItemViewProps {
   readonly onOpenNodeReference: ThreadNodeReferenceOpenHandler;
   readonly onOpenTurnDetails?: () => void;
   readonly onOpenThread: (threadId: string) => Promise<void>;
-  /**
-   * This Turn was started by a delegation, so its "user" message is the task the
-   * parent wrote — words the reader never said. Rendering it as their own
-   * message is the single biggest reason a child transcript reads as someone
-   * else's conversation you were dropped into.
-   */
-  readonly delegatedTask?: boolean;
   /** Absent where no Stop belongs — a read-only or historical rendering. */
   readonly onInterruptThread?: (threadId: string) => Promise<void>;
   /** Turn Details for a Thread other than this one — a delegated child's. */
@@ -319,7 +312,6 @@ export function ThreadToolActivityGroup({
 
 function UserMessageItem({
   canEditUserMessage,
-  delegatedTask,
   expandState,
   index,
   item,
@@ -329,10 +321,7 @@ function UserMessageItem({
   threadId,
 }: Omit<ThreadItemViewProps, 'item'> & { readonly item: UserMessageThreadItem }) {
   const t = useT();
-  // A delegated task is not the reader's message: it is neither theirs to edit
-  // nor theirs to have said, so it drops the bubble and the edit affordance and
-  // says where it came from instead.
-  const textEditable = !delegatedTask && canEditUserContentText(item.content);
+  const textEditable = canEditUserContentText(item.content);
   const textParts = item.content.flatMap((content) => content.type === 'text' ? [content.text] : []);
   const copyText = userMessageCopyText(item.content, index);
   const [editing, setEditing] = useState(false);
@@ -350,23 +339,6 @@ function UserMessageItem({
     }
   }
 
-  if (delegatedTask) {
-    return (
-      <article className="thread-item thread-delegated-task">
-        <p className="thread-delegated-task-origin">{t.agent.thread.taskFromParent}</p>
-        <div className="thread-delegated-task-body">
-          {renderUserContent(
-            item.content,
-            index,
-            onOpenNodeReference,
-            threadId,
-            item.id,
-            expandState,
-          )}
-        </div>
-      </article>
-    );
-  }
   return (
     <article className="thread-item thread-user-message">
       {editing ? (
@@ -1156,6 +1128,7 @@ function SubagentActivityItem({
   const expanded = drill === undefined && expandState.isExpanded(disclosureId, false);
   return (
     <div className={`thread-item thread-delegation-row thread-subagent-${presentation.status}`}>
+      <div className="thread-delegation-row-line">
       <ButtonControl
         {...(drill ? {} : { 'aria-expanded': expanded })}
         aria-label={`${openLabel}. ${status}${error ? `. ${error}` : ''}`}
@@ -1175,18 +1148,19 @@ function SubagentActivityItem({
         <span className="thread-delegation-row-name">{name}</span>
         <span className="thread-delegation-row-status">{status}</span>
       </ButtonControl>
-      {presentation.status === 'running' ? (
-        <LoaderIcon aria-hidden className="thread-delegation-row-spinner" size={ICON_SIZE.rowGlyph} />
-      ) : null}
-      {running ? (
-        <IconButton
-          icon={StopIcon}
-          iconSize={ICON_SIZE.tiny}
-          label={t.agent.thread.stopSubagent({ name })}
-          onClick={() => void onInterruptThread(presentation.agentThreadId)}
-          variant="message"
-        />
-      ) : null}
+        {presentation.status === 'running' ? (
+          <LoaderIcon aria-hidden className="thread-delegation-row-spinner" size={ICON_SIZE.rowGlyph} />
+        ) : null}
+        {running ? (
+          <IconButton
+            icon={StopIcon}
+            iconSize={ICON_SIZE.tiny}
+            label={t.agent.thread.stopSubagent({ name })}
+            onClick={() => void onInterruptThread(presentation.agentThreadId)}
+            variant="message"
+          />
+        ) : null}
+      </div>
       {/* Its own line, wrapping in full: a failure the row had to truncate is a
           failure the reader cannot act on. */}
       {error ? <small className="thread-delegation-row-error">{error}</small> : null}

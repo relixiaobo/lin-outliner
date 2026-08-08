@@ -1174,7 +1174,6 @@ commandPalette: {
       openSubagentThread: ({ id }) => `打开子智能体线程 ${id}`,
       retryTurn: '重试',
       subagentReadOnly: '由本次对话驱动,可随时停止。',
-      taskFromParent: '来自本次对话的任务',
       stopUnavailable: '该工作已经结束。',
       stopSubagent: ({ name }: { name: string }) => `停止 ${name}`,
       subagentStatuses: {

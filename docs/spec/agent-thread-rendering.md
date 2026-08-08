@@ -44,7 +44,9 @@ so there is no reading position to lose and none to restore. Scrolling is
 contained, so the inner region never chains into the transcript's.
 
 A GRANDCHILD replaces the container's contents rather than nesting inside them,
-and the header names the way back. Nesting would put a scroll region inside a
+and the header keeps a crumb naming the container it came from — a swap replaces
+everything at once, so without one it reads as a jump with nothing left to
+orient against. Nesting would put a scroll region inside a
 scroll region, which fights at the boundary, and would draw depth as indentation
 the reader has to measure. Delegation is capped at depth two, so that header is
 never more than one step. The container carries the child's name, the delegated
@@ -52,10 +54,14 @@ form's glyph, Stop while its Turn is active and its lineage root is a user
 Thread, and a standing note where a composer would be, since the absence of one
 is a contract rather than an omission.
 
-A Turn started by a delegation owns no message the user wrote: its `userMessage`
-is the task the parent authored, so it renders as a neutral, origin-labelled
-block rather than the reader's own right-aligned bubble, and offers no edit
-affordance. The evidence is the Turn's own trigger, not a view flag.
+Inside the container the transcript renders EXACTLY as the main conversation
+does — same message stream, same bubbles, same rows — because it is the same
+thing: a request and the work it produced. What differs is only what cannot act
+there. A read-only embedded view has no composer, and it drops Edit and Continue
+in new chat, since neither can run against a child Thread; they are hidden
+rather than disabled, because a control that never works is not a control, and
+the actions that remain hold the row's height. Copy and Turn Details stay,
+because both work.
 
 Parent Thread Details lists the descendant subtree newest-activity first with a
 readable name, status, and last activity; the read names the subtree while the

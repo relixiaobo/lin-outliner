@@ -74,14 +74,21 @@ export function SubagentRunDetail({
   return (
     <div className="thread-subagent-detail">
       <header className="thread-subagent-detail-header">
+        {/* The crumb, not a bare arrow: drilling replaces what is on screen, so
+            the header has to keep saying where you came from — otherwise the
+            swap reads as a jump with nothing left to orient against. */}
         {outer ? (
-          <IconButton
-            icon={BackIcon}
-            iconSize={ICON_SIZE.menu}
-            label={t.agent.thread.backToParent({ name: subagentName(outer, t.agent.thread.untitled) })}
-            onClick={() => setStack((current) => current.slice(0, -1))}
-            variant="message"
-          />
+          <>
+            <button
+              className="thread-subagent-detail-crumb"
+              onClick={() => setStack((current) => current.slice(0, -1))}
+              type="button"
+            >
+              <BackIcon aria-hidden size={ICON_SIZE.rowGlyph} />
+              <span>{subagentName(outer, t.agent.thread.untitled)}</span>
+            </button>
+            <span aria-hidden className="thread-subagent-detail-crumb-separator">/</span>
+          </>
         ) : null}
         <FormIcon aria-hidden className="thread-subagent-detail-glyph" size={ICON_SIZE.rowGlyph} />
         <span className="thread-subagent-detail-title">{name}</span>
@@ -100,7 +107,7 @@ export function SubagentRunDetail({
       ) : thread === null ? (
         <p className="thread-subagent-detail-empty">{t.agent.thread.threadUnavailable}</p>
       ) : (
-        <div className="thread-subagent-detail-body">
+        <div className="thread-subagent-detail-body" key={threadId}>
           <ThreadView
             // Read-only by contract: a child is driven by its parent, and user
             // control on it is interrupt-only.

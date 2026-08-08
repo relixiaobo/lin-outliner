@@ -1632,7 +1632,9 @@ export function ThreadView({
                     >
                       <ThreadTurnView
                         onInterruptThread={onInterruptThread}
-                        canEditUserMessage={turn.id === editableTurnId && turn.status !== 'inProgress'}
+                        canEditUserMessage={composerEnabled
+                          && turn.id === editableTurnId
+                          && turn.status !== 'inProgress'}
                         composerEnabled={composerEnabled}
                         isLastTurn={turnIndex === turns.length - 1}
                         expandState={expandState}
@@ -2004,6 +2006,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
   }, [composerEnabled, isLastTurn, turn]);
   const responseTail = standaloneContextBoundary ? null : (
     <ThreadResponseTail
+      canContinueInNewChat={composerEnabled}
       onCopy={copyTurn}
       onContinueInNewChat={continueInNewChat}
       onOpenDetails={() => onOpenTurnDetails(turn)}
@@ -2019,11 +2022,6 @@ const ThreadTurnView = memo(function ThreadTurnView({
     <ThreadItemView
       agentResponseTail={item.id === responseItem?.id ? responseTail : null}
       canEditUserMessage={canEditUserMessage && showMessageActions}
-      // Canonical evidence, not a view flag: a Turn a delegation started owns
-      // no message the reader wrote. Read defensively — a Turn that reaches the
-      // renderer without provenance is a bad record, and A12 says the transcript
-      // degrades rather than blanking on one.
-      delegatedTask={turn.provenance?.trigger?.kind === 'subagent'}
       defaultReasoningExpanded={reasoningExpandedByDefault(turn, item)}
       expandState={expandState}
       index={index}
@@ -2102,6 +2100,7 @@ function isStandaloneContextBoundaryTurn(turn: Turn): boolean {
 }
 
 function ThreadResponseTail({
+  canContinueInNewChat,
   onCopy,
   onContinueInNewChat,
   onOpenDetails,
@@ -2109,6 +2108,12 @@ function ThreadResponseTail({
   statusOwnedElsewhere,
   turn,
 }: {
+  /**
+   * Forking a Thread starts a conversation, which a read-only embedded view
+   * cannot do. Hidden rather than disabled: a control that never works is not a
+   * control, and the row keeps its height from the actions that remain.
+   */
+  readonly canContinueInNewChat: boolean;
   readonly onCopy: () => Promise<void>;
   readonly onContinueInNewChat: () => Promise<void>;
   readonly onOpenDetails: () => void;
@@ -2181,13 +2186,15 @@ function ThreadResponseTail({
               onCopy={onCopy}
               text=""
             />
-            <IconButton
-              icon={GitForkIcon}
-              iconSize={ICON_SIZE.menu}
-              label={t.agent.thread.continueInNewChat}
-              onClick={() => void onContinueInNewChat()}
-              variant="message"
-            />
+            {canContinueInNewChat ? (
+              <IconButton
+                icon={GitForkIcon}
+                iconSize={ICON_SIZE.menu}
+                label={t.agent.thread.continueInNewChat}
+                onClick={() => void onContinueInNewChat()}
+                variant="message"
+              />
+            ) : null}
             <span className="thread-response-details-anchor">
               <IconButton
                 icon={InfoIcon}

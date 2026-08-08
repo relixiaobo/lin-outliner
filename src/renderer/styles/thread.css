@@ -1594,12 +1594,22 @@
 .thread-delegation-row {
   display: flex;
   min-width: 0;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-1);
   color: var(--text-soft);
   font-size: var(--font-meta);
   line-height: var(--line-meta);
+}
+
+/* The row proper never wraps: its status, spinner, and Stop belong beside the
+   name, and a long name must shorten rather than push them onto a line of their
+   own. Only the failure reason below is allowed to run to several lines. */
+.thread-delegation-row-line {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-2);
 }
 
 .thread-delegation-row-open {
@@ -1680,7 +1690,6 @@
 /* A full second line under the name: the status segment stays short and
    unshrinkable, so the reason has to live somewhere it can wrap whole. */
 .thread-delegation-row-error {
-  flex: 1 0 100%;
   min-width: 0;
   padding-left: calc(var(--icon-size-xs) + var(--space-3));
   overflow-wrap: anywhere;
@@ -3046,7 +3055,10 @@
   /* Tall enough to read a Turn, short enough to leave the conversation around
      it. Viewport-relative so a short window is not swallowed whole. */
   height: min(55vh, 420px);
-  flex: 1 0 100%;
+  /* Neither grows nor shrinks: the height IS the promise. `flex: 1 0 100%` here
+     read as a basis on the row's main axis once the row became a column, and
+     the box collapsed to its content the moment a swap emptied it. */
+  flex: 0 0 auto;
   flex-direction: column;
   margin-top: var(--space-2);
   border: 1px solid var(--separator);
@@ -3089,6 +3101,42 @@
   min-height: 0;
   flex: 1 1 auto;
   flex-direction: column;
+  /* A swap replaces everything at once, which reads as a jump. The fade gives
+     the eye something to follow; reduced-motion flattens it globally. */
+  animation: subagent-detail-swap var(--motion-slow);
+}
+
+@keyframes subagent-detail-swap {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Back to the container you came from, said by name. */
+.thread-subagent-detail-crumb {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 40%;
+  align-items: center;
+  gap: var(--space-1);
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--text-tertiary);
+  font: inherit;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color var(--motion-fast);
+}
+
+.thread-subagent-detail-crumb:hover,
+.thread-subagent-detail-crumb:focus-visible {
+  color: var(--text-strong);
+}
+
+.thread-subagent-detail-crumb-separator {
+  flex: 0 0 auto;
+  color: var(--text-faint);
 }
 
 .thread-subagent-detail-empty {
@@ -3121,28 +3169,3 @@
   transform: rotate(90deg);
 }
 
-.thread-delegated-task {
-  display: flex;
-  max-width: 100%;
-  min-width: 0;
-  flex-direction: column;
-  gap: var(--space-2);
-  border-left: 2px solid var(--separator);
-  padding-left: var(--space-4);
-}
-
-.thread-delegated-task-origin {
-  margin: 0;
-  color: var(--text-tertiary);
-  font-size: var(--font-ui-2xs);
-  line-height: var(--line-ui-2xs);
-}
-
-.thread-delegated-task-body {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: var(--space-2);
-  line-height: var(--line-content);
-}
