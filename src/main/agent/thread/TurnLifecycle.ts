@@ -1454,10 +1454,13 @@ export class TurnLifecycle {
    */
   private async failActiveTurn(active: ActiveTurn, error: Error): Promise<void> {
       await this.rejectUserInput(active.threadId, error).catch(() => undefined);
-      if (this.activeTurns.get(active.threadId) !== active) {
-        await this.setStatus(active.threadId, { type: 'idle' }).catch(() => undefined);
-        return;
-      }
+      // This Turn no longer owns the Thread, so it has no business naming the
+      // Thread's state. Completion releases ownership BEFORE its tail runs
+      // (`activeTurns.delete` then `setStatus(idle)`, then awaited naming, Goal
+      // usage, and extension hooks), and a new Turn can be admitted during that
+      // window — a throw from the tail would then stamp `idle` over a Turn that
+      // is actually running. Whoever owns the Thread has already set its status.
+      if (this.activeTurns.get(active.threadId) !== active) return;
       await active.recorder.finishOpenItems('failed').catch(() => undefined);
       const initial = this.core.readTurn(active.threadId, active.turnId);
       const thread = this.core.ephemeral.get(active.threadId)?.record.thread ?? this.core.metadata.read(active.threadId)?.thread;

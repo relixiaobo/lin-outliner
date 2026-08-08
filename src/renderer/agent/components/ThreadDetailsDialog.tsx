@@ -203,6 +203,7 @@ export function ThreadDetailsDialog({ thread, turns, onClose, onOpenThread }: Th
                             descendant,
                             live.queuedWorkThreadIds.has(descendant.id),
                             t.agent.thread,
+                            snapshot.latestTurnByThread.get(descendant.id),
                           )}
                           {' · '}
                           {formatRelativeTime(descendant.updatedAt)}
@@ -328,9 +329,13 @@ function descendantStatusLabel(
     readonly subagentFailed: string;
     readonly subagentQueued: string;
   },
+  latestTurn: Turn | undefined,
 ): string {
   if (thread.status.type === 'active') return labels.subagentRunning;
-  if (thread.status.type === 'systemError') return labels.subagentFailed;
+  // Failure is a property of the TURN, not of the Thread — the Thread stays
+  // usable after one. Reading only Thread status listed a child whose Turn died
+  // as "Idle", with nothing in this dialog saying otherwise.
+  if (latestTurn?.status === 'failed') return labels.subagentFailed;
   return queuedWork ? labels.subagentQueued : labels.subagentIdle;
 }
 

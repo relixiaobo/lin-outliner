@@ -263,7 +263,14 @@ lock, nothing ever cleared it, and it persists, so a single failure ended a
 conversation for good: retry refused, a new message refused, across restarts.
 Nothing writes that status now, and a Thread loaded carrying one from an earlier
 version is healed to `idle` alongside the `active` a lost process leaves behind.
-The status remains in the protocol so persisted records stay readable.
+The status remains in the protocol so persisted records stay readable, and a
+child's failure is read from its latest Turn wherever it is listed.
+
+A Turn that no longer owns its Thread writes no Thread status at all. Completion
+releases ownership before its tail runs — the active Turn is dropped and the
+status set — so a new Turn can be admitted while the previous one is still
+finishing; a failure in that tail would otherwise name the state of a Turn that
+is actually running.
 
 `/compact [instructions]` and `/clear` are reserved renderer commands handled before
 Skill routing. They require an idle Thread and create completed feature-triggered Turns

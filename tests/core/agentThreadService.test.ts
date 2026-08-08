@@ -2153,6 +2153,62 @@ describe('ThreadService', () => {
     await fixture.service.close();
   });
 
+  test('never lets a finished Turn name the status of the Turn that replaced it', async () => {
+    // Completion releases the Thread BEFORE its tail runs, so a new Turn can be
+    // admitted while the old one is still finishing. The tail here blocks until
+    // exactly that has happened, then throws: a throw from a Turn that no longer
+    // owns the Thread must not stamp a status over the Turn that does.
+    let releaseTail: () => void = () => undefined;
+    let markReached: () => void = () => undefined;
+    const tailReached = new Promise<void>((resolve) => { markReached = resolve; });
+    const tailHeld = new Promise<void>((resolve) => { releaseTail = resolve; });
+    let tailPending = true;
+    const extensions = new ExtensionRegistry();
+    extensions.register({
+      id: 'blocking-turn-tail',
+      onTurnStopped: async () => {
+        if (!tailPending) return;
+        tailPending = false;
+        markReached();
+        await tailHeld;
+        throw new Error('tail failed after the Thread was released');
+      },
+    });
+    const fixture = await createFixture(extensions);
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+
+    await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'First' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    fixture.executor.finish(0);
+    await tailReached;
+
+    // The Thread was released, so a second Turn takes it.
+    const second = await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Second' }],
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    releaseTail();
+    // Let the first Turn's failure path run to completion. Waiting for idle
+    // here would wait on the SECOND Turn, which is exactly the one still going.
+    for (let tick = 0; tick < 4; tick += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // The first Turn's failure must not have claimed the Thread back.
+    expect(fixture.service.readThread({ threadId: thread.id }).thread.status)
+      .toEqual({ type: 'active', activeFlags: [] });
+    fixture.executor.finish(1);
+    await fixture.service.waitForIdle(thread.id);
+    expect(second.turn.id).toBeTruthy();
+  });
+
   test('heals a Thread an earlier version left locked in systemError', async () => {
     const fixture = await createFixture();
     const thread = (await fixture.service.startThread({
