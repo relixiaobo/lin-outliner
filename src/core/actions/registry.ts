@@ -77,6 +77,34 @@ export const CONTEXT_MENU_ORDER: readonly ActionId[] = [
   'remove',
 ];
 
+/**
+ * Canonical order for the searchable `Actions ⌘K` panel. It is a DIFFERENT list
+ * from the menu's on purpose: the panel starts with activation (the thing a
+ * user most often wants from a found object) and may expose families the
+ * anchored menu deliberately does not.
+ */
+export const ACTION_PANEL_ORDER: readonly ActionId[] = [
+  'open',
+  'capture',
+  'create',
+  'openInSplitPane',
+  'setPinned',
+  'sendToAgent',
+  'duplicate',
+  'move',
+  'setDone',
+  'addTag',
+  'setViewMode',
+  'setViewToolbarVisible',
+  'editViewSection',
+  'editDescription',
+  'copy',
+  'emptyTrash',
+  'restore',
+  'deleteForever',
+  'remove',
+];
+
 export const MENU_GROUP: Record<ActionId, number> = {
   open: 0,
   openInSplitPane: 1,

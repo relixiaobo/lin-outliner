@@ -21,6 +21,7 @@ import type {
 
 export type RefMinter = () => ObjectRef;
 
+
 /** Semantic target of a row: a reference resolves through its whole chain. */
 export function contentTargetId(
   rowId: NodeId,

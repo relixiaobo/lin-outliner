@@ -258,7 +258,9 @@ import {
 import type { EffectStep } from '../core/actions/bindings';
 import {
   ACTION_EVENT_CHANNEL,
+  ACTION_OBJECT_QUERY_CHANNEL,
   ACTION_OPEN_CHANNEL,
+  ACTION_OPENED_CHANNEL,
   ACTION_PARAMETER_QUERY_CHANNEL,
   ACTION_REQUEST_CHANNEL,
   ACTION_STEP_ACK_CHANNEL,
@@ -270,6 +272,7 @@ import type {
   ActionRequest,
   InvocationEvent,
   InvocationSeed,
+  ObjectQueryRequest,
   ParameterObjectQueryRequest,
 } from '../core/actions/types';
 import {
@@ -1758,6 +1761,17 @@ async function toggleLauncher(): Promise<void> {
   await showLauncherWindow(async () => {
     front.app = await getFrontmostApp();
   });
+  // The invocation is created SYNCHRONOUSLY for this open, with its ambient slot
+  // pending: the panel accepts input and can already act on the stable objects
+  // before external capture resolves. That is what closes the show->context race
+  // at its source rather than making the renderer wait.
+  const launcherContents = getLauncherWindow()?.webContents;
+  if (launcherContents && !launcherContents.isDestroyed()) {
+    launcherContents.send(
+      ACTION_OPENED_CHANNEL,
+      actionInvocationService.openLauncher({ openSeq, consumerId: launcherContents.id }),
+    );
+  }
   try {
     const context = await captureExternalContext({
       id: contextId,
@@ -2172,6 +2186,16 @@ async function routeActionRendererStep(
   step: EffectStep,
   invocationRef: string,
 ): Promise<RendererStepAck> {
+  // A navigate can arrive from the LAUNCHER, whose whole point is working when
+  // the main window is closed. Reuse the shipped deferred-navigate path — bring
+  // the window up and flush on `did-finish-load` — instead of reporting `gone`
+  // for the one case the surface exists to serve.
+  if (step.on === 'mainRenderer' && step.kind === 'navigate' && typeof step.nodeId === 'string') {
+    if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isLoading()) {
+      navigateMainToNode(step.nodeId);
+      return { status: 'ok' };
+    }
+  }
   const target = mainWindow?.webContents;
   if (!target || target.isDestroyed()) return { status: 'gone' };
   const token = randomUUID();
@@ -2239,6 +2263,13 @@ function registerIpc() {
       webContentsId: event.sender.id,
       renderGeneration: event.sender.getProcessId(),
     });
+  });
+
+  ipcMain.handle(ACTION_OBJECT_QUERY_CHANNEL, (event, raw: unknown) => {
+    assertActionRequester(event);
+    const request = sanitizeObjectQuery(raw);
+    if (!request) return null;
+    return actionInvocationService.queryObjects(request, event.sender.id);
   });
 
   ipcMain.handle(ACTION_PARAMETER_QUERY_CHANNEL, (event, raw: unknown) => {
@@ -2949,6 +2980,23 @@ function sanitizeInvocationSeed(raw: unknown): InvocationSeed | null {
  * re-derives everything else. Anything malformed is refused outright rather
  * than half-trusted.
  */
+function sanitizeObjectQuery(raw: unknown): ObjectQueryRequest | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const value = raw as Record<string, unknown>;
+  if (
+    typeof value.invocationRef !== 'string'
+    || typeof value.openSeq !== 'number'
+    || typeof value.requestId !== 'string'
+    || typeof value.query !== 'string'
+  ) return null;
+  return {
+    invocationRef: value.invocationRef as ObjectQueryRequest['invocationRef'],
+    openSeq: value.openSeq,
+    requestId: value.requestId as ObjectQueryRequest['requestId'],
+    query: value.query.slice(0, 512),
+  };
+}
+
 function sanitizeParameterQuery(raw: unknown): ParameterObjectQueryRequest | null {
   if (typeof raw !== 'object' || raw === null) return null;
   const value = raw as Record<string, unknown>;

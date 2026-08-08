@@ -34,6 +34,8 @@ import {
   nodeText,
   presentObject,
 } from '../core/actions/objects';
+import { ACTION_PANEL_ORDER } from '../core/actions/registry';
+import { orderedResultObjects, systemNodeObject } from '../core/actions/surfaceObjects';
 import {
   eligibleMoveToIds,
   planFor,
@@ -55,7 +57,12 @@ import type {
   ActionRequest,
   ActionRequestResult,
   ActionResolveContext,
+  AmbientRequestId,
   InvocationRecord,
+  ObjectQueryRequest,
+  ObjectQueryResult,
+  RequestId,
+  SurfaceItemPresentation,
   ActionExecutionResult,
   ArgumentObjectGeneration,
   ArgumentSlot,
@@ -76,6 +83,8 @@ import type { DocumentProjection, FocusHint, NodeId, NodeProjection, SearchHit }
 
 /** How many ranked hits admission filters before the picker's own limit. */
 const CANDIDATE_FETCH_LIMIT = 200;
+/** How many ranked node hits the main list shows. */
+const LAUNCHER_RESULT_LIMIT = 8;
 const CANDIDATE_LIMIT = 10;
 const INVOCATION_TTL_MS = 5 * 60_000;
 const CHALLENGE_TTL_MS = 60_000;
@@ -207,6 +216,164 @@ export class ActionInvocationService {
     return this.openingFor(record);
   }
 
+  /**
+   * The launcher opening. Main creates the record SYNCHRONOUSLY for the new
+   * `openSeq`, installs the ready empty-query generation, and marks its one
+   * ambient slot `pending` — so the panel accepts input immediately and the
+   * stable objects are already legal subjects before the first keystroke, even
+   * though external capture has not resolved.
+   */
+  openLauncher(params: { openSeq: number; consumerId: number }): InvocationOpened {
+    const objects = new Map<ObjectRef, SurfaceObject>();
+    const mint = () => mintRef<ObjectRef>();
+    const resultObjects = orderedResultObjects({ query: '', nodeObjects: [], mintRef: mint });
+    for (const object of resultObjects) objects.set(object.objectRef, object);
+
+    const record: Record_ = {
+      ref: mintRef<InvocationRef>(),
+      invocation: {
+        fixedObjects: [],
+        argumentGenerations: [],
+        draftText: '',
+        resultGeneration: {
+          generation: 1,
+          requestId: 'initial' as RequestId,
+          state: 'ready',
+          objects: resultObjects,
+        },
+      },
+      // Main-origin records are first-class: out of app the main renderer may
+      // not even exist, and nothing here was attested by one.
+      origin: 'main',
+      consumableBy: params.consumerId,
+      openSeq: params.openSeq,
+      ambient: { requestId: mintRef<AmbientRequestId>(), revision: 0, state: 'pending' },
+      phase: 'live',
+      expiresAt: this.host.now() + INVOCATION_TTL_MS,
+      objects,
+      generation: 1,
+      challenge: null,
+    };
+    this.records.set(record.ref, record);
+    this.installResolverDestinations(record, resultObjects);
+    this.sweep();
+    return this.openingFor(record);
+  }
+
+  /**
+   * `Today` is a BOUND DESTINATION OBJECT, not prose inside an action id. When
+   * `capture(page)` or `create(draft)` is presented, main installs it in that
+   * exact `destination` slot as a resolver-owned generation — which is why the
+   * same Today node can hold a main-list subject ref AND a capture-destination
+   * argument ref at once: same noun, different uses and lifetimes.
+   */
+  private installResolverDestinations(
+    record: Record_,
+    objects: readonly SurfaceObject[],
+  ): void {
+    for (const object of objects) {
+      const actionId = object.kind === 'externalPage'
+        ? 'capture' as const
+        : object.kind === 'draft' && object.purpose === 'node'
+          ? 'create' as const
+          : null;
+      if (!actionId) continue;
+      const today = systemNodeObject('today', () => mintRef<ObjectRef>());
+      record.objects.set(today.objectRef, today);
+      this.replaceArgumentGeneration(record, {
+        slot: { actionId, subjectRef: object.objectRef, parameterId: 'destination' },
+        generation: ++record.generation,
+        source: { kind: 'resolver' },
+        state: 'ready',
+        objects: [today],
+      });
+    }
+  }
+
+  /**
+   * The main list's query. Main validates the opening, sanitizes and bounds the
+   * text, and atomically replaces the previous generation with an empty
+   * `pending` one BEFORE retrieval begins — that first transition invalidates
+   * every old result and draft ref. Fresh objects are installed only if the
+   * captured generation is still current.
+   */
+  queryObjects(request: ObjectQueryRequest, senderId: number): ObjectQueryResult {
+    const record = this.liveRecord(request.invocationRef, senderId);
+    const superseded = {
+      status: 'superseded' as const,
+      invocationRef: request.invocationRef,
+      openSeq: request.openSeq,
+      requestId: request.requestId,
+      generation: record?.generation ?? 0,
+    };
+    if (!record || record.openSeq !== request.openSeq) return superseded;
+
+    // `draftText` is admitted SYNCHRONOUSLY, before any await: it is payload,
+    // not selection, and type-then-immediate-Enter must see the latest text
+    // even though results have not resolved yet.
+    const query = request.query.slice(0, 512);
+    const generation = ++record.generation;
+    this.replaceResultGeneration(record, {
+      generation,
+      requestId: request.requestId,
+      state: 'pending',
+      objects: [],
+    }, query);
+
+    const mint = () => mintRef<ObjectRef>();
+    const nodeObjects = query.trim()
+      ? this.host.searchNodes(query.trim(), LAUNCHER_RESULT_LIMIT)
+        .map((hit) => nodeObjectForRow(hit.nodeId, this.actionProjection().byId, mint))
+      : [];
+    const resultObjects = orderedResultObjects({ query, nodeObjects, mintRef: mint });
+    if (record.generation !== generation) return { ...superseded, generation: record.generation };
+
+    for (const object of resultObjects) record.objects.set(object.objectRef, object);
+    this.replaceResultGeneration(record, {
+      generation,
+      requestId: request.requestId,
+      state: 'ready',
+      objects: resultObjects,
+    }, query);
+    this.installResolverDestinations(record, resultObjects);
+
+    const context = this.contextFor(record);
+    return {
+      status: 'ready',
+      invocationRef: record.ref,
+      openSeq: record.openSeq!,
+      requestId: request.requestId,
+      generation,
+      resultItems: resultObjects.map((object) => this.itemFor(context, object)),
+    };
+  }
+
+  private replaceResultGeneration(
+    record: Record_,
+    next: NonNullable<ActionInvocation['resultGeneration']>,
+    draftText: string,
+  ): void {
+    const previous = record.invocation.resultGeneration;
+    if (previous) {
+      // The transition invalidates every old result and draft ref; a challenge
+      // that named one dies with it.
+      for (const object of previous.objects) {
+        record.objects.delete(object.objectRef);
+        if (record.challenge?.subjectRef === object.objectRef) {
+          record.challenge = null;
+          if (record.phase === 'confirming') record.phase = 'live';
+        }
+      }
+      record.invocation = {
+        ...record.invocation,
+        argumentGenerations: record.invocation.argumentGenerations.filter((generation) => (
+          !previous.objects.some((object) => object.objectRef === generation.slot.subjectRef)
+        )),
+      };
+    }
+    record.invocation = { ...record.invocation, resultGeneration: next, draftText };
+  }
+
   private selectionObjectFor(
     seed: InvocationSeed,
     projection: ActionProjection,
@@ -243,15 +410,45 @@ export class ActionInvocationService {
   private openingFor(record: Record_): InvocationOpened {
     const context = this.contextFor(record);
     const currentObjects = this.currentObjects(record);
+    const generation = record.invocation.resultGeneration;
     return {
       invocationRef: record.ref,
       openSeq: record.openSeq,
-      fixedItems: record.invocation.fixedObjects.map((object) => ({
-        object: presentObject(object, context.projection, context.untitled),
-        actions: [],
-      })),
-      resultItems: [],
+      ...(record.ambient
+        ? { ambient: { state: record.ambient.state, revision: record.ambient.revision } }
+        : {}),
+      fixedItems: record.invocation.fixedObjects.map((object) => this.itemFor(context, object)),
+      resultItems: generation?.state === 'ready'
+        ? generation.objects.map((object) => this.itemFor(context, object))
+        : [],
       menuActions: resolveActionsForObjectSet(context, currentObjects, { surface: 'contextMenu' }),
+    };
+  }
+
+  /**
+   * One object row: its presentation, the action the bar names for Enter, and
+   * the searchable `Actions ⌘K` list. The primary is an OBJECT CONTRACT, never
+   * learned behaviour — and a selection has none, because it has no safe
+   * canonical activation.
+   */
+  private itemFor(
+    context: ActionResolveContext,
+    object: SurfaceObject,
+  ): SurfaceItemPresentation {
+    const actions = resolveActionsForObjectSet(context, [object], {
+      order: ACTION_PANEL_ORDER,
+      surface: 'actionPanel',
+    });
+    const primaryId = primaryActionFor(object);
+    const primary = primaryId
+      ? actions.find((action) => (
+        action.actionId === primaryId && action.evaluation.status === 'applicable'
+      ))
+      : undefined;
+    return {
+      object: presentObject(object, context.projection, context.untitled),
+      ...(primary ? { primaryAction: primary } : {}),
+      actions,
     };
   }
 
@@ -809,6 +1006,26 @@ export class ActionInvocationService {
       if (record.phase === 'executing') continue;
       if (record.expiresAt <= now) this.records.delete(ref);
     }
+  }
+}
+
+/**
+ * D6's fixed primary rule. `create(draft)` and `capture(page)` are safe blind
+ * Enter targets because the row reflects text the user just authored or a page
+ * they explicitly summoned over; an ambient node or selection mutation is not,
+ * so those objects never receive a mutating primary.
+ */
+function primaryActionFor(object: SurfaceObject): ActionId | null {
+  switch (object.kind) {
+    case 'node':
+    case 'appSurface':
+      return 'open';
+    case 'externalPage':
+      return 'capture';
+    case 'draft':
+      return object.purpose === 'node' ? 'create' : null;
+    case 'nodeSelection':
+      return null;
   }
 }
 
