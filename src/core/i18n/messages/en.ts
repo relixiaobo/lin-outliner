@@ -84,6 +84,12 @@ export const en = {
     queryAriaLabel: 'Launcher query',
     rootAriaLabel: ({ app }: { app: string }) => `${app} Launcher`,
     resultsAriaLabel: 'Results',
+    // The relocated ⌘K: inside the surface it shows the ACTIVE OBJECT's actions
+    // rather than summoning anything.
+    actionsLabel: 'Actions',
+    actionsAriaLabel: 'Actions for the selected item',
+    actionsPlaceholder: 'Search actions…',
+    removeContext: 'Remove context',
     // Result-row action labels (what Enter runs). `captureToToday` takes the
     // provider-aware noun (page / video); nounPage/nounVideo are those nouns.
     actions: {

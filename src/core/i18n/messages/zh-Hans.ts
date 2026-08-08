@@ -70,6 +70,10 @@ export const zhHans: PartialMessages = {
     queryAriaLabel: '启动器查询',
     rootAriaLabel: ({ app }) => `${app} 启动器`,
     resultsAriaLabel: '结果',
+    actionsLabel: '操作',
+    actionsAriaLabel: '所选项的操作',
+    actionsPlaceholder: '搜索操作…',
+    removeContext: '移除上下文',
     actions: {
       nounPage: '页面',
       nounVideo: '视频',

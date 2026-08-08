@@ -257,6 +257,7 @@ import {
 } from './rendererCapabilities';
 import type { EffectStep } from '../core/actions/bindings';
 import {
+  ACTION_AMBIENT_CHANGED_CHANNEL,
   ACTION_EVENT_CHANNEL,
   ACTION_OBJECT_QUERY_CHANNEL,
   ACTION_OPEN_CHANNEL,
@@ -271,6 +272,7 @@ import {
 import type {
   ActionRequest,
   InvocationEvent,
+  InvocationRef,
   InvocationSeed,
   ObjectQueryRequest,
   ParameterObjectQueryRequest,
@@ -1678,6 +1680,10 @@ let launcherContext: ExternalContext | null = null;
 // open it belongs to and is dropped if the launcher was dismissed or re-opened
 // before it resolved — so a slow capture can never repopulate a stale/next open.
 let launcherOpenSeq = 0;
+// The invocation main created for the CURRENT launcher opening. Ambient
+// resolution names it explicitly so a capture that lands after a dismiss or a
+// re-open cannot install a page into the wrong opening.
+let launcherInvocationRef: InvocationRef | null = null;
 
 /**
  * Dismiss the launcher and forget its captured context. EVERY hide path routes
@@ -1688,6 +1694,7 @@ let launcherOpenSeq = 0;
 function dismissLauncher(): void {
   hideLauncherWindow();
   launcherContext = null;
+  launcherInvocationRef = null;
   launcherOpenSeq++;
 }
 
@@ -1729,10 +1736,12 @@ async function toggleLauncher(): Promise<void> {
   // at its source rather than making the renderer wait.
   const launcherContents = getLauncherWindow()?.webContents;
   if (launcherContents && !launcherContents.isDestroyed()) {
-    launcherContents.send(
-      ACTION_OPENED_CHANNEL,
-      actionInvocationService.openLauncher({ openSeq, consumerId: launcherContents.id }),
-    );
+    const opened = actionInvocationService.openLauncher({
+      openSeq,
+      consumerId: launcherContents.id,
+    });
+    launcherInvocationRef = opened.invocationRef;
+    launcherContents.send(ACTION_OPENED_CHANNEL, opened);
   }
   try {
     const context = await captureExternalContext({
@@ -1763,11 +1772,19 @@ async function toggleLauncher(): Promise<void> {
     }
     // The raw ExternalContext no longer crosses to the locked-down renderer:
     // main derives the one view it needs (the capture-degraded hint) and pushes
-    // that. The ambient page OBJECT arrives through the action seam instead.
-    getLauncherWindow()?.webContents.send(
+    // that. The page itself arrives as an OBJECT through the action seam.
+    const contents = getLauncherWindow()?.webContents;
+    contents?.send(
       LAUNCHER_REMEDIATION_CHANNEL,
       remediationForContext(context, getMessages(effectiveLocale()), APP_NAME),
     );
+    if (contents && launcherInvocationRef) {
+      contents.send(ACTION_AMBIENT_CHANGED_CHANNEL, actionInvocationService.resolveAmbient({
+        invocationRef: launcherInvocationRef,
+        openSeq,
+        resolution: { kind: 'externalPage', contextId: context.id as never },
+      }));
+    }
     // First browser capture without Accessibility → request it once (shows the
     // system prompt and registers the app in the Privacy list).
     if (!accessibilityPrompted && context.providerId === 'generic-webpage' && !isAccessibilityTrusted()) {
@@ -2194,6 +2211,22 @@ const actionInvocationService = new ActionInvocationService({
   writeClipboard: (text) => clipboard.writeText(text),
   untitled: () => getMessages(effectiveLocale()).common.untitled,
   now: () => Date.now(),
+  // Main holds the authoritative captured context; the registry reads it, and
+  // only its PRESENTATION ever crosses to a renderer.
+  externalContext: (contextId) => (
+    launcherContext && launcherContext.id === contextId ? launcherContext : null
+  ),
+  describeExternalPage: (contextId) => {
+    const context = launcherContext && launcherContext.id === contextId ? launcherContext : null;
+    if (!context) return null;
+    const title = context.source?.title
+      || context.browser?.tabTitle
+      || context.app.name
+      || getMessages(effectiveLocale()).common.untitled;
+    const subtitle = context.browser?.hostname ?? context.app.name;
+    return { title, ...(subtitle ? { subtitle } : {}) };
+  },
+  newCaptureId: () => `cap:${randomUUID()}`,
 });
 
 function registerIpc() {

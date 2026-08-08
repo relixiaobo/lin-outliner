@@ -33,6 +33,7 @@ import {
   nodeSelectionObject,
   nodeText,
   presentObject,
+  type ExternalPageDescription,
 } from '../core/actions/objects';
 import { ACTION_PANEL_ORDER } from '../core/actions/registry';
 import { orderedResultObjects, systemNodeObject } from '../core/actions/surfaceObjects';
@@ -57,7 +58,10 @@ import type {
   ActionRequest,
   ActionRequestResult,
   ActionResolveContext,
+  AmbientContextChanged,
+  AmbientContextResolution,
   AmbientRequestId,
+  ExternalContextId,
   InvocationRecord,
   ObjectQueryRequest,
   ObjectQueryResult,
@@ -79,6 +83,7 @@ import type {
   ReadyActionPresentation,
   SurfaceObject,
 } from '../core/actions/types';
+import type { ExternalContext } from '../core/launcher/context';
 import type { DocumentProjection, FocusHint, NodeId, NodeProjection, SearchHit } from '../core/types';
 
 /** How many ranked hits admission filters before the picker's own limit. */
@@ -108,6 +113,14 @@ export interface ActionInvocationHost {
   /** The active locale's untitled fallback — part of `copy`'s parity. */
   untitled(): string;
   now(): number;
+  /**
+   * The captured page main holds for an opening. The registry reads it; it
+   * never crosses to a renderer, which only ever sees the presentation.
+   */
+  externalContext?(contextId: ExternalContextId): ExternalContext | null;
+  describeExternalPage?(contextId: ExternalContextId): ExternalPageDescription | null;
+  /** Nondeterministic, so main mints it rather than the registry. */
+  newCaptureId?(): string;
 }
 
 interface Challenge {
@@ -291,6 +304,77 @@ export class ActionInvocationService {
   }
 
   /**
+   * Main owns this transition. External capture resolves in main; neither
+   * renderer may post a finished object, and main pushes only the authoritative
+   * replacement presentation.
+   *
+   * It preserves `draftText`, the current result generation and unrelated
+   * argument generations — so typing while capture is slow loses neither the
+   * text nor the results that later arrive.
+   */
+  resolveAmbient(params: {
+    invocationRef: InvocationRef;
+    openSeq: number;
+    resolution: AmbientContextResolution;
+  }): AmbientContextChanged {
+    const record = this.records.get(params.invocationRef);
+    const superseded = {
+      status: 'superseded' as const,
+      invocationRef: params.invocationRef,
+      openSeq: params.openSeq,
+      requestId: (record?.ambient?.requestId ?? '') as AmbientRequestId,
+    };
+    // A resolution for an old opening, or one arriving after execution claimed
+    // the record, changes no membership at all.
+    if (!record || record.openSeq !== params.openSeq || !record.ambient) return superseded;
+    if (record.phase !== 'live' && record.phase !== 'confirming') return superseded;
+
+    // Replacing an old ambient subject invalidates that ref and its argument
+    // slots; a confirmation naming it is revoked and the phase returns to live.
+    if (record.ambient.state === 'resolved') {
+      this.invalidateRefsFor(record, record.ambient.objectRef);
+      record.invocation = {
+        ...record.invocation,
+        fixedObjects: record.invocation.fixedObjects
+          .filter((object) => object.objectRef !== (record.ambient as { objectRef?: ObjectRef }).objectRef),
+      };
+    }
+
+    const revision = record.ambient.revision + 1;
+    if (params.resolution.kind === 'none') {
+      record.ambient = { requestId: record.ambient.requestId, revision, state: 'none' };
+    } else if (params.resolution.kind === 'externalPage') {
+      const page: SurfaceObject = {
+        kind: 'externalPage',
+        objectRef: mintRef<ObjectRef>(),
+        contextId: params.resolution.contextId,
+      };
+      record.objects.set(page.objectRef, page);
+      record.invocation = {
+        ...record.invocation,
+        fixedObjects: [...record.invocation.fixedObjects, page],
+      };
+      record.ambient = {
+        requestId: record.ambient.requestId,
+        revision,
+        state: 'resolved',
+        objectRef: page.objectRef,
+      };
+      this.installResolverDestinations(record, [page]);
+    }
+
+    const context = this.contextFor(record);
+    return {
+      status: 'updated',
+      invocationRef: record.ref,
+      openSeq: params.openSeq,
+      revision,
+      ambientState: record.ambient.state === 'resolved' ? 'resolved' : 'none',
+      fixedItems: record.invocation.fixedObjects.map((object) => this.itemFor(context, object)),
+    };
+  }
+
+  /**
    * The main list's query. Main validates the opening, sanitizes and bounds the
    * text, and atomically replaces the previous generation with an empty
    * `pending` one BEFORE retrieval begins — that first transition invalidates
@@ -446,7 +530,14 @@ export class ActionInvocationService {
       ))
       : undefined;
     return {
-      object: presentObject(object, context.projection, context.untitled),
+      object: presentObject(
+        object,
+        context.projection,
+        context.untitled,
+        this.host.describeExternalPage
+          ? (contextId) => this.host.describeExternalPage!(contextId as ExternalContextId)
+          : undefined,
+      ),
       ...(primary ? { primaryAction: primary } : {}),
       actions,
     };
@@ -494,6 +585,10 @@ export class ActionInvocationService {
       invocation: record.invocation,
       objectFor: (ref) => record.objects.get(ref) ?? null,
       untitled: this.host.untitled(),
+      ...(this.host.externalContext
+        ? { externalContext: (contextId) => this.host.externalContext!(contextId) }
+        : {}),
+      ...(this.host.newCaptureId ? { newCaptureId: () => this.host.newCaptureId!() } : {}),
     };
   }
 

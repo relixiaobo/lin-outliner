@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { nameFor } from '../../core/actions/names';
 import { formatHotkey, type LauncherInitialState } from '../../core/launcher/commands';
 import type { LauncherRemediation } from '../../core/launcher/remediation';
 import type {
+  ActionPresentation,
   InvocationOpened,
   InvocationRef,
   ObjectRef,
@@ -9,6 +11,8 @@ import type {
   SurfaceItemPresentation,
 } from '../../core/actions/types';
 import {
+  filterActions,
+  indexOfRef,
   navigableItems,
   objectRowView,
   primaryActionLabel,
@@ -56,7 +60,15 @@ export function LauncherApp() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [remediation, setRemediation] = useState<LauncherRemediation | null>(null);
+  const [fixedItems, setFixedItems] = useState<readonly SurfaceItemPresentation[]>([]);
+  // The `Actions ⌘K` panel for the active object, and its own query.
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const [actionQuery, setActionQuery] = useState('');
   const latestRequestRef = useRef<string | null>(null);
+  // Ambient revision guard: only a matching opening with a STRICTLY NEWER
+  // revision may change the chip, so a delayed push cannot resurrect one the
+  // user removed or that was already replaced.
+  const ambientRevisionRef = useRef(-1);
 
   const invocationRef: InvocationRef | null = opening?.invocationRef ?? null;
   const openSeq = opening?.openSeq ?? null;
@@ -67,28 +79,46 @@ export function LauncherApp() {
     setBusy(false);
     setError(null);
     setRemediation(null);
+    setFixedItems([]);
+    setActionsOpen(false);
+    setActionQuery('');
+    ambientRevisionRef.current = -1;
   }, []);
 
   useEffect(() => {
     const bridge = launcherBridge();
+    // A missing bridge means the preload did not load. Render the empty panel
+    // rather than throwing: a blank window teaches the user nothing.
     if (!bridge?.launcher) return;
-    void bridge.launcher.getInitialState().then(setState);
-    const offShown = bridge.launcher.onShown(() => {
+    void bridge.launcher.getInitialState?.().then(setState);
+    const offShown = bridge.launcher.onShown?.(() => {
       reset();
       inputRef.current?.focus();
       inputRef.current?.select();
-    });
+    }) ?? (() => undefined);
     // Main pushes the opening it created for this summon. Its empty-query
     // generation is already READY, so the panel paints furnished — the stable
     // objects are legal subjects before the first keystroke.
-    const offOpened = bridge.actions.onOpened((next) => {
+    const offOpened = bridge.actions?.onOpened?.((next) => {
       setOpening(next);
       setResults(next.resultItems);
-    });
-    const offRemediation = bridge.launcher.onRemediation((next) => setRemediation(next));
+      setFixedItems(next.fixedItems);
+      ambientRevisionRef.current = next.ambient?.revision ?? -1;
+    }) ?? (() => undefined);
+    // Main pushes the authoritative replacement presentation; the renderer never
+    // constructs a chip, and applies only a strictly newer revision.
+    const offAmbient = bridge.actions?.onAmbientChanged?.((change) => {
+      if (change.status !== 'updated') return;
+      if (change.revision <= ambientRevisionRef.current) return;
+      ambientRevisionRef.current = change.revision;
+      setFixedItems(change.fixedItems);
+    }) ?? (() => undefined);
+    const offRemediation = bridge.launcher.onRemediation?.((next) => setRemediation(next))
+      ?? (() => undefined);
     return () => {
       offShown();
       offOpened();
+      offAmbient();
       offRemediation();
     };
   }, [reset]);
@@ -119,9 +149,13 @@ export function LauncherApp() {
     setError(null);
   }, [query]);
 
+  // Typing is PAYLOAD admission, not result selection — so it does not count as
+  // an explicit choice and a late chip may still take activity. Opening the
+  // actions panel does count, which is why it is not cleared here.
+
   const items = useMemo(
-    () => navigableItems({ fixedItems: opening?.fixedItems ?? [], resultItems: results }),
-    [opening, results],
+    () => navigableItems({ fixedItems, resultItems: results }),
+    [fixedItems, results],
   );
   const activeRef = useMemo(
     () => resolveActiveRef({ items, explicitRef }),
@@ -137,9 +171,8 @@ export function LauncherApp() {
    * Run an action by NAMING it. Nothing about the effect is decided here: main
    * re-evaluates the tuple against the latest projection and executes the plan.
    */
-  const runPrimary = useCallback(async (item: SurfaceItemPresentation | undefined) => {
+  const runAction = useCallback(async (primary: ActionPresentation | undefined) => {
     const actions = launcherBridge()?.actions;
-    const primary = item?.primaryAction;
     if (!actions || !invocationRef || !primary || runningRef.current) return;
     if (primary.evaluation.status !== 'applicable') return;
     runningRef.current = true;
@@ -154,7 +187,7 @@ export function LauncherApp() {
       } as never);
       if (result?.status === 'completed') {
         reset();
-        void launcherBridge()?.launcher.hide();
+        void launcherBridge()?.launcher.hide?.();
         return;
       }
       // Anything else is a failure the user must see: the panel stays open and
@@ -169,17 +202,59 @@ export function LauncherApp() {
     }
   }, [invocationRef, reset, t]);
 
+  const runPrimary = useCallback(
+    (item: SurfaceItemPresentation | undefined) => runAction(item?.primaryAction),
+    [runAction],
+  );
+
+  /** Drop one context object and keep searching; membership changes in MAIN. */
+  const removeObject = useCallback(async (objectRef: ObjectRef) => {
+    const actions = launcherBridge()?.actions;
+    if (!actions || !invocationRef) return;
+    const result = await actions.event({ kind: 'objectRemoved', invocationRef, objectRef });
+    if (result?.status !== 'updated') return;
+    ambientRevisionRef.current += 1;
+    setFixedItems(result.opening.fixedItems);
+    setExplicitRef(null);
+  }, [invocationRef]);
+
   const onKeyDown = useCallback(
     (event: React.KeyboardEvent) => {
       // While an IME composition is active, Enter/arrows/Escape belong to the
       // IME — committing a pinyin candidate must not fire the active row.
       if (isImeComposingEvent(event)) return;
+      if (event.key === 'k' && (event.metaKey || event.ctrlKey)) {
+        // The global ⌘K summon retires; the keystroke is RELOCATED to "show this
+        // object's actions" inside the surface (D6).
+        event.preventDefault();
+        if (activeItem) {
+          setActionsOpen((open) => !open);
+          setActionQuery('');
+        }
+        return;
+      }
       if (event.key === 'Escape') {
         event.preventDefault();
-        if (invocationRef) {
-          void launcherBridge()?.actions.event({ kind: 'abandoned', invocationRef });
+        // Escape precedence: subpanel -> active result -> launcher.
+        if (actionsOpen) {
+          setActionsOpen(false);
+          return;
         }
-        void launcherBridge()?.launcher.hide();
+        if (explicitRef && fixedItems.length > 0) {
+          setExplicitRef(null);
+          return;
+        }
+        if (invocationRef) {
+          void launcherBridge()?.actions?.event?.({ kind: 'abandoned', invocationRef });
+        }
+        void launcherBridge()?.launcher.hide?.();
+        return;
+      }
+      if (actionsOpen) return;
+      if (event.key === 'ArrowUp' && explicitRef && indexOfRef(items, explicitRef) === 0) {
+        // ArrowUp from the first row returns to the chip without clearing input.
+        event.preventDefault();
+        setExplicitRef(null);
         return;
       }
       if (event.key === 'ArrowDown') {
@@ -193,7 +268,7 @@ export function LauncherApp() {
         void runPrimary(activeItem);
       }
     },
-    [activeItem, activeRef, invocationRef, items, runPrimary],
+    [actionsOpen, activeItem, activeRef, explicitRef, fixedItems, invocationRef, items, runPrimary],
   );
 
   const primaryLabel = primaryActionLabel(activeItem, locale);
@@ -231,20 +306,58 @@ export function LauncherApp() {
         </div>
       ) : null}
 
-      <div id="launcher-results" className="launcher-body" role="listbox" aria-label={t.launcher.resultsAriaLabel}>
-        <div className="launcher-body-inner">
-          {items.map((item) => (
-            <LauncherRow
-              key={rowKey(item)}
-              item={item}
-              active={item.object.objectRef === activeRef}
-              rowRef={item.object.objectRef === activeRef ? activeRowRef : undefined}
-              onHover={() => setExplicitRef(item.object.objectRef)}
-              onClick={() => void runPrimary(item)}
+      {actionsOpen && activeItem ? (
+        <div className="launcher-body" role="listbox" aria-label={t.launcher.actionsAriaLabel}>
+          <div className="launcher-body-inner">
+            <Input
+              className="launcher-actions-search"
+              label={t.launcher.actionsAriaLabel}
+              value={actionQuery}
+              placeholder={t.launcher.actionsPlaceholder}
+              autoFocus
+              onChange={(event) => setActionQuery(event.target.value)}
+              variant="bare"
             />
-          ))}
+            {filterActions(activeItem.actions, actionQuery).map((action) => (
+              <div
+                key={`${action.actionId}:${nameFor(action.names, locale)}`}
+                role="option"
+                aria-selected={false}
+                aria-disabled={action.evaluation.status !== 'applicable'}
+                className="launcher-row"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => void runAction(action)}
+              >
+                <span className="launcher-row-title">{nameFor(action.names, locale)}</span>
+                {/* A rejected action is SHOWN WITH ITS REASON — a reason teaches
+                    the rule, a disappearance teaches distrust (D7). */}
+                {action.evaluation.status === 'rejected' ? (
+                  <span className="launcher-row-subtitle">
+                    {nameFor(action.evaluation.reason.names, locale)}
+                  </span>
+                ) : null}
+              </div>
+            ))}
+          </div>
         </div>
-      </div>
+      ) : (
+        <div id="launcher-results" className="launcher-body" role="listbox" aria-label={t.launcher.resultsAriaLabel}>
+          <div className="launcher-body-inner">
+            {items.map((item) => (
+              <LauncherRow
+                key={rowKey(item)}
+                item={item}
+                active={item.object.objectRef === activeRef}
+                rowRef={item.object.objectRef === activeRef ? activeRowRef : undefined}
+                removable={fixedItems.some((fixed) => fixed.object.objectRef === item.object.objectRef)}
+                onRemove={() => void removeObject(item.object.objectRef)}
+                onHover={() => setExplicitRef(item.object.objectRef)}
+                onClick={() => void runPrimary(item)}
+              />
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Two zones (D6a): identity/status left, the hint cluster right. */}
       <div className="launcher-actionbar">
@@ -278,6 +391,20 @@ export function LauncherApp() {
               <kbd className="launcher-kbd">↵</kbd>
             </Button>
           ) : null}
+          {/* Always present when there is an object to act on: the surface has
+              to say the actions exist, and teach the keystroke that shows them. */}
+          {activeItem ? (
+            <Button
+              className="launcher-actionbar-item launcher-actionbar-actions"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => { setActionsOpen((open) => !open); setActionQuery(''); }}
+              size="sm"
+              variant="ghost"
+            >
+              {t.launcher.actionsLabel}
+              <kbd className="launcher-kbd">⌘K</kbd>
+            </Button>
+          ) : null}
         </span>
       </div>
     </div>
@@ -291,11 +418,15 @@ function LauncherRow(props: {
   item: SurfaceItemPresentation;
   active: boolean;
   rowRef?: React.Ref<HTMLDivElement>;
+  /** Fixed objects (the ambient chip) can be dropped; results cannot. */
+  removable?: boolean;
+  onRemove?: () => void;
   onHover: () => void;
   onClick: () => void;
 }) {
+  const t = useT();
   const { locale } = useI18n();
-  const { item, active, rowRef, onHover, onClick } = props;
+  const { item, active, rowRef, removable, onRemove, onHover, onClick } = props;
   const { title, subtitle, typeLabel } = objectRowView(item.object, locale);
   return (
     <div
@@ -313,6 +444,17 @@ function LauncherRow(props: {
       <span className="launcher-row-title">{title}</span>
       {subtitle ? <span className="launcher-row-subtitle">{subtitle}</span> : null}
       <span className="launcher-row-type">{typeLabel}</span>
+      {removable ? (
+        <button
+          type="button"
+          className="launcher-row-remove"
+          aria-label={t.launcher.removeContext}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={(event) => { event.stopPropagation(); onRemove?.(); }}
+        >
+          ×
+        </button>
+      ) : null}
     </div>
   );
 }

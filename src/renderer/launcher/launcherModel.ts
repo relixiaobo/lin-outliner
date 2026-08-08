@@ -77,6 +77,10 @@ export function indexOfRef(
  * D6's fixed default activity, with no learned component:
  *
  * - a chip present before an explicit choice -> the chip is active;
+ * - a chip that RESOLVES LATE becomes active only while activity is still
+ *   implicit — typing alone is payload admission, not result selection, but
+ *   `ArrowDown` / a click / an open subpanel is an explicit choice the late
+ *   chip must not steal;
  * - no chip -> the first current-generation result is active;
  * - an explicitly chosen row survives while it is still in the generation.
  *
@@ -106,4 +110,22 @@ export function stepActiveRef(
 /** Stable React key. The ref is already generation-scoped and unique. */
 export function rowKey(item: SurfaceItemPresentation): string {
   return item.object.objectRef;
+}
+
+/**
+ * The searchable action list for the active object. Matches the family id, both
+ * locale names and the locale-independent aliases at once, so a user who thinks
+ * in English command names finds them in a Chinese interface (D8).
+ */
+export function filterActions(
+  actions: readonly ActionPresentation[],
+  query: string,
+): ActionPresentation[] {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) return [...actions];
+  return actions.filter((action) => {
+    if (action.actionId.toLowerCase().includes(normalized)) return true;
+    if (action.aliases.some((alias) => alias.toLowerCase().includes(normalized))) return true;
+    return Object.values(action.names).some((name) => name.toLowerCase().includes(normalized));
+  });
 }

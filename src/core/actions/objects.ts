@@ -109,10 +109,18 @@ const SYSTEM_OBJECT_NAMES: Record<SystemNodeKey, LocalizedNames> = {
   trash: objectName('trash'),
 };
 
+/** How main describes a captured page to the surface, without shipping context. */
+export interface ExternalPageDescription {
+  title: string;
+  /** Where it is from — a hostname or app name. */
+  subtitle?: string;
+}
+
 export function presentObject(
   object: SurfaceObject,
   projection: ActionProjection,
   untitled: string,
+  describeExternalPage?: (contextId: string) => ExternalPageDescription | null,
 ): ObjectPresentation {
   switch (object.kind) {
     case 'node': {
@@ -150,14 +158,21 @@ export function presentObject(
         iconId: 'node',
         typeLabel: objectTypeLabel('nodeSelection'),
       };
-    case 'externalPage':
+    case 'externalPage': {
+      // The chip is the same object presentation a result row uses, rendered
+      // compactly — not a second "attached context" concept.
+      const described = describeExternalPage?.(object.contextId);
       return {
         objectRef: object.objectRef,
         kind: 'externalPage',
-        name: { source: 'literal', value: object.contextId },
+        name: { source: 'literal', value: described?.title ?? untitled },
+        ...(described?.subtitle
+          ? { subtitle: { source: 'literal' as const, value: described.subtitle } }
+          : {}),
         iconId: 'open',
         typeLabel: objectTypeLabel('externalPage'),
       };
+    }
     case 'draft':
       return {
         objectRef: object.objectRef,
