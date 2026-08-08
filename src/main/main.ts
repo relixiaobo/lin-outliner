@@ -249,6 +249,12 @@ import {
 } from './launcher/launcherWindow';
 import { registerLauncherHotkey, unregisterLauncherHotkeys } from './launcher/launcherHotkey';
 import { ActionInvocationService, type RendererStepAck } from './actionInvocationService';
+import {
+  APP_RENDERER_CAPABILITIES,
+  LAUNCHER_RENDERER_CAPABILITIES,
+  registerRendererCapabilities,
+  rendererHasCapability,
+} from './rendererCapabilities';
 import type { EffectStep } from '../core/actions/bindings';
 import {
   ACTION_EVENT_CHANNEL,
@@ -1593,6 +1599,8 @@ function createWindow() {
     void mainWindow.loadFile(join(__dirname, '../renderer/index.html'));
   }
 
+  registerRendererCapabilities(mainWindow.webContents, APP_RENDERER_CAPABILITIES);
+
   mainWindow.on('closed', () => {
     pageTranslationService.dispose();
     actionInvocationService.invalidateRenderer(mainWindow?.webContents.id ?? -1);
@@ -1881,6 +1889,9 @@ function openSettingsWindow(openTarget: SettingsOpenTarget = {}) {
   });
 
   const window = settingsWindow;
+  // Settings keeps the app preload, so it keeps the app capabilities its
+  // `api/client` path uses.
+  registerRendererCapabilities(window.webContents, APP_RENDERER_CAPABILITIES);
   hardenWebContents(window.webContents);
   attachNativeContextMenu(window.webContents);
   // Match the main window's custom native corner (MAC_WINDOW_CORNER_RADIUS) so the
@@ -2079,6 +2090,8 @@ function createConfigChildWindow(options: {
     },
   });
 
+  // Provider-config child windows likewise keep the app bridge.
+  registerRendererCapabilities(target.webContents, APP_RENDERER_CAPABILITIES);
   hardenWebContents(target.webContents);
   attachNativeContextMenu(target.webContents);
   applyMacWindowCorner(target, MAC_WINDOW_CORNER_RADIUS);
@@ -2212,7 +2225,13 @@ function registerIpc() {
   // Every action channel is main-renderer only. The seed carries renderer FACTS
   // — anchored row, selection, panel identity, pin and expansion — and main
   // constructs the objects, mints the refs and owns the lifetime.
+  // Creating an invocation from a seed is ATTESTATION: only the main renderer
+  // can say which row was right-clicked, what is selected, and whether the row
+  // is pinned or expanded. The launcher has no such capability.
   ipcMain.handle(ACTION_OPEN_CHANNEL, (event, raw: unknown) => {
+    if (!rendererHasCapability(event.sender.id, 'actionAttestation')) {
+      throw new Error('This renderer may not attest invocation context.');
+    }
     assertMainRenderer(event, 'Action invocations');
     const seed = sanitizeInvocationSeed(raw);
     if (!seed) return null;
@@ -2223,14 +2242,14 @@ function registerIpc() {
   });
 
   ipcMain.handle(ACTION_PARAMETER_QUERY_CHANNEL, (event, raw: unknown) => {
-    assertMainRenderer(event, 'Action invocations');
+    assertActionRequester(event);
     const request = sanitizeParameterQuery(raw);
     if (!request) return null;
     return actionInvocationService.queryParameterObjects(request, event.sender.id);
   });
 
   ipcMain.handle(ACTION_REQUEST_CHANNEL, (event, raw: unknown) => {
-    assertMainRenderer(event, 'Action invocations');
+    assertActionRequester(event);
     const request = sanitizeActionRequest(raw);
     // A malformed request is not "stale" — it never named anything.
     if (!request) return { status: 'stale', reason: 'invocation' };
@@ -2238,13 +2257,14 @@ function registerIpc() {
   });
 
   ipcMain.handle(ACTION_EVENT_CHANNEL, (event, raw: unknown) => {
-    assertMainRenderer(event, 'Action invocations');
+    assertActionRequester(event);
     const invocationEvent = sanitizeInvocationEvent(raw);
     if (!invocationEvent) return { status: 'spent' };
     return actionInvocationService.event(invocationEvent, event.sender.id);
   });
 
   ipcMain.handle(ACTION_STEP_ACK_CHANNEL, (event, raw: unknown) => {
+    // Renderer steps only ever route to the MAIN renderer, so only it can ack.
     assertMainRenderer(event, 'Action invocations');
     const ack = raw as ActionStepAck | undefined;
     if (typeof ack?.token !== 'string') return;
@@ -2307,6 +2327,13 @@ function registerIpc() {
     });
   });
   ipcMain.handle('lin:invoke', async (event, command: string, args?: Record<string, unknown>) => {
+    // BEFORE dispatch, not inside it: the launcher must not reach
+    // `get_projection` or `delete_node` by any command name, and a renderer
+    // with no registered capabilities fails closed rather than inheriting the
+    // app's rights.
+    if (!rendererHasCapability(event.sender.id, 'appCommands')) {
+      throw new Error('This renderer may not invoke application commands.');
+    }
     const dispatch = () => {
       if (command.startsWith('memory_')) return handleMemoryCommand(command, args ?? {});
       if (isAgentCommand(command)) return handleAgentCommand(event, command, args ?? {});
@@ -2422,19 +2449,34 @@ function registerIpc() {
   });
   ipcMain.handle(LIN_CLEAR_URL_PREVIEW_DATA_CHANNEL, clearUrlPreviewWebsiteData);
   ipcMain.handle(LIN_CLEAR_PREVIEW_TRANSLATION_CACHE_CHANNEL, clearPreviewTranslationCache);
-  // Launcher window IPC (the prewarmed global launcher).
-  ipcMain.handle('launcher:hide', () => {
+  // Launcher window IPC (the prewarmed global launcher). Every handler below is
+  // sender-checked: `launcher:*` is the launcher's own bridge, and a non-launcher
+  // renderer naming these channels is refused rather than served.
+  function assertLauncherRenderer(event: IpcMainInvokeEvent): void {
+    if (!rendererHasCapability(event.sender.id, 'launcher')) {
+      throw new Error('The launcher bridge is available only to the launcher window.');
+    }
+  }
+
+  ipcMain.handle('launcher:hide', (event) => {
+    assertLauncherRenderer(event);
     dismissLauncher();
   });
-  ipcMain.handle('launcher:getInitialState', (): LauncherInitialState => ({
-    commands: getStaticLauncherCommands(),
-    hotkey: launcherHotkeyAccelerator,
-  }));
-  ipcMain.handle('launcher:executeCommand', (_event, id: unknown): LauncherExecuteResult =>
-    executeLauncherCommand(id));
+  ipcMain.handle('launcher:getInitialState', (event): LauncherInitialState => {
+    assertLauncherRenderer(event);
+    return {
+      commands: getStaticLauncherCommands(),
+      hotkey: launcherHotkeyAccelerator,
+    };
+  });
+  ipcMain.handle('launcher:executeCommand', (event, id: unknown): LauncherExecuteResult => {
+    assertLauncherRenderer(event);
+    return executeLauncherCommand(id);
+  });
   // New node from the launcher: a plain typed note (no external source). Ensure
   // today's date node, then create the node under it. NOT a capture — no sidecar.
-  ipcMain.handle('launcher:createCapture', async (_event, raw: unknown): Promise<LauncherCreateCaptureResult> => {
+  ipcMain.handle('launcher:createCapture', async (event, raw: unknown): Promise<LauncherCreateCaptureResult> => {
+    assertLauncherRenderer(event);
     const payload = (raw ?? {}) as { title?: unknown; note?: unknown };
     const title = typeof payload.title === 'string' ? payload.title.trim() : '';
     if (!title) return { ok: false };
@@ -2461,7 +2503,8 @@ function registerIpc() {
   // Context capture: save what the user was looking at (the main-held authoritative
   // ExternalContext for this open) under Today. The renderer supplies only an
   // optional note/intent — never the source metadata — so it can't be tampered with.
-  ipcMain.handle('launcher:createContextCapture', async (_event, raw: unknown): Promise<LauncherCreateCaptureResult> => {
+  ipcMain.handle('launcher:createContextCapture', async (event, raw: unknown): Promise<LauncherCreateCaptureResult> => {
+    assertLauncherRenderer(event);
     const context = launcherContext;
     if (!context) return { ok: false };
     const payload = (raw ?? {}) as { note?: unknown; intent?: unknown };
@@ -2501,7 +2544,8 @@ function registerIpc() {
   });
   // Inline node search: the launcher input queries the document directly (no
   // "Search notes" command). Read-only; main enriches hits with node text.
-  ipcMain.handle('launcher:searchNodes', async (_event, raw: unknown): Promise<LauncherNodeMatch[]> => {
+  ipcMain.handle('launcher:searchNodes', async (event, raw: unknown): Promise<LauncherNodeMatch[]> => {
+    assertLauncherRenderer(event);
     try {
       return await searchLauncherNodes(typeof raw === 'string' ? raw : '');
     } catch (error) {
@@ -2510,7 +2554,8 @@ function registerIpc() {
     }
   });
   // Open a node search result: bring up the main window and navigate to it.
-  ipcMain.handle('launcher:openNode', (_event, raw: unknown): void => {
+  ipcMain.handle('launcher:openNode', (event, raw: unknown): void => {
+    assertLauncherRenderer(event);
     if (typeof raw !== 'string' || !raw) return;
     navigateMainToNode(raw);
     dismissLauncher();
@@ -2957,6 +3002,18 @@ function sanitizeInvocationEvent(raw: unknown): InvocationEvent | null {
       return raw as InvocationEvent;
     default:
       return null;
+  }
+}
+
+/**
+ * Naming an action, querying its parameters and reporting a lifecycle event are
+ * open to any renderer holding `actionRequests` — the launcher included. That
+ * is safe precisely because main re-evaluates the named tuple itself; it is not
+ * safe for `lin:invoke`, which is why that channel has its own gate.
+ */
+function assertActionRequester(event: IpcMainInvokeEvent): void {
+  if (!rendererHasCapability(event.sender.id, 'actionRequests')) {
+    throw new Error('This renderer may not request actions.');
   }
 }
 
@@ -4276,13 +4333,18 @@ if (!app.requestSingleInstanceLock()) {
     createWindow();
     scheduleManagedSkillUpdateCheck();
     // Prewarm the hidden launcher window and bind the global toggle hotkey.
-    createLauncherWindow({
-      preloadPath: join(__dirname, '../preload/index.cjs'),
+    const launcherWindow = createLauncherWindow({
+      preloadPath: join(__dirname, '../preload/launcher.cjs'),
       devUrl: RENDERER_DEV_ORIGIN ? `${RENDERER_DEV_ORIGIN}/launcher.html` : null,
       packagedHtmlPath: join(__dirname, '../renderer/launcher.html'),
       harden: hardenWebContents,
       onBlurHide: dismissLauncher,
     });
+    // Least privilege at the seam, not only in the preload bundle: no
+    // `appCommands` (so `lin:invoke` is refused before dispatch) and no
+    // `actionAttestation` (so `view` / `workspace` facts stay the main
+    // renderer's to attest).
+    registerRendererCapabilities(launcherWindow.webContents, LAUNCHER_RENDERER_CAPABILITIES);
     // Tenon is a regular foreground app (dock icon + menu bar). In dev, launching
     // the binary straight from the terminal (not via LaunchServices) can leave the
     // app in macOS "accessory" activation policy (background-only → no dock icon, no

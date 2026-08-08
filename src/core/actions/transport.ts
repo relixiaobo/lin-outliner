@@ -8,9 +8,14 @@
 import type { EffectStep } from './bindings';
 
 export const ACTION_OPEN_CHANNEL = 'action:open';
+export const ACTION_OBJECT_QUERY_CHANNEL = 'action:objectQuery';
 export const ACTION_PARAMETER_QUERY_CHANNEL = 'action:parameterQuery';
 export const ACTION_REQUEST_CHANNEL = 'action:request';
 export const ACTION_EVENT_CHANNEL = 'action:event';
+/** main -> launcher: the opening main created for this summon. */
+export const ACTION_OPENED_CHANNEL = 'action:opened';
+/** main -> launcher: the authoritative replacement ambient presentation. */
+export const ACTION_AMBIENT_CHANGED_CHANNEL = 'action:ambientChanged';
 /** main -> renderer */
 export const ACTION_STEP_CHANNEL = 'action:step';
 /** renderer -> main */

@@ -17,7 +17,15 @@ export default defineConfig({
   preload: {
     build: {
       rollupOptions: {
-        input: 'src/preload/index.ts',
+        // Two preload bundles. `index` is the app bridge (main window, Settings,
+        // provider config). `launcher` is the locked-down launcher's ENTIRE
+        // bridge and deliberately omits the generic `lin:invoke` surface, so a
+        // compromised launcher renderer cannot acquire it by reloading — see
+        // docs/spec/action-registry.md.
+        input: {
+          index: 'src/preload/index.ts',
+          launcher: 'src/preload/launcher.ts',
+        },
         external: ['electron'],
         output: {
           entryFileNames: '[name].cjs',

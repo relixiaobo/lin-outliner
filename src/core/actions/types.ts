@@ -462,6 +462,61 @@ export interface InvocationOpened {
   menuActions: readonly ActionPresentation[];
 }
 
+/**
+ * The only way a launcher search generation enters the invocation. Main first
+ * installs an empty `pending` generation — invalidating every prior result ref
+ * — and then installs fresh objects only if this request is still current.
+ */
+export interface ObjectQueryRequest {
+  invocationRef: InvocationRef;
+  openSeq: number;
+  requestId: RequestId;
+  query: string;
+}
+
+export type ObjectQueryResult =
+  | {
+    status: 'ready';
+    invocationRef: InvocationRef;
+    openSeq: number;
+    requestId: RequestId;
+    generation: number;
+    resultItems: readonly SurfaceItemPresentation[];
+  }
+  | {
+    status: 'superseded';
+    invocationRef: InvocationRef;
+    openSeq: number;
+    requestId: RequestId;
+    generation: number;
+  };
+
+/**
+ * Main owns the ambient transition. External capture resolves in main; an
+ * in-app seed first passes its sender/id checks. Neither renderer may post a
+ * finished object, and main pushes only the authoritative replacement.
+ */
+export type AmbientContextResolution =
+  | { kind: 'externalPage'; contextId: ExternalContextId }
+  | { kind: 'inApp'; seed: InvocationSeed }
+  | { kind: 'none' };
+
+export type AmbientContextChanged =
+  | {
+    status: 'updated';
+    invocationRef: InvocationRef;
+    openSeq: number;
+    revision: number;
+    ambientState: 'resolved' | 'none';
+    fixedItems: readonly SurfaceItemPresentation[];
+  }
+  | {
+    status: 'superseded';
+    invocationRef: InvocationRef;
+    openSeq: number;
+    requestId: AmbientRequestId;
+  };
+
 /** Argument rows use the same object shape but a slot-scoped generation. */
 export interface ParameterObjectQueryRequest {
   invocationRef: InvocationRef;

@@ -81,6 +81,34 @@ that needs one resolves `absent` where it does not exist — that is why *Pin*,
 have no row without a workspace or a view, while *Open in split pane* consumes
 neither and stays available.
 
+## Renderer capabilities
+
+Two windows reach the seam and they are not equally trusted.
+
+The launcher loads its OWN preload (`src/preload/launcher.ts`), which is its
+entire bridge: the generic `window.lin.invoke` surface is simply not there to
+acquire, so navigating or reloading that renderer cannot obtain it. That is
+least privilege, not the gate.
+
+The gate is `src/main/rendererCapabilities.ts`: capabilities are registered
+against the real `webContents` at window creation and dropped when it is
+destroyed, and every inbound seam checks them. An unregistered renderer has
+none and fails closed.
+
+| Capability | Main window, Settings, provider config | Launcher |
+| --- | --- | --- |
+| `appCommands` (`lin:invoke`) | yes | **no** |
+| `launcher` (`launcher:*`) | no | yes |
+| `actionRequests` (name an action, query a parameter, report a lifecycle event) | yes | yes |
+| `actionAttestation` (create an invocation from a seed) | yes | **no** |
+
+`lin:invoke` checks `appCommands` **before dispatch**, so no command name —
+`get_projection`, `delete_node`, or any other — is reachable from the launcher.
+`actionRequests` is shared because its whole safety argument is that main
+re-evaluates the named tuple itself against the latest projection. Attestation
+is not shared, because `view` and `workspace` facts are the main renderer's to
+state and a launcher attempt to supply them is rejected rather than merged.
+
 ## Phases and confirmation
 
 `live -> confirming -> executing -> spent`. The invocation is **claimed on
