@@ -475,3 +475,48 @@ green, and prefer a guard that asserts on the emitted artifact rather than on
 the source that produced it.** `tests/core/preloadBundle.test.ts` is the shape to
 copy: it pins the config *and*, when a build is present, reads the built bundle
 and fails on any `require()` a sandboxed preload could not resolve.
+
+## A probe that cannot fail is not evidence
+
+`agent-tool-reliability` (#509) shipped a real Electron probe whose stated goal
+was to catch `web_fetch` request-construction failures. It reported **7 passed,
+0 failed** on a branch where every redirecting URL was broken, because its local
+fixture answered 200 to every request and its only public target does not
+redirect. The green run was not a weak signal — it was a false one, and it was
+attached to precisely the bug it existed to catch.
+
+The same run had two other ways to look like success. Fixture setup and teardown
+sat outside the wrapper that converts a throw into a recorded FAIL, so a failed
+loopback listen aborted everything with a bare stack trace and no verdicts. And
+the script inherited Electron's default `window-all-closed`, so a tool-owned
+BrowserWindow closing mid-run quit the process with **exit code 0** before the
+summary printed — masked only by the one window-using probe happening to be
+last. Three independent paths, one shape: the harness ending in a state a reader
+scores as pass.
+
+So: **build the failure first.** A fixture must serve the failure the probe
+exists to catch (here: one 302 route, and a 409 on a contradictory Fetch
+Metadata triple) and you must watch the probe go red on it before trusting it
+green. Every step belongs inside the failure-recording wrapper, including setup
+and teardown. And a run must not be able to end in a way that resembles success:
+own the process lifetime, flush before exiting, and close with a completeness
+check — an expected-name list that turns a missing, duplicated or unplanned
+probe into an explicit FAIL — so "it printed passes" can never be confused with
+"it ran".
+
+## Own a protocol-defined header set entirely, or not at all
+
+The same PR's first repair removed exactly the field the platform rejected —
+`Sec-Fetch-Mode: navigate`, which Chromium 148 refuses on the `Session.fetch`
+path — and kept the rest of the hand-built navigation set. Chromium then filled
+the gap it had just been handed with its own `sec-fetch-mode: no-cors`, leaving
+`dest=document` + `mode=no-cors` + `user=?1` on the wire: a triple no real
+browser emits, and one bot-protection layers read as automation. The request now
+failed *more* legibly than before.
+
+`Sec-Fetch-*` is a coherent set whose values constrain each other, and the
+platform is a co-author of it. Removing one member does not shrink the set; it
+hands that member to Chromium and creates a contradiction with the members you
+kept. So: **when a set of headers is defined jointly and the platform generates
+some of them, take all of it or none of it.** Deleting the one field that
+errored is a fix shaped by the error message, not by the contract.

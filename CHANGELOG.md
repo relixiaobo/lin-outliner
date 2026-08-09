@@ -175,6 +175,41 @@ Entries reference the pull request that introduced them.
 
 ### Fixed
 
+- **The agent can read the web again (PR #509, codex)** — `web_fetch` had gone
+  blind. It hand-built a browser navigation's `Sec-Fetch-*` headers and sent them
+  through Electron 42's `Session.fetch`, which Chromium 148 refuses on that path
+  (`Sec-Fetch-Mode: navigate` → `net::ERR_INVALID_ARGUMENT`), so every fetch
+  failed before it reached the network. Chromium now owns the whole Fetch
+  Metadata set; the accepted user agent, client hints and content negotiation
+  stay. Redirects were a second wall: Electron cancels `redirect: 'manual'`, so
+  the hand-rolled per-hop loop could never run a single hop, and every
+  redirecting URL — `http`→`https`, bare domain → `www`, link shorteners, most
+  news fronts — died on `Redirect was cancelled`. Chromium follows the chain
+  now, with a request-scoped observer on the dedicated session recording the
+  landing URL that `Response.url` leaves empty, feeding the existing final-URL
+  result and cross-host hint. `file_read` had the mirror problem: `pages` was
+  offered for every file type, so a valid selector on a non-PDF read failed
+  outright while a malformed one (a JSON number instead of a string) was
+  silently dropped and could answer questions about "page 12" from text that was
+  not page 12. A malformed value now fails loudly, a valid one is ignored only
+  after the read route is known — with a warning that names what that route
+  actually supports instead of pointing at `offset`/`limit` the notebook, slide
+  and rich-document readers do not honor — and the catalog says again that a
+  plain PDF read returns the whole document's extracted text.
+- **The web-tools probe can no longer report a silent success (PR #509, codex)** —
+  the probe that guards the above had three ways to look green while broken. Its
+  fixture only ever answered 200, so it passed 7/7 on a build where every
+  redirecting URL failed; it now serves a real 302 and rejects a contradictory
+  Fetch Metadata triple with 409. Fixture setup and teardown ran outside the
+  probe wrapper, so a failed loopback listen aborted the run with a bare stack
+  trace and no verdicts; both are reported as probes now. And the process
+  inherited Electron's default `window-all-closed`, so a tool-owned
+  BrowserWindow closing mid-run killed it with exit code 0 before the summary —
+  masked only by the window-using search probe happening to be last. The probe
+  owns its lifetime, the search runs before the remaining fetches, stdout is
+  flushed before an explicit exit, and a closing expected-name check turns a
+  missing, duplicated or unplanned probe into a failure rather than a partial
+  green run.
 - **Coming back to a Thread lands where you were reading (PR #499, cc-2)** —
   opening a Subagent page, Automations, or another Thread and returning used to
   drop the reader somewhere else in the transcript: the snapshot recorded a

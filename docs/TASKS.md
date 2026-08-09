@@ -691,6 +691,15 @@ and the merged PR, distilled rules in [`lessons.md`](lessons.md). Everything
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
 
+- **agent-tool-reliability** (codex, PR #509, merged 2026-08-09 — plan archived at
+  [docs/plans/archive/agent-tool-reliability.md](plans/archive/agent-tool-reliability.md))
+  — `web_fetch` reaches the web again (Chromium owns `Sec-Fetch-*`; redirects are followed
+  by Chromium with an observer recording the landing URL), `file_read` fails loudly on a
+  malformed `pages` and warns per read route, and the Electron probe that guards them can no
+  longer look green while broken. `/code-review high` found ten, all fixed; the re-review found
+  an eleventh — the probe inherited `window-all-closed`, so a tool BrowserWindow closing mid-run
+  ended it with exit code 0 before the summary, masked only by the window-using probe happening
+  to run last.
 - **error-feedback-unification** (cc, PR #508, merged 2026-08-08 — plan archived at
   [docs/plans/archive/error-feedback-unification.md](plans/archive/error-feedback-unification.md))
   — every action failure in the app now reports to one window-anchored notice instead of a
