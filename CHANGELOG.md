@@ -10,6 +10,11 @@ Entries reference the pull request that introduced them.
 
 `main` is the `0.3.0` train; entries here move under the next tag.
 
+### Internal
+
+- **Opened the 0.3.0 train (main-agent)** — `package.json` dials to `0.3.0`
+  after the v0.2.0 tag so dev builds name the next train.
+
 ## [0.2.0] - 2026-08-09
 
 **Tenon 0.2 pulls the app together into one command surface — and fixes what
