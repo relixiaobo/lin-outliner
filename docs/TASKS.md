@@ -55,10 +55,11 @@ theme-section entry below; this list is the ordering, not a second record):
   visual-media baseline fixture (`test.extend` default), then the run-dependent flaky
   set as one problem.
 
-**Design-gate queue** (PM bandwidth; two open): `skill-path-ownership` first, then the
-`anthropic-auth-clarity` scope re-decision (its premise moved — five dual-auth
-providers now, see the entry). **Release:** freeze **v0.2.0** after #509 + Lane A
-lands; main drafts the user-register note, PM ratifies.
+**Design-gate queue** (PM bandwidth; one open): `skill-path-ownership`. The
+auth-clarity scope was **decided 2026-08-09: all five dual-auth rows** (entry renamed
+`dual-auth-clarity`) — it joins Lane A once its one-pager is drafted. **Release:** **v0.2.0 freeze initiated
+2026-08-09** (PM call — trains leave on time; Lane A catches the 0.3.0 train): note
+drafted by main, PM ratifies, then tag + dial to 0.3.0.
 
 `pi-ai-0.80-upgrade` shipped #348 (clean `Models` migration, not the interim `/compat` shim) — see *Recently completed*.
 `dream-channel-and-memory-retire` shipped in full (PR1 #324 + PR2 #328 + PR3 #329) — see *Recently completed*.
@@ -489,17 +490,18 @@ Standalone agent items (not part of the program):
   **Same removal applied 2026-08-09 to `agent-dream-secret-redaction`** — the staleness
   audit found its subject (the Dream extraction worker) is the same retired code.
 
-- **anthropic-auth-clarity** (P3, *no plan file*, **premise refreshed 2026-08-09 —
-  scope decision pending PM**) — the original premise is stale: dual OAuth+API-key
-  providers are now **five**, not one — `OAUTH_API_KEY_FALLBACK = {anthropic,
-  kimi-coding, openrouter, radius, xai}`, moved to
-  `src/renderer/ui/agent/providerOAuthCapabilities.ts:4` (gate at
+- **dual-auth-clarity** (P3, *no plan file*, **scope ratified 2026-08-09: all five
+  dual-auth rows** — renamed from `anthropic-auth-clarity`; the original "Anthropic is
+  the only dual provider" premise died in the audit) — dual OAuth+API-key providers
+  are `OAUTH_API_KEY_FALLBACK = {anthropic, kimi-coding, openrouter, radius, xai}`
+  (`src/renderer/ui/agent/providerOAuthCapabilities.ts:4`; gate at
   `ProviderConfigWindow.tsx:169`, buried "Use an API key instead" link at
-  `ProviderOAuthForm.tsx:333`). The ratified **option B** (explicit segmented
-  "API key | OAuth" control up front, single mutually-exclusive credential slot,
-  presentation only) still fits, but the PM must re-decide scope: Anthropic-only, or
-  all five dual-auth rows. Dev drafts the build one-pager after that call. i18n en/zh +
-  `i18nCoverage`; design-system neutral tokens (B3/B4), UI gate = light/dark visual.
+  `ProviderOAuthForm.tsx:333`). Build the ratified **option B** generically, driven by
+  that set: an explicit segmented "API key | OAuth" control up front on every
+  dual-auth row, defaulting to the stored credential; single mutually-exclusive
+  credential slot stays — presentation only. Dev drafts the build one-pager; then it
+  joins Lane A. i18n en/zh + `i18nCoverage`; design-system neutral tokens (B3/B4), UI
+  gate = light/dark visual.
 
 ### Files & media
 

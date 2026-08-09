@@ -8,7 +8,35 @@ Entries reference the pull request that introduced them.
 
 ## [Unreleased]
 
-`main` is the `0.2.0` train; entries here move under the next tag.
+`main` is the `0.3.0` train; entries here move under the next tag.
+
+## [0.2.0] - 2026-08-09
+
+**Tenon 0.2 pulls the app together into one command surface — and fixes what
+made 0.1 feel rough.**
+
+- **Right-click and ⌘K now share one brain** — every node action lives in a
+  single core registry; the context menu and the launcher are two views of it,
+  so they can never offer different things. The launcher acts on the row you're
+  focused on, and can capture the browser page you're looking at. Indent and
+  Outdent join the searchable set; permanent deletion asks with macOS's own
+  confirmation sheet.
+- **Chinese, Japanese and Korean input works in the launcher** — composition no
+  longer breaks mid-word, and the candidate window is no longer covered by the
+  launcher itself.
+- **Search has a visible home** — a Search row leads the sidebar, and Settings
+  shows the global launcher's real shortcut.
+- **The agent reads the web again** — page fetching had gone completely blind
+  and is fixed, redirects included.
+- **Delegated work reads like a colleague** — a subagent is one named row in
+  the timeline that opens in place; you're no longer teleported into a child
+  conversation. A failed turn gets a real Retry button, and everything you did
+  that fails reports to one notice at the top of the window instead of the
+  agent's corner.
+- **Coming back lands where you were** — reopening a Thread restores your
+  reading position instead of dropping you somewhere else in the transcript.
+- **Browser Pilot comes preinstalled** — the agent can drive Chrome out of the
+  box; removing it sticks.
 
 ### Added
 
