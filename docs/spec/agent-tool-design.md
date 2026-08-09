@@ -83,7 +83,15 @@ normalization path: it accepts at most 256 MiB of source data and emits at most
 2,000 px / 4.5 MiB of model input rather than base64-encoding the original file.
 PDF and rich-document reads retain their own page, byte, output, and timeout
 budgets; PDF source size is rejected before whole-file buffering, and rendered
-page images are normalized serially through the same bounded image path.
+page images are normalized serially through the same bounded image path. A PDF
+read extracts text from the whole document by default; the `pages` selector is
+only for rendering page images or inspecting layout. When present, `pages` must
+be a non-empty string before any file route runs, and PDF range validation
+remains fail-closed. A valid `pages` string on a non-PDF file is ignored after
+content-based routing, the normal type-specific read completes, and a
+route-specific warning describes the result. Only line-oriented text reads use
+`offset` and `limit`; image, notebook, presentation, and rich-document routes do
+not claim pagination they cannot perform.
 
 PPTX is a dedicated in-process OOXML route rather than a MarkItDown route. It
 indexes the ZIP central directory lazily and validates the package graph before
@@ -159,6 +167,21 @@ a later Turn.
 - `web_fetch`: HTTP retrieval with redirect, size, and content extraction limits
 - `generate_image`: configured image-provider generation
 - `data_import`: preview and commit a validated import pack
+
+`web_fetch` uses a credential-free Electron `Session.fetch` partition with
+automatic redirect following, then applies its byte, timeout, and extraction
+bounds before returning content. Requests present the configured Chrome user
+agent, client hints, and content-negotiation headers. Chromium owns the complete
+`Sec-Fetch-*` metadata set: the runtime must not mix navigation-only values with
+the Fetch API values Chromium generates. Electron 42 leaves `Response.url` empty
+for this path, so a redirect observer on the dedicated session records the
+landing URL for result metadata and the existing cross-host hint; it does not
+construct or replay redirect hops. The real Electron probe exercises local read,
+metadata, and find modes, verifies a real 302 and a consistent Fetch Metadata
+set, and retains public reachability checks. Tool-owned BrowserWindows do not own
+the probe process lifecycle: later probes continue after those windows close,
+and the run fails unless every expected probe name is recorded exactly once
+before the flushed summary and explicit exit.
 
 `generate_image` separates the provider's original artifact from the bounded image shown
 to the model. It validates provider MIME/base64 against the 256 MiB source-image safety

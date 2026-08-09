@@ -8,8 +8,6 @@ import {
   isTransientNetworkError,
   looksLikeDynamicHtmlShell,
   makeRedirectedHostHint,
-  nextSecFetchSite,
-  webFetchRefererForHop,
 } from '../../src/main/agent/capabilities/agentWebFetchFallback';
 import {
   extractFetchedPageContent,
@@ -215,6 +213,8 @@ describe('agent web fetch fallback heuristics', () => {
     expect(isTransientNetworkError(new Error('net::ERR_CONNECTION_REFUSED'))).toBe(false);
     expect(isTransientNetworkError(new Error('net::ERR_CERT_AUTHORITY_INVALID'))).toBe(false);
     expect(isTransientNetworkError(new Error('net::ERR_UNSAFE_PORT'))).toBe(false);
+    expect(isTransientNetworkError(new Error('net::ERR_TOO_MANY_REDIRECTS'))).toBe(false);
+    expect(isTransientNetworkError(new Error('Redirect was cancelled'))).toBe(false);
     expect(isTransientNetworkError(new Error('getaddrinfo ENOTFOUND host'))).toBe(false);
     // Transient drops are retried — under the Chromium net:: shape...
     expect(isTransientNetworkError(new Error('net::ERR_CONNECTION_RESET'))).toBe(true);
@@ -224,30 +224,6 @@ describe('agent web fetch fallback heuristics', () => {
     // dead if session.fetch does not surface a net:: code.
     expect(isTransientNetworkError(new Error('Failed to fetch'))).toBe(true);
     expect(isTransientNetworkError(new TypeError('fetch failed'))).toBe(true);
-  });
-
-  test('webFetchRefererForHop matches Chrome strict-origin-when-cross-origin', () => {
-    // Same origin → full URL minus fragment.
-    expect(webFetchRefererForHop('https://a.com/p?q=1#frag', 'https://a.com/next'))
-      .toBe('https://a.com/p?q=1');
-    // Cross-origin → origin only (no path/query leak).
-    expect(webFetchRefererForHop('https://a.com/secret/path?token=x', 'https://b.com/'))
-      .toBe('https://a.com/');
-    // https→http downgrade → no Referer at all.
-    expect(webFetchRefererForHop('https://a.com/p', 'http://b.com/')).toBeUndefined();
-    // http→http cross-origin still sends origin only.
-    expect(webFetchRefererForHop('http://a.com/p', 'http://b.com/')).toBe('http://a.com/');
-  });
-
-  test('nextSecFetchSite degrades monotonically across a redirect chain', () => {
-    // First hop from the initiator: immediate relationship.
-    expect(nextSecFetchSite(undefined, 'https://a.com/', 'https://a.com/2')).toBe('same-origin');
-    expect(nextSecFetchSite(undefined, 'https://a.com/', 'https://b.com/')).toBe('cross-site');
-    // Once cross-site, a later same-origin hop stays cross-site (chain semantics).
-    expect(nextSecFetchSite('cross-site', 'https://b.com/', 'https://b.com/2')).toBe('cross-site');
-    // Same-origin stays same-origin until the chain actually crosses.
-    expect(nextSecFetchSite('same-origin', 'https://a.com/', 'https://a.com/2')).toBe('same-origin');
-    expect(nextSecFetchSite('same-origin', 'https://a.com/', 'https://b.com/')).toBe('cross-site');
   });
 
   test('makeRedirectedHostHint always labels finalHost from the landing URL', () => {
