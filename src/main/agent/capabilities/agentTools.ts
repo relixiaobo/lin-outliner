@@ -35,7 +35,6 @@ import {
   MAX_FETCH_CHARS,
   MAX_SEARCH_LIMIT,
   WEB_FETCH_BROWSER_TIMEOUT_MS,
-  WEB_FETCH_MAX_REDIRECTS,
   WEB_FETCH_RENDER_SETTLE_MS,
   WEB_FETCH_RETRY_DELAY_MS,
   WEB_FETCH_USER_AGENT,
@@ -87,12 +86,11 @@ import {
   fallbackHint,
   isTransientNetworkError,
   makeRedirectedHostHint,
-  nextSecFetchSite,
   shouldTryBrowserFallbackForHttpFailure,
 } from './agentWebFetchFallback';
 import {
+  beginWebFetchRedirectTrace,
   buildWebFetchHeaders,
-  type WebFetchRedirectContext,
 } from './agentWebFetchRequest';
 import {
   BING_IMAGES_RESULT_SELECTOR,
@@ -113,7 +111,6 @@ const WEB_FETCH_BROWSER_PARTITION = 'web-fetch-browser';
 const SEARCH_NAV_TIMEOUT_MS = 60_000;
 const SEARCH_RATE_INTERVAL_MS = 3_000;
 const SEARCH_RATE_BURST = 2;
-const HTTP_REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 let recentSearchStarts: number[] = [];
 let webFetchBrowserTail: Promise<void> = Promise.resolve();
 let webFetchBrowserSessionConfigured = false;
@@ -684,7 +681,7 @@ async function fetchTextOnce(
   signal?.addEventListener('abort', onAbort, { once: true });
 
   try {
-    return await fetchTextWithRedirects(startedUrl, startedUrl, controller.signal, scratchRoot, clientSession);
+    return await fetchTextFollowingRedirects(startedUrl, controller.signal, scratchRoot, clientSession);
   } catch (error) {
     if (error instanceof WebToolFailure) throw error;
     if (controller.signal.aborted) {
@@ -700,50 +697,31 @@ async function fetchTextOnce(
   }
 }
 
-async function fetchTextWithRedirects(
-  currentUrl: string,
+async function fetchTextFollowingRedirects(
   startedUrl: string,
   signal: AbortSignal,
   scratchRoot: string,
   clientSession: Session,
-  depth = 0,
-  redirect?: WebFetchRedirectContext,
 ): Promise<FetchTextResult> {
-  if (depth > WEB_FETCH_MAX_REDIRECTS) {
-    throw new WebToolFailure('too_many_redirects', `too many redirects; exceeded ${WEB_FETCH_MAX_REDIRECTS}`);
-  }
-
-  const response = await clientSession.fetch(currentUrl, {
-    method: 'GET',
-    redirect: 'manual',
-    credentials: 'omit',
-    signal,
-    headers: buildWebFetchHeaders(currentUrl, redirect),
-  });
-
-  if (HTTP_REDIRECT_STATUSES.has(response.status)) {
-    const redirectUrl = resolveRedirectUrl(currentUrl, response.headers.get('location'));
-    if (!redirectUrl) {
-      throw new WebToolFailure('invalid_redirect', `HTTP ${response.status} redirect is missing a valid Location header`, {
-        finalUrl: currentUrl,
-        statusCode: response.status,
-      });
-    }
-    // Follow redirects across hosts (shorteners, trackers, regional/mobile
-    // subdomains), preserving the server's literal scheme. Only invalid or
-    // credential-bearing redirect URLs are refused; a cross-host landing is
-    // surfaced later as a non-fatal redirected_host hint.
-    if (!isWebFetchUrl(redirectUrl)) {
-      throw redirectedHostFailure(startedUrl, redirectUrl, response.status);
-    }
-    const secFetchSite = nextSecFetchSite(redirect?.secFetchSite, currentUrl, redirectUrl);
-    return await fetchTextWithRedirects(redirectUrl, startedUrl, signal, scratchRoot, clientSession, depth + 1, {
-      referrerUrl: currentUrl,
-      secFetchSite,
+  const redirectTrace = beginWebFetchRedirectTrace(clientSession, startedUrl);
+  let response: Response;
+  let finalUrl: string;
+  try {
+    response = await clientSession.fetch(startedUrl, {
+      method: 'GET',
+      redirect: 'follow',
+      credentials: 'omit',
+      signal,
+      headers: buildWebFetchHeaders(),
     });
+    finalUrl = redirectTrace.finalUrl(response.url);
+  } finally {
+    redirectTrace.dispose();
   }
 
-  const finalUrl = response.url || currentUrl;
+  if (!isWebFetchUrl(finalUrl)) {
+    throw redirectedHostFailure(startedUrl, finalUrl, response.status);
+  }
   const redirectedHostHint = crossHostRedirectHint(startedUrl, finalUrl);
   const contentType = response.headers.get('content-type') ?? '';
   if (response.status === 401) {
@@ -807,15 +785,6 @@ async function fetchTextWithRedirects(
     body,
     ...(redirectedHostHint ? { redirectedHostHint } : {}),
   };
-}
-
-function resolveRedirectUrl(baseUrl: string, location: string | null): string | null {
-  if (!location) return null;
-  try {
-    return new URL(location, baseUrl).toString();
-  } catch {
-    return null;
-  }
 }
 
 function redirectedHostFailure(startedUrl: string, redirectUrl: string, statusCode: number): WebToolFailure {

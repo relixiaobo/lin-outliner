@@ -83,11 +83,15 @@ normalization path: it accepts at most 256 MiB of source data and emits at most
 2,000 px / 4.5 MiB of model input rather than base64-encoding the original file.
 PDF and rich-document reads retain their own page, byte, output, and timeout
 budgets; PDF source size is rejected before whole-file buffering, and rendered
-page images are normalized serially through the same bounded image path. The
-`pages` selector is for PDF layout inspection only. If it is supplied for a
-non-PDF file, `file_read` ignores it, completes the normal type-specific read,
-and returns a warning; line-oriented reads use `offset` and `limit` for
-pagination. PDF page-range validation remains fail-closed.
+page images are normalized serially through the same bounded image path. A PDF
+read extracts text from the whole document by default; the `pages` selector is
+only for rendering page images or inspecting layout. When present, `pages` must
+be a non-empty string before any file route runs, and PDF range validation
+remains fail-closed. A valid `pages` string on a non-PDF file is ignored after
+content-based routing, the normal type-specific read completes, and a
+route-specific warning describes the result. Only line-oriented text reads use
+`offset` and `limit`; image, notebook, presentation, and rich-document routes do
+not claim pagination they cannot perform.
 
 PPTX is a dedicated in-process OOXML route rather than a MarkItDown route. It
 indexes the ZIP central directory lazily and validates the package graph before
@@ -164,13 +168,17 @@ a later Turn.
 - `generate_image`: configured image-provider generation
 - `data_import`: preview and commit a validated import pack
 
-`web_fetch` uses a credential-free Electron `Session.fetch` partition, follows
-redirects manually, and applies its byte, timeout, and extraction bounds before
-returning content. Requests present the configured Chrome user agent, client
-hints, and per-hop referrer/site headers, but Chromium owns `Sec-Fetch-Mode`:
-the runtime must not set the navigation-only `navigate` value on a Fetch API
-request. The real Electron probe exercises local read, metadata, and find modes
-so request-construction failures are detected without public-network access.
+`web_fetch` uses a credential-free Electron `Session.fetch` partition with
+automatic redirect following, then applies its byte, timeout, and extraction
+bounds before returning content. Requests present the configured Chrome user
+agent, client hints, and content-negotiation headers. Chromium owns the complete
+`Sec-Fetch-*` metadata set: the runtime must not mix navigation-only values with
+the Fetch API values Chromium generates. Electron 42 leaves `Response.url` empty
+for this path, so a redirect observer on the dedicated session records the
+landing URL for result metadata and the existing cross-host hint; it does not
+construct or replay redirect hops. The real Electron probe exercises local read,
+metadata, and find modes, verifies a real 302 and a consistent Fetch Metadata
+set, and retains public reachability checks.
 
 `generate_image` separates the provider's original artifact from the bounded image shown
 to the model. It validates provider MIME/base64 against the 256 MiB source-image safety

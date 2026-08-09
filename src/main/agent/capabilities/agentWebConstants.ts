@@ -31,7 +31,6 @@ export const FETCH_TIMEOUT_MS = 45_000;
 export const WEB_FETCH_RETRY_DELAY_MS = 600;
 export const WEB_FETCH_BROWSER_TIMEOUT_MS = 20_000;
 export const WEB_FETCH_RENDER_SETTLE_MS = 5_000;
-export const WEB_FETCH_MAX_REDIRECTS = 10;
 export const MAX_FETCH_BYTES = 10 * 1024 * 1024;
 export const DEFAULT_FETCH_CHARS = 30_000;
 export const MAX_FETCH_CHARS = 100_000;

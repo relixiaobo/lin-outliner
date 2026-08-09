@@ -407,7 +407,7 @@ describe('agent local tools', () => {
       await writeFile(filePath, 'alpha\nbeta\n', 'utf8');
       const fileRead = createLocalTools({ localRoot: workspaceRoot })
         .find((tool) => tool.name === 'file_read')!;
-      const expectedWarning = 'Ignored the pages parameter because it only applies to PDF files. The file was read normally; use offset and limit to paginate text files.';
+      const expectedWarning = 'Ignored the pages parameter because it only applies to PDF files. The file was read normally as text; use offset and limit to paginate text files.';
 
       const firstResult = await (fileRead.execute as any)('non-pdf-pages-first', {
         file_path: filePath,
@@ -431,6 +431,25 @@ describe('agent local tools', () => {
       expect(cached.status).toBe('unchanged');
       expect(cached.warnings).toEqual([expectedWarning]);
       expect(JSON.parse((cachedResult.content[0] as { text: string }).text).warnings).toEqual([expectedWarning]);
+    });
+  });
+
+  test('file_read rejects non-string or blank pages instead of silently dropping them', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const filePath = path.join(workspaceRoot, 'document.pdf');
+      await writeFile(filePath, 'not read because argument validation runs first', 'utf8');
+
+      for (const pages of [12, '   ']) {
+        const read = await executeTool(workspaceRoot, 'file_read', {
+          file_path: filePath,
+          pages,
+        });
+
+        expect(read.ok).toBe(false);
+        expect(read.error?.code).toBe('invalid_args');
+        expect(read.error?.message).toContain('non-empty PDF page range string');
+        expect(read.instructions).toContain('"3" or "1-5"');
+      }
     });
   });
 
@@ -883,6 +902,27 @@ describe('agent local tools', () => {
     });
   });
 
+  test('file_read warns when pages targets image bytes behind a PDF extension', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const filePath = path.join(workspaceRoot, 'scan.pdf');
+      await writeFile(filePath, makePng(9, 13));
+      const tool = createLocalTools({ localRoot: workspaceRoot })
+        .find((candidate) => candidate.name === 'file_read')!;
+
+      const result = await (tool.execute as any)('image-behind-pdf-extension', {
+        file_path: filePath,
+        pages: '2',
+      });
+      const read = result.details as ToolEnvelope<{ type: 'image' }>;
+      const expectedWarning = 'Ignored the pages parameter because it only applies to PDF files. The file was read normally as an image; page selection is unavailable for images.';
+
+      expect(read.ok).toBe(true);
+      expect(read.data?.type).toBe('image');
+      expect(read.warnings).toEqual([expectedWarning]);
+      expect(JSON.parse(result.content[0].text).warnings).toEqual([expectedWarning]);
+    });
+  });
+
   test('file_read normalizes a large image into a bounded observation', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const filePath = path.join(workspaceRoot, 'large-image.png');
@@ -961,7 +1001,10 @@ describe('agent local tools', () => {
       try {
         await withPrependedPath(binDir, async () => {
           const tool = createLocalTools({ localRoot: workspaceRoot }).find((candidate) => candidate.name === 'file_read')!;
-          const result = await (tool.execute as any)('rich-doc-visible', { file_path: filePath });
+          const result = await (tool.execute as any)('rich-doc-visible', {
+            file_path: filePath,
+            pages: '2',
+          });
           const read = result.details as ToolEnvelope<{
             type: 'markdown';
             file: {
@@ -983,6 +1026,9 @@ describe('agent local tools', () => {
             originalSize: 'fake office payload'.length,
           });
           expect(read.instructions).toBe('The document was converted to Markdown locally.');
+          expect(read.warnings).toEqual([
+            'Ignored the pages parameter because it only applies to PDF files. The document was read normally as converted Markdown; file_read does not support page or offset/limit pagination for this format.',
+          ]);
 
           const visible = JSON.parse(result.content[0].text);
           expect(visible.data.file).toEqual({
@@ -1233,13 +1279,16 @@ describe('agent local tools', () => {
             converter: string;
             coverage: { totalSlides: number };
           };
-        }>(workspaceRoot, 'file_read', { file_path: filePath });
+        }>(workspaceRoot, 'file_read', { file_path: filePath, pages: '2' });
 
         expect(read.ok).toBe(true);
         expect(read.data?.file.converter).toBe('pptx-structural');
         expect(read.data?.file.coverage.totalSlides).toBe(1);
         expect(read.data?.file.content).toContain('Built-in PPTX reader');
         expect(read.instructions).not.toContain('MarkItDown');
+        expect(read.warnings).toEqual([
+          'Ignored the pages parameter because it only applies to PDF files. The presentation was read normally as Markdown; file_read does not support slide ranges or offset/limit pagination for presentations.',
+        ]);
       } finally {
         if (originalCommand === undefined) {
           delete process.env.LIN_AGENT_MARKITDOWN_COMMAND;
@@ -1584,12 +1633,15 @@ describe('agent local tools', () => {
       const read = await executeTool<{
         type: 'notebook';
         file: { totalCells: number; content: string; cells: Array<{ cellType: string; outputs?: string[] }> };
-      }>(workspaceRoot, 'file_read', { file_path: filePath });
+      }>(workspaceRoot, 'file_read', { file_path: filePath, pages: '2' });
 
       expect(read.ok).toBe(true);
       expect(read.data!.file.totalCells).toBe(2);
       expect(read.data!.file.content).toContain('--- Cell 1 (markdown) ---');
       expect(read.data!.file.cells[1]!.outputs).toEqual(['hi\n']);
+      expect(read.warnings).toEqual([
+        'Ignored the pages parameter because it only applies to PDF files. The notebook was read normally; file_read returns all rendered cells and does not support page or offset/limit pagination for notebooks.',
+      ]);
     });
   });
 
