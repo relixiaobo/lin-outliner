@@ -53,8 +53,10 @@ work.
   does not need public-network availability to catch this class of regression.
   The fixture includes a real 302 and rejects contradictory Fetch Metadata.
   Fixture setup and teardown are reported like other probes, public checks use
-  stable page signals, and process exit preserves the complete summary when
-  output is redirected.
+  stable page signals, tool-owned BrowserWindow closure cannot end the probe,
+  and process exit preserves the complete summary when output is redirected.
+  A final expected-name check makes an omitted, duplicated, or unplanned probe
+  an explicit failure rather than a partial green run.
 
 ### Tolerant non-PDF page selection
 
@@ -105,4 +107,6 @@ runtime decisions above.
 - [ ] PDF page selection remains covered by its existing rendering tests.
 - [ ] Redirected probe output contains the complete trailing summary and retains
   the correct exit code.
+- [ ] The BrowserWindow-backed search runs before later fetch probes, and closing
+  its window cannot terminate the process before every expected probe is recorded.
 - [ ] `bun run typecheck`, `bun run test:core`, and `bun run docs:check` pass.

@@ -54,8 +54,23 @@ const results: ProbeResult[] = [];
 const tools = createAgentTools();
 const DEFAULT_TOOL_TIMEOUT_MS = 30_000;
 const SEARCH_TOOL_TIMEOUT_MS = 85_000;
+const EXPECTED_PROBE_NAMES = [
+  'local fixture setup',
+  'web_fetch read local fixture',
+  'web_fetch metadata local fixture',
+  'web_fetch find local fixture',
+  'web_fetch follows local redirect',
+  'local fixture teardown',
+  'web_search Google SERP',
+  'web_fetch read example.com',
+  'web_fetch metadata example.com',
+  'web_fetch find example.com',
+] as const;
 
 async function main(): Promise<number> {
+  app.on('window-all-closed', () => {
+    // Tool-owned windows may close mid-run; this probe exits explicitly after its summary.
+  });
   await app.whenReady();
 
   const fixtureState: { fixture?: LocalWebFixture } = {};
@@ -81,13 +96,6 @@ async function main(): Promise<number> {
       });
     }
   }
-  await runWebFetchProbes(
-    'example.com',
-    'https://example.com/',
-    'Example Domain',
-    'domain',
-  );
-
   await runProbe('web_search Google SERP', async () => {
     const envelope = await executeTool<WebSearchProbeData>(
       'web_search',
@@ -117,6 +125,16 @@ async function main(): Promise<number> {
     return `count=${envelope.data.resultCount} first="${preview(first?.title ?? '')}"`;
   });
 
+  // Keep a non-window probe after web_search so a BrowserWindow close cannot
+  // silently truncate a green run before the summary.
+  await runWebFetchProbes(
+    'example.com',
+    'https://example.com/',
+    'Example Domain',
+    'domain',
+  );
+
+  recordProbeCompletenessFailure();
   printSummary();
   return results.some((result) => result.verdict === 'FAIL') ? 1 : 0;
 }
@@ -331,6 +349,33 @@ function rejectAfter(ms: number, message: string): Promise<never> {
 function recordResult(result: ProbeResult): void {
   results.push(result);
   console.log(formatResult(result));
+}
+
+function recordProbeCompletenessFailure(): void {
+  const actualNames = results.map((result) => result.name);
+  const expectedNames = new Set<string>(EXPECTED_PROBE_NAMES);
+  const missing = EXPECTED_PROBE_NAMES.filter((name) => !actualNames.includes(name));
+  const unexpected = [...new Set(actualNames.filter((name) => !expectedNames.has(name)))];
+  const duplicates = [...new Set(actualNames.filter((name, index) => actualNames.indexOf(name) !== index))];
+  if (
+    actualNames.length === EXPECTED_PROBE_NAMES.length
+    && missing.length === 0
+    && unexpected.length === 0
+    && duplicates.length === 0
+  ) return;
+
+  const detail = [
+    `expected=${EXPECTED_PROBE_NAMES.length} recorded=${actualNames.length}`,
+    ...(missing.length ? [`missing=${missing.join(', ')}`] : []),
+    ...(unexpected.length ? [`unexpected=${unexpected.join(', ')}`] : []),
+    ...(duplicates.length ? [`duplicates=${duplicates.join(', ')}`] : []),
+  ].join('; ');
+  recordResult({
+    name: 'probe completeness',
+    verdict: 'FAIL',
+    detail,
+    durationMs: 0,
+  });
 }
 
 function formatResult(result: ProbeResult): string {

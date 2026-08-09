@@ -178,7 +178,10 @@ for this path, so a redirect observer on the dedicated session records the
 landing URL for result metadata and the existing cross-host hint; it does not
 construct or replay redirect hops. The real Electron probe exercises local read,
 metadata, and find modes, verifies a real 302 and a consistent Fetch Metadata
-set, and retains public reachability checks.
+set, and retains public reachability checks. Tool-owned BrowserWindows do not own
+the probe process lifecycle: later probes continue after those windows close,
+and the run fails unless every expected probe name is recorded exactly once
+before the flushed summary and explicit exit.
 
 `generate_image` separates the provider's original artifact from the bounded image shown
 to the model. It validates provider MIME/base64 against the 256 MiB source-image safety
