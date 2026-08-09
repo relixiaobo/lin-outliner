@@ -33,36 +33,32 @@ has an entry here, and its status/priority live only here, never in the plan fil
 Items with no `docs/plans/*.md` file are marked *(no plan file)*. All owners are
 unassigned — future dev is not pre-committed to any clone.
 
-**Top of queue (2026-06-23 re-prioritization).** The agent portfolio is done, so the frontier is
-product surface + polish. Ranked candidates, tagged by build-readiness:
+**Top of queue (2026-08-09 re-prioritization, post-#505 close + staleness audit).**
+The flagship (`unified-command-surface`) shipped and the 2026-08-09 audit re-anchored
+every stale entry, so the frontier is four parallel lanes (detail lives in each item's
+theme-section entry below; this list is the ordering, not a second record):
 
-1. **`performance` P3** (build-ready now, fast-track) — localized O(N) cleanups. #380 shipped
-   reference-summary Trash set precomputation and default-panel row-model pruning; #413 shipped
-   core sparse transaction/write-path hardening, bounded journal/undo metadata, sparse replication
-   import, and yielding import cache/finalization; #414 shipped the main-side document read model
-   for Agent node tools and sparse `replace_outline` mutation facts; #415 shipped patch-first
-   focused rich-text editor input and Core/Loro ordinary patch application; #416 routed ordinary
-   Agent `node_create` through the maintained read model and transaction-local command deltas;
-   #417 extended that route to definition creation; #418 cached renderer `Intl` formatters;
-   #419 coalesced diagnostic log writes; #420 made renderer projection delta
-   snapshots bucketed copy-on-write with lazy `projection.nodes` views; #421
-   bounded search-query compilation and removed recursive query traversal; #422
-   made panel date-navigation counts incremental and windowed; #424 replaced
-   per-field full-map copies for system reference values with read-only overlays;
-   #426 cached active field-name reuse candidates per renderer projection snapshot;
-   #427 cached active tag selector candidates and the empty-query order per snapshot.
-   Remaining localized
-   cleanups are still tracked in `docs/plans/performance-optimization.md`; no design gate.
-2. **UI-quality Layer-3 remainder** (build-ready now, small) — `icon-semantics` (isolated) then
-   `dark-mode-contrast-pass` (runs **last**, cross-cutting light+dark pass). `keyboard-a11y` shipped #273.
-3. **`anthropic-auth-clarity`** (P3, *needs a small one-pager*) — PM picked option B (segmented
-   API-key/Claude-Pro control); presentation-only, light/dark gate.
-4. **`agent-skills-authoring` security/curation tails** (P1 tail) — Skillify v2 body, preview/confirm,
-   and NL save-as-skill routing shipped (#230/#271); remaining tails are executable support-file
-   ratify+sandbox and opt-in curation dry-run.
-5. **`file-preview` tail** (P2) — Office best-effort renderers and any later static URL-reader extraction.
-   Media streaming, direct URL preview, preview-first links, and sandboxed local HTML shipped in #345
-   (EPUB #339/#344, PDF #227, web-native basics #210 already in).
+- **Lane A — build-ready quick wins** (fast-track, parallelize freely; small items
+  don't count against the review-queue cap): `embed-strategy` (isolated protocol PR —
+  land **first** so siblings rebase once), `renderer-state-hygiene`,
+  `floating-toolbar-polish`, `icon-semantics`, the three prime-agent fast-tracks
+  (`agent-delegation-context-hygiene` · `agent-goal-continuation-enrichment` ·
+  `agent-hygiene-checks`), the `file-as-node` pane-restore bug, and the micro-tails
+  (#460 truncation dialects · `scripts-typecheck-coverage` · #208 follow-ups).
+  `dark-mode-contrast-pass` still runs **last** per its own rule; `performance` P3
+  remains an uncapped background lane (trail + remaining items under **Performance**).
+- **Lane B — agent reliability**: `agent-episodic-transcripts` PR 1 → PR 2, then
+  `agent-doc-drift-notice`.
+- **Lane C — product surface**: `file-preview` Office tail (apply its refresh note
+  first), then `agent-skills-authoring` security tail.
+- **Lane D — test-signal infrastructure**: e2e stability, starting with the
+  visual-media baseline fixture (`test.extend` default), then the run-dependent flaky
+  set as one problem.
+
+**Design-gate queue** (PM bandwidth; two open): `skill-path-ownership` first, then the
+`anthropic-auth-clarity` scope re-decision (its premise moved — five dual-auth
+providers now, see the entry). **Release:** freeze **v0.2.0** after #509 + Lane A
+lands; main drafts the user-register note, PM ratifies.
 
 `pi-ai-0.80-upgrade` shipped #348 (clean `Models` migration, not the interim `/compat` shim) — see *Recently completed*.
 `dream-channel-and-memory-retire` shipped in full (PR1 #324 + PR2 #328 + PR3 #329) — see *Recently completed*.
@@ -70,9 +66,9 @@ product surface + polish. Ranked candidates, tagged by build-readiness:
 **Needs design / escalation before build** (not in the queue yet):
 `launcher-provider-expansion`, the directional agent tails
 (`agent-self-modification` · `agent-generative-ui` — escalate the capability
-boundary), `agent-computer-control` (settle the hard-prohibition and
-helper-packaging decisions before implementation), and
-`browser-extension-integration` (record-only, **not approved to build**).
+boundary), and `browser-extension-integration` (record-only, **not approved to
+build**). `agent-computer-control` left this list 2026-08-09 — closed `superseded`,
+see its entry.
 
 The **agent program** (`agent-program`, `meta`) is PM-ratified and its whole arc — foundation
 through the multi-agent spine, **M0 → M3** — has fully landed (M0/M0.5 foundation · M1
@@ -111,7 +107,12 @@ capture-pipeline tracks below stay separate (orthogonal to the surface).
   classify into which source `kind` + capture framing (Tier A browser web apps
   classifiable now; Tier B native macOS apps later). Orthogonal to the command
   surface and survives the convergence intact; does **not** own rich extraction. See
-  `docs/plans/launcher-provider-expansion.md`.
+  `docs/plans/launcher-provider-expansion.md`. **2026-08-09 audit: VALID** — the
+  orthogonality claim held through #504/#505 (capture now *executes* through the
+  registry; classification stays here, and a Tier-A provider is still exactly the
+  plan's recipe). Two build-time pointers: the permission-remediation sub-item now has
+  a concrete home (`src/core/launcher/remediation.ts`, extend its discriminant), and
+  `launcherIcons.tsx` was rewritten in #505 — re-read it before adding provider glyphs.
 - **browser-extension-integration** (**record-only — not approved to build**) —
   future explicit read-only rich capture from an already-visible Tenon URL
   Preview through a narrow Electron-main reader. It adds no extension, external
@@ -238,9 +239,14 @@ before any directional/security-sensitive build.
   archived at `docs/plans/archive/native-turn-kernel.md`. **Follow-ups:** vocabulary-fronting
   import sweep SHIPPED as #447 (2026-07-30, codex-2; two sanctioned chokepoints — `kernel/types`
   for the type vocabulary, `piModels` for runtime functions — completion criterion: the `pi-ai`
-  importer list equals the transport allowlist exactly). Still queued: `subagent-budget-propagation`
-  PR C (draft #455) and the `Pi*` mechanical rename; the `agent-browser-control`
-  plan revision shipped as #459 (2026-07-30, codex-3).
+  importer list equals the transport allowlist exactly). Still queued: the `Pi*` mechanical
+  rename — **re-scoped by the 2026-08-09 audit**: ~86 genuinely stale sites in 5 files
+  (`runtime/PiTurnExecutor.ts` filename + its `Pi*` classes, `kernel/ModelGateway.ts`
+  `PiModelGateway*`, one `TranscriptRenderer.ts` import, two test files); the ~83
+  `piModels`/pi-ai transport-vocabulary sites (incl. the deliberate `PiImageContent`
+  import aliases) are the sanctioned #447 chokepoint and are **excluded**.
+  (`subagent-budget-propagation` PR C shipped as #455; the `agent-browser-control`
+  plan revision shipped as #459, 2026-07-30, codex-3.)
 - **threadservice-decomposition** (P2, `done` 2026-07-30; PR #451, codex-2) — the 4,502-line /
   107-method `ThreadService.ts` split into four owned modules (`ThreadResourceOps`,
   `ThreadCatalogOps`, `SubagentCollaboration`, `TurnLifecycle`) over one shared `ThreadCore`
@@ -315,14 +321,16 @@ see *Recently completed*.
   byte-unchanged through the move — R100 relocation only) and now guards every future
   contribution migration, incl. the browser-control landing zone. Plan archived at
   `docs/plans/archive/toolruntime-handler-contribution.md`.
-- **agent-conversation-model** (P1, the spine, M0–M3 — **M0–M3 all shipped; kept
-  `in-progress` only as the live design authority for the one deferred tail, mid-run
-  `needs-input`**) — IM-native rebuild: durable Agents in **DMs/Channels** over the ambient
-  outline; the per-agent **memory line**; background tasks + notifications; multi-member
-  Channels + **coordinator** routing; "session" dissolves into per-turn assembly.
-  Code-grounded (stress-tested against the real runtime). Owns the detailed design of the
-  M0 seams it analyzed (identity, `actor`, session→conversation, `AgentSessionState`
-  split). See `docs/plans/reference/agent-conversation-model.md`.
+- **agent-conversation-model** (P1, the spine, M0–M3 all shipped — **moved off
+  `in-progress` 2026-08-09**: the one tail it was held open for, mid-run `needs-input`,
+  is audit-verified **already shipped for its ratified scope** (`TurnLifecycle.ts:465` —
+  foreground root-Thread pause with timeout auto-resolution, abort unwind, renderer +
+  i18n; the plan itself scoped it to "a conversation's own foreground agent, never a
+  subagent", and the subagent half was closed by the 2026-06-08 respawn-not-resume
+  decision). The residual "floor-aware delivery in Channels + `needs-input` wake" belongs
+  to the unbuilt P3 multi-member spine — no Channel/coordinator exists in code — not to a
+  live tail. Stays a standing design authority (`meta`): IM-native model, per-agent memory
+  line, the M0 seams it analyzed. See `docs/plans/reference/agent-conversation-model.md`.
 - **agent-capability-ceiling** — **RESOLVED 2026-06-16: verified unnecessary, dropped (not
   built).** Post-#252/#266 capability is one **global** model (`decide(effect)` + non-configurable
   floor + a global grants ledger); a delegated/authored agent's `permissionMode` is type-locked to
@@ -381,7 +389,13 @@ see *Recently completed*.
   (gated on slash skills, not automatic listing). Remaining active work is the
   **security/curation tail**: executable support-file ratify+sandbox and opt-in
   curation dry-run.
-  See `docs/plans/agent-skills-authoring.md`.
+  See `docs/plans/agent-skills-authoring.md`. **Refresh before build (2026-08-09
+  audit):** the tail is precisely located and genuinely unbuilt —
+  `agentSkillAuthoring.ts:170` names it in its own error message, and
+  `EXECUTABLE_SUPPORT_EXTENSIONS` already lists exactly the extensions to allowlist —
+  but the plan's three-source table predates #406: `SkillSourceKind` now has four
+  sources (`types.ts:750`, adds `managed`), and Feature B's exclusion list should name
+  `managed` instead of the untrusted-repo heuristic.
 - **agent-self-modification** (P1, M1–M3, **slimmed by the reorg**) — controlled
   self-maintenance: self-observation (`runtime_status` / doctor), the cc-2.1-style
   `config` tool (single-agent self-configuration), **hooks** (untrusted consumer of the
@@ -392,11 +406,23 @@ see *Recently completed*.
   a follow-up PR — runtime settings stay user-managed via Settings → Agent meanwhile.
   **Skills moved to `agent-skills-authoring`; memory is `agent-conversation-model`'s.**
   Directional/security-sensitive — escalate the capability boundary to the PM before
-  building. See `docs/plans/agent-self-modification.md`.
+  building. See `docs/plans/agent-self-modification.md`. **Refresh before build
+  (2026-08-09 audit): ~60% of the plan describes removed code** — the
+  `codex_app.configuration_*` tools (zero hits; removed #333), delivery unit 1 (shipped
+  #153, removed #333 — the plan does not know), and a lifecycle-hook list claiming
+  `turnAdmitted`/`turnErrored` seams that do not exist (`ExtensionRegistry.ts:39-127`
+  exposes seven others). §Configuration ownership (`AgentConfigurationLoader.ts:137,141`)
+  and §Recovery semantics are intact; rewrite the rest around the `file_edit` +
+  validated-pipeline alternative this entry already names.
 - **agent-generative-ui** (P3, M1/M2, directional CSP/A3 gate) — Claude-style custom
   visuals in agent chat: the assistant generates interactive HTML/SVG widgets inline
   while the tool arguments stream; its `widget_state.updated` event joins the program
-  taxonomy. Mostly independent. See `docs/plans/agent-generative-ui.md`.
+  taxonomy. Mostly independent. See `docs/plans/agent-generative-ui.md`. **2026-08-09
+  audit: VALID** — premises held through every rewrite (delta union, `ThreadItemView`,
+  CSP/privileged-scheme seams, two shipped precedents); one addition required at build:
+  a §Progressive-argument-capture paragraph stating streamed argument deltas are
+  presentation-only speculation — the admitted canonical call (#483) stays the sole
+  argument authority.
 - **agent-browser-control** (P1 design, **`superseded` and closed 2026-08-03** — plan archived
   at `docs/plans/archive/agent-browser-control.md`; design authored #442/#443, revised #459;
   **no product code ever shipped, and none is needed**) — the 2026-07-31 review concluded the
@@ -425,16 +451,24 @@ see *Recently completed*.
   image instead of killing the user action. Generated originals use tiered retention under the
   Thread's 5/6/8 GiB pressure policy; external and durable originals remain protected. See
   `docs/plans/archive/generated-image-resources.md`.
-- **agent-computer-control** (P1, plan merged #361, implementation pending) —
-  Tenon-native macOS computer-use tool family covering the useful
-  `computer-pilot` / `cu` surface: setup diagnostics, app/menu/sdef discovery,
-  state/snapshot/OCR/screenshot observation, app-targeted click/type/key/AX
-  actions, waits, pointer/window/app control, AppleScript, and defaults. The
-  initial backend adapts `cu` through strict `execFile` argv builders, preserves
-  `--app`-targeted method audit/verification fields, and returns screenshots /
-  annotated captures as payload-backed image tool results. Directional/security-
-  sensitive: implementation still needs helper-packaging and hard-prohibition
-  decisions before code. See `docs/plans/agent-computer-control.md`.
+- **agent-computer-control** (P1 design, **`superseded` and closed 2026-08-09** — plan
+  archived at `docs/plans/archive/agent-computer-control.md`; no product code ever
+  shipped: `rg 'ComputerControl|TENON_CU|computer_setup' src/` is empty) — the
+  browser-control precedent (closed 2026-08-03, same lesson, entry above) applies
+  verbatim and is now observable rather than predicted: the managed-Skill channel is
+  spec (`agent-tool-design.md`, the Browser Pilot pattern), the per-Skill host seam is
+  generic (`managedSkillShellEnvironment.ts` — a `computer-pilot` contributor is ~5
+  lines against the plan's 13 tools + 6 services), and the plan's own critical product
+  requirement — the model must see the pixels — is already met by `file_read` returning
+  image content (`agentLocalTools.ts:929`). Three of the plan's five referenced specs no
+  longer exist and its payload shape predates #490 artifact refs. Residue re-filed as
+  **computer-pilot-managed-skill** below.
+- **computer-pilot-managed-skill** (P3, `draft`, *no plan file*) — ship macOS
+  computer-use as a managed-Skill catalog entry (`computer-pilot` / `cu`) plus a
+  `ManagedSkillShellEnvironment` contributor (env + PATH segment + per-Turn output dir —
+  the `browserPilotHost.ts` shape, ~200 lines); visual results reach the model through
+  existing `file_read` image content. Artifact durability rides the tool-agnostic
+  **agent-tool-artifact-resources** item under standalone agent items.
 Standalone agent items (not part of the program):
 
 - **agent-secrets-windows-acl** (P3, *no plan file*) — follow-up from #115: the
@@ -442,33 +476,30 @@ Standalone agent items (not part of the program):
   Windows currently falls back to the user-profile ACL with no extra restriction.
   Add Windows ACL hardening if/when Windows becomes a supported target. See
   `[[agent-secrets-plaintext-decision]]` rationale.
-- **agent-dream-secret-redaction** (P3, *no plan file*) — follow-up from #159
-  (runtime Dream extraction): the runtime-owned Dream worker sends raw completed-turn
-  evidence (including tool-call arguments and tool results) to a no-tools model and
-  can persist proposed facts into the durable, plaintext-`0600` memory event store;
-  the only guard against capturing a secret/credential is the extractor prompt ("Do
-  not save secrets/credentials..."). **PM decision (2026-06-07): accept prompt-level
-  for now** — it matches the ratified write design (memory writes are runtime-owned,
-  what-not-to-save is model-guided). Add a defense-in-depth code-level guard later
-  (e.g. skip/redact obvious secret patterns / high-entropy strings before
-  add/update), accepting it is heuristic and imperfect. Memory store is plaintext at
-  rest like the secrets store — see `[[agent-secrets-plaintext-decision]]`.
+- **agent-tool-artifact-resources** (P3, `draft`, *no plan file* — re-filed 2026-08-09;
+  the browser-control close-out explicitly recommended boarding this tool-agnostically
+  and it never was) — tool artifacts (screenshots, PDFs, downloads) become durable
+  Thread resources readable by `file_read` and pruned by the resource system, plus a
+  per-Turn output root. Not browser-specific; also carries the artifact story for
+  **computer-pilot-managed-skill** above.
 - **agent-dream-followups** — **REMOVED 2026-08-03.** Seven polish items for a subsystem
   that no longer exists: `dream-channel-and-memory-retire` retired Dream in full (#324, #328,
   #329) and `rg -i dream src/` is empty. It survived the retirement because nothing links a
   backlog item to the code it polishes — the retirement PRs had no reason to look here.
+  **Same removal applied 2026-08-09 to `agent-dream-secret-redaction`** — the staleness
+  audit found its subject (the Dream extraction worker) is the same retired code.
 
-- **anthropic-auth-clarity** (P3, *no plan file*) — Anthropic is the only provider
-  carrying BOTH an OAuth login (Claude Pro/Max) and an API key on one pi-ai id
-  (`OAUTH_API_KEY_FALLBACK = {'anthropic'}` in `providerCatalog.tsx`), shown
-  OAuth-primary with a buried "use API key instead" link; `openai-codex` /
-  `github-copilot` are oauth-only, the rest api-key-only. PM picked **option B
-  (clarity, no data-model change)**: on the Anthropic row, replace the hidden toggle
-  with an explicit segmented control ("API key" | "Claude Pro/Max") up front,
-  defaulting to whichever credential is stored. Single `anthropic` credential slot
-  stays (mutually exclusive) — presentation only. Touches `ProviderConfigWindow.tsx`,
-  `ProviderOAuthForm.tsx`, i18n en/zh + `i18nCoverage`; design-system neutral tokens
-  (B3/B4), UI gate = light/dark visual. Dev drafts the build one-pager.
+- **anthropic-auth-clarity** (P3, *no plan file*, **premise refreshed 2026-08-09 —
+  scope decision pending PM**) — the original premise is stale: dual OAuth+API-key
+  providers are now **five**, not one — `OAUTH_API_KEY_FALLBACK = {anthropic,
+  kimi-coding, openrouter, radius, xai}`, moved to
+  `src/renderer/ui/agent/providerOAuthCapabilities.ts:4` (gate at
+  `ProviderConfigWindow.tsx:169`, buried "Use an API key instead" link at
+  `ProviderOAuthForm.tsx:333`). The ratified **option B** (explicit segmented
+  "API key | OAuth" control up front, single mutually-exclusive credential slot,
+  presentation only) still fits, but the PM must re-decide scope: Anthropic-only, or
+  all five dual-auth rows. Dev drafts the build one-pager after that call. i18n en/zh +
+  `i18nCoverage`; design-system neutral tokens (B3/B4), UI gate = light/dark visual.
 
 ### Files & media
 
@@ -483,12 +514,26 @@ archived `done` (see Recently completed). Remaining active work:
   Range-capable streams + media renderers, direct URL preview, preview-first links, sandboxed local
   HTML)** — remaining: **Office** and optional static URL-reader extraction if PM wants reader-mode
   pages beyond the hardened webview preview. See `docs/plans/file-preview.md`.
+  **Refresh before build (2026-08-09 audit):** the plan's printed registry interface
+  drifted (`PreviewRendererEntry` has no `priority`/`toolbar` slot — array order is
+  priority, chrome is `mediaActions`; `previewRenderers.tsx:198`); the Office section
+  must first decide reuse-vs-rebuild against main's shipped routes (`agentPptxIngestion.ts`
+  hardened OOXML + the MarkItDown subprocess for docx/xlsx) or it creates a **third**
+  Office path; and the static URL reader is essentially built
+  (`agentWebFetchContent.ts`, Defuddle extraction) — rescope that section to exposing
+  the existing extractor as a preview presentation.
 - **file-as-node follow-up** (low, pre-release bug, *no plan file*) — restoring a persisted pane
   whose top view was an `asset` file-preview drops the whole pane instead of salvaging its outliner
   anchor / backStack (`useWorkspaceLayout` `sanitizePanel`). Dev-only userData, narrow same-day
   window. (Feature shipped #241, archived `done`.)
-- **asset-gc** (P2, *no plan file*) — asset `index.json` rebuild + garbage
-  collection for orphaned assets; drag-from-Finder ingest; inline alt-text editing.
+- **asset-gc** (P2, *no plan file*, **rescoped 2026-08-09**: the `index.json` half is
+  obsolete — no index exists, authoritative `<id>.meta.json` sidecars carry metadata
+  (`assetService.ts:33`) — and drag-from-Finder ingest shipped
+  (`OutlinerItem.tsx:909`)) — remaining: an **orphan-asset sweep** that must walk both
+  node→asset fields (`bannerAssetId`, image/attachment `assetId`, `thumbnailAssetId`)
+  **and** asset→asset edges (PDF thumbnail derivation) — distinct from #490's
+  Thread-payload retention, which is a different store with no shared sweeper — plus
+  **inline alt-text editing** (`mediaAlt` is writable only at node creation today).
 ### Outliner & UI polish
 
 - **nodex-parity-decisions** (meta, *standing reference — not a work item*) — the
@@ -505,25 +550,36 @@ archived `done` (see Recently completed). Remaining active work:
   site is `// TODO plural via Intl`-marked; the `n===1` ternary only breaks when a
   multi-form European locale lands); (2) finish the date/number second sweep —
   outliner group-by labels (`state/outlinerRows.ts`: `(Empty)`/`Done`/`Yes`/`No`)
-  + agent debug timestamps still OS-locale, need a labels bundle threaded through
-  the row pipeline; (3) add 繁體中文 / 日本語 / a European locale once more surfaces
+  + `AutomationRunsView.tsx:95,103` raw `Intl` formatters still OS-locale (the 2026-08-09
+  audit re-pointed this from "agent debug timestamps"; route them through the #418
+  locale-threaded cached helpers in `ui/formatting.ts`), need a labels bundle threaded
+  through the row pipeline; (3) add 繁體中文 / 日本語 / a European locale once more surfaces
   are extracted. Full detail in the archived plan `docs/plans/archive/i18n-multi-language.md`.
 - **floating-toolbar-polish** (P3, build-ready) — heading-mark toggle + `#`
   selection extract in the floating editor toolbar. Destination policy
   **PM-ratified 2026-08-06: option A** (per-tag `defaultExtractParentId`). See
-  `docs/plans/floating-toolbar-polish.md`.
+  `docs/plans/floating-toolbar-polish.md`. **2026-08-09 audit: VALID** (registry does
+  not claim at-caret surfaces, `action-registry.md:296`); two stale refs at build:
+  `TextMarkKind` is `types.ts:213` (not :110) and the Heading icon source is
+  `icons.ts:75` (`AgentMarkdown.tsx` is gone); mirror the registry `addTag`
+  create-then-apply candidate policy in the `#`-extract tag pick.
 - **embed-strategy** (P3, build-ready, small) — remove the dead
   `embedType`/`embedId`/`'embed'` schema from `src/core/types.ts` (verified
   still present; no renderer or command ever produced such a node). Touches the
   protocol surface, so it lands as an **isolated PR** siblings rebase over. The
   cached-metadata-card alternative lost on positioning and is recorded in the
   plan so it is not silently re-opened. See `docs/plans/embed-strategy.md`.
-- **past-chats-output-polish** (P3, *no plan file*) — minor cleanups deferred from PR #7:
-  (1) drop the now-redundant `returned_items` / `returned_hits` / `message_count`
-  counts in `visiblePastChatsResult` (derivable from the inline arrays);
-  (2) avoid `isJsonText` re-parsing on every render in `AgentToolCallBlock`
-  (compute once in the memoized `resultParts`); (3) give `visiblePastChatsResult`
-  a named return type instead of `unknown`. None affect behavior.
+  **Widened by the 2026-08-09 audit:** removal forces a search-facet decision the plan
+  does not mention — `searchEngine.ts` builds `has:audio`/`has:video`/`type:embed`
+  semantics on the dead type (`:2084,2093-2123,1970`) while `AttachmentNode`, the real
+  media carrier since #204/#241, is not consulted by those predicates. Decide
+  re-point-to-attachment vs remove-the-facets, and rewrite the encoding tests rather
+  than deleting them. Still one isolated protocol PR, but a behavior decision, not a
+  compiler exercise.
+`past-chats-output-polish` was **REMOVED 2026-08-09** — every named symbol
+(`visiblePastChatsResult`, `AgentToolCallBlock`, the count fields) died with the
+Agent Core replacement (`59c7e1cf`, 2026-07-24); recall lives in the memory
+extension now. Same no-link-to-code disease as the Dream entries.
 
 ### UI quality (design-system consistency)
 
@@ -541,12 +597,21 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   `threadToolIcons` guard and left it one open question: an interrupted tool row
   shares `--text-faint` with a completed one, so the two read alike — giving
   interrupted its own hue is a B4 call this lane owns. See
-  `docs/plans/icon-semantics.md`.
+  `docs/plans/icon-semantics.md`. **Call sites moved (2026-08-09 audit):** #504
+  extracted glyph mapping to `outliner/actionIcons.tsx` — G4 lands there and now also
+  reaches the launcher action panel; the `ConfigIcon` refs are
+  `DefinitionConfigPanel.tsx:161,166`. The interrupted-hue question is confirmed live
+  (`thread.css:1481-1495`, identical `--text-faint` to completed, deliberately per its
+  comment) — ratify or close it at this lane's gate.
 - **dark-mode-contrast-pass** (P3, cross-cutting) — runs **last**, after L1/L2, as a
   real light+dark run to confirm static contrast risks + apply one-token
   `theme-dark.css` nudges. PR #377 already landed the central dark
   `--text-tertiary` lift; the full visual walk remains active. See
-  `docs/plans/dark-mode-contrast-pass.md`.
+  `docs/plans/dark-mode-contrast-pass.md`. **2026-08-09 audit:** the plan's row 1 IS
+  #377 — mark it done and demote rows 5/9 to confirm-only; its `.agent-menu-button`
+  precedent selector no longer exists (cite #377 itself instead); and the "command
+  popover" walk item now means `launcher.css` (#505 retired `CommandPalette`). The
+  remaining token targets verified intact.
 
 
 ### Performance
@@ -587,40 +652,47 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
 
 ### Storage & platform hygiene (from the 2026-06-10 pre-release sweep)
 
-- **renderer-state-hygiene** (P3, *fast-track, no plan file*, **PM-ratified**) — three
-  small renderer items in one PR: (1) `useWorkspaceLayout.ts` localStorage key says
-  `:v4` (`STORAGE_KEY`) but the persisted `version` int is `3` — align key↔int (drop
-  nothing; pre-release old keys are simply ignored, no migration), and fix the
-  `workspace-layout.md` claim in the same change (A6/A8); (2) on a projection delta,
-  cull `removedIds` from `focusedId`/`selectedIds`/`expanded` instead of relying on
-  read-side defensive checks; (3) pin the focus convention in `ui-behavior.md`:
-  outliner-row focus must go through the focusRequest rail (IME composition guard,
-  #176 family) — direct `element.focus()` is for non-editor chrome only. Renderer-only;
-  no collision with #179/#180.
+- **renderer-state-hygiene** (P3, *fast-track, no plan file*, **PM-ratified; rescoped
+  2026-08-09 — the key/version item already shipped**: key and int are both at v7,
+  `useWorkspaceLayout.ts:20-21`, and `workspace-layout.md:283` matches) — two remaining
+  renderer items in one PR: (1) on a projection delta, cull `removedIds` from
+  `focusedId`/`selectedIds`/`expanded` instead of relying on read-side defensive checks
+  (audit-verified still absent: the delta reducer at `state/document.ts:117` patches
+  only projection structures and never touches `UiState`); (2) pin the focus convention
+  in `ui-behavior.md`: outliner-row focus must go through the focusRequest rail (IME
+  composition guard, #176 family) — direct `element.focus()` is for non-editor chrome
+  only (audit-verified: the rule currently exists only on this board). Renderer-only.
 
 ### Deferred follow-ups & carried TODOs
 
 Small unclaimed items split off from shipped PRs — fast-track each when a clone is free; none block
 anything.
 
-- **#208 review follow-ups** (P3, *fast-track, no plan file*) — non-blocking items surfaced by
-  `/code-review high` on #208: **F7** add a core test pinning the agent `get_backlinks` projection
-  shape (`core.backlinks()` field-hosted-ref: `sourceId` = owner node, kind `field`); **F8** confirm +
-  test that search `LINKS_TO` / `WITH_REFS` excludes config/enum-role child refs via the shared
-  allowlist; **F2** case-fold length edge (İ/ß can change normalized length; CJK unaffected, low);
-  **F11** agent `backlinks()` rebuilds the full reference summary per call (main-process, not hot — cache
-  only if it shows up); **caseFold/`isMentionWord` dedup** — share one normalizer/word-boundary helper
-  with the search engine's `normalizeSearchText` / `WORD_RE` instead of two copies.
+- **#208 review follow-ups** (P3, *fast-track, no plan file*; **refs corrected by the
+  2026-08-09 audit** — there is no `get_backlinks`; the surfaces are
+  `agentNodeToolProjection.backlinks` via `node_read include_backlinks`, and
+  `core.backlinks()`) — **F7** the field-hosted-ref shape is already pinned at the
+  summary layer (`references.test.ts:38`); still unpinned: the `field` kind through
+  `core.backlinks()` (core tests cover only tree+inline) and the agent
+  `include_backlinks` output shape. **F8** the confirm half is done in code (`LINKS_TO`
+  / `WITH_REFS` route through the `BACKLINK_REF_ROLES` allowlist —
+  `searchEngine.ts:1407`, `references.ts:91`); the test half remains: no test sets
+  `refRole` on those ops. **F2** case-fold length edge (İ/ß; CJK unaffected, low).
+  **F11** `backlinks()` rebuilds the full reference summary per call (main-process, not
+  hot — cache only if it shows up). **Dedup** still valid: `references.ts:387`
+  `isMentionWord`/`caseFold` vs `textSearchAnalyzer.ts:59` `WORD_RE`/`normalizeSearchText`.
 - **flaky-pathless-image-chunking-e2e** (P3, *fast-track, no plan file*, filed 2026-07-31 at the
-  #464 gate) — `agent-thread.spec.ts:1247` *"streams a pathless image in bounded chunks and records
-  only a managed reference"* fails under full-suite parallel load but passes in isolation (1 fail
+  #464 gate) — `agent-thread.spec.ts` › *"streams a pathless image in bounded chunks and records
+  only a managed reference"* (anchor by title — the 2026-08-09 audit found every line ref in
+  these entries had drifted; it sat at :1452 that day) fails under full-suite parallel load but passes in isolation (1 fail
   in the gate's 538-test run, then 1/1 pass solo; #464's own probe saw 3 pass / 2 fail across five
   runs). The total byte count stays correct in the failing runs, so the suspicion is a
   chunk-boundary timing assumption in the test rather than a streaming bug. Reproduce the boundary
   split deterministically before touching product code.
 - **e2e-visual-media-baseline-fixture** (P3, *fast-track, no plan file*, filed 2026-08-03 at
   the #479 gate) — #479 gave the suite `tests/e2e/emulatedMedia.ts`, which pins all five
-  visual preferences over CDP, but it is **opt-in per call site**: three specs call it, and
+  visual preferences over CDP, but it is **opt-in per call site**: two specs call it
+  (`agent-thread.spec.ts`, `window-material.spec.ts` — count re-verified 2026-08-09), and
   `rg 'test.extend' tests/e2e` returns nothing. The environmental premise it works around is
   permanent — GitHub's macOS images report `prefers-reduced-transparency: reduce`, flipping
   the whole `:root` override block in `a11y.css` — so any future guard that asserts a rail,
@@ -631,7 +703,7 @@ anything.
   fixes it once instead of per spec.
 - **file-attachment-inline-preview-local-flake** (P3, *fast-track, no plan file*, filed
   2026-08-01 at the #475 gate, **rescoped 2026-08-01 once CI existed**) —
-  `file-attachments.spec.ts:178`
+  `file-attachments.spec.ts`
   › *"/attachment creates a lightweight file name row whose chevron expands an inline preview
   and whose bullet drills to the node page"* is a **local-environment flake**, not a red
   baseline. It fails often on a developer's machine and passes **0/10 in CI macOS**, so it is
@@ -644,7 +716,8 @@ anything.
   `e2e-signal-on-main` exists and was worth the build: four samples is not enough to call a
   test "always", and the person who got it wrong here was the gate.
   **It is not a geometry failure.** The assertion is inside
-  `expectConcentricPreviewCorners` (`file-attachments.spec.ts:139`, called from `:322`) and
+  `expectConcentricPreviewCorners` (declared at `file-attachments.spec.ts:122` per the
+  2026-08-09 audit; the `:322` call site is still exact) and
   it reports `Received: null` — the helper's own `if (!content) return null` guard, meaning
   `.file-preview-pdf--summary` is never found inside the visible preview frame within the
   5s poll. So the frame mounts and passes `toBeVisible()`, and the PDF summary subtree
@@ -677,9 +750,13 @@ anything.
   ('... N chars omitted ...', head+tail) — one exported helper (or at least one marker
   format) so a transcript never shows two truncation conventions for the same field.
   Confirmed at the #460 high gate but omitted from the fix list; cosmetic, forensics-only.
+  The 2026-08-09 audit found a **third** dialect to fold in: `agentLocalTools.ts:3201`
+  (`...[N bytes omitted; full output saved to file]...`).
 - **scripts-typecheck-coverage** (P3, *fast-track, no plan file*) — `scripts/` sits outside
   tsconfig `include`, so nothing typechecks `scripts/agent-dump.ts` or its hand-rolled
-  `bunSqliteAdapter` (surfaced by the #460 gate; repo-wide gap, not #460's blocker). Fix = a
+  `bunSqliteAdapter` (surfaced by the #460 gate; the 2026-08-09 audit counts the gap at
+  **16 scripts**, incl. the load-bearing `e2e-classify.ts` / `e2e-compare.ts` and
+  `docs-check.ts`). Fix = a
   `tsconfig.scripts.json` (or widened `include`) wired into `bun run typecheck`, plus whatever
   the first real check surfaces.
 

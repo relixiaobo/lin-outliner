@@ -520,3 +520,19 @@ hands that member to Chromium and creates a contradiction with the members you
 kept. So: **when a set of headers is defined jointly and the platform generates
 some of them, take all of it or none of it.** Deleting the one field that
 errored is a fix shaped by the error message, not by the contract.
+
+## Plans reference code by symbol, and big rewrites sweep the active plans
+
+The 2026-08-09 staleness audit of all 25 active items found one failure pattern
+everywhere: plan files and board entries do not evolve with the code, and the
+board records "shipped" while the plan file does not. Two whole items described
+subjects that no longer existed (`past-chats-output-polish`,
+`agent-dream-secret-redaction`), one P1 plan was superseded by a channel that
+now ships in spec (`agent-computer-control`), one "deferred tail" had in fact
+been built (`needs-input`, `TurnLifecycle.ts:465`), and in the flaky-test
+entries every line-number reference had drifted while every title/symbol
+reference survived. Two rules follow. **Reference code by symbol and test
+title, never by line number** — lines rot in weeks, names rot in quarters.
+**A large rewrite's gate checklist includes sweeping the active plans' reference
+surface** — the retirement PR is the only moment someone provably knows which
+premises just died; nothing else links a backlog item to the code it describes.
