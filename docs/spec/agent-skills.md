@@ -408,13 +408,55 @@ so afterwards is notification, not consent. If the chosen folder's name cannot
 be a Skill identity, the picker refuses and says why instead of adding something
 that would list nothing.
 
-That inference is deliberately absent. Resolving it meant deciding ownership at
-write time from an ordered set of guesses, and every guard added to one branch
-left the neighbouring branch, the create path, the conditional path, or the
-post-reload state resolving to the wrong Skill or to none — which is an
-ungoverned or misattributed write to the file that decides what the model
-executes. "A bound directory that is itself a Skill" is a separate seam and is
-tracked separately.
+Container shape does not make an explicitly bound directory a dedicated Skill
+namespace. The loader publishes the physical child roots it successfully
+admitted, and only those roots own their `SKILL.md` and support content. A path
+such as `<bound>/taxes/2025.md` is therefore ordinary content when `taxes` did
+not load as a Skill, and `<bound>/Research Notes/summary.md` is not rejected just
+because that ordinary folder cannot be a Skill identity. Ownership includes
+path-conditional Skills and valid physical roots hidden by canonical-name
+precedence; invocation visibility never decides write governance. If convention
+and bound candidates overlap, the most specific valid Skill root owns the path;
+source enumeration order never settles ownership.
+
+An exact `<bound>/<name>/SKILL.md` write is still a governed **admission
+attempt**. This lets the agent create or repair a definition through the
+identity and content validators without claiming other files under an unloaded
+child directory. Admission validates the prospective bundle's existing support
+files before writing the definition, including the executable, secret-looking,
+symlink, per-file-size, and bounded-file-count authoring rules. An agent may
+therefore write ordinary files first, but unsafe files prevent that directory
+from becoming an agent-authored Skill.
+
+Convention directories are different: `~/.agents/skills`, the workspace
+`.agents/skills`, and dynamically discovered nested `.agents/skills` directories
+exist specifically for Skills. They retain path-shaped ownership so a brand-new
+definition and its prospective support path are governed from the first write.
+
+The registry publishes bound-root ownership only after a complete load. A root
+that was admitted remains owned while its directory is still bound and present,
+even when `SKILL.md` is temporarily unparseable; a newly parsed root shadowed by
+an immutable built-in is not published. Resolution waits for the current
+registry generation before deciding a path, so a runtime settings bind has no
+post-update ungoverned window. Definition and managed-content writes invalidate
+the registry without awaiting a full scan inside the initiating mutation; the
+next path resolution, catalog projection, or invocation performs the awaited
+reload.
+
+Physically identical search directories are scanned once, with convention
+policy winning over a bound alias, but all logical aliases remain available for
+accurate write attribution. Each requested path is canonicalized asynchronously
+once, while admitted roots reuse physical identities computed at load time.
+Owner selection prefers the logical alias traversed by the request and then the
+deepest logical root. Canonical root matching follows a symlinked Skill to its
+physical root but does not make a child symlink that escapes the root into Skill
+content. Built-in and managed immutable fences remain authoritative when roots
+overlap.
+
+The runtime still does not infer that a bound directory is itself a Skill.
+Resolving that meant deciding between container and self ownership at write time
+from ordered guesses; "a bound directory that is itself a Skill" remains a
+separate tracked seam.
 
 **A Skill's directory name must be a valid Skill identity**
 (`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`), and that is enforced at **admission**, not

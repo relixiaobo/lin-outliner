@@ -1,5 +1,4 @@
 import path from 'node:path';
-import { existsSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import {
   isReadOnlyModelToolActionKind,
@@ -13,6 +12,7 @@ import {
   type ToolAccessScope,
   type ToolActionDescriptor,
 } from './agentCapabilityRules';
+import { canonicalPathPreservingSuffix } from './agentAttachmentMaterialization';
 
 export type {
   AgentToolActionKind,
@@ -62,7 +62,7 @@ export interface AgentCapabilityEvaluationInput {
 }
 
 export function createAgentCapabilityPolicy(input: AgentCapabilityPolicyInput = {}): AgentCapabilityPolicy {
-  const workspaceRoot = canonicalPathPreservingSuffix(input.workspaceRoot ?? process.cwd());
+  const workspaceRoot = canonicalPathPreservingSuffix(expandHome(input.workspaceRoot ?? process.cwd()));
   return {
     workspaceRoot,
     capabilityConfig: parseAgentCapabilitySettings(input.capabilityConfig),
@@ -392,23 +392,6 @@ function expandHome(inputPath: string): string {
   if (inputPath.startsWith('$HOME/')) return path.join(homedir(), inputPath.slice(6));
   if (inputPath.startsWith('${HOME}/')) return path.join(homedir(), inputPath.slice(8));
   return inputPath;
-}
-
-function canonicalPathPreservingSuffix(inputPath: string): string {
-  const requested = path.resolve(expandHome(inputPath));
-  let existing = requested;
-  while (!existsSync(existing)) {
-    const parent = path.dirname(existing);
-    if (parent === existing) break;
-    existing = parent;
-  }
-  try {
-    const canonicalExisting = realpathSync.native(existing);
-    const suffix = path.relative(existing, requested);
-    return suffix ? path.resolve(canonicalExisting, suffix) : canonicalExisting;
-  } catch {
-    return requested;
-  }
 }
 
 function parseShellWords(command: string): string[] {

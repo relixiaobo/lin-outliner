@@ -21,10 +21,11 @@ import {
   successEnvelope,
   type ToolEnvelope,
 } from './agentToolEnvelope';
-import type { AgentSkillRuntime } from './agentSkills';
+import type { AgentSkillContentTarget, AgentSkillRuntime } from './agentSkills';
 import {
   AgentSkillAuthoringError,
   validateAgentSkillContentWrite,
+  validateAgentSkillSupportFile,
   type AgentSkillWriteAudit,
 } from './agentSkillAuthoring';
 import {
@@ -829,26 +830,30 @@ async function notifySuccessfulSkillContentWrite(
 
 type SelfDefinitionWrite = { kind: 'skill'; skillWrite: AgentSkillWriteAudit };
 
-function validateSelfDefinitionContentWriteOrThrow(input: {
+async function validateSelfDefinitionContentWriteOrThrow(input: {
   workspace: WorkspaceContext;
   filePath: string;
   content: string;
   previousContent: string | null;
   operation: 'file_edit' | 'file_write';
-}): SelfDefinitionWrite | null {
+}): Promise<SelfDefinitionWrite | null> {
   // One source of truth for "is this a skill write": the live skill registry. Without a
   // skill runtime there are no skills to govern, so a write under the skill self-dir is refused.
-  const target = input.workspace.skillRuntime?.resolveSkillTarget(input.filePath) ?? null;
+  const target = await input.workspace.skillRuntime?.resolveSkillTarget(input.filePath) ?? null;
   if (target) {
     try {
+      const skillWrite = validateAgentSkillContentWrite({
+        target,
+        content: input.content,
+        previousContent: input.previousContent,
+        operation: input.operation,
+      });
+      if (target.ownership === 'bound-admission') {
+        await validateBoundSkillBundleAdmission(target, input.filePath);
+      }
       return {
         kind: 'skill',
-        skillWrite: validateAgentSkillContentWrite({
-          target,
-          content: input.content,
-          previousContent: input.previousContent,
-          operation: input.operation,
-        }),
+        skillWrite,
       };
     } catch (error) {
       if (error instanceof AgentSkillAuthoringError) {
@@ -869,8 +874,63 @@ function validateSelfDefinitionContentWriteOrThrow(input: {
   return null;
 }
 
+const MAX_AGENT_AUTHORED_SKILL_BUNDLE_FILES = 1_000;
+
+async function validateBoundSkillBundleAdmission(
+  definitionTarget: AgentSkillContentTarget,
+  definitionFile: string,
+): Promise<void> {
+  const pendingDirectories = [definitionTarget.skillRoot];
+  let supportFileCount = 0;
+  while (pendingDirectories.length > 0) {
+    const directory = pendingDirectories.pop()!;
+    const entries = await readdir(directory, { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return [];
+      throw error;
+    });
+    entries.sort((left, right) => left.name.localeCompare(right.name));
+    for (const entry of entries) {
+      const entryPath = path.join(directory, entry.name);
+      if (path.resolve(entryPath) === path.resolve(definitionFile)) continue;
+      const relativePath = path.relative(definitionTarget.skillRoot, entryPath).split(path.sep).join('/');
+      if (entry.isSymbolicLink()) {
+        throw new AgentSkillAuthoringError(
+          'symlinked_skill_support_file',
+          `Symlinked skill support files require a dedicated review path: ${relativePath}`,
+          'Replace the symlink with a visible text support file, or have the user review and admit this Skill manually.',
+        );
+      }
+      if (entry.isDirectory()) {
+        pendingDirectories.push(entryPath);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      supportFileCount += 1;
+      if (supportFileCount > MAX_AGENT_AUTHORED_SKILL_BUNDLE_FILES) {
+        throw new AgentSkillAuthoringError(
+          'skill_bundle_too_large',
+          `Skill bundle contains more than ${MAX_AGENT_AUTHORED_SKILL_BUNDLE_FILES} support files.`,
+          'Reduce the bundle before admitting it through agent authoring.',
+        );
+      }
+      const entryStat = await stat(entryPath);
+      const supportTarget = {
+        ...definitionTarget,
+        relativePath,
+        isSkillFile: false,
+      };
+      validateAgentSkillSupportFile(supportTarget, '', entryStat.size);
+      const content = await readFile(entryPath, 'utf8');
+      validateAgentSkillSupportFile(supportTarget, content);
+    }
+  }
+}
+
 function skillWriteInstructions(skillWrite: AgentSkillWriteAudit): string {
-  return `Skill content write validated for ${skillWrite.skillName}; the skill registry has been reloaded. Previous content metadata is retained in tool details for rollback. The skill is slash-invocable now, and model-invocable skills can appear in the automatic model skill listing without a separate trust prompt.`;
+  if (skillWrite.changeType === 'support-file-write') {
+    return `Skill support content write validated for ${skillWrite.skillName}; support files do not require a registry reload.`;
+  }
+  return `Skill definition write validated for ${skillWrite.skillName}; the registry is invalidated, and the next Skill resolution will await a reload and fail closed if it cannot complete. Previous definition metadata is retained for rollback.`;
 }
 
 // The skill self-definition outcome maps onto a file-write the same way for both
@@ -1265,7 +1325,7 @@ function createFileEditTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
         const nextContent = params.replace_all
           ? current.content.split(params.old_string).join(params.new_string)
           : current.content.replace(params.old_string, params.new_string);
-        const selfDefinitionWrite = validateSelfDefinitionContentWriteOrThrow({
+        const selfDefinitionWrite = await validateSelfDefinitionContentWriteOrThrow({
           workspace,
           filePath,
           content: nextContent,
@@ -1341,7 +1401,7 @@ function createFileWriteTool(workspace: WorkspaceContext): AgentTool<any, ToolEn
             metrics: metrics(started, data),
           }), visibleFileWrite(data));
         }
-        const selfDefinitionWrite = validateSelfDefinitionContentWriteOrThrow({
+        const selfDefinitionWrite = await validateSelfDefinitionContentWriteOrThrow({
           workspace,
           filePath,
           content: params.content,
