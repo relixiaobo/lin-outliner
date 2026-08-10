@@ -34,6 +34,7 @@ import type {
   SkillDefinition,
 } from '../../src/renderer/api/types';
 import type { SettingsOpenTarget } from '../../src/core/settingsWindow';
+import type { AppUpdateView } from '../../src/core/appUpdate';
 import { resetUrlPageTranslationPreferencesForTests } from '../../src/renderer/ui/preview/urlPageTranslationPreferences';
 import { resetTranslationLanguagePreferenceForTests } from '../../src/renderer/ui/preview/translationLanguagePreference';
 
@@ -127,6 +128,15 @@ const PROVIDER_SETTINGS: AgentProviderSettingsView = {
 const CAPABILITY_SETTINGS: AgentCapabilitySettingsView = {
   blocks: ['rm -rf /', 'curl * | sh'],
   diagnostics: [],
+};
+
+const APP_UPDATE_CURRENT: AppUpdateView = {
+  currentVersion: '0.1.0',
+  automaticChecksEnabled: true,
+  phase: 'idle',
+  lastSuccessfulCheckAt: null,
+  availableRelease: null,
+  manualError: null,
 };
 
 /** One skill per non-managed source, so every row shape is frozen. */
@@ -284,6 +294,27 @@ describe('settings page DOM', () => {
     expect(rendered.document.querySelector('.settings-nav-badge')).toBeNull();
   });
 
+  test('shows persistent app-update dots on General and About', async () => {
+    const rendered = await renderCategory(
+      { category: 'general' },
+      MANAGED_SKILLS,
+      undefined,
+      {
+        ...APP_UPDATE_CURRENT,
+        availableRelease: {
+          version: '0.2.0',
+          publishedAt: '2026-08-10T00:00:00Z',
+          note: 'A focused update.',
+          downloadAvailable: true,
+        },
+      },
+    );
+
+    const dots = rendered.document.querySelectorAll('.settings-status-dot:not(.is-hidden)');
+    expect(dots).toHaveLength(2);
+    expect([...dots].every((dot) => dot.getAttribute('aria-label') === 'Tenon update available')).toBeTrue();
+  });
+
   test('scrolls to and briefly marks a contextual settings anchor', async () => {
     let scrolledTarget: HTMLElement | null = null;
     const rendered = await renderCategory(
@@ -302,6 +333,7 @@ async function renderCategory(
   target: SettingsOpenTarget,
   managedSkills: ManagedSkillView[] = MANAGED_SKILLS,
   onScrollIntoView?: (target: HTMLElement) => void,
+  appUpdate: AppUpdateView = APP_UPDATE_CURRENT,
 ): Promise<Rendered> {
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
   installDomGlobals(window);
@@ -332,6 +364,16 @@ async function renderCategory(
         chrome: '142.0.0',
         node: '22.0.0',
       }),
+      appUpdate: {
+        get: async () => appUpdate,
+        check: async () => appUpdate,
+        setAutomaticChecksEnabled: async (enabled: boolean) => ({
+          ...appUpdate,
+          automaticChecksEnabled: enabled,
+        }),
+        open: async () => ({ ok: true, destination: 'download' }),
+        onChanged: () => () => undefined,
+      },
       // Subscriptions return their unsubscribe, as the real bridge does.
       onSettingsNavigate: () => () => undefined,
       onSettingsChanged: () => () => undefined,

@@ -363,3 +363,27 @@
   line-height: 1;
   padding: 0 var(--space-2);
 }
+
+/* Presence-based update status, not an unread count. Rose is the product's one
+   sparse accent and carries status meaning here; fixed geometry keeps its arrival
+   from changing neighboring controls. */
+.settings-status-dot {
+  display: inline-block;
+  width: var(--space-3);
+  height: var(--space-3);
+  flex: 0 0 var(--space-3);
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+}
+
+.settings-nav-item > .settings-status-dot {
+  margin-left: auto;
+}
+
+.settings-status-dot.is-hidden {
+  visibility: hidden;
+}
+
+.settings-update-error {
+  color: var(--status-danger);
+}

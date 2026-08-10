@@ -306,6 +306,16 @@ import { DiagnosticLogStore } from './diagnosticLog';
 import { NodeAccessStore } from './nodeAccessStore';
 import { resolveUserDataDir } from './userDataPath';
 import type { NodeAccessSource } from '../core/nodeAccessRanking';
+import {
+  LIN_APP_UPDATE_CHANGED_CHANNEL,
+  LIN_APP_UPDATE_CHECK_CHANNEL,
+  LIN_APP_UPDATE_GET_CHANNEL,
+  LIN_APP_UPDATE_OPEN_CHANNEL,
+  LIN_APP_UPDATE_SET_AUTOMATIC_CHANNEL,
+  type AppUpdateView,
+} from '../core/appUpdate';
+import { AppUpdateStore } from './appUpdateStore';
+import { AppUpdateService } from './appUpdateService';
 
 // App identity for menus / "About" / notifications. Kept deliberately separate
 // from the userData directory, which we resolve EXPLICITLY below instead of
@@ -437,6 +447,36 @@ const assetService = new AssetService(assetRoot);
 let mainWindow: BrowserWindow | null = null;
 let settingsWindow: BrowserWindow | null = null;
 let providerConfigWindow: BrowserWindow | null = null;
+const appUpdateStore = new AppUpdateStore(resolvedUserDataDir, {
+  onError: (error, operation) => reportError({
+    domain: 'app-update',
+    severity: 'warn',
+    code: `app-update-store-${operation}`,
+    message: `App update state ${operation} failed`,
+    context: { operation },
+    error,
+  }),
+});
+const appUpdateService = new AppUpdateService({
+  currentVersion: app.getVersion(),
+  defaultAutomaticChecksEnabled: app.isPackaged,
+  store: appUpdateStore,
+  openExternal: (url) => shell.openExternal(url),
+  onChanged: (view) => {
+    const target = liveWindow(settingsWindow);
+    if (target && !target.webContents.isDestroyed()) {
+      target.webContents.send(LIN_APP_UPDATE_CHANGED_CHANNEL, view);
+    }
+  },
+  onError: (error, operation) => reportError({
+    domain: 'app-update',
+    severity: 'warn',
+    code: `app-update-${operation}`,
+    message: `App update ${operation} failed`,
+    context: { operation },
+    error,
+  }),
+});
 let urlPreviewSession: Electron.Session | null = null;
 const urlPreviewGuests = new Set<Electron.WebContents>();
 let quitAfterFlush = false;
@@ -522,6 +562,7 @@ managedSkillShellEnvironment = new ManagedSkillShellEnvironmentRegistry({
 // No periodic polling while the app sits open, no auto-download, no auto-apply.
 const MANAGED_SKILL_UPDATE_THROTTLE_MS = 6 * 60 * 60 * 1_000;
 const MANAGED_SKILL_UPDATE_STARTUP_DELAY_MS = 30_000;
+const APP_UPDATE_STARTUP_DELAY_MS = 10_000;
 
 function scheduleManagedSkillUpdateCheck(): void {
   const timer = setTimeout(() => {
@@ -535,6 +576,13 @@ function scheduleManagedSkillUpdateCheck(): void {
       .catch(() => { /* recorded on the record; retried next launch */ });
   }, MANAGED_SKILL_UPDATE_STARTUP_DELAY_MS);
   // Never hold the event loop open on this.
+  timer.unref?.();
+}
+
+function scheduleAppUpdateCheck(): void {
+  const timer = setTimeout(() => {
+    void appUpdateService.checkInBackground();
+  }, APP_UPDATE_STARTUP_DELAY_MS);
   timer.unref?.();
 }
 
@@ -2084,6 +2132,13 @@ function isProviderConfigSender(event: IpcMainInvokeEvent): boolean {
   return Boolean(target && event.sender === target.webContents);
 }
 
+function assertSettingsRenderer(event: IpcMainInvokeEvent, capability: string): void {
+  const target = liveWindow(settingsWindow);
+  if (!target || event.sender !== target.webContents) {
+    throw new Error(`${capability} is only available from Settings.`);
+  }
+}
+
 function centeredChildWindowPosition(parent: BrowserWindow | null | undefined, width: number, height: number) {
   const bounds = isLiveWindow(parent) ? parent.getBounds() : undefined;
   return bounds
@@ -2332,6 +2387,27 @@ const actionInvocationService = new ActionInvocationService({
 });
 
 function registerIpc() {
+  ipcMain.handle(LIN_APP_UPDATE_GET_CHANNEL, (event): Promise<AppUpdateView> => {
+    assertSettingsRenderer(event, 'App update status');
+    return appUpdateService.view();
+  });
+
+  ipcMain.handle(LIN_APP_UPDATE_CHECK_CHANNEL, (event): Promise<AppUpdateView> => {
+    assertSettingsRenderer(event, 'App update checks');
+    return appUpdateService.checkExplicitly();
+  });
+
+  ipcMain.handle(LIN_APP_UPDATE_SET_AUTOMATIC_CHANNEL, (event, enabled: unknown): Promise<AppUpdateView> => {
+    assertSettingsRenderer(event, 'Automatic app update checks');
+    if (typeof enabled !== 'boolean') throw new Error('Automatic update-check preference must be a boolean.');
+    return appUpdateService.setAutomaticChecksEnabled(enabled);
+  });
+
+  ipcMain.handle(LIN_APP_UPDATE_OPEN_CHANNEL, (event) => {
+    assertSettingsRenderer(event, 'Opening an app update');
+    return appUpdateService.openAvailableUpdate();
+  });
+
   // Every action channel is main-renderer only. The seed carries renderer FACTS
   // — anchored row, selection, panel identity, pin and expansion — and main
   // constructs the objects, mints the refs and owns the lifetime.
@@ -4390,6 +4466,7 @@ if (!app.requestSingleInstanceLock()) {
     configureUrlPreviewSession(urlPreviewSession);
     registerIpc();
     createWindow();
+    scheduleAppUpdateCheck();
     scheduleManagedSkillUpdateCheck();
     // Prewarm the hidden launcher window and bind the global toggle hotkey.
     const launcherWindow = createLauncherWindow({

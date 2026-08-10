@@ -69,6 +69,34 @@ participate in document persistence, Loro
 replication, asset export, diagnostics export, or backup portability; loss or
 corruption is an ordinary cache miss.
 
+Application update discovery is another inspection-only main-process boundary.
+`AppUpdateService` checks the fixed public `relixiaobo/lin-outliner` GitHub
+Releases endpoint after the first window exists, never on the awaited startup
+path. Packaged builds opt into automatic checks by default; an attempted check
+throttles later ambient attempts for six hours, while an explicit Settings check
+bypasses the throttle. One `AbortController` bounds an attempt to five seconds.
+Main strictly decodes a bounded release/asset response, ignores drafts,
+prereleases, and invalid SemVer tags, and selects the highest stable version
+rather than trusting API order. It fetches `CHANGELOG.md` from that exact tag and
+reuses `parseChangelogReleases` for the user-register note; note failure does not
+hide an otherwise verified release, while an exact section's empty note is cached
+distinctly from failure. Both requests disable automatic redirects, validate
+every hop against their fixed GitHub host, and accept at most two hops. Both
+remote bodies are read incrementally; Main cancels the stream as soon as its byte
+ceiling is crossed.
+
+The versioned private `userData/app-update-state.json` record stores the automatic
+check preference, attempt/success timestamps, and the last verified release.
+Malformed reads and failed writes report diagnostics and degrade to defaults;
+network failure preserves the last valid release. This cache is neither document
+state nor a startup dependency. Release-page and `.dmg` destinations remain Main
+private and are revalidated on decode/load. The Settings preload can request
+`get`, `check`, `set automatic`, or `open`; it cannot submit a URL, and the
+launcher receives no update capability. Main accepts those IPC calls only from
+the live Settings window. Only the direct response to a current explicit check
+may carry its bounded failure code; ordinary reads and change broadcasts clear
+that field, so reopening About cannot replay an old failure.
+
 Derived metadata is extracted at ingest from the bytes alone — PDF page count by
 scanning for page objects, audio/video duration parsed from WAV/MP4 container
 headers. PDF thumbnails are an exception: they shell out to poppler's `pdftoppm`

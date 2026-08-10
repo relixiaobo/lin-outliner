@@ -96,6 +96,10 @@ interface InsetRowProps {
   badge?: number;
   /** What the badge means, since a bare digit announces as a bare digit. */
   badgeLabel?: string;
+  /** Presence-based status such as an available app update. */
+  statusIndicatorLabel?: string;
+  /** Keep the indicator's geometry stable while its status is absent/loading. */
+  reserveStatusIndicator?: boolean;
   /** An in-place disclosure keeps its expanded state on the row button. */
   disclosure?: 'collapsed' | 'expanded';
   ariaControls?: string;
@@ -122,6 +126,8 @@ export const InsetRow = memo(function InsetRow({
   drillsDown = false,
   badge,
   badgeLabel,
+  statusIndicatorLabel,
+  reserveStatusIndicator = false,
   disclosure,
   ariaControls,
   ariaLabel,
@@ -140,6 +146,14 @@ export const InsetRow = memo(function InsetRow({
         // element, where ARIA forbids naming and screen readers announce the digit
         // alone.
         <span className="inset-row-badge" role="status" aria-label={badgeLabel}>{badge}</span>
+      ) : null}
+      {statusIndicatorLabel || reserveStatusIndicator ? (
+        <span
+          aria-hidden={statusIndicatorLabel ? undefined : 'true'}
+          aria-label={statusIndicatorLabel}
+          className={`settings-status-dot${statusIndicatorLabel ? '' : ' is-hidden'}`}
+          role={statusIndicatorLabel ? 'img' : undefined}
+        />
       ) : null}
       {drillsDown ? (
         <span className="settings-drilldown-chevron" aria-hidden="true">

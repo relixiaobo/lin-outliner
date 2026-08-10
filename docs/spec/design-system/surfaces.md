@@ -290,7 +290,10 @@ Rail, toolbar, and category render immediately; provider/runtime data loads loca
 **Pages.** Model services and Skills sit under Agent; About sits under General.
 An unbounded collection the user installs or connects becomes a page; bounded
 settings stay inline. Page rows carry chevrons, history walks real routes, and
-per-provider configuration remains a native child window.
+per-provider configuration remains a native child window. Entering, leaving, or
+switching a secondary page resets the content scrollport before paint; ordinary
+category-to-category navigation does not trigger that reset. An explicit deep-
+link anchor then positions its requested group.
 
 **Deep links.** Categories are `general|agent|preview`; pages are
 `agent/services`, `agent/skills`, and `general/about`. An optional bounded
@@ -311,7 +314,13 @@ the same failure contract. Only the modal provider form retains Cancel/Save.
 
 **General.** Appearance (Theme and Language), Diagnostics, and About. Theme is a
 neutral `SegmentedControl` radiogroup with roving tabindex and arrow navigation;
-Language is `SelectControl variant="popup"`.
+Language is `SelectControl variant="popup"`. When a verified stable app release
+is newer than the running build and automatic checks remain enabled, General in
+the category rail and the About row each show the same fixed 6px rose status dot.
+It has a non-live accessible update-available name and no count or animation. Its
+fixed slot is reserved while hidden so async state cannot move adjacent content.
+This is a presence-based status, not unread state: opening About does not clear it; catching
+up to the release or disabling automatic checks does.
 
 **Agent.** Model services and Skills are pages; Memory and Permissions stay
 inline. Permissions states the Full Access boundary, lists explicit blocks, and
@@ -323,8 +332,21 @@ lines, and focusing or operating a row's menu or switch never expands the row.
 model, and clearing saved translations; Websites clears URL-preview session data.
 The preview Languages popover writes the same cross-window preference store.
 
-**About.** Identity/version with copy, What's New for the running version,
-support, and legal. The native About item opens this page.
+**About.** Identity/version with copy, Software Update, What's New for the running
+version, support, and legal. The native About item opens this page. Software
+Update shows checking, current, available, automatic-off, and explicit-failure
+states; an automatic-check switch and explicit Check now action apply immediately.
+Ambient failures render nothing and preserve cached availability. Explicit check
+and external-open failures stay inline in this group rather than using the shared
+Settings alert, an app toast, dialog, banner, notification, dock badge, or main-
+window surface.
+
+An available release shows only the newest stable version and its exact-tag
+user-register note. The action says **Download update** only when Main verified a
+GitHub release `.dmg`; otherwise it says **View release** and opens the verified
+release page. Both actions are URL-free commands across preload. Tenon opens the
+destination in the default browser and does not claim to install, relaunch, or
+automatically download the build.
 
 `AppInfo.version` selects its `CHANGELOG` section — note or not, since that is
 the build's own record. A build running **ahead** of the last release (a dev
