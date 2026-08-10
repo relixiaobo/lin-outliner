@@ -59,20 +59,25 @@ hyphens before comparison. It first compares that value with the node's exact
 - `calendar` or `calendarnode` for any day, week, or year node, with `day`,
   `week`, and `year` matching only their respective calendar node;
 - `image` for image nodes;
+- `attachment` for attachment nodes;
 - `code` or `codeblock` for code-block nodes.
 
 The evaluator only visits search candidates: plain, tag-definition,
-field-definition, search, code-block, and image nodes outside trash, system
-roots, and query-condition trees. An exact type outside that candidate set is
-therefore executable but cannot currently match; notably, `IS_TYPE attachment`
-returns no hits because attachment nodes are not yet candidates.
+field-definition, search, code-block, image, and attachment nodes outside trash,
+system roots, and query-condition trees. Attachment display text defaults to the
+original filename, so ordinary `STRING_MATCH` queries and Launcher lookup can
+find files by name; `IS_TYPE attachment` matches every searchable attachment,
+including PDFs.
 
-`HAS_IMAGE` matches image nodes, and `HAS_MEDIA` is currently the same predicate
-under a broader name. Neither rule infers media from arbitrary text or URLs.
-`HAS_AUDIO` and `HAS_VIDEO` remain executable protocol terms for compatibility
-with saved searches and replayed agent outlines, but currently always return no
-match and are deliberately absent from model-facing operator guidance. Their
-attachment-backed semantics are defined by the next media-search change.
+Media rules take no operand. Image nodes always match `HAS_IMAGE` and
+`HAS_MEDIA`. Attachment nodes are classified from the normalized MIME family:
+`image/*`, `audio/*`, and `video/*` match their corresponding facet, and all
+three families match `HAS_MEDIA`. When MIME data is absent or exactly
+`application/octet-stream`, a positive `videoDurationMs` supplies video kind,
+then a positive `audioDurationMs` supplies audio kind. Duration metadata never
+overrides an explicit non-media MIME such as `application/pdf`; PDFs and other
+files remain available through text search and `IS_TYPE attachment`, not a media
+facet. No rule infers media kind from arbitrary text, filenames, or URLs.
 
 ## Complexity Budget
 

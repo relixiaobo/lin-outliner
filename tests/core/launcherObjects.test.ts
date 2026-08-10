@@ -111,6 +111,30 @@ describe('the main-list query generation', () => {
     expect(result.resultItems[0]?.object.kind).toBe('node');
   });
 
+  test('returns attachment nodes through the shared search kernel', () => {
+    const h = harness();
+    const attachment = h.core.createAttachmentNode(h.core.projection().todayId, null, {
+      assetId: 'asset-quarterly-call',
+      mimeType: 'audio/wav',
+      originalFilename: 'Quarterly call recording.wav',
+      fileSize: 2_048,
+    }).focus!.nodeId;
+    const opened = h.service.openLauncher({ openSeq: 1, consumerId: LAUNCHER });
+    const result = h.service.queryObjects({
+      invocationRef: opened.invocationRef,
+      openSeq: 1,
+      requestId: 'r1' as RequestId,
+      query: 'Quarterly call',
+    }, LAUNCHER);
+
+    expect(result.status).toBe('ready');
+    if (result.status !== 'ready') return;
+    const item = result.resultItems.find((candidate) => candidate.object.backingNodeId === attachment);
+    expect(item?.object.kind).toBe('node');
+    expect(item?.object.name).toEqual({ source: 'literal', value: 'Quarterly call recording.wav' });
+    expect(result.resultItems.some((candidate) => candidate.object.kind === 'draft')).toBe(false);
+  });
+
   test('a zero-match query yields EXACTLY one node-purpose draft', () => {
     const h = harness();
     const opened = h.service.openLauncher({ openSeq: 1, consumerId: LAUNCHER });

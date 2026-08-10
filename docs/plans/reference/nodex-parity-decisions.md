@@ -58,7 +58,8 @@ Things lin has that nodex does not, kept here so the asymmetry is visible:
 - `trashedFromParentId / trashedFromIndex` for restore-to-origin from trash.
 - `inlineRefBias` cursor positioning when adjacent to an inline reference.
 - Wider query operator set: `DATE_OVERLAPS`, `DESCENDANT_OF*`,
-  `GRANDPARENTS_DESCENDANTS*`, `SIBLING_NAMED`, `HAS_MEDIA / HAS_IMAGE`,
+  `GRANDPARENTS_DESCENDANTS*`, `SIBLING_NAMED`,
+  `HAS_MEDIA / HAS_IMAGE / HAS_AUDIO / HAS_VIDEO`,
   `FIELD_IS_SET / FIELD_IS_NOT_SET / FIELD_IS_DEFINED / FIELD_IS_NOT_DEFINED`.
 - Command-driven core with `CommandOutcome { projection, focus? }`.
 - Scoped `UndoManager` separating `user:` / `agent:` / `system:` origins.

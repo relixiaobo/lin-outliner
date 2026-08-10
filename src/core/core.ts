@@ -5190,11 +5190,10 @@ function hasExternalNodeTargetReferences(state: DocumentState, targetId: string)
 
 // The authoritative set of seeded system nodes (workspace sections + built-in
 // tags). Membership confers structural protection (no move/delete/reparent via
-// `ensureNodeMovable` / `removeSubtreeDirect`) and excludes the node from search
-// candidates. Keep this in sync with the seeded sections — LIBRARY_ID and
+// `ensureNodeMovable` / `removeSubtreeDirect`). Keep this in sync with the seeded
+// sections and the search kernel's system-id exclusion — LIBRARY_ID and
 // RECENTS_ID belong here too (Library was previously protected only by its
-// `locked` flag, leaving `removeSubtreeDirect` / `isSearchCandidate` to treat it
-// as a normal node).
+// `locked` flag, leaving `removeSubtreeDirect` to treat it as a normal node).
 function isSystemId(nodeId: string) {
   return [
     WORKSPACE_ID,
@@ -5824,13 +5823,6 @@ function isOnlyInlineReference(content: RichText, targetId: string) {
   return content.inlineRefs.length === 1
     && content.inlineRefs[0].offset === 0
     && inlineRefNodeId(content.inlineRefs[0]) === targetId;
-}
-
-function isSearchCandidate(state: DocumentState, nodeId: string) {
-  const type = state.nodes[nodeId]?.type;
-  return !isInTrash(state, nodeId)
-    && !isSystemId(nodeId)
-    && (type === undefined || ['tagDef', 'fieldDef', 'search', 'codeBlock'].includes(type));
 }
 
 function appendRichText(left: RichText, right: RichText): RichText {

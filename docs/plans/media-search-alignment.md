@@ -88,11 +88,16 @@ plus a guidance grep proving the inert audio/video terms are not advertised.
 - Add `attachment` to the allowlist so attachment nodes are retrievable at all, and
   add `IS_TYPE attachment`.
 - Activate `HAS_AUDIO` / `HAS_VIDEO` by reading `AttachmentNode.mimeType` as the
-  authority, with `audioDurationMs` / `videoDurationMs` available as corroboration;
-  extend `HAS_IMAGE` to image-mime attachments; `HAS_MEDIA` becomes the real
+  authority. Only missing or generic MIME data falls back to duration metadata,
+  with video ahead of audio; an explicit non-media MIME is never overridden.
+  Extend `HAS_IMAGE` to image-mime attachments; `HAS_MEDIA` becomes the real
   superset (image nodes plus media attachments) rather than an alias.
+- PDFs and other non-media attachments remain searchable by filename and
+  `IS_TYPE attachment`; this PR adds no `HAS_PDF` facet.
 - Restore the guidance clause in `agentNodeToolGuidance.ts` with the accurate
   operand list, so the model regains the capability only once it answers truthfully.
+- Delete the two unused `isSearchCandidate` copies outside the search kernel
+  rather than extending already-drifted candidate policies.
 - User-visible: attachment rows begin appearing in ordinary text results. Their
   title is the filename, which is what a user searching for "tax return 2025"
   is looking for — but it is a result-set change and belongs in the CHANGELOG
@@ -100,10 +105,8 @@ plus a guidance grep proving the inert audio/video terms are not advertised.
 
 ## Open questions
 
-- Does PDF deserve its own facet, given `pdfPageCount` already exists, or is the
-  mime family enough?
-- Does admitting attachments change the results of any saved search enough to
-  warrant more than a CHANGELOG line?
+None. PR 2 deliberately keeps PDFs on text/type retrieval and records the
+user-visible result-set change in the CHANGELOG at the merge gate.
 
 ## Path not taken
 

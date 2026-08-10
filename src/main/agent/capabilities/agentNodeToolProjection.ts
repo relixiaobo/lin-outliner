@@ -184,14 +184,6 @@ export function nodeContentText(node: NodeProjection): string {
   return richTextToMarkdownReferenceMarkup(node.content);
 }
 
-export function isSearchCandidate(index: ProjectionIndex, nodeId: string): boolean {
-  const node = index.nodes.get(nodeId);
-  if (!node) return false;
-  return !isInTrash(index, nodeId)
-    && !SYSTEM_IDS.has(nodeId)
-    && (node.type === undefined || ['tagDef', 'fieldDef', 'search', 'codeBlock'].includes(node.type));
-}
-
 export function isInTrash(index: ProjectionIndex, nodeId: string): boolean {
   if (nodeId === TRASH_ID) return true;
   let current = index.nodes.get(nodeId)?.parentId;
