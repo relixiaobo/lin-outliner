@@ -103,11 +103,14 @@ ThreadNameGenerator,
 TurnExecutor
 } from './runtime/types';
 import type { AgentTool } from './runtime/kernel/types';
+import { automationTranscriptSubject } from './automations/AutomationRunContinuity';
 import { SubagentCollaboration } from './thread/SubagentCollaboration';
-import { subagentTranscriptRoot } from './thread/SubagentTranscriptArtifact';
 import { ThreadCatalogOps } from './thread/ThreadCatalogOps';
 import { ThreadCore,type NotificationListener } from './thread/ThreadCore';
 import { ThreadResourceOps } from './thread/ThreadResourceOps';
+import { threadTranscriptRoot } from './thread/ThreadTranscriptArtifact';
+import { ThreadTranscriptWriter } from './thread/ThreadTranscriptWriter';
+import type { TranscriptSubject } from './thread/TranscriptRenderer';
 import { TurnLifecycle } from './thread/TurnLifecycle';
 
 export interface AgentCorePaths {
@@ -117,7 +120,7 @@ export interface AgentCorePaths {
   readonly history: string;
   readonly goals: string;
   readonly payloads: string;
-  /** Subagent transcript artifacts. A sibling of `agent/`, directly under userData. */
+  /** Thread transcript artifacts. A sibling of `agent/`, directly under userData. */
   readonly transcripts: string;
 }
 
@@ -134,7 +137,7 @@ export interface ThreadServiceOptions {
   readonly stores: ThreadServiceStores;
   readonly executor: TurnExecutor;
   readonly attachmentScratchRoot: string;
-  /** App-owned root for Subagent transcript artifacts. Never a workspace path. */
+  /** App-owned root for Thread transcript artifacts. Never a workspace path. */
   readonly transcriptRoot: string;
   readonly nameGenerator?: ThreadNameGenerator;
   readonly extensions?: ExtensionRegistry;
@@ -318,6 +321,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
   private readonly resourceOps: ThreadResourceOps;
   private readonly catalogOps: ThreadCatalogOps;
   private readonly collaboration: SubagentCollaboration;
+  private readonly transcripts: ThreadTranscriptWriter;
   private readonly turnLifecycle: TurnLifecycle;
   private initialized = false;
   private closing = false;
@@ -355,6 +359,16 @@ export class ThreadService implements ThreadServiceExtensionHost {
     options.stores.payloads.setImageRetentionInventoryProvider((threadId) => (
       this.resourceOps.threadImageRetentionInventory(threadId)
     ));
+    this.transcripts = new ThreadTranscriptWriter({
+      transcriptRoot: options.transcriptRoot,
+      resolveSubject: (thread) => this.transcriptSubject(thread),
+      completedTurns: (threadId) => this.core.allTurns(threadId).filter((turn) => turn.status !== 'inProgress'),
+      payloads: (threadId) => ({
+        readContext: (ref) => this.core.payloads.readContext(threadId, ref),
+        readOutput: (ref) => this.core.payloads.readTextReference(threadId, ref),
+        readDiagnostics: (ref) => this.core.payloads.readTurnDiagnostics(threadId, ref),
+      }),
+    });
     this.turnLifecycle = new TurnLifecycle(
       this.core,
       this.resourceOps,
@@ -374,6 +388,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
         flushPendingSubagentActivities: (...args) => this.collaboration.flushPendingSubagentActivities(...args),
         queueChildTurnActivity: (...args) => this.collaboration.queueChildTurnActivity(...args),
       },
+      { enqueueTurn: (...args) => this.transcripts.enqueueTurn(...args) },
       this.executor,
       this.extensions,
       this.subagentBudgets,
@@ -401,7 +416,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       this.now,
       applyToolCeiling,
       (message) => new ThreadBusyError(message),
-      options.transcriptRoot,
+      this.transcripts,
     );
     this.catalogOps = new ThreadCatalogOps(
       this.core,
@@ -417,6 +432,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       applyToolCeiling,
       this.turnLifecycle,
       this.collaboration,
+      this.transcripts,
       (threadId) => this.goals.clear(threadId),
       (threadId) => { this.subagentBudgets.clearThread(threadId); },
       (message) => new ThreadBusyError(message),
@@ -469,7 +485,12 @@ export class ThreadService implements ThreadServiceExtensionHost {
     await Promise.all([
       // Transcript reclamation is the same kind of work as payload pruning, so it
       // joins the same startup batch rather than adding a serial step.
-      this.collaboration.sweepOrphanTranscripts((threadId) => knownThreads.has(threadId)),
+      // Reclaim the pre-rename directory first, THEN sweep: the relocation is
+      // what puts those artifacts back within reach of the sweep and of the
+      // deletion cascade, so ordering them decides whether an orphan among them
+      // is reclaimed on this launch or the next.
+      this.transcripts.reclaimLegacyDirectory()
+        .then(() => this.transcripts.sweepOrphans((threadId) => knownThreads.has(threadId))),
       ...knownThreadIds.flatMap((threadId) => [
         this.core.payloads.pruneUnreferencedResources(threadId, this.resourceOps.threadResourceReferences(threadId)),
         this.core.payloads.pruneUnreferencedContexts(threadId, this.resourceOps.threadContextPayloadReferences(threadId)),
@@ -892,10 +913,18 @@ export class ThreadService implements ThreadServiceExtensionHost {
   }
   async spawnChild(input: SpawnChildThreadInput): Promise<SpawnChildThreadResult> { return this.collaboration.spawnChild(input); }
   async spawnIsolatedSkillThread(input: SpawnIsolatedSkillThreadInput): Promise<SpawnChildThreadResult> { return this.collaboration.spawnIsolatedSkillThread(input); }
-  /** Test seam: settle a child's pending transcript appends. */
-  async flushSubagentTranscript(threadId: ThreadId): Promise<void> { return this.collaboration.flushTranscriptWrites(threadId); }
-  /** Account layer for a delegated child: the artifact path, or null when it is not on disk (A12). */
-  async subagentTranscriptPath(threadId: ThreadId): Promise<string | null> { return this.collaboration.transcriptPathForReader(threadId); }
+  /** Test seam: settle a Thread's pending transcript appends. */
+  async flushThreadTranscript(threadId: ThreadId): Promise<void> { return this.transcripts.flush(threadId); }
+  /** Account layer for a Thread that keeps one: the artifact path, or null when it is not on disk (A12). */
+  async threadTranscriptPath(threadId: ThreadId): Promise<string | null> { return this.transcripts.pathForReader(threadId); }
+  /**
+   * The ONE answer to whether a Thread keeps an account and what its header
+   * says. Delegation is asked first because spawn metadata is the authority for
+   * a child; an Automation Thread is a root, so the two can never both match.
+   */
+  private transcriptSubject(thread: Thread): TranscriptSubject | null {
+    return this.collaboration.delegatedTranscriptSubject(thread) ?? automationTranscriptSubject(thread);
+  }
   collaborationToolContributions(turn: { threadId: ThreadId; turnId: string }): readonly AgentTool[] { return this.collaboration.collaborationToolContributions(turn); }
   async spawnCollaborationAgent(input: {
     senderThreadId: ThreadId;
@@ -965,7 +994,7 @@ export function agentCorePaths(userDataPath: string): AgentCorePaths {
     history: join(root, 'thread_history.sqlite'),
     goals: join(root, 'goals.sqlite'),
     payloads: join(root, 'payloads'),
-    transcripts: subagentTranscriptRoot(userDataPath),
+    transcripts: threadTranscriptRoot(userDataPath),
   };
 }
 

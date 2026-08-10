@@ -2,6 +2,7 @@ import type { TSchema } from 'typebox';
 import { resolveChildConfiguration,type AgentRole,type EffectiveThreadConfiguration,type ReasoningEffort } from '../../../core/agent/configuration';
 import type { ContextCursor,ContextEvidenceKind,InheritedContextPayload,JsonValue,Thread,ThreadContextPayload,ThreadContextPayloadReference,ThreadId,ThreadItem,ThreadItemOutputReference,ThreadResourceReference,ThreadUserContent,Turn,TurnId } from '../../../core/agent/protocol';
 import { modelToolContract } from '../../../core/agent/tools';
+import { turnTerminalAnswer } from '../../../core/agent/turnAnswer';
 import { isolatedSkillIdentity, isolatedSkillTaskName } from '../../../core/agent/subagentTaskPath';
 import {
   contextPayloadReferenceKey,
@@ -28,11 +29,11 @@ import type { AgentTool,AgentToolResult } from '../runtime/kernel/types';
 import { SubagentDepthLimitError,SubagentSpawnLimitError } from '../SubagentStructuralLimitError';
 import type { CollaborationAgentView,CollaborationTerminalOutcome,CollaborationWaitResult,SpawnChildThreadInput,SpawnChildThreadResult,SpawnIsolatedSkillThreadInput } from '../ThreadService';
 import { uuidV7 } from '../uuid';
-import { appendSubagentTranscript,rebuildSubagentTranscript,removeSubagentTranscript,subagentTranscriptPath,subagentTranscriptSize,sweepOrphanTranscripts } from './SubagentTranscriptArtifact';
 import type { ThreadCatalogOps } from './ThreadCatalogOps';
 import { ThreadCore } from './ThreadCore';
 import type { ThreadResourceOps } from './ThreadResourceOps';
-import { renderTranscript,renderTurn,type TranscriptPayloadReader } from './TranscriptRenderer';
+import type { ThreadTranscriptWriter } from './ThreadTranscriptWriter';
+import type { TranscriptSubject } from './TranscriptRenderer';
 import type { TurnLifecycle } from './TurnLifecycle';
 
 export interface StagedContextEvidence {
@@ -57,19 +58,6 @@ export interface PendingSubagentActivity {
    */
   readonly form: 'collaboration' | 'isolatedSkill';
 }
-/**
- * Ceiling on any filesystem wait the account layer puts in front of a delegator.
- * Long enough that an ordinary slow volume still answers accurately, short enough
- * that a wedged one is a hiccup rather than a parked Turn.
- */
-const TRANSCRIPT_READY_TIMEOUT_MS = 2_000;
-
-interface TranscriptCursor {
-  readonly turns: number;
-  readonly bytes: number;
-  /** Every Turn already in the file — not just the last, so a rebuild dedups what is queued behind it. */
-  readonly turnIds: ReadonlySet<TurnId>;
-}
 interface CollaborationActivityState {
   pending: boolean;
   readonly waiters: Set<() => void>;
@@ -84,12 +72,6 @@ export class SubagentCollaboration {
   private readonly ephemeralSpawnEdges = new Map<ThreadId, { sessionId: string; parentThreadId: ThreadId; taskPath: string; createdAt: number }>();
   private readonly pendingSubagentActivities = new Map<ThreadId, PendingSubagentActivity[]>();
   private readonly collaborationActivity = new Map<ThreadId, CollaborationActivityState>();
-  /** Per child: how much of its account is already on disk. Compared against the file, never trusted alone. */
-  private readonly transcriptCursors = new Map<ThreadId, TranscriptCursor>();
-  /** Per child: the tail of its serialized append chain, so Turns land in order and deletion can drain it. */
-  private readonly transcriptWrites = new Map<ThreadId, Promise<void>>();
-  /** Children whose artifact was deleted. Thread ids are never reused, so this only ever grows by real deletions. */
-  private readonly discardedTranscripts = new Set<ThreadId>();
   constructor(
     private readonly core: ThreadCore,
     private readonly resourceOps: ThreadResourceOps,
@@ -101,7 +83,7 @@ export class SubagentCollaboration {
     private readonly now: () => number,
     private readonly applyToolCeiling: (configuration: EffectiveThreadConfiguration, toolCeiling: readonly string[] | null) => EffectiveThreadConfiguration,
     private readonly createThreadBusyError: (message: string) => Error,
-    private readonly transcriptRoot: string,
+    private readonly transcripts: ThreadTranscriptWriter,
   ) {}
   recordEphemeralSpawnEdge(threadId: ThreadId, edge: { readonly sessionId: string; readonly parentThreadId: ThreadId; readonly taskPath: string; readonly createdAt: number }): void {
     this.ephemeralSpawnEdges.set(threadId, edge);
@@ -115,10 +97,7 @@ export class SubagentCollaboration {
       this.mailbox.delete(threadId);
       this.pendingSubagentActivities.delete(threadId);
       this.collaborationActivity.delete(threadId);
-      this.transcriptCursors.delete(threadId);
-      // `transcriptWrites` is deliberately NOT cleared here: deletion drains it
-      // after this teardown runs, and a chain removed early cannot be drained.
-      // The chain removes its own entry when it settles.
+      this.transcripts.forgetCursor(threadId);
     }
   }
   /**
@@ -847,181 +826,35 @@ export class SubagentCollaboration {
       const terminalTurn = turnId === undefined
         ? this.core.allTurns(threadId).at(-1)
         : this.core.readTurn(threadId, turnId);
-      const result = terminalTurn?.items
-        .flatMap((item) => item.type === 'agentMessage' && item.phase !== 'commentary'
-          ? [item.text.trim()]
-          : [])
-        .filter(Boolean)
-        .join('\n\n') ?? '';
+      const result = terminalTurn ? turnTerminalAnswer(terminalTurn.items) : '';
       return {
         taskPath,
         threadId,
         status,
         result: result || null,
         error: terminalTurn?.error?.message ?? null,
-        transcriptPath: await this.transcriptPathForReader(threadId),
+        transcriptPath: await this.transcripts.pathForReader(threadId),
       };
     }
 
   /**
-   * The account layer is written where a completed Turn already exists, never
-   * here: `wait_agent` renders nothing and only resolves whether the artifact is
-   * on disk. It waits for the child's append chain so a Turn that just completed
-   * is durable before its path is reported.
-   *
-   * Every wait is DEADLINE-BOUNDED. A12 protects against a throwing filesystem,
-   * but not against a wedged one — an fs promise that never settles would park
-   * the parent's Turn forever, which is precisely the failure mode A12 exists to
-   * prevent. On timeout the in-session cursor decides: if this process appended a
-   * Turn, the artifact exists and the path is reported anyway; otherwise null.
-   * A stalled volume then costs the account layer accuracy, never the delegator
-   * its result (A12), and never more than the deadline in latency (A9).
+   * The delegated Thread's identity, and by returning it at all, the answer to
+   * whether that Thread keeps an account. Spawn metadata is the authority here,
+   * so this lookup belongs to whoever owns spawn edges rather than to the
+   * writer: an ephemeral edge and a persisted one are both a delegation, and a
+   * Thread with neither is not one no matter what its parent field says.
    */
-  async transcriptPathForReader(threadId: ThreadId): Promise<string | null> {
-      try {
-        const path = subagentTranscriptPath(this.transcriptRoot, threadId);
-        await settledWithin(this.transcriptWrites.get(threadId), TRANSCRIPT_READY_TIMEOUT_MS);
-        // A Turn appended in this process is known to be on disk: no stat needed
-        // on the common path, which is also the one a parent waits on.
-        if (this.transcriptCursors.has(threadId)) return path;
-        const size = await withDeadline(
-          subagentTranscriptSize(path),
-          TRANSCRIPT_READY_TIMEOUT_MS,
-          null,
-        );
-        return size === null ? null : path;
-      } catch (error) {
-        console.warn(`[agent] Subagent transcript artifact was not resolved for ${threadId}`, error);
-        return null;
-      }
-    }
-
-  /**
-   * Serialize per child so Turns append in completion order, and so deletion has
-   * one handle to drain. The chain never rejects: `appendTranscriptTurn` owns
-   * the A12 guard, and this is deliberately not awaited by the Turn that
-   * produced it.
-   */
-  private enqueueTranscriptTurn(thread: Thread, turn: Turn): void {
-      if (!thread.parentThreadId) return;
-      const pending = (this.transcriptWrites.get(thread.id) ?? Promise.resolve())
-        .then(() => this.appendTranscriptTurn(thread, turn));
-      this.transcriptWrites.set(thread.id, pending);
-      void pending.finally(() => {
-        if (this.transcriptWrites.get(thread.id) === pending) this.transcriptWrites.delete(thread.id);
-      });
-    }
-
-  /**
-   * Extend the child's account by exactly the Turn that just completed.
-   *
-   * A completed Turn is immutable, so appending is monotonic and never rewrites
-   * what a reader may already be reading. That is what dissolves both staleness
-   * (nothing cached can go stale — history is never re-rendered) and write
-   * atomicity (a concurrent read sees a whole-Turn prefix, never a torn file).
-   *
-   * A12 covers the WHOLE body, reads included: a spawn-edge or store read that
-   * throws here must not escape into the Turn that produced it.
-   */
-  private async appendTranscriptTurn(thread: Thread, turn: Turn): Promise<void> {
-      try {
-        // Scoped to DELETION, not to any subtree stop. Stop and archive keep the
-        // artifact, and the Turn they interrupt is the child's last one — skipping
-        // it would leave a retained transcript ending mid-task while the store
-        // says interrupted, with no later Turn to heal it.
-        if (this.discardedTranscripts.has(thread.id)) return;
-        if (!this.taskPathForThread(thread.id)) return;
-        const path = subagentTranscriptPath(this.transcriptRoot, thread.id);
-        const cursor = this.transcriptCursors.get(thread.id);
-        // Membership, not "was it the last one": a rebuild folds in EVERY
-        // completed Turn, so Turns still queued behind it are already on disk
-        // and re-appending them would duplicate blocks under wrong ordinals.
-        if (cursor?.turnIds.has(turn.id)) return;
-        const size = cursor ? await subagentTranscriptSize(path) : null;
-        // Cold cursor, a removed file, or bytes that disagree with what we
-        // appended: rebuild once, atomically, and resume appending from there.
-        if (!cursor || size !== cursor.bytes) {
-          await this.rebuildTranscript(thread, path);
-          return;
-        }
-        const text = await renderTurn(turn, this.transcriptReader(thread.id), {
-          detail: 'brief',
-          ordinal: cursor.turns + 1,
-        });
-        await appendSubagentTranscript(path, text);
-        this.transcriptCursors.set(thread.id, {
-          turns: cursor.turns + 1,
-          bytes: cursor.bytes + Buffer.byteLength(text),
-          turnIds: new Set(cursor.turnIds).add(turn.id),
-        });
-      } catch (error) {
-        console.warn(`[agent] Subagent transcript Turn was not appended for ${thread.id}`, error);
-      }
-    }
-
-  private async rebuildTranscript(thread: Thread, path: string): Promise<void> {
-      const turns = this.core.allTurns(thread.id).filter((turn) => turn.status !== 'inProgress');
-      const text = await renderTranscript(turns, this.transcriptReader(thread.id), {
-        detail: 'brief',
-        subject: {
-          threadId: thread.id,
-          taskPath: this.taskPathForThread(thread.id),
-          parentThreadId: thread.parentThreadId,
-          role: thread.agentRole,
-          nickname: thread.agentNickname,
-          cwd: thread.cwd,
-        },
-      });
-      await rebuildSubagentTranscript(path, text);
-      this.transcriptCursors.set(thread.id, {
-        turns: turns.length,
-        bytes: Buffer.byteLength(text),
-        turnIds: new Set(turns.map((turn) => turn.id)),
-      });
-    }
-
-  /**
-   * Best-effort removal from the Thread-deletion descendant cascade.
-   *
-   * The order is the whole point. Mark the Thread discarded FIRST so nothing new
-   * enqueues, then drain the append chain so an append already past its guard and
-   * awaiting payload reads finishes BEFORE the `rm` — otherwise it lands behind
-   * the removal and resurrects a transcript the user deleted. This owns the chain
-   * entry's removal for the same reason: clearing it elsewhere first would leave
-   * this draining `undefined`, which is a no-op wearing a drain's clothes.
-   */
-  async deleteTranscriptArtifact(threadId: ThreadId): Promise<void> {
-      this.discardedTranscripts.add(threadId);
-      try {
-        await settledWithin(this.transcriptWrites.get(threadId), TRANSCRIPT_READY_TIMEOUT_MS);
-        this.transcriptWrites.delete(threadId);
-        this.transcriptCursors.delete(threadId);
-        await removeSubagentTranscript(subagentTranscriptPath(this.transcriptRoot, threadId));
-      } catch (error) {
-        console.warn(`[agent] Subagent transcript artifact was not removed for ${threadId}`, error);
-      }
-    }
-
-  /** Startup reclamation of transcripts whose Thread no longer exists. */
-  async sweepOrphanTranscripts(isKnownThread: (threadId: ThreadId) => boolean): Promise<readonly string[]> {
-      try {
-        return await sweepOrphanTranscripts(this.transcriptRoot, isKnownThread);
-      } catch (error) {
-        console.warn('[agent] Subagent transcript orphan sweep failed', error);
-        return [];
-      }
-    }
-
-  /** Test seam: settle the child's pending appends. */
-  async flushTranscriptWrites(threadId: ThreadId): Promise<void> {
-      await this.transcriptWrites.get(threadId);
-    }
-
-  private transcriptReader(threadId: ThreadId): TranscriptPayloadReader {
+  delegatedTranscriptSubject(thread: Thread): TranscriptSubject | null {
+      if (!thread.parentThreadId) return null;
+      const taskPath = this.taskPathForThread(thread.id);
+      if (!taskPath) return null;
       return {
-        readContext: (ref) => this.core.payloads.readContext(threadId, ref),
-        readOutput: (ref) => this.core.payloads.readTextReference(threadId, ref),
-        readDiagnostics: (ref) => this.core.payloads.readTurnDiagnostics(threadId, ref),
+        threadId: thread.id,
+        taskPath,
+        parentThreadId: thread.parentThreadId,
+        role: thread.agentRole,
+        nickname: thread.agentNickname,
+        cwd: thread.cwd,
       };
     }
 
@@ -1046,9 +879,10 @@ export class SubagentCollaboration {
       );
     }
   queueChildTurnActivity(thread: Thread, turn: Turn): void {
-      // Every delegated form gets an account and a parent-visible row; only
-      // collaboration gets the result channel.
-      this.enqueueTranscriptTurn(thread, turn);
+      // Every delegated form gets a parent-visible row; only collaboration gets
+      // the result channel. The account is written from the same Turn-completion
+      // point, but by the writer, which serves every Thread kind and not only a
+      // child.
       if (!thread.parentThreadId) return;
       const agentPath = this.taskPathForThread(thread.id);
       if (!agentPath) return;
@@ -1316,28 +1150,6 @@ function nonEmpty(value: string, field: string): string {
   const normalized = value.trim();
   if (!normalized) throw new Error(`${field} must be non-empty`);
   return normalized;
-}
-
-/**
- * Resolve with `fallback` if `work` has not settled in time. A rejection is the
- * caller's to handle; a promise that NEVER settles is the case this exists for.
- */
-async function withDeadline<T>(work: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      work,
-      new Promise<T>((resolve) => { timer = setTimeout(() => resolve(fallback), timeoutMs); }),
-    ]);
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
-  }
-}
-
-/** Await a bounded settle, treating "no chain" and "timed out" alike. */
-async function settledWithin(work: Promise<unknown> | undefined, timeoutMs: number): Promise<void> {
-  if (work === undefined) return;
-  await withDeadline(work.then(() => undefined, () => undefined), timeoutMs, undefined);
 }
 
 function collaborationTool(

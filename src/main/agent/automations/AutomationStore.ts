@@ -484,6 +484,28 @@ export class AutomationStore {
     return Object.freeze(rows.map(runFromRow));
   }
 
+  /**
+   * The most recent runs of one Automation on ONE project binding, newest first.
+   *
+   * Filtering in SQL rather than over a scanned page is what makes this correct
+   * at the binding cap: an Automation may carry 32 bindings and its runs
+   * interleave across them, so any window wide enough to hold three rows for a
+   * heavily-bound Automation is far wider than one occurrence needs, and any
+   * window narrow enough to be cheap would silently return fewer than asked.
+   */
+  recentRunsForBinding(
+    automationId: string,
+    projectBindingKey: string,
+    limit: number,
+  ): readonly AutomationRun[] {
+    const rows = this.db.prepare(`
+      SELECT * FROM automation_runs
+      WHERE automation_id = ? AND project_binding_key = ?
+      ORDER BY scheduled_for DESC, id DESC LIMIT ?
+    `).all(automationId, projectBindingKey, limit) as AutomationRunRow[];
+    return Object.freeze(rows.map(runFromRow));
+  }
+
   dispatchedRunsForReconciliation(): readonly AutomationRun[] {
     const rows = this.db.prepare(`
       SELECT * FROM automation_runs

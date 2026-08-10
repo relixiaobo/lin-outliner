@@ -51,6 +51,12 @@ interface TurnLifecycleCollaboration {
   takePendingCollaborationActivity(threadId: ThreadId): boolean; signalCollaborationActivity(threadId: ThreadId): void;
   flushPendingSubagentActivities(threadId: ThreadId, turnId: TurnId): Promise<readonly PendingSubagentActivity[]>; queueChildTurnActivity(thread: Thread, turn: Turn): void;
 }
+/**
+ * The account layer's hook. It is deliberately NOT part of the collaboration
+ * bag: every Thread's completed Turn passes through here, and only some of them
+ * are a delegated child's.
+ */
+interface TurnLifecycleTranscripts { enqueueTurn(thread: Thread, turn: Turn): void; }
 interface TurnLifecycleGoalUsage { addUsage(threadId: ThreadId, tokens: number, elapsedSeconds: number, turnId: TurnId): Promise<void>; }
 export interface ResolvedSubagentBudget {
   readonly member: SubagentRequestMember | null;
@@ -63,6 +69,7 @@ export class TurnLifecycle {
   constructor(
     private readonly core: ThreadCore, private readonly resourceOps: ThreadResourceOps,
     private readonly catalog: TurnLifecycleCatalog, private readonly collaboration: TurnLifecycleCollaboration,
+    private readonly transcripts: TurnLifecycleTranscripts,
     private readonly executor: TurnExecutor, private readonly extensions: ExtensionRegistry,
     private readonly subagentBudgets: SubagentRequestLedger,
     private readonly getDocumentProjection: () => DocumentProjection | null,
@@ -1185,6 +1192,7 @@ export class TurnLifecycle {
         else if (executionError) await this.extensions.turnError(thread, turn, executionError);
         else await this.extensions.turnStopped(thread, turn);
       }
+      this.transcripts.enqueueTurn(thread, turn);
       this.collaboration.queueChildTurnActivity(thread, turn);
       if (!hidden) await this.extensions.threadIdle(this.core.requireThread(active.threadId).thread);
     }
@@ -1511,7 +1519,10 @@ export class TurnLifecycle {
         await this.setStatus(active.threadId, { type: 'idle' }).catch(() => undefined);
       }).catch(() => undefined);
       if (thread && failedTurn) this.catalog.scheduleAutomaticThreadName(thread, failedTurn, active.configuration);
-      if (thread && failedTurn) this.collaboration.queueChildTurnActivity(thread, failedTurn);
+      if (thread && failedTurn) {
+        this.transcripts.enqueueTurn(thread, failedTurn);
+        this.collaboration.queueChildTurnActivity(thread, failedTurn);
+      }
     }
   async setStatus(threadId: ThreadId, status: ThreadStatus): Promise<void> {
       const now = this.now();

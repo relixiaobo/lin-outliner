@@ -9,6 +9,12 @@ import type {
 } from '../../../core/agent/automation';
 import type { ThreadService } from '../ThreadService';
 import { isSubagentBudgetExhaustedError } from '../SubagentBudgetExhaustedError';
+import {
+  AUTOMATION_RUN_GUIDANCE,
+  recentAutomationRuns,
+  type AutomationRunContinuityReader,
+  type RecentAutomationRun,
+} from './AutomationRunContinuity';
 import { AutomationStore } from './AutomationStore';
 import { AutomationWorktree } from './AutomationWorktree';
 
@@ -39,6 +45,19 @@ export class AutomationDispatcher {
 
   constructor(private readonly options: AutomationDispatcherOptions) {
     this.now = options.now ?? Date.now;
+  }
+
+  /**
+   * The reader the run digest is built through. It is a narrow view on purpose:
+   * everything it can do is inspection-only, so nothing it returns can be
+   * mistaken for a source of truth about the run being dispatched.
+   */
+  private get continuity(): AutomationRunContinuityReader {
+    return {
+      recentRunsForBinding: (...args) => this.options.store.recentRunsForBinding(...args),
+      readTurn: (threadId, turnId) => this.options.threads.readTurnForHost(threadId, turnId),
+      transcriptPath: (threadId) => this.options.threads.threadTranscriptPath(threadId),
+    };
   }
 
   async reconcile(): Promise<void> {
@@ -125,7 +144,7 @@ export class AutomationDispatcher {
         threadId: thread.id,
         input: [{ type: 'text', text: snapshot.prompt }],
         clientUserMessageId: prepared.id,
-        additionalContext: automationContext(prepared, executionCwd),
+        additionalContext: await automationContext(prepared, executionCwd, this.continuity),
         trigger: { kind: 'feature', feature: 'automation', ref: prepared.id },
       });
       if (!turn) return prepared;
@@ -245,11 +264,23 @@ export class AutomationDispatcher {
   }
 }
 
-function automationContext(run: AutomationRun, cwd: string): AdditionalContext {
+/**
+ * `guidance` is emitted FIRST, ahead of the data it governs: the model reads the
+ * contract for `recentRuns` before it reads any of it. An existing-Thread run
+ * gets neither — its predecessors are already Turns in the Thread it is joining,
+ * so a digest of them would be the same history told twice and worse.
+ */
+async function automationContext(
+  run: AutomationRun,
+  cwd: string,
+  continuity: AutomationRunContinuityReader,
+): Promise<AdditionalContext> {
+  const standalone = run.snapshot.destination.kind === 'standalone';
   return Object.freeze({
     automation_info: Object.freeze({
       kind: 'application',
       value: JSON.stringify({
+        ...(standalone ? { guidance: AUTOMATION_RUN_GUIDANCE } : {}),
         automationId: run.automationId,
         automationRunId: run.id,
         automationRevision: run.automationRevision,
@@ -267,9 +298,28 @@ function automationContext(run: AutomationRun, cwd: string): AdditionalContext {
               managed: run.worktree.managed,
             }
           : null,
+        ...(standalone ? { recentRuns: await recentRunsForDispatch(run, continuity) } : {}),
       }),
     }),
   });
+}
+
+/**
+ * A12 around the whole digest, not only around each read inside it: a
+ * predecessor's history is a hint, and a hint must never be able to stop the run
+ * it was meant to help. An empty list is the honest degraded answer — the model
+ * reads "no predecessors on record", not a half-built one.
+ */
+async function recentRunsForDispatch(
+  run: AutomationRun,
+  continuity: AutomationRunContinuityReader,
+): Promise<readonly RecentAutomationRun[]> {
+  try {
+    return await recentAutomationRuns(run, continuity);
+  } catch (error) {
+    console.warn(`[agent] Automation run continuity was not resolved for ${run.id}`, error);
+    return [];
+  }
 }
 
 export function assertAutomationConfigurationMatchesThread(

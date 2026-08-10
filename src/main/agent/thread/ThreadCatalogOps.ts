@@ -39,7 +39,11 @@ export interface ThreadCatalogCollaboration {
   deleteEphemeralSpawnEdge(threadId: ThreadId): void;
   ephemeralChildThreadIds(parentThreadId: ThreadId): readonly ThreadId[];
   clearThreadCoordinationState(threadIds: readonly ThreadId[]): void;
-  deleteTranscriptArtifact(threadId: ThreadId): Promise<void>;
+}
+
+/** The one deletion the catalog's descendant cascade owes the account layer. */
+export interface ThreadCatalogTranscripts {
+  delete(threadId: ThreadId): Promise<void>;
 }
 
 export class ThreadCatalogOps {
@@ -58,6 +62,7 @@ export class ThreadCatalogOps {
     private readonly applyToolCeiling: (configuration: EffectiveThreadConfiguration, toolCeiling: readonly string[] | null) => EffectiveThreadConfiguration,
     private readonly turnLifecycle: TurnLifecycle,
     private readonly collaboration: ThreadCatalogCollaboration,
+    private readonly transcripts: ThreadCatalogTranscripts,
     private readonly clearGoal: (threadId: ThreadId) => Promise<void>,
     private readonly clearSubagentBudget: (threadId: ThreadId) => void,
     private readonly createThreadBusyError: (message: string) => Error,
@@ -610,7 +615,7 @@ export class ThreadCatalogOps {
         // After coordination-state teardown, so no append the cascade raced can
         // land behind the removal and resurrect a transcript the user deleted.
         for (const descendantId of [...subtree.threadIds].reverse()) {
-          await this.collaboration.deleteTranscriptArtifact(descendantId);
+          await this.transcripts.delete(descendantId);
         }
       } finally {
         this.finishThreadSubtreeStop(subtree.threadIds);

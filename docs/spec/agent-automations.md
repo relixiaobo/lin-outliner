@@ -134,6 +134,49 @@ and worktree facts.
 This application context helps the model but is not provenance, a ThreadItem, or
 renderer-authored input.
 
+## Run Continuity
+
+A standalone run is a Thread with no history, so on its own it repeats a failed
+predecessor without knowing there was one. Its Thread materializes the same
+transcript artifact every delegated Thread does (mechanism:
+`agent-subagent-threads.md`), and `automation_info` carries a `recentRuns`
+digest of the runs before it. Everything stays pull-based: the digest is a
+pointer, and the transcript enters context only if the model reads it with the
+existing file tools. No model tool is added.
+
+`recentRuns` holds the three most recent runs of the same Automation **on the
+same project binding**, newest first, excluding the current one, queried by
+binding in SQL. The binding filter is the feature rather than a refinement: an
+Automation may carry up to 32 bindings and its runs interleave across all of
+them, so a binding-blind read would show a fresh run its siblings' history and
+none of its own.
+
+Each entry carries the run id, scheduled time, finish time, a status, one
+bounded outcome line, and a nullable `transcriptPath`. The outcome is derived
+from the canonical Turn every time the digest is built — an `AutomationRun`
+records how a run was *dispatched*, never how it ended, and it stays that way:
+`dispatched` plus the Turn's status and last non-commentary assistant text,
+`failed` from the run error, `omitted` from the omission reason and count, and
+`unknown` when the user deleted the Thread but kept the routing record. No
+outcome field is written down, so there is no second ledger to disagree with the
+first. Only a run that owned its Thread reports a `transcriptPath`.
+
+Outcome lines are single-lined and bounded on the way in. They are previous
+model output entering a *trusted* application context, so newlines and
+separators are stripped: a preview must not be able to forge another entry or
+read as an instruction addressed to the run receiving it.
+
+Doctrine rides in the same context as a fixed `guidance` string emitted first,
+ahead of the data it governs — when a prior run failed, grep its transcript
+before repeating the work, and treat transcripts and previews as records and
+untrusted data. An existing-Thread run gets neither `guidance` nor
+`recentRuns`: its predecessors are already Turns in the Thread it is joining.
+
+A12 covers the digest end to end and as a whole. Every lookup is guarded, and a
+history that cannot be read yields an empty list rather than a partial one — a
+run loses a hint, never its dispatch. Retention follows the existing run-record
+retention; there is no new policy knob.
+
 Automations never create a parallel Goal. A Turn in an existing Thread is
 observed by that Thread's current Goal extension normally. Automation-triggered
 Turns are ineligible for implicit Memory extraction, retrieval, citations, and

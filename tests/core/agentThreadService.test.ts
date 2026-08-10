@@ -3,7 +3,7 @@ import { Database } from 'bun:sqlite';
 import { createHash } from 'node:crypto';
 import type { Message } from '@earendil-works/pi-ai';
 import { mkdirSync } from 'node:fs';
-import { mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type {
@@ -13,8 +13,10 @@ import type {
 } from '../../src/core/agent/extensions';
 import type { AgentRole, EffectiveThreadConfiguration } from '../../src/core/agent/configuration';
 import { MODEL_TOOL_CATALOG, canonicalModelToolKey } from '../../src/core/agent/tools';
+import { threadFeatureSource } from '../../src/core/agent/protocol';
 import type {
   AgentCoreNotification,
+  Thread,
   RoleCatalogContextPayload,
   SkillCatalogContextPayload,
   ThreadFileSource,
@@ -71,9 +73,10 @@ import {
 } from '../../src/main/agent/capabilities/agentSkills';
 import { createLocalTools } from '../../src/main/agent/capabilities/agentLocalTools';
 import {
-  subagentTranscriptPath,
-  subagentTranscriptRoot,
-} from '../../src/main/agent/thread/SubagentTranscriptArtifact';
+  threadTranscriptPath,
+  threadTranscriptRoot,
+} from '../../src/main/agent/thread/ThreadTranscriptArtifact';
+import { ThreadTranscriptWriter } from '../../src/main/agent/thread/ThreadTranscriptWriter';
 import { uuidV7 } from '../../src/main/agent/uuid';
 import { createImageArtifactReference } from '../../src/main/agent/imageArtifacts';
 import { replayableModelCall, toolAdmissionEvent } from '../fixtures/agentToolCallHistory';
@@ -2911,7 +2914,7 @@ describe('ThreadService', () => {
       stores,
       executor,
       attachmentScratchRoot: join(root, 'agent-scratch'),
-      transcriptRoot: subagentTranscriptRoot(join(root, 'app-data')),
+      transcriptRoot: threadTranscriptRoot(join(root, 'app-data')),
       now: clock,
     });
     await service.initialize();
@@ -3805,7 +3808,7 @@ describe('ThreadService', () => {
       stores,
       executor,
       attachmentScratchRoot: join(root, 'agent-scratch'),
-      transcriptRoot: subagentTranscriptRoot(join(root, 'app-data')),
+      transcriptRoot: threadTranscriptRoot(join(root, 'app-data')),
       now: () => 1_720_000_000_000,
     });
     await service.initialize();
@@ -4042,7 +4045,7 @@ describe('ThreadService', () => {
       stores,
       executor,
       attachmentScratchRoot: join(root, 'agent-scratch'),
-      transcriptRoot: subagentTranscriptRoot(join(root, 'app-data')),
+      transcriptRoot: threadTranscriptRoot(join(root, 'app-data')),
       resolveUserContent: async (content, context) => {
         // A real managed attachment: the resolved content REFERENCES the
         // payload, so the re-send below actually has to resolve it.
@@ -4125,7 +4128,7 @@ describe('ThreadService', () => {
       stores,
       executor,
       attachmentScratchRoot: join(root, 'agent-scratch'),
-      transcriptRoot: subagentTranscriptRoot(join(root, 'app-data')),
+      transcriptRoot: threadTranscriptRoot(join(root, 'app-data')),
       extensions,
       resolveUserContent: async (_content, context) => {
         const written = await stores.payloads.writeResourceWithStatus(
@@ -5225,7 +5228,7 @@ describe('ThreadService', () => {
       stores,
       executor,
       attachmentScratchRoot: join(rootPath, 'agent-scratch'),
-      transcriptRoot: subagentTranscriptRoot(join(rootPath, 'app-data')),
+      transcriptRoot: threadTranscriptRoot(join(rootPath, 'app-data')),
       now: () => now,
     });
     await service.initialize();
@@ -5641,8 +5644,8 @@ describe('ThreadService', () => {
       fixture.service.waitForIdle(root.id),
     ]);
     await Promise.all([
-      fixture.service.flushSubagentTranscript(child.thread.id),
-      fixture.service.flushSubagentTranscript(grandchild.thread.id),
+      fixture.service.flushThreadTranscript(child.thread.id),
+      fixture.service.flushThreadTranscript(grandchild.thread.id),
     ]);
 
     const fork = (await fixture.service.forkThread({
@@ -9660,7 +9663,7 @@ async function openFixture(
       stores,
       executor,
       attachmentScratchRoot: join(root, 'agent-scratch'),
-      transcriptRoot: subagentTranscriptRoot(join(root, 'app-data')),
+      transcriptRoot: threadTranscriptRoot(join(root, 'app-data')),
       now: clock,
       extensions,
       ...options,
@@ -9843,7 +9846,144 @@ async function recordReferencedImageEvidence(
 }
 
 
-describe('subagent transcript artifact', () => {
+describe('Thread transcript artifact', () => {
+  test('materializes a standalone Automation Thread and leaves a user Thread alone', async () => {
+    const fixture = await createFixture();
+    const automation = await fixture.service.ensureFeatureRootThread({
+      id: uuidV7(9_400),
+      name: 'Daily review',
+      source: 'agent.automation',
+      threadSource: threadFeatureSource('automation'),
+      modelProvider: 'openai',
+      cwd: fixture.root,
+      configuration: defaultEffectiveThreadConfiguration(),
+    });
+    const automationTurn = await fixture.service.tryStartTurnIfIdle({
+      threadId: automation.id,
+      input: [{ type: 'text', text: 'Review what yesterday left behind' }],
+      trigger: { kind: 'feature', feature: 'automation', ref: 'run-a' },
+    });
+    expect(automationTurn).not.toBeNull();
+    await fixture.executor.waitUntilWaiting(0);
+    fixture.executor.finish(0, completedExecutionResult(0));
+    await fixture.service.waitForIdle(automation.id);
+    await fixture.service.flushThreadTranscript(automation.id);
+
+    const path = await fixture.service.threadTranscriptPath(automation.id);
+    expect(path).toBe(threadTranscriptPath(transcriptRootFor(fixture), automation.id));
+    const transcript = await readFile(path!, 'utf8');
+    expect(transcript).toContain(`threadId: ${automation.id}`);
+    expect(transcript).toContain('source: automation');
+    expect(transcript).toContain('name: Daily review');
+    // A root has no delegation to describe, and the run that produced each Turn
+    // is already named by that Turn's own trigger line.
+    expect(transcript).not.toContain('taskPath:');
+    expect(transcript).toContain('trigger: feature automation (run-a)');
+    expect(transcript).toContain('## Turn 1 — completed');
+    expect(transcript).toContain('Review what yesterday left behind');
+
+    // An ordinary conversation keeps no account yet: that is Feature 2's scope,
+    // and shipping it early here would materialize every user Thread silently.
+    const user = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const userTurn = await fixture.service.startRendererTurn({
+      threadId: user.id,
+      input: [{ type: 'text', text: 'An ordinary question' }],
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    fixture.executor.finish(1, completedExecutionResult(0));
+    await fixture.service.waitForIdle(user.id);
+    await fixture.service.flushThreadTranscript(user.id);
+    expect(userTurn.turn.id).toBeTruthy();
+    expect(await fixture.service.threadTranscriptPath(user.id)).toBeNull();
+
+    await fixture.service.close();
+  });
+
+  test('removes the Automation artifact when the Thread is deleted', async () => {
+    const fixture = await createFixture();
+    const automation = await fixture.service.ensureFeatureRootThread({
+      id: uuidV7(9_401),
+      name: 'Nightly sweep',
+      source: 'agent.automation',
+      threadSource: threadFeatureSource('automation'),
+      modelProvider: 'openai',
+      cwd: fixture.root,
+      configuration: defaultEffectiveThreadConfiguration(),
+    });
+    await fixture.service.tryStartTurnIfIdle({
+      threadId: automation.id,
+      input: [{ type: 'text', text: 'Sweep' }],
+      trigger: { kind: 'feature', feature: 'automation', ref: 'run-b' },
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    fixture.executor.finish(0, completedExecutionResult(0));
+    await fixture.service.waitForIdle(automation.id);
+    await fixture.service.flushThreadTranscript(automation.id);
+    const path = threadTranscriptPath(transcriptRootFor(fixture), automation.id);
+    expect(await readFile(path, 'utf8')).toContain('## Turn 1 — completed');
+
+    await fixture.service.deleteThread(automation.id);
+
+    expect(await readdir(transcriptRootFor(fixture))).not.toContain(`${automation.id}.md`);
+    await fixture.service.close();
+  });
+
+  test('moves the pre-rename artifacts forward rather than deleting them', async () => {
+    const fixture = await createFixture();
+    const spawned = await spawnTranscriptChild(fixture, 'relocated_child');
+    await fixture.service.waitForCollaborationActivity(spawned.root.id, spawned.rootTurn.turn.id);
+    await finishTranscriptRoot(fixture, spawned);
+    await fixture.service.close();
+
+    // Nothing computes this path any more, so what is inside it is beyond the
+    // reach of both the deletion cascade and the orphan sweep. It is still a
+    // released build's userData: the content is real and cannot be rebuilt,
+    // because a finished Thread never appends again.
+    const legacy = join(fixture.root, 'app-data', 'subagent-transcripts');
+    await mkdir(legacy, { recursive: true });
+    await rename(threadTranscriptPath(transcriptRootFor(fixture), spawned.child.thread.id),
+      join(legacy, `${spawned.child.thread.id}.md`));
+    await writeFile(join(legacy, '019fb2da-0000-7000-8000-00000000dead.md'), '# an orphan\n', 'utf8');
+
+    const reopened = await openFixture(fixture.root, new ControlledExecutor(), fixture.clock);
+    await reopened.service.initialize();
+
+    expect(await readdir(join(fixture.root, 'app-data'))).not.toContain('subagent-transcripts');
+    const remaining = await readdir(transcriptRootFor(fixture));
+    // The live child's account survives, now where the cascade can reach it; the
+    // orphan is reclaimed by the sweep that runs after the relocation, on this
+    // launch rather than the next.
+    expect(remaining).toContain(`${spawned.child.thread.id}.md`);
+    expect(remaining).not.toContain('019fb2da-0000-7000-8000-00000000dead.md');
+    expect(await readFile(threadTranscriptPath(transcriptRootFor(fixture), spawned.child.thread.id), 'utf8'))
+      .toContain('## Turn 1 — completed');
+    await reopened.service.close();
+  });
+
+  test('survives a subject resolver that throws on the turn-completion path', async () => {
+    const root = join(await mkdtemp(join(tmpdir(), 'tenon-transcript-subject-')), 'transcripts');
+    roots.push(root);
+    const writer = new ThreadTranscriptWriter({
+      transcriptRoot: root,
+      // A delegated subject is a spawn-edge lookup, so this is a store read on
+      // the user's path — and stores throw.
+      resolveSubject: () => { throw new Error('the metadata store is unreadable'); },
+      completedTurns: () => [],
+      payloads: () => ({ readContext: async () => null, readOutput: async () => null }),
+    });
+
+    // The completion tail continues past this call, so a throw here would strand
+    // a parent waiting on the child it never hears about (A12).
+    expect(() => writer.enqueueTurn({ id: 'thread-1' } as Thread, { id: 'turn-1' } as Turn)).not.toThrow();
+    await writer.flush('thread-1');
+    expect(await readdir(root).catch(() => [])).toEqual([]);
+  });
+
   test('appends the child account under userData and reports its path in the outcome', async () => {
     const fixture = await createFixture();
     const spawned = await spawnTranscriptChild(fixture, 'transcript_child');
@@ -9855,13 +9995,13 @@ describe('subagent transcript artifact', () => {
 
     const outcome = terminal.updates[0]!;
     expect(outcome).toMatchObject({ taskPath: '/root/transcript_child', status: 'completed', result: 'Done' });
-    expect(outcome.transcriptPath).toBe(subagentTranscriptPath(
+    expect(outcome.transcriptPath).toBe(threadTranscriptPath(
       transcriptRootFor(fixture),
       spawned.child.thread.id,
     ));
     // The account is app-owned: nothing lands in the workspace the child shares
     // with its parent, so git and workspace search never see a transcript.
-    expect(await readdir(fixture.root)).not.toContain('subagent-transcripts');
+    expect(await readdir(fixture.root)).not.toContain('thread-transcripts');
 
     const transcript = await readFile(outcome.transcriptPath!, 'utf8');
     expect(transcript).toContain(`threadId: ${spawned.child.thread.id}`);
@@ -9879,7 +10019,7 @@ describe('subagent transcript artifact', () => {
     const fixture = await createFixture();
     const spawned = await spawnTranscriptChild(fixture, 'growing_child');
     await fixture.service.waitForCollaborationActivity(spawned.root.id, spawned.rootTurn.turn.id);
-    const path = subagentTranscriptPath(transcriptRootFor(fixture), spawned.child.thread.id);
+    const path = threadTranscriptPath(transcriptRootFor(fixture), spawned.child.thread.id);
     const afterFirstTurn = await readFile(path, 'utf8');
 
     await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'growing_child-followup');
@@ -9893,7 +10033,7 @@ describe('subagent transcript artifact', () => {
     await fixture.executor.waitUntilWaiting(2);
     fixture.executor.finish(2);
     await fixture.service.waitForIdle(spawned.child.thread.id);
-    await fixture.service.flushSubagentTranscript(spawned.child.thread.id);
+    await fixture.service.flushThreadTranscript(spawned.child.thread.id);
 
     const afterSecondTurn = await readFile(path, 'utf8');
     expect(afterSecondTurn.startsWith(afterFirstTurn)).toBe(true);
@@ -9910,7 +10050,7 @@ describe('subagent transcript artifact', () => {
     const fixture = await createFixture();
     const spawned = await spawnTranscriptChild(fixture, 'rebuilt_child');
     await fixture.service.waitForCollaborationActivity(spawned.root.id, spawned.rootTurn.turn.id);
-    const path = subagentTranscriptPath(transcriptRootFor(fixture), spawned.child.thread.id);
+    const path = threadTranscriptPath(transcriptRootFor(fixture), spawned.child.thread.id);
     const expected = await readFile(path, 'utf8');
 
     // Truncate behind the cursor's back — the shape a crash mid-append leaves.
@@ -9926,7 +10066,7 @@ describe('subagent transcript artifact', () => {
     await fixture.executor.waitUntilWaiting(2);
     fixture.executor.finish(2);
     await fixture.service.waitForIdle(spawned.child.thread.id);
-    await fixture.service.flushSubagentTranscript(spawned.child.thread.id);
+    await fixture.service.flushThreadTranscript(spawned.child.thread.id);
 
     const rebuilt = await readFile(path, 'utf8');
     expect(rebuilt).not.toContain('clobbered');
@@ -9979,7 +10119,7 @@ describe('subagent transcript artifact', () => {
   test('does not resurrect the artifact when deletion races the parked parent wait', async () => {
     const fixture = await createFixture();
     const spawned = await spawnTranscriptChild(fixture, 'deleted_child');
-    const path = subagentTranscriptPath(transcriptRootFor(fixture), spawned.child.thread.id);
+    const path = threadTranscriptPath(transcriptRootFor(fixture), spawned.child.thread.id);
     expect(await readFile(path, 'utf8')).toContain('taskPath: /root/deleted_child');
 
     // Deletion's stop cascade wakes this parked wait; nothing it does may write.
@@ -9987,7 +10127,7 @@ describe('subagent transcript artifact', () => {
     await fixture.service.deleteThread(spawned.root.id);
     await parked.catch(() => undefined);
 
-    expect(await readdir(transcriptRootFor(fixture))).toEqual([]);
+    expect(await transcriptEntries(fixture)).toEqual([]);
     await fixture.service.close();
   });
 
@@ -9999,17 +10139,38 @@ describe('subagent transcript artifact', () => {
     // The append is now past its guards and parked inside rendering — exactly the
     // window where a drain that awaits `undefined` lets the write outlive the rm.
     await blocked.reached;
-    const deletion = fixture.service.deleteThread(spawned.root.id);
-    // Let the cascade run all the way to its removal step while the append is
-    // still parked. A real drain cannot get past it; a no-op drain removes the
-    // file here and the released append recreates it.
+    let deletionSettled = false;
+    const deletion = fixture.service.deleteThread(spawned.root.id)
+      .then(() => { deletionSettled = true; });
     for (let tick = 0; tick < 25; tick += 1) await new Promise((resolve) => setTimeout(resolve, 1));
+
+    // A real drain cannot get past the parked append; a no-op drain would have
+    // run the whole cascade to completion by now.
+    expect(deletionSettled).toBe(false);
     blocked.release();
     await deletion;
 
-    expect(await readdir(transcriptRootFor(fixture))).toEqual([]);
+    expect(await transcriptEntries(fixture)).toEqual([]);
     await fixture.service.close();
   });
+
+  test('does not recreate the artifact when the drain times out on a slow append', async () => {
+    const fixture = await createFixture();
+    const blocked = blockPayloadReads(fixture);
+    const spawned = await spawnTranscriptChildWithToolOutput(fixture, 'slow_child');
+
+    // Past the deadline the drain gives up and the removal proceeds — correct for
+    // a wedged chain, but this one is merely slow and is still going to write.
+    await blocked.reached;
+    await fixture.service.deleteThread(spawned.root.id);
+    blocked.release();
+    await fixture.service.flushThreadTranscript(spawned.child.thread.id);
+
+    // The write side re-checks `discarded` at the last moment before the bytes
+    // land, so a deletion the user performed does not need a restart to hold.
+    expect(await transcriptEntries(fixture)).toEqual([]);
+    await fixture.service.close();
+  }, 15_000);
 
   // Pins the observable invariant: a rebuild plus the appends queued behind it
   // leave exactly one block per Turn. It does NOT reproduce the narrow
@@ -10037,10 +10198,10 @@ describe('subagent transcript artifact', () => {
     fixture.executor.finish(2);
     await fixture.service.waitForIdle(spawned.child.thread.id);
     blocked.release();
-    await fixture.service.flushSubagentTranscript(spawned.child.thread.id);
+    await fixture.service.flushThreadTranscript(spawned.child.thread.id);
 
     const transcript = await readFile(
-      subagentTranscriptPath(transcriptRootFor(fixture), spawned.child.thread.id),
+      threadTranscriptPath(transcriptRootFor(fixture), spawned.child.thread.id),
       'utf8',
     );
     expect(transcript.match(/^## Turn 1 —/gm)).toHaveLength(1);
@@ -10077,10 +10238,10 @@ describe('subagent transcript artifact', () => {
     // Archive keeps the artifact, so the Turn it interrupts is the child's last
     // word: dropping it would leave a retained transcript ending mid-task.
     await fixture.service.setThreadArchived(root.id, true);
-    await fixture.service.flushSubagentTranscript(child.thread.id);
+    await fixture.service.flushThreadTranscript(child.thread.id);
 
     const transcript = await readFile(
-      subagentTranscriptPath(transcriptRootFor(fixture), child.thread.id),
+      threadTranscriptPath(transcriptRootFor(fixture), child.thread.id),
       'utf8',
     );
     expect(transcript).toContain('## Turn 1 — interrupted');
@@ -10095,7 +10256,7 @@ describe('subagent transcript artifact', () => {
     await fixture.service.close();
 
     const root = transcriptRootFor(fixture);
-    const orphan = subagentTranscriptPath(root, '019fb2da-0000-7000-8000-00000000dead');
+    const orphan = threadTranscriptPath(root, '019fb2da-0000-7000-8000-00000000dead');
     await writeFile(orphan, '# orphaned transcript\n', 'utf8');
 
     const reopened = await openFixture(fixture.root, new ControlledExecutor(), fixture.clock);
@@ -10158,9 +10319,9 @@ describe('subagent transcript artifact', () => {
     fixture.executor.finish(1);
     await fixture.service.waitForIdle(child.thread.id);
 
-    const path = await fixture.service.subagentTranscriptPath(child.thread.id);
+    const path = await fixture.service.threadTranscriptPath(child.thread.id);
 
-    expect(path).toBe(subagentTranscriptPath(transcriptRootFor(fixture), child.thread.id));
+    expect(path).toBe(threadTranscriptPath(transcriptRootFor(fixture), child.thread.id));
     const transcript = await readFile(path!, 'utf8');
     expect(transcript).toContain(`taskPath: ${child.taskPath}`);
     expect(transcript).toContain('Review the pending change');
@@ -10257,7 +10418,16 @@ async function recordChildToolOutput(context: TurnExecutionContext, itemId: stri
 
 /** Mirrors the fixture's userData location; deliberately NOT the workspace root. */
 function transcriptRootFor(fixture: Fixture): string {
-  return subagentTranscriptRoot(join(fixture.root, 'app-data'));
+  return threadTranscriptRoot(join(fixture.root, 'app-data'));
+}
+
+/**
+ * What survives on disk. A missing directory is the same answer as an empty one:
+ * an append that skipped its write never creates the directory it would have had
+ * to be deleted from.
+ */
+async function transcriptEntries(fixture: Fixture): Promise<readonly string[]> {
+  return readdir(transcriptRootFor(fixture)).catch(() => []);
 }
 
 async function spawnTranscriptChild(fixture: Fixture, taskName: string): Promise<{
@@ -10287,7 +10457,7 @@ async function spawnTranscriptChild(fixture: Fixture, taskName: string): Promise
   await fixture.executor.waitUntilWaiting(1);
   fixture.executor.finish(1);
   await fixture.service.waitForIdle(child.thread.id);
-  await fixture.service.flushSubagentTranscript(child.thread.id);
+  await fixture.service.flushThreadTranscript(child.thread.id);
   return { root, rootTurn, child };
 }
 
