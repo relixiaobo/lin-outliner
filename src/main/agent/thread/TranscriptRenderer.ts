@@ -68,9 +68,15 @@ export interface TranscriptPayloadReader {
  */
 export type TranscriptDetail = 'brief' | 'full';
 
-/** Identity of the rendered Thread. Every field is optional metadata, never structure. */
+/**
+ * Identity of the rendered Thread. Every field is optional metadata, never
+ * structure: a Thread kind that has nothing to say under a key simply omits it,
+ * so adding a key here cannot change what an existing kind renders.
+ */
 export interface TranscriptSubject {
   readonly threadId?: string;
+  readonly source?: string | null;
+  readonly name?: string | null;
   readonly taskPath?: string | null;
   readonly parentThreadId?: string | null;
   readonly role?: string | null;
@@ -103,6 +109,8 @@ export function renderTranscriptHeader(
 ): string {
   const entries: Array<[string, string | null | undefined]> = [
     ['threadId', subject?.threadId],
+    ['source', subject?.source],
+    ['name', subject?.name],
     ['taskPath', subject?.taskPath],
     ['parentThreadId', subject?.parentThreadId],
     ['role', subject?.role],

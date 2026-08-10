@@ -1,14 +1,14 @@
 /**
- * Where a delegated child's account layer lands on disk, and how it is named,
- * extended, and reclaimed.
+ * Where a Thread's account layer lands on disk, and how it is named, extended,
+ * and reclaimed.
  *
  * APP-OWNED STORAGE, NEVER THE WORKSPACE. Transcripts live under `userData`,
  * the pattern Claude Code and Codex both converge on. Git never sees them: no
  * gitignore entry to maintain, no workspace `file_glob`/`file_grep` noise, and
  * no path by which a secret echoed into a tool output becomes a committed file.
- * The parent still reads them with the existing `file_read` / `file_grep` —
- * the capability layer resolves absolute paths, so an app-owned location costs
- * no new tool and no permission change.
+ * A reader still reads them with the existing `file_read` / `file_grep` — the
+ * capability layer resolves absolute paths, so an app-owned location costs no
+ * new tool and no permission change.
  *
  * APPEND-ONLY. A completed Turn is immutable in the event-sourced store, so the
  * artifact only ever grows by whole completed Turns. That is what makes a
@@ -26,11 +26,19 @@ import { dirname, join } from 'node:path';
 import type { ThreadId } from '../../../core/agent/protocol';
 import { atomicWriteFile } from '../../jsonFileStore';
 
-export const SUBAGENT_TRANSCRIPT_DIRECTORY = 'subagent-transcripts';
+export const THREAD_TRANSCRIPT_DIRECTORY = 'thread-transcripts';
+/**
+ * The directory transcripts lived in while only delegated children had one.
+ * Nothing computes this path any more, which is exactly why it must be removed
+ * rather than left alone: artifacts inside it are unreachable by the deletion
+ * cascade and by the orphan sweep, so a Thread the user deletes would keep its
+ * full record on disk with nothing left that could ever remove it.
+ */
+const LEGACY_SUBAGENT_TRANSCRIPT_DIRECTORY = 'subagent-transcripts';
 const TRANSCRIPT_EXTENSION = '.md';
 
-export function subagentTranscriptRoot(userDataPath: string): string {
-  return join(userDataPath, SUBAGENT_TRANSCRIPT_DIRECTORY);
+export function threadTranscriptRoot(userDataPath: string): string {
+  return join(userDataPath, THREAD_TRANSCRIPT_DIRECTORY);
 }
 
 /**
@@ -38,12 +46,12 @@ export function subagentTranscriptRoot(userDataPath: string): string {
  * globally unique, and it is derivable from the Thread record, so cleanup and
  * tooling can always reconstruct the path without consulting spawn metadata.
  */
-export function subagentTranscriptPath(transcriptRoot: string, threadId: ThreadId): string {
+export function threadTranscriptPath(transcriptRoot: string, threadId: ThreadId): string {
   return join(transcriptRoot, `${threadId}${TRANSCRIPT_EXTENSION}`);
 }
 
 /** Byte length of the artifact, or null when it does not exist. */
-export async function subagentTranscriptSize(path: string): Promise<number | null> {
+export async function threadTranscriptSize(path: string): Promise<number | null> {
   try {
     return (await stat(path)).size;
   } catch {
@@ -51,17 +59,17 @@ export async function subagentTranscriptSize(path: string): Promise<number | nul
   }
 }
 
-export async function appendSubagentTranscript(path: string, text: string): Promise<void> {
+export async function appendThreadTranscript(path: string, text: string): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   await appendFile(path, text, 'utf8');
 }
 
-export async function rebuildSubagentTranscript(path: string, text: string): Promise<void> {
+export async function rebuildThreadTranscript(path: string, text: string): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   await atomicWriteFile(path, text);
 }
 
-export async function removeSubagentTranscript(path: string): Promise<void> {
+export async function removeThreadTranscript(path: string): Promise<void> {
   await rm(path, { force: true });
 }
 
@@ -93,4 +101,20 @@ export async function sweepOrphanTranscripts(
     }
   }
   return removed;
+}
+
+/**
+ * Reclaim the pre-rename directory, which is a sibling of the current root:
+ * both sit directly under `userData`, so the root is the only path this needs.
+ *
+ * Pre-release this is the wipe, not a migration — artifacts are rebuildable
+ * projections, so there is nothing to move and no old reader to keep. It is
+ * idempotent and best-effort: the next startup finds nothing, and a failure is
+ * simply retried by the one after it.
+ */
+export async function removeLegacyTranscriptDirectory(transcriptRoot: string): Promise<void> {
+  await rm(join(dirname(transcriptRoot), LEGACY_SUBAGENT_TRANSCRIPT_DIRECTORY), {
+    force: true,
+    recursive: true,
+  });
 }
