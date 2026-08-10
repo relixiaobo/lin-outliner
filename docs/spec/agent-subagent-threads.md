@@ -344,7 +344,7 @@ Waiting is interruptible and uses a pending latch scoped to the sender Thread. I
 has no model-controlled polling timeout: while a child is active, it returns only
 for sender steering or direct-child terminal activity. If no child is active it
 returns immediately. One return drains every terminal activity already queued,
-includes each child's final non-commentary result and error, and also includes the
+includes each child's completed final result and error, and also includes the
 current child-tree status. This makes one blocking wait after fan-out sufficient;
 the parent synthesizes completed outcomes instead of polling or repeating covered
 work. Each queued outcome is bound to the exact child Turn that emitted the terminal

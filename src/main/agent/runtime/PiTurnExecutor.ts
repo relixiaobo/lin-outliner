@@ -187,10 +187,17 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
       priorMessages.push(...currentMessages.slice(0, -1));
       const prompt = initialPrompt;
       if (context.signal.aborted) return { status: 'interrupted' };
-      const providerOptions = providerStreamOptionsFromRuntimeSettings(runtimeSettings, runtime.model);
+      let diagnostics: TurnDiagnosticsCollector;
+      const providerOptions = providerStreamOptionsFromRuntimeSettings(
+        runtimeSettings,
+        runtime.model,
+        {
+          onNoiseFrame: (frame) => diagnostics.captureStreamNoiseFrame(frame),
+        },
+      );
       const contextTurns = [...context.historyBeforeTurn, context.turn];
       const cacheAffinity = providerCacheAffinity(context.thread.id, contextTurns);
-      const diagnostics = new TurnDiagnosticsCollector({
+      diagnostics = new TurnDiagnosticsCollector({
         contextEpochId: latestContextEpochId(contextTurns, INITIAL_CONTEXT_EPOCH_ID),
         cacheAffinity,
         configuration: context.configuration,
@@ -820,6 +827,9 @@ export class PiEventNormalizer {
       case 'message_start':
         if (event.message.role === 'assistant') await this.ensureMessageItem();
         return;
+      case 'message_restart':
+        if (event.message.role === 'assistant') await this.completeAssistant(event.message, 'interrupted');
+        return;
       case 'message_update':
         if (event.message.role !== 'assistant') return;
         if (event.assistantMessageEvent.type === 'text_delta') {
@@ -893,7 +903,10 @@ export class PiEventNormalizer {
     return this.activeReasoningItem;
   }
 
-  private async completeAssistant(message: AssistantMessage): Promise<void> {
+  private async completeAssistant(
+    message: AssistantMessage,
+    completion: 'terminal' | 'interrupted' = 'terminal',
+  ): Promise<void> {
     const messageItem = await this.ensureMessageItem();
     await this.context.recorder.completed({
       ...messageItem,
@@ -901,7 +914,7 @@ export class PiEventNormalizer {
         .filter((part): part is TextContent => part.type === 'text')
         .map((part) => part.text)
         .join(''),
-      phase: messagePhase(message),
+      phase: completion === 'interrupted' ? 'interrupted' : messagePhase(message),
     });
     if (this.activeReasoningItem) {
       await this.context.recorder.completed({
@@ -911,15 +924,17 @@ export class PiEventNormalizer {
           .map((part) => part.thinking),
       });
     }
-    this.executionObserver?.assistantCompleted?.({ itemId: messageItem.id, message });
-    addUsage(this.usage, message.usage);
-    try {
-      this.context.onModelCallUsage?.(message.usage.totalTokens);
-    } catch (error) {
-      console.error('[agent][subagent-budget-audit] model-call usage observation failed', error);
+    if (completion === 'terminal') {
+      this.executionObserver?.assistantCompleted?.({ itemId: messageItem.id, message });
+      addUsage(this.usage, message.usage);
+      try {
+        this.context.onModelCallUsage?.(message.usage.totalTokens);
+      } catch (error) {
+        console.error('[agent][subagent-budget-audit] model-call usage observation failed', error);
+      }
+      this.stopReason = message.stopReason;
+      this.errorMessage = message.errorMessage ?? null;
     }
-    this.stopReason = message.stopReason;
-    this.errorMessage = message.errorMessage ?? null;
     this.activeMessageItem = null;
     this.activeReasoningItem = null;
   }

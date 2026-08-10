@@ -2,7 +2,10 @@ import { createHash } from 'node:crypto';
 import { describe, expect, test } from 'bun:test';
 import type { AgentEvent } from '../../src/main/agent/runtime/kernel/types';
 import type { Api, AssistantMessage, Message, Model, Tool, UserMessage } from '@earendil-works/pi-ai';
-import type { ThreadItem } from '../../src/core/agent/protocol';
+import {
+  MAX_TURN_DIAGNOSTICS_STREAM_NOISE_FRAMES,
+  type ThreadItem,
+} from '../../src/core/agent/protocol';
 import {
   decodeTurnDiagnosticsPayload,
   decodeTurnDiagnosticsPayloadJson,
@@ -126,6 +129,17 @@ describe('Turn diagnostics', () => {
       image_url: `data:image/png;base64,${imageBytes.toString('base64')}`,
       system: [{ text: 'Base', cache_control: { type: 'ephemeral' } }],
     });
+    const noiseAt = Date.now();
+    collector.captureStreamNoiseFrame({
+      arrivedAt: noiseAt,
+      frameType: 'relay.stream_notice',
+      snippet: '{"type":"relay.stream_notice","error":{"message":"stream_read_error"}}',
+    });
+    collector.captureStreamNoiseFrame({
+      arrivedAt: 0,
+      frameType: '',
+      snippet: '{"type":"","error":{"message":"late diagnostic"}}',
+    });
     collector.captureTransportResponse({
       status: 202,
       headers: {
@@ -196,6 +210,15 @@ describe('Turn diagnostics', () => {
       reservedOutputTokens: 8_192,
       commonPrefixMessageCount: 0,
       cacheBreakpoints: ['$.system[0].cache_control'],
+      streamNoiseFrames: [{
+        arrivedAt: noiseAt,
+        frameType: 'relay.stream_notice',
+        snippet: '{"type":"relay.stream_notice","error":{"message":"stream_read_error"}}',
+      }, {
+        arrivedAt: payload.providerCalls[0]?.requestedAt,
+        frameType: null,
+        snippet: '{"type":"","error":{"message":"late diagnostic"}}',
+      }],
       transportResponse: {
         httpStatus: 202,
         requestId: 'request-1',
@@ -565,6 +588,56 @@ describe('Turn diagnostics', () => {
       }),
     ]);
     expect(decodeTurnDiagnosticsPayloadJson(encodeTurnDiagnosticsPayload(payload))).toEqual(payload);
+  });
+
+  test('caps collected stream noise and rejects oversized durable payloads', async () => {
+    const message: UserMessage = {
+      role: 'user',
+      content: [{ type: 'text', text: 'Start.' }],
+      timestamp: 10,
+    };
+    const collector = new TurnDiagnosticsCollector({
+      contextEpochId: 'initial',
+      cacheAffinity: 'd'.repeat(64),
+      configuration: {
+        profileName: 'default',
+        developerInstructions: [],
+        model: model.id,
+        reasoningEffort: 'medium',
+        tools: ['alpha', 'zeta'],
+        skills: [],
+        plugins: [],
+        mcpServers: [],
+      },
+      stablePrompt: null,
+      tools: [tool('alpha'), tool('zeta')],
+      model,
+      thinkingLevel: 'medium',
+      providerOptions: {},
+      initialInput: { acceptedAt: 10, itemIds: ['initial-user'] },
+    });
+
+    prepare(collector, [message], 0, 10);
+    await collector.captureProviderRequest({ model: model.id, input: [message] });
+    for (let index = 0; index < MAX_TURN_DIAGNOSTICS_STREAM_NOISE_FRAMES + 5; index += 1) {
+      collector.captureStreamNoiseFrame({
+        arrivedAt: Date.now(),
+        frameType: 'relay.notice',
+        snippet: `noise-${index}`,
+      });
+    }
+
+    const payload = collector.payload();
+    const frames = payload.providerCalls[0]?.streamNoiseFrames ?? [];
+    expect(frames).toHaveLength(MAX_TURN_DIAGNOSTICS_STREAM_NOISE_FRAMES);
+    expect(frames.at(-1)?.snippet).toBe(`noise-${MAX_TURN_DIAGNOSTICS_STREAM_NOISE_FRAMES - 1}`);
+    expect(() => decodeTurnDiagnosticsPayload({
+      ...payload,
+      providerCalls: [{
+        ...payload.providerCalls[0]!,
+        streamNoiseFrames: [...frames, frames[0]!],
+      }],
+    })).toThrow(`cannot exceed ${MAX_TURN_DIAGNOSTICS_STREAM_NOISE_FRAMES} entries`);
   });
 });
 

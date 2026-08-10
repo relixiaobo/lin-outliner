@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   applyCustomOpenAIResponsesPayloadProfile,
+  customOpenAIResponsesFetchOption,
   isCustomOpenAIResponsesEndpoint,
 } from '../../src/main/openAIResponsesCompat';
 
@@ -96,6 +97,30 @@ describe('OpenAI Responses compatibility profile', () => {
       api: 'openai-completions' as const,
       baseUrl: 'https://proxy.example.com/v1',
     })).toBe(false);
+  });
+
+  test('installs the resilient fetch only for custom Responses endpoints', () => {
+    const fetch = (async () => new Response()) as typeof globalThis.fetch;
+    let creations = 0;
+    const createFetch = () => {
+      creations += 1;
+      return fetch;
+    };
+
+    expect(customOpenAIResponsesFetchOption(customResponsesModel, createFetch)).toEqual({ fetch });
+    expect(customOpenAIResponsesFetchOption({
+      api: 'openai-responses' as const,
+      baseUrl: 'https://api.openai.com/v1',
+    }, createFetch)).not.toHaveProperty('fetch');
+    expect(customOpenAIResponsesFetchOption({
+      api: 'openai-completions' as const,
+      baseUrl: 'https://proxy.example.com/v1',
+    }, createFetch)).not.toHaveProperty('fetch');
+    expect(customOpenAIResponsesFetchOption({
+      api: 'azure-openai-responses' as const,
+      baseUrl: 'https://example.openai.azure.com/openai',
+    }, createFetch)).not.toHaveProperty('fetch');
+    expect(creations).toBe(1);
   });
 
 });

@@ -10,10 +10,14 @@
  */
 import type { ThreadItem } from './protocol';
 
-/** Empty when the Turn left no non-commentary assistant text — a real outcome, not a failure. */
+/** Empty when the Turn left no completed final assistant text — a real outcome, not a failure. */
 export function turnTerminalAnswer(items: readonly ThreadItem[]): string {
   return items
-    .flatMap((item) => (item.type === 'agentMessage' && item.phase !== 'commentary' ? [item.text.trim()] : []))
+    .flatMap((item) => (
+      item.type === 'agentMessage' && (item.phase === 'final_answer' || item.phase === null)
+        ? [item.text.trim()]
+        : []
+    ))
     .filter(Boolean)
     .join('\n\n');
 }

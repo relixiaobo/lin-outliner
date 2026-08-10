@@ -161,7 +161,7 @@ reserves every isolated execution constraint before allocating space to authored
 descriptions, so pressure cannot silently remove the capability contract.
 
 The isolated Skill tool result records the child Turn outcome separately from the
-Skill execution mode. A completed outcome wraps the child's final non-commentary
+Skill execution mode. A completed outcome wraps the child's completed final
 text as a result to synthesize directly and tells the parent not to repeat covered
 work unless the result reports a gap or independent verification is explicitly
 required. The Skill tool is the only model-facing result channel for that isolated

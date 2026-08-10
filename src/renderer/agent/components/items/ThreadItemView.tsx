@@ -166,7 +166,9 @@ export function ThreadItemView(props: ThreadItemViewProps) {
               text={props.item.text}
             />
           </div>
-          {props.item.phase !== 'commentary' ? props.agentResponseTail : null}
+          {props.item.phase === 'final_answer' || props.item.phase === null
+            ? props.agentResponseTail
+            : null}
         </article>
       );
     case 'reasoning':

@@ -1461,6 +1461,11 @@ function materializeModelCallDiagnostics(
       },
     },
     response: {
+      streamNoiseFrames: (call.streamNoiseFrames ?? []).map((frame) => ({
+        arrivedAt: frame.arrivedAt,
+        frameType: frame.frameType,
+        snippet: frame.snippet,
+      })),
       transport: call.transportResponse ? {
         headersReceivedAt: call.transportResponse.headersReceivedAt,
         httpStatus: call.transportResponse.httpStatus,
