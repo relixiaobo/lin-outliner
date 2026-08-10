@@ -83,6 +83,34 @@ Entries reference the pull request that introduced them.
   `exitCode` from the same tool envelope in one step — so the fix was reverted and
   what the round proved became a `PiTurnExecutor` test pinning that coupling from
   the side that would break it silently.
+- **Your files are findable, and the media facets finally mean something (PR
+  #516, codex)** — `AttachmentNode` has carried every audio, video and PDF since
+  #204/#241, yet it was missing from search's candidate allowlist, so a file could
+  not be found by text, by type, or by any facet while the sibling `image` type
+  could. Attachments are candidates now: `STRING_MATCH` and the Launcher find a
+  file by its filename, `IS_TYPE attachment` matches every searchable file
+  including PDFs, and `HAS_AUDIO` / `HAS_VIDEO` stop being the inert compatibility
+  terms PR #510 left them as — they read the stored MIME family, with `HAS_MEDIA`
+  becoming the real image/audio/video union rather than an alias of `HAS_IMAGE`.
+  **This widens existing saved searches**: candidacy is global, not
+  operator-specific, so every executable tag, timestamp, field, link or structural
+  rule now evaluates an attachment that carries its data — a `HAS_TAG` view under
+  a tag-applying parent will list files it did not list before. Launcher rows
+  present those hits with a file glyph and a localized `File` label so a file
+  never reads as an ordinary note. The high review gate found seven, all fixed in
+  the same PR, and one of them changed the design: the classifier's
+  `application/octet-stream` → duration fallback and its `image/*` branch were
+  both **unreachable** — ingest only records a duration once the MIME is already
+  `audio/*`/`video/*`, and the write boundary rejects image-MIME attachments
+  outright — so rather than keep two branches no user could reach, the fix moved
+  to where the gap actually was: asset ingestion learned AAC, FLAC, Matroska,
+  MPEG, Ogg/Opus, AVI, WMA and WMV by signature and extension, so a `.flac` or
+  `.mkv` now carries a real family and matches. Stored MIME is the sole authority;
+  duration is presentation data, never a kind override. One
+  `mediaKindForMimeType` in core replaced three independent copies of the same
+  prefix logic (search, file card, preview player), and the tests that had
+  "covered" the dead branches by writing straight into `state.nodes` were rebuilt
+  through the command surface.
 
 ### Fixed
 

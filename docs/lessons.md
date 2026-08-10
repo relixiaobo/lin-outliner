@@ -649,3 +649,22 @@ window: invalidation became synchronous, the read became `async` and awaits the
 reload, and a load that fails now propagates. So: **if a cache must be fresh to
 be correct, make the reader await the refresh and fail closed — never let a
 not-yet-loaded answer be spelled the same as a negative one.**
+
+## A fallback that reads what an earlier boundary never writes is dead code
+
+The #516 gate found a media classifier whose two most interesting branches could
+not run. One rescued attachments with a generic MIME by consulting their stored
+duration — but ingest records a duration *only after* deciding the MIME is
+`audio/*` or `video/*`, so a generic-MIME attachment provably has none. The other
+classified `image/*` attachments, which the write boundary rejects outright. Both
+read plausible-looking fields that a boundary upstream guarantees are absent, and
+both had passing tests: the tests forged the states by writing into `state.nodes`
+directly, so the suite reported coverage for behavior no user action could reach,
+and the spec documented it as shipped. The fix was not to keep the branches
+honest but to move the work to where the gap actually was — teaching ingest more
+media signatures and extensions, so the files carry a real family before search
+ever sees them. So: **before writing a fallback, name the producer of the data it
+reads; if no shipped path writes that field in that state, you are not adding
+resilience, you are adding a branch that will never run.** And a test that has to
+bypass the command surface to reach a branch is telling you the branch is
+unreachable, not that it needs a fixture.

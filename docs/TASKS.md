@@ -39,9 +39,7 @@ every stale entry, so the frontier is four parallel lanes (detail lives in each 
 theme-section entry below; this list is the ordering, not a second record):
 
 - **Lane A — build-ready quick wins** (fast-track, parallelize freely; small items
-  don't count against the review-queue cap): `media-search-alignment` **PR 2**
-  (PR 1 shipped 2026-08-10 as #510 — protocol cleared, siblings rebase once; PR 2
-  stays plan-track under the same owner), `renderer-state-hygiene`,
+  don't count against the review-queue cap): `renderer-state-hygiene`,
   `floating-toolbar-polish`, `icon-semantics`, the two remaining prime-agent
   fast-tracks (`agent-delegation-context-hygiene` · `agent-hygiene-checks`; the
   third shipped 2026-08-10 as #512), the `file-as-node` pane-restore bug, and the micro-tails
@@ -563,22 +561,9 @@ archived `done` (see Recently completed). Remaining active work:
   `TextMarkKind` is `types.ts:213` (not :110) and the Heading icon source is
   `icons.ts:75` (`AgentMarkdown.tsx` is gone); mirror the registry `addTag`
   create-then-apply candidate policy in the `#`-extract tag pick.
-- **media-search-alignment** (P2, `in-progress` — PR 1 shipped 2026-08-10 as #510;
-  absorbs the former `embed-strategy`, whose plan is archived for provenance; see
-  [docs/plans/media-search-alignment.md](plans/media-search-alignment.md)) — search's
-  media model pointed at a node type that does not exist and is blind to the one that
-  does. Shape (b), **two sequenced PRs, one owner**. **PR 1 — done (#510)**: deleted
-  `EmbedNode` / `'embed'`, the embed-backed facet semantics, and `IS_TYPE embed`;
-  `HAS_AUDIO` / `HAS_VIDEO` stay in the protocol as parseable-but-inert
-  compatibility terms (saved searches and replayed agent outlines keep executing,
-  matching nothing until PR 2 activates attachment-backed semantics) and are no
-  longer advertised in guidance; `HAS_IMAGE` stays, `HAS_MEDIA` kept as its alias.
-  **PR 2**: `AttachmentNode` — the real carrier of every audio, video, and PDF since
-  #204/#241 — is missing from `isSearchCandidate`'s allowlist (`searchEngine.ts:2084`),
-  so an attachment cannot be found by text, type, or facet while the sibling `image`
-  type can; admit it, add `IS_TYPE attachment`, and rebuild the media facets on
-  `mimeType` + the duration fields. Confirm the omission was oversight rather than
-  decision against #204/#206/#241 before treating it as a bug. PM-ratified 2026-08-10.
+`media-search-alignment` is **complete** — both PRs shipped (#510, #516); see
+*Recently completed*.
+
 `past-chats-output-polish` was **REMOVED 2026-08-09** — every named symbol
 (`visiblePastChatsResult`, `AgentToolCallBlock`, the count fields) died with the
 Agent Core replacement (`59c7e1cf`, 2026-07-24); recall lives in the memory
@@ -809,6 +794,19 @@ and the merged PR, distilled rules in [`lessons.md`](lessons.md). Everything
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
 
+- **media-search-alignment** (codex, PR #516, merged 2026-08-10 — plan-track, plan archived
+  `done`; PR 2 of 2, completing the plan after #510) — attachments are search candidates
+  now, so a file is findable by filename, by `IS_TYPE attachment`, and through media facets
+  read from its stored MIME family; the Launcher gives those rows a file glyph and a `File`
+  label. Candidacy is global, so every executable rule that fits an attachment's data now
+  evaluates it — a result-set change for existing saved searches, recorded in the CHANGELOG.
+  `/code-review high` found seven, all fixed, and one redirected the design: the
+  octet-stream-duration and `image/*` branches of the classifier were **unreachable** (ingest
+  records a duration only once the MIME is already media; the write boundary rejects
+  image-MIME attachments), so the fix moved to ingest — AAC, FLAC, Matroska, MPEG, Ogg/Opus,
+  AVI, WMA and WMV are recognized by signature and extension. The rule is in
+  [`lessons.md`](lessons.md) — a fallback that reads data an earlier boundary never writes is
+  dead code, and a test that forges the state to cover it hides that.
 - **tool-detail-outcome-sections** (cc-2, PR #518, merged 2026-08-10 — fast-track, no plan
   file) — a tool detail stated its failure three times; the produced-value heading is now the
   single place the outcome and its exit code live. `/code-review medium` found three: two
