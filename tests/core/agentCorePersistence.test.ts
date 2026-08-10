@@ -452,17 +452,64 @@ describe('Agent Core persistence', () => {
     const threadId = uuidV7(3000);
     const first = goals.create(threadId, 'Ship Agent Core', 100, 10);
     expect(first.goal.status).toBe('active');
+    expect(goals.readContinuationState(threadId)).toMatchObject({
+      generation: 1,
+      admittedCount: 0,
+      wrapUpEligible: false,
+      wrapUpAdmitted: false,
+      pending: null,
+    });
     expect(() => goals.create(threadId, 'Replace active work', null, 11)).toThrow('unfinished Goal');
+    const continuationTurnId = uuidV7(3_001);
+    expect(goals.reserveContinuation(threadId, first.generation, 'normal', continuationTurnId))
+      .toEqual({ turnId: continuationTurnId, kind: 'normal', number: 1 });
+    expect(goals.commitContinuation(threadId, first.generation, continuationTurnId)).toMatchObject({
+      admittedCount: 1,
+      pending: null,
+    });
     expect(goals.deferContinuation(threadId, first.generation, 'Thread is active', 12).generation).toBe(1);
     expect(goals.addUsage(threadId, 100, 5, 13).goal.status).toBe('budgetLimited');
     expect(goals.readDeferral(threadId)).toBeNull();
+    expect(goals.readContinuationState(threadId)).toMatchObject({
+      admittedCount: 1,
+      wrapUpEligible: true,
+      wrapUpAdmitted: false,
+    });
+    const wrapUpTurnId = uuidV7(3_002);
+    expect(goals.reserveContinuation(threadId, first.generation, 'budgetLimitedWrapUp', wrapUpTurnId))
+      .toEqual({ turnId: wrapUpTurnId, kind: 'budgetLimitedWrapUp', number: 2 });
+    expect(goals.commitContinuation(threadId, first.generation, wrapUpTurnId)).toMatchObject({
+      admittedCount: 2,
+      wrapUpEligible: false,
+      wrapUpAdmitted: true,
+      pending: null,
+    });
     goals.updateFromAgent(threadId, 'complete', 14);
     expect(goals.addUsage(threadId, 1, 1, 15).goal.status).toBe('complete');
 
-    const replacement = goals.create(threadId, 'Verify Agent Core', null, 16);
+    const replacement = goals.create(threadId, 'Verify Agent Core', 5, 16);
     expect(replacement.generation).toBe(2);
     expect(replacement.goal.tokensUsed).toBe(0);
+    expect(goals.readContinuationState(threadId)).toMatchObject({
+      generation: 2,
+      admittedCount: 0,
+      wrapUpEligible: false,
+      wrapUpAdmitted: false,
+      pending: null,
+    });
     expect(() => goals.deferContinuation(threadId, first.generation, 'stale', 17)).toThrow('stale');
+    goals.updateFromAgent(threadId, 'blocked', 18);
+    expect(goals.addUsage(threadId, 5, 1, 19).goal.status).toBe('budgetLimited');
+    expect(goals.readContinuationState(threadId)?.wrapUpEligible).toBe(true);
+
+    goals.setStatus(threadId, 'complete', 20);
+    const interrupted = goals.create(threadId, 'Stop at the budget', 5, 21);
+    expect(goals.addUsage(threadId, 5, 1, 22, 'interrupted').goal.status).toBe('budgetLimited');
+    expect(goals.readContinuationState(threadId)).toMatchObject({
+      generation: interrupted.generation,
+      wrapUpEligible: false,
+      wrapUpAdmitted: false,
+    });
     goals.close();
   });
 

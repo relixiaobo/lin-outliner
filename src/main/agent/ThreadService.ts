@@ -425,7 +425,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     this.goals.bindHost(
       this,
       (threadId) => this.core.requireThread(threadId).thread,
-      (threadId) => this.core.allTurns(threadId, 'notLoaded'),
+      (threadId, turnId) => this.core.readTurn(threadId, turnId),
     );
     this.extensions.register(this.goals);
   }

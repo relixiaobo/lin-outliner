@@ -152,7 +152,10 @@ reuses that canonical observation when its tool result is recorded.
 
 A `ThreadGoal` is attached one-to-one to a Thread and stored separately from
 history. It carries objective, lifecycle status, optional token budget, token
-usage, continuation deferrals, and timestamps. Goal updates emit canonical Goal
+usage, continuation deferrals, timestamps, and a private continuation ledger.
+The ledger belongs to the Goal generation rather than to projected Turn history:
+it records the admitted continuation count, budget-wrap eligibility and admission,
+and any pre-admission Turn reservation. Goal updates emit canonical Goal
 notifications but do not create another execution entity.
 
 ## Runtime Ownership
@@ -340,23 +343,40 @@ configuration, and lets extensions reconcile their own state; it does not create
 a Turn.
 
 When a Turn becomes idle, an active Goal may admit a continuation through the
-same single-Turn coordinator. Its prompt carries the current-generation
-continuation number, available budget usage and remainder, an escaped
-data-not-instructions objective block, and the completion-audit rule that
-current evidence rather than memory or partial progress must prove completion.
-Usage is committed before continuation admission. Reaching a token budget
-changes the Goal to `budgetLimited` and may admit exactly one flagged wrap-up
-continuation that starts no substantive work and reports progress, remaining
-work, blockers, and the next step. Existing hard non-user Turn admission limits,
-including an exhausted Subagent request budget, remain authoritative and may
-refuse that wrap-up. Persisted Goal-continuation Turn provenance is the authority
-for the continuation number and whether the current Goal generation already
-admitted its wrap-up, so host restart does not duplicate it. A deferral records
-a lost active-Goal admission race for one idle boundary; the next real idle
-boundary clears it and retries the same Goal generation. Startup resumes active
-Goals and any not-yet-admitted budget-limited wrap-up on non-archived idle
-Threads. `waitForIdle` follows the whole continuation chain, including the
-wrap-up when admitted, rather than returning after only its first Turn.
+same single-Turn coordinator. The short dynamic user message carries only the
+Goal generation's continuation number, available budget usage and remainder,
+and the requested next action. The objective is admitted as untrusted
+Thread-state observation and the completion doctrine as an application
+instruction through typed `additionalContext` evidence. Shared XML escaping is
+therefore authoritative, diagnostics record the authority boundary, and the
+Thread-state projector emits unchanged objective and doctrine text only once in
+the effective context rather than repeating it in every continuation message.
+
+Usage is committed before continuation admission. Crossing a token budget
+changes every unfinished Goal status, including `blocked`, to `budgetLimited`;
+`complete` never regresses. A successfully completed Turn that crosses the
+budget also arms exactly one flagged wrap-up continuation. An interrupted or
+failed Turn still accounts its usage and changes the status but does not arm a
+wrap-up, so Stop cannot launch replacement work. The wrap-up starts no
+substantive work and reports progress, remaining work, blockers, and the next
+step. Existing hard non-user Turn admission limits, including an exhausted
+Subagent request budget, remain authoritative and may refuse it.
+
+Before admission, the Goal ledger durably reserves a generated Turn ID and
+continuation kind. Admission commits the count and one-shot wrap-up fact;
+known refusal releases the reservation. Startup reconciles an interrupted
+reservation with one indexed Turn-ID lookup: an existing Turn commits it, while
+an absent Turn reuses the reservation for admission. Admission errors release
+the reservation, record a diagnostic, and degrade without rejecting agent
+startup, so a later real idle boundary or restart can retry. A fork copies Turn
+history but not Goal state, so its new Goal starts at continuation one. History
+rollback does not rewind the Goal ledger and therefore cannot duplicate a
+removed wrap-up. A pre-existing `budgetLimited` Goal with no ledger row is not
+retroactively armed at upgrade; a pre-existing active Goal initializes its
+ledger lazily. A deferral records a lost active-Goal admission race for one idle
+boundary; the next real idle boundary clears it and retries the same Goal
+generation. `waitForIdle` follows the whole continuation chain, including an
+admitted wrap-up, rather than returning after only its first Turn.
 
 Archiving or deleting a Thread is a subtree operation over `parentThreadId`
 lineage. `ThreadService` first fences the complete subtree against new Turn and
