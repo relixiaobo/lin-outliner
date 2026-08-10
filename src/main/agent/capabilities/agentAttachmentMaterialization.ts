@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { constants } from 'node:fs';
+import { constants, existsSync, realpathSync } from 'node:fs';
 import { copyFile, lstat, mkdir, readdir, realpath, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 import type {
@@ -175,6 +175,39 @@ async function pruneDirEntriesByTtl(dir: string, now: number, ttlMs: number): Pr
 export function isPathInside(root: string, candidate: string): boolean {
   const relative = path.relative(path.resolve(root), path.resolve(candidate));
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+export function canonicalPathPreservingSuffix(inputPath: string): string {
+  const requested = path.resolve(inputPath);
+  let existing = requested;
+  while (!existsSync(existing)) {
+    const parent = path.dirname(existing);
+    if (parent === existing) break;
+    existing = parent;
+  }
+  try {
+    const canonicalExisting = realpathSync.native(existing);
+    const suffix = path.relative(existing, requested);
+    return suffix ? path.resolve(canonicalExisting, suffix) : canonicalExisting;
+  } catch {
+    return requested;
+  }
+}
+
+export async function canonicalPathPreservingSuffixAsync(inputPath: string): Promise<string> {
+  const requested = path.resolve(inputPath);
+  let existing = requested;
+  while (true) {
+    try {
+      const canonicalExisting = await realpath(existing);
+      const suffix = path.relative(existing, requested);
+      return suffix ? path.resolve(canonicalExisting, suffix) : canonicalExisting;
+    } catch {
+      const parent = path.dirname(existing);
+      if (parent === existing) return requested;
+      existing = parent;
+    }
+  }
 }
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {

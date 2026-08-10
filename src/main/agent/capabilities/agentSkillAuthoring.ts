@@ -74,7 +74,7 @@ export function validateAgentSkillContentWrite(input: {
   if (target.isSkillFile) {
     validateSkillMarkdown(input.content);
   } else {
-    validateSupportFile(target, input.content);
+    validateAgentSkillSupportFile(target, input.content);
   }
 
   const previousBytes = previous === null ? 0 : Buffer.byteLength(previous, 'utf8');
@@ -94,7 +94,7 @@ export function validateAgentSkillContentWrite(input: {
     previousBytes,
     nextBytes,
     warnings: target.isSkillFile
-      ? ['Agent-written skills are available immediately: slash-invocable now, and model-invocable skills can appear in the automatic listing without a separate trust prompt.']
+      ? ['The next Skill resolution or catalog projection awaits the registry refresh and fails closed if it cannot complete.']
       : ['Support files are not loaded automatically; the skill must reference them explicitly.'],
   };
 }
@@ -150,8 +150,11 @@ function validateSkillMarkdown(content: string): void {
   }
 }
 
-function validateSupportFile(target: AgentSkillContentTarget, content: string): void {
-  const bytes = Buffer.byteLength(content, 'utf8');
+export function validateAgentSkillSupportFile(
+  target: AgentSkillContentTarget,
+  content: string,
+  bytes = Buffer.byteLength(content, 'utf8'),
+): void {
   if (bytes > MAX_SUPPORT_FILE_BYTES) {
     throw new AgentSkillAuthoringError(
       'skill_support_file_too_large',

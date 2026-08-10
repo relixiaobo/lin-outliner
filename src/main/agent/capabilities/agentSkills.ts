@@ -1,6 +1,6 @@
 import type { AgentTool } from '../runtime/kernel/types';
 import { createHash } from 'node:crypto';
-import { existsSync, realpathSync } from 'node:fs';
+import { realpathSync } from 'node:fs';
 import { readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
@@ -16,7 +16,10 @@ import type { SkillDefinition } from '../../../core/types';
 // module; we import its validator for the undo restore path. Neither side touches the
 // other's bindings at module-evaluation time, so the cycle is safe under ESM.
 import { AgentSkillAuthoringError, isValidSkillName, validateAgentSkillContentWrite } from './agentSkillAuthoring';
-import { isPathInside as isPathInsideOrEqual } from './agentAttachmentMaterialization';
+import {
+  canonicalPathPreservingSuffixAsync,
+  isPathInside as isPathInsideOrEqual,
+} from './agentAttachmentMaterialization';
 import {
   BUILT_IN_SKILL_RESOURCE_DIR_NAME,
   BUILT_IN_SKILL_SOURCE_DIR,
@@ -403,15 +406,11 @@ export class AgentSkillRuntime {
     if (changed) this.requestCatalogRefresh();
   }
 
-  async notifySkillContentWritten(_filePaths: string[]): Promise<void> {
-    try {
-      await this.registry.reloadAfterContentWrite();
-    } catch (error) {
-      // The file write already succeeded. A registry refresh is runtime
-      // projection, so keep the last complete ownership snapshot and retry on
-      // the next catalog admission rather than turning the write into a failure.
-      console.warn(`Reloading Skills after a content write failed: ${error instanceof Error ? error.message : String(error)}`);
+  async notifySkillContentWritten(filePaths: string[]): Promise<void> {
+    if (filePaths.length > 0 && filePaths.every((filePath) => path.basename(filePath) !== SKILL_FILE_NAME)) {
+      return;
     }
+    this.registry.reloadAll();
     this.requestCatalogRefresh();
   }
 
@@ -431,7 +430,7 @@ export class AgentSkillRuntime {
     );
   }
 
-  resolveSkillTarget(filePath: string): AgentSkillContentTarget | null {
+  async resolveSkillTarget(filePath: string): Promise<AgentSkillContentTarget | null> {
     return this.registry.resolveSkillTarget(filePath);
   }
 
@@ -810,6 +809,11 @@ function isSkillQuestion(input: string): boolean {
     || /\b(?:tell me about|explain|describe)\b.{0,80}\b(?:skillify|skills?)\b/.test(input);
 }
 
+interface LoadedSkillAdmission {
+  registryChanged: boolean;
+  ownsMutableRoot: boolean;
+}
+
 class SkillRegistry {
   private readonly root: string;
   private readonly includeUserSkills: boolean;
@@ -819,6 +823,7 @@ class SkillRegistry {
   private readonly builtInReadOnlyIsolatedSkills: Set<string>;
   private additionalSkillDirectories: string[];
   private loadedBoundSkillRoots: LoadedBoundSkillRoot[] = [];
+  private loadedSkillSearchDirectories: SkillSearchDirectory[] = [];
   private loaded = false;
   private readonly skills = new Map<string, SkillDefinition>();
   private readonly conditionalSkills = new Map<string, SkillDefinition>();
@@ -921,7 +926,7 @@ class SkillRegistry {
     if (existing.agentHash === undefined || existing.agentHash !== skillContentHash(currentRaw)) {
       throw new Error(`Skill ${skill.name} was edited after the last agent write; undo would overwrite those edits.`);
     }
-    const target = this.resolveSkillTarget(skill.skillFile);
+    const target = await this.resolveSkillTarget(skill.skillFile);
     if (!target?.isSkillFile) {
       throw new Error(`Skill file for ${skill.name} no longer resolves to a governed skill path.`);
     }
@@ -1014,21 +1019,22 @@ class SkillRegistry {
     return true;
   }
 
-  resolveSkillTarget(filePath: string): AgentSkillContentTarget | null {
-    return resolveSkillContentTarget(filePath, {
-      root: this.root,
-      includeUserSkills: this.includeUserSkills,
-      additionalSkillDirectories: this.additionalSkillDirectories,
-      loadedBoundSkillRoots: this.loadedBoundSkillRoots,
-      builtInSkillDirectories: this.builtInSkillDirectories,
-      builtInSkillRoots: this.builtInSkillRoots,
-      managedSkillContentRoot: this.managedSkillContentRoot,
-    });
-  }
-
-  async reloadAfterContentWrite(): Promise<void> {
-    this.reloadAll();
-    await this.ensureLoaded();
+  async resolveSkillTarget(filePath: string): Promise<AgentSkillContentTarget | null> {
+    while (true) {
+      await this.ensureLoaded();
+      const generation = this.loadGeneration;
+      const target = await resolveSkillContentTarget(filePath, {
+        root: this.root,
+        includeUserSkills: this.includeUserSkills,
+        additionalSkillDirectories: [...this.additionalSkillDirectories],
+        loadedBoundSkillRoots: [...this.loadedBoundSkillRoots],
+        skillSearchDirectories: [...this.loadedSkillSearchDirectories],
+        builtInSkillDirectories: this.builtInSkillDirectories,
+        builtInSkillRoots: this.builtInSkillRoots,
+        managedSkillContentRoot: this.managedSkillContentRoot,
+      });
+      if (this.loaded && this.loadGeneration === generation) return target;
+    }
   }
 
   reloadAll(): void {
@@ -1073,7 +1079,7 @@ class SkillRegistry {
       // Nested .agents/skills dirs are always under the work root → project source.
       const loaded = await loadSkillsFromDir(dir, 'project');
       for (const skill of loaded) {
-        if (await this.addLoadedSkill(skill)) changed = true;
+        if ((await this.addLoadedSkill(skill)).registryChanged) changed = true;
       }
     }
 
@@ -1169,19 +1175,24 @@ class SkillRegistry {
         }
         await this.addLoadedSkill(skill);
       }
-      const roots = skillSearchDirs(this.root, this.includeUserSkills, this.additionalSkillDirectories);
-      for (const { dir, source, policy } of roots) {
+      const roots = await skillSearchDirs(this.root, this.includeUserSkills, this.additionalSkillDirectories);
+      for (const root of roots) {
+        const { dir, source, policy } = root;
         const loaded = await loadSkillsFromDir(dir, source);
-        if (policy === 'bound') {
-          nextLoadedBoundSkillRoots.push(...loaded.map((skill) => ({
-            skillName: skill.name,
-            skillRoot: skill.rootDir,
-            skillsDir: dir,
-            source,
-          })));
-        }
         for (const skill of loaded) {
-          await this.addLoadedSkill(skill);
+          const admission = await this.addLoadedSkill(skill);
+          if (policy !== 'bound' || !admission.ownsMutableRoot) continue;
+          const skillRootIdentity = await canonicalPathPreservingSuffixAsync(skill.rootDir);
+          for (const alias of root.aliases) {
+            nextLoadedBoundSkillRoots.push({
+              skillName: skill.name,
+              skillRoot: path.join(alias.dir, path.basename(skill.rootDir)),
+              skillRootIdentity,
+              skillsDir: alias.dir,
+              skillsDirIdentity: root.identity,
+              source: alias.source,
+            });
+          }
         }
       }
       for (const dir of this.dynamicSkillDirectories) {
@@ -1191,7 +1202,17 @@ class SkillRegistry {
         }
       }
       if (this.loadGeneration === loadGeneration) {
-        this.loadedBoundSkillRoots = deduplicateLoadedBoundSkillRoots(nextLoadedBoundSkillRoots);
+        this.loadedBoundSkillRoots = await retainAdmittedBoundSkillRoots({
+          previous: this.loadedBoundSkillRoots,
+          next: nextLoadedBoundSkillRoots,
+          searchDirectories: roots,
+          immutableSkillNames: new Set(
+            [...this.skills.values(), ...this.conditionalSkills.values()]
+              .filter((skill) => skill.source === 'built-in')
+              .map((skill) => skill.name),
+          ),
+        });
+        this.loadedSkillSearchDirectories = roots;
         this.loaded = true;
       }
     } catch (error) {
@@ -1204,18 +1225,23 @@ class SkillRegistry {
     }
   }
 
-  private async addLoadedSkill(skill: SkillDefinition): Promise<boolean> {
+  private async addLoadedSkill(skill: SkillDefinition): Promise<LoadedSkillAdmission> {
     const existing = this.skills.get(skill.name) ?? this.conditionalSkills.get(skill.name);
     if (existing?.source === 'built-in') {
       if (skill.source === 'built-in') {
         throw new Error(`Duplicate built-in skill "${skill.name}" from ${skillPathForPrompt(existing)} and ${skillPathForPrompt(skill)}.`);
       }
-      return false;
+      return { registryChanged: false, ownsMutableRoot: false };
     }
     const fileId = skill.source === 'built-in'
       ? skillPathForPrompt(skill)
       : await skillFileIdentity(skill.skillFile);
-    if (this.seenSkillFileIds.has(fileId)) return false;
+    if (this.seenSkillFileIds.has(fileId)) {
+      return {
+        registryChanged: false,
+        ownsMutableRoot: skill.source === 'user' || skill.source === 'project',
+      };
+    }
     this.seenSkillFileIds.add(fileId);
     const record = this.provenance.get(path.resolve(skill.skillFile));
     const skillWithIdentity = {
@@ -1238,7 +1264,10 @@ class SkillRegistry {
     } else {
       this.skills.set(skill.name, skillWithIdentity);
     }
-    return true;
+    return {
+      registryChanged: true,
+      ownsMutableRoot: skill.source === 'user' || skill.source === 'project',
+    };
   }
 
   private async discoverSkillDirsForPaths(filePaths: string[]): Promise<string[]> {
@@ -1299,35 +1328,54 @@ function developmentAppPath(): string {
 
 type SkillSearchDirectoryPolicy = 'convention' | 'bound';
 
-interface SkillSearchDirectory {
+interface SkillSearchDirectoryAlias {
   dir: string;
   source: 'user' | 'project';
-  policy: SkillSearchDirectoryPolicy;
 }
 
-function skillSearchDirs(
+export interface SkillSearchDirectory {
+  dir: string;
+  identity: string;
+  source: 'user' | 'project';
+  policy: SkillSearchDirectoryPolicy;
+  aliases: SkillSearchDirectoryAlias[];
+}
+
+async function skillSearchDirs(
   root: string,
   includeUserSkills: boolean,
   additionalSkillDirectories: readonly string[] = [],
-): SkillSearchDirectory[] {
-  const dirs: SkillSearchDirectory[] = [
+): Promise<SkillSearchDirectory[]> {
+  const dirs: Array<Omit<SkillSearchDirectory, 'identity' | 'aliases'>> = [
     ...(includeUserSkills ? [
       { dir: path.join(homedir(), '.agents', 'skills'), source: 'user', policy: 'convention' },
-    ] as SkillSearchDirectory[] : []),
+    ] as Array<Omit<SkillSearchDirectory, 'identity' | 'aliases'>> : []),
     { dir: path.join(root, '.agents', 'skills'), source: 'project', policy: 'convention' },
-    ...additionalSkillDirectories.map((dir): SkillSearchDirectory => ({
+    ...additionalSkillDirectories.map((dir): Omit<SkillSearchDirectory, 'identity' | 'aliases'> => ({
       dir,
       source: isPathInside(dir, root) ? 'project' : 'user',
       policy: 'bound',
     })),
   ];
-  const seen = new Set<string>();
-  return dirs.filter((entry) => {
-    const normalized = path.resolve(entry.dir);
-    if (seen.has(normalized)) return false;
-    seen.add(normalized);
-    return true;
-  });
+  const identities = await Promise.all(dirs.map((entry) => canonicalPathPreservingSuffixAsync(entry.dir)));
+  const grouped = new Map<string, SkillSearchDirectory>();
+  for (const [index, entry] of dirs.entries()) {
+    const identity = identities[index] ?? path.resolve(entry.dir);
+    const existing = grouped.get(identity);
+    if (existing) {
+      if (!existing.aliases.some((alias) => path.resolve(alias.dir) === path.resolve(entry.dir))) {
+        existing.aliases.push({ dir: path.resolve(entry.dir), source: entry.source });
+      }
+      continue;
+    }
+    grouped.set(identity, {
+      ...entry,
+      dir: path.resolve(entry.dir),
+      identity,
+      aliases: [{ dir: path.resolve(entry.dir), source: entry.source }],
+    });
+  }
+  return [...grouped.values()];
 }
 
 /** One mutable Skill-content target resolved through the current ownership policy. */
@@ -1338,13 +1386,16 @@ export interface AgentSkillContentTarget {
   source: Exclude<SkillDefinition['source'], 'built-in' | 'managed'>;
   relativePath: string;
   isSkillFile: boolean;
+  ownership: 'convention' | 'loaded-bound' | 'bound-admission';
 }
 
 /** A mutable physical Skill root admitted from an explicitly bound container. */
 export interface LoadedBoundSkillRoot {
   skillName: string;
   skillRoot: string;
+  skillRootIdentity?: string;
   skillsDir: string;
+  skillsDirIdentity?: string;
   source: Exclude<SkillDefinition['source'], 'built-in' | 'managed'>;
 }
 
@@ -1354,6 +1405,7 @@ export interface SkillDirConfig {
   includeUserSkills: boolean;
   additionalSkillDirectories: readonly string[];
   loadedBoundSkillRoots?: readonly LoadedBoundSkillRoot[];
+  skillSearchDirectories?: readonly SkillSearchDirectory[];
   builtInSkillDirectories?: readonly string[];
   builtInSkillRoots?: readonly string[];
   managedSkillContentRoot?: string;
@@ -1363,6 +1415,7 @@ function targetInsideSkillsDir(
   filePath: string,
   skillsDirInput: string,
   source: Exclude<SkillDefinition['source'], 'built-in' | 'managed'>,
+  ownership: AgentSkillContentTarget['ownership'],
 ): AgentSkillContentTarget | null {
   const skillsDir = path.resolve(skillsDirInput);
   if (!isPathInside(filePath, skillsDir)) return null;
@@ -1376,15 +1429,16 @@ function targetInsideSkillsDir(
     source,
     relativePath: parts.slice(1).join('/'),
     isSkillFile: parts.length === 2 && parts[1] === SKILL_FILE_NAME,
+    ownership,
   };
 }
 
 function targetInsideLoadedBoundSkillRoot(
   filePath: string,
+  filePathIdentity: string,
   owner: LoadedBoundSkillRoot,
+  skillRootIdentity: string,
 ): AgentSkillContentTarget | null {
-  const skillRootIdentity = canonicalPathPreservingSuffix(owner.skillRoot);
-  const filePathIdentity = canonicalPathPreservingSuffix(filePath);
   if (!isPathInside(filePathIdentity, skillRootIdentity)) return null;
   const parts = path.relative(skillRootIdentity, filePathIdentity).split(path.sep).filter(Boolean);
   if (parts.length === 0) return null;
@@ -1395,6 +1449,7 @@ function targetInsideLoadedBoundSkillRoot(
     source: owner.source,
     relativePath: parts.join('/'),
     isSkillFile: parts.length === 1 && parts[0] === SKILL_FILE_NAME,
+    ownership: 'loaded-bound',
   };
 }
 
@@ -1405,29 +1460,35 @@ function targetInsideLoadedBoundSkillRoot(
  * their exact SKILL.md path remains a governed admission attempt. Built-in and
  * managed Skills have no writable target.
  */
-export function resolveSkillContentTarget(
+export async function resolveSkillContentTarget(
   filePathInput: string,
   config: SkillDirConfig,
-): AgentSkillContentTarget | null {
+): Promise<AgentSkillContentTarget | null> {
   const filePath = path.resolve(filePathInput);
-  const filePathIdentity = canonicalPathPreservingSuffix(filePath);
-  for (const dir of [...(config.builtInSkillDirectories ?? []), ...(config.builtInSkillRoots ?? [])]) {
-    const builtInDir = canonicalPathPreservingSuffix(dir);
+  const filePathIdentity = await canonicalPathPreservingSuffixAsync(filePath);
+  const builtInDirs = await Promise.all(
+    [...(config.builtInSkillDirectories ?? []), ...(config.builtInSkillRoots ?? [])]
+      .map((dir) => canonicalPathPreservingSuffixAsync(dir)),
+  );
+  for (const builtInDir of builtInDirs) {
     if (filePathIdentity === builtInDir || isPathInside(filePathIdentity, builtInDir)) return null;
   }
   if (config.managedSkillContentRoot) {
-    const managedRoot = canonicalPathPreservingSuffix(config.managedSkillContentRoot);
+    const managedRoot = await canonicalPathPreservingSuffixAsync(config.managedSkillContentRoot);
     if (filePathIdentity === managedRoot || isPathInside(filePathIdentity, managedRoot)) return null;
   }
-  const searchDirs = skillSearchDirs(config.root, config.includeUserSkills, config.additionalSkillDirectories);
+  const searchDirs = config.skillSearchDirectories
+    ?? await skillSearchDirs(config.root, config.includeUserSkills, config.additionalSkillDirectories);
   const candidates: AgentSkillContentTarget[] = [];
 
   // 1. Convention directories are dedicated Skill namespaces. Path shape owns
   //    prospective content so a first SKILL.md write is never ungoverned.
-  for (const { dir, source, policy } of searchDirs) {
+  for (const { source, policy, aliases } of searchDirs) {
     if (policy !== 'convention') continue;
-    const target = targetInsideSkillsDir(filePath, dir, source);
-    if (target) candidates.push(target);
+    for (const alias of aliases) {
+      const target = targetInsideSkillsDir(filePath, alias.dir, source, 'convention');
+      if (target) candidates.push(target);
+    }
   }
 
   // 2. A bound container is ordinary user content except for physical Skill
@@ -1436,21 +1497,27 @@ export function resolveSkillContentTarget(
   const activeBoundDirIdentities = new Set(
     searchDirs
       .filter((entry) => entry.policy === 'bound')
-      .map((entry) => canonicalDirectoryIdentity(entry.dir)),
+      .map((entry) => entry.identity),
   );
   for (const owner of config.loadedBoundSkillRoots ?? []) {
-    if (!activeBoundDirIdentities.has(canonicalDirectoryIdentity(owner.skillsDir))) continue;
-    const target = targetInsideLoadedBoundSkillRoot(filePath, owner);
+    const skillsDirIdentity = owner.skillsDirIdentity
+      ?? await canonicalPathPreservingSuffixAsync(owner.skillsDir);
+    if (!activeBoundDirIdentities.has(skillsDirIdentity)) continue;
+    const skillRootIdentity = owner.skillRootIdentity
+      ?? await canonicalPathPreservingSuffixAsync(owner.skillRoot);
+    const target = targetInsideLoadedBoundSkillRoot(filePath, filePathIdentity, owner, skillRootIdentity);
     if (target) candidates.push(target);
   }
 
   // 3. The definition itself is an admission attempt. Keep exact SKILL.md
   //    creation and repair behind the existing identity/content validators,
   //    without claiming sibling support paths for a Skill that did not load.
-  for (const { dir, source, policy } of searchDirs) {
+  for (const { policy, aliases } of searchDirs) {
     if (policy !== 'bound') continue;
-    const target = targetInsideSkillsDir(filePath, dir, source);
-    if (target?.isSkillFile) candidates.push(target);
+    for (const alias of aliases) {
+      const target = targetInsideSkillsDir(filePath, alias.dir, alias.source, 'bound-admission');
+      if (target?.isSkillFile) candidates.push(target);
+    }
   }
 
   // 4. Nested .agents/skills under the work root (project) — matched by path so a
@@ -1461,23 +1528,30 @@ export function resolveSkillContentTarget(
     for (let index = parts.length - 3; index >= 0; index -= 1) {
       if (parts[index] !== '.agents' || parts[index + 1] !== 'skills') continue;
       const skillsDir = parts.slice(0, index + 2).join(path.sep) || path.sep;
-      const target = targetInsideSkillsDir(filePath, skillsDir, 'project');
+      const target = targetInsideSkillsDir(filePath, skillsDir, 'project', 'convention');
       if (target) candidates.push(target);
     }
   }
-  return mostSpecificSkillContentTarget(candidates);
+  return mostSpecificSkillContentTarget(candidates, filePath);
 }
 
 function mostSpecificSkillContentTarget(
   candidates: readonly AgentSkillContentTarget[],
+  filePath: string,
 ): AgentSkillContentTarget | null {
   let selected: AgentSkillContentTarget | null = null;
-  let selectedDepth = -1;
+  let selectedScore = '';
   for (const candidate of candidates) {
-    const depth = canonicalPathPreservingSuffix(candidate.skillRoot).split(path.sep).filter(Boolean).length;
-    if (depth <= selectedDepth) continue;
+    const logicalRoot = path.resolve(candidate.skillRoot);
+    const lexicalMatch = filePath === logicalRoot || isPathInside(filePath, logicalRoot);
+    const depth = logicalRoot.split(path.sep).filter(Boolean).length;
+    const ownershipRank = candidate.ownership === 'loaded-bound'
+      ? 2
+      : candidate.ownership === 'convention' ? 1 : 0;
+    const score = `${lexicalMatch ? '1' : '0'}:${String(depth).padStart(6, '0')}:${ownershipRank}:${logicalRoot}`;
+    if (selected && score <= selectedScore) continue;
     selected = candidate;
-    selectedDepth = depth;
+    selectedScore = score;
   }
   return selected;
 }
@@ -1486,12 +1560,40 @@ function deduplicateLoadedBoundSkillRoots(roots: readonly LoadedBoundSkillRoot[]
   const seen = new Set<string>();
   const result: LoadedBoundSkillRoot[] = [];
   for (const root of roots) {
-    const identity = canonicalDirectoryIdentity(root.skillRoot);
+    const identity = `${path.resolve(root.skillsDir)}\0${path.resolve(root.skillRoot)}`;
     if (seen.has(identity)) continue;
     seen.add(identity);
     result.push(root);
   }
   return result;
+}
+
+async function retainAdmittedBoundSkillRoots(input: {
+  previous: readonly LoadedBoundSkillRoot[];
+  next: readonly LoadedBoundSkillRoot[];
+  searchDirectories: readonly SkillSearchDirectory[];
+  immutableSkillNames: ReadonlySet<string>;
+}): Promise<LoadedBoundSkillRoot[]> {
+  const activeBoundDirIdentities = new Set(
+    input.searchDirectories
+      .filter((entry) => entry.policy === 'bound')
+      .map((entry) => entry.identity),
+  );
+  const retained = [...input.next];
+  for (const owner of input.previous) {
+    if (input.immutableSkillNames.has(owner.skillName)) continue;
+    const skillsDirIdentity = owner.skillsDirIdentity
+      ?? await canonicalPathPreservingSuffixAsync(owner.skillsDir);
+    if (!activeBoundDirIdentities.has(skillsDirIdentity)) continue;
+    const skillRootIdentity = owner.skillRootIdentity
+      ?? await canonicalPathPreservingSuffixAsync(owner.skillRoot);
+    const currentIdentity = await canonicalPathPreservingSuffixAsync(owner.skillRoot);
+    if (currentIdentity !== skillRootIdentity) continue;
+    const rootStat = await stat(owner.skillRoot).catch(() => null);
+    if (!rootStat?.isDirectory()) continue;
+    retained.push({ ...owner, skillRootIdentity, skillsDirIdentity });
+  }
+  return deduplicateLoadedBoundSkillRoots(retained);
 }
 
 async function loadSkillsFromDir(
@@ -1959,23 +2061,6 @@ function canonicalDirectoryIdentity(dir: string): string {
     return realpathSync.native(dir);
   } catch {
     return path.resolve(dir);
-  }
-}
-
-function canonicalPathPreservingSuffix(inputPath: string): string {
-  const requested = path.resolve(inputPath);
-  let existing = requested;
-  while (!existsSync(existing)) {
-    const parent = path.dirname(existing);
-    if (parent === existing) break;
-    existing = parent;
-  }
-  try {
-    const canonicalExisting = realpathSync.native(existing);
-    const suffix = path.relative(existing, requested);
-    return suffix ? path.resolve(canonicalExisting, suffix) : canonicalExisting;
-  } catch {
-    return requested;
   }
 }
 

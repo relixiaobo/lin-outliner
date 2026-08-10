@@ -422,19 +422,33 @@ source enumeration order never settles ownership.
 An exact `<bound>/<name>/SKILL.md` write is still a governed **admission
 attempt**. This lets the agent create or repair a definition through the
 identity and content validators without claiming other files under an unloaded
-child directory. After a valid definition write, the registry reload publishes
-the new root before the write completes, so a following support-file write is
-governed in the same Turn.
+child directory. Admission validates the prospective bundle's existing support
+files before writing the definition, including the executable, secret-looking,
+symlink, per-file-size, and bounded-file-count authoring rules. An agent may
+therefore write ordinary files first, but unsafe files prevent that directory
+from becoming an agent-authored Skill.
 
 Convention directories are different: `~/.agents/skills`, the workspace
 `.agents/skills`, and dynamically discovered nested `.agents/skills` directories
 exist specifically for Skills. They retain path-shaped ownership so a brand-new
 definition and its prospective support path are governed from the first write.
 
-The registry publishes bound-root ownership only after a complete load and
-retains the last complete snapshot during invalidation. Resolution filters that
-snapshot through the currently configured bound list, so unbinding removes
-ownership immediately. Canonical root matching follows a symlinked Skill to its
+The registry publishes bound-root ownership only after a complete load. A root
+that was admitted remains owned while its directory is still bound and present,
+even when `SKILL.md` is temporarily unparseable; a newly parsed root shadowed by
+an immutable built-in is not published. Resolution waits for the current
+registry generation before deciding a path, so a runtime settings bind has no
+post-update ungoverned window. Definition and managed-content writes invalidate
+the registry without awaiting a full scan inside the initiating mutation; the
+next path resolution, catalog projection, or invocation performs the awaited
+reload.
+
+Physically identical search directories are scanned once, with convention
+policy winning over a bound alias, but all logical aliases remain available for
+accurate write attribution. Each requested path is canonicalized asynchronously
+once, while admitted roots reuse physical identities computed at load time.
+Owner selection prefers the logical alias traversed by the request and then the
+deepest logical root. Canonical root matching follows a symlinked Skill to its
 physical root but does not make a child symlink that escapes the root into Skill
 content. Built-in and managed immutable fences remain authoritative when roots
 overlap.

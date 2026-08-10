@@ -1821,7 +1821,7 @@ describe('agent local tools', () => {
         changeType: 'create',
         skillName: 'draft-skill',
       });
-      expect(details.instructions).toContain('registry has been reloaded');
+      expect(details.instructions).toContain('registry is invalidated');
       expect(skill).toMatchObject({
         name: 'draft-skill',
         source: 'project',
@@ -1912,6 +1912,115 @@ describe('agent local tools', () => {
       });
       expect((newSupportResult.details as ToolEnvelope<unknown>).error?.code)
         .toBe('executable_skill_support_file');
+    });
+  });
+
+  test('bound definition admission validates support files written before SKILL.md', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const bound = path.join(workspaceRoot, 'bound-content');
+      const skillRuntime = new AgentSkillRuntime({
+        localRoot: workspaceRoot,
+        includeUserSkills: false,
+        additionalSkillDirectories: [bound],
+      });
+      const workspace = createAgentLocalWorkspaceContext(workspaceRoot, undefined, skillRuntime);
+      const fileWrite = createLocalTools({ workspace }).find((tool) => tool.name === 'file_write')!;
+      const cases = [
+        {
+          name: 'executable-first',
+          relativePath: 'run.sh',
+          content: '#!/bin/sh\necho unsafe\n',
+          errorCode: 'executable_skill_support_file',
+        },
+        {
+          name: 'secret-first',
+          relativePath: 'credentials.md',
+          content: 'AWS_SECRET_ACCESS_KEY=abcdefghijklmnop\n',
+          errorCode: 'secret_like_skill_content',
+        },
+        {
+          name: 'oversized-first',
+          relativePath: 'reference.txt',
+          content: 'x'.repeat(256 * 1024 + 1),
+          errorCode: 'skill_support_file_too_large',
+        },
+      ];
+
+      for (const testCase of cases) {
+        const skillRoot = path.join(bound, testCase.name);
+        const supportResult = await (fileWrite.execute as any)(`write-${testCase.name}-support`, {
+          file_path: path.join(skillRoot, testCase.relativePath),
+          content: testCase.content,
+        });
+        const supportDetails = supportResult.details as ToolEnvelope<{ skillWrite?: unknown }>;
+        expect(supportDetails.ok).toBe(true);
+        expect(supportDetails.data?.skillWrite).toBeUndefined();
+
+        const definitionResult = await (fileWrite.execute as any)(`write-${testCase.name}-definition`, {
+          file_path: path.join(skillRoot, 'SKILL.md'),
+          content: [
+            '---',
+            `description: Admission test for ${testCase.name}`,
+            'execution: isolated',
+            '---',
+            '',
+            'Use the prospective bundle.',
+            '',
+          ].join('\n'),
+        });
+        expect((definitionResult.details as ToolEnvelope<unknown>).error?.code).toBe(testCase.errorCode);
+        expect(await skillRuntime.getSkill(testCase.name)).toBeNull();
+      }
+    });
+  });
+
+  test('a failed registry reload blocks the next Skill-path write', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const builtInRoot = path.join(workspaceRoot, 'built-in-floor');
+      await mkdir(builtInRoot, { recursive: true });
+      await writeFile(path.join(builtInRoot, 'SKILL.md'), [
+        '---',
+        'description: Required built-in floor',
+        '---',
+        '',
+        'Use the floor.',
+        '',
+      ].join('\n'), 'utf8');
+      const bound = path.join(workspaceRoot, 'bound-content');
+      const skillRuntime = new AgentSkillRuntime({
+        localRoot: workspaceRoot,
+        includeUserSkills: false,
+        builtInSkillDirectories: [],
+        builtInSkillRoots: [builtInRoot],
+        builtInSkills: [],
+        additionalSkillDirectories: [bound],
+      });
+      await skillRuntime.listAllSkills();
+      const workspace = createAgentLocalWorkspaceContext(workspaceRoot, undefined, skillRuntime);
+      const fileWrite = createLocalTools({ workspace }).find((tool) => tool.name === 'file_write')!;
+      const skillRoot = path.join(bound, 'new-skill');
+      const definitionResult = await (fileWrite.execute as any)('write-definition-before-reload-failure', {
+        file_path: path.join(skillRoot, 'SKILL.md'),
+        content: [
+          '---',
+          'description: Definition awaiting registry refresh',
+          '---',
+          '',
+          'Use the new workflow.',
+          '',
+        ].join('\n'),
+      });
+      expect((definitionResult.details as ToolEnvelope<unknown>).ok).toBe(true);
+
+      await rm(builtInRoot, { recursive: true, force: true });
+      const supportFile = path.join(skillRoot, 'notes.md');
+      const supportResult = await (fileWrite.execute as any)('write-support-after-reload-failure', {
+        file_path: supportFile,
+        content: 'Must not land without ownership.\n',
+      });
+
+      expect((supportResult.details as ToolEnvelope<unknown>).ok).toBe(false);
+      expect(await stat(supportFile).catch(() => null)).toBeNull();
     });
   });
 

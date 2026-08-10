@@ -15,6 +15,28 @@ afterEach(async () => {
 });
 
 describe('managed skill runtime integration', () => {
+  test('managed change notification invalidates without eagerly rescanning the registry', async () => {
+    const fixture = await managedFixture('lazy-refresh');
+    let rootLoads = 0;
+    const runtime = new AgentSkillRuntime({
+      localRoot: fixture.workspace,
+      includeUserSkills: false,
+      builtInSkillDirectories: [],
+      builtInSkills: [],
+      managedSkillRoots: async () => {
+        rootLoads += 1;
+        return [];
+      },
+    });
+
+    await runtime.listAllSkills();
+    expect(rootLoads).toBe(1);
+    await runtime.notifySkillContentWritten([]);
+    expect(rootLoads).toBe(1);
+    await runtime.listAllSkills();
+    expect(rootLoads).toBe(2);
+  });
+
   test('loads only the pinned managed root and revalidates it before invocation', async () => {
     const fixture = await managedFixture('runtime-skill');
     const assertions: Array<{ id: string; hash: string }> = [];
@@ -52,7 +74,7 @@ describe('managed skill runtime integration', () => {
       contentHash: catalogEntry?.contentHash,
       resourceRoot: fixture.versionRoot,
     });
-    expect(runtime.resolveSkillTarget(path.join(fixture.versionRoot, 'SKILL.md'))).toBeNull();
+    expect(await runtime.resolveSkillTarget(path.join(fixture.versionRoot, 'SKILL.md'))).toBeNull();
   });
 
   test('fails closed when invocation integrity validation rejects the active hash', async () => {
@@ -104,7 +126,7 @@ describe('managed skill runtime integration', () => {
   test('never resolves managed content through the mutable authoring path', async () => {
     const fixture = await managedFixture('authoring-blocked');
 
-    expect(resolveSkillContentTarget(path.join(fixture.versionRoot, 'SKILL.md'), {
+    expect(await resolveSkillContentTarget(path.join(fixture.versionRoot, 'SKILL.md'), {
       root: fixture.workspace,
       includeUserSkills: false,
       additionalSkillDirectories: [fixture.contentRoot],

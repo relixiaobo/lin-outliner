@@ -29,39 +29,39 @@ function acknowledgePendingCatalogRefresh(runtime: AgentSkillRuntime): boolean {
 describe('resolveSkillContentTarget (single skill-path source of truth)', () => {
   const root = path.join(path.sep, 'work', 'project');
 
-  test('recognizes the default project skills dir', () => {
-    const target = resolveSkillContentTarget(
+  test('recognizes the default project skills dir', async () => {
+    const target = await resolveSkillContentTarget(
       path.join(root, '.agents', 'skills', 'demo', 'SKILL.md'),
       { root, includeUserSkills: false, additionalSkillDirectories: [] },
     );
     expect(target).toMatchObject({ skillName: 'demo', source: 'project', isSkillFile: true });
   });
 
-  test('recognizes a nested .agents/skills under root as project, even for a new dir', () => {
-    const target = resolveSkillContentTarget(
+  test('recognizes a nested .agents/skills under root as project, even for a new dir', async () => {
+    const target = await resolveSkillContentTarget(
       path.join(root, 'packages', 'a', '.agents', 'skills', 'nested', 'SKILL.md'),
       { root, includeUserSkills: false, additionalSkillDirectories: [] },
     );
     expect(target).toMatchObject({ skillName: 'nested', source: 'project', isSkillFile: true });
   });
 
-  test('recognizes an additional dir OUTSIDE root (the closed governance hole)', () => {
+  test('recognizes an additional dir OUTSIDE root (the closed governance hole)', async () => {
     // An exact definition is an admission attempt even before the Skill loads.
     const teamSkills = path.join(path.sep, 'home', 'x', 'team-skills');
-    const target = resolveSkillContentTarget(
+    const target = await resolveSkillContentTarget(
       path.join(teamSkills, 'shared', 'SKILL.md'),
       { root, includeUserSkills: false, additionalSkillDirectories: [teamSkills] },
     );
     expect(target).toMatchObject({ skillName: 'shared', source: 'user', isSkillFile: true });
   });
 
-  test('requires admitted ownership for support content in an additional dir', () => {
+  test('requires admitted ownership for support content in an additional dir', async () => {
     const teamSkills = path.join(path.sep, 'home', 'x', 'team-skills');
     const supportFile = path.join(teamSkills, 'shared', 'references', 'notes.md');
     const baseConfig = { root, includeUserSkills: false, additionalSkillDirectories: [teamSkills] };
 
-    expect(resolveSkillContentTarget(supportFile, baseConfig)).toBeNull();
-    expect(resolveSkillContentTarget(supportFile, {
+    expect(await resolveSkillContentTarget(supportFile, baseConfig)).toBeNull();
+    expect(await resolveSkillContentTarget(supportFile, {
       ...baseConfig,
       loadedBoundSkillRoots: [{
         skillName: 'shared',
@@ -76,9 +76,9 @@ describe('resolveSkillContentTarget (single skill-path source of truth)', () => 
     });
   });
 
-  test('returns null for a non-skill file', () => {
+  test('returns null for a non-skill file', async () => {
     expect(
-      resolveSkillContentTarget(path.join(root, 'notes.txt'), {
+      await resolveSkillContentTarget(path.join(root, 'notes.txt'), {
         root,
         includeUserSkills: false,
         additionalSkillDirectories: [],
@@ -826,7 +826,7 @@ describe('agent skills', () => {
     });
 
     expect(
-      resolveSkillContentTarget(path.join(skillDir, 'SKILL.md'), {
+      await resolveSkillContentTarget(path.join(skillDir, 'SKILL.md'), {
         root: path.dirname(path.dirname(skillDir)),
         includeUserSkills: false,
         additionalSkillDirectories: [],
@@ -842,7 +842,7 @@ describe('agent skills', () => {
     });
 
     expect(
-      resolveSkillContentTarget(path.join(skillDir, 'SKILL.md'), {
+      await resolveSkillContentTarget(path.join(skillDir, 'SKILL.md'), {
         root: path.dirname(path.dirname(skillDir)),
         includeUserSkills: false,
         additionalSkillDirectories: [path.dirname(skillDir)],
@@ -868,8 +868,8 @@ describe('agent skills', () => {
       additionalSkillDirectories: [skillsDir, aliasSkillsDir],
     });
 
-    expect(runtime.resolveSkillTarget(path.join(skillDir, 'SKILL.md'))).toBeNull();
-    expect(runtime.resolveSkillTarget(path.join(aliasSkillsDir, 'bundled-demo', 'new-notes.md'))).toBeNull();
+    expect(await runtime.resolveSkillTarget(path.join(skillDir, 'SKILL.md'))).toBeNull();
+    expect(await runtime.resolveSkillTarget(path.join(aliasSkillsDir, 'bundled-demo', 'new-notes.md'))).toBeNull();
     expect((await runtime.getSkill('bundled-demo'))?.source).toBe('built-in');
   });
 
