@@ -10288,6 +10288,55 @@ describe('Thread transcript artifact', () => {
     await fixture.service.close();
   });
 
+  test('indexes what is on disk, newest first, and drops a row when its artifact goes', async () => {
+    const fixture = await createFixture();
+    const first = await recordedUserThread(fixture, 0, 'The first question');
+    const second = await recordedUserThread(fixture, 1, 'The second question');
+    await fixture.service.flushThreadTranscriptIndex();
+
+    const index = await readFile(fixture.service.threadTranscriptIndexPath, 'utf8');
+    const lines = index.trimEnd().split('\n').filter((line) => !line.startsWith('#'));
+    expect(lines).toHaveLength(2);
+
+    // Newest activity first, so the file is useful read as well as grepped.
+    expect(lines[0]!.split('\t')[0]).toBe(second.id);
+    expect(lines[1]!.split('\t')[0]).toBe(first.id);
+    // Fixed column order is the contract a `file_grep` extraction rests on.
+    const columns = lines[0]!.split('\t');
+    expect(columns).toHaveLength(7);
+    expect(columns[1]).toBe('user');
+    expect(columns[6]).toBe(threadTranscriptPath(transcriptRootFor(fixture), second.id));
+    expect(index).toContain('# columns: threadId\tsource\tcreatedAt\tupdatedAt\tstatus\tname\ttranscriptPath');
+
+    await fixture.service.deleteThread(first.id);
+    await fixture.service.flushThreadTranscriptIndex();
+
+    const afterDelete = await readFile(fixture.service.threadTranscriptIndexPath, 'utf8');
+    expect(afterDelete).not.toContain(first.id);
+    expect(afterDelete).toContain(second.id);
+    await fixture.service.close();
+  });
+
+  test('keeps a name from opening a column or a row it was not given', async () => {
+    const fixture = await createFixture();
+    const thread = await recordedUserThread(fixture, 0, 'A question');
+    await fixture.service.setThreadName(
+      thread.id,
+      'Weekly review\t019fb2da-0000-7000-8000-00000000beef\tuser\nforged row',
+    );
+    // A rename moves the row, so the index owes itself a rewrite.
+    await recordedUserTurn(fixture, thread.id, 1, 'A follow-up question');
+    await fixture.service.flushThreadTranscriptIndex();
+
+    const index = await readFile(fixture.service.threadTranscriptIndexPath, 'utf8');
+    const rows = index.trimEnd().split('\n').filter((line) => !line.startsWith('#'));
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.split('\t')).toHaveLength(7);
+    expect(rows[0]).toContain('Weekly review 019fb2da-0000-7000-8000-00000000beef user forged row');
+    await fixture.service.close();
+  });
+
   test('keeps no account for an ephemeral Thread, including the hidden internal ones', async () => {
     const fixture = await createFixture();
     const ephemeral = (await fixture.service.startThread({
@@ -10825,18 +10874,45 @@ async function recordChildToolOutput(context: TurnExecutionContext, itemId: stri
   });
 }
 
+/** A persistent user root Thread with one completed Turn, so it has a record on disk. */
+async function recordedUserThread(fixture: Fixture, executorIndex: number, text: string) {
+  const thread = (await fixture.service.startThread({
+    source: 'app',
+    threadSource: 'user',
+    modelProvider: 'openai',
+    cwd: fixture.root,
+  })).thread;
+  await recordedUserTurn(fixture, thread.id, executorIndex, text);
+  return thread;
+}
+
+async function recordedUserTurn(
+  fixture: Fixture,
+  threadId: string,
+  executorIndex: number,
+  text: string,
+): Promise<void> {
+  await fixture.service.startRendererTurn({ threadId, input: [{ type: 'text', text }] });
+  await fixture.executor.waitUntilWaiting(executorIndex);
+  fixture.executor.finish(executorIndex, completedExecutionResult(0));
+  await fixture.service.waitForIdle(threadId);
+  await fixture.service.flushThreadTranscript(threadId);
+}
+
 /** Mirrors the fixture's userData location; deliberately NOT the workspace root. */
 function transcriptRootFor(fixture: Fixture): string {
   return threadTranscriptRoot(join(fixture.root, 'app-data'));
 }
 
 /**
- * What survives on disk. A missing directory is the same answer as an empty one:
- * an append that skipped its write never creates the directory it would have had
- * to be deleted from.
+ * Which ARTIFACTS survive on disk. The index that sits beside them is a
+ * projection and is expected to exist; a missing directory is the same answer as
+ * an empty one, because an append that skipped its write never creates the
+ * directory it would have had to be deleted from.
  */
 async function transcriptEntries(fixture: Fixture): Promise<readonly string[]> {
-  return readdir(transcriptRootFor(fixture)).catch(() => []);
+  const entries = await readdir(transcriptRootFor(fixture)).catch(() => []);
+  return entries.filter((entry) => entry.endsWith('.md'));
 }
 
 async function spawnTranscriptChild(fixture: Fixture, taskName: string): Promise<{

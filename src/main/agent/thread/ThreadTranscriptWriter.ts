@@ -46,6 +46,12 @@ export interface ThreadTranscriptWriterOptions {
   /** Every Turn of the Thread that is no longer running, in canonical order. */
   readonly completedTurns: (threadId: ThreadId) => readonly Turn[];
   readonly payloads: (threadId: ThreadId) => TranscriptPayloadReader;
+  /**
+   * The set of artifacts on disk changed. The writer does not know what anyone
+   * derives from that set — it just says when the set moved, which is what keeps
+   * the index out of this file and the direction of knowledge one-way.
+   */
+  readonly onArtifactsChanged?: () => void;
 }
 
 export class ThreadTranscriptWriter {
@@ -141,6 +147,7 @@ export class ThreadTranscriptWriter {
       if (settled) this.writes.delete(threadId);
       this.cursors.delete(threadId);
       await removeThreadTranscript(threadTranscriptPath(this.options.transcriptRoot, threadId));
+      this.options.onArtifactsChanged?.();
     } catch (error) {
       console.warn(`[agent] Thread transcript artifact was not removed for ${threadId}`, error);
     }
@@ -231,6 +238,7 @@ export class ThreadTranscriptWriter {
         bytes: cursor.bytes + Buffer.byteLength(text),
         turnIds: new Set(cursor.turnIds).add(turn.id),
       });
+      this.options.onArtifactsChanged?.();
     } catch (error) {
       console.warn(`[agent] Thread transcript Turn was not appended for ${threadId}`, error);
     }
@@ -249,6 +257,7 @@ export class ThreadTranscriptWriter {
       bytes: Buffer.byteLength(text),
       turnIds: new Set(turns.map((turn) => turn.id)),
     });
+    this.options.onArtifactsChanged?.();
   }
 }
 

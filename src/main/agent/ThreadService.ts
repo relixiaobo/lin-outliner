@@ -108,6 +108,7 @@ import { ThreadCatalogOps } from './thread/ThreadCatalogOps';
 import { ThreadCore,type NotificationListener } from './thread/ThreadCore';
 import { ThreadResourceOps } from './thread/ThreadResourceOps';
 import { threadTranscriptRoot } from './thread/ThreadTranscriptArtifact';
+import { ThreadTranscriptIndex } from './thread/ThreadTranscriptIndex';
 import { rootTranscriptSubject,ThreadTranscriptWriter } from './thread/ThreadTranscriptWriter';
 import type { TranscriptSubject } from './thread/TranscriptRenderer';
 import { TurnLifecycle } from './thread/TurnLifecycle';
@@ -321,6 +322,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
   private readonly catalogOps: ThreadCatalogOps;
   private readonly collaboration: SubagentCollaboration;
   private readonly transcripts: ThreadTranscriptWriter;
+  private readonly transcriptIndex: ThreadTranscriptIndex;
   private readonly turnLifecycle: TurnLifecycle;
   private initialized = false;
   private closing = false;
@@ -358,8 +360,13 @@ export class ThreadService implements ThreadServiceExtensionHost {
     options.stores.payloads.setImageRetentionInventoryProvider((threadId) => (
       this.resourceOps.threadImageRetentionInventory(threadId)
     ));
+    this.transcriptIndex = new ThreadTranscriptIndex({
+      transcriptRoot: options.transcriptRoot,
+      readThread: (threadId) => this.core.metadata.read(threadId)?.thread ?? null,
+    });
     this.transcripts = new ThreadTranscriptWriter({
       transcriptRoot: options.transcriptRoot,
+      onArtifactsChanged: () => this.transcriptIndex.schedule(),
       resolveSubject: (thread) => this.transcriptSubject(thread),
       completedTurns: (threadId) => this.core.allTurns(threadId).filter((turn) => turn.status !== 'inProgress'),
       payloads: (threadId) => ({
@@ -493,7 +500,11 @@ export class ThreadService implements ThreadServiceExtensionHost {
       // deletion cascade, so ordering them decides whether an orphan among them
       // is reclaimed on this launch or the next.
       this.transcripts.reclaimLegacyDirectory()
-        .then(() => this.transcripts.sweepOrphans((threadId) => knownThreads.has(threadId))),
+        .then(() => this.transcripts.sweepOrphans((threadId) => knownThreads.has(threadId)))
+        // Rebuild the index once the artifact set has settled: it is a
+        // projection of that set, so recomputing it earlier would only describe
+        // a directory that is about to change.
+        .then(() => { this.transcriptIndex.schedule(); }),
       ...knownThreadIds.flatMap((threadId) => [
         this.core.payloads.pruneUnreferencedResources(threadId, this.resourceOps.threadResourceReferences(threadId)),
         this.core.payloads.pruneUnreferencedContexts(threadId, this.resourceOps.threadContextPayloadReferences(threadId)),
@@ -920,6 +931,10 @@ export class ThreadService implements ThreadServiceExtensionHost {
   async flushThreadTranscript(threadId: ThreadId): Promise<void> { return this.transcripts.flush(threadId); }
   /** Account layer for a Thread that keeps one: the artifact path, or null when it is not on disk (A12). */
   async threadTranscriptPath(threadId: ThreadId): Promise<string | null> { return this.transcripts.pathForReader(threadId); }
+  /** Where past sessions are discoverable. Named by the discovery doctrine, read with the file tools. */
+  get threadTranscriptIndexPath(): string { return this.transcriptIndex.path; }
+  /** Test seam: settle the index rewrite in flight and anything it owes. */
+  async flushThreadTranscriptIndex(): Promise<void> { return this.transcriptIndex.flush(); }
   /**
    * The ONE answer to whether a Thread keeps an account and what its header
    * says. Delegation is asked first because spawn metadata is the authority for
