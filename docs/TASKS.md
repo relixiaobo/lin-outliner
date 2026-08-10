@@ -46,9 +46,8 @@ theme-section entry below; this list is the ordering, not a second record):
   (#460 truncation dialects · `scripts-typecheck-coverage` · #208 follow-ups).
   `dark-mode-contrast-pass` still runs **last** per its own rule; `performance` P3
   remains an uncapped background lane (trail + remaining items under **Performance**).
-- **Lane B — agent reliability**: `agent-episodic-transcripts` **PR 2** (PR 1 shipped
-  2026-08-10 as #511 — the artifact is per-Thread now, so PR 2 extends a writer that
-  already generalized), then `agent-doc-drift-notice`.
+- **Lane B — agent reliability**: `agent-doc-drift-notice` —
+  `agent-episodic-transcripts` is complete (#511 + #519 shipped 2026-08-10).
 - **Lane C — product surface**: `update-check-and-prompt` first (the PM wants users
   on fresh builds; works unsigned), then `file-preview` Office tail (apply its
   refresh note first), then `agent-skills-authoring` security tail.
@@ -157,18 +156,9 @@ before any directional/security-sensitive build.
   loading. **Unblocked 2026-08-10** — `skill-path-ownership` shipped (#513), so the
   ownership half of the ambiguity is settled and this item now only has to answer
   identity and loading.
-- **agent-episodic-transcripts** (P2, `in-progress` 2026-08-10 — see
-  [docs/plans/agent-episodic-transcripts.md](plans/agent-episodic-transcripts.md)) —
-  extend the subagent transcript artifact (#460) to every persistent Thread and
-  make past sessions discoverable: shape (b), two PRs — PR 1 gives standalone
-  Automation runs a `recentRuns` digest (status, outcome line, `transcriptPath`)
-  so a fresh run stops repeating its predecessor's failure; PR 2 adds the
-  all-Thread writer extension, a greppable index, discovery doctrine, and the
-  per-Thread privacy exclusion. Pull-based episodic memory over the existing
-  file tools; no new model tools, no second ledger. Out of the prime-agent
-  design study (2026-08-07/08). **PR 1 shipped 2026-08-10 as #511** (cc; high gate,
-  8 findings all fixed with regression tests verified to fail against the pre-fix
-  code) — the artifact is now per-Thread under `thread-transcripts/`; PR 2 remains.
+`agent-episodic-transcripts` is **complete** — both PRs shipped (#511, #519); see
+*Recently completed*.
+
 - **agent-doc-drift-notice** (P2, `draft` 2026-08-08 — see
   [docs/plans/agent-doc-drift-notice.md](plans/agent-doc-drift-notice.md)) —
   proactive staleness defense for the question-answering path: at Turn
@@ -794,6 +784,15 @@ and the merged PR, distilled rules in [`lessons.md`](lessons.md). Everything
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
 
+- **agent-episodic-transcripts** (cc, PR #519, merged 2026-08-10 — plan-track, plan archived
+  `done`; PR 2 of 2, completing the plan after #511) — every persistent Thread now keeps a
+  readable transcript, and a greppable `thread-transcripts/index.tsv` (a projection of the
+  artifacts, not an accumulated log) makes past sessions findable; a root Thread that can read
+  files is told when to consult it and reads what it needs with the file tools it already has.
+  Privacy is a per-conversation switch whose unit is the **session**, so excluding a root takes
+  its delegated Subagent work with it, and re-including rebuilds immediately rather than waiting
+  for a Turn a finished conversation will never have. `/code-review high` found ten, all fixed;
+  the two that mattered were the exclusion unit and the no-op re-inclusion.
 - **media-search-alignment** (codex, PR #516, merged 2026-08-10 — plan-track, plan archived
   `done`; PR 2 of 2, completing the plan after #510) — attachments are search candidates
   now, so a file is findable by filename, by `IS_TYPE attachment`, and through media facets

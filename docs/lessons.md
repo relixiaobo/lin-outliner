@@ -668,3 +668,22 @@ reads; if no shipped path writes that field in that state, you are not adding
 resilience, you are adding a branch that will never run.** And a test that has to
 bypass the command surface to reach a branch is telling you the branch is
 unreachable, not that it needs a fixture.
+
+## A privacy switch's unit is the conversation the user sees, not the record it names
+
+The #519 gate found "exclude this Thread from the records" doing exactly what it
+said: it deleted that Thread's artifact. But a root's Subagents write their own
+artifacts, so the delegated half of the excluded conversation stayed on disk —
+and, worse, kept its rows in the index the same PR had just taught every later
+Thread to grep. The user asked for one thing and got a strictly weaker one, with
+the UI reporting success. The deletion path next door already knew better: it
+cascades over the subtree. Two more findings in the same PR were the same
+mismatch in miniature — re-inclusion cleared a writer's flag and waited for a
+next Turn that a finished conversation never has, so the undo restored nothing
+while the menu claimed the record was back; and a removal that failed left the
+artifact listed forever, because nothing ever came back for it. So: **for any
+switch that removes or hides user content, write down the unit the user believes
+they are acting on, then check that every artifact in that unit is covered, that
+the inverse operation actually restores, and that a failed step is reconciled
+rather than assumed.** A privacy control that is merely mostly effective is a
+correctness bug with a confident label on it.

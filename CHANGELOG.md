@@ -53,6 +53,35 @@ Entries reference the pull request that introduced them.
   defects, all fixed in the same PR with regression tests; the carry-forward rule
   is in `docs/lessons.md` — a once-only guarantee needs a durable record, not a
   scan of history.
+- **Every conversation keeps a record, and past sessions become findable (PR
+  #519, cc)** — the transcript artifact that #511 generalized now covers every
+  persistent Thread, not only delegated children, and a greppable
+  `thread-transcripts/index.tsv` lists one row per recorded session (threadId,
+  source, cwd, created/updated, status, name, path), newest activity first. A
+  root Thread that can read files is told the index exists and when to consult
+  it: work that refers to something earlier, repeats something that failed
+  before, or asks what was already decided. Discovery is **pull-based** — the
+  model reads what it needs with the file tools it already has; no new model
+  tool, no second ledger, and nothing loaded into every prompt. Index rows and
+  transcripts are labeled records of what happened, not instructions, so their
+  content stays untrusted data. The index is a projection of the artifacts on
+  disk rather than an accumulated log, so it cannot drift from them; it is
+  rewritten by a coalescing single writer and reads its Thread records in one
+  query per rewrite. Privacy is a **per-conversation** switch in the Thread
+  action menu beside Rename and Delete: excluding removes the artifacts that are
+  already there and stops future appends, and the unit is the **session**, so a
+  root's delegated Subagent work goes with it rather than staying readable and
+  advertised in the index. Re-including rebuilds each artifact immediately from
+  canonical history rather than waiting for a next Turn a finished conversation
+  will never have. The exclusion lives beside the records in `excluded.txt`, not
+  as a column on the Thread record — it must be answerable synchronously while a
+  Turn completes, and the metadata store has no schema-evolution step. The high
+  review gate found ten defects, all fixed in the same PR: the session-vs-Thread
+  exclusion unit and the no-op re-inclusion were the two that mattered, joined by
+  a lost-wakeup window in the index writer, a stale index after rename/archive, a
+  per-artifact synchronous query on the main-process event loop, a menu item that
+  disabled itself under the cursor on every streamed delta, and a swallowed read
+  failure that left it inert with nothing said.
 
 ### Changed
 
