@@ -115,9 +115,6 @@ const NODE_SCALAR_KEYS: NodeFieldKey[] = [
   'pdfPageCount',
   'audioDurationMs',
   'videoDurationMs',
-  'embedType',
-  'embedId',
-  'sourceUrl',
   'aiSummary',
   // User-only-writable field keys; a string[] that round-trips through the
   // generic clone path (same as `capture`).

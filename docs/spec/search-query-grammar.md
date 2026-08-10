@@ -48,6 +48,11 @@ Rules:
 - JSON object DSL is allowed as an internal/debug shape only. It is not the
   canonical search outline syntax.
 
+Executable type rules accept `node`, `tag`, `field`, `search`, `day`, `week`,
+`year`, `image`, and `code` (including the documented aliases implemented by the
+evaluator). `HAS_IMAGE` matches image nodes, and `HAS_MEDIA` is the same predicate
+under a broader name. Neither rule infers media from arbitrary text or URLs.
+
 ## Complexity Budget
 
 Search query handling is admitted through a shared iterative compiler before

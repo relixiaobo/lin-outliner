@@ -157,8 +157,6 @@ export const SEARCH_EXECUTABLE_QUERY_OPS = [
   'OWNED_BY',
   'OVERDUE',
   'HAS_MEDIA',
-  'HAS_AUDIO',
-  'HAS_VIDEO',
   'HAS_IMAGE',
   'FIELD_IS_SET',
   'FIELD_IS_NOT_SET',
@@ -1213,8 +1211,8 @@ function evaluateLeaf(index: SearchIndex, candidate: SearchNode, conditionNode: 
 
   if (op === 'OVERDUE') return { ok: true, match: nodeIsOverdue(index, candidate, conditionNode), score: 18 };
 
-  if (op === 'HAS_MEDIA' || op === 'HAS_AUDIO' || op === 'HAS_VIDEO' || op === 'HAS_IMAGE') {
-    return { ok: true, match: nodeHasMediaKind(candidate, op), score: 14 };
+  if (op === 'HAS_MEDIA' || op === 'HAS_IMAGE') {
+    return { ok: true, match: candidate.type === 'image', score: 14 };
   }
 
   return {
@@ -1967,7 +1965,6 @@ function nodeMatchesType(index: SearchIndex, node: SearchNode, expectedType: str
   if (expected === 'week') return isWeekNode(index, node.id);
   if (expected === 'year') return isYearNode(index, node.id);
   if (expected === 'image') return node.type === 'image';
-  if (expected === 'embed') return node.type === 'embed';
   if (['code', 'codeblock'].includes(expected)) return node.type === 'codeBlock';
   return false;
 }
@@ -2081,45 +2078,7 @@ function isSearchCandidate(index: SearchIndex, nodeId: NodeId): boolean {
   return !isInTrash(index, nodeId)
     && !hasAncestorOfType(index, nodeId, 'queryCondition')
     && !SYSTEM_IDS.has(nodeId)
-    && (node.type === undefined || ['tagDef', 'fieldDef', 'search', 'codeBlock', 'image', 'embed'].includes(node.type));
-}
-
-/** The image node's url, narrowed — only image nodes carry one. */
-function nodeMediaUrl(node: SearchNode): string | undefined {
-  return node.type === 'image' ? node.mediaUrl : undefined;
-}
-
-/** The embed node's fields, narrowed — only embed nodes carry them. */
-function nodeEmbedFields(node: SearchNode): { embedType?: string; embedId?: string; sourceUrl?: string } {
-  return node.type === 'embed' ? node : {};
-}
-
-function nodeHasMediaKind(node: SearchNode, op: Extract<QueryOp, 'HAS_MEDIA' | 'HAS_AUDIO' | 'HAS_VIDEO' | 'HAS_IMAGE'>): boolean {
-  if (op === 'HAS_MEDIA') {
-    const embed = nodeEmbedFields(node);
-    return node.type === 'image'
-      || node.type === 'embed'
-      || Boolean(nodeMediaUrl(node) || embed.embedType || embed.embedId || embed.sourceUrl);
-  }
-  if (op === 'HAS_IMAGE') {
-    return node.type === 'image'
-      || mediaKindFromNode(node) === 'image';
-  }
-  if (op === 'HAS_AUDIO') return mediaKindFromNode(node) === 'audio';
-  return mediaKindFromNode(node) === 'video';
-}
-
-function mediaKindFromNode(node: SearchNode): 'image' | 'audio' | 'video' | 'embed' | null {
-  const embed = nodeEmbedFields(node);
-  const embedType = embed.embedType?.trim().toLowerCase();
-  if (embedType === 'image' || embedType === 'audio' || embedType === 'video') return embedType;
-  const url = nodeMediaUrl(node) || embed.sourceUrl || '';
-  const ext = url.split(/[?#]/)[0]?.split('.').pop()?.toLowerCase();
-  if (!ext) return node.type === 'embed' ? 'embed' : null;
-  if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'avif'].includes(ext)) return 'image';
-  if (['mp3', 'wav', 'm4a', 'aac', 'flac', 'ogg', 'oga'].includes(ext)) return 'audio';
-  if (['mp4', 'mov', 'm4v', 'webm', 'avi', 'mkv'].includes(ext)) return 'video';
-  return node.type === 'embed' ? 'embed' : null;
+    && (node.type === undefined || ['tagDef', 'fieldDef', 'search', 'codeBlock', 'image'].includes(node.type));
 }
 
 function hasAncestorOfType(index: SearchIndex, nodeId: NodeId, type: SearchNode['type']): boolean {

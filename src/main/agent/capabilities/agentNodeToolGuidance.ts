@@ -50,7 +50,7 @@ export const SEARCH_OPERATOR_REFERENCE = [
   '- Date fields: DATE_OVERLAPS uses field:: [[node:Date field^...]] plus value:: YYYY-MM-DD or start/end. OVERDUE checks unfinished nodes with overdue date field values and may include field:: to limit which date field.',
   '- Date/calendar nodes: FOR_DATE and FOR_RELATIVE_DATE use value:: date to match date-related nodes; ON_DAY_NODE matches nodes under day nodes.',
   '- Links and structure: LINKS_TO, CHILD_OF, DESCENDANT_OF, DESCENDANT_OF_WITH_REFS, and OWNED_BY use target:: [[node:Node^...]]. PARENTS_DESCENDANTS, GRANDPARENTS_DESCENDANTS, PARENTS_DESCENDANTS_WITH_REFS, and GRANDPARENTS_DESCENDANTS_WITH_REFS are scoped to the saved search node position. SIBLING_NAMED uses value:: sibling title. IN_LIBRARY needs no operand.',
-  '- Type/media: IS_TYPE value:: node|tag|field|search|day|week|year|image|embed|code; HAS_MEDIA, HAS_AUDIO, HAS_VIDEO, and HAS_IMAGE need no operand.',
+  '- Type/media: IS_TYPE value:: node|tag|field|search|day|week|year|image|code; HAS_MEDIA and HAS_IMAGE need no operand.',
   '- EDITED_BY exists in the data model but is not executable yet. Do not use it.',
 ].join('\n');
 

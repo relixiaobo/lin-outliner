@@ -71,7 +71,6 @@ export type NodeType =
   | 'codeBlock'
   | 'image'
   | 'attachment'
-  | 'embed'
   | 'tagDef'
   | 'fieldDef'
   | 'defConfig'
@@ -351,8 +350,6 @@ export const QUERY_OPS = [
   'OWNED_BY',
   'OVERDUE',
   'HAS_MEDIA',
-  'HAS_AUDIO',
-  'HAS_VIDEO',
   'HAS_IMAGE',
   'FIELD_IS_SET',
   'FIELD_IS_NOT_SET',
@@ -450,12 +447,6 @@ export interface AttachmentNode extends NodeBase {
   audioDurationMs?: number;
   videoDurationMs?: number;
 }
-export interface EmbedNode extends NodeBase {
-  type: 'embed';
-  embedType?: string;
-  embedId?: string;
-  sourceUrl?: string;
-}
 export interface TagDefNode extends NodeBase { type: 'tagDef'; }
 export interface FieldDefNode extends NodeBase { type: 'fieldDef'; }
 export interface DefConfigNode extends NodeBase {
@@ -513,7 +504,6 @@ export type Node =
   | CodeBlockNode
   | ImageNode
   | AttachmentNode
-  | EmbedNode
   | TagDefNode
   | FieldDefNode
   | DefConfigNode
