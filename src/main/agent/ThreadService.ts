@@ -109,12 +109,25 @@ import { ThreadCore,type NotificationListener } from './thread/ThreadCore';
 import { ThreadResourceOps } from './thread/ThreadResourceOps';
 import { threadTranscriptRoot } from './thread/ThreadTranscriptArtifact';
 import { documentDriftNotice,driftAttribution,DRIFT_ATTRIBUTION_SCAN,DRIFT_NOTICE_NODE_LIMIT,type DocumentDriftAttribution } from './context/documentDriftNotice';
+import { beliefsFromToolResult,type DocumentBelief } from './context/DocumentBeliefs';
 import { ThreadDocumentBeliefs } from './context/ThreadDocumentBeliefs';
+import { indexProjection } from './capabilities/agentNodeToolProjection';
 import { ThreadTranscriptExclusions } from './thread/ThreadTranscriptExclusions';
 import { ThreadTranscriptIndex } from './thread/ThreadTranscriptIndex';
 import { rootTranscriptSubject,ThreadTranscriptWriter } from './thread/ThreadTranscriptWriter';
 import type { TranscriptSubject } from './thread/TranscriptRenderer';
 import { TurnLifecycle } from './thread/TurnLifecycle';
+
+/** What the drift attribution needs of a journal entry, and nothing more. */
+export interface DocumentOperationRecord {
+  readonly origin: string;
+  readonly createdAt?: string;
+  readonly affectedNodeIds?: readonly string[];
+  readonly causation?: { readonly threadId: string };
+}
+
+/** Shared empty result, so "no drift" allocates nothing on the common path. */
+const NO_DOCUMENT_DRIFT = Object.freeze({ context: null, settle: () => undefined });
 
 export interface AgentCorePaths {
   readonly root: string;
@@ -163,11 +176,7 @@ export interface ThreadServiceOptions {
    * only — the drift check itself never reads it, so an install that cannot
    * answer simply drops one clause.
    */
-  readonly getRecentDocumentOperations?: (limit: number) => readonly {
-    readonly origin: string;
-    readonly affectedNodeIds?: readonly string[];
-    readonly causation?: { readonly threadId: string };
-  }[];
+  readonly getRecentDocumentOperations?: (limit: number) => readonly DocumentOperationRecord[];
   readonly resolveReferencedAsset?: (assetId: string) => Promise<ReferencedAssetResolution | null>;
   readonly resolveSkillAdmission?: (
     input: SkillAdmissionResolutionInput,
@@ -378,7 +387,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       this.resourceOps.threadImageRetentionInventory(threadId)
     ));
     this.transcriptExclusions = new ThreadTranscriptExclusions(options.transcriptRoot);
-    this.beliefs = new ThreadDocumentBeliefs();
+    this.beliefs = new ThreadDocumentBeliefs(this.now, (threadId) => this.rebuildDocumentBeliefs(threadId));
     this.transcriptIndex = new ThreadTranscriptIndex({
       transcriptRoot: options.transcriptRoot,
       readThreads: (threadIds) => new Map(
@@ -981,7 +990,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     // node the model was just shown becomes a belief at the moment it was shown,
     // and this is the one place that moment exists for every node tool at once —
     // no per-tool hook, and nothing for a new node tool to remember to call.
-    this.beliefs.observe(threadId, identity.name, result);
+    this.beliefs.observe(threadId, identity.name, result, this.getDocumentProjection());
     await this.extensions.toolCompleted({
       threadId,
       turnId,
@@ -994,6 +1003,11 @@ export class ThreadService implements ThreadServiceExtensionHost {
   }
   async spawnChild(input: SpawnChildThreadInput): Promise<SpawnChildThreadResult> { return this.collaboration.spawnChild(input); }
   async spawnIsolatedSkillThread(input: SpawnIsolatedSkillThreadInput): Promise<SpawnChildThreadResult> { return this.collaboration.spawnIsolatedSkillThread(input); }
+  /**
+   * Test seam: drop the in-session beliefs, so the next admission rebuilds them
+   * from the canonical record — the same path a restart or a fork takes.
+   */
+  dropDocumentBeliefs(threadId: ThreadId): void { this.beliefs.forget([threadId]); }
   /** Test seam: settle a Thread's pending transcript appends. */
   async flushThreadTranscript(threadId: ThreadId): Promise<void> { return this.transcripts.flush(threadId); }
   /** Account layer for a Thread that keeps one: the artifact path, or null when it is not on disk (A12). */
@@ -1035,23 +1049,70 @@ export class ThreadService implements ThreadServiceExtensionHost {
    * admission is when evidence is admitted; and the notice lands in the canonical
    * record, where a transcript reader can later audit what the model was told.
    */
-  /** How far back attribution looks. Bounded, and its miss costs a clause. */
-  private documentDriftContext(threadId: ThreadId, projection: DocumentProjection | null): AdditionalContext | null {
-    const drift = this.beliefs.takeDrift(threadId, projection, DRIFT_NOTICE_NODE_LIMIT);
-    if (drift.reported.length === 0) return null;
-    const notice = documentDriftNotice(
-      drift.reported,
-      drift.total,
-      this.driftAttribution(threadId, drift.reported.map((entry) => entry.nodeId)),
-    );
-    return notice === null ? null : { document_drift: { kind: 'application', value: notice } };
+  private async documentDriftContext(
+    threadId: ThreadId,
+    projection: DocumentProjection | null,
+  ): Promise<{ readonly context: AdditionalContext | null; readonly settle: () => void }> {
+    // A12 over the WHOLE composition, rendering included. `nodeTitle` and
+    // `nodeContentText` walk rich text, and this is called inline while building
+    // the admission argument, so a throw here would fail the user's Turn before
+    // it started — inspection-only data killing the user's action.
+    try {
+      const drift = await this.beliefs.peekDrift(threadId, projection, DRIFT_NOTICE_NODE_LIMIT);
+      if (drift.reported.length === 0) return NO_DOCUMENT_DRIFT;
+      const notice = documentDriftNotice(
+        drift.reported,
+        drift.total,
+        this.driftAttribution(threadId, drift.reported),
+      );
+      if (notice === null) return NO_DOCUMENT_DRIFT;
+      return {
+        context: { document_drift: { kind: 'application', value: notice } },
+        // Only once the Turn carrying it is durably recorded.
+        settle: () => this.beliefs.settleReported(threadId, projection, drift.reported),
+      };
+    } catch (error) {
+      console.warn(`[agent] Document drift notice was not composed for ${threadId}`, error);
+      return NO_DOCUMENT_DRIFT;
+    }
+  }
+
+  /**
+   * Beliefs a previous process, or the Thread this one was forked from, formed —
+   * recovered from the persisted tool outputs that were the observation.
+   *
+   * The observation time is the Turn's, because an Item carries none; that is
+   * monotonic with observation order, which is all attribution needs of it. A
+   * payload that no longer decodes contributes nothing rather than a guess.
+   */
+  private async rebuildDocumentBeliefs(threadId: ThreadId): Promise<readonly DocumentBelief[]> {
+    const projection = this.getDocumentProjection();
+    const index = projection ? indexProjection(projection) : null;
+    const beliefs: DocumentBelief[] = [];
+    for (const turn of this.core.allTurns(threadId)) {
+      const observedAt = turn.completedAt ?? turn.startedAt;
+      for (const item of turn.items) {
+        if (item.type !== 'dynamicToolCall' || !item.outputRef) continue;
+        const text = await this.core.payloads.readTextReference(threadId, item.outputRef).catch(() => null);
+        if (!text) continue;
+        try {
+          beliefs.push(...beliefsFromToolResult(item.tool, JSON.parse(text), index, observedAt));
+        } catch {
+          // Not JSON, or truncated past parsing: no belief rather than a wrong one.
+        }
+      }
+    }
+    return beliefs;
   }
 
   /** A12: attribution is garnish, so a journal that cannot answer costs one clause. */
-  private driftAttribution(threadId: ThreadId, nodeIds: readonly string[]): DocumentDriftAttribution | null {
+  private driftAttribution(
+    threadId: ThreadId,
+    drifted: readonly { readonly nodeId: string; readonly observedAt: number }[],
+  ): DocumentDriftAttribution | null {
     try {
       const entries = this.getRecentDocumentOperations?.(DRIFT_ATTRIBUTION_SCAN) ?? [];
-      return driftAttribution(nodeIds, entries, threadId);
+      return driftAttribution(drifted, entries, threadId);
     } catch {
       return null;
     }

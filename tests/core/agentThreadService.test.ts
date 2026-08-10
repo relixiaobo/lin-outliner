@@ -76,6 +76,8 @@ import {
   threadTranscriptPath,
   threadTranscriptRoot,
 } from '../../src/main/agent/thread/ThreadTranscriptArtifact';
+import { indexProjection } from '../../src/main/agent/capabilities/agentNodeToolProjection';
+import { editableOutlineRevision } from '../../src/main/agent/capabilities/agentNodeToolRead';
 import { ThreadTranscriptIndex } from '../../src/main/agent/thread/ThreadTranscriptIndex';
 import { ThreadTranscriptWriter } from '../../src/main/agent/thread/ThreadTranscriptWriter';
 import { uuidV7 } from '../../src/main/agent/uuid';
@@ -10234,8 +10236,10 @@ describe('document drift notice', () => {
     let projection = contextProjection([contextNode(PRICING, 'Enterprise ¥3,900/seat', { updatedAt: 1 })]);
     const fixture = await createFixture(undefined, {
       getDocumentProjection: () => projection,
+      // Dated AFTER the read below, because an operation that predates the
+      // observation explains nothing about drift the model can see.
       getRecentDocumentOperations: () => [
-        { origin: 'user', affectedNodeIds: [PRICING] },
+        { origin: 'user', affectedNodeIds: [PRICING], createdAt: new Date(4_000_000_000_000).toISOString() },
       ],
     });
     const thread = (await fixture.service.startThread({
@@ -10259,7 +10263,7 @@ describe('document drift notice', () => {
       'read-1',
       { namespace: null, name: 'node_read' },
       {},
-      { ok: true, data: { items: [{ nodeId: PRICING, revision: `${PRICING}:1` }] } },
+      { ok: true, data: { items: [{ nodeId: PRICING, revision: readRevision(projection, PRICING) }] } },
       null,
     );
     fixture.executor.finish(0, completedExecutionResult(0));
@@ -10303,6 +10307,154 @@ describe('document drift notice', () => {
     await fixture.service.close();
   });
 
+  test('says nothing when the document did not move', async () => {
+    const projection = contextProjection([contextNode(PRICING, 'Enterprise pricing', { updatedAt: 1 })]);
+    const fixture = await createFixture(undefined, { getDocumentProjection: () => projection });
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Read it' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    await fixture.service.notifyToolCompleted(
+      thread.id,
+      fixture.executor.contexts[0]!.turn.id,
+      'read-1',
+      { namespace: null, name: 'node_read' },
+      {},
+      { ok: true, data: { items: [{ nodeId: PRICING, revision: readRevision(projection, PRICING) }] } },
+      null,
+    );
+    fixture.executor.finish(0, completedExecutionResult(0));
+    await fixture.service.waitForIdle(thread.id);
+
+    await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'A follow-up that touches nothing' }],
+    });
+    await fixture.executor.waitUntilWaiting(1);
+
+    // The shipped version compared the emitted token against a different
+    // function, so this fired on every turn after every read — a false drift
+    // notice telling the model not to revert edits nobody made.
+    expect(await driftNoticeFor(fixture, thread.id, 1)).toBeNull();
+
+    fixture.executor.finish(1, completedExecutionResult(0));
+    await fixture.service.waitForIdle(thread.id);
+    await fixture.service.close();
+  });
+
+  test('keeps tracking a node after reporting it, so a second edit is reported too', async () => {
+    let projection = contextProjection([contextNode(PRICING, 'v1', { updatedAt: 1 })]);
+    const fixture = await createFixture(undefined, { getDocumentProjection: () => projection });
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    await fixture.service.startRendererTurn({ threadId: thread.id, input: [{ type: 'text', text: 'Read it' }] });
+    await fixture.executor.waitUntilWaiting(0);
+    await fixture.service.notifyToolCompleted(
+      thread.id,
+      fixture.executor.contexts[0]!.turn.id,
+      'read-1',
+      { namespace: null, name: 'node_read' },
+      {},
+      { ok: true, data: { items: [{ nodeId: PRICING, revision: readRevision(projection, PRICING) }] } },
+      null,
+    );
+    fixture.executor.finish(0, completedExecutionResult(0));
+    await fixture.service.waitForIdle(thread.id);
+
+    projection = contextProjection([contextNode(PRICING, 'v2', { updatedAt: 2 })]);
+    await fixture.service.startRendererTurn({ threadId: thread.id, input: [{ type: 'text', text: 'And now?' }] });
+    await fixture.executor.waitUntilWaiting(1);
+    expect(await driftNoticeFor(fixture, thread.id, 1)).toContain('v2');
+    fixture.executor.finish(1, completedExecutionResult(0));
+    await fixture.service.waitForIdle(thread.id);
+
+    projection = contextProjection([contextNode(PRICING, 'v3', { updatedAt: 3 })]);
+    await fixture.service.startRendererTurn({ threadId: thread.id, input: [{ type: 'text', text: 'And now?' }] });
+    await fixture.executor.waitUntilWaiting(2);
+
+    // Reporting must UPDATE the belief, not drop it. Dropping inverted the
+    // feature: the host stopped tracking a node the moment it handed the model
+    // that node's content, so the next edit went unreported and the model
+    // answered from — or wrote over — the version it had been given.
+    expect(await driftNoticeFor(fixture, thread.id, 2)).toContain('v3');
+
+    fixture.executor.finish(2, completedExecutionResult(0));
+    await fixture.service.waitForIdle(thread.id);
+    await fixture.service.close();
+  });
+
+  test('rebuilds beliefs from the record when this process never observed them', async () => {
+    let projection = contextProjection([contextNode(PRICING, 'Enterprise ¥3,900/seat', { updatedAt: 1 })]);
+    const fixture = await createFixture(undefined, { getDocumentProjection: () => projection });
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    await fixture.service.startRendererTurn({ threadId: thread.id, input: [{ type: 'text', text: 'Read it' }] });
+    await fixture.executor.waitUntilWaiting(0);
+    const context = fixture.executor.contexts[0]!;
+    const itemId = context.recorder.createItemId();
+    const started: ThreadItem = {
+      type: 'dynamicToolCall',
+      id: itemId,
+      provenance: context.recorder.localProvenance(itemId),
+      status: 'inProgress',
+      outputRef: null,
+      namespace: null,
+      tool: 'node_read',
+      arguments: {},
+      contentItems: null,
+      success: null,
+      durationMs: null,
+      modelCall: replayableModelCall('node_read', {}),
+    };
+    await context.recorder.started(started);
+    // The persisted output IS the observation, which is what makes the belief
+    // recoverable without anything new being written down.
+    const outputRef = await context.persistOutputText(
+      itemId,
+      JSON.stringify({
+        ok: true,
+        data: { items: [{ nodeId: PRICING, revision: readRevision(projection, PRICING) }] },
+      }),
+      'application/json',
+      'node_read output',
+    );
+    await context.recorder.completed({ ...started, status: 'completed', outputRef, success: true, durationMs: 1 });
+    fixture.executor.finish(0, completedExecutionResult(0));
+    await fixture.service.waitForIdle(thread.id);
+
+    // Stand in for the process that did not watch this happen — a restart, or a
+    // fork inheriting a history it never observed live.
+    fixture.service.dropDocumentBeliefs(thread.id);
+    projection = contextProjection([contextNode(PRICING, 'Enterprise ¥4,800/seat', { updatedAt: 2 })]);
+
+    await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'What do we charge?' }],
+    });
+    await fixture.executor.waitUntilWaiting(1);
+
+    expect(await driftNoticeFor(fixture, thread.id, 1)).toContain('Enterprise ¥4,800/seat');
+
+    fixture.executor.finish(1, completedExecutionResult(0));
+    await fixture.service.waitForIdle(thread.id);
+    await fixture.service.close();
+  });
+
   test('names a deleted node as deleted', async () => {
     let projection = contextProjection([contextNode(PRICING, 'Enterprise pricing', { updatedAt: 1 })]);
     const fixture = await createFixture(undefined, { getDocumentProjection: () => projection });
@@ -10323,7 +10475,7 @@ describe('document drift notice', () => {
       'read-1',
       { namespace: null, name: 'node_read' },
       {},
-      { ok: true, data: { items: [{ nodeId: PRICING, revision: `${PRICING}:1` }] } },
+      { ok: true, data: { items: [{ nodeId: PRICING, revision: readRevision(projection, PRICING) }] } },
       null,
     );
     fixture.executor.finish(0, completedExecutionResult(0));
@@ -10345,6 +10497,15 @@ describe('document drift notice', () => {
     await fixture.service.close();
   });
 });
+
+/**
+ * The token `node_read` really emits for this node. Never hand-written: a
+ * fixture written from an assumption about the format can only confirm the
+ * assumption, which is how a comparison that could never match once shipped.
+ */
+function readRevision(projection: DocumentProjection, nodeId: string): string {
+  return editableOutlineRevision(indexProjection(projection), nodeId);
+}
 
 /** The notice admitted as evidence for the Turn at `index`, or null when none was. */
 async function driftNoticeFor(fixture: Fixture, threadId: string, index: number): Promise<string | null> {

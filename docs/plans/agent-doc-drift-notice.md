@@ -66,7 +66,7 @@ is reported. A history walk would report both operations.
 
 A belief is recorded wherever a node is **rendered to the model** — `node_read`
 output, each result item of `node_search`, and the `userView` evidence payload
-admitted with the Turn. `recordNodeAccess` (`capabilities/agentNodeTools.ts:186`)
+admitted with the Turn. `recordNodeAccess` in `capabilities/agentNodeTools.ts`
 already proves this seam works and is already called from the search path; belief
 capture is a second consumer of the same moment, not a new hook.
 
@@ -78,10 +78,26 @@ whichever tool showed it.
 
 ### The belief record
 
-Per node: a small digest of the observable content — the node's text, its parent,
-and its existence — plus the id. Exact fields are a build decision, but the rule
-is that the digest must cover what would make a remembered answer wrong, and
-nothing else, so that metadata churn does not manufacture drift.
+Per node: the token the tool that showed it emitted, plus **which function
+emitted it**, plus whether the node was already in the trash.
+
+Naming the function is not bookkeeping, it is the correctness condition. The
+first build stored what `node_read` emits and compared it against `revisionOf`,
+which is a different function — `editableOutlineRevision` appends an outline hash
+— so the two could never be equal and every read produced a permanent false
+drift. A belief carries its own basis, and comparison recomputes THAT basis, so a
+shape a tool emits can only ever be compared with itself.
+
+The basis is as strong as the observation was: `node_read` renders an editable
+outline, so its belief is the outline revision, with text and structure inside
+the hash; `node_search` renders a snippet and a timestamp, so its belief is that
+timestamp, normalised to the epoch the projection carries. Pretending a search
+result is as strong a claim as a read would either miss drift or invent it.
+
+Trashing needs its own field because it is invisible to both: the trash is a
+subtree rather than a removal, so a trashed node stays in the projection, and
+trashing does not stamp `updatedAt`. Without an explicit check the flagship case
+— "the node you read has been deleted" — never fires at all.
 
 **The belief set is a projection of the canonical record, and takes its bound
 from the record.** No cap and no eviction policy of its own — the record is

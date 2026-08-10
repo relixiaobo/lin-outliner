@@ -1,34 +1,50 @@
 /**
  * What this Thread was shown about the document, and whether it is still true.
  *
- * THE BELIEF IS THE REVISION THE MODEL ALREADY SAW. `node_read` returns
- * `items[].revision` and `node_search` returns `items[].updatedAt`, both of which
- * are the token `revisionOf` produces and the token `node_edit` compares for its
- * expected-revision check. So this layer invents no notion of "changed": the
- * question the write path asks about a revision the model sends back is the
- * question this asks about a revision the host remembered on its behalf. One
- * token, one meaning, two directions.
+ * A BELIEF CARRIES THE FUNCTION THAT MADE IT. The first version of this file
+ * stored the token `node_read` emits and compared it against `revisionOf`, which
+ * is a different function — `editableOutlineRevision` appends an outline hash —
+ * so the two could never be equal and every read produced a permanent false
+ * drift. The fix is not a better guess at the format: a belief names its own
+ * `basis`, and comparison recomputes THAT basis against the current projection.
+ * A shape a tool emits can then only ever be compared with itself.
  *
- * That also settles what a belief is derived FROM. Beliefs are extracted from
- * tool result data by `beliefsFromToolResult`, and that one function serves both
- * the live path (called with the fresh result) and the rebuild path (called with
- * the same result decoded from its persisted payload). Live and rebuilt sets
- * cannot disagree, because they are the same extraction over the same bytes.
+ * THE BASIS IS AS STRONG AS THE OBSERVATION WAS. `node_read` renders a node's
+ * editable outline, so its belief is the outline revision — text, structure and
+ * children all inside the hash. `node_search` renders a snippet and a timestamp,
+ * so its belief is that timestamp. A search result is a weaker claim about what
+ * the model knows, and pretending otherwise would either miss drift or invent it.
  *
- * NO CAP AND NO EVICTION POLICY of its own: the set is a projection of the
- * canonical record, so it inherits the record's bounds — payload pruning and
- * compaction — rather than introducing a number invented here.
+ * Both bases are recoverable from the persisted tool output, which is what makes
+ * the set a projection of the canonical record rather than a cache: the same
+ * `beliefsFromToolResult` runs live and on rebuild, over the same bytes.
  */
 import type { NodeProjection } from '../../../core/types';
-import { revisionOf } from '../capabilities/agentNodeToolProjection';
+import type { DocumentProjection } from '../../../core/types';
+import { indexProjection, isInTrash } from '../capabilities/agentNodeToolProjection';
+import { editableOutlineRevision } from '../capabilities/agentNodeToolRead';
+import type { ProjectionIndex } from '../capabilities/agentNodeToolTypes';
 
 /** The node tools whose results say something about a node's current state. */
 const BELIEF_BEARING_TOOLS = new Set(['node_read', 'node_search', 'node_edit', 'node_create']);
 
+/**
+ * Which function produced the token, and therefore which one must reproduce it.
+ * `outline` is `editableOutlineRevision`; `updatedAt` is the raw epoch stamp.
+ */
+export type DocumentBeliefBasis = 'outline' | 'updatedAt';
+
 export interface DocumentBelief {
   readonly nodeId: string;
-  /** `${nodeId}:${updatedAt}` — the same token the expected-revision check compares. */
-  readonly revision: string;
+  readonly basis: DocumentBeliefBasis;
+  readonly token: string;
+  /** Whether the node was already in the trash when the model was shown it. */
+  readonly trashed: boolean;
+  /**
+   * When the model was shown it. Attribution needs this: an edit that predates
+   * the observation explains nothing about drift the model can see.
+   */
+  readonly observedAt: number;
 }
 
 export type DocumentDriftKind = 'changed' | 'gone';
@@ -36,39 +52,56 @@ export type DocumentDriftKind = 'changed' | 'gone';
 export interface DocumentDriftedNode {
   readonly nodeId: string;
   readonly kind: DocumentDriftKind;
-  /** The node as it is NOW, or null when it is gone. */
+  /** The node as it is NOW, or null when the projection no longer has it at all. */
   readonly node: NodeProjection | null;
+  /** When the belief that just failed was formed. */
+  readonly observedAt: number;
 }
 
 /**
  * Every belief a node tool's result expresses.
  *
- * Reads and searches state what the model was shown; edits state what it left
- * behind, and a Thread's own edit is a belief like any other — it is what the
- * model will answer from until something changes it. Unknown shapes yield
- * nothing rather than throwing: this runs behind a tool call and behind a
- * rebuild, and neither may fail over an unrecognised payload.
+ * `trashed` is resolved against the projection as it was when the result was
+ * produced, because "the node you read has since been deleted" is a claim about
+ * a transition, not about a state.
+ *
+ * Unknown shapes yield nothing rather than throwing: this runs behind a live
+ * tool call and behind a rebuild, and neither may fail over a payload it does
+ * not recognise.
  */
-export function beliefsFromToolResult(tool: string, result: unknown): readonly DocumentBelief[] {
+export function beliefsFromToolResult(
+  tool: string,
+  result: unknown,
+  index: ProjectionIndex | null,
+  observedAt: number,
+): readonly DocumentBelief[] {
   if (!BELIEF_BEARING_TOOLS.has(tool)) return [];
   const data = (result as { data?: unknown } | null)?.data;
   if (!isRecord(data)) return [];
   const beliefs: DocumentBelief[] = [];
-  // node_read: items carry the revision token directly.
+  const add = (nodeId: string, basis: DocumentBeliefBasis, token: string) => {
+    beliefs.push({ nodeId, basis, token, trashed: index ? isInTrash(index, nodeId) : false, observedAt });
+  };
   for (const item of arrayOf(data.items)) {
     if (!isRecord(item)) continue;
     const nodeId = stringOf(item.nodeId);
     if (!nodeId) continue;
-    const revision = stringOf(item.revision)
-      // node_search reports `updatedAt` instead, which is the same fact under
-      // another name — the token is derived rather than stored twice.
-      ?? (stringOf(item.updatedAt) === undefined ? undefined : `${nodeId}:${stringOf(item.updatedAt)}`);
-    if (revision) beliefs.push({ nodeId, revision });
+    // node_read states the outline revision it rendered.
+    const outline = stringOf(item.revision);
+    if (outline) {
+      add(nodeId, 'outline', outline);
+      continue;
+    }
+    // node_search states an ISO timestamp; normalise to the epoch the projection
+    // carries, so the stored token is already in the form its basis compares.
+    const updatedAt = epochOf(item.updatedAt);
+    if (updatedAt !== undefined) add(nodeId, 'updatedAt', updatedAt);
   }
-  // node_edit / node_create: an explicit map of what the mutation left behind.
+  // node_edit / node_create: an explicit map of what the mutation left behind,
+  // in the same outline form node_read emits.
   if (isRecord(data.revisions)) {
-    for (const [nodeId, revision] of Object.entries(data.revisions)) {
-      if (typeof revision === 'string' && revision) beliefs.push({ nodeId, revision });
+    for (const [nodeId, token] of Object.entries(data.revisions)) {
+      if (typeof token === 'string' && token) add(nodeId, 'outline', token);
     }
   }
   return beliefs;
@@ -77,27 +110,64 @@ export function beliefsFromToolResult(tool: string, result: unknown): readonly D
 /**
  * The beliefs that no longer hold, against the document as it is now.
  *
- * Order follows the belief set's own order — most recently observed last — and
- * the caller decides how many to carry. A node the projection does not have is
- * `gone`, which is the highest-signal outcome and the one a re-read cannot
- * recover on its own.
+ * Trashing is what "deleted" means here. A trashed node stays in the projection
+ * — the trash is a subtree, not a removal — and trashing does not stamp
+ * `updatedAt`, so neither absence nor a revision bump would ever notice it. The
+ * transition into the trash is checked explicitly, and reported as `gone`
+ * because that is what it is to the model that read it.
  */
 export function driftedNodes(
   beliefs: Iterable<DocumentBelief>,
-  nodesById: ReadonlyMap<string, NodeProjection>,
+  projection: DocumentProjection,
 ): readonly DocumentDriftedNode[] {
+  const index = indexProjection(projection);
   const drifted: DocumentDriftedNode[] = [];
   for (const belief of beliefs) {
-    const node = nodesById.get(belief.nodeId);
+    const node = index.nodes.get(belief.nodeId);
+    const observedAt = belief.observedAt;
     if (!node) {
-      drifted.push({ nodeId: belief.nodeId, kind: 'gone', node: null });
+      drifted.push({ nodeId: belief.nodeId, kind: 'gone', node: null, observedAt });
       continue;
     }
-    if (revisionOf(node) !== belief.revision) {
-      drifted.push({ nodeId: belief.nodeId, kind: 'changed', node });
+    if (!belief.trashed && isInTrash(index, belief.nodeId)) {
+      drifted.push({ nodeId: belief.nodeId, kind: 'gone', node, observedAt });
+      continue;
+    }
+    if (currentToken(index, node, belief.basis) !== belief.token) {
+      drifted.push({ nodeId: belief.nodeId, kind: 'changed', node, observedAt });
     }
   }
   return drifted;
+}
+
+/** The belief a node would produce right now, on the same basis it was made. */
+export function currentBelief(
+  index: ProjectionIndex,
+  nodeId: string,
+  basis: DocumentBeliefBasis,
+  observedAt: number,
+): DocumentBelief | null {
+  const node = index.nodes.get(nodeId);
+  if (!node) return null;
+  return {
+    nodeId,
+    basis,
+    token: currentToken(index, node, basis),
+    trashed: isInTrash(index, nodeId),
+    observedAt,
+  };
+}
+
+function currentToken(index: ProjectionIndex, node: NodeProjection, basis: DocumentBeliefBasis): string {
+  if (basis === 'updatedAt') return String(node.updatedAt);
+  try {
+    return editableOutlineRevision(index, node.id);
+  } catch {
+    // A node the serializer cannot render is a node we cannot claim anything
+    // about; an impossible token keeps it out of the "unchanged" bucket without
+    // asserting what changed.
+    return '';
+  }
 }
 
 /**
@@ -108,28 +178,27 @@ export function driftedNodes(
  * older one would report drift the model has already been told about.
  */
 export class DocumentBeliefSet {
-  private readonly revisions = new Map<string, string>();
+  private readonly beliefsById = new Map<string, DocumentBelief>();
 
   get size(): number {
-    return this.revisions.size;
+    return this.beliefsById.size;
   }
 
   record(beliefs: Iterable<DocumentBelief>): void {
     for (const belief of beliefs) {
       // Delete first so re-observation moves the node to the end: the order is
       // the recency the notice's cap spends its slots on.
-      this.revisions.delete(belief.nodeId);
-      this.revisions.set(belief.nodeId, belief.revision);
+      this.beliefsById.delete(belief.nodeId);
+      this.beliefsById.set(belief.nodeId, belief);
     }
   }
 
-  /** Forget a node entirely — used when the model has just been told about it. */
   forget(nodeIds: Iterable<string>): void {
-    for (const nodeId of nodeIds) this.revisions.delete(nodeId);
+    for (const nodeId of nodeIds) this.beliefsById.delete(nodeId);
   }
 
   beliefs(): readonly DocumentBelief[] {
-    return [...this.revisions].map(([nodeId, revision]) => ({ nodeId, revision }));
+    return [...this.beliefsById.values()];
   }
 }
 
@@ -143,4 +212,11 @@ function arrayOf(value: unknown): readonly unknown[] {
 
 function stringOf(value: unknown): string | undefined {
   return typeof value === 'string' && value ? value : undefined;
+}
+
+function epochOf(value: unknown): string | undefined {
+  if (typeof value === 'number') return String(value);
+  if (typeof value !== 'string' || !value) return undefined;
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? undefined : String(parsed);
 }

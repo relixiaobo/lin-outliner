@@ -63,7 +63,10 @@ interface TurnLifecycleTranscripts { enqueueTurn(thread: Thread, turn: Turn): vo
  * the only one.
  */
 interface TurnLifecycleDocumentDrift {
-  noticeFor(threadId: ThreadId, projection: DocumentProjection | null): AdditionalContext | null;
+  noticeFor(
+    threadId: ThreadId,
+    projection: DocumentProjection | null,
+  ): Promise<{ readonly context: AdditionalContext | null; readonly settle: () => void }>;
 }
 interface TurnLifecycleGoalUsage { addUsage(threadId: ThreadId, tokens: number, elapsedSeconds: number, turnId: TurnId, terminalStatus: TurnStatus): Promise<void>; }
 export interface ResolvedSubagentBudget {
@@ -410,8 +413,6 @@ export class TurnLifecycle {
               : null,
             readContext: (ref) => this.core.payloads.readContext(thread.id, ref),
           });
-          // One projection for both, so the notice and the evidence describe the
-          // same instant rather than two moments a mutation could sit between.
           const admissionProjection = this.getDocumentProjection();
           const evidence = await admitContextEvidence({
             thread,
@@ -419,10 +420,12 @@ export class TurnLifecycle {
             acceptedAt,
             content: admission.content,
             userView: request.userView,
-            additionalContext: {
-              ...request.additionalContext,
-              ...this.documentDrift.noticeFor(thread.id, admissionProjection),
-            },
+            // NO drift notice here. This is `steerTurn`: it admits into a Turn
+            // that is already running, and the notice's whole contract is that it
+            // arrives between Turns. Delivered here it would land while the model
+            // is composing an edit and tell it not to revert changes it is itself
+            // being asked to make.
+            additionalContext: request.additionalContext,
             extensionContext,
             skillCatalog,
             roleCatalog,
@@ -901,16 +904,14 @@ export class TurnLifecycle {
       // One projection for both, so the notice and the evidence describe the
       // same instant rather than two moments a mutation could sit between.
       const admissionProjection = this.getDocumentProjection();
+      const drift = await this.documentDrift.noticeFor(record.thread.id, admissionProjection);
       const evidence = await admitContextEvidence({
         thread: record.thread,
         turnId,
         acceptedAt: startedAt,
         content: input,
         userView: request.userView,
-        additionalContext: {
-          ...request.additionalContext,
-          ...this.documentDrift.noticeFor(record.thread.id, admissionProjection),
-        },
+        additionalContext: { ...request.additionalContext, ...drift.context },
         extensionContext,
         skillCatalog,
         roleCatalog,
@@ -971,6 +972,10 @@ export class TurnLifecycle {
         this.collaboration.takePendingCollaborationActivity(request.threadId);
       }
       this.activeTurns.set(request.threadId, active);
+      // Only now: the Turn carrying the notice is recorded and running, so the
+      // beliefs it reported can be advanced. Everything above can still throw,
+      // and a retry must find the same drift still there to report.
+      drift.settle();
       if (!record.thread.preview.trim() && preview) {
         try {
           this.catalog.setInitialPreview(request.threadId, preview, startedAt);

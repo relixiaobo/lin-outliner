@@ -22,30 +22,42 @@ export const DRIFT_NOTICE_NODE_LIMIT = 5;
 const CONTENT_MAX_CHARS = 400;
 /** How far back attribution looks in the journal. Its miss costs one clause. */
 export const DRIFT_ATTRIBUTION_SCAN = 100;
+/** The notice is four lines; a session list is not allowed to make it forty. */
+const MAX_ATTRIBUTED_SESSIONS = 3;
 
 /**
- * Who last touched these nodes, scoped BY NODE rather than by time.
+ * Who touched these nodes SINCE the model was shown them.
  *
- * The design has no boundary to scope by — that is the point of comparing
- * beliefs instead of replaying a log — so attribution asks the question that
- * needs no boundary: among the operations the journal still remembers, which
- * ones touched exactly these nodes. An edit older than the journal's ring simply
- * is not found, and the clause is omitted; correctness never depended on it.
+ * Scoping by node alone is not enough, which the review caught: the journal
+ * remembers operations from before the observation too, so an edit the user made
+ * at 10:00 would be credited for drift the model only saw at 10:05 — telling it
+ * the user personally changed something they changed before it ever looked. The
+ * node scope says WHICH operations are relevant; `observedAt` says which of them
+ * happened after the belief was formed. Both are needed, and neither is the
+ * comparison itself — attribution stays garnish, so an edit older than the
+ * journal's ring is simply not found and the clause is omitted.
  */
 export function driftAttribution(
-  driftedNodeIds: readonly string[],
+  drifted: readonly { readonly nodeId: string; readonly observedAt: number }[],
   entries: readonly {
     readonly origin: string;
+    readonly createdAt?: string;
     readonly affectedNodeIds?: readonly string[];
     readonly causation?: { readonly threadId: string };
   }[],
   selfThreadId: string,
 ): DocumentDriftAttribution | null {
-  const drifted = new Set(driftedNodeIds);
+  const observedAtByNode = new Map(drifted.map((entry) => [entry.nodeId, entry.observedAt]));
   let userEdits = 0;
   const otherSessions = new Set<string>();
   for (const entry of entries) {
-    if (!entry.affectedNodeIds?.some((nodeId) => drifted.has(nodeId))) continue;
+    const at = entry.createdAt === undefined ? Number.NaN : Date.parse(entry.createdAt);
+    // An operation with no usable timestamp cannot be placed relative to the
+    // observation, and a guess here is exactly the misattribution to avoid.
+    if (Number.isNaN(at)) continue;
+    const touchedAfterObservation = entry.affectedNodeIds
+      ?.some((nodeId) => { const observedAt = observedAtByNode.get(nodeId); return observedAt !== undefined && at > observedAt; });
+    if (!touchedAfterObservation) continue;
     if (entry.origin === 'user') {
       userEdits += 1;
       continue;
@@ -56,7 +68,12 @@ export function driftAttribution(
     if (threadId && threadId !== selfThreadId) otherSessions.add(threadId);
   }
   if (userEdits === 0 && otherSessions.size === 0) return null;
-  return { userEdits, otherSessionThreadIds: [...otherSessions] };
+  return {
+    userEdits,
+    // Bounded: an unlucky Thread could otherwise paste a hundred uuids into the
+    // notice it is trying to keep to four lines.
+    otherSessionThreadIds: [...otherSessions].slice(0, MAX_ATTRIBUTED_SESSIONS),
+  };
 }
 
 export interface DocumentDriftAttribution {
@@ -81,7 +98,7 @@ export function documentDriftNotice(
     lines.push(entry.kind === 'gone' || !entry.node
       // The highest-signal outcome, and the one a re-read cannot recover alone.
       ? `- ${entry.nodeId} has been deleted.`
-      : `- "${single(nodeTitle(entry.node))}" (${entry.nodeId}) is now: ${single(content(entry.node))}`);
+      : `- "${boundedLine(nodeTitle(entry.node))}" (${entry.nodeId}) is now: ${boundedLine(content(entry.node))}`);
   }
   lines.push(
     'These edits were made deliberately by someone else. Do not revert them unless asked.',
@@ -130,7 +147,7 @@ function content(node: NodeProjection): string {
  * Automation previews already follow: authored text entering trusted context
  * must not be able to open a line that looks like one of ours.
  */
-function single(value: string): string {
+function boundedLine(value: string): string {
   const collapsed = value.replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
   return collapsed.length > CONTENT_MAX_CHARS ? `${collapsed.slice(0, CONTENT_MAX_CHARS)}…` : collapsed;
 }
