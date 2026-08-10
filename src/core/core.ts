@@ -100,7 +100,6 @@ import {
   type CodeBlockNode,
   type DefConfigNode,
   type DisplayFieldNode,
-  type EmbedNode,
   type FieldEntryNode,
   type FilterRuleNode,
   type ImageNode,
@@ -4272,7 +4271,6 @@ export class Core {
     const template = requiredNode(state, templateNodeId);
     const code = template as Partial<CodeBlockNode>;
     const image = template as Partial<ImageNode>;
-    const embed = template as Partial<EmbedNode>;
     this.loro.createNodeWithId(freshId('template'), parentId, undefined, template.type, (node) => {
       node.templateId = templateNodeId;
       node.content = clone(template.content);
@@ -4284,10 +4282,6 @@ export class Core {
       target.mediaAlt = image.mediaAlt;
       target.imageWidth = image.imageWidth;
       target.imageHeight = image.imageHeight;
-      const targetEmbed = node as EmbedNode;
-      targetEmbed.embedType = embed.embedType;
-      targetEmbed.embedId = embed.embedId;
-      targetEmbed.sourceUrl = embed.sourceUrl;
     });
   }
 

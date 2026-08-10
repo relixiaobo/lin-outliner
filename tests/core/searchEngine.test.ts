@@ -16,7 +16,6 @@ import {
   plainText,
   QUERY_OPS,
   replaceAllRichTextPatch,
-  type EmbedNode,
   type ImageNode,
   type QueryOp,
   type SearchQueryExpr,
@@ -1301,54 +1300,86 @@ describe('core search engine', () => {
     expect(done.ok ? done.hits.map((hit) => hit.nodeId) : []).not.toContain(doneOld);
   });
 
-  test('executes media query rules and searches media nodes', () => {
+  test('treats HAS_MEDIA as an alias of HAS_IMAGE', () => {
     const core = Core.new();
     const today = core.projection().todayId;
     const image = mustFocus(core.createNode(today, null, 'Screenshot asset'));
-    const audio = mustFocus(core.createNode(today, null, 'Call recording'));
-    const video = mustFocus(core.createNode(today, null, 'Demo video'));
-    const embed = mustFocus(core.createNode(today, null, 'Demo embed'));
     const plain = mustFocus(core.createNode(today, null, 'Plain note'));
     const searchId = mustFocus(core.createNode(core.projection().searchesId, null, 'Media search'));
     const conditionId = mustFocus(core.createNode(searchId, null, 'Media'));
     const state = core.state();
 
-    // Media fields live only on their owning variants now: mediaUrl on image
-    // nodes, embedType/sourceUrl on embed nodes. Audio/video are embeds whose
-    // kind is resolved from the embed type or the source URL extension.
     state.nodes[image]!.type = 'image';
     (state.nodes[image] as ImageNode).mediaUrl = 'file:///tmp/screenshot.png';
-    state.nodes[audio]!.type = 'embed';
-    (state.nodes[audio] as EmbedNode).sourceUrl = 'file:///tmp/recording.mp3';
-    state.nodes[video]!.type = 'embed';
-    (state.nodes[video] as EmbedNode).embedType = 'video';
-    state.nodes[embed]!.type = 'embed';
-    (state.nodes[embed] as EmbedNode).sourceUrl = 'https://example.com/demo';
     state.nodes[searchId]!.type = 'search';
     state.nodes[conditionId]!.type = 'queryCondition';
     state.nodes[conditionId]!.queryOp = 'HAS_MEDIA';
 
     const media = runSearchNode(state, searchId);
-    expect(media.ok ? media.hits.map((hit) => hit.nodeId) : []).toEqual(expect.arrayContaining([image, audio, video, embed]));
-    expect(media.ok ? media.hits.map((hit) => hit.nodeId) : []).not.toContain(plain);
+    const mediaHits = media.ok ? media.hits.map((hit) => hit.nodeId) : [];
+    expect(mediaHits).toContain(image);
+    expect(mediaHits).not.toContain(plain);
 
     state.nodes[conditionId]!.queryOp = 'HAS_IMAGE';
     const images = runSearchNode(state, searchId);
-    expect(images.ok ? images.hits.map((hit) => hit.nodeId) : []).toContain(image);
-    expect(images.ok ? images.hits.map((hit) => hit.nodeId) : []).not.toContain(audio);
+    const imageHits = images.ok ? images.hits.map((hit) => hit.nodeId) : [];
+    expect(imageHits).toEqual(mediaHits);
+  });
 
-    state.nodes[conditionId]!.queryOp = 'HAS_AUDIO';
-    const audioResults = runSearchNode(state, searchId);
-    expect(audioResults.ok ? audioResults.hits.map((hit) => hit.nodeId) : []).toContain(audio);
-    expect(audioResults.ok ? audioResults.hits.map((hit) => hit.nodeId) : []).not.toContain(video);
+  test('searches image nodes by text', () => {
+    const core = Core.new();
+    const image = mustFocus(core.createNode(core.projection().todayId, null, 'Screenshot asset'));
+    const state = core.state();
 
-    state.nodes[conditionId]!.queryOp = 'HAS_VIDEO';
-    const videoResults = runSearchNode(state, searchId);
-    expect(videoResults.ok ? videoResults.hits.map((hit) => hit.nodeId) : []).toContain(video);
-    expect(videoResults.ok ? videoResults.hits.map((hit) => hit.nodeId) : []).not.toContain(audio);
+    state.nodes[image]!.type = 'image';
+    (state.nodes[image] as ImageNode).mediaUrl = 'file:///tmp/screenshot.png';
 
     const keyword = runSearchExpr(state, { kind: 'rule', op: 'STRING_MATCH', text: 'Screenshot' });
     expect(keyword.ok ? keyword.hits.map((hit) => hit.nodeId) : []).toContain(image);
+  });
+
+  test('keeps legacy media rules inert across saved-search reloads', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const tagId = mustFocus(core.createTag('legacy-media-match'));
+    const tagged = mustFocus(core.createNode(today, null, 'Tagged note'));
+    core.applyTag(tagged, tagId);
+
+    const legacyRules = [
+      { kind: 'rule', op: 'HAS_AUDIO' },
+      { kind: 'rule', op: 'HAS_VIDEO' },
+    ] as const;
+    const orSearchId = mustFocus(core.createSearchNode(core.projection().searchesId, null, {
+      title: 'Legacy media OR',
+      query: {
+        kind: 'group',
+        logic: 'OR',
+        children: [
+          { kind: 'rule', op: 'HAS_TAG', tagDefId: tagId },
+          ...legacyRules,
+        ],
+      },
+    }));
+    const andSearchId = mustFocus(core.createSearchNode(core.projection().searchesId, null, {
+      title: 'Legacy media AND',
+      query: {
+        kind: 'group',
+        logic: 'AND',
+        children: [
+          { kind: 'rule', op: 'HAS_TAG', tagDefId: tagId },
+          ...legacyRules,
+        ],
+      },
+    }));
+
+    const reloaded = Core.fromState(Core.deserializeState(core.serializeState()));
+    const orResult = runSearchNode(reloaded.state(), orSearchId);
+    const andResult = runSearchNode(reloaded.state(), andSearchId);
+
+    expect(orResult.ok).toBe(true);
+    expect(orResult.ok ? orResult.hits.map((hit) => hit.nodeId) : []).toEqual([tagged]);
+    expect(andResult.ok).toBe(true);
+    expect(andResult.ok ? andResult.hits.map((hit) => hit.nodeId) : []).toEqual([]);
   });
 
   test('executes Tana-style node type aliases', () => {
