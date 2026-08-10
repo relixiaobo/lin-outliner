@@ -229,6 +229,22 @@ Entries reference the pull request that introduced them.
   headline duplication and all: flattening keeps such a token's visible text and
   drops its target, so the tidier rendering would have put a URL in neither place and
   stripped a Node reference of the affordance that opens it.
+- **Deleted rows no longer linger in selection, focus, or open editors (PR #521,
+  codex)** — when an agent or another view removed rows, renderer-local UI state kept
+  their ids: the selection count could report rows that no longer exist (and a batch
+  action on them failed with an error), an undo could pop a deleted node's description
+  editor back open, and a parked focus or reference request could fire at a dead row.
+  Every accepted projection update now reconciles that state against the nodes that
+  left the projection — delta removals and full resync reseeds follow the same rule,
+  which closes the recovery-path gap the review gate found in the original patch
+  (pruning only on deltas meant a resync revived exactly the stale-state class being
+  fixed). The spec now also pins the focus convention: outliner-row focus goes through
+  the focusRequest rail (IME composition guard); direct `element.focus()` is reserved
+  for non-editor chrome. The high review gate found six findings, all fixed in the
+  same PR, and the fix extended past the report — a surviving row whose recorded focus
+  parent was removed clears the whole focus family, hidden-field expansion keys are
+  culled with their rows, and the batch-tag UI closes when pruning empties the
+  selection.
 
 ### Internal
 
