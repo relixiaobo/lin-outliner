@@ -21,6 +21,15 @@ import type { Thread, ThreadId } from '../../../core/agent/protocol';
 import { atomicWriteFile } from '../../jsonFileStore';
 
 const INDEX_FILE = 'index.tsv';
+
+/**
+ * One definition of where the index lives, because two consumers need it before
+ * the index object exists: the stable prompt names the path, and the executor
+ * that composes that prompt is built before the Thread service is.
+ */
+export function threadTranscriptIndexPath(transcriptRoot: string): string {
+  return join(transcriptRoot, INDEX_FILE);
+}
 const TRANSCRIPT_EXTENSION = '.md';
 /** A name is a label, not a record. Long enough to recognise a session, short enough to scan. */
 const NAME_MAX_CHARS = 120;
@@ -55,7 +64,7 @@ export class ThreadTranscriptIndex {
 
   /** Absolute path, which is what the doctrine names and what a reader greps. */
   get path(): string {
-    return join(this.options.transcriptRoot, INDEX_FILE);
+    return threadTranscriptIndexPath(this.options.transcriptRoot);
   }
 
   /**
