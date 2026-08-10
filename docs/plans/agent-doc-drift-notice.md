@@ -83,12 +83,33 @@ and its existence — plus the id. Exact fields are a build decision, but the ru
 is that the digest must cover what would make a remembered answer wrong, and
 nothing else, so that metadata churn does not manufacture drift.
 
-The set is held in memory per Thread, capped, and evicted oldest-first when the
-cap is hit; an evicted belief is simply not checked. It is rebuilt from the
-canonical record on restart and on fork, from the persisted tool-output payloads
-that were the observation in the first place. A payload that was truncated
-rebuilds as id-only and degrades to a "re-read" line rather than a content claim.
-A11: the cache is derived, the record is the source.
+**The belief set is a projection of the canonical record, and takes its bound
+from the record.** No cap and no eviction policy of its own — the record is
+already bounded by mechanisms that exist and are already tuned (tool-output
+payload pruning, compaction dropping Items), so a second knob would only be a
+number invented here to sit next to numbers that were reasoned about elsewhere.
+Three things fall out of that: the bound is inherited rather than guessed; the
+in-session set and a rebuilt set are equal by definition, so a restart cannot
+silently shrink coverage; and A11 holds — derived from the record, so restart and
+fork rebuild it for free and identically.
+
+The costs were measured against that choice rather than assumed. Memory is ~tens
+of bytes per belief and comparison is a hash equality against a projection
+already in hand, so neither is what grows; the one thing that scales with a long
+Thread is rebuilding from payloads, and that is exactly what the record's own
+bounds already limit.
+
+In session the set is maintained incrementally: appended on observation, and a
+belief is dropped when the Item that carried its observation leaves the projected
+history. Compaction already computes that set when it drops Items, so this is a
+notification rather than a second computation. If that hook proves expensive, the
+fallback is to let the in-session set be a superset, whose only cost is an
+occasional line about a node the model no longer remembers — bounded by the
+five-node cap and harmless.
+
+Rebuild reads the persisted tool-output payloads that were the observation in the
+first place. A payload that was truncated rebuilds as id-only and degrades to a
+"re-read" line rather than a content claim.
 
 ### Admission
 
@@ -130,11 +151,27 @@ header, the index rows, and the Automation previews already use.
 ### Attribution is garnish
 
 The operation journal is no longer load-bearing. Its one remaining contribution
-is *who*: origin, and the causal Thread id, which the episodic index (#519) makes
-resolvable — a model can look the Thread up and read its transcript. When the
-journal can answer, one clause is added; when it cannot (truncated ring, empty
-after a replica that was not reused), the clause is omitted and nothing else
-changes. Correctness never depends on it, so none of its limits need to be
+is *who*, and it draws exactly one distinction: **the user's own edit, or another
+session's**. That line comes free from the journal's `origin` field and is the
+only one that is load-bearing — direct human intent versus intent through an
+agent. Another session's clause names its Thread id.
+
+**An Automation is not labelled separately from any other session**, for two
+reasons. The distinction that would matter about an Automation is that nobody
+watched the result, and that is not something the record knows: an interactive
+Thread's edit may equally have scrolled past unseen. Asserting it would be
+claiming state we did not verify, which is the delivery rule this plan inherited.
+And the label would not save the lookup it appears to save — a model that only
+wants the category did not need it, and a model that wants to say anything useful
+("these figures came from the nightly refresh") has to resolve the Thread id in
+the episodic index (#519) either way, where it gets the Automation's name rather
+than its kind. Naming the Thread id is therefore the mechanism, not a decoration:
+the index is what makes the third level of detail available on demand, and no
+`threadSource` lookup happens on the admission path.
+
+When the journal can answer, one clause is added; when it cannot (truncated ring,
+empty after a replica that was not reused), the clause is omitted and nothing
+else changes. Correctness never depends on it, so none of its limits need to be
 described to the model.
 
 ### Delivery and A12
@@ -155,13 +192,3 @@ only what was actually compared.
 One line when a single node changed, at most four when several did. A user
 editing while they chat is the common case, not the exception, so the cap is
 implemented rather than intended.
-
-## Open questions
-
-- Whether the attribution clause labels an Automation separately from another
-  interactive Thread. Both are "another session" and both name their Thread id,
-  so the label earns its place only if resolving `threadSource` is cheap at
-  admission — decide at build, note the call.
-- The belief-set cap, and whether eviction is by count or by age. Lean small:
-  a Thread that has been shown hundreds of nodes is one whose earliest beliefs
-  are least likely to be load-bearing.
