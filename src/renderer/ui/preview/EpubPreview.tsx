@@ -154,20 +154,9 @@ export function EpubPreview({ displayMode, onEpubTranslationSurfaceChange, sourc
   const labels = useT().shell.filePreview;
   const [state, setState] = useState<EpubState>({ status: 'loading' });
   const targetKey = previewReadingPositionKey(source.target);
-  const savedReadingPositionRef = useRef<{ targetKey: string; position: EpubReadingPosition | null }>({
-    targetKey,
-    position: readEpubReadingPosition(targetKey),
-  });
-
-  if (savedReadingPositionRef.current.targetKey !== targetKey) {
-    savedReadingPositionRef.current = {
-      targetKey,
-      position: readEpubReadingPosition(targetKey),
-    };
-  }
+  const latestReadingPosition = readEpubReadingPosition(targetKey);
 
   const persistReadingPosition = useCallback((position: EpubReadingPosition) => {
-    savedReadingPositionRef.current = { targetKey, position };
     writeEpubReadingPosition(targetKey, position);
   }, [targetKey]);
 
@@ -214,7 +203,7 @@ export function EpubPreview({ displayMode, onEpubTranslationSurfaceChange, sourc
     <EpubReader
       displayMode={displayMode}
       file={state.file}
-      initialReadingPosition={savedReadingPositionRef.current.position}
+      initialReadingPosition={latestReadingPosition}
       makeBook={state.makeBook}
       name={source.name}
       onEpubTranslationSurfaceChange={onEpubTranslationSurfaceChange}
