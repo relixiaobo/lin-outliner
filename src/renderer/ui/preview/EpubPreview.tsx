@@ -7,6 +7,7 @@ import { useT } from '../../i18n/I18nProvider';
 import {
   previewReadingPositionKey,
   readEpubReadingPosition,
+  useReadingPositionSession,
   writeEpubReadingPosition,
   type EpubReadingPosition,
 } from './readingPositionStore';
@@ -155,25 +156,12 @@ export function EpubPreview({ displayMode, onEpubTranslationSurfaceChange, sourc
   const [state, setState] = useState<EpubState>({ status: 'loading' });
   const targetKey = previewReadingPositionKey(source.target);
   const sessionFile = state.status === 'ready' ? state.file : null;
-  const readingPositionSessionRef = useRef<{
-    displayMode: PreviewRendererProps['displayMode'];
-    file: File | null;
-    position: EpubReadingPosition | null;
-    targetKey: string;
-  } | null>(null);
-  if (
-    !readingPositionSessionRef.current
-    || readingPositionSessionRef.current.displayMode !== displayMode
-    || readingPositionSessionRef.current.file !== sessionFile
-    || readingPositionSessionRef.current.targetKey !== targetKey
-  ) {
-    readingPositionSessionRef.current = {
-      displayMode,
-      file: sessionFile,
-      position: readEpubReadingPosition(targetKey),
-      targetKey,
-    };
-  }
+  const initialReadingPosition = useReadingPositionSession(
+    targetKey,
+    displayMode,
+    sessionFile,
+    readEpubReadingPosition,
+  );
 
   const persistReadingPosition = useCallback((position: EpubReadingPosition) => {
     writeEpubReadingPosition(targetKey, position);
@@ -222,7 +210,7 @@ export function EpubPreview({ displayMode, onEpubTranslationSurfaceChange, sourc
     <EpubReader
       displayMode={displayMode}
       file={state.file}
-      initialReadingPosition={readingPositionSessionRef.current.position}
+      initialReadingPosition={initialReadingPosition}
       makeBook={state.makeBook}
       name={source.name}
       onEpubTranslationSurfaceChange={onEpubTranslationSurfaceChange}

@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import { previewTargetKey, type PreviewTarget } from '../../../core/preview';
 import {
   localStorageOrNull,
@@ -23,6 +24,39 @@ export interface EpubReadingPosition {
   updatedAt: number;
 }
 
+export function useReadingPositionSession<Position, SessionResource, DisplayMode>(
+  targetKey: string,
+  displayMode: DisplayMode,
+  sessionResource: SessionResource,
+  readPosition: (key: string) => Position | null,
+): Position | null {
+  const sessionRef = useRef<{
+    displayMode: DisplayMode;
+    position: Position | null;
+    readPosition: (key: string) => Position | null;
+    sessionResource: SessionResource;
+    targetKey: string;
+  } | null>(null);
+
+  if (
+    !sessionRef.current
+    || sessionRef.current.displayMode !== displayMode
+    || sessionRef.current.readPosition !== readPosition
+    || sessionRef.current.sessionResource !== sessionResource
+    || sessionRef.current.targetKey !== targetKey
+  ) {
+    sessionRef.current = {
+      displayMode,
+      position: readPosition(targetKey),
+      readPosition,
+      sessionResource,
+      targetKey,
+    };
+  }
+
+  return sessionRef.current.position;
+}
+
 let pdfReadingPositionsCache: Record<string, PdfReadingPosition> | null = null;
 let epubReadingPositionsCache: Record<string, EpubReadingPosition> | null = null;
 
@@ -35,11 +69,11 @@ export function readPdfReadingPosition(targetKey: string): PdfReadingPosition | 
 }
 
 export function writePdfReadingPosition(targetKey: string, position: PdfReadingPosition): void {
-  const storage = localStorageOrNull();
-  if (!storage) return;
   const positions = readPdfReadingPositions();
   positions[targetKey] = position;
   pruneLocalStorageEntries(positions, READING_POSITION_MAX_ENTRIES, (entry) => entry.updatedAt);
+  const storage = localStorageOrNull();
+  if (!storage) return;
   writeLocalStorageKeyedStore({
     storage,
     storageKey: PDF_READING_POSITION_STORAGE_KEY,
