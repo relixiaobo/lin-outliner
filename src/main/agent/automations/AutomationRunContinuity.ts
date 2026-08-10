@@ -1,5 +1,6 @@
 /**
- * What a fresh Automation run is told about the runs before it.
+ * The Automation side of the account layer: what a run's own transcript says it
+ * is, and what a fresh run is told about the runs before it.
  *
  * A standalone run is a Thread with no history, so without this it repeats its
  * predecessor's failure with no way of knowing it was ever attempted. The digest
@@ -15,7 +16,37 @@
  * user's interactive path.
  */
 import type { AutomationRun } from '../../../core/agent/automation';
-import type { ThreadId, Turn, TurnId } from '../../../core/agent/protocol';
+import type { Thread, ThreadId, Turn, TurnId } from '../../../core/agent/protocol';
+import { turnTerminalAnswer } from '../../../core/agent/turnAnswer';
+import type { TranscriptSubject } from '../thread/TranscriptRenderer';
+
+/**
+ * A standalone Automation run's own Thread, and null for everything else.
+ *
+ * Subject resolution belongs to whoever owns the kind's metadata — spawn edges
+ * answer for a delegated child, and this module answers for an Automation — so
+ * that the writer stays kind-agnostic and the next kind lands beside its owner
+ * rather than accumulating as another special case in shared infrastructure.
+ *
+ * The predicate is exact rather than approximate: an existing-Thread Automation
+ * adds its Turn to a *user* Thread, which reports `threadSource: 'user'`, so
+ * only a run that owns its Thread matches here — which is also the only run with
+ * a history no other Thread already holds.
+ *
+ * The header stays at what the Thread record itself knows. Automation and run
+ * identities are not repeated here because every Turn already renders its own
+ * trigger, which names the run that produced it — and a header cannot be
+ * revised once the file has grown past it.
+ */
+export function automationTranscriptSubject(thread: Thread): TranscriptSubject | null {
+  if (thread.ephemeral || thread.parentThreadId !== null || thread.threadSource !== 'automation') return null;
+  return {
+    threadId: thread.id,
+    source: 'automation',
+    name: thread.name,
+    cwd: thread.cwd,
+  };
+}
 
 /** How many predecessors a fresh run is told about. */
 export const RECENT_AUTOMATION_RUN_COUNT = 3;
@@ -43,6 +74,12 @@ export interface RecentAutomationRun {
   readonly transcriptPath: string | null;
 }
 
+/**
+ * Every method here is inspection-only. `transcriptPath` may not reject — its
+ * implementation owns its own A12 guard and answers null — so this side does not
+ * wrap it again; `readTurn` reaches a store that can throw, and is guarded below
+ * so that one unreadable predecessor costs one entry rather than the digest.
+ */
 export interface AutomationRunContinuityReader {
   recentRunsForBinding(
     automationId: string,
@@ -128,11 +165,11 @@ async function describeRun(
     ...base,
     finishedAt: turn.completedAt === null ? null : new Date(turn.completedAt).toISOString(),
     status: turnStatus(turn),
-    outcome: boundedLine(turn.error?.message ?? terminalAnswer(turn)),
+    outcome: boundedLine(turn.error?.message ?? turnTerminalAnswer(turn.items)),
     // Only a run that owned its Thread has an account of its own; an
     // existing-Thread run's Turns live in a conversation the user already reads.
     transcriptPath: run.snapshot.destination.kind === 'standalone' && run.threadId
-      ? await transcriptPathSafely(reader, run.threadId)
+      ? await reader.transcriptPath(run.threadId)
       : null,
   };
 }
@@ -144,15 +181,6 @@ function turnStatus(turn: Turn): RecentAutomationRunStatus {
     case 'inProgress': return 'running';
     case 'failed': return 'errored';
   }
-}
-
-/** The run's answer, as the reader of a delegated result would see it. */
-function terminalAnswer(turn: Turn): string | null {
-  const text = turn.items
-    .flatMap((item) => (item.type === 'agentMessage' && item.phase !== 'commentary' ? [item.text.trim()] : []))
-    .filter(Boolean)
-    .join(' ');
-  return text || null;
 }
 
 /**
@@ -183,17 +211,6 @@ function readTurnSafely(
 ): Turn | null {
   try {
     return reader.readTurn(threadId, turnId);
-  } catch {
-    return null;
-  }
-}
-
-async function transcriptPathSafely(
-  reader: AutomationRunContinuityReader,
-  threadId: ThreadId,
-): Promise<string | null> {
-  try {
-    return await reader.transcriptPath(threadId);
   } catch {
     return null;
   }

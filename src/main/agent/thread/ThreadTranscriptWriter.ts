@@ -16,7 +16,7 @@
 import type { Thread, ThreadId, Turn, TurnId } from '../../../core/agent/protocol';
 import {
   appendThreadTranscript,
-  removeLegacyTranscriptDirectory,
+  reclaimLegacyTranscriptDirectory,
   rebuildThreadTranscript,
   removeThreadTranscript,
   threadTranscriptPath,
@@ -62,9 +62,23 @@ export class ThreadTranscriptWriter {
    * Serialize per Thread so Turns append in completion order, and so deletion
    * has one handle to drain. The chain never rejects: `appendTurn` owns the A12
    * guard, and this is deliberately not awaited by the Turn that produced it.
+   *
+   * THIS IS CALLED ON THE TURN-COMPLETION PATH, SYNCHRONOUSLY. `resolveSubject`
+   * reads a store (a delegated subject is a spawn-edge lookup), so it has to be
+   * guarded HERE and not only inside the chain: a throw escaping this call would
+   * abandon the rest of the completion tail — the parent-visible activity row and
+   * the idle notification — and a parent waiting on that child would park until
+   * its own deadline. A12 exactly: the account is inspection-only and degrades,
+   * the user's Turn does not die for it.
    */
   enqueueTurn(thread: Thread, turn: Turn): void {
-    const subject = this.options.resolveSubject(thread);
+    let subject: TranscriptSubject | null;
+    try {
+      subject = this.options.resolveSubject(thread);
+    } catch (error) {
+      console.warn(`[agent] Thread transcript subject was not resolved for ${thread.id}`, error);
+      return;
+    }
     if (!subject) return;
     const pending = (this.writes.get(thread.id) ?? Promise.resolve())
       .then(() => this.appendTurn(thread.id, subject, turn));
@@ -111,12 +125,20 @@ export class ThreadTranscriptWriter {
    * the removal and resurrects a transcript the user deleted. This owns the chain
    * entry's removal for the same reason: clearing it elsewhere first would leave
    * this draining `undefined`, which is a no-op wearing a drain's clothes.
+   *
+   * A drain that TIMES OUT is not a drain that finished, and the two must not be
+   * confused: an append merely slow in a payload read would otherwise still be
+   * running when the `rm` lands and would write the file back afterwards, leaving
+   * the deleted Thread's content on disk until the next launch's sweep. So the
+   * timeout keeps the chain handle, and the write side re-checks `discarded`
+   * immediately before touching the file — only the second one closes the window
+   * completely.
    */
   async delete(threadId: ThreadId): Promise<void> {
     this.discarded.add(threadId);
     try {
-      await settledWithin(this.writes.get(threadId), TRANSCRIPT_READY_TIMEOUT_MS);
-      this.writes.delete(threadId);
+      const settled = await settledWithin(this.writes.get(threadId), TRANSCRIPT_READY_TIMEOUT_MS);
+      if (settled) this.writes.delete(threadId);
       this.cursors.delete(threadId);
       await removeThreadTranscript(threadTranscriptPath(this.options.transcriptRoot, threadId));
     } catch (error) {
@@ -135,15 +157,17 @@ export class ThreadTranscriptWriter {
   }
 
   /**
-   * Reclaim the pre-rename directory at startup. It sits beside the sweep
-   * because it is the same kind of work — disk the account layer no longer
-   * reaches — and for the same A12 reason it can only log.
+   * Reclaim the pre-rename directory at startup, BEFORE the sweep: a relocated
+   * artifact whose Thread is gone should be reclaimed on this launch rather than
+   * waiting for the next one. For the same A12 reason as the sweep, it can only
+   * log — startup does not fail over retention.
    */
-  async removeLegacyDirectory(): Promise<void> {
+  async reclaimLegacyDirectory(): Promise<readonly string[]> {
     try {
-      await removeLegacyTranscriptDirectory(this.options.transcriptRoot);
+      return await reclaimLegacyTranscriptDirectory(this.options.transcriptRoot);
     } catch (error) {
-      console.warn('[agent] Legacy transcript directory was not removed', error);
+      console.warn('[agent] Legacy transcript directory was not reclaimed', error);
+      return [];
     }
   }
 
@@ -197,6 +221,10 @@ export class ThreadTranscriptWriter {
         detail: 'brief',
         ordinal: cursor.turns + 1,
       });
+      // The last moment before the bytes land. Every await above (payload reads,
+      // a size stat) is a window in which the user could have deleted this Thread
+      // and its `rm` could already have run.
+      if (this.discarded.has(threadId)) return;
       await appendThreadTranscript(path, text);
       this.cursors.set(threadId, {
         turns: cursor.turns + 1,
@@ -214,6 +242,7 @@ export class ThreadTranscriptWriter {
       detail: 'brief',
       subject,
     });
+    if (this.discarded.has(threadId)) return;
     await rebuildThreadTranscript(path, text);
     this.cursors.set(threadId, {
       turns: turns.length,
@@ -221,29 +250,6 @@ export class ThreadTranscriptWriter {
       turnIds: new Set(turns.map((turn) => turn.id)),
     });
   }
-}
-
-/**
- * A standalone Automation run's own Thread, and null for everything else.
- *
- * The predicate is exact rather than approximate: an existing-Thread Automation
- * adds its Turn to a *user* Thread, which reports `threadSource: 'user'`, so
- * only a run that owns its Thread matches here — which is also the only run with
- * a history no other Thread already holds.
- *
- * The header stays at what the Thread record itself knows. Automation and run
- * identities are not repeated here because every Turn already renders its own
- * trigger, which names the run that produced it — and a header cannot be
- * revised once the file has grown past it.
- */
-export function automationTranscriptSubject(thread: Thread): TranscriptSubject | null {
-  if (thread.ephemeral || thread.parentThreadId !== null || thread.threadSource !== 'automation') return null;
-  return {
-    threadId: thread.id,
-    source: 'automation',
-    name: thread.name,
-    cwd: thread.cwd,
-  };
 }
 
 async function withDeadline<T>(work: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
@@ -258,8 +264,12 @@ async function withDeadline<T>(work: Promise<T>, timeoutMs: number, fallback: T)
   }
 }
 
-/** Await a bounded settle, treating "no chain" and "timed out" alike. */
-async function settledWithin(work: Promise<unknown> | undefined, timeoutMs: number): Promise<void> {
-  if (work === undefined) return;
-  await withDeadline(work.then(() => undefined, () => undefined), timeoutMs, undefined);
+/**
+ * Await a bounded settle. "No chain" counts as settled — there was nothing to
+ * wait for — but a TIMEOUT does not: a caller that has to know whether the work
+ * is still running gets to tell the two apart.
+ */
+async function settledWithin(work: Promise<unknown> | undefined, timeoutMs: number): Promise<boolean> {
+  if (work === undefined) return true;
+  return withDeadline(work.then(() => true, () => true), timeoutMs, false);
 }

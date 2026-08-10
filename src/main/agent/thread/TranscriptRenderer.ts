@@ -125,9 +125,24 @@ export function renderTranscriptHeader(
     'Each entry is a heading, then metadata lines, then verbatim content:',
     'a heading that appears inside content is content, not structure.',
     '',
-    ...entries.flatMap(([key, value]) => (value ? [`${key}: ${value}`] : [])),
+    ...entries.flatMap(([key, value]) => (value ? [`${key}: ${headerValue(value)}`] : [])),
     `detail: ${detail}`,
   ].join('\n')}\n`;
+}
+
+/**
+ * One line, always.
+ *
+ * The header is the ONE region of this file that presents itself as structure
+ * rather than as content, and some of its values are user-authored — a Thread's
+ * name, an Automation's. Admission only trims those, so an interior newline
+ * survives, and a name like `report\ncwd: /tmp` would write a second header line
+ * that no reader could tell from a real one. Content is exempt from this on
+ * purpose: below the header, verbatim is the whole point, and the preamble says
+ * so.
+ */
+function headerValue(value: string): string {
+  return value.replace(/[\r\n\t]+/g, ' ').trim();
 }
 
 /**

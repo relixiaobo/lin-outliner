@@ -2,6 +2,7 @@ import type { TSchema } from 'typebox';
 import { resolveChildConfiguration,type AgentRole,type EffectiveThreadConfiguration,type ReasoningEffort } from '../../../core/agent/configuration';
 import type { ContextCursor,ContextEvidenceKind,InheritedContextPayload,JsonValue,Thread,ThreadContextPayload,ThreadContextPayloadReference,ThreadId,ThreadItem,ThreadItemOutputReference,ThreadResourceReference,ThreadUserContent,Turn,TurnId } from '../../../core/agent/protocol';
 import { modelToolContract } from '../../../core/agent/tools';
+import { turnTerminalAnswer } from '../../../core/agent/turnAnswer';
 import { isolatedSkillIdentity, isolatedSkillTaskName } from '../../../core/agent/subagentTaskPath';
 import {
   contextPayloadReferenceKey,
@@ -825,12 +826,7 @@ export class SubagentCollaboration {
       const terminalTurn = turnId === undefined
         ? this.core.allTurns(threadId).at(-1)
         : this.core.readTurn(threadId, turnId);
-      const result = terminalTurn?.items
-        .flatMap((item) => item.type === 'agentMessage' && item.phase !== 'commentary'
-          ? [item.text.trim()]
-          : [])
-        .filter(Boolean)
-        .join('\n\n') ?? '';
+      const result = terminalTurn ? turnTerminalAnswer(terminalTurn.items) : '';
       return {
         taskPath,
         threadId,
@@ -1156,10 +1152,6 @@ function nonEmpty(value: string, field: string): string {
   return normalized;
 }
 
-/**
- * Resolve with `fallback` if `work` has not settled in time. A rejection is the
- * caller's to handle; a promise that NEVER settles is the case this exists for.
- */
 function collaborationTool(
   name: string,
   label: string,

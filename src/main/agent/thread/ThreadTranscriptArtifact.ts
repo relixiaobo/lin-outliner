@@ -21,7 +21,7 @@
  * rollout log and the payload store, and `agent:dump` can reproduce this text
  * for any Thread at any time.
  */
-import { appendFile, mkdir, readdir, rm, stat } from 'node:fs/promises';
+import { appendFile, mkdir, readdir, rename, rm, rmdir, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { ThreadId } from '../../../core/agent/protocol';
 import { atomicWriteFile } from '../../jsonFileStore';
@@ -29,7 +29,7 @@ import { atomicWriteFile } from '../../jsonFileStore';
 export const THREAD_TRANSCRIPT_DIRECTORY = 'thread-transcripts';
 /**
  * The directory transcripts lived in while only delegated children had one.
- * Nothing computes this path any more, which is exactly why it must be removed
+ * Nothing computes this path any more, which is exactly why it must be reclaimed
  * rather than left alone: artifacts inside it are unreachable by the deletion
  * cascade and by the orphan sweep, so a Thread the user deletes would keep its
  * full record on disk with nothing left that could ever remove it.
@@ -104,17 +104,52 @@ export async function sweepOrphanTranscripts(
 }
 
 /**
- * Reclaim the pre-rename directory, which is a sibling of the current root:
- * both sit directly under `userData`, so the root is the only path this needs.
+ * Move the pre-rename artifacts under the current root, then drop the emptied
+ * directory. The legacy directory is a sibling of the current root — both sit
+ * directly under `userData` — so the root is the only path this needs.
  *
- * Pre-release this is the wipe, not a migration — artifacts are rebuildable
- * projections, so there is nothing to move and no old reader to keep. It is
- * idempotent and best-effort: the next startup finds nothing, and a failure is
- * simply retried by the one after it.
+ * MOVE, DO NOT DELETE. Reclaiming the directory is necessary because after the
+ * rename nothing computes that path, so neither the deletion cascade nor the
+ * orphan sweep can reach inside it and a deleted Thread would keep its record
+ * forever. But this is `userData` a released build already wrote: deleting would
+ * destroy real conversation content, and a completed Thread never appends again,
+ * so nothing would ever rebuild it. Relocating satisfies the reachability
+ * requirement without spending the user's data — and the sweep that runs next
+ * then reclaims exactly the ones whose Thread is gone, which is the outcome
+ * deleting only appeared to produce.
+ *
+ * Best-effort and idempotent per A11: the queue is the directory listing, so an
+ * interrupted run resumes for free and later launches find nothing to do.
  */
-export async function removeLegacyTranscriptDirectory(transcriptRoot: string): Promise<void> {
-  await rm(join(dirname(transcriptRoot), LEGACY_SUBAGENT_TRANSCRIPT_DIRECTORY), {
-    force: true,
-    recursive: true,
-  });
+export async function reclaimLegacyTranscriptDirectory(transcriptRoot: string): Promise<readonly string[]> {
+  const legacy = join(dirname(transcriptRoot), LEGACY_SUBAGENT_TRANSCRIPT_DIRECTORY);
+  let entries: string[];
+  try {
+    entries = await readdir(legacy);
+  } catch {
+    return [];
+  }
+  const moved: string[] = [];
+  await mkdir(transcriptRoot, { recursive: true });
+  for (const entry of entries) {
+    if (!entry.endsWith(TRANSCRIPT_EXTENSION)) continue;
+    try {
+      const target = join(transcriptRoot, entry);
+      // The current root wins a collision: what this build wrote is the live
+      // artifact, and the legacy copy under it is by definition the older one.
+      if (await threadTranscriptSize(target) === null) {
+        await rename(join(legacy, entry), target);
+        moved.push(target);
+      } else {
+        await rm(join(legacy, entry), { force: true });
+      }
+    } catch {
+      // One unmovable file is not worth failing startup over, and leaving it
+      // keeps the directory non-empty so the next launch tries again.
+    }
+  }
+  // Non-recursive on purpose: this removes the directory only once it is empty,
+  // so a file this could not move is never destroyed as a side effect.
+  await rmdir(legacy).catch(() => undefined);
+  return moved;
 }

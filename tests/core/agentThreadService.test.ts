@@ -3,7 +3,7 @@ import { Database } from 'bun:sqlite';
 import { createHash } from 'node:crypto';
 import type { Message } from '@earendil-works/pi-ai';
 import { mkdirSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type {
@@ -16,6 +16,7 @@ import { MODEL_TOOL_CATALOG, canonicalModelToolKey } from '../../src/core/agent/
 import { threadFeatureSource } from '../../src/core/agent/protocol';
 import type {
   AgentCoreNotification,
+  Thread,
   RoleCatalogContextPayload,
   SkillCatalogContextPayload,
   ThreadFileSource,
@@ -75,6 +76,7 @@ import {
   threadTranscriptPath,
   threadTranscriptRoot,
 } from '../../src/main/agent/thread/ThreadTranscriptArtifact';
+import { ThreadTranscriptWriter } from '../../src/main/agent/thread/ThreadTranscriptWriter';
 import { uuidV7 } from '../../src/main/agent/uuid';
 import { createImageArtifactReference } from '../../src/main/agent/imageArtifacts';
 import { replayableModelCall, toolAdmissionEvent } from '../fixtures/agentToolCallHistory';
@@ -9931,21 +9933,55 @@ describe('Thread transcript artifact', () => {
     await fixture.service.close();
   });
 
-  test('reclaims the pre-rename transcript directory at startup', async () => {
+  test('moves the pre-rename artifacts forward rather than deleting them', async () => {
     const fixture = await createFixture();
+    const spawned = await spawnTranscriptChild(fixture, 'relocated_child');
+    await fixture.service.waitForCollaborationActivity(spawned.root.id, spawned.rootTurn.turn.id);
+    await finishTranscriptRoot(fixture, spawned);
     await fixture.service.close();
 
     // Nothing computes this path any more, so what is inside it is beyond the
-    // reach of both the deletion cascade and the orphan sweep.
+    // reach of both the deletion cascade and the orphan sweep. It is still a
+    // released build's userData: the content is real and cannot be rebuilt,
+    // because a finished Thread never appends again.
     const legacy = join(fixture.root, 'app-data', 'subagent-transcripts');
     await mkdir(legacy, { recursive: true });
-    await writeFile(join(legacy, 'deleted-thread.md'), '# a record nothing can remove\n', 'utf8');
+    await rename(threadTranscriptPath(transcriptRootFor(fixture), spawned.child.thread.id),
+      join(legacy, `${spawned.child.thread.id}.md`));
+    await writeFile(join(legacy, '019fb2da-0000-7000-8000-00000000dead.md'), '# an orphan\n', 'utf8');
 
     const reopened = await openFixture(fixture.root, new ControlledExecutor(), fixture.clock);
     await reopened.service.initialize();
 
     expect(await readdir(join(fixture.root, 'app-data'))).not.toContain('subagent-transcripts');
+    const remaining = await readdir(transcriptRootFor(fixture));
+    // The live child's account survives, now where the cascade can reach it; the
+    // orphan is reclaimed by the sweep that runs after the relocation, on this
+    // launch rather than the next.
+    expect(remaining).toContain(`${spawned.child.thread.id}.md`);
+    expect(remaining).not.toContain('019fb2da-0000-7000-8000-00000000dead.md');
+    expect(await readFile(threadTranscriptPath(transcriptRootFor(fixture), spawned.child.thread.id), 'utf8'))
+      .toContain('## Turn 1 — completed');
     await reopened.service.close();
+  });
+
+  test('survives a subject resolver that throws on the turn-completion path', async () => {
+    const root = join(await mkdtemp(join(tmpdir(), 'tenon-transcript-subject-')), 'transcripts');
+    roots.push(root);
+    const writer = new ThreadTranscriptWriter({
+      transcriptRoot: root,
+      // A delegated subject is a spawn-edge lookup, so this is a store read on
+      // the user's path — and stores throw.
+      resolveSubject: () => { throw new Error('the metadata store is unreadable'); },
+      completedTurns: () => [],
+      payloads: () => ({ readContext: async () => null, readOutput: async () => null }),
+    });
+
+    // The completion tail continues past this call, so a throw here would strand
+    // a parent waiting on the child it never hears about (A12).
+    expect(() => writer.enqueueTurn({ id: 'thread-1' } as Thread, { id: 'turn-1' } as Turn)).not.toThrow();
+    await writer.flush('thread-1');
+    expect(await readdir(root).catch(() => [])).toEqual([]);
   });
 
   test('appends the child account under userData and reports its path in the outcome', async () => {
@@ -10091,7 +10127,7 @@ describe('Thread transcript artifact', () => {
     await fixture.service.deleteThread(spawned.root.id);
     await parked.catch(() => undefined);
 
-    expect(await readdir(transcriptRootFor(fixture))).toEqual([]);
+    expect(await transcriptEntries(fixture)).toEqual([]);
     await fixture.service.close();
   });
 
@@ -10103,17 +10139,38 @@ describe('Thread transcript artifact', () => {
     // The append is now past its guards and parked inside rendering — exactly the
     // window where a drain that awaits `undefined` lets the write outlive the rm.
     await blocked.reached;
-    const deletion = fixture.service.deleteThread(spawned.root.id);
-    // Let the cascade run all the way to its removal step while the append is
-    // still parked. A real drain cannot get past it; a no-op drain removes the
-    // file here and the released append recreates it.
+    let deletionSettled = false;
+    const deletion = fixture.service.deleteThread(spawned.root.id)
+      .then(() => { deletionSettled = true; });
     for (let tick = 0; tick < 25; tick += 1) await new Promise((resolve) => setTimeout(resolve, 1));
+
+    // A real drain cannot get past the parked append; a no-op drain would have
+    // run the whole cascade to completion by now.
+    expect(deletionSettled).toBe(false);
     blocked.release();
     await deletion;
 
-    expect(await readdir(transcriptRootFor(fixture))).toEqual([]);
+    expect(await transcriptEntries(fixture)).toEqual([]);
     await fixture.service.close();
   });
+
+  test('does not recreate the artifact when the drain times out on a slow append', async () => {
+    const fixture = await createFixture();
+    const blocked = blockPayloadReads(fixture);
+    const spawned = await spawnTranscriptChildWithToolOutput(fixture, 'slow_child');
+
+    // Past the deadline the drain gives up and the removal proceeds — correct for
+    // a wedged chain, but this one is merely slow and is still going to write.
+    await blocked.reached;
+    await fixture.service.deleteThread(spawned.root.id);
+    blocked.release();
+    await fixture.service.flushThreadTranscript(spawned.child.thread.id);
+
+    // The write side re-checks `discarded` at the last moment before the bytes
+    // land, so a deletion the user performed does not need a restart to hold.
+    expect(await transcriptEntries(fixture)).toEqual([]);
+    await fixture.service.close();
+  }, 15_000);
 
   // Pins the observable invariant: a rebuild plus the appends queued behind it
   // leave exactly one block per Turn. It does NOT reproduce the narrow
@@ -10362,6 +10419,15 @@ async function recordChildToolOutput(context: TurnExecutionContext, itemId: stri
 /** Mirrors the fixture's userData location; deliberately NOT the workspace root. */
 function transcriptRootFor(fixture: Fixture): string {
   return threadTranscriptRoot(join(fixture.root, 'app-data'));
+}
+
+/**
+ * What survives on disk. A missing directory is the same answer as an empty one:
+ * an append that skipped its write never creates the directory it would have had
+ * to be deleted from.
+ */
+async function transcriptEntries(fixture: Fixture): Promise<readonly string[]> {
+  return readdir(transcriptRootFor(fixture)).catch(() => []);
 }
 
 async function spawnTranscriptChild(fixture: Fixture, taskName: string): Promise<{

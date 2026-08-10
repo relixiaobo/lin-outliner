@@ -38,6 +38,7 @@ import {
   memoryTagId,
 } from '../core/agent/memory';
 import { decodeThreadResourceReference } from '../core/agent/codec';
+import { turnTerminalAnswer } from '../core/agent/turnAnswer';
 import {
   AUTOMATION_NOTIFICATION_CHANNEL,
   AUTOMATION_REQUEST_CHANNEL,
@@ -769,12 +770,7 @@ function skillRuntimeForTurn(context: Parameters<ToolRuntime['createTools']>[0])
       if (!completed || completed.status === 'inProgress') {
         throw new Error(`Isolated Skill child Thread did not reach a terminal Turn: ${spawned.thread.id}`);
       }
-      const result = completed.items
-        .flatMap((item) => item.type === 'agentMessage' && item.phase !== 'commentary'
-          ? [item.text.trim()]
-          : [])
-        .filter(Boolean)
-        .join('\n\n');
+      const result = turnTerminalAnswer(completed.items);
       const transcriptPath = await threadService.threadTranscriptPath(spawned.thread.id);
       return {
         threadId: spawned.thread.id,

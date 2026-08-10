@@ -103,12 +103,13 @@ ThreadNameGenerator,
 TurnExecutor
 } from './runtime/types';
 import type { AgentTool } from './runtime/kernel/types';
+import { automationTranscriptSubject } from './automations/AutomationRunContinuity';
 import { SubagentCollaboration } from './thread/SubagentCollaboration';
 import { ThreadCatalogOps } from './thread/ThreadCatalogOps';
 import { ThreadCore,type NotificationListener } from './thread/ThreadCore';
 import { ThreadResourceOps } from './thread/ThreadResourceOps';
 import { threadTranscriptRoot } from './thread/ThreadTranscriptArtifact';
-import { automationTranscriptSubject,ThreadTranscriptWriter } from './thread/ThreadTranscriptWriter';
+import { ThreadTranscriptWriter } from './thread/ThreadTranscriptWriter';
 import type { TranscriptSubject } from './thread/TranscriptRenderer';
 import { TurnLifecycle } from './thread/TurnLifecycle';
 
@@ -484,11 +485,12 @@ export class ThreadService implements ThreadServiceExtensionHost {
     await Promise.all([
       // Transcript reclamation is the same kind of work as payload pruning, so it
       // joins the same startup batch rather than adding a serial step.
-      this.transcripts.sweepOrphans((threadId) => knownThreads.has(threadId)),
-      // Pre-release wipe of the pre-rename directory, joined to the same batch.
-      // Nothing computes that path any more, so anything left inside it is
-      // beyond the reach of both the deletion cascade and the sweep above.
-      this.transcripts.removeLegacyDirectory(),
+      // Reclaim the pre-rename directory first, THEN sweep: the relocation is
+      // what puts those artifacts back within reach of the sweep and of the
+      // deletion cascade, so ordering them decides whether an orphan among them
+      // is reclaimed on this launch or the next.
+      this.transcripts.reclaimLegacyDirectory()
+        .then(() => this.transcripts.sweepOrphans((threadId) => knownThreads.has(threadId))),
       ...knownThreadIds.flatMap((threadId) => [
         this.core.payloads.pruneUnreferencedResources(threadId, this.resourceOps.threadResourceReferences(threadId)),
         this.core.payloads.pruneUnreferencedContexts(threadId, this.resourceOps.threadContextPayloadReferences(threadId)),

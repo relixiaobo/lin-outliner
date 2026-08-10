@@ -59,14 +59,17 @@ priority. Feature 1 ships alone and does not depend on Feature 2.
   not change. The append hook already fires for every Thread's completed Turn, so
   no new call site appears.
 - **The artifact directory is unified here, not in Feature 2.**
-  `subagent-transcripts` becomes `thread-transcripts`, and the startup sweep
-  removes the legacy directory once. The rename is what makes that removal
-  necessary rather than merely tidy: artifacts under the old name are no longer
-  reachable by the deletion cascade or the sweep, so a Thread the user deletes
-  would leave its full record on disk with nothing left that could ever remove
-  it. Pre-release, relocation is regeneration — artifacts are rebuildable
-  projections, and `transcriptPath` consumers already receive absolute paths at
-  runtime.
+  `subagent-transcripts` becomes `thread-transcripts`, and startup **moves** the
+  legacy directory's artifacts under the new root before dropping the emptied
+  directory. Reclaiming it is what makes the rename safe rather than merely tidy:
+  artifacts under the old name are no longer reachable by the deletion cascade or
+  the sweep, so a Thread the user deletes would leave its full record on disk with
+  nothing left that could ever remove it. Moving rather than deleting is the other
+  half — this is `userData` a released build wrote, and a completed Thread never
+  appends again, so nothing would rebuild what a delete destroyed. Relocation runs
+  before the sweep, which then reclaims exactly the ones whose Thread is gone.
+  `transcriptPath` consumers receive absolute paths at runtime, so only a path
+  already written into a past Turn's record still names the old location.
 - Standalone-destination Automation Threads materialize that same artifact: same
   `TranscriptRenderer`, `brief` detail, same append-per-completed-Turn write
   model, recovery, and deletion cascade.

@@ -488,10 +488,18 @@ reads it with the existing `file_read` / `file_grep`: the capability layer
 resolves absolute paths, so an app-owned location costs no new tool and no
 permission change. The Thread id alone names the file — globally unique and
 derivable from the Thread record, so cleanup and tooling can always reconstruct
-the path. Startup removes the pre-rename `subagent-transcripts` directory: once
-nothing computes that path, neither the deletion cascade nor the orphan sweep
-can reach inside it, so anything left there would outlive the Thread it belongs
-to with nothing able to remove it.
+the path. Startup reclaims the pre-rename `subagent-transcripts` directory by
+**moving** its artifacts under the current root and then dropping the emptied
+directory. Reclaiming it is necessary because once nothing computes that path,
+neither the deletion cascade nor the orphan sweep can reach inside it, so
+anything left there would outlive the Thread it belongs to with nothing able to
+remove it. Moving rather than deleting is equally load-bearing: this is
+`userData` a released build wrote, a completed Thread never appends again, and
+so nothing would ever rebuild what a delete destroyed. The relocation runs
+BEFORE the sweep, which then reclaims exactly the relocated artifacts whose
+Thread is gone. A file that cannot be moved leaves the directory non-empty and
+the next launch retries (A11); the current root wins any name collision, since
+what this build wrote is the live artifact.
 
 **One writer, one predicate.** `thread/ThreadTranscriptWriter.ts` owns the
 cursors, the per-Thread append chain, recovery, deletion, and the orphan sweep
@@ -543,8 +551,20 @@ does with a predecessor's path is specified in `agent-automations.md`.
 
 **A12, end to end.** Every step the account performs — spawn-edge lookup, Turn
 reads, payload reads, and the write — sits inside the best-effort guard, not
-just the write. An account failure logs, leaves `transcriptPath` null, and never
-fails the Turn, the outcome delivery, or the Skill result.
+just the write. That includes subject resolution, which runs **synchronously on
+the turn-completion path**: it reads a store, and a throw escaping it would
+abandon the rest of the completion tail (the parent-visible activity row, the
+idle notification) and park a waiting parent until its own deadline. An account
+failure logs, leaves `transcriptPath` null, and never fails the Turn, the
+outcome delivery, or the Skill result.
+
+**Header values are single-lined.** The header is the one region of the file
+that presents itself as structure rather than content, and some subject values
+are user-authored (a Thread's name, an Automation's). Admission trims but does
+not strip interior newlines, so the renderer collapses them: otherwise a name
+like `report\ncwd: /tmp` writes a second header line no reader could tell from a
+real one. Content below the header is exempt by design — verbatim is the point,
+and the preamble says a heading inside content is content.
 
 **Lifecycle.** `ThreadCatalogOps.deleteThread`'s descendant cascade removes the
 artifact — the walk includes the subtree's root, so a Thread that keeps an
@@ -554,7 +574,12 @@ the append chain so an append already past its guard and awaiting reads
 finishes BEFORE the `rm` — otherwise it lands behind the removal and resurrects a
 transcript the user deleted — and it owns the chain entry's removal for the same
 reason: a chain cleared during coordination teardown cannot afterwards be
-drained. The guard is scoped to deletion specifically and NOT to any subtree
+drained. A drain that times out is not a drain that finished: the timeout keeps
+the chain handle, and the write side re-checks the discarded mark immediately
+before touching the file, so an append that was merely slow rather than wedged
+cannot write the transcript back after the `rm` and leave a deleted Thread's
+content on disk until the next launch. The guard is scoped to deletion
+specifically and NOT to any subtree
 stop: archive and stop keep the artifact, and the Turn they interrupt is the
 Thread's last one, so skipping it would leave a retained transcript ending
 mid-task with no later Turn to heal it. At startup an orphan sweep deletes any transcript
