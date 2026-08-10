@@ -1,5 +1,12 @@
 # Embed Schema Removal
 
+> **Absorbed 2026-08-10 into `docs/plans/media-search-alignment.md`.** The removal
+> is that plan's PR 1, widened by the staleness audit's finding that search built
+> live media facets on the dead type while the real carrier (`AttachmentNode`) was
+> excluded from search entirely. The positioning ruling below — removal rather than
+> a metadata card — carried over verbatim and is not re-opened. Kept here for
+> provenance only.
+
 `src/core/types.ts` still carries `embedType` and `embedId`, and `NodeType` still
 carries `'embed'`, from an early plan to render external links (YouTube, Twitter)
 as rich cards. **No renderer was ever built, and no command produces such a node.**

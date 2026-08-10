@@ -39,8 +39,9 @@ every stale entry, so the frontier is four parallel lanes (detail lives in each 
 theme-section entry below; this list is the ordering, not a second record):
 
 - **Lane A — build-ready quick wins** (fast-track, parallelize freely; small items
-  don't count against the review-queue cap): `embed-strategy` (isolated protocol PR —
-  land **first** so siblings rebase once), `renderer-state-hygiene`,
+  don't count against the review-queue cap): `media-search-alignment` **PR 1**
+  (isolated protocol PR — land **first** so siblings rebase once; its PR 2 follows
+  under the same owner and is plan-track), `renderer-state-hygiene`,
   `floating-toolbar-polish`, `icon-semantics`, the three prime-agent fast-tracks
   (`agent-delegation-context-hygiene` · `agent-goal-continuation-enrichment` ·
   `agent-hygiene-checks`), the `file-as-node` pane-restore bug, and the micro-tails
@@ -528,22 +529,6 @@ archived `done` (see Recently completed). Remaining active work:
   whose top view was an `asset` file-preview drops the whole pane instead of salvaging its outliner
   anchor / backStack (`useWorkspaceLayout` `sanitizePanel`). Dev-only userData, narrow same-day
   window. (Feature shipped #241, archived `done`.)
-- **attachment-search-and-media-facets** (P2, `draft` 2026-08-10, *dev drafts the
-  plan*) — **attachments are invisible to search.** `isSearchCandidate`'s type
-  allowlist (`searchEngine.ts:2084`) is `tagDef|fieldDef|search|codeBlock|image|embed`
-  — `attachment` is absent, so a node carrying a PDF, recording, or video cannot be
-  found by text, by type, or by any facet, while the sibling `image` type can. The
-  asymmetry looks like an oversight: attachments arrived later (#204/#206, #241) and
-  the allowlist was not revisited — the dev should confirm that against those PRs
-  rather than assume it. On top of that gap, `AttachmentNode` already carries exactly
-  what media facets need (`mimeType`, `audioDurationMs`, `videoDurationMs`,
-  `pdfPageCount`), so this is where `HAS_AUDIO`/`HAS_VIDEO` should have been reading
-  all along — `embed-strategy` removes their dead implementation first, and this item
-  reintroduces them against the real carrier plus `IS_TYPE attachment` and the agent
-  guidance line. Plan-track (user-visible result sets + core search): the one-pager
-  should propose the split — the searchability gap may be a small fix that ships
-  ahead of the facet design — and settle whether filename-titled rows are wanted in
-  ordinary text results.
 - **asset-gc** (P2, *no plan file*, **rescoped 2026-08-09**: the `index.json` half is
   obsolete — no index exists, authoritative `<id>.meta.json` sidecars carry metadata
   (`assetService.ts:33`) — and drag-from-Finder ingest shipped
@@ -581,25 +566,23 @@ archived `done` (see Recently completed). Remaining active work:
   `TextMarkKind` is `types.ts:213` (not :110) and the Heading icon source is
   `icons.ts:75` (`AgentMarkdown.tsx` is gone); mirror the registry `addTag`
   create-then-apply candidate policy in the `#`-extract tag pick.
-- **embed-strategy** (P3, build-ready, small) — remove the dead
-  `embedType`/`embedId`/`'embed'` schema from `src/core/types.ts` (verified
-  still present; no renderer or command ever produced such a node). Touches the
-  protocol surface, so it lands as an **isolated PR** siblings rebase over. The
-  cached-metadata-card alternative lost on positioning and is recorded in the
-  plan so it is not silently re-opened. See `docs/plans/embed-strategy.md`.
-  **Scope settled 2026-08-09/10 (PM):** the audit found `searchEngine.ts` also builds
-  media semantics on the dead type, which briefly widened this item; the ruling is to
-  keep it a **pure deletion** and take the media facets **out** with the schema —
-  delete `HAS_AUDIO` / `HAS_VIDEO` (they can match nothing once embed nodes are gone:
-  kind resolution needs `embedType` or an audio/video URL on a node type that only
-  images carry) and `IS_TYPE embed`, keep `HAS_IMAGE`, and strike the matching line
-  from `agentNodeToolGuidance.ts:53` so the model is no longer told an empty
-  capability exists — a facet that silently matches nothing is worse than an absent
-  one, because the agent uses it and reports "none found" as evidence of absence.
-  `HAS_MEDIA` degenerates to an alias of `HAS_IMAGE`; keep or fold it, dev's call.
-  Rewrite the media test rather than deleting it. The real user value —
-  attachments are not searchable at all — is boarded separately as
-  **attachment-search-and-media-facets**; do not pull it into this PR.
+- **media-search-alignment** (P2, `draft` 2026-08-10 — absorbs the former
+  `embed-strategy`, whose plan is archived for provenance; see
+  [docs/plans/media-search-alignment.md](plans/media-search-alignment.md)) — search's
+  media model points at a node type that does not exist and is blind to the one that
+  does. Shape (b), **two sequenced PRs, one owner**. **PR 1** (isolated protocol PR —
+  siblings rebase over it, so it lands first): delete `EmbedNode` / `'embed'` and,
+  with it, `HAS_AUDIO` / `HAS_VIDEO` / `IS_TYPE embed`, which can match nothing once
+  embed nodes are gone, plus the clause in `agentNodeToolGuidance.ts:53` that
+  advertises them — *a facet that silently matches nothing is worse than an absent
+  one*, because the agent is told it exists, uses it, and reports "none found" as
+  evidence of absence. `HAS_IMAGE` stays; `HAS_MEDIA` keep-or-fold is the dev's call.
+  **PR 2**: `AttachmentNode` — the real carrier of every audio, video, and PDF since
+  #204/#241 — is missing from `isSearchCandidate`'s allowlist (`searchEngine.ts:2084`),
+  so an attachment cannot be found by text, type, or facet while the sibling `image`
+  type can; admit it, add `IS_TYPE attachment`, and rebuild the media facets on
+  `mimeType` + the duration fields. Confirm the omission was oversight rather than
+  decision against #204/#206/#241 before treating it as a bug. PM-ratified 2026-08-10.
 `past-chats-output-polish` was **REMOVED 2026-08-09** — every named symbol
 (`visiblePastChatsResult`, `AgentToolCallBlock`, the count fields) died with the
 Agent Core replacement (`59c7e1cf`, 2026-07-24); recall lives in the memory
