@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { DocumentCommand } from '../core/commands';
-import { Core, type CoreTransactionMetadata, type OperationHistoryQuery } from '../core/core';
+import { Core, type CoreTransactionMetadata, type OperationHistoryItem, type OperationHistoryQuery } from '../core/core';
 import type { OperationHistoryScope } from '../core/operationJournal';
 import {
   DocumentSystemContractError,
@@ -267,6 +267,18 @@ export class DocumentService implements DocumentSystemHost {
 
   setMutationCoordinator(coordinator: DocumentMutationCoordinator): void {
     this.mutationCoordinator = coordinator;
+  }
+
+  /**
+   * The journal as it stands right now, without waiting on the mutation queue.
+   *
+   * `operationHistory` above settles the text-edit group first, which is right
+   * for a reader that wants a consistent view of a mutation in flight. Turn
+   * admission is not that reader: it must not wait, and an operation landing a
+   * moment later is the next Turn's news.
+   */
+  recentOperationsForInspection(limit: number): readonly OperationHistoryItem[] {
+    return this.core.operationHistory({ origin: 'all', limit }).items ?? [];
   }
 
   recordNodeAccess(nodeIds: readonly string[], source: NodeAccessSource): void | Promise<void> {

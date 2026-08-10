@@ -632,6 +632,110 @@ conversation/run/round debug projection, derive history from renderer pagination
 introduce an alternative execution ledger. The exact page contract lives in
 [`agent-thread-rendering.md`](agent-thread-rendering.md).
 
+## Document Drift Notice
+
+The write path is defended reactively: `node_edit` carries expected revisions, so
+a stale write fails loudly. The question-answering path has no such moment — a
+model can answer from a twenty-minute-old read without touching a tool — so it is
+defended proactively, by checking what the model was shown against the document
+as it is now.
+
+**A belief is the token the tool that showed the node emitted, together with
+which function emitted it.** Naming the function is the correctness condition,
+not bookkeeping: `node_read` emits `editableOutlineRevision`, which appends an
+outline hash to `revisionOf`, so comparing it against `revisionOf` can never be
+equal and turns every read into permanent false drift. Comparison recomputes the
+belief's own basis, so a shape a tool emits is only ever compared with itself.
+The basis is as strong as the observation was — an outline revision for a read, a
+normalised timestamp for a search result — and it is **read off the token rather
+than assumed from the field it arrived in**: `node_edit` writes one `revisions`
+map from fifteen code paths and only the outline path emits the three-part form,
+so labelling the map by its field name reproduced the same never-matching
+comparison for the other thirteen. Both forms share the `${nodeId}:` prefix and
+the id is known, so stripping it separates them without depending on the hash's
+alphabet. `beliefsFromToolResult` is the single
+extraction, used both live and when rebuilding from a persisted payload, so the
+two cannot disagree.
+
+**Trashing is checked explicitly**, because it is invisible to every token: the
+trash is a subtree rather than a removal, so a trashed node stays in the
+projection, and trashing does not stamp `updatedAt`. A belief therefore records
+whether the node was already trashed when it was shown, and a transition into the
+trash is reported as gone.
+
+**Beliefs are checked against current state, never recomputed from a log.** That
+is what makes the design free of a window, a boundary anchor, a retention limit,
+and "we may have missed some" wording — none of which are answered here, because
+none of them arise. A fork and a restart need no special case for the same
+reason.
+
+**Observation happens where every tool result already passes** — the Thread
+service's tool-completion notification, which has the Thread and the tool name in
+hand. There is no per-tool hook, so a node tool added later is covered without
+remembering to call anything, and `node_search` is covered like every other even
+though its arguments never say which nodes the model will see: its results are
+the rendering.
+
+**The belief set is a projection of the canonical record** and takes its bound
+from the record rather than from a cap of its own. Re-observing a node replaces
+its belief and moves it to the end; that order is the recency the notice's cap
+spends its slots on. Deletion of a Thread forgets its beliefs.
+
+**At admission** the beliefs are compared against the projection already in hand
+— the same projection evidence admission uses, so the notice and the evidence
+describe one instant. The comparison is READ-ONLY: beliefs are settled only once
+the Turn carrying the notice is durably recorded, because admission can still
+throw afterwards and a retry must find the same drift still there to report.
+
+Settling UPDATES a reported node's belief to what the model was just handed
+rather than dropping it. Dropping inverts the feature: the host would stop
+tracking a node the moment it told the model that node's content, so a second
+edit while the Thread sat idle would go unreported and the model would answer
+from — or write over — the version it had been given. A node reported as gone is
+the exception; there is nothing left to track. What does not fit the cap keeps
+its belief and surfaces next time.
+
+**The notice is never admitted by `steerTurn`.** Steering admits into a Turn that
+is already running, and the notice's contract is that it arrives between Turns;
+delivered mid-Turn it would reach a model composing an edit and tell it not to
+revert changes it is itself being asked to make.
+
+**A cold set is rebuilt from the canonical record** — the persisted tool outputs
+that were the observation — which is what makes a restart and a fork need no
+special case. The Turn's timestamp stands in for the Item's, which carries none;
+it is monotonic with observation order, which is all attribution asks of it. A
+Thread's set is released with the rest of its in-session coordination state when
+the Thread stops or is deleted — the rebuild path is what makes that safe — and a
+rebuild costs the next admission one pass over its payloads.
+
+**The notice is a belief update, not a warning.** It carries the current content
+of up to five drifted nodes, so the ordinary case costs no re-read round trip;
+outliner nodes are small, which is what makes that affordable. A deleted node is
+named as deleted — the outcome a re-read cannot recover alone. Content is
+single-lined and bounded like every other authored text entering trusted context.
+It closes with the instruction the coding agents include for the same situation:
+these edits were deliberate, do not revert them. Without it, a model told its
+reads changed can treat that as an inconsistency to repair and overwrite the
+user's edit.
+
+**Attribution is garnish, and is scoped by node AND by observation time** — an
+operation that predates the observation explains nothing about drift the model
+can see, and crediting it would tell the model the user personally changed
+something they changed before it ever looked. The node scope says which
+operations are relevant; the belief's own timestamp says which of them happened
+after it was formed. It draws one distinction, the only one both load-bearing and free:
+the user's own edit versus another session's, naming the causal Thread id, which
+the transcript index makes resolvable. An Automation is not labelled separately;
+what would matter about one is that nobody watched the result, and the record
+does not know that. The journal is read without waiting on the mutation queue,
+because admission must not wait. An edit older than the journal's ring is not
+found and the clause is dropped.
+
+The notice rides `additionalContext`, so "never mid-Turn" holds by construction
+and the notice lands in the canonical record. A12: any failure — no projection, a
+comparison that throws, a journal that cannot answer — skips the notice and never
+blocks admission.
+
 ## Trusted Document Transactions
 
 Projection-neutral system receipts and deterministic protected tag definitions

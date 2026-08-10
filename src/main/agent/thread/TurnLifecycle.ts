@@ -1,7 +1,7 @@
 import { decodePrivilegedTurnStartRequest,decodeThread,decodeThreadItem,decodeTurn } from '../../../core/agent/codec';
 import type { EffectiveThreadConfiguration } from '../../../core/agent/configuration';
 import { createHostRootTurnAdmissionBarrierSnapshot,createThreadAdmissionBarrierSnapshot } from '../../../core/agent/extensions';
-import { RUNTIME_FAILURE_ERROR_CODE,normalizeTurnErrorCode,type ContextCompactionThreadItem,type ContextCursor,type ContextEvidenceKind,type ContextEvidenceThreadItem,type PrivilegedTurnStartRequest,type RendererTurnStartRequest,type RequestUserInputRequest,type RequestUserInputResponse,type RoleCatalogContextPayload,type Thread,type ThreadContextPayload,type ThreadContextPayloadReference,type ThreadId,type ThreadItem,type ThreadResourceReference,type ThreadStatus,type ThreadUserContent,type Turn,type TurnError,type TurnErrorCode,type TurnId,type TurnStartResponse,type TurnStatus,type TurnSteerRequest,type TurnSteerResponse } from '../../../core/agent/protocol';
+import { RUNTIME_FAILURE_ERROR_CODE,normalizeTurnErrorCode,type AdditionalContext,type ContextCompactionThreadItem,type ContextCursor,type ContextEvidenceKind,type ContextEvidenceThreadItem,type PrivilegedTurnStartRequest,type RendererTurnStartRequest,type RequestUserInputRequest,type RequestUserInputResponse,type RoleCatalogContextPayload,type Thread,type ThreadContextPayload,type ThreadContextPayloadReference,type ThreadId,type ThreadItem,type ThreadResourceReference,type ThreadStatus,type ThreadUserContent,type Turn,type TurnError,type TurnErrorCode,type TurnId,type TurnStartResponse,type TurnStatus,type TurnSteerRequest,type TurnSteerResponse } from '../../../core/agent/protocol';
 import { threadPreviewFromContent } from '../../../core/agent/threadPreview';
 import { normalizeRequestUserInputToolInput } from '../../../core/agent/tools';
 import { MAX_PROMPT_IMAGE_BYTES,MAX_PROMPT_IMAGE_DIMENSION } from '../../../core/agentAttachmentLimits';
@@ -57,6 +57,17 @@ interface TurnLifecycleCollaboration {
  * are a delegated child's.
  */
 interface TurnLifecycleTranscripts { enqueueTurn(thread: Thread, turn: Turn): void; }
+/**
+ * The drift check. Injected rather than reached for, so this file keeps knowing
+ * nothing about beliefs beyond when to ask — admission is the moment, and it is
+ * the only one.
+ */
+interface TurnLifecycleDocumentDrift {
+  noticeFor(
+    threadId: ThreadId,
+    projection: DocumentProjection | null,
+  ): Promise<{ readonly context: AdditionalContext | null; readonly settle: () => void }>;
+}
 interface TurnLifecycleGoalUsage { addUsage(threadId: ThreadId, tokens: number, elapsedSeconds: number, turnId: TurnId, terminalStatus: TurnStatus): Promise<void>; }
 export interface ResolvedSubagentBudget {
   readonly member: SubagentRequestMember | null;
@@ -70,6 +81,7 @@ export class TurnLifecycle {
     private readonly core: ThreadCore, private readonly resourceOps: ThreadResourceOps,
     private readonly catalog: TurnLifecycleCatalog, private readonly collaboration: TurnLifecycleCollaboration,
     private readonly transcripts: TurnLifecycleTranscripts,
+    private readonly documentDrift: TurnLifecycleDocumentDrift,
     private readonly executor: TurnExecutor, private readonly extensions: ExtensionRegistry,
     private readonly subagentBudgets: SubagentRequestLedger,
     private readonly getDocumentProjection: () => DocumentProjection | null,
@@ -401,19 +413,25 @@ export class TurnLifecycle {
               : null,
             readContext: (ref) => this.core.payloads.readContext(thread.id, ref),
           });
+          const admissionProjection = this.getDocumentProjection();
           const evidence = await admitContextEvidence({
             thread,
             turnId: active.turnId,
             acceptedAt,
             content: admission.content,
             userView: request.userView,
+            // NO drift notice here. This is `steerTurn`: it admits into a Turn
+            // that is already running, and the notice's whole contract is that it
+            // arrives between Turns. Delivered here it would land while the model
+            // is composing an edit and tell it not to revert changes it is itself
+            // being asked to make.
             additionalContext: request.additionalContext,
             extensionContext,
             skillCatalog,
             roleCatalog,
             skillInvocation: skillAdmission.invocation,
             includeHostContext: !this.core.hiddenEphemeralThreads.has(request.threadId),
-            projection: this.getDocumentProjection(),
+            projection: admissionProjection,
             createItemId: () => uuidV7(),
             writeContext: (payload) => this.core.payloads.writeContext(thread.id, payload),
             resolveAsset: this.resolveReferencedAsset,
@@ -883,19 +901,23 @@ export class TurnLifecycle {
           : null,
         readContext: (ref) => this.core.payloads.readContext(record.thread.id, ref),
       });
+      // One projection for both, so the notice and the evidence describe the
+      // same instant rather than two moments a mutation could sit between.
+      const admissionProjection = this.getDocumentProjection();
+      const drift = await this.documentDrift.noticeFor(record.thread.id, admissionProjection);
       const evidence = await admitContextEvidence({
         thread: record.thread,
         turnId,
         acceptedAt: startedAt,
         content: input,
         userView: request.userView,
-        additionalContext: request.additionalContext,
+        additionalContext: { ...request.additionalContext, ...drift.context },
         extensionContext,
         skillCatalog,
         roleCatalog,
         skillInvocation: skillAdmission.invocation,
         includeHostContext: !this.core.hiddenEphemeralThreads.has(request.threadId),
-        projection: this.getDocumentProjection(),
+        projection: admissionProjection,
         createItemId: () => uuidV7(),
         writeContext: (payload) => this.core.payloads.writeContext(record.thread.id, payload),
         resolveAsset: this.resolveReferencedAsset,
@@ -950,6 +972,10 @@ export class TurnLifecycle {
         this.collaboration.takePendingCollaborationActivity(request.threadId);
       }
       this.activeTurns.set(request.threadId, active);
+      // Only now: the Turn carrying the notice is recorded and running, so the
+      // beliefs it reported can be advanced. Everything above can still throw,
+      // and a retry must find the same drift still there to report.
+      drift.settle();
       if (!record.thread.preview.trim() && preview) {
         try {
           this.catalog.setInitialPreview(request.threadId, preview, startedAt);
