@@ -54,11 +54,11 @@ export function readEpubReadingPosition(targetKey: string): EpubReadingPosition 
 }
 
 export function writeEpubReadingPosition(targetKey: string, position: EpubReadingPosition): void {
-  const storage = localStorageOrNull();
-  if (!storage) return;
   const positions = readEpubReadingPositions();
   positions[targetKey] = position;
   pruneLocalStorageEntries(positions, READING_POSITION_MAX_ENTRIES, (entry) => entry.updatedAt);
+  const storage = localStorageOrNull();
+  if (!storage) return;
   writeLocalStorageKeyedStore({
     storage,
     storageKey: EPUB_READING_POSITION_STORAGE_KEY,

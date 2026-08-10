@@ -18,36 +18,52 @@ This plan has shape (a): one complete feature in one PR.
 
 ## Design
 
-### One renderer-wide authority
+### One renderer-wide authority, captured per session
 
-`EpubPreview` will treat `readEpubReadingPosition` as the source of truth whenever
-it renders a restore candidate. It will no longer retain a per-component copy of
-the first position that the instance observed. The existing keyed store already
-updates synchronously and is shared by every preview instance in the renderer,
-so a later write from a split-pane reader becomes visible to an older inline
-preview before that preview starts another full-reader session.
+`EpubPreview` will treat `readEpubReadingPosition` as the source of truth at each
+full-reader session boundary. Its restore snapshot is keyed by target, display
+mode, and loaded file, rather than lasting for the component's entire lifetime.
+A mounted full-reader session keeps that snapshot fixed so another surface cannot
+silently move it; collapsing and re-expanding captures the shared latest value and
+starts a new session from there.
+
+`EpubReader` will mark a full session with no initial position as restored. This
+closes the null-position case instead of leaving the session able to adopt a
+position that another surface writes later.
 
 `persistReadingPosition` will continue to write through
 `writeEpubReadingPosition`, and `EpubReader` will keep its animation-frame scroll
-reporting. This preserves the current bounded update frequency while removing
-the stale second authority.
+reporting. `writeEpubReadingPosition` will update the module cache before checking
+for browser storage, preserving the latest position for later sessions in the
+same renderer even when `localStorage` is unavailable. This keeps writes bounded
+without adding React state or a store subscription.
 
 ### Regression coverage
 
-Extend the E2E test titled
-`EPUB files render through the inline reader instead of metadata fallback` with
-the observed two-surface sequence:
+Add a focused E2E test titled
+`EPUB readers refresh the shared position only when a new full session starts`
+with the observed two-surface sequence:
 
 1. Save an early position in the expanded inline reader.
-2. Open the same source in a split-pane reader and save a later position.
-3. Collapse and re-expand the original inline reader.
-4. Assert that restoration remains at the split pane's later section-relative
-   position and that the old inline snapshot does not replace it.
+2. Open the same source in a split-pane reader, wait for its restore layout to
+   settle, and save a later position.
+3. Re-render and reflow the still-open inline surface and assert that its current
+   session remains in the early section rather than jumping to the split reader's
+   later section.
+4. Save the later split position again, then collapse and re-expand the inline
+   reader.
+5. Assert that the new inline session restores the split pane's later
+   section-relative position and that the persisted record still matches it.
 
 Compare section identity and offset ratio with a small tolerance because the two
-reader surfaces can have different viewport heights. Do not use `updatedAt` as
-the semantic assertion: an automatic restore legitimately reports the restored
-position again with a newer timestamp.
+reader surfaces can have different viewport heights. Attribute writes by matching
+the unique persisted key to the scrolled reader's live section-relative position;
+do not use shared `updatedAt` alone, because any mounted reader may advance it.
+Wait for mounted section heights and the reader scroll position to settle before
+scrolling or asserting a restored value.
+
+Add a renderer unit test that denies `localStorage` access, writes an EPUB
+position, and reads it back from the module cache.
 
 ### Current-behavior specification
 
@@ -58,7 +74,9 @@ that value before starting a new full-reader session.
 ## Implementation Surface
 
 - `src/renderer/ui/preview/EpubPreview.tsx`
+- `src/renderer/ui/preview/readingPositionStore.ts`
 - `tests/e2e/file-attachments.spec.ts`
+- `tests/renderer/readingPositionStore.test.ts`
 - `docs/spec/workspace-layout.md`
 
 No Core protocol, main-process, dependency, build, task-board, or changelog file
@@ -68,9 +86,9 @@ changes are required.
 
 - A restore-induced scroll event can rewrite the same logical position with
   slightly different geometry. Regression assertions therefore compare the
-  stable section and a bounded ratio delta.
-- Refreshing from the shared store must not introduce renderer state or a new
-  subscription; reads remain cache-backed and writes remain synchronous.
+  settled reader DOM and persisted section with a bounded ratio delta.
+- Refreshing from the shared store must happen at session boundaries, not on
+  every render. The snapshot remains ref-backed and writes remain synchronous.
 
 ## Collision Result
 
@@ -81,7 +99,9 @@ does not overlap EPUB position state.
 
 ## Verification
 
-- Focused Playwright E2E for the EPUB reader test title above.
+- Focused Playwright E2E for the existing inline-renderer test and the
+  shared-position test above.
+- Focused renderer test for the storage-unavailable fallback.
 - `bun run typecheck`
 - `bun run test:renderer`
 - `bun run docs:check`
