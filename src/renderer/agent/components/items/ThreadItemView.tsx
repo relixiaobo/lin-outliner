@@ -835,16 +835,29 @@ function ToolItemDisclosure({
             </ToolDetailSection>
           ) : null}
           {detail.body}
-          {output ? (
+          {/*
+            A failed call gets this section even with nothing in it. The heading
+            is where the outcome — and the exit code that qualifies it — is
+            stated, so hanging it on there being output would lose the code of
+            every quiet check that fails: `test -f missing`, `grep -q`,
+            `diff --quiet`. `No output` is then the honest answer to what the
+            section asks, and distinguishes a tool that said nothing from one
+            whose output we failed to show.
+          */}
+          {output || detail.outcome.failed ? (
             <ToolDetailSection failed={detail.outcome.failed} label={detail.outcome.label}>
-              <ToolCodeBlock
-                code={output}
-                copyLabel={t.agent.thread.item.copyOutput}
-                cwd={threadCwd}
-                language={outputLoaded && loadedOutput.text
-                  ? outputLanguage(loadedOutput.text)
-                  : detail.outputLanguage}
-              />
+              {output ? (
+                <ToolCodeBlock
+                  code={output}
+                  copyLabel={t.agent.thread.item.copyOutput}
+                  cwd={threadCwd}
+                  language={outputLoaded && loadedOutput.text
+                    ? outputLanguage(loadedOutput.text)
+                    : detail.outputLanguage}
+                />
+              ) : (
+                <p className="thread-tool-no-output">{t.agent.thread.item.noOutput}</p>
+              )}
             </ToolDetailSection>
           ) : null}
         </div>
@@ -943,8 +956,13 @@ export function ThreadMessageCopyButton({
 
 /**
  * The heading of the section that holds what the tool produced, and whether
- * producing it failed. The two travel together because a heading reading
- * `Error` in neutral ink — or `Result` in danger red — contradicts itself.
+ * producing it failed. The label names the CONTENT — `Output` for shell
+ * streams, `Result` for a returned value, `Error` only where the content
+ * genuinely is an error payload — while `failed` carries the status colour. A
+ * failed collaboration call therefore reads `Result` in danger red, which is
+ * accurate: its content is a state snapshot, not an error, and the colour is
+ * what says the call failed. `Error` in neutral ink is the combination that
+ * would contradict itself, and no case produces it.
  *
  * A failure is stated exactly once per place it belongs: the folded row says
  * THAT the tool failed, this heading says the produced value is a failure and
@@ -1014,6 +1032,10 @@ function toolDetail(
         ...empty,
         input: argumentsValue === null ? null : jsonText(argumentsValue),
         inputLanguage: 'json',
+        // A file tool reports through its change list, not a stream, so a
+        // failed one states `No output` rather than staying silent about
+        // whether it said anything at all.
+        outcome: { label: t.agent.thread.item.output, failed: item.status === 'failed' },
         body: (
           <ul className="thread-file-changes">
             {item.changes.map((change, index) => (
@@ -1028,10 +1050,12 @@ function toolDetail(
         ),
       };
     case 'mcpToolCall':
-      // A failed call's message IS what it produced — the executor persists the
-      // same text as the output payload and keeps `result` null — so it fills
-      // the produced-value section instead of trailing it as a second voice.
-      // This is the precedence the Turn copy source already uses.
+      // A failed call's message IS what it produced, so it fills the
+      // produced-value section instead of trailing it as a second voice. The
+      // executor persists that same text as this Item's output payload, and the
+      // payload wins at the render site once it loads — error-first is the only
+      // precedence that shows the same thing before and after that read. Turn
+      // copy already reads it this way too.
       return {
         ...empty,
         input: jsonText(argumentsValue),
@@ -1092,6 +1116,12 @@ function toolDetail(
         ) : null,
       };
     case 'webSearch':
+      // Error-first for the same reason as `mcpToolCall`, though not for the
+      // same mechanism: `results` is parsed unconditionally here and can in
+      // principle survive an error, but the executor still persists the error
+      // text as this Item's output payload, and that payload replaces whatever
+      // this returns as soon as it loads. Preferring parsed results would show
+      // them for one frame and then swap them for the error.
       return {
         ...empty,
         input: jsonText(argumentsValue),

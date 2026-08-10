@@ -1757,6 +1757,13 @@
   color: var(--status-danger);
 }
 
+.thread-tool-no-output {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+}
+
 .thread-tool-activity-members {
   display: flex;
   min-width: 0;

@@ -502,6 +502,36 @@ describe('ThreadItemView tool row status presentation', () => {
     expect(rendered.document.querySelector('.thread-tool-body')?.textContent).not.toContain('Exit code');
   });
 
+  test('keeps the exit code of a quiet check that fails without printing anything', async () => {
+    // `test -f missing` exits 1 with empty streams. Hanging the code on there
+    // being output would make the one useful fact unreachable.
+    const rendered = renderItem(
+      command({
+        command: 'test -f missing',
+        status: 'failed',
+        exitCode: 1,
+        aggregatedOutput: null,
+      }),
+      { expanded: true },
+    );
+    await flush();
+
+    const outputSection = [...rendered.document.querySelectorAll('.thread-tool-section')].at(-1);
+    expect(outputSection?.querySelector('header')?.textContent).toBe('Output · Exit code 1');
+    expect(outputSection?.className).toContain('is-failed');
+    expect(outputSection?.querySelector('.thread-tool-no-output')?.textContent).toBe('No output');
+    expect(outputSection?.querySelector('.thread-tool-code-block')).toBeNull();
+  });
+
+  test('leaves a silent success without a produced-value section at all', async () => {
+    const rendered = renderItem(command({ aggregatedOutput: null }), { expanded: true });
+    await flush();
+
+    const headers = [...rendered.document.querySelectorAll('.thread-tool-section > header')]
+      .map((header) => header.textContent);
+    expect(headers).toEqual(['Arguments']);
+  });
+
   test('keeps a successful exit code out of the detail entirely', async () => {
     const rendered = renderItem(command({ aggregatedOutput: 'ok' }), { expanded: true });
     await flush();
@@ -530,6 +560,32 @@ describe('ThreadItemView tool row status presentation', () => {
     expect(rendered.document.querySelector('.thread-inline-error')).toBeNull();
     expect(rendered.document.querySelector('.thread-file-changes')?.textContent)
       .toContain('a.ts');
+    // The old failure sentence's one piece of information — the tool returned
+    // no message — survives as the answer this section owes, not as prose.
+    const outputSection = [...rendered.document.querySelectorAll('.thread-tool-section')].at(-1);
+    expect(outputSection?.querySelector('.thread-tool-no-output')?.textContent).toBe('No output');
+    expect(outputSection?.className).toContain('is-failed');
+  });
+
+  test('keeps a failed collaboration result named for what it holds', async () => {
+    // A state snapshot is a Result even when the call failed; the colour says
+    // it failed. Calling the snapshot an Error would misname the content.
+    const item: ThreadItem = {
+      ...base('collab-1'),
+      type: 'collabAgentToolCall',
+      status: 'failed',
+      tool: 'spawn_agent',
+      arguments: { prompt: 'investigate' },
+      receiverThreadIds: [],
+      agentsStates: {},
+      modelCall: replayableModelCall('spawn_agent', { prompt: 'investigate' }),
+    };
+    const rendered = renderItem(item, { expanded: true });
+    await flush();
+
+    const outputSection = [...rendered.document.querySelectorAll('.thread-tool-section')].at(-1);
+    expect(outputSection?.querySelector('header')?.textContent).toBe('Result');
+    expect(outputSection?.className).toContain('is-failed');
   });
 
   test('fills the produced-value section with a failed MCP call own message', async () => {

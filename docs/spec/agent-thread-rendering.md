@@ -152,10 +152,16 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
   A successful code is redundant with the completed row and stays hidden, and a
   failure that never produced one — a timeout, a kill — gets no invented number.
   A tool that failed with its own message shows that message AS the produced
-  value under the `Error` heading, the same precedence the Turn copy source
-  uses; failure prose is never presented under a neutral result heading. The
-  detail never adds a sentence restating a failure the row already reports, so a
-  failure with neither a code nor a message adds nothing below the row
+  value under the `Error` heading, the same precedence the Turn copy source and
+  the persisted output payload use; failure prose is never presented under a
+  neutral result heading. The heading names the CONTENT — `Error` only where the
+  content is an error payload — while the status colour carries the failure, so
+  a failed collaboration call reads `Result` in danger red over its state
+  snapshot. A failed call keeps this section even with nothing in it, reading
+  `No output`: the heading is where the outcome and its exit code are stated, so
+  a quiet check that fails without printing would otherwise take its code with
+  it. A successful call that printed nothing has no such section. The detail
+  never adds a sentence restating a failure the row already reports
 - a command row is labelled by the **caller's own description** of the command
   when there is one. The `bash` contract already requires a one-line account in
   active voice, so the transcript states intent rather than shell syntax, and
