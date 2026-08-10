@@ -2059,7 +2059,13 @@ function reasoningPresentation(text: string): { readonly summary: string; readon
       .slice(0, firstIndex)
       .reduce((length, token) => length + token.raw.length, 0);
     const remainder = text.slice(firstOffset + first.raw.length).trim();
-    const details = plainParagraph
+    // A leading paragraph or heading is carried whole by the summary line —
+    // flattening drops its inline formatting, never its words — so keeping it in
+    // the body would print the headline twice, once per line. A structural
+    // leading block (fence, list, table, quote) is summarized by a single line
+    // OF itself, so the body still has to render the complete source.
+    const summarizedInFull = paragraph !== null || first.type === 'heading';
+    const details = summarizedInFull
       ? hasVisibleMarkdown(remainder) ? remainder : ''
       : text;
     return {

@@ -125,19 +125,38 @@ describe('ThreadItemView reasoning presentation', () => {
     expect(codeBlock?.textContent).toContain('const answer = 2 * 3;');
   });
 
-  test('restores inline Markdown from the summary line when reasoning expands', async () => {
-    const source = '**Inspect** `src/**/*.ts` before editing.';
-    const rendered = renderItem(reasoningItem({ summary: [source], content: [] }));
+  test('never repeats a formatted leading reasoning line inside the expanded body', async () => {
+    const rendered = renderItem(reasoningItem({
+      summary: ['**Preparing browser tabs**'],
+      content: ['The open tabs decide where this runs.'],
+    }));
     await flush();
 
     const toggle = rendered.document.querySelector<HTMLButtonElement>('.thread-reasoning-toggle');
-    expect(toggle).not.toBeNull();
+    expect(toggle?.textContent).toContain('Preparing browser tabs');
     act(() => toggle?.click());
     await flush();
 
     const body = rendered.document.querySelector('.thread-reasoning-body');
-    expect(body?.querySelector('strong')?.textContent).toBe('Inspect');
-    expect(body?.querySelector('code')?.textContent).toBe('src/**/*.ts');
+    expect(body?.textContent).toBe('The open tabs decide where this runs.');
+    expect(body?.textContent).not.toContain('Preparing browser tabs');
+  });
+
+  test('never repeats a leading reasoning heading inside the expanded body', async () => {
+    const rendered = renderItem(reasoningItem({
+      summary: ['## Preparing browser tabs'],
+      content: ['The open tabs decide where this runs.'],
+    }));
+    await flush();
+
+    const toggle = rendered.document.querySelector<HTMLButtonElement>('.thread-reasoning-toggle');
+    expect(toggle?.textContent).toContain('Preparing browser tabs');
+    act(() => toggle?.click());
+    await flush();
+
+    const body = rendered.document.querySelector('.thread-reasoning-body');
+    expect(body?.textContent).toBe('The open tabs decide where this runs.');
+    expect(body?.querySelector('h2')).toBeNull();
   });
 
   test('measures a long single line that mounts with an expanded disclosure override', async () => {
