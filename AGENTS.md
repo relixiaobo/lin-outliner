@@ -376,8 +376,16 @@ open an isolated PR and let the other agent rebase before continuing:
   notes rather than left for the downloader to discover. A release freeze also
   writes the version section's opening **user-register note** — the What's New
   source and the release-body lead: main drafts it from the section's entries,
-  the PM ratifies. Versions dial per release train (minor pre-1.0), never per
-  PR; dial `package.json` right after tagging so dev builds name the next train.
+  the PM ratifies (a small train's note may be a single line). Versions dial per
+  release train, never per PR. **Cadence (PM-ratified 2026-08-10): a train
+  leaves whenever it carries a user-visible change — daily is fine, there is no
+  minimum load.** Each train bumps **minor**; **patch** is reserved for hotfixes
+  to an already-published version; **1.0 is an explicit PM declaration**, never
+  a consequence of any work type (a refactor ships on whatever train is open —
+  its version-relevant fact is only a userData wipe, which goes in the note).
+  The version number is a train counter, not a magnitude signal — magnitude
+  lives in the note's first line. Dial `package.json` right after tagging so
+  dev builds name the next train.
 - `.github/workflows/`, `playwright.config.ts` — the `main` e2e signal;
   main-agent-owned. It is deliberately not a PR gate and deliberately runs with
   `retries: 0` — turning retries on would make an unstable suite report green,

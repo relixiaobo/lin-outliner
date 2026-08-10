@@ -50,8 +50,9 @@ theme-section entry below; this list is the ordering, not a second record):
   remains an uncapped background lane (trail + remaining items under **Performance**).
 - **Lane B — agent reliability**: `agent-episodic-transcripts` PR 1 → PR 2, then
   `agent-doc-drift-notice`.
-- **Lane C — product surface**: `file-preview` Office tail (apply its refresh note
-  first), then `agent-skills-authoring` security tail.
+- **Lane C — product surface**: `update-check-and-prompt` first (the PM wants users
+  on fresh builds; works unsigned), then `file-preview` Office tail (apply its
+  refresh note first), then `agent-skills-authoring` security tail.
 - **Lane D — test-signal infrastructure**: e2e stability, starting with the
   visual-media baseline fixture (`test.extend` default), then the run-dependent flaky
   set as one problem.
@@ -656,6 +657,35 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   same index while preserving matching, ranking, creation, existing-tag, and Trash behavior.
   **Remaining P3:** additional localized O(N) cleanups still listed in the plan; the ordinary renderer
   projection delta path no longer rebuilds `new Map(prev.byId)` or the whole render-revision map.
+
+### Distribution & updates
+
+The PM wants users on fresh builds without visiting GitHub (ratified 2026-08-10,
+together with the train cadence: a release leaves whenever it carries a
+user-visible change — daily is fine). Two tiers, because macOS draws a hard line
+between them:
+
+- **update-check-and-prompt** (P2, `draft` 2026-08-10, *dev drafts the plan*) —
+  Tenon has no update channel at all (`rg 'autoUpdater|checkForUpdate' src/` is
+  empty): a user learns about a new version only by revisiting GitHub. This tier
+  works **unsigned**: main polls the GitHub Releases API (latest tag vs running
+  version; bounded frequency; offline-silent), and a newer version surfaces as a
+  gentle, never-modal notice — a Settings → About badge plus one dismissible
+  in-app indicator showing that release's user note (via the same parser What's
+  New uses) and linking the `.dmg`. With daily trains the prompt policy IS the
+  design core: the one-pager settles check frequency, skip-this-version /
+  remind-later semantics, batching (a user three trains behind sees one prompt,
+  not three), and a settings toggle. A12 applies: a failed or slow check must
+  never touch startup or the composer.
+- **signed-builds-and-auto-update** (P2, `draft` 2026-08-10, **gated on a PM
+  external action** — an Apple Developer Program membership) — true silent
+  auto-update on macOS (electron-updater / Squirrel.Mac) **refuses unsigned
+  builds**, so this tier is structurally blocked until builds are signed and
+  notarized. Signing pays twice: background auto-update becomes possible, and
+  the right-click-to-open Gatekeeper dance disappears for every new user. When
+  credentials exist: signing identity + notarization in `release.yml`, then
+  electron-updater over the same tagged releases, and the prompt tier above
+  degrades gracefully into its fallback UI.
 
 ### Storage & platform hygiene (from the 2026-06-10 pre-release sweep)
 
