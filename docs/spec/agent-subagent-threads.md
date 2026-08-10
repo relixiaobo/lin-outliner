@@ -480,7 +480,7 @@ must not be unified: this renderer keeps whatever the store kept, that one must
 shrink.
 
 **Artifact: app-owned, append-only.** The file is
-`<userData>/subagent-transcripts/<threadId>.md`. Storage is app-owned and never
+`<userData>/thread-transcripts/<threadId>.md`. Storage is app-owned and never
 the workspace — git never sees a transcript, so there is no gitignore to
 maintain, no workspace `file_glob`/`file_grep` noise, and no path by which a
 secret echoed into a tool output becomes a committed file. The parent still
@@ -488,16 +488,34 @@ reads it with the existing `file_read` / `file_grep`: the capability layer
 resolves absolute paths, so an app-owned location costs no new tool and no
 permission change. The Thread id alone names the file — globally unique and
 derivable from the Thread record, so cleanup and tooling can always reconstruct
-the path.
+the path. Startup removes the pre-rename `subagent-transcripts` directory: once
+nothing computes that path, neither the deletion cascade nor the orphan sweep
+can reach inside it, so anything left there would outlive the Thread it belongs
+to with nothing able to remove it.
 
-The artifact is extended once per **completed** child Turn, at the child's
-turn-completion point, and never on the parent's read path. A completed Turn is
+**One writer, one predicate.** `thread/ThreadTranscriptWriter.ts` owns the
+cursors, the per-Thread append chain, recovery, deletion, and the orphan sweep
+for EVERY Thread kind that keeps an account. Whether a Thread keeps one and what
+its artifact's header says are a single injected answer, `resolveSubject`: null
+materializes nothing, an object is the header. The subject is resolved once, when
+the Turn is enqueued, and carried down the chain — the two must not become two
+independent lookups again, which is what they were (a `parentThreadId` check at
+enqueue, a spawn-edge lookup at append) and the shape two answers eventually
+disagree in. `ThreadService` composes the subject from the delegated form
+(`SubagentCollaboration` owns spawn metadata, so it answers for a child) and the
+Automation form (a root, so the two can never both match). Every delegated
+executor — collaboration Subagent, isolated Skill — and every standalone
+Automation Thread materializes through it; the header omits whatever a Thread
+kind leaves unset, so adding a kind cannot change what an existing kind renders.
+
+The artifact is extended once per **completed** Turn, at that Thread's
+turn-completion point, and never on a reader's path. A completed Turn is
 immutable in the event-sourced store, which is what makes the append cursor
 monotonic and dissolves two whole problem classes: nothing cached can go stale
 because history is never re-rendered, and a concurrent reader sees a
 whole-Turn prefix rather than a torn file. A Turn still running is simply not in
 the file yet; steering and messages remain the live-interaction surface.
-Appends are serialized per child so Turns land in completion order.
+Appends are serialized per Thread so Turns land in completion order.
 
 **Recovery.** The in-session cursor records which Turns the file already
 contains, how many, and how many bytes that produced. When the cursor is cold
@@ -519,7 +537,9 @@ otherwise park the delegator's Turn indefinitely — exactly the outcome A12
 exists to prevent. A stalled volume costs the account layer accuracy, never the
 delegator its result. Isolated-Skill children use the identical location, renderer, and write
 model, and their result envelope carries the same path — the contract applies
-uniformly to every executor form.
+uniformly to every executor form. A standalone Automation Thread's account is
+reached the same way, through `ThreadService.threadTranscriptPath`; what a run
+does with a predecessor's path is specified in `agent-automations.md`.
 
 **A12, end to end.** Every step the account performs — spawn-edge lookup, Turn
 reads, payload reads, and the write — sits inside the best-effort guard, not
@@ -527,14 +547,16 @@ just the write. An account failure logs, leaves `transcriptPath` null, and never
 fails the Turn, the outcome delivery, or the Skill result.
 
 **Lifecycle.** `ThreadCatalogOps.deleteThread`'s descendant cascade removes the
-artifact. Removal marks the Thread discarded so nothing new enqueues, then drains
-the child's append chain so an append already past its guard and awaiting reads
+artifact — the walk includes the subtree's root, so a Thread that keeps an
+account without being anyone's child is covered by the same rule. Removal marks
+the Thread discarded so nothing new enqueues, then drains
+the append chain so an append already past its guard and awaiting reads
 finishes BEFORE the `rm` — otherwise it lands behind the removal and resurrects a
 transcript the user deleted — and it owns the chain entry's removal for the same
 reason: a chain cleared during coordination teardown cannot afterwards be
 drained. The guard is scoped to deletion specifically and NOT to any subtree
 stop: archive and stop keep the artifact, and the Turn they interrupt is the
-child's last one, so skipping it would leave a retained transcript ending
+Thread's last one, so skipping it would leave a retained transcript ending
 mid-task with no later Turn to heal it. At startup an orphan sweep deletes any transcript
 whose Thread id has no Thread record (A11: the work queue is derived from disk,
 so an interrupted sweep resumes for free). Accumulation here is an app-retention
