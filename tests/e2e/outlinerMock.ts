@@ -3,6 +3,7 @@ import type { TranslationLanguage } from '../../src/core/translationLanguage';
 import type { UrlPageTranslationPreferences } from '../../src/core/urlPageTranslation';
 import type { ManagedSkillCatalogEntryView, ManagedSkillView } from '../../src/core/types';
 import type { AppInfo } from '../../src/core/errorObservability';
+import type { AppUpdateView } from '../../src/core/appUpdate';
 
 export const ids = {
   workspace: 'workspace',
@@ -77,6 +78,8 @@ interface MockFixtureOptions {
   /** Seeds the Linlab catalog rows and its freshness state. */
   managedCatalogEntries?: ManagedSkillCatalogEntryView[];
   managedCatalogStatus?: 'fresh' | 'cached' | 'unavailable';
+  /** Seeds Settings-only application update status. */
+  appUpdate?: AppUpdateView;
 }
 
 type E2EWindow = Window & {
@@ -130,6 +133,13 @@ type E2EWindow = Window & {
     closeProviderConfig?: () => Promise<void>;
     notifySettingsChanged?: () => Promise<void>;
     appInfo?: () => Promise<AppInfo>;
+    appUpdate?: {
+      get: () => Promise<AppUpdateView>;
+      check: () => Promise<AppUpdateView>;
+      setAutomaticChecksEnabled: (enabled: boolean) => Promise<AppUpdateView>;
+      open: () => Promise<{ ok: boolean; destination?: 'download' | 'release'; error?: string }>;
+      onChanged: (listener: (view: AppUpdateView) => void) => () => void;
+    };
     onSettingsChanged?: (listener: () => void) => () => void;
     onSettingsNavigate?: (listener: (target: unknown) => void) => () => void;
     openLocalFile?: (options: { path: string; threadId?: string; attachmentId?: string }) => Promise<{ opened: boolean }>;
@@ -388,6 +398,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     const documentListeners: Array<(event: unknown) => void> = [];
     const oauthListeners: Array<(envelope: unknown) => void> = [];
     const settingsChangedListeners: Array<() => void> = [];
+    const appUpdateListeners: Array<(view: AppUpdateView) => void> = [];
     const translationLanguageListeners: Array<(language: TranslationLanguage) => void> = [];
     const translationPreferenceListeners: Array<(preferences: UrlPageTranslationPreferences) => void> = [];
     let translationLanguage = options.translationLanguage ?? 'en';
@@ -603,6 +614,14 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       body: 'Review workspace conventions before automatic use.',
     }];
     const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+    let appUpdate = clone(options.appUpdate ?? {
+      currentVersion: '0.1.0',
+      automaticChecksEnabled: true,
+      phase: 'idle',
+      lastSuccessfulCheckAt: now,
+      availableRelease: null,
+      manualError: null,
+    } satisfies AppUpdateView);
     const delay = (ms: number) => new Promise((resolve) => { window.setTimeout(resolve, ms); });
     type MockThreadItem = {
       id: string;
@@ -1782,6 +1801,26 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         chrome: '142.0.0',
         node: '22.0.0',
       }),
+      appUpdate: {
+        get: async () => clone(appUpdate),
+        check: async () => clone(appUpdate),
+        setAutomaticChecksEnabled: async (enabled) => {
+          appUpdate = { ...appUpdate, automaticChecksEnabled: enabled };
+          for (const listener of appUpdateListeners) listener(clone(appUpdate));
+          return clone(appUpdate);
+        },
+        open: async () => {
+          calls.push({ cmd: 'app_update_open', args: {} });
+          return { ok: true, destination: appUpdate.availableRelease?.downloadAvailable ? 'download' : 'release' };
+        },
+        onChanged: (listener) => {
+          appUpdateListeners.push(listener);
+          return () => {
+            const index = appUpdateListeners.indexOf(listener);
+            if (index >= 0) appUpdateListeners.splice(index, 1);
+          };
+        },
+      },
       automationRequest: async <T,>(method: string, input: Record<string, unknown> = {}): Promise<T> => {
         calls.push({ cmd: `automation/${method}`, args: clone(input) });
         if (method === 'list') return clone({ data: mockAutomations }) as T;

@@ -18,6 +18,7 @@ interface SettingsGeneralSectionProps {
   onError: (message: string | null) => void;
   onNotice: (message: string | null) => void;
   onOpenPage: (page: SettingsPageTarget) => void;
+  updateAvailable?: boolean;
 }
 
 /**
@@ -27,7 +28,12 @@ interface SettingsGeneralSectionProps {
  * all of its state is local to this component and only the shared error/notice
  * surface is passed down.
  */
-export function SettingsGeneralSection({ onError, onNotice, onOpenPage }: SettingsGeneralSectionProps) {
+export function SettingsGeneralSection({
+  onError,
+  onNotice,
+  onOpenPage,
+  updateAvailable = false,
+}: SettingsGeneralSectionProps) {
   // App-level appearance preference. Independent of the provider/capability save
   // flow: it applies immediately across all windows via the main process
   // (nativeTheme.themeSource) and persists, so there is no Save step.
@@ -218,6 +224,8 @@ export function SettingsGeneralSection({ onError, onNotice, onOpenPage }: Settin
           drillsDown
           label={t.settings.about.rowLabel}
           onSelect={() => onOpenPage('about')}
+          reserveStatusIndicator
+          statusIndicatorLabel={updateAvailable ? t.settings.about.updateAvailableIndicator : undefined}
         />
       </InsetGroup>
     </section>

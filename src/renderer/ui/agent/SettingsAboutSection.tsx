@@ -10,17 +10,22 @@ import {
   resolveChangelogRelease,
   type ChangelogRelease,
 } from '../../../core/changelog';
+import type { AppUpdateErrorCode, AppUpdateView } from '../../../core/appUpdate';
 import { serializeUnknownError, type AppInfo } from '../../../core/errorObservability';
 import { api } from '../../api/client';
-import { useT } from '../../i18n/I18nProvider';
+import { useI18n } from '../../i18n/I18nProvider';
 import { Button } from '../primitives/Button';
 import { ICON_SIZE, OpenIcon } from '../icons';
 import { InsetGroup, InsetRow } from './SettingsInsetList';
+import { SwitchControl } from '../primitives/SwitchControl';
+import { SwitchMark } from '../primitives/SwitchMark';
 
 const HELP_URL = 'https://github.com/relixiaobo/lin-outliner';
 const ISSUES_URL = 'https://github.com/relixiaobo/lin-outliner/issues';
 
 interface SettingsAboutSectionProps {
+  appUpdate?: AppUpdateView | null;
+  onAppUpdateChange?: (view: AppUpdateView) => void;
   onError: (message: string | null) => void;
   onNotice: (message: string | null) => void;
   loadChangelog?: () => Promise<string>;
@@ -48,7 +53,11 @@ function ReleaseNoteLink({ children, href, ...props }: ComponentPropsWithoutRef<
   );
 }
 
-const RELEASE_NOTE_COMPONENTS = { a: ReleaseNoteLink };
+function ReleaseNoteImage({ alt }: ComponentPropsWithoutRef<'img'>) {
+  return alt ? <span>{alt}</span> : null;
+}
+
+const RELEASE_NOTE_COMPONENTS = { a: ReleaseNoteLink, img: ReleaseNoteImage };
 
 /**
  * About: what this is, what changed, and how to reach us.
@@ -72,13 +81,16 @@ const RELEASE_NOTE_COMPONENTS = { a: ReleaseNoteLink };
  * empty row that says nothing is worse than a page that does not claim to.
  */
 export function SettingsAboutSection({
+  appUpdate = null,
+  onAppUpdateChange = () => undefined,
   onError,
   onNotice,
   loadChangelog = loadBundledChangelog,
 }: SettingsAboutSectionProps) {
-  const t = useT();
+  const { locale, t } = useI18n();
   const [info, setInfo] = useState<AppInfo | null>(null);
   const [releases, setReleases] = useState<readonly ChangelogRelease[]>([]);
+  const [updateActionError, setUpdateActionError] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -135,6 +147,66 @@ export function SettingsAboutSection({
     }
   }
 
+  async function checkForUpdates(): Promise<void> {
+    setUpdateActionError(null);
+    try {
+      const next = await window.lin?.appUpdate?.check();
+      if (!next) throw new Error('App update bridge unavailable.');
+      onAppUpdateChange(next);
+    } catch {
+      setUpdateActionError(t.settings.about.updateCheckFailed);
+    }
+  }
+
+  async function setAutomaticChecksEnabled(enabled: boolean): Promise<void> {
+    if (!appUpdate) return;
+    setUpdateActionError(null);
+    onAppUpdateChange({ ...appUpdate, automaticChecksEnabled: enabled });
+    try {
+      const next = await window.lin?.appUpdate?.setAutomaticChecksEnabled(enabled);
+      if (!next) throw new Error('App update bridge unavailable.');
+      onAppUpdateChange(next);
+    } catch {
+      onAppUpdateChange(appUpdate);
+      setUpdateActionError(t.settings.about.updatePreferenceFailed);
+    }
+  }
+
+  async function openAvailableUpdate(): Promise<void> {
+    setUpdateActionError(null);
+    try {
+      const result = await window.lin?.appUpdate?.open();
+      if (!result?.ok) setUpdateActionError(t.settings.about.updateOpenFailed);
+    } catch {
+      setUpdateActionError(t.settings.about.updateOpenFailed);
+    }
+  }
+
+  const availableUpdate = appUpdate?.availableRelease ?? null;
+  const updateError = updateActionError
+    ?? (appUpdate?.manualError ? updateErrorMessage(appUpdate.manualError, t.settings.about) : null);
+  const lastChecked = appUpdate?.lastSuccessfulCheckAt !== null && appUpdate?.lastSuccessfulCheckAt !== undefined
+    ? t.settings.about.updateLastChecked({
+        date: new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' })
+          .format(new Date(appUpdate.lastSuccessfulCheckAt)),
+      })
+    : t.settings.about.updateNeverChecked;
+  const updateStatusLabel = appUpdate?.phase === 'checking'
+    ? t.settings.about.updateChecking
+    : availableUpdate
+      ? t.settings.about.updateAvailable({ version: availableUpdate.version })
+      : appUpdate?.automaticChecksEnabled
+        ? appUpdate.lastSuccessfulCheckAt === null
+          ? t.settings.about.updateNotChecked
+          : t.settings.about.updateCurrent
+        : t.settings.about.updateAutomaticOff;
+  const updateStatusSublabel = availableUpdate
+    ? t.settings.about.updateReleased({
+        date: new Intl.DateTimeFormat(locale, { dateStyle: 'medium' })
+          .format(new Date(availableUpdate.publishedAt)),
+      })
+    : t.settings.about.updateInstalledVersion({ version: appUpdate?.currentVersion ?? info?.version ?? '' });
+
   return (
     <section className="agent-settings-section" aria-label={t.settings.about.sectionAriaLabel}>
       {info ? (
@@ -146,6 +218,67 @@ export function SettingsAboutSection({
               <Button onClick={() => void copyVersionInfo()} variant="secondary">
                 {t.settings.about.copyVersionInfo}
               </Button>
+            )}
+            wrap
+          />
+        </InsetGroup>
+      ) : null}
+
+      {appUpdate ? (
+        <InsetGroup ariaLabel={t.settings.about.updateGroup} id="software-update" label={t.settings.about.updateGroup}>
+          <InsetRow
+            label={updateStatusLabel}
+            sublabel={updateStatusSublabel}
+            trailing={availableUpdate ? (
+              <Button onClick={() => void openAvailableUpdate()} variant="secondary">
+                {availableUpdate.downloadAvailable
+                  ? t.settings.about.updateDownloadAction
+                  : t.settings.about.updateViewReleaseAction}
+              </Button>
+            ) : undefined}
+            wrap
+          />
+          {availableUpdate?.note ? (
+            <div className="settings-about-release-note-row" role="listitem">
+              <div className="file-preview-markdown settings-about-release-note">
+                <Markdown
+                  components={RELEASE_NOTE_COMPONENTS}
+                  remarkPlugins={RELEASE_NOTE_REMARK_PLUGINS}
+                  skipHtml
+                >
+                  {availableUpdate.note}
+                </Markdown>
+              </div>
+            </div>
+          ) : null}
+          <InsetRow
+            feedback={updateError ? <div className="settings-update-error" role="alert">{updateError}</div> : undefined}
+            label={t.settings.about.updateCheckLabel}
+            sublabel={lastChecked}
+            trailing={(
+              <Button
+                disabled={appUpdate.phase === 'checking'}
+                onClick={() => void checkForUpdates()}
+                variant="secondary"
+              >
+                {appUpdate.phase === 'checking'
+                  ? t.settings.about.updateCheckingAction
+                  : t.settings.about.updateCheckAction}
+              </Button>
+            )}
+            wrap
+          />
+          <InsetRow
+            label={t.settings.about.updateAutomaticLabel}
+            sublabel={t.settings.about.updateAutomaticSublabel}
+            trailing={(
+              <SwitchControl
+                checked={appUpdate.automaticChecksEnabled}
+                label={t.settings.about.updateAutomaticLabel}
+                onCheckedChange={(enabled) => void setAutomaticChecksEnabled(enabled)}
+              >
+                <SwitchMark checked={appUpdate.automaticChecksEnabled} />
+              </SwitchControl>
             )}
             wrap
           />
@@ -204,4 +337,17 @@ export function SettingsAboutSection({
       </InsetGroup>
     </section>
   );
+}
+
+function updateErrorMessage(
+  code: AppUpdateErrorCode,
+  messages: {
+    updateCheckFailed: string;
+    updateCheckTimedOut: string;
+    updateResponseInvalid: string;
+  },
+): string {
+  if (code === 'timeout') return messages.updateCheckTimedOut;
+  if (code === 'invalid-response') return messages.updateResponseInvalid;
+  return messages.updateCheckFailed;
 }

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { AppIcon } from '../icons';
 import type {
   AgentProviderConfigView,
@@ -39,6 +39,7 @@ import { capabilitySettingsRemovalPatch } from './agentCapabilitySettings';
 import { beginKeyedMutation, isCurrentKeyedMutation } from '../keyedMutationGeneration';
 import { createSerialMutationQueue } from '../../../core/serialMutationQueue';
 import { skillLibraryCount } from './skillLibraryCount';
+import { isAppUpdateAvailable, type AppUpdateView } from '../../../core/appUpdate';
 
 interface AgentSettingsViewProps {
   onClose: () => void;
@@ -163,6 +164,8 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
   // reason as the badge: the library owns the list but is only mounted on its
   // own page, and the row has to be right before anyone opens it.
   const [skillCount, setSkillCount] = useState(0);
+  const [appUpdate, setAppUpdate] = useState<AppUpdateView | null>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
   const mountedRef = useRef(false);
   // The persisted disabledSkills as of the last completed write, and a queue so
   // concurrent toggles cannot each write a whole array from the same stale read.
@@ -182,6 +185,7 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
   const settingsInitializedRef = useRef(false);
   const mutationGenerationsRef = useRef(new Map<string, number>());
   const t = useT();
+  const updateAvailable = isAppUpdateAvailable(appUpdate);
   // The toolbar names where you are, which on a sub-page is the page — the rail
   // already shows which category owns it.
   const categoryLabel = route.page ? t.settings.pages[route.page] : t.settings.categories[category].label;
@@ -205,6 +209,25 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
     return () => { active = false; };
   }, []);
 
+  // App update state has two consumers (the General rail and About), so the
+  // shell owns the one global subscription. Page components receive the same
+  // snapshot and cannot accumulate listeners as navigation mounts/unmounts them.
+  useEffect(() => {
+    let active = true;
+    const unsubscribe = window.lin?.appUpdate?.onChanged((view) => {
+      if (active) setAppUpdate(view);
+    });
+    void window.lin?.appUpdate?.get()
+      .then((view) => {
+        if (active) setAppUpdate(view);
+      })
+      .catch(() => { /* update status is inspection-only */ });
+    return () => {
+      active = false;
+      unsubscribe?.();
+    };
+  }, []);
+
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -221,6 +244,13 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
     setError(null);
     setNotice(null);
   }), []);
+
+  // A page reached from below the fold must not inherit the previous pane's
+  // scroll position. Reset before paint; the anchor effect below can then move
+  // an explicit deep link to its requested group.
+  useLayoutEffect(() => {
+    if (contentRef.current) contentRef.current.scrollTop = 0;
+  }, [route.category, route.page]);
 
   useEffect(() => {
     if (loading || !route.anchor) return;
@@ -683,13 +713,21 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
                       {skillUpdateCount}
                     </span>
                   ) : null}
+                  {id === 'general' ? (
+                    <span
+                      aria-hidden={updateAvailable ? undefined : 'true'}
+                      aria-label={updateAvailable ? t.settings.about.updateAvailableIndicator : undefined}
+                      className={`settings-status-dot${updateAvailable ? '' : ' is-hidden'}`}
+                      role={updateAvailable ? 'img' : undefined}
+                    />
+                  ) : null}
                 </ButtonControl>
               );
             })}
           </nav>
         </aside>
 
-        <div className="settings-content" aria-busy={loading ? 'true' : undefined}>
+        <div ref={contentRef} className="settings-content" aria-busy={loading ? 'true' : undefined}>
             {route.page === 'skills' ? (
               <SettingsSkillLibrarySection
                 additionalSkillDirectories={settings?.agent.additionalSkillDirectories ?? []}
@@ -714,12 +752,18 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
                 toggleErrors={providerToggleErrors}
               />
             ) : route.page === 'about' ? (
-              <SettingsAboutSection onError={setError} onNotice={setNotice} />
+              <SettingsAboutSection
+                appUpdate={appUpdate}
+                onAppUpdateChange={setAppUpdate}
+                onError={setError}
+                onNotice={setNotice}
+              />
             ) : category === 'general' ? (
               <SettingsGeneralSection
                 onError={setError}
                 onNotice={setNotice}
                 onOpenPage={openPage}
+                updateAvailable={updateAvailable}
               />
             ) : category === 'agent' ? (
               <SettingsAgentSection

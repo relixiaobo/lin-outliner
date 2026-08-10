@@ -149,7 +149,11 @@ root children (Daily notes,
 Library, Schema, Saved searches, and Trash — none hidden). The standalone
 Settings window is product chrome, not a document root section. On restore,
 an empty default legacy Settings root is removed; if that retired root has user
-content or live references, it is unlocked and moved into Library. The current
+content or live references, it is unlocked and moved into Library. Application
+update discovery likewise has no sidebar row, workspace pane, overlay, toast,
+banner, dialog, or dock badge. Its only ambient presentation is the persistent
+status dot inside the standalone Settings window; release status, notes, checks,
+preference, and download action live under General > About. The current
 workspace root itself is a clickable row with a compact avatar. Sidebar rows
 share one content axis; primary-nav entries and the workspace-root avatar sit on
 it with a 16px icon, but workspace-tree rows are text-only — a node's icon (its

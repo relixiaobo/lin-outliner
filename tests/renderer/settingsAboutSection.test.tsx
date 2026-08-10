@@ -3,6 +3,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 import { SettingsAboutSection } from '../../src/renderer/ui/agent/SettingsAboutSection';
+import type { AppUpdateView } from '../../src/core/appUpdate';
 
 const CHANGELOG_FIXTURE = `# Changelog
 
@@ -87,11 +88,17 @@ afterEach(() => {
   }
 });
 
-async function renderAbout(changelog = CHANGELOG_FIXTURE): Promise<void> {
+async function renderAbout(
+  changelog = CHANGELOG_FIXTURE,
+  appUpdate: AppUpdateView | null = null,
+  onAppUpdateChange: (view: AppUpdateView) => void = () => undefined,
+): Promise<void> {
   await act(async () => {
     root?.render(
       <SettingsAboutSection
+        appUpdate={appUpdate}
         loadChangelog={async () => changelog}
+        onAppUpdateChange={onAppUpdateChange}
         onError={() => undefined}
         onNotice={() => undefined}
       />,
@@ -111,6 +118,75 @@ function openedUrls(): string[] {
 }
 
 describe('SettingsAboutSection', () => {
+  test('shows a cached update note and uses URL-free update commands', async () => {
+    if (!window.lin) throw new Error('Missing test bridge');
+    const calls: string[] = [];
+    const state: AppUpdateView = {
+      currentVersion: '0.1.0',
+      automaticChecksEnabled: true,
+      phase: 'idle',
+      lastSuccessfulCheckAt: 1_800_000_000_000,
+      availableRelease: {
+        version: '0.2.0',
+        publishedAt: '2026-08-10T00:00:00Z',
+        note: '**Quieter updates.** No prompts outside Settings.\n\n![Release art](https://example.com/release.png)',
+        downloadAvailable: true,
+      },
+      manualError: null,
+    };
+    window.lin.appUpdate = {
+      get: async () => state,
+      check: async () => { calls.push('check'); return state; },
+      setAutomaticChecksEnabled: async (enabled) => {
+        calls.push(`automatic:${enabled}`);
+        return { ...state, automaticChecksEnabled: enabled };
+      },
+      open: async () => { calls.push('open'); return { ok: true, destination: 'download' }; },
+      onChanged: () => () => undefined,
+    };
+    const projected: AppUpdateView[] = [];
+    await renderAbout(CHANGELOG_FIXTURE, state, (view) => projected.push(view));
+
+    const updateGroup = document.querySelector('[data-settings-anchor="software-update"]');
+    expect(updateGroup?.textContent).toContain('Tenon 0.2.0 is available');
+    expect(updateGroup?.textContent).toContain('Quieter updates. No prompts outside Settings.');
+    expect(updateGroup?.innerHTML).not.toContain('github.com');
+    expect(updateGroup?.querySelector('img')).toBeNull();
+    expect(updateGroup?.textContent).toContain('Release art');
+
+    const download = [...updateGroup!.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.includes('Download update'));
+    const check = [...updateGroup!.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.includes('Check now'));
+    const automatic = updateGroup!.querySelector<HTMLButtonElement>('[role="switch"]');
+    await act(async () => {
+      download?.click();
+      check?.click();
+      automatic?.click();
+      await Promise.resolve();
+    });
+
+    expect(calls).toEqual(['open', 'check', 'automatic:false']);
+    expect(projected.at(-1)?.automaticChecksEnabled).toBeFalse();
+  });
+
+  test('keeps an explicit timeout inside the Software Update group', async () => {
+    const state: AppUpdateView = {
+      currentVersion: '0.1.0',
+      automaticChecksEnabled: true,
+      phase: 'idle',
+      lastSuccessfulCheckAt: null,
+      availableRelease: null,
+      manualError: 'timeout',
+    };
+    await renderAbout(CHANGELOG_FIXTURE, state);
+
+    const updateGroup = document.querySelector('[data-settings-anchor="software-update"]');
+    expect(updateGroup?.querySelector('[role="alert"]')?.textContent)
+      .toBe('The update check timed out. Try again.');
+    expect(document.querySelector('.agent-settings-feedback')).toBeNull();
+  });
+
   test('heads What\'s New with the running version and shows its note inline', async () => {
     await renderAbout();
 

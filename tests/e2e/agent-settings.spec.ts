@@ -108,6 +108,54 @@ test.describe('agent settings window', () => {
     await expect.poll(() => clipboardText(page)).toContain('Tenon 0.1.0\ndarwin arm64');
   });
 
+  test('keeps app update discovery passive and clears status dots only when automatic checks turn off', async ({ page }) => {
+    await page.setViewportSize({ width: 560, height: 480 });
+    const settings = await openSettings(page, '', {
+      appUpdate: {
+        currentVersion: '0.1.0',
+        automaticChecksEnabled: true,
+        phase: 'idle',
+        lastSuccessfulCheckAt: 1_800_000_000_000,
+        availableRelease: {
+          version: '0.2.0',
+          publishedAt: '2026-08-10T00:00:00Z',
+          note: 'A quieter release with focused improvements.',
+          downloadAvailable: true,
+        },
+        manualError: null,
+      },
+    });
+
+    // Status exists only inside Settings: one dot on the General rail item and
+    // one on its About row. There is no prompt, toast, or dialog to dismiss.
+    const visibleUpdateDots = settings.locator('.settings-status-dot:not(.is-hidden)');
+    await expect(visibleUpdateDots).toHaveCount(2);
+    await expect(visibleUpdateDots.first())
+      .toHaveAttribute('aria-label', 'Tenon update available');
+    await expect(settings.locator('.action-notice')).toHaveCount(0);
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+
+    await settings.locator('.inset-row', { hasText: 'About Tenon' }).locator('.inset-row-main').click();
+    await expect(settings.getByRole('list', { name: 'Software Update' })).toBeVisible();
+    await expect.poll(() => settings.locator('.settings-content').evaluate((element) => element.scrollTop)).toBe(0);
+    await expect(settings.getByText('Tenon 0.2.0 is available')).toBeVisible();
+    await expect(settings.getByText('A quieter release with focused improvements.')).toBeVisible();
+    // Merely viewing About does not acknowledge a state-based indicator.
+    await expect(visibleUpdateDots).toHaveCount(1);
+
+    await settings.getByRole('button', { name: 'Download update' }).click();
+    await expect.poll(async () => (await commandCalls(page)).filter((call) => call.cmd === 'app_update_open').length)
+      .toBe(1);
+    await expect(visibleUpdateDots).toHaveCount(1);
+
+    await settings.getByRole('switch', { name: 'Check automatically' }).click();
+    await expect(visibleUpdateDots).toHaveCount(0);
+    await settings.getByRole('button', { name: 'Back' }).click();
+    const reservedAboutDot = settings.locator('[data-settings-anchor="about"] .settings-status-dot');
+    await expect(reservedAboutDot).toHaveClass(/is-hidden/);
+    await expect(reservedAboutDot).toHaveAttribute('aria-hidden', 'true');
+  });
+
   test('keeps scrolled content below the fixed toolbar chrome', async ({ page }) => {
     const settings = await openSettings(page);
     const toolbarBox = await settings.locator('.settings-toolbar').boundingBox();

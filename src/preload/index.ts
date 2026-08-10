@@ -95,6 +95,15 @@ import {
   LIN_CLEAR_URL_PREVIEW_DATA_CHANNEL,
   type ClearUrlPreviewDataResult,
 } from '../core/urlPreviewSession';
+import {
+  LIN_APP_UPDATE_CHANGED_CHANNEL,
+  LIN_APP_UPDATE_CHECK_CHANNEL,
+  LIN_APP_UPDATE_GET_CHANNEL,
+  LIN_APP_UPDATE_OPEN_CHANNEL,
+  LIN_APP_UPDATE_SET_AUTOMATIC_CHANNEL,
+  type AppUpdateOpenResult,
+  type AppUpdateView,
+} from '../core/appUpdate';
 
 export interface LinPickedLocalFile {
   entryKind?: 'file' | 'directory';
@@ -398,6 +407,18 @@ const api = {
     ipcRenderer.invoke('lin:get-provider-api-key', { providerId }) as Promise<AgentProviderStoredApiKey>,
   notifySettingsChanged: () => ipcRenderer.invoke('lin:settings-changed') as Promise<void>,
   appInfo: () => ipcRenderer.invoke(LIN_APP_INFO_CHANNEL) as Promise<AppInfo>,
+  appUpdate: {
+    get: () => ipcRenderer.invoke(LIN_APP_UPDATE_GET_CHANNEL) as Promise<AppUpdateView>,
+    check: () => ipcRenderer.invoke(LIN_APP_UPDATE_CHECK_CHANNEL) as Promise<AppUpdateView>,
+    setAutomaticChecksEnabled: (enabled: boolean) =>
+      ipcRenderer.invoke(LIN_APP_UPDATE_SET_AUTOMATIC_CHANNEL, enabled) as Promise<AppUpdateView>,
+    open: () => ipcRenderer.invoke(LIN_APP_UPDATE_OPEN_CHANNEL) as Promise<AppUpdateOpenResult>,
+    onChanged: (listener: (view: AppUpdateView) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, view: AppUpdateView) => listener(view);
+      ipcRenderer.on(LIN_APP_UPDATE_CHANGED_CHANNEL, handler);
+      return () => ipcRenderer.removeListener(LIN_APP_UPDATE_CHANGED_CHANNEL, handler);
+    },
+  },
   revealDiagnosticsLog: () =>
     ipcRenderer.invoke(LIN_REVEAL_DIAGNOSTICS_LOG_CHANNEL) as Promise<DiagnosticsActionResult>,
   exportDiagnostics: () =>
