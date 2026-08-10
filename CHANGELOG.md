@@ -68,6 +68,21 @@ Entries reference the pull request that introduced them.
   follow-up PR rebuilds them on attachments. `HAS_MEDIA` stays as an alias of
   `HAS_IMAGE`, and the search grammar spec now documents the real `IS_TYPE`
   alias set and candidate rules.
+- **A failed tool states its outcome once, where it belongs (PR #518, cc-2)** — an
+  expanded tool detail said "failed" three times over: the folded row's own status
+  segment, a red sentence beneath the body (`Command failed with exit code 2`), and
+  the output heading flipping to `Error`. `ToolDetail` carried two channels for one
+  idea — a label and an error string — so every tool type kept them consistent by
+  hand and most did it differently. The produced-value section's heading now **is**
+  the outcome: the exit code rides the heading it explains (`Output · Exit code 2`),
+  a tool's own error message fills the section it produced under an `Error` heading,
+  and a failure with neither adds nothing below the row. The status colour lands on
+  that heading alone, never on the arguments the tool was *given*. The review gate
+  retracted its own headline finding after it had been built — a failing command
+  cannot strand its exit code, because the executor writes `aggregatedOutput` and
+  `exitCode` from the same tool envelope in one step — so the fix was reverted and
+  what the round proved became a `PiTurnExecutor` test pinning that coupling from
+  the side that would break it silently.
 
 ### Fixed
 
@@ -113,11 +128,30 @@ Entries reference the pull request that introduced them.
   mutation lock. The fix inverts the refresh model rather than patching each window —
   a definition write invalidates the registry synchronously, and Skill-path resolution
   is async and awaits the reload, failing closed if it cannot complete.
+- **Reasoning stops printing its own headline twice (PR #517, cc-2)** — a collapsed
+  reasoning block shows a one-line summary; expanding it re-rendered the complete
+  source, so a leading paragraph appeared once flattened in the summary and again in
+  the body. The body now starts after a leading paragraph or heading the summary
+  already carries whole — but only when carrying it whole loses nothing. A paragraph
+  containing a link, an image, raw HTML, or a Node reference goes back to the body,
+  headline duplication and all: flattening keeps such a token's visible text and
+  drops its target, so the tidier rendering would have put a URL in neither place and
+  stripped a Node reference of the affordance that opens it.
 
 ### Internal
 
 - **Opened the 0.3.0 train (main-agent)** — `package.json` dials to `0.3.0`
   after the v0.2.0 tag so dev builds name the next train.
+- **Deleted 30 message keys nothing reads (PR #518, cc-2 + main-agent)** — chasing
+  one unused string turned into an audit of the whole English tree, asking of every
+  leaf whether its identifier is typed anywhere in `src/`, `tests/`, or `scripts/`.
+  Thirty were not, across `agent.thread.*` (the eight Item-type display names and
+  nine more), `settings.skills.managed*`, `shell.filePreview.*`, `agent.turnDetails.*`,
+  and five singles; none was reachable through computed member access either, and all
+  were already dead before this train. `i18nCoverage` cannot catch the class — it
+  guards that each locale is a subset of English, which says nothing about whether
+  English itself is read — so every one of them was a line the next translator would
+  have paid for and a promise the UI never kept.
 
 ## [0.2.0] - 2026-08-09
 

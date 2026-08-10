@@ -798,6 +798,19 @@ and the merged PR, distilled rules in [`lessons.md`](lessons.md). Everything
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
 
+- **tool-detail-outcome-sections** (cc-2, PR #518, merged 2026-08-10 — fast-track, no plan
+  file) — a tool detail stated its failure three times; the produced-value heading is now the
+  single place the outcome and its exit code live. `/code-review medium` found three: two
+  contract slips fixed in place, and one headline finding **retracted after it was built** —
+  a failing command cannot strand its exit code, since the executor writes `aggregatedOutput`
+  and `exitCode` from one envelope in one step. The `No output` section it produced was
+  reverted and the coupling is now pinned by a `PiTurnExecutor` test. Rode along: 30 unread
+  i18n message keys deleted app-wide (PM call to bundle rather than split).
+- **reasoning-summary-duplication** (cc-2, PR #517, merged 2026-08-10 — fast-track, no plan
+  file) — an expanded reasoning block re-printed the headline its collapsed summary already
+  carried. The body now starts after that block, except when it holds a link, image, raw
+  HTML, or Node reference — flattening keeps such a token's text and drops its target, so
+  duplication is the cheaper loss. `/code-review medium` found exactly that case.
 - **skill-path-ownership** (codex-4, PR #513, merged 2026-08-10 — plan-track, plan archived
   `done`) — Skill write governance now follows what the registry admitted rather than path
   shape: convention directories stay namespaces, a hand-bound folder is ordinary content
