@@ -1279,9 +1279,7 @@ commandPalette: {
         noOutput: '无输出',
         copyArguments: '复制参数',
         copyOutput: '复制输出',
-        commandFailedWithExitCode: ({ code }) => `命令执行失败，退出码为 ${code}`,
-        commandFailed: '命令执行失败',
-        failedWithoutDetail: '执行失败，未返回错误信息。',
+        exitCode: ({ code }) => `退出码 ${code}`,
         status: {
           inProgress: '进行中',
           completed: '已完成',

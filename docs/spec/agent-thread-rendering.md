@@ -141,13 +141,21 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
   structure and applies bounds to each stored display field, so a large `file_write`
   retains its path even when content moves to a payload. Command output,
   file interaction, copy actions, and image previews retain their native
-  affordances; a successful shell exit code is redundant with the completed row
-  and stays hidden, while a non-zero exit code is rendered as an explicit failure
-  explanation. A failure that never produced an exit code — a timeout, a kill —
-  keeps a null code and says only that the command failed; the renderer never
-  borrows a plausible code the shell did not report. Every other tool failure
-  surfaces its own message, or, when it has none, states plainly that it failed
-  without one; failure prose is never presented under a neutral result heading
+  affordances. An expanded detail is a list of labelled sections and nothing
+  else. The input section is headed `Arguments` for every tool including `bash`:
+  it holds what the model REQUESTED, and that provenance — not its content — is
+  the load-bearing fact, so rendering shell text with bash highlighting stays an
+  exception in rendering rather than one in labelling. The produced-value
+  section's heading is the outcome — `Output`, `Result`, or `Error` — and
+  carries status colour when the production failed. A non-zero shell exit code qualifies that heading
+  (`Output · Exit code 2`), because the code explains the output it sits above.
+  A successful code is redundant with the completed row and stays hidden, and a
+  failure that never produced one — a timeout, a kill — gets no invented number.
+  A tool that failed with its own message shows that message AS the produced
+  value under the `Error` heading, the same precedence the Turn copy source
+  uses; failure prose is never presented under a neutral result heading. The
+  detail never adds a sentence restating a failure the row already reports, so a
+  failure with neither a code nor a message adds nothing below the row
 - a command row is labelled by the **caller's own description** of the command
   when there is one. The `bash` contract already requires a one-line account in
   active voice, so the transcript states intent rather than shell syntax, and

@@ -18,6 +18,16 @@ describe('thread tool row status CSS guards', () => {
     expect(threadCss).not.toMatch(/\.thread-tool-failed[^{]*svg\s*\{[^}]*width:\s*9px/);
   });
 
+  test('carries a failed outcome on the section heading that states it', () => {
+    // The detail's one status colour belongs to the heading that names the
+    // outcome. A whole-detail tint would repaint the arguments the tool was
+    // given, which did not fail.
+    expect(threadCss).toMatch(
+      /\.thread-tool-section\.is-failed > header \{\s*color:\s*var\(--status-danger\);/,
+    );
+    expect(threadCss).not.toMatch(/\.thread-tool-failed[^{]*\.thread-tool-body[^{]*\{[^}]*color:/);
+  });
+
   test('gives interrupted rows a muted treatment of their own', () => {
     expect(threadCss).toMatch(
       /\.thread-tool-interrupted > \.thread-tool-toggle \.thread-disclosure-status,\s*\.thread-tool-interrupted > \.thread-tool-toggle \.thread-tool-label \{\s*color:\s*var\(--text-faint\);/,

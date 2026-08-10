@@ -836,7 +836,7 @@ function ToolItemDisclosure({
           ) : null}
           {detail.body}
           {output ? (
-            <ToolDetailSection label={detail.outputLabel}>
+            <ToolDetailSection failed={detail.outcome.failed} label={detail.outcome.label}>
               <ToolCodeBlock
                 code={output}
                 copyLabel={t.agent.thread.item.copyOutput}
@@ -847,7 +847,6 @@ function ToolItemDisclosure({
               />
             </ToolDetailSection>
           ) : null}
-          {detail.error ? <p className="thread-inline-error" role="status">{detail.error}</p> : null}
         </div>
       ) : null}
     </div>
@@ -856,13 +855,15 @@ function ToolItemDisclosure({
 
 function ToolDetailSection({
   children,
+  failed = false,
   label,
 }: {
   readonly children: ReactNode;
+  readonly failed?: boolean;
   readonly label: string;
 }) {
   return (
-    <section className="thread-tool-section">
+    <section className={`thread-tool-section${failed ? ' is-failed' : ''}`}>
       <header><span>{label}</span></header>
       {children}
     </section>
@@ -940,13 +941,33 @@ export function ThreadMessageCopyButton({
   );
 }
 
+/**
+ * The heading of the section that holds what the tool produced, and whether
+ * producing it failed. The two travel together because a heading reading
+ * `Error` in neutral ink — or `Result` in danger red — contradicts itself.
+ *
+ * A failure is stated exactly once per place it belongs: the folded row says
+ * THAT the tool failed, this heading says the produced value is a failure and
+ * qualifies it with the shell's exit code, and the section body holds what the
+ * tool actually returned. Nothing restates a neighbour.
+ */
+interface ToolOutcome {
+  readonly label: string;
+  readonly failed: boolean;
+}
+
 interface ToolDetail {
   readonly input: string | null;
+  // The input section is headed `Arguments` for every tool, including `bash`.
+  // It holds what the model REQUESTED — sourced only from the `modelCall`
+  // envelope — and that provenance is the load-bearing fact about it; a heading
+  // naming the content instead would read as the host's own record of what ran.
+  // Rendering shell text with bash highlighting is the documented exception to
+  // JSON arguments, and an exception in rendering is not one in provenance.
   readonly inputLanguage: string;
   readonly output: string | null;
-  readonly outputLabel: string;
   readonly outputLanguage: string;
-  readonly error: string | null;
+  readonly outcome: ToolOutcome;
   readonly body: ReactNode;
 }
 
@@ -963,25 +984,29 @@ function toolDetail(
     inputLanguage: 'text',
     output: null,
     outputLanguage: 'text',
-    outputLabel: t.agent.thread.item.output,
-    error: null,
+    outcome: { label: t.agent.thread.item.output, failed: false },
     body: null,
   };
   switch (item.type) {
     case 'commandExecution': {
       const command = canonicalCommandArgument(argumentsValue);
+      // A non-zero exit code qualifies the output it explains, so it rides that
+      // section's heading rather than becoming a sentence of its own. A zero
+      // code is what the completed row already reports, and a failure that
+      // never produced one — a timeout, a kill — gets no invented number: the
+      // row's own failed segment is the statement that it failed.
+      const exitCode = item.exitCode !== null && item.exitCode !== 0
+        ? t.agent.thread.item.exitCode({ code: item.exitCode })
+        : null;
       return {
         ...empty,
         input: command ?? jsonText(argumentsValue),
         inputLanguage: command === null ? 'json' : 'bash',
         output: item.aggregatedOutput,
-        // A real non-zero code is the useful explanation; a failure that never
-        // produced one says so plainly instead of borrowing "exit code 1".
-        error: item.exitCode !== null && item.exitCode !== 0
-          ? t.agent.thread.item.commandFailedWithExitCode({ code: item.exitCode })
-          : item.status === 'failed'
-            ? t.agent.thread.item.commandFailed
-            : null,
+        outcome: {
+          label: exitCode ? `${t.agent.thread.item.output} · ${exitCode}` : t.agent.thread.item.output,
+          failed: item.status === 'failed',
+        },
       };
     }
     case 'fileChange':
@@ -989,7 +1014,6 @@ function toolDetail(
         ...empty,
         input: argumentsValue === null ? null : jsonText(argumentsValue),
         inputLanguage: 'json',
-        error: item.status === 'failed' ? t.agent.thread.item.failedWithoutDetail : null,
         body: (
           <ul className="thread-file-changes">
             {item.changes.map((change, index) => (
@@ -1004,14 +1028,19 @@ function toolDetail(
         ),
       };
     case 'mcpToolCall':
+      // A failed call's message IS what it produced — the executor persists the
+      // same text as the output payload and keeps `result` null — so it fills
+      // the produced-value section instead of trailing it as a second voice.
+      // This is the precedence the Turn copy source already uses.
       return {
         ...empty,
         input: jsonText(argumentsValue),
         inputLanguage: 'json',
-        output: item.result === null ? null : jsonText(item.result),
-        outputLanguage: 'json',
-        outputLabel: t.agent.thread.item.result,
-        error: item.error,
+        output: item.error ?? (item.result === null ? null : jsonText(item.result)),
+        outputLanguage: item.error === null ? 'json' : 'text',
+        outcome: item.error === null
+          ? { label: t.agent.thread.item.result, failed: false }
+          : { label: t.agent.thread.item.error, failed: true },
       };
     case 'dynamicToolCall': {
       const textOutput = (item.contentItems ?? []).flatMap((content) => (
@@ -1027,10 +1056,11 @@ function toolDetail(
         inputLanguage: 'json',
         output: textOutput || null,
         outputLanguage: isJsonText(textOutput) ? 'json' : 'text',
-        // Failure prose is an error, not a "Result" — and a failure that
-        // returned nothing at all still owes the user a sentence.
-        outputLabel: failed ? t.agent.thread.item.error : t.agent.thread.item.result,
-        error: failed && !textOutput ? t.agent.thread.item.failedWithoutDetail : null,
+        // Failure prose is an error, not a "Result".
+        outcome: {
+          label: failed ? t.agent.thread.item.error : t.agent.thread.item.result,
+          failed,
+        },
         body: images.length > 0 ? (
           <div className="thread-tool-images">
             {images.map((image) => (
@@ -1043,12 +1073,11 @@ function toolDetail(
     case 'collabAgentToolCall':
       return {
         ...empty,
-        error: item.status === 'failed' ? t.agent.thread.item.failedWithoutDetail : null,
         input: jsonText(argumentsValue),
         inputLanguage: 'json',
         output: jsonText(collaborationResultSnapshot(item)),
         outputLanguage: 'json',
-        outputLabel: t.agent.thread.item.result,
+        outcome: { label: t.agent.thread.item.result, failed: item.status === 'failed' },
         body: item.receiverThreadIds.length > 0 ? (
           <ul className="thread-agent-states">
             {item.receiverThreadIds.map((receiverThreadId) => (
@@ -1067,10 +1096,11 @@ function toolDetail(
         ...empty,
         input: jsonText(argumentsValue),
         inputLanguage: 'json',
-        output: item.results.length > 0 ? jsonText(item.results) : null,
-        outputLanguage: 'json',
-        outputLabel: t.agent.thread.item.result,
-        error: item.error,
+        output: item.error ?? (item.results.length > 0 ? jsonText(item.results) : null),
+        outputLanguage: item.error === null ? 'json' : 'text',
+        outcome: item.error === null
+          ? { label: t.agent.thread.item.result, failed: false }
+          : { label: t.agent.thread.item.error, failed: true },
       };
     default:
       return assertNever(item);

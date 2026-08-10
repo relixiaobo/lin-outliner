@@ -469,16 +469,49 @@ describe('ThreadItemView tool row status presentation', () => {
     expect(input?.textContent).not.toContain('"command"');
   });
 
-  test('explains a failure that never produced an exit code without inventing one', async () => {
-    const rendered = renderItem(command({ status: 'failed', exitCode: null }), { expanded: true });
+  test('hangs the exit code on the output it explains, under the arguments that requested it', async () => {
+    const rendered = renderItem(
+      command({ status: 'failed', exitCode: 2, aggregatedOutput: 'permission denied' }),
+      { expanded: true },
+    );
     await flush();
 
-    const error = rendered.document.querySelector('.thread-inline-error');
-    expect(error?.getAttribute('role')).toBe('status');
-    expect(error?.textContent).toBe('Command failed');
+    const sections = [...rendered.document.querySelectorAll('.thread-tool-section')];
+    // The input heading names provenance, not content: shell text under
+    // `Arguments` is still exactly what the model asked for.
+    expect(sections.map((section) => section.querySelector('header')?.textContent))
+      .toEqual(['Arguments', 'Output · Exit code 2']);
+    expect(sections[1]?.className).toContain('is-failed');
+    // The row already says the tool failed; the detail states it once more only
+    // where it adds the number, never as a sentence of its own.
+    expect(rendered.document.querySelector('.thread-inline-error')).toBeNull();
+    expect(rendered.document.querySelector('.thread-tool-body')?.textContent)
+      .not.toContain('Command failed');
   });
 
-  test('gives a failed file change a failure sentence instead of a silent body', async () => {
+  test('invents no exit code for a failure that never produced one', async () => {
+    const rendered = renderItem(
+      command({ status: 'failed', exitCode: null, aggregatedOutput: 'killed' }),
+      { expanded: true },
+    );
+    await flush();
+
+    const outputSection = [...rendered.document.querySelectorAll('.thread-tool-section')].at(-1);
+    expect(outputSection?.querySelector('header')?.textContent).toBe('Output');
+    expect(outputSection?.className).toContain('is-failed');
+    expect(rendered.document.querySelector('.thread-tool-body')?.textContent).not.toContain('Exit code');
+  });
+
+  test('keeps a successful exit code out of the detail entirely', async () => {
+    const rendered = renderItem(command({ aggregatedOutput: 'ok' }), { expanded: true });
+    await flush();
+
+    const outputSection = [...rendered.document.querySelectorAll('.thread-tool-section')].at(-1);
+    expect(outputSection?.querySelector('header')?.textContent).toBe('Output');
+    expect(outputSection?.className).not.toContain('is-failed');
+  });
+
+  test('adds no failure prose to a failed file change beyond its own changed paths', async () => {
     const item: ThreadItem = {
       ...base('file-1'),
       type: 'fileChange',
@@ -494,8 +527,34 @@ describe('ThreadItemView tool row status presentation', () => {
     const rendered = renderItem(item, { expanded: true });
     await flush();
 
-    expect(rendered.document.querySelector('.thread-inline-error')?.textContent)
-      .toBe('Failed without an error message.');
+    expect(rendered.document.querySelector('.thread-inline-error')).toBeNull();
+    expect(rendered.document.querySelector('.thread-file-changes')?.textContent)
+      .toContain('a.ts');
+  });
+
+  test('fills the produced-value section with a failed MCP call own message', async () => {
+    const item: ThreadItem = {
+      ...base('mcp-1'),
+      type: 'mcpToolCall',
+      status: 'failed',
+      outputRef: null,
+      server: 'weather',
+      tool: 'forecast',
+      pluginId: null,
+      arguments: { city: 'Chengdu' },
+      result: null,
+      error: 'upstream refused the connection',
+      durationMs: 3,
+      modelCall: replayableModelCall('weather__forecast', { city: 'Chengdu' }),
+    };
+    const rendered = renderItem(item, { expanded: true });
+    await flush();
+
+    const outputSection = [...rendered.document.querySelectorAll('.thread-tool-section')].at(-1);
+    expect(outputSection?.querySelector('header')?.textContent).toBe('Error');
+    expect(outputSection?.className).toContain('is-failed');
+    expect(outputSection?.textContent).toContain('upstream refused the connection');
+    expect(rendered.document.querySelector('.thread-inline-error')).toBeNull();
   });
 
   test('labels failed dynamic-tool prose as an error rather than a result', async () => {

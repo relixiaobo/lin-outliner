@@ -1751,6 +1751,12 @@
   line-height: var(--line-meta-tight);
 }
 
+/* The heading is where a failed tool states its outcome, so it is the one place
+   in the detail that carries status colour. */
+.thread-tool-section.is-failed > header {
+  color: var(--status-danger);
+}
+
 .thread-tool-activity-members {
   display: flex;
   min-width: 0;
