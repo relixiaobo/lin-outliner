@@ -15,6 +15,29 @@ Entries reference the pull request that introduced them.
 - **Opened the 0.4.0 train (main-agent)** — `package.json` dials to `0.4.0`
   after the v0.3.0 tag so dev builds name the next train.
 
+## [0.3.1] - 2026-08-10
+
+**0.3.1 is an emergency fix: 0.3.0 could not start.**
+
+The 0.3.0 build's desktop bridge failed to load — the new update checker pulled
+version-comparison code into the app's sandboxed bridge, which cannot resolve
+it — so every window showed "Tenon desktop bridge is unavailable" over an empty
+document. The chain is cut, and the build now refuses to package a bridge that
+cannot load. **If you installed 0.3.0, download 0.3.1 and drag it over the old
+app.**
+
+### Fixed
+
+- **The app starts again (main-agent hotfix)** — `preload/index.ts` imported
+  update channels from `core/appUpdate`, whose module graph reaches `semver`
+  (and `marked` via the changelog parser); electron-vite externalized those
+  into runtime `require()`s the sandboxed preload cannot resolve, so
+  `window.lin` never appeared and every window was dead. The zero-dependency
+  protocol surface moved to `core/appUpdateProtocol.ts`, the preload imports
+  only that, and `app:build` now runs `scripts/check-preload-bundle.ts` between
+  bundling and packaging — one bundle, sandbox-safe requires only — so an
+  unloadable preload fails the build instead of the first install.
+
 ## [0.3.0] - 2026-08-10
 
 **Tenon 0.3 is about memory: the agent remembers what happened, notices what
