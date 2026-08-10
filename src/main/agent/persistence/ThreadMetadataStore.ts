@@ -208,6 +208,28 @@ export class ThreadMetadataStore {
     return row ? recordFromRow(row) : null;
   }
 
+  /**
+   * One query for many Threads, chunked under SQLite's bound-parameter limit.
+   *
+   * The caller is the transcript index, which needs a record per artifact on
+   * disk and runs on the main process every time a Turn completes. Reading them
+   * one at a time is hundreds of synchronous queries on the event loop for an
+   * install with a long history — the renderer stalls exactly while the agent is
+   * busiest.
+   */
+  readMany(threadIds: readonly ThreadId[]): ReadonlyMap<ThreadId, ThreadCatalogRecord> {
+    const records = new Map<ThreadId, ThreadCatalogRecord>();
+    for (let start = 0; start < threadIds.length; start += 500) {
+      const chunk = threadIds.slice(start, start + 500);
+      if (chunk.length === 0) continue;
+      const rows = this.db
+        .prepare(`SELECT * FROM threads WHERE id IN (${chunk.map(() => '?').join(', ')})`)
+        .all(...chunk) as ThreadRow[];
+      for (const row of rows) records.set(row.id, recordFromRow(row));
+    }
+    return records;
+  }
+
   require(threadId: ThreadId): ThreadCatalogRecord {
     const record = this.read(threadId);
     if (!record) throw new Error(`Thread not found: ${threadId}`);

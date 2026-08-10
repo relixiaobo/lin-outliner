@@ -979,8 +979,12 @@ export function decodeAgentCoreRequest<M extends AgentCoreMethod>(
     case 'thread/configuration/get':
     case 'thread/archive':
     case 'thread/unarchive':
+    case 'thread/records/get':
     case 'thread/delete':
       decoded = decodeThreadIdentityRequest(value);
+      break;
+    case 'thread/records/set':
+      decoded = decodeThreadRecordsSetRequest(value);
       break;
     case 'thread/fork':
       decoded = decodeThreadForkRequest(value);
@@ -1072,6 +1076,10 @@ export function decodeAgentCoreResponse<M extends AgentCoreMethod>(
     case 'thread/delete':
     case 'userInput/respond':
       decoded = decodeEmptyResponse(value);
+      break;
+    case 'thread/records/get':
+    case 'thread/records/set':
+      decoded = decodeThreadRecordsResponse(value);
       break;
     case 'thread/turns/list':
       decoded = decodeThreadTurnsListResponse(value);
@@ -1208,6 +1216,21 @@ function decodeThreadIdentityRequest(value: unknown): AgentCoreRequestByMethod['
   const record = recordValue(value, 'thread operation');
   exactKeys(record, ['threadId'], 'thread operation');
   return deepFreeze({ threadId: uuidV7(record.threadId, 'threadId') });
+}
+
+function decodeThreadRecordsSetRequest(value: unknown): AgentCoreRequestByMethod['thread/records/set'] {
+  const record = recordValue(value, 'thread/records/set');
+  exactKeys(record, ['threadId', 'recorded'], 'thread/records/set');
+  return deepFreeze({
+    threadId: uuidV7(record.threadId, 'threadId'),
+    recorded: booleanValue(record.recorded, 'recorded'),
+  });
+}
+
+function decodeThreadRecordsResponse(value: unknown): AgentCoreResponseByMethod['thread/records/get'] {
+  const record = recordValue(value, 'thread/records response');
+  exactKeys(record, ['recorded'], 'thread/records response');
+  return deepFreeze({ recorded: booleanValue(record.recorded, 'recorded') });
 }
 
 function decodeThreadForkRequest(value: unknown): AgentCoreRequestByMethod['thread/fork'] {

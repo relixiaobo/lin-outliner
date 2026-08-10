@@ -46,6 +46,12 @@ export interface ThreadTranscriptWriterOptions {
   /** Every Turn of the Thread that is no longer running, in canonical order. */
   readonly completedTurns: (threadId: ThreadId) => readonly Turn[];
   readonly payloads: (threadId: ThreadId) => TranscriptPayloadReader;
+  /**
+   * The set of artifacts on disk changed. The writer does not know what anyone
+   * derives from that set — it just says when the set moved, which is what keeps
+   * the index out of this file and the direction of knowledge one-way.
+   */
+  readonly onArtifactsChanged?: () => void;
 }
 
 export class ThreadTranscriptWriter {
@@ -141,9 +147,54 @@ export class ThreadTranscriptWriter {
       if (settled) this.writes.delete(threadId);
       this.cursors.delete(threadId);
       await removeThreadTranscript(threadTranscriptPath(this.options.transcriptRoot, threadId));
+      this.options.onArtifactsChanged?.();
     } catch (error) {
       console.warn(`[agent] Thread transcript artifact was not removed for ${threadId}`, error);
     }
+  }
+
+  /**
+   * Let a Thread keep records again after its artifact was removed on purpose.
+   *
+   * `discarded` is permanent for a DELETED Thread — ids are never reused, so it
+   * only ever grows by real deletions — but an exclusion the user turns back off
+   * is not a deletion, and without this the Thread would stay silently unwritable
+   * for the rest of the session.
+   */
+  restore(threadId: ThreadId): void {
+    this.discarded.delete(threadId);
+  }
+
+  /**
+   * Materialize a Thread's whole record now, from canonical history.
+   *
+   * Re-including a conversation cannot wait for its next completed Turn: a
+   * finished one will never have another, so the artifact would stay missing
+   * while the UI reported the record as restored. Resolving the subject first
+   * keeps the one-predicate rule — a Thread that no longer qualifies (still
+   * excluded, ephemeral) rebuilds nothing.
+   */
+  async rebuildNow(thread: Thread): Promise<void> {
+    let subject: TranscriptSubject | null;
+    try {
+      subject = this.options.resolveSubject(thread);
+    } catch (error) {
+      console.warn(`[agent] Thread transcript subject was not resolved for ${thread.id}`, error);
+      return;
+    }
+    if (!subject) return;
+    const pending = (this.writes.get(thread.id) ?? Promise.resolve()).then(async () => {
+      try {
+        await this.rebuild(thread.id, subject, threadTranscriptPath(this.options.transcriptRoot, thread.id));
+      } catch (error) {
+        console.warn(`[agent] Thread transcript was not rebuilt for ${thread.id}`, error);
+      }
+    });
+    this.writes.set(thread.id, pending);
+    void pending.finally(() => {
+      if (this.writes.get(thread.id) === pending) this.writes.delete(thread.id);
+    });
+    await pending;
   }
 
   /** Startup reclamation of transcripts whose Thread no longer exists. */
@@ -231,6 +282,7 @@ export class ThreadTranscriptWriter {
         bytes: cursor.bytes + Buffer.byteLength(text),
         turnIds: new Set(cursor.turnIds).add(turn.id),
       });
+      this.options.onArtifactsChanged?.();
     } catch (error) {
       console.warn(`[agent] Thread transcript Turn was not appended for ${threadId}`, error);
     }
@@ -249,7 +301,33 @@ export class ThreadTranscriptWriter {
       bytes: Buffer.byteLength(text),
       turnIds: new Set(turns.map((turn) => turn.id)),
     });
+    this.options.onArtifactsChanged?.();
   }
+}
+
+/**
+ * Any persistent root Thread, and null for everything else.
+ *
+ * The predicate needs no per-kind knowledge, which is the point: a root that is
+ * not ephemeral keeps a record whether it is a user's conversation, an
+ * Automation run, or a feature source that does not exist yet. Feature 1 needed
+ * an Automation-shaped predicate and it lived beside the automations module for
+ * that reason; generalizing dissolves the special case rather than moving it.
+ * Ephemeral Threads — including the hidden memory-consolidation ones — are
+ * excluded here, so no internal Thread materializes by accident.
+ *
+ * `name` is the name at the moment the header is written, and a header cannot be
+ * revised once the file has grown past it. The index carries the live name; this
+ * is the one it had when it first said something.
+ */
+export function rootTranscriptSubject(thread: Thread): TranscriptSubject | null {
+  if (thread.ephemeral || thread.parentThreadId !== null) return null;
+  return {
+    threadId: thread.id,
+    source: thread.threadSource,
+    name: thread.name,
+    cwd: thread.cwd,
+  };
 }
 
 async function withDeadline<T>(work: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {

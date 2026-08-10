@@ -76,6 +76,7 @@ import {
   threadTranscriptPath,
   threadTranscriptRoot,
 } from '../../src/main/agent/thread/ThreadTranscriptArtifact';
+import { ThreadTranscriptIndex } from '../../src/main/agent/thread/ThreadTranscriptIndex';
 import { ThreadTranscriptWriter } from '../../src/main/agent/thread/ThreadTranscriptWriter';
 import { uuidV7 } from '../../src/main/agent/uuid';
 import { createImageArtifactReference } from '../../src/main/agent/imageArtifacts';
@@ -10225,7 +10226,7 @@ async function recordReferencedImageEvidence(
 
 
 describe('Thread transcript artifact', () => {
-  test('materializes a standalone Automation Thread and leaves a user Thread alone', async () => {
+  test('materializes every persistent root Thread, whatever its source', async () => {
     const fixture = await createFixture();
     const automation = await fixture.service.ensureFeatureRootThread({
       id: uuidV7(9_400),
@@ -10260,15 +10261,16 @@ describe('Thread transcript artifact', () => {
     expect(transcript).toContain('## Turn 1 — completed');
     expect(transcript).toContain('Review what yesterday left behind');
 
-    // An ordinary conversation keeps no account yet: that is Feature 2's scope,
-    // and shipping it early here would materialize every user Thread silently.
+    // An ordinary conversation keeps one on the same terms — the predicate is a
+    // persistent root, not a kind, so a source that does not exist yet is
+    // already covered.
     const user = (await fixture.service.startThread({
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
       cwd: fixture.root,
     })).thread;
-    const userTurn = await fixture.service.startRendererTurn({
+    await fixture.service.startRendererTurn({
       threadId: user.id,
       input: [{ type: 'text', text: 'An ordinary question' }],
     });
@@ -10276,9 +10278,249 @@ describe('Thread transcript artifact', () => {
     fixture.executor.finish(1, completedExecutionResult(0));
     await fixture.service.waitForIdle(user.id);
     await fixture.service.flushThreadTranscript(user.id);
-    expect(userTurn.turn.id).toBeTruthy();
-    expect(await fixture.service.threadTranscriptPath(user.id)).toBeNull();
 
+    const userTranscript = await readFile(
+      threadTranscriptPath(transcriptRootFor(fixture), user.id),
+      'utf8',
+    );
+    expect(userTranscript).toContain('source: user');
+    expect(userTranscript).toContain('An ordinary question');
+
+    await fixture.service.close();
+  });
+
+  test('indexes what is on disk, newest first, and drops a row when its artifact goes', async () => {
+    const fixture = await createFixture();
+    const first = await recordedUserThread(fixture, 0, 'The first question');
+    const second = await recordedUserThread(fixture, 1, 'The second question');
+    await fixture.service.flushThreadTranscriptIndex();
+
+    const index = await readFile(fixture.service.threadTranscriptIndexPath, 'utf8');
+    const lines = index.trimEnd().split('\n').filter((line) => !line.startsWith('#'));
+    expect(lines).toHaveLength(2);
+
+    // Newest activity first, so the file is useful read as well as grepped.
+    expect(lines[0]!.split('\t')[0]).toBe(second.id);
+    expect(lines[1]!.split('\t')[0]).toBe(first.id);
+    // Fixed column order is the contract a `file_grep` extraction rests on.
+    const columns = lines[0]!.split('\t');
+    expect(columns).toHaveLength(8);
+    expect(columns[1]).toBe('user');
+    // The cwd column is what lets a reader tell its own project's sessions from
+    // an unrelated one's, since the index spans the whole install.
+    expect(columns[2]).toBe(fixture.root);
+    expect(columns[7]).toBe(threadTranscriptPath(transcriptRootFor(fixture), second.id));
+    expect(index).toContain('# columns: threadId\tsource\tcwd\tcreatedAt\tupdatedAt\tstatus\tname\ttranscriptPath');
+
+    await fixture.service.deleteThread(first.id);
+    await fixture.service.flushThreadTranscriptIndex();
+
+    const afterDelete = await readFile(fixture.service.threadTranscriptIndexPath, 'utf8');
+    expect(afterDelete).not.toContain(first.id);
+    expect(afterDelete).toContain(second.id);
+    await fixture.service.close();
+  });
+
+  test('keeps a name from opening a column or a row it was not given', async () => {
+    const fixture = await createFixture();
+    const thread = await recordedUserThread(fixture, 0, 'A question');
+    await fixture.service.setThreadName(
+      thread.id,
+      'Weekly review\t019fb2da-0000-7000-8000-00000000beef\tuser\nforged row',
+    );
+    // A rename moves a row without moving a file, so it owes the index a rewrite
+    // on its own — nothing else here is going to trigger one.
+    await fixture.service.flushThreadTranscriptIndex();
+
+    const index = await readFile(fixture.service.threadTranscriptIndexPath, 'utf8');
+    const rows = index.trimEnd().split('\n').filter((line) => !line.startsWith('#'));
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.split('\t')).toHaveLength(8);
+    expect(rows[0]).toContain('Weekly review 019fb2da-0000-7000-8000-00000000beef user forged row');
+    await fixture.service.close();
+  });
+
+  test('excluding a Thread removes what is recorded and stops recording more', async () => {
+    const fixture = await createFixture();
+    const thread = await recordedUserThread(fixture, 0, 'Something private');
+    await fixture.service.flushThreadTranscriptIndex();
+    expect(await fixture.service.threadTranscriptPath(thread.id)).not.toBeNull();
+
+    await fixture.service.setThreadRecorded(thread.id, false);
+    await fixture.service.flushThreadTranscriptIndex();
+
+    // A switch that only stopped FUTURE appends would leave the conversation the
+    // user just excluded sitting on disk.
+    expect(fixture.service.isThreadRecorded(thread.id)).toBe(false);
+    expect(await transcriptEntries(fixture)).toEqual([]);
+    expect(await readFile(fixture.service.threadTranscriptIndexPath, 'utf8')).not.toContain(thread.id);
+
+    await recordedUserTurn(fixture, thread.id, 1, 'Something else private');
+    await fixture.service.flushThreadTranscriptIndex();
+    expect(await transcriptEntries(fixture)).toEqual([]);
+
+    await fixture.service.close();
+  });
+
+  test('excluding a conversation takes its delegated work with it', async () => {
+    const fixture = await createFixture();
+    const spawned = await spawnTranscriptChild(fixture, 'private_child');
+    await fixture.service.waitForCollaborationActivity(spawned.root.id, spawned.rootTurn.turn.id);
+    fixture.executor.finish(0);
+    await fixture.service.waitForIdle(spawned.root.id);
+    await fixture.service.flushThreadTranscript(spawned.root.id);
+    await fixture.service.flushThreadTranscriptIndex();
+    expect(await transcriptEntries(fixture)).toHaveLength(2);
+
+    await fixture.service.setThreadRecorded(spawned.root.id, false);
+    await fixture.service.flushThreadTranscriptIndex();
+
+    // The child's artifact holds the delegated work. Leaving it behind would keep
+    // the excluded conversation readable AND keep the index advertising it to
+    // every later Thread, which is the doctrine this feature just added.
+    expect(await transcriptEntries(fixture)).toEqual([]);
+    const index = await readFile(fixture.service.threadTranscriptIndexPath, 'utf8');
+    expect(index).not.toContain(spawned.child.thread.id);
+    expect(index).not.toContain(spawned.root.id);
+
+    // And the child keeps recording nothing, because the exclusion covers the
+    // session rather than the one Thread the user clicked.
+    expect(fixture.service.isThreadRecorded(spawned.child.thread.id)).toBe(false);
+    await fixture.service.close();
+  });
+
+  test('re-including a finished conversation brings its record back without another Turn', async () => {
+    const fixture = await createFixture();
+    const thread = await recordedUserThread(fixture, 0, 'A conversation that is over');
+    await fixture.service.setThreadRecorded(thread.id, false);
+    expect(await transcriptEntries(fixture)).toEqual([]);
+
+    await fixture.service.setThreadRecorded(thread.id, true);
+    await fixture.service.flushThreadTranscriptIndex();
+
+    // Waiting for a next completed Turn would mean an accidental exclusion could
+    // never be undone on a conversation that is already finished — while the menu
+    // reported the record as restored.
+    const transcript = await readFile(threadTranscriptPath(transcriptRootFor(fixture), thread.id), 'utf8');
+    expect(transcript).toContain('A conversation that is over');
+    expect(await readFile(fixture.service.threadTranscriptIndexPath, 'utf8')).toContain(thread.id);
+    await fixture.service.close();
+  });
+
+  test('reconciles an excluded artifact whose removal never happened', async () => {
+    const fixture = await createFixture();
+    const thread = await recordedUserThread(fixture, 0, 'Excluded but still on disk');
+    await fixture.service.setThreadRecorded(thread.id, false);
+    await fixture.service.close();
+
+    // Stand in for a removal that failed or was interrupted: nothing else would
+    // ever come back for this file, because an excluded Thread never rewrites it.
+    const orphaned = threadTranscriptPath(transcriptRootFor(fixture), thread.id);
+    await writeFile(orphaned, '# a record that should be gone\n', 'utf8');
+
+    const reopened = await openFixture(fixture.root, new ControlledExecutor(), fixture.clock);
+    await reopened.service.initialize();
+    await reopened.service.flushThreadTranscriptIndex();
+
+    expect(await transcriptEntries(fixture)).toEqual([]);
+    expect(await readFile(reopened.service.threadTranscriptIndexPath, 'utf8')).not.toContain(thread.id);
+    await reopened.service.close();
+  });
+
+  test('a rewrite asked for during a rewrite still happens', async () => {
+    const root = join(await mkdtemp(join(tmpdir(), 'tenon-transcript-index-')), 'transcripts');
+    roots.push(root);
+    await mkdir(root, { recursive: true });
+    const threadId = '019fb2da-0000-7000-8000-0000000000aa';
+    await writeFile(join(root, `${threadId}.md`), '# a record\n', 'utf8');
+    let reads = 0;
+    const index: ThreadTranscriptIndex = new ThreadTranscriptIndex({
+      transcriptRoot: root,
+      readThreads: (ids) => {
+        reads += 1;
+        // Arriving while a rewrite is in flight: the writer owes one more, and
+        // owing it is the whole reason this is a single coalescing chain rather
+        // than a queue.
+        if (reads === 1) index.schedule();
+        return new Map(ids.map((id) => [id, { ...threadStub(id) }]));
+      },
+      isExcluded: () => false,
+    });
+
+    index.schedule();
+    await index.flush();
+
+    expect(reads).toBe(2);
+    expect(await readFile(index.path, 'utf8')).toContain(threadId);
+  });
+
+  test('including a Thread again rebuilds its whole record, not just what follows', async () => {
+    const fixture = await createFixture();
+    const thread = await recordedUserThread(fixture, 0, 'The first question');
+    await fixture.service.setThreadRecorded(thread.id, false);
+    await recordedUserTurn(fixture, thread.id, 1, 'The excluded question');
+
+    await fixture.service.setThreadRecorded(thread.id, true);
+    await recordedUserTurn(fixture, thread.id, 2, 'The question after');
+    await fixture.service.flushThreadTranscriptIndex();
+
+    // The record returns whole, from canonical history, rather than resuming from
+    // wherever the exclusion interrupted it.
+    const transcript = await readFile(threadTranscriptPath(transcriptRootFor(fixture), thread.id), 'utf8');
+    expect(transcript).toContain('The first question');
+    expect(transcript).toContain('The excluded question');
+    expect(transcript).toContain('The question after');
+    expect(transcript).toContain('## Turn 3 — completed');
+    expect(await readFile(fixture.service.threadTranscriptIndexPath, 'utf8')).toContain(thread.id);
+    await fixture.service.close();
+  });
+
+  test('remembers an exclusion across a restart, and forgets it when the Thread goes', async () => {
+    const fixture = await createFixture();
+    const excluded = await recordedUserThread(fixture, 0, 'Excluded across restarts');
+    const kept = await recordedUserThread(fixture, 1, 'Kept across restarts');
+    await fixture.service.setThreadRecorded(excluded.id, false);
+    await fixture.service.close();
+
+    const reopened = await openFixture(fixture.root, new ControlledExecutor(), fixture.clock);
+    await reopened.service.initialize();
+    expect(reopened.service.isThreadRecorded(excluded.id)).toBe(false);
+    expect(reopened.service.isThreadRecorded(kept.id)).toBe(true);
+
+    // Deletion takes the Thread with it, so its exclusion has nothing left to
+    // govern and must not linger as a growing list of dead ids.
+    await reopened.service.deleteThread(excluded.id);
+    await reopened.service.close();
+
+    const again = await openFixture(fixture.root, new ControlledExecutor(), fixture.clock);
+    await again.service.initialize();
+    expect(again.service.isThreadRecorded(excluded.id)).toBe(true);
+    await again.service.close();
+  });
+
+  test('keeps no account for an ephemeral Thread, including the hidden internal ones', async () => {
+    const fixture = await createFixture();
+    const ephemeral = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+      ephemeral: true,
+    })).thread;
+    const turn = await fixture.service.startRendererTurn({
+      threadId: ephemeral.id,
+      input: [{ type: 'text', text: 'A throwaway question' }],
+    });
+    expect(turn.turn.id).toBeTruthy();
+    await fixture.executor.waitUntilWaiting(0);
+    fixture.executor.finish(0, completedExecutionResult(0));
+    await fixture.service.waitForIdle(ephemeral.id);
+    await fixture.service.flushThreadTranscript(ephemeral.id);
+
+    // Ephemeral is where the internal memory-consolidation Threads live too, so
+    // this is what keeps an internal Thread from materializing by accident.
+    expect(await fixture.service.threadTranscriptPath(ephemeral.id)).toBeNull();
     await fixture.service.close();
   });
 
@@ -10459,7 +10701,11 @@ describe('Thread transcript artifact', () => {
   test('delivers the outcome with a null path when the artifact cannot be written (A12)', async () => {
     const fixture = await createFixture();
     // Occupy the artifact directory name with a file so every write must fail.
+    // Startup creates that directory for the index, so settle it first and then
+    // replace it: `mkdir` will not turn a regular file back into a directory.
+    await fixture.service.flushThreadTranscriptIndex();
     mkdirSync(join(fixture.root, 'app-data'), { recursive: true });
+    await rm(transcriptRootFor(fixture), { recursive: true, force: true });
     await writeFile(transcriptRootFor(fixture), 'not a directory', 'utf8');
     const spawned = await spawnTranscriptChild(fixture, 'unwritable_child');
 
@@ -10794,18 +11040,68 @@ async function recordChildToolOutput(context: TurnExecutionContext, itemId: stri
   });
 }
 
+/** Only the fields the index reads, so the coalescing test needs no service. */
+function threadStub(id: string): Thread {
+  return {
+    id,
+    sessionId: id,
+    parentThreadId: null,
+    forkedFromId: null,
+    agentNickname: null,
+    agentRole: null,
+    name: 'A recorded session',
+    preview: 'A recorded session',
+    ephemeral: false,
+    source: 'app',
+    threadSource: 'user',
+    modelProvider: 'openai',
+    cwd: '/tmp/project',
+    createdAt: 1,
+    updatedAt: 2,
+    status: { type: 'idle' },
+    historyMode: 'full',
+  };
+}
+
+/** A persistent user root Thread with one completed Turn, so it has a record on disk. */
+async function recordedUserThread(fixture: Fixture, executorIndex: number, text: string) {
+  const thread = (await fixture.service.startThread({
+    source: 'app',
+    threadSource: 'user',
+    modelProvider: 'openai',
+    cwd: fixture.root,
+  })).thread;
+  await recordedUserTurn(fixture, thread.id, executorIndex, text);
+  return thread;
+}
+
+async function recordedUserTurn(
+  fixture: Fixture,
+  threadId: string,
+  executorIndex: number,
+  text: string,
+): Promise<void> {
+  await fixture.service.startRendererTurn({ threadId, input: [{ type: 'text', text }] });
+  await fixture.executor.waitUntilWaiting(executorIndex);
+  fixture.executor.finish(executorIndex, completedExecutionResult(0));
+  await fixture.service.waitForIdle(threadId);
+  await fixture.service.flushThreadTranscript(threadId);
+}
+
 /** Mirrors the fixture's userData location; deliberately NOT the workspace root. */
 function transcriptRootFor(fixture: Fixture): string {
   return threadTranscriptRoot(join(fixture.root, 'app-data'));
 }
 
 /**
- * What survives on disk. A missing directory is the same answer as an empty one:
- * an append that skipped its write never creates the directory it would have had
- * to be deleted from.
+ * Which ARTIFACTS survive on disk. The index that sits beside them is a
+ * projection and is expected to exist; a missing directory is the same answer as
+ * an empty one, because an append that skipped its write never creates the
+ * directory it would have had to be deleted from.
  */
 async function transcriptEntries(fixture: Fixture): Promise<readonly string[]> {
-  return readdir(transcriptRootFor(fixture)).catch(() => []);
+  const entries = await readdir(transcriptRootFor(fixture)).catch(() => []);
+  return entries.filter((entry) => entry.endsWith('.md'));
 }
 
 async function spawnTranscriptChild(fixture: Fixture, taskName: string): Promise<{

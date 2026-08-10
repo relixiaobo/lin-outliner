@@ -39,6 +39,8 @@ import {
 } from '../core/agent/memory';
 import { decodeThreadResourceReference } from '../core/agent/codec';
 import { turnTerminalAnswer } from '../core/agent/turnAnswer';
+import { threadTranscriptRoot } from './agent/thread/ThreadTranscriptArtifact';
+import { threadTranscriptIndexPath } from './agent/thread/ThreadTranscriptIndex';
 import {
   AUTOMATION_NOTIFICATION_CHANNEL,
   AUTOMATION_REQUEST_CHANNEL,
@@ -614,6 +616,7 @@ const attachmentResolver = new AttachmentResolver({
 const turnExecutor = new PiTurnExecutor({
   createTools: (context) => toolRuntime.createTools(context),
   beforeProviderContext: (context) => toolRuntime.prepareProviderContext(context),
+  transcriptIndexPath: threadTranscriptIndexPath(threadTranscriptRoot(resolvedUserDataDir)),
 });
 threadService = ThreadService.open(
   resolvedUserDataDir,

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties, type RefObject } from 
 import { createPortal } from 'react-dom';
 import type { Thread, ThreadId } from '../../../core/agent/protocol';
 import { useT } from '../../i18n/I18nProvider';
-import { AddIcon, ICON_SIZE, InfoIcon, MoreIcon, PencilIcon, TrashIcon } from '../../ui/icons';
+import { AddIcon, HideIcon, ICON_SIZE, InfoIcon, MoreIcon, PencilIcon, ShowIcon, TrashIcon } from '../../ui/icons';
 import { IconButton } from '../../ui/primitives/IconButton';
 import { useAnchoredOverlay } from '../../ui/primitives/useAnchoredOverlay';
 import { useMenuKeyboard } from '../../ui/primitives/useMenuKeyboard';
@@ -19,6 +19,9 @@ interface ThreadListProps {
   readonly onCreate: () => void;
   readonly onDelete: (thread: Thread) => void;
   readonly onDetails: (thread: Thread) => void;
+  /** Current state, read when the menu opens: a preference nobody polls. */
+  readonly readRecorded: (thread: Thread) => Promise<boolean>;
+  readonly onSetRecorded: (thread: Thread, recorded: boolean) => void;
   readonly onRename: (thread: Thread) => void;
   readonly onSelect: (threadId: ThreadId) => void;
 }
@@ -36,12 +39,40 @@ export function ThreadList({
   onDetails,
   onRename,
   onSelect,
+  onSetRecorded,
+  readRecorded,
 }: ThreadListProps) {
   const t = useT();
   const listRef = useRef<HTMLElement>(null);
   const actionsAnchorRef = useRef<HTMLButtonElement | null>(null);
   const actionsMenuRef = useRef<HTMLDivElement | null>(null);
   const [actionsTarget, setActionsTarget] = useState<Thread | null>(null);
+  // Unknown until the open menu answers, so the item never claims a state it has
+  // not read — a wrong label here would misreport whether a conversation is kept.
+  const [recorded, setRecorded] = useState<boolean | null>(null);
+  /** The read failed; the item stays inert but says why rather than looking broken. */
+  const [recordedUnavailable, setRecordedUnavailable] = useState(false);
+  // The parent rebuilds this closure on every store notification, and a store
+  // notification arrives per streamed delta. Depending on its identity would
+  // reset the state to null and re-issue the request many times a second, so the
+  // menu item would disable itself under the user's cursor mid-click.
+  const readRecordedRef = useRef(readRecorded);
+  readRecordedRef.current = readRecorded;
+  const actionsTargetId = actionsTarget?.id ?? null;
+  useEffect(() => {
+    const target = actionsTarget;
+    if (!target) return;
+    let live = true;
+    setRecorded(null);
+    setRecordedUnavailable(false);
+    void readRecordedRef.current(target)
+      .then((value) => { if (live) setRecorded(value); })
+      .catch(() => { if (live) setRecordedUnavailable(true); });
+    return () => { live = false; };
+    // Keyed by identity, not by object: the same Thread re-rendered is the same
+    // question, already answered.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [actionsTargetId]);
   const style = useAnchoredOverlay(listRef, {
     anchorRef,
     layoutKey: `${threads.length}:${selectedThreadId ?? ''}`,
@@ -179,6 +210,23 @@ export function ThreadList({
           </button>
           <button onClick={() => runThreadAction(onRename)} role="menuitem" type="button">
             <PencilIcon size={ICON_SIZE.menu} />{t.agent.thread.rename}
+          </button>
+          <button
+            disabled={recorded === null}
+            title={recordedUnavailable ? t.agent.thread.recordsUnavailable : undefined}
+            onClick={() => {
+              const target = actionsTarget;
+              if (recorded === null || !target) return;
+              onSetRecorded(target, !recorded);
+              setActionsTarget(null);
+            }}
+            role="menuitem"
+            type="button"
+          >
+            {recorded === false ? <ShowIcon size={ICON_SIZE.menu} /> : <HideIcon size={ICON_SIZE.menu} />}
+            {recordedUnavailable
+              ? t.agent.thread.recordsUnavailable
+              : recorded === false ? t.agent.thread.includeInRecords : t.agent.thread.excludeFromRecords}
           </button>
           <button onClick={() => runThreadAction(onDelete)} role="menuitem" type="button">
             <TrashIcon size={ICON_SIZE.menu} />{t.agent.thread.delete}

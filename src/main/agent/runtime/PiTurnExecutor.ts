@@ -124,6 +124,12 @@ export interface PiTurnExecutorOptions {
     runtime: PiRuntimeSelection,
   ) => Promise<string | null>;
   readonly resolveRuntimeSettings?: () => Promise<AgentRuntimeSettings>;
+  /**
+   * Where the episodic index lives, for the discovery doctrine. Passed in rather
+   * than resolved here: this executor is constructed before the Thread service,
+   * and the path is a pure function of `userData` either way.
+   */
+  readonly transcriptIndexPath?: string | null;
 }
 
 export type PiRuntimeContext = Pick<TurnExecutionContext, 'thread' | 'configuration'>;
@@ -163,7 +169,11 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
       if (context.signal.aborted) return { status: 'interrupted' };
       const stablePrompt = internalMemory
         ? null
-        : composeStablePrompt({ thread: context.thread, configuration: context.configuration });
+        : composeStablePrompt({
+            thread: context.thread,
+            configuration: context.configuration,
+            transcriptIndexPath: this.options.transcriptIndexPath ?? null,
+          });
       const systemPrompt = stablePrompt?.text
         ?? context.configuration.developerInstructions.join('\n\n');
       const projectionContext = withTurnScopedContextReads(context);

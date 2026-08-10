@@ -1276,6 +1276,16 @@ export interface ThreadIdentityRequest {
   readonly threadId: ThreadId;
 }
 
+/** Whether this Thread is kept in the readable transcript records. */
+export interface ThreadRecordsSetRequest {
+  readonly threadId: ThreadId;
+  readonly recorded: boolean;
+}
+
+export interface ThreadRecordsResponse {
+  readonly recorded: boolean;
+}
+
 export interface ThreadTurnsListRequest extends ThreadPageRequest {
   readonly threadId: ThreadId;
   readonly itemsView?: TurnItemsView | null;
@@ -1463,6 +1473,8 @@ export const AGENT_CORE_METHODS = [
   'thread/configuration/set',
   'thread/archive',
   'thread/unarchive',
+  'thread/records/get',
+  'thread/records/set',
   'thread/delete',
   'thread/turns/list',
   'thread/items/list',
@@ -1493,6 +1505,8 @@ export interface AgentCoreRequestByMethod {
   readonly 'thread/configuration/set': ThreadConfigurationSetRequest;
   readonly 'thread/archive': ThreadIdentityRequest;
   readonly 'thread/unarchive': ThreadIdentityRequest;
+  readonly 'thread/records/get': ThreadIdentityRequest;
+  readonly 'thread/records/set': ThreadRecordsSetRequest;
   readonly 'thread/delete': ThreadIdentityRequest;
   readonly 'thread/turns/list': ThreadTurnsListRequest;
   readonly 'thread/items/list': ThreadItemsListRequest;
@@ -1521,6 +1535,8 @@ export interface AgentCoreResponseByMethod {
   readonly 'thread/configuration/set': ThreadConfigurationResponse;
   readonly 'thread/archive': EmptyAgentCoreResponse;
   readonly 'thread/unarchive': EmptyAgentCoreResponse;
+  readonly 'thread/records/get': ThreadRecordsResponse;
+  readonly 'thread/records/set': ThreadRecordsResponse;
   readonly 'thread/delete': EmptyAgentCoreResponse;
   readonly 'thread/turns/list': ThreadTurnsListResponse;
   readonly 'thread/items/list': ThreadItemsListResponse;

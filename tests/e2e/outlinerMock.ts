@@ -2075,6 +2075,10 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           return {} as T;
         }
         if (method === 'thread/archive' || method === 'thread/unarchive') return {} as T;
+        if (method === 'thread/records/get') return { recorded: true } as T;
+        if (method === 'thread/records/set') {
+          return { recorded: (input as { recorded: boolean }).recorded } as T;
+        }
         if (method === 'thread/delete') {
           const targetId = String(input.threadId);
           const deleted = new Set([targetId]);
