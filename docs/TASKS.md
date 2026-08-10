@@ -133,17 +133,6 @@ before any directional/security-sensitive build.
 
 - **agent-program** (P1, `meta` — umbrella) — read first; it maps the rest (foundation /
   dependency graph / event taxonomy / milestones). See `docs/plans/reference/agent-program.md`.
-- **responses-stream-resilience** (P1, `draft` 2026-08-10 — see
-  [docs/plans/responses-stream-resilience.md](plans/responses-stream-resilience.md))
-  — a third-party OpenAI-Responses relay hiccup currently kills a Turn outright
-  (2026-08-10: two Turns dead on `stream_read_error` against the `cc-switch` relay,
-  while the same relay is fine under Codex CLI, which skips the frame and retries
-  five times). Match the three behaviours we lack: sanitize relay-injected
-  non-terminal error frames instead of letting the OpenAI SDK throw on any frame
-  carrying `error`, add the 300s SSE idle timeout we have never had, and treat an
-  established stream's death as retryable by default (budget 3, with backoff)
-  instead of matching a three-string allowlist and giving up the moment anything
-  was emitted. Shape (a), one PR, no protocol-surface change.
 - **skill-directory-is-itself-a-skill** (P3, `draft`, *no plan file yet* — cut from #470
   at the gate 2026-08-01, deliberately, not abandoned) — picking `~/work/my-pdf-skill`
   is at least as natural as picking its parent, but the loader only ever looks one
@@ -786,6 +775,19 @@ and the merged PR, distilled rules in [`lessons.md`](lessons.md). Everything
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
 
+- **responses-stream-resilience** (codex-2, PR #520, merged 2026-08-10 — plan-track, plan
+  archived `done`) — a third-party OpenAI-Responses relay hiccup no longer kills a Turn:
+  a non-terminal frame carrying a **non-empty** `error` is dropped instead of thrown on,
+  a 300s SSE idle timeout aborts a silent stream, and an established stream's death is
+  retried (budget 3, backoff) with the partial preserved under the new durable
+  `interrupted` `MessagePhase` — visible in the transcript, excluded from final answers,
+  Memory, provider context, signed-reasoning replay, and usage. Only custom Responses
+  endpoints install the wrapper. `/code-review high` found ten, all fixed in the same PR;
+  the load-bearing ones were the first cut's retry predicate defaulting to *retryable*
+  for custom endpoints — which also widened salvage, so a 500 could execute a mutating
+  tool call as a successful Turn — and the abandoned attempt persisting as a real
+  `final_answer` that then fed Memory and the next request. Protocol surface moved
+  (`MessagePhase` + inspection-only `streamNoiseFrames`); Core commands unchanged.
 - **renderer-state-hygiene** (codex, PR #521, merged 2026-08-10 — fast-track, no plan
   file) — renderer UI state no longer outlives the rows it points at: every accepted
   projection update, delta removals and full resync reseeds by the same rule, prunes

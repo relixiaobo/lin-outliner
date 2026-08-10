@@ -245,6 +245,30 @@ Entries reference the pull request that introduced them.
   parent was removed clears the whole focus family, hidden-field expansion keys are
   culled with their rows, and the batch-tag UI closes when pruning empties the
   selection.
+- **A relay hiccup no longer kills the whole Turn (PR #520, codex-2)** — pointing Tenon
+  at a third-party OpenAI-Responses relay meant a single injected frame or a dropped
+  connection ended the answer outright, while the same relay worked fine under other
+  clients. Three behaviours close that: a non-terminal frame carrying a **non-empty**
+  `error` is dropped instead of thrown on (a `null` or blank one passes through, so a
+  relay that stamps `"error": null` on every chunk is not mistaken for noise), a stream
+  that goes 300 seconds without a byte is aborted — long enough for the silent gaps that
+  are normal at high reasoning effort — and a stream that dies after it already started
+  is retried up to three times with backoff. Retry is deliberately narrow: rate limits,
+  server and transport failures, and known relay/idle interruptions qualify, while a
+  statusless `badRequest` stays terminal so a wrong key, an unknown model, or an
+  exhausted quota fails once instead of resending the full context four times. What the
+  abandoned attempt already printed stays on screen under a new durable `interrupted`
+  message phase, and is excluded from the final answer, Memory, the next request's
+  context, signed-reasoning replay, and token accounting — an interrupted segment, the
+  reconnect indicator, then a fresh segment, with no concatenation between them. Dropped
+  frames are secret-scanned, bounded, and capped at 64 per response before appearing in
+  Turn Details. Official OpenAI, Azure Responses, and non-Responses adapters keep their
+  existing transport untouched. The high review gate found ten defects, all fixed in the
+  same PR; the two load-bearing ones were a retry predicate that defaulted to *retryable*
+  for any custom-endpoint error — which also widened the tool-call salvage path, so a
+  provider 500 could execute a mutating tool call and report the Turn as successful — and
+  the abandoned partial being persisted as a genuine `final_answer`, which fed the
+  truncated text back into Memory extraction and the next provider request.
 
 ### Internal
 
