@@ -9,20 +9,27 @@
  * all of them, and the writer, the sweep and the index need no store read to
  * agree.
  *
- * It is a plain list of Thread ids, loaded once at startup and rewritten whole
+ * KEYED BY SESSION, NOT BY THREAD. Excluding a conversation has to cover the
+ * work it delegated: a root's Subagents write their own artifacts, and leaving
+ * those behind would keep the excluded content readable and, worse, keep
+ * advertising it in the index. Every Thread in a delegation subtree shares one
+ * `sessionId`, so one entry covers the subtree and the check stays O(1) on the
+ * turn-completion path — a parent walk would be a store read per Turn. A fork
+ * starts a new session, which is right: it is a new conversation.
+ *
+ * It is a plain list of session ids, loaded once at startup and rewritten whole
  * and atomically on change. Exclusion has to be answerable SYNCHRONOUSLY — the
  * subject is resolved on the turn-completion path — so the set is held in
  * memory, and the file is only how it survives a restart.
  */
 import { mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { ThreadId } from '../../../core/agent/protocol';
 import { atomicWriteFile } from '../../jsonFileStore';
 
 const EXCLUSIONS_FILE = 'excluded.txt';
 
 export class ThreadTranscriptExclusions {
-  private readonly excluded = new Set<ThreadId>();
+  private readonly excluded = new Set<string>();
 
   constructor(private readonly transcriptRoot: string) {}
 
@@ -49,8 +56,8 @@ export class ThreadTranscriptExclusions {
     }
   }
 
-  isExcluded(threadId: ThreadId): boolean {
-    return this.excluded.has(threadId);
+  isExcluded(sessionId: string): boolean {
+    return this.excluded.has(sessionId);
   }
 
   /**
@@ -58,18 +65,18 @@ export class ThreadTranscriptExclusions {
    * what follows — removing an artifact, restoring the writer — because those
    * belong to the writer, not to a preference.
    */
-  async setExcluded(threadId: ThreadId, excluded: boolean): Promise<boolean> {
-    if (this.excluded.has(threadId) === excluded) return false;
-    if (excluded) this.excluded.add(threadId);
-    else this.excluded.delete(threadId);
+  async setExcluded(sessionId: string, excluded: boolean): Promise<boolean> {
+    if (this.excluded.has(sessionId) === excluded) return false;
+    if (excluded) this.excluded.add(sessionId);
+    else this.excluded.delete(sessionId);
     await this.persist();
     return true;
   }
 
-  /** Deletion takes the Thread with it; keeping its id here would leak forever. */
-  async forget(threadIds: readonly ThreadId[]): Promise<void> {
+  /** Deletion takes the conversation with it; keeping its id here would leak forever. */
+  async forget(sessionIds: readonly string[]): Promise<void> {
     let changed = false;
-    for (const threadId of threadIds) changed = this.excluded.delete(threadId) || changed;
+    for (const sessionId of sessionIds) changed = this.excluded.delete(sessionId) || changed;
     if (changed) await this.persist();
   }
 
@@ -77,7 +84,7 @@ export class ThreadTranscriptExclusions {
     try {
       await mkdir(this.transcriptRoot, { recursive: true });
       await atomicWriteFile(this.path, `${[
-        '# Threads excluded from the transcript records, one id per line.',
+        '# Sessions excluded from the transcript records, one id per line.',
         ...[...this.excluded].sort(),
       ].join('\n')}\n`);
     } catch (error) {

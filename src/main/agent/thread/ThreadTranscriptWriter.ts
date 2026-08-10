@@ -165,6 +165,38 @@ export class ThreadTranscriptWriter {
     this.discarded.delete(threadId);
   }
 
+  /**
+   * Materialize a Thread's whole record now, from canonical history.
+   *
+   * Re-including a conversation cannot wait for its next completed Turn: a
+   * finished one will never have another, so the artifact would stay missing
+   * while the UI reported the record as restored. Resolving the subject first
+   * keeps the one-predicate rule — a Thread that no longer qualifies (still
+   * excluded, ephemeral) rebuilds nothing.
+   */
+  async rebuildNow(thread: Thread): Promise<void> {
+    let subject: TranscriptSubject | null;
+    try {
+      subject = this.options.resolveSubject(thread);
+    } catch (error) {
+      console.warn(`[agent] Thread transcript subject was not resolved for ${thread.id}`, error);
+      return;
+    }
+    if (!subject) return;
+    const pending = (this.writes.get(thread.id) ?? Promise.resolve()).then(async () => {
+      try {
+        await this.rebuild(thread.id, subject, threadTranscriptPath(this.options.transcriptRoot, thread.id));
+      } catch (error) {
+        console.warn(`[agent] Thread transcript was not rebuilt for ${thread.id}`, error);
+      }
+    });
+    this.writes.set(thread.id, pending);
+    void pending.finally(() => {
+      if (this.writes.get(thread.id) === pending) this.writes.delete(thread.id);
+    });
+    await pending;
+  }
+
   /** Startup reclamation of transcripts whose Thread no longer exists. */
   async sweepOrphans(isKnownThread: (threadId: ThreadId) => boolean): Promise<readonly string[]> {
     try {

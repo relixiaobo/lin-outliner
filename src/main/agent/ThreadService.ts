@@ -365,7 +365,13 @@ export class ThreadService implements ThreadServiceExtensionHost {
     this.transcriptExclusions = new ThreadTranscriptExclusions(options.transcriptRoot);
     this.transcriptIndex = new ThreadTranscriptIndex({
       transcriptRoot: options.transcriptRoot,
-      readThread: (threadId) => this.core.metadata.read(threadId)?.thread ?? null,
+      readThreads: (threadIds) => new Map(
+        [...this.core.metadata.readMany(threadIds)].map(([id, record]) => [id, record.thread]),
+      ),
+      // The index derives membership from disk, so it must apply the exclusion
+      // itself: an artifact whose removal failed or was interrupted is still a
+      // file, and listing it would advertise exactly what the user excluded.
+      isExcluded: (threadId) => this.isSessionExcluded(threadId),
     });
     this.transcripts = new ThreadTranscriptWriter({
       transcriptRoot: options.transcriptRoot,
@@ -443,7 +449,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       this.collaboration,
       {
         delete: (threadId) => this.transcripts.delete(threadId),
-        forgetExclusions: (threadIds) => this.transcriptExclusions.forget(threadIds),
+        forgetExclusions: (sessionIds) => this.transcriptExclusions.forget(sessionIds),
       },
       (threadId) => this.goals.clear(threadId),
       (threadId) => { this.subagentBudgets.clearThread(threadId); },
@@ -508,7 +514,13 @@ export class ThreadService implements ThreadServiceExtensionHost {
       // deletion cascade, so ordering them decides whether an orphan among them
       // is reclaimed on this launch or the next.
       this.transcripts.reclaimLegacyDirectory()
-        .then(() => this.transcripts.sweepOrphans((threadId) => knownThreads.has(threadId)))
+        .then(() => this.transcripts.sweepOrphans((threadId) => (
+          // Reconciliation, not just reclamation: an artifact whose removal
+          // failed or was interrupted mid-exclusion is still on disk, and
+          // nothing else would ever come back for it — the Thread is excluded,
+          // so it never rewrites the file that would notice.
+          knownThreads.has(threadId) && !this.isSessionExcluded(threadId)
+        )))
         // Rebuild the index once the artifact set has settled: it is a
         // projection of that set, so recomputing it earlier would only describe
         // a directory that is about to change.
@@ -774,8 +786,21 @@ export class ThreadService implements ThreadServiceExtensionHost {
   historyProjectionVersion(threadId: ThreadId): number { return this.catalogOps.historyProjectionVersion(threadId); }
   hasHistoryRollbackMarker(rollbackId: string): boolean { return this.catalogOps.hasHistoryRollbackMarker(rollbackId); }
   historyRollbackMarker(rollbackId: string): ThreadHistoryRollbackMarker | null { return this.catalogOps.historyRollbackMarker(rollbackId); }
-  async setThreadName(threadId: ThreadId, name: string | null): Promise<void> { return this.catalogOps.setThreadName(threadId, name); }
-  async setThreadArchived(threadId: ThreadId, archived: boolean): Promise<void> { return this.catalogOps.setThreadArchived(threadId, archived); }
+  /**
+   * Three index columns are mutable Thread fields, not artifact facts — `name`,
+   * `updatedAt`, `status` — so a rename or an archive moves a row without moving
+   * a file. Without these the index would keep answering with the old name, and
+   * a Thread renamed to what someone will actually search for would be
+   * unfindable in the very file the doctrine sends them to.
+   */
+  async setThreadName(threadId: ThreadId, name: string | null): Promise<void> {
+    await this.catalogOps.setThreadName(threadId, name);
+    this.transcriptIndex.schedule();
+  }
+  async setThreadArchived(threadId: ThreadId, archived: boolean): Promise<void> {
+    await this.catalogOps.setThreadArchived(threadId, archived);
+    this.transcriptIndex.schedule();
+  }
   async deleteThread(threadId: ThreadId): Promise<void> { return this.catalogOps.deleteThread(threadId); }
   async startRendererTurn(request: RendererTurnStartRequest): Promise<TurnStartResponse> { return this.turnLifecycle.startRendererTurn(request); }
   async startPrivilegedTurn(request: PrivilegedTurnStartRequest): Promise<TurnStartResponse> { return this.turnLifecycle.startPrivilegedTurn(request); }
@@ -960,30 +985,55 @@ export class ThreadService implements ThreadServiceExtensionHost {
    * into a root.
    */
   private transcriptSubject(thread: Thread): TranscriptSubject | null {
-    // The user's choice is the first word, ahead of every kind: a Thread taken
-    // out of the records keeps none, whatever it is.
-    if (this.transcriptExclusions.isExcluded(thread.id)) return null;
+    // The user's choice is the first word, ahead of every kind: a conversation
+    // taken out of the records keeps none, and neither does the work it
+    // delegated — the whole subtree shares this session.
+    if (this.transcriptExclusions.isExcluded(thread.sessionId)) return null;
     return this.collaboration.delegatedTranscriptSubject(thread) ?? rootTranscriptSubject(thread);
+  }
+
+  /**
+   * Whether an artifact's Thread belongs to an excluded session, answered from
+   * the Thread id alone because the index only ever has the filename.
+   */
+  private isSessionExcluded(threadId: ThreadId): boolean {
+    const sessionId = this.core.metadata.read(threadId)?.thread.sessionId;
+    return sessionId === undefined ? false : this.transcriptExclusions.isExcluded(sessionId);
   }
 
   /** Whether this Thread is kept in the readable records. */
   isThreadRecorded(threadId: ThreadId): boolean {
-    return !this.transcriptExclusions.isExcluded(threadId);
+    return !this.isSessionExcluded(threadId);
   }
 
   /**
-   * Take a Thread out of the records, or put it back.
+   * Take a conversation out of the records, or put it back.
    *
-   * Excluding removes what is already there, because a switch that only stops
-   * FUTURE appends would leave the conversation the user just excluded sitting on
-   * disk. Re-including clears the writer's discarded mark so the next completed
-   * Turn rebuilds the artifact from canonical history — the record returns
-   * whole, not from wherever it was interrupted.
+   * The unit is the SESSION, not the Thread: a root's Subagents write their own
+   * artifacts, so excluding the root alone would leave the delegated work
+   * readable and still listed in the index — the excluded content advertised to
+   * every later Thread by the very doctrine this feature adds.
+   *
+   * Excluding removes what is already there, because a switch that only stopped
+   * FUTURE appends would leave the conversation the user just excluded sitting
+   * on disk. Re-including rebuilds each artifact from canonical history straight
+   * away rather than waiting for a next Turn that a finished conversation will
+   * never have — otherwise undoing an accidental exclusion would silently keep
+   * nothing while the menu claimed the record was back.
    */
   async setThreadRecorded(threadId: ThreadId, recorded: boolean): Promise<void> {
-    if (!await this.transcriptExclusions.setExcluded(threadId, !recorded)) return;
-    if (recorded) this.transcripts.restore(threadId);
-    else await this.transcripts.delete(threadId);
+    const thread = this.core.metadata.read(threadId)?.thread;
+    if (!thread) return;
+    if (!await this.transcriptExclusions.setExcluded(thread.sessionId, !recorded)) return;
+    const subtree = this.catalogOps.recordedSessionThreads(threadId);
+    for (const member of subtree) {
+      if (recorded) {
+        this.transcripts.restore(member.id);
+        await this.transcripts.rebuildNow(member);
+      } else {
+        await this.transcripts.delete(member.id);
+      }
+    }
     this.transcriptIndex.schedule();
   }
   collaborationToolContributions(turn: { threadId: ThreadId; turnId: string }): readonly AgentTool[] { return this.collaboration.collaborationToolContributions(turn); }

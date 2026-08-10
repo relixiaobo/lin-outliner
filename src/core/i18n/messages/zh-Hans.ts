@@ -1158,6 +1158,7 @@ export const zhHans: PartialMessages = {
       rename: '重命名线程',
       excludeFromRecords: '不记入历史记录',
       includeInRecords: '记入历史记录',
+      recordsUnavailable: '无法读取记录状态',
       delete: '删除线程',
       deleteConfirm: ({ name }) => `删除"${name}"及其子线程？`,
       composerLabel: '向此线程发送消息',

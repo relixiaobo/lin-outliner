@@ -139,11 +139,23 @@ priority. Feature 1 ships alone and does not depend on Feature 2.
   cannot read a file has no use for a path — with the index path injected, since
   the composer otherwise knows nothing about `userData`.
 - **Privacy and lifecycle.** Default: all persistent Threads are included. A
-  per-Thread "exclude from records" toggle removes the artifact and index row
-  and stops future appends. It is a persisted boolean on the Thread record — a
-  sibling of `archived` — reached by a `thread/*` request and surfaced in the
+  per-Thread "exclude from records" toggle removes the artifacts and index rows
+  and stops future appends. The unit is the SESSION, not the Thread: a root's
+  Subagents write their own artifacts, so excluding the root alone would leave
+  the delegated work readable and still advertised by the index. Every Thread in
+  a delegation subtree shares one `sessionId`, so one entry covers the subtree
+  and the check stays O(1) on the turn-completion path.
+
+  The state lives beside the records (`excluded.txt` in the artifact directory),
+  NOT as a column on the Thread record: it is a property of this subsystem, it
+  must be answerable synchronously while a Turn completes, and the metadata store
+  has no schema-evolution step — only `CREATE TABLE IF NOT EXISTS` — so a new
+  column would break every install that already has the table. It is reached by a
+  `thread/records/*` request pair and surfaced in the
   per-Thread action menu beside Rename and Delete, the menu that already governs
-  a Thread's lifecycle. It is deliberately NOT an entry in the core action
+  a Thread's lifecycle. Re-including rebuilds each artifact immediately from
+  canonical history rather than waiting for a next Turn a finished conversation
+  will never have. It is deliberately NOT an entry in the core action
   registry: that registry's objects are nodes and surfaces, and adding a Thread
   object kind to carry one toggle would be a protocol change in service of a
   menu item. Thread deletion cascades to artifact and index row

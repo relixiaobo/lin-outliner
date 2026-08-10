@@ -1255,6 +1255,7 @@ export const en = {
       rename: 'Rename Thread',
       excludeFromRecords: 'Exclude from Records',
       includeInRecords: 'Include in Records',
+      recordsUnavailable: 'Records state unavailable',
       delete: 'Delete Thread',
       deleteConfirm: ({ name }: { name: string }) => `Delete "${name}" and its child Threads?`,
       composerLabel: 'Message this Thread',

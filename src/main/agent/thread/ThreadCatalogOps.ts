@@ -44,8 +44,8 @@ export interface ThreadCatalogCollaboration {
 /** What the catalog's descendant cascade owes the account layer. */
 export interface ThreadCatalogTranscripts {
   delete(threadId: ThreadId): Promise<void>;
-  /** Deletion takes the Thread with it, so its exclusion has nothing left to govern. */
-  forgetExclusions(threadIds: readonly ThreadId[]): Promise<void>;
+  /** Deletion takes the conversation with it, so its exclusion has nothing left to govern. */
+  forgetExclusions(sessionIds: readonly string[]): Promise<void>;
 }
 
 export class ThreadCatalogOps {
@@ -619,7 +619,7 @@ export class ThreadCatalogOps {
         for (const descendantId of [...subtree.threadIds].reverse()) {
           await this.transcripts.delete(descendantId);
         }
-        await this.transcripts.forgetExclusions(subtree.threadIds);
+        await this.transcripts.forgetExclusions(subtree.records.map((record) => record.thread.sessionId));
       } finally {
         this.finishThreadSubtreeStop(subtree.threadIds);
       }
@@ -655,6 +655,16 @@ export class ThreadCatalogOps {
     }
   private finishThreadSubtreeStop(threadIds: readonly ThreadId[]): void {
       for (const id of threadIds) this.core.stoppingThreads.delete(id);
+    }
+  /**
+   * The Threads a records decision applies to: the addressed Thread and every
+   * delegated descendant. Persistent members only — an ephemeral child never had
+   * an artifact to remove or restore.
+   */
+  recordedSessionThreads(threadId: ThreadId): readonly Thread[] {
+      return this.threadSubtreeIds(threadId)
+        .map((id) => this.core.metadata.read(id)?.thread ?? null)
+        .filter((thread): thread is Thread => thread !== null && !thread.ephemeral);
     }
   private threadSubtreeIds(threadId: ThreadId): ThreadId[] {
       const root = this.core.requireThread(threadId).thread;

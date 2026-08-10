@@ -524,14 +524,28 @@ artifact has grown past it.
 
 **The index.** `thread/ThreadTranscriptIndex.ts` maintains one greppable
 `index.tsv` beside the artifacts: a comment naming the columns, then one
-tab-separated row per recorded Thread — `threadId`, `source`, `createdAt`,
-`updatedAt`, `status`, `name`, `transcriptPath` — newest activity first. It is
+tab-separated row per recorded Thread — `threadId`, `source`, `cwd`,
+`createdAt`, `updatedAt`, `status`, `name`, `transcriptPath` — newest activity
+first. The index spans the whole install, so `cwd` is what lets a reader tell its
+own project's sessions from an unrelated one's, and the doctrine says to prefer
+matching rows. It is
 DERIVED, never accumulated: a row is mutable where the artifact is append-only,
 and it is one file written on behalf of every Thread where their chains are
 per-Thread, so the whole file is recomputed and rewritten atomically through a
-single serialized chain with writes coalesced. Membership comes from the
+single serialized chain with writes coalesced — and the chain re-checks for owed
+work as it clears its own handle, because a `schedule` landing between the drain
+loop's last read and that handle being nulled would otherwise be dropped, leaving
+a deleted Thread's row and its dangling path in the file the doctrine says to
+trust. Thread records are read in ONE query per rewrite: a row is needed per
+artifact on disk and this runs whenever a Turn completes, so reading them
+individually would put hundreds of synchronous queries on the main process event
+loop exactly while the agent is busiest. Membership comes from the
 artifacts on disk joined against the Thread records — the artifacts ARE the
-membership, so the index cannot point at a file that is not there. Nothing
+membership, so the index cannot point at a file that is not there — minus
+excluded sessions, because an artifact whose removal failed or was interrupted is
+still a file and must not be advertised back. Three of the columns (`name`,
+`updatedAt`, `status`) are mutable Thread fields rather than artifact facts, so
+rename and archive schedule a rewrite of their own; nothing else would. Nothing
 incremental survives between writes, which is a stronger form of A11 than a
 repairable log. TSV rather than a markdown table because table rows pad and
 align, and that padding is what makes `file_grep` column extraction brittle; the
@@ -548,17 +562,29 @@ and a directory of every unrelated session is neither its business nor its
 context to carry. The path reaches the prompt composer through the executor,
 which is constructed before the Thread service and derives it from `userData`.
 
-**Exclusion.** A per-Thread switch (`thread/records/get`, `thread/records/set`,
-surfaced in the Thread action menu beside Rename and Delete) takes a
-conversation out of the records. The state lives beside the records —
-`excluded.txt` in the same directory, loaded once at startup and rewritten whole
-— not on the Thread record: it is a property of this subsystem, it must be
-answerable synchronously on the turn-completion path, and the metadata store has
-no schema-evolution step to add a column through. Excluding removes what is
-already recorded, since a switch that only stopped future appends would leave the
-excluded conversation on disk. Including again clears the writer's discarded mark
-so the next completed Turn rebuilds the artifact whole from canonical history.
-Deletion forgets the exclusion with the Thread.
+**Exclusion.** A switch (`thread/records/get`, `thread/records/set`, surfaced in
+the Thread action menu beside Rename and Delete) takes a conversation out of the
+records. The unit is the SESSION, not the Thread: a root's Subagents write their
+own artifacts, so excluding the root alone would leave the delegated work
+readable and still advertised by the index — the excluded content handed to every
+later Thread by the very doctrine above. Every Thread in a delegation subtree
+shares one `sessionId`, so one entry covers the subtree and the check stays O(1)
+on the turn-completion path; a fork starts a new session, which is right, because
+it is a new conversation.
+
+The state lives beside the records — `excluded.txt` in the same directory, loaded
+once at startup and rewritten whole — not on the Thread record: it is a property
+of this subsystem, it must be answerable synchronously while a Turn completes,
+and the metadata store has no schema-evolution step to add a column through.
+Excluding removes every artifact in the session, since a switch that only stopped
+future appends would leave the excluded conversation on disk. Including again
+rebuilds each artifact immediately from canonical history rather than waiting for
+a next Turn: a finished conversation will never have one, so undoing an
+accidental exclusion would otherwise restore nothing while the UI reported the
+record as back. Startup reconciles the two — an artifact of an excluded session
+that survived a failed or interrupted removal is reclaimed by the sweep, which
+nothing else would ever come back for. Deletion forgets the exclusion with the
+conversation.
 
 The artifact is extended once per **completed** Turn, at that Thread's
 turn-completion point, and never on a reader's path. A completed Turn is

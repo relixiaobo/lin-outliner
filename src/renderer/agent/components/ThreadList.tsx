@@ -50,13 +50,29 @@ export function ThreadList({
   // Unknown until the open menu answers, so the item never claims a state it has
   // not read — a wrong label here would misreport whether a conversation is kept.
   const [recorded, setRecorded] = useState<boolean | null>(null);
+  /** The read failed; the item stays inert but says why rather than looking broken. */
+  const [recordedUnavailable, setRecordedUnavailable] = useState(false);
+  // The parent rebuilds this closure on every store notification, and a store
+  // notification arrives per streamed delta. Depending on its identity would
+  // reset the state to null and re-issue the request many times a second, so the
+  // menu item would disable itself under the user's cursor mid-click.
+  const readRecordedRef = useRef(readRecorded);
+  readRecordedRef.current = readRecorded;
+  const actionsTargetId = actionsTarget?.id ?? null;
   useEffect(() => {
-    if (!actionsTarget) return;
+    const target = actionsTarget;
+    if (!target) return;
     let live = true;
     setRecorded(null);
-    void readRecorded(actionsTarget).then((value) => { if (live) setRecorded(value); }).catch(() => undefined);
+    setRecordedUnavailable(false);
+    void readRecordedRef.current(target)
+      .then((value) => { if (live) setRecorded(value); })
+      .catch(() => { if (live) setRecordedUnavailable(true); });
     return () => { live = false; };
-  }, [actionsTarget, readRecorded]);
+    // Keyed by identity, not by object: the same Thread re-rendered is the same
+    // question, already answered.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [actionsTargetId]);
   const style = useAnchoredOverlay(listRef, {
     anchorRef,
     layoutKey: `${threads.length}:${selectedThreadId ?? ''}`,
@@ -197,6 +213,7 @@ export function ThreadList({
           </button>
           <button
             disabled={recorded === null}
+            title={recordedUnavailable ? t.agent.thread.recordsUnavailable : undefined}
             onClick={() => {
               const target = actionsTarget;
               if (recorded === null || !target) return;
@@ -207,7 +224,9 @@ export function ThreadList({
             type="button"
           >
             {recorded === false ? <ShowIcon size={ICON_SIZE.menu} /> : <HideIcon size={ICON_SIZE.menu} />}
-            {recorded === false ? t.agent.thread.includeInRecords : t.agent.thread.excludeFromRecords}
+            {recordedUnavailable
+              ? t.agent.thread.recordsUnavailable
+              : recorded === false ? t.agent.thread.includeInRecords : t.agent.thread.excludeFromRecords}
           </button>
           <button onClick={() => runThreadAction(onDelete)} role="menuitem" type="button">
             <TrashIcon size={ICON_SIZE.menu} />{t.agent.thread.delete}

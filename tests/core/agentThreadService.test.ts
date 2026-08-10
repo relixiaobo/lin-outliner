@@ -76,6 +76,7 @@ import {
   threadTranscriptPath,
   threadTranscriptRoot,
 } from '../../src/main/agent/thread/ThreadTranscriptArtifact';
+import { ThreadTranscriptIndex } from '../../src/main/agent/thread/ThreadTranscriptIndex';
 import { ThreadTranscriptWriter } from '../../src/main/agent/thread/ThreadTranscriptWriter';
 import { uuidV7 } from '../../src/main/agent/uuid';
 import { createImageArtifactReference } from '../../src/main/agent/imageArtifacts';
@@ -10303,10 +10304,13 @@ describe('Thread transcript artifact', () => {
     expect(lines[1]!.split('\t')[0]).toBe(first.id);
     // Fixed column order is the contract a `file_grep` extraction rests on.
     const columns = lines[0]!.split('\t');
-    expect(columns).toHaveLength(7);
+    expect(columns).toHaveLength(8);
     expect(columns[1]).toBe('user');
-    expect(columns[6]).toBe(threadTranscriptPath(transcriptRootFor(fixture), second.id));
-    expect(index).toContain('# columns: threadId\tsource\tcreatedAt\tupdatedAt\tstatus\tname\ttranscriptPath');
+    // The cwd column is what lets a reader tell its own project's sessions from
+    // an unrelated one's, since the index spans the whole install.
+    expect(columns[2]).toBe(fixture.root);
+    expect(columns[7]).toBe(threadTranscriptPath(transcriptRootFor(fixture), second.id));
+    expect(index).toContain('# columns: threadId\tsource\tcwd\tcreatedAt\tupdatedAt\tstatus\tname\ttranscriptPath');
 
     await fixture.service.deleteThread(first.id);
     await fixture.service.flushThreadTranscriptIndex();
@@ -10324,15 +10328,15 @@ describe('Thread transcript artifact', () => {
       thread.id,
       'Weekly review\t019fb2da-0000-7000-8000-00000000beef\tuser\nforged row',
     );
-    // A rename moves the row, so the index owes itself a rewrite.
-    await recordedUserTurn(fixture, thread.id, 1, 'A follow-up question');
+    // A rename moves a row without moving a file, so it owes the index a rewrite
+    // on its own — nothing else here is going to trigger one.
     await fixture.service.flushThreadTranscriptIndex();
 
     const index = await readFile(fixture.service.threadTranscriptIndexPath, 'utf8');
     const rows = index.trimEnd().split('\n').filter((line) => !line.startsWith('#'));
 
     expect(rows).toHaveLength(1);
-    expect(rows[0]!.split('\t')).toHaveLength(7);
+    expect(rows[0]!.split('\t')).toHaveLength(8);
     expect(rows[0]).toContain('Weekly review 019fb2da-0000-7000-8000-00000000beef user forged row');
     await fixture.service.close();
   });
@@ -10357,6 +10361,98 @@ describe('Thread transcript artifact', () => {
     expect(await transcriptEntries(fixture)).toEqual([]);
 
     await fixture.service.close();
+  });
+
+  test('excluding a conversation takes its delegated work with it', async () => {
+    const fixture = await createFixture();
+    const spawned = await spawnTranscriptChild(fixture, 'private_child');
+    await fixture.service.waitForCollaborationActivity(spawned.root.id, spawned.rootTurn.turn.id);
+    fixture.executor.finish(0);
+    await fixture.service.waitForIdle(spawned.root.id);
+    await fixture.service.flushThreadTranscript(spawned.root.id);
+    await fixture.service.flushThreadTranscriptIndex();
+    expect(await transcriptEntries(fixture)).toHaveLength(2);
+
+    await fixture.service.setThreadRecorded(spawned.root.id, false);
+    await fixture.service.flushThreadTranscriptIndex();
+
+    // The child's artifact holds the delegated work. Leaving it behind would keep
+    // the excluded conversation readable AND keep the index advertising it to
+    // every later Thread, which is the doctrine this feature just added.
+    expect(await transcriptEntries(fixture)).toEqual([]);
+    const index = await readFile(fixture.service.threadTranscriptIndexPath, 'utf8');
+    expect(index).not.toContain(spawned.child.thread.id);
+    expect(index).not.toContain(spawned.root.id);
+
+    // And the child keeps recording nothing, because the exclusion covers the
+    // session rather than the one Thread the user clicked.
+    expect(fixture.service.isThreadRecorded(spawned.child.thread.id)).toBe(false);
+    await fixture.service.close();
+  });
+
+  test('re-including a finished conversation brings its record back without another Turn', async () => {
+    const fixture = await createFixture();
+    const thread = await recordedUserThread(fixture, 0, 'A conversation that is over');
+    await fixture.service.setThreadRecorded(thread.id, false);
+    expect(await transcriptEntries(fixture)).toEqual([]);
+
+    await fixture.service.setThreadRecorded(thread.id, true);
+    await fixture.service.flushThreadTranscriptIndex();
+
+    // Waiting for a next completed Turn would mean an accidental exclusion could
+    // never be undone on a conversation that is already finished — while the menu
+    // reported the record as restored.
+    const transcript = await readFile(threadTranscriptPath(transcriptRootFor(fixture), thread.id), 'utf8');
+    expect(transcript).toContain('A conversation that is over');
+    expect(await readFile(fixture.service.threadTranscriptIndexPath, 'utf8')).toContain(thread.id);
+    await fixture.service.close();
+  });
+
+  test('reconciles an excluded artifact whose removal never happened', async () => {
+    const fixture = await createFixture();
+    const thread = await recordedUserThread(fixture, 0, 'Excluded but still on disk');
+    await fixture.service.setThreadRecorded(thread.id, false);
+    await fixture.service.close();
+
+    // Stand in for a removal that failed or was interrupted: nothing else would
+    // ever come back for this file, because an excluded Thread never rewrites it.
+    const orphaned = threadTranscriptPath(transcriptRootFor(fixture), thread.id);
+    await writeFile(orphaned, '# a record that should be gone\n', 'utf8');
+
+    const reopened = await openFixture(fixture.root, new ControlledExecutor(), fixture.clock);
+    await reopened.service.initialize();
+    await reopened.service.flushThreadTranscriptIndex();
+
+    expect(await transcriptEntries(fixture)).toEqual([]);
+    expect(await readFile(reopened.service.threadTranscriptIndexPath, 'utf8')).not.toContain(thread.id);
+    await reopened.service.close();
+  });
+
+  test('a rewrite asked for during a rewrite still happens', async () => {
+    const root = join(await mkdtemp(join(tmpdir(), 'tenon-transcript-index-')), 'transcripts');
+    roots.push(root);
+    await mkdir(root, { recursive: true });
+    const threadId = '019fb2da-0000-7000-8000-0000000000aa';
+    await writeFile(join(root, `${threadId}.md`), '# a record\n', 'utf8');
+    let reads = 0;
+    const index: ThreadTranscriptIndex = new ThreadTranscriptIndex({
+      transcriptRoot: root,
+      readThreads: (ids) => {
+        reads += 1;
+        // Arriving while a rewrite is in flight: the writer owes one more, and
+        // owing it is the whole reason this is a single coalescing chain rather
+        // than a queue.
+        if (reads === 1) index.schedule();
+        return new Map(ids.map((id) => [id, { ...threadStub(id) }]));
+      },
+      isExcluded: () => false,
+    });
+
+    index.schedule();
+    await index.flush();
+
+    expect(reads).toBe(2);
+    expect(await readFile(index.path, 'utf8')).toContain(threadId);
   });
 
   test('including a Thread again rebuilds its whole record, not just what follows', async () => {
@@ -10942,6 +11038,29 @@ async function recordChildToolOutput(context: TurnExecutionContext, itemId: stri
       summary: 'file_read output',
     },
   });
+}
+
+/** Only the fields the index reads, so the coalescing test needs no service. */
+function threadStub(id: string): Thread {
+  return {
+    id,
+    sessionId: id,
+    parentThreadId: null,
+    forkedFromId: null,
+    agentNickname: null,
+    agentRole: null,
+    name: 'A recorded session',
+    preview: 'A recorded session',
+    ephemeral: false,
+    source: 'app',
+    threadSource: 'user',
+    modelProvider: 'openai',
+    cwd: '/tmp/project',
+    createdAt: 1,
+    updatedAt: 2,
+    status: { type: 'idle' },
+    historyMode: 'full',
+  };
 }
 
 /** A persistent user root Thread with one completed Turn, so it has a record on disk. */
