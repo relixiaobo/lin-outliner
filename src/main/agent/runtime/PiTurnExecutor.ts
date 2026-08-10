@@ -85,6 +85,7 @@ import {
 import {
   applyCustomOpenAIResponsesPayloadProfile,
   customOpenAIResponsesPayloadProfileOption,
+  isCustomOpenAIResponsesEndpoint,
 } from '../../openAIResponsesCompat';
 import type {
   ThreadNameGenerationContext,
@@ -94,6 +95,7 @@ import type {
   TurnExecutor,
 } from './types';
 import { persistToolCallAdmission } from './toolCallHistory';
+import { createResilientResponsesFetch } from './sseResilientFetch';
 
 export const MAX_PERSISTED_TOOL_ARGUMENT_CHARS = 32_000;
 export const MAX_PERSISTED_TOOL_OUTPUT_CHARS = 50_000;
@@ -187,7 +189,7 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
       priorMessages.push(...currentMessages.slice(0, -1));
       const prompt = initialPrompt;
       if (context.signal.aborted) return { status: 'interrupted' };
-      const providerOptions = providerStreamOptionsFromRuntimeSettings(runtimeSettings, runtime.model);
+      const configuredProviderOptions = providerStreamOptionsFromRuntimeSettings(runtimeSettings, runtime.model);
       const contextTurns = [...context.historyBeforeTurn, context.turn];
       const cacheAffinity = providerCacheAffinity(context.thread.id, contextTurns);
       const diagnostics = new TurnDiagnosticsCollector({
@@ -198,12 +200,20 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
         tools,
         model: runtime.model,
         thinkingLevel: runtime.thinkingLevel,
-        providerOptions,
+        providerOptions: configuredProviderOptions,
         initialInput: {
           acceptedAt: prompt.timestamp,
           itemIds: context.turn.items.map((item) => item.id),
         },
       });
+      const providerOptions = isCustomOpenAIResponsesEndpoint(runtime.model)
+        ? {
+            ...configuredProviderOptions,
+            fetch: createResilientResponsesFetch({
+              onNoiseFrame: (frame) => diagnostics.captureStreamNoiseFrame(frame),
+            }),
+          }
+        : configuredProviderOptions;
       const disableDiagnostics = (error: unknown) => {
         if (!diagnostics.available) return;
         diagnostics.disable();
@@ -819,6 +829,9 @@ export class PiEventNormalizer {
     switch (event.type) {
       case 'message_start':
         if (event.message.role === 'assistant') await this.ensureMessageItem();
+        return;
+      case 'message_restart':
+        if (event.message.role === 'assistant') await this.completeAssistant(event.message);
         return;
       case 'message_update':
         if (event.message.role !== 'assistant') return;

@@ -1,4 +1,4 @@
-import type { Api, Model } from '@earendil-works/pi-ai';
+import type { Api, FetchFunction, Model } from '@earendil-works/pi-ai';
 import type { SimpleStreamOptions } from '@earendil-works/pi-ai';
 import { parseCcSwitchModelOptionId } from './ccSwitchRegistry';
 
@@ -16,6 +16,13 @@ export function isOfficialOpenAIBaseUrl(baseUrl: string): boolean {
   } catch {
     return baseUrl.includes('api.openai.com');
   }
+}
+
+export function customOpenAIResponsesFetchOption(
+  model: ResponsesCompatModel | null | undefined,
+  createFetch: () => FetchFunction,
+): Pick<SimpleStreamOptions, 'fetch'> {
+  return isCustomOpenAIResponsesEndpoint(model) ? { fetch: createFetch() } : {};
 }
 
 export function applyCustomOpenAIResponsesPayloadProfile(

@@ -126,6 +126,12 @@ describe('Turn diagnostics', () => {
       image_url: `data:image/png;base64,${imageBytes.toString('base64')}`,
       system: [{ text: 'Base', cache_control: { type: 'ephemeral' } }],
     });
+    const noiseAt = Date.now();
+    collector.captureStreamNoiseFrame({
+      arrivedAt: noiseAt,
+      frameType: 'relay.stream_notice',
+      snippet: '{"type":"relay.stream_notice","error":{"message":"stream_read_error"}}',
+    });
     collector.captureTransportResponse({
       status: 202,
       headers: {
@@ -196,6 +202,11 @@ describe('Turn diagnostics', () => {
       reservedOutputTokens: 8_192,
       commonPrefixMessageCount: 0,
       cacheBreakpoints: ['$.system[0].cache_control'],
+      streamNoiseFrames: [{
+        arrivedAt: noiseAt,
+        frameType: 'relay.stream_notice',
+        snippet: '{"type":"relay.stream_notice","error":{"message":"stream_read_error"}}',
+      }],
       transportResponse: {
         httpStatus: 202,
         requestId: 'request-1',

@@ -68,8 +68,10 @@ import {
   piRefreshImageModels,
 } from '../../piImageModels';
 import {
+  customOpenAIResponsesFetchOption,
   customOpenAIResponsesPayloadProfileOption,
 } from '../../openAIResponsesCompat';
+import { createResilientResponsesFetch } from '../runtime/sseResilientFetch';
 import { redactSecretLikeContent } from './agentSecretRedaction';
 import {
   ccSwitchModelOptionId,
@@ -301,9 +303,12 @@ export function providerStreamOptionsFromRuntimeSettings(
     AgentRuntimeSettings,
     'providerTimeoutMs' | 'providerMaxRetries' | 'providerMaxRetryDelayMs' | 'providerCacheRetention'
   > | null,
-  _model?: Pick<Model<Api>, 'api' | 'baseUrl'> | null,
-): Pick<SimpleStreamOptions, 'timeoutMs' | 'maxRetries' | 'maxRetryDelayMs' | 'cacheRetention'> {
-  const options: Pick<SimpleStreamOptions, 'timeoutMs' | 'maxRetries' | 'maxRetryDelayMs' | 'cacheRetention'> = {};
+  model?: Pick<Model<Api>, 'api' | 'baseUrl'> | null,
+): Pick<SimpleStreamOptions, 'timeoutMs' | 'maxRetries' | 'maxRetryDelayMs' | 'cacheRetention' | 'fetch'> {
+  const options: Pick<
+    SimpleStreamOptions,
+    'timeoutMs' | 'maxRetries' | 'maxRetryDelayMs' | 'cacheRetention' | 'fetch'
+  > = {};
   if (settings?.providerTimeoutMs !== null && settings?.providerTimeoutMs !== undefined) {
     options.timeoutMs = settings.providerTimeoutMs;
   }
@@ -316,6 +321,7 @@ export function providerStreamOptionsFromRuntimeSettings(
   if (settings?.providerCacheRetention) {
     options.cacheRetention = settings.providerCacheRetention;
   }
+  Object.assign(options, customOpenAIResponsesFetchOption(model, createResilientResponsesFetch));
   return options;
 }
 

@@ -305,6 +305,19 @@ OpenAI Responses requests use the provider's detailed reasoning-summary mode.
 The runtime preserves every delivered summary part in the canonical `reasoning`
 Item; the renderer never substitutes the first line for the expanded body.
 
+Only custom OpenAI Responses endpoints install the resilient SSE fetch. Non-SSE
+responses pass through unchanged. Each SSE frame is buffered only through its blank-line
+boundary; ordinary, terminal, comment, event, multi-line-data, malformed-JSON, and
+`[DONE]` frames retain their original bytes. A frame carrying a top-level `error` is
+dropped only when its `type` is not `response.completed`, `response.failed`, or
+`response.incomplete`. The dropped value is secret-scanned and bounded before its type
+and snippet enter diagnostics; raw frame bytes are never persisted. A clean close after
+such a dropped frame surfaces the first sanitized snippet in the terminal error.
+The wrapper aborts a stream that delivers no chunk for 300,000 ms. This fixed idle
+timeout matches the long silent gaps valid at high reasoning effort and is separate from
+the configurable whole-request timeout. Official `api.openai.com`, Azure Responses, and
+non-Responses adapters do not use this wrapper.
+
 An execution or streamed Item is recorded with `item/started`, optional typed deltas,
 and one terminal `item/completed`. Initial evidence and user facts are complete inside
 the atomic `turn/started` event. Subagent activity already queued while the Thread was
@@ -321,6 +334,14 @@ without a capability decision. Presentation arguments and visible results use bo
 projections with explicit truncation metadata. Tool-result details pass through
 the shared persistence slimmer before entering an Item. Dynamic image result
 lists also have a fixed maximum length.
+When a custom Responses stream is retried after it already emitted content, the kernel
+emits the main-process-only `message_restart` event with the interrupted partial before
+replacing the trailing provider-history message. The normalizer completes the interrupted
+`agentMessage` and optional `reasoning` Items from that authoritative partial, clears its
+active pointers, and opens fresh Items for the new stream. The transcript therefore shows
+an interrupted segment, the existing reconnect indicator, and a fresh segment; retry
+deltas never concatenate onto the interrupted Item. `message_restart` is not a Core
+command, persisted notification, or renderer protocol variant.
 Before admission, the kernel preserves the first non-empty provider call ID that is
 unused in provider-visible history and the current run. An empty ID or any same-batch
 or later collision is remapped to a fresh Turn-local UUIDv7. Admission, execution,
@@ -620,6 +641,15 @@ occurs inside provider dispatch after auth environment values have resolved.
 
 Retryable provider request/stream failures use bounded Codex-style backoff. Responses
 request retries include rate limits, server failures, and classified transport failures.
+For a custom OpenAI Responses endpoint, an error after the stream has started is
+retryable by default unless it is context overflow, an abort, or an explicit HTTP 4xx
+other than 429. The default stream budget is three retries; an explicit provider retry
+setting still wins. Material text or a partial tool call does not suppress retry, because
+tools execute only after the stream settles. Any fully parsed tool call still suppresses
+retry; when every call in that assistant message is complete, the existing custom-endpoint
+salvage path settles it as tool use instead. Stream retries wait through the same bounded
+exponential delay as request retries. Official OpenAI and Azure Responses retain their
+legacy one-retry premature-termination allowlist and do not retry after material output.
 The kernel retry policy is the sole retry owner for transient failures and context
 overflow recovery. `PiModelGateway` calls the transport with its request retry count
 disabled, so configured attempts cannot multiply. The
@@ -738,6 +768,11 @@ metadata therefore cannot enter Turn diagnostics. Transport response facts remai
 separate from the completed assistant response because headers may exist even when body
 streaming later fails. An adapter or non-HTTP transport that exposes no response hook
 provides no transport facts.
+Each custom Responses Provider Call also owns an ordered `streamNoiseFrames` list. Every
+entry records the chunk-arrival time, bounded frame type, and bounded secret-scanned JSON
+snippet for one frame the resilient fetch removed. The model-call diagnostic JSON export
+includes this list beside the transport and normalized response facts. An older
+diagnostics payload may omit the optional list; new calls write it even when empty.
 
 An assistant `message_end` closes the latest open Provider Call with its provider-neutral
 normalized assistant message, real usage, stop reason, error details, and receive time.

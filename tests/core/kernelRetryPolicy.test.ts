@@ -491,7 +491,7 @@ describe('kernel retry policy', () => {
     expect(events.map((event) => event.type)).toEqual(['start', 'text_start', 'text_delta', 'error']);
   });
 
-  test('does not retry a 524 after a complete tool call arrives', async () => {
+  test('still refuses to retry once a tool call finished parsing', async () => {
     let attempts = 0;
     const streamFn = createPolicyStreamFn((() => {
       attempts += 1;
@@ -514,7 +514,150 @@ describe('kernel retry policy', () => {
     for await (const event of stream) events.push(event);
 
     expect(attempts).toBe(1);
-    expect(events.map((event) => event.type)).toEqual(['toolcall_end', 'error']);
+    expect(events.map((event) => event.type)).toEqual(['toolcall_end', 'done']);
+    await expect(stream.result()).resolves.toMatchObject({ stopReason: 'toolUse' });
+  });
+
+  test('retries a stream error outside the legacy termination allowlist', async () => {
+    let attempts = 0;
+    const streamFn = createPolicyStreamFn((() => {
+      attempts += 1;
+      return attempts === 1
+        ? startedErrorStream('stream_read_error', CUSTOM_RESPONSES_MODEL)
+        : textStream('recovered from relay noise', CUSTOM_RESPONSES_MODEL);
+    }) as StreamFn, { requestRetryDelayMs: () => 0 });
+
+    const stream = streamFn(CUSTOM_RESPONSES_MODEL, { messages: [], tools: [] });
+    const events = [];
+    for await (const event of stream) events.push(event);
+
+    expect(attempts).toBe(2);
+    expect(events.map((event) => event.type)).toEqual([
+      'start', 'text_start', 'text_delta', 'text_end', 'done',
+    ]);
+    await expect(stream.result()).resolves.toMatchObject({ stopReason: 'stop' });
+  });
+
+  test('does not retry a context-overflow stream failure', async () => {
+    let attempts = 0;
+    const streamFn = createPolicyStreamFn((() => {
+      attempts += 1;
+      return startedErrorStream(
+        'context_length_exceeded: request has too many input tokens',
+        CUSTOM_RESPONSES_MODEL,
+      );
+    }) as StreamFn, { requestRetryDelayMs: () => 0 });
+
+    const stream = streamFn(CUSTOM_RESPONSES_MODEL, { messages: [], tools: [] });
+    const events = [];
+    for await (const event of stream) events.push(event);
+
+    expect(attempts).toBe(1);
+    expect(events.map((event) => event.type)).toEqual(['start', 'error']);
+  });
+
+  test('does not retry a 400 stream failure that carries a status', async () => {
+    let attempts = 0;
+    const streamFn = createPolicyStreamFn((() => {
+      attempts += 1;
+      return startedErrorStream(
+        'OpenAI API error (400): invalid request',
+        CUSTOM_RESPONSES_MODEL,
+      );
+    }) as StreamFn, { requestRetryDelayMs: () => 0 });
+
+    const stream = streamFn(CUSTOM_RESPONSES_MODEL, { messages: [], tools: [] });
+    for await (const _event of stream) { /* drain */ }
+
+    expect(attempts).toBe(1);
+    await expect(stream.result()).resolves.toMatchObject({ stopReason: 'error' });
+  });
+
+  test('retries a 429 stream failure that carries a status', async () => {
+    let attempts = 0;
+    const streamFn = createPolicyStreamFn((() => {
+      attempts += 1;
+      return attempts === 1
+        ? startedErrorStream('OpenAI API error (429): rate limited', CUSTOM_RESPONSES_MODEL)
+        : textStream('recovered after stream rate limit', CUSTOM_RESPONSES_MODEL);
+    }) as StreamFn, { requestRetryDelayMs: () => 0 });
+
+    const stream = streamFn(CUSTOM_RESPONSES_MODEL, { messages: [], tools: [] });
+    for await (const _event of stream) { /* drain */ }
+
+    expect(attempts).toBe(2);
+    await expect(stream.result()).resolves.toMatchObject({ stopReason: 'stop' });
+  });
+
+  test('stops after the third custom Responses stream retry', async () => {
+    let attempts = 0;
+    const retryDelays: number[] = [];
+    const retryEvents: string[] = [];
+    const streamFn = createPolicyStreamFn((() => {
+      attempts += 1;
+      return startedErrorStream('stream_read_error', CUSTOM_RESPONSES_MODEL);
+    }) as StreamFn, {
+      requestRetryDelayMs: (retryCount) => {
+        retryDelays.push(retryCount);
+        return 0;
+      },
+      onProviderRetry: (event) => retryEvents.push(
+        `${event.phase}:${event.kind}:${event.attempt}/${event.maxRetries}`,
+      ),
+    });
+
+    const stream = streamFn(CUSTOM_RESPONSES_MODEL, { messages: [], tools: [] });
+    const events = [];
+    for await (const event of stream) events.push(event);
+
+    expect(attempts).toBe(4);
+    expect(retryDelays).toEqual([1, 2, 3]);
+    expect(retryEvents).toEqual([
+      'retrying:stream:1/3',
+      'cleared:stream:1/3',
+      'retrying:stream:2/3',
+      'cleared:stream:2/3',
+      'retrying:stream:3/3',
+      'cleared:stream:3/3',
+    ]);
+    expect(events.map((event) => event.type)).toEqual(['start', 'error']);
+    await expect(stream.result()).resolves.toMatchObject({
+      stopReason: 'error',
+      errorMessage: 'stream_read_error',
+    });
+  });
+
+  test('retries a custom Responses stream that already emitted text', async () => {
+    let attempts = 0;
+    const streamFn = createPolicyStreamFn((() => {
+      attempts += 1;
+      if (attempts > 1) return textStream('fresh answer', CUSTOM_RESPONSES_MODEL);
+      const source = createAssistantMessageEventStream();
+      const message = normalizeAssistant(fauxAssistantMessage(fauxText('partial answer'), {
+        stopReason: 'error',
+        errorMessage: 'stream_read_error',
+      }), CUSTOM_RESPONSES_MODEL);
+      queueMicrotask(() => {
+        source.push({ type: 'start', partial: message });
+        source.push({ type: 'text_start', contentIndex: 0, partial: message });
+        source.push({ type: 'text_delta', contentIndex: 0, delta: 'partial answer', partial: message });
+        source.push({ type: 'error', reason: 'error', error: message });
+        source.end(message);
+      });
+      return source;
+    }) as StreamFn, { requestRetryDelayMs: () => 0 });
+
+    const stream = streamFn(CUSTOM_RESPONSES_MODEL, { messages: [], tools: [] });
+    const events = [];
+    for await (const event of stream) events.push(event);
+
+    expect(attempts).toBe(2);
+    expect(events.map((event) => event.type)).toEqual([
+      'start', 'text_start', 'text_delta',
+      'start', 'text_start', 'text_delta', 'text_end', 'done',
+    ]);
+    expect(JSON.stringify(events)).toContain('partial answer');
+    expect(JSON.stringify(events)).toContain('fresh answer');
   });
 
   test('aborts during request retry backoff without starting another attempt', async () => {
@@ -768,6 +911,20 @@ function errorStream(errorMessage: string, model: Model<Api> = OPENAI_RESPONSES_
     errorMessage,
   }), model);
   queueMicrotask(() => {
+    source.push({ type: 'error', reason: 'error', error: message });
+    source.end(message);
+  });
+  return source;
+}
+
+function startedErrorStream(errorMessage: string, model: Model<Api>) {
+  const source = createAssistantMessageEventStream();
+  const message = normalizeAssistant(fauxAssistantMessage([], {
+    stopReason: 'error',
+    errorMessage,
+  }), model);
+  queueMicrotask(() => {
+    source.push({ type: 'start', partial: message });
     source.push({ type: 'error', reason: 'error', error: message });
     source.end(message);
   });

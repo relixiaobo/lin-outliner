@@ -20,6 +20,7 @@ type RetryOutcome = 'settled' | 'retry-request' | 'retry-stream' | 'retry-overfl
 
 const MAX_RETRYABLE_RESPONSES_REQUEST_FAILURES = 4;
 const MAX_RETRYABLE_RESPONSES_TERMINATIONS = 1;
+const MAX_RETRYABLE_CUSTOM_RESPONSES_STREAM_ERRORS = 3;
 const RESPONSES_REQUEST_RETRY_INITIAL_DELAY_MS = 200;
 const RESPONSES_REQUEST_RETRY_JITTER = 0.1;
 
@@ -92,7 +93,12 @@ export function wrapStreamWithAbortSettling(
     ? normalizedRetryLimit(configuredMaxRequestRetries, MAX_RETRYABLE_RESPONSES_REQUEST_FAILURES)
     : 0;
   const maxStreamRetries = canRetryResponses
-    ? normalizedRetryLimit(configuredMaxStreamRetries, MAX_RETRYABLE_RESPONSES_TERMINATIONS)
+    ? normalizedRetryLimit(
+        configuredMaxStreamRetries,
+        isCustomOpenAIResponsesEndpoint(model)
+          ? MAX_RETRYABLE_CUSTOM_RESPONSES_STREAM_ERRORS
+          : MAX_RETRYABLE_RESPONSES_TERMINATIONS,
+      )
     : 0;
   const requestRetryDelayMs = configuredRequestRetryDelayMs ?? ((retryCount: number) => {
     const delay = responsesRequestRetryDelayMs(retryCount);
@@ -188,6 +194,8 @@ export function wrapStreamWithAbortSettling(
         } else {
           streamRetryCount += 1;
           showProviderRetry('stream', streamRetryCount, maxStreamRetries);
+          await waitForAbortableDelay(requestRetryDelayMs(streamRetryCount), abortCtrl.signal);
+          if (settled || abortCtrl.signal.aborted) break;
         }
         source = retrySource?.() ?? source;
       }
@@ -287,6 +295,7 @@ export function wrapStreamWithAbortSettling(
           const retry = retryOutcomeForResponsesError(
             event.error,
             event.reason,
+            model,
             requestRetryCount,
             maxRequestRetries,
             streamRetryCount,
@@ -322,6 +331,7 @@ export function wrapStreamWithAbortSettling(
         const retry = retryOutcomeForResponsesError(
           result,
           result.stopReason === 'aborted' ? 'aborted' : 'error',
+          model,
           requestRetryCount,
           maxRequestRetries,
           streamRetryCount,
@@ -354,6 +364,7 @@ export function wrapStreamWithAbortSettling(
       const retry = retryOutcomeForResponsesError(
         message,
         message.stopReason === 'aborted' ? 'aborted' : 'error',
+        model,
         requestRetryCount,
         maxRequestRetries,
         streamRetryCount,
@@ -399,6 +410,7 @@ function isMaterialStreamEvent(event: AssistantMessageEvent): boolean {
 function retryOutcomeForResponsesError(
   message: AssistantMessage,
   reason: 'aborted' | 'error',
+  model: Model<Api>,
   requestRetryCount: number,
   maxRequestRetries: number,
   streamRetryCount: number,
@@ -407,14 +419,15 @@ function retryOutcomeForResponsesError(
   sawMaterialOutput: boolean,
   completedToolCallIds: ReadonlySet<string>,
 ): Exclude<RetryOutcome, 'settled' | 'retry-overflow'> | null {
-  if (reason !== 'error' || sawMaterialOutput || completedToolCallIds.size > 0) return null;
+  if (reason !== 'error' || completedToolCallIds.size > 0) return null;
+  if (sawMaterialOutput && !isCustomOpenAIResponsesEndpoint(model)) return null;
   const failure = classifyModelFailure(message);
   if (!sawStreamEvent
     && requestRetryCount < maxRequestRetries
     && (failure?.kind === 'rateLimit' || failure?.kind === 'serverError' || failure?.kind === 'transport')) {
     return 'retry-request';
   }
-  if (streamRetryCount < maxStreamRetries && isTerminatedResponsesStreamError(message.errorMessage)) {
+  if (streamRetryCount < maxStreamRetries && isRetryableResponsesStreamError(message, model)) {
     return 'retry-stream';
   }
   return null;
@@ -509,7 +522,7 @@ function salvageTerminatedCustomResponsesToolUse(
 ): AssistantMessage | null {
   if (reason !== 'error') return null;
   if (!isCustomOpenAIResponsesEndpoint(model)) return null;
-  if (!isTerminatedResponsesStreamError(message.errorMessage)) return null;
+  if (!isRetryableResponsesStreamError(message, model)) return null;
   const toolCalls = message.content.filter(isToolCall);
   if (toolCalls.length === 0) return null;
   if (!toolCalls.every((toolCall) => completedToolCallIds.has(toolCall.id))) return null;
@@ -528,10 +541,20 @@ function isOpenAIResponsesModel(model: Model<Api>): boolean {
   return model.api === 'openai-responses' || model.api === 'azure-openai-responses';
 }
 
-function isTerminatedResponsesStreamError(errorMessage: string | undefined): boolean {
-  if (!errorMessage) return false;
-  const lower = errorMessage.toLowerCase();
-  return lower === 'terminated'
-    || lower.includes('stream ended before a terminal response event')
-    || lower.includes('terminated while');
+function isRetryableResponsesStreamError(message: AssistantMessage, model: Model<Api>): boolean {
+  if (!isCustomOpenAIResponsesEndpoint(model)) {
+    const lower = message.errorMessage?.toLowerCase();
+    return lower === 'terminated'
+      || Boolean(lower?.includes('stream ended before a terminal response event'))
+      || Boolean(lower?.includes('terminated while'));
+  }
+  const failure = classifyModelFailure(message);
+  if (failure?.kind === 'contextOverflow' || failure?.kind === 'aborted') return false;
+  if (
+    failure?.status !== undefined
+    && failure.status >= 400
+    && failure.status < 500
+    && failure.status !== 429
+  ) return false;
+  return true;
 }

@@ -55,8 +55,9 @@ interface TurnDiagnosticsCollectorInput {
 
 interface MutableProviderCall extends Omit<
   TurnDiagnosticsProviderCall,
-  'response' | 'transportResponse'
+  'response' | 'streamNoiseFrames' | 'transportResponse'
 > {
+  streamNoiseFrames: NonNullable<TurnDiagnosticsProviderCall['streamNoiseFrames']>[number][];
   transportResponse: TurnDiagnosticsProviderCall['transportResponse'];
   response: TurnDiagnosticsProviderCall['response'];
 }
@@ -183,6 +184,7 @@ export class TurnDiagnosticsCollector {
       ),
       requestFingerprint: fingerprint(stableJson(normalizedRequest)),
       cacheBreakpoints: cacheBreakpointPaths(payload),
+      streamNoiseFrames: [],
       transportResponse: null,
       response: null,
     });
@@ -250,6 +252,20 @@ export class TurnDiagnosticsCollector {
       occurredAt,
       sourceCallIndex: sourceCall.index,
       nextCallIndex: null,
+    });
+  }
+
+  captureStreamNoiseFrame(frame: {
+    readonly arrivedAt: number;
+    readonly frameType: string | null;
+    readonly snippet: string;
+  }): void {
+    const sourceCall = this.providerCalls.at(-1);
+    if (!sourceCall) return;
+    sourceCall.streamNoiseFrames.push({
+      arrivedAt: frame.arrivedAt,
+      frameType: frame.frameType,
+      snippet: frame.snippet,
     });
   }
 
@@ -375,7 +391,10 @@ export class TurnDiagnosticsCollector {
       },
       canonicalMessages: [...this.canonicalMessages.values()],
       requestFragments: [...this.requestFragments.values()],
-      providerCalls: this.providerCalls.map((call) => ({ ...call })),
+      providerCalls: this.providerCalls.map((call) => ({
+        ...call,
+        streamNoiseFrames: call.streamNoiseFrames.map((frame) => ({ ...frame })),
+      })),
       activities: this.activities.map((activity) => (
         activity.type === 'acceptedInput'
           ? acceptedInputActivity(activity)

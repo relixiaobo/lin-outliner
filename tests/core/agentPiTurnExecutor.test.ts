@@ -124,6 +124,112 @@ describe('PiTurnExecutor event normalization', () => {
     expect(normalizer.stopReason).toBe('stop');
   });
 
+  test('message_restart completes the interrupted items and opens fresh ones', async () => {
+    const fixture = createContext();
+    const normalizer = new PiEventNormalizer(fixture.context);
+    const interrupted = {
+      ...assistantMessage([
+        { type: 'thinking' as const, thinking: 'Interrupted reasoning' },
+        { type: 'text' as const, text: 'Interrupted answer' },
+      ]),
+      stopReason: 'pending' as const,
+    };
+    const fresh = assistantMessage([{ type: 'text', text: 'Fresh answer' }]);
+
+    normalizer.handle({ type: 'message_start', message: interrupted });
+    normalizer.handle({
+      type: 'message_update',
+      message: interrupted,
+      assistantMessageEvent: { type: 'thinking_delta', delta: 'Interrupted reasoning' },
+    } as AgentEvent);
+    normalizer.handle({
+      type: 'message_update',
+      message: interrupted,
+      assistantMessageEvent: { type: 'text_delta', delta: 'Interrupted answer' },
+    } as AgentEvent);
+    normalizer.handle({ type: 'message_restart', message: interrupted });
+    normalizer.handle({ type: 'message_start', message: fresh });
+    normalizer.handle({
+      type: 'message_update',
+      message: fresh,
+      assistantMessageEvent: { type: 'text_delta', delta: 'Fresh answer' },
+    } as AgentEvent);
+    normalizer.handle({ type: 'message_end', message: fresh });
+    await normalizer.flush();
+
+    expect(fixture.recorder.orderedItems()).toMatchObject([
+      { type: 'agentMessage', text: 'Interrupted answer' },
+      { type: 'reasoning', content: ['Interrupted reasoning'] },
+      { type: 'agentMessage', text: 'Fresh answer' },
+    ]);
+    expect(fixture.notifications.map((notification) => notification.type)).toEqual([
+      'item/started',
+      'item/started',
+      'item/delta',
+      'item/delta',
+      'item/completed',
+      'item/completed',
+      'item/started',
+      'item/delta',
+      'item/completed',
+    ]);
+  });
+
+  test('a retried stream does not concatenate onto the interrupted message', async () => {
+    const fixture = createContext();
+    let attempts = 0;
+    const executor = new PiTurnExecutor({
+      resolveRuntime: async () => runtimeSelection(),
+      resolveRuntimeSettings: async () => ({
+        ...runtimeSettings(),
+        providerMaxRetryDelayMs: 1,
+      }),
+      createTools: async () => [],
+      createGateway: (hooks) => new PiModelGateway({
+        ...hooks,
+        streamSimple: (model, providerContext, options = {}) => {
+          attempts += 1;
+          const attempt = attempts;
+          const stream = createAssistantMessageEventStream();
+          queueMicrotask(async () => {
+            await options.onPayload?.({ model: model.id, input: providerContext.messages }, model);
+            await options.onResponse?.({ status: 200, headers: {} }, model);
+            const text = attempt === 1 ? 'Partial segment' : 'Replacement segment';
+            const partial = {
+              ...assistantMessage([{ type: 'text' as const, text }]),
+              stopReason: 'pending' as const,
+            };
+            stream.push({ type: 'start', partial });
+            stream.push({ type: 'text_start', contentIndex: 0, partial });
+            stream.push({ type: 'text_delta', contentIndex: 0, delta: text, partial });
+            if (attempt === 1) {
+              const error = {
+                ...partial,
+                stopReason: 'error' as const,
+                errorMessage: 'stream_read_error',
+              };
+              stream.push({ type: 'error', reason: 'error', error });
+              stream.end(error);
+              return;
+            }
+            const completed = assistantMessage([{ type: 'text', text }]);
+            stream.push({ type: 'text_end', contentIndex: 0, content: text, partial: completed });
+            stream.push({ type: 'done', reason: 'stop', message: completed });
+            stream.end(completed);
+          });
+          return stream;
+        },
+      }),
+    });
+
+    await expect(executor.execute(fixture.context)).resolves.toMatchObject({ status: 'completed' });
+
+    expect(attempts).toBe(2);
+    expect(fixture.recorder.orderedItems()
+      .filter((item): item is Extract<ThreadItem, { type: 'agentMessage' }> => item.type === 'agentMessage')
+      .map((item) => item.text)).toEqual(['Partial segment', 'Replacement segment']);
+  });
+
   test('never lands a non-zero exit code on a command Item with nothing beside it', async () => {
     // The transcript hangs the exit code on the output section's heading, so a
     // code that outlived its output would be unreachable in the UI. It cannot:

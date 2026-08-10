@@ -376,6 +376,12 @@ export interface TurnDiagnosticsTransportResponse {
   readonly requestId: string | null;
 }
 
+export interface TurnDiagnosticsStreamNoiseFrame {
+  readonly arrivedAt: number;
+  readonly frameType: string | null;
+  readonly snippet: string;
+}
+
 export interface TurnDiagnosticsProviderCall {
   readonly index: number;
   readonly requestedAt: number;
@@ -389,6 +395,7 @@ export interface TurnDiagnosticsProviderCall {
   readonly request: TurnDiagnosticsProviderRequest;
   readonly requestFingerprint: string;
   readonly cacheBreakpoints: readonly string[];
+  readonly streamNoiseFrames?: readonly TurnDiagnosticsStreamNoiseFrame[];
   readonly transportResponse: TurnDiagnosticsTransportResponse | null;
   readonly response: TurnDiagnosticsProviderResponse | null;
 }

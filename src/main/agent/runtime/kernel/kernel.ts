@@ -194,12 +194,21 @@ async function streamAssistantResponse(
   let addedPartial = false;
   streamEvents: for await (const event of response) {
     switch (event.type) {
-      case 'start':
-        partialMessage = event.partial;
-        context.messages.push(partialMessage);
-        addedPartial = true;
+      case 'start': {
+        const nextPartial = event.partial;
+        if (addedPartial) {
+          if (partialMessage) {
+            await emit({ type: 'message_restart', message: { ...partialMessage } });
+          }
+          context.messages[context.messages.length - 1] = nextPartial;
+        } else {
+          context.messages.push(nextPartial);
+          addedPartial = true;
+        }
+        partialMessage = nextPartial;
         await emit({ type: 'message_start', message: { ...partialMessage } });
         break;
+      }
       case 'text_start':
       case 'text_delta':
       case 'text_end':

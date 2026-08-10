@@ -129,6 +129,9 @@ export class NativeAgentRuntime {
       case 'message_update':
         this.mutableState.streamingMessage = event.message;
         break;
+      case 'message_restart':
+        this.mutableState.streamingMessage = undefined;
+        break;
       case 'message_end':
         this.mutableState.streamingMessage = undefined;
         if (event.message.role === 'assistant') {
