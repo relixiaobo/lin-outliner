@@ -151,14 +151,15 @@ export class ThreadDocumentBeliefs {
     set.forget(gone);
   }
 
-  /**
-   * Release a Thread's beliefs when it stops running.
+/**
+   * Release a Thread's beliefs, called with the rest of its in-session
+   * coordination state when the Thread stops or is deleted.
    *
-   * The set is only useful to a Thread that will admit another Turn, and it is
-   * rebuilt from the record when one does. Holding it for the process lifetime
-   * would make a long session's memory grow with every Thread that ever read a
-   * node — one broad search adds fifty — and give a resumed Thread a set that
-   * only ever got longer.
+   * The set is only useful to a Thread that will admit another Turn, and the
+   * rebuild path is what makes letting go of it safe — a Thread that runs again
+   * reconstructs it from its record. Holding it for the process lifetime made a
+   * long session's memory grow with every Thread that ever read a node, one
+   * broad search adding fifty at a time.
    */
   forget(threadIds: readonly ThreadId[]): void {
     for (const threadId of threadIds) this.byThread.delete(threadId);

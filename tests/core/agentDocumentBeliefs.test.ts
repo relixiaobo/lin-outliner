@@ -4,7 +4,7 @@ import {
   driftedNodes,
   DocumentBeliefSet,
 } from '../../src/main/agent/context/DocumentBeliefs';
-import { indexProjection } from '../../src/main/agent/capabilities/agentNodeToolProjection';
+import { indexProjection, revisionOf } from '../../src/main/agent/capabilities/agentNodeToolProjection';
 import { editableOutlineRevision } from '../../src/main/agent/capabilities/agentNodeToolRead';
 import { TRASH_ID, type DocumentProjection, type NodeProjection } from '../../src/core/types';
 
@@ -98,6 +98,40 @@ describe('document beliefs', () => {
     expect(drift[0]!.kind).toBe('gone');
   });
 
+  test('classifies both revision forms node_edit emits, not just the outline one', () => {
+    const projection = documentWith([textNode(PRICING, 'Enterprise pricing')]);
+    const index = indexProjection(projection);
+
+    // `node_edit` writes one `revisions` map from fifteen code paths. Only the
+    // outline path emits the three-part form; the other thirteen emit
+    // `revisionOf`. Both are built here by the functions that really emit them.
+    const outlineForm = beliefsFromToolResult(
+      'node_edit',
+      { ok: true, data: { revisions: { [PRICING]: editableOutlineRevision(index, PRICING) } } },
+      index,
+      1_000,
+    );
+    const revisionForm = beliefsFromToolResult(
+      'node_edit',
+      { ok: true, data: { revisions: { [PRICING]: revisionOf(index.nodes.get(PRICING)!) } } },
+      index,
+      1_000,
+    );
+
+    expect(outlineForm[0]).toMatchObject({ basis: 'outline' });
+    expect(revisionForm[0]).toMatchObject({ basis: 'updatedAt' });
+    // Neither may report drift against the document they were emitted from —
+    // labelling the whole map `outline` told the model its own move was someone
+    // else's change it must not revert.
+    expect(driftedNodes(outlineForm, projection)).toEqual([]);
+    expect(driftedNodes(revisionForm, projection)).toEqual([]);
+
+    // And both still notice a real edit.
+    const after = documentWith([textNode(PRICING, 'Enterprise pricing', { updatedAt: 2 })]);
+    expect(driftedNodes(outlineForm, after)).toHaveLength(1);
+    expect(driftedNodes(revisionForm, after)).toHaveLength(1);
+  });
+
   test('yields nothing rather than throwing on a shape it does not know', () => {
     const index = indexProjection(documentWith([textNode(PRICING, 'Pricing')]));
     // This runs behind a live tool call and behind a rebuild from persisted
@@ -108,6 +142,14 @@ describe('document beliefs', () => {
     // An item stating neither basis expresses no belief, rather than a belief
     // with a fabricated token.
     expect(beliefsFromToolResult('node_read', { ok: true, data: { items: [{ nodeId: PRICING }] } }, index, 1)).toEqual([]);
+    // A revision that does not carry its node's id is a shape this does not
+    // know; guessing its basis is what produced the defect it replaced.
+    expect(beliefsFromToolResult(
+      'node_edit',
+      { ok: true, data: { revisions: { [PRICING]: 'something-else:1' } } },
+      index,
+      1,
+    )).toEqual([]);
   });
 
   test('a re-observed node keeps one belief, and the newest one', () => {

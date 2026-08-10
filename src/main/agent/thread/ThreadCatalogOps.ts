@@ -46,6 +46,7 @@ export interface ThreadCatalogTranscripts {
   delete(threadId: ThreadId): Promise<void>;
   /** Deletion takes the conversation with it, so its exclusion has nothing left to govern. */
   forgetExclusions(sessionIds: readonly string[]): Promise<void>;
+  /** In-session belief state, released with the rest of a Thread's coordination state. */
   forgetBeliefs(threadIds: readonly ThreadId[]): void;
 }
 
@@ -621,7 +622,6 @@ export class ThreadCatalogOps {
           await this.transcripts.delete(descendantId);
         }
         await this.transcripts.forgetExclusions(subtree.records.map((record) => record.thread.sessionId));
-        this.transcripts.forgetBeliefs(subtree.threadIds);
       } finally {
         this.finishThreadSubtreeStop(subtree.threadIds);
       }
@@ -695,6 +695,11 @@ export class ThreadCatalogOps {
     }
   private clearThreadCoordinationState(threadIds: readonly ThreadId[]): void {
       this.collaboration.clearThreadCoordinationState(threadIds);
+      // Beliefs are in-session state like the rest of this, and the rebuild path
+      // is what makes releasing them safe: a Thread that runs again reconstructs
+      // them from its record. Without this the set grew for the process
+      // lifetime, one entry per node any Thread ever read.
+      this.transcripts.forgetBeliefs(threadIds);
       this.core.clearThreadAdmissionBarriers(threadIds);
     }
   async createThread(

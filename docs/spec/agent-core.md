@@ -647,7 +647,13 @@ outline hash to `revisionOf`, so comparing it against `revisionOf` can never be
 equal and turns every read into permanent false drift. Comparison recomputes the
 belief's own basis, so a shape a tool emits is only ever compared with itself.
 The basis is as strong as the observation was — an outline revision for a read, a
-normalised timestamp for a search result. `beliefsFromToolResult` is the single
+normalised timestamp for a search result — and it is **read off the token rather
+than assumed from the field it arrived in**: `node_edit` writes one `revisions`
+map from fifteen code paths and only the outline path emits the three-part form,
+so labelling the map by its field name reproduced the same never-matching
+comparison for the other thirteen. Both forms share the `${nodeId}:` prefix and
+the id is known, so stripping it separates them without depending on the hash's
+alphabet. `beliefsFromToolResult` is the single
 extraction, used both live and when rebuilding from a persisted payload, so the
 two cannot disagree.
 
@@ -698,8 +704,9 @@ revert changes it is itself being asked to make.
 that were the observation — which is what makes a restart and a fork need no
 special case. The Turn's timestamp stands in for the Item's, which carries none;
 it is monotonic with observation order, which is all attribution asks of it. A
-Thread's set is released when the Thread is deleted, and a rebuild costs the next
-admission one pass over its payloads.
+Thread's set is released with the rest of its in-session coordination state when
+the Thread stops or is deleted — the rebuild path is what makes that safe — and a
+rebuild costs the next admission one pass over its payloads.
 
 **The notice is a belief update, not a warning.** It carries the current content
 of up to five drifted nodes, so the ordinary case costs no re-read round trip;

@@ -15,6 +15,16 @@
  * so its belief is that timestamp. A search result is a weaker claim about what
  * the model knows, and pretending otherwise would either miss drift or invent it.
  *
+ * AND THE BASIS IS READ OFF THE TOKEN, NOT ASSUMED FROM THE FIELD IT ARRIVED IN.
+ * `node_edit` writes one `revisions` map from fifteen code paths, and only the
+ * outline path emits the three-part form — the other thirteen emit `revisionOf`.
+ * Labelling the whole map `outline` reproduced the original defect for the
+ * majority of edits: the model moved a node and was then told its own edit was
+ * someone else's change it must not revert. Both forms share the prefix
+ * `${nodeId}:`, and the id is the map key, so stripping the known prefix
+ * separates them without depending on the hash's alphabet or on ids never
+ * containing a colon.
+ *
  * Both bases are recoverable from the persisted tool output, which is what makes
  * the set a projection of the canonical record rather than a cache: the same
  * `beliefsFromToolResult` runs live and on rebuild, over the same bytes.
@@ -86,10 +96,10 @@ export function beliefsFromToolResult(
     if (!isRecord(item)) continue;
     const nodeId = stringOf(item.nodeId);
     if (!nodeId) continue;
-    // node_read states the outline revision it rendered.
-    const outline = stringOf(item.revision);
-    if (outline) {
-      add(nodeId, 'outline', outline);
+    const revision = stringOf(item.revision);
+    if (revision) {
+      const classified = classifyRevision(nodeId, revision);
+      if (classified) add(nodeId, classified.basis, classified.token);
       continue;
     }
     // node_search states an ISO timestamp; normalise to the epoch the projection
@@ -97,11 +107,13 @@ export function beliefsFromToolResult(
     const updatedAt = epochOf(item.updatedAt);
     if (updatedAt !== undefined) add(nodeId, 'updatedAt', updatedAt);
   }
-  // node_edit / node_create: an explicit map of what the mutation left behind,
-  // in the same outline form node_read emits.
+  // node_edit / node_create: what the mutation left behind, in whichever of the
+  // two revision forms the path that produced it emits.
   if (isRecord(data.revisions)) {
     for (const [nodeId, token] of Object.entries(data.revisions)) {
-      if (typeof token === 'string' && token) add(nodeId, 'outline', token);
+      if (typeof token !== 'string' || !token) continue;
+      const classified = classifyRevision(nodeId, token);
+      if (classified) add(nodeId, classified.basis, classified.token);
     }
   }
   return beliefs;
@@ -200,6 +212,31 @@ export class DocumentBeliefSet {
   beliefs(): readonly DocumentBelief[] {
     return [...this.beliefsById.values()];
   }
+}
+
+/**
+ * Which function emitted this revision token, decided by its own structure.
+ *
+ * `revisionOf` is `${id}:${updatedAt}`; `editableOutlineRevision` appends
+ * `:${hash}` to it. The id is known — it is the key the token arrived under — so
+ * stripping `${nodeId}:` leaves either a bare stamp or a stamp and a hash, and
+ * nothing here depends on what the hash looks like. A token that does not carry
+ * the expected prefix is a shape this does not know, and expresses no belief
+ * rather than a guessed one.
+ */
+function classifyRevision(
+  nodeId: string,
+  token: string,
+): { readonly basis: DocumentBeliefBasis; readonly token: string } | null {
+  const prefix = `${nodeId}:`;
+  if (!token.startsWith(prefix)) return null;
+  const rest = token.slice(prefix.length);
+  if (!rest) return null;
+  // A third segment means the outline hash is present, so the outline is what
+  // was rendered and what must be recomputed.
+  return rest.includes(':')
+    ? { basis: 'outline', token }
+    : { basis: 'updatedAt', token: rest };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
