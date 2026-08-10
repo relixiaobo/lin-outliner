@@ -87,6 +87,32 @@ Entries reference the pull request that introduced them.
   spots exactly matched the regression being repaired; the row-stacking check also
   dropped every `role="menu"` popover on the floor. Each fix was verified by
   re-injecting the original breakage and watching the guard fire.
+- **A folder you bind is your folder, not a Skill namespace (PR #513, codex-4)** —
+  write governance resolved a Skill target from **path shape alone** and never asked
+  whether a Skill had actually loaded there, so inside a directory the user bound by
+  hand `<bound>/taxes/2025.md` was validated as support content of a Skill "taxes"
+  that does not exist, and `<bound>/Research Notes/summary.md` was refused with
+  `invalid_skill_name` though it is not a Skill at all. Ownership now follows what the
+  registry admitted: the convention directories (`~/.agents/skills`, the workspace
+  `.agents/skills`, nested ones) stay dedicated namespaces where path shape governs
+  content before a `SKILL.md` exists, while a bound directory is an ordinary folder in
+  which only an **admitted** child root owns its definition and support files. An exact
+  `<bound>/<name>/SKILL.md` write remains a governed admission attempt, and admission
+  now validates the whole prospective bundle — so authoring the support files first no
+  longer smuggles executable, secret-looking, symlinked, or oversized content into a
+  Skill, which is the hole the write-order swap opened. Ownership is independent of
+  invocation state, and when a convention and a bound candidate overlap the most
+  specific valid root wins on **logical** path, not on where a symlink happens to
+  point. The high review gate found ten defects, all fixed in the same PR with named
+  regression tests: the write-order bypass above, a bind window in which a settings
+  change left the in-flight turn resolving against a stale snapshot, alias dedup that
+  attributed a write to a container the file was not in, canonical-vs-logical depth
+  ranking that governed a symlinked Skill's own `SKILL.md` as its parent's support
+  file, a swallowed reload failure reported to the model as success, and a managed-Skill
+  mutation path that had come to await a full re-hashing disk rescan inside the
+  mutation lock. The fix inverts the refresh model rather than patching each window —
+  a definition write invalidates the registry synchronously, and Skill-path resolution
+  is async and awaits the reload, failing closed if it cannot complete.
 
 ### Internal
 

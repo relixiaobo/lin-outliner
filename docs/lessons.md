@@ -619,3 +619,33 @@ verified by passing on the fixed code — re-inject the original breakage and wa
 it fail.** Anything that reaches the guard through a skip, a `continue`, or a
 `NaN` comparison is indistinguishable from health, and a regression test that has
 never once been red is a claim, not evidence.
+
+## Admitting a unit means validating the unit, not the file in your hand
+
+The #513 gate found that a governance check keyed to the file being written let
+an agent author a Skill's support files *first* and its `SKILL.md` second. Each
+write was judged alone and each judgement was locally right: `run.sh` under a
+directory no Skill had loaded from was ordinary user content, and the `SKILL.md`
+that arrived next was a valid definition. Only the pair was the attack —
+admission turned the already-written executable into part of an invocable Skill,
+and the branch's own guards (`executable_skill_support_file`,
+`rejectSecretLookingContent`) never ran on it, because they had run on the wrong
+question. The fix moved the gate to the moment of admission and walked the whole
+prospective bundle. So: **when a write admits something into a trusted set,
+validate everything the admission pulls in, not the bytes the caller passed you.**
+Order-of-writes is attacker-chosen; the admission boundary is the only point that
+sees the finished unit.
+
+## A snapshot published asynchronously and read synchronously is a stale read
+
+The same PR resolved Skill path ownership through a synchronous resolver reading
+a `loadedBoundSkillRoots` snapshot that only an async registry load ever
+republished. Every window between "the world changed" and "the load finished" —
+a settings change mid-turn, a definition write, a reload that threw and was
+caught — resolved against the old world and silently *downgraded* to ungoverned,
+because "no owner found" and "owner not published yet" are the same `null`. Three
+separate confirmed defects were that one shape. The fix was not to plug each
+window: invalidation became synchronous, the read became `async` and awaits the
+reload, and a load that fails now propagates. So: **if a cache must be fresh to
+be correct, make the reader await the refresh and fail closed — never let a
+not-yet-loaded answer be spelled the same as a negative one.**

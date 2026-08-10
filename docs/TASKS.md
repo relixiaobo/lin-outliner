@@ -58,8 +58,8 @@ theme-section entry below; this list is the ordering, not a second record):
   visual-media baseline fixture (`test.extend` default), then the run-dependent flaky
   set as one problem.
 
-**Design-gate queue** (PM bandwidth; one open): `skill-path-ownership`. The
-auth-clarity scope was **decided 2026-08-09: all five dual-auth rows** (entry renamed
+**Design-gate queue** (PM bandwidth): _empty_ — `skill-path-ownership` shipped #513
+2026-08-10. The auth-clarity scope was **decided 2026-08-09: all five dual-auth rows** (entry renamed
 `dual-auth-clarity`) — it joins Lane A once its one-pager is drafted. **Release:** **v0.2.0 freeze initiated
 2026-08-09** (PM call — trains leave on time; Lane A catches the 0.3.0 train): note
 drafted by main, PM ratifies, then tag + dial to 0.3.0.
@@ -136,20 +136,6 @@ before any directional/security-sensitive build.
 
 - **agent-program** (P1, `meta` — umbrella) — read first; it maps the rest (foundation /
   dependency graph / event taxonomy / milestones). See `docs/plans/reference/agent-program.md`.
-- **skill-path-ownership** (P2, `draft`, *no plan file yet* — spun out of #470 at the
-  gate 2026-08-01; the two items below are one question and should be designed
-  together) — **who owns a path, and when is that decided?** `targetInsideSkillsDir`
-  resolves a write target from **path shape alone** and never asks whether a Skill
-  actually loaded there: under a bound directory, `<bound>/taxes/2025.md` is validated
-  as support content of a Skill "taxes" that does not exist, and
-  `<bound>/Research Notes/summary.md` is refused with `invalid_skill_name` though it is
-  not a Skill at all. That is correct for `.agents/skills` — a directory that is *for*
-  Skills by convention — and wrong for a folder a user bound by hand. Pre-existing
-  (verified on `origin/main` at the gate), but #470 is what made it reachable from the
-  UI, and #470's confirm-then-bind-the-parent flow aims it at a directory the user did
-  not pick. Design the ownership model — resolve against what the registry actually
-  loaded, or distinguish convention directories from bound ones — rather than adding
-  another guard to the branch ladder.
 - **skill-directory-is-itself-a-skill** (P3, `draft`, *no plan file yet* — cut from #470
   at the gate 2026-08-01, deliberately, not abandoned) — picking `~/work/my-pdf-skill`
   is at least as natural as picking its parent, but the loader only ever looks one
@@ -159,7 +145,9 @@ before any directional/security-sensitive build.
   ambiguity "container **or** Skill?" was being resolved by ordered guesses at write
   time (A7). #470 now asks whether to bind the parent instead, which is honest but not
   the feature. Give this its own seam: settle identity and ownership first, then the
-  loading. Depends on `skill-path-ownership`.
+  loading. **Unblocked 2026-08-10** — `skill-path-ownership` shipped (#513), so the
+  ownership half of the ambiguity is settled and this item now only has to answer
+  identity and loading.
 - **agent-episodic-transcripts** (P2, `in-progress` 2026-08-10 — see
   [docs/plans/agent-episodic-transcripts.md](plans/agent-episodic-transcripts.md)) —
   extend the subagent transcript artifact (#460) to every persistent Thread and
@@ -810,6 +798,15 @@ and the merged PR, distilled rules in [`lessons.md`](lessons.md). Everything
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
 
+- **skill-path-ownership** (codex-4, PR #513, merged 2026-08-10 — plan-track, plan archived
+  `done`) — Skill write governance now follows what the registry admitted rather than path
+  shape: convention directories stay namespaces, a hand-bound folder is ordinary content
+  where only an admitted child root owns its files, and an exact `SKILL.md` write stays a
+  governed admission that validates the whole prospective bundle. `/code-review high` found
+  ten defects — including a write-order bypass that let an executable or credential-bearing
+  support file into a Skill ahead of its definition — all fixed in the same PR by inverting
+  the refresh model (synchronous invalidate, async resolution that awaits the reload and
+  fails closed) rather than patching each window.
 - **popover-list-layout-repair** (anti, PR #515, merged 2026-08-10 — fast-track, no plan
   file) — retiring the command palette (#505) took the shared popover row contract with it;
   the popover-only CSS is rebuilt without reviving any dead `.command-*` rule, and
