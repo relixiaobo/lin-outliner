@@ -1276,7 +1276,6 @@ commandPalette: {
         result: '结果',
         error: '错误',
         output: '输出',
-        noOutput: '无输出',
         copyArguments: '复制参数',
         copyOutput: '复制输出',
         exitCode: ({ code }) => `退出码 ${code}`,

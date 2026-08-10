@@ -1378,7 +1378,6 @@ commandPalette: {
         result: 'Result',
         error: 'Error',
         output: 'Output',
-        noOutput: 'No output',
         copyArguments: 'Copy arguments',
         copyOutput: 'Copy output',
         exitCode: ({ code }: { code: number }) => `Exit code ${code}`,
