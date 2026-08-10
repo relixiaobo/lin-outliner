@@ -39,8 +39,8 @@ every stale entry, so the frontier is four parallel lanes (detail lives in each 
 theme-section entry below; this list is the ordering, not a second record):
 
 - **Lane A — build-ready quick wins** (fast-track, parallelize freely; small items
-  don't count against the review-queue cap): `renderer-state-hygiene`,
-  `floating-toolbar-polish`, `icon-semantics`, the two remaining prime-agent
+  don't count against the review-queue cap): `floating-toolbar-polish`,
+  `icon-semantics`, the two remaining prime-agent
   fast-tracks (`agent-delegation-context-hygiene` · `agent-hygiene-checks`; the
   third shipped 2026-08-10 as #512), the `file-as-node` pane-restore bug, and the micro-tails
   (#460 truncation dialects · `scripts-typecheck-coverage` · #208 follow-ups).
@@ -133,17 +133,6 @@ before any directional/security-sensitive build.
 
 - **agent-program** (P1, `meta` — umbrella) — read first; it maps the rest (foundation /
   dependency graph / event taxonomy / milestones). See `docs/plans/reference/agent-program.md`.
-- **responses-stream-resilience** (P1, `draft` 2026-08-10 — see
-  [docs/plans/responses-stream-resilience.md](plans/responses-stream-resilience.md))
-  — a third-party OpenAI-Responses relay hiccup currently kills a Turn outright
-  (2026-08-10: two Turns dead on `stream_read_error` against the `cc-switch` relay,
-  while the same relay is fine under Codex CLI, which skips the frame and retries
-  five times). Match the three behaviours we lack: sanitize relay-injected
-  non-terminal error frames instead of letting the OpenAI SDK throw on any frame
-  carrying `error`, add the 300s SSE idle timeout we have never had, and treat an
-  established stream's death as retryable by default (budget 3, with backoff)
-  instead of matching a three-string allowlist and giving up the moment anything
-  was emitted. Shape (a), one PR, no protocol-surface change.
 - **skill-directory-is-itself-a-skill** (P3, `draft`, *no plan file yet* — cut from #470
   at the gate 2026-08-01, deliberately, not abandoned) — picking `~/work/my-pdf-skill`
   is at least as natural as picking its parent, but the loader only ever looks one
@@ -657,19 +646,6 @@ between them:
   electron-updater over the same tagged releases, and the prompt tier above
   degrades gracefully into its fallback UI.
 
-### Storage & platform hygiene (from the 2026-06-10 pre-release sweep)
-
-- **renderer-state-hygiene** (P3, *fast-track, no plan file*, **PM-ratified; rescoped
-  2026-08-09 — the key/version item already shipped**: key and int are both at v7,
-  `useWorkspaceLayout.ts:20-21`, and `workspace-layout.md:283` matches) — two remaining
-  renderer items in one PR: (1) on a projection delta, cull `removedIds` from
-  `focusedId`/`selectedIds`/`expanded` instead of relying on read-side defensive checks
-  (audit-verified still absent: the delta reducer at `state/document.ts:117` patches
-  only projection structures and never touches `UiState`); (2) pin the focus convention
-  in `ui-behavior.md`: outliner-row focus must go through the focusRequest rail (IME
-  composition guard, #176 family) — direct `element.focus()` is for non-editor chrome
-  only (audit-verified: the rule currently exists only on this board). Renderer-only.
-
 ### Deferred follow-ups & carried TODOs
 
 Small unclaimed items split off from shipped PRs — fast-track each when a clone is free; none block
@@ -799,6 +775,30 @@ and the merged PR, distilled rules in [`lessons.md`](lessons.md). Everything
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
 
+- **responses-stream-resilience** (codex-2, PR #520, merged 2026-08-10 — plan-track, plan
+  archived `done`) — a third-party OpenAI-Responses relay hiccup no longer kills a Turn:
+  a non-terminal frame carrying a **non-empty** `error` is dropped instead of thrown on,
+  a 300s SSE idle timeout aborts a silent stream, and an established stream's death is
+  retried (budget 3, backoff) with the partial preserved under the new durable
+  `interrupted` `MessagePhase` — visible in the transcript, excluded from final answers,
+  Memory, provider context, signed-reasoning replay, and usage. Only custom Responses
+  endpoints install the wrapper. `/code-review high` found ten, all fixed in the same PR;
+  the load-bearing ones were the first cut's retry predicate defaulting to *retryable*
+  for custom endpoints — which also widened salvage, so a 500 could execute a mutating
+  tool call as a successful Turn — and the abandoned attempt persisting as a real
+  `final_answer` that then fed Memory and the next request. Protocol surface moved
+  (`MessagePhase` + inspection-only `streamNoiseFrames`); Core commands unchanged.
+- **renderer-state-hygiene** (codex, PR #521, merged 2026-08-10 — fast-track, no plan
+  file) — renderer UI state no longer outlives the rows it points at: every accepted
+  projection update, delta removals and full resync reseeds by the same rule, prunes
+  departed node ids from selection, focus, expansion, the description editor, deferred
+  focus/reference requests, and the toolbar dropdown; `ui-behavior.md` now pins the
+  focusRequest-rail focus convention alongside it. `/code-review high` found six, all
+  fixed in the same PR — the load-bearing one was that the original patch pruned only
+  on deltas, so the resync/full-reseed recovery path revived exactly the stale-state
+  class the PR was closing; the fix unified both paths through one accepted-update
+  boundary and went past the report (focus-parent-driven clears, hidden-field
+  expansion keys, batch UI closing when the selection empties).
 - **update-check-and-prompt** (codex-3, PR #514, merged 2026-08-10 — plan-track, plan archived
   `done`) — an unsigned build can now find its own newest release: main polls the fixed GitHub
   Releases endpoint off the startup path, and the only ambient UI is a rose status dot beside

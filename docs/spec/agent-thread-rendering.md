@@ -371,9 +371,11 @@ receiverless wait does not count as an additional agent; the count is the
 distinct active child Thread identities in the projection. Rendering builds one
 Turn-level process projection from every reasoning, non-empty commentary,
 image-view, Subagent, and tool Item. That block is placed before the first final
-response regardless of
-the Items' persisted arrival order, so a late reasoning Item cannot appear
-below the answer. The process disclosure contains the independent reasoning,
+response regardless of the Items' persisted arrival order, so a late reasoning
+Item cannot appear below the answer. A provider-retry partial carries the
+`interrupted` message phase: it remains visible before the process block but is
+not treated as the final response and receives no response tail. The process
+disclosure contains the independent reasoning,
 activity-group, and tool detail disclosures rather than replacing them.
 An empty process does not render an empty timeline container. The status line,
 separator, visible timeline, and following answer use the same tokenized

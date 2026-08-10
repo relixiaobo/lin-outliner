@@ -75,6 +75,27 @@ describe('Turn process projection', () => {
 
     expect(blocks).toEqual([{ kind: 'process', items: [visible] }]);
   });
+
+  test('keeps an interrupted segment before process state and the final response', () => {
+    const interrupted = interruptedResponse('interrupted');
+    const response = agentResponse('response');
+    const completed: Turn = {
+      ...turn([interrupted, response]),
+      status: 'completed',
+      completedAt: 3,
+      durationMs: 2,
+    };
+
+    expect(groupTurnContent(completed).map((block) => (
+      block.kind === 'process'
+        ? { kind: block.kind, itemIds: block.items.map((item) => item.id) }
+        : { kind: block.kind, itemId: block.item.id }
+    ))).toEqual([
+      { kind: 'item', itemId: 'interrupted' },
+      { kind: 'process', itemIds: [] },
+      { kind: 'item', itemId: 'response' },
+    ]);
+  });
 });
 
 function turn(items: readonly ThreadItem[]): Turn {
@@ -141,6 +162,14 @@ function agentResponse(id: string): Extract<ThreadItem, { type: 'agentMessage' }
     text: 'Finished.',
     phase: 'final_answer',
     memoryCitation: null,
+  };
+}
+
+function interruptedResponse(id: string): Extract<ThreadItem, { type: 'agentMessage' }> {
+  return {
+    ...agentResponse(id),
+    text: 'Partial response.',
+    phase: 'interrupted',
   };
 }
 

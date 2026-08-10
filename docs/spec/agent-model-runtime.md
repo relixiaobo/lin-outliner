@@ -305,6 +305,22 @@ OpenAI Responses requests use the provider's detailed reasoning-summary mode.
 The runtime preserves every delivered summary part in the canonical `reasoning`
 Item; the renderer never substitutes the first line for the expanded body.
 
+Only custom OpenAI Responses endpoints install the resilient SSE fetch. Non-SSE
+responses pass through unchanged. Each SSE frame is buffered only through its blank-line
+boundary; ordinary, terminal, comment, event, multi-line-data, malformed-JSON, and
+`[DONE]` frames retain their original bytes. A frame carrying a non-empty top-level
+`error` is dropped only when its `type` is not `response.completed`, `response.failed`,
+or `response.incomplete`; `null`, blank, and empty-container error values pass through.
+The dropped value is secret-scanned and bounded before its type and snippet enter
+diagnostics; raw frame bytes are never persisted. At most 64 noise frames per response
+are scanned and reported. Further matching frames are dropped without diagnostic work.
+A clean close after such a dropped frame surfaces the first sanitized snippet in the
+terminal error.
+The wrapper aborts a stream that delivers no chunk for 300,000 ms. This fixed idle
+timeout matches the long silent gaps valid at high reasoning effort and is separate from
+the configurable whole-request timeout. Official `api.openai.com`, Azure Responses, and
+non-Responses adapters do not use this wrapper.
+
 An execution or streamed Item is recorded with `item/started`, optional typed deltas,
 and one terminal `item/completed`. Initial evidence and user facts are complete inside
 the atomic `turn/started` event. Subagent activity already queued while the Thread was
@@ -321,6 +337,17 @@ without a capability decision. Presentation arguments and visible results use bo
 projections with explicit truncation metadata. Tool-result details pass through
 the shared persistence slimmer before entering an Item. Dynamic image result
 lists also have a fixed maximum length.
+When a custom Responses stream is retried after it already emitted content, the kernel
+emits the main-process-only `message_restart` event with the interrupted partial before
+replacing the trailing provider-history message. The normalizer completes the interrupted
+`agentMessage` and optional `reasoning` Items from that authoritative partial, marks the
+message phase `interrupted`, clears its active pointers, and opens fresh Items for the new
+stream. The interrupted Item remains visible but is excluded from final-answer readers,
+Memory extraction, later provider context, signed-reasoning replay, and usage accounting.
+The transcript therefore shows an interrupted segment, the existing reconnect indicator,
+and a fresh segment; retry deltas never concatenate onto the interrupted Item.
+`message_restart` is not a Core command, persisted notification, or renderer protocol
+variant; `interrupted` is a durable Core `MessagePhase`.
 Before admission, the kernel preserves the first non-empty provider call ID that is
 unused in provider-visible history and the current run. An empty ID or any same-batch
 or later collision is remapped to a fresh Turn-local UUIDv7. Admission, execution,
@@ -620,6 +647,20 @@ occurs inside provider dispatch after auth environment values have resolved.
 
 Retryable provider request/stream failures use bounded Codex-style backoff. Responses
 request retries include rate limits, server failures, and classified transport failures.
+For a custom OpenAI Responses endpoint, an error after the stream has started is retryable
+only when it is a classified rate limit, server failure, transport failure, legacy
+termination, or known relay/idle stream interruption. Unknown statusless `badRequest`
+messages stay terminal so invalid credentials, missing models, and exhausted quota do not
+resend the full context. The default stream budget is three retries; an explicit provider
+retry setting still wins. A pre-stream failure belongs only to the request budget and
+cannot fall through into the stream budget after exhausting it. Material text or a partial
+tool call does not suppress retry, because tools execute only after the stream settles.
+Any fully parsed tool call suppresses retry. Only the legacy premature-termination
+allowlist may salvage a message whose every tool call completed; a 429, 5xx, or transport
+failure remains terminal and cannot execute a mutating tool as successful output. Stream
+retries wait through the same bounded exponential delay as request retries. Official
+OpenAI and Azure Responses retain their legacy one-retry premature-termination allowlist
+and do not retry after material output.
 The kernel retry policy is the sole retry owner for transient failures and context
 overflow recovery. `PiModelGateway` calls the transport with its request retry count
 disabled, so configured attempts cannot multiply. The
@@ -738,6 +779,14 @@ metadata therefore cannot enter Turn diagnostics. Transport response facts remai
 separate from the completed assistant response because headers may exist even when body
 streaming later fails. An adapter or non-HTTP transport that exposes no response hook
 provides no transport facts.
+Each custom Responses Provider Call also owns an ordered `streamNoiseFrames` list. Every
+entry records the chunk-arrival time, bounded frame type, and bounded secret-scanned JSON
+snippet for one frame the resilient fetch removed. The model-call diagnostic JSON export
+includes this list beside the transport and normalized response facts. An older
+diagnostics payload may omit the optional list; new calls write it even when empty. The
+producer, collector, and decoder enforce a 64-entry maximum. The collector clamps a stale
+or invalid arrival time to the owning request and normalizes an empty frame type to `null`,
+so inspection-only relay metadata cannot invalidate the Turn's complete diagnostics.
 
 An assistant `message_end` closes the latest open Provider Call with its provider-neutral
 normalized assistant message, real usage, stop reason, error details, and receive time.

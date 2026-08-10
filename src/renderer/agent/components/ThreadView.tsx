@@ -2787,17 +2787,13 @@ export function groupTurnContent(turn: Turn): ThreadContentBlock[] {
   const itemBlocks = turn.items
     .filter((item) => !isThreadProcessItem(item) && !isEmptyCommentaryItem(item))
     .map((item) => ({ kind: 'item' as const, item }));
-  const hasFinalResponse = itemBlocks.some((block) => (
-    block.item.type === 'agentMessage' && block.item.phase !== 'commentary'
-  ));
+  const hasFinalResponse = itemBlocks.some((block) => isFinalResponseItem(block.item));
   const needsProcessBlock = processItems.length > 0
     || turn.status === 'inProgress'
     || (turn.status === 'completed' && hasFinalResponse && turn.durationMs !== null);
   if (!needsProcessBlock) return itemBlocks;
 
-  const firstResponseIndex = itemBlocks.findIndex((block) => (
-    block.item.type === 'agentMessage' && block.item.phase !== 'commentary'
-  ));
+  const firstResponseIndex = itemBlocks.findIndex((block) => isFinalResponseItem(block.item));
   const blocks: ThreadContentBlock[] = [...itemBlocks];
   blocks.splice(
     firstResponseIndex < 0 ? blocks.length : firstResponseIndex,
@@ -2852,17 +2848,22 @@ function groupTurnItems(items: readonly ThreadItem[]): ThreadItemGroup[] {
 function lastAgentResponse(turn: Turn): Extract<ThreadItem, { type: 'agentMessage' }> | null {
   for (let index = turn.items.length - 1; index >= 0; index -= 1) {
     const item = turn.items[index];
-    if (item?.type === 'agentMessage' && item.phase !== 'commentary') return item;
+    if (item && isFinalResponseItem(item)) return item;
   }
   return null;
+}
+
+function isFinalResponseItem(
+  item: ThreadItem,
+): item is Extract<ThreadItem, { type: 'agentMessage' }> {
+  return item.type === 'agentMessage'
+    && (item.phase === 'final_answer' || item.phase === null);
 }
 
 function isSoloResultlessReasoning(turn: Turn, item: ThreadItem): boolean {
   if (item.type !== 'reasoning') return false;
   if (turn.items.some((candidate) => (
-    candidate.type === 'agentMessage'
-    && candidate.phase !== 'commentary'
-    && candidate.text.trim().length > 0
+    isFinalResponseItem(candidate) && candidate.text.trim().length > 0
   ))) return false;
   const processItems = turn.items.filter(isThreadProcessItem);
   return processItems.length === 1 && processItems[0]?.id === item.id;

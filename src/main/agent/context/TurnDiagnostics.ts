@@ -11,16 +11,17 @@ import type {
   Tool,
 } from '../runtime/kernel/types';
 import type { EffectiveThreadConfiguration } from '../../../core/agent/configuration';
-import type {
-  JsonValue,
-  ModelToolCallHistory,
-  ThreadItem,
-  TurnDiagnosticsPayload,
-  TurnDiagnosticsActivity,
-  TurnDiagnosticsProviderCall,
-  TurnDiagnosticsMessagePartProvenance,
-  TurnDiagnosticsProviderRequest,
-  TurnDiagnosticsProviderRequestField,
+import {
+  MAX_TURN_DIAGNOSTICS_STREAM_NOISE_FRAMES,
+  type JsonValue,
+  type ModelToolCallHistory,
+  type ThreadItem,
+  type TurnDiagnosticsPayload,
+  type TurnDiagnosticsActivity,
+  type TurnDiagnosticsProviderCall,
+  type TurnDiagnosticsMessagePartProvenance,
+  type TurnDiagnosticsProviderRequest,
+  type TurnDiagnosticsProviderRequestField,
 } from '../../../core/agent/protocol';
 import {
   redactSecretLikeJsonForDiagnostics,
@@ -55,8 +56,9 @@ interface TurnDiagnosticsCollectorInput {
 
 interface MutableProviderCall extends Omit<
   TurnDiagnosticsProviderCall,
-  'response' | 'transportResponse'
+  'response' | 'streamNoiseFrames' | 'transportResponse'
 > {
+  streamNoiseFrames: NonNullable<TurnDiagnosticsProviderCall['streamNoiseFrames']>[number][];
   transportResponse: TurnDiagnosticsProviderCall['transportResponse'];
   response: TurnDiagnosticsProviderCall['response'];
 }
@@ -183,6 +185,7 @@ export class TurnDiagnosticsCollector {
       ),
       requestFingerprint: fingerprint(stableJson(normalizedRequest)),
       cacheBreakpoints: cacheBreakpointPaths(payload),
+      streamNoiseFrames: [],
       transportResponse: null,
       response: null,
     });
@@ -250,6 +253,23 @@ export class TurnDiagnosticsCollector {
       occurredAt,
       sourceCallIndex: sourceCall.index,
       nextCallIndex: null,
+    });
+  }
+
+  captureStreamNoiseFrame(frame: {
+    readonly arrivedAt: number;
+    readonly frameType: string | null;
+    readonly snippet: string;
+  }): void {
+    const sourceCall = this.providerCalls.at(-1);
+    if (!sourceCall) return;
+    if (sourceCall.streamNoiseFrames.length >= MAX_TURN_DIAGNOSTICS_STREAM_NOISE_FRAMES) return;
+    sourceCall.streamNoiseFrames.push({
+      arrivedAt: Number.isFinite(frame.arrivedAt)
+        ? Math.max(sourceCall.requestedAt, frame.arrivedAt)
+        : sourceCall.requestedAt,
+      frameType: frame.frameType?.trim() ? frame.frameType : null,
+      snippet: frame.snippet,
     });
   }
 
@@ -375,7 +395,10 @@ export class TurnDiagnosticsCollector {
       },
       canonicalMessages: [...this.canonicalMessages.values()],
       requestFragments: [...this.requestFragments.values()],
-      providerCalls: this.providerCalls.map((call) => ({ ...call })),
+      providerCalls: this.providerCalls.map((call) => ({
+        ...call,
+        streamNoiseFrames: call.streamNoiseFrames.map((frame) => ({ ...frame })),
+      })),
       activities: this.activities.map((activity) => (
         activity.type === 'acceptedInput'
           ? acceptedInputActivity(activity)

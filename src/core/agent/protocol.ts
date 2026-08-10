@@ -376,6 +376,14 @@ export interface TurnDiagnosticsTransportResponse {
   readonly requestId: string | null;
 }
 
+export const MAX_TURN_DIAGNOSTICS_STREAM_NOISE_FRAMES = 64;
+
+export interface TurnDiagnosticsStreamNoiseFrame {
+  readonly arrivedAt: number;
+  readonly frameType: string | null;
+  readonly snippet: string;
+}
+
 export interface TurnDiagnosticsProviderCall {
   readonly index: number;
   readonly requestedAt: number;
@@ -389,6 +397,7 @@ export interface TurnDiagnosticsProviderCall {
   readonly request: TurnDiagnosticsProviderRequest;
   readonly requestFingerprint: string;
   readonly cacheBreakpoints: readonly string[];
+  readonly streamNoiseFrames?: readonly TurnDiagnosticsStreamNoiseFrame[];
   readonly transportResponse: TurnDiagnosticsTransportResponse | null;
   readonly response: TurnDiagnosticsProviderResponse | null;
 }
@@ -597,7 +606,7 @@ export interface MemoryCitation {
   readonly threadIds: readonly ThreadId[];
 }
 
-export type MessagePhase = 'commentary' | 'final_answer';
+export type MessagePhase = 'commentary' | 'final_answer' | 'interrupted';
 export type ItemExecutionStatus = 'inProgress' | 'completed' | 'failed' | 'interrupted';
 
 interface ThreadItemBase {

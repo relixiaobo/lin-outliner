@@ -82,10 +82,14 @@ New module `src/main/agent/runtime/sseResilientFetch.ts`, exporting
   at a time** (to the `\n\n` boundary) and no more — never aggregate across
   frames, or streaming latency regresses.
 - Per frame, parse the `data:` payload as JSON. Drop the frame — and report it
-  through the `onNoiseFrame` callback — when it carries an `error` key **and**
+  through the `onNoiseFrame` callback — when it carries a **non-empty** `error`
+  value **and**
   its `type` is not one of `response.failed`, `response.incomplete`,
   `response.completed`. Every other frame is forwarded **byte-for-byte**; do not
   re-serialize, or unknown relay fields are silently rewritten.
+- Report at most 64 noise frames per response. Further matching frames are still
+  dropped, but skip diagnostics and secret scanning so a chatty relay cannot
+  grow the payload or stall the live stream without bound.
 - Handle: multi-line `data:`, `event:` lines, comment lines (`:` prefix), the
   `[DONE]` sentinel, and frames split across chunks.
 - A frame whose JSON does not parse is forwarded unchanged, not dropped — our
@@ -108,28 +112,30 @@ Turns.
 
 In `src/main/agent/runtime/kernel/retryPolicy.ts`:
 
-- Replace `isTerminatedResponsesStreamError` with
-  `isRetryableResponsesStreamError`, inverting the default. An error that killed
-  an already-established stream is retryable **unless** it is semantically
-  final:
+- Add `isRetryableResponsesStreamError` for custom endpoints. An established
+  stream is retryable only for classified rate limits, server failures,
+  transports, the legacy termination allowlist, or the known relay/idle stream
+  interruption messages:
 
   ```
   const failure = classifyModelFailure(message)
-  if (failure?.kind === 'contextOverflow' || failure?.kind === 'aborted') return false
-  if (failure?.status !== undefined && failure.status >= 400
-      && failure.status < 500 && failure.status !== 429) return false
-  return true
+  if (failure?.kind === 'rateLimit'
+      || failure?.kind === 'serverError'
+      || failure?.kind === 'transport') return true
+  return isTerminatedResponsesStreamError(message)
+      || isKnownRelayStreamInterruption(message)
   ```
 
-  Note why the status check cannot lean on `failure.kind` alone:
-  `classifyErrorMessage` derives its kind by scraping an HTTP status out of the
-  message string, so a bare `stream_read_error` lands in `badRequest` with no
-  status — indistinguishable from a real 400 if you match on kind.
+  A bare `stream_read_error` lands in `badRequest` with no status, so it needs an
+  explicit known-interruption match. Unknown `badRequest` text stays terminal:
+  otherwise an invalid key, missing model, or exhausted quota can resend the
+  full context four times.
 
-- Both existing callers move to the new predicate:
-  `retryOutcomeForResponsesError` and `salvageTerminatedCustomResponsesToolUse`.
-  Widening salvage is intended and safe — it still requires every tool call in
-  the message to have completed parsing.
+- `retryOutcomeForResponsesError` uses the broader custom-endpoint predicate.
+  `salvageTerminatedCustomResponsesToolUse` deliberately retains the legacy
+  termination allowlist: a 429, 5xx, or transport failure after `toolcall_end`
+  remains a provider error and never executes a mutating tool as successful
+  output.
 
 - `MAX_RETRYABLE_RESPONSES_TERMINATIONS` 1 → **3**. Not Codex's 5: a relay blip
   clears in one or two attempts, and five sequential re-sends of a 70k-token
@@ -137,6 +143,8 @@ In `src/main/agent/runtime/kernel/retryPolicy.ts`:
 
 - Give the `retry-stream` branch the same backoff the `retry-request` branch
   has. It currently loops with no delay.
+- A failure before any stream event belongs only to the request budget. Once
+  that budget is exhausted it cannot fall through and spend the stream budget.
 
 - Leave `maxStreamRetries: providerOptions.maxRetries` in `PiTurnExecutor`
   alone: an explicit user setting keeps winning; only the default moves.
@@ -148,7 +156,9 @@ This incident was reconstructed entirely from `TurnDiagnostics`
 nor stream retries would have shown up there. Add
 `captureStreamNoiseFrame` alongside `captureProviderRetry`, recording per
 provider call: when the frame arrived, its `type`, and a redacted snippet
-through the existing secret-scan budget helper — never the raw frame.
+through the existing secret-scan budget helper — never the raw frame. Clamp the
+arrival time to the owning call's request time, normalize an empty type to
+`null`, and enforce the same 64-entry cap in the collector and codec.
 
 `captureProviderRetry` already fires for stream retries; confirm the
 `retry-stream` path reaches it with the new budget.
@@ -184,16 +194,19 @@ a state we should model as fatal either way.
   message** rather than the accumulated deltas, so deltas are a live preview and
   the committed content is authoritative. Without this, the interrupted item
   never completes and the re-sent deltas concatenate onto it.
+- The interrupted `agentMessage` uses the durable `interrupted` phase. It stays
+  visible but is not a final answer, Memory input, later provider history, or
+  signed-reasoning replay source. Closing it does not add usage or notify the
+  terminal assistant observer; only the successful replacement does.
 - The user-facing result is an interrupted segment, the existing retry
   indicator, then a fresh segment — exactly what Codex shows around
   `Reconnecting... 1/5`. `showProviderRetry('stream', …)` →
   `context.onProviderRetry` already carries that signal; do not redraw
   silently.
 
-No protocol-surface change is required anywhere in this step. If an
-implementation detail nonetheless starts reaching into
-`src/core/agent/protocol.ts` or `src/core/agent/codec.ts`, that is the signal
-the approach drifted — stop and re-read this step rather than widening the PR.
+The `interrupted` `MessagePhase` variant is the one Core protocol change in this
+step. A durable marker is required because the visible partial must survive a
+restart while every later reader must distinguish it from a completed answer.
 
 ## Settled decisions
 
@@ -206,7 +219,8 @@ Recorded so no one re-opens them mid-build:
   dropped. Only frames that both carry `error` and are not a terminal response
   event get removed.
 - A retry after the stream already emitted shows an **interrupted segment plus a
-  fresh one**, not a silent redraw. Suppressing the interrupted segment would
+  fresh one**, not a silent redraw. The first segment carries the durable
+  `interrupted` phase and is excluded from answer/context consumers. Suppressing it would
   need a rollback the recorder does not have; showing it is also what Codex
   does, and the retry indicator explains it.
 
@@ -221,6 +235,9 @@ New `tests/core/sseResilientFetch.test.ts`:
 
 - "forwards standard responses frames byte-for-byte"
 - "drops a relay error frame and keeps reading to response.completed"
+- "forwards frames whose error field is empty"
+- "normalizes an empty noise frame type to null"
+- "caps reported noise frames per response"
 - "keeps response.failed fatal"
 - "forwards a frame whose data is not valid JSON"
 - "reassembles a frame split across chunks"
@@ -233,14 +250,22 @@ Extend `tests/core/kernelRetryPolicy.test.ts`:
 - "does not retry a context-overflow failure"
 - "does not retry a 400 that carries a status"
 - "retries a 429 that carries a status"
+- "does not retry permanent custom Responses failures without a status"
+- "does not spend the stream budget after a request failure exhausts its budget"
 - "stops after the third stream retry"
-- "still refuses to retry once a tool call finished parsing"
+- "surfaces a non-termination provider failure once a tool call finished parsing"
 - "retries a stream that already emitted text"
 
 Extend `tests/core/agentPiTurnExecutor.test.ts`:
 
 - "message_restart completes the interrupted items and opens fresh ones"
 - "a retried stream does not concatenate onto the interrupted message"
+- "message_restart excludes the interrupted attempt from provider context,
+  terminal observation, and usage"
+
+Extend `tests/core/agentTurnDiagnostics.test.ts`:
+
+- "caps collected stream noise and rejects oversized durable payloads"
 
 Extend `tests/core/openAIResponsesCompat.test.ts` for the gating: the resilient
 fetch is installed for a custom base URL and absent for `api.openai.com`.

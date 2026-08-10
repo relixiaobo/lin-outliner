@@ -9,6 +9,7 @@ import {
   MODEL_TOOL_CALL_EVIDENCE_REASONS,
   MAX_THREAD_CONTEXT_PAYLOAD_BYTES,
   MAX_TURN_DIAGNOSTICS_PAYLOAD_BYTES,
+  MAX_TURN_DIAGNOSTICS_STREAM_NOISE_FRAMES,
   THREAD_HISTORY_MODE,
   THREAD_ITEM_TYPES,
   REQUEST_USER_INPUT_MAX_AUTO_RESOLUTION_MS,
@@ -80,6 +81,8 @@ export class AgentProtocolCodecError extends Error {
 const UUID_V7_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SHA_256_PATTERN = /^[0-9a-f]{64}$/;
 const ITEM_EXECUTION_STATUSES = new Set(['inProgress', 'completed', 'failed', 'interrupted']);
+const MAX_TURN_DIAGNOSTICS_STREAM_FRAME_TYPE_BYTES = 256;
+const MAX_TURN_DIAGNOSTICS_STREAM_NOISE_SNIPPET_BYTES = 8 * 1024;
 export function decodeThreadSource(value: unknown, path = 'threadSource'): ThreadSource {
   const source = stringValue(value, path);
   if (source.startsWith('feature:')) fail(path, 'feature sources use their plain app-owned label');
@@ -223,7 +226,7 @@ export function decodeThreadItem(value: unknown): ThreadItem {
         ...base,
         type,
         text: stringValue(record.text, 'item.text', true),
-        phase: nullableEnum(record.phase, ['commentary', 'final_answer'], 'item.phase'),
+        phase: nullableEnum(record.phase, ['commentary', 'final_answer', 'interrupted'], 'item.phase'),
         memoryCitation: decodeMemoryCitation(record.memoryCitation),
       };
       break;
@@ -2737,7 +2740,7 @@ export function decodeTurnDiagnosticsPayload(value: unknown): TurnDiagnosticsPay
       'index', 'requestedAt', 'preparedContext', 'protectedFromMessageIndex',
       'estimatedInputTokens', 'inputTokenLimit', 'reservedOutputTokens',
       'commonPrefixMessageCount', 'request', 'requestFingerprint',
-      'cacheBreakpoints', 'transportResponse', 'response',
+      'cacheBreakpoints', 'streamNoiseFrames', 'transportResponse', 'response',
     ], `turnDiagnostics.providerCalls[${index}]`);
     const preparedContext = recordValue(
       call.preparedContext,
@@ -2830,6 +2833,36 @@ export function decodeTurnDiagnosticsPayload(value: unknown): TurnDiagnosticsPay
           call.transportResponse,
           `turnDiagnostics.providerCalls[${index}].transportResponse`,
         );
+    const streamNoiseFramesPath = `turnDiagnostics.providerCalls[${index}].streamNoiseFrames`;
+    const streamNoiseFrameEntries = call.streamNoiseFrames === undefined
+      ? undefined
+      : arrayValue(call.streamNoiseFrames, streamNoiseFramesPath);
+    if (
+      streamNoiseFrameEntries
+      && streamNoiseFrameEntries.length > MAX_TURN_DIAGNOSTICS_STREAM_NOISE_FRAMES
+    ) {
+      fail(streamNoiseFramesPath, `cannot exceed ${MAX_TURN_DIAGNOSTICS_STREAM_NOISE_FRAMES} entries`);
+    }
+    const streamNoiseFrames = streamNoiseFrameEntries?.map((entry, frameIndex) => {
+      const framePath = `turnDiagnostics.providerCalls[${index}].streamNoiseFrames[${frameIndex}]`;
+      const frame = recordValue(entry, framePath);
+      exactKeys(frame, ['arrivedAt', 'frameType', 'snippet'], framePath);
+      return {
+        arrivedAt: nonNegativeNumber(frame.arrivedAt, `${framePath}.arrivedAt`),
+        frameType: frame.frameType === null
+          ? null
+          : boundedUtf8String(
+              frame.frameType,
+              `${framePath}.frameType`,
+              MAX_TURN_DIAGNOSTICS_STREAM_FRAME_TYPE_BYTES,
+            ),
+        snippet: boundedUtf8String(
+          frame.snippet,
+          `${framePath}.snippet`,
+          MAX_TURN_DIAGNOSTICS_STREAM_NOISE_SNIPPET_BYTES,
+        ),
+      };
+    });
     const protectedFromMessageIndex = nonNegativeInteger(
       call.protectedFromMessageIndex,
       `turnDiagnostics.providerCalls[${index}].protectedFromMessageIndex`,
@@ -2873,6 +2906,7 @@ export function decodeTurnDiagnosticsPayload(value: unknown): TurnDiagnosticsPay
         call.cacheBreakpoints,
         `turnDiagnostics.providerCalls[${index}].cacheBreakpoints`,
       ),
+      ...(streamNoiseFrames === undefined ? {} : { streamNoiseFrames }),
       transportResponse,
       response,
     };
@@ -2897,6 +2931,14 @@ export function decodeTurnDiagnosticsPayload(value: unknown): TurnDiagnosticsPay
     if (call.response && call.response.receivedAt < call.requestedAt) {
       fail(`turnDiagnostics.providerCalls[${index}].response.receivedAt`, 'cannot precede the request');
     }
+    call.streamNoiseFrames?.forEach((frame, frameIndex) => {
+      if (frame.arrivedAt < call.requestedAt) {
+        fail(
+          `turnDiagnostics.providerCalls[${index}].streamNoiseFrames[${frameIndex}].arrivedAt`,
+          'cannot precede the request',
+        );
+      }
+    });
     if (call.transportResponse && call.transportResponse.headersReceivedAt < call.requestedAt) {
       fail(
         `turnDiagnostics.providerCalls[${index}].transportResponse.headersReceivedAt`,

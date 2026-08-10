@@ -647,7 +647,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           }
       >;
       text?: string;
-      phase?: 'commentary' | 'final_answer' | null;
+      phase?: 'commentary' | 'final_answer' | 'interrupted' | null;
       memoryCitation?: null;
     };
     type MockTurn = {
