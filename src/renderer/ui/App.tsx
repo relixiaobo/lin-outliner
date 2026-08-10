@@ -55,8 +55,8 @@ const NODE_ACCESS_RECORD_DELAY_MS = 1200;
 
 export function App() {
   const t = useT();
-  const { index, applyProjectionUpdate } = useProjectionStore(api.getProjection);
   const [ui, setUi] = useUiState();
+  const { index, applyProjectionUpdate } = useProjectionStore(api.getProjection, setUi);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   // Agent rail is a 3-state model: collapsed seed (bare icon) -> hover glass chip
   // (CSS-only, no React state) -> open full panel. We persist only the binary

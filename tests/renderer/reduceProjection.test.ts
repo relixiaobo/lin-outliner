@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import { TAG_DAY_ID, type DocumentProjection, type NodeId, type NodeProjection, type ProjectionUpdate } from '../../src/core/types';
-import { reduceProjection } from '../../src/renderer/state/document';
+import {
+  reduceProjection,
+  reduceUiStateForProjectionUpdate,
+  type UiState,
+} from '../../src/renderer/state/document';
+import { hiddenFieldKey } from '../../src/renderer/state/outlinerRows';
 
 function node(id: string, patch: Partial<NodeProjection> = {}): NodeProjection {
   return {
@@ -51,6 +56,41 @@ function seed(revision = 1) {
   const state = reduceProjection(null, full(revision, tree()));
   if (!state) throw new Error('seed full update must produce a state');
   return state;
+}
+
+function uiState(patch: Partial<UiState> = {}): UiState {
+  return {
+    focusedId: null,
+    focusedParentId: null,
+    focusedPanelId: null,
+    focusSurface: null,
+    selectedId: null,
+    selectedIds: new Set(),
+    selectionAnchorId: null,
+    selectionRootId: null,
+    selectionSource: null,
+    focusRequest: null,
+    pendingInputChar: null,
+    pendingReferenceConversion: null,
+    pendingReferenceTypeAhead: null,
+    trailingDraftPlacement: null,
+    expanded: new Set(),
+    expandedHiddenFields: new Set(),
+    editingDescriptionId: null,
+    batchTagSelectorOpen: false,
+    toolbarDropdownRequest: null,
+    ...patch,
+  };
+}
+
+function applyAcceptedUiUpdate(
+  state: UiState,
+  previous: ReturnType<typeof seed>,
+  update: ProjectionUpdate,
+): UiState {
+  const next = reduceProjection(previous, update);
+  if (!next) throw new Error('test update must be accepted');
+  return reduceUiStateForProjectionUpdate(state, previous.index, next.index, update);
 }
 
 describe('reduceProjection — full update', () => {
@@ -301,5 +341,248 @@ describe('reduceProjection — revision discipline', () => {
       removedIds: [],
     });
     expect(orphan).toBeNull();
+  });
+});
+
+describe('reduceUiStateForProjectionUpdate', () => {
+  test('prunes removed focus, selection, expansion, and deferred state at the delta boundary', () => {
+    const previous = seed(1);
+    const focusTarget = { nodeId: 'c', parentId: 'b', panelId: 'panel-1', surface: 'row' as const };
+    const state = uiState({
+      focusedId: 'c',
+      focusedParentId: 'b',
+      focusedPanelId: 'panel-1',
+      focusSurface: 'row',
+      selectedId: 'c',
+      selectedIds: new Set(['a', 'b', 'c']),
+      selectionAnchorId: 'b',
+      selectionRootId: 'b',
+      selectionSource: 'global',
+      focusRequest: { target: focusTarget, placement: { kind: 'end' } },
+      pendingInputChar: { target: focusTarget, char: 'x' },
+      pendingReferenceConversion: { nodeId: 'a', parentId: 'root', targetId: 'c' },
+      pendingReferenceTypeAhead: { nodeId: 'c', parentId: 'b', targetId: 'a2' },
+      trailingDraftPlacement: { parentId: 'c', afterId: null, panelId: 'panel-1' },
+      expanded: new Set(['a', 'b', 'c']),
+      editingDescriptionId: 'c',
+      toolbarDropdownRequest: { nodeId: 'c', section: 'sort', nonce: 1 },
+    });
+
+    const next = applyAcceptedUiUpdate(state, previous, {
+      kind: 'delta',
+      revision: 2,
+      todayId: 'root',
+      changedNodes: [node('a', { parentId: 'root' })],
+      removedIds: ['b', 'c'],
+    });
+
+    expect(next.focusedId).toBeNull();
+    expect(next.focusedParentId).toBeNull();
+    expect(next.focusedPanelId).toBeNull();
+    expect(next.focusSurface).toBeNull();
+    expect(next.focusRequest).toBeNull();
+    expect(next.pendingInputChar).toBeNull();
+    expect(next.pendingReferenceTypeAhead).toBeNull();
+    expect(next.trailingDraftPlacement).toBeNull();
+    expect(next.selectedId).toBe('a');
+    expect(next.selectedIds).toEqual(new Set(['a']));
+    expect(next.selectionAnchorId).toBe('a');
+    expect(next.selectionRootId).toBeNull();
+    expect(next.selectionSource).toBe('global');
+    expect(next.pendingReferenceConversion).toBeNull();
+    expect(next.expanded).toEqual(new Set(['a']));
+    expect(next.editingDescriptionId).toBeNull();
+    expect(next.toolbarDropdownRequest).toBeNull();
+  });
+
+  test('clears parked requests that target a removed row without dropping surviving focus', () => {
+    const previous = seed(1);
+    const removedTarget = { nodeId: 'c', parentId: 'b', panelId: 'panel-1', surface: 'row' as const };
+    const state = uiState({
+      focusedId: 'a',
+      focusedParentId: 'root',
+      focusedPanelId: 'panel-1',
+      focusSurface: 'row',
+      selectedId: 'a',
+      selectedIds: new Set(['a']),
+      focusRequest: { target: removedTarget, placement: { kind: 'end' } },
+      pendingInputChar: { target: removedTarget, char: 'x' },
+      pendingReferenceConversion: { nodeId: 'a', parentId: 'root', targetId: 'c' },
+      pendingReferenceTypeAhead: { nodeId: 'a', parentId: 'root', targetId: 'c' },
+      trailingDraftPlacement: { parentId: 'a', afterId: 'b', panelId: 'panel-1' },
+    });
+
+    const next = applyAcceptedUiUpdate(state, previous, {
+      kind: 'delta',
+      revision: 2,
+      todayId: 'root',
+      changedNodes: [node('a', { parentId: 'root' })],
+      removedIds: ['b', 'c'],
+    });
+
+    expect(next.focusedId).toBe('a');
+    expect(next.focusedParentId).toBe('root');
+    expect(next.focusedPanelId).toBe('panel-1');
+    expect(next.focusSurface).toBe('row');
+    expect(next.focusRequest).toBeNull();
+    expect(next.pendingInputChar).toBeNull();
+    expect(next.pendingReferenceConversion).toBeNull();
+    expect(next.pendingReferenceTypeAhead).toBeNull();
+    expect(next.trailingDraftPlacement).toBeNull();
+  });
+
+  test('clears the shared focus family when a surviving row loses its focus parent', () => {
+    const previous = seed(1);
+    const focusTarget = { nodeId: 'c', parentId: 'b', panelId: 'panel-1', surface: 'row' as const };
+    const state = uiState({
+      focusedId: 'c',
+      focusedParentId: 'b',
+      focusedPanelId: 'panel-1',
+      focusSurface: 'row',
+      selectedId: 'c',
+      selectedIds: new Set(['c']),
+      focusRequest: { target: focusTarget, placement: { kind: 'end' } },
+      pendingInputChar: { target: focusTarget, char: 'x' },
+      pendingReferenceTypeAhead: { nodeId: 'c', parentId: 'b', targetId: 'a2' },
+      trailingDraftPlacement: { parentId: 'b', afterId: 'c', panelId: 'panel-1' },
+    });
+
+    const next = applyAcceptedUiUpdate(state, previous, {
+      kind: 'delta',
+      revision: 2,
+      todayId: 'root',
+      changedNodes: [
+        node('a', { parentId: 'root' }),
+        node('a2', { parentId: 'root', children: ['c'] }),
+        node('c', { parentId: 'a2' }),
+      ],
+      removedIds: ['b'],
+    });
+
+    expect(next.focusedId).toBeNull();
+    expect(next.focusedParentId).toBeNull();
+    expect(next.focusedPanelId).toBeNull();
+    expect(next.focusSurface).toBeNull();
+    expect(next.focusRequest).toBeNull();
+    expect(next.pendingInputChar).toBeNull();
+    expect(next.pendingReferenceTypeAhead).toBeNull();
+    expect(next.trailingDraftPlacement).toBeNull();
+    expect(next.selectedIds).toEqual(new Set(['c']));
+  });
+
+  test('derives removals from an accepted full reseed', () => {
+    const previous = seed(1);
+    const state = uiState({
+      focusedId: 'c',
+      focusedParentId: 'b',
+      selectedId: 'c',
+      selectedIds: new Set(['a', 'c']),
+      selectionAnchorId: 'c',
+      expanded: new Set(['a', 'b', 'c']),
+      editingDescriptionId: 'c',
+    });
+
+    const next = applyAcceptedUiUpdate(state, previous, full(3, [
+      node('root', { children: ['a', 'a2'] }),
+      node('a', { parentId: 'root' }),
+      node('a2', { parentId: 'root' }),
+    ]));
+
+    expect(next.focusedId).toBeNull();
+    expect(next.selectedId).toBe('a');
+    expect(next.selectedIds).toEqual(new Set(['a']));
+    expect(next.selectionAnchorId).toBe('a');
+    expect(next.expanded).toEqual(new Set(['a']));
+    expect(next.editingDescriptionId).toBeNull();
+  });
+
+  test('prunes hidden-field expansion and closes batch UI with the final selection', () => {
+    const fieldId = 'field-entry';
+    const previous = reduceProjection(null, full(1, [
+      node('root', { children: [fieldId] }),
+      node(fieldId, { type: 'fieldEntry', parentId: 'root' }),
+    ]));
+    if (!previous) throw new Error('field seed must produce a state');
+    const state = uiState({
+      selectedId: fieldId,
+      selectedIds: new Set([fieldId]),
+      selectionAnchorId: fieldId,
+      selectionRootId: 'root',
+      selectionSource: 'ref-click',
+      expanded: new Set([fieldId]),
+      expandedHiddenFields: new Set([hiddenFieldKey('root', fieldId)]),
+      editingDescriptionId: fieldId,
+      batchTagSelectorOpen: true,
+      toolbarDropdownRequest: { nodeId: fieldId, section: 'display', nonce: 1 },
+    });
+
+    const next = applyAcceptedUiUpdate(state, previous, {
+      kind: 'delta',
+      revision: 2,
+      todayId: 'root',
+      changedNodes: [node('root')],
+      removedIds: [fieldId],
+    });
+
+    expect(next.selectedId).toBeNull();
+    expect(next.selectedIds).toEqual(new Set());
+    expect(next.selectionAnchorId).toBeNull();
+    expect(next.selectionRootId).toBe('root');
+    expect(next.selectionSource).toBeNull();
+    expect(next.expanded).toEqual(new Set());
+    expect(next.expandedHiddenFields).toEqual(new Set());
+    expect(next.editingDescriptionId).toBeNull();
+    expect(next.batchTagSelectorOpen).toBe(false);
+    expect(next.toolbarDropdownRequest).toBeNull();
+  });
+
+  test('keeps the state and set identities when removed nodes are not represented', () => {
+    const previous = seed(1);
+    const state = uiState({
+      selectedId: 'a',
+      selectedIds: new Set(['a']),
+      selectionAnchorId: 'a',
+      selectionRootId: 'root',
+      expanded: new Set(['a']),
+      expandedHiddenFields: new Set(['root:unrelated-field']),
+    });
+
+    const next = applyAcceptedUiUpdate(state, previous, {
+      kind: 'delta',
+      revision: 2,
+      todayId: 'root',
+      changedNodes: [node('a', { parentId: 'root' })],
+      removedIds: ['b', 'c'],
+    });
+
+    expect(next).toBe(state);
+    expect(next.selectedIds).toBe(state.selectedIds);
+    expect(next.expanded).toBe(state.expanded);
+    expect(next.expandedHiddenFields).toBe(state.expandedHiddenFields);
+  });
+
+  test('chooses the final surviving selection without materializing the Set', () => {
+    const previous = seed(1);
+    const state = uiState({
+      selectedId: 'c',
+      selectedIds: new Set(['a', 'a2', 'c']),
+      selectionAnchorId: 'c',
+      selectionRootId: 'root',
+      selectionSource: 'global',
+    });
+
+    const next = applyAcceptedUiUpdate(state, previous, {
+      kind: 'delta',
+      revision: 2,
+      todayId: 'root',
+      changedNodes: [node('b', { parentId: 'a' })],
+      removedIds: ['c'],
+    });
+
+    expect(next.selectedId).toBe('a2');
+    expect(next.selectedIds).toEqual(new Set(['a', 'a2']));
+    expect(next.selectionAnchorId).toBe('a2');
+    expect(next.selectionRootId).toBe('root');
+    expect(next.selectionSource).toBe('global');
   });
 });
