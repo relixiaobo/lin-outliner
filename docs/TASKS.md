@@ -810,6 +810,17 @@ and the merged PR, distilled rules in [`lessons.md`](lessons.md). Everything
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
 
+- **popover-list-layout-repair** (anti, PR #515, merged 2026-08-10 — fast-track, no plan
+  file) — retiring the command palette (#505) took the shared popover row contract with it;
+  the popover-only CSS is rebuilt without reviving any dead `.command-*` rule, and
+  `PopoverBulletIcon` carries its own decorative class. The light/dark runtime surface probe
+  gained the row-width, stacking, active-state and bullet invariants that would have caught
+  it. `/code-review medium` found three, all in the new guard and all fixed before merge —
+  it skipped an invisible bullet instead of failing on it, compared a `NaN` parsed from
+  `width: auto`, and dropped every `role="menu"` popover; each fix verified by re-injecting
+  the original breakage and watching the guard fire. The rule is in
+  [`lessons.md`](lessons.md) — a guard written from the fixed code inherits the bug's blind
+  spots unless the regression is re-injected against it.
 - **agent-goal-continuation-enrichment** (codex-2, PR #512, merged 2026-08-10 — fast-track,
   no plan file) — a Goal that hits its token budget now signs off with one flagged wrap-up
   continuation instead of going silent, the continuation prompt carries live state

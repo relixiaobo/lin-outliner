@@ -599,3 +599,23 @@ once. So: **when a fact must hold exactly once, own it — a row you write, keye
 the thing it constrains.** Provenance is a log of what happened, not a ledger of
 what may still happen; the moment you ask a log a question about the future, you
 have coupled your invariant to every edit, copy, and truncation the log allows.
+
+## A guard written from the fixed code inherits the bug's blind spots
+
+The #515 gate found three defects, all in the runtime guard the PR added to keep
+the popover row contract from being deleted again — and two of them made the
+guard unable to catch the very regression it existed for. It skipped any bullet
+that was not visible, but a bullet that loses its sizing class renders as an
+empty `display: inline` span with a 0×0 rect, so the failure mode *was* the skip
+condition. It compared `Number.parseFloat(getComputedStyle(el, '::before').width)`
+against a threshold, but deleting the `::before` rule — precisely what had
+happened — resolves that width to `"auto"`, and `NaN < 5` is `false`, so the
+check passed on the broken build. Both were written by reading the repaired code
+and asserting what it produces; against the repaired code they were green and
+looked complete. The third had the same root: the check grouped rows by
+`[role="listbox"]`, silently dropping every `role="menu"` popover, because the
+surfaces the author had open all happened to be listboxes. So: **a guard is not
+verified by passing on the fixed code — re-inject the original breakage and watch
+it fail.** Anything that reaches the guard through a skip, a `continue`, or a
+`NaN` comparison is indistinguishable from health, and a regression test that has
+never once been red is a claim, not evidence.

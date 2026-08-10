@@ -69,6 +69,25 @@ Entries reference the pull request that introduced them.
   `HAS_IMAGE`, and the search grammar spec now documents the real `IS_TYPE`
   alias set and candidate rules.
 
+### Fixed
+
+- **Popover lists stack as rows again (PR #515, anti)** — retiring the command
+  palette (PR #505) took the shared popover row contract with it: the CSS the
+  popovers depended on lived in the palette's selector groups, so slash commands,
+  tag and reference suggestions, field-reuse and options pickers lost full-width
+  vertical rows, their icon and label slots, the neutral active fill, normal
+  enabled opacity, and the generic bullet. The popover-only selectors are rebuilt
+  without reviving any dead `.command-*` rule, and `PopoverBulletIcon` now carries
+  its own decorative class instead of borrowing the node-marker one. The live
+  light/dark runtime surface probe gained the invariants that would have caught
+  it — row width against the parent's content box, vertical stacking, active
+  state, and a visible bullet. Those guards were themselves hardened at the review
+  gate: the bullet check skipped an invisible bullet instead of failing on it, and
+  compared a `NaN` parsed from `width: auto` against its threshold, so both blind
+  spots exactly matched the regression being repaired; the row-stacking check also
+  dropped every `role="menu"` popover on the floor. Each fix was verified by
+  re-injecting the original breakage and watching the guard fire.
+
 ### Internal
 
 - **Opened the 0.3.0 train (main-agent)** — `package.json` dials to `0.3.0`
