@@ -117,6 +117,28 @@ Entries reference the pull request that introduced them.
   page and persisted it. Both are now contracts in
   `docs/spec/architecture.md`. The three findings left open are on the board as
   **#514 update-check review tail**; the ceiling lesson is in `docs/lessons.md`.
+- **The agent is told when the document moved under it (PR #522, cc)** — the model
+  could answer "what does the doc say about pricing" from a twenty-minute-old read,
+  confidently and wrongly, and nothing fired: the write path is defended by expected
+  revisions, the question-answering path had no equivalent moment. Between Turns, the
+  host now compares the revision token each node tool already handed the model against
+  the document as it is now, and admits one bounded notice naming up to five nodes that
+  moved — with their current content, so the ordinary case costs no re-read — plus who
+  changed them, and closing with the instruction the coding agents use in the same
+  situation: these edits were deliberate, do not revert them. A node that went to the
+  trash is named as deleted. Nothing new had to be persisted or added to a tool
+  contract; beliefs rebuild from the tool outputs already in the record, so a restart
+  or a fork needs no special case. The high gate found ten defects across two rounds and
+  every one of them shipped fixed: the comparison could never match on **any** path
+  (`node_read` emits a three-part outline revision, `node_search` an ISO string, and
+  thirteen of `node_edit`'s fifteen paths a two-part stamp, all compared against one
+  assumed shape), a trashed node fired nothing because the trash is a subtree that never
+  stamps `updatedAt`, reporting a node dropped its belief instead of advancing it —
+  inverting the whole feature — and the notice was admitted mid-Turn from `steerTurn`,
+  consumed before the Turn was durable, rendered outside any guard, and attributed edits
+  that predated the model's read. Every one passed the original tests, which hand-wrote
+  the token shapes the implementation assumed; the rule that fell out is in
+  `docs/lessons.md`.
 
 ### Changed
 

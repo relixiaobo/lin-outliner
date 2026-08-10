@@ -707,3 +707,30 @@ needs an order of magnitude, not a comfortable margin. Then check what happens
 when it is crossed: if the failure is caught by a caller that keeps reporting
 success, the ceiling is not a guard, it is a scheduled silent outage. Either make
 crossing it visible or make it non-fatal on purpose.
+
+## When a value has more than one producer, the test enumerates the producers
+
+The #522 gate found a drift check whose comparison could never match on any path.
+The belief a node tool handed back was `editableOutlineRevision`
+(`id:updatedAt:hash`); the check recomputed `revisionOf` (`id:updatedAt`). Every
+node the model read was reported as someone else's edit on the very next turn,
+complete with an instruction not to revert changes nobody had made. The tests
+passed because their fixtures hand-wrote `` `${id}:1` `` — the shape the
+implementation assumed. **A fixture written from an assumption can only ever
+agree with it.**
+
+The first fix verified the token `node_read` really emits and generalized from
+it — and the same defect survived one field over. `node_edit` writes a single
+`revisions` map from fifteen code paths in two different shapes: only the outline
+path emits the three-part form, the other thirteen emit `revisionOf`. Labelling
+the map by its field name reproduced the original bug for the majority of edits,
+one commit after fixing it, and the round of new tests written to prevent exactly
+this did not touch a `revisions` payload at all.
+
+So, two turns of the same screw. **Build every fixture by calling the function
+that really emits the value — never hand-write the shape you believe it has.**
+And because one field can be fed by many writers: **when a value can come from
+more than one producer, enumerate the producers in the test, not the field.**
+Verifying one instance and generalizing to the class is how the second instance
+survives — grep the writers and count them before you decide one example is
+representative.

@@ -47,8 +47,9 @@ theme-section entry below; this list is the ordering, not a second record):
   (#460 truncation dialects · `scripts-typecheck-coverage` · #208 follow-ups).
   `dark-mode-contrast-pass` still runs **last** per its own rule; `performance` P3
   remains an uncapped background lane (trail + remaining items under **Performance**).
-- **Lane B — agent reliability**: `agent-doc-drift-notice` —
-  `agent-episodic-transcripts` is complete (#511 + #519 shipped 2026-08-10).
+- **Lane B — agent reliability**: _empty_ — `agent-doc-drift-notice` shipped
+  2026-08-10 as #522 and `agent-episodic-transcripts` is complete (#511 + #519,
+  same day). Next candidate comes from the **Agent capabilities** backlog.
 - **Lane C — product surface**: `update-check-and-prompt` shipped 2026-08-10 (#514);
   next is the `file-preview` Office tail (apply its refresh note first), then the
   `agent-skills-authoring` security tail.
@@ -149,14 +150,6 @@ before any directional/security-sensitive build.
 `agent-episodic-transcripts` is **complete** — both PRs shipped (#511, #519); see
 *Recently completed*.
 
-- **agent-doc-drift-notice** (P2, `draft` 2026-08-08 — see
-  [docs/plans/agent-doc-drift-notice.md](plans/agent-doc-drift-notice.md)) —
-  proactive staleness defense for the question-answering path: at Turn
-  admission (and on a fork's first Turn), if foreign-origin document edits
-  landed since the Thread's previous Turn, inject one bounded notice with the
-  origin-split counts and the intersection against nodes this Thread
-  previously touched. Shape (a), one PR. Complements reactive expected
-  revisions; out of the prime-agent design study (belief-maintenance pattern).
 - **agent-delegation-context-hygiene** (P3, `draft` 2026-08-08, fast-track, *no plan
   file*) — teach delegation as context hygiene in the `collaboration.spawn_agent`
   tool description: a When→Why menu (delegate context-heavy reconnaissance —
@@ -772,6 +765,13 @@ and the merged PR, distilled rules in [`lessons.md`](lessons.md). Everything
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
 
+- **agent-doc-drift-notice** (cc, PR #522, merged 2026-08-10 — plan archived) — the model is
+  told, between Turns, when a node it was shown has since moved or been trashed, by
+  comparing the revision token it was already handed against the document as it is now;
+  no journal window, no boundary, no tool-contract change. The high gate found ten
+  defects across two rounds — the comparison could never match on any path, a trashed
+  node fired nothing, reporting dropped the belief it should have advanced — all fixed
+  with tests built by calling the real emitters.
 - **file-as-node pane restore** (codex-3, PR #523, merged 2026-08-10 — fast-track, no plan
   file) — a persisted pane whose current view no longer validates is repaired instead of
   dropped: `sanitizePanel` now yields a candidate and `repairPanel` lands it on the latest
