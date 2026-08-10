@@ -3,19 +3,21 @@
 Search's media model is aimed at a node type that does not exist, and blind to the
 one that does.
 
-`src/core/types.ts` still carries `EmbedNode` (`embedType` / `embedId` /
+At plan time, `src/core/types.ts` carried `EmbedNode` (`embedType` / `embedId` /
 `sourceUrl`) and `'embed'` in `NodeType`, from an early plan to render external
-links as rich cards. **No renderer was ever built and no command produces such a
-node.** On top of that dead type, `searchEngine.ts` builds live semantics:
-`HAS_AUDIO` and `HAS_VIDEO` resolve a media kind from `embedType` or a media URL,
-and `IS_TYPE embed` matches the type directly — so all three can only ever return
-nothing. Nobody can reach them from the UI either; the sole consumer is the agent,
-which `agentNodeToolGuidance.ts:53` explicitly tells that these facets are
-available.
+links as rich cards. **No renderer was ever built and no command produced such a
+node.** On top of that dead type, `nodeHasMediaKind` in
+`src/core/searchEngine.ts` built live semantics: `HAS_AUDIO` and `HAS_VIDEO`
+resolved a media kind from `embedType` or a media URL, and `IS_TYPE embed` matched
+the type directly — so all three could only ever return nothing. Nobody could
+reach them from the UI either; the sole consumer was the agent, whose
+`SEARCH_OPERATOR_REFERENCE` in
+`src/main/agent/capabilities/agentNodeToolGuidance.ts` explicitly advertises
+these facets.
 
 Meanwhile `AttachmentNode` — the real carrier of every audio file, video, and PDF
 since `file-attachments` (#204/#206) and `file-as-node` (#241) — is absent from
-`isSearchCandidate`'s type allowlist (`searchEngine.ts:2084`:
+`isSearchCandidate`'s type allowlist in `src/core/searchEngine.ts`:
 `tagDef|fieldDef|search|codeBlock|image|embed`). An attachment cannot be found by
 text, by type, or by any facet, while its sibling `image` type can.
 
@@ -55,28 +57,28 @@ independently shippable and independently useful.
   `nodeEmbedFields` and `mediaKindFromNode` collapse with them. Delete
   `IS_TYPE embed`.
 - `HAS_IMAGE` stays as-is — `ImageNode` is real and produced. `HAS_MEDIA`
-  degenerates into an alias of `HAS_IMAGE`; keeping it as the superset PR 2 grows
-  or folding it into `HAS_IMAGE` is the dev's call, recorded in the PR.
-- Strike the media clause from `agentNodeToolGuidance.ts:53` in the same change.
+  stays as an alias of `HAS_IMAGE`, avoiding a second protocol removal and
+  reintroduction before PR 2 grows it into a real superset.
+- Strike the media clause from `SEARCH_OPERATOR_REFERENCE` in
+  `src/main/agent/capabilities/agentNodeToolGuidance.ts` in the same change.
   **A facet that silently matches nothing is worse than an absent one**: the agent
   is instructed that it exists, uses it, gets an empty result, and reports absence
   as evidence. That is the reason this deletion is not merely cleanup.
-- Rewrite `tests/core/searchEngine.test.ts`'s media test against what survives
-  rather than deleting it — it currently encodes the embed-era model in its own
-  comments.
+- Replace the embed-era media test with `core search engine > treats HAS_MEDIA as
+  an alias of HAS_IMAGE` in `tests/core/searchEngine.test.ts`, comparing the full
+  result sets rather than deleting coverage.
 
 `src/core/types.ts` is an infrastructure-ownership file, so this lands isolated and
 siblings rebase once after it merges. Verification: `typecheck` (the compiler finds
 every reader of the removed fields), `test:core`, and a grep proving no
-`embedType` / `embedId` / `'embed'` reference survives outside the change.
+`embedType` / `embedId` / product-node `'embed'` reference survives in TypeScript.
 
 ### PR 2 — Admit attachments to search, rebuild the facets on them
 
-- **First, confirm the omission was an oversight rather than a decision.** Check
-  `isSearchCandidate`'s allowlist against the `file-attachments` (#204/#206) and
-  `file-as-node` (#241) PRs before treating it as a bug; the asymmetry with `image`
-  suggests attachments simply arrived later and the allowlist was never revisited,
-  but that is a hypothesis, not a finding.
+- The omission is confirmed as an oversight: `isSearchCandidate` predates
+  `AttachmentNode`, and neither the `file-attachments` PRs (#204/#206) nor the
+  `file-as-node` PR (#241) touched `src/core/searchEngine.ts`. Launcher retrieval
+  calls the same kernel and adds no second node-type filter.
 - Add `attachment` to the allowlist so attachment nodes are retrievable at all, and
   add `IS_TYPE attachment`.
 - Reintroduce `HAS_AUDIO` / `HAS_VIDEO` reading `AttachmentNode.mimeType` as the
@@ -92,12 +94,6 @@ every reader of the removed fields), `test:core`, and a grep proving no
 
 ## Open questions
 
-- Was `attachment`'s absence from `isSearchCandidate` deliberate? Settle this
-  before PR 2's shape is fixed; if it was deliberate, PR 2 becomes facets-only over
-  a narrower candidate rule.
-- `HAS_MEDIA` through PR 1: keep as an image alias, or remove and reintroduce in
-  PR 2? Keeping it avoids a second `QueryOp` churn; removing it keeps PR 1's rule
-  ("delete every predicate that cannot answer") uniform.
 - Does PDF deserve its own facet, given `pdfPageCount` already exists, or is the
   mime family enough?
 - Does admitting attachments change the results of any saved search enough to
