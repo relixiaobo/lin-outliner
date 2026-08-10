@@ -854,7 +854,7 @@ async function probeSurface(page: Page): Promise<SurfaceProbe> {
 
     const itemGroups = new Map<HTMLElement, HTMLElement[]>();
     for (const item of visiblePopoverItems) {
-      const owner = item.closest<HTMLElement>('[role="listbox"], .batch-tag-list');
+      const owner = item.closest<HTMLElement>('[role="listbox"], [role="menu"], .batch-tag-list');
       if (!owner) continue;
       const group = itemGroups.get(owner) ?? [];
       group.push(item);
@@ -871,12 +871,23 @@ async function probeSurface(page: Page): Promise<SurfaceProbe> {
     }
 
     for (const bullet of document.querySelectorAll<HTMLElement>('.popover-item-bullet')) {
-      if (!isVisible(bullet)) continue;
+      const item = bullet.closest<HTMLElement>('.popover-item');
+      if (!item || !isVisible(item)) continue;
+      const box = bullet.getBoundingClientRect();
       const marker = getComputedStyle(bullet, '::before');
       const width = Number.parseFloat(marker.width);
       const height = Number.parseFloat(marker.height);
-      if (width < 5 || height < 5) {
-        popoverItemViolations.push(`popover bullet: ${width.toFixed(1)}x${height.toFixed(1)}`);
+      if (
+        box.width < 1
+        || box.height < 1
+        || !Number.isFinite(width)
+        || !Number.isFinite(height)
+        || width < 5
+        || height < 5
+      ) {
+        popoverItemViolations.push(
+          `popover bullet: box=${box.width.toFixed(1)}x${box.height.toFixed(1)}, marker=${marker.width}x${marker.height}`,
+        );
       }
     }
 
