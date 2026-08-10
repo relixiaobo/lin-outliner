@@ -46,6 +46,7 @@ export interface ThreadCatalogTranscripts {
   delete(threadId: ThreadId): Promise<void>;
   /** Deletion takes the conversation with it, so its exclusion has nothing left to govern. */
   forgetExclusions(sessionIds: readonly string[]): Promise<void>;
+  forgetBeliefs(threadIds: readonly ThreadId[]): void;
 }
 
 export class ThreadCatalogOps {
@@ -620,6 +621,7 @@ export class ThreadCatalogOps {
           await this.transcripts.delete(descendantId);
         }
         await this.transcripts.forgetExclusions(subtree.records.map((record) => record.thread.sessionId));
+        this.transcripts.forgetBeliefs(subtree.threadIds);
       } finally {
         this.finishThreadSubtreeStop(subtree.threadIds);
       }

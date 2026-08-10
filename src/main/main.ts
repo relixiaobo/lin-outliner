@@ -664,6 +664,7 @@ threadService = ThreadService.open(
       }
     },
     getDocumentProjection: () => documentService.getProjection(),
+    getRecentDocumentOperations: (limit) => documentService.recentOperationsForInspection(limit),
     resolveReferencedAsset: async (assetId) => {
       const [path, metadata] = await Promise.all([
         assetService.pathFor(assetId),

@@ -108,6 +108,8 @@ import { ThreadCatalogOps } from './thread/ThreadCatalogOps';
 import { ThreadCore,type NotificationListener } from './thread/ThreadCore';
 import { ThreadResourceOps } from './thread/ThreadResourceOps';
 import { threadTranscriptRoot } from './thread/ThreadTranscriptArtifact';
+import { documentDriftNotice,driftAttribution,DRIFT_ATTRIBUTION_SCAN,DRIFT_NOTICE_NODE_LIMIT,type DocumentDriftAttribution } from './context/documentDriftNotice';
+import { ThreadDocumentBeliefs } from './context/ThreadDocumentBeliefs';
 import { ThreadTranscriptExclusions } from './thread/ThreadTranscriptExclusions';
 import { ThreadTranscriptIndex } from './thread/ThreadTranscriptIndex';
 import { rootTranscriptSubject,ThreadTranscriptWriter } from './thread/ThreadTranscriptWriter';
@@ -156,6 +158,16 @@ export interface ThreadServiceOptions {
     context: ThreadUserContentResolutionContext,
   ) => readonly ThreadUserContent[] | Promise<readonly ThreadUserContent[]>;
   readonly getDocumentProjection?: () => DocumentProjection;
+  /**
+   * The journal as it stands, without waiting on the mutation queue. Attribution
+   * only — the drift check itself never reads it, so an install that cannot
+   * answer simply drops one clause.
+   */
+  readonly getRecentDocumentOperations?: (limit: number) => readonly {
+    readonly origin: string;
+    readonly affectedNodeIds?: readonly string[];
+    readonly causation?: { readonly threadId: string };
+  }[];
   readonly resolveReferencedAsset?: (assetId: string) => Promise<ReferencedAssetResolution | null>;
   readonly resolveSkillAdmission?: (
     input: SkillAdmissionResolutionInput,
@@ -307,6 +319,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
   private readonly executor: TurnExecutor;
   private readonly extensions: ExtensionRegistry;
   private readonly getDocumentProjection: () => DocumentProjection | null;
+  private readonly getRecentDocumentOperations: ThreadServiceOptions['getRecentDocumentOperations'];
   private readonly resolveReferencedAsset?: (assetId: string) => Promise<ReferencedAssetResolution | null>;
   private readonly resolveSkillAdmission: (
     input: SkillAdmissionResolutionInput,
@@ -325,6 +338,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
   private readonly transcripts: ThreadTranscriptWriter;
   private readonly transcriptIndex: ThreadTranscriptIndex;
   private readonly transcriptExclusions: ThreadTranscriptExclusions;
+  private readonly beliefs: ThreadDocumentBeliefs;
   private readonly turnLifecycle: TurnLifecycle;
   private initialized = false;
   private closing = false;
@@ -343,6 +357,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       this.extensions,
     );
     this.getDocumentProjection = options.getDocumentProjection ?? (() => null);
+    this.getRecentDocumentOperations = options.getRecentDocumentOperations;
     this.resolveReferencedAsset = options.resolveReferencedAsset;
     this.resolveSkillAdmission = async (input) => await options.resolveSkillAdmission?.(input) ?? {
       catalogSnapshot: null,
@@ -363,6 +378,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       this.resourceOps.threadImageRetentionInventory(threadId)
     ));
     this.transcriptExclusions = new ThreadTranscriptExclusions(options.transcriptRoot);
+    this.beliefs = new ThreadDocumentBeliefs();
     this.transcriptIndex = new ThreadTranscriptIndex({
       transcriptRoot: options.transcriptRoot,
       readThreads: (threadIds) => new Map(
@@ -404,6 +420,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
         queueChildTurnActivity: (...args) => this.collaboration.queueChildTurnActivity(...args),
       },
       { enqueueTurn: (...args) => this.transcripts.enqueueTurn(...args) },
+      { noticeFor: (threadId, projection) => this.documentDriftContext(threadId, projection) },
       this.executor,
       this.extensions,
       this.subagentBudgets,
@@ -450,6 +467,9 @@ export class ThreadService implements ThreadServiceExtensionHost {
       {
         delete: (threadId) => this.transcripts.delete(threadId),
         forgetExclusions: (sessionIds) => this.transcriptExclusions.forget(sessionIds),
+        // A deleted Thread's beliefs govern nothing; ids are never reused, so
+        // keeping them would only be a set that grows and is never read.
+        forgetBeliefs: (threadIds) => { this.beliefs.forget(threadIds); },
       },
       (threadId) => this.goals.clear(threadId),
       (threadId) => { this.subagentBudgets.clearThread(threadId); },
@@ -957,6 +977,11 @@ export class ThreadService implements ThreadServiceExtensionHost {
     error: string | null,
   ): Promise<void> {
     if (this.core.hiddenEphemeralThreads.has(threadId)) return;
+    // Every tool result passes here exactly once, with the Thread in hand. A
+    // node the model was just shown becomes a belief at the moment it was shown,
+    // and this is the one place that moment exists for every node tool at once —
+    // no per-tool hook, and nothing for a new node tool to remember to call.
+    this.beliefs.observe(threadId, identity.name, result);
     await this.extensions.toolCompleted({
       threadId,
       turnId,
@@ -999,6 +1024,37 @@ export class ThreadService implements ThreadServiceExtensionHost {
   private isSessionExcluded(threadId: ThreadId): boolean {
     const sessionId = this.core.metadata.read(threadId)?.thread.sessionId;
     return sessionId === undefined ? false : this.transcriptExclusions.isExcluded(sessionId);
+  }
+
+  /**
+   * The drift notice for this admission, or null when nothing the model was
+   * shown has moved.
+   *
+   * It rides `additionalContext`, the channel `automation_info` already uses, so
+   * two properties come free: "never mid-Turn" is true by construction, because
+   * admission is when evidence is admitted; and the notice lands in the canonical
+   * record, where a transcript reader can later audit what the model was told.
+   */
+  /** How far back attribution looks. Bounded, and its miss costs a clause. */
+  private documentDriftContext(threadId: ThreadId, projection: DocumentProjection | null): AdditionalContext | null {
+    const drift = this.beliefs.takeDrift(threadId, projection, DRIFT_NOTICE_NODE_LIMIT);
+    if (drift.reported.length === 0) return null;
+    const notice = documentDriftNotice(
+      drift.reported,
+      drift.total,
+      this.driftAttribution(threadId, drift.reported.map((entry) => entry.nodeId)),
+    );
+    return notice === null ? null : { document_drift: { kind: 'application', value: notice } };
+  }
+
+  /** A12: attribution is garnish, so a journal that cannot answer costs one clause. */
+  private driftAttribution(threadId: ThreadId, nodeIds: readonly string[]): DocumentDriftAttribution | null {
+    try {
+      const entries = this.getRecentDocumentOperations?.(DRIFT_ATTRIBUTION_SCAN) ?? [];
+      return driftAttribution(nodeIds, entries, threadId);
+    } catch {
+      return null;
+    }
   }
 
   /** Whether this Thread is kept in the readable records. */
