@@ -609,6 +609,18 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   same index while preserving matching, ranking, creation, existing-tag, and Trash behavior.
   **Remaining P3:** additional localized O(N) cleanups still listed in the plan; the ordinary renderer
   projection delta path no longer rebuilds `new Map(prev.byId)` or the whole render-revision map.
+- **agent-streaming-delta-pipeline** (P1, `draft` 2026-08-10) — bound the per-chunk cost of
+  streaming Turns. Today every provider chunk independently pays stat+open+write+fsync+close
+  on the rollout log, a full read→decode→append→stringify→UPDATE of the accumulated item in
+  the history projection (no WAL, synchronous driver on the main thread), three codec passes,
+  one IPC broadcast, and a whole-snapshot renderer store notify — so a Subagent run (two
+  concurrent streams) janks the entire app, worst with the Subagent row expanded (child
+  history loads, its deltas start applying, and a second full ThreadView renders per chunk).
+  Two independent PRs: main-process write path (WAL pragmas + rollout group commit + delta
+  coalescing at `recordNotification` + projection streaming overlay with a crash-recovery
+  replay step) and renderer store frame batching. No protocol change; collision check
+  2026-08-10: no open PRs, no overlap. Design:
+  [`agent-streaming-delta-pipeline`](plans/agent-streaming-delta-pipeline.md).
 
 ### Distribution & updates
 
