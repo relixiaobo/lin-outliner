@@ -306,6 +306,14 @@ their failures are logged and cannot turn a committed admission into a reported 
 `item/started` and `item/completed` remain the sole lifecycle for real streaming or
 execution Items and are not a legacy compatibility path.
 
+String-append `item/delta` notifications are serialized per Thread and coalesced for up
+to 40 ms only while Turn, Item, and delta type all match. Agent-message text, reasoning
+summary/content, and command output use this path; dynamic-tool output remains a sequence
+of discrete content values and is never merged. Any different or non-delta notification
+flushes the pending group first, preserving canonical order. The active `ItemRecorder`
+still applies every provider chunk immediately, while rollout, projection, extension,
+IPC, and renderer listeners observe the equivalent coalesced notification.
+
 Once either admission event is durable, later status bookkeeping or live steering
 delivery cannot reject that input. Such a failure aborts and fails the already-accepted
 Turn. One serialized steering-delivery chain preserves admission order, and
@@ -459,6 +467,24 @@ the history source of truth. Complete textual tool outputs, managed attachment i
 image-artifact renditions, semantic context payloads, and immutable Turn diagnostics live in
 the Thread-owned payload directory; canonical Items and terminal Turn execution retain
 typed content-addressed references.
+Agent SQLite databases use WAL. The shared open policy is `synchronous=NORMAL`;
+authoritative metadata, Goal, Memory, and Automation stores explicitly strengthen it to
+`FULL`, while the rebuildable history projection remains `NORMAL`.
+
+Rollout appends reuse one open handle per recently active Thread, bounded by a 16-handle
+LRU. Delta lines are written immediately and group-synced within 150 ms. Every non-delta
+lifecycle event is a sync barrier; Thread deletion, LRU eviction, and service flush also
+sync before closing. A hard crash may therefore lose only the final group-commit window
+of an unfinished stream. Completed Items and Turns cross a sync barrier, and the existing
+torn-tail repair discards only a partial final JSONL line.
+
+The history projection keeps unfinished streamed Items in a decoded in-memory overlay
+instead of rewriting `item_json` for every delta. All Turn and Item read surfaces apply
+that overlay. Item completion writes the final canonical row and clears its overlay;
+Turn completion, rollback, rebuild, and deletion clear the corresponding entries. At
+startup, reconciliation compares the projection watermark's byte boundary with the
+surviving rollout and rebuilds the Thread if an unsynced rollout tail was lost after its
+projection transaction committed.
 Context writes
 canonicalize through the Core codec before hashing. Context and text reads/copies
 verify digest and byte length, while text also selects storage by the referenced
@@ -548,9 +574,11 @@ If fork preparation fails after a transient `thread/started` notification, the
 renderer reloads the authoritative Thread catalog before surfacing the error, so
 the rolled-back fork does not remain visible.
 
-Startup reconciles catalog and history projections from rollouts. A Turn left
-`inProgress` by host restart is completed as `interrupted`; every unfinished
-streamed or executable Item first receives its terminal completion fact. Clean
+Startup reconciles catalog and history projections from rollouts. Before terminalizing
+an `inProgress` Turn, startup replays its `item/started` and `item/delta` facts into each
+open Item and persists one recovered row per Item. The Turn is then completed as
+`interrupted`; every unfinished streamed or executable Item first receives its terminal
+completion fact. Clean
 replay then produces the same paginated Turns and Items as incremental
 projection. There is one storage format and no alternate reader or dual-write
 path. New tool Items always write the required envelope, and decode rejects a tool

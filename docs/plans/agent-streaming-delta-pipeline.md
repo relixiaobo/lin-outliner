@@ -24,8 +24,10 @@ costs, per streaming Thread:
   `decodeThreadItem`, appends the delta, `JSON.stringify`s, and UPDATEs — all
   synchronously on the main thread. O(item²) over the life of a stream; a long
   research answer means megabytes per second of redundant parse/stringify.
-- **SQLite defaults.** `openSqlite` opens `node:sqlite` `DatabaseSync` with no
-  pragmas: no WAL, so each UPDATE is its own journaled synchronous transaction.
+- **SQLite synchronization.** Agent stores already open in WAL mode, but the
+  rebuildable history projection uses `synchronous=FULL`, so every projected
+  delta still pays the strongest power-loss barrier even though rollout JSONL
+  can reconstruct it.
 - **Three codec passes + one IPC message per chunk.**
   `ThreadCore.recordNotification` decodes, the projection decodes again, the
   preload (`decodeAgentCoreNotification`) decodes a third time; nothing batches.
@@ -61,17 +63,21 @@ work, same fix family.
 Internal build order (A7 — each step lands with tests green): pragmas →
 rollout group commit → delta coalescing → projection streaming overlay.
 
-**1a. SQLite pragmas.** `openSqlite` executes `journal_mode=WAL` and
-`synchronous=NORMAL` on open. Applies to all agent databases.
+**1a. SQLite pragmas.** `openSqlite` establishes `journal_mode=WAL` and
+`synchronous=NORMAL` as the agent-store baseline. The rebuildable history
+projection uses that policy. Authoritative metadata, Goal, Memory, and
+Automation stores retain their explicit `synchronous=FULL` override, so this
+optimization does not widen their power-loss window.
 
 **1b. Rollout group commit.** `RolloutStore` keeps one append handle open per
 Thread (map of `threadId → { handle, byteOffset }`), replacing the per-event
 stat/open/close; appends write immediately and return. fsync becomes batched:
-a short timer (~150 ms, constant in one place) after the first unsynced write,
-plus forced sync at barriers — `item/completed`, `items/completed`,
-`turn/completed`, before a Thread delete's `rm`, and `flush()` (which the
-`before-quit` path already awaits). Handles close on Thread delete, on quit,
-and past a small LRU cap. The existing torn-tail repair in `readEntries`
+a short timer (150 ms, constant in one place) after the first unsynced write,
+plus forced sync at every non-delta lifecycle barrier — including
+`item/completed`, `items/completed`, and `turn/completed` — before a Thread
+delete's `rm`, and during `flush()` (which the `before-quit` path already
+awaits). Handles close on Thread delete, flush, and past a 16-handle LRU cap.
+The existing torn-tail repair in `readEntries`
 already tolerates a partial trailing line, so the crash window changes from
 "nothing unsynced" to "at most the group-commit window".
 
@@ -89,9 +95,11 @@ type, a `dynamicToolOutput` delta (appends discrete content items; never
 merged), or any non-delta notification — flushes the pending group **first**,
 preserving per-Thread order by construction; Turn-level notifications from
 `TurnLifecycle` also pass through `recordNotification`, so interrupt and
-steering paths need no special casing. An idle-group timer (~40 ms) bounds
-display latency. A flush runs the existing pipeline (rollout append, projection
-apply, listener broadcast, extension notify) once with the merged delta.
+steering paths need no special casing. Rollback, delete, and service shutdown
+also flush the Thread queue before mutating or closing its stores. A 40 ms
+idle-group timer bounds display latency. A flush runs the existing pipeline
+(rollout append, projection apply, listener broadcast, extension notify) once
+with the merged delta.
 
 Effect: every downstream per-event cost — rollout write, projection apply, IPC
 message, preload decode, renderer render — drops by the merge factor (typically
@@ -103,7 +111,7 @@ in-progress streamed items as **decoded objects in memory**
 (`threadId → turnId → itemId → ThreadItem`). `item/delta` decodes the stored
 item once on first delta, then applies `applyThreadItemDelta` in memory,
 advances the watermark, and writes **no row**. Read paths (`listTurns`,
-`readTurn`, `unfinishedItems`) overlay these objects over their rows —
+`readTurn`, `listItems`, `unfinishedItems`) overlay these objects over their rows —
 mid-stream history reads (the Subagent-row expansion path) must keep returning
 accumulated text. `item/completed` / `items/completed` write the final row as
 today and drop the overlay entry; `turn/completed` and `history/rollback` drop
@@ -112,7 +120,10 @@ replaying.
 
 Crash-recovery invariant: **streamed text recorded in the rollout survives a
 crash even though delta rows are no longer written.** `reconcileThread` already
-reads the full rollout at open; when the newest Turn is `inProgress`,
+reads the full rollout at open. Because a `NORMAL` projection commit may reach
+disk before an unsynced delta line, reconciliation compares the persisted
+watermark boundary with the surviving rollout and rebuilds any projection that
+advanced past a lost tail. When the newest Turn is `inProgress`,
 reconstruct that Turn's open items from the rollout entries (replay deltas onto
 each `item/started` snapshot) and persist the result to rows **before**
 `finishCrashedTurn` reads `unfinishedItems`. One bounded write per open item,
@@ -133,15 +144,18 @@ the entire Turn.
 
 `ThreadStore.patch` keeps updating `this.snapshot` synchronously — every
 request/response method, the `historyRevisions` guards, and existing tests keep
-their exact semantics. Only **listener notification** defers: the first patch
-in a frame schedules a flush (`requestAnimationFrame`, falling back to a ~16 ms
-timeout where rAF is unavailable; the scheduler is injectable for tests), and
-the flush notifies each listener once. `useSyncExternalStore` reads the latest
-snapshot at flush, so React renders at most once per frame per subscriber
-regardless of how many notifications arrived — parent stream, expanded child
-stream, or both. An occluded window's suspended rAF simply defers rendering
-until reveal, which is the desired behavior; the snapshot itself is never
-stale.
+their exact semantics. High-frequency `item/delta` patches defer **listener
+notification**: the first delta in a frame schedules a flush
+(`requestAnimationFrame`, falling back to a ~16 ms timeout where rAF is
+unavailable; the scheduler is injectable for tests), and the flush notifies
+each listener once. Request/response and lifecycle patches notify immediately,
+preserving focus and state-transition semantics; an immediate lifecycle patch
+also consumes any older scheduled delta delivery so it cannot render stale or
+duplicate state. `useSyncExternalStore` reads the latest snapshot at flush, so
+React renders at most once per frame for token deltas regardless of whether
+they arrive from the parent stream, expanded child stream, or both. An occluded
+window's suspended rAF defers delta rendering until reveal, while the snapshot
+itself is never stale.
 
 ## Verification
 
@@ -158,9 +172,10 @@ stale.
   accumulated text; the existing interrupted-rollout scenario extends to assert
   `finishCrashedTurn`-visible content includes streamed deltas after a
   simulated crash (fresh store + reconcile-shaped replay).
-- **Renderer batching** (`tests/renderer/threadStore.test.ts`): N
+- **Renderer batching** (`tests/renderer/threadStore.test.ts`): N delta
   `applyNotification` calls update the snapshot synchronously but notify
-  listeners once per injected-scheduler flush.
+  listeners once per injected-scheduler flush; a lifecycle event delivers
+  immediately and invalidates an older scheduled delta flush.
 - **Perceived responsiveness (A9).** Manual before/after with a research
   Subagent running and its row expanded: typing latency in the outliner, main
   process CPU (Activity Monitor), and delta IPC rate. Record the numbers in the
@@ -168,11 +183,8 @@ stale.
 
 ## Open questions
 
-- Window constants: 150 ms group-commit and 40 ms coalescing are starting
-  points — tune against the responsiveness measurements; both live in one
-  place.
-- Rollout handle LRU cap (suggest 16): confirm it comfortably covers parent +
-  children + automations running concurrently.
-- WAL interaction with the data-maintenance flows (wipe/export): SQLite handles
-  stray `-wal`/`-shm` companions itself, but confirm the maintenance paths copy
-  or delete the whole database family.
+None. The constants are 150 ms for rollout group commit, 40 ms for delta
+coalescing, and 16 open rollout handles. Agent maintenance operates on the
+owning userData tree or through live store APIs rather than copying a bare
+SQLite database file, so WAL companion files do not create a separate export or
+wipe contract.

@@ -2759,6 +2759,7 @@ describe('ThreadService', () => {
     ] satisfies AgentCoreNotification[]) {
       await rollout.append(thread.id, notification);
     }
+    await rollout.flush();
 
     const reopened = await openFixture(fixture.root, new ControlledExecutor(), fixture.clock);
     await reopened.service.initialize();

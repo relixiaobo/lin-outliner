@@ -587,7 +587,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     ]);
     const failures: unknown[] = [];
     const operations = await Promise.allSettled([
-      this.core.rollout.flush(),
+      this.core.flush(),
       this.core.rollbackRecovery.close(),
       this.core.payloads.abortAllResourceUploads(),
       Promise.all([...this.core.ephemeral.keys()].map((threadId) => this.core.payloads.deleteThread(threadId))),

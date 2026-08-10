@@ -455,6 +455,7 @@ export class ThreadCatalogOps {
         if (this.turnLifecycle.hasActiveTurn(thread.id) || thread.status.type !== 'idle') {
         throw this.createThreadBusyError('Cannot roll back a Thread with an active Turn');
         }
+        await this.core.flushThreadNotifications(thread.id);
         const turns = this.core.allTurns(thread.id);
         if (request.numTurns > turns.length) {
           throw new Error('History rollback exceeds the current Turn count');
@@ -596,6 +597,7 @@ export class ThreadCatalogOps {
         for (const descendantId of [...subtree.threadIds].reverse()) {
           await this.clearGoal(descendantId);
           this.clearSubagentBudget(descendantId);
+          await this.core.flushThreadNotifications(descendantId);
           this.core.history.deleteThread(descendantId);
           await this.core.rollout.delete(descendantId);
           await this.core.payloads.deleteThread(descendantId);
@@ -906,7 +908,7 @@ export class ThreadCatalogOps {
     }
   async reconcileThread(threadId: ThreadId): Promise<void> {
       const entries = await this.core.rollout.read(threadId);
-      this.core.history.applyMany(entries.filter((entry) => entry.ordinal > this.core.history.watermark(threadId).ordinal));
+      this.core.history.reconcileThread(threadId, entries);
       for (const marker of this.core.history.rollbackMarkers(threadId)) {
         await this.finalizeHistoryRollbackHooks(this.extensions.historyRollbackExtensions(), 'commit', marker);
       }
@@ -927,7 +929,12 @@ export class ThreadCatalogOps {
         cursor = page.nextCursor;
       } while (cursor);
       const latest = this.core.history.listTurns({ threadId, limit: 1, sortDirection: 'desc', itemsView: 'full' }).data[0];
-      if (latest?.status === 'inProgress') await this.finishCrashedTurn(threadId, latest);
+      if (latest?.status === 'inProgress') {
+        this.core.history.restoreOpenItemsFromRollout(threadId, latest.id, entries);
+        const recovered = this.core.history.readTurn(threadId, latest.id, 'full');
+        if (!recovered) throw new Error(`Recovered Turn is missing from history: ${latest.id}`);
+        await this.finishCrashedTurn(threadId, recovered);
+      }
       const record = this.core.metadata.require(threadId);
       if (record.nameOrigin === 'automatic' && this.core.allTurns(threadId).length === 0) {
         this.clearAutomaticThreadName(threadId);

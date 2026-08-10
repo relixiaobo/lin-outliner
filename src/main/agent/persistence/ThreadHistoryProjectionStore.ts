@@ -62,13 +62,16 @@ export interface ProjectionWatermark {
   readonly byteOffset: number;
 }
 
+type StreamingItemsByTurn = Map<string, Map<string, ThreadItem>>;
+
 export class ThreadHistoryProjectionStore {
   private readonly db: SqliteDatabase;
+  private streamingItems = new Map<ThreadId, StreamingItemsByTurn>();
 
   constructor(path: string, database?: SqliteDatabase) {
     if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
     this.db = database ?? openSqlite(path);
-    this.db.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;');
+    this.db.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;');
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS thread_turns (
         thread_id TEXT NOT NULL,
@@ -122,6 +125,7 @@ export class ThreadHistoryProjectionStore {
   }
 
   close(): void {
+    this.streamingItems.clear();
     this.db.close();
   }
 
@@ -169,8 +173,27 @@ export class ThreadHistoryProjectionStore {
     });
   }
 
+  reconcileThread(threadId: ThreadId, entries: readonly RolloutEntry[]): void {
+    if (entries.some((entry) => entry.event.threadId !== threadId)) {
+      throw new Error('Cannot reconcile a Thread from another rollout');
+    }
+    const watermark = this.watermark(threadId);
+    const projectedEntry = watermark.ordinal < 0 ? null : entries[watermark.ordinal];
+    const projectedBoundary = watermark.ordinal < 0
+      ? 0
+      : projectedEntry
+        ? projectedEntry.byteOffset + projectedEntry.byteLength
+        : null;
+    if (projectedBoundary !== watermark.byteOffset) {
+      this.rebuildThread(threadId, entries);
+      return;
+    }
+    this.applyMany(entries.slice(watermark.ordinal + 1));
+  }
+
   rebuildThread(threadId: ThreadId, entries: readonly RolloutEntry[]): void {
     this.transaction(() => {
+      this.streamingItems.delete(threadId);
       this.db.prepare('DELETE FROM thread_turns WHERE thread_id = ?').run(threadId);
       this.db.prepare('DELETE FROM history_rollbacks WHERE thread_id = ?').run(threadId);
       this.db.prepare('DELETE FROM rollout_watermarks WHERE thread_id = ?').run(threadId);
@@ -183,6 +206,7 @@ export class ThreadHistoryProjectionStore {
 
   deleteThread(threadId: ThreadId): void {
     this.transaction(() => {
+      this.streamingItems.delete(threadId);
       this.db.prepare('DELETE FROM thread_turns WHERE thread_id = ?').run(threadId);
       this.db.prepare('DELETE FROM history_rollbacks WHERE thread_id = ?').run(threadId);
       this.db.prepare('DELETE FROM rollout_watermarks WHERE thread_id = ?').run(threadId);
@@ -265,7 +289,7 @@ export class ThreadHistoryProjectionStore {
     return {
       data: page.map((row): ThreadItemEntry => ({
         turnId: row.turn_id,
-        item: decodeThreadItem(JSON.parse(row.item_json)),
+        item: this.itemFromRow(row),
       })),
       nextCursor: hasNext && last ? itemCursor(last, direction) : null,
       backwardsCursor: first ? itemCursor(first, opposite(direction)) : null,
@@ -300,7 +324,31 @@ export class ThreadHistoryProjectionStore {
       WHERE thread_id = ? AND turn_id = ? AND completed_at IS NULL
       ORDER BY item_index
     `).all(threadId, turnId) as unknown as ItemRow[];
-    return rows.map((row) => decodeThreadItem(JSON.parse(row.item_json)));
+    return rows.map((row) => this.itemFromRow(row));
+  }
+
+  restoreOpenItemsFromRollout(
+    threadId: ThreadId,
+    turnId: string,
+    entries: readonly RolloutEntry[],
+  ): void {
+    const openItems = reconstructOpenItems(threadId, turnId, entries);
+    this.transaction(() => {
+      this.requireMutableTurnPosition(threadId, turnId);
+      for (const item of openItems.values()) {
+        const row = this.readItemRow(threadId, item.id);
+        if (!row) throw new Error(`Recovered Item start is missing from projection: ${item.id}`);
+        if (row.turn_id !== turnId) throw new Error(`Recovered Thread Item does not belong to Turn: ${item.id}`);
+        if (row.completed_at !== null) throw new Error(`Recovered Thread Item is already complete: ${item.id}`);
+        const decoded = decodeThreadItem(item);
+        const result = this.db.prepare(`
+          UPDATE thread_items SET item_json = ?, item_type = ?
+          WHERE thread_id = ? AND turn_id = ? AND item_id = ? AND completed_at IS NULL
+        `).run(JSON.stringify(decoded), decoded.type, threadId, turnId, decoded.id);
+        if (Number(result.changes) !== 1) throw new Error(`Failed to restore streamed Thread Item: ${item.id}`);
+      }
+      this.deleteTurnStreamingItems(threadId, turnId);
+    });
   }
 
   private applyInside(entry: RolloutEntry): void {
@@ -366,6 +414,7 @@ export class ThreadHistoryProjectionStore {
       marker.afterProjectionVersion,
     );
     for (const turnId of marker.omittedTurnIds) {
+      this.deleteTurnStreamingItems(marker.threadId, turnId);
       this.db.prepare('DELETE FROM thread_turns WHERE thread_id = ? AND turn_id = ?').run(marker.threadId, turnId);
     }
   }
@@ -404,11 +453,13 @@ export class ThreadHistoryProjectionStore {
               notification.turn.completedAt,
             );
           });
+          this.deleteTurnStreamingItems(notification.threadId, notification.turnId);
           return;
         }
         if (existing.status !== 'inProgress') throw new Error(`Terminal Turn is immutable: ${notification.turnId}`);
         this.assertTurnItemsMatch(notification.threadId, notification.turnId, notification.turn.items);
         this.upsertTurn(notification.threadId, ordinal, notification.turn);
+        this.deleteTurnStreamingItems(notification.threadId, notification.turnId);
         return;
       }
       case 'item/started': {
@@ -443,6 +494,7 @@ export class ThreadHistoryProjectionStore {
           null,
           notification.completedAt,
         );
+        this.deleteStreamingItem(notification.threadId, notification.turnId, notification.itemId);
         return;
       }
       case 'items/completed': {
@@ -465,6 +517,7 @@ export class ThreadHistoryProjectionStore {
             notification.completedAt,
             notification.completedAt,
           );
+          this.deleteStreamingItem(notification.threadId, notification.turnId, item.id);
         }
         return;
       }
@@ -549,11 +602,10 @@ export class ThreadHistoryProjectionStore {
     if (!row) throw new Error(`Item delta precedes item start: ${itemId}`);
     if (row.turn_id !== turnId) throw new Error(`Thread Item does not belong to Turn: ${itemId}`);
     if (row.completed_at !== null) throw new Error(`Completed Thread Item is immutable: ${itemId}`);
-    const item = decodeThreadItem(JSON.parse(row.item_json));
+    const item = this.streamingItems.get(threadId)?.get(turnId)?.get(itemId)
+      ?? decodeThreadItem(JSON.parse(row.item_json));
     const updated = applyThreadItemDelta(item, delta);
-    this.db.prepare(`
-      UPDATE thread_items SET item_json = ?, item_type = ? WHERE thread_id = ? AND item_id = ?
-    `).run(JSON.stringify(updated), updated.type, threadId, itemId);
+    this.setStreamingItem(threadId, turnId, updated);
   }
 
   private requireMutableTurnPosition(threadId: ThreadId, turnId: string): number {
@@ -611,10 +663,10 @@ export class ThreadHistoryProjectionStore {
     const items = itemsView === 'notLoaded'
       ? []
       : (this.db.prepare(`
-          SELECT item_json FROM thread_items
+          SELECT * FROM thread_items
           WHERE thread_id = ? AND turn_id = ? ORDER BY item_index
-        `).all(row.thread_id, row.turn_id) as unknown as Array<{ item_json: string }>)
-        .map((itemRow) => decodeThreadItem(JSON.parse(itemRow.item_json)));
+        `).all(row.thread_id, row.turn_id) as unknown as ItemRow[])
+        .map((itemRow) => this.itemFromRow(itemRow));
     return decodeTurn({
       id: row.turn_id,
       items,
@@ -630,14 +682,60 @@ export class ThreadHistoryProjectionStore {
   }
 
   private transaction(operation: () => void): void {
-    this.db.exec('BEGIN IMMEDIATE');
+    const previousStreamingItems = this.streamingItems;
+    this.streamingItems = cloneStreamingItems(previousStreamingItems);
+    let began = false;
     try {
+      this.db.exec('BEGIN IMMEDIATE');
+      began = true;
       operation();
       this.db.exec('COMMIT');
     } catch (error) {
-      this.db.exec('ROLLBACK');
+      this.streamingItems = previousStreamingItems;
+      if (began) {
+        try {
+          this.db.exec('ROLLBACK');
+        } catch (rollbackError) {
+          throw new AggregateError([error, rollbackError], 'History projection transaction failed to roll back');
+        }
+      }
       throw error;
     }
+  }
+
+  private itemFromRow(row: ItemRow): ThreadItem {
+    return this.streamingItems.get(row.thread_id)?.get(row.turn_id)?.get(row.item_id)
+      ?? decodeThreadItem(JSON.parse(row.item_json));
+  }
+
+  private setStreamingItem(threadId: ThreadId, turnId: string, item: ThreadItem): void {
+    let turns = this.streamingItems.get(threadId);
+    if (!turns) {
+      turns = new Map();
+      this.streamingItems.set(threadId, turns);
+    }
+    let items = turns.get(turnId);
+    if (!items) {
+      items = new Map();
+      turns.set(turnId, items);
+    }
+    items.set(item.id, item);
+  }
+
+  private deleteStreamingItem(threadId: ThreadId, turnId: string, itemId: string): void {
+    const turns = this.streamingItems.get(threadId);
+    const items = turns?.get(turnId);
+    if (!items) return;
+    items.delete(itemId);
+    if (items.size === 0) turns!.delete(turnId);
+    if (turns!.size === 0) this.streamingItems.delete(threadId);
+  }
+
+  private deleteTurnStreamingItems(threadId: ThreadId, turnId: string): void {
+    const turns = this.streamingItems.get(threadId);
+    if (!turns) return;
+    turns.delete(turnId);
+    if (turns.size === 0) this.streamingItems.delete(threadId);
   }
 }
 
@@ -703,4 +801,71 @@ function itemCursor(row: ItemRow, direction: 'asc' | 'desc'): string {
 
 function opposite(direction: 'asc' | 'desc'): 'asc' | 'desc' {
   return direction === 'asc' ? 'desc' : 'asc';
+}
+
+function reconstructOpenItems(
+  threadId: ThreadId,
+  turnId: string,
+  entries: readonly RolloutEntry[],
+): ReadonlyMap<string, ThreadItem> {
+  const openItems = new Map<string, ThreadItem>();
+  let turnStarted = false;
+  for (const entry of entries) {
+    if (entry.event.threadId !== threadId) throw new Error('Cannot recover a Thread from another rollout');
+    const event = entry.event;
+    if (event.type === 'history/rollback') {
+      if (event.omittedTurnIds.includes(turnId)) {
+        openItems.clear();
+        turnStarted = false;
+      }
+      continue;
+    }
+    switch (event.type) {
+      case 'turn/started':
+        if (event.turnId !== turnId) break;
+        openItems.clear();
+        turnStarted = true;
+        break;
+      case 'item/started':
+        if (event.turnId !== turnId) break;
+        if (!turnStarted) throw new Error(`Recovered Item lifecycle precedes Turn start: ${turnId}`);
+        if (openItems.has(event.itemId)) throw new Error(`Recovered Thread Item was already started: ${event.itemId}`);
+        openItems.set(event.itemId, event.item);
+        break;
+      case 'item/delta': {
+        if (event.turnId !== turnId) break;
+        const item = openItems.get(event.itemId);
+        if (!item) throw new Error(`Recovered Item delta precedes item start: ${event.itemId}`);
+        openItems.set(event.itemId, applyThreadItemDelta(item, event.delta));
+        break;
+      }
+      case 'item/completed':
+        if (event.turnId === turnId) openItems.delete(event.itemId);
+        break;
+      case 'items/completed':
+        if (event.turnId === turnId) {
+          for (const item of event.items) openItems.delete(item.id);
+        }
+        break;
+      case 'turn/completed':
+        if (event.turnId === turnId) {
+          openItems.clear();
+          turnStarted = false;
+        }
+        break;
+      default:
+        break;
+    }
+  }
+  if (!turnStarted) throw new Error(`Cannot recover missing in-progress Turn: ${turnId}`);
+  return openItems;
+}
+
+function cloneStreamingItems(
+  source: ReadonlyMap<ThreadId, StreamingItemsByTurn>,
+): Map<ThreadId, StreamingItemsByTurn> {
+  return new Map([...source].map(([threadId, turns]) => [
+    threadId,
+    new Map([...turns].map(([turnId, items]) => [turnId, new Map(items)])),
+  ]));
 }

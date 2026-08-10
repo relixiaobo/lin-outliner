@@ -70,6 +70,10 @@ const EMPTY_SNAPSHOT: ThreadStoreSnapshot = {
 };
 
 const MAX_CACHED_TOOL_OUTPUTS = 64;
+const LISTENER_FALLBACK_DELAY_MS = 16;
+
+export type ThreadStoreListenerScheduler = (flush: () => void) => void;
+type ThreadStoreListenerDelivery = 'immediate' | 'frame';
 
 export class ThreadStore {
   private snapshot = EMPTY_SNAPSHOT;
@@ -81,8 +85,13 @@ export class ThreadStore {
   private readonly configurationRevisions = new Map<ThreadId, number>();
   private readonly outputTextCache = new Map<string, Promise<string | null>>();
   private readonly toolArgumentsCache = new Map<string, Promise<JsonValue | null>>();
+  private listenerFlushScheduled = false;
+  private listenerFlushGeneration = 0;
 
-  constructor(private readonly client: Pick<typeof api, 'agentCoreRequest' | 'onAgentCoreNotification'> = api) {}
+  constructor(
+    private readonly client: Pick<typeof api, 'agentCoreRequest' | 'onAgentCoreNotification'> = api,
+    private readonly scheduleListenerFlush: ThreadStoreListenerScheduler = scheduleOnNextFrame,
+  ) {}
 
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
@@ -734,24 +743,41 @@ export class ThreadStore {
   ): void {
     this.updateTurnItems(threadId, turnId, (items) => items.map((item) => (
       item.id === itemId ? applyItemDelta(item, delta) : item
-    )));
+    )), 'frame');
   }
 
   private updateTurnItems(
     threadId: ThreadId,
     turnId: string,
     update: (items: readonly ThreadItem[]) => readonly ThreadItem[],
+    delivery: ThreadStoreListenerDelivery = 'immediate',
   ): void {
     const turnsByThread = new Map(this.snapshot.turnsByThread);
     turnsByThread.set(threadId, (turnsByThread.get(threadId) ?? []).map((turn) => (
       turn.id === turnId ? { ...turn, items: update(turn.items) } : turn
     )));
-    this.patch({ turnsByThread });
+    this.patch({ turnsByThread }, delivery);
   }
 
-  private patch(patch: Partial<ThreadStoreSnapshot>): void {
+  private patch(
+    patch: Partial<ThreadStoreSnapshot>,
+    delivery: ThreadStoreListenerDelivery = 'immediate',
+  ): void {
     this.snapshot = { ...this.snapshot, ...patch };
-    for (const listener of this.listeners) listener();
+    if (delivery === 'immediate') {
+      this.listenerFlushScheduled = false;
+      this.listenerFlushGeneration += 1;
+      for (const listener of this.listeners) listener();
+      return;
+    }
+    if (this.listeners.size === 0 || this.listenerFlushScheduled) return;
+    this.listenerFlushScheduled = true;
+    const generation = this.listenerFlushGeneration;
+    this.scheduleListenerFlush(() => {
+      if (!this.listenerFlushScheduled || generation !== this.listenerFlushGeneration) return;
+      this.listenerFlushScheduled = false;
+      for (const listener of this.listeners) listener();
+    });
   }
 }
 
@@ -759,6 +785,14 @@ export const threadStore = new ThreadStore();
 
 export function useThreadStore(): ThreadStoreSnapshot {
   return useSyncExternalStore(threadStore.subscribe, threadStore.getSnapshot, threadStore.getSnapshot);
+}
+
+function scheduleOnNextFrame(flush: () => void): void {
+  if (typeof requestAnimationFrame === 'function') {
+    requestAnimationFrame(() => flush());
+    return;
+  }
+  setTimeout(flush, LISTENER_FALLBACK_DELAY_MS);
 }
 
 function threadPreviewFromTurn(turn: Turn): string {

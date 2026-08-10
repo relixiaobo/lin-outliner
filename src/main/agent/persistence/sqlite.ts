@@ -25,5 +25,7 @@ interface NodeSqliteModule {
 
 export function openSqlite(path: string): SqliteDatabase {
   const nodeSqlite = createRequire(import.meta.url)('node:sqlite') as NodeSqliteModule;
-  return new nodeSqlite.DatabaseSync(path);
+  const database = new nodeSqlite.DatabaseSync(path);
+  database.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;');
+  return database;
 }
