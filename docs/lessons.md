@@ -734,3 +734,19 @@ more than one producer, enumerate the producers in the test, not the field.**
 Verifying one instance and generalizing to the class is how the second instance
 survives — grep the writers and count them before you decide one example is
 representative.
+
+## A guard that runs "if the artifact happens to exist" guards nothing
+
+v0.3.0 shipped dead — `window.lin` undefined in every window — because the
+update checker's import chain pulled `semver` into the sandboxed preload, whose
+`require` polyfill resolves only electron/events/timers/url. The #505 preload
+guard existed and encoded exactly this failure, but its artifact half ran only
+"when a build is present", no CI test run builds, and the whole Playwright
+suite drives Chrome against a vite dev server with `window.lin` mocked — so no
+test in this repo ever loads the real preload, and the one context that mattered
+was checked by no one. Two rules. **Put the check where the artifact is
+produced**: `app:build` now runs `scripts/check-preload-bundle.ts` between
+electron-vite build and electron-builder, so an unloadable preload fails the
+build, not the first user. **Know which realities your test pyramid never
+touches** — packaged Electron is one of them here; that gap is a standing fact
+to design guards around, not an oversight to fix once.

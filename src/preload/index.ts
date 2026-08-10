@@ -103,7 +103,7 @@ import {
   LIN_APP_UPDATE_SET_AUTOMATIC_CHANNEL,
   type AppUpdateOpenResult,
   type AppUpdateView,
-} from '../core/appUpdate';
+} from '../core/appUpdateProtocol';
 
 export interface LinPickedLocalFile {
   entryKind?: 'file' | 'directory';
