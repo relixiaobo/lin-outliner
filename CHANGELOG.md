@@ -178,6 +178,27 @@ Entries reference the pull request that introduced them.
 
 ### Fixed
 
+- **A pane whose file preview outlives its node is repaired, not thrown away (PR
+  #523, codex-3)** — restoring a same-day layout dropped any pane whose current
+  view no longer validated: preview a file node, delete the node, restart, and the
+  whole pane vanished along with the outliner it had been opened from. Restore now
+  sanitizes the pane into a candidate and repairs it — an invalid current view
+  lands on the latest valid **outliner** entry in the pane's Back stack, then
+  Forward. Entries skipped on the way there are not discarded but moved to the
+  opposite stack in navigation order, so a URL or Turn Diagnostics view stays one
+  Back/Forward press away instead of being silently mounted at launch. A preview
+  opened as a *fresh* split has no history at all, which is the original bug's own
+  path, so those panes now record a `recoveryRootId` — the source pane's live
+  outliner root — and fall back to it, then to the live Today/library root.
+  Recovery never clones a root that is already on screen (an active recovered pane
+  keeps its identity, otherwise the existing valid pane wins), while duplicate
+  outliner panes the user opened deliberately with `Cmd+M` are left alone. Runtime
+  healing was folded onto the same policy — `repairMissingOutlinerRoots` became
+  `repairInvalidPanelViews` and now widens from "missing outliner root" to full
+  view validity — so deleting a node with the app open and deleting it before a
+  restart no longer land the pane in different places. Turn Diagnostics also gained
+  a real close: when sanitization leaves no Back destination and another pane
+  remains, its X removes the pane instead of invoking an empty Back stack.
 - **Popover lists stack as rows again (PR #515, anti)** — retiring the command
   palette (PR #505) took the shared popover row contract with it: the CSS the
   popovers depended on lived in the palette's selector groups, so slash commands,

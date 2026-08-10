@@ -42,7 +42,8 @@ theme-section entry below; this list is the ordering, not a second record):
   don't count against the review-queue cap): `floating-toolbar-polish`,
   `icon-semantics`, the two remaining prime-agent
   fast-tracks (`agent-delegation-context-hygiene` · `agent-hygiene-checks`; the
-  third shipped 2026-08-10 as #512), the `file-as-node` pane-restore bug, and the micro-tails
+  third shipped 2026-08-10 as #512; the `file-as-node` pane-restore bug shipped
+  2026-08-10 as #523), and the micro-tails
   (#460 truncation dialects · `scripts-typecheck-coverage` · #208 follow-ups).
   `dark-mode-contrast-pass` still runs **last** per its own rule; `performance` P3
   remains an uncapped background lane (trail + remaining items under **Performance**).
@@ -499,10 +500,6 @@ archived `done` (see Recently completed). Remaining active work:
   Office path; and the static URL reader is essentially built
   (`agentWebFetchContent.ts`, Defuddle extraction) — rescope that section to exposing
   the existing extractor as a preview presentation.
-- **file-as-node follow-up** (low, pre-release bug, *no plan file*) — restoring a persisted pane
-  whose top view was an `asset` file-preview drops the whole pane instead of salvaging its outliner
-  anchor / backStack (`useWorkspaceLayout` `sanitizePanel`). Dev-only userData, narrow same-day
-  window. (Feature shipped #241, archived `done`.)
 - **asset-gc** (P2, *no plan file*, **rescoped 2026-08-09**: the `index.json` half is
   obsolete — no index exists, authoritative `<id>.meta.json` sidecars carry metadata
   (`assetService.ts:33`) — and drag-from-Finder ingest shipped
@@ -775,6 +772,21 @@ and the merged PR, distilled rules in [`lessons.md`](lessons.md). Everything
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
 
+- **file-as-node pane restore** (codex-3, PR #523, merged 2026-08-10 — fast-track, no plan
+  file) — a persisted pane whose current view no longer validates is repaired instead of
+  dropped: `sanitizePanel` now yields a candidate and `repairPanel` lands it on the latest
+  valid **outliner** entry (Back, then Forward), moving skipped entries to the opposite
+  stack so a URL or Turn Diagnostics view stays reachable without mounting at startup. A
+  fresh split preview carries a new `recoveryRootId` (its source pane's live root) so the
+  empty-stack case — the original bug's own path — falls back to a real outliner, and
+  `dedupeRecoveredOutliners` keeps recovery from cloning a visible root while leaving
+  deliberate `Cmd+M` duplicates alone. Runtime healing was folded onto the same policy
+  (`repairMissingOutlinerRoots` → `repairInvalidPanelViews`), so restart and live repair no
+  longer choose different destinations. `/code-review high` found seven, all fixed in the
+  same PR; the load-bearing ones were promotion applying no kind filter — which could
+  restore a canvas with zero outliner views (null `rootId`, dead commands), an
+  undismissable Turn Diagnostics pane whose X was wired to a no-op Back, and a startup
+  fetch of a URL the user had navigated away from.
 - **responses-stream-resilience** (codex-2, PR #520, merged 2026-08-10 — plan-track, plan
   archived `done`) — a third-party OpenAI-Responses relay hiccup no longer kills a Turn:
   a non-terminal frame carrying a **non-empty** `error` is dropped instead of thrown on,
