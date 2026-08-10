@@ -491,7 +491,7 @@ describe('kernel retry policy', () => {
     expect(events.map((event) => event.type)).toEqual(['start', 'text_start', 'text_delta', 'error']);
   });
 
-  test('still refuses to retry once a tool call finished parsing', async () => {
+  test('surfaces a non-termination provider failure once a tool call finished parsing', async () => {
     let attempts = 0;
     const streamFn = createPolicyStreamFn((() => {
       attempts += 1;
@@ -514,8 +514,11 @@ describe('kernel retry policy', () => {
     for await (const event of stream) events.push(event);
 
     expect(attempts).toBe(1);
-    expect(events.map((event) => event.type)).toEqual(['toolcall_end', 'done']);
-    await expect(stream.result()).resolves.toMatchObject({ stopReason: 'toolUse' });
+    expect(events.map((event) => event.type)).toEqual(['toolcall_end', 'error']);
+    await expect(stream.result()).resolves.toMatchObject({
+      stopReason: 'error',
+      errorMessage: 'OpenAI API error (524): 524 status code (no body)',
+    });
   });
 
   test('retries a stream error outside the legacy termination allowlist', async () => {
@@ -587,6 +590,47 @@ describe('kernel retry policy', () => {
 
     expect(attempts).toBe(2);
     await expect(stream.result()).resolves.toMatchObject({ stopReason: 'stop' });
+  });
+
+  test('does not retry permanent custom Responses failures without a status', async () => {
+    for (const errorMessage of [
+      'Invalid API key',
+      'OpenAI Responses stream ended after a sanitized relay error frame: {"error":{"message":"Model not found"}}',
+      'OpenAI Responses stream ended after a sanitized relay error frame: {"error":{"message":"Insufficient quota"}}',
+    ]) {
+      let attempts = 0;
+      const streamFn = createPolicyStreamFn((() => {
+        attempts += 1;
+        return startedErrorStream(errorMessage, CUSTOM_RESPONSES_MODEL);
+      }) as StreamFn, { requestRetryDelayMs: () => 0 });
+
+      const stream = streamFn(CUSTOM_RESPONSES_MODEL, { messages: [], tools: [] });
+      for await (const _event of stream) { /* drain */ }
+
+      expect(attempts).toBe(1);
+      await expect(stream.result()).resolves.toMatchObject({ stopReason: 'error', errorMessage });
+    }
+  });
+
+  test('does not spend the stream budget after a request failure exhausts its budget', async () => {
+    let attempts = 0;
+    const streamFn = createPolicyStreamFn((() => {
+      attempts += 1;
+      return errorStream('Connection error.', CUSTOM_RESPONSES_MODEL);
+    }) as StreamFn, {
+      maxRequestRetries: 1,
+      maxStreamRetries: 3,
+      requestRetryDelayMs: () => 0,
+    });
+
+    const stream = streamFn(CUSTOM_RESPONSES_MODEL, { messages: [], tools: [] });
+    for await (const _event of stream) { /* drain */ }
+
+    expect(attempts).toBe(2);
+    await expect(stream.result()).resolves.toMatchObject({
+      stopReason: 'error',
+      errorMessage: 'Connection error.',
+    });
   });
 
   test('stops after the third custom Responses stream retry', async () => {

@@ -1,4 +1,5 @@
 import type { FetchFunction } from '@earendil-works/pi-ai';
+import { MAX_TURN_DIAGNOSTICS_STREAM_NOISE_FRAMES } from '../../../core/agent/protocol';
 import { redactSecretLikeJsonForDiagnostics } from '../capabilities/agentSecretRedaction';
 
 export const RESPONSES_STREAM_IDLE_TIMEOUT_MS = 300_000;
@@ -17,7 +18,7 @@ export interface ResponsesStreamNoiseFrame {
   readonly snippet: string;
 }
 
-interface ResilientResponsesFetchOptions {
+export interface ResilientResponsesFetchOptions {
   readonly idleTimeoutMs?: number;
   readonly onNoiseFrame?: (frame: ResponsesStreamNoiseFrame) => void | Promise<void>;
 }
@@ -45,6 +46,7 @@ export function createResilientResponsesFetch(
 
     let buffer: Uint8Array<ArrayBufferLike> = new Uint8Array();
     let firstNoiseSnippet: string | null = null;
+    let reportedNoiseFrameCount = 0;
     let sawTerminalFrame = false;
     let lastChunkAt = Date.now();
     let streamController: TransformStreamDefaultController<Uint8Array> | null = null;
@@ -79,6 +81,8 @@ export function createResilientResponsesFetch(
         controller.enqueue(frame);
         return;
       }
+      if (reportedNoiseFrameCount >= MAX_TURN_DIAGNOSTICS_STREAM_NOISE_FRAMES) return;
+      reportedNoiseFrameCount += 1;
       const diagnostic = await redactSecretLikeJsonForDiagnostics(parsed.noise.value);
       const frameType = isRecord(diagnostic.value) && typeof diagnostic.value.type === 'string'
         ? boundedFrameType(diagnostic.value.type)
@@ -176,7 +180,7 @@ function parseFrame(frame: Uint8Array): ParsedFrame {
   const terminal = frameType !== null && TERMINAL_RESPONSE_TYPES.has(frameType);
   return {
     terminal,
-    noise: Object.hasOwn(value, 'error') && !terminal
+    noise: hasNonEmptyError(value.error) && !terminal
       ? { value }
       : null,
   };
@@ -213,7 +217,16 @@ function boundedSnippet(value: string): string {
 
 function boundedFrameType(value: string | null): string | null {
   if (value === null) return null;
-  return Array.from(value).slice(0, MAX_NOISE_FRAME_TYPE_CODE_POINTS).join('');
+  const bounded = Array.from(value.trim()).slice(0, MAX_NOISE_FRAME_TYPE_CODE_POINTS).join('');
+  return bounded || null;
+}
+
+function hasNonEmptyError(value: unknown): boolean {
+  if (value === null || value === undefined || value === false) return false;
+  if (typeof value === 'string') return value.trim().length > 0;
+  if (Array.isArray(value)) return value.length > 0;
+  if (isRecord(value)) return Object.keys(value).length > 0;
+  return Boolean(value);
 }
 
 function normalizeIdleTimeout(value: number | undefined): number {

@@ -9,6 +9,7 @@ import {
   MODEL_TOOL_CALL_EVIDENCE_REASONS,
   MAX_THREAD_CONTEXT_PAYLOAD_BYTES,
   MAX_TURN_DIAGNOSTICS_PAYLOAD_BYTES,
+  MAX_TURN_DIAGNOSTICS_STREAM_NOISE_FRAMES,
   THREAD_HISTORY_MODE,
   THREAD_ITEM_TYPES,
   REQUEST_USER_INPUT_MAX_AUTO_RESOLUTION_MS,
@@ -225,7 +226,7 @@ export function decodeThreadItem(value: unknown): ThreadItem {
         ...base,
         type,
         text: stringValue(record.text, 'item.text', true),
-        phase: nullableEnum(record.phase, ['commentary', 'final_answer'], 'item.phase'),
+        phase: nullableEnum(record.phase, ['commentary', 'final_answer', 'interrupted'], 'item.phase'),
         memoryCitation: decodeMemoryCitation(record.memoryCitation),
       };
       break;
@@ -2832,31 +2833,36 @@ export function decodeTurnDiagnosticsPayload(value: unknown): TurnDiagnosticsPay
           call.transportResponse,
           `turnDiagnostics.providerCalls[${index}].transportResponse`,
         );
-    const streamNoiseFrames = call.streamNoiseFrames === undefined
+    const streamNoiseFramesPath = `turnDiagnostics.providerCalls[${index}].streamNoiseFrames`;
+    const streamNoiseFrameEntries = call.streamNoiseFrames === undefined
       ? undefined
-      : arrayValue(
-          call.streamNoiseFrames,
-          `turnDiagnostics.providerCalls[${index}].streamNoiseFrames`,
-        ).map((entry, frameIndex) => {
-          const framePath = `turnDiagnostics.providerCalls[${index}].streamNoiseFrames[${frameIndex}]`;
-          const frame = recordValue(entry, framePath);
-          exactKeys(frame, ['arrivedAt', 'frameType', 'snippet'], framePath);
-          return {
-            arrivedAt: nonNegativeNumber(frame.arrivedAt, `${framePath}.arrivedAt`),
-            frameType: frame.frameType === null
-              ? null
-              : boundedUtf8String(
-                  frame.frameType,
-                  `${framePath}.frameType`,
-                  MAX_TURN_DIAGNOSTICS_STREAM_FRAME_TYPE_BYTES,
-                ),
-            snippet: boundedUtf8String(
-              frame.snippet,
-              `${framePath}.snippet`,
-              MAX_TURN_DIAGNOSTICS_STREAM_NOISE_SNIPPET_BYTES,
+      : arrayValue(call.streamNoiseFrames, streamNoiseFramesPath);
+    if (
+      streamNoiseFrameEntries
+      && streamNoiseFrameEntries.length > MAX_TURN_DIAGNOSTICS_STREAM_NOISE_FRAMES
+    ) {
+      fail(streamNoiseFramesPath, `cannot exceed ${MAX_TURN_DIAGNOSTICS_STREAM_NOISE_FRAMES} entries`);
+    }
+    const streamNoiseFrames = streamNoiseFrameEntries?.map((entry, frameIndex) => {
+      const framePath = `turnDiagnostics.providerCalls[${index}].streamNoiseFrames[${frameIndex}]`;
+      const frame = recordValue(entry, framePath);
+      exactKeys(frame, ['arrivedAt', 'frameType', 'snippet'], framePath);
+      return {
+        arrivedAt: nonNegativeNumber(frame.arrivedAt, `${framePath}.arrivedAt`),
+        frameType: frame.frameType === null
+          ? null
+          : boundedUtf8String(
+              frame.frameType,
+              `${framePath}.frameType`,
+              MAX_TURN_DIAGNOSTICS_STREAM_FRAME_TYPE_BYTES,
             ),
-          };
-        });
+        snippet: boundedUtf8String(
+          frame.snippet,
+          `${framePath}.snippet`,
+          MAX_TURN_DIAGNOSTICS_STREAM_NOISE_SNIPPET_BYTES,
+        ),
+      };
+    });
     const protectedFromMessageIndex = nonNegativeInteger(
       call.protectedFromMessageIndex,
       `turnDiagnostics.providerCalls[${index}].protectedFromMessageIndex`,

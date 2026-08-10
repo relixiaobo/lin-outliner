@@ -11,16 +11,17 @@ import type {
   Tool,
 } from '../runtime/kernel/types';
 import type { EffectiveThreadConfiguration } from '../../../core/agent/configuration';
-import type {
-  JsonValue,
-  ModelToolCallHistory,
-  ThreadItem,
-  TurnDiagnosticsPayload,
-  TurnDiagnosticsActivity,
-  TurnDiagnosticsProviderCall,
-  TurnDiagnosticsMessagePartProvenance,
-  TurnDiagnosticsProviderRequest,
-  TurnDiagnosticsProviderRequestField,
+import {
+  MAX_TURN_DIAGNOSTICS_STREAM_NOISE_FRAMES,
+  type JsonValue,
+  type ModelToolCallHistory,
+  type ThreadItem,
+  type TurnDiagnosticsPayload,
+  type TurnDiagnosticsActivity,
+  type TurnDiagnosticsProviderCall,
+  type TurnDiagnosticsMessagePartProvenance,
+  type TurnDiagnosticsProviderRequest,
+  type TurnDiagnosticsProviderRequestField,
 } from '../../../core/agent/protocol';
 import {
   redactSecretLikeJsonForDiagnostics,
@@ -262,9 +263,12 @@ export class TurnDiagnosticsCollector {
   }): void {
     const sourceCall = this.providerCalls.at(-1);
     if (!sourceCall) return;
+    if (sourceCall.streamNoiseFrames.length >= MAX_TURN_DIAGNOSTICS_STREAM_NOISE_FRAMES) return;
     sourceCall.streamNoiseFrames.push({
-      arrivedAt: frame.arrivedAt,
-      frameType: frame.frameType,
+      arrivedAt: Number.isFinite(frame.arrivedAt)
+        ? Math.max(sourceCall.requestedAt, frame.arrivedAt)
+        : sourceCall.requestedAt,
+      frameType: frame.frameType?.trim() ? frame.frameType : null,
       snippet: frame.snippet,
     });
   }

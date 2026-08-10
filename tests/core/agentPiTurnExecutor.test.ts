@@ -126,10 +126,20 @@ describe('PiTurnExecutor event normalization', () => {
 
   test('message_restart completes the interrupted items and opens fresh ones', async () => {
     const fixture = createContext();
-    const normalizer = new PiEventNormalizer(fixture.context);
+    const observedCompletions: string[] = [];
+    const normalizer = new PiEventNormalizer(fixture.context, {
+      assistantCompleted: ({ message }) => observedCompletions.push(message.content
+        .filter((part) => part.type === 'text')
+        .map((part) => part.text)
+        .join('')),
+    });
     const interrupted = {
       ...assistantMessage([
-        { type: 'thinking' as const, thinking: 'Interrupted reasoning' },
+        {
+          type: 'thinking' as const,
+          thinking: 'Interrupted reasoning',
+          thinkingSignature: openAIReasoningSignature('interrupted'),
+        },
         { type: 'text' as const, text: 'Interrupted answer' },
       ]),
       stopReason: 'pending' as const,
@@ -158,9 +168,9 @@ describe('PiTurnExecutor event normalization', () => {
     await normalizer.flush();
 
     expect(fixture.recorder.orderedItems()).toMatchObject([
-      { type: 'agentMessage', text: 'Interrupted answer' },
+      { type: 'agentMessage', text: 'Interrupted answer', phase: 'interrupted' },
       { type: 'reasoning', content: ['Interrupted reasoning'] },
-      { type: 'agentMessage', text: 'Fresh answer' },
+      { type: 'agentMessage', text: 'Fresh answer', phase: 'final_answer' },
     ]);
     expect(fixture.notifications.map((notification) => notification.type)).toEqual([
       'item/started',
@@ -173,6 +183,18 @@ describe('PiTurnExecutor event normalization', () => {
       'item/delta',
       'item/completed',
     ]);
+    expect(observedCompletions).toEqual(['Fresh answer']);
+    expect(normalizer.usage.totalTokens).toBe(7);
+
+    const projected = await new CanonicalContextProjector(
+      runtimeSelection().model,
+      fixture.context,
+    ).projectTurns([{
+      ...fixture.context.turn,
+      items: [...fixture.context.turn.items, ...fixture.recorder.orderedItems()],
+    }]);
+    expect(JSON.stringify(projected)).not.toContain('Interrupted answer');
+    expect(JSON.stringify(projected)).toContain('Fresh answer');
   });
 
   test('a retried stream does not concatenate onto the interrupted message', async () => {

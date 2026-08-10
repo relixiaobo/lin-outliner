@@ -85,7 +85,6 @@ import {
 import {
   applyCustomOpenAIResponsesPayloadProfile,
   customOpenAIResponsesPayloadProfileOption,
-  isCustomOpenAIResponsesEndpoint,
 } from '../../openAIResponsesCompat';
 import type {
   ThreadNameGenerationContext,
@@ -95,7 +94,6 @@ import type {
   TurnExecutor,
 } from './types';
 import { persistToolCallAdmission } from './toolCallHistory';
-import { createResilientResponsesFetch } from './sseResilientFetch';
 
 export const MAX_PERSISTED_TOOL_ARGUMENT_CHARS = 32_000;
 export const MAX_PERSISTED_TOOL_OUTPUT_CHARS = 50_000;
@@ -189,10 +187,17 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
       priorMessages.push(...currentMessages.slice(0, -1));
       const prompt = initialPrompt;
       if (context.signal.aborted) return { status: 'interrupted' };
-      const configuredProviderOptions = providerStreamOptionsFromRuntimeSettings(runtimeSettings, runtime.model);
+      let diagnostics: TurnDiagnosticsCollector;
+      const providerOptions = providerStreamOptionsFromRuntimeSettings(
+        runtimeSettings,
+        runtime.model,
+        {
+          onNoiseFrame: (frame) => diagnostics.captureStreamNoiseFrame(frame),
+        },
+      );
       const contextTurns = [...context.historyBeforeTurn, context.turn];
       const cacheAffinity = providerCacheAffinity(context.thread.id, contextTurns);
-      const diagnostics = new TurnDiagnosticsCollector({
+      diagnostics = new TurnDiagnosticsCollector({
         contextEpochId: latestContextEpochId(contextTurns, INITIAL_CONTEXT_EPOCH_ID),
         cacheAffinity,
         configuration: context.configuration,
@@ -200,20 +205,12 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
         tools,
         model: runtime.model,
         thinkingLevel: runtime.thinkingLevel,
-        providerOptions: configuredProviderOptions,
+        providerOptions,
         initialInput: {
           acceptedAt: prompt.timestamp,
           itemIds: context.turn.items.map((item) => item.id),
         },
       });
-      const providerOptions = isCustomOpenAIResponsesEndpoint(runtime.model)
-        ? {
-            ...configuredProviderOptions,
-            fetch: createResilientResponsesFetch({
-              onNoiseFrame: (frame) => diagnostics.captureStreamNoiseFrame(frame),
-            }),
-          }
-        : configuredProviderOptions;
       const disableDiagnostics = (error: unknown) => {
         if (!diagnostics.available) return;
         diagnostics.disable();
@@ -831,7 +828,7 @@ export class PiEventNormalizer {
         if (event.message.role === 'assistant') await this.ensureMessageItem();
         return;
       case 'message_restart':
-        if (event.message.role === 'assistant') await this.completeAssistant(event.message);
+        if (event.message.role === 'assistant') await this.completeAssistant(event.message, 'interrupted');
         return;
       case 'message_update':
         if (event.message.role !== 'assistant') return;
@@ -906,7 +903,10 @@ export class PiEventNormalizer {
     return this.activeReasoningItem;
   }
 
-  private async completeAssistant(message: AssistantMessage): Promise<void> {
+  private async completeAssistant(
+    message: AssistantMessage,
+    completion: 'terminal' | 'interrupted' = 'terminal',
+  ): Promise<void> {
     const messageItem = await this.ensureMessageItem();
     await this.context.recorder.completed({
       ...messageItem,
@@ -914,7 +914,7 @@ export class PiEventNormalizer {
         .filter((part): part is TextContent => part.type === 'text')
         .map((part) => part.text)
         .join(''),
-      phase: messagePhase(message),
+      phase: completion === 'interrupted' ? 'interrupted' : messagePhase(message),
     });
     if (this.activeReasoningItem) {
       await this.context.recorder.completed({
@@ -924,15 +924,17 @@ export class PiEventNormalizer {
           .map((part) => part.thinking),
       });
     }
-    this.executionObserver?.assistantCompleted?.({ itemId: messageItem.id, message });
-    addUsage(this.usage, message.usage);
-    try {
-      this.context.onModelCallUsage?.(message.usage.totalTokens);
-    } catch (error) {
-      console.error('[agent][subagent-budget-audit] model-call usage observation failed', error);
+    if (completion === 'terminal') {
+      this.executionObserver?.assistantCompleted?.({ itemId: messageItem.id, message });
+      addUsage(this.usage, message.usage);
+      try {
+        this.context.onModelCallUsage?.(message.usage.totalTokens);
+      } catch (error) {
+        console.error('[agent][subagent-budget-audit] model-call usage observation failed', error);
+      }
+      this.stopReason = message.stopReason;
+      this.errorMessage = message.errorMessage ?? null;
     }
-    this.stopReason = message.stopReason;
-    this.errorMessage = message.errorMessage ?? null;
     this.activeMessageItem = null;
     this.activeReasoningItem = null;
   }

@@ -23,6 +23,7 @@ const MAX_RETRYABLE_RESPONSES_TERMINATIONS = 1;
 const MAX_RETRYABLE_CUSTOM_RESPONSES_STREAM_ERRORS = 3;
 const RESPONSES_REQUEST_RETRY_INITIAL_DELAY_MS = 200;
 const RESPONSES_REQUEST_RETRY_JITTER = 0.1;
+const RETRYABLE_CUSTOM_RESPONSES_STREAM_ERROR_RE = /\bstream_read_error\b|\bstream idle timeout\b/i;
 
 type StreamWithPolicyInput = RetryPolicyOptions & {
   model: Model<Api>;
@@ -422,10 +423,11 @@ function retryOutcomeForResponsesError(
   if (reason !== 'error' || completedToolCallIds.size > 0) return null;
   if (sawMaterialOutput && !isCustomOpenAIResponsesEndpoint(model)) return null;
   const failure = classifyModelFailure(message);
-  if (!sawStreamEvent
-    && requestRetryCount < maxRequestRetries
-    && (failure?.kind === 'rateLimit' || failure?.kind === 'serverError' || failure?.kind === 'transport')) {
-    return 'retry-request';
+  const retryableRequestFailure = failure?.kind === 'rateLimit'
+    || failure?.kind === 'serverError'
+    || failure?.kind === 'transport';
+  if (!sawStreamEvent && retryableRequestFailure) {
+    return requestRetryCount < maxRequestRetries ? 'retry-request' : null;
   }
   if (streamRetryCount < maxStreamRetries && isRetryableResponsesStreamError(message, model)) {
     return 'retry-stream';
@@ -522,7 +524,7 @@ function salvageTerminatedCustomResponsesToolUse(
 ): AssistantMessage | null {
   if (reason !== 'error') return null;
   if (!isCustomOpenAIResponsesEndpoint(model)) return null;
-  if (!isRetryableResponsesStreamError(message, model)) return null;
+  if (!isTerminatedResponsesStreamError(message)) return null;
   const toolCalls = message.content.filter(isToolCall);
   if (toolCalls.length === 0) return null;
   if (!toolCalls.every((toolCall) => completedToolCallIds.has(toolCall.id))) return null;
@@ -543,10 +545,7 @@ function isOpenAIResponsesModel(model: Model<Api>): boolean {
 
 function isRetryableResponsesStreamError(message: AssistantMessage, model: Model<Api>): boolean {
   if (!isCustomOpenAIResponsesEndpoint(model)) {
-    const lower = message.errorMessage?.toLowerCase();
-    return lower === 'terminated'
-      || Boolean(lower?.includes('stream ended before a terminal response event'))
-      || Boolean(lower?.includes('terminated while'));
+    return isTerminatedResponsesStreamError(message);
   }
   const failure = classifyModelFailure(message);
   if (failure?.kind === 'contextOverflow' || failure?.kind === 'aborted') return false;
@@ -556,5 +555,16 @@ function isRetryableResponsesStreamError(message: AssistantMessage, model: Model
     && failure.status < 500
     && failure.status !== 429
   ) return false;
-  return true;
+  if (failure?.kind === 'rateLimit' || failure?.kind === 'serverError' || failure?.kind === 'transport') {
+    return true;
+  }
+  return isTerminatedResponsesStreamError(message)
+    || RETRYABLE_CUSTOM_RESPONSES_STREAM_ERROR_RE.test(message.errorMessage ?? '');
+}
+
+function isTerminatedResponsesStreamError(message: AssistantMessage): boolean {
+  const lower = message.errorMessage?.toLowerCase();
+  return lower === 'terminated'
+    || Boolean(lower?.includes('stream ended before a terminal response event'))
+    || Boolean(lower?.includes('terminated while'));
 }

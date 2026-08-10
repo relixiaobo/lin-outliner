@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { MAX_TURN_DIAGNOSTICS_STREAM_NOISE_FRAMES } from '../../src/core/agent/protocol';
 import { createResilientResponsesFetch } from '../../src/main/agent/runtime/sseResilientFetch';
 
 describe('resilient OpenAI Responses SSE fetch', () => {
@@ -46,6 +47,26 @@ describe('resilient OpenAI Responses SSE fetch', () => {
     });
   });
 
+  test('forwards frames whose error field is empty', async () => {
+    const source = [
+      'data: {"type":"response.output_text.delta","delta":"one","error":null}\n\n',
+      'data: {"type":"response.output_text.delta","delta":"two","error":""}\n\n',
+      'data: {"type":"response.output_text.delta","delta":"three","error":{}}\n\n',
+      'data: {"type":"response.completed"}\n\n',
+    ].join('');
+    const captured: string[] = [];
+
+    await withMockFetch(async () => eventStreamResponse([source]), async () => {
+      const fetch = createResilientResponsesFetch({
+        onNoiseFrame: (frame) => captured.push(frame.snippet),
+      });
+      const response = await fetch('https://relay.example.test/v1/responses');
+
+      expect(await response.text()).toBe(source);
+      expect(captured).toEqual([]);
+    });
+  });
+
   test('carries the sanitized noise snippet when the stream closes without a terminal frame', async () => {
     const secret = 'sk-0123456789abcdefghijklmnopqrstuvwxyz';
     const noise = `data: {"type":"relay.notice","error":"stream_read_error","api_key":"${secret}"}\n\n`;
@@ -83,6 +104,41 @@ describe('resilient OpenAI Responses SSE fetch', () => {
       expect(captured).toHaveLength(1);
       expect(captured[0]?.frameType).not.toContain(secretType);
       expect(captured[0]?.snippet).not.toContain(secretType);
+    });
+  });
+
+  test('normalizes an empty noise frame type to null', async () => {
+    const noise = 'data: {"type":"","error":{"message":"stream_read_error"}}\n\n';
+    const completed = 'data: {"type":"response.completed"}\n\n';
+    const captured: Array<string | null> = [];
+
+    await withMockFetch(async () => eventStreamResponse([noise, completed]), async () => {
+      const fetch = createResilientResponsesFetch({
+        onNoiseFrame: (frame) => captured.push(frame.frameType),
+      });
+      const response = await fetch('https://relay.example.test/v1/responses');
+
+      expect(await response.text()).toBe(completed);
+      expect(captured).toEqual([null]);
+    });
+  });
+
+  test('caps reported noise frames per response', async () => {
+    const noise = Array.from(
+      { length: MAX_TURN_DIAGNOSTICS_STREAM_NOISE_FRAMES + 5 },
+      (_, index) => `data: {"type":"relay.notice","error":"noise-${index}"}\n\n`,
+    ).join('');
+    const completed = 'data: {"type":"response.completed"}\n\n';
+    let captured = 0;
+
+    await withMockFetch(async () => eventStreamResponse([noise, completed]), async () => {
+      const fetch = createResilientResponsesFetch({
+        onNoiseFrame: () => { captured += 1; },
+      });
+      const response = await fetch('https://relay.example.test/v1/responses');
+
+      expect(await response.text()).toBe(completed);
+      expect(captured).toBe(MAX_TURN_DIAGNOSTICS_STREAM_NOISE_FRAMES);
     });
   });
 

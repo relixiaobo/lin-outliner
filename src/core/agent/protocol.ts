@@ -376,6 +376,8 @@ export interface TurnDiagnosticsTransportResponse {
   readonly requestId: string | null;
 }
 
+export const MAX_TURN_DIAGNOSTICS_STREAM_NOISE_FRAMES = 64;
+
 export interface TurnDiagnosticsStreamNoiseFrame {
   readonly arrivedAt: number;
   readonly frameType: string | null;
@@ -604,7 +606,7 @@ export interface MemoryCitation {
   readonly threadIds: readonly ThreadId[];
 }
 
-export type MessagePhase = 'commentary' | 'final_answer';
+export type MessagePhase = 'commentary' | 'final_answer' | 'interrupted';
 export type ItemExecutionStatus = 'inProgress' | 'completed' | 'failed' | 'interrupted';
 
 interface ThreadItemBase {

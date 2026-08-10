@@ -71,7 +71,10 @@ import {
   customOpenAIResponsesFetchOption,
   customOpenAIResponsesPayloadProfileOption,
 } from '../../openAIResponsesCompat';
-import { createResilientResponsesFetch } from '../runtime/sseResilientFetch';
+import {
+  createResilientResponsesFetch,
+  type ResilientResponsesFetchOptions,
+} from '../runtime/sseResilientFetch';
 import { redactSecretLikeContent } from './agentSecretRedaction';
 import {
   ccSwitchModelOptionId,
@@ -304,6 +307,7 @@ export function providerStreamOptionsFromRuntimeSettings(
     'providerTimeoutMs' | 'providerMaxRetries' | 'providerMaxRetryDelayMs' | 'providerCacheRetention'
   > | null,
   model?: Pick<Model<Api>, 'api' | 'baseUrl'> | null,
+  responsesStreamOptions: ResilientResponsesFetchOptions = {},
 ): Pick<SimpleStreamOptions, 'timeoutMs' | 'maxRetries' | 'maxRetryDelayMs' | 'cacheRetention' | 'fetch'> {
   const options: Pick<
     SimpleStreamOptions,
@@ -321,7 +325,10 @@ export function providerStreamOptionsFromRuntimeSettings(
   if (settings?.providerCacheRetention) {
     options.cacheRetention = settings.providerCacheRetention;
   }
-  Object.assign(options, customOpenAIResponsesFetchOption(model, createResilientResponsesFetch));
+  Object.assign(options, customOpenAIResponsesFetchOption(
+    model,
+    () => createResilientResponsesFetch(responsesStreamOptions),
+  ));
   return options;
 }
 

@@ -155,7 +155,7 @@ Each entry carries the run id, scheduled time, finish time, a status, one
 bounded outcome line, and a nullable `transcriptPath`. The outcome is derived
 from the canonical Turn every time the digest is built — an `AutomationRun`
 records how a run was *dispatched*, never how it ended, and it stays that way:
-`dispatched` plus the Turn's status and last non-commentary assistant text,
+`dispatched` plus the Turn's status and completed final assistant text,
 `failed` from the run error, `omitted` from the omission reason and count, and
 `unknown` when the user deleted the Thread but kept the routing record. No
 outcome field is written down, so there is no second ledger to disagree with the

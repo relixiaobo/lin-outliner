@@ -407,6 +407,7 @@ export class CanonicalContextProjector {
       if (toolResults.length > 0 || toolEvidence.length > 0) flushAssistant();
       switch (item.type) {
         case 'agentMessage':
+          if (item.phase === 'interrupted') break;
           assistantItemIds.push(item.id);
           if (item.text) assistantContent.push({ type: 'text', text: item.text });
           break;
