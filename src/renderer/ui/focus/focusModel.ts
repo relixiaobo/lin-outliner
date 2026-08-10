@@ -1,11 +1,12 @@
-import type {
-  CursorPlacement,
-  FocusRequest,
-  FocusSurface,
-  FocusTarget,
-  InlineRefCursorBias,
-  PendingInputChar,
-  UiState,
+import {
+  CLEARED_FOCUS_STATE,
+  type CursorPlacement,
+  type FocusRequest,
+  type FocusSurface,
+  type FocusTarget,
+  type InlineRefCursorBias,
+  type PendingInputChar,
+  type UiState,
 } from '../../state/document';
 import type { NodeId } from '../../api/types';
 
@@ -97,14 +98,7 @@ export function relayCompositionHandoffState(state: UiState, text: string): UiSt
 export function clearFocusState(state: UiState): UiState {
   return {
     ...state,
-    focusedId: null,
-    focusedParentId: null,
-    focusedPanelId: null,
-    focusSurface: null,
-    focusRequest: null,
-    pendingInputChar: null,
-    pendingReferenceTypeAhead: null,
-    trailingDraftPlacement: null,
+    ...CLEARED_FOCUS_STATE,
   };
 }
 

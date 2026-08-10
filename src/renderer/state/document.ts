@@ -25,6 +25,7 @@ import {
 } from './selectableRows';
 import {
   buildOutlinerRows,
+  hiddenFieldKey,
   readViewConfig,
   visibleAuthoredTableFieldIds,
   type OutlinerRowItem,
@@ -177,8 +178,9 @@ export interface ProjectionStore {
 // the reduce stays a pure function call OUTSIDE the setState updater (no resync
 // side effect inside an updater that StrictMode double-invokes) and back-to-back
 // applies in one tick chain correctly before React commits. A single in-flight
-// guard collapses duplicate resync requests. Accepted deltas also prune removed
-// node ids from renderer-local UI state at this same update boundary.
+// guard collapses duplicate resync requests. Every accepted update also prunes
+// node ids that left the projection from renderer-local UI state at this same
+// boundary, including full reseeds returned by commands or resync.
 export function useProjectionStore(
   resync: () => Promise<ProjectionSnapshot>,
   setUi: Dispatch<SetStateAction<UiState>>,
@@ -194,25 +196,45 @@ export function useProjectionStore(
     }
   }, []);
 
+  const commitAcceptedUpdate = useCallback((
+    previous: ProjectionState | null,
+    next: ProjectionState,
+    update: ProjectionUpdate,
+  ) => {
+    if (next === previous) return;
+    const removals = projectionRemovals(
+      previous?.index ?? null,
+      next.index,
+      update,
+    );
+    if (removals !== null) {
+      setUi((current) => reduceUiStateForProjectionRemovals(current, removals));
+    }
+    commit(next);
+  }, [commit, setUi]);
+
   const applyProjectionUpdate = useCallback((update: ProjectionUpdate) => {
     const previous = stateRef.current;
     const next = measureRenderIndex(() => reduceProjection(previous, update));
     if (next !== null) {
-      if (next !== previous && update.kind === 'delta' && update.removedIds.length > 0) {
-        setUi((current) => reduceUiStateForProjectionUpdate(current, update));
-      }
-      commit(next);
+      commitAcceptedUpdate(previous, next, update);
       return;
     }
     if (resyncInFlight.current) return;
     resyncInFlight.current = true;
     void resync()
-      .then((snapshot) => commit(reduceProjection(
-        stateRef.current,
-        { kind: 'full', revision: snapshot.revision, projection: snapshot.projection },
-      )))
+      .then((snapshot) => {
+        const fullUpdate: ProjectionUpdate = {
+          kind: 'full',
+          revision: snapshot.revision,
+          projection: snapshot.projection,
+        };
+        const previous = stateRef.current;
+        const next = reduceProjection(previous, fullUpdate);
+        if (next !== null) commitAcceptedUpdate(previous, next, fullUpdate);
+      })
       .finally(() => { resyncInFlight.current = false; });
-  }, [commit, resync, setUi]);
+  }, [commitAcceptedUpdate, resync]);
 
   return { index: state?.index ?? null, applyProjectionUpdate };
 }
@@ -282,6 +304,27 @@ export interface ToolbarDropdownRequest {
   nonce: number;
 }
 
+export const CLEARED_FOCUS_STATE = {
+  focusedId: null,
+  focusedParentId: null,
+  focusedPanelId: null,
+  focusSurface: null,
+  focusRequest: null,
+  pendingInputChar: null,
+  pendingReferenceTypeAhead: null,
+  trailingDraftPlacement: null,
+} satisfies Pick<
+  UiState,
+  | 'focusedId'
+  | 'focusedParentId'
+  | 'focusedPanelId'
+  | 'focusSurface'
+  | 'focusRequest'
+  | 'pendingInputChar'
+  | 'pendingReferenceTypeAhead'
+  | 'trailingDraftPlacement'
+>;
+
 export function useUiState() {
   return useState<UiState>({
     focusedId: null,
@@ -308,55 +351,161 @@ export function useUiState() {
 
 export function reduceUiStateForProjectionUpdate(
   state: UiState,
+  previous: DocumentIndex | null,
+  next: DocumentIndex,
   update: ProjectionUpdate,
 ): UiState {
-  if (update.kind !== 'delta' || update.removedIds.length === 0) return state;
+  const removals = projectionRemovals(previous, next, update);
+  return removals === null ? state : reduceUiStateForProjectionRemovals(state, removals);
+}
 
-  const removedIds = new Set(update.removedIds);
+function reduceUiStateForProjectionRemovals(
+  state: UiState,
+  removals: ProjectionRemovals,
+): UiState {
+  const { nodeIds: removedIds, hiddenFieldKeys: removedHiddenFieldKeys } = removals;
   const selectedIds = withoutRemovedIds(state.selectedIds, removedIds);
   const expanded = withoutRemovedIds(state.expanded, removedIds);
-  const focusedRemoved = state.focusedId !== null && removedIds.has(state.focusedId);
-  const selectedIdRemoved = state.selectedId !== null && removedIds.has(state.selectedId);
-  const selectionAnchorRemoved = state.selectionAnchorId !== null && removedIds.has(state.selectionAnchorId);
-  const selectionRootRemoved = state.selectionRootId !== null && removedIds.has(state.selectionRootId);
+  const expandedHiddenFields = withoutRemovedIds(state.expandedHiddenFields, removedHiddenFieldKeys);
+  const focusStateRemoved = nodeIdRemoved(state.focusedId, removedIds)
+    || nodeIdRemoved(state.focusedParentId, removedIds);
+  const focusRequestRemoved = state.focusRequest !== null
+    && focusTargetReferencesRemovedNode(state.focusRequest.target, removedIds);
+  const pendingInputRemoved = state.pendingInputChar !== null
+    && focusTargetReferencesRemovedNode(state.pendingInputChar.target, removedIds);
+  const pendingReferenceConversionRemoved = state.pendingReferenceConversion !== null
+    && referenceRequestReferencesRemovedNode(state.pendingReferenceConversion, removedIds);
+  const pendingReferenceTypeAheadRemoved = state.pendingReferenceTypeAhead !== null
+    && referenceRequestReferencesRemovedNode(state.pendingReferenceTypeAhead, removedIds);
+  const trailingDraftPlacementRemoved = state.trailingDraftPlacement !== null
+    && (
+      removedIds.has(state.trailingDraftPlacement.parentId)
+      || nodeIdRemoved(state.trailingDraftPlacement.afterId, removedIds)
+    );
+  const selectedIdRemoved = nodeIdRemoved(state.selectedId, removedIds);
+  const selectionAnchorRemoved = nodeIdRemoved(state.selectionAnchorId, removedIds);
+  const selectionRootRemoved = nodeIdRemoved(state.selectionRootId, removedIds);
+  const editingDescriptionRemoved = nodeIdRemoved(state.editingDescriptionId, removedIds);
+  const toolbarDropdownRemoved = state.toolbarDropdownRequest !== null
+    && removedIds.has(state.toolbarDropdownRequest.nodeId);
 
   if (
     selectedIds === state.selectedIds
     && expanded === state.expanded
-    && !focusedRemoved
+    && expandedHiddenFields === state.expandedHiddenFields
+    && !focusStateRemoved
+    && !focusRequestRemoved
+    && !pendingInputRemoved
+    && !pendingReferenceConversionRemoved
+    && !pendingReferenceTypeAheadRemoved
+    && !trailingDraftPlacementRemoved
     && !selectedIdRemoved
     && !selectionAnchorRemoved
     && !selectionRootRemoved
+    && !editingDescriptionRemoved
+    && !toolbarDropdownRemoved
   ) return state;
 
-  const selectedId = selectedIdRemoved ? [...selectedIds].at(-1) ?? null : state.selectedId;
+  const selectedId = selectedIdRemoved ? lastSetValue(selectedIds) : state.selectedId;
+  const selectionEmptied = selectedIds !== state.selectedIds && selectedIds.size === 0;
+  const focusPatch = focusStateRemoved
+    ? CLEARED_FOCUS_STATE
+    : {
+        focusRequest: focusRequestRemoved ? null : state.focusRequest,
+        pendingInputChar: pendingInputRemoved ? null : state.pendingInputChar,
+        pendingReferenceTypeAhead: pendingReferenceTypeAheadRemoved
+          ? null
+          : state.pendingReferenceTypeAhead,
+        trailingDraftPlacement: trailingDraftPlacementRemoved
+          ? null
+          : state.trailingDraftPlacement,
+      };
   return {
     ...state,
-    ...(focusedRemoved
-      ? {
-          focusedId: null,
-          focusedParentId: null,
-          focusedPanelId: null,
-          focusSurface: null,
-          focusRequest: null,
-          pendingInputChar: null,
-          pendingReferenceTypeAhead: null,
-          trailingDraftPlacement: null,
-        }
-      : {}),
+    ...focusPatch,
     selectedId,
     selectedIds,
     selectionAnchorId: selectionAnchorRemoved ? selectedId : state.selectionAnchorId,
     selectionRootId: selectionRootRemoved ? null : state.selectionRootId,
-    selectionSource: selectedIds !== state.selectedIds && selectedIds.size === 0
+    selectionSource: selectionEmptied ? null : state.selectionSource,
+    pendingReferenceConversion: pendingReferenceConversionRemoved
       ? null
-      : state.selectionSource,
+      : state.pendingReferenceConversion,
     expanded,
+    expandedHiddenFields,
+    editingDescriptionId: editingDescriptionRemoved ? null : state.editingDescriptionId,
+    batchTagSelectorOpen: selectionEmptied ? false : state.batchTagSelectorOpen,
+    toolbarDropdownRequest: toolbarDropdownRemoved ? null : state.toolbarDropdownRequest,
   };
 }
 
-function withoutRemovedIds(current: Set<NodeId>, removedIds: ReadonlySet<NodeId>): Set<NodeId> {
-  let next: Set<NodeId> | null = null;
+interface ProjectionRemovals {
+  nodeIds: ReadonlySet<NodeId>;
+  hiddenFieldKeys: ReadonlySet<string>;
+}
+
+function projectionRemovals(
+  previous: DocumentIndex | null,
+  next: DocumentIndex,
+  update: ProjectionUpdate,
+): ProjectionRemovals | null {
+  if (previous === null) return null;
+
+  const nodeIds = new Set<NodeId>();
+  if (update.kind === 'delta') {
+    for (const id of update.removedIds) nodeIds.add(id);
+  } else {
+    for (const id of previous.byId.keys()) {
+      if (!next.byId.has(id)) nodeIds.add(id);
+    }
+  }
+  if (nodeIds.size === 0) return null;
+
+  const hiddenFieldKeys = new Set<string>();
+  for (const id of nodeIds) {
+    const removedNode = previous.byId.get(id);
+    if (!removedNode) continue;
+    if (removedNode.type === 'fieldEntry' && removedNode.parentId) {
+      hiddenFieldKeys.add(hiddenFieldKey(removedNode.parentId, id));
+    }
+    for (const childId of removedNode.children) {
+      if (previous.byId.get(childId)?.type === 'fieldEntry') {
+        hiddenFieldKeys.add(hiddenFieldKey(id, childId));
+      }
+    }
+  }
+  return { nodeIds, hiddenFieldKeys };
+}
+
+function nodeIdRemoved(id: NodeId | null | undefined, removedIds: ReadonlySet<NodeId>): boolean {
+  return id !== null && id !== undefined && removedIds.has(id);
+}
+
+function focusTargetReferencesRemovedNode(
+  target: FocusTarget,
+  removedIds: ReadonlySet<NodeId>,
+): boolean {
+  return removedIds.has(target.nodeId) || nodeIdRemoved(target.parentId, removedIds);
+}
+
+function referenceRequestReferencesRemovedNode(
+  request: PendingReferenceConversion | PendingReferenceTypeAhead,
+  removedIds: ReadonlySet<NodeId>,
+): boolean {
+  return removedIds.has(request.nodeId)
+    || removedIds.has(request.parentId)
+    || removedIds.has(request.targetId);
+}
+
+function lastSetValue<T>(values: ReadonlySet<T>): T | null {
+  let last: T | null = null;
+  for (const value of values) last = value;
+  return last;
+}
+
+function withoutRemovedIds<T>(current: Set<T>, removedIds: ReadonlySet<T>): Set<T> {
+  if (current.size === 0 || removedIds.size === 0) return current;
+  let next: Set<T> | null = null;
   for (const id of current) {
     if (!removedIds.has(id)) continue;
     next ??= new Set(current);
