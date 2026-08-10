@@ -10,6 +10,21 @@ Entries reference the pull request that introduced them.
 
 `main` is the `0.3.0` train; entries here move under the next tag.
 
+### Changed
+
+- **Search drops the dead embed model but keeps old queries valid (PR #510,
+  codex)** — the `embed` node type existed only in the protocol (nothing ever
+  produced one), so the search facets built on it — `HAS_AUDIO`, `HAS_VIDEO`,
+  `IS_TYPE embed` — could never match, while the agent was still told they work
+  and would report "no audio found" as evidence of absence. The dead type and
+  its embed-backed semantics are deleted and the operator guidance stops
+  advertising the audio/video facets; `HAS_AUDIO` / `HAS_VIDEO` remain
+  parseable-but-inert compatibility terms, so persisted saved searches and
+  replayed agent outlines keep executing and simply match nothing until the
+  follow-up PR rebuilds them on attachments. `HAS_MEDIA` stays as an alias of
+  `HAS_IMAGE`, and the search grammar spec now documents the real `IS_TYPE`
+  alias set and candidate rules.
+
 ### Internal
 
 - **Opened the 0.3.0 train (main-agent)** — `package.json` dials to `0.3.0`

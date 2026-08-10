@@ -39,9 +39,9 @@ every stale entry, so the frontier is four parallel lanes (detail lives in each 
 theme-section entry below; this list is the ordering, not a second record):
 
 - **Lane A — build-ready quick wins** (fast-track, parallelize freely; small items
-  don't count against the review-queue cap): `media-search-alignment` **PR 1**
-  (isolated protocol PR — land **first** so siblings rebase once; its PR 2 follows
-  under the same owner and is plan-track), `renderer-state-hygiene`,
+  don't count against the review-queue cap): `media-search-alignment` **PR 2**
+  (PR 1 shipped 2026-08-10 as #510 — protocol cleared, siblings rebase once; PR 2
+  stays plan-track under the same owner), `renderer-state-hygiene`,
   `floating-toolbar-polish`, `icon-semantics`, the three prime-agent fast-tracks
   (`agent-delegation-context-hygiene` · `agent-goal-continuation-enrichment` ·
   `agent-hygiene-checks`), the `file-as-node` pane-restore bug, and the micro-tails
@@ -567,17 +567,16 @@ archived `done` (see Recently completed). Remaining active work:
   `TextMarkKind` is `types.ts:213` (not :110) and the Heading icon source is
   `icons.ts:75` (`AgentMarkdown.tsx` is gone); mirror the registry `addTag`
   create-then-apply candidate policy in the `#`-extract tag pick.
-- **media-search-alignment** (P2, `draft` 2026-08-10 — absorbs the former
-  `embed-strategy`, whose plan is archived for provenance; see
+- **media-search-alignment** (P2, `in-progress` — PR 1 shipped 2026-08-10 as #510;
+  absorbs the former `embed-strategy`, whose plan is archived for provenance; see
   [docs/plans/media-search-alignment.md](plans/media-search-alignment.md)) — search's
-  media model points at a node type that does not exist and is blind to the one that
-  does. Shape (b), **two sequenced PRs, one owner**. **PR 1** (isolated protocol PR —
-  siblings rebase over it, so it lands first): delete `EmbedNode` / `'embed'` and,
-  with it, `HAS_AUDIO` / `HAS_VIDEO` / `IS_TYPE embed`, which can match nothing once
-  embed nodes are gone, plus the clause in `agentNodeToolGuidance.ts:53` that
-  advertises them — *a facet that silently matches nothing is worse than an absent
-  one*, because the agent is told it exists, uses it, and reports "none found" as
-  evidence of absence. `HAS_IMAGE` stays; `HAS_MEDIA` keep-or-fold is the dev's call.
+  media model pointed at a node type that does not exist and is blind to the one that
+  does. Shape (b), **two sequenced PRs, one owner**. **PR 1 — done (#510)**: deleted
+  `EmbedNode` / `'embed'`, the embed-backed facet semantics, and `IS_TYPE embed`;
+  `HAS_AUDIO` / `HAS_VIDEO` stay in the protocol as parseable-but-inert
+  compatibility terms (saved searches and replayed agent outlines keep executing,
+  matching nothing until PR 2 activates attachment-backed semantics) and are no
+  longer advertised in guidance; `HAS_IMAGE` stays, `HAS_MEDIA` kept as its alias.
   **PR 2**: `AttachmentNode` — the real carrier of every audio, video, and PDF since
   #204/#241 — is missing from `isSearchCandidate`'s allowlist (`searchEngine.ts:2084`),
   so an attachment cannot be found by text, type, or facet while the sibling `image`
