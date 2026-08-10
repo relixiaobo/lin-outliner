@@ -744,6 +744,16 @@ anything.
   Confirmed at the #460 high gate but omitted from the fix list; cosmetic, forensics-only.
   The 2026-08-09 audit found a **third** dialect to fold in: `agentLocalTools.ts:3201`
   (`...[N bytes omitted; full output saved to file]...`).
+- **packaged-boot-smoke** (P2, *fast-track, no plan file*, filed 2026-08-10 at the
+  v0.3.0 incident) — no suite in this repo loads the real Electron runtime: the
+  whole Playwright suite drives Chrome against the vite dev server with
+  `window.lin` mocked (`tests/e2e/outlinerMock.ts`), which is how v0.3.0 shipped
+  with a preload that could not load while every gate stayed green. The build-time
+  guard (`scripts/check-preload-bundle.ts`, in `app:build` since the hotfix) closes
+  the preload-require class; this item is the next ring: one minimal boot smoke
+  that launches the `out/`-built app in real Electron (CDP probe: `window.lin`
+  exists, document loads), runnable at freeze time. Scope the check to boot — the
+  mocked suite stays the behavior authority.
 - **plan-reference-guard** (P3, *fast-track, no plan file*, filed 2026-08-10 from the
   staleness audit) — extend `docs:check`: scan active plans and the board for
   `file:line`-shaped references and backticked symbol names, verify each still
