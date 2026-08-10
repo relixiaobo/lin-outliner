@@ -46,14 +46,34 @@ describe('resolveSkillContentTarget (single skill-path source of truth)', () => 
   });
 
   test('recognizes an additional dir OUTSIDE root (the closed governance hole)', () => {
-    // The loader and file-tool gateway share this resolver so configured skill dirs
-    // get the same validation, provenance, and hot-reload handling as defaults.
+    // An exact definition is an admission attempt even before the Skill loads.
     const teamSkills = path.join(path.sep, 'home', 'x', 'team-skills');
     const target = resolveSkillContentTarget(
       path.join(teamSkills, 'shared', 'SKILL.md'),
       { root, includeUserSkills: false, additionalSkillDirectories: [teamSkills] },
     );
     expect(target).toMatchObject({ skillName: 'shared', source: 'user', isSkillFile: true });
+  });
+
+  test('requires admitted ownership for support content in an additional dir', () => {
+    const teamSkills = path.join(path.sep, 'home', 'x', 'team-skills');
+    const supportFile = path.join(teamSkills, 'shared', 'references', 'notes.md');
+    const baseConfig = { root, includeUserSkills: false, additionalSkillDirectories: [teamSkills] };
+
+    expect(resolveSkillContentTarget(supportFile, baseConfig)).toBeNull();
+    expect(resolveSkillContentTarget(supportFile, {
+      ...baseConfig,
+      loadedBoundSkillRoots: [{
+        skillName: 'shared',
+        skillRoot: path.join(teamSkills, 'shared'),
+        skillsDir: teamSkills,
+        source: 'user',
+      }],
+    })).toMatchObject({
+      skillName: 'shared',
+      relativePath: 'references/notes.md',
+      isSkillFile: false,
+    });
   });
 
   test('returns null for a non-skill file', () => {
@@ -838,14 +858,18 @@ describe('agent skills', () => {
       frontmatter: ['description: Bundled demo skill'],
       body: 'Use bundled instructions.',
     });
+    const aliasParent = await mkdtemp(path.join(tmpdir(), 'lin-skills-built-in-alias-'));
+    const aliasSkillsDir = path.join(aliasParent, 'skills');
+    await symlink(skillsDir, aliasSkillsDir);
     const runtime = new AgentSkillRuntime({
       localRoot: root,
       includeUserSkills: false,
       builtInSkillDirectories: [skillsDir],
-      additionalSkillDirectories: [skillsDir],
+      additionalSkillDirectories: [skillsDir, aliasSkillsDir],
     });
 
     expect(runtime.resolveSkillTarget(path.join(skillDir, 'SKILL.md'))).toBeNull();
+    expect(runtime.resolveSkillTarget(path.join(aliasSkillsDir, 'bundled-demo', 'new-notes.md'))).toBeNull();
     expect((await runtime.getSkill('bundled-demo'))?.source).toBe('built-in');
   });
 

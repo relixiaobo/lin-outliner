@@ -44,7 +44,9 @@ admits that root as a Skill. Therefore:
 
 Ownership is independent of invocation state. Path-conditional Skills and
 valid physical roots hidden by canonical-name precedence still own their own
-files. Enablement cannot turn write governance on or off.
+files. Enablement cannot turn write governance on or off. When convention and
+bound candidates overlap, the most specific valid Skill root wins; source-loop
+order never decides ownership.
 
 ### Registry-owned snapshot
 

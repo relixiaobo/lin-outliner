@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { AgentSkillRuntime } from '../../src/main/agent/capabilities/agentSkills';
@@ -81,7 +81,7 @@ describe('bound local skill directories', () => {
     });
   });
 
-  test('every loaded skill resolves to a governed write target', async () => {
+  test('only admitted bound skills own support paths', async () => {
     // The invariant that matters: loader and resolver must agree. A Skill that
     // loads but resolves to no target is an ungoverned write — no content
     // validation, no audit, no provenance, no "Undo agent edit".
@@ -102,6 +102,12 @@ describe('bound local skill directories', () => {
     expect(runtime.resolveSkillTarget(
       path.join(bound, 'nested-resources', 'references', 'notes.md'),
     )).toMatchObject({ skillName: 'nested-resources', isSkillFile: false });
+    expect(runtime.resolveSkillTarget(path.join(bound, 'taxes', '2025.md'))).toBeNull();
+    expect(runtime.resolveSkillTarget(path.join(bound, 'Research Notes', 'summary.md'))).toBeNull();
+    expect(runtime.resolveSkillTarget(path.join(bound, 'taxes', 'SKILL.md'))).toMatchObject({
+      skillName: 'taxes',
+      isSkillFile: true,
+    });
   });
 
   test('a directory whose name cannot be a Skill name is never admitted', async () => {
@@ -115,6 +121,113 @@ describe('bound local skill directories', () => {
     const runtime = runtimeFor(workspace, [bound]);
 
     expect(await runtime.listAllSkills()).toEqual([]);
+    expect(runtime.resolveSkillTarget(path.join(bound, 'My Skill', 'notes.md'))).toBeNull();
+    expect(runtime.resolveSkillTarget(path.join(bound, 'My Skill', 'SKILL.md'))).toMatchObject({
+      skillName: 'My Skill',
+      isSkillFile: true,
+    });
+  });
+
+  test('path-conditional skills own their bound roots before activation', async () => {
+    const workspace = await temporaryRoot();
+    const bound = await temporaryRoot();
+    const skillRoot = path.join(bound, 'conditional');
+    await mkdir(skillRoot, { recursive: true });
+    await writeFile(path.join(skillRoot, 'SKILL.md'), [
+      '---',
+      'description: Conditional bound workflow',
+      'paths:',
+      '  - src/**/*.ts',
+      '---',
+      '',
+      'Use the conditional workflow.',
+      '',
+    ].join('\n'), 'utf8');
+
+    const runtime = runtimeFor(workspace, [bound]);
+
+    expect((await runtime.listAllSkills()).map((skill) => skill.name)).toEqual(['conditional']);
+    expect(runtime.resolveSkillTarget(path.join(skillRoot, 'references', 'notes.md'))).toMatchObject({
+      skillName: 'conditional',
+      isSkillFile: false,
+    });
+  });
+
+  test('same-name physical skills each own their bound root', async () => {
+    const workspace = await temporaryRoot();
+    const firstBound = await temporaryRoot();
+    const secondBound = await temporaryRoot();
+    await writeSkill(path.join(firstBound, 'shared'), 'shared', 'First shared workflow.');
+    await writeSkill(path.join(secondBound, 'shared'), 'shared', 'Second shared workflow.');
+
+    const runtime = runtimeFor(workspace, [firstBound, secondBound]);
+    await runtime.listAllSkills();
+
+    expect(runtime.resolveSkillTarget(path.join(firstBound, 'shared', 'first.md'))).toMatchObject({
+      skillName: 'shared',
+      skillsDir: firstBound,
+    });
+    expect(runtime.resolveSkillTarget(path.join(secondBound, 'shared', 'second.md'))).toMatchObject({
+      skillName: 'shared',
+      skillsDir: secondBound,
+    });
+  });
+
+  test('the most specific admitted root wins when a bound container overlaps a convention Skill', async () => {
+    const workspace = await temporaryRoot();
+    const conventionSkillRoot = path.join(workspace, '.agents', 'skills', 'team');
+    await writeSkill(conventionSkillRoot, 'team', 'Team convention workflow.');
+    await writeSkill(path.join(conventionSkillRoot, 'alpha'), 'alpha', 'Nested explicitly bound workflow.');
+
+    const runtime = runtimeFor(workspace, [conventionSkillRoot]);
+    await runtime.listAllSkills();
+
+    expect(runtime.resolveSkillTarget(path.join(conventionSkillRoot, 'team-notes.md'))).toMatchObject({
+      skillName: 'team',
+    });
+    expect(runtime.resolveSkillTarget(path.join(conventionSkillRoot, 'alpha', 'notes.md'))).toMatchObject({
+      skillName: 'alpha',
+      skillRoot: path.join(conventionSkillRoot, 'alpha'),
+    });
+  });
+
+  test('a successful reload publishes new ownership and unbinding removes it immediately', async () => {
+    const workspace = await temporaryRoot();
+    const bound = await temporaryRoot();
+    const skillRoot = path.join(bound, 'new-skill');
+    const skillFile = path.join(skillRoot, 'SKILL.md');
+    const runtime = runtimeFor(workspace, [bound]);
+    await runtime.listAllSkills();
+
+    expect(runtime.resolveSkillTarget(path.join(skillRoot, 'notes.md'))).toBeNull();
+    expect(runtime.resolveSkillTarget(skillFile)).toMatchObject({ skillName: 'new-skill', isSkillFile: true });
+
+    await writeSkill(skillRoot, 'new-skill', 'Newly admitted workflow.');
+    await runtime.notifySkillContentWritten([skillFile]);
+    expect(runtime.resolveSkillTarget(path.join(skillRoot, 'notes.md'))).toMatchObject({
+      skillName: 'new-skill',
+      isSkillFile: false,
+    });
+
+    runtime.updateAdditionalSkillDirectories([]);
+    expect(runtime.resolveSkillTarget(path.join(skillRoot, 'notes.md'))).toBeNull();
+  });
+
+  test('bound ownership follows a symlinked physical root but not an escaping child', async () => {
+    const workspace = await temporaryRoot();
+    const bound = await temporaryRoot();
+    const physicalRoot = path.join(await temporaryRoot(), 'physical-skill');
+    const outside = await temporaryRoot();
+    await writeSkill(physicalRoot, 'alias', 'Symlinked workflow.');
+    await symlink(physicalRoot, path.join(bound, 'alias'));
+    await symlink(outside, path.join(physicalRoot, 'escape'));
+
+    const runtime = runtimeFor(workspace, [bound]);
+    await runtime.listAllSkills();
+
+    expect(runtime.resolveSkillTarget(path.join(bound, 'alias', 'notes.md'))).toMatchObject({ skillName: 'alias' });
+    expect(runtime.resolveSkillTarget(path.join(physicalRoot, 'notes.md'))).toMatchObject({ skillName: 'alias' });
+    expect(runtime.resolveSkillTarget(path.join(bound, 'alias', 'escape', 'notes.md'))).toBeNull();
   });
 
   test('the same rule applies to the convention directories', async () => {

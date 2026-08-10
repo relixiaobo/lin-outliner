@@ -1832,6 +1832,89 @@ describe('agent local tools', () => {
     });
   });
 
+  test('bound directories govern only admitted Skill roots and exact definition admission', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const bound = path.join(workspaceRoot, 'bound-content');
+      const admittedRoot = path.join(bound, 'alpha');
+      await mkdir(admittedRoot, { recursive: true });
+      await writeFile(path.join(admittedRoot, 'SKILL.md'), [
+        '---',
+        'description: Admitted bound workflow',
+        '---',
+        '',
+        'Use alpha.',
+        '',
+      ].join('\n'), 'utf8');
+      const skillRuntime = new AgentSkillRuntime({
+        localRoot: workspaceRoot,
+        includeUserSkills: false,
+        additionalSkillDirectories: [bound],
+      });
+      await skillRuntime.listAllSkills();
+      const workspace = createAgentLocalWorkspaceContext(workspaceRoot, undefined, skillRuntime);
+      const fileWrite = createLocalTools({ workspace }).find((tool) => tool.name === 'file_write')!;
+
+      const ordinaryPath = path.join(bound, 'Research Notes', 'summary.md');
+      const ordinaryResult = await (fileWrite.execute as any)('write-ordinary-bound-file', {
+        file_path: ordinaryPath,
+        content: 'Ordinary research notes.\n',
+      });
+      const ordinaryDetails = ordinaryResult.details as ToolEnvelope<{ skillWrite?: unknown }>;
+      expect(ordinaryDetails.ok).toBe(true);
+      expect(ordinaryDetails.data?.skillWrite).toBeUndefined();
+      expect(await readFile(ordinaryPath, 'utf8')).toBe('Ordinary research notes.\n');
+
+      const loadedSupportResult = await (fileWrite.execute as any)('write-loaded-support-script', {
+        file_path: path.join(admittedRoot, 'run.sh'),
+        content: 'echo governed\n',
+      });
+      expect((loadedSupportResult.details as ToolEnvelope<unknown>).error?.code)
+        .toBe('executable_skill_support_file');
+
+      const invalidDefinitionResult = await (fileWrite.execute as any)('write-invalid-name-definition', {
+        file_path: path.join(bound, 'My Skill', 'SKILL.md'),
+        content: [
+          '---',
+          'description: Invalid directory identity',
+          '---',
+          '',
+          'Do not admit this Skill.',
+          '',
+        ].join('\n'),
+      });
+      expect((invalidDefinitionResult.details as ToolEnvelope<unknown>).error?.code).toBe('invalid_skill_name');
+
+      const newSkillRoot = path.join(bound, 'new-skill');
+      const newDefinitionResult = await (fileWrite.execute as any)('write-new-bound-skill', {
+        file_path: path.join(newSkillRoot, 'SKILL.md'),
+        content: [
+          '---',
+          'description: Newly admitted bound workflow',
+          '---',
+          '',
+          'Use the new workflow.',
+          '',
+        ].join('\n'),
+      });
+      const newDefinitionDetails = newDefinitionResult.details as ToolEnvelope<{
+        skillWrite?: { changeType: string; skillName: string };
+      }>;
+      expect(newDefinitionDetails.ok).toBe(true);
+      expect(newDefinitionDetails.data?.skillWrite).toMatchObject({
+        changeType: 'create',
+        skillName: 'new-skill',
+      });
+      expect(await skillRuntime.getSkill('new-skill')).toBeDefined();
+
+      const newSupportResult = await (fileWrite.execute as any)('write-new-support-script', {
+        file_path: path.join(newSkillRoot, 'run.sh'),
+        content: 'echo newly-governed\n',
+      });
+      expect((newSupportResult.details as ToolEnvelope<unknown>).error?.code)
+        .toBe('executable_skill_support_file');
+    });
+  });
+
   test('file_edit hot-reloads existing user-only skill content', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const skillRuntime = new AgentSkillRuntime({ localRoot: workspaceRoot, includeUserSkills: false });
