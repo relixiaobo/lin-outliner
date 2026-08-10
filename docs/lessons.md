@@ -580,3 +580,22 @@ made the test fail with three resurrected files. So: **a test that still passes
 after you revert half a fix means your model of which path it takes is wrong,
 not that the half is dead** — revert each guard a fix adds on its own, or the
 "verified" claim is about a path the test never took.
+
+## A once-only guarantee needs a durable record, not a scan of history
+
+The #512 gate found ten defects, and five were the same decision: "this Goal has
+already had its one budget-limited wrap-up" was answered by scanning persisted
+Turn provenance for a matching `ref`. Derived state looks free — no new table, no
+write path, nothing to keep in sync — but it inherits every property of the log
+it reads. History that predates the feature has no marker, so *every* pre-existing
+budget-limited Goal read as "not yet wrapped up" and would have fired a paid Turn
+at the first launch after upgrade. A fork copies Turns verbatim while its new Goal
+restarts at generation 1, so inherited refs read as this Goal's own. A history
+rollback deletes the very row that was the evidence, so the guarantee silently
+re-armed. And answering the question at all cost a full paged decode of the Thread's
+Turn history on every idle boundary — O(n²) across a long autonomous run. The fix
+was one table with a reserve → commit/release protocol, and it closed all five at
+once. So: **when a fact must hold exactly once, own it — a row you write, keyed to
+the thing it constrains.** Provenance is a log of what happened, not a ledger of
+what may still happen; the moment you ask a log a question about the future, you
+have coupled your invariant to every edit, copy, and truncation the log allows.

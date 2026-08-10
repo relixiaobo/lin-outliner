@@ -42,9 +42,9 @@ theme-section entry below; this list is the ordering, not a second record):
   don't count against the review-queue cap): `media-search-alignment` **PR 2**
   (PR 1 shipped 2026-08-10 as #510 — protocol cleared, siblings rebase once; PR 2
   stays plan-track under the same owner), `renderer-state-hygiene`,
-  `floating-toolbar-polish`, `icon-semantics`, the three prime-agent fast-tracks
-  (`agent-delegation-context-hygiene` · `agent-goal-continuation-enrichment` ·
-  `agent-hygiene-checks`), the `file-as-node` pane-restore bug, and the micro-tails
+  `floating-toolbar-polish`, `icon-semantics`, the two remaining prime-agent
+  fast-tracks (`agent-delegation-context-hygiene` · `agent-hygiene-checks`; the
+  third shipped 2026-08-10 as #512), the `file-as-node` pane-restore bug, and the micro-tails
   (#460 truncation dialects · `scripts-typecheck-coverage` · #208 follow-ups).
   `dark-mode-contrast-pass` still runs **last** per its own rule; `performance` P3
   remains an uncapped background lane (trail + remaining items under **Performance**).
@@ -189,15 +189,6 @@ before any directional/security-sensitive build.
   command runs inline). Verify by re-running the rollout tool-sequence
   measurement after it ships: long reconnaissance runs should move off root
   Threads. Out of the prime-agent design study.
-- **agent-goal-continuation-enrichment** (P3, `draft` 2026-08-08, fast-track, *no
-  plan file*) — the Goal continuation prompt today is one bare objective line
-  (`GoalExtension.ts:81`). Enrich it four ways in one small PR: a state line
-  (continuation count; budget used/remaining when a budget exists), a
-  completion-audit doctrine sentence (no completing from memory or partial
-  progress), exactly one flagged wrap-up continuation when the Goal turns
-  `budgetLimited` (progress / remaining / blockers / next step) instead of the
-  current silent stop, and objective escaping with data-not-instructions
-  framing. Out of the prime-agent design study.
 - **agent-hygiene-checks** (P3, `draft` 2026-08-08, fast-track, *no plan file*) —
   small verification tails from the prime-agent design study: (1) per-Thread
   auxiliary maps (collaboration mailbox, pending subagent activities, barrier
@@ -819,6 +810,14 @@ and the merged PR, distilled rules in [`lessons.md`](lessons.md). Everything
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
 
+- **agent-goal-continuation-enrichment** (codex-2, PR #512, merged 2026-08-10 — fast-track,
+  no plan file) — a Goal that hits its token budget now signs off with one flagged wrap-up
+  continuation instead of going silent, the continuation prompt carries live state
+  (continuation number, budget used/remaining), and the objective plus completion doctrine
+  moved onto the typed `contributeThreadContext` channel. The one-shot guarantee is owned
+  state (`goal_continuation_state`, reserve → commit/release) rather than a scan of Turn
+  provenance. `/code-review high` found ten, all fixed before merge; the distilled rule is in
+  [`lessons.md`](lessons.md).
 - **agent-tool-reliability** (codex, PR #509, merged 2026-08-09 — plan archived at
   [docs/plans/archive/agent-tool-reliability.md](plans/archive/agent-tool-reliability.md))
   — `web_fetch` reaches the web again (Chromium owns `Sec-Fetch-*`; redirects are followed

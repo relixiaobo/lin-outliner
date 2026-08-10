@@ -33,6 +33,26 @@ Entries reference the pull request that introduced them.
   two carry-forward rules are in `docs/lessons.md` — a relocated call leaves its
   guard behind, and "no migration" licenses wiping dev userData, not deleting what a
   released build wrote.
+- **A Goal that runs out of budget signs off instead of going quiet (PR #512,
+  codex-2)** — a Goal that hit its token budget used to stop mid-stride with no
+  summary; it now gets exactly one flagged wrap-up continuation that reports
+  progress, remaining work, blockers, and the clearest next step. Every
+  continuation prompt also carries live state — which continuation this is, and
+  tokens used/remaining when a budget exists — while the objective and the
+  completion-audit doctrine moved off the prompt onto the typed
+  `contributeThreadContext` channel, so they are sent once as context evidence
+  (objective as untrusted observation, doctrine as application instruction)
+  instead of being re-persisted into every continuation Turn. The "exactly one"
+  guarantee is **owned state** — a `goal_continuation_state` table with a
+  reserve → commit/release protocol and a pre-generated Turn ID — rather than a
+  scan of persisted Turn provenance, which is what makes it survive a restart, a
+  fork, and a history rollback, and what keeps a pre-existing budget-limited Goal
+  silent when the feature first ships. Eligibility is armed only when a
+  **completed** Turn crosses the budget, so pressing Stop on the Turn that
+  exhausts a Goal no longer starts another one. The high review gate found ten
+  defects, all fixed in the same PR with regression tests; the carry-forward rule
+  is in `docs/lessons.md` — a once-only guarantee needs a durable record, not a
+  scan of history.
 
 ### Changed
 
