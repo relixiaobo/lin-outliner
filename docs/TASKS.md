@@ -616,9 +616,10 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   one IPC broadcast, and a whole-snapshot renderer store notify — so a Subagent run (two
   concurrent streams) janks the entire app, worst with the Subagent row expanded (child
   history loads, its deltas start applying, and a second full ThreadView renders per chunk).
-  Two independent PRs: main-process write path (WAL pragmas + rollout group commit + delta
-  coalescing at `recordNotification` + projection streaming overlay with a crash-recovery
-  replay step) and renderer store frame batching. No protocol change; collision check
+  One PR (PM-ratified 2026-08-10): main-process write path (WAL pragmas + rollout group
+  commit + delta coalescing at `recordNotification` + projection streaming overlay with a
+  crash-recovery replay step), then renderer store frame batching on top. No protocol change;
+  collision check
   2026-08-10: no open PRs, no overlap. Design:
   [`agent-streaming-delta-pipeline`](plans/agent-streaming-delta-pipeline.md).
 

@@ -1,8 +1,9 @@
 # Agent Streaming Delta Pipeline
 
-**Shape:** (b) a SET of two independent complete features, each its own PR,
-ordered by priority only (Feature 1 first — it is the dominant cost); neither
-depends on the other.
+**Shape:** (a) ONE complete feature in one PR (PM-ratified 2026-08-10). The two
+parts below are build order within that single PR, not separate releases: the
+main-process write path first (it is the dominant cost), the renderer store
+batching on top.
 
 ## Goal
 
@@ -46,7 +47,7 @@ work, same fix family.
   concatenate into one notification of the same shape).
 - **No renderer component restructuring.** `ThreadTurnView` and markdown blocks
   are already memoized; per-thread store selectors are deliberately deferred —
-  reconsider only if measurement still shows jank after both features land.
+  reconsider only if measurement still shows jank after this PR lands.
 - **No change to the persistence contract** (`docs/spec/agent-core.md`
   Persistence): the rollout JSONL stays the history source of truth and the
   history projection stays rebuildable.
@@ -55,11 +56,10 @@ work, same fix family.
 
 ## Design
 
-### Feature 1 — main-process streaming write path (one PR)
+### Part 1 — main-process streaming write path
 
-Internal build order (A7 — each step lands with tests green, but they ship as
-one PR): pragmas → rollout group commit → delta coalescing → projection
-streaming overlay.
+Internal build order (A7 — each step lands with tests green): pragmas →
+rollout group commit → delta coalescing → projection streaming overlay.
 
 **1a. SQLite pragmas.** `openSqlite` executes `journal_mode=WAL` and
 `synchronous=NORMAL` on open. Applies to all agent databases.
@@ -129,7 +129,7 @@ Also in this step: the `item/delta` arm of
 `applyThreadItemDelta` only appends; validate the delta application result, not
 the entire Turn.
 
-### Feature 2 — renderer store notification batching (one PR)
+### Part 2 — renderer store notification batching
 
 `ThreadStore.patch` keeps updating `this.snapshot` synchronously — every
 request/response method, the `historyRevisions` guards, and existing tests keep
