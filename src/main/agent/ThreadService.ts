@@ -103,13 +103,12 @@ ThreadNameGenerator,
 TurnExecutor
 } from './runtime/types';
 import type { AgentTool } from './runtime/kernel/types';
-import { automationTranscriptSubject } from './automations/AutomationRunContinuity';
 import { SubagentCollaboration } from './thread/SubagentCollaboration';
 import { ThreadCatalogOps } from './thread/ThreadCatalogOps';
 import { ThreadCore,type NotificationListener } from './thread/ThreadCore';
 import { ThreadResourceOps } from './thread/ThreadResourceOps';
 import { threadTranscriptRoot } from './thread/ThreadTranscriptArtifact';
-import { ThreadTranscriptWriter } from './thread/ThreadTranscriptWriter';
+import { rootTranscriptSubject,ThreadTranscriptWriter } from './thread/ThreadTranscriptWriter';
 import type { TranscriptSubject } from './thread/TranscriptRenderer';
 import { TurnLifecycle } from './thread/TurnLifecycle';
 
@@ -924,10 +923,12 @@ export class ThreadService implements ThreadServiceExtensionHost {
   /**
    * The ONE answer to whether a Thread keeps an account and what its header
    * says. Delegation is asked first because spawn metadata is the authority for
-   * a child; an Automation Thread is a root, so the two can never both match.
+   * a child; the other branch is roots only, so the two can never both match —
+   * and an orphaned child, whose spawn edge is gone, is not silently promoted
+   * into a root.
    */
   private transcriptSubject(thread: Thread): TranscriptSubject | null {
-    return this.collaboration.delegatedTranscriptSubject(thread) ?? automationTranscriptSubject(thread);
+    return this.collaboration.delegatedTranscriptSubject(thread) ?? rootTranscriptSubject(thread);
   }
   collaborationToolContributions(turn: { threadId: ThreadId; turnId: string }): readonly AgentTool[] { return this.collaboration.collaborationToolContributions(turn); }
   async spawnCollaborationAgent(input: {

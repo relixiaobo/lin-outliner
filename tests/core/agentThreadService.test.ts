@@ -10225,7 +10225,7 @@ async function recordReferencedImageEvidence(
 
 
 describe('Thread transcript artifact', () => {
-  test('materializes a standalone Automation Thread and leaves a user Thread alone', async () => {
+  test('materializes every persistent root Thread, whatever its source', async () => {
     const fixture = await createFixture();
     const automation = await fixture.service.ensureFeatureRootThread({
       id: uuidV7(9_400),
@@ -10260,15 +10260,16 @@ describe('Thread transcript artifact', () => {
     expect(transcript).toContain('## Turn 1 — completed');
     expect(transcript).toContain('Review what yesterday left behind');
 
-    // An ordinary conversation keeps no account yet: that is Feature 2's scope,
-    // and shipping it early here would materialize every user Thread silently.
+    // An ordinary conversation keeps one on the same terms — the predicate is a
+    // persistent root, not a kind, so a source that does not exist yet is
+    // already covered.
     const user = (await fixture.service.startThread({
       source: 'app',
       threadSource: 'user',
       modelProvider: 'openai',
       cwd: fixture.root,
     })).thread;
-    const userTurn = await fixture.service.startRendererTurn({
+    await fixture.service.startRendererTurn({
       threadId: user.id,
       input: [{ type: 'text', text: 'An ordinary question' }],
     });
@@ -10276,9 +10277,39 @@ describe('Thread transcript artifact', () => {
     fixture.executor.finish(1, completedExecutionResult(0));
     await fixture.service.waitForIdle(user.id);
     await fixture.service.flushThreadTranscript(user.id);
-    expect(userTurn.turn.id).toBeTruthy();
-    expect(await fixture.service.threadTranscriptPath(user.id)).toBeNull();
 
+    const userTranscript = await readFile(
+      threadTranscriptPath(transcriptRootFor(fixture), user.id),
+      'utf8',
+    );
+    expect(userTranscript).toContain('source: user');
+    expect(userTranscript).toContain('An ordinary question');
+
+    await fixture.service.close();
+  });
+
+  test('keeps no account for an ephemeral Thread, including the hidden internal ones', async () => {
+    const fixture = await createFixture();
+    const ephemeral = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+      ephemeral: true,
+    })).thread;
+    const turn = await fixture.service.startRendererTurn({
+      threadId: ephemeral.id,
+      input: [{ type: 'text', text: 'A throwaway question' }],
+    });
+    expect(turn.turn.id).toBeTruthy();
+    await fixture.executor.waitUntilWaiting(0);
+    fixture.executor.finish(0, completedExecutionResult(0));
+    await fixture.service.waitForIdle(ephemeral.id);
+    await fixture.service.flushThreadTranscript(ephemeral.id);
+
+    // Ephemeral is where the internal memory-consolidation Threads live too, so
+    // this is what keeps an internal Thread from materializing by accident.
+    expect(await fixture.service.threadTranscriptPath(ephemeral.id)).toBeNull();
     await fixture.service.close();
   });
 

@@ -1,6 +1,5 @@
 /**
- * The Automation side of the account layer: what a run's own transcript says it
- * is, and what a fresh run is told about the runs before it.
+ * What a fresh Automation run is told about the runs before it.
  *
  * A standalone run is a Thread with no history, so without this it repeats its
  * predecessor's failure with no way of knowing it was ever attempted. The digest
@@ -16,37 +15,8 @@
  * user's interactive path.
  */
 import type { AutomationRun } from '../../../core/agent/automation';
-import type { Thread, ThreadId, Turn, TurnId } from '../../../core/agent/protocol';
+import type { ThreadId, Turn, TurnId } from '../../../core/agent/protocol';
 import { turnTerminalAnswer } from '../../../core/agent/turnAnswer';
-import type { TranscriptSubject } from '../thread/TranscriptRenderer';
-
-/**
- * A standalone Automation run's own Thread, and null for everything else.
- *
- * Subject resolution belongs to whoever owns the kind's metadata — spawn edges
- * answer for a delegated child, and this module answers for an Automation — so
- * that the writer stays kind-agnostic and the next kind lands beside its owner
- * rather than accumulating as another special case in shared infrastructure.
- *
- * The predicate is exact rather than approximate: an existing-Thread Automation
- * adds its Turn to a *user* Thread, which reports `threadSource: 'user'`, so
- * only a run that owns its Thread matches here — which is also the only run with
- * a history no other Thread already holds.
- *
- * The header stays at what the Thread record itself knows. Automation and run
- * identities are not repeated here because every Turn already renders its own
- * trigger, which names the run that produced it — and a header cannot be
- * revised once the file has grown past it.
- */
-export function automationTranscriptSubject(thread: Thread): TranscriptSubject | null {
-  if (thread.ephemeral || thread.parentThreadId !== null || thread.threadSource !== 'automation') return null;
-  return {
-    threadId: thread.id,
-    source: 'automation',
-    name: thread.name,
-    cwd: thread.cwd,
-  };
-}
 
 /** How many predecessors a fresh run is told about. */
 export const RECENT_AUTOMATION_RUN_COUNT = 3;

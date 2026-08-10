@@ -252,6 +252,31 @@ export class ThreadTranscriptWriter {
   }
 }
 
+/**
+ * Any persistent root Thread, and null for everything else.
+ *
+ * The predicate needs no per-kind knowledge, which is the point: a root that is
+ * not ephemeral keeps a record whether it is a user's conversation, an
+ * Automation run, or a feature source that does not exist yet. Feature 1 needed
+ * an Automation-shaped predicate and it lived beside the automations module for
+ * that reason; generalizing dissolves the special case rather than moving it.
+ * Ephemeral Threads — including the hidden memory-consolidation ones — are
+ * excluded here, so no internal Thread materializes by accident.
+ *
+ * `name` is the name at the moment the header is written, and a header cannot be
+ * revised once the file has grown past it. The index carries the live name; this
+ * is the one it had when it first said something.
+ */
+export function rootTranscriptSubject(thread: Thread): TranscriptSubject | null {
+  if (thread.ephemeral || thread.parentThreadId !== null) return null;
+  return {
+    threadId: thread.id,
+    source: thread.threadSource,
+    name: thread.name,
+    cwd: thread.cwd,
+  };
+}
+
 async function withDeadline<T>(work: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
