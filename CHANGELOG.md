@@ -10,6 +10,30 @@ Entries reference the pull request that introduced them.
 
 `main` is the `0.3.0` train; entries here move under the next tag.
 
+### Added
+
+- **An Automation run knows how its predecessors ended (PR #511, cc)** — a
+  standalone Automation run starts on a Thread with no history, so it would repeat
+  yesterday's failure with no way of knowing it had ever been attempted. A fresh
+  run's prompt now carries a digest of its last three predecessors on the same
+  schedule: each one's status, a single bounded outcome line, and the
+  `transcriptPath` of that run's own account, so when the summary is not enough the
+  model reads the full transcript with the file tools it already has — pull-based,
+  no new model tool and no second ledger. Everything in the digest is treated as
+  untrusted data: outcome lines collapse to one bounded line, and header values are
+  stripped of newlines so a Thread or Automation name cannot forge a metadata line
+  in the region of the file that presents itself as structure. The transcript
+  artifact generalized on the way — it answers for a Thread rather than only for a
+  delegated child, so it lives under `<userData>/thread-transcripts/` now, and
+  startup **relocates** the pre-rename `subagent-transcripts` artifacts beneath it
+  rather than deleting them (a finished Thread never appends again, so nothing would
+  ever rebuild what a delete destroyed) before the orphan sweep reclaims exactly the
+  ones whose Thread is gone. The high review gate found eight defects, all fixed in
+  the same PR with regression tests verified to fail against the pre-fix code; the
+  two carry-forward rules are in `docs/lessons.md` — a relocated call leaves its
+  guard behind, and "no migration" licenses wiping dev userData, not deleting what a
+  released build wrote.
+
 ### Changed
 
 - **Search drops the dead embed model but keeps old queries valid (PR #510,

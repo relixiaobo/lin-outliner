@@ -536,3 +536,47 @@ title, never by line number** — lines rot in weeks, names rot in quarters.
 **A large rewrite's gate checklist includes sweeping the active plans' reference
 surface** — the retirement PR is the only moment someone provably knows which
 premises just died; nothing else links a backlog item to the code it describes.
+
+## Moving a call to a new site moves it onto a new path — take its guard with it
+
+#511's transcript writer moved subject resolution out of the guarded append and
+up to the `enqueueTurn` call site. The lookup itself was untouched and read
+exactly the same, but it now ran synchronously on the turn-completion tail with
+its `try`/`catch` left behind, so a spawn-edge store read that threw would
+abandon the rest of the tail — the parent-visible activity row and the idle
+notification — and park a parent waiting on `wait_agent` until its own deadline.
+Nobody edited a guard; the code simply moved out from under one. A12 names the
+boundary, and this is how a change crosses it invisibly: the diff shows a
+relocation, not a removed guard. So: **when a refactor relocates a call, re-ask
+which path it now runs on and whether the guard that covered it came along.** A
+moved read is a fresh invariant question even when its body is identical.
+
+## "No migration" licenses wiping dev userData, not deleting what a released build wrote
+
+The same PR renamed the transcript directory and reclaimed the old one with a
+recursive delete, citing the pre-release no-migration rule. The rule does say
+that — but what sat inside was real conversation content a *released* build had
+written, and a completed Thread never appends again, so nothing would ever
+rebuild it, while parents' already-persisted `transcriptPath` strings pointed
+into it. The reclamation was still necessary (after the rename nothing computes
+the old path, so neither the deletion cascade nor the orphan sweep can reach
+inside it), but relocating — `rename` each artifact under the current root, then
+`rmdir` only once the directory is empty — satisfies that requirement without
+spending the user's data, and the sweep that runs next reclaims exactly the ones
+whose Thread is gone: the outcome deleting only appeared to produce. So: **the
+no-migration rule licenses wiping `~/.lin-outliner-*` dev userData; it does not
+license deleting a subset of prod userData a shipped build wrote.** Once a build
+has been released, a rename relocates.
+
+## Verify a regression test by reverting each guard the fix added, separately
+
+The #511 gate confirmed every correctness fix the same way: revert it, watch the
+new test fail. Three did. The fourth — a deleted Thread's transcript recreated
+by a merely-slow append — still **passed** after the append-path `discarded`
+re-check was reverted, which reads as "that half is redundant, drop it". It was
+not: `delete()` clears the cursor, so the parked append resumes down the
+*rebuild* branch, and it was the second re-check catching it. Reverting both
+made the test fail with three resurrected files. So: **a test that still passes
+after you revert half a fix means your model of which path it takes is wrong,
+not that the half is dead** — revert each guard a fix adds on its own, or the
+"verified" claim is about a path the test never took.

@@ -48,8 +48,9 @@ theme-section entry below; this list is the ordering, not a second record):
   (#460 truncation dialects · `scripts-typecheck-coverage` · #208 follow-ups).
   `dark-mode-contrast-pass` still runs **last** per its own rule; `performance` P3
   remains an uncapped background lane (trail + remaining items under **Performance**).
-- **Lane B — agent reliability**: `agent-episodic-transcripts` PR 1 → PR 2, then
-  `agent-doc-drift-notice`.
+- **Lane B — agent reliability**: `agent-episodic-transcripts` **PR 2** (PR 1 shipped
+  2026-08-10 as #511 — the artifact is per-Thread now, so PR 2 extends a writer that
+  already generalized), then `agent-doc-drift-notice`.
 - **Lane C — product surface**: `update-check-and-prompt` first (the PM wants users
   on fresh builds; works unsigned), then `file-preview` Office tail (apply its
   refresh note first), then `agent-skills-authoring` security tail.
@@ -159,7 +160,7 @@ before any directional/security-sensitive build.
   time (A7). #470 now asks whether to bind the parent instead, which is honest but not
   the feature. Give this its own seam: settle identity and ownership first, then the
   loading. Depends on `skill-path-ownership`.
-- **agent-episodic-transcripts** (P2, `draft` 2026-08-08 — see
+- **agent-episodic-transcripts** (P2, `in-progress` 2026-08-10 — see
   [docs/plans/agent-episodic-transcripts.md](plans/agent-episodic-transcripts.md)) —
   extend the subagent transcript artifact (#460) to every persistent Thread and
   make past sessions discoverable: shape (b), two PRs — PR 1 gives standalone
@@ -168,7 +169,9 @@ before any directional/security-sensitive build.
   all-Thread writer extension, a greppable index, discovery doctrine, and the
   per-Thread privacy exclusion. Pull-based episodic memory over the existing
   file tools; no new model tools, no second ledger. Out of the prime-agent
-  design study (2026-08-07/08).
+  design study (2026-08-07/08). **PR 1 shipped 2026-08-10 as #511** (cc; high gate,
+  8 findings all fixed with regression tests verified to fail against the pre-fix
+  code) — the artifact is now per-Thread under `thread-transcripts/`; PR 2 remains.
 - **agent-doc-drift-notice** (P2, `draft` 2026-08-08 — see
   [docs/plans/agent-doc-drift-notice.md](plans/agent-doc-drift-notice.md)) —
   proactive staleness defense for the question-answering path: at Turn
@@ -302,6 +305,9 @@ before any directional/security-sensitive build.
   `<userData>/subagent-transcripts/<threadId>.md` (extended once per completed child turn,
   never the workspace; `transcriptPath` in terminal outcomes, read with existing file tools)
   and the stateless `bun run agent:dump` stdout projection (A11: forensics as a command).
+  **Both premises in that path moved on 2026-08-10 (#511)**: the directory is
+  `thread-transcripts/` and the writer answers for a Thread, not only for a delegated
+  child — startup relocates the pre-rename artifacts rather than deleting them.
   Shipped through two gate rounds: the medium review's 8 findings led the PM to ratify a
   structural redesign (the Claude Code pattern — app-owned append-only storage, result-first
   `wait_agent`, turn-completion-driven materialization) folded into the plan in place; the
