@@ -157,6 +157,8 @@ export const SEARCH_EXECUTABLE_QUERY_OPS = [
   'OWNED_BY',
   'OVERDUE',
   'HAS_MEDIA',
+  'HAS_AUDIO',
+  'HAS_VIDEO',
   'HAS_IMAGE',
   'FIELD_IS_SET',
   'FIELD_IS_NOT_SET',
@@ -1210,6 +1212,9 @@ function evaluateLeaf(index: SearchIndex, candidate: SearchNode, conditionNode: 
   }
 
   if (op === 'OVERDUE') return { ok: true, match: nodeIsOverdue(index, candidate, conditionNode), score: 18 };
+
+  // Preserve old saved searches and replayed outlines until attachment-backed media facets land.
+  if (op === 'HAS_AUDIO' || op === 'HAS_VIDEO') return { ok: true, match: false, score: 0 };
 
   if (op === 'HAS_MEDIA' || op === 'HAS_IMAGE') {
     return { ok: true, match: candidate.type === 'image', score: 14 };

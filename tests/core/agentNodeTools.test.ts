@@ -260,6 +260,8 @@ describe('agent node tools', () => {
     expect(nodeSearch.description).toContain('[[node:^exact-id]]');
     expect(nodeSearch.description).toContain('Do not express done state as FIELD_IS');
     expect(nodeSearch.description).toContain('Use DATE_OVERLAPS only for values stored in a date field');
+    expect(nodeSearch.description).not.toContain('HAS_AUDIO');
+    expect(nodeSearch.description).not.toContain('HAS_VIDEO');
     expect(nodeSearchParameters).not.toContain('Plain field names');
     expect(nodeSearchParameters).not.toContain('Date field values use YYYY-MM-DD');
     expect((nodeSearch.parameters as any).properties.queries.maxItems).toBe(20);
@@ -3313,6 +3315,19 @@ describe('agent node tools', () => {
     expect(envelope.data!.total).toBe(1);
     expect(envelope.data!.items?.map((item) => item.nodeId)).toEqual([tagged]);
     expect(envelope.data!.items?.map((item) => item.nodeId)).not.toContain(untagged);
+  });
+
+  test('node_search keeps legacy media rules parseable but inert', async () => {
+    const core = Core.new();
+
+    for (const op of ['HAS_AUDIO', 'HAS_VIDEO'] as const) {
+      const envelope = await executeTool<{ total: number }>(core, 'node_search', {
+        outline: `- %%search%% Legacy media\n  - ${op}`,
+      });
+
+      expect(envelope.ok).toBe(true);
+      expect(envelope.data?.total).toBe(0);
+    }
   });
 
   test('node_search executes nested canonical query groups', async () => {

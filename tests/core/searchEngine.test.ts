@@ -1324,9 +1324,62 @@ describe('core search engine', () => {
     const images = runSearchNode(state, searchId);
     const imageHits = images.ok ? images.hits.map((hit) => hit.nodeId) : [];
     expect(imageHits).toEqual(mediaHits);
+  });
+
+  test('searches image nodes by text', () => {
+    const core = Core.new();
+    const image = mustFocus(core.createNode(core.projection().todayId, null, 'Screenshot asset'));
+    const state = core.state();
+
+    state.nodes[image]!.type = 'image';
+    (state.nodes[image] as ImageNode).mediaUrl = 'file:///tmp/screenshot.png';
 
     const keyword = runSearchExpr(state, { kind: 'rule', op: 'STRING_MATCH', text: 'Screenshot' });
     expect(keyword.ok ? keyword.hits.map((hit) => hit.nodeId) : []).toContain(image);
+  });
+
+  test('keeps legacy media rules inert across saved-search reloads', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const tagId = mustFocus(core.createTag('legacy-media-match'));
+    const tagged = mustFocus(core.createNode(today, null, 'Tagged note'));
+    core.applyTag(tagged, tagId);
+
+    const legacyRules = [
+      { kind: 'rule', op: 'HAS_AUDIO' },
+      { kind: 'rule', op: 'HAS_VIDEO' },
+    ] as const;
+    const orSearchId = mustFocus(core.createSearchNode(core.projection().searchesId, null, {
+      title: 'Legacy media OR',
+      query: {
+        kind: 'group',
+        logic: 'OR',
+        children: [
+          { kind: 'rule', op: 'HAS_TAG', tagDefId: tagId },
+          ...legacyRules,
+        ],
+      },
+    }));
+    const andSearchId = mustFocus(core.createSearchNode(core.projection().searchesId, null, {
+      title: 'Legacy media AND',
+      query: {
+        kind: 'group',
+        logic: 'AND',
+        children: [
+          { kind: 'rule', op: 'HAS_TAG', tagDefId: tagId },
+          ...legacyRules,
+        ],
+      },
+    }));
+
+    const reloaded = Core.fromState(Core.deserializeState(core.serializeState()));
+    const orResult = runSearchNode(reloaded.state(), orSearchId);
+    const andResult = runSearchNode(reloaded.state(), andSearchId);
+
+    expect(orResult.ok).toBe(true);
+    expect(orResult.ok ? orResult.hits.map((hit) => hit.nodeId) : []).toEqual([tagged]);
+    expect(andResult.ok).toBe(true);
+    expect(andResult.ok ? andResult.hits.map((hit) => hit.nodeId) : []).toEqual([]);
   });
 
   test('executes Tana-style node type aliases', () => {

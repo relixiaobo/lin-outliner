@@ -21,15 +21,16 @@ since `file-attachments` (#204/#206) and `file-as-node` (#241) — is absent fro
 `tagDef|fieldDef|search|codeBlock|image|embed`). An attachment cannot be found by
 text, by type, or by any facet, while its sibling `image` type can.
 
-This plan removes the model built on the type that never existed, and rebuilds it
-on the type that does.
+This plan removes the model built on the type that never existed, preserves its
+old query terms as inert compatibility shells, and rebuilds them on the type that
+does.
 
 ## Goal
 
 The node types search knows about are exactly the node types that carry media: the
-dead embed schema and its unreachable facets are gone, attachments are findable,
+dead embed schema and embed-backed semantics are gone, attachments are findable,
 and `HAS_AUDIO` / `HAS_VIDEO` / `HAS_MEDIA` answer from `AttachmentNode`'s own
-metadata.
+metadata without breaking queries persisted before that rebuild lands.
 
 ## Non-goals
 
@@ -48,14 +49,16 @@ genuine dependency — PR 1 is a protocol-surface change that lands isolated so
 siblings rebase once, and PR 2 rebuilds on the ground it clears. Each is
 independently shippable and independently useful.
 
-### PR 1 — Remove the dead type and its unreachable facets
+### PR 1 — Remove the dead type while preserving query compatibility
 
 - Delete `EmbedNode` (`embedType`, `embedId`, `sourceUrl`), `'embed'` from
   `NodeType`, and the Loro key registrations and codec/validation branches that
   read them.
-- Delete `HAS_AUDIO` and `HAS_VIDEO` from `QueryOp` and their implementations;
-  `nodeEmbedFields` and `mediaKindFromNode` collapse with them. Delete
-  `IS_TYPE embed`.
+- Delete the embed-backed `HAS_AUDIO` and `HAS_VIDEO` implementations;
+  `nodeEmbedFields` and `mediaKindFromNode` collapse with them. Keep both terms
+  in `QueryOp` and the executable allowlist so saved searches and replayed Agent
+  outlines still parse, but evaluate them as false until PR 2 activates real
+  attachment-backed semantics. Delete `IS_TYPE embed`.
 - `HAS_IMAGE` stays as-is — `ImageNode` is real and produced. `HAS_MEDIA`
   stays as an alias of `HAS_IMAGE`, avoiding a second protocol removal and
   reintroduction before PR 2 grows it into a real superset.
@@ -66,12 +69,15 @@ independently shippable and independently useful.
   as evidence. That is the reason this deletion is not merely cleanup.
 - Replace the embed-era media test with `core search engine > treats HAS_MEDIA as
   an alias of HAS_IMAGE` in `tests/core/searchEngine.test.ts`, comparing the full
-  result sets rather than deleting coverage.
+  result sets rather than deleting coverage. Add reload and Agent-outline
+  regressions proving the hidden legacy operators stay parseable but inert, and
+  keep image text-search candidacy in its own named test.
 
 `src/core/types.ts` is an infrastructure-ownership file, so this lands isolated and
 siblings rebase once after it merges. Verification: `typecheck` (the compiler finds
 every reader of the removed fields), `test:core`, and a grep proving no
-`embedType` / `embedId` / product-node `'embed'` reference survives in TypeScript.
+`embedType` / `embedId` / product-node `'embed'` reference survives in TypeScript,
+plus a guidance grep proving the inert audio/video terms are not advertised.
 
 ### PR 2 — Admit attachments to search, rebuild the facets on them
 
@@ -81,7 +87,7 @@ every reader of the removed fields), `test:core`, and a grep proving no
   calls the same kernel and adds no second node-type filter.
 - Add `attachment` to the allowlist so attachment nodes are retrievable at all, and
   add `IS_TYPE attachment`.
-- Reintroduce `HAS_AUDIO` / `HAS_VIDEO` reading `AttachmentNode.mimeType` as the
+- Activate `HAS_AUDIO` / `HAS_VIDEO` by reading `AttachmentNode.mimeType` as the
   authority, with `audioDurationMs` / `videoDurationMs` available as corroboration;
   extend `HAS_IMAGE` to image-mime attachments; `HAS_MEDIA` becomes the real
   superset (image nodes plus media attachments) rather than an alias.

@@ -48,10 +48,31 @@ Rules:
 - JSON object DSL is allowed as an internal/debug shape only. It is not the
   canonical search outline syntax.
 
-Executable type rules accept `node`, `tag`, `field`, `search`, `day`, `week`,
-`year`, `image`, and `code` (including the documented aliases implemented by the
-evaluator). `HAS_IMAGE` matches image nodes, and `HAS_MEDIA` is the same predicate
+`IS_TYPE` lowercases its operand, trims it, and removes spaces, underscores, and
+hyphens before comparison. It first compares that value with the node's exact
+`NodeType`, then applies these aliases:
+
+- `node`, `plain`, or `textnode` for plain nodes;
+- `tag`, `tagdef`, or `supertag` for tag definitions;
+- `field` or `fielddef` for field definitions;
+- `search`, `searchnode`, or `livesearch` for search nodes;
+- `calendar` or `calendarnode` for any day, week, or year node, with `day`,
+  `week`, and `year` matching only their respective calendar node;
+- `image` for image nodes;
+- `code` or `codeblock` for code-block nodes.
+
+The evaluator only visits search candidates: plain, tag-definition,
+field-definition, search, code-block, and image nodes outside trash, system
+roots, and query-condition trees. An exact type outside that candidate set is
+therefore executable but cannot currently match; notably, `IS_TYPE attachment`
+returns no hits because attachment nodes are not yet candidates.
+
+`HAS_IMAGE` matches image nodes, and `HAS_MEDIA` is currently the same predicate
 under a broader name. Neither rule infers media from arbitrary text or URLs.
+`HAS_AUDIO` and `HAS_VIDEO` remain executable protocol terms for compatibility
+with saved searches and replayed agent outlines, but currently always return no
+match and are deliberately absent from model-facing operator guidance. Their
+attachment-backed semantics are defined by the next media-search change.
 
 ## Complexity Budget
 

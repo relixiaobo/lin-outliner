@@ -350,6 +350,8 @@ export const QUERY_OPS = [
   'OWNED_BY',
   'OVERDUE',
   'HAS_MEDIA',
+  'HAS_AUDIO',
+  'HAS_VIDEO',
   'HAS_IMAGE',
   'FIELD_IS_SET',
   'FIELD_IS_NOT_SET',
