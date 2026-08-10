@@ -851,10 +851,15 @@ opens the chapter popover already scrolled to the current active chapter, while
 focus and clicks inside the popover keep the user's current popover scroll
 position. Keyboard focus keeps the popover open for navigation, but pointer focus
 from clicking a popover item does not pin it open after the pointer leaves the
-rail. Both surfaces jump to resolved scroll positions. Reader scroll positions persist per resolved preview
-identity: PDFs restore page + page-relative offset, while EPUBs restore spine
-section + section-relative offset. Documents without outline metadata render no
-rail.
+rail. Both surfaces jump to resolved scroll positions. Reader scroll positions
+persist per resolved preview identity: PDFs restore page + page-relative offset,
+while EPUBs restore spine section + section-relative offset. Duplicate mounted
+PDF and EPUB surfaces capture that shared latest position when entering a
+full-reader session; the captured target stays fixed for that session, so another
+surface cannot silently move it, while re-entering full mode refreshes to the
+latest progress. If browser storage is unavailable, PDF and EPUB positions remain
+available to later sessions in the same renderer through their in-memory caches.
+Documents without outline metadata render no rail.
 
 **Add to outline.** A non-node preview carries an "add to outline" action that
 saves the source into the document as a file node. It is offered for the kinds

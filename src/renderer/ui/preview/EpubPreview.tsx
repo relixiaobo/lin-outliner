@@ -7,6 +7,7 @@ import { useT } from '../../i18n/I18nProvider';
 import {
   previewReadingPositionKey,
   readEpubReadingPosition,
+  useReadingPositionSession,
   writeEpubReadingPosition,
   type EpubReadingPosition,
 } from './readingPositionStore';
@@ -154,20 +155,15 @@ export function EpubPreview({ displayMode, onEpubTranslationSurfaceChange, sourc
   const labels = useT().shell.filePreview;
   const [state, setState] = useState<EpubState>({ status: 'loading' });
   const targetKey = previewReadingPositionKey(source.target);
-  const savedReadingPositionRef = useRef<{ targetKey: string; position: EpubReadingPosition | null }>({
+  const sessionFile = state.status === 'ready' ? state.file : null;
+  const initialReadingPosition = useReadingPositionSession(
     targetKey,
-    position: readEpubReadingPosition(targetKey),
-  });
-
-  if (savedReadingPositionRef.current.targetKey !== targetKey) {
-    savedReadingPositionRef.current = {
-      targetKey,
-      position: readEpubReadingPosition(targetKey),
-    };
-  }
+    displayMode,
+    sessionFile,
+    readEpubReadingPosition,
+  );
 
   const persistReadingPosition = useCallback((position: EpubReadingPosition) => {
-    savedReadingPositionRef.current = { targetKey, position };
     writeEpubReadingPosition(targetKey, position);
   }, [targetKey]);
 
@@ -214,7 +210,7 @@ export function EpubPreview({ displayMode, onEpubTranslationSurfaceChange, sourc
     <EpubReader
       displayMode={displayMode}
       file={state.file}
-      initialReadingPosition={savedReadingPositionRef.current.position}
+      initialReadingPosition={initialReadingPosition}
       makeBook={state.makeBook}
       name={source.name}
       onEpubTranslationSurfaceChange={onEpubTranslationSurfaceChange}
@@ -437,9 +433,12 @@ function EpubReader({
     if (
       displayMode !== 'full'
       || state.status !== 'ready'
-      || !initialReadingPosition
       || restoredFullSessionRef.current === fullSessionRef.current
     ) {
+      return undefined;
+    }
+    if (!initialReadingPosition) {
+      restoredFullSessionRef.current = fullSessionRef.current;
       return undefined;
     }
 

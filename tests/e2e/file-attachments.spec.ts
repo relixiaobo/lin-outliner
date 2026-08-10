@@ -94,6 +94,326 @@ async function pasteClipboardFileAndOpenPreview(
   return previewFrame;
 }
 
+type StoredPdfReadingPosition = {
+  pageNumber: number;
+  pageOffsetRatio: number;
+  updatedAt: number;
+};
+
+async function readStoredPdfReadingPosition(
+  page: Parameters<typeof trailingEditor>[0],
+): Promise<StoredPdfReadingPosition | null> {
+  return page.evaluate(() => {
+    const raw = localStorage.getItem('lin-outliner:pdf-reading-position:v1');
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as {
+      positions?: Record<string, Partial<StoredPdfReadingPosition>>;
+    };
+    const entries = Object.entries(parsed.positions ?? {});
+    if (entries.length === 0) return null;
+    if (entries.length !== 1) {
+      throw new Error(`Expected one PDF reading-position key, found: ${entries.map(([key]) => key).join(', ')}`);
+    }
+    const [, position] = entries[0];
+    if (
+      typeof position.pageNumber !== 'number'
+      || typeof position.pageOffsetRatio !== 'number'
+      || typeof position.updatedAt !== 'number'
+    ) {
+      return null;
+    }
+    return position as StoredPdfReadingPosition;
+  });
+}
+
+async function readPdfReaderPosition(reader: Locator): Promise<Omit<StoredPdfReadingPosition, 'updatedAt'> | null> {
+  return reader.evaluate((element) => {
+    const pages = Array.from(element.querySelectorAll<HTMLElement>('.file-preview-pdf-page'));
+    if (pages.length === 0) return null;
+    const rootRect = element.getBoundingClientRect();
+    const viewportTop = rootRect.top + 1;
+    const currentPage = pages.find((page) => page.getBoundingClientRect().bottom > viewportTop)
+      ?? pages[pages.length - 1];
+    const pageNumber = Number(currentPage.dataset.pdfPageNumber);
+    if (!Number.isFinite(pageNumber) || pageNumber < 1) return null;
+    const pageRect = currentPage.getBoundingClientRect();
+    const pageOffset = Math.max(0, Math.min(pageRect.height, viewportTop - pageRect.top));
+    return {
+      pageNumber,
+      pageOffsetRatio: pageRect.height > 0 ? pageOffset / pageRect.height : 0,
+    };
+  });
+}
+
+function pdfReadingPositionsMatch(
+  left: Pick<StoredPdfReadingPosition, 'pageNumber' | 'pageOffsetRatio'>,
+  right: Pick<StoredPdfReadingPosition, 'pageNumber' | 'pageOffsetRatio'>,
+  tolerance = 0.04,
+): boolean {
+  return left.pageNumber === right.pageNumber
+    && Math.abs(left.pageOffsetRatio - right.pageOffsetRatio) < tolerance;
+}
+
+async function waitForPdfReaderLayout(reader: Locator): Promise<void> {
+  await expect.poll(async () => reader.evaluate(async (element) => {
+    const snapshot = () => {
+      const pages = Array.from(element.querySelectorAll<HTMLElement>('.file-preview-pdf-page'));
+      return {
+        ready: element.clientHeight > 0
+          && element.scrollHeight > element.clientHeight
+          && pages.length > 0
+          && pages.every((page) => {
+            const rect = page.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0;
+          }),
+        pageRects: pages.map((page) => {
+          const rect = page.getBoundingClientRect();
+          return { height: rect.height, top: rect.top };
+        }),
+        scrollTop: element.scrollTop,
+      };
+    };
+    const before = snapshot();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const after = snapshot();
+    return before.ready
+      && after.ready
+      && before.pageRects.length === after.pageRects.length
+      && before.pageRects.every((rect, index) => {
+        const next = after.pageRects[index];
+        return Boolean(next)
+          && Math.abs(rect.height - next.height) < 0.5
+          && Math.abs(rect.top - next.top) < 0.5;
+      })
+      && Math.abs(before.scrollTop - after.scrollTop) < 0.5;
+  })).toBe(true);
+}
+
+async function scrollPdfReaderToPosition(
+  page: Parameters<typeof trailingEditor>[0],
+  reader: Locator,
+  pageNumber: number,
+  pageOffsetRatio: number,
+): Promise<StoredPdfReadingPosition> {
+  await waitForPdfReaderLayout(reader);
+  const previousPosition = await readStoredPdfReadingPosition(page);
+  const maximumScrollTop = await reader.evaluate((element, target) => {
+    const maximum = element.scrollHeight - element.clientHeight;
+    const pageElement = element.querySelector<HTMLElement>(
+      `.file-preview-pdf-page[data-pdf-page-number="${target.pageNumber}"]`,
+    );
+    if (!pageElement) throw new Error(`Missing PDF page ${target.pageNumber}`);
+    const rootRect = element.getBoundingClientRect();
+    const pageRect = pageElement.getBoundingClientRect();
+    const pageTop = element.scrollTop + pageRect.top - rootRect.top;
+    element.scrollTo({
+      top: Math.round(pageTop + pageRect.height * target.pageOffsetRatio),
+      behavior: 'auto',
+    });
+    return maximum;
+  }, { pageNumber, pageOffsetRatio });
+  expect(maximumScrollTop).toBeGreaterThan(0);
+  await expect.poll(async () => {
+    const [readerPosition, storedPosition] = await Promise.all([
+      readPdfReaderPosition(reader),
+      readStoredPdfReadingPosition(page),
+    ]);
+    if (!readerPosition || !storedPosition) return false;
+    const changed = !previousPosition || !pdfReadingPositionsMatch(storedPosition, previousPosition);
+    return changed && pdfReadingPositionsMatch(storedPosition, readerPosition);
+  }).toBe(true);
+  await waitForPdfReaderLayout(reader);
+  const [readerPosition, storedPosition] = await Promise.all([
+    readPdfReaderPosition(reader),
+    readStoredPdfReadingPosition(page),
+  ]);
+  if (!readerPosition || !storedPosition || !pdfReadingPositionsMatch(storedPosition, readerPosition)) {
+    throw new Error('Persisted PDF position does not belong to the scrolled reader');
+  }
+  return storedPosition;
+}
+
+async function expectPdfReaderPosition(
+  reader: Locator,
+  expectedPosition: Pick<StoredPdfReadingPosition, 'pageNumber' | 'pageOffsetRatio'>,
+): Promise<void> {
+  await waitForPdfReaderLayout(reader);
+  try {
+    await expect.poll(async () => {
+      const position = await readPdfReaderPosition(reader);
+      return position ? pdfReadingPositionsMatch(position, expectedPosition, 0.08) : false;
+    }).toBe(true);
+  } catch (error) {
+    const actualPosition = await readPdfReaderPosition(reader);
+    throw new Error(
+      `Expected PDF position ${JSON.stringify(expectedPosition)}, received ${JSON.stringify(actualPosition)}`,
+      { cause: error },
+    );
+  }
+}
+
+type StoredEpubReadingPosition = {
+  sectionIndex: number;
+  sectionOffsetRatio: number;
+  updatedAt: number;
+};
+
+async function readStoredEpubReadingPosition(
+  page: Parameters<typeof trailingEditor>[0],
+): Promise<StoredEpubReadingPosition | null> {
+  return page.evaluate(() => {
+    const raw = localStorage.getItem('lin-outliner:epub-reading-position:v1');
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as {
+      positions?: Record<string, Partial<StoredEpubReadingPosition>>;
+    };
+    const entries = Object.entries(parsed.positions ?? {});
+    if (entries.length === 0) return null;
+    if (entries.length !== 1) {
+      throw new Error(`Expected one EPUB reading-position key, found: ${entries.map(([key]) => key).join(', ')}`);
+    }
+    const [, position] = entries[0];
+    if (
+      typeof position.sectionIndex !== 'number'
+      || typeof position.sectionOffsetRatio !== 'number'
+      || typeof position.updatedAt !== 'number'
+    ) {
+      return null;
+    }
+    return position as StoredEpubReadingPosition;
+  });
+}
+
+async function readEpubReaderPosition(reader: Locator): Promise<Omit<StoredEpubReadingPosition, 'updatedAt'> | null> {
+  return reader.evaluate((element) => {
+    const sections = Array.from(element.querySelectorAll<HTMLElement>('.file-preview-epub-section'));
+    if (sections.length === 0) return null;
+    const rootRect = element.getBoundingClientRect();
+    const viewportTop = rootRect.top + 1;
+    const currentSection = sections.find((section) => section.getBoundingClientRect().bottom > viewportTop)
+      ?? sections[sections.length - 1];
+    const sectionIndex = Number(currentSection.dataset.epubSectionIndex);
+    if (!Number.isFinite(sectionIndex) || sectionIndex < 0) return null;
+    const sectionRect = currentSection.getBoundingClientRect();
+    const sectionOffset = Math.max(0, Math.min(sectionRect.height, viewportTop - sectionRect.top));
+    return {
+      sectionIndex,
+      sectionOffsetRatio: sectionRect.height > 0 ? sectionOffset / sectionRect.height : 0,
+    };
+  });
+}
+
+function epubReadingPositionsMatch(
+  left: Pick<StoredEpubReadingPosition, 'sectionIndex' | 'sectionOffsetRatio'>,
+  right: Pick<StoredEpubReadingPosition, 'sectionIndex' | 'sectionOffsetRatio'>,
+  tolerance = 0.04,
+): boolean {
+  return left.sectionIndex === right.sectionIndex
+    && Math.abs(left.sectionOffsetRatio - right.sectionOffsetRatio) < tolerance;
+}
+
+async function waitForEpubReaderLayout(reader: Locator): Promise<void> {
+  await expect.poll(async () => reader.evaluate(async (element) => {
+    const snapshot = () => {
+      const sections = Array.from(element.querySelectorAll<HTMLElement>('.file-preview-epub-section'));
+      return {
+        ready: sections.length > 0 && sections.every((section) => {
+          const frame = section.querySelector<HTMLIFrameElement>('.file-preview-epub-iframe');
+          return Boolean(frame?.style.height);
+        }),
+        heights: sections.map((section) => section.getBoundingClientRect().height),
+        scrollTop: element.scrollTop,
+      };
+    };
+    const before = snapshot();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    const after = snapshot();
+    return before.ready
+      && after.ready
+      && before.heights.length === after.heights.length
+      && before.heights.every((height, index) => Math.abs(height - (after.heights[index] ?? -1)) < 0.5)
+      && Math.abs(before.scrollTop - after.scrollTop) < 0.5;
+  })).toBe(true);
+}
+
+async function scrollEpubReaderToPosition(
+  page: Parameters<typeof trailingEditor>[0],
+  reader: Locator,
+  sectionIndex: number,
+  sectionOffsetRatio: number,
+): Promise<StoredEpubReadingPosition> {
+  await waitForEpubReaderLayout(reader);
+  const previousPosition = await readStoredEpubReadingPosition(page);
+  const maximumScrollTop = await reader.evaluate((element, target) => {
+    const maximum = element.scrollHeight - element.clientHeight;
+    const section = element.querySelector<HTMLElement>(
+      `.file-preview-epub-section[data-epub-section-index="${target.sectionIndex}"]`,
+    );
+    if (!section) throw new Error(`Missing EPUB section ${target.sectionIndex}`);
+    const rootRect = element.getBoundingClientRect();
+    const sectionRect = section.getBoundingClientRect();
+    const sectionTop = element.scrollTop + sectionRect.top - rootRect.top;
+    element.scrollTo({
+      top: Math.round(sectionTop + sectionRect.height * target.sectionOffsetRatio),
+      behavior: 'auto',
+    });
+    return maximum;
+  }, { sectionIndex, sectionOffsetRatio });
+  expect(maximumScrollTop).toBeGreaterThan(0);
+  await expect.poll(async () => {
+    const [readerPosition, storedPosition] = await Promise.all([
+      readEpubReaderPosition(reader),
+      readStoredEpubReadingPosition(page),
+    ]);
+    if (!readerPosition || !storedPosition) return false;
+    const changed = !previousPosition || !epubReadingPositionsMatch(storedPosition, previousPosition);
+    return changed && epubReadingPositionsMatch(storedPosition, readerPosition);
+  }).toBe(true);
+  await waitForEpubReaderLayout(reader);
+  const [readerPosition, storedPosition] = await Promise.all([
+    readEpubReaderPosition(reader),
+    readStoredEpubReadingPosition(page),
+  ]);
+  if (!readerPosition || !storedPosition || !epubReadingPositionsMatch(storedPosition, readerPosition)) {
+    throw new Error('Persisted EPUB position does not belong to the scrolled reader');
+  }
+  return storedPosition;
+}
+
+async function expectEpubReaderPosition(
+  reader: Locator,
+  expectedPosition: Pick<StoredEpubReadingPosition, 'sectionIndex' | 'sectionOffsetRatio'>,
+): Promise<void> {
+  await waitForEpubReaderLayout(reader);
+  try {
+    await expect.poll(async () => {
+      const position = await readEpubReaderPosition(reader);
+      return position ? epubReadingPositionsMatch(position, expectedPosition, 0.08) : false;
+    }).toBe(true);
+  } catch (error) {
+    const actualPosition = await readEpubReaderPosition(reader);
+    throw new Error(
+      `Expected EPUB position ${JSON.stringify(expectedPosition)}, received ${JSON.stringify(actualPosition)}`,
+      { cause: error },
+    );
+  }
+}
+
+async function openSplitPaneFromPreviewPill(
+  page: Parameters<typeof trailingEditor>[0],
+  previewBody: Locator,
+): Promise<Locator> {
+  const panelCountBefore = await page.locator('.outline-panel-surface').count();
+  await previewBody.locator('.file-preview-pill-more').click();
+  await page.getByRole('menu', { name: 'Preview actions' })
+    .getByRole('menuitem', { name: 'Open in split pane' })
+    .click();
+  await expect(page.locator('.outline-panel-surface')).toHaveCount(panelCountBefore + 1);
+  const readerPane = page.locator('.outline-panel-surface.active-panel');
+  await expect(readerPane.locator('.file-preview-panel--reader')).toBeVisible();
+  return readerPane;
+}
+
 async function openEpubSplitReader(
   page: Parameters<typeof trailingEditor>[0],
   name: string,
@@ -107,14 +427,7 @@ async function openEpubSplitReader(
   const inlineChapter = inlinePreview.locator('.file-preview-epub-iframe').first().contentFrame();
   await expect(inlineChapter.locator('[data-tenon-epub-translation-style]')).toHaveCount(0);
 
-  const panelCountBefore = await page.locator('.outline-panel-surface').count();
-  await inlinePreview.locator('..').locator('.file-preview-pill-more').click();
-  await page.getByRole('menu', { name: 'Preview actions' })
-    .getByRole('menuitem', { name: 'Open in split pane' })
-    .click();
-  await expect(page.locator('.outline-panel-surface')).toHaveCount(panelCountBefore + 1);
-  const readerPane = page.locator('.outline-panel-surface.active-panel');
-  await expect(readerPane.locator('.file-preview-panel--reader')).toBeVisible();
+  const readerPane = await openSplitPaneFromPreviewPill(page, inlinePreview.locator('..'));
   const chapter = readerPane.locator('.file-preview-epub-iframe').first().contentFrame();
   return { chapter, readerPane };
 }
@@ -1186,20 +1499,7 @@ test.describe('file attachments', () => {
     await page.mouse.move(readerBox.x + readerBox.width / 2, readerBox.y + readerBox.height / 2);
     await page.mouse.wheel(0, 20000);
     await expect.poll(async () => fullReader.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
-    await expect.poll(async () => page.evaluate(() => {
-      const raw = localStorage.getItem('lin-outliner:epub-reading-position:v1');
-      if (!raw) return null;
-      const parsed = JSON.parse(raw) as {
-        positions?: Record<string, { sectionIndex?: unknown; sectionOffsetRatio?: unknown }>;
-      };
-      const position = Object.values(parsed.positions ?? {})[0];
-      return position
-        ? {
-          sectionIndex: typeof position.sectionIndex,
-          sectionOffsetRatio: typeof position.sectionOffsetRatio,
-        }
-        : null;
-    })).toEqual({ sectionIndex: 'number', sectionOffsetRatio: 'number' });
+    await expect.poll(async () => Boolean(await readStoredEpubReadingPosition(page))).toBe(true);
 
     await epubBody.locator('.file-preview-pill-primary').click();
     await expect(epubBody.locator('.file-node-preview.collapsed .file-preview-epub--summary')).toBeVisible();
@@ -1207,6 +1507,93 @@ test.describe('file attachments', () => {
     const restoredReader = epubBody.locator('.file-node-preview.expanded .file-preview-epub-host');
     await expect(restoredReader).toHaveAttribute('data-epub-continuous-reader', 'true');
     await expect.poll(async () => restoredReader.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  });
+
+  test('PDF readers refresh the shared position only when a new full session starts', async ({ page }) => {
+    await page.setViewportSize({ width: 1500, height: 900 });
+    await pasteClipboardFileAndOpenPreview(page, {
+      name: 'shared-position.pdf',
+      mimeType: 'application/pdf',
+      text: 'pdf bytes',
+    });
+    const pdfBody = page.locator('.file-node-row-preview > .file-node-body').last();
+    await pdfBody.locator('.file-preview-pill-primary').click();
+    const inlineReader = pdfBody.locator('.file-node-preview.expanded .file-preview-pdf--full');
+    await expect(inlineReader).toBeVisible();
+    const inlinePosition = await scrollPdfReaderToPosition(page, inlineReader, 1, 0.25);
+
+    const splitPane = await openSplitPaneFromPreviewPill(page, pdfBody);
+    const splitReader = splitPane.locator('.file-preview-pdf--full');
+    await expect(splitReader).toBeVisible();
+    await expectPdfReaderPosition(splitReader, inlinePosition);
+    const firstSplitPosition = await scrollPdfReaderToPosition(page, splitReader, 2, 0.2);
+    expect(firstSplitPosition.pageNumber).toBeGreaterThan(inlinePosition.pageNumber);
+
+    const resizeHandle = pdfBody.locator('.file-preview-resize-handle');
+    await resizeHandle.focus();
+    await resizeHandle.press('ArrowDown');
+    await waitForPdfReaderLayout(inlineReader);
+
+    const latestSplitPosition = await scrollPdfReaderToPosition(page, splitReader, 3, 0.04);
+    await pdfBody.locator('.file-preview-pill-primary').click();
+    await expect(pdfBody.locator('.file-node-preview.collapsed .file-preview-pdf--summary')).toBeVisible();
+    await pdfBody.locator('.file-preview-pill-primary').click();
+    const restoredReader = pdfBody.locator('.file-node-preview.expanded .file-preview-pdf--full');
+    await expect(restoredReader).toBeVisible();
+    await expectPdfReaderPosition(restoredReader, latestSplitPosition);
+    await expect.poll(async () => {
+      const [restoredPosition, storedPosition] = await Promise.all([
+        readPdfReaderPosition(restoredReader),
+        readStoredPdfReadingPosition(page),
+      ]);
+      return restoredPosition && storedPosition
+        ? pdfReadingPositionsMatch(restoredPosition, storedPosition, 0.08)
+        : false;
+    }).toBe(true);
+  });
+
+  test('EPUB readers refresh the shared position only when a new full session starts', async ({ page }) => {
+    await pasteClipboardFileAndOpenPreview(page, {
+      name: 'shared-position.epub',
+      mimeType: 'application/epub+zip',
+      text: 'epub bytes',
+    });
+    const epubBody = page.locator('.file-node-row-preview > .file-node-body').last();
+    await epubBody.locator('.file-preview-pill-primary').click();
+    const inlineReader = epubBody.locator('.file-node-preview.expanded .file-preview-epub-host');
+    await expect(inlineReader).toHaveAttribute('data-epub-continuous-reader', 'true');
+    const inlinePosition = await scrollEpubReaderToPosition(page, inlineReader, 0, 0.25);
+
+    const splitPane = await openSplitPaneFromPreviewPill(page, epubBody);
+    const splitReader = splitPane.locator('.file-preview-epub-host');
+    await expect(splitReader).toHaveAttribute('data-epub-continuous-reader', 'true');
+    await expectEpubReaderPosition(splitReader, inlinePosition);
+    const firstSplitPosition = await scrollEpubReaderToPosition(page, splitReader, 1, 0.2);
+    expect(firstSplitPosition.sectionIndex).toBeGreaterThan(inlinePosition.sectionIndex);
+
+    const resizeHandle = epubBody.locator('.file-preview-resize-handle');
+    await resizeHandle.focus();
+    await resizeHandle.press('ArrowDown');
+    await waitForEpubReaderLayout(inlineReader);
+    await expect.poll(async () => (await readEpubReaderPosition(inlineReader))?.sectionIndex ?? -1)
+      .toBe(inlinePosition.sectionIndex);
+
+    const latestSplitPosition = await scrollEpubReaderToPosition(page, splitReader, 1, 0.55);
+    await epubBody.locator('.file-preview-pill-primary').click();
+    await expect(epubBody.locator('.file-node-preview.collapsed .file-preview-epub--summary')).toBeVisible();
+    await epubBody.locator('.file-preview-pill-primary').click();
+    const restoredReader = epubBody.locator('.file-node-preview.expanded .file-preview-epub-host');
+    await expect(restoredReader).toHaveAttribute('data-epub-continuous-reader', 'true');
+    await expectEpubReaderPosition(restoredReader, latestSplitPosition);
+    await expect.poll(async () => {
+      const [restoredPosition, storedPosition] = await Promise.all([
+        readEpubReaderPosition(restoredReader),
+        readStoredEpubReadingPosition(page),
+      ]);
+      return restoredPosition && storedPosition
+        ? epubReadingPositionsMatch(restoredPosition, storedPosition, 0.08)
+        : false;
+    }).toBe(true);
   });
 
   test('EPUB readers translate in place without inheriting website automatic consent', async ({ page }) => {

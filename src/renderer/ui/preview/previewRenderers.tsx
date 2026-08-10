@@ -58,6 +58,7 @@ import { FilePreviewPill, type FilePreviewMenuAction } from './FilePreviewPill';
 import {
   previewReadingPositionKey,
   readPdfReadingPosition,
+  useReadingPositionSession,
   writePdfReadingPosition,
   type PdfReadingPosition,
 } from './readingPositionStore';
@@ -1023,20 +1024,15 @@ function PdfPreview({
     | { status: 'error'; error?: string }
   >({ status: 'loading' });
   const targetKey = previewReadingPositionKey(source.target);
-  const savedReadingPositionRef = useRef<{ targetKey: string; position: PdfReadingPosition | null }>({
+  const sessionDocument = state.status === 'ready' ? state.document : null;
+  const initialReadingPosition = useReadingPositionSession(
     targetKey,
-    position: readPdfReadingPosition(targetKey),
-  });
-
-  if (savedReadingPositionRef.current.targetKey !== targetKey) {
-    savedReadingPositionRef.current = {
-      targetKey,
-      position: readPdfReadingPosition(targetKey),
-    };
-  }
+    displayMode,
+    sessionDocument,
+    readPdfReadingPosition,
+  );
 
   const persistReadingPosition = useCallback((position: PdfReadingPosition) => {
-    savedReadingPositionRef.current = { targetKey, position };
     writePdfReadingPosition(targetKey, position);
   }, [targetKey]);
 
@@ -1090,7 +1086,7 @@ function PdfPreview({
       key={state.document.fingerprints?.[0] ?? undefined}
       document={state.document}
       displayMode={displayMode}
-      initialReadingPosition={savedReadingPositionRef.current.position}
+      initialReadingPosition={initialReadingPosition}
       onReadingPositionChange={persistReadingPosition}
       onSummaryPageSelect={onSummaryPageSelect}
       pageCount={state.pageCount}
@@ -1284,9 +1280,12 @@ function PdfPages({
       || pageWidth <= 0
       || !restoreTargetAspectReady
       || scrollToPageNumber
-      || !initialReadingPosition
       || restoredSessionRef.current === fullSessionRef.current
     ) {
+      return undefined;
+    }
+    if (!initialReadingPosition) {
+      restoredSessionRef.current = fullSessionRef.current;
       return undefined;
     }
     const animationFrame = window.requestAnimationFrame(() => {
