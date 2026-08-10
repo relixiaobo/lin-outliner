@@ -3624,8 +3624,24 @@ test.describe('canonical agent Thread surface', () => {
     const commandDetails = page.locator('.thread-tool').filter({ hasText: 'false' });
     const command = commandDetails.locator('.thread-tool-toggle');
     await command.click();
-    await expect(commandDetails).toContainText('Command failed with exit code 2');
-    await expect(commandDetails).not.toContainText('exit 2');
+    const sections = commandDetails.locator('.thread-tool-section');
+    await expect(sections.locator('header')).toHaveText(['Arguments', 'Output · Exit code 2']);
+    const failedHeader = sections.filter({ has: page.locator('header', { hasText: 'Exit code 2' }) });
+    await expect(failedHeader.locator('header')).toHaveCSS(
+      'color',
+      await page.evaluate(() => {
+        const probe = document.createElement('span');
+        probe.style.color = 'var(--status-danger)';
+        document.body.append(probe);
+        const color = getComputedStyle(probe).color;
+        probe.remove();
+        return color;
+      }),
+    );
+    // The failure is stated where it adds something and nowhere else: the folded
+    // row already carries `failed`, so the detail owes no sentence of its own.
+    await expect(commandDetails.locator('.thread-inline-error')).toHaveCount(0);
+    await expect(commandDetails).not.toContainText('Command failed');
   });
 
   test('never claims a settled Turn is still working, and states the wait as a wait', async ({ page }) => {
@@ -4144,8 +4160,13 @@ test.describe('canonical agent Thread surface', () => {
     await page.locator('.thread-tool-activity-toggle').click();
     const failed = page.locator('.thread-tool-failed.thread-tool');
     await failed.locator('.thread-tool-toggle').click();
-    await expect(failed.locator('.thread-inline-error')).toHaveText('Command failed');
-    await expect(failed).not.toContainText('exit code');
+    // A timeout reported no code and no output, so the detail adds nothing: the
+    // row's own `failed` segment is the whole statement, and no plausible
+    // -looking code is borrowed to fill the gap.
+    await expect(failed.locator('.thread-tool-label')).toContainText('failed');
+    await expect(failed.locator('.thread-tool-section header')).toHaveText(['Arguments']);
+    await expect(failed.locator('.thread-inline-error')).toHaveCount(0);
+    await expect(failed).not.toContainText('Exit code');
   });
 
   for (const colorScheme of ['light', 'dark'] as const) {
