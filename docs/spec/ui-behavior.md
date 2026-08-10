@@ -68,6 +68,12 @@ keyboard or pointer change should be checked against this matrix.
 ## Row State Model
 
 - `focusedId` means the row is in edit mode.
+- Programmatic focus for an editable outliner row goes through the
+  `focusRequest` state rail. Callers never focus row DOM directly; the row-owned
+  consumer performs the DOM focus only after the shared IME composition guard
+  allows it, leaving a blocked request parked until `compositionend` relays it.
+  Outside that request consumer, direct `element.focus()` is reserved for
+  non-editor chrome.
 - `selectedId` and `selectedIds` mean row selection mode.
 - `selectionRootId` is the panel-level selection scope. Field values still render
   inside a nested value-column `OutlinerView`, but their selection root is the

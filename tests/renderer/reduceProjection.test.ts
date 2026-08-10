@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import { TAG_DAY_ID, type DocumentProjection, type NodeId, type NodeProjection, type ProjectionUpdate } from '../../src/core/types';
-import { reduceProjection } from '../../src/renderer/state/document';
+import {
+  reduceProjection,
+  reduceUiStateForProjectionUpdate,
+  type UiState,
+} from '../../src/renderer/state/document';
 
 function node(id: string, patch: Partial<NodeProjection> = {}): NodeProjection {
   return {
@@ -51,6 +55,31 @@ function seed(revision = 1) {
   const state = reduceProjection(null, full(revision, tree()));
   if (!state) throw new Error('seed full update must produce a state');
   return state;
+}
+
+function uiState(patch: Partial<UiState> = {}): UiState {
+  return {
+    focusedId: null,
+    focusedParentId: null,
+    focusedPanelId: null,
+    focusSurface: null,
+    selectedId: null,
+    selectedIds: new Set(),
+    selectionAnchorId: null,
+    selectionRootId: null,
+    selectionSource: null,
+    focusRequest: null,
+    pendingInputChar: null,
+    pendingReferenceConversion: null,
+    pendingReferenceTypeAhead: null,
+    trailingDraftPlacement: null,
+    expanded: new Set(),
+    expandedHiddenFields: new Set(),
+    editingDescriptionId: null,
+    batchTagSelectorOpen: false,
+    toolbarDropdownRequest: null,
+    ...patch,
+  };
 }
 
 describe('reduceProjection — full update', () => {
@@ -301,5 +330,98 @@ describe('reduceProjection — revision discipline', () => {
       removedIds: [],
     });
     expect(orphan).toBeNull();
+  });
+});
+
+describe('reduceUiStateForProjectionUpdate', () => {
+  test('prunes removed focus, selection, and expansion state at the delta boundary', () => {
+    const focusTarget = { nodeId: 'c', parentId: 'b', panelId: 'panel-1', surface: 'row' as const };
+    const state = uiState({
+      focusedId: 'c',
+      focusedParentId: 'b',
+      focusedPanelId: 'panel-1',
+      focusSurface: 'row',
+      selectedId: 'c',
+      selectedIds: new Set(['a', 'b', 'c']),
+      selectionAnchorId: 'b',
+      selectionRootId: 'b',
+      selectionSource: 'global',
+      focusRequest: { target: focusTarget, placement: { kind: 'end' } },
+      pendingInputChar: { target: focusTarget, char: 'x' },
+      pendingReferenceConversion: { nodeId: 'a', parentId: 'root', targetId: 'a2' },
+      pendingReferenceTypeAhead: { nodeId: 'c', parentId: 'b', targetId: 'a2' },
+      trailingDraftPlacement: { parentId: 'c', afterId: null, panelId: 'panel-1' },
+      expanded: new Set(['a', 'b', 'c']),
+    });
+
+    const next = reduceUiStateForProjectionUpdate(state, {
+      kind: 'delta',
+      revision: 2,
+      todayId: 'root',
+      changedNodes: [],
+      removedIds: ['b', 'c'],
+    });
+
+    expect(next.focusedId).toBeNull();
+    expect(next.focusedParentId).toBeNull();
+    expect(next.focusedPanelId).toBeNull();
+    expect(next.focusSurface).toBeNull();
+    expect(next.focusRequest).toBeNull();
+    expect(next.pendingInputChar).toBeNull();
+    expect(next.pendingReferenceTypeAhead).toBeNull();
+    expect(next.trailingDraftPlacement).toBeNull();
+    expect(next.selectedId).toBe('a');
+    expect(next.selectedIds).toEqual(new Set(['a']));
+    expect(next.selectionAnchorId).toBe('a');
+    expect(next.selectionRootId).toBeNull();
+    expect(next.selectionSource).toBe('global');
+    expect(next.expanded).toEqual(new Set(['a']));
+    expect(next.pendingReferenceConversion).toBe(state.pendingReferenceConversion);
+  });
+
+  test('keeps the state and set identities when removed nodes are not represented', () => {
+    const state = uiState({
+      selectedId: 'a',
+      selectedIds: new Set(['a']),
+      selectionAnchorId: 'a',
+      selectionRootId: 'root',
+      expanded: new Set(['a']),
+    });
+
+    const next = reduceUiStateForProjectionUpdate(state, {
+      kind: 'delta',
+      revision: 2,
+      todayId: 'root',
+      changedNodes: [],
+      removedIds: ['b'],
+    });
+
+    expect(next).toBe(state);
+    expect(next.selectedIds).toBe(state.selectedIds);
+    expect(next.expanded).toBe(state.expanded);
+  });
+
+  test('clears selection metadata when the final selected node is removed', () => {
+    const state = uiState({
+      selectedId: 'a',
+      selectedIds: new Set(['a']),
+      selectionAnchorId: 'a',
+      selectionRootId: 'root',
+      selectionSource: 'ref-click',
+    });
+
+    const next = reduceUiStateForProjectionUpdate(state, {
+      kind: 'delta',
+      revision: 2,
+      todayId: 'root',
+      changedNodes: [],
+      removedIds: ['a'],
+    });
+
+    expect(next.selectedId).toBeNull();
+    expect(next.selectedIds).toEqual(new Set());
+    expect(next.selectionAnchorId).toBeNull();
+    expect(next.selectionRootId).toBe('root');
+    expect(next.selectionSource).toBeNull();
   });
 });

@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import type {
   DocumentProjection,
   FocusPlacement,
@@ -177,8 +177,12 @@ export interface ProjectionStore {
 // the reduce stays a pure function call OUTSIDE the setState updater (no resync
 // side effect inside an updater that StrictMode double-invokes) and back-to-back
 // applies in one tick chain correctly before React commits. A single in-flight
-// guard collapses duplicate resync requests.
-export function useProjectionStore(resync: () => Promise<ProjectionSnapshot>): ProjectionStore {
+// guard collapses duplicate resync requests. Accepted deltas also prune removed
+// node ids from renderer-local UI state at this same update boundary.
+export function useProjectionStore(
+  resync: () => Promise<ProjectionSnapshot>,
+  setUi: Dispatch<SetStateAction<UiState>>,
+): ProjectionStore {
   const [state, setState] = useState<ProjectionState | null>(null);
   const stateRef = useRef<ProjectionState | null>(null);
   const resyncInFlight = useRef(false);
@@ -191,8 +195,12 @@ export function useProjectionStore(resync: () => Promise<ProjectionSnapshot>): P
   }, []);
 
   const applyProjectionUpdate = useCallback((update: ProjectionUpdate) => {
-    const next = measureRenderIndex(() => reduceProjection(stateRef.current, update));
+    const previous = stateRef.current;
+    const next = measureRenderIndex(() => reduceProjection(previous, update));
     if (next !== null) {
+      if (next !== previous && update.kind === 'delta' && update.removedIds.length > 0) {
+        setUi((current) => reduceUiStateForProjectionUpdate(current, update));
+      }
       commit(next);
       return;
     }
@@ -204,7 +212,7 @@ export function useProjectionStore(resync: () => Promise<ProjectionSnapshot>): P
         { kind: 'full', revision: snapshot.revision, projection: snapshot.projection },
       )))
       .finally(() => { resyncInFlight.current = false; });
-  }, [commit, resync]);
+  }, [commit, resync, setUi]);
 
   return { index: state?.index ?? null, applyProjectionUpdate };
 }
@@ -296,6 +304,65 @@ export function useUiState() {
     batchTagSelectorOpen: false,
     toolbarDropdownRequest: null,
   });
+}
+
+export function reduceUiStateForProjectionUpdate(
+  state: UiState,
+  update: ProjectionUpdate,
+): UiState {
+  if (update.kind !== 'delta' || update.removedIds.length === 0) return state;
+
+  const removedIds = new Set(update.removedIds);
+  const selectedIds = withoutRemovedIds(state.selectedIds, removedIds);
+  const expanded = withoutRemovedIds(state.expanded, removedIds);
+  const focusedRemoved = state.focusedId !== null && removedIds.has(state.focusedId);
+  const selectedIdRemoved = state.selectedId !== null && removedIds.has(state.selectedId);
+  const selectionAnchorRemoved = state.selectionAnchorId !== null && removedIds.has(state.selectionAnchorId);
+  const selectionRootRemoved = state.selectionRootId !== null && removedIds.has(state.selectionRootId);
+
+  if (
+    selectedIds === state.selectedIds
+    && expanded === state.expanded
+    && !focusedRemoved
+    && !selectedIdRemoved
+    && !selectionAnchorRemoved
+    && !selectionRootRemoved
+  ) return state;
+
+  const selectedId = selectedIdRemoved ? [...selectedIds].at(-1) ?? null : state.selectedId;
+  return {
+    ...state,
+    ...(focusedRemoved
+      ? {
+          focusedId: null,
+          focusedParentId: null,
+          focusedPanelId: null,
+          focusSurface: null,
+          focusRequest: null,
+          pendingInputChar: null,
+          pendingReferenceTypeAhead: null,
+          trailingDraftPlacement: null,
+        }
+      : {}),
+    selectedId,
+    selectedIds,
+    selectionAnchorId: selectionAnchorRemoved ? selectedId : state.selectionAnchorId,
+    selectionRootId: selectionRootRemoved ? null : state.selectionRootId,
+    selectionSource: selectedIds !== state.selectedIds && selectedIds.size === 0
+      ? null
+      : state.selectionSource,
+    expanded,
+  };
+}
+
+function withoutRemovedIds(current: Set<NodeId>, removedIds: ReadonlySet<NodeId>): Set<NodeId> {
+  let next: Set<NodeId> | null = null;
+  for (const id of current) {
+    if (!removedIds.has(id)) continue;
+    next ??= new Set(current);
+    next.delete(id);
+  }
+  return next ?? current;
 }
 
 export function isRowExpanded(
