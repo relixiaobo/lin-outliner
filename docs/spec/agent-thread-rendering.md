@@ -107,10 +107,12 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
   multiplication asterisks is never stripped. A leading paragraph or heading is
   carried whole by the summary line — flattening it loses inline formatting, not
   words — so expansion reveals only the remaining content and never repeats the
-  headline. When the leading block is structural (fence, list, table, quote),
-  the summary is one line of it, so expansion renders the complete canonical
-  source and fences, lists, tables, links, references, and inline code remain
-  intact. A compact summary that fits the available width is plain text
+  headline. It is not carried whole when it holds a link, an image, or a Node
+  reference: what flattening drops there is the target, which a summary line can
+  neither show nor open. That block, and any structural leading block (fence,
+  list, table, quote) whose summary is one line of itself, keeps expansion
+  rendering the complete canonical source, so fences, lists, tables, links,
+  references, and inline code remain intact. A compact summary that fits the available width is plain text
   with no disclosure affordance. A visually truncated summary becomes a
   disclosure whose expansion wraps it in place. Its first width read also runs
   when the disclosure mounts with an expanded override; streaming updates

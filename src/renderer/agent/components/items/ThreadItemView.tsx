@@ -2059,13 +2059,7 @@ function reasoningPresentation(text: string): { readonly summary: string; readon
       .slice(0, firstIndex)
       .reduce((length, token) => length + token.raw.length, 0);
     const remainder = text.slice(firstOffset + first.raw.length).trim();
-    // A leading paragraph or heading is carried whole by the summary line —
-    // flattening drops its inline formatting, never its words — so keeping it in
-    // the body would print the headline twice, once per line. A structural
-    // leading block (fence, list, table, quote) is summarized by a single line
-    // OF itself, so the body still has to render the complete source.
-    const summarizedInFull = paragraph !== null || first.type === 'heading';
-    const details = summarizedInFull
+    const details = isSummarizedInFull(first)
       ? hasVisibleMarkdown(remainder) ? remainder : ''
       : text;
     return {
@@ -2079,6 +2073,32 @@ function reasoningPresentation(text: string): { readonly summary: string; readon
 
 function isVisibleMarkdownToken(token: Token): boolean {
   return token.type !== 'space' && token.type !== 'def';
+}
+
+/**
+ * Whether the one-line summary carries this leading block whole, so the body
+ * can start after it instead of printing the headline a second time.
+ *
+ * A paragraph or heading survives flattening: emphasis and inline code lose
+ * their marks, never their words. A structural block does not — its summary is
+ * one line OF it, a fence's first code line or a list's first item — so the
+ * body still owes the complete source.
+ *
+ * Links, images, and Node references are the exception inside a paragraph: what
+ * flattening drops there is the TARGET, which a plain summary line can neither
+ * show nor open. Those blocks stay in the body, headline duplication and all,
+ * because a reachable URL beats a tidy one.
+ */
+function isSummarizedInFull(token: Token): boolean {
+  if (token.type !== 'paragraph' && token.type !== 'heading') return false;
+  if (splitReferenceMarkers(token.raw).some((segment) => segment.type !== 'text')) return false;
+  return carriesNoTarget(token);
+}
+
+function carriesNoTarget(token: Token): boolean {
+  if (token.type === 'link' || token.type === 'image' || token.type === 'html') return false;
+  if (!('tokens' in token) || !Array.isArray(token.tokens)) return true;
+  return token.tokens.every(carriesNoTarget);
 }
 
 function hasVisibleMarkdown(text: string): boolean {
