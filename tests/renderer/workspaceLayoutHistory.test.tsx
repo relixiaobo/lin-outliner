@@ -90,6 +90,241 @@ describe('useWorkspaceLayout history focus', () => {
     });
   });
 
+  test('restores an invalid current view from the latest Back outliner', () => {
+    const h = renderLayout({
+      activePanelId: 'panel-reader',
+      panels: [{
+        id: 'panel-reader',
+        type: 'workspace',
+        size: 2.5,
+        view: {
+          kind: 'file-preview',
+          target: { kind: 'asset', assetId: 'legacy-asset', label: 'legacy.md' },
+        },
+        backStack: [
+          { kind: 'outliner', rootId: 'today', scrollTop: 120 },
+          { kind: 'outliner', rootId: 'missing' },
+          { kind: 'outliner', rootId: 'alpha', scrollTop: 240 },
+          { kind: 'thread-turn-details', threadId: 'thread-alpha', turnId: 'turn-one' },
+        ],
+        forwardStack: [{ kind: 'outliner', rootId: 'today', scrollTop: 360 }],
+      }],
+    });
+
+    expect(h.api.activePanelId).toBe('panel-reader');
+    expect(h.api.panels).toEqual([{
+      id: 'panel-reader',
+      type: 'workspace',
+      size: 2.5,
+      view: { kind: 'outliner', rootId: 'alpha', scrollTop: 240 },
+      recoveryRootId: 'alpha',
+      backStack: [{ kind: 'outliner', rootId: 'today', scrollTop: 120 }],
+      forwardStack: [
+        { kind: 'outliner', rootId: 'today', scrollTop: 360 },
+        { kind: 'thread-turn-details', threadId: 'thread-alpha', turnId: 'turn-one' },
+      ],
+    }]);
+  });
+
+  test('restores from a Forward outliner without auto-opening a nearer URL', () => {
+    const h = renderLayout({
+      activePanelId: 'panel-reader',
+      panels: [{
+        id: 'panel-reader',
+        type: 'workspace',
+        size: 1,
+        view: {
+          kind: 'file-preview',
+          target: { kind: 'asset', assetId: 'legacy-current', label: 'current.md' },
+        },
+        backStack: [
+          { kind: 'outliner', rootId: 'missing' },
+          {
+            kind: 'file-preview',
+            target: { kind: 'asset', assetId: 'legacy-back', label: 'back.md' },
+          },
+        ],
+        forwardStack: [
+          { kind: 'outliner', rootId: 'today', scrollTop: 120 },
+          { kind: 'outliner', rootId: 'alpha', scrollTop: 240 },
+          {
+            kind: 'file-preview',
+            target: { kind: 'url', url: 'https://example.com/navigated-away' },
+          },
+        ],
+      }],
+    });
+
+    expect(h.api.panels).toEqual([{
+      id: 'panel-reader',
+      type: 'workspace',
+      size: 1,
+      view: { kind: 'outliner', rootId: 'alpha', scrollTop: 240 },
+      recoveryRootId: 'alpha',
+      backStack: [{
+        kind: 'file-preview',
+        target: { kind: 'url', url: 'https://example.com/navigated-away' },
+      }],
+      forwardStack: [{ kind: 'outliner', rootId: 'today', scrollTop: 120 }],
+    }]);
+  });
+
+  test('uses Today for an active pane with no valid view and removes the recovery duplicate', () => {
+    const h = renderLayout({
+      activePanelId: 'panel-invalid',
+      panels: [
+        {
+          id: 'panel-base',
+          type: 'workspace',
+          size: 1,
+          view: { kind: 'outliner', rootId: 'today' },
+          backStack: [],
+          forwardStack: [],
+        },
+        {
+          id: 'panel-invalid',
+          type: 'workspace',
+          size: 2,
+          view: {
+            kind: 'file-preview',
+            target: { kind: 'asset', assetId: 'legacy-current', label: 'current.md' },
+          },
+          backStack: [{ kind: 'outliner', rootId: 'missing' }],
+          forwardStack: [{
+            kind: 'file-preview',
+            target: { kind: 'asset', assetId: 'legacy-forward', label: 'forward.md' },
+          }],
+        },
+      ],
+    });
+
+    expect(h.api.activePanelId).toBe('panel-invalid');
+    expect(h.api.panels).toEqual([{
+      id: 'panel-invalid',
+      type: 'workspace',
+      size: 2,
+      view: { kind: 'outliner', rootId: 'today' },
+      recoveryRootId: 'today',
+      backStack: [],
+      forwardStack: [],
+    }]);
+  });
+
+  test('collapses duplicate roots produced by two recovered panes', () => {
+    const invalidView = {
+      kind: 'file-preview' as const,
+      target: { kind: 'asset' as const, assetId: 'legacy-asset', label: 'legacy.md' },
+    };
+    const h = renderLayout({
+      activePanelId: 'panel-second',
+      panels: [
+        {
+          id: 'panel-first',
+          type: 'workspace',
+          size: 1,
+          view: invalidView,
+          backStack: [{ kind: 'outliner', rootId: 'today' }],
+          forwardStack: [],
+        },
+        {
+          id: 'panel-second',
+          type: 'workspace',
+          size: 2,
+          view: invalidView,
+          backStack: [{ kind: 'outliner', rootId: 'today' }],
+          forwardStack: [],
+        },
+      ],
+    });
+
+    expect(h.api.activePanelId).toBe('panel-second');
+    expect(h.api.panels).toEqual([{
+      id: 'panel-second',
+      type: 'workspace',
+      size: 2,
+      view: { kind: 'outliner', rootId: 'today' },
+      recoveryRootId: 'today',
+      backStack: [],
+      forwardStack: [],
+    }]);
+  });
+
+  test('uses a fresh split recovery root when no navigation history exists', () => {
+    const h = renderLayout({
+      activePanelId: 'panel-reader',
+      panels: [
+        {
+          id: 'panel-base',
+          type: 'workspace',
+          size: 1,
+          view: { kind: 'outliner', rootId: 'today' },
+          backStack: [],
+          forwardStack: [],
+        },
+        {
+          id: 'panel-reader',
+          type: 'workspace',
+          size: 1.5,
+          view: {
+            kind: 'file-preview',
+            target: { kind: 'asset', assetId: 'deleted-asset', label: 'deleted.md' },
+          },
+          recoveryRootId: 'alpha',
+          backStack: [],
+          forwardStack: [],
+        },
+      ],
+    });
+
+    expect(h.api.activePanelId).toBe('panel-reader');
+    expect(h.api.panels).toEqual([
+      {
+        id: 'panel-base',
+        type: 'workspace',
+        size: 1,
+        view: { kind: 'outliner', rootId: 'today' },
+        backStack: [],
+        forwardStack: [],
+      },
+      {
+        id: 'panel-reader',
+        type: 'workspace',
+        size: 1.5,
+        view: { kind: 'outliner', rootId: 'alpha' },
+        recoveryRootId: 'alpha',
+        backStack: [],
+        forwardStack: [],
+      },
+    ]);
+  });
+
+  test('preserves intentional duplicate outliner panes when neither was recovered', () => {
+    const h = renderLayout({
+      activePanelId: 'panel-second',
+      panels: [
+        {
+          id: 'panel-first',
+          type: 'workspace',
+          size: 1,
+          view: { kind: 'outliner', rootId: 'today' },
+          backStack: [],
+          forwardStack: [],
+        },
+        {
+          id: 'panel-second',
+          type: 'workspace',
+          size: 1,
+          view: { kind: 'outliner', rootId: 'today' },
+          backStack: [],
+          forwardStack: [],
+        },
+      ],
+    });
+
+    expect(h.api.activePanelId).toBe('panel-second');
+    expect(h.api.panels.map((panel) => panel.id)).toEqual(['panel-first', 'panel-second']);
+  });
+
   test('global root navigation leaves active Turn Diagnostics and reuses an existing outliner pane', () => {
     const h = renderLayout({
       activePanelId: 'panel-details',
@@ -191,6 +426,7 @@ describe('useWorkspaceLayout history focus', () => {
     const readerPanel = h.api.panels.find((panel) => panel.id !== 'panel-test');
     expect(readerPanel).toMatchObject({
       type: 'workspace',
+      recoveryRootId: 'today',
       view: {
         kind: 'file-preview',
         nodeId: 'alpha',
@@ -198,6 +434,54 @@ describe('useWorkspaceLayout history focus', () => {
         target: { kind: 'asset', assetId: 'asset-alpha', label: 'reader-note.md' },
       },
     });
+  });
+
+  test('repairs a deleted fresh-split file node at runtime with the restore policy', () => {
+    const h = renderLayout({
+      activePanelId: 'panel-base',
+      panels: [{
+        id: 'panel-base',
+        type: 'workspace',
+        size: 1,
+        view: { kind: 'outliner', rootId: 'today' },
+        backStack: [],
+        forwardStack: [],
+      }],
+    });
+
+    act(() => {
+      h.api.navigatePanelPreview('panel-base', {
+        kind: 'asset',
+        assetId: 'asset-alpha',
+        label: 'reader-note.md',
+      }, { newPane: true, nodeId: 'alpha', presentation: 'reader' });
+    });
+    const readerPanelId = h.api.activePanelId;
+    const nextProjection = projection();
+    const nodes = nextProjection.nodes
+      .filter((candidate) => candidate.id !== 'alpha')
+      .map((candidate) => candidate.id === 'root'
+        ? { ...candidate, children: candidate.children.filter((childId) => childId !== 'alpha') }
+        : candidate);
+    const withoutFileNode = { ...nextProjection, nodes };
+    const byId = new Map(nodes.map((candidate) => [candidate.id, candidate]));
+    let repairedRootId: NodeId | null = null;
+
+    act(() => {
+      repairedRootId = h.api.repairInvalidPanelViews(withoutFileNode, byId);
+    });
+
+    expect(repairedRootId).toBe('today');
+    expect(h.api.activePanelId).toBe(readerPanelId);
+    expect(h.api.panels).toEqual([{
+      id: readerPanelId,
+      type: 'workspace',
+      size: 1,
+      view: { kind: 'outliner', rootId: 'today' },
+      recoveryRootId: 'today',
+      backStack: [],
+      forwardStack: [],
+    }]);
   });
 
   test('loose file readers do not dedupe with the same target normal preview', () => {

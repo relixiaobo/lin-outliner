@@ -661,7 +661,9 @@ raw model-authored secret or host-injected credential.
 Missing, corrupt, rolled-back, or mismatched evidence remains explicitly unavailable.
 Opening Turn Diagnostics pushes the current view onto the pane's Back stack and never creates a
 split. Opening another Turn while Turn Diagnostics is current replaces only the target,
-without adding history noise; Back or close returns to the prior view.
+without adding history noise; Back or close returns to the prior view. If layout
+sanitization leaves no prior view and another pane remains, Close removes the
+Diagnostics pane instead of invoking an empty Back stack.
 
 Normal Thread UI may visually group Items by Turn without printing every Turn
 ID. Turn Diagnostics must show the same Thread, Turn, and Item
