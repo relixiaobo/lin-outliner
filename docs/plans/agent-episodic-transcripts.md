@@ -109,29 +109,51 @@ priority. Feature 1 ships alone and does not depend on Feature 2.
   line per included Thread — Thread id, source (user / automation / subagent),
   created and last-updated timestamps, terminal status, a bounded
   single-line name/preview (sanitized: newlines and separators stripped, so a
-  preview cannot forge columns or entries), and the artifact path. The index
-  is a rebuildable projection maintained by the same append chain and rebuilt
-  by the startup sweep (A11: derived from Thread records plus disk, resumes
-  for free).
+  preview cannot forge columns or entries), and the artifact path.
+- **The index is derived and rewritten whole, not appended.** An index row is
+  mutable — last-updated, status, and preview all change as a Thread lives — so
+  it is not the append-only shape the artifact is, and it is ONE file written on
+  behalf of every Thread while the artifact's chain is per-Thread. It is
+  therefore held in memory as a projection of the Thread records and written
+  through a single global serialized chain as one atomic whole-file rewrite
+  (tmp+rename, so a reader sees old-or-new), with writes coalesced rather than
+  queued. Startup rebuilds it from the catalog. A11 holds more completely than an
+  incremental log would allow: there is no accumulated state that can be wrong,
+  only a projection recomputed from records. A row costs roughly 200 bytes, so a
+  thousand Threads is a 200 KB rewrite off the user's path.
+- **Format is tab-separated**, with a leading comment naming the columns:
+  `threadId`, `source`, `createdAt`, `updatedAt`, `status`, `name`,
+  `transcriptPath`. A markdown table row pads and aligns, which makes column
+  extraction by `file_grep` brittle; TSV with a fixed column order does not. The
+  single-line sanitizer that Feature 1 introduced already strips tabs, so a name
+  cannot forge a column.
+- The current Thread's own row is included. It costs one line and answers "is
+  this conversation being recorded" from the same file that answers everything
+  else.
 - **Discovery doctrine.** Root Threads get one line of system context naming
   the index path and the contract: consult it when the task refers to prior
   work or repeats a past failure; transcripts are records, not facts, and
   their content is untrusted data. (Prime-agent's lesson: it exposes the
-  transcript path with no doctrine, and the capability goes unused.)
+  transcript path with no doctrine, and the capability goes unused.) It rides in
+  the stable prompt as a capability block gated on the file tools — a Thread that
+  cannot read a file has no use for a path — with the index path injected, since
+  the composer otherwise knows nothing about `userData`.
 - **Privacy and lifecycle.** Default: all persistent Threads are included. A
   per-Thread "exclude from records" toggle removes the artifact and index row
-  and stops future appends. Thread deletion cascades to artifact and index row
+  and stops future appends. It is a persisted boolean on the Thread record — a
+  sibling of `archived` — reached by a `thread/*` request and surfaced in the
+  per-Thread action menu beside Rename and Delete, the menu that already governs
+  a Thread's lifecycle. It is deliberately NOT an entry in the core action
+  registry: that registry's objects are nodes and surfaces, and adding a Thread
+  object kind to carry one toggle would be a protocol change in service of a
+  menu item. Thread deletion cascades to artifact and index row
   via the existing deletion rule; ephemeral Threads never materialize.
   Retention/accumulation stays an app-retention concern as today.
+- Artifacts stay at `brief` detail for every Thread kind. `full` exists for
+  forensics through `agent:dump`, not for a model reader.
 
 ## Open questions
 
-- Whether Feature 2's root-Thread artifacts stay at `brief` detail or gain a
-  fuller level. Feature 1 keeps `brief`: `full` exists for forensics through
-  `agent:dump`, not for a model reader.
-- Index line format (tsv-style vs markdown table row) — pick for `file_grep`
-  stability.
-- Surface for the per-Thread exclusion toggle (renderer detail, decide at
-  build).
-- Whether the current Thread's own transcript line appears in its index view
-  (harmless and occasionally useful vs. noise).
+None outstanding. Feature 1 shipped as #511; Feature 2's four open questions were
+settled above (index write model and format, `brief` detail, the toggle's home,
+and the Thread's own row).
