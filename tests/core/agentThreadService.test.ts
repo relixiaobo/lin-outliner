@@ -9991,6 +9991,7 @@ async function createFixture(
     ConstructorParameters<typeof ThreadService>[0],
     | 'resolveConfiguration'
     | 'getDocumentProjection'
+    | 'getRecentDocumentOperations'
     | 'resolveReferencedAsset'
     | 'resolveRendererStartDefaults'
     | 'resolveRole'
@@ -10023,6 +10024,7 @@ async function openFixture(
     ConstructorParameters<typeof ThreadService>[0],
     | 'resolveConfiguration'
     | 'getDocumentProjection'
+    | 'getRecentDocumentOperations'
     | 'resolveReferencedAsset'
     | 'resolveRendererStartDefaults'
     | 'resolveRole'
@@ -10224,6 +10226,137 @@ async function recordReferencedImageEvidence(
   });
 }
 
+
+describe('document drift notice', () => {
+  const PRICING = '019fb2da-0000-7000-8000-0000000000a1';
+
+  test('tells the model what moved under it, and stays quiet when nothing did', async () => {
+    let projection = contextProjection([contextNode(PRICING, 'Enterprise ¥3,900/seat', { updatedAt: 1 })]);
+    const fixture = await createFixture(undefined, {
+      getDocumentProjection: () => projection,
+      getRecentDocumentOperations: () => [
+        { origin: 'user', affectedNodeIds: [PRICING] },
+      ],
+    });
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+
+    // Turn 1: the model is shown the node. Reading is what creates the belief —
+    // the pure question-answering path never writes, so a write-derived set
+    // would have nothing here, which is exactly the case this defends.
+    await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'What does the pricing node say?' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    await fixture.service.notifyToolCompleted(
+      thread.id,
+      fixture.executor.contexts[0]!.turn.id,
+      'read-1',
+      { namespace: null, name: 'node_read' },
+      {},
+      { ok: true, data: { items: [{ nodeId: PRICING, revision: `${PRICING}:1` }] } },
+      null,
+    );
+    fixture.executor.finish(0, completedExecutionResult(0));
+    await fixture.service.waitForIdle(thread.id);
+
+    // Someone else edits it while the Thread sits idle.
+    projection = contextProjection([
+      contextNode(PRICING, 'Enterprise ¥4,800/seat, 10% off annual', { updatedAt: 2 }),
+    ]);
+
+    await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'So what do we charge enterprise?' }],
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    const notice = await driftNoticeFor(fixture, thread.id, 1);
+
+    expect(notice).toContain('1 node you were shown has changed since you saw it');
+    // A belief update, not a warning: the current content rides along, so the
+    // ordinary case costs no re-read round trip.
+    expect(notice).toContain('Enterprise ¥4,800/seat, 10% off annual');
+    expect(notice).toContain('by the user directly');
+    // The line that keeps this feature from creating its own failure: a model
+    // told its reads changed can treat that as an inconsistency to repair.
+    expect(notice).toContain('Do not revert them unless asked');
+
+    fixture.executor.finish(1, completedExecutionResult(0));
+    await fixture.service.waitForIdle(thread.id);
+
+    // Reporting is also forgetting, so an unchanged document says nothing at all
+    // rather than repeating what the model was already told.
+    await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'And annual?' }],
+    });
+    await fixture.executor.waitUntilWaiting(2);
+    expect(await driftNoticeFor(fixture, thread.id, 2)).toBeNull();
+
+    fixture.executor.finish(2, completedExecutionResult(0));
+    await fixture.service.waitForIdle(thread.id);
+    await fixture.service.close();
+  });
+
+  test('names a deleted node as deleted', async () => {
+    let projection = contextProjection([contextNode(PRICING, 'Enterprise pricing', { updatedAt: 1 })]);
+    const fixture = await createFixture(undefined, { getDocumentProjection: () => projection });
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Read it' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    await fixture.service.notifyToolCompleted(
+      thread.id,
+      fixture.executor.contexts[0]!.turn.id,
+      'read-1',
+      { namespace: null, name: 'node_read' },
+      {},
+      { ok: true, data: { items: [{ nodeId: PRICING, revision: `${PRICING}:1` }] } },
+      null,
+    );
+    fixture.executor.finish(0, completedExecutionResult(0));
+    await fixture.service.waitForIdle(thread.id);
+
+    projection = contextProjection([]);
+    await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Now what?' }],
+    });
+    await fixture.executor.waitUntilWaiting(1);
+
+    // Deletion is the outcome a re-read cannot recover on its own, so it is
+    // named rather than folded into "changed".
+    expect(await driftNoticeFor(fixture, thread.id, 1)).toContain(`${PRICING} has been deleted`);
+
+    fixture.executor.finish(1, completedExecutionResult(0));
+    await fixture.service.waitForIdle(thread.id);
+    await fixture.service.close();
+  });
+});
+
+/** The notice admitted as evidence for the Turn at `index`, or null when none was. */
+async function driftNoticeFor(fixture: Fixture, threadId: string, index: number): Promise<string | null> {
+  const turn = fixture.service.readThread({ threadId, includeTurns: true }).thread.turns![index]!;
+  for (const item of turn.items) {
+    if (item.type !== 'contextEvidence' || item.kind !== 'additionalContext') continue;
+    const payload = await fixture.stores.payloads.readContext(threadId, item.payloadRef);
+    const text = JSON.stringify(payload);
+    if (text.includes('document_drift')) return text;
+  }
+  return null;
+}
 
 describe('Thread transcript artifact', () => {
   test('materializes every persistent root Thread, whatever its source', async () => {

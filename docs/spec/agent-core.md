@@ -632,6 +632,71 @@ conversation/run/round debug projection, derive history from renderer pagination
 introduce an alternative execution ledger. The exact page contract lives in
 [`agent-thread-rendering.md`](agent-thread-rendering.md).
 
+## Document Drift Notice
+
+The write path is defended reactively: `node_edit` carries expected revisions, so
+a stale write fails loudly. The question-answering path has no such moment — a
+model can answer from a twenty-minute-old read without touching a tool — so it is
+defended proactively, by checking what the model was shown against the document
+as it is now.
+
+**A belief is the revision the model was already shown.** `node_read` returns
+`items[].revision` and `node_search` returns `items[].updatedAt`; both are the
+token `revisionOf` produces and the token `node_edit` compares. No second notion
+of "changed" exists: the question the write path asks about a revision the model
+sends back is the question this asks about a revision the host remembered on its
+behalf. `beliefsFromToolResult` is the single extraction, used both live and when
+rebuilding from a persisted payload, so the two cannot disagree.
+
+**Beliefs are checked against current state, never recomputed from a log.** That
+is what makes the design free of a window, a boundary anchor, a retention limit,
+and "we may have missed some" wording — none of which are answered here, because
+none of them arise. A fork and a restart need no special case for the same
+reason.
+
+**Observation happens where every tool result already passes** — the Thread
+service's tool-completion notification, which has the Thread and the tool name in
+hand. There is no per-tool hook, so a node tool added later is covered without
+remembering to call anything, and `node_search` is covered like every other even
+though its arguments never say which nodes the model will see: its results are
+the rendering.
+
+**The belief set is a projection of the canonical record** and takes its bound
+from the record rather than from a cap of its own. Re-observing a node replaces
+its belief and moves it to the end; that order is the recency the notice's cap
+spends its slots on. Deletion of a Thread forgets its beliefs.
+
+**At admission** the beliefs are compared against the projection already in hand
+— the same projection evidence admission uses, so the notice and the evidence
+describe one instant. Reporting a node also forgets it, so the next admission
+does not repeat what the model has already been told; what does not fit the cap
+keeps its belief and surfaces next time.
+
+**The notice is a belief update, not a warning.** It carries the current content
+of up to five drifted nodes, so the ordinary case costs no re-read round trip;
+outliner nodes are small, which is what makes that affordable. A deleted node is
+named as deleted — the outcome a re-read cannot recover alone. Content is
+single-lined and bounded like every other authored text entering trusted context.
+It closes with the instruction the coding agents include for the same situation:
+these edits were deliberate, do not revert them. Without it, a model told its
+reads changed can treat that as an inconsistency to repair and overwrite the
+user's edit.
+
+**Attribution is garnish, and is scoped by node rather than by time** — there is
+no boundary to scope by, so it asks which remembered operations touched exactly
+these nodes. It draws one distinction, the only one both load-bearing and free:
+the user's own edit versus another session's, naming the causal Thread id, which
+the transcript index makes resolvable. An Automation is not labelled separately;
+what would matter about one is that nobody watched the result, and the record
+does not know that. The journal is read without waiting on the mutation queue,
+because admission must not wait. An edit older than the journal's ring is not
+found and the clause is dropped.
+
+The notice rides `additionalContext`, so "never mid-Turn" holds by construction
+and the notice lands in the canonical record. A12: any failure — no projection, a
+comparison that throws, a journal that cannot answer — skips the notice and never
+blocks admission.
+
 ## Trusted Document Transactions
 
 Projection-neutral system receipts and deterministic protected tag definitions

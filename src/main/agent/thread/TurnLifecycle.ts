@@ -898,19 +898,25 @@ export class TurnLifecycle {
           : null,
         readContext: (ref) => this.core.payloads.readContext(record.thread.id, ref),
       });
+      // One projection for both, so the notice and the evidence describe the
+      // same instant rather than two moments a mutation could sit between.
+      const admissionProjection = this.getDocumentProjection();
       const evidence = await admitContextEvidence({
         thread: record.thread,
         turnId,
         acceptedAt: startedAt,
         content: input,
         userView: request.userView,
-        additionalContext: request.additionalContext,
+        additionalContext: {
+          ...request.additionalContext,
+          ...this.documentDrift.noticeFor(record.thread.id, admissionProjection),
+        },
         extensionContext,
         skillCatalog,
         roleCatalog,
         skillInvocation: skillAdmission.invocation,
         includeHostContext: !this.core.hiddenEphemeralThreads.has(request.threadId),
-        projection: this.getDocumentProjection(),
+        projection: admissionProjection,
         createItemId: () => uuidV7(),
         writeContext: (payload) => this.core.payloads.writeContext(record.thread.id, payload),
         resolveAsset: this.resolveReferencedAsset,
