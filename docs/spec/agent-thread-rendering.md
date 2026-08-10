@@ -104,12 +104,15 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
   directly in the process timeline, without a `Thinking` / `Thought` prefix
   once content exists. The summary is derived from parsed Markdown rather than
   by cutting the source at a physical newline, and literal text such as glob or
-  multiplication asterisks is never stripped. A plain-text leading paragraph
-  may be separated from later blocks, so expansion reveals only the remaining
-  content without repeating the summary. When the leading block carries
-  Markdown structure or inline formatting, expansion renders the complete
-  canonical source so fences, lists, tables, links, references, and inline code
-  remain intact. A compact summary that fits the available width is plain text
+  multiplication asterisks is never stripped. A leading paragraph or heading is
+  carried whole by the summary line — flattening it loses inline formatting, not
+  words — so expansion reveals only the remaining content and never repeats the
+  headline. It is not carried whole when it holds a link, an image, or a Node
+  reference: what flattening drops there is the target, which a summary line can
+  neither show nor open. That block, and any structural leading block (fence,
+  list, table, quote) whose summary is one line of itself, keeps expansion
+  rendering the complete canonical source, so fences, lists, tables, links,
+  references, and inline code remain intact. A compact summary that fits the available width is plain text
   with no disclosure affordance. A visually truncated summary becomes a
   disclosure whose expansion wraps it in place. Its first width read also runs
   when the disclosure mounts with an expanded override; streaming updates

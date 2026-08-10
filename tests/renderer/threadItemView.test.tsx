@@ -18,6 +18,7 @@ import {
 import { I18nProvider } from '../../src/renderer/i18n/I18nProvider';
 import type { SubagentPresentation } from '../../src/renderer/agent/subagentPresentation';
 import { buildIndex } from '../../src/renderer/state/document';
+import { formatNodeReferenceMarker } from '../../src/core/referenceMarkup';
 import { replayableModelCall } from '../fixtures/agentToolCallHistory';
 
 const mounted: Array<() => void> = [];
@@ -125,19 +126,76 @@ describe('ThreadItemView reasoning presentation', () => {
     expect(codeBlock?.textContent).toContain('const answer = 2 * 3;');
   });
 
-  test('restores inline Markdown from the summary line when reasoning expands', async () => {
-    const source = '**Inspect** `src/**/*.ts` before editing.';
-    const rendered = renderItem(reasoningItem({ summary: [source], content: [] }));
+  test('never repeats a formatted leading reasoning line inside the expanded body', async () => {
+    const rendered = renderItem(reasoningItem({
+      summary: ['**Preparing browser tabs**'],
+      content: ['The open tabs decide where this runs.'],
+    }));
     await flush();
 
     const toggle = rendered.document.querySelector<HTMLButtonElement>('.thread-reasoning-toggle');
-    expect(toggle).not.toBeNull();
+    expect(toggle?.textContent).toContain('Preparing browser tabs');
     act(() => toggle?.click());
     await flush();
 
     const body = rendered.document.querySelector('.thread-reasoning-body');
-    expect(body?.querySelector('strong')?.textContent).toBe('Inspect');
-    expect(body?.querySelector('code')?.textContent).toBe('src/**/*.ts');
+    expect(body?.textContent).toBe('The open tabs decide where this runs.');
+    expect(body?.textContent).not.toContain('Preparing browser tabs');
+  });
+
+  test('never repeats a leading reasoning heading inside the expanded body', async () => {
+    const rendered = renderItem(reasoningItem({
+      summary: ['## Preparing browser tabs'],
+      content: ['The open tabs decide where this runs.'],
+    }));
+    await flush();
+
+    const toggle = rendered.document.querySelector<HTMLButtonElement>('.thread-reasoning-toggle');
+    expect(toggle?.textContent).toContain('Preparing browser tabs');
+    act(() => toggle?.click());
+    await flush();
+
+    const body = rendered.document.querySelector('.thread-reasoning-body');
+    expect(body?.textContent).toBe('The open tabs decide where this runs.');
+    expect(body?.querySelector('h2')).toBeNull();
+  });
+
+  test('keeps a leading reasoning line that carries a link target reachable', async () => {
+    // Flattening a link keeps its words and loses its URL, which the summary
+    // line can neither show nor open — so this block stays in the body.
+    const rendered = renderItem(reasoningItem({
+      summary: ['Checking [the RFC](https://example.test/rfc) first.'],
+      content: ['It settles the encoding question.'],
+    }));
+    await flush();
+
+    const toggle = rendered.document.querySelector<HTMLButtonElement>('.thread-reasoning-toggle');
+    expect(toggle?.textContent).toContain('Checking the RFC first.');
+    act(() => toggle?.click());
+    await flush();
+
+    const body = rendered.document.querySelector('.thread-reasoning-body');
+    expect(body?.querySelector('a')?.getAttribute('href')).toBe('https://example.test/rfc');
+    expect(body?.textContent).toContain('It settles the encoding question.');
+  });
+
+  test('keeps a leading reasoning line that carries a Node reference openable', async () => {
+    // The label survives flattening; the reference target and its open
+    // affordance do not, so this block stays in the body too.
+    const rendered = renderItem(reasoningItem({
+      summary: [`Rereading ${formatNodeReferenceMarker('Weekly notes', 'node-1')} before deciding.`],
+      content: ['The plan is already written down there.'],
+    }));
+    await flush();
+
+    const toggle = rendered.document.querySelector<HTMLButtonElement>('.thread-reasoning-toggle');
+    expect(toggle?.textContent).toContain('Rereading Weekly notes before deciding.');
+    act(() => toggle?.click());
+    await flush();
+
+    const body = rendered.document.querySelector('.thread-reasoning-body');
+    expect(body?.querySelector('a')?.getAttribute('href')).toBe('#lin-node:node-1');
+    expect(body?.textContent).toContain('The plan is already written down there.');
   });
 
   test('measures a long single line that mounts with an expanded disclosure override', async () => {
