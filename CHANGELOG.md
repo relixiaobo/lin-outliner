@@ -200,6 +200,27 @@ Entries reference the pull request that introduced them.
 
 ### Fixed
 
+- **A second view of the same book or PDF no longer rewinds your reading position
+  (PR #524, codex-4)** — a reader kept the position it had captured when it first
+  mounted, for as long as it stayed mounted. Open a book inline, open the same book
+  in a split pane, read ahead there, then collapse and re-expand the inline
+  preview: the inline reader restored its own stale snapshot and wrote that back
+  over the shared record, throwing away the progress made in the other pane. Both
+  readers now capture the shared latest position at a **session boundary** —
+  keyed by preview identity, display mode, and the loaded document — through one
+  `useReadingPositionSession` hook that `EpubPreview` and `PdfPreview` share, so
+  re-entering full mode picks up the newest progress while a mounted session's
+  target stays fixed and cannot be moved by another surface mid-read. A session
+  that opens with no stored position marks itself restored instead of staying
+  armed, which is what previously let a first-time reader be yanked to another
+  pane's position on its next render. Positions also survive when browser storage
+  is unavailable: both writers now update the in-memory cache before the storage
+  guard rather than returning early and losing the position entirely. The high
+  review gate found eight defects across two rounds — the yank, the lost in-memory
+  fallback, and five E2E-quality problems (assertions gated on a shared,
+  non-attributable `updatedAt` singleton rather than the reader's settled state)
+  — all fixed in the same PR, and the PDF half was fixed at the shared mechanism
+  rather than as a second copy of the EPUB patch.
 - **A pane whose file preview outlives its node is repaired, not thrown away (PR
   #523, codex-3)** — restoring a same-day layout dropped any pane whose current
   view no longer validated: preview a file node, delete the node, restart, and the

@@ -765,6 +765,15 @@ and the merged PR, distilled rules in [`lessons.md`](lessons.md). Everything
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
 
+- **epub-reading-position-refresh** (codex-4, PR #524, merged 2026-08-10 — plan archived) —
+  duplicate EPUB/PDF reader surfaces stopped overwriting each other's progress: both
+  previews now capture the shared position at a session boundary through one
+  `useReadingPositionSession` hook, a null-position session locks instead of staying
+  armed, and both writers update the in-memory cache before the storage guard. The high
+  gate found eight defects across two rounds — the cross-surface yank, the lost
+  in-memory fallback, and five E2E-quality problems from gating on a shared
+  `updatedAt` singleton — with the PDF half fixed at the shared mechanism rather than
+  as a second copy of the EPUB patch.
 - **agent-doc-drift-notice** (cc, PR #522, merged 2026-08-10 — plan archived) — the model is
   told, between Turns, when a node it was shown has since moved or been trashed, by
   comparing the revision token it was already handed against the document as it is now;
