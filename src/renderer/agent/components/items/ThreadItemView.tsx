@@ -836,28 +836,27 @@ function ToolItemDisclosure({
           ) : null}
           {detail.body}
           {/*
-            A failed call gets this section even with nothing in it. The heading
-            is where the outcome — and the exit code that qualifies it — is
-            stated, so hanging it on there being output would lose the code of
-            every quiet check that fails: `test -f missing`, `grep -q`,
-            `diff --quiet`. `No output` is then the honest answer to what the
-            section asks, and distinguishes a tool that said nothing from one
-            whose output we failed to show.
+            No output, no section — including for a failure. The exit code rides
+            this heading and so depends on there being output to hang it on,
+            which holds because the executor writes `aggregatedOutput` and
+            `exitCode` into the same object literal
+            (`PiTurnExecutor.completedToolItem`) from a tool envelope that is
+            never empty: a code cannot outlive the output beside it. The one
+            reachable failure with neither is an Item closed by
+            `finishOpenItems('failed')` when its Turn was interrupted or
+            crashed, and that call was cut off rather than silent — printing
+            `No output` under it would assert something we do not know.
           */}
-          {output || detail.outcome.failed ? (
+          {output ? (
             <ToolDetailSection failed={detail.outcome.failed} label={detail.outcome.label}>
-              {output ? (
-                <ToolCodeBlock
-                  code={output}
-                  copyLabel={t.agent.thread.item.copyOutput}
-                  cwd={threadCwd}
-                  language={outputLoaded && loadedOutput.text
-                    ? outputLanguage(loadedOutput.text)
-                    : detail.outputLanguage}
-                />
-              ) : (
-                <p className="thread-tool-no-output">{t.agent.thread.item.noOutput}</p>
-              )}
+              <ToolCodeBlock
+                code={output}
+                copyLabel={t.agent.thread.item.copyOutput}
+                cwd={threadCwd}
+                language={outputLoaded && loadedOutput.text
+                  ? outputLanguage(loadedOutput.text)
+                  : detail.outputLanguage}
+              />
             </ToolDetailSection>
           ) : null}
         </div>
@@ -1032,10 +1031,6 @@ function toolDetail(
         ...empty,
         input: argumentsValue === null ? null : jsonText(argumentsValue),
         inputLanguage: 'json',
-        // A file tool reports through its change list, not a stream, so a
-        // failed one states `No output` rather than staying silent about
-        // whether it said anything at all.
-        outcome: { label: t.agent.thread.item.output, failed: item.status === 'failed' },
         body: (
           <ul className="thread-file-changes">
             {item.changes.map((change, index) => (

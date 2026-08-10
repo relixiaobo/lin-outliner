@@ -4160,12 +4160,11 @@ test.describe('canonical agent Thread surface', () => {
     await page.locator('.thread-tool-activity-toggle').click();
     const failed = page.locator('.thread-tool-failed.thread-tool');
     await failed.locator('.thread-tool-toggle').click();
-    // A timeout reported no code and printed nothing. The detail says exactly
-    // that — an unqualified heading over `No output` — and borrows no
-    // plausible-looking code to fill the gap.
+    // A timeout reported no code and no output, so the detail adds nothing: the
+    // row's own `failed` segment is the whole statement, and no plausible
+    // -looking code is borrowed to fill the gap.
     await expect(failed.locator('.thread-tool-label')).toContainText('failed');
-    await expect(failed.locator('.thread-tool-section header')).toHaveText(['Arguments', 'Output']);
-    await expect(failed.locator('.thread-tool-no-output')).toHaveText('No output');
+    await expect(failed.locator('.thread-tool-section header')).toHaveText(['Arguments']);
     await expect(failed.locator('.thread-inline-error')).toHaveCount(0);
     await expect(failed).not.toContainText('Exit code');
   });

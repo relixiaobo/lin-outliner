@@ -124,6 +124,33 @@ describe('PiTurnExecutor event normalization', () => {
     expect(normalizer.stopReason).toBe('stop');
   });
 
+  test('never lands a non-zero exit code on a command Item with nothing beside it', async () => {
+    // The transcript hangs the exit code on the output section's heading, so a
+    // code that outlived its output would be unreachable in the UI. It cannot:
+    // both fields come from the same completion literal, and the envelope the
+    // output is read from is never empty. This pins that coupling from the
+    // executor side, where breaking it would otherwise be silent.
+    const fixture = createContext();
+    const normalizer = new PiEventNormalizer(fixture.context);
+    normalizer.handle(toolAdmissionEvent('call-bash-fail', 'bash', { command: 'false' }));
+    normalizer.handle({
+      type: 'tool_execution_end',
+      toolCallId: 'call-bash-fail',
+      toolName: 'bash',
+      result: {
+        content: [{ type: 'text', text: '{\n  "ok": false,\n  "data": {}\n}' }],
+        details: { data: { exitCode: 2 } },
+      },
+      isError: true,
+    });
+    await normalizer.flush();
+
+    const [item] = fixture.recorder.orderedItems();
+    expect(item).toMatchObject({ type: 'commandExecution', status: 'failed', exitCode: 2 });
+    const command = item as Extract<ThreadItem, { type: 'commandExecution' }>;
+    expect(command.aggregatedOutput ?? '').not.toBe('');
+  });
+
   test('keeps admitted and rejected bash cwd host-owned while preserving canonical dispositions', async () => {
     const fixture = createContext();
     const normalizer = new PiEventNormalizer(fixture.context);

@@ -157,11 +157,12 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
   neutral result heading. The heading names the CONTENT — `Error` only where the
   content is an error payload — while the status colour carries the failure, so
   a failed collaboration call reads `Result` in danger red over its state
-  snapshot. A failed call keeps this section even with nothing in it, reading
-  `No output`: the heading is where the outcome and its exit code are stated, so
-  a quiet check that fails without printing would otherwise take its code with
-  it. A successful call that printed nothing has no such section. The detail
-  never adds a sentence restating a failure the row already reports
+  snapshot. A call that produced nothing has no such section at all, failed or
+  not: an exit code cannot outlive the output it qualifies, because both are
+  written from the same tool envelope in one step, and a call cut off by an
+  interrupted Turn was silenced rather than silent — the row's own failed
+  segment is the whole statement there. The detail never adds a sentence
+  restating a failure the row already reports
 - a command row is labelled by the **caller's own description** of the command
   when there is one. The `bash` contract already requires a one-line account in
   active voice, so the transcript states intent rather than shell syntax, and
