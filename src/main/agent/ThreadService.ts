@@ -438,7 +438,11 @@ export class ThreadService implements ThreadServiceExtensionHost {
       (message) => new ThreadBusyError(message),
     );
     this.goals = new GoalExtension(this.goalStore, (notification) => this.core.recordNotification(notification));
-    this.goals.bindHost(this, (threadId) => this.core.requireThread(threadId).thread);
+    this.goals.bindHost(
+      this,
+      (threadId) => this.core.requireThread(threadId).thread,
+      (threadId, turnId) => this.core.readTurn(threadId, turnId),
+    );
     this.extensions.register(this.goals);
   }
 

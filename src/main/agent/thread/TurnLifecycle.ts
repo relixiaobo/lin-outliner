@@ -1,7 +1,7 @@
 import { decodePrivilegedTurnStartRequest,decodeThread,decodeThreadItem,decodeTurn } from '../../../core/agent/codec';
 import type { EffectiveThreadConfiguration } from '../../../core/agent/configuration';
 import { createHostRootTurnAdmissionBarrierSnapshot,createThreadAdmissionBarrierSnapshot } from '../../../core/agent/extensions';
-import { RUNTIME_FAILURE_ERROR_CODE,normalizeTurnErrorCode,type ContextCompactionThreadItem,type ContextCursor,type ContextEvidenceKind,type ContextEvidenceThreadItem,type PrivilegedTurnStartRequest,type RendererTurnStartRequest,type RequestUserInputRequest,type RequestUserInputResponse,type RoleCatalogContextPayload,type Thread,type ThreadContextPayload,type ThreadContextPayloadReference,type ThreadId,type ThreadItem,type ThreadResourceReference,type ThreadStatus,type ThreadUserContent,type Turn,type TurnError,type TurnErrorCode,type TurnId,type TurnStartResponse,type TurnSteerRequest,type TurnSteerResponse } from '../../../core/agent/protocol';
+import { RUNTIME_FAILURE_ERROR_CODE,normalizeTurnErrorCode,type ContextCompactionThreadItem,type ContextCursor,type ContextEvidenceKind,type ContextEvidenceThreadItem,type PrivilegedTurnStartRequest,type RendererTurnStartRequest,type RequestUserInputRequest,type RequestUserInputResponse,type RoleCatalogContextPayload,type Thread,type ThreadContextPayload,type ThreadContextPayloadReference,type ThreadId,type ThreadItem,type ThreadResourceReference,type ThreadStatus,type ThreadUserContent,type Turn,type TurnError,type TurnErrorCode,type TurnId,type TurnStartResponse,type TurnStatus,type TurnSteerRequest,type TurnSteerResponse } from '../../../core/agent/protocol';
 import { threadPreviewFromContent } from '../../../core/agent/threadPreview';
 import { normalizeRequestUserInputToolInput } from '../../../core/agent/tools';
 import { MAX_PROMPT_IMAGE_BYTES,MAX_PROMPT_IMAGE_DIMENSION } from '../../../core/agentAttachmentLimits';
@@ -57,7 +57,7 @@ interface TurnLifecycleCollaboration {
  * are a delegated child's.
  */
 interface TurnLifecycleTranscripts { enqueueTurn(thread: Thread, turn: Turn): void; }
-interface TurnLifecycleGoalUsage { addUsage(threadId: ThreadId, tokens: number, elapsedSeconds: number, turnId: TurnId): Promise<void>; }
+interface TurnLifecycleGoalUsage { addUsage(threadId: ThreadId, tokens: number, elapsedSeconds: number, turnId: TurnId, terminalStatus: TurnStatus): Promise<void>; }
 export interface ResolvedSubagentBudget {
   readonly member: SubagentRequestMember | null;
   readonly pool: SubagentRequestPool | null;
@@ -1187,6 +1187,7 @@ export class TurnLifecycle {
           turn.execution.usage.totalTokens,
           Math.ceil((turn.durationMs ?? 0) / 1000),
           active.turnId,
+          turn.status,
         );
         if (status === 'interrupted') await this.extensions.turnAborted(thread, turn);
         else if (executionError) await this.extensions.turnError(thread, turn, executionError);

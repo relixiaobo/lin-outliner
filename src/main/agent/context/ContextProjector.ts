@@ -35,6 +35,7 @@ import type {
   UserViewContextPayload,
 } from '../../../core/agent/protocol';
 import { modelCallArgumentSource } from '../../../core/agent/modelCallHistory';
+import { escapeXml } from '../../../core/reminderXml';
 import {
   formatFileReferenceMarker,
   formatNodeReferenceMarker,
@@ -1466,10 +1467,6 @@ export function toolItemVisibleOutputText(item: HistoryToolItem): string {
     });
     case 'webSearch': return item.error ?? JSON.stringify(item.results);
   }
-}
-
-function escapeXml(value: string): string {
-  return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
