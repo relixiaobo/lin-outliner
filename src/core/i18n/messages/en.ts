@@ -488,6 +488,7 @@ export const en = {
     // Right-aligned type label on an object row, and the chip's kind.
     objectTypes: {
       node: 'Node',
+      file: 'File',
       nodeSelection: 'Selection',
       externalPage: 'Page',
       draftNode: 'New node',

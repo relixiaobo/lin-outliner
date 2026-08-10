@@ -1,5 +1,6 @@
 import type { NodeProjection } from '../../api/types';
 import type { PreviewTarget } from '../../../core/preview';
+import { mediaKindForMimeType } from '../../../core/mediaKind';
 import { inlineFileIconKind, type InlineFileIconKind } from '../editor/inlineFileIcon';
 
 // Lightweight file-node helpers, kept free of the heavy preview-renderer module
@@ -91,8 +92,9 @@ type AttachmentKind = 'pdf' | 'audio' | 'video' | 'file';
 
 function attachmentKind(mimeType: string): AttachmentKind {
   if (mimeType === 'application/pdf') return 'pdf';
-  if (mimeType.startsWith('audio/')) return 'audio';
-  if (mimeType.startsWith('video/')) return 'video';
+  const mediaKind = mediaKindForMimeType(mimeType);
+  if (mediaKind === 'audio') return 'audio';
+  if (mediaKind === 'video') return 'video';
   return 'file';
 }
 

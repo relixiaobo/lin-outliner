@@ -36,6 +36,7 @@ import {
   startOfLocalDay,
   startOfLocalWeek,
 } from './localDate';
+import { mediaKindForMimeType, type MediaKind } from './mediaKind';
 import { intersectSetList, unionSets } from './setUtils';
 import {
   createTextSearchIndex,
@@ -615,10 +616,6 @@ export function searchQueryTerms(query: SearchQueryExpr | null | undefined): str
   if (!query) return [];
   const compiled = compileSearchQueryExpr(query);
   return compiled.ok ? compiled.query.terms : [];
-}
-
-export function isCoreSearchCandidate(document: SearchDocument, nodeId: NodeId): boolean {
-  return isSearchCandidate(indexSearchDocument(document), nodeId);
 }
 
 export function scoreSearchTerm(document: SearchDocument, nodeId: NodeId, term: string): number {
@@ -1962,27 +1959,11 @@ function isCalendarNode(index: SearchIndex, nodeId: NodeId): boolean {
   return isDayNode(index, nodeId) || isWeekNode(index, nodeId) || isYearNode(index, nodeId);
 }
 
-type SearchMediaKind = 'image' | 'audio' | 'video';
-
-function nodeMediaKind(node: SearchNode): SearchMediaKind | null {
+function nodeMediaKind(node: SearchNode): MediaKind | null {
   if (node.type === 'image') return 'image';
   if (node.type !== 'attachment') return null;
-
-  const mimeType = node.mimeType?.trim().toLowerCase();
-  if (mimeType?.startsWith('image/')) return 'image';
-  if (mimeType?.startsWith('audio/')) return 'audio';
-  if (mimeType?.startsWith('video/')) return 'video';
-
-  // Duration metadata only fills in absent or generic MIME data. It never
-  // overrides an explicit non-media family such as application/pdf.
-  if (mimeType && mimeType !== 'application/octet-stream') return null;
-  if (isPositiveDuration(node.videoDurationMs)) return 'video';
-  if (isPositiveDuration(node.audioDurationMs)) return 'audio';
-  return null;
-}
-
-function isPositiveDuration(value: number | undefined): boolean {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0;
+  const mediaKind = mediaKindForMimeType(node.mimeType);
+  return mediaKind === 'audio' || mediaKind === 'video' ? mediaKind : null;
 }
 
 function nodeMatchesType(index: SearchIndex, node: SearchNode, expectedType: string): boolean {

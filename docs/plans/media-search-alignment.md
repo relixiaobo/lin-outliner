@@ -36,7 +36,8 @@ metadata without breaking queries persisted before that rebuild lands.
 
 - **No rich link card, metadata fetch, poster asset, provider override map, or
   live iframe embed** — the path not taken below stays not taken.
-- No preview, player, or viewer work; this is retrieval only.
+- No preview, player, or viewer behavior changes; Launcher only gains file-aware
+  presentation for the attachment results this PR admits.
 - No migration. Pre-release, a format change wipes `~/.lin-outliner-*` dev
   userData rather than shipping a reader (`AGENTS.md`), and independently no
   `type: 'embed'` node has ever been creatable, so no document contains one.
@@ -88,20 +89,24 @@ plus a guidance grep proving the inert audio/video terms are not advertised.
 - Add `attachment` to the allowlist so attachment nodes are retrievable at all, and
   add `IS_TYPE attachment`.
 - Activate `HAS_AUDIO` / `HAS_VIDEO` by reading `AttachmentNode.mimeType` as the
-  authority. Only missing or generic MIME data falls back to duration metadata,
-  with video ahead of audio; an explicit non-media MIME is never overridden.
-  Extend `HAS_IMAGE` to image-mime attachments; `HAS_MEDIA` becomes the real
-  superset (image nodes plus media attachments) rather than an alias.
+  sole authority. Asset ingestion expands its signature/extension table for
+  common AAC, FLAC, Matroska, MPEG, Ogg/Opus, AVI, WMA, and WMV files so those
+  user paths produce an explicit media family. Duration metadata is presentation
+  data, not a kind override. `HAS_IMAGE` remains image-node-only because the
+  attachment write boundary rejects `image/*`; `HAS_MEDIA` becomes the real
+  image/audio/video union rather than an image alias.
 - PDFs and other non-media attachments remain searchable by filename and
   `IS_TYPE attachment`; this PR adds no `HAS_PDF` facet.
 - Restore the guidance clause in `agentNodeToolGuidance.ts` with the accurate
   operand list, so the model regains the capability only once it answers truthfully.
-- Delete the two unused `isSearchCandidate` copies outside the search kernel
-  rather than extending already-drifted candidate policies.
-- User-visible: attachment rows begin appearing in ordinary text results. Their
-  title is the filename, which is what a user searching for "tax return 2025"
-  is looking for — but it is a result-set change and belongs in the CHANGELOG
-  entry.
+- Delete the two unused `isSearchCandidate` copies and the zero-consumer
+  `isCoreSearchCandidate` wrapper, leaving one internal candidate authority.
+- Attachment candidacy applies to every executable rule whose data fits, not
+  only text/media rules: tags, timestamps, and structural scopes can therefore
+  return attachments too. Launcher presents those rows with a file glyph and
+  localized File label; Enter keeps the ordinary node `open` action, whose
+  existing navigation path opens the file preview. The full result-set change
+  belongs in the CHANGELOG entry.
 
 ## Open questions
 

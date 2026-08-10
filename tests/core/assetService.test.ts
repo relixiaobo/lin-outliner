@@ -140,6 +140,18 @@ describe('AssetService', () => {
     expect(meta.id).not.toBe(meta.sha256);
   });
 
+  test('path ingest assigns a media MIME family from a common extension', async () => {
+    const sourcePath = join(root, 'interview.flac');
+    await writeFile(sourcePath, new Uint8Array([0, 1, 2, 3]));
+
+    const meta = await service.ingest({ kind: 'path', path: sourcePath });
+    expect(meta).toMatchObject({
+      mimeType: 'audio/flac',
+      originalFilename: 'interview.flac',
+    });
+    expect(meta.audioDurationMs).toBeUndefined();
+  });
+
   test('content identity does not replace stable logical asset ids', async () => {
     const bytes = pngBytes(12, 8);
     const first = await service.ingest({ kind: 'buffer', data: bytes });
@@ -328,12 +340,15 @@ describe('sniffMimeType', () => {
     expect(sniffMimeType(new Uint8Array([0xff, 0xd8, 0xff, 0xe0]))).toBe('image/jpeg');
     expect(sniffMimeType(new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d]))).toBe('application/pdf');
     expect(sniffMimeType(wavBytes(100))).toBe('audio/wav');
+    expect(sniffMimeType(new Uint8Array([0x66, 0x4c, 0x61, 0x43]))).toBe('audio/flac');
+    expect(sniffMimeType(new Uint8Array([0xff, 0xf1]))).toBe('audio/aac');
     expect(sniffMimeType(new Uint8Array([0x50, 0x4b, 0x03, 0x04]))).toBe('application/zip');
   });
 
   test('falls back to the filename extension when bytes are inconclusive', () => {
     expect(sniffMimeType(new Uint8Array([0x50, 0x4b, 0x03, 0x04]), 'book.epub')).toBe('application/epub+zip');
     expect(sniffMimeType(new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d]), 'renamed.epub')).toBe('application/pdf');
+    expect(sniffMimeType(new Uint8Array([0x4f, 0x67, 0x67, 0x53]), 'clip.ogv')).toBe('video/ogg');
     expect(sniffMimeType(new Uint8Array([0, 0, 0]), 'note.svg')).toBe('image/svg+xml');
     expect(sniffMimeType(new Uint8Array([0, 0, 0]), 'mystery')).toBeUndefined();
   });
@@ -347,6 +362,16 @@ describe('mimeTypeForFilename', () => {
     expect(mimeTypeForFilename('clip.webm')).toBe('video/webm');
     expect(mimeTypeForFilename('memo.mp3')).toBe('audio/mpeg');
     expect(mimeTypeForFilename('memo.m4a')).toBe('audio/mp4');
+    expect(mimeTypeForFilename('interview.flac')).toBe('audio/flac');
+    expect(mimeTypeForFilename('voice.aac')).toBe('audio/aac');
+    expect(mimeTypeForFilename('voice.opus')).toBe('audio/opus');
+    expect(mimeTypeForFilename('concert.mka')).toBe('audio/x-matroska');
+    expect(mimeTypeForFilename('archive.wma')).toBe('audio/x-ms-wma');
+    expect(mimeTypeForFilename('screening.ogv')).toBe('video/ogg');
+    expect(mimeTypeForFilename('screening.mpg')).toBe('video/mpeg');
+    expect(mimeTypeForFilename('screening.mkv')).toBe('video/x-matroska');
+    expect(mimeTypeForFilename('screening.avi')).toBe('video/x-msvideo');
+    expect(mimeTypeForFilename('screening.wmv')).toBe('video/x-ms-wmv');
   });
 });
 

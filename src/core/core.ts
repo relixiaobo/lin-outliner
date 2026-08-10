@@ -13,6 +13,7 @@ import {
 } from './documentSystem';
 import { CoreError } from './errors';
 import { LoroOutlinerDocument, type SharedLoroDocumentState } from './loroDocument';
+import { mediaKindForMimeType } from './mediaKind';
 import { freshNodeId, isClientNodeId } from './nodeId';
 import {
   OperationJournal,
@@ -4809,7 +4810,7 @@ function normalizeAttachmentOptions(options: {
   const assetId = options.assetId?.trim();
   if (!assetId) throw CoreError.invalidOperation('attachment node requires an assetId');
   const mimeType = normalizeMimeType(options.mimeType);
-  if (mimeType.startsWith('image/')) {
+  if (mediaKindForMimeType(mimeType) === 'image') {
     throw CoreError.invalidOperation('image assets must be created as image nodes');
   }
   const originalFilename = options.originalFilename?.trim();

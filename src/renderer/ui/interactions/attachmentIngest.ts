@@ -1,5 +1,6 @@
 import { api } from '../../api/client';
 import type { AssetMetadata } from '../../api/types';
+import { mediaKindForMimeType } from '../../../core/mediaKind';
 import type { CommandRunner, CommandRunnerOptions } from '../shared';
 
 export interface IngestedFiles {
@@ -32,7 +33,7 @@ export async function ingestFiles(files: readonly File[]): Promise<IngestedFiles
     const bytes = new Uint8Array(await file.arrayBuffer());
     const asset = await api.ingestAssetFromData(bytes, file.type || undefined, file.name || undefined);
     assets.push(asset);
-    if (asset.mimeType.startsWith('image/')) images.push(asset);
+    if (mediaKindForMimeType(asset.mimeType) === 'image') images.push(asset);
     else attachments.push(asset);
   }
   return { assets, images, attachments };
@@ -51,7 +52,7 @@ export function createAssetNode(
   asset: AssetMetadata,
   options?: CommandRunnerOptions,
 ): ReturnType<CommandRunner> {
-  return asset.mimeType.startsWith('image/')
+  return mediaKindForMimeType(asset.mimeType) === 'image'
     ? run(() => api.createImageNode(parentId, index, {
         assetId: asset.id,
         width: asset.imageWidth,

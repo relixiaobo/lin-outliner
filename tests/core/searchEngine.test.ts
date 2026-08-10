@@ -16,7 +16,6 @@ import {
   plainText,
   QUERY_OPS,
   replaceAllRichTextPatch,
-  type AttachmentNode,
   type QueryOp,
   type SearchQueryExpr,
 } from '../../src/core/types';
@@ -1300,43 +1299,30 @@ describe('core search engine', () => {
     expect(done.ok ? done.hits.map((hit) => hit.nodeId) : []).not.toContain(doneOld);
   });
 
-  test('executes media facets from image and attachment metadata', () => {
+  test('executes media facets from image nodes and explicit attachment MIME families', () => {
     const core = Core.new();
     const today = core.projection().todayId;
     const image = mustFocus(core.createImageNode(today, null, {
       mediaUrl: 'https://example.com/screenshot.png',
       name: 'Screenshot asset',
     }));
-    const imageAttachment = mustFocus(core.createAttachmentNode(today, null, {
-      assetId: 'asset-image',
-      mimeType: 'application/octet-stream',
-      originalFilename: 'Imported image.webp',
-      fileSize: 100,
-    }));
     const audio = mustFocus(core.createAttachmentNode(today, null, {
       assetId: 'asset-audio',
-      mimeType: 'audio/wav',
-      originalFilename: 'Call recording.wav',
+      mimeType: 'audio/flac',
+      originalFilename: 'Call recording.flac',
       fileSize: 200,
     }));
     const video = mustFocus(core.createAttachmentNode(today, null, {
       assetId: 'asset-video',
-      mimeType: 'video/mp4',
-      originalFilename: 'Demo video.mp4',
+      mimeType: 'video/x-matroska',
+      originalFilename: 'Demo video.mkv',
       fileSize: 300,
     }));
-    const genericAudio = mustFocus(core.createAttachmentNode(today, null, {
-      assetId: 'asset-generic-audio',
+    const genericWithDurations = mustFocus(core.createAttachmentNode(today, null, {
+      assetId: 'asset-generic',
       mimeType: 'application/octet-stream',
-      originalFilename: 'Unknown audio.bin',
+      originalFilename: 'Unknown media.bin',
       fileSize: 400,
-      audioDurationMs: 1_000,
-    }));
-    const genericVideo = mustFocus(core.createAttachmentNode(today, null, {
-      assetId: 'asset-generic-video',
-      mimeType: 'application/octet-stream',
-      originalFilename: 'Unknown video.bin',
-      fileSize: 500,
       audioDurationMs: 1_000,
       videoDurationMs: 1_000,
     }));
@@ -1344,36 +1330,35 @@ describe('core search engine', () => {
       assetId: 'asset-pdf',
       mimeType: 'application/pdf',
       originalFilename: 'Meeting packet.pdf',
-      fileSize: 600,
+      fileSize: 500,
       audioDurationMs: 1_000,
+    }));
+    const filenameOnlyAttachment = mustFocus(core.createAttachmentNode(today, null, {
+      assetId: 'asset-image-name',
+      mimeType: 'application/octet-stream',
+      originalFilename: 'Imported image.webp',
+      fileSize: 600,
     }));
     const filenameOnly = mustFocus(core.createNode(today, null, 'Not media.mp3'));
     const state = core.state();
-
-    (state.nodes[imageAttachment] as AttachmentNode).mimeType = 'image/webp';
 
     const hitsFor = (op: QueryOp) => {
       const result = runSearchExpr(state, { kind: 'rule', op });
       expect(result.ok).toBe(true);
       return (result.ok ? result.hits.map((hit) => hit.nodeId) : []).sort();
     };
-    const attachmentIds = [imageAttachment, audio, video, genericAudio, genericVideo, pdf].sort();
+    const attachmentIds = [audio, video, genericWithDurations, pdf, filenameOnlyAttachment].sort();
 
-    expect(hitsFor('HAS_IMAGE')).toEqual([image, imageAttachment].sort());
-    expect(hitsFor('HAS_AUDIO')).toEqual([audio, genericAudio].sort());
-    expect(hitsFor('HAS_VIDEO')).toEqual([video, genericVideo].sort());
-    expect(hitsFor('HAS_MEDIA')).toEqual([
-      image,
-      imageAttachment,
-      audio,
-      video,
-      genericAudio,
-      genericVideo,
-    ].sort());
+    expect(hitsFor('HAS_IMAGE')).toEqual([image]);
+    expect(hitsFor('HAS_AUDIO')).toEqual([audio]);
+    expect(hitsFor('HAS_VIDEO')).toEqual([video]);
+    expect(hitsFor('HAS_MEDIA')).toEqual([image, audio, video].sort());
     const attachments = runSearchExpr(state, { kind: 'rule', op: 'IS_TYPE', text: 'attachment' });
     expect(attachments.ok).toBe(true);
     expect((attachments.ok ? attachments.hits.map((hit) => hit.nodeId) : []).sort()).toEqual(attachmentIds);
     expect(hitsFor('HAS_MEDIA')).not.toContain(pdf);
+    expect(hitsFor('HAS_MEDIA')).not.toContain(genericWithDurations);
+    expect(hitsFor('HAS_MEDIA')).not.toContain(filenameOnlyAttachment);
     expect(hitsFor('HAS_MEDIA')).not.toContain(filenameOnly);
   });
 
@@ -1399,6 +1384,21 @@ describe('core search engine', () => {
 
     const keyword = runSearchExpr(core.state(), { kind: 'rule', op: 'STRING_MATCH', text: 'tax return 2025' });
     expect(keyword.ok ? keyword.hits.map((hit) => hit.nodeId) : []).toEqual([attachment]);
+  });
+
+  test('evaluates applicable general rules for attachment candidates', () => {
+    const core = Core.new();
+    const tagId = mustFocus(core.createTag('reference-material'));
+    const attachment = mustFocus(core.createAttachmentNode(core.projection().todayId, null, {
+      assetId: 'asset-reference',
+      mimeType: 'application/pdf',
+      originalFilename: 'Reference material.pdf',
+      fileSize: 700,
+    }));
+    core.applyTag(attachment, tagId);
+
+    const tagged = runSearchExpr(core.state(), { kind: 'rule', op: 'HAS_TAG', tagDefId: tagId });
+    expect(tagged.ok ? tagged.hits.map((hit) => hit.nodeId) : []).toContain(attachment);
   });
 
   test('activates persisted media rules across saved-search reloads', () => {

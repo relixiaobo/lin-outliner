@@ -67,17 +67,19 @@ field-definition, search, code-block, image, and attachment nodes outside trash,
 system roots, and query-condition trees. Attachment display text defaults to the
 original filename, so ordinary `STRING_MATCH` queries and Launcher lookup can
 find files by name; `IS_TYPE attachment` matches every searchable attachment,
-including PDFs.
+including PDFs. Candidacy is global rather than operator-specific: every
+executable tag, timestamp, field, link, or structural rule evaluates an
+attachment when that attachment carries the rule's required data.
 
 Media rules take no operand. Image nodes always match `HAS_IMAGE` and
-`HAS_MEDIA`. Attachment nodes are classified from the normalized MIME family:
-`image/*`, `audio/*`, and `video/*` match their corresponding facet, and all
-three families match `HAS_MEDIA`. When MIME data is absent or exactly
-`application/octet-stream`, a positive `videoDurationMs` supplies video kind,
-then a positive `audioDurationMs` supplies audio kind. Duration metadata never
-overrides an explicit non-media MIME such as `application/pdf`; PDFs and other
-files remain available through text search and `IS_TYPE attachment`, not a media
-facet. No rule infers media kind from arbitrary text, filenames, or URLs.
+`HAS_MEDIA`. The attachment write boundary rejects `image/*`, so attachment
+facets classify only explicit normalized `audio/*` and `video/*` MIME families;
+both also match `HAS_MEDIA`. Asset ingestion recognizes common media signatures
+and filename extensions before creating the node, including AAC, FLAC,
+Matroska, MPEG, Ogg/Opus, AVI, WMA, and WMV. Missing/generic MIME data, duration
+metadata, arbitrary text, filenames inside the search evaluator, and URLs never
+override the stored family. PDFs and other files remain available through text
+search and `IS_TYPE attachment`, not a media facet.
 
 ## Complexity Budget
 

@@ -23,6 +23,7 @@ interface LauncherMockOptions {
   result?: ActionRequestResult;
   /** Delay the opening push, to model the summon->context window. */
   deferOpening?: boolean;
+  opening?: InvocationOpened;
 }
 
 interface LauncherMock {
@@ -73,6 +74,17 @@ function opening(): InvocationOpened {
   };
 }
 
+function attachmentOpening(): InvocationOpened {
+  const attachment = item('Quarterly call recording.wav', 'node', 'ref-file', 'Open');
+  attachment.object = {
+    ...attachment.object,
+    name: { source: 'literal', value: 'Quarterly call recording.wav' },
+    iconId: 'file',
+    typeLabel: { en: 'File', 'zh-Hans': '文件' },
+  };
+  return { ...opening(), resultItems: [attachment] };
+}
+
 function makeLauncherMock(options: LauncherMockOptions = {}): LauncherMock {
   const { hotkey = 'CommandOrControl+Shift+Space', result = { status: 'completed' } } = options;
   const calls = { request: [] as unknown[], hide: 0, event: [] as unknown[], queryObjects: [] as unknown[] };
@@ -106,7 +118,7 @@ function makeLauncherMock(options: LauncherMockOptions = {}): LauncherMock {
   return {
     calls,
     bridge,
-    pushOpening: () => openedCb?.(opening()),
+    pushOpening: () => openedCb?.(options.opening ?? opening()),
     triggerShown: () => shownCb?.(),
   };
 }
@@ -195,6 +207,15 @@ describe('LauncherApp rows are objects', () => {
     const r = await renderLauncher({ deferOpening: true });
     // No locally-invented rows: the renderer has no object model of its own.
     expect(rows(r)).toHaveLength(0);
+  });
+
+  test('an attachment node keeps its file glyph and localized type label', async () => {
+    const r = await renderLauncher({ opening: attachmentOpening() });
+    const row = rows(r)[0]!;
+    expect(row.querySelector('.launcher-row-title')?.textContent).toBe('Quarterly call recording.wav');
+    expect(row.querySelector('.launcher-row-type')?.textContent).toBe('File');
+    expect(row.querySelector('.launcher-row-bullet')).toBeNull();
+    expect(row.querySelector('.launcher-row-icon')).not.toBeNull();
   });
 });
 

@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, open, readFile, readdir, realpath, rm, stat, unlink } f
 import { Readable } from 'node:stream';
 import { join } from 'node:path';
 import type { AssetIngestInput, AssetMetadata } from '../core/types';
+import { mediaKindForMimeType } from '../core/mediaKind';
 import { isPathInside } from './agent/capabilities/agentAttachmentMaterialization';
 import { sha256Bytes, sha256File } from './fileHashing';
 import { atomicWriteFile, writeJsonFile } from './jsonFileStore';
@@ -55,6 +56,7 @@ export class AssetService {
     const ext = extensionForMime(mimeType, originalFilename);
     const dimensions = imageDimensions(bytes, mimeType);
     const durationMs = mediaDurationMs(bytes, mimeType);
+    const mediaKind = mediaKindForMimeType(mimeType);
     const createdAt = Date.now();
     await mkdir(this.root, { recursive: true });
     const assetPath = join(this.root, `${id}${ext}`);
@@ -71,8 +73,8 @@ export class AssetService {
       ...(originalFilename ? { originalFilename } : {}),
       ...(dimensions ? { imageWidth: dimensions.width, imageHeight: dimensions.height } : {}),
       ...(mimeType === 'application/pdf' ? pdfMetadata(bytes) : {}),
-      ...(durationMs !== undefined && mimeType.startsWith('audio/') ? { audioDurationMs: durationMs } : {}),
-      ...(durationMs !== undefined && mimeType.startsWith('video/') ? { videoDurationMs: durationMs } : {}),
+      ...(durationMs !== undefined && mediaKind === 'audio' ? { audioDurationMs: durationMs } : {}),
+      ...(durationMs !== undefined && mediaKind === 'video' ? { videoDurationMs: durationMs } : {}),
     };
     const thumbnailAssetId = mimeType === 'application/pdf'
       ? await this.derivePdfThumbnail(assetPath, originalFilename)
@@ -352,11 +354,21 @@ const MIME_TO_EXT: Record<string, string> = {
   'application/epub+zip': '.epub',
   'audio/mpeg': '.mp3',
   'audio/mp4': '.m4a',
+  'audio/aac': '.aac',
+  'audio/flac': '.flac',
   'audio/ogg': '.ogg',
+  'audio/opus': '.opus',
   'audio/wav': '.wav',
+  'audio/x-matroska': '.mka',
+  'audio/x-ms-wma': '.wma',
   'video/mp4': '.mp4',
+  'video/mpeg': '.mpeg',
+  'video/ogg': '.ogv',
   'video/quicktime': '.mov',
   'video/webm': '.webm',
+  'video/x-matroska': '.mkv',
+  'video/x-msvideo': '.avi',
+  'video/x-ms-wmv': '.wmv',
   'text/plain': '.txt',
   'text/html': '.html',
   'text/markdown': '.md',
@@ -378,13 +390,24 @@ const EXT_TO_MIME: Record<string, string> = {
   '.epub': 'application/epub+zip',
   '.mp3': 'audio/mpeg',
   '.m4a': 'audio/mp4',
+  '.aac': 'audio/aac',
+  '.flac': 'audio/flac',
   '.oga': 'audio/ogg',
   '.ogg': 'audio/ogg',
+  '.opus': 'audio/opus',
   '.wav': 'audio/wav',
+  '.mka': 'audio/x-matroska',
+  '.wma': 'audio/x-ms-wma',
   '.mp4': 'video/mp4',
   '.m4v': 'video/mp4',
+  '.mpeg': 'video/mpeg',
+  '.mpg': 'video/mpeg',
   '.mov': 'video/quicktime',
+  '.ogv': 'video/ogg',
   '.webm': 'video/webm',
+  '.mkv': 'video/x-matroska',
+  '.avi': 'video/x-msvideo',
+  '.wmv': 'video/x-ms-wmv',
   '.txt': 'text/plain',
   '.html': 'text/html',
   '.htm': 'text/html',
@@ -432,8 +455,17 @@ export function sniffMimeType(bytes: Uint8Array, filename?: string): string | un
   if (bytes.length >= 12
     && bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46
     && bytes[8] === 0x57 && bytes[9] === 0x41 && bytes[10] === 0x56 && bytes[11] === 0x45) return 'audio/wav';
+  if (bytes.length >= 12
+    && bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46
+    && bytes[8] === 0x41 && bytes[9] === 0x56 && bytes[10] === 0x49 && bytes[11] === 0x20) return 'video/x-msvideo';
   if (bytes.length >= 3 && bytes[0] === 0x49 && bytes[1] === 0x44 && bytes[2] === 0x33) return 'audio/mpeg';
-  if (bytes.length >= 4 && bytes[0] === 0x4f && bytes[1] === 0x67 && bytes[2] === 0x67 && bytes[3] === 0x53) return 'audio/ogg';
+  if (bytes.length >= 4 && bytes[0] === 0x66 && bytes[1] === 0x4c && bytes[2] === 0x61 && bytes[3] === 0x43) return 'audio/flac';
+  if (bytes.length >= 2 && bytes[0] === 0xff && (bytes[1] & 0xf6) === 0xf0) return 'audio/aac';
+  if (bytes.length >= 4 && bytes[0] === 0x4f && bytes[1] === 0x67 && bytes[2] === 0x67 && bytes[3] === 0x53) {
+    return filenameMimeType === 'video/ogg' || filenameMimeType === 'audio/opus'
+      ? filenameMimeType
+      : 'audio/ogg';
+  }
   if (bytes.length >= 4 && bytes[0] === 0x50 && bytes[1] === 0x4b && bytes[2] === 0x03 && bytes[3] === 0x04) {
     return filenameMimeType === 'application/epub+zip' ? filenameMimeType : 'application/zip';
   }

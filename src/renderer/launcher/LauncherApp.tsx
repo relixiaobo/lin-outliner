@@ -546,12 +546,12 @@ function LauncherRow(props: {
 
 function LauncherRowIcon({ item }: { item: SurfaceItemPresentation }) {
   const { object } = item;
-  // A node's icon is DATA, not a fixed glyph: show the node's own emoji when it
-  // has one, and the outliner bullet otherwise.
+  // Ordinary nodes show their own emoji or the outliner bullet. Typed node
+  // presentations such as attachments keep their semantic glyph.
   if (object.emoji) {
     return <span className="launcher-row-emoji" aria-hidden="true">{object.emoji}</span>;
   }
-  if (object.kind === 'node' && object.name.source === 'literal') {
+  if (object.kind === 'node' && object.name.source === 'literal' && object.iconId === 'node') {
     return <span className="launcher-row-bullet" aria-hidden="true" />;
   }
   const Icon = iconForObject(object);

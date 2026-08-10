@@ -104,8 +104,8 @@ search**, and a **live capture draft** — there is no mode and no "pick New Cap
 first" step. The result list is built purely by `buildLauncherItems` (in
 `launcherModel.ts`, unit-tested without a DOM) from `(query, context, nodes,
 commands)`, rendered as a single **flat** list of uniform rows
-(`glyph · title · subtitle · right-aligned type label` — `Command` or `Node`). No
-section headers.
+(`glyph · title · subtitle · right-aligned type label`, such as `Node`, `File`,
+`Page`, or `App`). No section headers.
 
 Ordering is **capture-first**:
 
@@ -203,18 +203,21 @@ There is **no** "Search notes" command — typing IS the search. The renderer
 debounces (120ms) and calls `ObjectQueryRequest`; main runs the same ranked
 retrieval and returns the top hits (limit 8) as node OBJECTS whose presentation
 carries the single-line title, the parent's text as subtitle and the node's own
-emoji, since the locked-down launcher renderer can't read the document. Resolution looks up only the hit nodes
+emoji, since the locked-down launcher renderer can't read the document.
+Attachment hits remain node objects but carry a file glyph and localized File
+type label, so a file named like an ordinary note remains visibly distinct.
+Resolution looks up only the hit nodes
 (+ their parents) by id via `Core.projectionNodesByIds`, never materializing the
 whole-document projection per keystroke. `search_nodes` is a transient lookup
 surface. It uses the same document-derived reference-authority boost as saved
 searches, then opts into per-user personal access ranking; both affect ordering
 only and never change saved search rules or materialized saved-search results.
-`Enter` on a node runs `open`, whose renderer step routes through
-`navigateMainToNode`, which brings up / creates the main
-window and sends `LAUNCHER_NAVIGATE_TO_NODE_CHANNEL` so the main renderer runs
-`navigateRoot + focusNode` (an in-place re-root of the active pane). A
-navigate that arrives before the main window's renderer has loaded is queued and
-flushed on each `did-finish-load` (re-armable, so it survives a renderer reload).
+`Enter` on a node runs `open`; main focuses the main window and sends the action
+registry's renderer navigation step. The main renderer's `navigateRoot` opens
+the existing file preview for attachment/image nodes and otherwise performs the
+ordinary in-place outliner landing. A navigation that arrives before the main
+window's renderer has loaded is queued and flushed after load (re-armable, so it
+survives a renderer reload).
 Only the resulting main-window landing records human access after a short dwell;
 typing, hovering, selection movement, and raw search hits do not.
 
