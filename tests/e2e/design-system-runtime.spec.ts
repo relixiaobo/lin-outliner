@@ -16,6 +16,7 @@ interface SurfaceProbe {
   bodyHorizontalOverflow: number;
   colorScheme: string;
   hasRendererThemeBridge: boolean;
+  popoverItemViolations: string[];
   visibleOutOfViewport: Array<{
     selector: string;
     left: number;
@@ -819,12 +820,73 @@ async function probeSurface(page: Page): Promise<SurfaceProbe> {
       .filter((rect) => rect.right > window.innerWidth + 2 || rect.left < -2)
       .slice(0, 20);
 
+    const visiblePopoverItems = Array.from(document.querySelectorAll<HTMLElement>('.popover-item'))
+      .filter(isVisible);
+    const popoverItemViolations = visiblePopoverItems.flatMap((item) => {
+      const violations: string[] = [];
+      const style = getComputedStyle(item);
+      const parent = item.parentElement;
+      const label = item.textContent?.trim().replace(/\s+/gu, ' ').slice(0, 40) || '(unlabelled)';
+
+      if (style.display !== 'flex') violations.push(`${label}: display=${style.display}`);
+      if (!item.classList.contains('disabled') && Number.parseFloat(style.opacity) < 0.99) {
+        violations.push(`${label}: opacity=${style.opacity}`);
+      }
+      if (item.classList.contains('active') && !item.classList.contains('disabled')) {
+        const background = style.backgroundColor;
+        if (background === 'transparent' || background === 'rgba(0, 0, 0, 0)') {
+          violations.push(`${label}: active background is transparent`);
+        }
+      }
+      if (parent) {
+        const parentStyle = getComputedStyle(parent);
+        const parentContentWidth = parent.clientWidth
+          - Number.parseFloat(parentStyle.paddingLeft)
+          - Number.parseFloat(parentStyle.paddingRight);
+        const itemWidth = item.getBoundingClientRect().width;
+        if (Math.abs(parentContentWidth - itemWidth) > 1) {
+          violations.push(`${label}: width=${itemWidth.toFixed(1)}, parent=${parentContentWidth.toFixed(1)}`);
+        }
+      }
+
+      return violations;
+    });
+
+    const itemGroups = new Map<HTMLElement, HTMLElement[]>();
+    for (const item of visiblePopoverItems) {
+      const owner = item.closest<HTMLElement>('[role="listbox"], .batch-tag-list');
+      if (!owner) continue;
+      const group = itemGroups.get(owner) ?? [];
+      group.push(item);
+      itemGroups.set(owner, group);
+    }
+    for (const items of itemGroups.values()) {
+      for (let index = 1; index < items.length; index += 1) {
+        const previous = items[index - 1].getBoundingClientRect();
+        const current = items[index].getBoundingClientRect();
+        if (current.top < previous.bottom - 1) {
+          popoverItemViolations.push(`popover rows overlap at item ${index + 1}`);
+        }
+      }
+    }
+
+    for (const bullet of document.querySelectorAll<HTMLElement>('.popover-item-bullet')) {
+      if (!isVisible(bullet)) continue;
+      const marker = getComputedStyle(bullet, '::before');
+      const width = Number.parseFloat(marker.width);
+      const height = Number.parseFloat(marker.height);
+      if (width < 5 || height < 5) {
+        popoverItemViolations.push(`popover bullet: ${width.toFixed(1)}x${height.toFixed(1)}`);
+      }
+    }
+
     const root = document.documentElement;
     return {
       bodyTextLength: document.body.innerText.trim().length,
       bodyHorizontalOverflow: root.scrollWidth - root.clientWidth,
       colorScheme: getComputedStyle(root).colorScheme,
       hasRendererThemeBridge: Boolean(document.querySelector('[data-theme]')),
+      popoverItemViolations,
       visibleOutOfViewport,
     };
   });
@@ -847,6 +909,7 @@ test.describe('design-system runtime surfaces', () => {
         expect(probe.bodyTextLength).toBeGreaterThan(0);
         expect(probe.bodyHorizontalOverflow).toBe(0);
         expect(probe.visibleOutOfViewport).toEqual([]);
+        expect(probe.popoverItemViolations).toEqual([]);
         expect(probe.hasRendererThemeBridge).toBe(false);
         expect(probe.colorScheme).toContain(colorScheme);
       });
