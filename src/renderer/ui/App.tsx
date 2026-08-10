@@ -173,7 +173,7 @@ export function App() {
     openPreview,
     openThreadTurnDetailsPanel,
     panels,
-    repairMissingOutlinerRoots,
+    repairInvalidPanelViews,
     resizePanelPair,
     rootId,
     updatePanelScroll,
@@ -275,9 +275,9 @@ export function App() {
 
   useEffect(() => {
     if (!index) return;
-    const repairedFocusRootId = repairMissingOutlinerRoots(index.projection, index.byId);
+    const repairedFocusRootId = repairInvalidPanelViews(index.projection, index.byId);
     if (repairedFocusRootId) focusNode(repairedFocusRootId);
-  }, [focusNode, index, repairMissingOutlinerRoots]);
+  }, [focusNode, index, repairInvalidPanelViews]);
 
   useEffect(() => {
     void run(async () => {

@@ -41,6 +41,9 @@ export type PanelView = OutlinerPanelView | FilePreviewPanelView | ThreadTurnDet
 export interface WorkspaceContentPanelState extends WorkspacePanelBase {
   type: 'workspace';
   view: PanelView;
+  // Last live outliner root associated with this pane. Fresh split previews have
+  // no Back entry, so restore uses this root if their current node disappears.
+  recoveryRootId?: NodeId;
   // Per-pane view-navigation history. Always present — the panel factory and the
   // persistence sanitizer both seed it — so consumers never need to guard for
   // absence.

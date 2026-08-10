@@ -114,8 +114,21 @@ function samePanelView(left: PanelView, right: PanelView): boolean {
   return panelViewKey(left) === panelViewKey(right);
 }
 
-function workspacePanel(id: string, view: PanelView, size = 1): WorkspaceContentPanelState {
-  return { id, type: 'workspace', view, size, backStack: [], forwardStack: [] };
+function workspacePanel(
+  id: string,
+  view: PanelView,
+  size = 1,
+  recoveryRootId?: NodeId,
+): WorkspaceContentPanelState {
+  return {
+    id,
+    type: 'workspace',
+    view,
+    size,
+    backStack: [],
+    forwardStack: [],
+    ...(recoveryRootId ? { recoveryRootId } : {}),
+  };
 }
 
 function outlinerPanel(id: string, rootId: NodeId, size = 1): WorkspaceContentPanelState {
@@ -128,17 +141,22 @@ function filePreviewPanel(
   size = 1,
   nodeId?: NodeId,
   presentation?: FilePreviewPresentation,
+  recoveryRootId?: NodeId,
 ): WorkspaceContentPanelState {
-  return workspacePanel(id, filePreviewView(target, nodeId, undefined, presentation), size);
+  return workspacePanel(id, filePreviewView(target, nodeId, undefined, presentation), size, recoveryRootId);
 }
 
 function navigateWorkspacePanel(panel: WorkspaceContentPanelState, view: PanelView): WorkspaceContentPanelState {
   if (samePanelView(panel.view, view)) return panel;
+  const recoveryRootId = isOutlinerView(panel.view) && !isOutlinerView(view)
+    ? panel.view.rootId
+    : panel.recoveryRootId;
   return {
     ...panel,
     view,
     backStack: [...panel.backStack, panel.view].slice(-MAX_PANEL_PAGE_HISTORY),
     forwardStack: [],
+    ...(recoveryRootId ? { recoveryRootId } : {}),
   };
 }
 
@@ -150,7 +168,7 @@ function sanitizeSize(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 1;
 }
 
-function sanitizePanelView(value: unknown, nodeIds: Set<NodeId>): PanelView | null {
+function sanitizePanelView(value: unknown, nodeIds: NodeLookup): PanelView | null {
   if (!isRecord(value) || typeof value.kind !== 'string') return null;
   const scrollTop = normalizeScrollTop(value.scrollTop);
   if (value.kind === 'outliner') {
@@ -175,7 +193,7 @@ function sanitizePanelView(value: unknown, nodeIds: Set<NodeId>): PanelView | nu
   return null;
 }
 
-function sanitizeViewStack(value: unknown, nodeIds: Set<NodeId>): PanelView[] {
+function sanitizeViewStack(value: unknown, nodeIds: NodeLookup): PanelView[] {
   if (!Array.isArray(value)) return [];
   return value
     .map((entry) => sanitizePanelView(entry, nodeIds))
@@ -197,43 +215,189 @@ function panelOutlinerAnchor(panel: WorkspacePanelState): OutlinerPanelView | nu
   return null;
 }
 
-function sanitizePanel(value: unknown, nodeIds: Set<NodeId>): WorkspacePanelState | null {
+function panelRecoveryRootId(panel: WorkspacePanelState | null | undefined): NodeId | null {
+  if (!isWorkspacePanel(panel)) return null;
+  return panelOutlinerAnchor(panel)?.rootId ?? panel.recoveryRootId ?? null;
+}
+
+interface SanitizedWorkspacePanel {
+  readonly id: string;
+  readonly size: number;
+  readonly view: PanelView | null;
+  readonly backStack: PanelView[];
+  readonly forwardStack: PanelView[];
+  readonly recoveryRootId?: NodeId;
+}
+
+interface RepairedWorkspacePanel {
+  readonly panel: WorkspaceContentPanelState;
+  readonly recovered: boolean;
+}
+
+function sanitizePanel(value: unknown, nodeIds: NodeLookup): SanitizedWorkspacePanel | null {
   if (!isRecord(value) || typeof value.id !== 'string') return null;
   rememberId(value.id);
   const size = sanitizeSize(value.size);
   if (value.type !== 'workspace') return null;
-  const backStack = sanitizeViewStack(value.backStack, nodeIds);
-  const forwardStack = sanitizeViewStack(value.forwardStack, nodeIds);
-  const view = sanitizePanelView(value.view, nodeIds)
-    ?? backStack.pop()
-    ?? forwardStack.pop();
-  if (!view) return null;
   return {
     id: value.id,
-    type: 'workspace',
     size,
-    view,
-    backStack,
-    forwardStack,
+    view: sanitizePanelView(value.view, nodeIds),
+    backStack: sanitizeViewStack(value.backStack, nodeIds),
+    forwardStack: sanitizeViewStack(value.forwardStack, nodeIds),
+    ...(typeof value.recoveryRootId === 'string' && nodeIds.has(value.recoveryRootId)
+      ? { recoveryRootId: value.recoveryRootId }
+      : {}),
   };
 }
 
-function sanitizeLayout(value: unknown, nodeIds: Set<NodeId>): WorkspaceLayout | null {
-  if (!isRecord(value) || !Array.isArray(value.panels)) return null;
-  const panels = value.panels
-    .slice(0, MAX_PERSISTED_PANELS)
-    .map((panel) => sanitizePanel(panel, nodeIds))
-    .filter((panel): panel is WorkspacePanelState => Boolean(panel));
+function latestOutlinerIndex(views: readonly PanelView[]): number {
+  for (let index = views.length - 1; index >= 0; index -= 1) {
+    if (isOutlinerView(views[index])) return index;
+  }
+  return -1;
+}
+
+function cappedPanelHistory(...groups: readonly (readonly PanelView[])[]): PanelView[] {
+  return groups.flat().slice(-MAX_PANEL_PAGE_HISTORY);
+}
+
+function repairedPanel(
+  candidate: SanitizedWorkspacePanel,
+  view: PanelView,
+  backStack: PanelView[],
+  forwardStack: PanelView[],
+  recovered: boolean,
+): RepairedWorkspacePanel {
+  const recoveryRootId = recovered && isOutlinerView(view) ? view.rootId : candidate.recoveryRootId;
+  return {
+    recovered,
+    panel: {
+      id: candidate.id,
+      type: 'workspace',
+      size: candidate.size,
+      view,
+      backStack,
+      forwardStack,
+      ...(recoveryRootId ? { recoveryRootId } : {}),
+    },
+  };
+}
+
+function repairPanel(
+  candidate: SanitizedWorkspacePanel,
+  fallbackRootId: NodeId | null,
+): RepairedWorkspacePanel | null {
+  if (candidate.view) {
+    return repairedPanel(candidate, candidate.view, candidate.backStack, candidate.forwardStack, false);
+  }
+
+  const backIndex = latestOutlinerIndex(candidate.backStack);
+  if (backIndex >= 0) {
+    const view = candidate.backStack[backIndex];
+    return repairedPanel(
+      candidate,
+      view,
+      candidate.backStack.slice(0, backIndex),
+      cappedPanelHistory(
+        candidate.forwardStack,
+        candidate.backStack.slice(backIndex + 1).reverse(),
+      ),
+      true,
+    );
+  }
+
+  const forwardIndex = latestOutlinerIndex(candidate.forwardStack);
+  if (forwardIndex >= 0) {
+    const view = candidate.forwardStack[forwardIndex];
+    return repairedPanel(
+      candidate,
+      view,
+      cappedPanelHistory(
+        candidate.backStack,
+        candidate.forwardStack.slice(forwardIndex + 1).reverse(),
+      ),
+      candidate.forwardStack.slice(0, forwardIndex),
+      true,
+    );
+  }
+
+  const recoveryRootId = candidate.recoveryRootId ?? fallbackRootId;
+  if (!recoveryRootId) return null;
+  return repairedPanel(
+    { ...candidate, recoveryRootId },
+    outlinerView(recoveryRootId),
+    [],
+    cappedPanelHistory(candidate.forwardStack, candidate.backStack.slice().reverse()),
+    true,
+  );
+}
+
+function dedupeRecoveredOutliners(
+  entries: readonly RepairedWorkspacePanel[],
+  activePanelId: string | null,
+): RepairedWorkspacePanel[] {
+  const byRoot = new Map<NodeId, RepairedWorkspacePanel[]>();
+  for (const entry of entries) {
+    if (!isOutlinerView(entry.panel.view)) continue;
+    const group = byRoot.get(entry.panel.view.rootId) ?? [];
+    group.push(entry);
+    byRoot.set(entry.panel.view.rootId, group);
+  }
+
+  const removedIds = new Set<string>();
+  for (const group of byRoot.values()) {
+    const recovered = group.filter((entry) => entry.recovered);
+    if (recovered.length === 0) continue;
+    const activeRecovered = recovered.find((entry) => entry.panel.id === activePanelId);
+    if (activeRecovered) {
+      for (const entry of group) {
+        if (entry !== activeRecovered) removedIds.add(entry.panel.id);
+      }
+      continue;
+    }
+    const stable = group.filter((entry) => !entry.recovered);
+    if (stable.length > 0) {
+      for (const entry of recovered) removedIds.add(entry.panel.id);
+      continue;
+    }
+    for (const entry of recovered.slice(1)) removedIds.add(entry.panel.id);
+  }
+  return entries.filter((entry) => !removedIds.has(entry.panel.id));
+}
+
+function repairPanels(
+  candidates: readonly SanitizedWorkspacePanel[],
+  requestedActivePanelId: string | null,
+  fallbackRootId: NodeId | null,
+): WorkspaceLayout | null {
+  const repaired = candidates
+    .map((candidate) => repairPanel(candidate, fallbackRootId))
+    .filter((entry): entry is RepairedWorkspacePanel => Boolean(entry));
+  const entries = dedupeRecoveredOutliners(repaired, requestedActivePanelId);
+  const panels = entries.map((entry) => entry.panel);
   if (panels.length === 0) return null;
-  // The canvas is anchored by at least one outliner view, current or in a pane's
-  // view history.
   if (!panels.some((panel) => Boolean(panelOutlinerAnchor(panel)))) return null;
 
   const panelIds = new Set(panels.map((panel) => panel.id));
-  const activePanelId = typeof value.activePanelId === 'string' && panelIds.has(value.activePanelId)
-    ? value.activePanelId
+  const activePanelId = requestedActivePanelId && panelIds.has(requestedActivePanelId)
+    ? requestedActivePanelId
     : panels[0].id;
   return { activePanelId, panels };
+}
+
+function sanitizeLayout(
+  value: unknown,
+  nodeIds: NodeLookup,
+  fallbackRootId: NodeId | null,
+): WorkspaceLayout | null {
+  if (!isRecord(value) || !Array.isArray(value.panels)) return null;
+  const candidates = value.panels
+    .slice(0, MAX_PERSISTED_PANELS)
+    .map((panel) => sanitizePanel(panel, nodeIds))
+    .filter((panel): panel is SanitizedWorkspacePanel => Boolean(panel));
+  const requestedActivePanelId = typeof value.activePanelId === 'string' ? value.activePanelId : null;
+  return repairPanels(candidates, requestedActivePanelId, fallbackRootId);
 }
 
 function loadPersistedLayout(initial: DocumentProjection): WorkspaceLayout | null {
@@ -244,7 +408,7 @@ function loadPersistedLayout(initial: DocumentProjection): WorkspaceLayout | nul
     const parsed = JSON.parse(raw) as unknown;
     if (!isRecord(parsed) || parsed.version !== STORAGE_VERSION) return null;
     if (parsed.localDate !== todayIsoLocalDate()) return null;
-    return sanitizeLayout(parsed, nodeIds);
+    return sanitizeLayout(parsed, nodeIds, fallbackOutlinerRootId(initial, nodeIds));
   } catch {
     return null;
   }
@@ -271,15 +435,16 @@ function fallbackOutlinerRootId(projection: DocumentProjection, nodeIds: NodeLoo
   return projection.nodes[0]?.id ?? null;
 }
 
-function hasMissingOutlinerRoot(panels: readonly WorkspacePanelState[], nodeIds: NodeLookup): boolean {
+function hasInvalidPanelState(panels: readonly WorkspacePanelState[], nodeIds: NodeLookup): boolean {
   for (const panel of panels) {
     if (!isWorkspacePanel(panel)) continue;
-    if (isOutlinerView(panel.view) && !nodeIds.has(panel.view.rootId)) return true;
+    if (!sanitizePanelView(panel.view, nodeIds)) return true;
+    if (panel.recoveryRootId && !nodeIds.has(panel.recoveryRootId)) return true;
     for (const view of panel.backStack) {
-      if (isOutlinerView(view) && !nodeIds.has(view.rootId)) return true;
+      if (!sanitizePanelView(view, nodeIds)) return true;
     }
     for (const view of panel.forwardStack) {
-      if (isOutlinerView(view) && !nodeIds.has(view.rootId)) return true;
+      if (!sanitizePanelView(view, nodeIds)) return true;
     }
   }
   return false;
@@ -410,6 +575,11 @@ export function useWorkspaceLayout({
 
   const openPreviewPanel = useCallback((target: PreviewTarget, options: FilePreviewNavigationOptions = {}) => {
     const { nodeId, presentation } = options;
+    const sourcePanel = panels.find((panel) => panel.id === activePanelId);
+    const recoveryRootId = panelRecoveryRootId(sourcePanel)
+      ?? rootId
+      ?? panels.map(panelRecoveryRootId).find(Boolean)
+      ?? undefined;
     const keepActive = (panelId: string) => {
       setActivePanelId(panelId);
       window.requestAnimationFrame(() => setActivePanelId(panelId));
@@ -427,10 +597,13 @@ export function useWorkspaceLayout({
       const panelId = nextId('panel');
       preparePanelCount(panels.length + 1);
       keepActive(panelId);
-      setPanels((prev) => [...prev, filePreviewPanel(panelId, target, 1, nodeId, presentation)]);
+      setPanels((prev) => [
+        ...prev,
+        filePreviewPanel(panelId, target, 1, nodeId, presentation, recoveryRootId),
+      ]);
     }
     clearPreviewNavigationState();
-  }, [canFitPanelCount, clearPreviewNavigationState, panels, preparePanelCount]);
+  }, [activePanelId, canFitPanelCount, clearPreviewNavigationState, panels, preparePanelCount, rootId]);
 
   const navigatePanelPreview = useCallback((panelId: string, target: PreviewTarget, options?: FilePreviewNavigationOptions) => {
     if (options?.newPane) {
@@ -595,37 +768,24 @@ export function useWorkspaceLayout({
     panels,
   ]);
 
-  const repairMissingOutlinerRoots = useCallback((projection: DocumentProjection, nodeIds: NodeLookup): NodeId | null => {
+  const repairInvalidPanelViews = useCallback((projection: DocumentProjection, nodeIds: NodeLookup): NodeId | null => {
     if (!initializedRef.current || panels.length === 0) return null;
-    if (!hasMissingOutlinerRoot(panels, nodeIds)) return null;
+    if (!hasInvalidPanelState(panels, nodeIds)) return null;
     const fallbackRootId = fallbackOutlinerRootId(projection, nodeIds);
-    if (!fallbackRootId) return null;
+    const candidates = panels
+      .map((panel) => sanitizePanel(panel, nodeIds))
+      .filter((panel): panel is SanitizedWorkspacePanel => Boolean(panel));
+    const layout = repairPanels(candidates, activePanelId, fallbackRootId);
+    if (!layout) return null;
 
-    let changed = false;
-    let repairedActiveRootId: NodeId | null = null;
-    const nextPanels = panels.map((panel) => {
-      if (!isWorkspacePanel(panel)) return panel;
-
-      const backStack = panel.backStack.filter((view) => !isOutlinerView(view) || nodeIds.has(view.rootId));
-      const forwardStack = panel.forwardStack.filter((view) => !isOutlinerView(view) || nodeIds.has(view.rootId));
-      let view = panel.view;
-      let panelChanged = backStack.length !== panel.backStack.length
-        || forwardStack.length !== panel.forwardStack.length;
-
-      if (isOutlinerView(view) && !nodeIds.has(view.rootId)) {
-        view = outlinerView(fallbackRootId);
-        panelChanged = true;
-        if (panel.id === activePanelId) repairedActiveRootId = fallbackRootId;
-      }
-
-      if (!panelChanged) return panel;
-      changed = true;
-      return { ...panel, view, backStack, forwardStack };
-    });
-
-    if (!changed) return null;
-    setPanels(nextPanels);
-    return repairedActiveRootId;
+    const previousActivePanel = panels.find((panel) => panel.id === activePanelId) ?? null;
+    const nextActivePanel = layout.panels.find((panel) => panel.id === layout.activePanelId) ?? null;
+    setPanels(layout.panels);
+    if (layout.activePanelId !== activePanelId) setActivePanelId(layout.activePanelId);
+    return isOutlinerPanel(nextActivePanel)
+      && (!isOutlinerPanel(previousActivePanel) || previousActivePanel.view.rootId !== nextActivePanel.view.rootId)
+      ? nextActivePanel.view.rootId
+      : null;
   }, [activePanelId, panels]);
 
   // Move a pane to a new left-right position. `index` is an insertion position
@@ -684,7 +844,7 @@ export function useWorkspaceLayout({
     openPreview,
     openThreadTurnDetailsPanel,
     panels,
-    repairMissingOutlinerRoots,
+    repairInvalidPanelViews,
     resizePanelPair,
     rootId,
     updatePanelScroll,

@@ -279,7 +279,9 @@ location needed to read the current data:
 Opening Turn Diagnostics replaces the active pane's current view and pushes that view
 onto its Back stack; it never adds a pane. A different Turn replaces the current
 Turn Diagnostics target without adding another history entry. Back and the Diagnostics
-close action return to the originating view.
+close action return to the originating view. If sanitization leaves no Back
+destination and another pane remains, Close removes the Diagnostics pane instead
+of presenting a no-op control.
 
 The tile ratio (`size`) lives **on the panel**, not in a separate parallel map —
 one array is the whole layout truth, so adding/closing a pane cannot desync a
@@ -289,11 +291,23 @@ the TypeScript-backed document model. Pre-release layout shape changes do not
 ship migrations or legacy readers; old dev userData can be wiped.
 
 Restore sanitizes each workspace pane's current view and Back/Forward stacks
-independently. When the current view is invalid, the latest valid Back entry is
-promoted; if Back has none, the latest valid Forward entry is promoted instead.
-The promoted entry is removed from its stack while the pane id, size, remaining
-history, and active-pane identity are preserved. A pane is dropped only when its
-current view and both history stacks contain no valid view.
+independently. A valid current view stays current. An invalid current view can
+automatically land only on an outliner: restore chooses the latest valid Back
+outliner, then the latest valid Forward outliner. Valid entries skipped while
+reaching that outliner move to the opposite stack in navigation order, so a URL
+or Turn Diagnostics view remains user-reachable without mounting automatically
+at startup.
+
+A fresh split preview records the source pane's live outliner as
+`recoveryRootId`, because it starts with empty navigation stacks. If an invalid
+current view has no outliner in history, restore uses that recovery root and then
+the live Today/library/workspace fallback. Recovery never adds another copy of an
+already visible outliner root: an active recovered pane keeps its identity;
+otherwise an existing valid pane wins. Duplicate outliner panes that were all
+already valid remain allowed, including panes created deliberately with `Cmd+M`.
+The same policy repairs a live pane when a projection update invalidates an
+outliner root or node-bound asset preview, so runtime and restart do not choose
+different destinations.
 
 The canvas is anchored by at least one outliner view, either current or in a
 workspace pane's view history, so startup can restore focus. A sanitized layout
@@ -443,8 +457,9 @@ Source authority stays source-specific:
   on the existing asset commands. A standalone `asset` preview is only valid
   when the view is bound to a file node via `nodeId`; a persisted `file-preview`
   view whose target is an `asset` but has no `nodeId` is invalidated on restore.
-  If it was the current view, the pane falls back through its valid navigation
-  history under the restore rules above (pre-launch — no migration).
+  If it was the current view, the pane falls back to a live outliner under the
+  restore rules above; another preview or Diagnostics entry is retained only as
+  navigation history (pre-launch — no migration).
 - `url` targets are first-class loose previews. Ordinary `http(s)` links from the
   outliner and Thread history route into a Tenon split preview pane by default.
   URL targets normalize through one shared `http(s)`-only helper in core. The pane

@@ -310,7 +310,11 @@ export function WorkspaceCanvas(props: WorkspaceCanvasProps) {
               <ThreadTurnDetailsPanel
                 canGoBack={Boolean(panel.backStack.length)}
                 onBack={() => props.onNavigatePanelBack(panel.id)}
-                onClose={() => props.onNavigatePanelBack(panel.id)}
+                onClose={() => (
+                  panel.backStack.length > 0
+                    ? props.onNavigatePanelBack(panel.id)
+                    : props.onClosePanel(panel.id)
+                )}
                 panelDragHandle={panelDragHandleFor(panel)}
                 showClose={activePanels.length > 1}
                 threadId={panel.view.threadId}
