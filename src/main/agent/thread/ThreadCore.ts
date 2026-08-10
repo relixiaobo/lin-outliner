@@ -14,7 +14,8 @@ AgentCoreNotification,
 AgentCoreRecordedNotification,
 AgentCoreTransientNotification,
 ThreadId,
-Turn
+Turn,
+TurnItemsView,
 } from '../../../core/agent/protocol';
 import { ExtensionRegistry } from '../ExtensionRegistry';
 import { applyThreadItemDelta } from '../itemDelta';
@@ -227,10 +228,10 @@ export class ThreadCore {
   requireThread(threadId: ThreadId): ThreadCatalogRecord {
       return this.ephemeral.get(threadId)?.record ?? this.metadata.require(threadId);
     }
-  allTurns(threadId: ThreadId): Turn[] {
+  allTurns(threadId: ThreadId, itemsView: TurnItemsView = 'full'): Turn[] {
       const ephemeral = this.ephemeral.get(threadId);
       if (ephemeral) return [...ephemeral.turns];
-      return this.history.allTurns(threadId);
+      return this.history.allTurns(threadId, itemsView);
     }
   readTurn(threadId: ThreadId, turnId: string): Turn | null {
       return this.ephemeral.get(threadId)?.turns.find((turn) => turn.id === turnId)

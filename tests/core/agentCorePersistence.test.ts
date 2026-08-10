@@ -457,11 +457,12 @@ describe('Agent Core persistence', () => {
     expect(goals.addUsage(threadId, 100, 5, 13).goal.status).toBe('budgetLimited');
     expect(goals.readDeferral(threadId)).toBeNull();
     goals.updateFromAgent(threadId, 'complete', 14);
+    expect(goals.addUsage(threadId, 1, 1, 15).goal.status).toBe('complete');
 
-    const replacement = goals.create(threadId, 'Verify Agent Core', null, 15);
+    const replacement = goals.create(threadId, 'Verify Agent Core', null, 16);
     expect(replacement.generation).toBe(2);
     expect(replacement.goal.tokensUsed).toBe(0);
-    expect(() => goals.deferContinuation(threadId, first.generation, 'stale', 16)).toThrow('stale');
+    expect(() => goals.deferContinuation(threadId, first.generation, 'stale', 17)).toThrow('stale');
     goals.close();
   });
 

@@ -128,7 +128,9 @@ export class GoalStore {
     if (!current) throw new Error(`Goal not found for Thread: ${threadId}`);
     const tokensUsed = current.goal.tokensUsed + tokens;
     const timeUsedSeconds = current.goal.timeUsedSeconds + timeSeconds;
-    const status = current.goal.tokenBudget !== null && tokensUsed >= current.goal.tokenBudget
+    const status = current.goal.status === 'active'
+      && current.goal.tokenBudget !== null
+      && tokensUsed >= current.goal.tokenBudget
       ? 'budgetLimited'
       : current.goal.status;
     this.db.prepare(`
