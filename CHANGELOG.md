@@ -8,7 +8,30 @@ Entries reference the pull request that introduced them.
 
 ## [Unreleased]
 
-`main` is the `0.3.0` train; entries here move under the next tag.
+`main` is the `0.4.0` train; entries here move under the next tag.
+
+## [0.3.0] - 2026-08-10
+
+**Tenon 0.3 is about memory: the agent remembers what happened, notices what
+changed, and the app tells you when there's a newer one.**
+
+- **The agent keeps records** — every conversation now leaves a findable
+  transcript; a scheduled task starts by reading how its recent runs ended
+  instead of repeating last night's failure; and a long-running goal that hits
+  its budget signs off with a proper handoff — progress, remainder, blockers,
+  next step — instead of going quiet.
+- **It notices the document moving under it** — come back to a conversation
+  after editing your outline elsewhere, and the agent is told what changed
+  before it answers from stale memory.
+- **Your files are findable** — attachments (PDFs, recordings, videos) now
+  appear in search, and the audio/video filters finally mean what they say.
+- **Tenon tells you about new versions, quietly** — a gentle notice with the
+  release note and a download link; never a popup.
+- **A dozen fixes** — reading positions stop rewinding when a book or PDF is
+  open twice, a restored pane keeps its history, popover lists lay out as rows
+  again, a folder you bind stays your folder instead of a Skill namespace,
+  deleted rows leave selection and focus, and a provider hiccup mid-answer no
+  longer kills the whole turn.
 
 ### Added
 

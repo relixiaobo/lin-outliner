@@ -39,29 +39,32 @@ every stale entry, so the frontier is four parallel lanes (detail lives in each 
 theme-section entry below; this list is the ordering, not a second record):
 
 - **Lane A — build-ready quick wins** (fast-track, parallelize freely; small items
-  don't count against the review-queue cap): `floating-toolbar-polish`,
-  `icon-semantics`, the two remaining prime-agent
-  fast-tracks (`agent-delegation-context-hygiene` · `agent-hygiene-checks`; the
-  third shipped 2026-08-10 as #512; the `file-as-node` pane-restore bug shipped
-  2026-08-10 as #523), and the micro-tails
-  (#460 truncation dialects · `scripts-typecheck-coverage` · #208 follow-ups).
+  don't count against the review-queue cap): `floating-toolbar-polish` (**unblocked
+  2026-08-10** — its `core/types.ts` dependency landed with #510; rebase and go),
+  `icon-semantics`, `dual-auth-clarity` (scope ratified, one-pager then build), the
+  two remaining prime-agent fast-tracks (`agent-delegation-context-hygiene` ·
+  `agent-hygiene-checks`), and the micro-tails (#460 truncation dialects ·
+  `scripts-typecheck-coverage` · `plan-reference-guard` · #208 follow-ups).
   `dark-mode-contrast-pass` still runs **last** per its own rule; `performance` P3
   remains an uncapped background lane (trail + remaining items under **Performance**).
-- **Lane B — agent reliability**: _empty_ — `agent-doc-drift-notice` shipped
-  2026-08-10 as #522 and `agent-episodic-transcripts` is complete (#511 + #519,
-  same day). Next candidate comes from the **Agent capabilities** backlog.
-- **Lane C — product surface**: `update-check-and-prompt` shipped 2026-08-10 (#514);
-  next is the `file-preview` Office tail (apply its refresh note first), then the
-  `agent-skills-authoring` security tail.
-- **Lane D — test-signal infrastructure**: e2e stability, starting with the
-  visual-media baseline fixture (`test.extend` default), then the run-dependent flaky
-  set as one problem.
+- **Lane B — agent reliability**: cleared 2026-08-10 (`agent-doc-drift-notice` #522;
+  `agent-episodic-transcripts` #511 + #519). Next candidates from the backlog:
+  `agent-tool-artifact-resources`, then `computer-pilot-managed-skill` on top of it.
+  The next *major* agent bet is a PM direction call, not a backlog pop.
+- **Lane C — product surface**: `update-check-and-prompt` shipped #514; next is the
+  `file-preview` Office tail (apply its refresh note first), then the
+  `agent-skills-authoring` security tail. `signed-builds-and-auto-update` stays
+  gated: **PM deferred the Apple Developer membership 2026-08-10** — the shipped
+  prompt tier covers reach until that is revisited.
+- **Lane D — test-signal infrastructure**: **still unclaimed and now the oldest
+  untouched lane** — e2e stability, starting with the visual-media baseline fixture
+  (`test.extend` default), then the run-dependent flaky set as one problem. Wave 1
+  routed its intended owner elsewhere; give this lane the next free clone.
 
-**Design-gate queue** (PM bandwidth): _empty_ — `skill-path-ownership` shipped #513
-2026-08-10. The auth-clarity scope was **decided 2026-08-09: all five dual-auth rows** (entry renamed
-`dual-auth-clarity`) — it joins Lane A once its one-pager is drafted. **Release:** **v0.2.0 freeze initiated
-2026-08-09** (PM call — trains leave on time; Lane A catches the 0.3.0 train): note
-drafted by main, PM ratifies, then tag + dial to 0.3.0.
+**Design-gate queue** (PM bandwidth): _empty_ — `skill-path-ownership` shipped #513.
+**Release:** v0.2.0 shipped 2026-08-09; **v0.3.0 freeze initiated 2026-08-10** — the
+cadence rule fires (16 user-visible entries aboard): note drafted by main, PM
+ratifies, then tag + dial to 0.4.0.
 
 `pi-ai-0.80-upgrade` shipped #348 (clean `Models` migration, not the interim `/compat` shim) — see *Recently completed*.
 `dream-channel-and-memory-retire` shipped in full (PR1 #324 + PR2 #328 + PR3 #329) — see *Recently completed*.
@@ -627,7 +630,8 @@ between them:
   `docs/spec/design-system/surfaces.md`; plan archived at
   `docs/plans/archive/update-check-and-prompt.md`.
 - **signed-builds-and-auto-update** (P2, `draft` 2026-08-10, **gated on a PM
-  external action** — an Apple Developer Program membership) — true silent
+  external action** — an Apple Developer Program membership; **PM deferred the
+  membership 2026-08-10**, so this stays parked with no owner) — true silent
   auto-update on macOS (electron-updater / Squirrel.Mac) **refuses unsigned
   builds**, so this tier is structurally blocked until builds are signed and
   notarized. Signing pays twice: background auto-update becomes possible, and
