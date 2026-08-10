@@ -789,6 +789,15 @@ anything.
   Confirmed at the #460 high gate but omitted from the fix list; cosmetic, forensics-only.
   The 2026-08-09 audit found a **third** dialect to fold in: `agentLocalTools.ts:3201`
   (`...[N bytes omitted; full output saved to file]...`).
+- **plan-reference-guard** (P3, *fast-track, no plan file*, filed 2026-08-10 from the
+  staleness audit) — extend `docs:check`: scan active plans and the board for
+  `file:line`-shaped references and backticked symbol names, verify each still
+  resolves in the tree, and report the dead ones. The audit found 17 of 25 active
+  items stale after ~6 weeks of rewrites, and the rot is mechanically checkable —
+  the same B11 logic as the design guards: a discipline that a script can enforce
+  should not be left to memory. Line refs that the guard flags get rewritten as
+  symbol refs (the now-recorded authoring rule), so the guard converges the docs
+  toward the durable form.
 - **scripts-typecheck-coverage** (P3, *fast-track, no plan file*) — `scripts/` sits outside
   tsconfig `include`, so nothing typechecks `scripts/agent-dump.ts` or its hand-rolled
   `bunSqliteAdapter` (surfaced by the #460 gate; the 2026-08-09 audit counts the gap at

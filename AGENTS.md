@@ -295,6 +295,13 @@ only the outcome (the merge) is recorded.
 `/code-review` works on a local branch/diff — no GitHub PR required. It is billed
 and user-triggered.
 
+One extra gate duty when a merge **retires or rewrites a subsystem**: sweep the
+active plans' and board's reference surface for premises that just died. The
+retirement PR's gate is the only moment someone provably knows which claims
+stopped being true — nothing else links a backlog item to the code it describes
+(the 2026-08-09 audit found 17 of 25 items stale, including two whole items
+whose subject no longer existed).
+
 ### Concurrency & WIP discipline
 
 - **Cap the review queue, not the agent count.** At most **2 significant
@@ -448,7 +455,9 @@ A plan's lifecycle is the status of its board item; the plan file does not recor
 
 **Plan authoring.** Keep each plan single-file and **frontmatter-free** — it is
 pure design. Lead with **Goal** / **Non-goals**, then **Design**, then **Open
-questions**; sub-checklists last. When a plan is implemented, fold its **Design**
+questions**; sub-checklists last. **Reference code by symbol and test title,
+never by line number** — the 2026-08-09 staleness audit found every line ref in
+older entries had rotted while symbol and title refs survived. When a plan is implemented, fold its **Design**
 into the relevant `spec/` document, **mark its `docs/TASKS.md` item `done`**, and
 move the plan to `archive/`. A plan is not a place for daily progress notes —
 those go in commit messages.
