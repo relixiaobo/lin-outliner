@@ -245,12 +245,12 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
     setNotice(null);
   }), []);
 
-  // A page reached from below the fold must not inherit the previous pane's
-  // scroll position. Reset before paint; the anchor effect below can then move
-  // an explicit deep link to its requested group.
+  // A secondary page reached from below the fold must not inherit its parent
+  // pane's scroll position. Reset before paint when entering, leaving, or
+  // switching pages; category-to-category navigation does not trigger a reset.
   useLayoutEffect(() => {
     if (contentRef.current) contentRef.current.scrollTop = 0;
-  }, [route.category, route.page]);
+  }, [route.page]);
 
   useEffect(() => {
     if (loading || !route.anchor) return;

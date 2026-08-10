@@ -21,7 +21,10 @@ import {
 export const APP_UPDATE_THROTTLE_MS = 6 * 60 * 60 * 1_000;
 export const APP_UPDATE_TIMEOUT_MS = 5_000;
 const MAX_RELEASE_RESPONSE_BYTES = 1_000_000;
-const MAX_CHANGELOG_BYTES = 750_000;
+const MAX_CHANGELOG_BYTES = 4 * 1_024 * 1_024;
+const MAX_REDIRECTS = 2;
+const GITHUB_API_HOST = 'api.github.com';
+const GITHUB_RAW_HOST = 'raw.githubusercontent.com';
 
 type AppUpdateCheckKind = 'ambient' | 'explicit';
 
@@ -46,7 +49,6 @@ export class AppUpdateService {
   private readonly ready: Promise<void>;
   private state: StoredAppUpdateState;
   private phase: AppUpdateView['phase'] = 'idle';
-  private manualError: AppUpdateErrorCode | null = null;
   private checkInFlight: Promise<AppUpdateView> | null = null;
   private explicitCheckRequested = false;
 
@@ -76,7 +78,6 @@ export class AppUpdateService {
     await this.ready;
     if (this.state.automaticChecksEnabled === enabled) return this.projectView();
     this.state = { ...this.state, automaticChecksEnabled: enabled };
-    this.manualError = null;
     await this.options.store.save(this.state);
     this.emit();
     if (enabled) void this.checkInBackground({ force: true });
@@ -126,8 +127,8 @@ export class AppUpdateService {
   }
 
   private async runCheck(): Promise<AppUpdateView> {
+    let manualError: AppUpdateErrorCode | null = null;
     this.phase = 'checking';
-    this.manualError = null;
     this.state = { ...this.state, lastAttemptAt: this.now() };
     await this.options.store.save(this.state);
     this.emit();
@@ -136,7 +137,7 @@ export class AppUpdateService {
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
     timeout.unref?.();
     try {
-      const response = await this.fetch(APP_UPDATE_RELEASES_URL, {
+      const response = await fetchFromTrustedHost(this.fetch, APP_UPDATE_RELEASES_URL, GITHUB_API_HOST, {
         headers: {
           Accept: 'application/vnd.github+json',
           'User-Agent': `Tenon/${this.options.currentVersion}`,
@@ -161,13 +162,13 @@ export class AppUpdateService {
       await this.options.store.save(this.state);
     } catch (error) {
       this.options.onError?.(error, 'check');
-      if (this.explicitCheckRequested) this.manualError = classifyCheckError(error);
+      if (this.explicitCheckRequested) manualError = classifyCheckError(error);
     } finally {
       clearTimeout(timeout);
       this.phase = 'idle';
       this.emit();
     }
-    return this.projectView();
+    return this.projectView(manualError);
   }
 
   private async buildStoredRelease(
@@ -180,17 +181,22 @@ export class AppUpdateService {
     if (!sameRelease || note === null) {
       try {
         const tag = encodeURIComponent(release.tag);
-        const response = await this.fetch(
+        const response = await fetchFromTrustedHost(
+          this.fetch,
           `https://raw.githubusercontent.com/relixiaobo/lin-outliner/${tag}/CHANGELOG.md`,
+          GITHUB_RAW_HOST,
           { signal },
         );
         const changelog = await responseText(response, MAX_CHANGELOG_BYTES);
-        const releaseNote = parseChangelogReleases(changelog)
-          .find((entry) => normalizedVersion(entry.version) === release.version)?.note || null;
-        if (releaseNote && releaseNote.length > APP_UPDATE_MAX_RELEASE_NOTE_LENGTH) {
+        const matchingRelease = parseChangelogReleases(changelog)
+          .find((entry) => normalizedVersion(entry.version) === release.version);
+        if (!matchingRelease) {
+          throw new AppUpdatePayloadError('Changelog does not contain the selected release.');
+        }
+        if (matchingRelease.note.length > APP_UPDATE_MAX_RELEASE_NOTE_LENGTH) {
           throw new AppUpdatePayloadError('Release note exceeds the character limit.');
         }
-        note = releaseNote;
+        note = matchingRelease.note;
       } catch (error) {
         this.options.onError?.(error, 'release-note');
       }
@@ -218,7 +224,7 @@ export class AppUpdateService {
     return lastAttemptAt === null || now < lastAttemptAt || now - lastAttemptAt >= this.throttleMs;
   }
 
-  private projectView(): AppUpdateView {
+  private projectView(manualError: AppUpdateErrorCode | null = null): AppUpdateView {
     const release = this.availableStoredRelease();
     return {
       currentVersion: this.options.currentVersion,
@@ -228,10 +234,10 @@ export class AppUpdateService {
       availableRelease: release ? {
         version: release.version,
         publishedAt: release.publishedAt,
-        note: release.note,
+        note: release.note || null,
         downloadAvailable: release.downloadUrl !== null,
       } : null,
-      manualError: this.manualError,
+      manualError,
     };
   }
 
@@ -248,6 +254,46 @@ function classifyCheckError(error: unknown): AppUpdateErrorCode {
 
 function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === 'AbortError';
+}
+
+async function fetchFromTrustedHost(
+  fetchImpl: typeof globalThis.fetch,
+  initialUrl: string,
+  trustedHost: string,
+  init: RequestInit,
+): Promise<Response> {
+  let url = trustedUpdateUrl(initialUrl, trustedHost);
+  for (let redirect = 0; redirect <= MAX_REDIRECTS; redirect += 1) {
+    const response = await fetchImpl(url, { ...init, redirect: 'manual' });
+    if (response.status < 300 || response.status >= 400) return response;
+
+    await response.body?.cancel().catch(() => undefined);
+    const location = response.headers.get('location');
+    if (!location || redirect === MAX_REDIRECTS) {
+      throw new AppUpdatePayloadError('Update request returned too many or invalid redirects.');
+    }
+    url = trustedUpdateUrl(location, trustedHost, url);
+  }
+  throw new AppUpdatePayloadError('Update redirect policy rejected the request.');
+}
+
+function trustedUpdateUrl(value: string, trustedHost: string, base?: URL): URL {
+  let url: URL;
+  try {
+    url = new URL(value, base);
+  } catch {
+    throw new AppUpdatePayloadError('Update request returned an invalid redirect URL.');
+  }
+  if (
+    url.protocol !== 'https:'
+    || url.hostname !== trustedHost
+    || url.port !== ''
+    || url.username !== ''
+    || url.password !== ''
+  ) {
+    throw new AppUpdatePayloadError('Update request redirected outside its trusted GitHub host.');
+  }
+  return url;
 }
 
 async function responseText(response: Response, maxBytes: number): Promise<string> {

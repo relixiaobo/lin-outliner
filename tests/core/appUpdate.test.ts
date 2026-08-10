@@ -7,6 +7,7 @@ import {
   decodeGitHubReleases,
   isAppUpdateAvailable,
   selectLatestStableRelease,
+  type AppUpdateView,
 } from '../../src/core/appUpdate';
 import { AppUpdateService, APP_UPDATE_THROTTLE_MS } from '../../src/main/appUpdateService';
 import { AppUpdateStore, defaultState, type StoredAppUpdateState } from '../../src/main/appUpdateStore';
@@ -100,6 +101,7 @@ describe('AppUpdateService', () => {
       await prepared.service.checkInBackground();
       await prepared.service.checkInBackground();
       expect(prepared.fetchCalls).toHaveLength(2); // Releases plus exact-tag changelog.
+      expect(prepared.fetchInits.every((init) => init?.redirect === 'manual')).toBeTrue();
       const view = await prepared.service.view();
       expect(view.availableRelease).toEqual({
         version: '0.6.0',
@@ -115,7 +117,8 @@ describe('AppUpdateService', () => {
   });
 
   test('explicit checks bypass throttling and ambient failures retain cached availability', async () => {
-    const prepared = await prepareService();
+    const broadcasts: AppUpdateView[] = [];
+    const prepared = await prepareService({ onChanged: (view) => broadcasts.push(view) });
     try {
       await prepared.service.checkInBackground();
       prepared.fetchImpl = async () => { throw new Error('offline'); };
@@ -126,6 +129,8 @@ describe('AppUpdateService', () => {
       const explicit = await prepared.service.checkExplicitly();
       expect(explicit.availableRelease?.version).toBe('0.6.0');
       expect(explicit.manualError).toBe('network');
+      expect((await prepared.service.view()).manualError).toBeNull();
+      expect(broadcasts.every((view) => view.manualError === null)).toBeTrue();
       expect(prepared.fetchCalls.length).toBe(4);
     } finally {
       await prepared.cleanup();
@@ -156,6 +161,34 @@ describe('AppUpdateService', () => {
 
       expect((await explicit).manualError).toBe('network');
       await ambient;
+      expect((await service.view()).manualError).toBeNull();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('rejects an off-host redirect without following it', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-app-update-redirect-'));
+    const calls: string[] = [];
+    try {
+      const service = new AppUpdateService({
+        currentVersion: '0.3.0',
+        defaultAutomaticChecksEnabled: true,
+        store: new AppUpdateStore(root),
+        fetch: async (input, init) => {
+          calls.push(String(input));
+          expect(init?.redirect).toBe('manual');
+          return new Response(null, {
+            status: 302,
+            headers: { location: 'https://example.com/releases.json' },
+          });
+        },
+        openExternal: async () => undefined,
+      });
+
+      expect((await service.checkExplicitly()).manualError).toBe('invalid-response');
+      expect(calls).toHaveLength(1);
+      expect(calls[0]).toStartWith('https://api.github.com/');
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -243,6 +276,59 @@ describe('AppUpdateService', () => {
     }
   });
 
+  test('accepts a changelog above the old byte ceiling while keeping the stream bounded', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-app-update-large-changelog-'));
+    let calls = 0;
+    try {
+      const largeChangelog = `## [0.6.0] - 2026-08-10\n\nA bounded release note.\n\n### Internal\n\n${'x'.repeat(800_000)}`;
+      const service = new AppUpdateService({
+        currentVersion: '0.3.0',
+        defaultAutomaticChecksEnabled: true,
+        store: new AppUpdateStore(root),
+        fetch: async () => {
+          calls += 1;
+          return calls === 1
+            ? jsonResponse([release('0.6.0')])
+            : textResponse(largeChangelog);
+        },
+        openExternal: async () => undefined,
+      });
+
+      expect((await service.checkExplicitly()).availableRelease?.note).toBe('A bounded release note.');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('caches an empty exact-tag note without downloading the changelog again', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-app-update-empty-note-'));
+    const store = new AppUpdateStore(root);
+    const urls: string[] = [];
+    try {
+      const service = new AppUpdateService({
+        currentVersion: '0.3.0',
+        defaultAutomaticChecksEnabled: true,
+        store,
+        fetch: async (input) => {
+          const url = String(input);
+          urls.push(url);
+          return url.includes('api.github.com')
+            ? jsonResponse([release('0.6.0')])
+            : textResponse('## [0.6.0] - 2026-08-10\n\n### Fixed\n\n- Ledger entry only.\n');
+        },
+        openExternal: async () => undefined,
+      });
+
+      expect((await service.checkExplicitly()).availableRelease?.note).toBeNull();
+      expect((await service.checkExplicitly()).availableRelease?.note).toBeNull();
+      expect(urls.filter((url) => url.includes('raw.githubusercontent.com'))).toHaveLength(1);
+      const persisted = JSON.parse(await readFile(store.filePath, 'utf8')) as StoredAppUpdateState;
+      expect(persisted.release?.note).toBe('');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test('disabling automatic checks hides the dot but preserves manual checks', async () => {
     const prepared = await prepareService();
     try {
@@ -304,9 +390,13 @@ describe('AppUpdateService', () => {
   });
 });
 
-async function prepareService(options: { openExternal?: (url: string) => Promise<void> } = {}) {
+async function prepareService(options: {
+  openExternal?: (url: string) => Promise<void>;
+  onChanged?: (view: AppUpdateView) => void;
+} = {}) {
   const root = await mkdtemp(join(tmpdir(), 'tenon-app-update-service-'));
   const fetchCalls: string[] = [];
+  const fetchInits: Array<RequestInit | undefined> = [];
   let fetchImpl: typeof fetch = async (input) => {
     const url = String(input);
     if (url.includes('api.github.com')) return jsonResponse([release('0.4.0'), release('0.6.0')]);
@@ -318,14 +408,17 @@ async function prepareService(options: { openExternal?: (url: string) => Promise
     store: new AppUpdateStore(root),
     fetch: async (input, init) => {
       fetchCalls.push(String(input));
+      fetchInits.push(init);
       return fetchImpl(input, init);
     },
     openExternal: options.openExternal ?? (async () => undefined),
+    onChanged: options.onChanged,
     now: () => NOW,
   });
   return {
     service,
     fetchCalls,
+    fetchInits,
     get fetchImpl() { return fetchImpl; },
     set fetchImpl(value: typeof fetch) { fetchImpl = value; },
     cleanup: () => rm(root, { recursive: true, force: true }),

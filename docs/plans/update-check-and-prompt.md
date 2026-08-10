@@ -60,7 +60,9 @@ automatic-check preference, check phase, last successful check time, and an
 optional available release containing its version, publication time, parsed user
 note, and whether a direct download is available. URLs remain main-owned; renderer
 actions name `check`, `set automatic checks`, or `open download` instead of sending
-an arbitrary URL back across IPC.
+an arbitrary URL back across IPC. An explicit failure code exists only in that
+check call's direct response and About's mounted local state; ordinary reads and
+change broadcasts never replay it.
 
 On launch, a cached release at or below the running version is retired. A failed
 refresh never erases a newer cached release. A successful refresh with no release
@@ -78,7 +80,12 @@ and extracts the matching user-register note with the same
 `parseChangelogReleases` contract used by What's New and release publishing. Note
 fetch or parse failure degrades to honest version/download status rather than
 hiding a known update. A cached note is reused while the selected version is
-unchanged.
+unchanged, including an intentionally empty note from a release section written
+before the user-register convention.
+
+Both GitHub requests disable automatic redirect following. Main validates each
+redirect hop against the request's fixed HTTPS host and accepts at most two hops;
+response bodies remain incrementally bounded independently of redirect handling.
 
 The direct asset must be a `.dmg` belonging to the selected release, and its URL
 must remain on GitHub's expected HTTPS release-download path. The release page is

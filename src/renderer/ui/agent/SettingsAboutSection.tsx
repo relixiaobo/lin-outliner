@@ -59,6 +59,22 @@ function ReleaseNoteImage({ alt }: ComponentPropsWithoutRef<'img'>) {
 
 const RELEASE_NOTE_COMPONENTS = { a: ReleaseNoteLink, img: ReleaseNoteImage };
 
+function ReleaseNote({ note }: { note: string }) {
+  return (
+    <div className="settings-about-release-note-row" role="listitem">
+      <div className="file-preview-markdown settings-about-release-note">
+        <Markdown
+          components={RELEASE_NOTE_COMPONENTS}
+          remarkPlugins={RELEASE_NOTE_REMARK_PLUGINS}
+          skipHtml
+        >
+          {note}
+        </Markdown>
+      </div>
+    </div>
+  );
+}
+
 /**
  * About: what this is, what changed, and how to reach us.
  *
@@ -152,7 +168,10 @@ export function SettingsAboutSection({
     try {
       const next = await window.lin?.appUpdate?.check();
       if (!next) throw new Error('App update bridge unavailable.');
-      onAppUpdateChange(next);
+      if (next.manualError) {
+        setUpdateActionError(updateErrorMessage(next.manualError, t.settings.about));
+      }
+      onAppUpdateChange({ ...next, manualError: null });
     } catch {
       setUpdateActionError(t.settings.about.updateCheckFailed);
     }
@@ -183,8 +202,8 @@ export function SettingsAboutSection({
   }
 
   const availableUpdate = appUpdate?.availableRelease ?? null;
-  const updateError = updateActionError
-    ?? (appUpdate?.manualError ? updateErrorMessage(appUpdate.manualError, t.settings.about) : null);
+  const hasSuccessfulCheck = appUpdate?.lastSuccessfulCheckAt !== null
+    && appUpdate?.lastSuccessfulCheckAt !== undefined;
   const lastChecked = appUpdate?.lastSuccessfulCheckAt !== null && appUpdate?.lastSuccessfulCheckAt !== undefined
     ? t.settings.about.updateLastChecked({
         date: new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' })
@@ -195,11 +214,11 @@ export function SettingsAboutSection({
     ? t.settings.about.updateChecking
     : availableUpdate
       ? t.settings.about.updateAvailable({ version: availableUpdate.version })
-      : appUpdate?.automaticChecksEnabled
-        ? appUpdate.lastSuccessfulCheckAt === null
+      : hasSuccessfulCheck
+        ? t.settings.about.updateCurrent
+        : appUpdate?.automaticChecksEnabled
           ? t.settings.about.updateNotChecked
-          : t.settings.about.updateCurrent
-        : t.settings.about.updateAutomaticOff;
+          : t.settings.about.updateAutomaticOff;
   const updateStatusSublabel = availableUpdate
     ? t.settings.about.updateReleased({
         date: new Intl.DateTimeFormat(locale, { dateStyle: 'medium' })
@@ -239,20 +258,12 @@ export function SettingsAboutSection({
             wrap
           />
           {availableUpdate?.note ? (
-            <div className="settings-about-release-note-row" role="listitem">
-              <div className="file-preview-markdown settings-about-release-note">
-                <Markdown
-                  components={RELEASE_NOTE_COMPONENTS}
-                  remarkPlugins={RELEASE_NOTE_REMARK_PLUGINS}
-                  skipHtml
-                >
-                  {availableUpdate.note}
-                </Markdown>
-              </div>
-            </div>
+            <ReleaseNote note={availableUpdate.note} />
           ) : null}
           <InsetRow
-            feedback={updateError ? <div className="settings-update-error" role="alert">{updateError}</div> : undefined}
+            feedback={updateActionError
+              ? <div className="settings-update-error" role="alert">{updateActionError}</div>
+              : undefined}
             label={t.settings.about.updateCheckLabel}
             sublabel={lastChecked}
             trailing={(
@@ -290,17 +301,7 @@ export function SettingsAboutSection({
           {/* A section written before the note convention degrades to the link
               alone — better an honest pointer than a dump of category detail. */}
           {release.note ? (
-            <div className="settings-about-release-note-row" role="listitem">
-              <div className="file-preview-markdown settings-about-release-note">
-                <Markdown
-                  components={RELEASE_NOTE_COMPONENTS}
-                  remarkPlugins={RELEASE_NOTE_REMARK_PLUGINS}
-                  skipHtml
-                >
-                  {release.note}
-                </Markdown>
-              </div>
-            </div>
+            <ReleaseNote note={release.note} />
           ) : null}
           <InsetRow
             label={t.settings.about.fullChangelogAction}

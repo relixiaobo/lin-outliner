@@ -79,8 +79,11 @@ Main strictly decodes a bounded release/asset response, ignores drafts,
 prereleases, and invalid SemVer tags, and selects the highest stable version
 rather than trusting API order. It fetches `CHANGELOG.md` from that exact tag and
 reuses `parseChangelogReleases` for the user-register note; note failure does not
-hide an otherwise verified release. Both remote bodies are read incrementally;
-Main cancels the stream as soon as its byte ceiling is crossed.
+hide an otherwise verified release, while an exact section's empty note is cached
+distinctly from failure. Both requests disable automatic redirects, validate
+every hop against their fixed GitHub host, and accept at most two hops. Both
+remote bodies are read incrementally; Main cancels the stream as soon as its byte
+ceiling is crossed.
 
 The versioned private `userData/app-update-state.json` record stores the automatic
 check preference, attempt/success timestamps, and the last verified release.
@@ -90,7 +93,9 @@ state nor a startup dependency. Release-page and `.dmg` destinations remain Main
 private and are revalidated on decode/load. The Settings preload can request
 `get`, `check`, `set automatic`, or `open`; it cannot submit a URL, and the
 launcher receives no update capability. Main accepts those IPC calls only from
-the live Settings window.
+the live Settings window. Only the direct response to a current explicit check
+may carry its bounded failure code; ordinary reads and change broadcasts clear
+that field, so reopening About cannot replay an old failure.
 
 Derived metadata is extracted at ingest from the bytes alone — PDF page count by
 scanning for page objects, audio/video duration parsed from WAV/MP4 container

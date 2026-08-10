@@ -171,20 +171,108 @@ describe('SettingsAboutSection', () => {
   });
 
   test('keeps an explicit timeout inside the Software Update group', async () => {
+    if (!window.lin) throw new Error('Missing test bridge');
     const state: AppUpdateView = {
       currentVersion: '0.1.0',
       automaticChecksEnabled: true,
       phase: 'idle',
       lastSuccessfulCheckAt: null,
       availableRelease: null,
-      manualError: 'timeout',
+      manualError: null,
     };
-    await renderAbout(CHANGELOG_FIXTURE, state);
+    window.lin.appUpdate = {
+      get: async () => state,
+      check: async () => ({ ...state, manualError: 'timeout' }),
+      setAutomaticChecksEnabled: async (enabled) => ({ ...state, automaticChecksEnabled: enabled }),
+      open: async () => ({ ok: false, error: 'unavailable' }),
+      onChanged: () => () => undefined,
+    };
+    const projected: AppUpdateView[] = [];
+    await renderAbout(CHANGELOG_FIXTURE, state, (view) => projected.push(view));
+
+    const check = [...document.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.includes('Check now'));
+    await act(async () => {
+      check?.click();
+      await Promise.resolve();
+    });
 
     const updateGroup = document.querySelector('[data-settings-anchor="software-update"]');
     expect(updateGroup?.querySelector('[role="alert"]')?.textContent)
       .toBe('The update check timed out. Try again.');
+    expect(projected.at(-1)?.manualError).toBeNull();
     expect(document.querySelector('.agent-settings-feedback')).toBeNull();
+  });
+
+  test('shows current after a successful manual check while automatic checks are off', async () => {
+    if (!window.lin) throw new Error('Missing test bridge');
+    const state: AppUpdateView = {
+      currentVersion: '0.1.0',
+      automaticChecksEnabled: false,
+      phase: 'idle',
+      lastSuccessfulCheckAt: null,
+      availableRelease: null,
+      manualError: null,
+    };
+    const checked = { ...state, lastSuccessfulCheckAt: 1_800_000_000_000 };
+    window.lin.appUpdate = {
+      get: async () => state,
+      check: async () => checked,
+      setAutomaticChecksEnabled: async (enabled) => ({ ...checked, automaticChecksEnabled: enabled }),
+      open: async () => ({ ok: false, error: 'unavailable' }),
+      onChanged: () => () => undefined,
+    };
+    const projected: AppUpdateView[] = [];
+    const onChange = (view: AppUpdateView) => projected.push(view);
+    await renderAbout(CHANGELOG_FIXTURE, state, onChange);
+    expect(document.querySelector('[data-settings-anchor="software-update"]')?.textContent)
+      .toContain('Automatic checks are off');
+
+    const check = [...document.querySelectorAll<HTMLButtonElement>('button')]
+      .find((button) => button.textContent?.includes('Check now'));
+    await act(async () => {
+      check?.click();
+      await Promise.resolve();
+    });
+    await renderAbout(CHANGELOG_FIXTURE, projected.at(-1) ?? null, onChange);
+
+    const updateGroup = document.querySelector('[data-settings-anchor="software-update"]');
+    expect(updateGroup?.textContent).toContain('Tenon is up to date');
+    expect(updateGroup?.textContent).not.toContain('Automatic checks are off');
+  });
+
+  test('hardens links and images identically in both release-note surfaces', async () => {
+    const state: AppUpdateView = {
+      currentVersion: '0.1.0',
+      automaticChecksEnabled: true,
+      phase: 'idle',
+      lastSuccessfulCheckAt: 1_800_000_000_000,
+      availableRelease: {
+        version: '0.2.0',
+        publishedAt: '2026-08-10T00:00:00Z',
+        note: '[Update details](https://example.com/update)\n\n![Update art](https://example.com/update.png)',
+        downloadAvailable: false,
+      },
+      manualError: null,
+    };
+    const changelog = CHANGELOG_FIXTURE.replace(
+      '**Welcome to Tenon 0.1.** See the [details](https://example.com/release).',
+      '**Welcome to Tenon 0.1.** See the [details](https://example.com/release).\n\n![Bundled art](https://example.com/release.png)',
+    );
+    await renderAbout(changelog, state);
+    const opened = openedUrls();
+    const notes = [...document.querySelectorAll<HTMLElement>('.settings-about-release-note')];
+
+    expect(notes).toHaveLength(2);
+    expect(notes.every((note) => note.querySelector('img') === null)).toBeTrue();
+    expect(notes[0]?.textContent).toContain('Update art');
+    expect(notes[1]?.textContent).toContain('Bundled art');
+    await act(async () => {
+      notes[0]?.querySelector<HTMLAnchorElement>('a')?.click();
+      notes[1]?.querySelector<HTMLAnchorElement>('a')?.click();
+      await Promise.resolve();
+    });
+    expect(opened).toEqual(['https://example.com/update', 'https://example.com/release']);
   });
 
   test('heads What\'s New with the running version and shows its note inline', async () => {

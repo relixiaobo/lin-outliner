@@ -290,9 +290,10 @@ Rail, toolbar, and category render immediately; provider/runtime data loads loca
 **Pages.** Model services and Skills sit under Agent; About sits under General.
 An unbounded collection the user installs or connects becomes a page; bounded
 settings stay inline. Page rows carry chevrons, history walks real routes, and
-per-provider configuration remains a native child window. Each route transition
-resets the content scrollport before paint; an explicit deep-link anchor then
-positions its requested group.
+per-provider configuration remains a native child window. Entering, leaving, or
+switching a secondary page resets the content scrollport before paint; ordinary
+category-to-category navigation does not trigger that reset. An explicit deep-
+link anchor then positions its requested group.
 
 **Deep links.** Categories are `general|agent|preview`; pages are
 `agent/services`, `agent/skills`, and `general/about`. An optional bounded

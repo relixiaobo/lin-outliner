@@ -135,6 +135,11 @@ test.describe('agent settings window', () => {
     await expect(settings.locator('.action-notice')).toHaveCount(0);
     await expect(page.getByRole('dialog')).toHaveCount(0);
 
+    await settings.locator('.settings-content').evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+    });
+    await expect.poll(() => settings.locator('.settings-content').evaluate((element) => element.scrollTop))
+      .toBeGreaterThan(0);
     await settings.locator('.inset-row', { hasText: 'About Tenon' }).locator('.inset-row-main').click();
     await expect(settings.getByRole('list', { name: 'Software Update' })).toBeVisible();
     await expect.poll(() => settings.locator('.settings-content').evaluate((element) => element.scrollTop)).toBe(0);
