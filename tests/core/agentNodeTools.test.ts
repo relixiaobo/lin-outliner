@@ -260,8 +260,8 @@ describe('agent node tools', () => {
     expect(nodeSearch.description).toContain('[[node:^exact-id]]');
     expect(nodeSearch.description).toContain('Do not express done state as FIELD_IS');
     expect(nodeSearch.description).toContain('Use DATE_OVERLAPS only for values stored in a date field');
-    expect(nodeSearch.description).not.toContain('HAS_AUDIO');
-    expect(nodeSearch.description).not.toContain('HAS_VIDEO');
+    expect(nodeSearch.description).toContain('IS_TYPE value:: node|tag|field|search|day|week|year|image|attachment|code');
+    expect(nodeSearch.description).toContain('HAS_MEDIA, HAS_IMAGE, HAS_AUDIO, and HAS_VIDEO need no operand');
     expect(nodeSearchParameters).not.toContain('Plain field names');
     expect(nodeSearchParameters).not.toContain('Date field values use YYYY-MM-DD');
     expect((nodeSearch.parameters as any).properties.queries.maxItems).toBe(20);
@@ -3317,16 +3317,43 @@ describe('agent node tools', () => {
     expect(envelope.data!.items?.map((item) => item.nodeId)).not.toContain(untagged);
   });
 
-  test('node_search keeps legacy media rules parseable but inert', async () => {
+  test('node_search executes attachment-backed media rules', async () => {
     const core = Core.new();
+    const today = core.projection().todayId;
+    const image = mustFocus(core.createImageNode(today, null, {
+      mediaUrl: 'https://example.com/cover.png',
+      name: 'Cover art',
+    }));
+    const audio = mustFocus(core.createAttachmentNode(today, null, {
+      assetId: 'asset-audio',
+      mimeType: 'audio/wav',
+      originalFilename: 'Voice memo.wav',
+      fileSize: 200,
+    }));
+    const video = mustFocus(core.createAttachmentNode(today, null, {
+      assetId: 'asset-video',
+      mimeType: 'video/mp4',
+      originalFilename: 'Product demo.mp4',
+      fileSize: 300,
+    }));
 
-    for (const op of ['HAS_AUDIO', 'HAS_VIDEO'] as const) {
-      const envelope = await executeTool<{ total: number }>(core, 'node_search', {
+    const cases = [
+      { op: 'HAS_IMAGE', expected: [image] },
+      { op: 'HAS_AUDIO', expected: [audio] },
+      { op: 'HAS_VIDEO', expected: [video] },
+      { op: 'HAS_MEDIA', expected: [image, audio, video] },
+    ] as const;
+    for (const { op, expected } of cases) {
+      const envelope = await executeTool<{
+        total: number;
+        items?: Array<{ nodeId: string }>;
+      }>(core, 'node_search', {
         outline: `- %%search%% Legacy media\n  - ${op}`,
       });
 
       expect(envelope.ok).toBe(true);
-      expect(envelope.data?.total).toBe(0);
+      expect(envelope.data?.total).toBe(expected.length);
+      expect(envelope.data?.items?.map((item) => item.nodeId).sort()).toEqual([...expected].sort());
     }
   });
 

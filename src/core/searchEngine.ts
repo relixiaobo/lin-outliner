@@ -36,6 +36,7 @@ import {
   startOfLocalDay,
   startOfLocalWeek,
 } from './localDate';
+import { mediaKindForMimeType, type MediaKind } from './mediaKind';
 import { intersectSetList, unionSets } from './setUtils';
 import {
   createTextSearchIndex,
@@ -615,10 +616,6 @@ export function searchQueryTerms(query: SearchQueryExpr | null | undefined): str
   if (!query) return [];
   const compiled = compileSearchQueryExpr(query);
   return compiled.ok ? compiled.query.terms : [];
-}
-
-export function isCoreSearchCandidate(document: SearchDocument, nodeId: NodeId): boolean {
-  return isSearchCandidate(indexSearchDocument(document), nodeId);
 }
 
 export function scoreSearchTerm(document: SearchDocument, nodeId: NodeId, term: string): number {
@@ -1213,11 +1210,16 @@ function evaluateLeaf(index: SearchIndex, candidate: SearchNode, conditionNode: 
 
   if (op === 'OVERDUE') return { ok: true, match: nodeIsOverdue(index, candidate, conditionNode), score: 18 };
 
-  // Preserve old saved searches and replayed outlines until attachment-backed media facets land.
-  if (op === 'HAS_AUDIO' || op === 'HAS_VIDEO') return { ok: true, match: false, score: 0 };
-
-  if (op === 'HAS_MEDIA' || op === 'HAS_IMAGE') {
-    return { ok: true, match: candidate.type === 'image', score: 14 };
+  if (op === 'HAS_MEDIA' || op === 'HAS_IMAGE' || op === 'HAS_AUDIO' || op === 'HAS_VIDEO') {
+    const mediaKind = nodeMediaKind(candidate);
+    const match = op === 'HAS_MEDIA'
+      ? mediaKind !== null
+      : op === 'HAS_IMAGE'
+        ? mediaKind === 'image'
+        : op === 'HAS_AUDIO'
+          ? mediaKind === 'audio'
+          : mediaKind === 'video';
+    return { ok: true, match, score: 14 };
   }
 
   return {
@@ -1957,6 +1959,13 @@ function isCalendarNode(index: SearchIndex, nodeId: NodeId): boolean {
   return isDayNode(index, nodeId) || isWeekNode(index, nodeId) || isYearNode(index, nodeId);
 }
 
+function nodeMediaKind(node: SearchNode): MediaKind | null {
+  if (node.type === 'image') return 'image';
+  if (node.type !== 'attachment') return null;
+  const mediaKind = mediaKindForMimeType(node.mimeType);
+  return mediaKind === 'audio' || mediaKind === 'video' ? mediaKind : null;
+}
+
 function nodeMatchesType(index: SearchIndex, node: SearchNode, expectedType: string): boolean {
   const expected = normalizeComparableValue(expectedType).replace(/[\s_-]+/g, '');
   const actual = normalizeComparableValue(node.type ?? 'node').replace(/[\s_-]+/g, '');
@@ -2083,7 +2092,7 @@ function isSearchCandidate(index: SearchIndex, nodeId: NodeId): boolean {
   return !isInTrash(index, nodeId)
     && !hasAncestorOfType(index, nodeId, 'queryCondition')
     && !SYSTEM_IDS.has(nodeId)
-    && (node.type === undefined || ['tagDef', 'fieldDef', 'search', 'codeBlock', 'image'].includes(node.type));
+    && (node.type === undefined || ['tagDef', 'fieldDef', 'search', 'codeBlock', 'image', 'attachment'].includes(node.type));
 }
 
 function hasAncestorOfType(index: SearchIndex, nodeId: NodeId, type: SearchNode['type']): boolean {

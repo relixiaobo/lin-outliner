@@ -85,6 +85,7 @@ export type IconId =
   | 'description'
   | 'duplicate'
   | 'field'
+  | 'file'
   | 'filter'
   | 'group'
   | 'hideToolbar'

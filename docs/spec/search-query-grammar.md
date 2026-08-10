@@ -59,20 +59,27 @@ hyphens before comparison. It first compares that value with the node's exact
 - `calendar` or `calendarnode` for any day, week, or year node, with `day`,
   `week`, and `year` matching only their respective calendar node;
 - `image` for image nodes;
+- `attachment` for attachment nodes;
 - `code` or `codeblock` for code-block nodes.
 
 The evaluator only visits search candidates: plain, tag-definition,
-field-definition, search, code-block, and image nodes outside trash, system
-roots, and query-condition trees. An exact type outside that candidate set is
-therefore executable but cannot currently match; notably, `IS_TYPE attachment`
-returns no hits because attachment nodes are not yet candidates.
+field-definition, search, code-block, image, and attachment nodes outside trash,
+system roots, and query-condition trees. Attachment display text defaults to the
+original filename, so ordinary `STRING_MATCH` queries and Launcher lookup can
+find files by name; `IS_TYPE attachment` matches every searchable attachment,
+including PDFs. Candidacy is global rather than operator-specific: every
+executable tag, timestamp, field, link, or structural rule evaluates an
+attachment when that attachment carries the rule's required data.
 
-`HAS_IMAGE` matches image nodes, and `HAS_MEDIA` is currently the same predicate
-under a broader name. Neither rule infers media from arbitrary text or URLs.
-`HAS_AUDIO` and `HAS_VIDEO` remain executable protocol terms for compatibility
-with saved searches and replayed agent outlines, but currently always return no
-match and are deliberately absent from model-facing operator guidance. Their
-attachment-backed semantics are defined by the next media-search change.
+Media rules take no operand. Image nodes always match `HAS_IMAGE` and
+`HAS_MEDIA`. The attachment write boundary rejects `image/*`, so attachment
+facets classify only explicit normalized `audio/*` and `video/*` MIME families;
+both also match `HAS_MEDIA`. Asset ingestion recognizes common media signatures
+and filename extensions before creating the node, including AAC, FLAC,
+Matroska, MPEG, Ogg/Opus, AVI, WMA, and WMV. Missing/generic MIME data, duration
+metadata, arbitrary text, filenames inside the search evaluator, and URLs never
+override the stored family. PDFs and other files remain available through text
+search and `IS_TYPE attachment`, not a media facet.
 
 ## Complexity Budget
 

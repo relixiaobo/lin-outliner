@@ -23,6 +23,7 @@ function harness() {
   const core = Core.new();
   const commands: { command: string; args: Record<string, unknown> }[] = [];
   const surfaces: string[] = [];
+  const rendererSteps: unknown[] = [];
   const host: ActionInvocationHost = {
     projection: () => core.projection(),
     runCommand: async (command, args) => {
@@ -35,13 +36,16 @@ function harness() {
       query,
       { limit },
     ),
-    executeRendererStep: async () => ({ status: 'ok' }),
+    executeRendererStep: async (step) => {
+      rendererSteps.push(step);
+      return { status: 'ok' };
+    },
     activateAppSurface: async (surface) => { surfaces.push(surface); },
     writeClipboard: () => undefined,
     untitled: () => 'Untitled',
     now: () => 1,
   };
-  return { core, commands, surfaces, service: new ActionInvocationService(host) };
+  return { core, commands, rendererSteps, surfaces, service: new ActionInvocationService(host) };
 }
 
 function labels(opening: InvocationOpened): string[] {
@@ -109,6 +113,49 @@ describe('the main-list query generation', () => {
     if (result.status !== 'ready') return;
     expect(result.resultItems.some((item) => item.object.kind === 'draft')).toBe(false);
     expect(result.resultItems[0]?.object.kind).toBe('node');
+  });
+
+  test('returns and opens attachment nodes through the shared search kernel', async () => {
+    const h = harness();
+    const attachment = h.core.createAttachmentNode(h.core.projection().todayId, null, {
+      assetId: 'asset-quarterly-call',
+      mimeType: 'audio/wav',
+      originalFilename: 'Quarterly call recording.wav',
+      fileSize: 2_048,
+    }).focus!.nodeId;
+    const opened = h.service.openLauncher({ openSeq: 1, consumerId: LAUNCHER });
+    const result = h.service.queryObjects({
+      invocationRef: opened.invocationRef,
+      openSeq: 1,
+      requestId: 'r1' as RequestId,
+      query: 'Quarterly call',
+    }, LAUNCHER);
+
+    expect(result.status).toBe('ready');
+    if (result.status !== 'ready') return;
+    const item = result.resultItems.find((candidate) => candidate.object.backingNodeId === attachment);
+    expect(item?.object.kind).toBe('node');
+    expect(item?.object.name).toEqual({ source: 'literal', value: 'Quarterly call recording.wav' });
+    expect(item?.object.iconId).toBe('file');
+    expect(item?.object.typeLabel).toEqual({ en: 'File', 'zh-Hans': '文件' });
+    expect(item?.primaryAction?.actionId).toBe('open');
+    expect(result.resultItems.some((candidate) => candidate.object.kind === 'draft')).toBe(false);
+    expect(item).toBeDefined();
+    if (!item) return;
+
+    const openedAttachment = await h.service.request({
+      actionId: 'open',
+      invocationRef: opened.invocationRef,
+      subjectRef: item.object.objectRef,
+      arguments: {},
+    }, LAUNCHER);
+    expect(openedAttachment.status).toBe('completed');
+    expect(h.rendererSteps).toEqual([{
+      on: 'mainRenderer',
+      kind: 'navigate',
+      nodeId: attachment,
+      inPlace: true,
+    }]);
   });
 
   test('a zero-match query yields EXACTLY one node-purpose draft', () => {

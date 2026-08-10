@@ -147,6 +147,7 @@ export function presentObject(
       }
       const contentId = nodeIdForFacet(object.content, projection);
       const node = projection.byId.get(contentId);
+      const isAttachment = node?.type === 'attachment';
       // The parent's text disambiguates same-named nodes, which is the whole
       // reason the shipped launcher row carried a subtitle.
       const parent = node?.parentId ? projection.byId.get(node.parentId) : undefined;
@@ -160,8 +161,8 @@ export function presentObject(
         // Only a real emoji icon: an image / generated icon identifier is not
         // an emoji, and emitting it as one renders the raw id.
         ...(node?.icon && node.iconKind === 'emoji' ? { emoji: node.icon } : {}),
-        iconId: 'node',
-        typeLabel: objectTypeLabel('node'),
+        iconId: isAttachment ? 'file' : 'node',
+        typeLabel: objectTypeLabel(isAttachment ? 'file' : 'node'),
         backingNodeId: contentId,
       };
     }

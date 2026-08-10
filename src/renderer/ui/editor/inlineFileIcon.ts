@@ -10,6 +10,8 @@
 // React and the two ProseMirror `toDOM` callbacks, and `currentColor` masking
 // makes it theme-aware by construction (design-system B1/B8).
 
+import { mediaKindForMimeType } from '../../../core/mediaKind';
+
 export type InlineFileIconKind =
   | 'archive'
   | 'audio'
@@ -39,10 +41,11 @@ const IMAGE_FILE_ICON_EXTENSIONS = new Set(['avif', 'bmp', 'gif', 'heic', 'jpeg'
 export function inlineFileIconKind(file: InlineFileIconDescriptor): InlineFileIconKind {
   if (file.entryKind === 'directory' || file.mimeType === 'inode/directory') return 'folder';
   const mimeType = (file.mimeType ?? '').toLowerCase();
+  const mediaKind = mediaKindForMimeType(mimeType);
   const extension = (file.name ?? '').match(/\.([a-z0-9]{1,8})$/iu)?.[1]?.toLowerCase() ?? '';
-  if (mimeType.startsWith('image/') || IMAGE_FILE_ICON_EXTENSIONS.has(extension)) return 'image';
-  if (mimeType.startsWith('audio/')) return 'audio';
-  if (mimeType.startsWith('video/')) return 'video';
+  if (mediaKind === 'image' || IMAGE_FILE_ICON_EXTENSIONS.has(extension)) return 'image';
+  if (mediaKind === 'audio') return 'audio';
+  if (mediaKind === 'video') return 'video';
   if (mimeType.includes('presentation') || mimeType.includes('powerpoint') || ['ppt', 'pptx', 'key', 'keynote', 'odp'].includes(extension)) {
     return 'presentation';
   }

@@ -428,6 +428,7 @@ export const zhHans: PartialMessages = {
   actions: {
     objectTypes: {
       node: '节点',
+      file: '文件',
       nodeSelection: '选中项',
       externalPage: '页面',
       draftNode: '新建节点',

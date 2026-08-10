@@ -24,6 +24,7 @@ import type {
   PreviewUrlSource,
 } from '../../../core/preview';
 import { normalizePreviewHttpUrl } from '../../../core/preview';
+import { mediaKindForMimeType } from '../../../core/mediaKind';
 import { URL_PREVIEW_WEBVIEW_PARTITION } from '../../../core/urlPreviewSession';
 import { api } from '../../api/client';
 import { useT } from '../../i18n/I18nProvider';
@@ -1806,15 +1807,15 @@ export function targetTitleFallback(target: PreviewTarget): string {
 }
 
 function isImageSource(source: PreviewFileSource): boolean {
-  return source.mimeType.toLowerCase().startsWith('image/');
+  return mediaKindForMimeType(source.mimeType) === 'image';
 }
 
 function isAudioSource(source: PreviewFileSource): boolean {
-  return source.entryKind === 'file' && source.mimeType.toLowerCase().startsWith('audio/');
+  return source.entryKind === 'file' && mediaKindForMimeType(source.mimeType) === 'audio';
 }
 
 function isVideoSource(source: PreviewFileSource): boolean {
-  return source.entryKind === 'file' && source.mimeType.toLowerCase().startsWith('video/');
+  return source.entryKind === 'file' && mediaKindForMimeType(source.mimeType) === 'video';
 }
 
 function mediaKindForSource(source: PreviewSourceDescriptor): 'audio' | 'video' | null {

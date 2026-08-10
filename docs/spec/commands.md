@@ -153,7 +153,10 @@ Thread through Agent Core.
 duration when the format is locally parseable, and a best-effort first-page PDF
 thumbnail when the platform thumbnail tool is available. MIME type is resolved
 from file signatures or filename extension first, then from a renderer hint when
-present, falling back to `application/octet-stream`.
+present, falling back to `application/octet-stream`. The signature/extension
+table covers the common AAC, FLAC, Matroska, MPEG, Ogg/Opus, AVI, WMA, and WMV
+audio/video families used by media search; duration is derived only when the
+container has a local parser and never substitutes for MIME classification.
 
 `ingest_local_file` is the ingest bridge for agent-produced files (agent-file-model
 F4): it path-ingests a file into the asset store and returns `AssetMetadata`, but
