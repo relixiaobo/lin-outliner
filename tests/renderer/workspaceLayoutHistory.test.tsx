@@ -90,6 +90,113 @@ describe('useWorkspaceLayout history focus', () => {
     });
   });
 
+  test('restores an invalid current view from the latest valid Back entry', () => {
+    const h = renderLayout({
+      activePanelId: 'panel-reader',
+      panels: [{
+        id: 'panel-reader',
+        type: 'workspace',
+        size: 2.5,
+        view: {
+          kind: 'file-preview',
+          target: { kind: 'asset', assetId: 'legacy-asset', label: 'legacy.md' },
+        },
+        backStack: [
+          { kind: 'outliner', rootId: 'today', scrollTop: 120 },
+          { kind: 'outliner', rootId: 'missing' },
+          { kind: 'outliner', rootId: 'alpha', scrollTop: 240 },
+        ],
+        forwardStack: [{ kind: 'outliner', rootId: 'today', scrollTop: 360 }],
+      }],
+    });
+
+    expect(h.api.activePanelId).toBe('panel-reader');
+    expect(h.api.panels).toEqual([{
+      id: 'panel-reader',
+      type: 'workspace',
+      size: 2.5,
+      view: { kind: 'outliner', rootId: 'alpha', scrollTop: 240 },
+      backStack: [{ kind: 'outliner', rootId: 'today', scrollTop: 120 }],
+      forwardStack: [{ kind: 'outliner', rootId: 'today', scrollTop: 360 }],
+    }]);
+  });
+
+  test('restores an invalid current view from Forward when Back has no valid entry', () => {
+    const h = renderLayout({
+      activePanelId: 'panel-reader',
+      panels: [{
+        id: 'panel-reader',
+        type: 'workspace',
+        size: 1,
+        view: {
+          kind: 'file-preview',
+          target: { kind: 'asset', assetId: 'legacy-current', label: 'current.md' },
+        },
+        backStack: [
+          { kind: 'outliner', rootId: 'missing' },
+          {
+            kind: 'file-preview',
+            target: { kind: 'asset', assetId: 'legacy-back', label: 'back.md' },
+          },
+        ],
+        forwardStack: [
+          { kind: 'outliner', rootId: 'today', scrollTop: 120 },
+          { kind: 'outliner', rootId: 'also-missing' },
+          { kind: 'outliner', rootId: 'alpha', scrollTop: 240 },
+        ],
+      }],
+    });
+
+    expect(h.api.panels).toEqual([{
+      id: 'panel-reader',
+      type: 'workspace',
+      size: 1,
+      view: { kind: 'outliner', rootId: 'alpha', scrollTop: 240 },
+      backStack: [],
+      forwardStack: [{ kind: 'outliner', rootId: 'today', scrollTop: 120 }],
+    }]);
+  });
+
+  test('drops a pane only when its current view and history are all invalid', () => {
+    const h = renderLayout({
+      activePanelId: 'panel-invalid',
+      panels: [
+        {
+          id: 'panel-base',
+          type: 'workspace',
+          size: 1,
+          view: { kind: 'outliner', rootId: 'today' },
+          backStack: [],
+          forwardStack: [],
+        },
+        {
+          id: 'panel-invalid',
+          type: 'workspace',
+          size: 2,
+          view: {
+            kind: 'file-preview',
+            target: { kind: 'asset', assetId: 'legacy-current', label: 'current.md' },
+          },
+          backStack: [{ kind: 'outliner', rootId: 'missing' }],
+          forwardStack: [{
+            kind: 'file-preview',
+            target: { kind: 'asset', assetId: 'legacy-forward', label: 'forward.md' },
+          }],
+        },
+      ],
+    });
+
+    expect(h.api.activePanelId).toBe('panel-base');
+    expect(h.api.panels).toEqual([{
+      id: 'panel-base',
+      type: 'workspace',
+      size: 1,
+      view: { kind: 'outliner', rootId: 'today' },
+      backStack: [],
+      forwardStack: [],
+    }]);
+  });
+
   test('global root navigation leaves active Turn Diagnostics and reuses an existing outliner pane', () => {
     const h = renderLayout({
       activePanelId: 'panel-details',

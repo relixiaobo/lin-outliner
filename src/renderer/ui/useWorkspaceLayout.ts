@@ -202,15 +202,19 @@ function sanitizePanel(value: unknown, nodeIds: Set<NodeId>): WorkspacePanelStat
   rememberId(value.id);
   const size = sanitizeSize(value.size);
   if (value.type !== 'workspace') return null;
-  const view = sanitizePanelView(value.view, nodeIds);
+  const backStack = sanitizeViewStack(value.backStack, nodeIds);
+  const forwardStack = sanitizeViewStack(value.forwardStack, nodeIds);
+  const view = sanitizePanelView(value.view, nodeIds)
+    ?? backStack.pop()
+    ?? forwardStack.pop();
   if (!view) return null;
   return {
     id: value.id,
     type: 'workspace',
     size,
     view,
-    backStack: sanitizeViewStack(value.backStack, nodeIds),
-    forwardStack: sanitizeViewStack(value.forwardStack, nodeIds),
+    backStack,
+    forwardStack,
   };
 }
 

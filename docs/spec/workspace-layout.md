@@ -288,6 +288,13 @@ side table. The layout is persisted to `localStorage`
 the TypeScript-backed document model. Pre-release layout shape changes do not
 ship migrations or legacy readers; old dev userData can be wiped.
 
+Restore sanitizes each workspace pane's current view and Back/Forward stacks
+independently. When the current view is invalid, the latest valid Back entry is
+promoted; if Back has none, the latest valid Forward entry is promoted instead.
+The promoted entry is removed from its stack while the pane id, size, remaining
+history, and active-pane identity are preserved. A pane is dropped only when its
+current view and both history stacks contain no valid view.
+
 The canvas is anchored by at least one outliner view, either current or in a
 workspace pane's view history, so startup can restore focus. A sanitized layout
 without one is replaced by the default single pane.
@@ -435,8 +442,9 @@ Source authority stays source-specific:
   default session, not the remote URL-preview partition. Open/reveal/copy stay
   on the existing asset commands. A standalone `asset` preview is only valid
   when the view is bound to a file node via `nodeId`; a persisted `file-preview`
-  view whose target is an `asset` but has no `nodeId` is dropped on restore
-  (pre-launch — no migration).
+  view whose target is an `asset` but has no `nodeId` is invalidated on restore.
+  If it was the current view, the pane falls back through its valid navigation
+  history under the restore rules above (pre-launch — no migration).
 - `url` targets are first-class loose previews. Ordinary `http(s)` links from the
   outliner and Thread history route into a Tenon split preview pane by default.
   URL targets normalize through one shared `http(s)`-only helper in core. The pane
