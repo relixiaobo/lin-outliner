@@ -1500,6 +1500,8 @@ describe('Codex Agent Core protocol codec', () => {
       },
       'thread/archive': { threadId: THREAD_ID },
       'thread/unarchive': { threadId: THREAD_ID },
+      'thread/records/get': { threadId: THREAD_ID },
+      'thread/records/set': { threadId: THREAD_ID, recorded: false },
       'thread/delete': { threadId: THREAD_ID },
       'thread/turns/list': { threadId: THREAD_ID, limit: 20, itemsView: 'summary' },
       'thread/items/list': { threadId: THREAD_ID, turnId: TURN_ID, sortDirection: 'asc' },
@@ -1557,6 +1559,8 @@ describe('Codex Agent Core protocol codec', () => {
       },
       'thread/archive': {},
       'thread/unarchive': {},
+      'thread/records/get': { recorded: true },
+      'thread/records/set': { recorded: false },
       'thread/delete': {},
       'thread/turns/list': { data: [completedTurn], nextCursor: null, backwardsCursor: null },
       'thread/items/list': {

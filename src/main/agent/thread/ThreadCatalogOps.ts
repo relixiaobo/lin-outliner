@@ -41,9 +41,11 @@ export interface ThreadCatalogCollaboration {
   clearThreadCoordinationState(threadIds: readonly ThreadId[]): void;
 }
 
-/** The one deletion the catalog's descendant cascade owes the account layer. */
+/** What the catalog's descendant cascade owes the account layer. */
 export interface ThreadCatalogTranscripts {
   delete(threadId: ThreadId): Promise<void>;
+  /** Deletion takes the Thread with it, so its exclusion has nothing left to govern. */
+  forgetExclusions(threadIds: readonly ThreadId[]): Promise<void>;
 }
 
 export class ThreadCatalogOps {
@@ -617,6 +619,7 @@ export class ThreadCatalogOps {
         for (const descendantId of [...subtree.threadIds].reverse()) {
           await this.transcripts.delete(descendantId);
         }
+        await this.transcripts.forgetExclusions(subtree.threadIds);
       } finally {
         this.finishThreadSubtreeStop(subtree.threadIds);
       }

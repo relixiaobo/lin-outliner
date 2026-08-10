@@ -10337,6 +10337,72 @@ describe('Thread transcript artifact', () => {
     await fixture.service.close();
   });
 
+  test('excluding a Thread removes what is recorded and stops recording more', async () => {
+    const fixture = await createFixture();
+    const thread = await recordedUserThread(fixture, 0, 'Something private');
+    await fixture.service.flushThreadTranscriptIndex();
+    expect(await fixture.service.threadTranscriptPath(thread.id)).not.toBeNull();
+
+    await fixture.service.setThreadRecorded(thread.id, false);
+    await fixture.service.flushThreadTranscriptIndex();
+
+    // A switch that only stopped FUTURE appends would leave the conversation the
+    // user just excluded sitting on disk.
+    expect(fixture.service.isThreadRecorded(thread.id)).toBe(false);
+    expect(await transcriptEntries(fixture)).toEqual([]);
+    expect(await readFile(fixture.service.threadTranscriptIndexPath, 'utf8')).not.toContain(thread.id);
+
+    await recordedUserTurn(fixture, thread.id, 1, 'Something else private');
+    await fixture.service.flushThreadTranscriptIndex();
+    expect(await transcriptEntries(fixture)).toEqual([]);
+
+    await fixture.service.close();
+  });
+
+  test('including a Thread again rebuilds its whole record, not just what follows', async () => {
+    const fixture = await createFixture();
+    const thread = await recordedUserThread(fixture, 0, 'The first question');
+    await fixture.service.setThreadRecorded(thread.id, false);
+    await recordedUserTurn(fixture, thread.id, 1, 'The excluded question');
+
+    await fixture.service.setThreadRecorded(thread.id, true);
+    await recordedUserTurn(fixture, thread.id, 2, 'The question after');
+    await fixture.service.flushThreadTranscriptIndex();
+
+    // The record returns whole, from canonical history, rather than resuming from
+    // wherever the exclusion interrupted it.
+    const transcript = await readFile(threadTranscriptPath(transcriptRootFor(fixture), thread.id), 'utf8');
+    expect(transcript).toContain('The first question');
+    expect(transcript).toContain('The excluded question');
+    expect(transcript).toContain('The question after');
+    expect(transcript).toContain('## Turn 3 — completed');
+    expect(await readFile(fixture.service.threadTranscriptIndexPath, 'utf8')).toContain(thread.id);
+    await fixture.service.close();
+  });
+
+  test('remembers an exclusion across a restart, and forgets it when the Thread goes', async () => {
+    const fixture = await createFixture();
+    const excluded = await recordedUserThread(fixture, 0, 'Excluded across restarts');
+    const kept = await recordedUserThread(fixture, 1, 'Kept across restarts');
+    await fixture.service.setThreadRecorded(excluded.id, false);
+    await fixture.service.close();
+
+    const reopened = await openFixture(fixture.root, new ControlledExecutor(), fixture.clock);
+    await reopened.service.initialize();
+    expect(reopened.service.isThreadRecorded(excluded.id)).toBe(false);
+    expect(reopened.service.isThreadRecorded(kept.id)).toBe(true);
+
+    // Deletion takes the Thread with it, so its exclusion has nothing left to
+    // govern and must not linger as a growing list of dead ids.
+    await reopened.service.deleteThread(excluded.id);
+    await reopened.service.close();
+
+    const again = await openFixture(fixture.root, new ControlledExecutor(), fixture.clock);
+    await again.service.initialize();
+    expect(again.service.isThreadRecorded(excluded.id)).toBe(true);
+    await again.service.close();
+  });
+
   test('keeps no account for an ephemeral Thread, including the hidden internal ones', async () => {
     const fixture = await createFixture();
     const ephemeral = (await fixture.service.startThread({
@@ -10539,7 +10605,11 @@ describe('Thread transcript artifact', () => {
   test('delivers the outcome with a null path when the artifact cannot be written (A12)', async () => {
     const fixture = await createFixture();
     // Occupy the artifact directory name with a file so every write must fail.
+    // Startup creates that directory for the index, so settle it first and then
+    // replace it: `mkdir` will not turn a regular file back into a directory.
+    await fixture.service.flushThreadTranscriptIndex();
     mkdirSync(join(fixture.root, 'app-data'), { recursive: true });
+    await rm(transcriptRootFor(fixture), { recursive: true, force: true });
     await writeFile(transcriptRootFor(fixture), 'not a directory', 'utf8');
     const spawned = await spawnTranscriptChild(fixture, 'unwritable_child');
 

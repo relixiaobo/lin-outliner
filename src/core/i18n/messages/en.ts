@@ -1253,6 +1253,8 @@ export const en = {
       none: 'None',
       noTurns: 'No Turns recorded.',
       rename: 'Rename Thread',
+      excludeFromRecords: 'Exclude from Records',
+      includeInRecords: 'Include in Records',
       delete: 'Delete Thread',
       deleteConfirm: ({ name }: { name: string }) => `Delete "${name}" and its child Threads?`,
       composerLabel: 'Message this Thread',

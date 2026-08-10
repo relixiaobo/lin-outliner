@@ -153,6 +153,18 @@ export class ThreadTranscriptWriter {
     }
   }
 
+  /**
+   * Let a Thread keep records again after its artifact was removed on purpose.
+   *
+   * `discarded` is permanent for a DELETED Thread — ids are never reused, so it
+   * only ever grows by real deletions — but an exclusion the user turns back off
+   * is not a deletion, and without this the Thread would stay silently unwritable
+   * for the rest of the session.
+   */
+  restore(threadId: ThreadId): void {
+    this.discarded.delete(threadId);
+  }
+
   /** Startup reclamation of transcripts whose Thread no longer exists. */
   async sweepOrphans(isKnownThread: (threadId: ThreadId) => boolean): Promise<readonly string[]> {
     try {

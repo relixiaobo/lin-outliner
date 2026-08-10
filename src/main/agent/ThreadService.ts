@@ -108,6 +108,7 @@ import { ThreadCatalogOps } from './thread/ThreadCatalogOps';
 import { ThreadCore,type NotificationListener } from './thread/ThreadCore';
 import { ThreadResourceOps } from './thread/ThreadResourceOps';
 import { threadTranscriptRoot } from './thread/ThreadTranscriptArtifact';
+import { ThreadTranscriptExclusions } from './thread/ThreadTranscriptExclusions';
 import { ThreadTranscriptIndex } from './thread/ThreadTranscriptIndex';
 import { rootTranscriptSubject,ThreadTranscriptWriter } from './thread/ThreadTranscriptWriter';
 import type { TranscriptSubject } from './thread/TranscriptRenderer';
@@ -323,6 +324,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
   private readonly collaboration: SubagentCollaboration;
   private readonly transcripts: ThreadTranscriptWriter;
   private readonly transcriptIndex: ThreadTranscriptIndex;
+  private readonly transcriptExclusions: ThreadTranscriptExclusions;
   private readonly turnLifecycle: TurnLifecycle;
   private initialized = false;
   private closing = false;
@@ -360,6 +362,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     options.stores.payloads.setImageRetentionInventoryProvider((threadId) => (
       this.resourceOps.threadImageRetentionInventory(threadId)
     ));
+    this.transcriptExclusions = new ThreadTranscriptExclusions(options.transcriptRoot);
     this.transcriptIndex = new ThreadTranscriptIndex({
       transcriptRoot: options.transcriptRoot,
       readThread: (threadId) => this.core.metadata.read(threadId)?.thread ?? null,
@@ -438,7 +441,10 @@ export class ThreadService implements ThreadServiceExtensionHost {
       applyToolCeiling,
       this.turnLifecycle,
       this.collaboration,
-      this.transcripts,
+      {
+        delete: (threadId) => this.transcripts.delete(threadId),
+        forgetExclusions: (threadIds) => this.transcriptExclusions.forget(threadIds),
+      },
       (threadId) => this.goals.clear(threadId),
       (threadId) => { this.subagentBudgets.clearThread(threadId); },
       (message) => new ThreadBusyError(message),
@@ -477,6 +483,8 @@ export class ThreadService implements ThreadServiceExtensionHost {
   async initialize(): Promise<void> {
     if (this.initialized) return;
     await this.core.payloads.initialize();
+    // Before any Turn can complete: the subject resolver reads this synchronously.
+    await this.transcriptExclusions.load();
     const knownThreadIds: ThreadId[] = [];
     const resumableThreadIds: ThreadId[] = [];
     for (const archived of [false, true]) {
@@ -635,6 +643,15 @@ export class ThreadService implements ThreadServiceExtensionHost {
       case 'thread/delete':
         await this.deleteThread((decoded as AgentCoreRequestByMethod['thread/delete']).threadId);
         return emptyResponse() as AgentCoreResponseByMethod[Method];
+      case 'thread/records/get':
+        return {
+          recorded: this.isThreadRecorded((decoded as AgentCoreRequestByMethod['thread/records/get']).threadId),
+        } as AgentCoreResponseByMethod[Method];
+      case 'thread/records/set': {
+        const request = decoded as AgentCoreRequestByMethod['thread/records/set'];
+        await this.setThreadRecorded(request.threadId, request.recorded);
+        return { recorded: this.isThreadRecorded(request.threadId) } as AgentCoreResponseByMethod[Method];
+      }
       case 'thread/turns/list':
         return this.listTurns(decoded as AgentCoreRequestByMethod['thread/turns/list']) as AgentCoreResponseByMethod[Method];
       case 'thread/items/list':
@@ -943,7 +960,31 @@ export class ThreadService implements ThreadServiceExtensionHost {
    * into a root.
    */
   private transcriptSubject(thread: Thread): TranscriptSubject | null {
+    // The user's choice is the first word, ahead of every kind: a Thread taken
+    // out of the records keeps none, whatever it is.
+    if (this.transcriptExclusions.isExcluded(thread.id)) return null;
     return this.collaboration.delegatedTranscriptSubject(thread) ?? rootTranscriptSubject(thread);
+  }
+
+  /** Whether this Thread is kept in the readable records. */
+  isThreadRecorded(threadId: ThreadId): boolean {
+    return !this.transcriptExclusions.isExcluded(threadId);
+  }
+
+  /**
+   * Take a Thread out of the records, or put it back.
+   *
+   * Excluding removes what is already there, because a switch that only stops
+   * FUTURE appends would leave the conversation the user just excluded sitting on
+   * disk. Re-including clears the writer's discarded mark so the next completed
+   * Turn rebuilds the artifact from canonical history — the record returns
+   * whole, not from wherever it was interrupted.
+   */
+  async setThreadRecorded(threadId: ThreadId, recorded: boolean): Promise<void> {
+    if (!await this.transcriptExclusions.setExcluded(threadId, !recorded)) return;
+    if (recorded) this.transcripts.restore(threadId);
+    else await this.transcripts.delete(threadId);
+    this.transcriptIndex.schedule();
   }
   collaborationToolContributions(turn: { threadId: ThreadId; turnId: string }): readonly AgentTool[] { return this.collaboration.collaborationToolContributions(turn); }
   async spawnCollaborationAgent(input: {

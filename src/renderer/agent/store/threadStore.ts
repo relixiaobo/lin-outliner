@@ -222,6 +222,16 @@ export class ThreadStore {
     this.updateThread(threadId, (thread) => ({ ...thread, name }));
   }
 
+  /** Whether this Thread is kept in the readable transcript records. */
+  async readThreadRecorded(threadId: ThreadId): Promise<boolean> {
+    return (await this.client.agentCoreRequest('thread/records/get', { threadId })).recorded;
+  }
+
+  /** Main owns the effect — removing the artifact, or letting it be written again. */
+  async setThreadRecorded(threadId: ThreadId, recorded: boolean): Promise<boolean> {
+    return (await this.client.agentCoreRequest('thread/records/set', { threadId, recorded })).recorded;
+  }
+
   async deleteThread(threadId: ThreadId): Promise<void> {
     await this.client.agentCoreRequest('thread/delete', { threadId });
     const deletedIds = descendantThreadIds(this.snapshot.threads, threadId);

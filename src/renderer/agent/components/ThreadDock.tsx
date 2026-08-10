@@ -480,6 +480,10 @@ export function ThreadDock({
             onDelete={setDeleteTarget}
             onDetails={(target) => void openDetails(target)}
             onRename={beginRename}
+            onSetRecorded={(target, recorded) => {
+              void runAction(async () => { await threadStore.setThreadRecorded(target.id, recorded); });
+            }}
+            readRecorded={(target) => threadStore.readThreadRecorded(target.id)}
             onSelect={(threadId) => {
               void runAction(() => threadStore.selectThread(threadId));
               setListOpen(false);
