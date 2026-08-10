@@ -48,9 +48,9 @@ theme-section entry below; this list is the ordering, not a second record):
   remains an uncapped background lane (trail + remaining items under **Performance**).
 - **Lane B — agent reliability**: `agent-doc-drift-notice` —
   `agent-episodic-transcripts` is complete (#511 + #519 shipped 2026-08-10).
-- **Lane C — product surface**: `update-check-and-prompt` first (the PM wants users
-  on fresh builds; works unsigned), then `file-preview` Office tail (apply its
-  refresh note first), then `agent-skills-authoring` security tail.
+- **Lane C — product surface**: `update-check-and-prompt` shipped 2026-08-10 (#514);
+  next is the `file-preview` Office tail (apply its refresh note first), then the
+  `agent-skills-authoring` security tail.
 - **Lane D — test-signal infrastructure**: e2e stability, starting with the
   visual-media baseline fixture (`test.extend` default), then the run-dependent flaky
   set as one problem.
@@ -635,18 +635,18 @@ together with the train cadence: a release leaves whenever it carries a
 user-visible change — daily is fine). Two tiers, because macOS draws a hard line
 between them:
 
-- **update-check-and-prompt** (P2, `draft` 2026-08-10, *dev drafts the plan*) —
-  Tenon has no update channel at all (`rg 'autoUpdater|checkForUpdate' src/` is
-  empty): a user learns about a new version only by revisiting GitHub. This tier
-  works **unsigned**: main polls the GitHub Releases API (latest tag vs running
-  version; bounded frequency; offline-silent), and a newer version surfaces as a
-  gentle, never-modal notice — a Settings → About badge plus one dismissible
-  in-app indicator showing that release's user note (via the same parser What's
-  New uses) and linking the `.dmg`. With daily trains the prompt policy IS the
-  design core: the one-pager settles check frequency, skip-this-version /
-  remind-later semantics, batching (a user three trains behind sees one prompt,
-  not three), and a settings toggle. A12 applies: a failed or slow check must
-  never touch startup or the composer.
+- **update-check-and-prompt** (P2, `done` 2026-08-10; PR #514, codex-3) — the
+  unsigned tier shipped. Main polls the fixed GitHub Releases endpoint (bounded
+  frequency, five-second deadline, offline-silent, never on the startup path) and
+  discovery stays **passive**: the only ambient UI is a rose status dot beside
+  General and About, and About carries the version comparison, that release's user
+  note (the same `parseChangelogReleases` What's New uses), an explicit recheck, an
+  automatic-checks toggle, and a Download update action that opens a main-validated
+  `.dmg`. The PM chose Settings-only status over a prompt, so skip-version /
+  remind-later / batching are deliberately absent — presence-based status needs no
+  dismissal lifecycle. Design folded into `docs/spec/architecture.md` +
+  `docs/spec/design-system/surfaces.md`; plan archived at
+  `docs/plans/archive/update-check-and-prompt.md`.
 - **signed-builds-and-auto-update** (P2, `draft` 2026-08-10, **gated on a PM
   external action** — an Apple Developer Program membership) — true silent
   auto-update on macOS (electron-updater / Squirrel.Mac) **refuses unsigned
@@ -675,6 +675,21 @@ between them:
 Small unclaimed items split off from shipped PRs — fast-track each when a clone is free; none block
 anything.
 
+- **#514 update-check review tail** (P3, *fast-track, no plan file*, filed 2026-08-10 at the #514
+  gate) — three findings the gate raised and the PR consciously left. **(a)** `appUpdate.ts`
+  `decodeRelease` picks the `.dmg` by `localeCompare` on the filename with no architecture
+  predicate; harmless today because `release.yml` ships one Apple-silicon image, and a hard
+  mis-download the first time a release carries two — select on `process.arch` with the release
+  page as the fallback, and do it **before** any second image ships. **(b)** `appUpdateService.ts`
+  `runCheck` spends one 5s `AbortController` on both the Releases request and the CHANGELOG
+  request, so a slow-but-working link loses the release note every time; the degrade is honest
+  (version + download still show) but permanent for that user. **(c)** `SettingsAboutSection.tsx`
+  `setAutomaticChecksEnabled` rolls back to the render-time `appUpdate` prop with none of
+  `AgentSettingsView`'s `beginKeyedMutation` / `isCurrentMutation` guard, so a toggle that fails
+  while a background check lands can erase a just-discovered release until the six-hour throttle
+  allows another check. Also worth folding in: "changelog has no section for the selected tag"
+  now throws, and since a tag's content never changes, that release re-fetches and re-lexes the
+  whole file on every check forever — cache the negative result the way the empty note is cached.
 - **#208 review follow-ups** (P3, *fast-track, no plan file*; **refs corrected by the
   2026-08-09 audit** — there is no `get_backlinks`; the surfaces are
   `agentNodeToolProjection.backlinks` via `node_read include_backlinks`, and
@@ -784,6 +799,17 @@ and the merged PR, distilled rules in [`lessons.md`](lessons.md). Everything
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
 
+- **update-check-and-prompt** (codex-3, PR #514, merged 2026-08-10 — plan-track, plan archived
+  `done`) — an unsigned build can now find its own newest release: main polls the fixed GitHub
+  Releases endpoint off the startup path, and the only ambient UI is a rose status dot beside
+  General and About, with the version comparison, that release's user note, an explicit recheck,
+  the automatic-checks toggle, and a main-validated `.dmg` download all living inside About.
+  Presence-based status, so there is no skip/remind/dismiss lifecycle to get wrong.
+  `/code-review high` found ten; seven fixed in the same PR — the load-bearing ones were a 750 KB
+  changelog ceiling the repo's own 562 KB append-only file was about to cross (silently nulling
+  every release note thereafter) and two GitHub fetches following redirects with no per-hop host
+  allow-list. The three left are filed under *Deferred follow-ups* as **#514 update-check review
+  tail**; visual verification of the five About states was **not** run at the gate.
 - **agent-episodic-transcripts** (cc, PR #519, merged 2026-08-10 — plan-track, plan archived
   `done`; PR 2 of 2, completing the plan after #511) — every persistent Thread now keeps a
   readable transcript, and a greppable `thread-transcripts/index.tsv` (a projection of the

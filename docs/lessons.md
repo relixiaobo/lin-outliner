@@ -687,3 +687,23 @@ they are acting on, then check that every artifact in that unit is covered, that
 the inverse operation actually restores, and that a failed step is reconciled
 rather than assumed.** A privacy control that is merely mostly effective is a
 correctness bug with a confident label on it.
+
+## A byte ceiling is chosen against the thing it bounds, not against a round number
+
+The #514 gate found `MAX_CHANGELOG_BYTES = 750_000` guarding a fetch of this
+repo's own `CHANGELOG.md` — a file that was 562,626 bytes that day, is
+append-only, and grows with every merge. The constant was not wrong yet; it was
+75% spent at the moment it was written, with weeks of runway. And the behavior on
+the far side of it was the worst possible one: the reader throws, the caller
+catches, the check still reports success, and every release note silently becomes
+empty forever, with nothing but a `warn` in the log. Nobody would have connected
+"About shows no release notes anymore" to a constant chosen months earlier.
+
+The mistake is picking a limit by how large the number feels instead of measuring
+what it bounds. So: **when you write a size, count, or time ceiling, state the
+current value of the thing it limits and which direction it moves, and pick the
+ceiling as a multiple of that** — a bound over a monotonically growing artifact
+needs an order of magnitude, not a comfortable margin. Then check what happens
+when it is crossed: if the failure is caught by a caller that keeps reporting
+success, the ceiling is not a guard, it is a scheduled silent outage. Either make
+crossing it visible or make it non-fatal on purpose.

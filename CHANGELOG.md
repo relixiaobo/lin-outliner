@@ -82,6 +82,41 @@ Entries reference the pull request that introduced them.
   per-artifact synchronous query on the main-process event loop, a menu item that
   disabled itself under the cursor on every streamed delta, and a swallowed read
   failure that left it inert with nothing said.
+- **Tenon tells you a new version exists, quietly (PR #514, codex-3)** — an
+  unsigned build had no update channel at all, so the only way to learn about a
+  release was to go back to GitHub. Main now polls the fixed
+  `relixiaobo/lin-outliner` Releases endpoint: at most one attempt per six hours,
+  a five-second deadline, started after the first window exists so startup never
+  waits on it, and silent when it fails. Discovery is deliberately **passive** —
+  the only ambient UI is a small rose status dot beside General in the Settings
+  rail and beside About in the General page; there is no banner, toast, dialog,
+  notification, or dock badge, and nothing appears in the main window at all.
+  About holds the rest: installed vs available version, that release's own user
+  note read from `CHANGELOG.md` at the exact validated tag through the same
+  `parseChangelogReleases` contract What's New and release publishing use, the
+  last successful check, an explicit recheck that bypasses the throttle, an
+  automatic-checks toggle, and a Download update action. The dot is
+  presence-based **status**, not an unread notification: opening About does not
+  clear it, and it goes away only when the running build catches up or automatic
+  checks are off — which is why there is no skip-this-version, remind-later, or
+  dismissal lifecycle to get wrong, and why someone three trains behind sees one
+  status for the newest train rather than three prompts. Every URL stays
+  main-owned; the renderer names an action (`check`, `set automatic`, `open`) and
+  can never hand a URL back across IPC, the `.dmg` must sit on GitHub's expected
+  release-download path, the release page is the fallback when no usable asset
+  exists, and remote Markdown renders with HTML disabled and controlled external
+  links. Failure degrades honestly rather than hiding a known update: a note that
+  will not fetch or parse still shows version and download, an ambient failure
+  leaves the last valid release cached and says nothing, and an explicit failure
+  is reported inline in About only. The high review gate found ten defects, seven
+  fixed in the same PR. Two were load-bearing: the changelog byte ceiling was
+  750 KB against a 562 KB append-only file this repo adds to every merge — one
+  more month and every release note would have silently become empty — and both
+  GitHub fetches followed redirects with no per-hop host allow-list, so an
+  off-origin 302 could have put attacker-authored Markdown in the app's own About
+  page and persisted it. Both are now contracts in
+  `docs/spec/architecture.md`. The three findings left open are on the board as
+  **#514 update-check review tail**; the ceiling lesson is in `docs/lessons.md`.
 
 ### Changed
 
