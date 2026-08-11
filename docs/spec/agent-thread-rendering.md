@@ -1056,6 +1056,16 @@ Notifications are decoded before entering renderer state. A notification for an
 unloaded Thread updates catalog metadata without manufacturing partial history.
 When a page is loaded, Item order follows persisted rollout position.
 
+`threadStore` applies every decoded notification to its snapshot synchronously, so
+request guards and imperative reads always see the latest state. Subscriber delivery for
+`item/delta` is coalesced to at most once per animation frame, with a 16 ms timer fallback
+when `requestAnimationFrame` is unavailable. Request/response and lifecycle changes
+notify synchronously; they preserve focus and state-transition semantics and invalidate
+any older scheduled delta delivery. `useSyncExternalStore` reads the latest snapshot when
+a delta delivery runs, so concurrent parent and expanded-child streams do not force a
+React render for every token and an occluded window can defer delta rendering without
+stale store state.
+
 ## Visual Contract
 
 The Agent dock follows the shared design system:

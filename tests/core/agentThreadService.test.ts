@@ -800,9 +800,12 @@ describe('ThreadService', () => {
     const loggedErrors: unknown[][] = [];
     const previousConsoleError = console.error;
     console.error = (...args: unknown[]) => { loggedErrors.push(args); };
-    await fixture.service.setThreadName(thread.id, 'Committed name').finally(() => {
+    try {
+      await fixture.service.setThreadName(thread.id, 'Committed name');
+      await waitUntil(() => loggedErrors.length > 0);
+    } finally {
       console.error = previousConsoleError;
-    });
+    }
 
     expect(fixture.service.readThread({ threadId: thread.id }).thread.name).toBe('Committed name');
     expect(loggedErrors).toHaveLength(1);
@@ -2759,6 +2762,7 @@ describe('ThreadService', () => {
     ] satisfies AgentCoreNotification[]) {
       await rollout.append(thread.id, notification);
     }
+    await rollout.flush();
 
     const reopened = await openFixture(fixture.root, new ControlledExecutor(), fixture.clock);
     await reopened.service.initialize();
@@ -4233,12 +4237,161 @@ describe('ThreadService', () => {
       .toHaveLength(1);
     await fixture.service.close();
 
+    // A missing rollout must not erase pending rollback-hook recovery before
+    // the projection snapshot becomes the replacement source of truth.
+    await rm(fixture.stores.rollout.pathFor(thread.id), { force: true });
+
     const startupExtension = new HistoryRollbackProbe('memory-probe');
     const startupRegistry = new ExtensionRegistry();
     startupRegistry.register(startupExtension);
     const reopened = await openFixture(fixture.root, new ControlledExecutor(), fixture.clock, startupRegistry);
     await reopened.service.initialize();
     expect(startupExtension.events).toEqual(['commit']);
+    await reopened.service.close();
+  });
+
+  test('continues rollback and deletion when notification flush fails', async () => {
+    const fixture = await createFixture();
+    const rollbackTarget = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    await fixture.service.startRendererTurn({
+      threadId: rollbackTarget.id,
+      input: [{ type: 'text', text: 'Rollback despite stale delta failure' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    fixture.executor.finish(0);
+    await fixture.service.waitForIdle(rollbackTarget.id);
+    const deleteTarget = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const core = (fixture.service as unknown as {
+      core: { flushThreadNotifications(threadId: string): Promise<void> };
+    }).core;
+    const flushThreadNotifications = core.flushThreadNotifications.bind(core);
+    core.flushThreadNotifications = async () => {
+      throw new Error('simulated notification flush failure');
+    };
+    const loggedErrors: unknown[][] = [];
+    const previousConsoleError = console.error;
+    console.error = (...args: unknown[]) => { loggedErrors.push(args); };
+    try {
+      await fixture.service.rollbackThread({ threadId: rollbackTarget.id, numTurns: 1 });
+      await fixture.service.deleteThread(deleteTarget.id);
+    } finally {
+      core.flushThreadNotifications = flushThreadNotifications;
+      console.error = previousConsoleError;
+    }
+
+    expect(fixture.service.readThread({ threadId: rollbackTarget.id, includeTurns: true }).thread.turns).toEqual([]);
+    expect(fixture.stores.metadata.read(deleteTarget.id)).toBeNull();
+    expect(loggedErrors.map((entry) => entry[0])).toEqual([
+      `[agent] failed to flush Thread notifications for ${rollbackTarget.id}`,
+      `[agent] failed to flush Thread notifications for ${deleteTarget.id}`,
+    ]);
+    await fixture.service.close();
+  });
+
+  test('restores a missing rollout from projection and keeps future ordinals contiguous', async () => {
+    const fixture = await createFixture();
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const first = await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Preserve this Turn without its rollout' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    fixture.executor.finish(0);
+    await fixture.service.waitForIdle(thread.id);
+    await fixture.service.close();
+    await rm(fixture.stores.rollout.pathFor(thread.id), { force: true });
+
+    const secondExecutor = new ControlledExecutor();
+    const reopened = await openFixture(fixture.root, secondExecutor, fixture.clock);
+    await reopened.service.initialize();
+    expect(reopened.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns?.map((turn) => turn.id))
+      .toEqual([first.turn.id]);
+    expect((await reopened.stores.rollout.read(thread.id)).map((entry) => entry.event.type))
+      .toEqual(['turn/completed']);
+
+    const second = await reopened.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Append after rollout repair' }],
+    });
+    await secondExecutor.waitUntilWaiting(0);
+    secondExecutor.finish(0);
+    await reopened.service.waitForIdle(thread.id);
+    await reopened.service.close();
+
+    const verified = await openFixture(fixture.root, new ControlledExecutor(), fixture.clock);
+    await verified.service.initialize();
+    expect(verified.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns?.map((turn) => turn.id))
+      .toEqual([first.turn.id, second.turn.id]);
+    const entries = await verified.stores.rollout.read(thread.id);
+    expect(entries.map((entry) => entry.ordinal)).toEqual(entries.map((_, index) => index));
+    await verified.service.close();
+  });
+
+  test('isolates a corrupt Thread rollout while initializing the remaining catalog', async () => {
+    const fixture = await createFixture();
+    const corrupt = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const healthy = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    for (const [index, thread] of [corrupt, healthy].entries()) {
+      await fixture.service.startRendererTurn({
+        threadId: thread.id,
+        input: [{ type: 'text', text: `Initial Turn ${index}` }],
+      });
+      await fixture.executor.waitUntilWaiting(index);
+      fixture.executor.finish(index);
+      await fixture.service.waitForIdle(thread.id);
+    }
+    await fixture.service.close();
+    await writeFile(fixture.stores.rollout.pathFor(corrupt.id), 'invalid rollout JSON\n', 'utf8');
+
+    const healthyExecutor = new ControlledExecutor();
+    const reopened = await openFixture(fixture.root, healthyExecutor, fixture.clock);
+    const loggedErrors: unknown[][] = [];
+    const previousConsoleError = console.error;
+    console.error = (...args: unknown[]) => { loggedErrors.push(args); };
+    try {
+      await reopened.service.initialize();
+    } finally {
+      console.error = previousConsoleError;
+    }
+
+    expect(reopened.service.listThreads().data.map((thread) => thread.id)).toEqual(
+      expect.arrayContaining([corrupt.id, healthy.id]),
+    );
+    expect(loggedErrors.some((entry) => entry[0] === `[agent] failed to reconcile Thread ${corrupt.id}`)).toBe(true);
+    await reopened.service.startRendererTurn({
+      threadId: healthy.id,
+      input: [{ type: 'text', text: 'Healthy Thread still resumes' }],
+    });
+    await healthyExecutor.waitUntilWaiting(0);
+    healthyExecutor.finish(0);
+    await reopened.service.waitForIdle(healthy.id);
+    expect(reopened.service.readThread({ threadId: healthy.id, includeTurns: true }).thread.turns).toHaveLength(2);
+    expect(reopened.service.readThread({ threadId: corrupt.id, includeTurns: true }).thread.turns).toHaveLength(1);
     await reopened.service.close();
   });
 

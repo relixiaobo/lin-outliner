@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { appendFile, mkdtemp, rm } from 'node:fs/promises';
+import { appendFile, mkdtemp, rm, truncate } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Database } from 'bun:sqlite';
@@ -16,8 +16,10 @@ import type { SqliteDatabase } from '../../src/main/agent/persistence/sqlite';
 import { replayableModelCall } from '../fixtures/agentToolCallHistory';
 
 const roots: string[] = [];
+const rolloutStores: RolloutStore[] = [];
 
 afterEach(async () => {
+  await Promise.allSettled(rolloutStores.splice(0).map((store) => store.flush()));
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -55,6 +57,15 @@ const turnExecution: Turn['execution'] = {
 
 function testDatabase(path: string): SqliteDatabase {
   return new Database(path) as unknown as SqliteDatabase;
+}
+
+function trackedRolloutStore(
+  path: string,
+  options?: ConstructorParameters<typeof RolloutStore>[1],
+): RolloutStore {
+  const store = new RolloutStore(path, options);
+  rolloutStores.push(store);
+  return store;
 }
 
 function thread(id: string, updatedAt: number, overrides: Partial<Thread> = {}): Thread {
@@ -207,7 +218,7 @@ describe('Agent Core persistence', () => {
 
   test('repairs a torn rollout tail and preserves strict append ordinals', async () => {
     const root = await tempRoot();
-    const store = new RolloutStore(join(root, 'rollouts'));
+    const store = trackedRolloutStore(join(root, 'rollouts'));
     const threadId = uuidV7(1000);
     const notifications = lifecycle(threadId);
     await Promise.all(notifications.slice(0, 2).map((notification) => store.append(threadId, notification)));
@@ -219,6 +230,137 @@ describe('Agent Core persistence', () => {
     expect((await store.read(threadId)).map((entry) => entry.ordinal)).toEqual([0, 1, 2]);
   });
 
+  test('group-commits streamed rollout writes and syncs lifecycle barriers', async () => {
+    const root = await tempRoot();
+    const scheduled = new Set<() => void>();
+    let syncCount = 0;
+    const store = trackedRolloutStore(join(root, 'grouped-rollouts'), {
+      schedule: (callback) => {
+        scheduled.add(callback);
+        return callback;
+      },
+      cancelScheduled: (handle) => scheduled.delete(handle as () => void),
+      onDidSync: () => { syncCount += 1; },
+    });
+    const threadId = uuidV7(1_100);
+    const prefix = interruptedLifecycle(threadId, false);
+    await store.append(threadId, prefix[0]!);
+    await store.append(threadId, prefix[1]!);
+    syncCount = 0;
+
+    for (let index = 0; index < 8; index += 1) await store.append(threadId, prefix[2]!);
+    expect(syncCount).toBe(0);
+    expect(scheduled.size).toBe(1);
+    const scheduledSync = scheduled.values().next().value!;
+    scheduled.delete(scheduledSync);
+    scheduledSync();
+    await store.read(threadId);
+    expect(syncCount).toBe(1);
+
+    await store.append(threadId, prefix[2]!);
+    const completion = interruptedLifecycle(threadId, true)[3]!;
+    await store.append(threadId, completion);
+    expect(syncCount).toBe(2);
+    expect(scheduled.size).toBe(0);
+  });
+
+  test('syncs LRU evictions and flushes, but unlinks deleted rollouts without fsync', async () => {
+    const root = await tempRoot();
+    const scheduled = new Set<() => void>();
+    const syncedThreadIds: string[] = [];
+    const store = trackedRolloutStore(join(root, 'bounded-rollouts'), {
+      openHandleLimit: 1,
+      schedule: (callback) => {
+        scheduled.add(callback);
+        return callback;
+      },
+      cancelScheduled: (handle) => scheduled.delete(handle as () => void),
+      onDidSync: (threadId) => syncedThreadIds.push(threadId),
+    });
+    const firstThreadId = uuidV7(1_200);
+    const secondThreadId = uuidV7(1_300);
+    const firstDelta = interruptedLifecycle(firstThreadId, false)[2]!;
+    const secondDelta = interruptedLifecycle(secondThreadId, false)[2]!;
+
+    await store.append(firstThreadId, firstDelta);
+    await store.append(secondThreadId, secondDelta);
+    expect(syncedThreadIds).toEqual([firstThreadId]);
+    expect(scheduled.size).toBe(1);
+
+    await store.append(firstThreadId, firstDelta);
+    expect(syncedThreadIds).toEqual([firstThreadId, secondThreadId]);
+    expect((await store.read(firstThreadId)).map((entry) => entry.ordinal)).toEqual([0, 1]);
+
+    await store.delete(firstThreadId);
+    expect(syncedThreadIds).toEqual([firstThreadId, secondThreadId]);
+    expect(scheduled.size).toBe(0);
+    expect(await store.read(firstThreadId)).toEqual([]);
+
+    await store.append(secondThreadId, secondDelta);
+    await store.flush();
+    expect(syncedThreadIds).toEqual([firstThreadId, secondThreadId, secondThreadId]);
+    expect(scheduled.size).toBe(0);
+  });
+
+  test('deletes a rollout even when closing its unlinked handle reports a failure', async () => {
+    const root = await tempRoot();
+    const backgroundErrors: Array<{ message: string; error: unknown }> = [];
+    let syncCount = 0;
+    let failClose = false;
+    const store = trackedRolloutStore(join(root, 'delete-close-failure'), {
+      syncFile: async (_threadId, handle) => {
+        syncCount += 1;
+        await handle.sync();
+      },
+      closeFile: async (_threadId, handle) => {
+        await handle.close();
+        if (failClose) throw new Error('simulated close failure');
+      },
+      onBackgroundError: (message, error) => backgroundErrors.push({ message, error }),
+    });
+    const threadId = uuidV7(1_350);
+    await store.append(threadId, interruptedLifecycle(threadId, false)[2]!);
+    failClose = true;
+
+    await expect(store.delete(threadId)).resolves.toBeUndefined();
+
+    expect(syncCount).toBe(0);
+    expect(await store.read(threadId)).toEqual([]);
+    expect(backgroundErrors.map(({ message }) => message)).toEqual([
+      `[agent] failed to close deleted rollout for ${threadId}`,
+    ]);
+  });
+
+  test('does not reject a successful append when LRU eviction fsync fails', async () => {
+    const root = await tempRoot();
+    const scheduled = new Set<() => void>();
+    const backgroundErrors: Array<{ message: string; error: unknown }> = [];
+    const firstThreadId = uuidV7(1_360);
+    const secondThreadId = uuidV7(1_370);
+    const store = trackedRolloutStore(join(root, 'lru-sync-failure'), {
+      openHandleLimit: 1,
+      schedule: (callback) => {
+        scheduled.add(callback);
+        return callback;
+      },
+      cancelScheduled: (handle) => scheduled.delete(handle as () => void),
+      syncFile: async (threadId, handle) => {
+        if (threadId === firstThreadId) throw new Error('simulated eviction fsync failure');
+        await handle.sync();
+      },
+      onBackgroundError: (message, error) => backgroundErrors.push({ message, error }),
+    });
+
+    await store.append(firstThreadId, interruptedLifecycle(firstThreadId, false)[2]!);
+    await expect(store.append(secondThreadId, interruptedLifecycle(secondThreadId, false)[2]!))
+      .resolves.toMatchObject({ ordinal: 0 });
+
+    expect((await store.read(secondThreadId)).map((entry) => entry.ordinal)).toEqual([0]);
+    expect(backgroundErrors.map(({ message }) => message)).toEqual([
+      '[agent] rollout LRU eviction failed',
+    ]);
+  });
+
   test('finalizes a Turn whose Items were persisted before the protocol grew a field', async () => {
     // A crashed Turn from an older build is finalized after upgrade. The Item
     // did not change, so the terminal-mutation invariant must not fire — it
@@ -226,7 +368,7 @@ describe('Agent Core persistence', () => {
     const root = await tempRoot();
     const threadId = uuidV7(2_600);
     const path = join(root, 'thread_history.sqlite');
-    const rollout = new RolloutStore(join(root, 'rollouts'));
+    const rollout = trackedRolloutStore(join(root, 'rollouts'));
     for (const notification of commandLifecycle(threadId)) await rollout.append(threadId, notification);
     const entries = await rollout.read(threadId);
     const store = new ThreadHistoryProjectionStore(path, testDatabase(path));
@@ -254,7 +396,7 @@ describe('Agent Core persistence', () => {
 
   test('rebuilds paginated Turn and Item projections exactly from rollout JSONL', async () => {
     const root = await tempRoot();
-    const rollout = new RolloutStore(join(root, 'rollouts'));
+    const rollout = trackedRolloutStore(join(root, 'rollouts'));
     const threadId = uuidV7(2000);
     for (const notification of lifecycle(threadId)) await rollout.append(threadId, notification);
     const entries = await rollout.read(threadId);
@@ -300,9 +442,92 @@ describe('Agent Core persistence', () => {
     rebuilt.close();
   });
 
+  test('keeps streamed Item rows unchanged while read surfaces use the in-memory overlay', async () => {
+    const root = await tempRoot();
+    const threadId = uuidV7(2_050);
+    const rollout = trackedRolloutStore(join(root, 'overlay-rollouts'));
+    const notifications = lifecycle(threadId);
+    const started = notifications[0]!;
+    if (started.type !== 'turn/started') throw new Error('Missing started Turn fixture');
+    for (const notification of notifications.slice(0, 4)) await rollout.append(threadId, notification);
+    const entries = await rollout.read(threadId);
+    const path = join(root, 'overlay-history.sqlite');
+    const database = testDatabase(path);
+    const store = new ThreadHistoryProjectionStore(path, database);
+    store.applyMany(entries.slice(0, -1));
+    const before = database.prepare(
+      'SELECT item_json FROM thread_items WHERE thread_id = ? AND item_id = ?',
+    ).get(threadId, 'item-agent-4000') as { item_json: string };
+
+    store.apply(entries.at(-1)!);
+    const after = database.prepare(
+      'SELECT item_json FROM thread_items WHERE thread_id = ? AND item_id = ?',
+    ).get(threadId, 'item-agent-4000') as { item_json: string };
+    expect(after.item_json).toBe(before.item_json);
+    expect(store.readTurn(threadId, started.turnId, 'full')?.items.at(-1)).toMatchObject({
+      type: 'agentMessage',
+      text: 'Do',
+    });
+    expect(store.listItems({ threadId }).data.at(-1)?.item).toMatchObject({
+      type: 'agentMessage',
+      text: 'Do',
+    });
+    store.close();
+  });
+
+  test('restores the streaming overlay when a projection COMMIT fails', async () => {
+    const root = await tempRoot();
+    const threadId = uuidV7(2_075);
+    const rollout = trackedRolloutStore(join(root, 'overlay-rollback-rollouts'));
+    for (const notification of interruptedLifecycle(threadId, false)) {
+      await rollout.append(threadId, notification);
+    }
+    const entries = await rollout.read(threadId);
+    const started = entries[0]?.event;
+    if (started?.type !== 'turn/started') throw new Error('Missing interrupted Turn fixture');
+    const path = join(root, 'overlay-rollback-history.sqlite');
+    const database = testDatabase(path);
+    let failNextCommit = false;
+    const failingDatabase: SqliteDatabase = {
+      exec: (sql) => {
+        if (failNextCommit && sql.trim() === 'COMMIT') {
+          failNextCommit = false;
+          throw new Error('simulated COMMIT failure');
+        }
+        database.exec(sql);
+      },
+      prepare: (sql) => database.prepare(sql),
+      close: () => database.close(),
+    };
+    const store = new ThreadHistoryProjectionStore(path, failingDatabase);
+    store.applyMany(entries);
+    const streamed = store.readTurn(threadId, started.turnId, 'full')?.items.at(-1);
+    if (streamed?.type !== 'agentMessage') throw new Error('Missing streamed agent Item');
+    failNextCommit = true;
+
+    expect(() => store.apply({
+      ordinal: entries.length,
+      byteOffset: entries.at(-1)!.byteOffset + entries.at(-1)!.byteLength,
+      byteLength: 1,
+      event: {
+        type: 'item/completed',
+        threadId,
+        turnId: started.turnId,
+        itemId: streamed.id,
+        item: streamed,
+        completedAt: 2_076,
+      },
+    })).toThrow('simulated COMMIT failure');
+
+    expect(store.watermark(threadId).ordinal).toBe(entries.length - 1);
+    expect(store.readTurn(threadId, started.turnId, 'full')?.items.at(-1)).toEqual(streamed);
+    expect(store.unfinishedItems(threadId, started.turnId).at(-1)).toEqual(streamed);
+    store.close();
+  });
+
   test('replays rollback markers without deleting immutable rollout facts', async () => {
     const root = await tempRoot();
-    const rollout = new RolloutStore(join(root, 'rollback-rollouts'));
+    const rollout = trackedRolloutStore(join(root, 'rollback-rollouts'));
     const threadId = uuidV7(2_100);
     const firstLifecycle = lifecycle(threadId, 4_100);
     for (const notification of firstLifecycle) await rollout.append(threadId, notification);
@@ -363,7 +588,7 @@ describe('Agent Core persistence', () => {
 
   test('replays an interrupted Turn with a completed partial stream exactly', async () => {
     const root = await tempRoot();
-    const rollout = new RolloutStore(join(root, 'interrupted-rollouts'));
+    const rollout = trackedRolloutStore(join(root, 'interrupted-rollouts'));
     const threadId = uuidV7(2_250);
     for (const notification of interruptedLifecycle(threadId, true)) {
       await rollout.append(threadId, notification);
@@ -397,11 +622,70 @@ describe('Agent Core persistence', () => {
     rebuilt.close();
   });
 
+  test('restores streamed open Item content from rollout after the in-memory overlay is lost', async () => {
+    const root = await tempRoot();
+    const threadId = uuidV7(2_300);
+    const rollout = trackedRolloutStore(join(root, 'crash-rollouts'));
+    for (const notification of interruptedLifecycle(threadId, false)) {
+      await rollout.append(threadId, notification);
+    }
+    const entries = await rollout.read(threadId);
+    const started = entries[0]?.event;
+    if (started?.type !== 'turn/started') throw new Error('Missing interrupted Turn fixture');
+    const path = join(root, 'crash-history.sqlite');
+    const initial = new ThreadHistoryProjectionStore(path, testDatabase(path));
+    initial.applyMany(entries);
+    const turnId = started.turnId;
+    expect(initial.readTurn(threadId, turnId, 'full')?.items.at(-1)).toMatchObject({ text: 'Partial output' });
+    initial.close();
+
+    const reopened = new ThreadHistoryProjectionStore(path, testDatabase(path));
+    expect(reopened.readTurn(threadId, turnId, 'full')?.items.at(-1)).toMatchObject({ text: '' });
+    reopened.restoreOpenItemsFromRollout(threadId, turnId, entries);
+    expect(reopened.unfinishedItems(threadId, turnId).at(-1)).toMatchObject({
+      type: 'agentMessage',
+      text: 'Partial output',
+    });
+    expect(reopened.readTurn(threadId, turnId, 'full')?.items.at(-1)).toMatchObject({ text: 'Partial output' });
+    reopened.close();
+  });
+
+  test('rebuilds a projection that advanced past a lost unsynced rollout tail', async () => {
+    const root = await tempRoot();
+    const threadId = uuidV7(2_350);
+    const rollout = trackedRolloutStore(join(root, 'lost-tail-rollouts'));
+    for (const notification of interruptedLifecycle(threadId, false)) {
+      await rollout.append(threadId, notification);
+    }
+    const entries = await rollout.read(threadId);
+    const delta = entries.at(-1)!;
+    const path = join(root, 'lost-tail-history.sqlite');
+    const initial = new ThreadHistoryProjectionStore(path, testDatabase(path));
+    initial.applyMany(entries);
+    expect(initial.watermark(threadId).ordinal).toBe(delta.ordinal);
+    initial.close();
+
+    await rollout.flush();
+    await truncate(rollout.pathFor(threadId), delta.byteOffset);
+    const durableEntries = await rollout.read(threadId);
+    const reopened = new ThreadHistoryProjectionStore(path, testDatabase(path));
+    reopened.reconcileThread(threadId, durableEntries);
+
+    expect(reopened.watermark(threadId)).toEqual({
+      threadId,
+      ordinal: delta.ordinal - 1,
+      byteOffset: delta.byteOffset,
+    });
+    expect(reopened.listTurns({ threadId, itemsView: 'full' }).data[0]?.items.at(-1))
+      .toMatchObject({ type: 'agentMessage', text: '' });
+    reopened.close();
+  });
+
   test('rejects Item and Turn mutation after terminal lifecycle facts', async () => {
     const root = await tempRoot();
     const threadId = uuidV7(2_500);
     const notifications = lifecycle(threadId);
-    const rollout = new RolloutStore(join(root, 'immutable-rollouts'));
+    const rollout = trackedRolloutStore(join(root, 'immutable-rollouts'));
     for (const notification of notifications) await rollout.append(threadId, notification);
     const entries = await rollout.read(threadId);
     const beforeTurnCompletion = entries.slice(0, -1);

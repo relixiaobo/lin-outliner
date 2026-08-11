@@ -327,6 +327,14 @@ the atomic `turn/started` event. Subagent activity already queued while the Thre
 idle is admitted before that evidence and the trailing user message, so it remains prior
 assistant history without breaking the active user boundary. Later steering evidence and
 input use `items/completed`. Neither path synthesizes a streaming lifecycle.
+The recorder applies every delta to its current decoded Item before the next provider
+event can observe it. Core may coalesce adjacent string deltas for the same Thread,
+Turn, Item, and delta type into one equivalent 40 ms downstream write; a lifecycle
+boundary or a different Item/type flushes the group first. Dynamic-tool output values
+remain discrete. Item completion therefore carries the exact chunk-current final Item
+even though durability, projection, IPC, and renderer work run at the lower coalesced
+rate. A failed downstream delta group is reported and dropped without blocking later
+deltas or lifecycle; the terminal Item snapshot remains the canonical repair boundary.
 The recorder validates local provenance and rejects completion before start. A raw
 provider call first resolves canonical identity, runs model-argument preparation, and
 passes the exposed schema. The kernel then persists one admission decision and emits

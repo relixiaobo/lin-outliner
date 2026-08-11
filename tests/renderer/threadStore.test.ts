@@ -55,7 +55,8 @@ describe('renderer Thread store', () => {
         throw new Error(`Unexpected method: ${method}`);
       },
     } as unknown as ThreadStoreClient;
-    const store = new ThreadStore(client);
+    const scheduledFlushes: Array<() => void> = [];
+    const store = new ThreadStore(client, (flush) => scheduledFlushes.push(flush));
     await store.initialize();
     let snapshots = 0;
     store.subscribe(() => { snapshots += 1; });
@@ -88,6 +89,101 @@ describe('renderer Thread store', () => {
 
     expect(snapshots).toBe(1);
     expect(store.getSnapshot().turnsByThread.get(owner.id)?.[0]?.items).toEqual(items);
+    expect(scheduledFlushes).toHaveLength(0);
+  });
+
+  test('updates snapshots synchronously while notifying listeners once per scheduled frame', async () => {
+    const owner = thread('thread-1', 1);
+    const active = turn('turn-1', 'inProgress', '');
+    let notify: (notification: AgentCoreNotification) => void = () => undefined;
+    const client = {
+      onAgentCoreNotification: (listener: (notification: AgentCoreNotification) => void) => {
+        notify = listener;
+        return () => undefined;
+      },
+      agentCoreRequest: async (method: string) => {
+        if (method === 'thread/list') return { data: [owner], nextCursor: null };
+        if (method === 'thread/turns/list') return { data: [active], nextCursor: null, backwardsCursor: null };
+        if (method === 'goal/get') return { goal: null };
+        if (method === 'thread/configuration/get') return configurationResponse(owner);
+        throw new Error(`Unexpected method: ${method}`);
+      },
+    } as unknown as ThreadStoreClient;
+    const scheduledFlushes: Array<() => void> = [];
+    const store = new ThreadStore(client, (flush) => scheduledFlushes.push(flush));
+    await store.initialize();
+    let snapshots = 0;
+    store.subscribe(() => { snapshots += 1; });
+    const item = active.items[0]!;
+
+    const chunks = Array.from({ length: 100 }, (_, index) => `[${index}]`);
+    for (const delta of chunks) {
+      notify({
+        type: 'item/delta',
+        threadId: owner.id,
+        turnId: active.id,
+        itemId: item.id,
+        delta: { type: 'agentMessageText', delta },
+      });
+    }
+
+    expect(store.getSnapshot().turnsByThread.get(owner.id)?.[0]?.items[0]).toMatchObject({
+      type: 'agentMessage',
+      text: chunks.join(''),
+    });
+    expect(snapshots).toBe(0);
+    expect(scheduledFlushes).toHaveLength(1);
+    scheduledFlushes.shift()!();
+    expect(snapshots).toBe(1);
+  });
+
+  test('delivers lifecycle state immediately and invalidates an older scheduled delta flush', async () => {
+    const owner = thread('thread-1', 1);
+    const active = turn('turn-1', 'inProgress', '');
+    let notify: (notification: AgentCoreNotification) => void = () => undefined;
+    const client = {
+      onAgentCoreNotification: (listener: (notification: AgentCoreNotification) => void) => {
+        notify = listener;
+        return () => undefined;
+      },
+      agentCoreRequest: async (method: string) => {
+        if (method === 'thread/list') return { data: [owner], nextCursor: null };
+        if (method === 'thread/turns/list') return { data: [active], nextCursor: null, backwardsCursor: null };
+        if (method === 'goal/get') return { goal: null };
+        if (method === 'thread/configuration/get') return configurationResponse(owner);
+        throw new Error(`Unexpected method: ${method}`);
+      },
+    } as unknown as ThreadStoreClient;
+    const scheduledFlushes: Array<() => void> = [];
+    const store = new ThreadStore(client, (flush) => scheduledFlushes.push(flush));
+    await store.initialize();
+    let snapshots = 0;
+    store.subscribe(() => { snapshots += 1; });
+    const item = active.items[0]!;
+
+    notify({
+      type: 'item/delta',
+      threadId: owner.id,
+      turnId: active.id,
+      itemId: item.id,
+      delta: { type: 'agentMessageText', delta: 'Done' },
+    });
+    expect(snapshots).toBe(0);
+    expect(scheduledFlushes).toHaveLength(1);
+
+    notify({
+      type: 'item/completed',
+      threadId: owner.id,
+      turnId: active.id,
+      itemId: item.id,
+      item: { ...item, text: 'Done' },
+      completedAt: 2,
+    });
+    expect(snapshots).toBe(1);
+    expect(store.getSnapshot().turnsByThread.get(owner.id)?.[0]?.items[0]).toMatchObject({ text: 'Done' });
+
+    scheduledFlushes.shift()!();
+    expect(snapshots).toBe(1);
   });
 
   test('preserves text spacing around structured composer references', async () => {

@@ -455,6 +455,7 @@ export class ThreadCatalogOps {
         if (this.turnLifecycle.hasActiveTurn(thread.id) || thread.status.type !== 'idle') {
         throw this.createThreadBusyError('Cannot roll back a Thread with an active Turn');
         }
+        await this.flushThreadNotificationsBestEffort(thread.id);
         const turns = this.core.allTurns(thread.id);
         if (request.numTurns > turns.length) {
           throw new Error('History rollback exceeds the current Turn count');
@@ -594,6 +595,7 @@ export class ThreadCatalogOps {
       try {
         await this.stopThreadSubtree(subtree.threadIds);
         for (const descendantId of [...subtree.threadIds].reverse()) {
+          await this.flushThreadNotificationsBestEffort(descendantId);
           await this.clearGoal(descendantId);
           this.clearSubagentBudget(descendantId);
           this.core.history.deleteThread(descendantId);
@@ -905,10 +907,15 @@ export class ThreadCatalogOps {
       this.core.emitTransientNotification({ type: 'thread/name/updated', threadId });
     }
   async reconcileThread(threadId: ThreadId): Promise<void> {
-      const entries = await this.core.rollout.read(threadId);
-      this.core.history.applyMany(entries.filter((entry) => entry.ordinal > this.core.history.watermark(threadId).ordinal));
-      for (const marker of this.core.history.rollbackMarkers(threadId)) {
+      let entries = await this.core.rollout.read(threadId);
+      const reconcileResult = this.core.history.reconcileThread(threadId, entries);
+      const rollbackMarkers = this.core.history.rollbackMarkers(threadId);
+      for (const marker of rollbackMarkers) {
         await this.finalizeHistoryRollbackHooks(this.extensions.historyRollbackExtensions(), 'commit', marker);
+      }
+      if (reconcileResult === 'rolloutMissing') {
+        entries = await this.core.rollout.restoreMissing(threadId, this.core.history.rolloutSnapshot(threadId));
+        this.core.history.rebuildThread(threadId, entries);
       }
       let cursor: string | null = null;
       do {
@@ -927,7 +934,12 @@ export class ThreadCatalogOps {
         cursor = page.nextCursor;
       } while (cursor);
       const latest = this.core.history.listTurns({ threadId, limit: 1, sortDirection: 'desc', itemsView: 'full' }).data[0];
-      if (latest?.status === 'inProgress') await this.finishCrashedTurn(threadId, latest);
+      if (latest?.status === 'inProgress') {
+        this.core.history.restoreOpenItemsFromRollout(threadId, latest.id, entries);
+        const recovered = this.core.history.readTurn(threadId, latest.id, 'full');
+        if (!recovered) throw new Error(`Recovered Turn is missing from history: ${latest.id}`);
+        await this.finishCrashedTurn(threadId, recovered);
+      }
       const record = this.core.metadata.require(threadId);
       if (record.nameOrigin === 'automatic' && this.core.allTurns(threadId).length === 0) {
         this.clearAutomaticThreadName(threadId);
@@ -939,6 +951,14 @@ export class ThreadCatalogOps {
       // is what gives those Threads back — nothing writes the status any more.
       if (record.thread.status.type === 'active' || record.thread.status.type === 'systemError') {
         await this.turnLifecycle.setStatus(threadId, { type: 'idle' });
+      }
+    }
+
+  private async flushThreadNotificationsBestEffort(threadId: ThreadId): Promise<void> {
+      try {
+        await this.core.flushThreadNotifications(threadId);
+      } catch (error) {
+        console.error(`[agent] failed to flush Thread notifications for ${threadId}`, error);
       }
     }
 
