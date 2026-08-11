@@ -750,3 +750,40 @@ electron-vite build and electron-builder, so an unloadable preload fails the
 build, not the first user. **Know which realities your test pyramid never
 touches** — packaged Electron is one of them here; that gap is a standing fact
 to design guards around, not an oversight to fix once.
+
+## A remembered failure may end one operation; it must never speak for the next
+
+PR #525 optimized streaming by moving delta writes off the caller's await. To
+keep a broken Thread from retrying forever it stored the error in a per-Thread
+map — and that one map produced the round's two worst defects. Later deltas
+checked the map and returned early, so a single transient `EIO` silently
+discarded the rest of the response with no log line; then the *next required*
+lifecycle write checked the map and threw the stale error **instead of running
+its own operation**, so `item/completed` was never appended and the next launch
+found an Item that never finished. A remembered failure had been promoted from
+"this write failed" to "this Thread is broken", and then spent on operations
+that had not been tried. The rule: an error belongs to the operation that
+produced it. Report it, and let the next operation attempt its own work and
+fail on its own evidence. If you truly need a circuit breaker, it needs an
+explicit close condition and must never substitute itself for an action the
+caller requires — silently skipping a required write is worse than the failure
+it was avoiding. Corollary from the same diff: **maintenance work must not
+change its caller's result.** LRU eviction ran in `append`'s `finally` and
+could reject an append whose bytes were already durably on disk; cleanup and
+bookkeeping around a successful operation get caught and reported, never
+propagated.
+
+## Absent evidence is not evidence of disagreement
+
+The same PR's reconciler compared a projection watermark against the rollout's
+byte boundary and rebuilt the projection on mismatch. With the rollout file
+missing or empty there were no entries at all, so the boundary resolved to
+`null`, `null !== watermark.byteOffset` read as a mismatch, and "rebuild" —
+`DELETE` every turn, item and marker for that Thread, then replay zero entries
+— erased a full conversation the projection still held intact. Nothing was
+inconsistent; one side of the comparison simply had nothing to say. Before a
+reconciler destroys the side it does not trust, make it distinguish *contradicts*
+from *has no data*, and then ask which side actually holds the surviving copy:
+the fix rebuilds the missing rollout from the projection, the reverse of the
+original direction. Any reconcile whose repair is a delete deserves this check
+by construction.

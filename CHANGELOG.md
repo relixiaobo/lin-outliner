@@ -10,6 +10,51 @@ Entries reference the pull request that introduced them.
 
 `main` is the `0.4.0` train; entries here move under the next tag.
 
+### Changed
+
+- **A streaming answer no longer janks the whole app (PR #525, codex)** — every
+  provider chunk used to pay a full persist cycle of its own: stat+open+write+
+  fsync+close on the rollout log, a read→decode→append→stringify→UPDATE of the
+  entire accumulated message in the history projection, three codec passes, an
+  IPC broadcast, and a whole-snapshot renderer store notify. A Subagent run —
+  two concurrent streams — made the outliner stutter under the agent's own
+  typing, worst with the Subagent row expanded. Four changes bound that cost:
+  rollout appends reuse open handles behind a 16-handle LRU and group-commit
+  within 150 ms; adjacent string deltas for the same Turn, Item and delta type
+  coalesce within 40 ms (discrete dynamic-tool output still never merges);
+  in-progress Items live in a decoded memory overlay applied across every
+  history read surface, so the projection stops rewriting the whole message per
+  chunk; and the renderer updates snapshots synchronously but delivers delta
+  subscriber notifications at most once per animation frame, with lifecycle
+  changes still immediate. The rebuildable history projection moves to WAL with
+  `synchronous=NORMAL`, while authoritative metadata, Goal, Memory and
+  Automation stores keep `FULL`. The same 200-delta probe goes from a 56.11 ms
+  median to 5.51 ms — 10.2× — with 200 rollout writes collapsing to 1 and both
+  projections ending on the identical complete text. **The durability trade,
+  stated plainly:** a hard crash can lose the last at-most-150 ms group-commit
+  window of an *unfinished* stream; Item and Turn completion remain forced sync
+  barriers, and startup rebuilds any projection found ahead of the surviving
+  rollout. The high gate found ten defects, all fixed with eleven regression
+  tests. Two would have cost user data: a sticky per-Thread failure map that,
+  after one transient disk error, silently discarded every later delta *and*
+  then threw that stale error **in place of** the next required lifecycle write
+  — skipping it, so the rollout kept an Item that never completed and the next
+  launch's assertion killed Agent startup for every Thread; and a reconcile path
+  that treated a missing or empty rollout as a mismatch and "repaired" it by
+  deleting the Thread's entire projected history. The first is gone — the map
+  and its required-notification wrapper are deleted, so a failure is reported
+  and the next write still runs. The second now rebuilds the *rollout* from the
+  projection instead of the reverse. The rest were misplaced failure boundaries:
+  fsyncing a file one line before unlinking it (a throw there skipped the
+  unlink and orphaned the transcript), LRU eviction throwing from an `append`'s
+  `finally` and thereby rejecting an append that had already durably landed, a
+  flush in the middle of the delete cascade that could leave a Thread listed but
+  with its goal and budget wiped, and recovery `throw`s on the unguarded startup
+  loop — the last two moved to A12's degrade-don't-kill side, so one damaged
+  Thread now skips its own resume instead of emptying the Agent pane. The
+  overlay's rollback also stopped deep-cloning every open Item on every
+  transaction and now journals inverse mutations for only the keys it touched.
+
 ### Internal
 
 - **Opened the 0.4.0 train (main-agent)** — `package.json` dials to `0.4.0`

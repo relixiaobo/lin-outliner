@@ -2,7 +2,7 @@
 
 **Shape:** (a) ONE complete feature in one PR — a bounded cost-cleanup pass on
 the same pipeline PR #525 (`agent-streaming-delta-pipeline`) hardened, building
-on it after it merges.
+on it now that it has merged.
 
 ## Goal
 
@@ -33,7 +33,7 @@ audit):
 
 - No change to the delta-pipeline design shipped by PR #525 (coalescing
   windows, overlay, group commit, store frame batching stay as specified in
-  `docs/plans/agent-streaming-delta-pipeline.md`).
+  `docs/spec/agent-core.md`, where that plan's design was folded on merge).
 - No markdown renderer swap; `MemoizedMarkdownBlock` block-level memoization
   stays the rendering unit.
 

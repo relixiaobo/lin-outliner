@@ -21,10 +21,11 @@ See `AGENTS.md` for the full workflow.
 
 Open PRs and claims — the PR queue, not this snapshot, is authoritative.
 
-- **#525 `codex/agent-streaming-delta-pipeline`** (ready 2026-08-11) — bounds
-  the streaming delta pipeline cost per
-  [`agent-streaming-delta-pipeline`](plans/agent-streaming-delta-pipeline.md);
-  awaiting the main-agent gate.
+- **#526 `codex-2/responses-tool-contract-hardening`** (draft 2026-08-11) — plan
+  review only, no implementation: an explicit `strict` invariant on every
+  Responses function-tool payload, exact post-`prepareArguments` admission, and a
+  Turn-local repeated-rejection quarantine. The plan file lands with that PR, so
+  it is not linked from here yet.
 
 
 ## Backlog
@@ -620,19 +621,6 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   same index while preserving matching, ranking, creation, existing-tag, and Trash behavior.
   **Remaining P3:** additional localized O(N) cleanups still listed in the plan; the ordinary renderer
   projection delta path no longer rebuilds `new Map(prev.byId)` or the whole render-revision map.
-- **agent-streaming-delta-pipeline** (P1, `in-progress` 2026-08-11; PR #525 ready, codex) — bound the per-chunk cost of
-  streaming Turns. Today every provider chunk independently pays stat+open+write+fsync+close
-  on the rollout log, a full read→decode→append→stringify→UPDATE of the accumulated item in
-  the history projection (no WAL, synchronous driver on the main thread), three codec passes,
-  one IPC broadcast, and a whole-snapshot renderer store notify — so a Subagent run (two
-  concurrent streams) janks the entire app, worst with the Subagent row expanded (child
-  history loads, its deltas start applying, and a second full ThreadView renders per chunk).
-  One PR (PM-ratified 2026-08-10): main-process write path (WAL pragmas + rollout group
-  commit + delta coalescing at `recordNotification` + projection streaming overlay with a
-  crash-recovery replay step), then renderer store frame batching on top. No protocol change;
-  collision check
-  2026-08-10: no open PRs, no overlap. Design:
-  [`agent-streaming-delta-pipeline`](plans/agent-streaming-delta-pipeline.md).
 - **typing-hot-path** (P0, `draft` 2026-08-11) — every keystroke pays O(document)
   several times over. Main: the memory extension's two hooks (`guardMutation`'s
   eagerly-built projection + `memoryGraphMayChange`'s ~4 full-document passes
@@ -858,6 +846,17 @@ and the merged PR, distilled rules in [`lessons.md`](lessons.md). Everything
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
 
+- **agent-streaming-delta-pipeline** (codex, PR #525, merged 2026-08-11 — plan archived) —
+  a streaming Turn no longer pays a full persist cycle per provider chunk: rollout appends
+  reuse handles behind a 16-handle LRU and group-commit within 150 ms, adjacent string deltas
+  for the same Item coalesce within 40 ms, in-progress Items live in a decoded projection
+  overlay recovered from rollout facts after restart, and the renderer notifies delta
+  subscribers at most once per frame. Measured 56.11 ms → 5.51 ms median on the 200-delta
+  probe (200 rollout writes → 1). The high gate found ten defects — a sticky failure map that
+  silently dropped later deltas *and* skipped the next required lifecycle write, an empty
+  rollout rebuilding (i.e. erasing) a Thread's whole projected history, fsync-before-unlink and
+  LRU eviction throwing from a `finally`, and recovery `throw`s on the unguarded startup path —
+  all fixed with eleven regression tests, the last two per A12's degrade-don't-kill boundary.
 - **epub-reading-position-refresh** (codex-4, PR #524, merged 2026-08-10 — plan archived) —
   duplicate EPUB/PDF reader surfaces stopped overwriting each other's progress: both
   previews now capture the shared position at a session boundary through one
