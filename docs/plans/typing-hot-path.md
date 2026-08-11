@@ -130,7 +130,13 @@ Renderer (all inside the per-keystroke `flushSync` in `useCommandRunner`):
   — which already evaluates graph relevance for the command — records an
   `affectsMemory` verdict on the operation, and `documentChanged` consumes that
   verdict (one source of truth, no second classifier to drift). Non-command
-  projection changes without a verdict take the conservative path. What defers
+  projection changes without a verdict take the conservative path. The
+  verdict's **lifecycle spans every notification of its operation**: a text
+  patch's `operationId` fires again when `flushTextEditGroupNow` emits its
+  end-of-group (empty) projection event, so a consume-once verdict would send
+  that second event down the conservative full-graph path, and a never-expiring
+  one would leak — the verdict lives until the operation's group closes, and
+  empty deltas skip graph work outright. What defers
   is ONLY the digest and the wake: `canonicalGraphDigest` computation and the
   pipeline wake move to a debounced idle timer (~500 ms) or the pipeline's own
   wake points. The generated-node **ownership reconciliation** (fingerprint
@@ -139,10 +145,16 @@ Renderer (all inside the per-keystroke `flushSync` in `useCommandRunner`):
   stale ownership of a node the user just edited. Synchronous does NOT mean
   full-graph: today the reconciliation builds the whole canonical graph to
   fingerprint one node, so the `MemoryMutationIndex` additionally stores each
-  canonical node's fingerprint inputs (category, `sourceDate`, and whatever
-  else `timelineNodeFingerprint` reads) — a single edited node reconciles in
-  O(1) against its index entry. The zero-full-graph-build guarantee covers
-  ALL text patches, **including patches to owned/generated nodes**. `memory:*` self-publications
+  canonical node's fingerprint inputs (category, `sourceDate`, `parentKey`,
+  tags, text — the exact `memoryNodeFingerprint` surface). Those inputs are
+  DERIVED from ancestry: a day-node rename changes `sourceDate` for every
+  generated descendant, a container move changes `parentKey`, an ancestor
+  entering Trash changes graph membership — none of which put the descendants
+  in the sparse delta. The index therefore maintains the reverse-dependency
+  closure (ancestor → dependent generated records) and reconciliation runs
+  over **all affected generated records** — O(affected), not O(one) and not
+  O(all generated). The zero-full-graph-build guarantee covers ALL text
+  patches, **including patches to owned/generated nodes**. `memory:*` self-publications
   keep their existing skip. `generatedNodes()` becomes a cached read
   invalidated by `MemoryControlStore` writes instead of a per-event SELECT.
 - Invariant: a real memory-graph change — including tag removal, a subtree
@@ -191,9 +203,14 @@ Renderer (all inside the per-keystroke `flushSync` in `useCommandRunner`):
   marked the document dirty at a persistence revision — immediate and
   O(changed); **this is what ordinary UI mutations return at**), *snapshotted*
   (the saver captured a consistent state covering that revision — an internal
-  pipeline milestone that runs on the saver's cadence, never per keystroke,
-  and whose capture must itself be O(changed) or amortized through the
-  structural-sharing map below), and *durable* (bytes on disk). A mutation
+  pipeline milestone that runs on the saver's cadence, never per keystroke —
+  and whose main-thread cost is UNSPECIFIED until the PM picks the
+  persistence option: today capture means O(N) `materializeState` + Loro
+  export + encoding, so the chosen option's one-pager must state exactly what
+  the main thread hands over — a revision handle, exported bytes, or a shared
+  structure — with its complexity and ownership, and the accepted →
+  snapshotted main-thread work is measured separately), and *durable* (bytes
+  on disk). A mutation
   never waits for snapshot capture — an "ordinary mutations return at
   submitted" reading would smuggle the coalescing wait back into the
   keystroke. **Trusted document-system transactions are an
@@ -231,9 +248,15 @@ Renderer (all inside the per-keystroke `flushSync` in `useCommandRunner`):
   cancelling from there would leave a half-torn-down app, and the latch makes
   a second ⌘Q bypass the drain entirely (`if (quitAfterFlush) return`). The
   redesign: **Phase 1 is reversible** — nothing is torn down; the document
-  drains toward the durable ack under the deadline. Only a successful drain
-  enters **Phase 2** — irreversible teardown (hotkeys, services, agent close)
-  and exit. A failed/timed-out drain with dirty state resets the latch, keeps
+  drains toward the durable ack under the deadline. The drain is a
+  **linearizable revision barrier**: with saves off the mutation queue and
+  services still live, new mutations can arrive after a drain target is
+  chosen, so Phase 2 entry requires `durableRevision ≥ latestAcceptedRevision`
+  checked atomically — either mutation admission freezes at the barrier, or
+  the drain loops until the check holds at the moment of transition; an app
+  must never exit with a newer accepted revision than the one it persisted.
+  Only that established barrier enters **Phase 2** — irreversible teardown
+  (hotkeys, services, agent close) and exit. A failed/timed-out drain with dirty state resets the latch, keeps
   every service live, and surfaces the persistent Retry / Quit-anyway choice;
   a second ⌘Q while dirty re-enters Phase 1, never bypasses it. The
   bounded-timeout exit remains for non-document flushes inside Phase 2, so a
@@ -275,7 +298,12 @@ Renderer (all inside the per-keystroke `flushSync` in `useCommandRunner`):
   the debounced scan DOES run it would still block the renderer for its whole
   duration; the deferred scan therefore runs cooperatively (chunked with
   yields, or in a worker), and typing while a scan is in flight must stay
-  responsive. A true incremental mention index is an explicit follow-up, not
+  responsive. The worker option carries its own trap: posting the full
+  `DocumentIndex`/Map does the structured-clone serialization ON the sending
+  thread — an O(N) jank relocated, not removed. A worker path must feed from
+  an incrementally maintained mirror (delta messages) or a transferable
+  representation built in bounded batches, and the responsiveness probe
+  measures from BEFORE task submission. A true incremental mention index is an explicit follow-up, not
   this PR. The deferral is a user-visible freshness change with its own
   acceptance contract: linked references update
   immediately; unlinked mentions refresh debounced; a stale computation never
@@ -322,11 +350,15 @@ Renderer (all inside the per-keystroke `flushSync` in `useCommandRunner`):
   Queries resolve against a posting index that serves the EXISTING contains
   semantics at **every query length** — mid-word substrings, one- and
   two-character queries, single CJK characters (`rankTextSearchLabel` is plain
-  substring matching today, and none of that narrows): a suffix or
-  full-coverage n-gram posting structure (1..3-grams including CJK single
-  characters, or suffix-array postings — dev's choice within that constraint;
-  sorted-prefix keys alone cannot retrieve mid-word matches bounded and are
-  out). It yields a **bounded candidate set** without enumerating all nodes. Semantics are the PM-ratified **shortlist
+  substring matching today, and none of that narrows) AND locates **exact
+  full substrings with a bounded result**: a fixed 1..3-gram intersection is
+  not enough on its own — for a query like `abcd`, arbitrarily many labels
+  containing `abc` and `bcd` but never `abcd` intersect as false positives,
+  and verifying them degenerates to O(N). The structure must resolve the
+  complete substring (suffix-array/suffix-automaton postings, or n-grams with
+  positional verification whose false-positive work is itself bounded) and
+  return bounded DISTINCT node ids. It yields a **bounded candidate set**
+  without enumerating all nodes. Semantics are the PM-ratified **shortlist
   contract** (2026-08-11): exact global top-24 equivalence cannot be bounded —
   the real composite ordering is text rank → disabled → untitled → context
   rank → label length → `updatedAt` → label, an empty query ties every node on
@@ -340,10 +372,17 @@ Renderer (all inside the per-keystroke `flushSync` in `useCommandRunner`):
   the shortlist. That is necessary but not sufficient: each cycle check
   (`canReachInDisplayGraph`) is itself a full display-graph DFS, so 24
   shortlist members could still cost 24 × O(N) per keystroke. The reachability
-  answer is therefore cached — a reverse-reachable set keyed on
-  (referenceGraphRevision, current parent), or an equivalent bounded
-  reachability index — so the per-keystroke bound covers **graph nodes
-  visited**, not merely cycle-check invocations. The visible difference is confined to deep ties (which
+  answer is therefore cached — a reverse-reachable set, or an equivalent
+  bounded reachability index — so the per-keystroke bound covers **graph nodes
+  visited**, not merely cycle-check invocations. Two contracts the cache must
+  state: (1) **invalidation keys on display-graph adjacency, not reference
+  edges alone** — the DFS walks ordinary content-child edges too, so a pure
+  content subtree move changes reachability without touching a reference
+  edge; the key combines the structure (parent/children) revision with
+  referenceGraphRevision; (2) **cold builds never run on the input event** —
+  first popover open or a post-invalidation rebuild constructs the set
+  cooperatively (or precomputed off-thread), so the O(N) build cost cannot
+  land inside a keystroke. The visible difference is confined to deep ties (which
   equal-rank peers fill the tail); top results for real queries are
   text-rank-dominated and unchanged. Breadcrumb presentation is computed
   lazily for the final bounded results at render time, never stored per node —
@@ -397,7 +436,13 @@ Renderer (all inside the per-keystroke `flushSync` in `useCommandRunner`):
   index's membership sets equal the sets the full scan derives; a text patch
   to a non-memory node does zero graph work while one to an owned/generated
   node still authorizes and reconciles ownership synchronously **without a
-  full graph build (counter covers the owned/generated case too)**. Transaction
+  full graph build (counter covers the owned/generated case too)**;
+  ancestor-derived reconciliation cases — a day-node rename, a container move,
+  an ancestor entering Trash — reconcile every affected generated descendant,
+  asserted on the **control-store outcomes** (ownership flips, removals), not
+  merely on the pipeline wake; the verdict survives the end-of-group empty
+  projection event (graph-build counter checked after the group flush fires,
+  with empty deltas doing zero graph work). Transaction
   cases: a multi-command transaction whose later commands depend on earlier
   ones' membership changes authorizes identically to the full-scan guard, the
   overlay folds on commit, and a rolled-back transaction leaves the base index
@@ -419,7 +464,9 @@ Renderer (all inside the per-keystroke `flushSync` in `useCommandRunner`):
   clean state quits fast, a dirty-state deadline cancels into the Retry /
   Quit-anyway surface with hotkeys and services still functional (nothing torn
   down in Phase 1), and a second ⌘Q while dirty re-enters the drain rather
-  than bypassing it via the latch.
+  than bypassing it via the latch; a mutation injected DURING the drain moves
+  the barrier — the app exits only once `durableRevision ≥
+  latestAcceptedRevision` holds atomically at Phase 2 entry.
 - Unit, PR-C: incremental-maintenance equivalence tests — patched
   referenceSummary / candidate-index state equals a from-scratch build across
   a mutation corpus (`tests/renderer`); a candidate-visit upper-bound test —
@@ -431,8 +478,13 @@ Renderer (all inside the per-keystroke `flushSync` in `useCommandRunner`):
   invoked only for shortlist members, AND the per-keystroke bound counts
   **graph nodes visited by reachability checks**, not merely invocations
   (cached reverse-reachable set); **query-length coverage tests** — one-char,
-  two-char, single-CJK-character, and mid-word substring queries all retrieve
-  through the posting index with results matching contains semantics; an **edge-signature test** —
+  two-char, single-CJK-character, mid-word substring, AND long queries over a
+  corpus dense in shared-gram false positives (labels containing every 3-gram
+  of the query but never the query itself) all retrieve through the posting
+  index with results matching contains semantics inside the visit bound;
+  **reachability-cache tests** — a cold cache builds off the input event
+  (first-open keystroke latency unaffected) and a pure content subtree move
+  (no reference edge touched) invalidates reachability; an **edge-signature test** —
   inserting text before an inline ref (offset-only change) does not bump
   referenceGraphRevision; **expanded-Backlinks freshness tests** — linked
   updates immediate, unlinked debounced, stale generation never overwrites
