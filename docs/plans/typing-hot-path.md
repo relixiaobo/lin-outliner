@@ -87,9 +87,14 @@ Renderer (all inside the per-keystroke `flushSync` in `useCommandRunner`):
 
 ### PR-A — memory extension off the mutation path (main)
 
-- **Lazy guard input.** `guardMutation` receives a projection **thunk** (or the
-  maintained `DocumentReadModel`) instead of an eagerly assembled projection;
-  a mutation with no registered guard never assembles anything.
+- **Lazy guard input — the live projection thunk ONLY, never the read model.**
+  `guardMutation` receives a thunk over `core.projection()` instead of an
+  eagerly assembled projection; a mutation with no registered guard never
+  assembles anything. The `DocumentReadModel` is NOT a legal guard input: it
+  updates from post-commit deltas, while `core.projection()` explicitly builds
+  fresh inside a transaction to reflect in-flight mutations — a guard reading
+  the read model mid-transaction would judge a multi-command memory
+  publication against stale membership.
 - **A `MemoryMutationIndex`, because a command-kind switch cannot answer
   membership.** Even a plain `apply_node_text_patch` must be judged against
   the guard's membership sets — is the target canonical-owned, a protected
@@ -102,7 +107,11 @@ Renderer (all inside the per-keystroke `flushSync` in `useCommandRunner`):
   reserved-tagged ids, active tag definitions, and generated ids. It updates
   only from operations whose verdict was `affectsMemory` (and from the memory
   pipeline's own writes); ordinary revision churn never invalidates it. The
-  guard answers a text patch with O(1) lookups against the index.
+  guard answers a text patch with O(1) lookups against the index. The index is
+  **transaction-aware**: updates accumulate in an overlay while a transaction
+  is open (later commands in the same transaction read through it), fold into
+  the base only on outer commit, and are discarded on rollback — the base
+  never observes an uncommitted state.
 - **Deferred, guard-informed `documentChanged`.** A new-state changed-node-id
   check is NOT a sound bail: memory-graph membership also depends on facts a
   changed id does not carry — the node's OLD tags (a removal), deletion events
@@ -131,8 +140,9 @@ Renderer (all inside the per-keystroke `flushSync` in `useCommandRunner`):
 - **Remove forced synchronous saves from the mutation queue.** The undo-group
   boundary (`endUndoGroup`) keeps its grouping semantics, but the disk write it
   forces joins the coalescer instead of being awaited inline; likewise the
-  structural-edit → first-keystroke forced flush. Ordering stays correct
-  because all saves already serialize through the mutation queue.
+  structural-edit → first-keystroke forced flush. Save ordering is owned by the
+  handoff contract below — persistence revisions, single snapshot ownership,
+  and acks — NOT by the mutation queue, which saves leave entirely.
 - **An honest crash window needs a max-wait checkpoint.** The 700 ms coalescer
   (`scheduleTextEditFlush`) clears and re-arms its timer on every patch, so
   sustained typing defers the save indefinitely — "loses at most the coalescing
@@ -209,13 +219,20 @@ Renderer (all inside the per-keystroke `flushSync` in `useCommandRunner`):
   props it reads). The `@` candidate base cannot be revision-cached — it reads
   titles, ancestor breadcrumbs, `updatedAt`, candidate types, and the
   display-cycle graph, several of which change on the very keystroke being
-  served — so it becomes an **incrementally maintained candidate index**
-  (per-node entries patched from changed ids; full rebuild only on
-  referenceGraphRevision / trash / tag-definition changes), the same shape as
-  the `#` path's cache but with per-node patching instead of identity keying.
-  Share one trash-descendant set per trash revision (the precomputed-Trash-set
-  precedent from the perf program) instead of per-candidate ancestor walks with
-  `Set` allocations.
+  served — so it becomes a **queryable label index, not just a maintained base
+  table**: an incrementally patched base (per-node entries updated from
+  changed ids) is necessary but not sufficient — a query that still
+  filters/ranks/sorts every node only shrinks the constant, not the O(N).
+  Queries resolve against a label/text lookup structure (sorted label keys or
+  n-gram buckets — dev's choice) that yields a **bounded candidate set**
+  without enumerating all nodes; rank/sort run on that bounded set only.
+  Breadcrumb and display-cycle presentation are computed lazily for the
+  bounded results at render time, never stored per node — an ancestor rename
+  therefore cannot invalidate descendants' cached entries, because breadcrumbs
+  are not cached. Full rebuild only on referenceGraphRevision / trash /
+  tag-definition changes. Share one trash-descendant set per trash revision
+  (the precomputed-Trash-set precedent from the perf program) instead of
+  per-candidate ancestor walks with `Set` allocations.
 - **`Sidebar`:** memoize rows; use the shared per-revision trash-descendant set.
 - **`buildVisualRows`: incremental row-model patching — window-only derivation
   is out.** The layout model needs the complete flat row list:
@@ -223,9 +240,16 @@ Renderer (all inside the per-keystroke `flushSync` in `useCommandRunner`):
   offsets, and forced-index collection scans all rows — deriving only the
   viewport would force a virtualization-architecture change this plan's
   non-goals exclude. Instead the full row model is kept and **patched** from
-  changed ids: a text patch touches its row in place; structural changes
-  (sort/filter/group/reference membership) invalidate and rebuild the affected
-  branch only, with the invalidation rules per trigger stated in the PR.
+  changed ids — but "text patch → in-place row update" is NOT universally
+  sound: Name, Updated, and custom field values all feed the active view's
+  sort (`fieldTextFor`), filter (`partitionFilterRows`), and grouping, so
+  ordinary typing can legitimately move a row, cross a group, or enter/leave
+  the filtered set. The patcher therefore declares the active view's **field
+  dependencies** (sort field ids, filter-rule fields, group field): a text
+  patch whose changed fields are disjoint from them updates the row in place;
+  one that intersects them invalidates and rebuilds the affected branch, same
+  as a structural change. Invalidation rules per trigger are stated in the
+  PR.
 - **`CodeBlockRow`:** debounce re-highlighting (~150 ms). The text itself lives
   in the editor; the highlight is decoration and may lag a beat.
 
@@ -241,7 +265,11 @@ Renderer (all inside the per-keystroke `flushSync` in `useCommandRunner`):
   `MemoryMutationIndex` equivalence: after an arbitrary mutation corpus, the
   index's membership sets equal the sets the full scan derives; a text patch
   to a non-memory node does zero graph work while one to an owned/generated
-  node still authorizes and reconciles ownership synchronously.
+  node still authorizes and reconciles ownership synchronously. Transaction
+  cases: a multi-command transaction whose later commands depend on earlier
+  ones' membership changes authorizes identically to the full-scan guard, the
+  overlay folds on commit, and a rolled-back transaction leaves the base index
+  byte-identical (commit/rollback equivalence).
 - Unit, PR-B: a text-patch burst performs no synchronous save inside
   `runMutation` and never queues behind an in-flight file write; sustained
   typing past the max-wait still checkpoints (fake clock); a failed background
@@ -250,11 +278,16 @@ Renderer (all inside the per-keystroke `flushSync` in `useCommandRunner`):
   not copied per patch (counter).
 - Unit, PR-C: incremental-maintenance equivalence tests — patched
   referenceSummary / candidate-index state equals a from-scratch build across
-  a mutation corpus (`tests/renderer`); a transcript fixture that asserts no
-  `ThreadTurnView` re-render on a document-only index change; rail
-  close→reopen preserves composer draft, staged attachments, and scroll
-  position; patched visual-row model equals a from-scratch `buildVisualRows`
-  across sort/filter/group/reference mutations.
+  a mutation corpus (`tests/renderer`); a candidate-visit upper-bound test —
+  a picker query touches at most O(bounded results) candidate entries, never
+  all nodes (counter); a transcript fixture that asserts no `ThreadTurnView`
+  re-render on a document-only index change; rail close→reopen preserves
+  composer draft, staged attachments, and scroll position; patched visual-row
+  model equals a from-scratch `buildVisualRows` across sort/filter/group/
+  reference mutations — including sort/filter/group **parity under typing**:
+  editing Name, Updated-relevant content, a custom field value that feeds the
+  active sort/filter/group, and renaming a reference target must each move,
+  regroup, or re-filter rows identically to a full rebuild.
 - **Probe (A9):** `renderProbe` typing latency on the large test document,
   before/after each PR, with the agent rail open and a Subagent streaming —
   numbers recorded in each PR body.
