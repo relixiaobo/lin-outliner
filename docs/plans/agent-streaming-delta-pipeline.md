@@ -74,9 +74,13 @@ Thread (map of `threadId → { handle, byteOffset }`), replacing the per-event
 stat/open/close; appends write immediately and return. fsync becomes batched:
 a short timer (150 ms, constant in one place) after the first unsynced write,
 plus forced sync at every non-delta lifecycle barrier — including
-`item/completed`, `items/completed`, and `turn/completed` — before a Thread
-delete's `rm`, and during `flush()` (which the `before-quit` path already
-awaits). Handles close on Thread delete, flush, and past a 16-handle LRU cap.
+`item/completed`, `items/completed`, and `turn/completed` — and during
+`flush()` (which the `before-quit` path already awaits). Handles close on
+Thread delete, flush, and past a 16-handle LRU cap. Delete cancels a scheduled
+sync, closes best-effort without syncing bytes that are about to be discarded,
+and still unlinks if close reports an error. LRU eviction does sync before
+close, but an eviction failure is background maintenance and cannot reverse a
+successful append.
 The existing torn-tail repair in `readEntries`
 already tolerates a partial trailing line, so the crash window changes from
 "nothing unsynced" to "at most the group-commit window".
@@ -96,10 +100,18 @@ merged), or any non-delta notification — flushes the pending group **first**,
 preserving per-Thread order by construction; Turn-level notifications from
 `TurnLifecycle` also pass through `recordNotification`, so interrupt and
 steering paths need no special casing. Rollback, delete, and service shutdown
-also flush the Thread queue before mutating or closing its stores. A 40 ms
-idle-group timer bounds display latency. A flush runs the existing pipeline
+also flush the Thread queue before mutating or closing its stores; rollback and
+delete treat a stale-delta flush failure as best-effort so their destructive
+cascade still completes. Transient notifications join the same per-Thread
+queue and best-effort flush an older delta before broadcast. A 40 ms idle-group
+timer bounds display latency. A flush runs the existing pipeline
 (rollout append, projection apply, listener broadcast, extension notify) once
 with the merged delta.
+
+A deferred delta failure is reported but is not sticky. The failed group is
+dropped, a later delta starts a fresh group, and a required lifecycle event
+still persists. Its complete Item snapshot is the repair boundary for any
+stream text whose earlier delta write failed.
 
 Effect: every downstream per-event cost — rollout write, projection apply, IPC
 message, preload decode, renderer render — drops by the merge factor (typically
@@ -129,10 +141,21 @@ each `item/started` snapshot) and persist the result to rows **before**
 `finishCrashedTurn` reads `unfinishedItems`. One bounded write per open item,
 paid only for a crashed Thread at open.
 
+If a projection has a durable watermark but its rollout is completely absent,
+reconciliation preserves the projection instead of rebuilding it from an empty
+log. Startup first completes any projected rollback-hook recovery, writes an
+atomic minimal rollout from the final projected Turn/Item snapshots, and then
+rebuilds the projection from that replacement log so later ordinals remain
+contiguous. A failure is isolated to that Thread; other catalog Threads still
+reconcile, prune, and resume.
+
 Equivalence contract: the incremental-vs-rebuilt tests in
 `tests/core/agentCorePersistence.test.ts` compare through read APIs; the
 overlay narrows the guarantee from row-level to read-surface equivalence for
 in-progress items only. Completed items keep byte-identical rows.
+Projection transactions keep an O(number of touched overlay keys) undo journal;
+a failed SQLite commit replays those inverse mutations rather than cloning the
+complete `streamingItems` tree for every delta.
 
 Also in this step: the `item/delta` arm of
 `ThreadCore.applyEphemeralNotification` stops re-running whole-Turn
@@ -162,16 +185,22 @@ itself is never stale.
 - **Rollout group commit** (`tests/core/agentCorePersistence.test.ts` +
   new cases): sync behavior observable via injected hooks/clock, not real
   timers — N streamed appends produce ≤1 sync until a barrier event forces one;
-  a torn trailing line after an unsynced append still repairs on read.
+  a torn trailing line after an unsynced append still repairs on read; delete
+  still unlinks after close failure, and LRU sync failure cannot reject the
+  append that triggered eviction.
 - **Coalescing** (new, `tests/core`): N text deltas inside the window yield one
   merged rollout entry; a delta followed by `item/completed` for the same item
   flushes the delta first (ordering); deltas for distinct items or types do not
-  merge; `dynamicToolOutput` passes through unmerged.
+  merge; `dynamicToolOutput` passes through unmerged; failed delta groups do not
+  poison later deltas or required lifecycle events; transient delivery remains
+  behind older recorded deltas.
 - **Projection overlay** (`tests/core/agentCorePersistence.test.ts`): after
   `item/delta` the `thread_items` row is unchanged while `readTurn` returns the
   accumulated text; the existing interrupted-rollout scenario extends to assert
   `finishCrashedTurn`-visible content includes streamed deltas after a
-  simulated crash (fresh store + reconcile-shaped replay).
+  simulated crash (fresh store + reconcile-shaped replay). Injected commit
+  failure restores the prior overlay, while a completely missing rollout is
+  rebuilt from projection and accepts later Turns with contiguous ordinals.
 - **Renderer batching** (`tests/renderer/threadStore.test.ts`): N delta
   `applyNotification` calls update the snapshot synchronously but notify
   listeners once per injected-scheduler flush; a lifecycle event delivers

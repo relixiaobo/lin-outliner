@@ -264,7 +264,7 @@ describe('Agent Core persistence', () => {
     expect(scheduled.size).toBe(0);
   });
 
-  test('syncs LRU evictions and pending writes before delete or flush closes their handles', async () => {
+  test('syncs LRU evictions and flushes, but unlinks deleted rollouts without fsync', async () => {
     const root = await tempRoot();
     const scheduled = new Set<() => void>();
     const syncedThreadIds: string[] = [];
@@ -292,14 +292,73 @@ describe('Agent Core persistence', () => {
     expect((await store.read(firstThreadId)).map((entry) => entry.ordinal)).toEqual([0, 1]);
 
     await store.delete(firstThreadId);
-    expect(syncedThreadIds).toEqual([firstThreadId, secondThreadId, firstThreadId]);
+    expect(syncedThreadIds).toEqual([firstThreadId, secondThreadId]);
     expect(scheduled.size).toBe(0);
     expect(await store.read(firstThreadId)).toEqual([]);
 
     await store.append(secondThreadId, secondDelta);
     await store.flush();
-    expect(syncedThreadIds).toEqual([firstThreadId, secondThreadId, firstThreadId, secondThreadId]);
+    expect(syncedThreadIds).toEqual([firstThreadId, secondThreadId, secondThreadId]);
     expect(scheduled.size).toBe(0);
+  });
+
+  test('deletes a rollout even when closing its unlinked handle reports a failure', async () => {
+    const root = await tempRoot();
+    const backgroundErrors: Array<{ message: string; error: unknown }> = [];
+    let syncCount = 0;
+    let failClose = false;
+    const store = trackedRolloutStore(join(root, 'delete-close-failure'), {
+      syncFile: async (_threadId, handle) => {
+        syncCount += 1;
+        await handle.sync();
+      },
+      closeFile: async (_threadId, handle) => {
+        await handle.close();
+        if (failClose) throw new Error('simulated close failure');
+      },
+      onBackgroundError: (message, error) => backgroundErrors.push({ message, error }),
+    });
+    const threadId = uuidV7(1_350);
+    await store.append(threadId, interruptedLifecycle(threadId, false)[2]!);
+    failClose = true;
+
+    await expect(store.delete(threadId)).resolves.toBeUndefined();
+
+    expect(syncCount).toBe(0);
+    expect(await store.read(threadId)).toEqual([]);
+    expect(backgroundErrors.map(({ message }) => message)).toEqual([
+      `[agent] failed to close deleted rollout for ${threadId}`,
+    ]);
+  });
+
+  test('does not reject a successful append when LRU eviction fsync fails', async () => {
+    const root = await tempRoot();
+    const scheduled = new Set<() => void>();
+    const backgroundErrors: Array<{ message: string; error: unknown }> = [];
+    const firstThreadId = uuidV7(1_360);
+    const secondThreadId = uuidV7(1_370);
+    const store = trackedRolloutStore(join(root, 'lru-sync-failure'), {
+      openHandleLimit: 1,
+      schedule: (callback) => {
+        scheduled.add(callback);
+        return callback;
+      },
+      cancelScheduled: (handle) => scheduled.delete(handle as () => void),
+      syncFile: async (threadId, handle) => {
+        if (threadId === firstThreadId) throw new Error('simulated eviction fsync failure');
+        await handle.sync();
+      },
+      onBackgroundError: (message, error) => backgroundErrors.push({ message, error }),
+    });
+
+    await store.append(firstThreadId, interruptedLifecycle(firstThreadId, false)[2]!);
+    await expect(store.append(secondThreadId, interruptedLifecycle(secondThreadId, false)[2]!))
+      .resolves.toMatchObject({ ordinal: 0 });
+
+    expect((await store.read(secondThreadId)).map((entry) => entry.ordinal)).toEqual([0]);
+    expect(backgroundErrors.map(({ message }) => message)).toEqual([
+      '[agent] rollout LRU eviction failed',
+    ]);
   });
 
   test('finalizes a Turn whose Items were persisted before the protocol grew a field', async () => {
@@ -413,6 +472,56 @@ describe('Agent Core persistence', () => {
       type: 'agentMessage',
       text: 'Do',
     });
+    store.close();
+  });
+
+  test('restores the streaming overlay when a projection COMMIT fails', async () => {
+    const root = await tempRoot();
+    const threadId = uuidV7(2_075);
+    const rollout = trackedRolloutStore(join(root, 'overlay-rollback-rollouts'));
+    for (const notification of interruptedLifecycle(threadId, false)) {
+      await rollout.append(threadId, notification);
+    }
+    const entries = await rollout.read(threadId);
+    const started = entries[0]?.event;
+    if (started?.type !== 'turn/started') throw new Error('Missing interrupted Turn fixture');
+    const path = join(root, 'overlay-rollback-history.sqlite');
+    const database = testDatabase(path);
+    let failNextCommit = false;
+    const failingDatabase: SqliteDatabase = {
+      exec: (sql) => {
+        if (failNextCommit && sql.trim() === 'COMMIT') {
+          failNextCommit = false;
+          throw new Error('simulated COMMIT failure');
+        }
+        database.exec(sql);
+      },
+      prepare: (sql) => database.prepare(sql),
+      close: () => database.close(),
+    };
+    const store = new ThreadHistoryProjectionStore(path, failingDatabase);
+    store.applyMany(entries);
+    const streamed = store.readTurn(threadId, started.turnId, 'full')?.items.at(-1);
+    if (streamed?.type !== 'agentMessage') throw new Error('Missing streamed agent Item');
+    failNextCommit = true;
+
+    expect(() => store.apply({
+      ordinal: entries.length,
+      byteOffset: entries.at(-1)!.byteOffset + entries.at(-1)!.byteLength,
+      byteLength: 1,
+      event: {
+        type: 'item/completed',
+        threadId,
+        turnId: started.turnId,
+        itemId: streamed.id,
+        item: streamed,
+        completedAt: 2_076,
+      },
+    })).toThrow('simulated COMMIT failure');
+
+    expect(store.watermark(threadId).ordinal).toBe(entries.length - 1);
+    expect(store.readTurn(threadId, started.turnId, 'full')?.items.at(-1)).toEqual(streamed);
+    expect(store.unfinishedItems(threadId, started.turnId).at(-1)).toEqual(streamed);
     store.close();
   });
 

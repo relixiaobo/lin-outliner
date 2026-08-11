@@ -521,15 +521,21 @@ export class ThreadService implements ThreadServiceExtensionHost {
     // Before any Turn can complete: the subject resolver reads this synchronously.
     await this.transcriptExclusions.load();
     const knownThreadIds: ThreadId[] = [];
+    const reconciledThreadIds: ThreadId[] = [];
     const resumableThreadIds: ThreadId[] = [];
     for (const archived of [false, true]) {
       let cursor: string | null = null;
       do {
         const page = this.core.metadata.list({ archived, cursor, limit: 100 });
         for (const thread of page.data) {
-          await this.catalogOps.reconcileThread(thread.id);
           knownThreadIds.push(thread.id);
-          if (!archived) resumableThreadIds.push(thread.id);
+          try {
+            await this.catalogOps.reconcileThread(thread.id);
+            reconciledThreadIds.push(thread.id);
+            if (!archived) resumableThreadIds.push(thread.id);
+          } catch (error) {
+            console.error(`[agent] failed to reconcile Thread ${thread.id}`, error);
+          }
         }
         cursor = page.nextCursor;
       } while (cursor);
@@ -554,7 +560,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
         // projection of that set, so recomputing it earlier would only describe
         // a directory that is about to change.
         .then(() => { this.transcriptIndex.schedule(); }),
-      ...knownThreadIds.flatMap((threadId) => [
+      ...reconciledThreadIds.flatMap((threadId) => [
         this.core.payloads.pruneUnreferencedResources(threadId, this.resourceOps.threadResourceReferences(threadId)),
         this.core.payloads.pruneUnreferencedContexts(threadId, this.resourceOps.threadContextPayloadReferences(threadId)),
         this.core.payloads.pruneUnreferencedTurnDiagnostics(threadId, this.resourceOps.threadTurnDiagnosticsReferences(threadId)),

@@ -333,7 +333,8 @@ Turn, Item, and delta type into one equivalent 40 ms downstream write; a lifecyc
 boundary or a different Item/type flushes the group first. Dynamic-tool output values
 remain discrete. Item completion therefore carries the exact chunk-current final Item
 even though durability, projection, IPC, and renderer work run at the lower coalesced
-rate.
+rate. A failed downstream delta group is reported and dropped without blocking later
+deltas or lifecycle; the terminal Item snapshot remains the canonical repair boundary.
 The recorder validates local provenance and rejects completion before start. A raw
 provider call first resolves canonical identity, runs model-argument preparation, and
 passes the exposed schema. The kernel then persists one admission decision and emits

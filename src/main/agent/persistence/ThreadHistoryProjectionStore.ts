@@ -1,6 +1,6 @@
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { decodeThreadItem, decodeTurn } from '../../../core/agent/codec';
+import { decodeAgentCoreRecordedNotification, decodeThreadItem, decodeTurn } from '../../../core/agent/codec';
 import type {
   AgentCoreRecordedNotification,
   ThreadId,
@@ -17,6 +17,7 @@ import { decodeCursor, encodeCursor, pageLimit } from './cursor';
 import type {
   RolloutEntry,
   RolloutEvent,
+  RolloutSnapshotEvent,
   ThreadHistoryRollbackMarker,
 } from './RolloutStore';
 import { openSqlite, type SqliteDatabase, type SqliteValue } from './sqlite';
@@ -64,9 +65,12 @@ export interface ProjectionWatermark {
 
 type StreamingItemsByTurn = Map<string, Map<string, ThreadItem>>;
 
+export type ThreadProjectionReconcileResult = 'reconciled' | 'rolloutMissing';
+
 export class ThreadHistoryProjectionStore {
   private readonly db: SqliteDatabase;
-  private streamingItems = new Map<ThreadId, StreamingItemsByTurn>();
+  private readonly streamingItems = new Map<ThreadId, StreamingItemsByTurn>();
+  private streamingUndoActions: Array<() => void> | null = null;
 
   constructor(path: string, database?: SqliteDatabase) {
     if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
@@ -173,11 +177,12 @@ export class ThreadHistoryProjectionStore {
     });
   }
 
-  reconcileThread(threadId: ThreadId, entries: readonly RolloutEntry[]): void {
+  reconcileThread(threadId: ThreadId, entries: readonly RolloutEntry[]): ThreadProjectionReconcileResult {
     if (entries.some((entry) => entry.event.threadId !== threadId)) {
       throw new Error('Cannot reconcile a Thread from another rollout');
     }
     const watermark = this.watermark(threadId);
+    if (entries.length === 0 && watermark.ordinal >= 0) return 'rolloutMissing';
     const projectedEntry = watermark.ordinal < 0 ? null : entries[watermark.ordinal];
     const projectedBoundary = watermark.ordinal < 0
       ? 0
@@ -186,14 +191,79 @@ export class ThreadHistoryProjectionStore {
         : null;
     if (projectedBoundary !== watermark.byteOffset) {
       this.rebuildThread(threadId, entries);
-      return;
+      return 'reconciled';
     }
     this.applyMany(entries.slice(watermark.ordinal + 1));
+    return 'reconciled';
+  }
+
+  rolloutSnapshot(threadId: ThreadId): readonly RolloutSnapshotEvent[] {
+    const turnRows = this.db.prepare(`
+      SELECT * FROM thread_turns WHERE thread_id = ? ORDER BY position
+    `).all(threadId) as unknown as TurnRow[];
+    const records: RolloutSnapshotEvent[] = [];
+    for (const turnRow of turnRows) {
+      const itemRows = this.db.prepare(`
+        SELECT * FROM thread_items
+        WHERE thread_id = ? AND turn_id = ? ORDER BY item_index
+      `).all(threadId, turnRow.turn_id) as unknown as ItemRow[];
+      const turn = this.turnFromRow(turnRow, 'full');
+      if (turn.status !== 'inProgress') {
+        records.push({
+          event: decodeAgentCoreRecordedNotification({
+            type: 'turn/completed',
+            threadId,
+            turnId: turn.id,
+            turn,
+          }),
+          recordedAt: turn.completedAt ?? turn.startedAt,
+        });
+        continue;
+      }
+      records.push({
+        event: decodeAgentCoreRecordedNotification({
+          type: 'turn/started',
+          threadId,
+          turnId: turn.id,
+          turn: decodeTurn({ ...turn, items: [] }),
+        }),
+        recordedAt: turn.startedAt,
+      });
+      for (const row of itemRows) {
+        const item = this.itemFromRow(row);
+        if (row.completed_at !== null) {
+          records.push({
+            event: decodeAgentCoreRecordedNotification({
+              type: 'items/completed',
+              threadId,
+              turnId: turn.id,
+              items: [item],
+              completedAt: row.completed_at,
+            }),
+            recordedAt: row.completed_at,
+          });
+          continue;
+        }
+        const startedAt = row.started_at ?? turn.startedAt;
+        records.push({
+          event: decodeAgentCoreRecordedNotification({
+            type: 'item/started',
+            threadId,
+            turnId: turn.id,
+            itemId: item.id,
+            item,
+            startedAt,
+          }),
+          recordedAt: startedAt,
+        });
+      }
+    }
+    return records;
   }
 
   rebuildThread(threadId: ThreadId, entries: readonly RolloutEntry[]): void {
     this.transaction(() => {
-      this.streamingItems.delete(threadId);
+      this.deleteThreadStreamingItems(threadId);
       this.db.prepare('DELETE FROM thread_turns WHERE thread_id = ?').run(threadId);
       this.db.prepare('DELETE FROM history_rollbacks WHERE thread_id = ?').run(threadId);
       this.db.prepare('DELETE FROM rollout_watermarks WHERE thread_id = ?').run(threadId);
@@ -206,7 +276,7 @@ export class ThreadHistoryProjectionStore {
 
   deleteThread(threadId: ThreadId): void {
     this.transaction(() => {
-      this.streamingItems.delete(threadId);
+      this.deleteThreadStreamingItems(threadId);
       this.db.prepare('DELETE FROM thread_turns WHERE thread_id = ?').run(threadId);
       this.db.prepare('DELETE FROM history_rollbacks WHERE thread_id = ?').run(threadId);
       this.db.prepare('DELETE FROM rollout_watermarks WHERE thread_id = ?').run(threadId);
@@ -682,8 +752,9 @@ export class ThreadHistoryProjectionStore {
   }
 
   private transaction(operation: () => void): void {
-    const previousStreamingItems = this.streamingItems;
-    this.streamingItems = cloneStreamingItems(previousStreamingItems);
+    if (this.streamingUndoActions) throw new Error('Nested history projection transaction is not allowed');
+    const undoActions: Array<() => void> = [];
+    this.streamingUndoActions = undoActions;
     let began = false;
     try {
       this.db.exec('BEGIN IMMEDIATE');
@@ -691,7 +762,7 @@ export class ThreadHistoryProjectionStore {
       operation();
       this.db.exec('COMMIT');
     } catch (error) {
-      this.streamingItems = previousStreamingItems;
+      for (let index = undoActions.length - 1; index >= 0; index -= 1) undoActions[index]!();
       if (began) {
         try {
           this.db.exec('ROLLBACK');
@@ -700,6 +771,8 @@ export class ThreadHistoryProjectionStore {
         }
       }
       throw error;
+    } finally {
+      this.streamingUndoActions = null;
     }
   }
 
@@ -709,6 +782,16 @@ export class ThreadHistoryProjectionStore {
   }
 
   private setStreamingItem(threadId: ThreadId, turnId: string, item: ThreadItem): void {
+    const previousItems = this.streamingItems.get(threadId)?.get(turnId);
+    const hadPrevious = previousItems?.has(item.id) ?? false;
+    const previous = previousItems?.get(item.id);
+    this.recordStreamingUndo(hadPrevious
+      ? () => this.setStreamingItemRaw(threadId, turnId, previous!)
+      : () => this.deleteStreamingItemRaw(threadId, turnId, item.id));
+    this.setStreamingItemRaw(threadId, turnId, item);
+  }
+
+  private setStreamingItemRaw(threadId: ThreadId, turnId: string, item: ThreadItem): void {
     let turns = this.streamingItems.get(threadId);
     if (!turns) {
       turns = new Map();
@@ -723,6 +806,13 @@ export class ThreadHistoryProjectionStore {
   }
 
   private deleteStreamingItem(threadId: ThreadId, turnId: string, itemId: string): void {
+    const previous = this.streamingItems.get(threadId)?.get(turnId)?.get(itemId);
+    if (!previous) return;
+    this.recordStreamingUndo(() => this.setStreamingItemRaw(threadId, turnId, previous));
+    this.deleteStreamingItemRaw(threadId, turnId, itemId);
+  }
+
+  private deleteStreamingItemRaw(threadId: ThreadId, turnId: string, itemId: string): void {
     const turns = this.streamingItems.get(threadId);
     const items = turns?.get(turnId);
     if (!items) return;
@@ -733,9 +823,31 @@ export class ThreadHistoryProjectionStore {
 
   private deleteTurnStreamingItems(threadId: ThreadId, turnId: string): void {
     const turns = this.streamingItems.get(threadId);
-    if (!turns) return;
+    const previous = turns?.get(turnId);
+    if (!turns || !previous) return;
+    this.recordStreamingUndo(() => this.setStreamingTurnRaw(threadId, turnId, previous));
     turns.delete(turnId);
     if (turns.size === 0) this.streamingItems.delete(threadId);
+  }
+
+  private setStreamingTurnRaw(threadId: ThreadId, turnId: string, items: Map<string, ThreadItem>): void {
+    let turns = this.streamingItems.get(threadId);
+    if (!turns) {
+      turns = new Map();
+      this.streamingItems.set(threadId, turns);
+    }
+    turns.set(turnId, items);
+  }
+
+  private deleteThreadStreamingItems(threadId: ThreadId): void {
+    const previous = this.streamingItems.get(threadId);
+    if (!previous) return;
+    this.recordStreamingUndo(() => this.streamingItems.set(threadId, previous));
+    this.streamingItems.delete(threadId);
+  }
+
+  private recordStreamingUndo(action: () => void): void {
+    this.streamingUndoActions?.push(action);
   }
 }
 
@@ -859,13 +971,4 @@ function reconstructOpenItems(
   }
   if (!turnStarted) throw new Error(`Cannot recover missing in-progress Turn: ${turnId}`);
   return openItems;
-}
-
-function cloneStreamingItems(
-  source: ReadonlyMap<ThreadId, StreamingItemsByTurn>,
-): Map<ThreadId, StreamingItemsByTurn> {
-  return new Map([...source].map(([threadId, turns]) => [
-    threadId,
-    new Map([...turns].map(([turnId, items]) => [turnId, new Map(items)])),
-  ]));
 }

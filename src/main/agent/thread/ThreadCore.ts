@@ -39,6 +39,7 @@ export interface ThreadCoreOptions {
   readonly deltaCoalesceDelayMs?: number;
   readonly schedule?: (callback: () => void, delayMs: number) => unknown;
   readonly cancelScheduled?: (handle: unknown) => void;
+  readonly onNotificationError?: (message: string, error: unknown) => void;
 }
 
 interface PendingItemDelta {
@@ -46,6 +47,7 @@ interface PendingItemDelta {
   readonly turnId: string;
   readonly itemId: string;
   readonly deltaType: StringItemDelta['type'];
+  readonly ephemeral: boolean;
   delta: string;
   scheduledFlush: unknown | null;
 }
@@ -64,10 +66,10 @@ export class ThreadCore {
   private readonly threadBarrierGenerations = new Map<ThreadId, number>();
   private readonly pendingItemDeltas = new Map<ThreadId, PendingItemDelta>();
   private readonly notificationQueues = new Map<ThreadId, Promise<unknown>>();
-  private readonly deferredNotificationFailures = new Map<ThreadId, unknown>();
   private readonly deltaCoalesceDelayMs: number;
   private readonly schedule: (callback: () => void, delayMs: number) => unknown;
   private readonly cancelScheduled: (handle: unknown) => void;
+  private readonly onNotificationError: (message: string, error: unknown) => void;
   private hostBarrierGeneration = 0;
   private hostRootAdmissionBarrierActive = false;
   constructor(
@@ -84,6 +86,7 @@ export class ThreadCore {
     }
     this.schedule = options.schedule ?? scheduleTimer;
     this.cancelScheduled = options.cancelScheduled ?? cancelTimer;
+    this.onNotificationError = options.onNotificationError ?? ((message, error) => console.error(message, error));
   }
   subscribe(listener: NotificationListener): () => void {
       this.listeners.add(listener);
@@ -116,26 +119,29 @@ export class ThreadCore {
     }
   async recordNotification(notification: AgentCoreRecordedNotification): Promise<void> {
       const decoded = decodeAgentCoreRecordedNotification(notification);
-      this.requireThread(decoded.threadId);
+      const ephemeral = this.requireThread(decoded.threadId).thread.ephemeral;
       if (isStringItemDelta(decoded)) {
-        this.enqueueDeferredNotification(decoded.threadId, () => this.acceptStringItemDelta(decoded));
+        this.enqueueDeferredNotification(
+          decoded.threadId,
+          () => this.acceptStringItemDelta(decoded, ephemeral),
+          '[agent] deferred item delta failed',
+        );
         return;
       }
-      await this.enqueueRequiredNotification(decoded.threadId, async () => {
-        await this.flushPendingItemDelta(decoded.threadId);
-        await this.persistAndBroadcast(decoded);
+      await this.enqueueNotification(decoded.threadId, async () => {
+        await this.flushPendingItemDeltaBestEffort(decoded.threadId);
+        await this.persistAndBroadcast(decoded, ephemeral);
       });
     }
 
   async flushThreadNotifications(threadId: ThreadId): Promise<void> {
-      await this.enqueueRequiredNotification(threadId, () => this.flushPendingItemDelta(threadId));
+      await this.enqueueNotification(threadId, () => this.flushPendingItemDelta(threadId));
     }
 
   async flush(): Promise<void> {
       const threadIds = new Set<ThreadId>([
         ...this.pendingItemDeltas.keys(),
         ...this.notificationQueues.keys(),
-        ...this.deferredNotificationFailures.keys(),
       ]);
       const results = await Promise.allSettled(
         [...threadIds].map((threadId) => this.flushThreadNotifications(threadId)),
@@ -145,9 +151,8 @@ export class ThreadCore {
       if (failures.length > 0) throw new AggregateError(failures, 'ThreadCore failed to flush notifications');
     }
 
-  private async persistAndBroadcast(decoded: AgentCoreRecordedNotification): Promise<void> {
-      const record = this.requireThread(decoded.threadId);
-      if (record.thread.ephemeral) {
+  private async persistAndBroadcast(decoded: AgentCoreRecordedNotification, ephemeral: boolean): Promise<void> {
+      if (ephemeral) {
         this.applyEphemeralNotification(decoded);
       } else {
         const entry = await this.rollout.append(decoded.threadId, decoded);
@@ -175,7 +180,10 @@ export class ThreadCore {
       }
     }
 
-  private async acceptStringItemDelta(notification: RecordedItemDelta & { readonly delta: StringItemDelta }): Promise<void> {
+  private async acceptStringItemDelta(
+    notification: RecordedItemDelta & { readonly delta: StringItemDelta },
+    ephemeral: boolean,
+  ): Promise<void> {
       const pending = this.pendingItemDeltas.get(notification.threadId);
       if (
         pending
@@ -186,12 +194,13 @@ export class ThreadCore {
         pending.delta += notification.delta.delta;
         return;
       }
-      if (pending) await this.flushPendingItemDelta(notification.threadId);
+      if (pending) await this.flushPendingItemDeltaBestEffort(notification.threadId);
       const next: PendingItemDelta = {
         threadId: notification.threadId,
         turnId: notification.turnId,
         itemId: notification.itemId,
         deltaType: notification.delta.type,
+        ephemeral,
         delta: notification.delta.delta,
         scheduledFlush: null,
       };
@@ -199,7 +208,11 @@ export class ThreadCore {
       next.scheduledFlush = this.schedule(() => {
         next.scheduledFlush = null;
         if (this.pendingItemDeltas.get(notification.threadId) !== next) return;
-        this.enqueueDeferredNotification(notification.threadId, () => this.flushPendingItemDelta(notification.threadId));
+        this.enqueueDeferredNotification(
+          notification.threadId,
+          () => this.flushPendingItemDelta(notification.threadId),
+          '[agent] deferred item delta failed',
+        );
       }, this.deltaCoalesceDelayMs);
     }
 
@@ -217,31 +230,24 @@ export class ThreadCore {
         turnId: pending.turnId,
         itemId: pending.itemId,
         delta: { type: pending.deltaType, delta: pending.delta },
-      }));
+      }), pending.ephemeral);
     }
 
-  private enqueueDeferredNotification(threadId: ThreadId, operation: () => Promise<void>): void {
-      const queued = this.enqueueNotification(threadId, async () => {
-        if (this.deferredNotificationFailures.has(threadId)) return;
-        try {
-          await operation();
-        } catch (error) {
-          this.deferredNotificationFailures.set(threadId, error);
-          throw error;
-        }
-      });
-      void queued.catch(() => undefined);
+  private async flushPendingItemDeltaBestEffort(threadId: ThreadId): Promise<void> {
+      try {
+        await this.flushPendingItemDelta(threadId);
+      } catch (error) {
+        this.reportNotificationError('[agent] deferred item delta failed', error);
+      }
     }
 
-  private enqueueRequiredNotification<T>(threadId: ThreadId, operation: () => Promise<T>): Promise<T> {
-      return this.enqueueNotification(threadId, async () => {
-        if (this.deferredNotificationFailures.has(threadId)) {
-          const error = this.deferredNotificationFailures.get(threadId);
-          this.deferredNotificationFailures.delete(threadId);
-          throw error;
-        }
-        return operation();
-      });
+  private enqueueDeferredNotification(
+    threadId: ThreadId,
+    operation: () => Promise<void>,
+    failureMessage: string,
+  ): void {
+      const queued = this.enqueueNotification(threadId, operation);
+      void queued.catch((error) => this.reportNotificationError(failureMessage, error));
     }
 
   private enqueueNotification<T>(threadId: ThreadId, operation: () => Promise<T>): Promise<T> {
@@ -256,6 +262,13 @@ export class ThreadCore {
   emitTransientNotification(notification: AgentCoreTransientNotification): void {
       const decoded = decodeAgentCoreTransientNotification(notification);
       this.requireThread(decoded.threadId);
+      this.enqueueDeferredNotification(decoded.threadId, async () => {
+        await this.flushPendingItemDeltaBestEffort(decoded.threadId);
+        this.broadcastTransientNotification(decoded);
+      }, '[agent] transient notification delivery failed');
+    }
+
+  private broadcastTransientNotification(decoded: AgentCoreTransientNotification): void {
       if (!this.hiddenEphemeralThreads.has(decoded.threadId)) {
         for (const listener of this.listeners) {
           try {
@@ -264,6 +277,14 @@ export class ThreadCore {
             console.error('[agent] transient notification listener failed', error);
           }
         }
+      }
+    }
+
+  private reportNotificationError(message: string, error: unknown): void {
+      try {
+        this.onNotificationError(message, error);
+      } catch (observerError) {
+        console.error('[agent] notification error observer failed', observerError);
       }
     }
   applyEphemeralNotification(notification: AgentCoreRecordedNotification): void {

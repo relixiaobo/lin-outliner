@@ -1,4 +1,4 @@
-import { mkdir, open, readFile, rm, stat, truncate, type FileHandle } from 'node:fs/promises';
+import { mkdir, open, readFile, rename, rm, stat, truncate, type FileHandle } from 'node:fs/promises';
 import { join } from 'node:path';
 import { decodeAgentCoreRecordedNotification } from '../../../core/agent/codec';
 import {
@@ -24,6 +24,11 @@ export interface RolloutEntry extends RolloutRecord {
   readonly byteLength: number;
 }
 
+export interface RolloutSnapshotEvent {
+  readonly event: AgentCoreRecordedNotification;
+  readonly recordedAt: number;
+}
+
 interface RolloutEnvelope {
   readonly ordinal: number;
   readonly recordedAt: number;
@@ -40,6 +45,9 @@ export interface RolloutStoreOptions {
   readonly schedule?: (callback: () => void, delayMs: number) => unknown;
   readonly cancelScheduled?: (handle: unknown) => void;
   readonly onDidSync?: (threadId: ThreadId) => void;
+  readonly syncFile?: (threadId: ThreadId, handle: FileHandle) => Promise<void>;
+  readonly closeFile?: (threadId: ThreadId, handle: FileHandle) => Promise<void>;
+  readonly onBackgroundError?: (message: string, error: unknown) => void;
 }
 
 interface OpenRolloutFile {
@@ -60,6 +68,9 @@ export class RolloutStore {
   private readonly schedule: (callback: () => void, delayMs: number) => unknown;
   private readonly cancelScheduled: (handle: unknown) => void;
   private readonly onDidSync: (threadId: ThreadId) => void;
+  private readonly syncFile: (threadId: ThreadId, handle: FileHandle) => Promise<void>;
+  private readonly closeFile: (threadId: ThreadId, handle: FileHandle) => Promise<void>;
+  private readonly onBackgroundError: (message: string, error: unknown) => void;
   private useOrder = 0;
 
   constructor(private readonly rootPath: string, options: RolloutStoreOptions = {}) {
@@ -74,6 +85,9 @@ export class RolloutStore {
     this.schedule = options.schedule ?? scheduleTimer;
     this.cancelScheduled = options.cancelScheduled ?? cancelTimer;
     this.onDidSync = options.onDidSync ?? (() => undefined);
+    this.syncFile = options.syncFile ?? ((_threadId, handle) => handle.sync());
+    this.closeFile = options.closeFile ?? ((_threadId, handle) => handle.close());
+    this.onBackgroundError = options.onBackgroundError ?? ((message, error) => console.error(message, error));
   }
 
   async append(
@@ -131,8 +145,49 @@ export class RolloutStore {
         throw error;
       } finally {
         file.busy -= 1;
-        await this.trimOpenFiles();
+        try {
+          await this.trimOpenFiles();
+        } catch (error) {
+          this.reportBackgroundError('[agent] rollout LRU eviction failed', error);
+        }
       }
+    });
+  }
+
+  async restoreMissing(
+    threadId: ThreadId,
+    records: readonly RolloutSnapshotEvent[],
+  ): Promise<readonly RolloutEntry[]> {
+    assertThreadId(threadId);
+    const encoded = encodeSnapshot(threadId, records);
+    return this.serialized(threadId, async () => {
+      await mkdir(this.rootPath, { recursive: true });
+      const openFile = this.openFiles.get(threadId);
+      if (openFile) await this.closeOpenFile(threadId, openFile, false);
+      const path = this.pathFor(threadId);
+      if ((await readEntries(path, true)).length > 0) {
+        throw new Error(`Cannot restore a non-empty rollout for ${threadId}`);
+      }
+      const temporaryPath = `${path}.repair`;
+      let handle: FileHandle | null = null;
+      try {
+        handle = await open(temporaryPath, 'w');
+        const result = await handle.write(encoded.text, null, 'utf8');
+        if (result.bytesWritten !== Buffer.byteLength(encoded.text)) {
+          throw new Error(`Incomplete rollout restore: wrote ${result.bytesWritten} bytes`);
+        }
+        await this.syncFile(threadId, handle);
+        this.observeSync(threadId);
+        await this.closeFile(threadId, handle);
+        handle = null;
+        await rename(temporaryPath, path);
+      } catch (error) {
+        if (handle) await this.closeFile(threadId, handle).catch(() => undefined);
+        await rm(temporaryPath, { force: true }).catch(() => undefined);
+        throw error;
+      }
+      this.nextOrdinals.set(threadId, encoded.entries.length);
+      return encoded.entries;
     });
   }
 
@@ -166,13 +221,18 @@ export class RolloutStore {
       if (file) {
         file.busy += 1;
         try {
-          await this.closeOpenFile(threadId, file, true);
+          await this.closeOpenFile(threadId, file, false);
+        } catch (error) {
+          this.reportBackgroundError(`[agent] failed to close deleted rollout for ${threadId}`, error);
         } finally {
           file.busy -= 1;
         }
       }
-      await rm(this.pathFor(threadId), { force: true });
-      this.nextOrdinals.delete(threadId);
+      try {
+        await rm(this.pathFor(threadId), { force: true });
+      } finally {
+        this.nextOrdinals.delete(threadId);
+      }
     });
   }
 
@@ -259,7 +319,7 @@ export class RolloutStore {
           await this.trimOpenFiles();
         }
       }).catch((error) => {
-        console.error('[agent] rollout group commit failed', error);
+        this.reportBackgroundError('[agent] rollout group commit failed', error);
       });
     }, this.groupCommitDelayMs);
   }
@@ -267,12 +327,16 @@ export class RolloutStore {
   private async syncOpenFile(threadId: ThreadId, file: OpenRolloutFile): Promise<void> {
     this.cancelScheduledSync(file);
     if (!file.unsynced) return;
-    await file.handle.sync();
+    await this.syncFile(threadId, file.handle);
     file.unsynced = false;
+    this.observeSync(threadId);
+  }
+
+  private observeSync(threadId: ThreadId): void {
     try {
       this.onDidSync(threadId);
     } catch (error) {
-      console.error('[agent] rollout sync observer failed', error);
+      this.reportBackgroundError('[agent] rollout sync observer failed', error);
     }
   }
 
@@ -288,7 +352,7 @@ export class RolloutStore {
       }
     }
     try {
-      await file.handle.close();
+      await this.closeFile(threadId, file.handle);
     } catch (error) {
       failures.push(error);
     }
@@ -314,6 +378,34 @@ export class RolloutStore {
       await this.closeOpenFile(candidate[0], candidate[1], true);
     }
   }
+
+  private reportBackgroundError(message: string, error: unknown): void {
+    try {
+      this.onBackgroundError(message, error);
+    } catch (observerError) {
+      console.error('[agent] rollout error observer failed', observerError);
+    }
+  }
+}
+
+function encodeSnapshot(
+  threadId: ThreadId,
+  records: readonly RolloutSnapshotEvent[],
+): { readonly text: string; readonly entries: readonly RolloutEntry[] } {
+  const entries: RolloutEntry[] = [];
+  const lines: string[] = [];
+  let byteOffset = 0;
+  for (const [ordinal, record] of records.entries()) {
+    if (!Number.isFinite(record.recordedAt)) throw new Error('Invalid rollout snapshot timestamp');
+    const event = decodeAgentCoreRecordedNotification(record.event);
+    if (event.threadId !== threadId) throw new Error('Rollout snapshot event Thread does not match its file owner');
+    const line = `${JSON.stringify({ ordinal, recordedAt: record.recordedAt, event })}\n`;
+    const byteLength = Buffer.byteLength(line);
+    lines.push(line);
+    entries.push({ ordinal, recordedAt: record.recordedAt, event, byteOffset, byteLength });
+    byteOffset += byteLength;
+  }
+  return { text: lines.join(''), entries };
 }
 
 async function readEntries(path: string, repairTail: boolean): Promise<RolloutEntry[]> {

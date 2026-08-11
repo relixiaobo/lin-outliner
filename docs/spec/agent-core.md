@@ -310,9 +310,12 @@ String-append `item/delta` notifications are serialized per Thread and coalesced
 to 40 ms only while Turn, Item, and delta type all match. Agent-message text, reasoning
 summary/content, and command output use this path; dynamic-tool output remains a sequence
 of discrete content values and is never merged. Any different or non-delta notification
-flushes the pending group first, preserving canonical order. The active `ItemRecorder`
-still applies every provider chunk immediately, while rollout, projection, extension,
-IPC, and renderer listeners observe the equivalent coalesced notification.
+flushes the pending group first, preserving canonical order. Transient notifications use
+the same per-Thread queue and best-effort flush an older delta before broadcast. A failed
+deferred delta is reported but does not poison later groups; required lifecycle events
+continue, and their complete Item snapshots repair any missing streamed state. The active
+`ItemRecorder` still applies every provider chunk immediately, while rollout, projection,
+extension, IPC, and renderer listeners observe the equivalent coalesced notification.
 
 Once either admission event is durable, later status bookkeeping or live steering
 delivery cannot reject that input. Such a failure aborts and fails the already-accepted
@@ -473,10 +476,12 @@ authoritative metadata, Goal, Memory, and Automation stores explicitly strengthe
 
 Rollout appends reuse one open handle per recently active Thread, bounded by a 16-handle
 LRU. Delta lines are written immediately and group-synced within 150 ms. Every non-delta
-lifecycle event is a sync barrier; Thread deletion, LRU eviction, and service flush also
-sync before closing. A hard crash may therefore lose only the final group-commit window
-of an unfinished stream. Completed Items and Turns cross a sync barrier, and the existing
-torn-tail repair discards only a partial final JSONL line.
+lifecycle event is a sync barrier; LRU eviction and service flush also sync before closing.
+Thread deletion cancels pending sync, closes best-effort, and unlinks even if close fails:
+syncing bytes that are being discarded provides no durability. LRU maintenance failures
+are reported without changing an already-successful append result. A hard crash may
+therefore lose only the final group-commit window of an unfinished stream. Completed Items
+and Turns cross a sync barrier, and torn-tail repair discards only a partial final JSONL line.
 
 The history projection keeps unfinished streamed Items in a decoded in-memory overlay
 instead of rewriting `item_json` for every delta. All Turn and Item read surfaces apply
@@ -484,7 +489,12 @@ that overlay. Item completion writes the final canonical row and clears its over
 Turn completion, rollback, rebuild, and deletion clear the corresponding entries. At
 startup, reconciliation compares the projection watermark's byte boundary with the
 surviving rollout and rebuilds the Thread if an unsynced rollout tail was lost after its
-projection transaction committed.
+projection transaction committed. Overlay transactions journal inverse mutations only for
+touched keys, so SQLite rollback restores in-memory state without cloning all active
+streaming Items. If the rollout is wholly absent while a projection watermark exists,
+startup atomically writes a minimal replacement rollout from projected final snapshots and
+then rebuilds the projection from it; projected rollback hooks are recovered before their
+markers are replaced.
 Context writes
 canonicalize through the Core codec before hashing. Context and text reads/copies
 verify digest and byte length, while text also selects storage by the referenced
@@ -578,7 +588,9 @@ Startup reconciles catalog and history projections from rollouts. Before termina
 an `inProgress` Turn, startup replays its `item/started` and `item/delta` facts into each
 open Item and persists one recovered row per Item. The Turn is then completed as
 `interrupted`; every unfinished streamed or executable Item first receives its terminal
-completion fact. Clean
+completion fact. Reconciliation failure is isolated to the owning Thread: it remains in
+the catalog but skips payload pruning and resume for that launch, while other Threads
+continue startup normally. Clean
 replay then produces the same paginated Turns and Items as incremental
 projection. There is one storage format and no alternate reader or dual-write
 path. New tool Items always write the required envelope, and decode rejects a tool

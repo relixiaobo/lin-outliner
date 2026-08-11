@@ -11,7 +11,7 @@ import { ThreadHistoryProjectionStore } from '../../src/main/agent/persistence/T
 import { ThreadMetadataStore } from '../../src/main/agent/persistence/ThreadMetadataStore';
 import type { SqliteDatabase } from '../../src/main/agent/persistence/sqlite';
 import { ToolPayloadStore } from '../../src/main/agent/persistence/ToolPayloadStore';
-import { ThreadCore } from '../../src/main/agent/thread/ThreadCore';
+import { ThreadCore, type ThreadCoreOptions } from '../../src/main/agent/thread/ThreadCore';
 import { uuidV7 } from '../../src/main/agent/uuid';
 import { replayableModelCall } from '../fixtures/agentToolCallHistory';
 
@@ -181,9 +181,150 @@ describe('Agent streaming delta pipeline', () => {
         ],
       });
   });
+
+  test('persists a required lifecycle event after a pending delta fails', async () => {
+    const notificationErrors: Array<{ message: string; error: unknown }> = [];
+    const fixture = await createFixture({
+      onNotificationError: (message, error) => notificationErrors.push({ message, error }),
+    });
+    const append = fixture.rollout.append.bind(fixture.rollout);
+    let failNextDelta = true;
+    fixture.rollout.append = async (threadId, notification, recordedAt) => {
+      if (failNextDelta && notification.type === 'item/delta') {
+        failNextDelta = false;
+        throw new Error('simulated delta append failure');
+      }
+      return append(threadId, notification, recordedAt);
+    };
+    try {
+      await fixture.core.recordNotification({
+        type: 'item/delta',
+        threadId: fixture.threadId,
+        turnId: fixture.turnId,
+        itemId: fixture.agentOne.id,
+        delta: { type: 'agentMessageText', delta: 'lost delta' },
+      });
+      await fixture.core.recordNotification({
+        type: 'item/completed',
+        threadId: fixture.threadId,
+        turnId: fixture.turnId,
+        itemId: fixture.agentOne.id,
+        item: { ...fixture.agentOne, text: 'final snapshot' },
+        completedAt: fixtureSeed,
+      });
+    } finally {
+      fixture.rollout.append = append;
+    }
+
+    const itemEvents = (await fixture.rollout.read(fixture.threadId))
+      .map((entry) => entry.event)
+      .filter((event) => event.type === 'item/delta' || (
+        event.type === 'item/completed' && event.itemId === fixture.agentOne.id
+      ));
+    expect(itemEvents.map((event) => event.type)).toEqual(['item/completed']);
+    expect(fixture.history.readTurn(fixture.threadId, fixture.turnId, 'full')?.items)
+      .toContainEqual({ ...fixture.agentOne, text: 'final snapshot' });
+    expect(notificationErrors.map(({ message }) => message)).toEqual([
+      '[agent] deferred item delta failed',
+    ]);
+  });
+
+  test('accepts a later delta after an earlier delta flush fails', async () => {
+    const fixture = await createFixture();
+    const append = fixture.rollout.append.bind(fixture.rollout);
+    let failNextDelta = true;
+    fixture.rollout.append = async (threadId, notification, recordedAt) => {
+      if (failNextDelta && notification.type === 'item/delta') {
+        failNextDelta = false;
+        throw new Error('simulated first delta failure');
+      }
+      return append(threadId, notification, recordedAt);
+    };
+    try {
+      await fixture.core.recordNotification({
+        type: 'item/delta',
+        threadId: fixture.threadId,
+        turnId: fixture.turnId,
+        itemId: fixture.agentOne.id,
+        delta: { type: 'agentMessageText', delta: 'first' },
+      });
+      await expect(fixture.core.flushThreadNotifications(fixture.threadId))
+        .rejects.toThrow('simulated first delta failure');
+      await fixture.core.recordNotification({
+        type: 'item/delta',
+        threadId: fixture.threadId,
+        turnId: fixture.turnId,
+        itemId: fixture.agentOne.id,
+        delta: { type: 'agentMessageText', delta: 'second' },
+      });
+      await fixture.core.flushThreadNotifications(fixture.threadId);
+    } finally {
+      fixture.rollout.append = append;
+    }
+
+    const deltas = (await fixture.rollout.read(fixture.threadId))
+      .map((entry) => entry.event)
+      .filter((event) => event.type === 'item/delta');
+    expect(deltas.map((event) => event.delta)).toEqual([
+      { type: 'agentMessageText', delta: 'second' },
+    ]);
+  });
+
+  test('delivers a transient notification after the pending recorded delta', async () => {
+    const fixture = await createFixture();
+    const observed: string[] = [];
+    const unsubscribe = fixture.core.subscribe((notification) => {
+      if (notification.type === 'item/delta' || notification.type === 'thread/name/updated') {
+        observed.push(notification.type);
+      }
+    });
+
+    await fixture.core.recordNotification({
+      type: 'item/delta',
+      threadId: fixture.threadId,
+      turnId: fixture.turnId,
+      itemId: fixture.agentOne.id,
+      delta: { type: 'agentMessageText', delta: 'before transient' },
+    });
+    fixture.core.emitTransientNotification({
+      type: 'thread/name/updated',
+      threadId: fixture.threadId,
+      threadName: 'Ordered name',
+    });
+    await fixture.core.flushThreadNotifications(fixture.threadId);
+
+    expect(observed).toEqual(['item/delta', 'thread/name/updated']);
+    unsubscribe();
+  });
+
+  test('requires Thread metadata once for a recorded non-delta notification', async () => {
+    const fixture = await createFixture();
+    const requireThread = fixture.metadata.require.bind(fixture.metadata);
+    let requireCount = 0;
+    fixture.metadata.require = (threadId) => {
+      requireCount += 1;
+      return requireThread(threadId);
+    };
+    try {
+      await fixture.core.recordNotification({
+        type: 'item/completed',
+        threadId: fixture.threadId,
+        turnId: fixture.turnId,
+        itemId: fixture.agentOne.id,
+        item: { ...fixture.agentOne, text: 'complete' },
+        completedAt: fixtureSeed,
+      });
+    } finally {
+      fixture.metadata.require = requireThread;
+    }
+
+    expect(requireCount).toBe(1);
+  });
 });
 
-async function createFixture(): Promise<StreamingFixture> {
+async function createFixture(
+  coreOptions: Pick<ThreadCoreOptions, 'onNotificationError'> = {},
+): Promise<StreamingFixture> {
   const seed = fixtureSeed;
   fixtureSeed += 100;
   const root = await mkdtemp(join(tmpdir(), 'tenon-streaming-pipeline-'));
@@ -208,6 +349,7 @@ async function createFixture(): Promise<StreamingFixture> {
     {
       schedule: coreClock.schedule,
       cancelScheduled: coreClock.cancel,
+      ...coreOptions,
     },
   );
   const owner = thread(threadId, seed);
