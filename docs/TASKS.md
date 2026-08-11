@@ -629,9 +629,11 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   same index while preserving matching, ranking, creation, existing-tag, and Trash behavior.
   **Remaining P3:** additional localized O(N) cleanups still listed in the plan; the ordinary renderer
   projection delta path no longer rebuilds `new Map(prev.byId)` or the whole render-revision map.
-  **Ownership transfer 2026-08-11:** P3-2/3/5/13/21 moved to `typing-hot-path` and P3-11/12 to
-  `interaction-jank-cleanups` (marked *transferred* in the plan's tables) — claim them only through
-  those plans' items, never from this catalog.
+  **Ownership transfer 2026-08-11:** P3-2/5/13/21 and the `@`-picker half of P3-3 moved to
+  `typing-hot-path`; P3-11/12 to `interaction-jank-cleanups`; P3-3's field-picker half already
+  shipped with #426. The catalog rows now cross-reference the owning plan (design voice, per the
+  no-status-in-plans rule) — claim these units only through those plans' items, never from the
+  catalog.
 - **typing-hot-path** (P0, `draft` 2026-08-11) — every keystroke pays O(document)
   several times over. Main: the memory extension's two hooks (`guardMutation`'s
   eagerly-built projection + `memoryGraphMayChange`'s ~4 full-document passes

@@ -192,10 +192,24 @@ Renderer (all inside the per-keystroke `flushSync` in `useCommandRunner`):
   therefore await the *durable* ack. Acceptance bound, scoped accordingly: no
   **ordinary** keystroke mutation ever waits on an O(document) serialize or on
   the file write; trusted-transaction latency is deliberately unchanged.
-- **Fix the text-search map clone.** Maintain `textSearchNodes` as a persistent
-  structure mutated under the mutation queue (or COW buckets), so a committed
-  text patch costs O(changed), not an O(N) `new Map(previousNodes)` copy (both
-  the plain and yielding variants).
+- **Fix the text-search map clone — with the before-state preserved.** The
+  delta refresh legitimately reads BOTH generations: deletions collect
+  descendants from the previous map, and Trash-boundary changes compare
+  previous against next. In-place mutation would make them the same object and
+  leave a trashed ancestor's unchanged descendants indexed. `textSearchNodes`
+  therefore becomes an immutable structurally-shared map (or generational COW)
+  where producing the next generation is O(changed) while the previous
+  generation stays readable until the refresh completes. Tests cover the
+  semantic cases — a subtree crossing the Trash boundary, a parent deletion
+  pruning descendants, tagDef/fieldDef/reference-dependent refreshes — not
+  merely a no-copy counter.
+- **Quit policy (PM-ratified 2026-08-11): a failed save blocks quit.** The
+  quit path keeps its fast drain, but the hard timeout no longer
+  unconditionally exits over dirty state: if the deadline expires with unsaved
+  document changes (or the saver mid-retry), quit is cancelled, the app stays
+  open, and a persistent failure surface offers Retry and Quit-anyway. The
+  bounded-timeout exit remains for everything else, so a wedged non-document
+  flush still cannot hold the process hostage.
 
 ### PR-C — renderer keystroke commit cost (renderer)
 
@@ -207,8 +221,12 @@ Renderer (all inside the per-keystroke `flushSync` in `useCommandRunner`):
   keystroke, bumping the revision globally. So the split is: narrow
   **structural** revisions maintained from the applied `ProjectionUpdate` delta
   — a tag-definition revision, a trash-membership revision, and a
-  **referenceGraphRevision** (reference edges, `inlineRefs`, `refRole`, source
-  parentage, search/query ancestry) — for the facts that change rarely; and
+  **referenceGraphRevision** defined on **edge signatures** (source id,
+  target id, `refRole`, source parentage, search/query ancestry) and NEVER on
+  full `inlineRefs` values: inline-ref offsets shift whenever text is inserted
+  before a ref, so an offset-sensitive revision would bump on exactly the
+  keystrokes it must ignore (`nodeReverseKeys` already compares target ids
+  only — the precedent to follow) — for the facts that change rarely; and
   **per-node incremental maintenance** for the facts that change per keystroke
   (titles, `updatedAt`): caches patch the changed nodes' entries in place
   rather than invalidating globally.
@@ -225,7 +243,12 @@ Renderer (all inside the per-keystroke `flushSync` in `useCommandRunner`):
   moves that recompute off the synchronous keystroke commit (deferred/debounced
   refresh of the expanded section, linked references still update immediately
   via the incremental summary). A true incremental mention index is an
-  explicit follow-up, not this PR.
+  explicit follow-up, not this PR. The deferral is a user-visible freshness
+  change with its own acceptance contract: linked references update
+  immediately; unlinked mentions refresh debounced; a stale computation never
+  overwrites a newer one (generation-checked); collapsing the section or
+  switching targets cancels pending work; and the References freshness
+  paragraphs in `docs/spec/ui-behavior.md` update in the same PR (A6).
 - **Decouple the agent dock from irrelevant document deltas.** The transcript
   cannot be permanently severed from the index — `threadNodeReferenceStyle`
   and reference labels legitimately read node titles/colors, which must stay
@@ -238,7 +261,13 @@ Renderer (all inside the per-keystroke `flushSync` in `useCommandRunner`):
   value child text, so a tagDef/defConfig edit recolors chips whose target
   never changed — subscribe through the same reverse-dependency closure the
   row renderer uses (`ReverseEdges`/`propagateDirty`), not on the target id
-  alone.
+  alone. And the subscription surface is **every index-derived transcript
+  leaf, not chips alone**: tool-activity segments and subjects
+  (`threadToolActivitySegments`), the process-header summary
+  (`threadProcessSummary`), and any other label resolution read the index too —
+  chip-only subscription would leave tool summaries and headers showing stale
+  titles after a rename. Event-driven reads (the copy actions) take the
+  accessor's latest value at click time instead of subscribing.
   (`ThreadItemView` memoization itself belongs to `agent-streaming-followups`,
   which sequences the prop stabilization it needs — this PR only removes the
   document-delta trigger and does NOT touch item-level memo.) Stop paying for a
@@ -259,21 +288,23 @@ Renderer (all inside the per-keystroke `flushSync` in `useCommandRunner`):
   filters/ranks/sorts every node only shrinks the constant, not the O(N).
   Queries resolve against a label/text lookup structure (sorted label keys or
   n-gram buckets — dev's choice) that yields a **bounded candidate set**
-  without enumerating all nodes. The binding contract: **the bounded set must
-  provably contain the global top-N of the FULL composite ordering** — the
-  current ranking sorts by `disabledReason` first, then position rank
-  (ancestor/sibling proximity), then text/recency — because truncating by
-  text score alone and computing disabled/cycle afterwards would change the
-  visible top-24. The context-dependent keys make this tractable: disabled and
-  position states apply only to identifiable bounded subsets (the current
-  node's ancestor chain, its descendants for cycle checks, its siblings),
-  which are UNIONED into the retrieved set before the composite sort runs.
-  Breadcrumb presentation is computed lazily for the final bounded results at
-  render time, never stored per node — an ancestor rename therefore cannot
-  invalidate descendants' cached entries. If implementation shows the
-  covering-set proof cannot be made, STOP and escalate to the PM for an
-  explicit ranking-semantics ratification (the `node_search` precedent) —
-  never silently ship a different top-24. Full rebuild only on
+  without enumerating all nodes. Semantics are the PM-ratified **shortlist
+  contract** (2026-08-11): exact global top-24 equivalence cannot be bounded —
+  the real composite ordering is text rank → disabled → untitled → context
+  rank → label length → `updatedAt` → label, an empty query ties every node on
+  text rank, and the cycle-disable check (`canReachInDisplayGraph`) walks the
+  whole display graph — so the picker returns a deterministic shortlist
+  instead: retrieval by text-rank tiers from the label index (an
+  `updatedAt`-ordered list serves the empty query), a hard visit bound, and
+  the full tie-break chain applied within the retrieved set only.
+  Rank-completeness still holds — no excluded candidate has a better text
+  rank than any included one — and disabled/cycle states are computed only for
+  the shortlist. The visible difference is confined to deep ties (which
+  equal-rank peers fill the tail); top results for real queries are
+  text-rank-dominated and unchanged. Breadcrumb presentation is computed
+  lazily for the final bounded results at render time, never stored per node —
+  an ancestor rename therefore cannot invalidate descendants' cached entries.
+  Full rebuild only on
   referenceGraphRevision / trash / tag-definition changes. Share one
   trash-descendant set per trash revision (the precomputed-Trash-set precedent
   from the perf program) instead of per-candidate ancestor walks with `Set`
@@ -331,20 +362,33 @@ Renderer (all inside the per-keystroke `flushSync` in `useCommandRunner`):
   `before-quit` drains to the latest revision's ack; a trusted document-system
   transaction still resolves only after the durable ack (the cross-store
   ordering test: SQLite finalization never observed before the workspace
-  write); the search-refresh map is not copied per patch (counter).
+  write); the search-refresh map is not copied per patch (counter) AND the
+  generational structure passes the semantic cases — Trash-boundary subtree
+  crossing, parent deletion pruning descendants, tagDef/fieldDef/reference
+  dependent refreshes — with before-state reads intact; quit with clean state
+  stays fast, quit at deadline with dirty state is cancelled and surfaces
+  Retry / Quit-anyway.
 - Unit, PR-C: incremental-maintenance equivalence tests — patched
   referenceSummary / candidate-index state equals a from-scratch build across
   a mutation corpus (`tests/renderer`); a candidate-visit upper-bound test —
   a picker query touches at most O(bounded results) candidate entries, never
-  all nodes (counter); a **final-output equivalence test** — the bounded-set
-  query's top-24, including disabled ordering and position ranks, is identical
-  to the full-scan ranking across corpora with disabled candidates near the
-  boundary; a transcript fixture that asserts no `ThreadTurnView` re-render on
-  a document-only index change AND zero transcript renders per document delta
-  while the rail is closed (suspension must remove the work, not merely
-  survive it); rail close→reopen preserves composer draft, staged
-  attachments, and scroll position; a chip recolors when its target's tagDef
-  color config changes (derived-chain subscription); patched visual-row
+  all nodes (counter); **shortlist-contract tests** — the visit bound holds on
+  every query including the empty and universal-match ones,
+  rank-completeness holds (no excluded candidate out-ranks an included one),
+  ordering is deterministic across runs, and disabled/cycle computation is
+  invoked only for shortlist members (counter); an **edge-signature test** —
+  inserting text before an inline ref (offset-only change) does not bump
+  referenceGraphRevision; **expanded-Backlinks freshness tests** — linked
+  updates immediate, unlinked debounced, stale generation never overwrites
+  newer, collapse/target-switch cancels; a transcript fixture that asserts no
+  `ThreadTurnView` re-render on a document-only index change AND zero
+  transcript renders per document delta while the rail is closed (suspension
+  must remove the work, not merely survive it); rail close→reopen preserves
+  composer draft, staged attachments, and scroll position; **rename/recolor
+  regressions across every index-derived leaf** — a node rename refreshes
+  reference chips, tool-activity subjects, and the process header, and a copy
+  action after a rename copies the new title (accessor read at click time);
+  patched visual-row
   model equals a from-scratch `buildVisualRows` across sort/filter/group/
   reference mutations — including sort/filter/group **parity under typing**:
   editing Name, Updated-relevant content, a custom field value that feeds the
