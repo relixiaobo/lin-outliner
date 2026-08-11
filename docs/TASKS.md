@@ -571,6 +571,22 @@ The 2026-06-04/05 design-system / UI-consistency review, landed as a plan suite 
 three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Layer 3, #273) shipped
 — see Recently completed. Remaining Layer-3 lanes:
 
+- **semantic-working-state** (P2, `draft` 2026-08-11) — Thread spinners conflate two
+  meanings: "work is advancing" and "data is not ready". Split them — Working keeps its
+  identity glyph and moves the *text* with a cadenced shimmer (600 ms delay, 1 s sweep,
+  4 s cadence; tokenized, CSS-only, no per-row React timer), while Loading, Waiting,
+  Recovery and terminal states keep their existing indicators under an explicit retained
+  matrix. Only the most specific *expanded* representation animates, so a parent and its
+  live child never both move. Static cues carry every row under reduced motion /
+  increased contrast (in-progress tool weight; the Plan step's filled dot + strong text +
+  `aria-current`), and the `--text-strong` open Plan step is deliberately static rather
+  than stretching one highlight token across the whole alpha ladder. Two independent PRs:
+  Thread/Plan (adds the `WorkingText` primitive), then Settings (Provider + managed-Skill
+  progressive copy) on top of it. Design:
+  [`semantic-working-state`](plans/semantic-working-state.md). **Gate note (#529):** the
+  merge closed the BR-8/AC-10 contradiction the weight cue introduced — BR-8 now scopes
+  its no-reflow claim to the sweep layer and names the weight change as the one bounded
+  metric exception; evidence must include a tool settling on a short and a truncated row.
 - **icon-semantics** (P3, Layer 3, small/isolated) — action↔icon collisions (Hash,
   unknown-tool, remove/X-vs-Trash, the gear catch-all that #118 sharpened). #461
   re-picked four glyphs (file delete, `web_fetch`, MCP vs unknown, skill) under a

@@ -92,11 +92,14 @@ The load-bearing rules are:
   and each surface's progressive wording remain visible.
 - **BR-7:** the visual duplicate is `aria-hidden`; the base text remains the
   one accessible name and live-region payload.
-- **BR-8:** the overlay is absolute and pointer-inert, so entering or leaving a
-  working state never changes measured width, row height, focus, or hit targets.
-  A truncated visual duplicate uses the same width, white-space, overflow, and
-  ellipsis rules as the base text, so the sweep cannot reveal different tail
-  glyphs.
+- **BR-8:** the overlay is absolute and pointer-inert, so the sweep layer itself
+  never changes measured width, row height, focus, or hit targets. A truncated
+  visual duplicate uses the same width, white-space, overflow, and ellipsis
+  rules as the base text, so the sweep cannot reveal different tail glyphs. The
+  BR-3 weight cue is the one deliberate metric change on the working transition:
+  it applies to the act segment, which is the flex-shrinking item of its row, so
+  row height, controls, and hit targets stay put while the tally position and
+  the truncation point may shift as a tool settles.
 
 ### Codex behavior evidence
 
@@ -164,7 +167,7 @@ This surface belongs to the first implementation PR.
 
 | Surface / symbol | Current | New behavior |
 | --- | --- | --- |
-| `ThreadProcessBlock` | A live, non-collapsible Turn shows its summary plus `thread-process-spinner`; the completed collapsible branch is already static; `blockedOnUser` already suppresses the spinner | Remove the live spinner. Shimmer the live summary only when no expanded live leaf owns the working cue. Keep completed collapsible summaries and user-blocked summaries static; do not add motion to either branch. |
+| `ThreadProcessBlock` | A live, non-collapsible Turn shows its summary plus `thread-process-spinner`; the completed collapsible branch is already static; `blockedOnUser` already suppresses the spinner | Remove the live spinner. Shimmer the live summary only when no expanded live leaf either owns the working cue or statically suppresses it per BR-5. Keep completed collapsible summaries and user-blocked summaries static; do not add motion to either branch. |
 | `ReasoningDisclosure` | An empty live Item shows static `Thinking`; the Turn spinner supplies motion | Wrap only the empty live `Thinking` label in `WorkingText`. Populated reasoning stays readable and static while it streams. |
 | `executionStatusNode` / `ToolItemDisclosure` | `inProgress` replaces the tool glyph with `LoaderIcon` | Always return the tool glyph. Shimmer only the neutral action segment of an in-progress row and apply `font-weight: 600` to that segment through `thread-tool-inProgress`; failure/interruption tallies remain static. A command with `item.description` keeps that exact sentence in every status rather than routing it through command-oriented i18n. |
 | `ThreadToolActivityGroup` | A running group spins its group glyph | A collapsed running group shimmers its neutral action segment. When expanded in the DOM, its summary is static and each in-progress member shimmers instead. Finished members never inherit motion. Collapsing or expanding mid-run transfers ownership without a frame where both levels animate. |
@@ -312,8 +315,10 @@ outside both PRs.
   cues.
 - **AC-10:** With a narrow long English or Chinese label, the base and visual
   copy have the same rendered width, white-space, overflow, ellipsis, and final
-  visible glyph. Pinned tallies, row height, controls, and neighboring text do
-  not move when working starts or stops.
+  visible glyph. Row height, controls, and hit targets do not move when the
+  sweep starts or stops. Per BR-8, the weight cue may move the tally position
+  and the truncation point as a tool settles; that shift is bounded to the act
+  segment and is verified by evidence rather than forbidden.
 - **AC-11:** In light and dark mode, the tokenized highlight is visible at both
   remaining animated resting-color endpoints, `--text-tertiary` and
   `--text-soft`, without a raw consumer color, brand accent, background fill,
@@ -344,8 +349,9 @@ Visual verification uses `bun run dev:codex-4` and records PR-comment evidence
 for light and dark Thread/Plan states, a narrow pane, at least two concurrent
 Subagents, group and Plan expansion/collapse during active work, reduced motion,
 and increased contrast. Evidence must include the `--text-tertiary` and
-`--text-soft` animated endpoints, the static open Plan step, and a truncated
-label during the active sweep.
+`--text-soft` animated endpoints, the static open Plan step, a truncated label
+during the active sweep, and a tool settling from in-progress to completed on
+both a short row and a truncated one.
 
 #### PR2 acceptance
 
