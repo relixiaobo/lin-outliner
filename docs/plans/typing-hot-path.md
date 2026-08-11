@@ -104,10 +104,19 @@ Renderer (all inside the per-keystroke `flushSync` in `useCommandRunner`):
   Nor can they be cached on the projection revision, which bumps every
   keystroke. PR-A therefore maintains an incremental `MemoryMutationIndex`
   holding at least: canonical-owned ids, protected-ancestor ids,
-  reserved-tagged ids, active tag definitions, and generated ids. It updates
-  only from operations whose verdict was `affectsMemory` (and from the memory
-  pipeline's own writes); ordinary revision churn never invalidates it. The
-  guard answers a text patch with O(1) lookups against the index. The index is
+  reserved-tagged ids, active tag definitions, and generated ids. Its update
+  rules split by what the data is: **membership sets** (owned / protected /
+  reserved-tagged / generated) update from operations whose verdict was
+  `affectsMemory` plus the memory pipeline's own writes — but **classification
+  inputs** update from EVERY committed sparse delta, because the classifier
+  reads them to judge the NEXT command: `commandUsesReservedTag` resolves
+  by-name tag creation/paste against all active tag definitions, so an
+  ordinary tagDef rename or trash move — itself `affectsMemory=false` — still
+  changes what a later command resolves to. Gating those inputs on
+  `affectsMemory` would drift the index; the per-delta update is O(changed)
+  (a tagDef appears in the delta exactly when it changes). Only digest and
+  wake are gated on the verdict. The guard answers a text patch with O(1)
+  lookups against the index. The index is
   **transaction-aware**: updates accumulate in an overlay while a transaction
   is open (later commands in the same transaction read through it), fold into
   the base only on outer commit, and are discarded on rollback — the base
@@ -170,8 +179,19 @@ Renderer (all inside the per-keystroke `flushSync` in `useCommandRunner`):
   handling is part of the contract: a failed save keeps the dirty state at its
   revision, retries with backoff, and surfaces a persistent failure (today's
   timer `void`s the promise — a silent-drop this PR removes); `before-quit`
-  drains by awaiting the latest revision's ack. Acceptance bound: no keystroke
-  ever waits on an O(document) serialize OR on the file write.
+  drains by awaiting the latest revision's ack.
+- **Two ack tiers — trusted transactions keep their durability contract.** The
+  handoff has two acknowledgement levels: *submitted* (the saver owns a
+  consistent snapshot) and *durable* (bytes on disk). Ordinary UI mutations
+  return at *submitted*. **Trusted document-system transactions are an
+  explicit exception**: today `runMutation` awaits `saveCore()` inline when a
+  `systemContext` is present, and the spec requires the transaction to resolve
+  only after the workspace bytes are durable — the memory control plane's
+  SQLite finalization must never precede the document write, or a crash leaves
+  the stores disagreeing. Those transactions (and the memory write gate)
+  therefore await the *durable* ack. Acceptance bound, scoped accordingly: no
+  **ordinary** keystroke mutation ever waits on an O(document) serialize or on
+  the file write; trusted-transaction latency is deliberately unchanged.
 - **Fix the text-search map clone.** Maintain `textSearchNodes` as a persistent
   structure mutated under the mutation queue (or COW buckets), so a committed
   text patch costs O(changed), not an O(N) `new Map(previousNodes)` copy (both
@@ -197,7 +217,15 @@ Renderer (all inside the per-keystroke `flushSync` in `useCommandRunner`):
   eligibility, source-parent and search-ancestry resolution, trash state), so
   its cache patches entries from changed ids and rebuilds only on
   referenceGraphRevision / trash-revision changes. The WeakMap-on-`byId` key is
-  the bug: `byId` changes identity per delta by design.
+  the bug: `byId` changes identity per delta by design. **Scope note — the
+  expanded-Backlinks path is separate and stays O(N) for now:**
+  `referenceSummaryForExpandedTarget` runs `includeUnlinked` full-corpus text
+  matching, a dependency set (every node's text/description) no incremental
+  reference cache covers. This PR does NOT claim O(changed) for it; instead it
+  moves that recompute off the synchronous keystroke commit (deferred/debounced
+  refresh of the expanded section, linked references still update immediately
+  via the incremental summary). A true incremental mention index is an
+  explicit follow-up, not this PR.
 - **Decouple the agent dock from irrelevant document deltas.** The transcript
   cannot be permanently severed from the index — `threadNodeReferenceStyle`
   and reference labels legitimately read node titles/colors, which must stay
@@ -205,6 +233,12 @@ Renderer (all inside the per-keystroke `flushSync` in `useCommandRunner`):
   so `DocumentIndex` identity stops being a memo input, and re-render reference
   chips off a per-node-id subscription so a rename/recolor still propagates
   (a global revision would bump per keystroke via the edited node's title).
+  The subscription covers the **derived color chain**, not just the target
+  node: a chip's color resolves target → `tags[0]` → tagDef → defConfig →
+  value child text, so a tagDef/defConfig edit recolors chips whose target
+  never changed — subscribe through the same reverse-dependency closure the
+  row renderer uses (`ReverseEdges`/`propagateDirty`), not on the target id
+  alone.
   (`ThreadItemView` memoization itself belongs to `agent-streaming-followups`,
   which sequences the prop stabilization it needs — this PR only removes the
   document-delta trigger and does NOT touch item-level memo.) Stop paying for a
@@ -225,14 +259,25 @@ Renderer (all inside the per-keystroke `flushSync` in `useCommandRunner`):
   filters/ranks/sorts every node only shrinks the constant, not the O(N).
   Queries resolve against a label/text lookup structure (sorted label keys or
   n-gram buckets — dev's choice) that yields a **bounded candidate set**
-  without enumerating all nodes; rank/sort run on that bounded set only.
-  Breadcrumb and display-cycle presentation are computed lazily for the
-  bounded results at render time, never stored per node — an ancestor rename
-  therefore cannot invalidate descendants' cached entries, because breadcrumbs
-  are not cached. Full rebuild only on referenceGraphRevision / trash /
-  tag-definition changes. Share one trash-descendant set per trash revision
-  (the precomputed-Trash-set precedent from the perf program) instead of
-  per-candidate ancestor walks with `Set` allocations.
+  without enumerating all nodes. The binding contract: **the bounded set must
+  provably contain the global top-N of the FULL composite ordering** — the
+  current ranking sorts by `disabledReason` first, then position rank
+  (ancestor/sibling proximity), then text/recency — because truncating by
+  text score alone and computing disabled/cycle afterwards would change the
+  visible top-24. The context-dependent keys make this tractable: disabled and
+  position states apply only to identifiable bounded subsets (the current
+  node's ancestor chain, its descendants for cycle checks, its siblings),
+  which are UNIONED into the retrieved set before the composite sort runs.
+  Breadcrumb presentation is computed lazily for the final bounded results at
+  render time, never stored per node — an ancestor rename therefore cannot
+  invalidate descendants' cached entries. If implementation shows the
+  covering-set proof cannot be made, STOP and escalate to the PM for an
+  explicit ranking-semantics ratification (the `node_search` precedent) —
+  never silently ship a different top-24. Full rebuild only on
+  referenceGraphRevision / trash / tag-definition changes. Share one
+  trash-descendant set per trash revision (the precomputed-Trash-set precedent
+  from the perf program) instead of per-candidate ancestor walks with `Set`
+  allocations.
 - **`Sidebar`:** memoize rows; use the shared per-revision trash-descendant set.
 - **`buildVisualRows`: incremental row-model patching — window-only derivation
   is out.** The layout model needs the complete flat row list:
@@ -245,11 +290,17 @@ Renderer (all inside the per-keystroke `flushSync` in `useCommandRunner`):
   sort (`fieldTextFor`), filter (`partitionFilterRows`), and grouping, so
   ordinary typing can legitimately move a row, cross a group, or enter/leave
   the filtered set. The patcher therefore declares the active view's **field
-  dependencies** (sort field ids, filter-rule fields, group field): a text
-  patch whose changed fields are disjoint from them updates the row in place;
-  one that intersects them invalidates and rebuilds the affected branch, same
-  as a structural change. Invalidation rules per trigger are stated in the
-  PR.
+  dependencies** (sort field ids, filter-rule fields, group field) — and the
+  intersection runs against the **derived-dependency closure, not the raw
+  changed fields**: a reference row's display value reads its TARGET node
+  (`displayNode`), and an empty-title parent's Name derives from descendant
+  text, so a target rename changes a sort value on rows whose own fields never
+  appear in the delta. The existing `ReverseEdges`/`propagateDirty` machinery
+  in `renderRev` already encodes this propagation for render dirtiness —
+  reuse it to expand the changed-id set to the effective changed-field set
+  BEFORE intersecting. Disjoint → in-place row update; intersecting →
+  invalidate and rebuild the affected branch, same as a structural change.
+  Invalidation rules per trigger are stated in the PR.
 - **`CodeBlockRow`:** debounce re-highlighting (~150 ms). The text itself lives
   in the editor; the highlight is decoration and may lag a beat.
 
@@ -269,20 +320,31 @@ Renderer (all inside the per-keystroke `flushSync` in `useCommandRunner`):
   cases: a multi-command transaction whose later commands depend on earlier
   ones' membership changes authorizes identically to the full-scan guard, the
   overlay folds on commit, and a rolled-back transaction leaves the base index
-  byte-identical (commit/rollback equivalence).
+  byte-identical (commit/rollback equivalence). Classification-input case: an
+  ordinary tagDef rename or trash move (verdict `affectsMemory=false`)
+  followed by a by-name tag create/paste classifies identically to the
+  full-scan guard.
 - Unit, PR-B: a text-patch burst performs no synchronous save inside
   `runMutation` and never queues behind an in-flight file write; sustained
   typing past the max-wait still checkpoints (fake clock); a failed background
   save keeps the dirty revision, retries, and surfaces — never a silent drop;
-  `before-quit` drains to the latest revision's ack; the search-refresh map is
-  not copied per patch (counter).
+  `before-quit` drains to the latest revision's ack; a trusted document-system
+  transaction still resolves only after the durable ack (the cross-store
+  ordering test: SQLite finalization never observed before the workspace
+  write); the search-refresh map is not copied per patch (counter).
 - Unit, PR-C: incremental-maintenance equivalence tests — patched
   referenceSummary / candidate-index state equals a from-scratch build across
   a mutation corpus (`tests/renderer`); a candidate-visit upper-bound test —
   a picker query touches at most O(bounded results) candidate entries, never
-  all nodes (counter); a transcript fixture that asserts no `ThreadTurnView`
-  re-render on a document-only index change; rail close→reopen preserves
-  composer draft, staged attachments, and scroll position; patched visual-row
+  all nodes (counter); a **final-output equivalence test** — the bounded-set
+  query's top-24, including disabled ordering and position ranks, is identical
+  to the full-scan ranking across corpora with disabled candidates near the
+  boundary; a transcript fixture that asserts no `ThreadTurnView` re-render on
+  a document-only index change AND zero transcript renders per document delta
+  while the rail is closed (suspension must remove the work, not merely
+  survive it); rail close→reopen preserves composer draft, staged
+  attachments, and scroll position; a chip recolors when its target's tagDef
+  color config changes (derived-chain subscription); patched visual-row
   model equals a from-scratch `buildVisualRows` across sort/filter/group/
   reference mutations — including sort/filter/group **parity under typing**:
   editing Name, Updated-relevant content, a custom field value that feeds the

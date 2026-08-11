@@ -241,15 +241,21 @@ across keystrokes); they are listed so nothing is lost, but should be revisited
 
 ### Renderer input / display hot paths
 
+> **Ownership transfer (2026-08-11).** The 2026-08-11 performance audit spun
+> several remaining units into dedicated plans; those rows are marked
+> *transferred* below and are no longer claimable from this catalog:
+> P3-2/3/5/13/21 → `typing-hot-path`; P3-11/12 → `interaction-jank-cleanups`.
+> Claim them through those plans' board items only.
+
 | ID | Finding | Location | Note |
 |----|---------|----------|------|
 | P3-1 | `OutlinerView`/`OutlinerFieldRow` not memoized → `buildOutlinerRows` (filter/sort/group, recursive `childText`) re-runs per subtree per keystroke | `OutlinerView.tsx:49`, `OutlinerFieldRow.tsx:107`, `outlinerRows.ts:153,327,412` | retired by **P2-1**; else add memo + cache field-value primitives per build (Codex #4/#5) |
-| P3-2 | References display re-runs an O(N) backlink scan every keystroke (memo keyed on per-frame `byId`) | `systemFields.ts:102` via `OutlinerFieldRow.tsx:197` | **largely addressed by #121** — a held `target→referrers` reverse-edge index now exists (`renderRev.ts` `ReverseEdges`); remaining work is to route the backlink display through it instead of re-scanning |
+| P3-2 | References display re-runs an O(N) backlink scan every keystroke (memo keyed on per-frame `byId`) | `systemFields.ts:102` via `OutlinerFieldRow.tsx:197` | **transferred → `typing-hot-path` PR-C** (incremental referenceSummary); the #121 `ReverseEdges` index is its substrate |
 | P3-23 | Delta reducer copies the **whole** `byId` (`new Map(prev.byId)`) and rebuilds the **whole** `nextRevisions` map every keystroke — both O(N), immutability-driven (the residual #119/#121 left) | `renderer/state/document.ts` (`reduceProjection`), `renderRev.ts` (`nextRevisions`) | persistent/HAMT-style structural sharing, or mutate-with-version-stamp; measure with `tmp/bench-reverse-edges.ts` before trading immutability for throughput (perception-first, `AGENTS.md` A9) |
-| P3-3 | `@`/reference & field picker filter+map+rank+sort the **whole** projection per keystroke, with per-candidate ancestor walks | `referenceCandidates.ts:139`, `useFieldNameReuse.ts:57` | reuse the main-process text index or a renderer-side label/fieldDef index (Codex #6) |
+| P3-3 | `@`/reference & field picker filter+map+rank+sort the **whole** projection per keystroke, with per-candidate ancestor walks | `referenceCandidates.ts:139`, `useFieldNameReuse.ts:57` | **transferred → `typing-hot-path` PR-C** (queryable label index with top-N covering contract) |
 | P3-4 | Day-page note counts scan all of `byId`, memo dep `byId` reborn each keystroke | `NodePanel.tsx:292` | **↑P1**; or move counts into projection metadata / incremental date index (Codex #7) |
-| P3-5 | `index` object identity changes every keystroke → unmemoized siblings (`Sidebar`, `ThreadDock`, `CommandPalette`) re-render | current `App.tsx` consumers | memo heavy consumers against the slice they use |
-| P3-21 | A code block being edited re-highlights the whole block through Shiki on every keystroke | current `CodeBlockRow` path | debounce re-highlight while typing in large blocks; Thread Markdown uses its own bounded work under P2-2 |
+| P3-5 | `index` object identity changes every keystroke → unmemoized siblings (`Sidebar`, `ThreadDock`, `CommandPalette`) re-render | current `App.tsx` consumers | **transferred → `typing-hot-path` PR-C** (Sidebar memo, dock decoupling/suspension) |
+| P3-21 | A code block being edited re-highlights the whole block through Shiki on every keystroke | current `CodeBlockRow` path | **transferred → `typing-hot-path` PR-C** (debounced re-highlight) |
 
 ### Core scans (reverse-index candidates)
 
@@ -264,9 +270,9 @@ across keystrokes); they are listed so nothing is lost, but should be revisited
 
 | ID | Finding | Location | Note |
 |----|---------|----------|------|
-| P3-11 | Structured search rebuilds a full-doc node `Map` per call **and** clones it again | `searchEngine.ts:399-409`, `:222` | cache `SearchIndex` keyed by `core.revision()`; drop defensive clone |
-| P3-12 | Search candidate filtering does two ancestor walks + fresh `Set` per candidate | `searchEngine.ts:1640-1689` | precompute `inTrash`/condition flags in one tree walk at index build |
-| P3-13 | Incremental text-search refresh clones the whole node `Map` | `documentService.ts:592` | mutate the changed ids in place |
+| P3-11 | Structured search rebuilds a full-doc node `Map` per call **and** clones it again | `searchEngine.ts:399-409`, `:222` | **transferred → `interaction-jank-cleanups` PR-4** (revision-keyed cache, base + virtual-node overlay) |
+| P3-12 | Search candidate filtering does two ancestor walks + fresh `Set` per candidate | `searchEngine.ts:1640-1689` | **transferred → `interaction-jank-cleanups` PR-4** |
+| P3-13 | Incremental text-search refresh clones the whole node `Map` | `documentService.ts:592` | **transferred → `typing-hot-path` PR-B** (persistent structure, O(changed) per patch) |
 | P3-22 | `materializeSearchNodeResultsDirect` inner `.find` over a node's children when reordering result refs | `core.ts:2254-2257` | bounded to one search node's children on explicit refresh; index children by id if it shows up. Low |
 
 ### Main-process IO / bundle
