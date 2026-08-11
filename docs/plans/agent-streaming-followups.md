@@ -75,14 +75,28 @@ audit):
   an unchanged item reuses its previous projected object (identity-stable
   output), a changed item recomputes alone, and group boundaries rebuild only
   when a grouping-relevant field (type/status/membership) changed. The
-  subagent-presentation cache's inputs are NOT the items alone:
-  `projectSubagentsForTurn` also reads `threadsById` and `latestTurnByThread`
-  for each related child's nickname, status, error, and duration — so each
-  item's cache entry is additionally keyed on the identity of the child Thread
-  record and latest-Turn entry it consumed, and a child-only change (parent
-  items untouched) invalidates exactly the items referencing that child. A text
-  delta then re-projects exactly the one changed item — and the one group block
-  containing it — with zero recomputation of unchanged items; (3) only then
+  subagent-presentation cache is **two layers**, because its inputs are not the
+  items alone:
+  - *Per-child base layer* — one entry per related child, keyed on the child
+    Thread record identity, its `latestTurnByThread` entry, and the parent
+    items that evidence it. A child-only change recomputes exactly that
+    child's base entry.
+  - *Collection layer* — the projection work that is irreducibly
+    collection-scoped and must recompute whenever its own inputs change, not
+    per child: the **eligible-child membership** during an in-progress
+    `wait_agent` (the projection scans the whole catalog for collaboration
+    children, so a NEW child mid-wait has no base entry to invalidate — the
+    membership set is itself a key); the **parent Turn's presentation fields**
+    (`livePresentationState` reads the parent's status and `startedAt`, so
+    parent settlement changes rows with no item or child-entry change); and the
+    **display-name collision set** (`disambiguateDisplayNames` ordinal-numbers
+    duplicates across all children, so one child's join/rename/removal renames
+    same-named siblings). The collection layer is O(children) counting over
+    cached base entries — cheap — and it applies ordinals compare-and-reuse, so
+    a child whose final display name did not change keeps its identical
+    presentation object.
+  A text delta then re-projects exactly the one changed item — and the one
+  group block containing it — with zero recomputation of unchanged items; (3) only then
   `memo(ThreadItemView)`, with a render-count test proving the memo actually
   hits during a streamed delta.
 - **Isolate the ticker — the whole header, not just a span.** The elapsed value
@@ -110,8 +124,13 @@ audit):
   recomputation, so both are asserted); AND a child-only change (child Thread
   status/latest-Turn update with parent items untouched) refreshes exactly the
   items referencing that child — no stale nickname/status/duration, no
-  recomputation of unrelated items. The elapsed tick does not re-render the
-  nested transcript fixture.
+  recomputation of unrelated items. Collection-layer cases: a NEW child
+  appearing during an active `wait_agent` shows up without any parent item
+  change; the parent Turn settling with unchanged items updates every row's
+  live state; a same-named child joining, renaming, and being removed each
+  renumber exactly the colliding siblings (and children whose final display
+  name is unchanged keep identity-stable presentation objects). The elapsed
+  tick does not re-render the nested transcript fixture.
 - **A9 manual:** long streaming answer (100 KB+) with an expanded Subagent row —
   renderer CPU before/after, recorded in the PR body.
 
