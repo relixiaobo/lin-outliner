@@ -343,6 +343,53 @@ describe('native turn kernel parity', () => {
     expect(executions).toEqual([argumentsValue]);
   });
 
+  test('isolates canonical history from mutations inside a tool handler', async () => {
+    const providerArguments = {
+      nested: { value: 'original' },
+      removable: 'preserved',
+    };
+    const mutating = parameterTool('mutating', {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        nested: {
+          type: 'object',
+          additionalProperties: false,
+          properties: { value: { type: 'string' } },
+          required: ['value'],
+        },
+        removable: { type: 'string' },
+      },
+      required: ['nested', 'removable'],
+    }, async (_id, args) => {
+      const mutable = args as typeof providerArguments;
+      mutable.nested.value = 'mutated';
+      delete (mutable as Partial<typeof providerArguments>).removable;
+      return toolResult('mutated private execution copy');
+    });
+    const gateway = new ScriptedGateway([
+      () => terminalStream(assistant([{
+        type: 'toolCall', id: 'mutating-call', name: 'mutating', arguments: providerArguments,
+      }], 'toolUse')),
+      () => terminalStream(assistant([{ type: 'text', text: 'done' }])),
+    ]);
+    const runtime = createRuntime(gateway, { tools: [mutating] });
+
+    await runtime.prompt(USER);
+
+    const replayedCalls = gateway.requests[1]!.context.messages.flatMap((message) => (
+      message.role === 'assistant'
+        ? message.content.filter((part) => part.type === 'toolCall')
+        : []
+    ));
+    expect(providerArguments).toEqual({ nested: { value: 'original' }, removable: 'preserved' });
+    expect(replayedCalls).toMatchObject([{
+      id: 'mutating-call',
+      name: 'mutating',
+      arguments: { nested: { value: 'original' }, removable: 'preserved' },
+    }]);
+  });
+
   test('rejects wrong scalar, array, nested, and unknown-field types without conversion', async () => {
     let executions = 0;
     const schemas: Array<[string, Record<string, unknown>, Record<string, unknown>]> = [

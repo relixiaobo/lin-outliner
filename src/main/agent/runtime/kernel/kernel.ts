@@ -330,6 +330,7 @@ interface PreparedToolCall {
 
 interface ImmediateToolCall {
   kind: 'immediate';
+  tool: AgentTool<any> | null;
   result: AgentToolResult<any>;
   isError: boolean;
   admission: ToolCallAdmissionRequest;
@@ -434,7 +435,7 @@ async function executeToolCallsSequential(
       admissionFailureGuard,
       preparation.admission,
       toolCall,
-      context.tools.find((tool) => tool.name === toolCall.name) ?? null,
+      preparation.tool,
       admission,
     );
     const admitted = preparation.kind === 'prepared' && admission.decision.execute;
@@ -483,7 +484,7 @@ async function executeToolCallsParallel(
       admissionFailureGuard,
       preparation.admission,
       toolCall,
-      context.tools.find((tool) => tool.name === toolCall.name) ?? null,
+      preparation.tool,
       admission,
     );
     const admitted = preparation.kind === 'prepared' && admission.decision.execute;
@@ -535,6 +536,7 @@ async function prepareToolCall(
   if (!tool) {
     return {
       kind: 'immediate',
+      tool: null,
       result: errorToolResult('Tool is not exposed by the active registry.'),
       isError: true,
       admission: await rejectedToolCallAdmissionRequest(toolCall, null, 'unresolvedTool'),
@@ -545,7 +547,7 @@ async function prepareToolCall(
     const preparedArguments = tool.prepareArguments
       ? tool.prepareArguments(toolCall.arguments)
       : toolCall.arguments;
-    const args = validateExactToolArguments(tool, preparedArguments);
+    const args = structuredClone(validateExactToolArguments(tool, preparedArguments));
     const admissionArguments = await prepareToolCallArguments(args ?? null);
     const canonicalCall = {
       ...toolCall,
@@ -581,6 +583,7 @@ async function prepareToolCall(
   } catch (error) {
     return {
       kind: 'immediate',
+      tool,
       result: errorToolResult(errorMessage(error)),
       isError: true,
       admission: await rejectedToolCallAdmissionRequest(toolCall, identity, 'invalidArguments'),
