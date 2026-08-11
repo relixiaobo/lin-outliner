@@ -177,15 +177,24 @@ Renderer (all inside the per-keystroke `flushSync` in `useCommandRunner`):
   the FIRST unsaved change, not reset by subsequent keystrokes (e.g. 5 s
   max-wait): the crash window becomes max(idle window, max-wait), stated as
   such.
-- **Bound the serialize cost — persistence contract, PM decides.**
-  `serializeState` currently produces one atomic single-file envelope with a
-  full Loro snapshot per save. The two ways out — incremental
-  `doc.export({ mode: 'update' })` appends with compaction and crash-recovery
-  rules, or moving export + base64 + stringify to a worker (Loro binding
-  transferability permitting) — change the persistence contract (file format
-  and/or threading model), which is directional: the one-pager presents both
-  with measurements and the PM ratifies one BEFORE build. No product code for
-  PR-B lands ahead of that ratification.
+- **Bound the serialize cost — PM-ratified 2026-08-11: incremental
+  update-export append log.** Measured on the real production document (314
+  nodes, 415 KB envelope): a full-snapshot serialize emits 373 KB in ~3 ms
+  warm (15 ms cold) and grows with total edit history — the envelope is
+  oplog-dominated, so heavy use inflates even a small document — while an
+  update export from the persisted version is 22 bytes in ~0.1 ms and stays
+  O(changed) forever. The ratified shape: each save appends
+  `doc.export({ mode: 'update', from: lastPersistedVersion })` to a log
+  alongside the snapshot; idle/threshold **compaction** rewrites the snapshot
+  and truncates the log on the saver's schedule (never inside the typing
+  rhythm); **crash recovery** reads the snapshot and replays the log,
+  discarding a torn tail — the same pattern `RolloutStore` ships hardened.
+  Worker-thread export was evaluated and REJECTED as degenerate: the Loro doc
+  lives on the main thread, so a worker either structured-clones the full
+  state per save (the O(N) cost stays on main) or maintains an incremental
+  mirror (this option's plumbing plus a second-instance drift risk). This
+  also closes the snapshotted-tier capture question: capture IS the
+  incremental export, O(changed) by construction.
 - **The save leaves the mutation queue entirely — a full handoff contract,
   not just an off-thread serialize.** Today `flushCoreSave` chains onto
   `mutationQueue` and `saveCore` awaits the whole `atomicWriteFile`, so a
@@ -204,12 +213,11 @@ Renderer (all inside the per-keystroke `flushSync` in `useCommandRunner`):
   O(changed); **this is what ordinary UI mutations return at**), *snapshotted*
   (the saver captured a consistent state covering that revision — an internal
   pipeline milestone that runs on the saver's cadence, never per keystroke —
-  and whose main-thread cost is UNSPECIFIED until the PM picks the
-  persistence option: today capture means O(N) `materializeState` + Loro
-  export + encoding, so the chosen option's one-pager must state exactly what
-  the main thread hands over — a revision handle, exported bytes, or a shared
-  structure — with its complexity and ownership, and the accepted →
-  snapshotted main-thread work is measured separately), and *durable* (bytes
+  under the ratified persistence option, capture IS the incremental
+  `export(update)` from the last persisted version: O(changed) by
+  construction, with compaction's full-snapshot rewrite confined to the
+  saver's schedule; the accepted → snapshotted main-thread work is still
+  measured separately as acceptance evidence), and *durable* (bytes
   on disk). A mutation
   never waits for snapshot capture — an "ordinary mutations return at
   submitted" reading would smuggle the coalescing wait back into the
@@ -511,11 +519,10 @@ Renderer (all inside the per-keystroke `flushSync` in `useCommandRunner`):
 
 ## Open questions
 
-- **PM ratification required before PR-B builds:** incremental-update
-  export (file-format change: append log + compaction + recovery rules) vs
-  worker-thread export (threading change, binding transferability to verify) —
-  a persistence-contract decision, presented with measurements at the
-  one-pager.
+- ~~PM ratification required before PR-B builds~~ — ratified 2026-08-11:
+  incremental update-export append log with compaction (measurements in the
+  PR-B design above). PR-B is unblocked; compaction thresholds are the dev's
+  call within the stated bounds.
 - PR-A's `affectsMemory` verdict transport (operation metadata vs a
   guard-to-listener side channel keyed by operationId) is the dev's call; the
   bound is one classifier, not two. Likewise the `MemoryMutationIndex`
