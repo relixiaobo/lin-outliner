@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { createHash } from 'node:crypto';
 import type { Message } from '@earendil-works/pi-ai';
@@ -9867,19 +9867,57 @@ describe('ThreadService', () => {
         parameters: EXTENSION_PROBE_CONTRACT.inputSchema!,
         executionMode: 'sequential',
         execute: async () => ({ content: [{ type: 'text', text: 'updated' }], details: { updated: true } }),
+      }, {
+        name: 'broken_probe__run',
+        label: 'Broken Probe',
+        description: 'This malformed contribution must be omitted.',
+        parameters: null as never,
+        executionMode: 'sequential',
+        execute: async () => ({ content: [{ type: 'text', text: 'bad' }], details: { bad: true } }),
+      }, {
+        name: 'mismatched_probe__run',
+        label: 'Mismatched Probe',
+        description: MISMATCHED_EXTENSION_PROBE_CONTRACT.description,
+        parameters: {
+          type: 'object',
+          additionalProperties: false,
+          properties: { actual: { type: 'number' } },
+          required: ['actual'],
+        } as never,
+        executionMode: 'sequential',
+        execute: async () => ({ content: [{ type: 'text', text: 'bad' }], details: { bad: true } }),
+      }, {
+        name: 'malformed_dynamic',
+        label: 'Malformed Dynamic Tool',
+        description: 'This malformed dynamic contribution must be omitted.',
+        parameters: null as never,
+        executionMode: 'sequential',
+        execute: async () => ({ content: [{ type: 'text', text: 'bad' }], details: { bad: true } }),
       }],
     });
-    const tools = await runtime.createTools(context);
+    const warnings: string[] = [];
+    const warning = spyOn(console, 'warn').mockImplementation((...args) => {
+      warnings.push(args.map(String).join(' '));
+    });
+    const tools = await runtime.createTools(context).finally(() => warning.mockRestore());
     expect(tools.map((tool) => tool.name)).toContain('generate_image');
     expect(tools.map((tool) => tool.name)).toContain('automation_probe__run');
+    expect(tools.map((tool) => tool.name)).not.toContain('broken_probe__run');
+    expect(tools.map((tool) => tool.name)).not.toContain('mismatched_probe__run');
+    expect(tools.map((tool) => tool.name)).not.toContain('malformed_dynamic');
+    expect(warnings).toEqual(expect.arrayContaining([
+      expect.stringContaining('Skipping model tool "broken_probe.run": invalid schema'),
+      expect.stringContaining('Skipping model tool "mismatched_probe.run": runtime schema does not match'),
+      expect.stringContaining('Skipping model tool "malformed_dynamic": invalid schema'),
+    ]));
 
     const missingImplementation = new ToolRuntime(fixture.service, {
       capabilityTools: runtimeSchemaTools,
       assembleRegistry: true,
     });
-    await expect(missingImplementation.createTools(context)).rejects.toThrow(
-      'Enabled extension model tool has no runtime implementation',
-    );
+    const missingWarning = spyOn(console, 'warn').mockImplementation(() => {});
+    await expect(missingImplementation.createTools(context).finally(() => missingWarning.mockRestore()))
+      .rejects.toThrow('Enabled extension model tool has no runtime implementation');
     fixture.executor.finish();
     await fixture.service.waitForIdle(thread.id);
     await fixture.service.close();
@@ -10086,11 +10124,41 @@ const EXTENSION_PROBE_CONTRACT = {
   actionKinds: ['agent.plan.update'],
 } as const;
 
+const BROKEN_EXTENSION_PROBE_CONTRACT = {
+  identity: { namespace: 'broken_probe', name: 'run' },
+  description: 'Malformed extension schema probe.',
+  scope: 'rootThread',
+  schemaOwner: 'extension',
+  inputSchema: null,
+  actionKinds: ['agent.plan.update'],
+} as const;
+
+const MISMATCHED_EXTENSION_PROBE_CONTRACT = {
+  identity: { namespace: 'mismatched_probe', name: 'run' },
+  description: 'Mismatched extension schema probe.',
+  scope: 'rootThread',
+  schemaOwner: 'extension',
+  inputSchema: {
+    type: 'object',
+    additionalProperties: false,
+    properties: { expected: { type: 'string' } },
+    required: ['expected'],
+  },
+  actionKinds: ['agent.plan.update'],
+} as const;
+
 class ToolContributionProbe implements AgentCoreExtension {
   readonly id = 'automation-probe';
 
   contributeTools() {
-    return { extensionId: this.id, tools: [EXTENSION_PROBE_CONTRACT] };
+    return {
+      extensionId: this.id,
+      tools: [
+        EXTENSION_PROBE_CONTRACT,
+        BROKEN_EXTENSION_PROBE_CONTRACT,
+        MISMATCHED_EXTENSION_PROBE_CONTRACT,
+      ],
+    };
   }
 }
 

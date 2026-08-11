@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
+import { MODEL_TOOL_CATALOG, canonicalModelToolKey } from '../../src/core/agent/tools';
+import { compileToolParameters } from '../../src/main/agent/runtime/kernel/exactToolArguments';
 
 describe('canonical provider tool catalog', () => {
   test('passes the isolated byte-stability probe', async () => {
@@ -20,5 +22,18 @@ describe('canonical provider tool catalog', () => {
     ]);
     if (exitCode !== 0) throw new Error(`${stdout}\n${stderr}`.trim());
     expect(exitCode).toBe(0);
+  });
+
+  test('compiles every static model-tool schema', () => {
+    const failures: string[] = [];
+    for (const contract of MODEL_TOOL_CATALOG) {
+      if (contract.inputSchema === null) continue;
+      try {
+        compileToolParameters(contract.inputSchema as never);
+      } catch (error) {
+        failures.push(`${canonicalModelToolKey(contract.identity)}: ${String(error)}`);
+      }
+    }
+    expect(failures).toEqual([]);
   });
 });

@@ -25,6 +25,7 @@ import { redactSecretLikeJsonAsync } from '../capabilities/agentSecretRedaction'
 import type { AgentCapabilityConfig } from '../capabilities/agentCapabilityRules';
 import type { ThreadService } from '../ThreadService';
 import type { TurnExecutionContext } from './types';
+import { compileToolParameters } from './kernel/exactToolArguments';
 
 export interface ToolRuntimeOptions {
   readonly outliner?: OutlinerToolHost;
@@ -50,6 +51,7 @@ export interface ToolRuntimeOptions {
 
 export class ToolRuntime {
   private readonly mutationCausation = new AsyncLocalStorage<AgentMutationCausation>();
+  private readonly reportedUnavailableToolSchemas = new Set<string>();
   private readonly outliner: OutlinerToolHost | undefined;
   private readonly importService: AgentImportService | null;
 
@@ -85,6 +87,7 @@ export class ToolRuntime {
           ...(imageGeneration === undefined ? {} : { imageGeneration }),
         });
     const dynamicTools = await this.options.dynamicTools?.(context) ?? [];
+    const dynamicToolSet = new Set(dynamicTools);
     const tools = [
       ...capabilityTools,
       ...(this.importService ? [this.createDataImportTool()] : []),
@@ -96,7 +99,6 @@ export class ToolRuntime {
       ...dynamicTools,
     ];
     const extensionContributions = await this.service.extensionToolContributions(context.thread.id);
-    const extensionContracts = extensionContributions.flatMap((contribution) => contribution.tools);
     const extensionOwners = new Map<string, string>();
     for (const contribution of extensionContributions) {
       for (const contract of contribution.tools) {
@@ -105,6 +107,20 @@ export class ToolRuntime {
         extensionOwners.set(key, contribution.extensionId);
       }
     }
+    const unavailableCanonical = new Set<string>();
+    const extensionContracts = extensionContributions.flatMap((contribution) => (
+      contribution.tools.filter((contract) => {
+        const canonical = canonicalModelToolKey(contract.identity);
+        if (contract.inputSchema !== null && this.hasValidToolSchema(canonical, contract.inputSchema)) {
+          return true;
+        }
+        unavailableCanonical.add(canonical);
+        if (contract.inputSchema === null) {
+          this.reportUnavailableToolSchema(canonical, 'invalid schema (extension tool schema must be an object)');
+        }
+        return false;
+      })
+    ));
     const shouldAssembleRegistry = this.options.assembleRegistry ?? this.options.capabilityTools === undefined;
     const registry = shouldAssembleRegistry
       ? assembleModelToolRegistry(schemaContributions(tools), extensionContracts)
@@ -118,14 +134,26 @@ export class ToolRuntime {
     const unique = new Map<string, AgentTool>();
     const enabledCanonical = new Set<string>();
     for (const tool of tools) {
+      const providerIdentity = identityFromProviderName(tool.name);
+      const providerCanonical = canonicalModelToolKey(providerIdentity);
+      if (unavailableCanonical.has(providerCanonical)) continue;
+      if (!this.hasValidToolSchema(providerCanonical, tool.parameters)) {
+        unavailableCanonical.add(providerCanonical);
+        continue;
+      }
       const identity = registry
         ? decodeProviderToolName(tool.name, 'flat', registry)
-        : identityFromProviderName(tool.name);
+        : providerIdentity;
       if (!identity) throw new Error(`Runtime model tool has no canonical contract: ${tool.name}`);
       const canonical = canonicalModelToolKey(identity);
       const contract = contracts.get(canonical) ?? modelToolContract(canonical);
       if (!contract) throw new Error(`Runtime model tool has no canonical contract: ${canonical}`);
       if (registry && !sameSchema(tool.parameters, contract.inputSchema)) {
+        if (dynamicToolSet.has(tool) || extensionOwners.has(canonical)) {
+          unavailableCanonical.add(canonical);
+          this.reportUnavailableToolSchema(canonical, 'runtime schema does not match its canonical contract');
+          continue;
+        }
         throw new Error(`Runtime model-tool schema does not match its contract: ${canonical}`);
       }
       const extensionOwner = extensionOwners.get(canonical);
@@ -141,7 +169,11 @@ export class ToolRuntime {
     for (const contract of extensionContracts) {
       const canonical = canonicalModelToolKey(contract.identity);
       const owner = extensionOwners.get(canonical)!;
-      if ((allowed.has(canonical) || enabledExtensions.has(owner)) && !enabledCanonical.has(canonical)) {
+      if (
+        !unavailableCanonical.has(canonical)
+        && (allowed.has(canonical) || enabledExtensions.has(owner))
+        && !enabledCanonical.has(canonical)
+      ) {
         throw new Error(`Enabled extension model tool has no runtime implementation: ${canonical}`);
       }
     }
@@ -348,6 +380,25 @@ export class ToolRuntime {
     const { readAgentCapabilityConfig } = await import('../capabilities/agentCapabilityStore');
     return readAgentCapabilityConfig();
   }
+
+  private hasValidToolSchema(canonical: string, schema: unknown): boolean {
+    try {
+      compileToolParameters(schema as TSchema);
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.reportUnavailableToolSchema(canonical, `invalid schema (${message})`);
+      return false;
+    }
+  }
+
+  private reportUnavailableToolSchema(canonical: string, reason: string): void {
+    if (this.reportedUnavailableToolSchemas.has(canonical)) return;
+    this.reportedUnavailableToolSchemas.add(canonical);
+    console.warn(
+      `[agent] Skipping model tool "${boundedDiagnostic(canonical, 120)}": ${boundedDiagnostic(reason, 240)}.`,
+    );
+  }
 }
 
 function outlinerWithCausation(
@@ -496,4 +547,9 @@ function jsonValue(value: unknown): JsonValue {
 
 function isRecord(value: unknown): value is Record<string, JsonValue> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function boundedDiagnostic(value: string, maximum: number): string {
+  const compact = value.replace(/\s+/g, ' ').trim();
+  return compact.length <= maximum ? compact : `${compact.slice(0, maximum - 3)}...`;
 }

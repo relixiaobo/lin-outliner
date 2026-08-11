@@ -292,6 +292,315 @@ describe('native turn kernel parity', () => {
     expect(events.some((event) => event.type === 'tool_execution_start')).toBe(false);
   });
 
+  test('admits exact nested JSON values after preparing arguments exactly once', async () => {
+    const argumentsValue = {
+      nullable: null,
+      empty: '',
+      zero: 0,
+      disabled: false,
+      items: [1, 2],
+      nested: { label: 'kept' },
+    };
+    const executions: unknown[] = [];
+    let preparations = 0;
+    const exact = parameterTool('exact', {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        nullable: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+        optional: { type: 'string' },
+        empty: { type: 'string' },
+        zero: { type: 'number' },
+        disabled: { type: 'boolean' },
+        items: { type: 'array', items: { type: 'integer' } },
+        nested: {
+          type: 'object',
+          additionalProperties: false,
+          properties: { label: { type: 'string' } },
+          required: ['label'],
+        },
+      },
+      required: ['nullable', 'empty', 'zero', 'disabled', 'items', 'nested'],
+    }, async (_id, args) => {
+      executions.push(args);
+      return toolResult('exact');
+    });
+    exact.prepareArguments = (args) => {
+      preparations += 1;
+      return args as never;
+    };
+    const gateway = new ScriptedGateway([
+      () => terminalStream(assistant([{
+        type: 'toolCall', id: 'exact-call', name: 'exact', arguments: argumentsValue,
+      }], 'toolUse')),
+      () => terminalStream(assistant([{ type: 'text', text: 'done' }])),
+    ]);
+    const runtime = createRuntime(gateway, { tools: [exact] });
+
+    await runtime.prompt(USER);
+
+    expect(preparations).toBe(1);
+    expect(executions).toEqual([argumentsValue]);
+  });
+
+  test('rejects wrong scalar, array, nested, and unknown-field types without conversion', async () => {
+    let executions = 0;
+    const schemas: Array<[string, Record<string, unknown>, Record<string, unknown>]> = [
+      ['string_value', { type: 'string' }, { value: null }],
+      ['number_value', { type: 'number' }, { value: '1' }],
+      ['boolean_value', { type: 'boolean' }, { value: 'false' }],
+      ['null_value', { type: 'null' }, { value: 0 }],
+      ['array_value', { type: 'array', items: { type: 'integer' } }, { value: ['1'] }],
+      [
+        'nested_value',
+        {
+          type: 'object',
+          additionalProperties: false,
+          properties: { label: { type: 'string' } },
+          required: ['label'],
+        },
+        { value: { label: 'ok', extra: true } },
+      ],
+    ];
+    const tools = schemas.map(([name, valueSchema]) => parameterTool(name, {
+      type: 'object',
+      additionalProperties: false,
+      properties: { value: valueSchema },
+      required: ['value'],
+    }, async () => {
+      executions += 1;
+      return toolResult('must not execute');
+    }));
+    const gateway = new ScriptedGateway([
+      () => terminalStream(assistant(schemas.map(([name, , argumentsValue], index) => ({
+        type: 'toolCall' as const,
+        id: `wrong-${index}`,
+        name,
+        arguments: argumentsValue,
+      })), 'toolUse')),
+      () => terminalStream(assistant([{ type: 'text', text: 'done' }])),
+    ]);
+    const runtime = createRuntime(gateway, { tools });
+    const events: AgentEvent[] = [];
+    runtime.subscribe((event) => events.push(event));
+
+    await runtime.prompt(USER);
+
+    expect(executions).toBe(0);
+    expect(events.filter((event) => event.type === 'tool_call_admission')).toHaveLength(schemas.length);
+    expect(events.filter((event) => event.type === 'tool_call_admission')).toEqual(
+      Array.from({ length: schemas.length }, () => expect.objectContaining({
+        decision: expect.objectContaining({
+          execute: false,
+          modelCall: expect.objectContaining({ reason: 'invalidArguments' }),
+        }),
+      })),
+    );
+  });
+
+  test('quarantines only the resolved tool after its second identical rejection', async () => {
+    const strict = parameterTool('strict', {
+      type: 'object',
+      additionalProperties: false,
+      properties: { value: { type: 'string' } },
+      required: ['value'],
+    }, async () => toolResult('must not execute'));
+    const sibling = tool('sibling');
+    const repeatedCall = (id: string) => assistant([{
+      type: 'toolCall' as const,
+      id,
+      name: 'strict',
+      arguments: { value: 1 },
+    }], 'toolUse');
+    const gateway = new ScriptedGateway([
+      () => terminalStream(repeatedCall('repeat-one')),
+      () => terminalStream(repeatedCall('repeat-two')),
+      () => terminalStream(assistant([{ type: 'text', text: 'blocked' }])),
+    ]);
+    const runtime = createRuntime(gateway, { tools: [strict, sibling] });
+
+    await runtime.prompt(USER);
+
+    expect(gateway.requests.map((request) => request.context.tools.map((entry) => entry.name))).toEqual([
+      ['strict', 'sibling'],
+      ['strict', 'sibling'],
+      ['sibling'],
+    ]);
+  });
+
+  test('does not collide deterministic failures with different attempted arguments', async () => {
+    const strict = parameterTool('strict', {
+      type: 'object',
+      additionalProperties: false,
+      properties: { value: { type: 'string' } },
+      required: ['value'],
+    }, async () => toolResult('must not execute'));
+    const gateway = new ScriptedGateway([
+      () => terminalStream(assistant([{
+        type: 'toolCall', id: 'different-one', name: 'strict', arguments: { value: 1 },
+      }], 'toolUse')),
+      () => terminalStream(assistant([{
+        type: 'toolCall', id: 'different-two', name: 'strict', arguments: { value: 2 },
+      }], 'toolUse')),
+      () => terminalStream(assistant([{ type: 'text', text: 'done' }])),
+    ]);
+    const runtime = createRuntime(gateway, { tools: [strict] });
+
+    await runtime.prompt(USER);
+
+    expect(gateway.requests[2]?.context.tools.map((entry) => entry.name)).toEqual(['strict']);
+  });
+
+  test('does not collide identical failures after the exposed schema changes', async () => {
+    const parameters = {
+      type: 'object',
+      additionalProperties: false,
+      properties: { value: { type: 'string' } },
+      required: ['value'],
+    };
+    const strict = parameterTool('strict', parameters, async () => toolResult('must not execute'));
+    const invalidCall = (id: string) => assistant([{
+      type: 'toolCall' as const,
+      id,
+      name: 'strict',
+      arguments: { value: 1 },
+    }], 'toolUse');
+    const gateway = new ScriptedGateway([
+      () => terminalStream(invalidCall('schema-one')),
+      () => {
+        parameters.properties.value = { type: 'boolean' };
+        return terminalStream(invalidCall('schema-two'));
+      },
+      () => terminalStream(assistant([{ type: 'text', text: 'done' }])),
+    ]);
+    const runtime = createRuntime(gateway, { tools: [strict] });
+
+    await runtime.prompt(USER);
+
+    expect(gateway.requests[2]?.context.tools.map((entry) => entry.name)).toEqual(['strict']);
+  });
+
+  test('recreates the quarantine guard for the next NativeAgentRuntime prompt', async () => {
+    const strict = parameterTool('strict', {
+      type: 'object',
+      additionalProperties: false,
+      properties: { value: { type: 'string' } },
+      required: ['value'],
+    }, async () => toolResult('must not execute'));
+    const repeatedCall = (id: string) => assistant([{
+      type: 'toolCall' as const,
+      id,
+      name: 'strict',
+      arguments: { value: 1 },
+    }], 'toolUse');
+    const gateway = new ScriptedGateway([
+      () => terminalStream(repeatedCall('turn-one-a')),
+      () => terminalStream(repeatedCall('turn-one-b')),
+      () => terminalStream(assistant([{ type: 'text', text: 'turn one done' }])),
+      () => terminalStream(assistant([{ type: 'text', text: 'turn two done' }])),
+    ]);
+    const runtime = createRuntime(gateway, { tools: [strict] });
+
+    await runtime.prompt(USER);
+    await runtime.prompt({ role: 'user', content: 'Again', timestamp: 2 });
+
+    expect(gateway.requests[2]?.context.tools).toHaveLength(0);
+    expect(gateway.requests[3]?.context.tools.map((entry) => entry.name)).toEqual(['strict']);
+  });
+
+  test('quarantines repeated truncated calls by their resolved tool identity', async () => {
+    const gateway = new ScriptedGateway([
+      () => terminalStream(assistant([{
+        type: 'toolCall', id: 'truncated-one', name: 'cut', arguments: { partial: true },
+      }], 'length')),
+      () => terminalStream(assistant([{
+        type: 'toolCall', id: 'truncated-two', name: 'cut', arguments: { partial: true },
+      }], 'length')),
+      () => terminalStream(assistant([{ type: 'text', text: 'done' }])),
+    ]);
+    const runtime = createRuntime(gateway, { tools: [tool('cut')] });
+
+    await runtime.prompt(USER);
+
+    expect(gateway.requests[2]?.context.tools).toHaveLength(0);
+  });
+
+  test('makes one final tool-free request at the deterministic failure ceiling', async () => {
+    const scripts = [() => terminalStream(assistant([{
+      type: 'toolCall' as const,
+      id: 'admitted-before-ceiling',
+      name: 'available',
+      arguments: {},
+    }], 'toolUse')), ...Array.from({ length: 8 }, (_, index) => () => terminalStream(assistant([{
+      type: 'toolCall' as const,
+      id: `missing-${index}`,
+      name: `missing_tool_${index}`,
+      arguments: { attempt: index },
+    }], 'toolUse')))];
+    scripts.push(() => terminalStream(assistant([{
+      type: 'toolCall',
+      id: 'hallucinated-after-ceiling',
+      name: 'available',
+      arguments: {},
+    }], 'toolUse')));
+    const gateway = new ScriptedGateway(scripts);
+    const runtime = createRuntime(gateway, { tools: [tool('available')] });
+
+    await runtime.prompt(USER);
+
+    expect(gateway.requests).toHaveLength(10);
+    expect(gateway.requests.slice(0, 9).every((request) => request.context.tools.length === 1)).toBe(true);
+    const finalRequest = gateway.requests[9]!;
+    expect(finalRequest.context.tools).toHaveLength(0);
+    expect(finalRequest.context.messages.some((message) => (
+      message.role === 'assistant' && message.content.some((part) => (
+        part.type === 'toolCall' && part.id === 'admitted-before-ceiling'
+      ))
+    ))).toBe(true);
+    expect(finalRequest.context.messages.some((message) => (
+      message.role === 'toolResult' && message.toolCallId === 'admitted-before-ceiling'
+    ))).toBe(true);
+    expect(JSON.stringify(runtime.state.messages)).toContain('hallucinated-after-ceiling');
+    expect(JSON.stringify(runtime.state.messages)).toContain('unresolvedTool');
+  });
+
+  test('does not count admission persistence or tool execution failures as deterministic', async () => {
+    const strict = parameterTool('strict', {
+      type: 'object',
+      additionalProperties: false,
+      properties: { value: { type: 'string' } },
+      required: ['value'],
+    }, async () => { throw new Error('transient execution failure'); });
+    const gateway = new ScriptedGateway([
+      () => terminalStream(assistant([{
+        type: 'toolCall', id: 'persist-one', name: 'strict', arguments: { value: 1 },
+      }], 'toolUse')),
+      () => terminalStream(assistant([{
+        type: 'toolCall', id: 'persist-two', name: 'strict', arguments: { value: 1 },
+      }], 'toolUse')),
+      () => terminalStream(assistant([{
+        type: 'toolCall', id: 'execution-one', name: 'strict', arguments: { value: 'ok' },
+      }], 'toolUse')),
+      () => terminalStream(assistant([{ type: 'text', text: 'done' }])),
+    ]);
+    let admissionAttempts = 0;
+    const runtime = createRuntime(gateway, {
+      tools: [strict],
+      admitToolCall: (request) => {
+        admissionAttempts += 1;
+        if (request.outcome.type === 'rejected') throw new Error('persistence unavailable');
+        return persistToolCallAdmission(request, async () => { throw new Error('not needed'); });
+      },
+    });
+
+    await runtime.prompt(USER);
+
+    expect(admissionAttempts).toBe(3);
+    expect(gateway.requests.slice(0, 4).map((request) => request.context.tools.map((entry) => entry.name)))
+      .toEqual([['strict'], ['strict'], ['strict'], ['strict']]);
+    expect(JSON.stringify(runtime.state.messages)).toContain('transient execution failure');
+  });
+
   test('does not let a rejected call id suppress a later admitted result with the same id', async () => {
     const reusedCallId = 'provider-reused-id';
     const executions: unknown[] = [];
@@ -420,6 +729,43 @@ describe('native turn kernel parity', () => {
     expect(replayAssistant.content.map((part) => part.type)).toEqual(['toolCall']);
     expect(admission).toMatchObject({
       decision: { modelCall: { disposition: 'redactedReplay' } },
+    });
+    expect(JSON.stringify(admission)).not.toContain(secret);
+  });
+
+  test('executes admitted arguments when their redacted placeholder fails exact replay validation', async () => {
+    const secret = 'abcdefghijklmnop';
+    const command = `curl -H "Authorization: Bearer ${secret}" https://example.test`;
+    const executedArguments: unknown[] = [];
+    const exactSecret = parameterTool('exact_secret', {
+      type: 'object',
+      additionalProperties: false,
+      properties: { command: { type: 'string', const: command } },
+      required: ['command'],
+    }, async (_id, args) => {
+      executedArguments.push(args);
+      return toolResult('executed');
+    });
+    const gateway = new ScriptedGateway([
+      () => terminalStream(assistant([{
+        type: 'toolCall', id: 'exact-secret-call', name: 'exact_secret', arguments: { command },
+      }], 'toolUse')),
+      () => terminalStream(assistant([{ type: 'text', text: 'done' }])),
+    ]);
+    const runtime = createRuntime(gateway, { tools: [exactSecret] });
+    let admission: Extract<AgentEvent, { readonly type: 'tool_call_admission' }> | null = null;
+    runtime.subscribe((event) => {
+      if (event.type === 'tool_call_admission') admission = event;
+    });
+
+    await runtime.prompt(USER);
+
+    expect(executedArguments).toEqual([{ command }]);
+    expect(admission).toMatchObject({
+      decision: {
+        execute: true,
+        modelCall: { disposition: 'evidenceOnly', reason: 'schemaIncompatible' },
+      },
     });
     expect(JSON.stringify(admission)).not.toContain(secret);
   });

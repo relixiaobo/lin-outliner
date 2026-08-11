@@ -305,6 +305,16 @@ OpenAI Responses requests use the provider's detailed reasoning-summary mode.
 The runtime preserves every delivered summary part in the canonical `reasoning`
 Item; the renderer never substitutes the first line for the expanded body.
 
+Every top-level function tool in an `openai-responses`,
+`openai-codex-responses`, or `azure-openai-responses` payload carries an explicit
+boolean `strict`. The payload hook preserves an existing boolean and normalizes an
+absent value or the Codex adapter's `null` sentinel to `false`. A different value is a
+local payload defect and fails before network I/O. This is a wire-level declaration of
+Tenon's current non-strict optional-property semantics, not a schema rewrite or a claim
+that the endpoint supports strict constrained sampling. Function parameters and every
+non-function tool record remain unchanged. The rule applies equally to official OpenAI,
+custom relay, Codex, and Azure Responses paths.
+
 Only custom OpenAI Responses endpoints install the resilient SSE fetch. Non-SSE
 responses pass through unchanged. Each SSE frame is buffered only through its blank-line
 boundary; ordinary, terminal, comment, event, multi-line-data, malformed-JSON, and
@@ -336,15 +346,27 @@ even though durability, projection, IPC, and renderer work run at the lower coal
 rate. A failed downstream delta group is reported and dropped without blocking later
 deltas or lifecycle; the terminal Item snapshot remains the canonical repair boundary.
 The recorder validates local provenance and rejects completion before start. A raw
-provider call first resolves canonical identity, runs model-argument preparation, and
-passes the exposed schema. The kernel then persists one admission decision and emits
-`tool_call_admission`; only admitted calls may emit `tool_execution_start` and reach
-capability evaluation or execution. Unknown tools, malformed or provider-truncated
-arguments, and argument-persistence failure complete a failed Item from `evidenceOnly`
-without a capability decision. Presentation arguments and visible results use bounded
-projections with explicit truncation metadata. Tool-result details pass through
-the shared persistence slimmer before entering an Item. Dynamic image result
-lists also have a fixed maximum length.
+provider call first resolves canonical identity, runs the resolved tool's
+`prepareArguments` once when present, and checks the resulting value with Tenon's
+TypeBox compiler without `Value.Convert` or any generic coercion. The exact prepared JSON
+then supplies redaction, canonical admission, capability evaluation, and execution. The
+kernel persists one admission decision and emits `tool_call_admission`; only admitted
+calls may emit `tool_execution_start` and reach capability evaluation or execution.
+Unknown tools, malformed or provider-truncated arguments, and argument-persistence
+failure complete a failed Item from `evidenceOnly` without a capability decision.
+Presentation arguments and visible results use bounded projections with explicit
+truncation metadata. Tool-result details pass through the shared persistence slimmer
+before entering an Item. Dynamic image result lists also have a fixed maximum length.
+
+The kernel owns a fresh deterministic-admission guard for each `runKernel` invocation.
+After the second identical resolved rejection it removes that canonical tool from later
+request snapshots while retaining every other tool. At eight deterministic rejections it
+issues one final tool-free provider request and schedules no further provider loop,
+including when that response hallucinates a tool call. `invalidArguments`,
+`truncatedArguments`, and unresolved calls count; execution exceptions, provider and
+persistence failures, capability outcomes, permission decisions, and cancellation do
+not. Provider call IDs do not affect fingerprints. The exact tool snapshot sent in each
+request is also the only registry eligible to execute calls from that response.
 When a custom Responses stream is retried after it already emitted content, the kernel
 emits the main-process-only `message_restart` event with the interrupted partial before
 replacing the trailing provider-history message. The normalizer completes the interrupted
@@ -450,7 +472,13 @@ copies; it never touches an external original.
 ## Tools And Causation
 
 `ToolRuntime` exposes tools through the effective Thread configuration, Core scope,
-and canonical registry identity. The kernel freezes a schema-valid canonical call
+and canonical registry identity. It compiles each runtime-provided schema before
+exposure; one invalid dynamic, extension, or MCP contribution is skipped with a bounded
+diagnostic while valid siblings remain available. Static catalog schemas are guarded in
+the test suite. Dynamic and extension implementation mismatches degrade like malformed
+runtime schemas; Core/capability mismatches, duplicate identities, and enabled valid
+extension contracts with no implementation remain hard registry defects.
+The kernel freezes a schema-valid canonical call
 before `ToolRuntime` evaluates argument-dependent capability blocks. A valid blocked
 call therefore retains its call/result pair and structured `operation_unavailable`
 audit; an invalid call never reaches capability evaluation. Admission starts the
