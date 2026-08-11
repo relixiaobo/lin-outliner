@@ -801,7 +801,4 @@ rather than the contribution, an extension declaring `bash` deleted the **real**
 trusted neighbour, which the previous fail-closed version denied it. When you
 convert a structural failure into a degradation, scope it twice: to the exact
 set of entries whose author you distrust, and to a key space that author cannot
-reach into. Everything else stays a structural failure. The matching test trap
-is the same shape — the new guard built stand-in schemas for the contracts it
-could not construct, so it exercised none of the ones the change actually put at
-risk.
+reach into. Everything else stays a structural failure.
