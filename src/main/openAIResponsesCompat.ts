@@ -33,6 +33,9 @@ export function applyCustomOpenAIResponsesPayloadProfile(
 
   const nextPayload: Record<string, unknown> = { ...payload };
   let changed = applyCcSwitchModelAlias(nextPayload, model);
+  if (isOpenAIResponsesFamily(model.api)) {
+    changed = applyFunctionToolStrictInvariant(nextPayload) || changed;
+  }
 
   if (!isCustomOpenAIResponsesEndpoint(model)) return changed ? nextPayload : undefined;
   if (!Array.isArray(payload.input)) return changed ? nextPayload : undefined;
@@ -118,6 +121,31 @@ function applyCcSwitchModelAlias(payload: Record<string, unknown>, model: Respon
   if (!upstreamModel || payload.model !== modelId) return false;
   payload.model = upstreamModel;
   return true;
+}
+
+function isOpenAIResponsesFamily(api: Api): boolean {
+  return api === 'openai-responses'
+    || api === 'openai-codex-responses'
+    || api === 'azure-openai-responses';
+}
+
+function applyFunctionToolStrictInvariant(payload: Record<string, unknown>): boolean {
+  if (!Array.isArray(payload.tools)) return false;
+  let changed = false;
+  const tools = payload.tools.map((tool) => {
+    if (!isRecord(tool) || tool.type !== 'function') return tool;
+    if (typeof tool.strict === 'boolean') return tool;
+    if (tool.strict !== undefined && tool.strict !== null) {
+      const name = typeof tool.name === 'string' && tool.name.trim()
+        ? tool.name.replace(/\s+/g, ' ').trim().slice(0, 80)
+        : '<unnamed>';
+      throw new Error(`Responses function tool "${name}" has a non-boolean strict value.`);
+    }
+    changed = true;
+    return { ...tool, strict: false };
+  });
+  if (changed) payload.tools = tools;
+  return changed;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

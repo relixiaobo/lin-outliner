@@ -1,4 +1,4 @@
-import { validateToolArguments } from '@earendil-works/pi-ai/compat';
+import { createHash } from 'node:crypto';
 import {
   SUBAGENT_BUDGET_EXHAUSTED_ERROR_CODE,
   type TurnError,
@@ -30,6 +30,7 @@ import {
   type ToolCallAdmissionRequest,
 } from '../toolCallHistory';
 import { uuidV7 } from '../../uuid';
+import { validateExactToolArguments } from './exactToolArguments';
 
 export type KernelEventSink = (event: KernelEvent) => Promise<void> | void;
 
@@ -49,6 +50,50 @@ export interface KernelSteeringMessage {
   readonly onDelivered?: () => void;
 }
 
+const MAX_DETERMINISTIC_ADMISSION_FAILURES = 8;
+
+type DeterministicAdmissionFailureReason = Extract<
+  ToolCallAdmissionRequest['outcome'],
+  { readonly type: 'rejected' }
+>['reason'];
+
+class TurnAdmissionFailureGuard {
+  private readonly occurrences = new Map<string, number>();
+  private readonly quarantinedTools = new Set<string>();
+  private deterministicFailureCount = 0;
+  private finalToolFreeRequestIssued = false;
+
+  beginProviderRequest(tools: readonly AgentTool[]): {
+    readonly tools: AgentTool[];
+    readonly finalToolFreeRequest: boolean;
+  } {
+    if (this.deterministicFailureCount >= MAX_DETERMINISTIC_ADMISSION_FAILURES) {
+      this.finalToolFreeRequestIssued = true;
+      return { tools: [], finalToolFreeRequest: true };
+    }
+    return {
+      tools: tools.filter((tool) => !this.quarantinedTools.has(toolIdentityKey(tool))),
+      finalToolFreeRequest: false,
+    };
+  }
+
+  record(
+    toolCall: AgentToolCall,
+    tool: AgentTool | null,
+    reason: DeterministicAdmissionFailureReason,
+  ): void {
+    this.deterministicFailureCount += 1;
+    const fingerprint = deterministicAdmissionFailureFingerprint(toolCall, tool, reason);
+    const count = (this.occurrences.get(fingerprint) ?? 0) + 1;
+    this.occurrences.set(fingerprint, count);
+    if (tool && count >= 2) this.quarantinedTools.add(toolIdentityKey(tool));
+  }
+
+  shouldEndAfter(finalToolFreeRequest: boolean): boolean {
+    return finalToolFreeRequest && this.finalToolFreeRequestIssued;
+  }
+}
+
 export async function runKernel(
   prompts: Message[],
   initialContext: KernelContext,
@@ -63,6 +108,7 @@ export async function runKernel(
     messages: [...initialContext.messages, ...prompts],
   };
   const usedToolCallIds = historicalToolCallIds(context.messages);
+  const admissionFailureGuard = new TurnAdmissionFailureGuard();
 
   await emit({ type: 'agent_start' });
   await emit({ type: 'turn_start' });
@@ -121,7 +167,9 @@ export async function runKernel(
     }
     pendingMessages = [];
 
-    const message = await streamAssistantResponse(context, options, signal, emit);
+    const request = admissionFailureGuard.beginProviderRequest(context.tools);
+    const requestContext: KernelContext = { ...context, tools: request.tools };
+    const message = await streamAssistantResponse(requestContext, options, signal, emit);
     providerCallCount += 1;
     newMessages.push(message);
     if (message.stopReason === 'error' || message.stopReason === 'aborted') {
@@ -136,8 +184,22 @@ export async function runKernel(
     hasMoreToolCalls = false;
     if (toolCalls.length > 0) {
       const batch = message.stopReason === 'length'
-        ? await failTruncatedToolCalls(context, toolCalls, signal, emit, options.admitToolCall)
-        : await executeToolCalls(context, toolCalls, signal, emit, options.admitToolCall);
+        ? await failTruncatedToolCalls(
+            requestContext,
+            toolCalls,
+            signal,
+            emit,
+            options.admitToolCall,
+            admissionFailureGuard,
+          )
+        : await executeToolCalls(
+            requestContext,
+            toolCalls,
+            signal,
+            emit,
+            options.admitToolCall,
+            admissionFailureGuard,
+          );
       toolResults.push(...batch.messages);
       hasMoreToolCalls = !batch.terminate && !signal.aborted;
       const liveAssistant = rewriteAssistantToolCallHistory(message, batch.admissions);
@@ -150,6 +212,7 @@ export async function runKernel(
     }
 
     await emit({ type: 'turn_end', message, toolResults });
+    if (admissionFailureGuard.shouldEndAfter(request.finalToolFreeRequest)) break;
   }
 
   await emit({ type: 'agent_end', messages: newMessages });
@@ -267,6 +330,7 @@ interface PreparedToolCall {
 
 interface ImmediateToolCall {
   kind: 'immediate';
+  tool: AgentTool<any> | null;
   result: AgentToolResult<any>;
   isError: boolean;
   admission: ToolCallAdmissionRequest;
@@ -276,6 +340,7 @@ interface ToolCallAdmissionRecord {
   readonly providerToolCallId: string;
   readonly toolCallId: string;
   readonly decision: ToolCallAdmissionDecision;
+  readonly completed: boolean;
 }
 
 interface ExecutedToolCall {
@@ -295,6 +360,7 @@ async function failTruncatedToolCalls(
   signal: AbortSignal,
   emit: KernelEventSink,
   admit: KernelAgentOptions['admitToolCall'],
+  admissionFailureGuard: TurnAdmissionFailureGuard,
 ): Promise<ExecutedToolBatch> {
   const messages: ToolResultMessage[] = [];
   const admissions: ToolCallAdmissionRecord[] = [];
@@ -309,6 +375,13 @@ async function failTruncatedToolCalls(
     if (signal.aborted) break;
     const admission = await admitAndEmit(request, providerToolCallId, admit, emit);
     admissions.push(admission);
+    recordDeterministicAdmissionFailure(
+      admissionFailureGuard,
+      request,
+      toolCall,
+      tool ?? null,
+      admission,
+    );
     const finalized: FinalizedToolCall = {
       toolCall,
       result: errorToolResult(
@@ -330,13 +403,14 @@ async function executeToolCalls(
   signal: AbortSignal,
   emit: KernelEventSink,
   admit: KernelAgentOptions['admitToolCall'],
+  admissionFailureGuard: TurnAdmissionFailureGuard,
 ): Promise<ExecutedToolBatch> {
   const hasSequentialTool = toolCalls.some(({ toolCall }) => (
     context.tools.find((tool) => tool.name === toolCall.name)?.executionMode === 'sequential'
   ));
   return !hasSequentialTool
-    ? executeToolCallsParallel(context, toolCalls, signal, emit, admit)
-    : executeToolCallsSequential(context, toolCalls, signal, emit, admit);
+    ? executeToolCallsParallel(context, toolCalls, signal, emit, admit, admissionFailureGuard)
+    : executeToolCallsSequential(context, toolCalls, signal, emit, admit, admissionFailureGuard);
 }
 
 async function executeToolCallsSequential(
@@ -345,6 +419,7 @@ async function executeToolCallsSequential(
   signal: AbortSignal,
   emit: KernelEventSink,
   admit: KernelAgentOptions['admitToolCall'],
+  admissionFailureGuard: TurnAdmissionFailureGuard,
 ): Promise<ExecutedToolBatch> {
   const finalizedCalls: FinalizedToolCall[] = [];
   const messages: ToolResultMessage[] = [];
@@ -356,6 +431,13 @@ async function executeToolCallsSequential(
     if (signal.aborted) break;
     const admission = await admitAndEmit(preparation.admission, providerToolCallId, admit, emit);
     admissions.push(admission);
+    recordDeterministicAdmissionFailure(
+      admissionFailureGuard,
+      preparation.admission,
+      toolCall,
+      preparation.tool,
+      admission,
+    );
     const admitted = preparation.kind === 'prepared' && admission.decision.execute;
     let finalized: FinalizedToolCall;
     if (preparation.kind === 'prepared' && admission.decision.execute) {
@@ -388,6 +470,7 @@ async function executeToolCallsParallel(
   signal: AbortSignal,
   emit: KernelEventSink,
   admit: KernelAgentOptions['admitToolCall'],
+  admissionFailureGuard: TurnAdmissionFailureGuard,
 ): Promise<ExecutedToolBatch> {
   const entries: Array<{ readonly entry: FinalizedToolEntry; readonly includeInHistory: boolean }> = [];
   const admissions: ToolCallAdmissionRecord[] = [];
@@ -397,6 +480,13 @@ async function executeToolCallsParallel(
     if (signal.aborted) break;
     const admission = await admitAndEmit(preparation.admission, providerToolCallId, admit, emit);
     admissions.push(admission);
+    recordDeterministicAdmissionFailure(
+      admissionFailureGuard,
+      preparation.admission,
+      toolCall,
+      preparation.tool,
+      admission,
+    );
     const admitted = preparation.kind === 'prepared' && admission.decision.execute;
     if (!admitted) {
       const finalized = {
@@ -446,6 +536,7 @@ async function prepareToolCall(
   if (!tool) {
     return {
       kind: 'immediate',
+      tool: null,
       result: errorToolResult('Tool is not exposed by the active registry.'),
       isError: true,
       admission: await rejectedToolCallAdmissionRequest(toolCall, null, 'unresolvedTool'),
@@ -456,10 +547,7 @@ async function prepareToolCall(
     const preparedArguments = tool.prepareArguments
       ? tool.prepareArguments(toolCall.arguments)
       : toolCall.arguments;
-    const preparedCall = preparedArguments === toolCall.arguments
-      ? toolCall
-      : { ...toolCall, arguments: preparedArguments as Record<string, any> };
-    const args = validateToolArguments(tool, preparedCall);
+    const args = structuredClone(validateExactToolArguments(tool, preparedArguments));
     const admissionArguments = await prepareToolCallArguments(args ?? null);
     const canonicalCall = {
       ...toolCall,
@@ -468,10 +556,7 @@ async function prepareToolCall(
     let redactedArgumentsReplayable = true;
     if (admissionArguments.redactedPaths.length > 0) {
       try {
-        validateToolArguments(tool, {
-          ...canonicalCall,
-          arguments: admissionArguments.redactedArguments as Record<string, any>,
-        });
+        validateExactToolArguments(tool, admissionArguments.redactedArguments);
       } catch {
         redactedArgumentsReplayable = false;
       }
@@ -498,6 +583,7 @@ async function prepareToolCall(
   } catch (error) {
     return {
       kind: 'immediate',
+      tool,
       result: errorToolResult(errorMessage(error)),
       isError: true,
       admission: await rejectedToolCallAdmissionRequest(toolCall, identity, 'invalidArguments'),
@@ -585,9 +671,11 @@ async function admitAndEmit(
   emit: KernelEventSink,
 ): Promise<ToolCallAdmissionRecord> {
   let decision: ToolCallAdmissionDecision;
+  let completed = true;
   try {
     decision = admit ? await admit(request) : transientToolCallAdmission(request);
   } catch {
+    completed = false;
     decision = persistenceFailureAdmission(request);
   }
   await emit({
@@ -601,7 +689,47 @@ async function admitAndEmit(
     providerToolCallId,
     toolCallId: request.toolCallId,
     decision,
+    completed,
   };
+}
+
+function recordDeterministicAdmissionFailure(
+  guard: TurnAdmissionFailureGuard,
+  request: ToolCallAdmissionRequest,
+  toolCall: AgentToolCall,
+  tool: AgentTool | null,
+  admission: ToolCallAdmissionRecord,
+): void {
+  if (!admission.completed || request.outcome.type !== 'rejected') return;
+  guard.record(toolCall, tool, request.outcome.reason);
+}
+
+function deterministicAdmissionFailureFingerprint(
+  toolCall: AgentToolCall,
+  tool: AgentTool | null,
+  reason: DeterministicAdmissionFailureReason,
+): string {
+  const identity = tool ? canonicalToolIdentity(tool) : null;
+  return createHash('sha256').update(stableJson([
+    identity ?? { providerName: toolCall.name },
+    tool ? modelToolSchemaDigest(tool.parameters) : null,
+    toolCall.arguments,
+    reason,
+  ])).digest('hex');
+}
+
+function toolIdentityKey(tool: AgentTool): string {
+  const identity = canonicalToolIdentity(tool);
+  return identity.namespace === null ? identity.name : `${identity.namespace}.${identity.name}`;
+}
+
+function stableJson(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record).sort().map((key) => (
+    `${JSON.stringify(key)}:${stableJson(record[key])}`
+  )).join(',')}}`;
 }
 
 function historicalToolCallIds(messages: readonly Message[]): Set<string> {

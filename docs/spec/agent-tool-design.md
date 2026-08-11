@@ -24,6 +24,14 @@ Registry assembly fails when a required schema is missing, a canonical identity
 duplicates another, an extension uses an unsupported action kind, or provider
 encoding would collide. Flat provider names use `namespace__name`; tool-name
 components cannot contain the separator, making the mapping reversible.
+Every concrete static catalog schema is compilation-guarded by the test suite.
+`ToolRuntime` also compiles extension contracts and runtime implementations before
+exposure. A malformed dynamic, extension, or MCP-backed schema omits only that
+canonical contribution and emits one bounded diagnostic; valid siblings remain
+available. A valid dynamic or extension implementation whose schema disagrees with
+its canonical contract is omitted by the same boundary. Core/capability contract
+mismatches, duplicate contracts, and enabled valid extension contracts with no
+implementation remain structural failures rather than degraded runtime input.
 
 Domain-owned tool handlers are contributed by their owning modules; `runtime/`
 only distributes those contributions through the same assembly seam used by
@@ -342,12 +350,20 @@ Thread catalog and explicit blocks.
 ## Canonical Call History
 
 Every raw provider call crosses one ordered admission boundary: resolve canonical
-identity, apply model-argument normalization, validate the exposed schema, persist the
-canonical history envelope, evaluate argument-dependent capability blocks, bind host
-execution context, then execute. Host context such as Thread `cwd`, workspace and
-scratch roots, environment, credentials, and private handles is never added to the
-model arguments. `bash` history therefore records its exact admitted `command` and
-optional model fields while `commandExecution.cwd` remains host-owned audit metadata.
+identity, run that tool's `prepareArguments` once when present, validate the resulting
+JSON exactly against the exposed schema, persist the canonical history envelope,
+evaluate argument-dependent capability blocks, bind host execution context, then
+execute. The shared boundary never converts scalar types: `null`, strings, numbers,
+integers, and booleans remain distinct; arrays retain order and cardinality; and unknown
+fields remain present for schema rejection. Valid empty strings, zeroes, and false values
+are not treated as missing. A tool-owned preparation may implement a specific public
+normalization, but no generic layer performs coercion after it. The same prepared value
+is used for canonical history, capability evaluation, and execution.
+
+Host context such as Thread `cwd`, workspace and scratch roots, environment,
+credentials, and private handles is never added to the model arguments. `bash` history
+therefore records its exact admitted `command` and optional model fields while
+`commandExecution.cwd` remains host-owned audit metadata.
 
 The immutable envelope has three dispositions:
 
@@ -409,6 +425,22 @@ Provider call IDs are canonicalized before admission. The first non-empty unused
 preserved; an empty or repeated ID receives a fresh Turn-local UUIDv7. That canonical ID
 is the only ID used by execution, Item causation, result pairing, and replay. The original
 provider ID is retained only transiently to correlate the provider response part.
+
+Deterministic admission rejection has a Turn-local containment guard. Its in-memory
+fingerprint combines canonical identity (or the unresolved provider name), schema digest
+when resolved, stable pre-redaction attempted JSON, and rejection reason; provider call
+IDs are excluded. The first occurrence preserves the ordinary correction path. The
+second identical `invalidArguments` or `truncatedArguments` rejection quarantines that
+canonical tool for later provider calls in the same Turn. Each provider call freezes one
+tool snapshot, and that exact snapshot governs both wire exposure and execution, so a
+quarantined tool hallucinated later cannot execute. Different arguments, schema digests,
+or reasons do not collide, and the guard resets on the next Turn.
+
+Unresolved calls contribute only to a Turn-wide ceiling because there is no real tool to
+quarantine. At eight deterministic rejections, the kernel makes exactly one final request
+with an empty tool list and then ends the Turn even if the provider emits another tool
+call; that call receives bounded rejection evidence. Provider, persistence, capability,
+permission, cancellation, and tool-execution failures do not increment this guard.
 
 ## Result Contract
 

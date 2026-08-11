@@ -1314,7 +1314,7 @@ describe('provider credential resolver', () => {
         text: { verbosity: 'low' },
         tool_choice: 'auto',
         parallel_tool_calls: true,
-        tools: [{ type: 'function', name: 'probe' }],
+        tools: [{ type: 'function', name: 'probe', strict: false }],
       }]);
     } finally {
       restoreFetch();

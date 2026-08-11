@@ -4,7 +4,9 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import {
   assembleModelToolRegistry,
   canonicalModelToolKey,
+  COLLABORATION_NAMESPACE,
   decodeProviderToolName,
+  MODEL_TOOL_ACTION_KINDS,
   modelToolContract,
   type ModelToolContract,
   type ModelToolIdentity,
@@ -25,6 +27,21 @@ import { redactSecretLikeJsonAsync } from '../capabilities/agentSecretRedaction'
 import type { AgentCapabilityConfig } from '../capabilities/agentCapabilityRules';
 import type { ThreadService } from '../ThreadService';
 import type { TurnExecutionContext } from './types';
+import { compileToolParameters } from './kernel/exactToolArguments';
+
+const DATA_IMPORT_PARAMETERS = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['operation'],
+  properties: {
+    operation: { type: 'string', enum: ['preview_file', 'commit_file', 'preview_content', 'commit_content'] },
+    pack_file: { type: 'string' },
+    pack_content: { type: 'string' },
+    pack_label: { type: 'string' },
+    parent_id: { type: 'string' },
+    preview_id: { type: 'string' },
+  },
+} as TSchema;
 
 export interface ToolRuntimeOptions {
   readonly outliner?: OutlinerToolHost;
@@ -50,6 +67,7 @@ export interface ToolRuntimeOptions {
 
 export class ToolRuntime {
   private readonly mutationCausation = new AsyncLocalStorage<AgentMutationCausation>();
+  private readonly reportedUnavailableToolSchemas = new Set<string>();
   private readonly outliner: OutlinerToolHost | undefined;
   private readonly importService: AgentImportService | null;
 
@@ -85,6 +103,7 @@ export class ToolRuntime {
           ...(imageGeneration === undefined ? {} : { imageGeneration }),
         });
     const dynamicTools = await this.options.dynamicTools?.(context) ?? [];
+    const dynamicToolSet = new Set(dynamicTools);
     const tools = [
       ...capabilityTools,
       ...(this.importService ? [this.createDataImportTool()] : []),
@@ -96,15 +115,25 @@ export class ToolRuntime {
       ...dynamicTools,
     ];
     const extensionContributions = await this.service.extensionToolContributions(context.thread.id);
-    const extensionContracts = extensionContributions.flatMap((contribution) => contribution.tools);
     const extensionOwners = new Map<string, string>();
     for (const contribution of extensionContributions) {
       for (const contract of contribution.tools) {
-        const key = canonicalModelToolKey(contract.identity);
+        const key = assertExtensionContractStructure(contract);
         if (extensionOwners.has(key)) throw new Error(`Duplicate extension runtime model tool: ${key}`);
         extensionOwners.set(key, contribution.extensionId);
       }
     }
+    const unavailableCanonical = new Set<string>();
+    const extensionContracts = extensionContributions.flatMap((contribution) => (
+      contribution.tools.filter((contract) => {
+        const canonical = canonicalModelToolKey(contract.identity);
+        const schemaFailure = this.toolSchemaFailure(contract.inputSchema);
+        if (schemaFailure === null) return true;
+        unavailableCanonical.add(canonical);
+        this.reportUnavailableToolSchema(canonical, schemaFailure);
+        return false;
+      })
+    ));
     const shouldAssembleRegistry = this.options.assembleRegistry ?? this.options.capabilityTools === undefined;
     const registry = shouldAssembleRegistry
       ? assembleModelToolRegistry(schemaContributions(tools), extensionContracts)
@@ -118,14 +147,31 @@ export class ToolRuntime {
     const unique = new Map<string, AgentTool>();
     const enabledCanonical = new Set<string>();
     for (const tool of tools) {
+      const providerIdentity = identityFromProviderName(tool.name);
+      const providerCanonical = canonicalModelToolKey(providerIdentity);
+      if (unavailableCanonical.has(providerCanonical)) continue;
+      const schemaFailure = this.toolSchemaFailure(tool.parameters);
+      if (schemaFailure !== null) {
+        if (!dynamicToolSet.has(tool) && !extensionOwners.has(providerCanonical)) {
+          throw new Error(`Runtime model-tool schema is invalid: ${providerCanonical}: ${schemaFailure}`);
+        }
+        unavailableCanonical.add(providerCanonical);
+        this.reportUnavailableToolSchema(providerCanonical, schemaFailure);
+        continue;
+      }
       const identity = registry
         ? decodeProviderToolName(tool.name, 'flat', registry)
-        : identityFromProviderName(tool.name);
+        : providerIdentity;
       if (!identity) throw new Error(`Runtime model tool has no canonical contract: ${tool.name}`);
       const canonical = canonicalModelToolKey(identity);
       const contract = contracts.get(canonical) ?? modelToolContract(canonical);
       if (!contract) throw new Error(`Runtime model tool has no canonical contract: ${canonical}`);
       if (registry && !sameSchema(tool.parameters, contract.inputSchema)) {
+        if (dynamicToolSet.has(tool) || extensionOwners.has(canonical)) {
+          unavailableCanonical.add(canonical);
+          this.reportUnavailableToolSchema(canonical, 'runtime schema does not match its canonical contract');
+          continue;
+        }
         throw new Error(`Runtime model-tool schema does not match its contract: ${canonical}`);
       }
       const extensionOwner = extensionOwners.get(canonical);
@@ -141,7 +187,11 @@ export class ToolRuntime {
     for (const contract of extensionContracts) {
       const canonical = canonicalModelToolKey(contract.identity);
       const owner = extensionOwners.get(canonical)!;
-      if ((allowed.has(canonical) || enabledExtensions.has(owner)) && !enabledCanonical.has(canonical)) {
+      if (
+        !unavailableCanonical.has(canonical)
+        && (allowed.has(canonical) || enabledExtensions.has(owner))
+        && !enabledCanonical.has(canonical)
+      ) {
         throw new Error(`Enabled extension model tool has no runtime implementation: ${canonical}`);
       }
     }
@@ -201,19 +251,7 @@ export class ToolRuntime {
       name: 'data_import',
       label: 'Import Data',
       description: 'Preview or commit a validated Tenon Import Pack into the Outliner.',
-      parameters: {
-        type: 'object',
-        additionalProperties: false,
-        required: ['operation'],
-        properties: {
-          operation: { type: 'string', enum: ['preview_file', 'commit_file', 'preview_content', 'commit_content'] },
-          pack_file: { type: 'string' },
-          pack_content: { type: 'string' },
-          pack_label: { type: 'string' },
-          parent_id: { type: 'string' },
-          preview_id: { type: 'string' },
-        },
-      } as TSchema,
+      parameters: DATA_IMPORT_PARAMETERS,
       executionMode: 'sequential',
       execute: async (_itemId, params) => {
         const input = record(params, 'data_import');
@@ -348,6 +386,24 @@ export class ToolRuntime {
     const { readAgentCapabilityConfig } = await import('../capabilities/agentCapabilityStore');
     return readAgentCapabilityConfig();
   }
+
+  private toolSchemaFailure(schema: unknown): string | null {
+    try {
+      compileToolParameters(schema as TSchema);
+      return null;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return `invalid schema (${boundedDiagnostic(message, 240)})`;
+    }
+  }
+
+  private reportUnavailableToolSchema(canonical: string, reason: string): void {
+    if (this.reportedUnavailableToolSchemas.has(canonical)) return;
+    this.reportedUnavailableToolSchemas.add(canonical);
+    console.warn(
+      `[agent] Skipping model tool "${boundedDiagnostic(canonical, 120)}": ${boundedDiagnostic(reason, 240)}.`,
+    );
+  }
 }
 
 function outlinerWithCausation(
@@ -441,6 +497,23 @@ function identityFromProviderName(name: string): ModelToolIdentity {
     : { namespace: name.slice(0, separator), name: name.slice(separator + 2) };
 }
 
+function assertExtensionContractStructure(contract: ModelToolContract): string {
+  const canonical = canonicalModelToolKey(contract.identity);
+  if (contract.schemaOwner !== 'extension') {
+    throw new Error(`Extension model tool must be owned by extension: ${canonical}`);
+  }
+  if (contract.identity.namespace === COLLABORATION_NAMESPACE) {
+    throw new Error(`The ${COLLABORATION_NAMESPACE} namespace is reserved by Core`);
+  }
+  if (modelToolContract(canonical)) throw new Error(`Duplicate canonical model tool: ${canonical}`);
+  for (const kind of contract.actionKinds) {
+    if (!(MODEL_TOOL_ACTION_KINDS as readonly string[]).includes(kind)) {
+      throw new Error(`Unsupported action kind for ${canonical}: ${kind}`);
+    }
+  }
+  return canonical;
+}
+
 function schemaContributions(tools: readonly AgentTool[]): ModelToolSchemaContribution[] {
   const contributions = new Map<string, ModelToolSchemaContribution>();
   for (const tool of tools) {
@@ -496,4 +569,9 @@ function jsonValue(value: unknown): JsonValue {
 
 function isRecord(value: unknown): value is Record<string, JsonValue> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function boundedDiagnostic(value: string, maximum: number): string {
+  const compact = value.replace(/\s+/g, ' ').trim();
+  return compact.length <= maximum ? compact : `${compact.slice(0, maximum - 3)}...`;
 }
