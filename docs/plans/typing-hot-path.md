@@ -162,9 +162,12 @@ Renderer (all inside the per-keystroke `flushSync` in `useCommandRunner`):
   fresh. Pass the index through a stable read-at-render accessor (ref/context)
   so `DocumentIndex` identity stops being a memo input, and re-render reference
   chips off the reference-presentation semantic revision (or a per-node-id
-  subscription) so a rename/recolor still propagates. Memoize `ThreadItemView`.
-  Stop paying for a closed dock: unmount (or fully suspend) the transcript when
-  the rail is closed instead of relying on `inert`.
+  subscription) so a rename/recolor still propagates. (`ThreadItemView`
+  memoization itself belongs to `agent-streaming-followups`, which sequences
+  the prop stabilization it needs — this PR only removes the document-delta
+  trigger and does NOT touch item-level memo.) Stop paying for a closed dock:
+  unmount (or fully suspend) the transcript when the rail is closed instead of
+  relying on `inert`.
 - **Reference/tag pickers:** fix `TriggerPopover`'s memo deps (destructure the
   props it reads); memoize `referenceItems` on (semantic revision, query); give
   the `@` path a cached candidate base like the `#` path has, keyed on the
