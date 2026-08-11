@@ -430,14 +430,20 @@ Deterministic admission rejection has a Turn-local containment guard. Its in-mem
 fingerprint combines canonical identity (or the unresolved provider name), schema digest
 when resolved, stable pre-redaction attempted JSON, and rejection reason; provider call
 IDs are excluded. The first occurrence preserves the ordinary correction path. The
-second identical `invalidArguments` or `truncatedArguments` rejection quarantines that
-canonical tool for later provider calls in the same Turn. Each provider call freezes one
+second identical `invalidArguments` rejection quarantines that canonical tool for later
+provider calls in the same Turn. Each provider call freezes one
 tool snapshot, and that exact snapshot governs both wire exposure and execution, so a
 quarantined tool hallucinated later cannot execute. Different arguments, schema digests,
 or reasons do not collide, and the guard resets on the next Turn.
 
-Unresolved calls contribute only to a Turn-wide ceiling because there is no real tool to
-quarantine. At eight deterministic rejections, the kernel makes exactly one final request
+`truncatedArguments` never quarantines. Truncation is a property of the response's
+output-token limit rather than of the tool, and the rejection explicitly asks the model to
+re-issue the call with complete arguments; removing the tool would answer that compliant
+retry with an unresolved-tool rejection. It still counts toward the Turn-wide ceiling, so a
+Turn that only ever truncates is closed by the ceiling instead of spinning.
+
+Unresolved calls likewise contribute only to the Turn-wide ceiling because there is no real
+tool to quarantine. At eight deterministic rejections, the kernel makes exactly one final request
 with an empty tool list and then ends the Turn even if the provider emits another tool
 call; that call receives bounded rejection evidence. Provider, persistence, capability,
 permission, cancellation, and tool-execution failures do not increment this guard.

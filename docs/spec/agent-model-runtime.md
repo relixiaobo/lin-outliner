@@ -359,13 +359,15 @@ truncation metadata. Tool-result details pass through the shared persistence sli
 before entering an Item. Dynamic image result lists also have a fixed maximum length.
 
 The kernel owns a fresh deterministic-admission guard for each `runKernel` invocation.
-After the second identical resolved rejection it removes that canonical tool from later
-request snapshots while retaining every other tool. At eight deterministic rejections it
-issues one final tool-free provider request and schedules no further provider loop,
-including when that response hallucinates a tool call. `invalidArguments`,
-`truncatedArguments`, and unresolved calls count; execution exceptions, provider and
-persistence failures, capability outcomes, permission decisions, and cancellation do
-not. Provider call IDs do not affect fingerprints. The exact tool snapshot sent in each
+After the second identical resolved `invalidArguments` rejection it removes that canonical
+tool from later request snapshots while retaining every other tool. At eight deterministic
+rejections it issues one final tool-free provider request and schedules no further provider
+loop, including when that response hallucinates a tool call. `invalidArguments`,
+`truncatedArguments`, and unresolved calls all count toward that ceiling; execution
+exceptions, provider and persistence failures, capability outcomes, permission decisions,
+and cancellation do not. `truncatedArguments` and unresolved calls never quarantine — the
+first names an output-token limit rather than a defective tool, and the second has no
+resolved tool to remove. Provider call IDs do not affect fingerprints. The exact tool snapshot sent in each
 request is also the only registry eligible to execute calls from that response.
 When a custom Responses stream is retried after it already emitted content, the kernel
 emits the main-process-only `message_restart` event with the interrupted partial before
