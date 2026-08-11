@@ -10,7 +10,6 @@ import type {
 } from '../../../../core/agent/extensions';
 import {
   MEMORY_EXTENSION_ID,
-  MEMORY_TAG_DEFINITIONS,
   type MemoryFeatureMode,
   type MemorySettingsView,
   type ThreadMemoryMode,
@@ -23,8 +22,13 @@ import type {
   Turn,
   TurnId,
 } from '../../../../core/agent/protocol';
-import { TAG_DAY_ID, TRASH_ID, type DocumentProjection, type NodeProjection } from '../../../../core/types';
-import type { DocumentMutationMeta } from '../../../documentService';
+import type { DocumentProjection, NodeProjection, ProjectionUpdate } from '../../../../core/types';
+import type {
+  DocumentMutationMeta,
+  DocumentMutationObserver,
+  DocumentTransactionProjectionChanges,
+  ProjectionChangedDelivery,
+} from '../../../documentService';
 import { uuidV7 } from '../../uuid';
 import {
   MemoryControlStore,
@@ -32,6 +36,10 @@ import {
   type MemoryRollbackRecord,
 } from './MemoryControlStore';
 import { MemoryPipeline, type MemoryPipelineSourceHost, phase1Source } from './MemoryPipeline';
+import {
+  MemoryMutationIndex,
+  type MemoryMutationIndexUpdate,
+} from './MemoryMutationIndex';
 import {
   Phase1,
   collectMemoryEvidence,
@@ -81,7 +89,7 @@ export interface MemoryDocumentPolicy {
     command: DocumentCommand,
     args: Readonly<Record<string, unknown>>,
     meta: DocumentMutationMeta,
-    projection: DocumentProjection,
+    projection: DocumentProjection | (() => DocumentProjection),
   ): boolean;
   filterProjection(projection: DocumentProjection, causation: AgentMutationCausation): DocumentProjection;
   documentChanged(operationId?: string): void;
@@ -92,20 +100,33 @@ interface TurnMemoryUsage {
   readonly threadId: ThreadId;
 }
 
-export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy {
+export interface MemoryExtensionOptions {
+  readonly onError?: (error: unknown, operation: 'graph-digest' | 'graph-wake') => void;
+}
+
+export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy, DocumentMutationObserver {
   readonly id = MEMORY_EXTENSION_ID;
   private host: MemoryThreadHost | null = null;
   private pipeline: MemoryPipeline | null = null;
   private preparedForTurnAdmission = false;
   private initialized = false;
   private workerStopped = false;
+  private workerStopping = false;
+  private workerStopPromise: Promise<void> | null = null;
   private storeClosed = false;
   private readonly turnMemoryUsage = new Map<TurnId, TurnMemoryUsage>();
   private lastGraphDigest = '';
+  private mutationIndex: MemoryMutationIndex | null = null;
+  private transactionAffectedNodeIds: Set<string> | null = null;
+  private graphChangeTimer?: ReturnType<typeof setTimeout>;
+  private graphChangePending = false;
+  private graphChangeForcesWake = false;
+  private graphDigestComputations = 0;
 
   constructor(
     private readonly control: MemoryControlStore,
     private readonly timeline: TimelineMemoryStore,
+    private readonly options: MemoryExtensionOptions = {},
   ) {}
 
   bindHost(host: MemoryThreadHost): void {
@@ -148,6 +169,22 @@ export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy
     });
   }
 
+  initializeMutationIndex(projection: DocumentProjection): void {
+    if (this.mutationIndex) {
+      this.mutationIndex.applyProjectionUpdate({ kind: 'full', revision: 0, projection });
+      return;
+    }
+    this.mutationIndex = new MemoryMutationIndex(projection);
+  }
+
+  mutationIndexFullRebuildCount(): number {
+    return this.mutationIndex?.fullRebuildCount() ?? 0;
+  }
+
+  graphDigestComputationCount(): number {
+    return this.graphDigestComputations;
+  }
+
   async prepareForTurnAdmission(): Promise<void> {
     if (this.preparedForTurnAdmission) return;
     const host = this.requireHost();
@@ -156,7 +193,7 @@ export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy
     this.control.deleteOrphanAdmissions(new Set(host.persistentRootThreads().flatMap((thread) => (
       host.readThread({ threadId: thread.id, includeTurns: true }).thread.turns?.map((turn) => turn.id) ?? []
     ))));
-    this.lastGraphDigest = canonicalGraphDigest(this.timeline);
+    this.lastGraphDigest = this.currentCanonicalGraphDigest();
     await this.requirePipeline().recover();
     this.preparedForTurnAdmission = true;
   }
@@ -168,10 +205,22 @@ export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy
     this.initialized = true;
   }
 
-  async stopWorker(): Promise<void> {
-    if (this.workerStopped) return;
-    await this.pipeline?.close();
-    this.workerStopped = true;
+  stopWorker(): Promise<void> {
+    if (this.workerStopped) return Promise.resolve();
+    if (this.workerStopPromise) return this.workerStopPromise;
+    this.workerStopping = true;
+    this.flushDeferredGraphChange();
+    const stop = (async () => {
+      try {
+        await this.pipeline?.close();
+        this.workerStopped = true;
+      } finally {
+        this.workerStopping = false;
+        this.workerStopPromise = null;
+      }
+    })();
+    this.workerStopPromise = stop;
+    return stop;
   }
 
   closeStore(): void {
@@ -430,10 +479,10 @@ export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy
     command: DocumentCommand,
     args: Readonly<Record<string, unknown>>,
     meta: DocumentMutationMeta,
-    projection: DocumentProjection,
+    projection: DocumentProjection | (() => DocumentProjection),
   ): boolean {
-    const generatedNodeIds = new Set(this.control.generatedNodes().map((entry) => entry.nodeId));
-    if (!memoryGraphMayChange(command, args, projection, this.timeline, generatedNodeIds)) return false;
+    const index = this.requireMutationIndex(projection);
+    if (!index.mayChangeMemory(command, args, this.control.generatedNodeIds())) return false;
     const origin = meta.origin ?? 'user';
     if (origin === 'user' && !meta.causation) {
       return true;
@@ -482,25 +531,162 @@ export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy
     return filteredProjection(projection, hidden);
   }
 
+  beginTransaction(_meta: DocumentMutationMeta, projection: () => DocumentProjection): void {
+    const index = this.requireMutationIndex(projection);
+    index.beginTransaction();
+    this.transactionAffectedNodeIds = new Set();
+  }
+
+  applyTransactionChanges(changes: DocumentTransactionProjectionChanges): void {
+    const index = this.mutationIndex;
+    if (!index || !this.transactionAffectedNodeIds) return;
+    const update = index.applyTransactionChanges(changes);
+    for (const nodeId of update.affectedCanonicalNodeIds) this.transactionAffectedNodeIds.add(nodeId);
+  }
+
+  commitTransaction(meta: DocumentMutationMeta, affectsMemory: boolean | undefined): void {
+    const index = this.mutationIndex;
+    const affected = this.transactionAffectedNodeIds ?? new Set<string>();
+    this.transactionAffectedNodeIds = null;
+    index?.commitTransaction();
+    if (meta.operationId?.startsWith('memory:') || affected.size === 0) return;
+    const changed = this.reconcileGeneratedNodes(affected);
+    if (changed || affectsMemory !== false) this.scheduleDeferredGraphChange(changed);
+  }
+
+  rollbackTransaction(): void {
+    this.mutationIndex?.rollbackTransaction();
+    this.transactionAffectedNodeIds = null;
+  }
+
+  projectionChanged(delivery: ProjectionChangedDelivery): void {
+    if (delivery.transactionIndexed) return;
+    const update = delivery.event.update;
+    if (update.kind === 'delta' && update.changedNodes.length === 0 && update.removedIds.length === 0) return;
+    const indexUpdate = this.applyProjectionUpdate(update);
+    if (delivery.operationId?.startsWith('memory:')) return;
+    const affected = new Set(indexUpdate.affectedCanonicalNodeIds);
+    if (indexUpdate.fullRebuild) {
+      for (const nodeId of this.control.generatedNodeIds()) affected.add(nodeId);
+    }
+    const changed = this.reconcileGeneratedNodes(affected);
+    if (changed || delivery.affectsMemory !== false) this.scheduleDeferredGraphChange(changed);
+  }
+
   documentChanged(operationId?: string): void {
     if (operationId?.startsWith('memory:')) return;
-    let changed = false;
-    const graph = new Map(this.timeline.graph().nodes.map((entry) => [entry.node.id, entry]));
-    for (const generated of this.control.generatedNodes()) {
-      const entry = graph.get(generated.nodeId);
-      if (!entry) {
-        this.control.removeGeneratedNode(generated.nodeId);
-        changed = true;
-        continue;
-      }
-      if (generated.fingerprint === timelineNodeFingerprint(entry)) continue;
-      this.control.markNodeUserAuthoritative(generated.nodeId);
-      changed = true;
-    }
-    const digest = canonicalGraphDigest(this.timeline);
+    const projection = this.timeline.projection();
+    const update = this.applyProjectionUpdate({ kind: 'full', revision: 0, projection });
+    const affected = new Set([...update.affectedCanonicalNodeIds, ...this.control.generatedNodeIds()]);
+    const changed = this.reconcileGeneratedNodes(affected);
+    const digest = this.currentCanonicalGraphDigest();
+    this.graphDigestComputations += 1;
     if (changed || digest !== this.lastGraphDigest) {
       this.lastGraphDigest = digest;
       if (this.initialized) this.requirePipeline().wakeGlobal('memory-graph-changed');
+    }
+  }
+
+  private requireMutationIndex(
+    projection: DocumentProjection | (() => DocumentProjection),
+  ): MemoryMutationIndex {
+    if (!this.mutationIndex) {
+      this.mutationIndex = new MemoryMutationIndex(
+        typeof projection === 'function' ? projection() : projection,
+      );
+    }
+    return this.mutationIndex;
+  }
+
+  private applyProjectionUpdate(update: ProjectionUpdate): MemoryMutationIndexUpdate {
+    if (!this.mutationIndex) {
+      const projection = update.kind === 'full' ? update.projection : this.timeline.projection();
+      this.mutationIndex = new MemoryMutationIndex(projection);
+      return {
+        affectedCanonicalNodeIds: this.mutationIndex.allCanonicalNodeIds(),
+        fullRebuild: true,
+      };
+    }
+    return this.mutationIndex.applyProjectionUpdate(update);
+  }
+
+  private reconcileGeneratedNodes(affectedNodeIds: ReadonlySet<string>): boolean {
+    if (affectedNodeIds.size === 0) return false;
+    const generatedById = this.control.generatedNodesById();
+    const index = this.mutationIndex;
+    if (!index) return false;
+    let changed = false;
+    for (const nodeId of affectedNodeIds) {
+      const generated = generatedById.get(nodeId);
+      if (!generated) continue;
+      const entry = index.canonicalNode(nodeId);
+      if (!entry) {
+        this.control.removeGeneratedNode(nodeId);
+        changed = true;
+        continue;
+      }
+      if (
+        generated.userAuthoritative
+        || generated.fingerprint === timelineNodeFingerprint(entry)
+      ) continue;
+      this.control.markNodeUserAuthoritative(nodeId);
+      changed = true;
+    }
+    return changed;
+  }
+
+  private scheduleDeferredGraphChange(forceWake: boolean): void {
+    if (this.workerStopping || this.workerStopped || this.storeClosed) return;
+    this.graphChangePending = true;
+    this.graphChangeForcesWake ||= forceWake;
+    if (this.graphChangeTimer) return;
+    this.graphChangeTimer = setTimeout(() => this.flushDeferredGraphChange(), 500);
+    this.graphChangeTimer.unref?.();
+  }
+
+  private flushDeferredGraphChange(): void {
+    if (this.graphChangeTimer) clearTimeout(this.graphChangeTimer);
+    this.graphChangeTimer = undefined;
+    if (!this.graphChangePending) return;
+    const forceWake = this.graphChangeForcesWake;
+    this.graphChangePending = false;
+    this.graphChangeForcesWake = false;
+    if (this.workerStopped || this.storeClosed) return;
+    let shouldWake = forceWake;
+    try {
+      const digest = this.currentCanonicalGraphDigest();
+      this.graphDigestComputations += 1;
+      if (digest !== this.lastGraphDigest) {
+        this.lastGraphDigest = digest;
+        shouldWake = true;
+      }
+    } catch (error) {
+      this.reportDeferredGraphError(error, 'graph-digest');
+      shouldWake = true;
+    }
+    if (shouldWake && this.initialized) {
+      try {
+        this.requirePipeline().wakeGlobal('memory-graph-changed');
+      } catch (error) {
+        this.reportDeferredGraphError(error, 'graph-wake');
+      }
+    }
+  }
+
+  private currentCanonicalGraphDigest(): string {
+    return canonicalGraphDigest(
+      this.mutationIndex?.canonicalNodesInGraphOrder() ?? this.timeline.graph().nodes,
+    );
+  }
+
+  private reportDeferredGraphError(
+    error: unknown,
+    operation: 'graph-digest' | 'graph-wake',
+  ): void {
+    try {
+      this.options.onError?.(error, operation);
+    } catch {
+      // Error reporting must not escape a timer callback or the shutdown path.
     }
   }
 
@@ -585,340 +771,6 @@ function turnHasExplicitMemoryIntent(turn: Turn): boolean {
   )));
 }
 
-function memoryGraphMayChange(
-  command: DocumentCommand,
-  args: Readonly<Record<string, unknown>>,
-  projection: DocumentProjection,
-  timeline: TimelineMemoryStore,
-  generatedNodeIds: ReadonlySet<string>,
-): boolean {
-  const reservedTagIds = new Set<string>(MEMORY_TAG_DEFINITIONS.map((entry) => entry.tagId));
-  const index = new Map(projection.nodes.map((node) => [node.id, node]));
-  if (commandUsesReservedTag(command, args, projection.nodes, index, reservedTagIds)) return true;
-  const reservedTaggedNodes = projection.nodes.filter((node) => node.tags.some((tagId) => reservedTagIds.has(tagId)));
-  const reservedTaggedIds = new Set(reservedTaggedNodes.map((node) => node.id));
-  const protectedAncestors = new Set<string>();
-  for (const tagged of reservedTaggedNodes) {
-    let current = tagged.parentId ? index.get(tagged.parentId) : undefined;
-    while (current && !protectedAncestors.has(current.id)) {
-      protectedAncestors.add(current.id);
-      current = current.parentId ? index.get(current.parentId) : undefined;
-    }
-  }
-  const graph = timeline.graph(projection);
-  const owned = new Set<string>();
-  for (const container of graph.containers) {
-    addDescendants(container.node.id, index, owned);
-    let current: NodeProjection | undefined = container.node.parentId
-      ? index.get(container.node.parentId)
-      : undefined;
-    while (current) {
-      protectedAncestors.add(current.id);
-      current = current.parentId ? index.get(current.parentId) : undefined;
-    }
-  }
-  const direct = (key: string) => typeof args[key] === 'string' ? args[key] as string : null;
-  const directArray = (key: string) => Array.isArray(args[key])
-    ? (args[key] as unknown[]).filter((value): value is string => typeof value === 'string')
-    : [];
-  const changesOwned = (...nodeIds: Array<string | null>) => nodeIds.some((nodeId) => (
-    nodeId !== null && owned.has(nodeId)
-  ));
-  const changesIdentity = (...nodeIds: Array<string | null>) => nodeIds.some((nodeId) => (
-    nodeId !== null && (owned.has(nodeId) || protectedAncestors.has(nodeId))
-  ));
-  const changesStructure = (...nodeIds: Array<string | null>) => nodeIds.some((nodeId) => (
-    nodeId !== null && (owned.has(nodeId) || reservedTaggedIds.has(nodeId) || protectedAncestors.has(nodeId))
-  ));
-  const createsInsideMemory = (parentId: string | null) => parentId !== null && owned.has(parentId);
-  const changesOwnedArray = (key: string) => directArray(key).some((nodeId) => changesOwned(nodeId));
-  const changesStructureArray = (key: string) => directArray(key).some((nodeId) => changesStructure(nodeId));
-  const changesDayIdentity = (...nodeIds: Array<string | null>) => direct('tagId') === TAG_DAY_ID
-    && nodeIds.some((nodeId) => nodeId !== null && protectedAncestors.has(nodeId));
-  const historyNodeIsProtected = (nodeId: string) => owned.has(nodeId)
-    || reservedTaggedIds.has(nodeId)
-    || protectedAncestors.has(nodeId)
-    || reservedTagIds.has(nodeId)
-    || generatedNodeIds.has(nodeId);
-
-  switch (command) {
-    case 'get_projection':
-    case 'search_nodes':
-    case 'backlinks':
-    case 'create_tag':
-    case 'create_field_definition':
-    case 'ensure_date_node':
-    case 'ensure_tag_search':
-      return false;
-    case 'init_workspace':
-      return owned.size > 0 || reservedTaggedIds.size > 0;
-    case 'create_node':
-      return changesOwned(direct('id')) || createsInsideMemory(direct('parentId'));
-    case 'create_rich_text_node':
-    case 'create_tagged_node':
-    case 'create_tag_and_tagged_node':
-    case 'create_nodes_from_tree':
-    case 'create_image_node':
-    case 'create_attachment_node':
-    case 'create_search_node':
-      return createsInsideMemory(direct('parentId'));
-    case 'create_capture': {
-      const input = args.input && typeof args.input === 'object' && !Array.isArray(args.input)
-        ? args.input as Record<string, unknown>
-        : {};
-      return createsInsideMemory(typeof input.destinationParentId === 'string' ? input.destinationParentId : null);
-    }
-    case 'paste_nodes_into_node':
-    case 'update_node_description':
-    case 'set_node_checkbox_visible':
-    case 'set_code_block':
-    case 'set_code_language':
-    case 'set_node_image':
-    case 'set_view_toolbar_visible':
-    case 'set_view_mode':
-    case 'clear_sort_rules':
-    case 'clear_filter_rules':
-    case 'set_group_field':
-    case 'add_display_field':
-    case 'set_node_icon':
-    case 'set_node_banner':
-    case 'toggle_done':
-    case 'cycle_done_state':
-    case 'set_search_node':
-    case 'set_search_query_outline':
-    case 'refresh_search_node_results':
-      return changesOwned(direct('nodeId'));
-    case 'apply_node_text_patch':
-      return changesIdentity(direct('nodeId'));
-    case 'split_node':
-      return changesStructure(direct('nodeId')) || createsInsideMemory(direct('targetParentId'));
-    case 'add_sort_rule':
-    case 'add_filter_rule':
-      return changesOwned(direct('nodeId'), direct('field'));
-    case 'update_sort_rule':
-    case 'update_filter_rule':
-    case 'remove_sort_rule':
-    case 'remove_filter_rule':
-      return changesOwned(direct('ruleId'), direct('field'));
-    case 'update_display_field':
-    case 'remove_display_field':
-      return changesOwned(direct('displayFieldId'), direct('field'));
-    case 'merge_node_into':
-      return changesStructure(direct('nodeId'), direct('targetId'));
-    case 'move_node':
-      return changesStructure(direct('nodeId')) || createsInsideMemory(direct('parentId'));
-    case 'batch_move_nodes':
-      return Array.isArray(args.moves) && args.moves.some((move) => {
-        if (!move || typeof move !== 'object' || Array.isArray(move)) return true;
-        const entry = move as Record<string, unknown>;
-        return changesStructure(typeof entry.nodeId === 'string' ? entry.nodeId : null)
-          || createsInsideMemory(typeof entry.parentId === 'string' ? entry.parentId : null);
-      });
-    case 'indent_node': {
-      const nodeId = direct('nodeId');
-      const node = nodeId ? index.get(nodeId) : undefined;
-      const siblings = node?.parentId ? index.get(node.parentId)?.children ?? [] : [];
-      const position = node ? siblings.indexOf(node.id) : -1;
-      const previousSiblingId = position > 0 ? siblings[position - 1] ?? null : null;
-      return changesStructure(nodeId) || createsInsideMemory(previousSiblingId);
-    }
-    case 'outdent_node':
-    case 'trash_node':
-    case 'restore_node':
-    case 'delete_node':
-      return changesStructure(direct('nodeId'));
-    case 'batch_trash_nodes':
-    case 'batch_outdent_nodes':
-    case 'batch_duplicate_nodes':
-      return changesStructureArray('nodeIds');
-    case 'batch_indent_nodes':
-      return directArray('nodeIds').some((nodeId) => {
-        const node = index.get(nodeId);
-        const siblings = node?.parentId ? index.get(node.parentId)?.children ?? [] : [];
-        const position = node ? siblings.indexOf(node.id) : -1;
-        return changesStructure(nodeId) || createsInsideMemory(position > 0 ? siblings[position - 1] ?? null : null);
-      });
-    case 'batch_toggle_done':
-    case 'batch_cycle_done_state':
-    case 'batch_move_nodes_up':
-    case 'batch_move_nodes_down':
-      return changesOwnedArray('nodeIds');
-    case 'batch_apply_tag':
-      return changesOwnedArray('nodeIds') || changesDayIdentity(...directArray('nodeIds'));
-    case 'apply_tag':
-    case 'remove_tag':
-      return changesOwned(direct('nodeId')) || changesDayIdentity(direct('nodeId'));
-    case 'set_tag_config':
-      return changesOwned(direct('tagId'));
-    case 'set_field_config':
-      return changesOwned(direct('fieldId'));
-    case 'create_field_def':
-      return changesOwned(direct('tagId'));
-    case 'create_inline_field_after_node':
-      return changesOwned(direct('afterNodeId'));
-    case 'create_inline_field':
-      return createsInsideMemory(direct('parentId')) || changesOwned(direct('targetDefId'));
-    case 'reuse_field_definition':
-      return changesOwned(direct('entryId'), direct('targetDefId'));
-    case 'merge_definitions':
-      return changesOwned(direct('targetId')) || changesOwnedArray('sourceIds');
-    case 'register_collected_option':
-      return changesOwned(direct('fieldDefId'));
-    case 'create_collected_field_option':
-      return changesOwned(direct('fieldEntryId'), direct('id'));
-    case 'select_field_option':
-      return changesOwned(direct('fieldEntryId'), direct('id'));
-    case 'set_field_free_text_value':
-      return changesOwned(direct('fieldEntryId'), direct('id'));
-    case 'clear_field_value':
-      return changesOwned(direct('fieldEntryId'));
-    case 'remove_field_value':
-      return changesOwned(direct('valueId'));
-    case 'add_reference':
-    case 'add_reference_conversion':
-      return createsInsideMemory(direct('parentId'));
-    case 'set_reference_target':
-      return changesOwned(direct('referenceId'));
-    case 'replace_node_with_reference':
-    case 'replace_node_with_reference_conversion':
-    case 'replace_node_with_inline_reference':
-    case 'restore_inline_reference_node_to_reference':
-      return changesStructure(direct('nodeId'));
-    case 'convert_reference_to_inline_node':
-      return changesStructure(direct('referenceId'));
-    case 'undo':
-    case 'redo':
-      return historyMutationMayChangeMemory(args.historyMutation, historyNodeIsProtected);
-    default:
-      return true;
-  }
-}
-
-function historyMutationMayChangeMemory(
-  value: unknown,
-  nodeIsProtected: (nodeId: string) => boolean,
-): boolean {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return true;
-  const context = value as Record<string, unknown>;
-  if (context.status === 'none') {
-    return !Array.isArray(context.targets) || context.targets.length > 0;
-  }
-  if (context.status !== 'known' || !Array.isArray(context.targets)) return true;
-  if (context.targets.length === 0) return true;
-
-  for (const valueTarget of context.targets) {
-    if (!valueTarget || typeof valueTarget !== 'object' || Array.isArray(valueTarget)) return true;
-    const target = valueTarget as Record<string, unknown>;
-    if (
-      typeof target.operationId !== 'string'
-      || !Array.isArray(target.affectedNodeIds)
-      || !target.affectedNodeIds.every((nodeId) => typeof nodeId === 'string')
-      || typeof target.affectedNodeCount !== 'number'
-      || !Number.isInteger(target.affectedNodeCount)
-      || target.affectedNodeCount < 0
-      || target.affectedNodeCount !== target.affectedNodeIds.length
-      || (target.affectedNodeIdsTruncated !== undefined && typeof target.affectedNodeIdsTruncated !== 'boolean')
-      || target.affectedNodeIdsTruncated === true
-      || typeof target.affectsMemory !== 'boolean'
-    ) {
-      return true;
-    }
-    if (target.affectsMemory || (target.affectedNodeIds as string[]).some(nodeIsProtected)) return true;
-  }
-  return false;
-}
-
-function commandUsesReservedTag(
-  command: DocumentCommand,
-  args: Readonly<Record<string, unknown>>,
-  nodes: readonly NodeProjection[],
-  index: ReadonlyMap<string, NodeProjection>,
-  reservedTagIds: ReadonlySet<string>,
-): boolean {
-  if (
-    (command === 'create_tagged_node'
-      || command === 'apply_tag'
-      || command === 'remove_tag'
-      || command === 'batch_apply_tag')
-    && typeof args.tagId === 'string'
-    && reservedTagIds.has(args.tagId)
-  ) {
-    return true;
-  }
-
-  const activeDefinitions = nodes.filter((node) => (
-    node.type === 'tagDef' && !projectionNodeIsInTrash(node, index)
-  ));
-  const firstDefinitionByName = new Map<string, string>();
-  const materializedDefinitionByName = new Map<string, string>();
-  for (const definition of activeDefinitions) {
-    const key = definitionNameKey(definition.content.text);
-    if (!key) continue;
-    if (!firstDefinitionByName.has(key)) firstDefinitionByName.set(key, definition.id);
-    materializedDefinitionByName.set(key, definition.id);
-  }
-  const resolvesToReserved = (name: unknown, definitions: ReadonlyMap<string, string>) => (
-    typeof name === 'string' && reservedTagIds.has(definitions.get(definitionNameKey(name)) ?? '')
-  );
-  const materializedNameIsReserved = (name: unknown) => resolvesToReserved(name, materializedDefinitionByName);
-
-  switch (command) {
-    case 'create_tag_and_tagged_node':
-      return resolvesToReserved(args.name, firstDefinitionByName);
-    case 'create_nodes_from_tree':
-      return createNodeTreesUseReservedTag(args.nodes, materializedNameIsReserved);
-    case 'paste_nodes_into_node':
-      return pasteRowMetaUsesReservedTag(args.firstMeta, materializedNameIsReserved)
-        || createNodeTreesUseReservedTag(args.children, materializedNameIsReserved)
-        || createNodeTreesUseReservedTag(args.siblingsAfter, materializedNameIsReserved);
-    default:
-      return false;
-  }
-}
-
-function createNodeTreesUseReservedTag(
-  value: unknown,
-  nameIsReserved: (name: unknown) => boolean,
-): boolean {
-  if (!Array.isArray(value)) return false;
-  const pending = [...value];
-  while (pending.length > 0) {
-    const entry = pending.pop();
-    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
-    const tree = entry as Record<string, unknown>;
-    if (pasteRowMetaUsesReservedTag(tree, nameIsReserved)) return true;
-    if (Array.isArray(tree.children)) pending.push(...tree.children);
-  }
-  return false;
-}
-
-function pasteRowMetaUsesReservedTag(
-  value: unknown,
-  nameIsReserved: (name: unknown) => boolean,
-): boolean {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const tags = (value as Record<string, unknown>).tags;
-  return Array.isArray(tags) && tags.some(nameIsReserved);
-}
-
-function projectionNodeIsInTrash(
-  node: NodeProjection,
-  index: ReadonlyMap<string, NodeProjection>,
-): boolean {
-  let current: NodeProjection | undefined = node;
-  const visited = new Set<string>();
-  while (current && !visited.has(current.id)) {
-    if (current.id === TRASH_ID) return true;
-    visited.add(current.id);
-    current = current.parentId ? index.get(current.parentId) : undefined;
-  }
-  return false;
-}
-
-function definitionNameKey(name: string): string {
-  return name.trim().toLowerCase();
-}
-
 function addDescendants(rootId: string, index: ReadonlyMap<string, NodeProjection>, output: Set<string>): void {
   const stack = [rootId];
   while (stack.length > 0) {
@@ -956,10 +808,14 @@ function filteredProjection(projection: DocumentProjection, hidden: ReadonlySet<
   };
 }
 
-function canonicalGraphDigest(timeline: TimelineMemoryStore): string {
-  return timelineDigest(timeline.graph().nodes.map((entry) => ({
+function canonicalGraphDigest(nodes: readonly CanonicalMemoryNode[]): string {
+  return timelineDigest(nodes.map((entry) => ({
     id: entry.node.id,
     parentId: entry.node.parentId ?? null,
+    category: entry.category,
+    sourceDate: entry.sourceDate,
+    containerId: entry.containerId,
+    episodeId: entry.episodeId,
     tags: entry.node.tags,
     text: entry.node.content.text,
   })));

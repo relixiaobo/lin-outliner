@@ -11,6 +11,11 @@ import { Phase1 } from '../../src/main/agent/extensions/memory/Phase1';
 import { TimelineMemoryStore } from '../../src/main/agent/extensions/memory/TimelineMemoryStore';
 import { Database } from 'bun:sqlite';
 import type { SqliteDatabase } from '../../src/main/agent/persistence/sqlite';
+import type {
+  DocumentMutationObserver,
+  DocumentTransactionProjectionChanges,
+  ProjectionChangedDelivery,
+} from '../../src/main/documentService';
 
 let electronUserDataRoot = '';
 
@@ -81,6 +86,7 @@ describe('Document system runtime', () => {
       ':memory:',
       new Database(':memory:') as unknown as SqliteDatabase,
     );
+    const extension = new MemoryExtension(control, timeline);
     const threadId = uuidV7();
     const turnId = uuidV7();
     const itemId = uuidV7();
@@ -142,6 +148,11 @@ describe('Document system runtime', () => {
       admittedAt: startedAt,
     });
     await timeline.ensureTagDefinitions();
+    extension.initializeMutationIndex(instance.getProjection());
+    instance.setMutationGuard((command, args, meta, projection) => ({
+      affectsMemory: extension.authorizeMutation(command, args, meta, projection),
+    }));
+    instance.setMutationObserver(extension);
     const phase = new Phase1(control, timeline, {
       run: async () => JSON.stringify({
         dates: [{
@@ -245,6 +256,123 @@ describe('Document system runtime', () => {
     expect(await instance.readDocumentSystemReceipt('memory', 'daily-notes')).toEqual(receipt);
   });
 
+  test('mirrors transaction deltas to Memory without stealing them from tool collectors', async () => {
+    const instance = await service();
+    const observedChanges: DocumentTransactionProjectionChanges[] = [];
+    const deliveries: ProjectionChangedDelivery[] = [];
+    let commits = 0;
+    let rollbacks = 0;
+    const observer: DocumentMutationObserver = {
+      beginTransaction: () => undefined,
+      applyTransactionChanges: (changes) => observedChanges.push(changes),
+      commitTransaction: () => { commits += 1; },
+      rollbackTransaction: () => { rollbacks += 1; },
+      projectionChanged: (delivery) => deliveries.push(delivery),
+    };
+    instance.setMutationObserver(observer);
+    let collectorChanges: DocumentTransactionProjectionChanges | null = null;
+    let createdId = '';
+
+    await instance.transaction({ origin: 'agent', tool: 'transaction-delta-test' }, async () => {
+      const result = await instance.handle('create_node', {
+        parentId: instance.getProjection().rootId,
+        index: null,
+        text: 'Transaction delta',
+      }) as { focus?: { nodeId?: string } };
+      createdId = result.focus?.nodeId ?? '';
+      collectorChanges = instance.drainTransactionProjectionChanges();
+    });
+
+    expect(observedChanges.flatMap((changes) => changes.changedNodes.map((node) => node.id))).toContain(createdId);
+    expect(collectorChanges?.changedNodes.map((node) => node.id)).toContain(createdId);
+    expect(commits).toBe(1);
+    expect(rollbacks).toBe(0);
+    expect(deliveries).toHaveLength(1);
+    expect(deliveries[0].transactionIndexed).toBe(true);
+
+    await expect(instance.transaction({ origin: 'agent', tool: 'transaction-rollback-test' }, async () => {
+      await instance.handle('create_node', {
+        parentId: instance.getProjection().rootId,
+        index: null,
+        text: 'Rolled back delta',
+      });
+      throw new Error('rollback');
+    })).rejects.toThrow('rollback');
+    expect(rollbacks).toBe(1);
+    expect(deliveries).toHaveLength(1);
+  });
+
+  test('preserves net-zero transactions while exposing intermediate observer and collector deltas', async () => {
+    const instance = await service();
+    const observedChanges: DocumentTransactionProjectionChanges[] = [];
+    const deliveries: ProjectionChangedDelivery[] = [];
+    let commits = 0;
+    instance.setMutationObserver({
+      beginTransaction: () => undefined,
+      applyTransactionChanges: (changes) => observedChanges.push(changes),
+      commitTransaction: () => { commits += 1; },
+      rollbackTransaction: () => undefined,
+      projectionChanged: (delivery) => deliveries.push(delivery),
+    });
+    const revisionBefore = instance.projectionSnapshot().revision;
+    let collectorChanges: DocumentTransactionProjectionChanges | null = null;
+    let nodeId = '';
+
+    await instance.transaction({ origin: 'agent', tool: 'net-zero-test' }, async () => {
+      const result = await instance.handle('create_node', {
+        parentId: instance.getProjection().rootId,
+        index: null,
+        text: 'Transient',
+      }) as { focus?: { nodeId?: string } };
+      nodeId = result.focus?.nodeId ?? '';
+      await instance.handle('delete_node', { nodeId });
+      collectorChanges = instance.drainTransactionProjectionChanges();
+    });
+
+    expect(observedChanges).toHaveLength(2);
+    expect(observedChanges[0]?.changedNodes.some((node) => node.id === nodeId)).toBe(true);
+    expect(observedChanges[1]?.removedIds).toContain(nodeId);
+    expect(collectorChanges?.removedIds).toContain(nodeId);
+    expect(commits).toBe(1);
+    expect(instance.projectionSnapshot().revision).toBe(revisionBefore);
+    expect(deliveries).toEqual([]);
+    expect((await instance.operationHistory({ origin: 'agent' })).items)
+      .not.toContainEqual(expect.objectContaining({ tool: 'net-zero-test' }));
+  });
+
+  test('keeps a committed mutation successful when the observer commit fails', async () => {
+    const instance = await service();
+    const deliveries: ProjectionChangedDelivery[] = [];
+    const observerErrors: string[] = [];
+    let rollbacks = 0;
+    const observer: DocumentMutationObserver = {
+      beginTransaction: () => undefined,
+      applyTransactionChanges: () => undefined,
+      commitTransaction: () => { throw new Error('observer commit failed'); },
+      rollbackTransaction: () => { rollbacks += 1; },
+      projectionChanged: (delivery) => deliveries.push(delivery),
+    };
+    instance.setMutationObserver(observer);
+    instance.setMutationObserverErrorHandler((_error, phase) => observerErrors.push(phase));
+    let createdId = '';
+
+    await expect(instance.transaction({ origin: 'agent', tool: 'observer-commit-test' }, async () => {
+      const result = await instance.handle('create_node', {
+        parentId: instance.getProjection().rootId,
+        index: null,
+        text: 'Committed before observer failure',
+      }) as { focus?: { nodeId?: string } };
+      createdId = result.focus?.nodeId ?? '';
+    })).resolves.toBeUndefined();
+
+    expect(rollbacks).toBe(0);
+    expect(observerErrors).toEqual(['commit-transaction']);
+    expect(instance.getProjection().nodes.some((node) => node.id === createdId)).toBe(true);
+    expect(deliveries).toHaveLength(1);
+    expect(deliveries[0].transactionIndexed).not.toBe(true);
+    await instance.flushPendingChanges();
+  });
+
   test('persists Agent Turn causation in document operation metadata', async () => {
     const instance = await service();
     const causation = {
@@ -284,9 +412,11 @@ describe('Document system runtime', () => {
 
     try {
       await timeline.ensureTagDefinitions();
+      extension.initializeMutationIndex(instance.getProjection());
       instance.setMutationGuard((command, args, meta, projection) => ({
         affectsMemory: extension.authorizeMutation(command, args, meta, projection),
       }));
+      instance.setMutationObserver(extension);
       const todayId = instance.getProjection().todayId;
 
       await instance.handle('create_tag_and_tagged_node', {

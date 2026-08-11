@@ -422,7 +422,16 @@ const documentService = new DocumentService();
 const extensionRegistry = new ExtensionRegistry();
 const memoryControlStore = new MemoryControlStore(join(app.getPath('userData'), 'agent', 'memories.sqlite'));
 const timelineMemoryStore = new TimelineMemoryStore(documentService);
-const memoryExtension = new MemoryExtension(memoryControlStore, timelineMemoryStore);
+const memoryExtension = new MemoryExtension(memoryControlStore, timelineMemoryStore, {
+  onError: (error, operation) => reportError({
+    domain: 'memory',
+    severity: 'error',
+    code: `memory-${operation}-failed`,
+    message: `Memory ${operation} failed.`,
+    context: { operation },
+    error,
+  }),
+});
 const importService = new AgentImportService(documentService, { toolName: 'tenon-import' });
 const importApiServer = new AgentImportApiServer(importService, { userDataDir: app.getPath('userData') });
 configureTenonImportRuntime({
@@ -771,6 +780,15 @@ extensionRegistry.register(memoryExtension);
 documentService.setMutationGuard((command, args, meta, projection) => {
   return { affectsMemory: memoryExtension.authorizeMutation(command, args, meta, projection) };
 });
+documentService.setMutationObserver(memoryExtension);
+documentService.setMutationObserverErrorHandler((error, phase) => reportError({
+  domain: 'memory',
+  severity: 'error',
+  code: `memory-document-observer-${phase}-failed`,
+  message: `Memory document observer failed during ${phase}.`,
+  context: { operation: phase },
+  error,
+}));
 documentService.setMutationCoordinator((meta, operation) => (
   meta.origin === 'system' && meta.operationId?.startsWith('memory:')
     ? operation()
@@ -1092,13 +1110,12 @@ const localFilePreviewStreams = new LocalFilePreviewStreamRegistry(() => [
   assetRoot(),
 ]);
 
-documentService.onProjectionChanged(({ event, sourceWebContentsId, operationId }) => {
+documentService.onProjectionChanged(({ event, sourceWebContentsId }) => {
   const target = liveWindow(mainWindow)?.webContents;
   if (target && target.id !== sourceWebContentsId) {
     target.send(LIN_DOCUMENT_EVENT_CHANNEL, event);
   }
   pruneNodeAccessForProjectionUpdate(event.update);
-  memoryExtension.documentChanged(operationId);
 });
 
 documentService.setTransientSearchOptionsProvider(() => ({
@@ -4418,6 +4435,7 @@ if (!app.requestSingleInstanceLock()) {
     // neither local catalog corruption nor cleanup failure may block app startup.
     await reconcileProviderConfig().catch(() => { /* best-effort; catalog reads remain guarded */ });
     await documentService.initWorkspace();
+    memoryExtension.initializeMutationIndex(documentService.liveProjection());
     await threadService.initialize();
     await memoryExtension.startWorker();
     await automationService.start();

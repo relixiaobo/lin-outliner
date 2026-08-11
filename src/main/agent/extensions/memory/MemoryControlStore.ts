@@ -138,6 +138,9 @@ export interface MemoryStage2Finalization {
 }
 
 export class MemoryControlStore {
+  private generatedNodesCache: readonly MemoryGeneratedNodeRecord[] | null = null;
+  private generatedNodeIdsCache: ReadonlySet<string> | null = null;
+  private generatedNodesByIdCache: ReadonlyMap<string, MemoryGeneratedNodeRecord> | null = null;
   private readonly db: SqliteDatabase;
 
   constructor(path: string, database?: SqliteDatabase) {
@@ -561,15 +564,33 @@ export class MemoryControlStore {
   }
 
   generatedNodes(): readonly MemoryGeneratedNodeRecord[] {
-    return (this.db.prepare('SELECT * FROM generated_nodes ORDER BY generated_at, node_id').all() as GeneratedNodeRow[])
-      .map((row) => ({
-        nodeId: row.node_id,
-        category: row.category,
-        sourceDate: row.source_date,
-        fingerprint: row.fingerprint,
-        userAuthoritative: row.user_authoritative === 1,
-        generatedAt: row.generated_at,
-      }));
+    if (this.generatedNodesCache) return this.generatedNodesCache;
+    this.generatedNodesCache = Object.freeze(
+      (this.db.prepare('SELECT * FROM generated_nodes ORDER BY generated_at, node_id').all() as GeneratedNodeRow[])
+        .map((row) => Object.freeze({
+          nodeId: row.node_id,
+          category: row.category,
+          sourceDate: row.source_date,
+          fingerprint: row.fingerprint,
+          userAuthoritative: row.user_authoritative === 1,
+          generatedAt: row.generated_at,
+        })),
+    );
+    return this.generatedNodesCache;
+  }
+
+  generatedNodeIds(): ReadonlySet<string> {
+    if (!this.generatedNodeIdsCache) {
+      this.generatedNodeIdsCache = new Set(this.generatedNodesById().keys());
+    }
+    return this.generatedNodeIdsCache;
+  }
+
+  generatedNodesById(): ReadonlyMap<string, MemoryGeneratedNodeRecord> {
+    if (!this.generatedNodesByIdCache) {
+      this.generatedNodesByIdCache = new Map(this.generatedNodes().map((entry) => [entry.nodeId, entry]));
+    }
+    return this.generatedNodesByIdCache;
   }
 
   generatedNodesForThread(threadId: ThreadId): readonly MemoryGeneratedNodeRecord[] {
@@ -591,14 +612,17 @@ export class MemoryControlStore {
 
   markNodeUserAuthoritative(nodeId: string): void {
     this.db.prepare(`UPDATE generated_nodes SET user_authoritative = 1 WHERE node_id = ?`).run(nodeId);
+    this.invalidateGeneratedNodesCache();
   }
 
   updateGeneratedNodeFingerprint(nodeId: string, fingerprint: string): void {
     this.db.prepare(`UPDATE generated_nodes SET fingerprint = ? WHERE node_id = ?`).run(fingerprint, nodeId);
+    this.invalidateGeneratedNodesCache();
   }
 
   removeGeneratedNode(nodeId: string): void {
     this.db.prepare('DELETE FROM generated_nodes WHERE node_id = ?').run(nodeId);
+    this.invalidateGeneratedNodesCache();
   }
 
   lineageForNode(nodeId: string): readonly MemoryLineageInput[] {
@@ -831,6 +855,7 @@ export class MemoryControlStore {
         publication.generation,
       )));
     });
+    this.invalidateGeneratedNodesCache();
   }
 
   private initializeSetting(key: string, value: string): void {
@@ -891,6 +916,13 @@ export class MemoryControlStore {
         VALUES (?, ?, ?, ?)
       `).run(edge.nodeId, edge.threadId, edge.turnId, edge.originItemId);
     }
+    this.invalidateGeneratedNodesCache();
+  }
+
+  private invalidateGeneratedNodesCache(): void {
+    this.generatedNodesCache = null;
+    this.generatedNodeIdsCache = null;
+    this.generatedNodesByIdCache = null;
   }
 
   private finalizePublicationInsideTransaction(id: string): void {
@@ -913,6 +945,7 @@ export class MemoryControlStore {
       return result;
     } catch (error) {
       this.db.exec('ROLLBACK');
+      this.invalidateGeneratedNodesCache();
       throw error;
     }
   }
