@@ -65,8 +65,10 @@ Other:
 
 ## Non-goals
 
-- **No tool semantics change**; memory visibility rules unchanged — the
-  filtered projection stays byte-identical, only its computation is cached.
+- **No tool semantics change, with ONE ratified exception:** `node_search`
+  ranking under a memory filter moves to indexed scoring (PM-ratified
+  2026-08-11 — see PR-1). Memory visibility rules are unchanged — the filtered
+  projection stays byte-identical, only its computation is cached.
 - **Secret-redaction coverage unchanged** — only scheduling moves (the durable
   path never gains a budget); the error-only fail-open contract in
   `docs/spec/agent-core.md` stays as specified.
@@ -94,10 +96,10 @@ Other:
   result slots and skew ranking; (2) switching `node_search` from today's
   filtered-linear path to the index changes result semantics — the indexed
   scorer (`scoreTextSearchRecord`) and the fallback scorer (`scoreTerm`)
-  rank differently — so the target semantics is a PM ratification point (the
-  recommendation: indexed scoring everywhere, consistent with unfiltered
-  threads). `node_edit` regains sparse mutation facts instead of per-node
-  `JSON.stringify` diffs.
+  rank differently. **PM-ratified 2026-08-11: indexed scoring everywhere**,
+  consistent with unfiltered threads — this is the plan's single deliberate
+  semantics change. `node_edit` regains sparse mutation facts instead of
+  per-node `JSON.stringify` diffs.
 
 ### PR-2 — per-model-call context costs
 
@@ -115,23 +117,25 @@ explicitly NOT part of this plan.
   `withTurnScopedContextReads`) to output payloads: each content-addressed
   payload is read and hash-verified once per Turn, not once per step. This is
   the contract-compatible bulk of the win.
-- **Token-count caching by a RAW-content key — not the diagnostics
-  fingerprint.** Message object identity is unstable (each projection builds
-  fresh messages), so `ContextBudgetPlanner` keys per-message token counts by a
-  stable hash of the **raw** message. The diagnostics fingerprint cannot be
-  reused for this: `rememberMessage` content-addresses the **redacted**
-  diagnostic copy, and redaction collapses distinct secrets of different
-  lengths into one placeholder — same fingerprint, different real token counts,
-  wrong budget. The two keys stay independent by design; the extra
-  stableJson+hash per distinct raw message is still far cheaper than
-  re-tokenizing every message every step.
+- **Token-count caching: dropped.** `estimateProviderMessageTokens` is a
+  length-based estimator (no real tokenizer), so any cache keyed by a
+  stableJson+hash of the raw message costs MORE per lookup than the estimate it
+  saves — and message objects are rebuilt every projection, so there is no
+  serialization-free identity to key on short of new projector contract
+  surface (a stamped message-identity sidecar), which is out of this plan's
+  scope. (The diagnostics fingerprint is not a substitute: it content-addresses
+  the REDACTED copy, which collapses distinct secrets into one placeholder —
+  same key, different real token counts.) If the A9 measurement shows budget
+  estimation itself is material, a follow-up plan can introduce the sidecar
+  identity deliberately.
 - **Diagnostics: no contract cuts.** `TurnDiagnosticsCollector` already
   deduplicates canonical fragments via its fingerprint map, and the audit
   contract requires the complete reconstructable set — retained copies are NOT
-  capped. The remaining cost item is narrow: reuse fingerprints for content the
-  fingerprint pass has already seen this Turn (shared with the token cache
-  above) and avoid the second deep clone where the normalized value is provably
-  the same object graph. Measure-first; if the win is marginal, drop it.
+  capped. The remaining cost item is narrow: within its own redacted-copy
+  keyspace, reuse fingerprints for content the fingerprint pass has already
+  seen this Turn, and avoid the second deep clone where the normalized value is
+  provably the same object graph. Measure-first; if the win is marginal, drop
+  it.
 
 ### PR-3 — small tails
 
@@ -174,9 +178,6 @@ explicitly NOT part of this plan.
 
 ## Open questions
 
-- **PM ratification required for PR-1's search semantics:** re-enabling the
-  index under the filter moves `node_search` from the fallback scorer to the
-  indexed scorer — ranking changes. Recommendation: indexed everywhere.
 - Diagnostics capture stays always-on and contract-complete; a settings gate
   would be a separate PM product call, not part of this plan.
 - The filtered read-model wrapper's internal shape is the dev's call within
