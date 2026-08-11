@@ -555,7 +555,7 @@ describe('native turn kernel parity', () => {
     expect(gateway.requests[3]?.context.tools.map((entry) => entry.name)).toEqual(['strict']);
   });
 
-  test('quarantines repeated truncated calls by their resolved tool identity', async () => {
+  test('keeps a repeatedly truncated tool exposed so the model can re-issue a shorter call', async () => {
     const gateway = new ScriptedGateway([
       () => terminalStream(assistant([{
         type: 'toolCall', id: 'truncated-one', name: 'cut', arguments: { partial: true },
@@ -569,7 +569,25 @@ describe('native turn kernel parity', () => {
 
     await runtime.prompt(USER);
 
-    expect(gateway.requests[2]?.context.tools).toHaveLength(0);
+    expect(gateway.requests[2]?.context.tools).toHaveLength(1);
+  });
+
+  test('still counts truncation toward the deterministic failure ceiling', async () => {
+    const scripts = Array.from({ length: 8 }, (_, index) => () => terminalStream(assistant([{
+      type: 'toolCall' as const,
+      id: `truncated-${index}`,
+      name: 'cut',
+      arguments: { attempt: index },
+    }], 'length')));
+    scripts.push(() => terminalStream(assistant([{ type: 'text', text: 'done' }])));
+    const gateway = new ScriptedGateway(scripts);
+    const runtime = createRuntime(gateway, { tools: [tool('cut')] });
+
+    await runtime.prompt(USER);
+
+    expect(gateway.requests).toHaveLength(9);
+    expect(gateway.requests.slice(0, 8).every((request) => request.context.tools.length === 1)).toBe(true);
+    expect(gateway.requests[8]?.context.tools).toHaveLength(0);
   });
 
   test('makes one final tool-free request at the deterministic failure ceiling', async () => {

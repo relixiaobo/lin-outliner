@@ -57,6 +57,17 @@ type DeterministicAdmissionFailureReason = Extract<
   { readonly type: 'rejected' }
 >['reason'];
 
+/**
+ * Truncation is a property of the response's output-token limit, not of the tool:
+ * the same call succeeds as soon as the model writes shorter arguments, which is
+ * exactly what the rejection message asks it to do. Quarantining there would answer
+ * a compliant retry with "Tool is not exposed by the active registry", so truncation
+ * only counts toward the Turn ceiling — enough to stop a Turn that never progresses.
+ */
+function quarantines(reason: DeterministicAdmissionFailureReason): boolean {
+  return reason !== 'truncatedArguments';
+}
+
 class TurnAdmissionFailureGuard {
   private readonly occurrences = new Map<string, number>();
   private readonly quarantinedTools = new Set<string>();
@@ -86,7 +97,9 @@ class TurnAdmissionFailureGuard {
     const fingerprint = deterministicAdmissionFailureFingerprint(toolCall, tool, reason);
     const count = (this.occurrences.get(fingerprint) ?? 0) + 1;
     this.occurrences.set(fingerprint, count);
-    if (tool && count >= 2) this.quarantinedTools.add(toolIdentityKey(tool));
+    if (tool && count >= 2 && quarantines(reason)) {
+      this.quarantinedTools.add(toolIdentityKey(tool));
+    }
   }
 
   shouldEndAfter(finalToolFreeRequest: boolean): boolean {
