@@ -802,3 +802,36 @@ trusted neighbour, which the previous fail-closed version denied it. When you
 convert a structural failure into a degradation, scope it twice: to the exact
 set of entries whose author you distrust, and to a key space that author cannot
 reach into. Everything else stays a structural failure.
+
+## Relocating a drain relocates every decision it feeds
+
+#530 moved Memory work off the typing path and, to keep the incremental index
+fed, drained `core.drainTransactionProjectionChanges()` in a `finally` after
+every command instead of once per transaction. The drain looks like a read. It
+is not: it patches the committed state snapshot each command's changes are
+compared against, which is exactly the comparison Core used to decide whether a
+transaction changed anything at all. Per-transaction, an agent tool that tagged
+and untagged the same Node netted to zero and produced no commit, no revision
+bump and no undo entry; per-command, both halves reported "changed", so the
+transaction committed and left the user a phantom ⌘Z step that does nothing.
+Before you move a call that drains, accumulates, or resets state, enumerate what
+reads that state downstream — the fix here was not to special-case the drain but
+to give Core its own before/after record so the net-change verdict stopped
+depending on drain cadence at all. A decision must not be a side effect of how
+often something is polled.
+
+## An observer added to a committed mutation must be non-authoritative
+
+The same PR gave `DocumentService` a mutation observer and wired the Memory
+extension into it — reasonably, since the index has to see sparse changes as
+they happen. But it was inserted ahead of the renderer's projection listeners
+and its commit failure was rethrown *after* the document had committed, saved
+and broadcast. Both inversions hand a bookkeeping component a veto over work
+that already succeeded: a SQLite error in Memory silently suppressed the
+renderer update for an edit that was durably persisted, and a failed
+reconciliation reported `error` for Nodes the agent had in fact created, so the
+model retried and made duplicates. When you add an observer to a path that has
+already committed, it goes last, every phase is contained and reported, and its
+failure degrades to the slower correct path — here, emitting `transactionIndexed:
+false` so the ordinary projection delivery resyncs the index. Cf. A12: the
+observer is not the write boundary, so it never gets to fail the write.

@@ -650,7 +650,7 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   shipped with #426. The catalog rows now cross-reference the owning plan (design voice, per the
   no-status-in-plans rule) — claim these units only through those plans' items, never from the
   catalog.
-- **typing-hot-path** (P0, `draft` 2026-08-11) — every keystroke pays O(document)
+- **typing-hot-path** (P0, `in-progress` 2026-08-11) — every keystroke pays O(document)
   several times over. Main: the memory extension's two hooks (`guardMutation`'s
   eagerly-built projection + `memoryGraphMayChange`'s ~4 full-document passes
   before every command; `documentChanged`'s double graph build + SHA-256 digest +
@@ -664,6 +664,9 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   Shiki re-highlight. Three independent PRs: memory off the mutation path /
   save-export off the typing rhythm / renderer commit cost. Design:
   [`typing-hot-path`](plans/typing-hot-path.md).
+  **PR-A shipped 2026-08-11 (#530, codex-3):** incremental `MemoryMutationIndex`
+  + transaction-aware observer; guard `0.436 ms` → `0.000295 ms` on a 5,009-node
+  document, zero projection reads after a 3.6 ms bootstrap. PR-B and PR-C remain.
 - **agent-tool-call-path** (P1, `draft` 2026-08-11) — host overhead dominates
   agent Turns. `MemoryExtension.filterProjection` decodes the entire thread
   history and builds the memory graph 2-3× on every `getProjection()` (1-3 per

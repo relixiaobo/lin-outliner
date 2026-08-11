@@ -88,6 +88,45 @@ Entries reference the pull request that introduced them.
   landed. Truncation still counts toward the eight-failure ceiling, so a Turn
   that only ever truncates is still closed rather than spinning, but the tool
   itself stays available for the shorter call the message asks for.
+- **Typing no longer pays for the size of your document, once per keystroke
+  (PR #530, codex-3)** — before every single command the Memory extension
+  assembled the whole document and rescanned the Memory graph several times over
+  to decide whether the edit touched a Memory Node; every projection change then
+  rebuilt that graph again, re-read the generated rows from SQLite, hashed a
+  fresh digest and woke the Memory pipeline. A keystroke in a large outline paid
+  all of it twice — before and after the actual mutation. A bootstrapped
+  `MemoryMutationIndex` now maintains canonical ownership, protected ancestors,
+  reserved-tag membership, active tag definitions, fingerprint inputs and
+  ancestor reverse dependencies incrementally from sparse changed-node deltas, so
+  after one 3.6 ms bootstrap the guard authorizes from the index and never asks
+  for a projection again. Generated-ownership reconciliation stays synchronous —
+  a day rename, container move or Trash move still promotes affected generated
+  descendants to user-authoritative *before* the Memory write gate releases — but
+  visits only the affected reverse-dependency closure instead of the whole graph,
+  and digesting plus the pipeline wake coalesce for at most 500 ms from the first
+  pending change. On a synthetic 5,009-node document the guard goes from
+  `0.436 ms` to `0.000295 ms` per call, ~1,480×, with zero projection reads after
+  bootstrap. The high gate found ten defects, all fixed with regression tests.
+  The one that would have been visible: draining projection changes after every
+  command turned Core's transaction-level "nothing actually changed" detection
+  into a per-command one, so an agent transaction that nets to zero — tag then
+  untag, move then move back — committed anyway and left a phantom undo step that
+  did nothing when you pressed ⌘Z. Net-change detection moved back into Core,
+  which now compares each touched node's pre-transaction state against its final
+  state. Four more were misplaced failure boundaries around the new observer: it
+  ran ahead of the renderer's projection update (so a Memory SQLite error
+  silently suppressed the edit on screen), and a failed reconciliation was
+  rethrown *after* the document had already committed and saved, which reported
+  `error` for nodes the agent had in fact created and led it to make duplicates.
+  The observer is now non-authoritative end to end — every phase is contained and
+  reported, and a failed commit falls back to the ordinary projection delivery
+  that resyncs the index. The remaining fixes: an ancestor walk that could hang
+  the main process outright on a transient parent cycle, a graph-change timer
+  that could be armed after the Memory store closed during quit, a debounce with
+  no maximum wait that could postpone Memory extraction across an entire editing
+  session, and three duplicated copies of the canonical-Memory classification
+  rules — now one shared implementation, so the mutation guard and the Memory
+  pipeline cannot drift apart about which Nodes are Memory.
 
 ### Internal
 
