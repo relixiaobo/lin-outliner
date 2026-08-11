@@ -618,11 +618,6 @@
   color: var(--text-soft);
 }
 
-.thread-process-spinner {
-  flex: 0 0 auto;
-  animation: thread-tool-spin var(--motion-working-cycle) linear infinite;
-}
-
 .thread-process-rule {
   margin-top: var(--space-4);
   border-top: 1px solid color-mix(in srgb, currentColor 20%, transparent);
@@ -1369,6 +1364,14 @@
   white-space: nowrap;
 }
 
+/* Motion disappears for reduced-motion and increased-contrast users, so the
+   active tool's action keeps one quiet non-motion cue. The act is the row's
+   shrinking segment; controls and the fixed status slot retain their geometry. */
+.thread-tool-inProgress > .thread-tool-toggle .thread-tool-summary-act,
+.thread-tool-inProgress > .thread-tool-activity-toggle .thread-tool-summary-act {
+  font-weight: 600;
+}
+
 .thread-tool-activity-count-failed,
 .thread-tool-activity-count-interrupted {
   flex: 0 0 auto;
@@ -1434,28 +1437,6 @@
 
 .thread-disclosure-indicator.is-expanded .thread-disclosure-chevron {
   transform: rotate(90deg);
-}
-
-/* A running row keeps its spinner through hover, focus, and expansion: the
-   chevron swap would leave the only "still working" cue invisible. The chevron
-   stands down for the duration — aria-expanded and the body still carry the
-   disclosure state, and the slot geometry never changes (B7). */
-.thread-tool-inProgress > .thread-tool-toggle:hover .thread-disclosure-status,
-.thread-tool-inProgress > .thread-tool-toggle:focus-visible .thread-disclosure-status,
-.thread-tool-inProgress > .thread-tool-activity-toggle:hover .thread-disclosure-status,
-.thread-tool-inProgress > .thread-tool-activity-toggle:focus-visible .thread-disclosure-status,
-.thread-tool-inProgress > .thread-tool-toggle .thread-disclosure-indicator.is-expanded .thread-disclosure-status,
-.thread-tool-inProgress > .thread-tool-activity-toggle .thread-disclosure-indicator.is-expanded .thread-disclosure-status {
-  opacity: 1;
-}
-
-.thread-tool-inProgress > .thread-tool-toggle:hover .thread-disclosure-chevron,
-.thread-tool-inProgress > .thread-tool-toggle:focus-visible .thread-disclosure-chevron,
-.thread-tool-inProgress > .thread-tool-activity-toggle:hover .thread-disclosure-chevron,
-.thread-tool-inProgress > .thread-tool-activity-toggle:focus-visible .thread-disclosure-chevron,
-.thread-tool-inProgress > .thread-tool-toggle .thread-disclosure-indicator.is-expanded .thread-disclosure-chevron,
-.thread-tool-inProgress > .thread-tool-activity-toggle .thread-disclosure-indicator.is-expanded .thread-disclosure-chevron {
-  opacity: 0;
 }
 
 /* Row status is colour on the glyph + label, never a second slot treatment:
@@ -1654,11 +1635,6 @@
   color: var(--text-tertiary);
 }
 
-.thread-delegation-row-spinner {
-  flex: 0 0 auto;
-  color: var(--text-faint);
-}
-
 .thread-delegation-row .icon-button {
   display: inline-flex;
   width: 22px;
@@ -1764,13 +1740,6 @@
   gap: var(--space-3);
   margin-top: var(--space-3);
   padding-left: 20px;
-}
-
-/* Scoped to the row's own toggle: a running group must not spin the glyphs of
-   the finished children it contains. */
-.thread-tool-inProgress > .thread-tool-toggle .thread-disclosure-status svg,
-.thread-tool-inProgress > .thread-tool-activity-toggle .thread-disclosure-status svg {
-  animation: thread-tool-spin var(--motion-working-cycle) linear infinite;
 }
 
 @keyframes thread-tool-spin {
@@ -2258,11 +2227,6 @@
   white-space: nowrap;
 }
 
-.thread-plan-progress-spinner,
-.thread-plan-progress-popover li.is-in_progress .thread-plan-step-status svg {
-  animation: thread-tool-spin var(--motion-working-cycle) linear infinite;
-}
-
 .thread-plan-progress-popover {
   position: absolute;
   right: var(--agent-content-x);
@@ -2322,9 +2286,8 @@
   line-height: var(--line-meta);
 }
 
-/* The current step is marked by weight and text colour, never by the spinning
-   icon alone: that cue disappears entirely under reduced motion, and colour
-   alone is not a state. */
+/* The current step remains explicit without motion: text, weight, the semantic
+   aria-current marker, and a neutral filled dot all agree. */
 .thread-plan-progress-popover li.is-in_progress {
   color: var(--text-strong);
   font-weight: 600;
@@ -2344,6 +2307,14 @@
   height: 5px;
   border: 1px solid var(--text-faint);
   border-radius: var(--radius-pill);
+  content: '';
+}
+
+.thread-plan-progress-popover li.is-in_progress .thread-plan-step-status::before {
+  width: 5px;
+  height: 5px;
+  border-radius: var(--radius-pill);
+  background: var(--text-secondary);
   content: '';
 }
 
@@ -3037,12 +3008,7 @@
 
   .thread-streaming-shape,
   .thread-streaming-shape path,
-  .thread-plan-progress-spinner,
-  .thread-plan-progress-popover li.is-in_progress .thread-plan-step-status svg,
-  .thread-process-spinner,
-  .thread-provider-retry svg,
-  .thread-tool-inProgress > .thread-tool-toggle .thread-disclosure-status svg,
-  .thread-tool-inProgress > .thread-tool-activity-toggle .thread-disclosure-status svg {
+  .thread-provider-retry svg {
     animation: none;
   }
 }

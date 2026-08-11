@@ -3001,6 +3001,10 @@ test.describe('canonical agent Thread surface', () => {
       await expect(rows).toHaveCount(2);
       await expect(rows.locator('.thread-delegation-row-status').first())
         .toContainText(/Running · \d+[smhd]/u);
+      // Identity stays still while only each live status phrase owns motion.
+      await expect(rows.locator('.thread-delegation-row-name .working-text')).toHaveCount(0);
+      await expect(rows.locator('.thread-delegation-row-status.working-text')).toHaveCount(2);
+      await expect(rows.locator('.thread-delegation-row-status .working-text-sweep')).toHaveCount(2);
       // Every colour comes from the ink tokens, so the row follows the scheme
       // instead of carrying a hardcoded value that only works in light. The row
       // also has to share the tool rows' type ramp: it is one more thing the
@@ -3065,7 +3069,9 @@ test.describe('canonical agent Thread surface', () => {
 
       await expect(parentTurn.locator('.thread-process-title'))
         .toContainText(/Waiting on 1 subagent ·/u);
-      await expect(parentTurn.locator('.thread-delegation-row.thread-subagent-completed')).toHaveCount(1);
+      const completedRow = parentTurn.locator('.thread-delegation-row.thread-subagent-completed');
+      await expect(completedRow).toHaveCount(1);
+      await expect(completedRow.locator('.thread-delegation-row-status.working-text')).toHaveCount(0);
 
       await page.evaluate(({ child, parentThreadId, startedAt }) => {
         const target = window as Window & {
@@ -3700,7 +3706,7 @@ test.describe('canonical agent Thread surface', () => {
     await expect(divider).toHaveText('Read notes.md');
     await expect(page.locator('.thread-process-block')).not.toContainText('Working');
 
-    // Blocked on the user: the label says so, and the spinner stops claiming work.
+    // Blocked on the user: the label says so, and no shimmer claims progress.
     await page.evaluate(async ({ threadId }) => {
       const target = window as Window & {
         __LIN_E2E__?: { emitAgentCoreNotification: (n: unknown) => void };
@@ -3723,6 +3729,13 @@ test.describe('canonical agent Thread surface', () => {
         },
       });
       target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/plan/updated',
+        threadId,
+        turnId: liveTurnId,
+        explanation: null,
+        plan: [{ step: 'Answer the clarification', status: 'in_progress' }],
+      });
+      target.__LIN_E2E__?.emitAgentCoreNotification({
         type: 'thread/status/changed',
         threadId,
         status: { type: 'active', activeFlags: ['waitingOnUserInput'] },
@@ -3731,7 +3744,10 @@ test.describe('canonical agent Thread surface', () => {
 
     const live = page.locator('.thread-process-block').last();
     await expect(live.locator('.thread-process-title')).toHaveText('Waiting for input');
-    await expect(live.locator('.thread-process-spinner')).toHaveCount(0);
+    await expect(live.locator('.working-text')).toHaveCount(0);
+    const blockedPlan = page.locator('.thread-plan-progress-summary');
+    await expect(blockedPlan).toHaveText('1/1 · Answer the clarification');
+    await expect(blockedPlan.locator('.working-text')).toHaveCount(0);
   });
 
   test('states an interrupted Turn once, and never leaves an unlabelled timeline', async ({ page }) => {
@@ -4317,7 +4333,7 @@ test.describe('canonical agent Thread surface', () => {
     });
   }
 
-  test('keeps a running tool spinning on its own row through hover and expansion', async ({ page }) => {
+  test('hands running group motion between its summary and expanded members', async ({ page }) => {
     await createNewThread(page);
     const turnId = await page.evaluate(async () => {
       const target = window as Window & {
@@ -4375,27 +4391,27 @@ test.describe('canonical agent Thread surface', () => {
     const turn = page.locator(`[data-thread-turn-row="${turnId}"]`);
     const group = turn.locator('.thread-tool-activity-group');
     await expect(group).toHaveClass(/thread-tool-inProgress/);
-    await group.locator('.thread-tool-activity-toggle').click();
+    const groupToggle = group.locator(':scope > .thread-tool-activity-toggle');
+    await expect(groupToggle.locator('.working-text')).toHaveCount(1);
+    await expect(groupToggle.locator('.thread-disclosure-status svg')).toHaveCSS('animation-name', 'none');
+    await expect(group.locator('.thread-tool-activity-members')).toHaveCount(0);
+
+    // The semantic group glyph uses the ordinary disclosure handoff on hover.
+    await groupToggle.hover();
+    await expect(groupToggle.locator('.thread-disclosure-status')).toHaveCSS('opacity', '0');
+    await expect(groupToggle.locator('.thread-disclosure-chevron')).toHaveCSS('opacity', '1');
+    await groupToggle.click();
     const running = turn.locator('.thread-tool-activity-members .thread-tool-inProgress');
     const done = turn.locator('.thread-tool-activity-members .thread-tool-completed');
     await expect(running).toHaveCount(1);
+    await expect(groupToggle.locator('.working-text')).toHaveCount(0);
+    await expect(running.locator('.working-text')).toHaveCount(1);
+    await expect(done.locator('.working-text')).toHaveCount(0);
+    await expect(running.locator('.thread-disclosure-status svg')).toHaveCSS('animation-name', 'none');
 
-    // A finished child inside a running group must not borrow the spinner.
-    await expect(done.locator('.thread-disclosure-status svg')).toHaveCSS('animation-name', 'none');
-    await expect(running.locator('.thread-disclosure-status svg'))
-      .toHaveCSS('animation-name', 'thread-tool-spin');
-
-    // Opacity is transitioned, so these assertions have to settle rather than
-    // read the frame the hover landed on.
-    await running.locator('.thread-tool-toggle').hover();
-    await expect(running.locator('.thread-disclosure-status')).toHaveCSS('opacity', '1');
-    await expect(running.locator('.thread-disclosure-chevron')).toHaveCSS('opacity', '0');
-    await running.locator('.thread-tool-toggle').click();
-    await expect(running.locator('.thread-disclosure-status')).toHaveCSS('opacity', '1');
-    // A settled sibling still swaps to the chevron on hover.
-    await done.locator('.thread-tool-toggle').hover();
-    await expect(done.locator('.thread-disclosure-status')).toHaveCSS('opacity', '0');
-    await expect(done.locator('.thread-disclosure-chevron')).toHaveCSS('opacity', '1');
+    await groupToggle.click();
+    await expect(group.locator('.thread-tool-activity-members')).toHaveCount(0);
+    await expect(groupToggle.locator('.working-text')).toHaveCount(1);
   });
 
   test('shows web tool arguments and results as direct JSON', async ({ page }) => {
@@ -4612,7 +4628,7 @@ test.describe('canonical agent Thread surface', () => {
     const detail = page.locator('.thread-subagent-detail');
     await expect(detail.getByRole('textbox', { name: 'Message this Thread' })).toHaveCount(0);
     const pill = detail.locator('.thread-plan-progress-summary');
-    await expect(pill).toHaveText('2/2 · Cross-check the citations');
+    await expect(pill.locator('.working-text-base')).toHaveText('2/2 · Cross-check the citations');
 
     // With no composer to return to, Escape must still land focus somewhere
     // reachable rather than dropping it to the document body.
@@ -4741,7 +4757,11 @@ test.describe('canonical agent Thread surface', () => {
 
     const progress = page.locator('.thread-plan-progress-summary');
     // The persistent affordance is the current step's text, not a bare counter.
-    await expect(progress).toHaveText('2/24 · Implement the transient projection');
+    const workingLabel = progress.locator('.thread-plan-progress-label.working-text');
+    await expect(workingLabel.locator('.working-text-base'))
+      .toHaveText('2/24 · Implement the transient projection');
+    await expect(workingLabel.locator('.working-text-sweep')).toHaveAttribute('aria-hidden', 'true');
+    await expect(progress).toHaveAccessibleName('2/24 · Implement the transient projection');
     await expect(progress).toHaveAttribute('aria-expanded', 'false');
     await progress.hover();
     const checklist = page.locator('.thread-plan-progress-popover');
@@ -4751,10 +4771,11 @@ test.describe('canonical agent Thread surface', () => {
     // Each row states its status for assistive tech; the icons are decorative.
     await expect(checklist.locator('li').first()).toHaveText('Completed: Inspect the current behavior');
     await expect(checklist.locator('li').last()).toHaveText('Pending: Verify interaction checkpoint 24');
-    // The current step is marked by weight and colour, so the cue survives
-    // reduced motion, where the spinner stops.
+    // The current step is marked by semantics, weight, colour, and a filled dot,
+    // so opening the Plan can stop all motion without losing working state.
     const currentStep = checklist.locator('li.is-in_progress');
     await expect(currentStep).toHaveCount(1);
+    await expect(currentStep).toHaveAttribute('aria-current', 'step');
     await expect(currentStep).toHaveCSS('font-weight', '600');
     expect(await checklist.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
 
@@ -4769,12 +4790,27 @@ test.describe('canonical agent Thread surface', () => {
     await expect(progress).toHaveAttribute('aria-expanded', 'true');
     await expect(checklist).toBeVisible();
     await expect(checklist).toBeFocused();
+    await expect(page.locator('.thread-plan-progress .working-text')).toHaveCount(0);
+    const currentCue = await currentStep.locator('.thread-plan-step-status').evaluate((element) => {
+      const style = getComputedStyle(element, '::before');
+      return {
+        backgroundColor: style.backgroundColor,
+        content: style.content,
+        height: style.height,
+        width: style.width,
+      };
+    });
+    expect(currentCue).toMatchObject({ content: '\"\"', height: '5px', width: '5px' });
+    expect(currentCue.backgroundColor).not.toBe('rgba(0, 0, 0, 0)');
     await checklist.evaluate((element) => { element.scrollTop = 0; });
     await checklist.press('PageDown');
     await expect.poll(() => checklist.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
     await checklist.press('Escape');
     await expect(progress).toHaveAttribute('aria-expanded', 'false');
     await expect(checklist).not.toBeVisible();
+    await expect(progress.locator('.thread-plan-progress-label.working-text')).toHaveCount(1);
+    await expect(progress.locator('.working-text-base'))
+      .toHaveText('2/24 · Implement the transient projection');
     // Closing hands focus back to the composer, not to the pill: the Plan is a
     // transient status affordance, not a destination to be stranded in.
     await expect(page.getByRole('textbox', { name: 'Message this Thread' })).toBeFocused();

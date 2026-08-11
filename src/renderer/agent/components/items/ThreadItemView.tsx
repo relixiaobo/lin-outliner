@@ -63,6 +63,7 @@ import { ReadOnlyCodeBlock } from '../../../ui/editor/CodeBlockSurface';
 import { SubagentRunDetail } from '../SubagentRunDetail';
 import { IconButton } from '../../../ui/primitives/IconButton';
 import { ButtonControl } from '../../../ui/primitives/ButtonControl';
+import { WorkingText } from '../../../ui/primitives/WorkingText';
 import { canEditUserContentText, replaceUserContentText } from '../../threadInput';
 import {
   threadNodeReferenceDisplayLabel,
@@ -288,7 +289,12 @@ export function ThreadToolActivityGroup({
         onClick={(event) => expandState.toggle(disclosureId, expanded, event.currentTarget)}
       >
         <DisclosureIndicator expanded={expanded} status={executionStatusNode(status, groupGlyph(items))} />
-        <ToolSummaryText className="thread-tool-activity-summary" segments={segments} title={title} />
+        <ToolSummaryText
+          className="thread-tool-activity-summary"
+          segments={segments}
+          title={title}
+          working={status === 'inProgress' && !expanded}
+        />
       </ButtonControl>
       {expanded ? (
         <div className="thread-tool-activity-members">
@@ -661,7 +667,11 @@ function ReasoningDisclosure({
     // Same class set as the populated branch: the first token must not change
     // the element's classes underneath the reader.
     return streaming
-      ? <div className="thread-item thread-reasoning is-thinking">{t.agent.thinking.thinking}</div>
+      ? (
+          <div className="thread-item thread-reasoning is-thinking">
+            <WorkingText text={t.agent.thinking.thinking} />
+          </div>
+        )
       : null;
   }
   if (!canExpand) {
@@ -808,6 +818,11 @@ function ToolItemDisclosure({
     : summarizeThreadToolItem(item, t.agent.thread.activity, index, {
       subjectLimit: Number.POSITIVE_INFINITY,
     });
+  const expandedSubagentOwnsWorking = expanded
+    && item.type === 'collabAgentToolCall'
+    && item.receiverThreadIds.some((receiverThreadId) => (
+      isSubagentWorkingStatus(collaborationPresentation(item, receiverThreadId, subagents).status)
+    ));
   return (
     <div className={`thread-item thread-tool thread-tool-${item.status}`}>
       <ButtonControl
@@ -822,7 +837,12 @@ function ToolItemDisclosure({
         }}
       >
         <DisclosureIndicator expanded={expanded} status={executionStatusNode(item.status, toolIcon(item))} />
-        <ToolSummaryText className="thread-tool-label" segments={segments} title={title} />
+        <ToolSummaryText
+          className="thread-tool-label"
+          segments={segments}
+          title={title}
+          working={item.status === 'inProgress' && !expandedSubagentOwnsWorking}
+        />
       </ButtonControl>
       {expanded ? (
         <div className="thread-tool-body">
@@ -893,16 +913,20 @@ function ToolSummaryText({
   className,
   segments,
   title,
+  working,
 }: {
   readonly className: string;
   readonly segments: readonly ToolActivitySegment[];
   readonly title: string;
+  readonly working: boolean;
 }) {
   const act = segments.filter((segment) => segment.tone === 'neutral').map((segment) => segment.text).join(' · ');
   const tallies = segments.filter((segment) => segment.tone !== 'neutral');
   return (
     <span className={className} title={title}>
-      <span className="thread-tool-summary-act">{act}</span>
+      {working
+        ? <WorkingText className="thread-tool-summary-act" text={act} truncate />
+        : <span className="thread-tool-summary-act">{act}</span>}
       {tallies.map((segment, index) => (
         <span className={`thread-tool-activity-count-${segment.tone}`} key={`${segment.tone}-${index}`}>
           {` · ${segment.text}`}
@@ -1105,8 +1129,7 @@ function toolDetail(
               <SubagentStateItem
                 key={receiverThreadId}
                 onOpenThread={onOpenThread}
-                presentation={subagents?.get(receiverThreadId)
-                  ?? presentationFromSnapshot(receiverThreadId, item.agentsStates[receiverThreadId])}
+                presentation={collaborationPresentation(item, receiverThreadId, subagents)}
               />
             ))}
           </ul>
@@ -1134,6 +1157,15 @@ function toolDetail(
   }
 }
 
+function collaborationPresentation(
+  item: Extract<ThreadToolItem, { type: 'collabAgentToolCall' }>,
+  receiverThreadId: string,
+  subagents: ReadonlyMap<string, SubagentPresentation> | undefined,
+): SubagentPresentation {
+  return subagents?.get(receiverThreadId)
+    ?? presentationFromSnapshot(receiverThreadId, item.agentsStates[receiverThreadId]);
+}
+
 /**
  * One delegated child, for its whole life: the same row, in the same slot,
  * while it runs and after it settles. It reads name-first with the status as a
@@ -1142,9 +1174,9 @@ function toolDetail(
  * announced in its own vocabulary.
  *
  * Live it also carries the two affordances only a running child can offer: a
- * spinner, and a Stop that reaches this child alone. Interrupting from here
- * leaves the request open (the delegator may legitimately delegate again); the
- * composer's Stop is the one that closes it.
+ * working status phrase, and a Stop that reaches this child alone. Interrupting
+ * from here leaves the request open (the delegator may legitimately delegate
+ * again); the composer's Stop is the one that closes it.
  */
 function SubagentActivityItem({
   expandState,
@@ -1203,11 +1235,10 @@ function SubagentActivityItem({
         />
         <FormIcon aria-hidden size={ICON_SIZE.rowGlyph} />
         <span className="thread-delegation-row-name">{name}</span>
-        <span className="thread-delegation-row-status">{status}</span>
+        {isSubagentWorkingStatus(presentation.status)
+          ? <WorkingText className="thread-delegation-row-status" text={status} />
+          : <span className="thread-delegation-row-status">{status}</span>}
       </ButtonControl>
-        {presentation.status === 'running' ? (
-          <LoaderIcon aria-hidden className="thread-delegation-row-spinner" size={ICON_SIZE.rowGlyph} />
-        ) : null}
         {running ? (
           <IconButton
             icon={StopIcon}
@@ -1261,7 +1292,9 @@ function SubagentStateItem({
       >
         <AgentIcon size={ICON_SIZE.menu} />
         <code>{identity}</code>
-        <span>{error ?? statusWithDuration}</span>
+        {isSubagentWorkingStatus(presentation.status)
+          ? <WorkingText text={statusWithDuration} />
+          : <span>{error ?? statusWithDuration}</span>}
       </button>
     </li>
   );
@@ -1284,6 +1317,10 @@ function subagentStatusLabel(
   return durationMs !== null && durationMs >= 1_000
     ? `${status} · ${formatSubagentDuration(durationMs)}`
     : status;
+}
+
+function isSubagentWorkingStatus(status: SubagentPresentation['status']): boolean {
+  return status === 'pendingInit' || status === 'running';
 }
 
 
@@ -1862,12 +1899,11 @@ function dynamicToolArgument(
 
 /**
  * A row's status is carried by colour and by its label wording, never by
- * swapping the tool's own glyph: a failed row has to keep saying WHICH tool
- * broke. Only `inProgress` substitutes, because there the spinner *is* the
- * state and nothing else animates.
+ * swapping the tool's own glyph: every row has to keep saying which tool is
+ * active or settled while the adjacent action text carries status and motion.
  */
-function executionStatusNode(status: ItemExecutionStatus, toolGlyph: ReactNode): ReactNode {
-  return status === 'inProgress' ? <LoaderIcon size={ICON_SIZE.tiny} /> : toolGlyph;
+function executionStatusNode(_status: ItemExecutionStatus, toolGlyph: ReactNode): ReactNode {
+  return toolGlyph;
 }
 
 function ToolOutputImage({
