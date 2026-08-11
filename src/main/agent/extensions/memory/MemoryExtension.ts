@@ -100,6 +100,10 @@ interface TurnMemoryUsage {
   readonly threadId: ThreadId;
 }
 
+export interface MemoryExtensionOptions {
+  readonly onError?: (error: unknown, operation: 'graph-digest' | 'graph-wake') => void;
+}
+
 export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy, DocumentMutationObserver {
   readonly id = MEMORY_EXTENSION_ID;
   private host: MemoryThreadHost | null = null;
@@ -107,6 +111,8 @@ export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy
   private preparedForTurnAdmission = false;
   private initialized = false;
   private workerStopped = false;
+  private workerStopping = false;
+  private workerStopPromise: Promise<void> | null = null;
   private storeClosed = false;
   private readonly turnMemoryUsage = new Map<TurnId, TurnMemoryUsage>();
   private lastGraphDigest = '';
@@ -120,6 +126,7 @@ export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy
   constructor(
     private readonly control: MemoryControlStore,
     private readonly timeline: TimelineMemoryStore,
+    private readonly options: MemoryExtensionOptions = {},
   ) {}
 
   bindHost(host: MemoryThreadHost): void {
@@ -186,7 +193,7 @@ export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy
     this.control.deleteOrphanAdmissions(new Set(host.persistentRootThreads().flatMap((thread) => (
       host.readThread({ threadId: thread.id, includeTurns: true }).thread.turns?.map((turn) => turn.id) ?? []
     ))));
-    this.lastGraphDigest = canonicalGraphDigest(this.timeline);
+    this.lastGraphDigest = this.currentCanonicalGraphDigest();
     await this.requirePipeline().recover();
     this.preparedForTurnAdmission = true;
   }
@@ -198,11 +205,22 @@ export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy
     this.initialized = true;
   }
 
-  async stopWorker(): Promise<void> {
-    if (this.workerStopped) return;
+  stopWorker(): Promise<void> {
+    if (this.workerStopped) return Promise.resolve();
+    if (this.workerStopPromise) return this.workerStopPromise;
+    this.workerStopping = true;
     this.flushDeferredGraphChange();
-    await this.pipeline?.close();
-    this.workerStopped = true;
+    const stop = (async () => {
+      try {
+        await this.pipeline?.close();
+        this.workerStopped = true;
+      } finally {
+        this.workerStopping = false;
+        this.workerStopPromise = null;
+      }
+    })();
+    this.workerStopPromise = stop;
+    return stop;
   }
 
   closeStore(): void {
@@ -561,7 +579,7 @@ export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy
     const update = this.applyProjectionUpdate({ kind: 'full', revision: 0, projection });
     const affected = new Set([...update.affectedCanonicalNodeIds, ...this.control.generatedNodeIds()]);
     const changed = this.reconcileGeneratedNodes(affected);
-    const digest = canonicalGraphDigest(this.timeline);
+    const digest = this.currentCanonicalGraphDigest();
     this.graphDigestComputations += 1;
     if (changed || digest !== this.lastGraphDigest) {
       this.lastGraphDigest = digest;
@@ -618,10 +636,10 @@ export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy
   }
 
   private scheduleDeferredGraphChange(forceWake: boolean): void {
-    if (this.workerStopped) return;
+    if (this.workerStopping || this.workerStopped || this.storeClosed) return;
     this.graphChangePending = true;
     this.graphChangeForcesWake ||= forceWake;
-    if (this.graphChangeTimer) clearTimeout(this.graphChangeTimer);
+    if (this.graphChangeTimer) return;
     this.graphChangeTimer = setTimeout(() => this.flushDeferredGraphChange(), 500);
     this.graphChangeTimer.unref?.();
   }
@@ -633,15 +651,42 @@ export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy
     const forceWake = this.graphChangeForcesWake;
     this.graphChangePending = false;
     this.graphChangeForcesWake = false;
+    if (this.workerStopped || this.storeClosed) return;
+    let shouldWake = forceWake;
     try {
-      const digest = canonicalGraphDigest(this.timeline);
+      const digest = this.currentCanonicalGraphDigest();
       this.graphDigestComputations += 1;
-      if (forceWake || digest !== this.lastGraphDigest) {
+      if (digest !== this.lastGraphDigest) {
         this.lastGraphDigest = digest;
-        if (this.initialized) this.requirePipeline().wakeGlobal('memory-graph-changed');
+        shouldWake = true;
       }
+    } catch (error) {
+      this.reportDeferredGraphError(error, 'graph-digest');
+      shouldWake = true;
+    }
+    if (shouldWake && this.initialized) {
+      try {
+        this.requirePipeline().wakeGlobal('memory-graph-changed');
+      } catch (error) {
+        this.reportDeferredGraphError(error, 'graph-wake');
+      }
+    }
+  }
+
+  private currentCanonicalGraphDigest(): string {
+    return canonicalGraphDigest(
+      this.mutationIndex?.canonicalNodesInGraphOrder() ?? this.timeline.graph().nodes,
+    );
+  }
+
+  private reportDeferredGraphError(
+    error: unknown,
+    operation: 'graph-digest' | 'graph-wake',
+  ): void {
+    try {
+      this.options.onError?.(error, operation);
     } catch {
-      if (this.initialized) this.requirePipeline().wakeGlobal('memory-graph-changed');
+      // Error reporting must not escape a timer callback or the shutdown path.
     }
   }
 
@@ -763,8 +808,8 @@ function filteredProjection(projection: DocumentProjection, hidden: ReadonlySet<
   };
 }
 
-function canonicalGraphDigest(timeline: TimelineMemoryStore): string {
-  return timelineDigest(timeline.graph().nodes.map((entry) => ({
+function canonicalGraphDigest(nodes: readonly CanonicalMemoryNode[]): string {
+  return timelineDigest(nodes.map((entry) => ({
     id: entry.node.id,
     parentId: entry.node.parentId ?? null,
     category: entry.category,

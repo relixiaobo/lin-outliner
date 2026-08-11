@@ -80,8 +80,6 @@ interface TextEditGroup {
   nodeId: string;
   origin: NonNullable<DocumentMutationMeta['origin']>;
   operationId: string;
-  guardObserved: boolean;
-  affectsMemory?: boolean;
   timer?: ReturnType<typeof setTimeout>;
 }
 
@@ -90,7 +88,6 @@ export interface ProjectionChangedDelivery {
   sourceWebContentsId?: number;
   operationId?: string;
   affectsMemory?: boolean;
-  operationComplete?: boolean;
   transactionIndexed?: boolean;
 }
 
@@ -121,9 +118,20 @@ export interface DocumentMutationObserver {
   projectionChanged(delivery: ProjectionChangedDelivery): void;
 }
 
+export type DocumentMutationObserverPhase =
+  | 'begin-transaction'
+  | 'apply-transaction-changes'
+  | 'commit-transaction'
+  | 'rollback-transaction'
+  | 'projection-changed';
+
+export type DocumentMutationObserverErrorHandler = (
+  error: unknown,
+  phase: DocumentMutationObserverPhase,
+) => void;
+
 interface ProjectionChangedOptions {
   readonly affectsMemory?: boolean;
-  readonly operationComplete?: boolean;
   readonly transactionIndexed?: boolean;
   readonly forceEmptyUpdate?: boolean;
 }
@@ -178,8 +186,10 @@ export class DocumentService implements DocumentSystemHost {
   private nodeAccessRecorder?: (nodeIds: readonly string[], source: NodeAccessSource) => void | Promise<void>;
   private mutationGuard?: DocumentMutationGuard;
   private mutationObserver?: DocumentMutationObserver;
+  private mutationObserverErrorHandler?: DocumentMutationObserverErrorHandler;
+  private mutationObserverTransactionActive = false;
   private mutationCoordinator?: DocumentMutationCoordinator;
-  private pendingTransactionProjectionChanges: DocumentTransactionProjectionChanges | null = null;
+  private pendingTransactionProjectionChanges: DocumentTransactionProjectionChanges[] | null = null;
   private readonly nodeRetrieval = new NodeRetrievalService({
     getProjection: () => this.core.projection(),
     getTextSearchIndex: () => this.getTextSearchIndex(),
@@ -270,9 +280,9 @@ export class DocumentService implements DocumentSystemHost {
 
   drainTransactionProjectionChanges() {
     const cached = this.pendingTransactionProjectionChanges;
-    if (cached) {
-      this.pendingTransactionProjectionChanges = null;
-      return cached;
+    if (cached && cached.length > 0) {
+      this.pendingTransactionProjectionChanges = [];
+      return mergeTransactionProjectionChangeBatch(cached);
     }
     return this.core.drainTransactionProjectionChanges();
   }
@@ -300,6 +310,10 @@ export class DocumentService implements DocumentSystemHost {
 
   setMutationObserver(observer: DocumentMutationObserver): void {
     this.mutationObserver = observer;
+  }
+
+  setMutationObserverErrorHandler(handler: DocumentMutationObserverErrorHandler): void {
+    this.mutationObserverErrorHandler = handler;
   }
 
   setMutationCoordinator(coordinator: DocumentMutationCoordinator): void {
@@ -377,7 +391,7 @@ export class DocumentService implements DocumentSystemHost {
             effectiveMeta.origin ?? historyChangeOrigin(query.origin),
             effectiveMeta.sourceWebContentsId,
             effectiveMeta.operationId,
-            { affectsMemory: guardResult?.affectsMemory, operationComplete: true },
+            { affectsMemory: guardResult?.affectsMemory },
           );
         }
         return result;
@@ -457,14 +471,7 @@ export class DocumentService implements DocumentSystemHost {
           this.rollbackObservedTransaction();
           throw error;
         }
-        let observerCommitFailed = false;
-        let observerCommitError: unknown;
-        try {
-          this.commitObservedTransaction(meta, coreMetadata.affectsMemory);
-        } catch (error) {
-          observerCommitFailed = true;
-          observerCommitError = error;
-        }
+        const transactionIndexed = this.commitObservedTransaction(meta, coreMetadata.affectsMemory);
         if (this.core.persistenceRevision() !== persistenceRevisionBefore) {
           if (systemContext) await this.saveCore();
           else this.scheduleCoreSave();
@@ -473,11 +480,9 @@ export class DocumentService implements DocumentSystemHost {
           this.refreshTextSearchIndexFromCoreDelta();
           this.emitProjectionChanged(meta.origin ?? 'user', meta.sourceWebContentsId, meta.operationId, {
             affectsMemory: coreMetadata.affectsMemory,
-            operationComplete: true,
-            transactionIndexed: true,
+            transactionIndexed,
           });
         }
-        if (observerCommitFailed) throw observerCommitError;
         return result;
       });
       this.mutationQueue = task.then(() => undefined, () => undefined);
@@ -525,7 +530,6 @@ export class DocumentService implements DocumentSystemHost {
           this.scheduleCoreSave();
           this.emitProjectionChanged(meta.origin ?? 'agent', meta.sourceWebContentsId, meta.operationId, {
             affectsMemory,
-            operationComplete: true,
           });
         }
         return focus ? { focus } : {};
@@ -587,13 +591,6 @@ export class DocumentService implements DocumentSystemHost {
             effectiveMeta,
             (result) => {
               affectsMemory = result?.affectsMemory;
-              const group = this.textEditGroup;
-              if (group && group.operationId === effectiveMeta.operationId) {
-                group.affectsMemory = group.guardObserved
-                  ? mergeAffectsMemory(group.affectsMemory, affectsMemory)
-                  : affectsMemory;
-                group.guardObserved = true;
-              }
             },
           )),
           coreMetadata,
@@ -617,7 +614,6 @@ export class DocumentService implements DocumentSystemHost {
           effectiveMeta.operationId,
           {
             affectsMemory,
-            operationComplete: command !== 'apply_node_text_patch' && !isMaterialize,
           },
         );
         const focus = 'focus' in outcome ? outcome.focus : undefined;
@@ -644,7 +640,6 @@ export class DocumentService implements DocumentSystemHost {
         nodeId,
         origin,
         operationId: `op:${randomUUID()}`,
-        guardObserved: false,
       };
     }
     return {
@@ -665,7 +660,6 @@ export class DocumentService implements DocumentSystemHost {
       nodeId,
       origin,
       operationId: `op:${randomUUID()}`,
-      guardObserved: false,
     };
     return {
       ...meta,
@@ -697,8 +691,6 @@ export class DocumentService implements DocumentSystemHost {
     this.core.endUndoGroup();
     await this.saveCore();
     this.emitProjectionChanged(group.origin, undefined, group.operationId, {
-      affectsMemory: group.affectsMemory,
-      operationComplete: true,
       forceEmptyUpdate: true,
     });
   }
@@ -1061,31 +1053,73 @@ export class DocumentService implements DocumentSystemHost {
   }
 
   private beginObservedTransaction(meta: DocumentMutationMeta): void {
-    this.pendingTransactionProjectionChanges = null;
-    this.mutationObserver?.beginTransaction(meta, () => this.core.projection());
+    this.pendingTransactionProjectionChanges = [];
+    this.mutationObserverTransactionActive = false;
+    const observer = this.mutationObserver;
+    if (!observer) return;
+    try {
+      observer.beginTransaction(meta, () => this.core.projection());
+      this.mutationObserverTransactionActive = true;
+    } catch (error) {
+      this.reportMutationObserverError(error, 'begin-transaction');
+      try {
+        observer.rollbackTransaction();
+      } catch (rollbackError) {
+        this.reportMutationObserverError(rollbackError, 'rollback-transaction');
+      }
+    }
   }
 
   private captureTransactionProjectionChanges(): void {
     const changes = this.core.drainTransactionProjectionChanges();
     if (!changes) return;
-    this.mutationObserver?.applyTransactionChanges(changes);
-    this.pendingTransactionProjectionChanges = mergeTransactionProjectionChanges(
-      this.pendingTransactionProjectionChanges,
-      changes,
-    );
+    this.pendingTransactionProjectionChanges?.push(changes);
+    if (!this.mutationObserverTransactionActive) return;
+    try {
+      this.mutationObserver?.applyTransactionChanges(changes);
+    } catch (error) {
+      this.reportMutationObserverError(error, 'apply-transaction-changes');
+      this.mutationObserverTransactionActive = false;
+      try {
+        this.mutationObserver?.rollbackTransaction();
+      } catch (rollbackError) {
+        this.reportMutationObserverError(rollbackError, 'rollback-transaction');
+      }
+    }
   }
 
-  private commitObservedTransaction(meta: DocumentMutationMeta, affectsMemory: boolean | undefined): void {
+  private commitObservedTransaction(meta: DocumentMutationMeta, affectsMemory: boolean | undefined): boolean {
+    const active = this.mutationObserverTransactionActive;
+    this.mutationObserverTransactionActive = false;
+    this.pendingTransactionProjectionChanges = null;
+    if (!active) return false;
     try {
       this.mutationObserver?.commitTransaction(meta, affectsMemory);
-    } finally {
-      this.pendingTransactionProjectionChanges = null;
+      return true;
+    } catch (error) {
+      this.reportMutationObserverError(error, 'commit-transaction');
+      return false;
     }
   }
 
   private rollbackObservedTransaction(): void {
-    this.mutationObserver?.rollbackTransaction();
+    const active = this.mutationObserverTransactionActive;
+    this.mutationObserverTransactionActive = false;
     this.pendingTransactionProjectionChanges = null;
+    if (!active) return;
+    try {
+      this.mutationObserver?.rollbackTransaction();
+    } catch (error) {
+      this.reportMutationObserverError(error, 'rollback-transaction');
+    }
+  }
+
+  private reportMutationObserverError(error: unknown, phase: DocumentMutationObserverPhase): void {
+    try {
+      this.mutationObserverErrorHandler?.(error, phase);
+    } catch {
+      // Observer diagnostics must never become part of the document mutation boundary.
+    }
   }
 
   private searchNodes(query: string) {
@@ -1394,11 +1428,14 @@ export class DocumentService implements DocumentSystemHost {
       ...(sourceWebContentsId !== undefined ? { sourceWebContentsId } : {}),
       ...(operationId !== undefined ? { operationId } : {}),
       ...(options.affectsMemory !== undefined ? { affectsMemory: options.affectsMemory } : {}),
-      ...(options.operationComplete !== undefined ? { operationComplete: options.operationComplete } : {}),
       ...(options.transactionIndexed ? { transactionIndexed: true } : {}),
     };
-    this.mutationObserver?.projectionChanged(delivery);
     for (const listener of this.projectionChangedListeners) listener(delivery);
+    try {
+      this.mutationObserver?.projectionChanged(delivery);
+    } catch (error) {
+      this.reportMutationObserverError(error, 'projection-changed');
+    }
   }
 
   private applyProjectionUpdateToReadModel(update: ProjectionUpdate): void {
@@ -1409,38 +1446,23 @@ export class DocumentService implements DocumentSystemHost {
   }
 }
 
-function mergeAffectsMemory(
-  previous: boolean | undefined,
-  next: boolean | undefined,
-): boolean | undefined {
-  if (previous === true || next === true) return true;
-  if (previous === undefined || next === undefined) return undefined;
-  return false;
-}
-
-function mergeTransactionProjectionChanges(
-  previous: DocumentTransactionProjectionChanges | null,
-  next: DocumentTransactionProjectionChanges,
+function mergeTransactionProjectionChangeBatch(
+  changes: readonly DocumentTransactionProjectionChanges[],
 ): DocumentTransactionProjectionChanges {
-  if (!previous) {
-    return {
-      todayId: next.todayId,
-      changedNodes: [...next.changedNodes],
-      removedIds: [...next.removedIds],
-    };
-  }
-  const changedById = new Map(previous.changedNodes.map((node) => [node.id, node]));
-  const removedIds = new Set(previous.removedIds);
-  for (const node of next.changedNodes) {
-    changedById.set(node.id, node);
-    removedIds.delete(node.id);
-  }
-  for (const nodeId of next.removedIds) {
-    changedById.delete(nodeId);
-    removedIds.add(nodeId);
+  const changedById = new Map<string, NodeProjection>();
+  const removedIds = new Set<string>();
+  for (const change of changes) {
+    for (const node of change.changedNodes) {
+      changedById.set(node.id, node);
+      removedIds.delete(node.id);
+    }
+    for (const nodeId of change.removedIds) {
+      changedById.delete(nodeId);
+      removedIds.add(nodeId);
+    }
   }
   return {
-    todayId: next.todayId,
+    todayId: changes.at(-1)!.todayId,
     changedNodes: [...changedById.values()],
     removedIds: [...removedIds],
   };

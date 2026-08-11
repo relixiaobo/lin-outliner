@@ -241,7 +241,10 @@ definition rename or Trash move can change how the next by-name command resolves
 Within a document transaction, each command's sparse changes enter a reversible
 journal before the next command is authorized; commit folds the journal and
 rollback restores the exact pre-transaction index. The same sparse changes remain
-available to the Agent tool effect collector.
+available to the Agent tool effect collector, while Core still decides revision,
+persistence, and undo from the transaction's net before/after state. Observer
+failure is non-authoritative: it is recorded, never changes a committed mutation's
+result, and falls back to the normal committed projection delivery.
 
 Projection deliveries carry the guard's `affectsMemory` verdict as an internal
 sidecar. Generated ownership reconciliation is synchronous and visits only
@@ -251,10 +254,12 @@ promotes it to user-authoritative before the Memory write gate releases. A day
 rename, container move, or ancestor entering Trash therefore reconciles all
 affected generated descendants without rebuilding the full graph. Generated-row
 reads are cached in `MemoryControlStore` and invalidated by every write. Canonical
-graph digesting, including derived canonical identity such as source date, and
-the pipeline wake are trailing-debounced for 500 ms; an empty text-edit-group
-close performs no graph work. `memory:*` publications still update the mutation
-index but skip ownership reconciliation and digest scheduling.
+graph digesting iterates the index's canonical entries rather than rebuilding a
+full-document graph, includes derived canonical identity such as source date, and
+coalesces pipeline wakes for at most 500 ms from the first pending change. An empty
+text-edit-group close performs no graph work, and worker shutdown rejects new
+timers before awaiting pipeline close. `memory:*` publications still update the
+mutation index but skip ownership reconciliation and digest scheduling.
 
 The Memory extension observes the existing canonical tool lifecycle. A
 successful built-in `node_read` counts as Memory use only for exact requested

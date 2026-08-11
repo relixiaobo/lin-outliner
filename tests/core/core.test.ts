@@ -2744,6 +2744,29 @@ describe('Core', () => {
     expect(core.state().nodes[nodeId]!.content.text).toBe('Edited in transaction');
   });
 
+  test('transaction projection drains preserve net-zero commit detection', async () => {
+    const core = Core.new();
+    const parentId = core.projection().rootId;
+    const revisionBefore = core.revision();
+    const persistenceRevisionBefore = core.persistenceRevision();
+    let nodeId = '';
+
+    await core.transaction('agent', () => {
+      nodeId = mustFocus(core.createNode(parentId, null, 'Transient'));
+      const created = core.drainTransactionProjectionChanges();
+      expect(created?.changedNodes.some((node) => node.id === nodeId)).toBe(true);
+
+      core.deleteNode(nodeId);
+      const deleted = core.drainTransactionProjectionChanges();
+      expect(deleted?.removedIds).toContain(nodeId);
+    }, { tool: 'node_edit', operationId: 'op:net-zero-transaction' });
+
+    expect(core.revision()).toBe(revisionBefore);
+    expect(core.persistenceRevision()).toBe(persistenceRevisionBefore);
+    expect(core.operationHistory({ origin: 'agent' }).items)
+      .not.toContainEqual(expect.objectContaining({ operationId: 'op:net-zero-transaction' }));
+  });
+
   test('groups continuous text patches into one Loro undo item and one journal entry', () => {
     const core = Core.new();
     const nodeId = mustFocus(core.createNode(core.projection().todayId, null, ''));

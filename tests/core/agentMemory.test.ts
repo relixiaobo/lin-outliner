@@ -808,6 +808,8 @@ describe('Codex Memory contracts', () => {
     const projection = memoryProjection();
     const index = new MemoryMutationIndex(projection);
     expect(index.debugSnapshot()).toEqual(fullScanMemoryMutationSnapshot(projection));
+    expect(index.canonicalNodesInGraphOrder().map((entry) => entry.node.id))
+      .toEqual(canonicalMemoryGraph(projection).nodes.map((entry) => entry.node.id));
 
     applyMemoryIndexDelta(projection, index, [patchProjectionNode(projection, 'ordinary:1', {
       content: { text: 'Ordinary edit', spans: [] },
@@ -818,6 +820,8 @@ describe('Codex Memory contracts', () => {
       content: { text: '2026-07-25', spans: [] },
     })]);
     expect(index.debugSnapshot()).toEqual(fullScanMemoryMutationSnapshot(projection));
+    expect(index.canonicalNodesInGraphOrder().map((entry) => entry.node.id))
+      .toEqual(canonicalMemoryGraph(projection).nodes.map((entry) => entry.node.id));
 
     applyMemoryIndexDelta(projection, index, [
       patchProjectionNode(projection, 'day', { children: [] }),
@@ -851,6 +855,21 @@ describe('Codex Memory contracts', () => {
     expect(index.mayChangeMemory('apply_node_text_patch', { nodeId: 'belief:1' }, new Set())).toBe(false);
   });
 
+  test('degrades cyclic ancestor state without hanging canonical classification', () => {
+    const projection = memoryProjection();
+    const index = new MemoryMutationIndex(projection);
+    const cyclicEpisode = patchProjectionNode(projection, EPISODE_NODE_ID, { parentId: 'belief:1' });
+
+    expect(() => index.applyTransactionChanges({
+      changedNodes: [cyclicEpisode],
+      removedIds: [],
+    })).not.toThrow();
+    replaceProjectionNodes(projection, [cyclicEpisode]);
+
+    expect(index.canonicalNodesInGraphOrder().map((entry) => entry.node.id)).toEqual([MEMORY_NODE_ID]);
+    expect(index.mayChangeMemory('apply_node_text_patch', { nodeId: 'belief:1' }, new Set())).toBe(true);
+  });
+
   test('updates by-name tag classification from every sparse delta', () => {
     const projection = memoryProjection();
     const index = new MemoryMutationIndex(projection);
@@ -881,6 +900,14 @@ describe('Codex Memory contracts', () => {
     seedGeneratedGraph(store, timeline);
     const extension = new MemoryExtension(store, timeline);
     extension.initializeMutationIndex(projection);
+    const originalGraph = timeline.graph.bind(timeline);
+    let fullGraphReads = 0;
+    Object.assign(timeline, {
+      graph: (override?: DocumentProjection) => {
+        fullGraphReads += 1;
+        return originalGraph(override);
+      },
+    });
     const wakes: string[] = [];
     Object.assign(extension as unknown as Record<string, unknown>, {
       initialized: true,
@@ -921,6 +948,8 @@ describe('Codex Memory contracts', () => {
     expect(store.generatedNodes().every((entry) => entry.userAuthoritative)).toBe(true);
     expect(extension.mutationIndexFullRebuildCount()).toBe(1);
     expect(extension.graphDigestComputationCount()).toBe(0);
+    const firstGraphTimer = (extension as unknown as { graphChangeTimer?: ReturnType<typeof setTimeout> })
+      .graphChangeTimer;
 
     const renamedBelief = patchProjectionNode(projection, 'belief:1', {
       content: { text: 'Edited belief', spans: [] },
@@ -933,9 +962,68 @@ describe('Codex Memory contracts', () => {
       changedNodes: [renamedBelief],
       removedIds: [],
     }, true));
+    expect((extension as unknown as { graphChangeTimer?: ReturnType<typeof setTimeout> }).graphChangeTimer)
+      .toBe(firstGraphTimer);
     await extension.stopWorker();
     expect(extension.graphDigestComputationCount()).toBe(1);
+    expect(fullGraphReads).toBe(0);
     expect(wakes).toEqual(['memory-graph-changed']);
+  });
+
+  test('does not rearm graph work while the worker is stopping and contains wake failures', async () => {
+    const store = memoryStore();
+    const projection = memoryProjection();
+    const timeline = new TimelineMemoryStore(readOnlyTimelineHost(projection));
+    const errors: string[] = [];
+    const extension = new MemoryExtension(store, timeline, {
+      onError: (_error, operation) => errors.push(operation),
+    });
+    extension.initializeMutationIndex(projection);
+    let releaseClose = () => undefined;
+    const closing = new Promise<void>((resolve) => {
+      releaseClose = resolve;
+    });
+    Object.assign(extension as unknown as Record<string, unknown>, {
+      initialized: true,
+      pipeline: {
+        wakeGlobal: () => { throw new Error('closed pipeline'); },
+        close: () => closing,
+      },
+    });
+    const renamedBelief = patchProjectionNode(projection, 'belief:1', {
+      content: { text: 'Changed before stop', spans: [] },
+    });
+    replaceProjectionNodes(projection, [renamedBelief]);
+    extension.projectionChanged(memoryProjectionDelivery({
+      kind: 'delta',
+      revision: 1,
+      todayId: projection.todayId,
+      changedNodes: [renamedBelief],
+      removedIds: [],
+    }, true));
+
+    const stopping = extension.stopWorker();
+    expect(errors).toEqual(['graph-wake']);
+    expect((extension as unknown as { graphChangeTimer?: ReturnType<typeof setTimeout> }).graphChangeTimer)
+      .toBeUndefined();
+
+    const renamedAgain = patchProjectionNode(projection, 'belief:1', {
+      content: { text: 'Changed during stop', spans: [] },
+    });
+    replaceProjectionNodes(projection, [renamedAgain]);
+    extension.projectionChanged(memoryProjectionDelivery({
+      kind: 'delta',
+      revision: 2,
+      todayId: projection.todayId,
+      changedNodes: [renamedAgain],
+      removedIds: [],
+    }, true));
+    expect((extension as unknown as { graphChangeTimer?: ReturnType<typeof setTimeout> }).graphChangeTimer)
+      .toBeUndefined();
+
+    releaseClose();
+    await expect(stopping).resolves.toBeUndefined();
+    expect(errors).toEqual(['graph-wake']);
   });
 
   test('removes every generated descendant when an ancestor enters Trash', async () => {
@@ -2006,7 +2094,6 @@ function memoryProjectionDelivery(
       timestamp: Date.now(),
     },
     affectsMemory,
-    operationComplete: true,
   };
 }
 

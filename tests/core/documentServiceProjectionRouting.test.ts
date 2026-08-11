@@ -112,7 +112,7 @@ describe('DocumentService projection routing metadata', () => {
     expect(model.node(SCHEMA_ID)).toBe(unchangedBefore);
   });
 
-  test('keeps plain typing lazy and closes its verdict with an empty observer delta', async () => {
+  test('keeps plain typing lazy and ignores the empty text-group close for Memory', async () => {
     const service = await createService();
     const rootId = service.getProjection().rootId;
     const created = await service.handle('create_node', {
@@ -145,15 +145,40 @@ describe('DocumentService projection routing metadata', () => {
 
     expect(typeof suppliedProjection).toBe('function');
     expect(deliveries).toHaveLength(2);
-    expect(deliveries[0]).toMatchObject({ affectsMemory: true, operationComplete: false });
+    expect(deliveries[0]).toMatchObject({ affectsMemory: true });
     expect(deliveries[0].event.update.kind).toBe('delta');
     expect(deliveries[0].event.update.kind === 'delta' && deliveries[0].event.update.changedNodes).not.toEqual([]);
-    expect(deliveries[1]).toMatchObject({
-      operationId: deliveries[0].operationId,
-      affectsMemory: true,
-      operationComplete: true,
-    });
+    expect(deliveries[1].operationId).toBe(deliveries[0].operationId);
+    expect(deliveries[1]).not.toHaveProperty('affectsMemory');
     expect(deliveries[1].event.update).toMatchObject({ kind: 'delta', changedNodes: [], removedIds: [] });
+  });
+
+  test('delivers projection listeners before isolating observer failures', async () => {
+    const service = await createService();
+    const order: string[] = [];
+    const observerErrors: string[] = [];
+    service.onProjectionChanged(() => order.push('listener'));
+    service.setMutationObserver({
+      beginTransaction: () => undefined,
+      applyTransactionChanges: () => undefined,
+      commitTransaction: () => undefined,
+      rollbackTransaction: () => undefined,
+      projectionChanged: () => {
+        order.push('observer');
+        throw new Error('observer projection failed');
+      },
+    });
+    service.setMutationObserverErrorHandler((_error, phase) => observerErrors.push(phase));
+
+    await expect(service.handle('create_node', {
+      parentId: service.getProjection().rootId,
+      index: null,
+      text: 'Observer failure isolation',
+    })).resolves.toBeDefined();
+
+    expect(order).toEqual(['listener', 'observer']);
+    expect(observerErrors).toEqual(['projection-changed']);
+    expect(service.getProjection().nodes.some((node) => node.content.text === 'Observer failure isolation')).toBe(true);
   });
 
   test('serves DocumentService-backed node_read through the read model', async () => {

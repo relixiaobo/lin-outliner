@@ -1,12 +1,9 @@
 import type { DocumentCommand } from '../../../../core/commands';
 import {
   MEMORY_TAG_DEFINITIONS,
-  memoryCategoryForTagId,
   memoryTagId,
-  type MemoryCategory,
 } from '../../../../core/agent/memory';
 import {
-  DAILY_NOTES_ID,
   TAG_DAY_ID,
   TRASH_ID,
   type DocumentProjection,
@@ -14,8 +11,11 @@ import {
   type NodeProjection,
   type ProjectionUpdate,
 } from '../../../../core/types';
+import { collectDescendantIds, nodeIsInSubtree } from '../../../../core/treeUtils';
 import {
   canonicalMemoryGraph,
+  canonicalMemoryContainerAncestorFromIndex,
+  canonicalMemoryNodeFromIndex,
   timelineNodeFingerprint,
   type CanonicalMemoryNode,
 } from './TimelineMemoryStore';
@@ -105,6 +105,44 @@ export class MemoryMutationIndex {
 
   allCanonicalNodeIds(): ReadonlySet<NodeId> {
     return new Set(this.canonicalById.keys());
+  }
+
+  canonicalNodesInGraphOrder(): readonly CanonicalMemoryNode[] {
+    const containers = [...this.canonicalById.values()]
+      .filter((entry) => entry.category === 'memory')
+      .sort((left, right) => left.node.id.localeCompare(right.node.id));
+    const ordered: CanonicalMemoryNode[] = [];
+    for (const container of containers) {
+      ordered.push(container);
+      for (const episodeId of container.node.children) {
+        const episode = this.canonicalById.get(episodeId);
+        if (
+          !episode
+          || episode.category !== 'episode'
+          || episode.containerId !== container.node.id
+        ) continue;
+        ordered.push(episode);
+        const queue = [...episode.node.children];
+        const visited = new Set<NodeId>();
+        while (queue.length > 0) {
+          const nodeId = queue.shift()!;
+          if (visited.has(nodeId)) continue;
+          visited.add(nodeId);
+          const node = this.nodes.get(nodeId);
+          if (!node) continue;
+          queue.push(...node.children);
+          const entry = this.canonicalById.get(nodeId);
+          if (
+            entry
+            && entry.category !== 'memory'
+            && entry.category !== 'episode'
+            && entry.containerId === container.node.id
+            && entry.episodeId === episode.node.id
+          ) ordered.push(entry);
+        }
+      }
+    }
+    return ordered;
   }
 
   mayChangeMemory(
@@ -325,7 +363,7 @@ export class MemoryMutationIndex {
     for (const node of this.nodes.values()) this.addDirectDerivedState(node);
     const graph = canonicalMemoryGraph(projection);
     for (const container of graph.containers) {
-      for (const nodeId of collectDescendants(this.nodes, container.node.id)) this.owned.add(nodeId);
+      for (const nodeId of nodeAndDescendantIds(this.nodes, container.node.id)) this.owned.add(nodeId);
     }
     for (const entry of graph.nodes) this.addCanonicalEntry(entry);
     this.fullRebuilds += 1;
@@ -351,14 +389,14 @@ export class MemoryMutationIndex {
       for (const childId of changedChildIds(before, after)) subtreeRoots.add(childId);
     }
     for (const rootId of subtreeRoots) {
-      for (const nodeId of collectDescendants(this.nodes, rootId)) affectedNodeIds.add(nodeId);
+      for (const nodeId of nodeAndDescendantIds(this.nodes, rootId)) affectedNodeIds.add(nodeId);
     }
 
     for (const nodeId of delta.removedIds) this.nodes.delete(nodeId);
     for (const node of delta.changedNodes) this.nodes.set(node.id, node);
 
     for (const rootId of subtreeRoots) {
-      for (const nodeId of collectDescendants(this.nodes, rootId)) affectedNodeIds.add(nodeId);
+      for (const nodeId of nodeAndDescendantIds(this.nodes, rootId)) affectedNodeIds.add(nodeId);
     }
     for (const nodeId of affectedNodeIds) this.removeDerivedState(nodeId);
     for (const nodeId of affectedNodeIds) {
@@ -374,7 +412,7 @@ export class MemoryMutationIndex {
   private addDerivedState(node: NodeProjection): void {
     this.addDirectDerivedState(node);
     if (this.canonicalContainerAncestor(node.id)) this.owned.add(node.id);
-    const canonical = this.canonicalEntryFor(node);
+    const canonical = canonicalMemoryNodeFromIndex(node, this.nodes);
     if (canonical) this.addCanonicalEntry(canonical);
   }
 
@@ -385,7 +423,7 @@ export class MemoryMutationIndex {
       this.protectedPaths.set(node.id, path);
       for (const ancestorId of path) incrementCount(this.protectedAncestorCounts, ancestorId);
     }
-    if (node.type === 'tagDef' && !nodeIsInTrash(node.id, this.nodes)) {
+    if (node.type === 'tagDef' && !nodeIsInSubtree(this.nodes, node.id, TRASH_ID)) {
       const name = definitionNameKey(node.content.text);
       if (name) {
         this.activeDefinitionNameById.set(node.id, name);
@@ -433,71 +471,9 @@ export class MemoryMutationIndex {
     return dependents;
   }
 
-  private canonicalEntryFor(node: NodeProjection): CanonicalMemoryNode | null {
-    if (nodeIsInTrash(node.id, this.nodes)) return null;
-    if (this.isCanonicalContainer(node)) {
-      const day = node.parentId ? this.nodes.get(node.parentId) : undefined;
-      return day ? {
-        node,
-        category: 'memory',
-        sourceDate: day.content.text,
-        containerId: node.id,
-        episodeId: null,
-      } : null;
-    }
-
-    const path: NodeProjection[] = [node];
-    let current = node.parentId ? this.nodes.get(node.parentId) : undefined;
-    while (current) {
-      path.push(current);
-      if (this.isCanonicalContainer(current)) break;
-      current = current.parentId ? this.nodes.get(current.parentId) : undefined;
-    }
-    const container = path.at(-1);
-    if (!container || !this.isCanonicalContainer(container)) return null;
-    const episode = path.at(-2);
-    if (!episode || !episode.tags.includes(memoryTagId('episode')) || nodeIsInTrash(episode.id, this.nodes)) return null;
-    const day = container.parentId ? this.nodes.get(container.parentId) : undefined;
-    if (!day) return null;
-    if (node.id === episode.id) {
-      return {
-        node,
-        category: 'episode',
-        sourceDate: day.content.text,
-        containerId: container.id,
-        episodeId: episode.id,
-      };
-    }
-    const category = node.tags.map(memoryCategoryForTagId).find(isLeafMemoryCategory);
-    if (!category) return null;
-    return {
-      node,
-      category,
-      sourceDate: day.content.text,
-      containerId: container.id,
-      episodeId: episode.id,
-    };
-  }
-
   private canonicalContainerAncestor(nodeId: NodeId): NodeProjection | null {
-    let current = this.nodes.get(nodeId);
-    const visited = new Set<NodeId>();
-    while (current && !visited.has(current.id)) {
-      if (this.isCanonicalContainer(current)) return current;
-      visited.add(current.id);
-      current = current.parentId ? this.nodes.get(current.parentId) : undefined;
-    }
-    return null;
-  }
-
-  private isCanonicalContainer(node: NodeProjection): boolean {
-    if (!node.tags.includes(memoryTagId('memory')) || !node.parentId || nodeIsInTrash(node.id, this.nodes)) return false;
-    const parent = this.nodes.get(node.parentId);
-    return Boolean(
-      parent
-      && isDayNodeInsideDailyNotes(parent, this.nodes)
-      && /^\d{4}-\d{2}-\d{2}$/.test(parent.content.text),
-    );
+    const node = this.nodes.get(nodeId);
+    return node ? canonicalMemoryContainerAncestorFromIndex(node, this.nodes)?.node ?? null : null;
   }
 
   private isProtectedAncestor(nodeId: NodeId): boolean {
@@ -570,16 +546,8 @@ function sameFilteredTags(
   return beforeRelevant.every((tagId) => afterRelevant.includes(tagId));
 }
 
-function collectDescendants(nodes: ReadonlyMap<NodeId, NodeProjection>, rootId: NodeId): Set<NodeId> {
-  const descendants = new Set<NodeId>();
-  const stack = [rootId];
-  while (stack.length > 0) {
-    const nodeId = stack.pop()!;
-    if (descendants.has(nodeId)) continue;
-    descendants.add(nodeId);
-    stack.push(...(nodes.get(nodeId)?.children ?? []));
-  }
-  return descendants;
+function nodeAndDescendantIds(nodes: ReadonlyMap<NodeId, NodeProjection>, rootId: NodeId): Set<NodeId> {
+  return new Set([rootId, ...collectDescendantIds(nodes, rootId)]);
 }
 
 function ancestorIds(nodeId: NodeId, nodes: ReadonlyMap<NodeId, NodeProjection>): NodeId[] {
@@ -592,33 +560,6 @@ function ancestorIds(nodeId: NodeId, nodes: ReadonlyMap<NodeId, NodeProjection>)
     current = nodes.get(current.parentId);
   }
   return ancestors;
-}
-
-function nodeIsInTrash(nodeId: NodeId, nodes: ReadonlyMap<NodeId, NodeProjection>): boolean {
-  let current = nodes.get(nodeId);
-  const visited = new Set<NodeId>();
-  while (current && !visited.has(current.id)) {
-    if (current.id === TRASH_ID || current.parentId === TRASH_ID) return true;
-    visited.add(current.id);
-    current = current.parentId ? nodes.get(current.parentId) : undefined;
-  }
-  return false;
-}
-
-function isDayNodeInsideDailyNotes(node: NodeProjection, nodes: ReadonlyMap<NodeId, NodeProjection>): boolean {
-  if (!node.tags.includes(TAG_DAY_ID)) return false;
-  let current: NodeProjection | undefined = node;
-  const visited = new Set<NodeId>();
-  while (current?.parentId && !visited.has(current.id)) {
-    if (current.parentId === DAILY_NOTES_ID) return true;
-    visited.add(current.id);
-    current = nodes.get(current.parentId);
-  }
-  return false;
-}
-
-function isLeafMemoryCategory(value: MemoryCategory | null): value is Exclude<MemoryCategory, 'memory' | 'episode'> {
-  return value === 'belief' || value === 'question' || value === 'guidance';
 }
 
 function historyMutationMayChangeMemory(

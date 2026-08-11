@@ -20,6 +20,7 @@ import {
   type DocumentProjection,
   type NodeProjection,
 } from '../../../../core/types';
+import { nodeIsInSubtree } from '../../../../core/treeUtils';
 import { Mutex } from '../../Mutex';
 
 export const MEMORY_RECEIPT_SCOPE = DAILY_NOTES_ID;
@@ -287,51 +288,40 @@ export function canonicalMemoryGraph(projection: DocumentProjection): CanonicalM
   const canonicalIds = new Set<string>();
 
   for (const node of tagged) {
-    if (!node.tags.includes(memoryTagId('memory')) || !node.parentId) continue;
-    const parent = index.get(node.parentId);
-    if (!parent || !isDayNodeInsideDailyNotes(parent, index) || isInTrash(node.id, index)) continue;
-    const sourceDate = parent.content.text;
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(sourceDate)) continue;
-    const container: CanonicalMemoryNode = {
-      node,
-      category: 'memory',
-      sourceDate,
-      containerId: node.id,
-      episodeId: null,
-    };
+    const container = canonicalMemoryNodeFromIndex(node, index);
+    if (!container || container.category !== 'memory') continue;
     containers.push(container);
     nodes.push(container);
     canonicalIds.add(node.id);
 
     for (const episodeId of node.children) {
       const episode = index.get(episodeId);
-      if (!episode || !episode.tags.includes(memoryTagId('episode')) || isInTrash(episode.id, index)) continue;
-      const episodeEntry: CanonicalMemoryNode = {
-        node: episode,
-        category: 'episode',
-        sourceDate,
-        containerId: node.id,
-        episodeId: episode.id,
-      };
+      if (!episode) continue;
+      const episodeEntry = canonicalMemoryNodeFromIndex(episode, index);
+      if (
+        !episodeEntry
+        || episodeEntry.category !== 'episode'
+        || episodeEntry.containerId !== container.node.id
+      ) continue;
       nodes.push(episodeEntry);
       canonicalIds.add(episode.id);
       const stack = [...episode.children];
+      const visited = new Set<string>();
       while (stack.length > 0) {
         const childId = stack.shift()!;
+        if (visited.has(childId)) continue;
+        visited.add(childId);
         const child = index.get(childId);
-        if (!child || isInTrash(child.id, index)) continue;
+        if (!child) continue;
         stack.push(...child.children);
-        const category = child.tags.map(memoryCategoryForTagId).find((value) => (
-          value === 'belief' || value === 'question' || value === 'guidance'
-        ));
-        if (!category) continue;
-        nodes.push({
-          node: child,
-          category,
-          sourceDate,
-          containerId: node.id,
-          episodeId: episode.id,
-        });
+        const entry = canonicalMemoryNodeFromIndex(child, index);
+        if (
+          !entry
+          || !isLeafMemoryCategory(entry.category)
+          || entry.containerId !== container.node.id
+          || entry.episodeId !== episode.id
+        ) continue;
+        nodes.push(entry);
         canonicalIds.add(child.id);
       }
     }
@@ -342,6 +332,92 @@ export function canonicalMemoryGraph(projection: DocumentProjection): CanonicalM
     nodes: Object.freeze(nodes),
     strayTaggedNodeIds: Object.freeze(tagged.map((node) => node.id).filter((id) => !canonicalIds.has(id))),
   };
+}
+
+export function canonicalMemoryNodeFromIndex(
+  node: NodeProjection,
+  index: ReadonlyMap<string, NodeProjection>,
+): CanonicalMemoryNode | null {
+  if (nodeIsInSubtree(index, node.id, TRASH_ID)) return null;
+  const directContainer = canonicalMemoryContainer(node, index);
+  if (directContainer) return directContainer;
+
+  const path: NodeProjection[] = [node];
+  const visited = new Set<string>([node.id]);
+  let current = node.parentId ? index.get(node.parentId) : undefined;
+  while (current && !visited.has(current.id)) {
+    visited.add(current.id);
+    path.push(current);
+    const container = canonicalMemoryContainer(current, index);
+    if (container) {
+      const episode = path.at(-2);
+      if (!episode || !episode.tags.includes(memoryTagId('episode'))) return null;
+      if (node.id === episode.id) {
+        return {
+          node,
+          category: 'episode',
+          sourceDate: container.sourceDate,
+          containerId: container.node.id,
+          episodeId: episode.id,
+        };
+      }
+      const category = node.tags.map(memoryCategoryForTagId).find(isLeafMemoryCategory);
+      return category ? {
+        node,
+        category,
+        sourceDate: container.sourceDate,
+        containerId: container.node.id,
+        episodeId: episode.id,
+      } : null;
+    }
+    current = current.parentId ? index.get(current.parentId) : undefined;
+  }
+  return null;
+}
+
+export function canonicalMemoryContainerAncestorFromIndex(
+  node: NodeProjection,
+  index: ReadonlyMap<string, NodeProjection>,
+): CanonicalMemoryNode | null {
+  const visited = new Set<string>();
+  let current: NodeProjection | undefined = node;
+  while (current && !visited.has(current.id)) {
+    visited.add(current.id);
+    const container = canonicalMemoryContainer(current, index);
+    if (container) return container;
+    current = current.parentId ? index.get(current.parentId) : undefined;
+  }
+  return null;
+}
+
+function canonicalMemoryContainer(
+  node: NodeProjection,
+  index: ReadonlyMap<string, NodeProjection>,
+): CanonicalMemoryNode | null {
+  if (
+    !node.tags.includes(memoryTagId('memory'))
+    || !node.parentId
+    || nodeIsInSubtree(index, node.id, TRASH_ID)
+  ) return null;
+  const day = index.get(node.parentId);
+  if (
+    !day
+    || !isDayNodeInsideDailyNotes(day, index)
+    || !/^\d{4}-\d{2}-\d{2}$/.test(day.content.text)
+  ) return null;
+  return {
+    node,
+    category: 'memory',
+    sourceDate: day.content.text,
+    containerId: node.id,
+    episodeId: null,
+  };
+}
+
+function isLeafMemoryCategory(
+  value: MemoryCategory | null,
+): value is Exclude<MemoryCategory, 'memory' | 'episode'> {
+  return value === 'belief' || value === 'question' || value === 'guidance';
 }
 
 export function timelineDigest(value: unknown): string {
@@ -497,16 +573,6 @@ function isDayNodeInsideDailyNotes(node: NodeProjection, index: ReadonlyMap<stri
   return false;
 }
 
-function isInTrash(nodeId: string, index: ReadonlyMap<string, NodeProjection>): boolean {
-  let current = index.get(nodeId);
-  const visited = new Set<string>();
-  while (current?.parentId && !visited.has(current.id)) {
-    if (current.parentId === TRASH_ID) return true;
-    visited.add(current.id);
-    current = index.get(current.parentId);
-  }
-  return nodeId === TRASH_ID;
-}
 
 function stableJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;

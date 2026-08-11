@@ -422,7 +422,16 @@ const documentService = new DocumentService();
 const extensionRegistry = new ExtensionRegistry();
 const memoryControlStore = new MemoryControlStore(join(app.getPath('userData'), 'agent', 'memories.sqlite'));
 const timelineMemoryStore = new TimelineMemoryStore(documentService);
-const memoryExtension = new MemoryExtension(memoryControlStore, timelineMemoryStore);
+const memoryExtension = new MemoryExtension(memoryControlStore, timelineMemoryStore, {
+  onError: (error, operation) => reportError({
+    domain: 'memory',
+    severity: 'error',
+    code: `memory-${operation}-failed`,
+    message: `Memory ${operation} failed.`,
+    context: { operation },
+    error,
+  }),
+});
 const importService = new AgentImportService(documentService, { toolName: 'tenon-import' });
 const importApiServer = new AgentImportApiServer(importService, { userDataDir: app.getPath('userData') });
 configureTenonImportRuntime({
@@ -772,6 +781,14 @@ documentService.setMutationGuard((command, args, meta, projection) => {
   return { affectsMemory: memoryExtension.authorizeMutation(command, args, meta, projection) };
 });
 documentService.setMutationObserver(memoryExtension);
+documentService.setMutationObserverErrorHandler((error, phase) => reportError({
+  domain: 'memory',
+  severity: 'error',
+  code: `memory-document-observer-${phase}-failed`,
+  message: `Memory document observer failed during ${phase}.`,
+  context: { operation: phase },
+  error,
+}));
 documentService.setMutationCoordinator((meta, operation) => (
   meta.origin === 'system' && meta.operationId?.startsWith('memory:')
     ? operation()

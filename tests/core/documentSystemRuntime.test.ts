@@ -302,9 +302,48 @@ describe('Document system runtime', () => {
     expect(deliveries).toHaveLength(1);
   });
 
-  test('does not roll back the Memory index after the document commit boundary', async () => {
+  test('preserves net-zero transactions while exposing intermediate observer and collector deltas', async () => {
+    const instance = await service();
+    const observedChanges: DocumentTransactionProjectionChanges[] = [];
+    const deliveries: ProjectionChangedDelivery[] = [];
+    let commits = 0;
+    instance.setMutationObserver({
+      beginTransaction: () => undefined,
+      applyTransactionChanges: (changes) => observedChanges.push(changes),
+      commitTransaction: () => { commits += 1; },
+      rollbackTransaction: () => undefined,
+      projectionChanged: (delivery) => deliveries.push(delivery),
+    });
+    const revisionBefore = instance.projectionSnapshot().revision;
+    let collectorChanges: DocumentTransactionProjectionChanges | null = null;
+    let nodeId = '';
+
+    await instance.transaction({ origin: 'agent', tool: 'net-zero-test' }, async () => {
+      const result = await instance.handle('create_node', {
+        parentId: instance.getProjection().rootId,
+        index: null,
+        text: 'Transient',
+      }) as { focus?: { nodeId?: string } };
+      nodeId = result.focus?.nodeId ?? '';
+      await instance.handle('delete_node', { nodeId });
+      collectorChanges = instance.drainTransactionProjectionChanges();
+    });
+
+    expect(observedChanges).toHaveLength(2);
+    expect(observedChanges[0]?.changedNodes.some((node) => node.id === nodeId)).toBe(true);
+    expect(observedChanges[1]?.removedIds).toContain(nodeId);
+    expect(collectorChanges?.removedIds).toContain(nodeId);
+    expect(commits).toBe(1);
+    expect(instance.projectionSnapshot().revision).toBe(revisionBefore);
+    expect(deliveries).toEqual([]);
+    expect((await instance.operationHistory({ origin: 'agent' })).items)
+      .not.toContainEqual(expect.objectContaining({ tool: 'net-zero-test' }));
+  });
+
+  test('keeps a committed mutation successful when the observer commit fails', async () => {
     const instance = await service();
     const deliveries: ProjectionChangedDelivery[] = [];
+    const observerErrors: string[] = [];
     let rollbacks = 0;
     const observer: DocumentMutationObserver = {
       beginTransaction: () => undefined,
@@ -314,6 +353,7 @@ describe('Document system runtime', () => {
       projectionChanged: (delivery) => deliveries.push(delivery),
     };
     instance.setMutationObserver(observer);
+    instance.setMutationObserverErrorHandler((_error, phase) => observerErrors.push(phase));
     let createdId = '';
 
     await expect(instance.transaction({ origin: 'agent', tool: 'observer-commit-test' }, async () => {
@@ -323,12 +363,13 @@ describe('Document system runtime', () => {
         text: 'Committed before observer failure',
       }) as { focus?: { nodeId?: string } };
       createdId = result.focus?.nodeId ?? '';
-    })).rejects.toThrow('observer commit failed');
+    })).resolves.toBeUndefined();
 
     expect(rollbacks).toBe(0);
+    expect(observerErrors).toEqual(['commit-transaction']);
     expect(instance.getProjection().nodes.some((node) => node.id === createdId)).toBe(true);
     expect(deliveries).toHaveLength(1);
-    expect(deliveries[0].transactionIndexed).toBe(true);
+    expect(deliveries[0].transactionIndexed).not.toBe(true);
     await instance.flushPendingChanges();
   });
 

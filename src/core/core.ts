@@ -196,6 +196,7 @@ interface CoreTransaction {
   metadata: CoreTransactionMetadata;
   chunkedCommits: number;
   affectedNodeIds: Set<NodeId>;
+  originalNodes: Map<NodeId, Node | undefined>;
   changed: boolean;
   chunkUndoValue?: OperationHistoryEntry;
 }
@@ -812,6 +813,7 @@ export class Core {
       metadata,
       chunkedCommits: 0,
       affectedNodeIds: new Set(),
+      originalNodes: new Map(),
       changed: false,
     };
     try {
@@ -838,6 +840,7 @@ export class Core {
     const transaction = this.activeTransaction;
     if (!transaction) return;
     this.patchActiveTransactionTouchedNodes(transaction);
+    this.captureActiveTransactionNetChanges(transaction);
     this.loro.commit(transaction.origin, this.chunkUndoValueForTransaction(transaction));
     transaction.chunkedCommits += 1;
   }
@@ -3038,6 +3041,7 @@ export class Core {
 
   private finalizeActiveTransaction(transaction: CoreTransaction): boolean {
     this.patchActiveTransactionTouchedNodes(transaction);
+    this.captureActiveTransactionNetChanges(transaction);
     const systemChanged = this.loro.drainSystemDataChanged();
     if (!transaction.changed && !systemChanged) return false;
     const affectedNodeIds = [...transaction.affectedNodeIds].sort();
@@ -3047,17 +3051,29 @@ export class Core {
   }
 
   private patchActiveTransactionTouchedNodes(transaction: CoreTransaction): TouchedMutationPatch {
-    const patch = this.drainTouchedMutationPatch();
-    if (patch.changed) {
-      transaction.changed = true;
-      for (const id of patch.affectedNodeIds) transaction.affectedNodeIds.add(id);
-    }
-    return patch;
+    return this.drainTouchedMutationPatch((affectedNodeIds) => {
+      for (const nodeId of affectedNodeIds) {
+        if (!transaction.originalNodes.has(nodeId)) {
+          transaction.originalNodes.set(nodeId, this.stateValue.nodes[nodeId]);
+        }
+      }
+    });
   }
 
-  private drainTouchedMutationPatch(): TouchedMutationPatch {
+  private captureActiveTransactionNetChanges(transaction: CoreTransaction): void {
+    const changedNodeIds = changedTransactionNodeIds(transaction.originalNodes, this.stateValue.nodes);
+    transaction.originalNodes.clear();
+    if (changedNodeIds.length === 0) return;
+    transaction.changed = true;
+    for (const nodeId of changedNodeIds) transaction.affectedNodeIds.add(nodeId);
+  }
+
+  private drainTouchedMutationPatch(
+    beforePatch?: (affectedNodeIds: readonly string[]) => void,
+  ): TouchedMutationPatch {
     const affectedNodeIds = this.loro.drainTouchedNodeIds();
     if (affectedNodeIds.length === 0) return { affectedNodeIds, changed: false, afterNodes: new Map() };
+    beforePatch?.(affectedNodeIds);
     const afterNodes = this.loro.materializeNodes(affectedNodeIds);
     // Exact change detection at O(touched): a node is changed iff its committed
     // pre-mutation snapshot differs from its post-mutation materialization.
@@ -4674,6 +4690,22 @@ function changedTouchedNodeIds(
     if (before === undefined || after === undefined) return before !== after;
     return !sameJson(before, after);
   });
+}
+
+function changedTransactionNodeIds(
+  originalNodes: ReadonlyMap<string, Node | undefined>,
+  currentNodes: Readonly<Record<string, Node>>,
+): string[] {
+  const changed: string[] = [];
+  for (const [nodeId, before] of originalNodes) {
+    const after = currentNodes[nodeId];
+    if (before === undefined || after === undefined) {
+      if (before !== after) changed.push(nodeId);
+    } else if (!sameJson(before, after)) {
+      changed.push(nodeId);
+    }
+  }
+  return changed;
 }
 
 function commitOriginFor(origin: CommitOrigin) {
