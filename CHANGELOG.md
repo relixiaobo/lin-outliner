@@ -54,6 +54,30 @@ Entries reference the pull request that introduced them.
   Thread now skips its own resume instead of emptying the Agent pane. The
   overlay's rollback also stopped deep-cloning every open Item on every
   transaction and now journals inverse mutations for only the keys it touched.
+- **A malformed tool call no longer kills the Turn on an OpenAI-Responses relay
+  (PR #527, codex-2)** — one bad function-tool contract could spin a Turn until
+  it died with nothing to show. Three layers close it, and only together. On the
+  wire, every Responses-family function tool now carries an explicit boolean
+  `strict`: `pi-ai` omitted the field whenever compatibility said strict mode was
+  unsupported (including the default official-OpenAI path) and the Codex adapter
+  sent `null`, leaving an intermediary free to reinterpret optional fields —
+  Tenon now writes `false` in both cases and refuses to send an ambiguous
+  contract at all. In the kernel, admission validates the exact prepared JSON:
+  the dependency validator used to run `Value.Convert` plus JSON-schema coercion,
+  so a model's `"5"` quietly became `5` and each tool received values with
+  different JSON semantics from the model output; `prepareArguments` is now the
+  only place allowed to normalize, and the admitted value is cloned so a tool
+  handler can no longer mutate the assistant message that gets replayed to the
+  provider. And a Turn-local fingerprint (canonical identity + schema digest +
+  attempted arguments + reason) quarantines a tool on the second *identical*
+  rejected call while different arguments still get their retry, with an
+  eight-failure ceiling that closes tool exposure for one final response rather
+  than looping. Runtime-provided schemas are compiled at their exposure
+  boundary, where one malformed extension or MCP contribution is omitted and
+  diagnosed while its valid siblings stay available — but a contribution whose
+  canonical key collides with a Core tool, or a Core capability schema that
+  cannot compile, stays a structural failure instead of silently deleting a
+  built-in tool from the thread.
 
 ### Internal
 

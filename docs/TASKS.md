@@ -45,9 +45,8 @@ theme-section entry below; this list is the ordering, not a second record):
   `scripts-typecheck-coverage` · `plan-reference-guard` · #208 follow-ups).
   `dark-mode-contrast-pass` still runs **last** per its own rule; `performance` P3
   remains an uncapped background lane (trail + remaining items under **Performance**).
-- **Lane B — agent reliability**: `responses-tool-contract-hardening` now leads
-  (P1, plan ratified 2026-08-11 via #526; item under Agent capabilities). Behind
-  it, the earlier candidates stand: `agent-tool-artifact-resources`, then
+- **Lane B — agent reliability**: `responses-tool-contract-hardening` shipped
+  #527, so `agent-tool-artifact-resources` leads, then
   `computer-pilot-managed-skill` on top of it. The next *major* agent bet is a PM
   direction call, not a backlog pop.
 - **Lane C — product surface**: `update-check-and-prompt` shipped #514; next is the
@@ -451,19 +450,22 @@ see *Recently completed*.
   **agent-tool-artifact-resources** item under standalone agent items.
 Standalone agent items (not part of the program):
 
-- **responses-tool-contract-hardening** (P1, `draft` — plan ratified 2026-08-11,
-  landed via #526; builds as ONE implementation PR) —
-  [`plans/responses-tool-contract-hardening.md`](plans/responses-tool-contract-hardening.md)
-  closes a dead-Turn class observed on an OpenAI-Responses relay with three layers
-  that only hold together: every Responses-family function tool carries an explicit
-  boolean `strict` (absent, and the Codex adapter's `null` sentinel, normalize to
-  `false` — never left to an intermediary to interpret); kernel admission validates
-  the exact prepared JSON with no scalar coercion, replacing the dependency
-  validator's generic conversions; and a Turn-local fingerprint quarantines a tool
-  on the second identical rejected call, with an eight-failure ceiling closing tool
-  exposure for the rest of the Turn. Both open questions were ratified with the
-  plan (the eight-failure ceiling and the cross-family scope). Gate note: the diff
-  touches kernel + wire + runtime + two specs → `/code-review ultra`.
+- **responses-tool-contract-hardening** (P1, `done` 2026-08-11; plan PR #526,
+  implementation PR #527, codex-2) — the dead-Turn class observed on an
+  OpenAI-Responses relay is closed by three layers that only hold together: an
+  explicit boolean `strict` on every Responses-family function-tool payload, exact
+  kernel admission with no scalar coercion, and a Turn-local fingerprint that
+  quarantines a tool on the second identical rejected call under an eight-failure
+  ceiling. Design folded into `docs/spec/agent-tool-design.md` and
+  `docs/spec/agent-model-runtime.md`; plan archived at
+  `docs/plans/archive/responses-tool-contract-hardening.md`. **Open PM call:**
+  `truncatedArguments` counts toward that ceiling and can quarantine a healthy
+  tool — the plan mandates it (Design §5), but truncation is a property of
+  `max_output_tokens`, not of the tool, and the same code path tells the model to
+  re-issue the call it then refuses to expose. The gate flagged it as the one
+  ratified premise worth revisiting; four sibling objections (coercion removal,
+  the never-reset ceiling, `strict: false` on the official path, fail-closed on a
+  non-boolean `strict`) were checked against the plan and stand as written.
 - **agent-secrets-windows-acl** (P3, *no plan file*) — follow-up from #115: the
   plaintext `agent-secrets.json` is hardened to `0600`/`0700` on POSIX only;
   Windows currently falls back to the user-profile ACL with no extra restriction.
@@ -858,6 +860,16 @@ One line per merge, newest first; the retrospective lives in the CHANGELOG entry
 and the merged PR, distilled rules in [`lessons.md`](lessons.md). Everything
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
+
+- **responses-tool-contract-hardening** (codex-2, PR #527, merged 2026-08-11 — plan
+  archived) — a malformed tool contract no longer spins a Turn to death on an
+  OpenAI-Responses relay: every Responses-family function tool carries an explicit
+  boolean `strict` on the wire, kernel admission validates the exact prepared JSON
+  with `prepareArguments` as the only normalizer, and a Turn-local fingerprint
+  quarantines a tool on the second identical rejected call under an eight-failure
+  ceiling. Gate ran `/code-review high` (10 findings; 5 fixed in c2b5e723, 5 checked
+  against the ratified plan and left as design calls) plus `typecheck` + `test:core`
+  green at 2110 pass / 0 fail.
 
 - **agent-streaming-delta-pipeline** (codex, PR #525, merged 2026-08-11 — plan archived) —
   a streaming Turn no longer pays a full persist cycle per provider chunk: rollout appends

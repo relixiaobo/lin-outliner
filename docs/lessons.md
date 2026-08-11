@@ -787,3 +787,21 @@ from *has no data*, and then ask which side actually holds the surviving copy:
 the fix rebuilds the missing rollout from the projection, the reverse of the
 original direction. Any reconcile whose repair is a delete deserves this check
 by construction.
+
+## Degrading instead of throwing must be scoped to the source you distrust
+
+A12 says a bad extension or MCP contribution should be omitted and diagnosed
+rather than kill an unrelated user Turn, so #527 replaced a `throw` with a
+skip — and recorded each skipped contract in a set keyed by *canonical tool
+name*. Two things then leaked past the intended blast radius. The skip applied
+to every runtime tool, so a first-party capability schema that failed to compile
+also vanished behind one `console.warn`; and because the eviction key was a name
+rather than the contribution, an extension declaring `bash` deleted the **real**
+`bash` from that thread — the untrusted input had gained the power to disable a
+trusted neighbour, which the previous fail-closed version denied it. When you
+convert a structural failure into a degradation, scope it twice: to the exact
+set of entries whose author you distrust, and to a key space that author cannot
+reach into. Everything else stays a structural failure. The matching test trap
+is the same shape — the new guard built stand-in schemas for the contracts it
+could not construct, so it exercised none of the ones the change actually put at
+risk.
