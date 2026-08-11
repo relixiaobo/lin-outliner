@@ -120,7 +120,8 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
   disclosure remains folded. A folded disclosure keeps its chevron hidden at
   rest and reveals it on hover or keyboard focus without changing row geometry;
   an open disclosure keeps the chevron visible. An empty live Item retains the
-  `Thinking` placeholder
+  `Thinking` placeholder and marks only that placeholder with `WorkingText`;
+  once readable reasoning arrives, the streamed content remains static
 - consecutive command, file, MCP, dynamic-tool, collaboration, and search Items
   form one counted activity disclosure without creating another data model
 - each tool row derives a readable summary from its canonical fields and exposes
@@ -183,18 +184,18 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
   only as `<<WORD`, never a here-string or a bit shift, and a root working
   directory has no prefix worth stripping. The renderer does not otherwise
   interpret shell syntax
-- a tool row keeps its own tool-type icon in every terminal state, so a broken
-  row still says which tool broke; only the running state substitutes a glyph,
-  because there the spinner *is* the state. Status is carried by colour on that
-  glyph plus the label — failure tints both with `--status-danger`, an
-  interrupted row is muted rather than alarmed — and the label wording always
-  names the state, so no row encodes status by colour alone. The status colour
-  rides on the label and never becomes a fill, ring, or second slot geometry, and
-  it persists through hover, focus, and expansion instead of being swapped away
-  by the disclosure chevron. A running row likewise keeps its spinner through
-  hover, focus, and expansion, and a group only ever animates its own glyph, not
-  the finished children inside it. The indicator is decorative to assistive
-  technology: the label text and `aria-expanded` carry the state
+- a tool row keeps its own tool-type icon in every state, so a running or broken
+  row still says which tool is involved. While running, only the neutral action
+  segment uses `WorkingText`, and that segment has 600 weight as its static cue;
+  a caller-authored command description remains exact rather than being rewritten
+  into progressive copy. Failure still tints the glyph plus label with
+  `--status-danger`, and an interrupted row is muted rather than alarmed. The
+  label wording always names terminal state, so no row encodes status by colour
+  alone. Status colour never becomes a fill, ring, or second slot geometry and
+  persists through hover, focus, and expansion. The semantic glyph uses the
+  ordinary disclosure-chevron handoff instead of doubling as a spinner. Both
+  glyph layers are decorative to assistive technology: the label text and
+  `aria-expanded` carry the state
 - a tool row says **what the agent did**, in the user's terms, and never shows a
   model-facing tool identifier for a tool the renderer can map: built-in tool
   calls resolve to one shared activity vocabulary, and the identifier survives
@@ -229,8 +230,10 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
   appended tally of what went wrong ("Ran 3 commands · 1 failed · 1 interrupted")
   carries status colour — the failed count in `--status-danger`, the interrupted
   count muted. Colouring the whole line would say every call in the group failed
-  when one of them did. The group's own status class still drives the running
-  spinner, and each member row inside carries its own status treatment
+  when one of them did. A collapsed running group applies `WorkingText` only to
+  its neutral summary. Expanding it freezes that summary and mounts each member's
+  own treatment, so only in-progress members move; collapsing transfers motion
+  back to the group summary in the same render. Finished members remain static
 - bounded tool-result projections render immediately; expanding a row resolves
   its content-addressed `outputRef` once and replaces the projection with the
   full text, while copied Turns use the same full result
@@ -308,7 +311,9 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
   A running child measures from its start; a settled one has no clock left, so
   the duration is the one its own Turn recorded, and a row left with only a
   terminal Item after a reload states the status alone rather than inventing a
-  span.
+  span. The form glyph and identity name stay static while a `pendingInit` or
+  running status phrase alone uses `WorkingText`; the separate fixed-size Stop
+  action remains available while the child can be interrupted.
   The name ellipsizes and the status never does, so a row can never truncate
   away the outcome it is reporting. A failed row exposes a
   bounded user-facing error on its own wrapping line and tints its glyph and label with
@@ -322,7 +327,10 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
   current truth. The snapshot remains available in expanded result JSON and in
   Turn copy after a child is deleted. Renderer user surfaces never resolve a
   collaboration Item's raw `outputRef`, because the model-facing result also
-  contains internal budget receipts; they expose only the typed snapshot
+  contains internal budget receipts; they expose only the typed snapshot. When a
+  collaboration tool detail is expanded, each child keeps its Agent glyph and
+  identity static while a live status phrase uses `WorkingText`; that mounted
+  child status owns motion instead of the parent tool summary
 - Memory used by an answer renders through the ordinary inline Node-reference
   affordance next to the supported claim; `node_search` and `node_read` remain
   in the process and Turn Diagnostics, with no separate Memory Item or disclosure
@@ -335,8 +343,8 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
 A delegated child has ONE presentation for its whole life: the delegation row
 in its Turn's process timeline, in the delegating call's canonical slot. It does
 not change surface, shape, or position when the child settles — live it carries a
-spinner and a Stop that interrupts that child alone, and settled it keeps the
-same slot and states the outcome, so the post-hoc rendering IS the live row
+moving status phrase and a Stop that interrupts that child alone, and settled it
+keeps the same slot and states the outcome, so the post-hoc rendering IS the live row
 rather than a second thing the reader has to re-find. It carries the delegated
 form's own glyph and shares the type ramp and resting colour of the tool rows
 around it: a delegation is one more thing the Turn did, not an event announced in
@@ -389,10 +397,16 @@ inspection-only provider boundary cannot create an empty process block, split a
 consecutive tool group, count against lone reasoning, or add an invisible flex
 interval between visible rows.
 
+The live status row uses `WorkingText` only while no more-specific mounted live
+tool, empty `Thinking` placeholder, Subagent status, or readable streaming Item
+owns or statically suppresses that cue. Once a specific process representation
+exists, the Turn summary stays static. Completed collapsible summaries and
+terminal summaries are always static.
+
 The status line never claims more than the run is doing. A settled Turn is
 described in the past — it never falls through to the live `Working` label —
 and when a Turn is **blocked on the user** (`waitingOnUserInput`) the line says
-so and the spinner stops, because a spinner claims work is happening. The
+so and contains no `WorkingText`, because motion would claim progress. The
 elapsed time is deliberately **not** adjusted: it is wall-clock since the Turn
 started, the same span the server records as `durationMs`, so the live label
 and the settled one measure the same thing and cannot contradict each other.
@@ -971,7 +985,11 @@ affordance is **the current step's text**, not a bare counter: `2/5 · Draft the
 summary`, ellipsized to one line, on a fixed single-line height so it never
 reflows the composer. A Plan whose every step is complete reads as complete
 rather than as its last step. The current step is the first `in_progress` step,
-then the first `pending` one.
+then the first `pending` one. An incomplete closed pill keeps `PlanToolIcon`
+static and applies `WorkingText` only to that summary label while the Turn is
+advancing. A Turn blocked on user input keeps the closed Plan summary static.
+Opening the Plan removes all Plan motion, and collapsing resumes only the
+summary sweep once the Turn is advancing again.
 
 The pill also renders on a Thread that has **no composer** — a watched child or
 automation Thread — because `update_plan` is `anyThread`-scoped and such a
@@ -980,8 +998,9 @@ destination differs, since there is no composer to return to.
 
 Hover previews the complete checklist; activating the summary opens the same
 scrollable checklist and moves keyboard focus into it. The current step is
-marked by weight and text colour rather than by the spinning icon alone, whose
-cue disappears entirely under reduced motion; completed steps stay dimmed. Step
+marked by strong text, 600 weight, a neutral filled dot in the fixed status slot,
+and `aria-current="step"`; it never shimmers. Completed steps stay dimmed and use
+a check glyph, while pending steps keep a static hollow dot. Step
 rows carry their status as text for assistive technology, since the icons are
 decorative, and the live announcement includes the current step's text rather
 than only a counter. Deliberately closing it — Escape, or re-activating the

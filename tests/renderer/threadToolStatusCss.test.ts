@@ -73,21 +73,15 @@ describe('thread tool row status CSS guards', () => {
     }
   });
 
-  test('spins only the running row own glyph, and stops under reduced motion', () => {
+  test('uses running action weight as the static cue and never spins the semantic glyph', () => {
     expect(threadCss).toMatch(
-      /\.thread-tool-inProgress > \.thread-tool-toggle \.thread-disclosure-status svg,\s*\.thread-tool-inProgress > \.thread-tool-activity-toggle \.thread-disclosure-status svg \{\s*animation:\s*thread-tool-spin/,
+      /\.thread-tool-inProgress > \.thread-tool-toggle \.thread-tool-summary-act,\s*\.thread-tool-inProgress > \.thread-tool-activity-toggle \.thread-tool-summary-act \{\s*font-weight:\s*600;/,
     );
-    const reducedMotion = threadCss.slice(threadCss.indexOf('@media (prefers-reduced-motion: reduce)'));
-    expect(reducedMotion).toContain('.thread-tool-inProgress > .thread-tool-toggle .thread-disclosure-status svg');
-    expect(reducedMotion).toContain('.thread-tool-inProgress > .thread-tool-activity-toggle .thread-disclosure-status svg');
+    expect(threadCss).not.toMatch(/\.thread-tool-inProgress[^{]*\.thread-disclosure-status svg\s*\{[^}]*animation:/);
   });
 
-  test('keeps a running row spinner visible through hover, focus, and expansion', () => {
-    expect(threadCss).toMatch(
-      /\.thread-tool-inProgress > \.thread-tool-toggle:hover \.thread-disclosure-status,[\s\S]*?\.is-expanded \.thread-disclosure-status \{\s*opacity:\s*1;/,
-    );
-    expect(threadCss).toMatch(
-      /\.thread-tool-inProgress > \.thread-tool-toggle:hover \.thread-disclosure-chevron,[\s\S]*?\.is-expanded \.thread-disclosure-chevron \{\s*opacity:\s*0;/,
-    );
+  test('lets running rows use the ordinary disclosure glyph and chevron handoff', () => {
+    expect(threadCss).not.toContain('.thread-tool-inProgress > .thread-tool-toggle:hover .thread-disclosure-status');
+    expect(threadCss).not.toContain('.thread-tool-inProgress > .thread-tool-toggle:hover .thread-disclosure-chevron');
   });
 });

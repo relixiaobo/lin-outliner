@@ -62,6 +62,7 @@ import {
   ICON_SIZE,
   InfoIcon,
   LoaderIcon,
+  PlanToolIcon,
   RefreshIcon,
   SendIcon,
   StopIcon,
@@ -69,6 +70,7 @@ import {
 } from '../../ui/icons';
 import { IconButton } from '../../ui/primitives/IconButton';
 import { ButtonControl } from '../../ui/primitives/ButtonControl';
+import { WorkingText } from '../../ui/primitives/WorkingText';
 import { ThreadGoalView } from './ThreadGoalView';
 import { ThreadComposerModelControl } from './ThreadComposerModelControl';
 import { UserInputRequest } from './UserInputRequest';
@@ -1737,12 +1739,16 @@ export function ThreadView({
           show it. Read-only there: no composer to hand focus back to. */}
       {!composerEnabled && activePlan ? (
         <div className="thread-composer-region thread-plan-progress-region">
-          <ThreadPlanProgress plan={activePlan} />
+          <ThreadPlanProgress plan={activePlan} working={!waitingOnUserInput} />
         </div>
       ) : null}
       {composerEnabled ? <div className="thread-composer-region thread-composer" ref={composerRegionRef}>
         {activePlan ? (
-          <ThreadPlanProgress onClosed={() => composerRef.current?.focus()} plan={activePlan} />
+          <ThreadPlanProgress
+            onClosed={() => composerRef.current?.focus()}
+            plan={activePlan}
+            working={!waitingOnUserInput}
+          />
         ) : null}
         <div
           className={`thread-composer-surface${dragActive ? ' is-dragging' : ''}`}
@@ -2340,11 +2346,13 @@ function ThreadProviderRetryStatus({ status }: { readonly status: ProviderRetryS
 function ThreadPlanProgress({
   onClosed,
   plan,
+  working,
 }: {
   /** Where focus goes when the checklist closes. Absent on a Thread with no
    *  composer, where it returns to the pill instead. */
   readonly onClosed?: () => void;
   readonly plan: ActiveTurnPlan;
+  readonly working: boolean;
 }) {
   const t = useT();
   const summaryId = useId();
@@ -2401,8 +2409,10 @@ function ThreadPlanProgress({
       >
         {complete
           ? <CheckIcon aria-hidden size={ICON_SIZE.tiny} />
-          : <LoaderIcon aria-hidden className="thread-plan-progress-spinner" size={ICON_SIZE.tiny} />}
-        <span className="thread-plan-progress-label">{label}</span>
+          : <PlanToolIcon aria-hidden size={ICON_SIZE.tiny} />}
+        {!complete && !open && working
+          ? <WorkingText className="thread-plan-progress-label" text={label} truncate />
+          : <span className="thread-plan-progress-label">{label}</span>}
       </button>
       {/* The announcement carries the step text, not just the counter — a
           counter alone tells a screen-reader user nothing changed but a number. */}
@@ -2427,10 +2437,13 @@ function ThreadPlanProgress({
         {plan.explanation ? <p>{plan.explanation}</p> : null}
         <ol>
           {plan.plan.map((step, index) => (
-            <li className={`is-${step.status}`} key={`${index}:${step.step}`}>
+            <li
+              aria-current={step.status === 'in_progress' ? 'step' : undefined}
+              className={`is-${step.status}`}
+              key={`${index}:${step.step}`}
+            >
               <span aria-hidden className="thread-plan-step-status">
                 {step.status === 'completed' ? <CheckIcon size={ICON_SIZE.tiny} /> : null}
-                {step.status === 'in_progress' ? <LoaderIcon size={ICON_SIZE.tiny} /> : null}
               </span>
               <span>
                 <span className="thread-visually-hidden">
@@ -2585,6 +2598,9 @@ function ThreadProcessBlock({
     turn, items, hasFinalResponse, liveElapsedMs, t, index, subagents, blockedOnUser,
   );
   const timelineVisible = items.length > 0 && (!collapsible || expanded);
+  const summaryWorking = turn.status === 'inProgress'
+    && !blockedOnUser
+    && !hasSpecificLiveProcessState(turn, items, subagents);
   return (
     <div className={`thread-process-block${turn.status === 'failed' && !hasFinalResponse ? ' is-error' : ''}`}>
       {terminalResponseOwnsStatus ? null : collapsible ? (
@@ -2603,10 +2619,9 @@ function ThreadProcessBlock({
         </ButtonControl>
       ) : (
         <div className="thread-work-divider">
-          <span className="thread-process-title">{summary}</span>
-          {turn.status === 'inProgress' && !blockedOnUser ? (
-            <LoaderIcon className="thread-process-spinner" size={ICON_SIZE.rowGlyph} />
-          ) : null}
+          {summaryWorking
+            ? <WorkingText className="thread-process-title" text={summary} truncate />
+            : <span className="thread-process-title">{summary}</span>}
         </div>
       )}
       {terminalResponseOwnsStatus ? null : <div aria-hidden className="thread-process-rule" />}
@@ -2624,6 +2639,25 @@ function ThreadProcessBlock({
       {timelineVisible ? <div className="thread-process-timeline">{children}</div> : null}
     </div>
   );
+}
+
+function hasSpecificLiveProcessState(
+  turn: Turn,
+  items: readonly ThreadItem[],
+  subagents: SubagentTurnProjection,
+): boolean {
+  if (items.some((item) => isThreadToolItem(item) && item.status === 'inProgress')) return true;
+  if (items.some((item) => (
+    item.type === 'subAgentActivity'
+    && isSubagentWorkingStatus(subagents.byThreadId.get(item.agentThreadId)?.status)
+  ))) return true;
+  const tail = turn.items.at(-1);
+  return tail?.type === 'reasoning'
+    || (tail?.type === 'agentMessage' && tail.phase === 'commentary' && Boolean(tail.text.trim()));
+}
+
+function isSubagentWorkingStatus(status: string | undefined): boolean {
+  return status === 'pendingInit' || status === 'running';
 }
 
 function ThreadStreamingIndicator() {

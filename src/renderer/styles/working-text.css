@@ -1,0 +1,78 @@
+.working-text {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  color: inherit;
+  vertical-align: bottom;
+}
+
+.working-text-base,
+.working-text-sweep-copy {
+  display: block;
+}
+
+.working-text-sweep {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  color: var(--working-text-highlight);
+  opacity: 0;
+  pointer-events: none;
+  -webkit-mask-image: linear-gradient(90deg, transparent 0%, currentColor 20%, currentColor 30%, transparent 50%);
+  mask-image: linear-gradient(90deg, transparent 0%, currentColor 20%, currentColor 30%, transparent 50%);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  animation: working-text-sweep-window var(--motion-working-cycle) linear var(--motion-working-delay) infinite;
+  will-change: transform;
+}
+
+.working-text-sweep-copy {
+  animation: working-text-sweep-copy var(--motion-working-cycle) linear var(--motion-working-delay) infinite;
+  will-change: transform;
+}
+
+.working-text-truncate {
+  width: 100%;
+}
+
+.working-text-truncate > .working-text-base,
+.working-text-truncate > .working-text-sweep > .working-text-sweep-copy {
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes working-text-sweep-window {
+  0% {
+    opacity: 1;
+    transform: translateX(-50%);
+    animation-timing-function: steps(48, end);
+  }
+
+  25%,
+  100% {
+    opacity: 1;
+    transform: translateX(125%);
+  }
+}
+
+@keyframes working-text-sweep-copy {
+  0% {
+    transform: translateX(50%);
+    animation-timing-function: steps(48, end);
+  }
+
+  25%,
+  100% {
+    transform: translateX(-125%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce), (prefers-contrast: more) {
+  .working-text-sweep {
+    display: none;
+  }
+}
