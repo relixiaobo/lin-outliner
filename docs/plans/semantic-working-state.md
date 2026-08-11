@@ -8,20 +8,29 @@ resource loading. The result should make Agent activity easier to scan:
 
 - the icon continues to identify the tool, Skill, Plan, or Subagent;
 - the action text says what is happening and carries the working motion;
+- every working state remains identifiable when animation is disabled;
 - waiting, terminal, recovery, and data-loading states remain visually distinct;
-- one hierarchy does not animate both its summary and its visible child for the
+- one hierarchy does not animate both its summary and its expanded child for the
   same work.
 
-This is shape **(a): one complete feature in one PR**. The shared primitive,
-Thread consumers, Plan consumers, eligible settings actions, specs, tests, and
-light/dark visual evidence land together. No protocol or persistence work is
-required.
+This is shape **(b): a set of two independent complete features**:
+
+1. **Thread working states:** add the shared primitive and adopt it across
+   Thinking, Turn, tool/group, Subagent, and Plan surfaces. This is a complete
+   Thread experience with its own specs, tests, and visual evidence.
+2. **Settings working states:** adopt the landed primitive across Provider and
+   managed-Skill actions, including truthful progressive copy. This is a
+   complete Settings experience with its own specs, tests, and visual evidence.
+
+The Settings feature depends only on the public renderer primitive from the
+Thread feature and lands after it. Neither PR is scaffolding for a later feature,
+and each is independently user-visible and verifiable. No protocol or
+persistence work is required.
 
 The reference behavior was inspected in the locally installed Codex desktop app
-(`com.openai.codex`, version `26.727.51351`). The relevant bundle source is
-preserved below because the extracted files under
-`tmp/research/chatgpt-running-state/` are intentionally gitignored and will not
-exist in another clone.
+(`com.openai.codex`, version `26.727.51351`). This plan records the observed
+behavioral and timing facts needed by Tenon; it does not reproduce the
+commercial production bundle.
 
 ## Non-goals
 
@@ -37,11 +46,10 @@ exist in another clone.
 - Do not change the assistant response streaming rose, Thread-list activity
   dots, search refresh, file translation, Add to Today, copy-key, or other
   icon-only progress controls.
-- Do not add renderer-driven theme state, raw UI colors, a gradient page
-  background, or a feature flag for the shimmer variant.
-- Do not copy Codex component architecture wholesale. Its source is behavioral
-  evidence; Tenon keeps its own primitives, token system, and accessibility
-  rules.
+- Do not add renderer-driven theme state, raw UI colors outside token
+  declarations, a gradient page background, or a shimmer feature flag.
+- Do not copy Codex component architecture. Its inspected behavior is evidence;
+  Tenon keeps its own primitives, token system, and accessibility rules.
 
 ## Design
 
@@ -52,7 +60,7 @@ observable meanings:
 
 | State family | Meaning | Indicator | Examples |
 | --- | --- | --- | --- |
-| Working | Tenon is actively advancing a named action | static identity glyph plus cadenced `WorkingText` | Thinking, running a command, an active Subagent, installing a Skill |
+| Working | Tenon is actively advancing a named action | stable identity/status cue plus cadenced `WorkingText` | Thinking, running a command, an active Subagent, installing a Skill |
 | Loading | data or media is not ready and no useful action-level progress exists | reserved spinner or skeleton | initial Thread details, Skill catalog, search results, file preview |
 | Waiting / blocked | progress requires a person or external event | static status text and the existing response affordance | `waitingOnUserInput`, OAuth authorization wait |
 | Recovery | Tenon is retrying a failed dependency | existing retry indicator and attempt copy | provider reconnect/backoff |
@@ -63,34 +71,100 @@ The load-bearing rules are:
 - **BR-1:** `WorkingText` is used only while an action is genuinely advancing.
 - **BR-2:** a working tool, Plan, Skill, or Subagent retains its semantic glyph;
   a loader never substitutes for identity.
-- **BR-3:** the base text is always present and readable. The sweep is an
-  enhancement, never the only state cue.
-- **BR-4:** motion is cadenced: the first sweep starts after `600ms`, crosses the
-  text in `1s` with 48 stepped positions, then rests; a new sweep begins every
-  `4s`.
-- **BR-5:** only the most specific visible representation of one action shimmers.
-  A collapsed summary may shimmer; when its active child becomes visible, the
-  summary becomes static. Genuinely concurrent leaf actions may each shimmer.
-- **BR-6:** `prefers-reduced-motion: reduce` and `prefers-contrast: more` render
-  static high-contrast text with no sweep. Comprehension never depends on motion.
-- **BR-7:** the visual duplicate is `aria-hidden`; the base text remains the one
-  accessible name and live-region payload.
+- **BR-3:** motion is never the only in-progress cue. The readable base uses
+  progressive wording. The two existing exceptions gain explicit static cues:
+  an active command description is prefixed with the existing localized
+  `runningCommand` phrase, and a current Plan step keeps strong text plus a
+  neutral filled dot and `aria-current="step"`.
+- **BR-4:** motion is cadenced: the first sweep starts after `600ms`, crosses
+  the text in `1s` with 48 stepped positions, then rests; a new sweep begins
+  every `4s`.
+- **BR-5:** only the most specific expanded representation of one action
+  shimmers. "Visible" means mounted because its disclosure is expanded, not
+  merely inside the viewport. A collapsed summary may shimmer; expanding it
+  transfers ownership to its live child in the same render. No
+  `IntersectionObserver` is introduced. Genuinely concurrent leaf actions may
+  each shimmer.
+- **BR-6:** `prefers-reduced-motion: reduce` and
+  `prefers-contrast: more` disable the visual sweep. The static cues in BR-3
+  and each surface's progressive wording remain visible.
+- **BR-7:** the visual duplicate is `aria-hidden`; the base text remains the
+  one accessible name and live-region payload.
 - **BR-8:** the overlay is absolute and pointer-inert, so entering or leaving a
-  working state never changes measured width, row height, ellipsis, focus, or
-  hit targets.
+  working state never changes measured width, row height, focus, or hit targets.
+  A truncated visual duplicate uses the same width, white-space, overflow, and
+  ellipsis rules as the base text, so the sweep cannot reveal different tail
+  glyphs.
 
-### Surface mapping
+### Codex behavior evidence
 
-#### Agent Thread and Plan
+The inspected production bundle contains a continuous implementation and a
+cadenced implementation:
+
+| Evidence | Observed fact | Tenon decision |
+| --- | --- | --- |
+| Continuous variant | a text-clipped gradient moves continuously for `2s` with `steps(48, end)`; reduced motion disables it | Reject it because several concurrent tools or Subagents would create continuous motion |
+| Cadenced timing | first activation after `600ms`, active for `1s`, repeated every `4s` | Adopt these tokenized values without a feature flag |
+| Cadenced structure | normal readable text remains in place while an `aria-hidden` duplicate supplies the sweep | Adopt the accessibility and geometry split through `WorkingText` |
+| Sweep shape | a `0% -> 20%-30% -> 50%` mask window crosses the label while paired layers translate in opposite directions; the observed endpoints are `-50% -> 125%` and `50% -> -125%` | Recreate the behavior with Tenon tokens and independently authored CSS |
+| Cadenced stepping | 48 stepped positions occur during the active interval | A `4s` CSS cycle places the sweep in its first 25%; CSS applies `steps(48, end)` to that keyframe interval and holds for the remaining `3s` |
+| Consumer split | identity remains static while action metadata such as `Thinking`, running tool text, and an Agent's `is working` status carries motion | Adopt this identity/action split across the mapped Tenon consumers |
+
+CSS owns cadence rather than a timer per React instance. Mounting and unmounting
+therefore starts and stops the effect, while media queries cancel motion without
+component state. The values are tokens, so later tuning is a token edit rather
+than an experiment branch.
+
+### `WorkingText` primitive
+
+Add `src/renderer/ui/primitives/WorkingText.tsx` with a deliberately narrow
+contract: one text string, an optional `truncate` mode, an optional contextual
+class, and ordinary span attributes. It renders:
+
+- one normal base text layer, which alone participates in accessibility;
+- one absolute `aria-hidden` sweep layer containing a visual text copy;
+- no IDs, controls, or interactive descendants in the duplicate.
+
+Add `src/renderer/styles/working-text.css` and import it once from
+`src/renderer/styles/index.css`. The root preserves the consumer's
+`currentColor`. The sweep copy uses a dedicated
+`--working-text-highlight` alpha-on-ink token declared in `tokens.css`
+instead of relying on current-color overdraw, whose strength changes with every
+consumer's base alpha. Start the token at `rgb(var(--ink) / 0.72)`; light/dark
+evidence for the faintest and strongest mapped consumers must validate or tune
+that single value before the Thread PR is ready.
+
+When `truncate` is true, both internal text layers share one truncation class:
+`width: 100%`, `overflow: hidden`, `text-overflow: ellipsis`, and
+`white-space: nowrap`. The absolute sweep remains clipped to the same root
+width. This prevents a narrow base label ending in an ellipsis while the moving
+copy exposes hard-clipped source characters.
+
+One four-second keyframe cycle performs the one-second sweep in its first
+quarter and holds the terminal transform for the remaining three seconds. A
+tokenized `600ms` initial delay matches the observed behavior. The masked
+overlay uses paired opposite transforms so the highlight crosses the complete
+text without changing layout.
+
+Retire the Thread-only spinner uses of `--motion-working-cycle` and redefine
+the working motion tokens for cadence and initial delay. Timing literals outside
+`tokens.css` continue to satisfy the motion-token guard. Both reduced-motion
+and increased-contrast media queries hide the sweep layer rather than merely
+pausing it over the start of the label.
+
+### Thread and Plan surfaces
+
+This surface belongs to the first implementation PR.
 
 | Surface / symbol | Current | New behavior |
 | --- | --- | --- |
-| `ThreadProcessBlock` | Turn summary followed by `thread-process-spinner` | Remove the spinner. Shimmer the summary only when no visible live leaf row already states the work. `waitingOnUserInput` remains static. |
-| `ReasoningDisclosure` | empty live Item shows static `Thinking`; the Turn spinner supplies motion | Wrap only the empty live `Thinking` label in `WorkingText`. Populated reasoning stays readable and static while it streams. |
-| `executionStatusNode` / `ToolItemDisclosure` | `inProgress` replaces the tool glyph with `LoaderIcon` | Always return the tool glyph. Shimmer only the neutral action segment of an in-progress row; failure/interruption tallies remain static. |
-| `ThreadToolActivityGroup` | a running group spins its group glyph | A collapsed running group shimmers its neutral action segment. When expanded, its summary is static and each in-progress member shimmers instead. Finished members never inherit motion. |
-| `DelegationRow` | running status appends a loader | Keep the form/Agent glyph and name static; shimmer only the running status phrase. Stop remains a separate fixed-size action. |
-| `ThreadPlanProgress` | summary and current checklist step each spin | Use the existing `PlanToolIcon` as the stable Plan glyph. When closed, shimmer the current-step summary. When open, freeze the summary and shimmer only the current checklist step. Completed steps keep `CheckIcon`; pending steps stay static. |
+| `ThreadProcessBlock` | A live, non-collapsible Turn shows its summary plus `thread-process-spinner`; the completed collapsible branch is already static; `blockedOnUser` already suppresses the spinner | Remove the live spinner. Shimmer the live summary only when no expanded live leaf owns the working cue. Keep completed collapsible summaries and user-blocked summaries static; do not add motion to either branch. |
+| `ReasoningDisclosure` | An empty live Item shows static `Thinking`; the Turn spinner supplies motion | Wrap only the empty live `Thinking` label in `WorkingText`. Populated reasoning stays readable and static while it streams. |
+| `executionStatusNode` / `ToolItemDisclosure` | `inProgress` replaces the tool glyph with `LoaderIcon` | Always return the tool glyph. Shimmer only the neutral action segment of an in-progress row; failure/interruption tallies remain static. For a command with `item.description`, the active act uses the existing localized `runningCommand({ command: item.description })`; the settled act remains the caller's exact description. |
+| `ThreadToolActivityGroup` | A running group spins its group glyph | A collapsed running group shimmers its neutral action segment. When expanded in the DOM, its summary is static and each in-progress member shimmers instead. Finished members never inherit motion. Collapsing or expanding mid-run transfers ownership without a frame where both levels animate. |
+| `SubagentActivityItem` | Running status appends a loader to the `.thread-delegation-row` | Keep the form/Agent glyph and name static; shimmer only the running status phrase. Stop remains a separate fixed-size action. |
+| `SubagentStateItem` | An expanded collaboration tool detail shows static Agent identity and status text | Include this surface: keep `AgentIcon` and identity static and shimmer only a running status phrase. Because it is mounted only inside the expanded tool detail, the collapsed parent summary owns motion and the expanded child status owns it after transfer. |
+| `ThreadPlanProgress` | The summary and current checklist step spin; the step also already has strong text while pending steps use a hollow dot | Use the existing `PlanToolIcon` as the stable summary glyph. When closed, shimmer the current-step summary. When open, freeze the summary and shimmer only the current checklist step. Replace its loader with a neutral filled dot in the existing fixed status slot, retain strong text, and add `aria-current="step"`. Completed steps keep `CheckIcon`; pending steps keep their static hollow dot. |
 
 The existing Turn/process projection remains authoritative. Working-state
 selection is renderer presentation derived from existing `Turn.status`,
@@ -98,246 +172,56 @@ selection is renderer presentation derived from existing `Turn.status`,
 projection. It adds no state model and changes no `src/core/agent/protocol.ts`
 contract.
 
-#### Provider and managed-Skill actions
+The most-specific-expanded rule is evaluated from existing `expanded` /
+`open` component state. It does not react to scrolling or clipping. A child
+that is mounted by an open disclosure owns the motion even when scrolled outside
+the viewport; viewport observation would add invisible work and unstable motion
+handoffs without improving comprehension.
+
+### Provider and managed-Skill surfaces
+
+This surface belongs to the second implementation PR and uses the primitive
+landed by the Thread feature.
 
 Eligible settings operations already expose a truthful progressive verb:
 
 - `ProviderConfigForm`: `Validating...` in the cancellable result row and
   `Saving...` in the Save button.
-- `ManagedSkillsSettings`: `Resolving...`, `Installing...`, and `Applying...`.
+- `ManagedSkillsSettings`: `Resolving...`, `Installing...`, and
+  `Applying...`.
 - managed-Skill destructive/reversal confirmations after adding explicit
   `Uninstalling...` and `Rolling back...` messages in English and Simplified
   Chinese.
 
-These phrases use `WorkingText`. Buttons keep the icon for the command they are
-performing (`AddIcon`, `RefreshIcon`, `TrashIcon`, or `UndoIcon`) instead of
-changing to `LoaderIcon`. Provider validation has one animated owner: the
-cancellable result row; the disabled Validate button repeats the current label
-statically so the same operation does not shimmer twice.
+These phrases use `WorkingText`, so their static base copy remains an
+in-progress cue when motion is disabled. Buttons keep the icon for the command
+they are performing (`AddIcon`, `RefreshIcon`, `TrashIcon`, or `UndoIcon`)
+instead of changing to `LoaderIcon`. Provider validation has one animated
+owner: the cancellable result row; the disabled Validate button repeats the
+current label statically so the same operation does not shimmer twice.
 
-The following stay outside `WorkingText`:
+### Explicit retained matrix
+
+The following stay outside `WorkingText` in both PRs:
 
 - `ThreadProviderRetryStatus`: reconnect/backoff is recovery, not normal work.
-- `ProviderOAuthForm`'s fallback `Waiting for authorization...`: it is blocked on
-  a browser/person. The current `flow.progress` contract does not distinguish
-  active token exchange from external waiting, so the entire row stays on the
-  existing treatment rather than guessing.
+- `ProviderOAuthForm`'s fallback `Waiting for authorization...`: it is
+  blocked on a browser/person. The current `flow.progress` contract does not
+  distinguish active token exchange from external waiting, so the entire row
+  stays on the existing treatment rather than guessing.
 - `ThreadTurnDetailsPanel`, managed-Skill catalog/library initial reads,
   `OutlinerEmptyState` search loading, and preview renderers: resource loading.
 - `ToolFileResult`, search refresh, API-key copy, and file-translation start:
   icon-only commands with no stable visible text target.
-
-### `WorkingText` primitive
-
-Add `src/renderer/ui/primitives/WorkingText.tsx` with a deliberately narrow
-contract: one text string, an optional contextual class, and ordinary span
-attributes. It renders the real text once plus an `aria-hidden` duplicate used
-only by the visual sweep. Restricting the payload to text prevents duplicate
-IDs, controls, or interactive descendants in the overlay.
-
-Add `src/renderer/styles/working-text.css` and import it once from
-`src/renderer/styles/index.css`. The root inherits `currentColor`; the duplicate
-therefore deepens the existing alpha-on-ink text briefly without introducing a
-new hue or raw color. The masked overlay follows Codex's `0% -> 20-30% -> 50%`
-window. Its paired transforms move in opposite directions so the highlight
-crosses the full text while the mask itself remains clipped to the root.
-
-Use a CSS-only cadence rather than per-instance React timers: one four-second
-keyframe cycle performs the one-second sweep in its first quarter and holds the
-terminal transform for the remaining three seconds. A `600ms` tokenized initial
-delay matches the observed source. This preserves the reference timing while
-letting CSS own mount/unmount and user-preference cancellation.
-
-Retire the Thread-only spinner use of `--motion-working-cycle`; redefine the
-working motion tokens for cadence and initial delay. All timing literals outside
-`tokens.css` continue to satisfy the existing motion-token guard.
-
-### Codex implementation evidence
-
-The production bundle contains two implementations. The following excerpts are
-whitespace-normalized from the installed app; hashed module names and minified
-local identifiers are retained where they establish provenance.
-
-#### Continuous variant (observed, not selected)
-
-```css
-@keyframes loading-shimmer {
-  0% { background-position: -100% 0; }
-  100% { background-position: 250% 0; }
-}
-
-.loading-shimmer-pure-text,
-.loading-shimmer {
-  background: var(--shimmer-text-secondary)
-    linear-gradient(
-      to right,
-      transparent 0%,
-      var(--shimmer-contrast) 40%,
-      var(--shimmer-contrast) 60%,
-      transparent 100%
-    );
-  -webkit-text-fill-color: transparent;
-  background-position: -100% 0;
-  background-repeat: no-repeat;
-  background-size: 50% 200%;
-  -webkit-background-clip: text;
-  background-clip: text;
-  animation: loading-shimmer 2s steps(48, end) infinite;
-  display: inline-block;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .loading-shimmer-pure-text,
-  .loading-shimmer {
-    animation: none;
-  }
-}
-```
-
-This is rejected for Tenon because every active row moves continuously. Several
-parallel tools or Subagents would recreate the visual noise the change is meant
-to remove.
-
-#### Cadenced variant (selected reference)
-
-The bundle gates this path behind `shimmer_variant = "cadenced_legacy"` and uses
-these exact timing constants:
-
-```js
-const activeDurationMs = 1_000;
-const cadenceMs = 4_000;
-const initialDelayMs = 600;
-const experimentVariant = 'cadenced_legacy';
-```
-
-Its minified React control flow, expanded without changing behavior, is:
-
-```tsx
-useEffect(() => {
-  if (!cadenced || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-    return;
-  }
-
-  const element = ref.current;
-  if (element == null) return;
-
-  let removeActiveTimeout: number | undefined;
-  let cadenceInterval: number | undefined;
-
-  const sweep = () => {
-    if (removeActiveTimeout !== undefined) window.clearTimeout(removeActiveTimeout);
-    element.classList.remove(styles.cadencedShimmerActive);
-    element.classList.add(styles.cadencedShimmerActive);
-    removeActiveTimeout = window.setTimeout(() => {
-      element.classList.remove(styles.cadencedShimmerActive);
-      removeActiveTimeout = undefined;
-    }, activeDurationMs);
-  };
-
-  const initialTimeout = window.setTimeout(() => {
-    sweep();
-    cadenceInterval = window.setInterval(sweep, cadenceMs);
-  }, initialDelayMs);
-
-  return () => {
-    if (removeActiveTimeout !== undefined) window.clearTimeout(removeActiveTimeout);
-    window.clearTimeout(initialTimeout);
-    if (cadenceInterval !== undefined) window.clearInterval(cadenceInterval);
-    element.classList.remove(styles.cadencedShimmerActive);
-  };
-}, [cadenced]);
-```
-
-The component keeps normal text in the accessibility tree and overlays one
-visual-only copy. This excerpt uses the bundle's `jsx` call shape rather than
-reconstructing authored JSX:
-
-```tsx
-jsx('span', {
-  ref: cadenced ? ref : undefined,
-  className: rootClassName,
-  ...props,
-  children: [
-    children,
-    cadenced
-      ? jsx('span', {
-          'aria-hidden': true,
-          className: styles.cadencedShimmerSweep,
-          children: jsx('span', {
-            className: styles.cadencedShimmerHighlight,
-            children,
-          }),
-        })
-      : null,
-  ],
-});
-```
-
-The corresponding production CSS is:
-
-```css
-._cadencedShimmer_1q6es_1 {
-  -webkit-text-fill-color: currentColor;
-  background: none;
-  background-clip: border-box;
-  animation: none;
-  position: relative;
-}
-
-._cadencedShimmerSweep_1q6es_23 {
-  pointer-events: none;
-  width: 100%;
-  position: absolute;
-  inset: 0 auto 0 0;
-  overflow: hidden;
-  transform: translate(-50%);
-  mask-image: linear-gradient(
-    90deg,
-    #0000 0%,
-    #000 20% 30%,
-    #0000 50% 100%
-  );
-}
-
-._cadencedShimmerHighlight_1q6es_17 {
-  -webkit-text-fill-color: currentColor;
-  width: 100%;
-  display: block;
-  transform: translate(50%);
-}
-
-._cadencedShimmerActive_1q6es_56 ._cadencedShimmerSweep_1q6es_23,
-._cadencedShimmerActive_1q6es_56 ._cadencedShimmerHighlight_1q6es_17 {
-  animation-duration: 1s;
-  animation-timing-function: steps(48, end);
-  animation-iteration-count: 1;
-}
-
-@keyframes _cadencedLoadingShimmerSweep_1q6es_1 {
-  0% { transform: translate(-50%); }
-  100% { transform: translate(125%); }
-}
-
-@keyframes _cadencedLoadingShimmerHighlight_1q6es_1 {
-  0% { transform: translate(50%); }
-  100% { transform: translate(-125%); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  ._cadencedShimmerActive_1q6es_56 ._cadencedShimmerSweep_1q6es_23,
-  ._cadencedShimmerActive_1q6es_56 ._cadencedShimmerHighlight_1q6es_17 {
-    animation: none;
-  }
-}
-```
-
-Codex applies the text class to `Thinking`, starting/running command and file
-activity, web activity, active multi-agent work, and browser activity. Its
-background-Agent row keeps the identicon and name static and applies shimmer
-only to the `is working` metadata. That identity/action split is the product
-behavior this plan adopts.
+- Assistant response streaming, Thread-list activity dots, completed
+  collapsible Turn summaries, and user-blocked Turn summaries: their existing
+  surface-specific treatment remains authoritative.
+- Every completed, failed, interrupted, success, and error row: terminal status
+  remains static.
 
 ### Implementation boundaries
+
+#### PR1: Thread working states
 
 Expected product files:
 
@@ -348,140 +232,223 @@ Expected product files:
 - `src/renderer/styles/thread.css`
 - `src/renderer/agent/components/ThreadView.tsx`
 - `src/renderer/agent/components/items/ThreadItemView.tsx`
+
+Current-intended spec updates:
+
+- `docs/spec/design-system/patterns.md`: split Working from Loading and record
+  cadence, static fallbacks, identity retention, expanded-hierarchy ownership,
+  truncation parity, and motion preferences.
+- `docs/spec/design-system/components.md`: update compact
+  activity/disclosure rows and Plan progress from spinner-owned state to
+  text-owned working state.
+- `docs/spec/agent-thread-rendering.md`: replace every claim that the spinner
+  is the running state; describe tool, group, Thinking, Turn, Plan, and both
+  Subagent status surfaces.
+
+No dependency, i18n, preload, main-process, IPC, command, core protocol,
+persistence, or userData file changes are expected.
+
+#### PR2: Settings working states
+
+Expected product files:
+
 - `src/renderer/ui/agent/ManagedSkillsSettings.tsx`
 - `src/renderer/ui/agent/ProviderConfigForm.tsx`
 - `src/core/i18n/messages/en.ts`
 - `src/core/i18n/messages/zh-Hans.ts`
 
-No dependency, preload, main-process, IPC, command, core protocol, persistence,
-or userData file changes are expected. `LoaderIcon` remains exported and used by
-the loading/recovery consumers outside this plan.
+Current-intended spec updates:
 
-### Spec sync
-
-The implementation PR updates current-intended behavior in the same change:
-
-- `docs/spec/design-system/patterns.md`: split Working from Loading and record
-  cadence, identity retention, hierarchy suppression, and motion preferences.
-- `docs/spec/design-system/components.md`: update compact activity/disclosure
-  rows and Plan progress from spinner-owned state to text-owned working state.
-- `docs/spec/design-system/surfaces.md`: record provider validation's text-led
-  working state.
-- `docs/spec/agent-thread-rendering.md`: replace every claim that the spinner is
-  the running state; describe tool, group, Thinking, Turn, Plan, and Subagent
-  ownership.
+- `docs/spec/design-system/surfaces.md`: record provider validation's
+  text-led working state and single animated owner.
 - `docs/spec/agent-skills.md`: record stable action icons plus progressive
   working copy for managed mutations.
 
+The PR consumes `WorkingText` without changing its contract or shared CSS.
+No dependency, Thread, preload, main-process, IPC, command, core protocol,
+persistence, or userData file changes are expected.
+
+`LoaderIcon` remains exported and used by Loading and Recovery consumers
+outside both PRs.
+
 ### Acceptance and verification
 
-- **AC-1:** While a tool is in progress, its original tool glyph remains visible
-  and only its neutral action phrase uses `WorkingText`.
-- **AC-2:** While empty reasoning is streaming, `Thinking` shimmers; when the
-  first readable reasoning text arrives, that text is rendered normally without
-  a class or geometry swap on the container.
-- **AC-3:** While a Subagent is running, its name and form glyph remain static,
-  only its status phrase shimmers, and Stop remains available.
-- **AC-4:** While a Plan disclosure is closed, only its summary shimmers; while
-  open, only the current step shimmers. Completion removes all working motion.
-- **AC-5:** If a Turn is waiting on user input, failed, interrupted, or complete,
-  it contains no `WorkingText` and announces its existing static status.
-- **AC-6:** A `WorkingText` instance exposes its text once to accessibility APIs;
-  the visual duplicate is `aria-hidden` and pointer-inert.
-- **AC-7:** Under reduced motion or increased contrast, the base text remains
-  visible and the overlay does not animate.
-- **AC-8:** In light and dark mode, the sweep deepens `currentColor` without a
-  raw color, brand accent, background fill, or loss of the underlying text.
-- **AC-9:** At narrow Agent-pane widths and with long English and Chinese labels,
-  ellipsis, pinned failure tallies, row height, controls, and neighboring text do
-  not move when the working state starts or stops.
-- **AC-10:** Initial data loads, reconnect, OAuth wait, and icon-only operations
-  retain their existing loading/recovery indicator and never receive
+#### PR1 acceptance
+
+- **AC-1:** While a tool is in progress, its original tool glyph remains
+  visible and only its neutral action phrase uses `WorkingText`.
+- **AC-2:** A running command with a caller description has localized
+  progressive base copy even with motion disabled; its settled label returns to
+  the exact description.
+- **AC-3:** While empty reasoning is streaming, `Thinking` shimmers; when the
+  first readable reasoning text arrives, that text renders normally without a
+  geometry swap on the container.
+- **AC-4:** `SubagentActivityItem` and `SubagentStateItem` keep identity
+  static and mark only a running status phrase as working. Stop remains
+  available on the lifecycle row.
+- **AC-5:** A collapsed running group shimmers only its summary. Expanding it
+  mid-run freezes the summary and starts only its running members; collapsing
+  reverses ownership without simultaneous parent/child motion.
+- **AC-6:** A closed Plan shimmers only its summary. Opening it mid-run freezes
+  the summary and starts only the current step; the current step always retains
+  its neutral filled dot, strong text, and `aria-current="step"`. Completion
+  removes all working motion.
+- **AC-7:** If a Turn is waiting on user input, failed, interrupted, complete,
+  or represented by its completed collapsible summary, it contains no
+  `WorkingText` and announces its existing static status.
+- **AC-8:** A `WorkingText` instance exposes its text once to accessibility
+  APIs; the visual duplicate is `aria-hidden` and pointer-inert.
+- **AC-9:** Under reduced motion or increased contrast, the overlay is absent
+  and every mapped row remains distinguishable as working through progressive
+  copy or the Plan's static current-step cues.
+- **AC-10:** With a narrow long English or Chinese label, the base and visual
+  copy have the same rendered width, white-space, overflow, ellipsis, and final
+  visible glyph. Pinned tallies, row height, controls, and neighboring text do
+  not move when working starts or stops.
+- **AC-11:** In light and dark mode, the tokenized highlight is visible on both
+  the faintest and strongest mapped text colors without a raw consumer color,
+  brand accent, background fill, or loss of the underlying text.
+- **AC-12:** Initial data loads, reconnect, OAuth wait, icon-only operations,
+  and every terminal surface retain their existing indicator and never receive
   `WorkingText` accidentally.
-- **AC-11:** Managed-Skill install/update/uninstall/rollback and provider
-  validation/save show progressive copy, retain their action glyph where one
-  exists, and settle to the existing success/error state.
 
 Focused automated coverage should update or add these test titles:
 
-- `WorkingText renders one accessible text node and an aria-hidden sweep copy`
+- `WorkingText renders one accessible text layer and an aria-hidden sweep copy`
+- `WorkingText mirrors truncation geometry and ellipsis onto its visual copy`
 - `WorkingText uses a cadenced tokenized sweep and becomes static for motion and contrast preferences`
 - `keeps the tool own glyph in every status and shimmers only the running action`
-- `shimmers only a collapsed running group or its visible running members`
+- `keeps a described command statically identifiable while it is running`
+- `hands running group motion between its summary and expanded members`
 - `reads Subagent identity statically and marks only live status as working`
+- `hands Plan motion between its summary and current step without losing the static current marker`
 - `shows Turn-local Plan progress only while the Turn is active`
 - `stops working motion while the Turn is blocked on user input`
-- `validates a key asynchronously and never saves on validate`
-- `keeps managed Skill action glyphs stable while progress copy is working`
-- `uses progressive uninstall and rollback copy while the mutation is pending`
 
 Run `bun run typecheck`, `bun run test:renderer`, focused
-`bun run test:e2e -- tests/e2e/agent-thread.spec.ts tests/e2e/agent-settings.spec.ts`,
+`bun run test:e2e -- tests/e2e/agent-thread.spec.ts`,
 `bun run docs:check`, `bun scripts/design-system-metrics.ts --check`, and
-`git diff --check` before marking the implementation ready.
+`git diff --check` before marking PR1 ready.
 
 Visual verification uses `bun run dev:codex-4` and records PR-comment evidence
-for light and dark Thread/Plan/Settings states, a narrow pane, at least two
-concurrent Subagents, reduced motion, and increased contrast. Evidence uploads
-use GitHub's comment CDN rather than a side-branch asset URL.
+for light and dark Thread/Plan states, a narrow pane, at least two concurrent
+Subagents, group and Plan expansion/collapse during active work, reduced motion,
+and increased contrast. Evidence must include the faintest and strongest text
+consumers plus a truncated label during the active sweep.
+
+#### PR2 acceptance
+
+- **AC-13:** Managed-Skill install/update/uninstall/rollback and provider
+  validation/save show progressive base copy, retain their action glyph where
+  one exists, and settle to the existing success/error state.
+- **AC-14:** Provider validation has exactly one animated owner in its result
+  row; the disabled Validate button repeats the progressive label statically.
+- **AC-15:** Reduced motion and increased contrast leave every progressive
+  Settings phrase readable and static.
+- **AC-16:** OAuth wait, Provider recovery, initial catalog/library loading, and
+  icon-only Settings operations retain their existing non-working treatment.
+
+Focused automated coverage should update or add these test titles:
+
+- `validates a key asynchronously with one working owner and never saves on validate`
+- `keeps managed Skill action glyphs stable while progress copy is working`
+- `uses progressive uninstall and rollback copy while the mutation is pending`
+- `keeps waiting recovery and resource loading outside WorkingText`
+
+Run `bun run typecheck`, `bun run test:renderer`, focused
+`bun run test:e2e -- tests/e2e/agent-settings.spec.ts`,
+`bun run docs:check`, `bun scripts/design-system-metrics.ts --check`, and
+`git diff --check` before marking PR2 ready.
+
+Visual verification uses the landed PR1 primitive and records light/dark
+Provider and managed-Skill operations, reduced motion, increased contrast, long
+English and Chinese copy, success, and error settlement. Evidence uploads for
+both PRs use GitHub's comment CDN rather than a side-branch asset URL.
 
 ### Collision check
 
-- Refreshed against GitHub and `docs/TASKS.md` on 2026-08-11: there are no open
-  PR claims and no active plan for shimmer or semantic working-state motion.
+- The initial GitHub and `docs/TASKS.md` check found no pre-existing PR claim
+  or active plan for shimmer or semantic working-state motion. Draft PR #529 is
+  now the plan-surface claim.
+- Draft PR #530 owns the typing hot path, main-process document service, and
+  Memory extension/index modules. It does not overlap either implementation
+  unit in this plan.
 - `icon-semantics` may later edit glyph mappings, but this plan adds no icon
-  alias and reuses the existing `PlanToolIcon`, tool glyph resolver, and managed
-  action glyphs. There is no shared implementation decision.
-- The likely files are renderer components, renderer styles, i18n messages, and
-  current specs. No infrastructure-ownership file is touched.
-- Result: **no overlap**. Re-run `gh pr list`, the board scan, and the intended
-  file-scope comparison immediately before opening the Draft implementation PR.
+  alias and reuses the existing `PlanToolIcon`, tool glyph resolver, and
+  managed action glyphs. There is no shared implementation decision.
+- PR1 owns renderer Thread components, shared working-text styles, and Thread
+  specs. PR2 owns Settings components, progressive i18n copy, and Settings
+  specs. Their only dependency is the landed `WorkingText` contract, so their
+  implementation file scopes do not overlap.
+- No infrastructure-ownership file is touched. Re-run `gh pr list`, the board
+  scan, and each intended file-scope comparison immediately before opening its
+  Draft implementation PR.
 
 ### Risks
 
 - **Motion multiplies under concurrency.** Cadence alone is not sufficient if a
-  parent and child both animate the same fact. BR-5 makes the leaf the owner and
-  permits multiple motion only for genuinely concurrent leaf actions.
-- **The duplicate can break truncation or wrapping.** `WorkingText` replaces the
-  existing text span rather than nesting another layout-owning box. Focused DOM
-  and narrow-pane tests freeze ellipsis, pinned tallies, and row geometry.
+  parent and child both animate the same fact. BR-5 makes DOM expansion the
+  deterministic handoff and permits multiple motion only for genuinely
+  concurrent leaf actions.
+- **The duplicate can disagree with truncated text.** `truncate` gives the
+  accessible base and visual copy the same width and ellipsis contract. Focused
+  DOM and narrow-pane sweep evidence verify glyph parity as well as geometry.
 - **Accessible text can be announced twice.** The base string is the only normal
-  child; the entire sweep subtree is `aria-hidden`. Live regions continue to
-  announce state changes through the base string.
+  text layer; the entire sweep subtree is `aria-hidden`. Live regions continue
+  to announce state changes through the base string.
 - **Continuous animation would look busy and consume more paint.** The selected
-  cadence moves for one quarter of each cycle, uses transforms/masks only, and
-  creates no React interval per row.
-- **Current-color doubling can become too strong in high contrast.** The overlay
-  is disabled for `prefers-contrast: more`; the load-bearing base text already
-  inherits the strengthened token.
-- **Settings copy can lie during destructive work.** The implementation adds
-  explicit progressive English and Chinese labels before applying shimmer;
-  imperative `Uninstall` / `Roll back` never animate as if they were status.
-- **Spinner semantics can regress elsewhere during a sweep.** Completion is
-  derived from an explicit consumer matrix and focused `rg` output, not a global
-  `LoaderIcon` replacement. AC-10 freezes the retained family.
+  cadence moves for one quarter of each cycle, uses transforms and masks only,
+  and creates no React interval per row.
+- **Sweep strength can drift across base text alphas.** A dedicated
+  alpha-on-ink highlight token replaces current-color doubling. The faintest and
+  strongest mapped consumers are required visual evidence in both themes, and
+  increased contrast removes the overlay.
+- **Settings copy can lie during destructive work.** PR2 adds explicit
+  progressive English and Chinese labels before applying shimmer; imperative
+  `Uninstall` / `Roll back` never animate as if they were status.
+- **Spinner semantics can regress during consumer conversion.** Completion is
+  derived from the explicit retained matrix and focused `rg` output, not a
+  global `LoaderIcon` replacement. AC-12 and AC-16 freeze the retained
+  families.
+- **The dependent PRs can drift.** PR2 starts only after PR1 lands and consumes
+  the final primitive unchanged; a requested primitive contract change returns
+  to PR1 rather than being introduced from Settings.
 
 ## Open questions
 
-No product question blocks implementation. Main review should explicitly
-challenge three chosen boundaries before approval: settings consumers land in
-the same complete feature, the most-specific-visible-text rule suppresses
-duplicate parent motion, and the observed `600ms / 1s / 4s` cadence is adopted
-without a feature flag. Any redirect should update this plan before code starts.
+None. The implementation uses two complete PRs, DOM disclosure expansion as the
+motion-ownership boundary, and the observed `600ms / 1s / 4s` cadence without
+a feature flag.
 
 ## Checklist
 
-- [ ] Add the text-only `WorkingText` primitive and shared cadenced CSS.
-- [ ] Replace Thread, Thinking, tool/group, Subagent, and Plan working spinners
-      according to the most-specific-visible-text rule.
+### PR1: Thread working states
+
+- [ ] Add the text-only `WorkingText` primitive, truncation mode, shared
+      cadenced CSS, highlight token, and preference fallbacks.
+- [ ] Replace Thread, Thinking, tool/group, both Subagent surfaces, and Plan
+      working spinners according to the most-specific-expanded rule.
+- [ ] Add progressive copy for active command descriptions and static current
+      Plan-step cues.
+- [ ] Leave every Loading, Waiting, Recovery, terminal, and icon-only Thread
+      consumer in the explicit retained matrix unchanged.
+- [ ] Update the three Thread and design-system spec documents.
+- [ ] Add renderer and E2E coverage under the PR1 test titles.
+- [ ] Run typecheck, renderer tests, focused Thread E2E, docs check, design
+      metrics, and diff checks.
+- [ ] Verify all PR1 visual states and attach evidence to the PR by comment
+      upload.
+
+### PR2: Settings working states
+
 - [ ] Convert eligible Provider and managed-Skill progressive actions while
       preserving their identity/action glyphs.
 - [ ] Add English and Simplified Chinese progressive uninstall/rollback copy.
-- [ ] Leave every Loading, Waiting, Recovery, terminal, and icon-only consumer
-      in the explicit retained matrix unchanged.
-- [ ] Update the five current-intended spec documents.
-- [ ] Update renderer and E2E coverage under the test titles above.
-- [ ] Run typecheck, renderer tests, focused E2E, docs check, design metrics, and
-      diff checks.
-- [ ] Verify light, dark, narrow, concurrent, reduced-motion, and
-      increased-contrast states; attach evidence to the PR by comment upload.
+- [ ] Leave every Loading, Waiting, Recovery, terminal, and icon-only Settings
+      consumer in the explicit retained matrix unchanged.
+- [ ] Update the two Settings and Skill spec documents.
+- [ ] Add renderer and E2E coverage under the PR2 test titles.
+- [ ] Run typecheck, renderer tests, focused Settings E2E, docs check, design
+      metrics, and diff checks.
+- [ ] Verify all PR2 visual states and attach evidence to the PR by comment
+      upload.
