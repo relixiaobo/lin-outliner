@@ -4,7 +4,10 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { SCHEMA_ID, type CommandResult, type DocumentProjectionChangedEvent } from '../../src/core/types';
 import { createNodeTools } from '../../src/main/agent/capabilities/agentNodeTools';
-import type { ProjectionChangedDelivery } from '../../src/main/documentService';
+import type {
+  DocumentMutationObserver,
+  ProjectionChangedDelivery,
+} from '../../src/main/documentService';
 
 let electronUserDataRoot = '';
 
@@ -107,6 +110,50 @@ describe('DocumentService projection routing metadata', () => {
     expect(model.revision).toBe(result.update.revision);
     expect(model.node(nodeId)?.content.text).toBe('Read model routed');
     expect(model.node(SCHEMA_ID)).toBe(unchangedBefore);
+  });
+
+  test('keeps plain typing lazy and closes its verdict with an empty observer delta', async () => {
+    const service = await createService();
+    const rootId = service.getProjection().rootId;
+    const created = await service.handle('create_node', {
+      parentId: rootId,
+      index: null,
+      text: 'Observer typing',
+    }) as CommandResult;
+    const nodeId = created.focus!.nodeId;
+    const deliveries: ProjectionChangedDelivery[] = [];
+    const observer: DocumentMutationObserver = {
+      beginTransaction: () => undefined,
+      applyTransactionChanges: () => undefined,
+      commitTransaction: () => undefined,
+      rollbackTransaction: () => undefined,
+      projectionChanged: (delivery) => deliveries.push(delivery),
+    };
+    service.setMutationObserver(observer);
+    let suppliedProjection: (() => unknown) | undefined;
+    service.setMutationGuard((command, _args, _meta, projection) => {
+      expect(typeof projection).toBe('function');
+      suppliedProjection = projection;
+      return { affectsMemory: command === 'apply_node_text_patch' };
+    });
+
+    await service.handle('apply_node_text_patch', {
+      nodeId,
+      patch: { ops: [{ type: 'insert', index: 'Observer typing'.length, text: ' now' }] },
+    });
+    await service.flushPendingChanges();
+
+    expect(typeof suppliedProjection).toBe('function');
+    expect(deliveries).toHaveLength(2);
+    expect(deliveries[0]).toMatchObject({ affectsMemory: true, operationComplete: false });
+    expect(deliveries[0].event.update.kind).toBe('delta');
+    expect(deliveries[0].event.update.kind === 'delta' && deliveries[0].event.update.changedNodes).not.toEqual([]);
+    expect(deliveries[1]).toMatchObject({
+      operationId: deliveries[0].operationId,
+      affectsMemory: true,
+      operationComplete: true,
+    });
+    expect(deliveries[1].event.update).toMatchObject({ kind: 'delta', changedNodes: [], removedIds: [] });
   });
 
   test('serves DocumentService-backed node_read through the read model', async () => {

@@ -771,6 +771,7 @@ extensionRegistry.register(memoryExtension);
 documentService.setMutationGuard((command, args, meta, projection) => {
   return { affectsMemory: memoryExtension.authorizeMutation(command, args, meta, projection) };
 });
+documentService.setMutationObserver(memoryExtension);
 documentService.setMutationCoordinator((meta, operation) => (
   meta.origin === 'system' && meta.operationId?.startsWith('memory:')
     ? operation()
@@ -1092,13 +1093,12 @@ const localFilePreviewStreams = new LocalFilePreviewStreamRegistry(() => [
   assetRoot(),
 ]);
 
-documentService.onProjectionChanged(({ event, sourceWebContentsId, operationId }) => {
+documentService.onProjectionChanged(({ event, sourceWebContentsId }) => {
   const target = liveWindow(mainWindow)?.webContents;
   if (target && target.id !== sourceWebContentsId) {
     target.send(LIN_DOCUMENT_EVENT_CHANNEL, event);
   }
   pruneNodeAccessForProjectionUpdate(event.update);
-  memoryExtension.documentChanged(operationId);
 });
 
 documentService.setTransientSearchOptionsProvider(() => ({
@@ -4418,6 +4418,7 @@ if (!app.requestSingleInstanceLock()) {
     // neither local catalog corruption nor cleanup failure may block app startup.
     await reconcileProviderConfig().catch(() => { /* best-effort; catalog reads remain guarded */ });
     await documentService.initWorkspace();
+    memoryExtension.initializeMutationIndex(documentService.liveProjection());
     await threadService.initialize();
     await memoryExtension.startWorker();
     await automationService.start();

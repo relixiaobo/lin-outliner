@@ -80,6 +80,8 @@ interface TextEditGroup {
   nodeId: string;
   origin: NonNullable<DocumentMutationMeta['origin']>;
   operationId: string;
+  guardObserved: boolean;
+  affectsMemory?: boolean;
   timer?: ReturnType<typeof setTimeout>;
 }
 
@@ -87,6 +89,9 @@ export interface ProjectionChangedDelivery {
   event: DocumentProjectionChangedEvent;
   sourceWebContentsId?: number;
   operationId?: string;
+  affectsMemory?: boolean;
+  operationComplete?: boolean;
+  transactionIndexed?: boolean;
 }
 
 type ProjectionChangedListener = (delivery: ProjectionChangedDelivery) => void;
@@ -99,8 +104,29 @@ export type DocumentMutationGuard = (
   command: DocumentCommand,
   args: Readonly<Record<string, unknown>>,
   meta: DocumentMutationMeta,
-  projection: DocumentProjection,
+  projection: () => DocumentProjection,
 ) => DocumentMutationGuardResult | void;
+
+export interface DocumentTransactionProjectionChanges {
+  readonly todayId: string;
+  readonly changedNodes: NodeProjection[];
+  readonly removedIds: string[];
+}
+
+export interface DocumentMutationObserver {
+  beginTransaction(meta: DocumentMutationMeta, projection: () => DocumentProjection): void;
+  applyTransactionChanges(changes: DocumentTransactionProjectionChanges): void;
+  commitTransaction(meta: DocumentMutationMeta, affectsMemory: boolean | undefined): void;
+  rollbackTransaction(): void;
+  projectionChanged(delivery: ProjectionChangedDelivery): void;
+}
+
+interface ProjectionChangedOptions {
+  readonly affectsMemory?: boolean;
+  readonly operationComplete?: boolean;
+  readonly transactionIndexed?: boolean;
+  readonly forceEmptyUpdate?: boolean;
+}
 
 export type DocumentMutationCoordinator = <T>(
   meta: DocumentMutationMeta,
@@ -151,7 +177,9 @@ export class DocumentService implements DocumentSystemHost {
   private transientSearchOptionsProvider?: () => TransientSearchOptions;
   private nodeAccessRecorder?: (nodeIds: readonly string[], source: NodeAccessSource) => void | Promise<void>;
   private mutationGuard?: DocumentMutationGuard;
+  private mutationObserver?: DocumentMutationObserver;
   private mutationCoordinator?: DocumentMutationCoordinator;
+  private pendingTransactionProjectionChanges: DocumentTransactionProjectionChanges | null = null;
   private readonly nodeRetrieval = new NodeRetrievalService({
     getProjection: () => this.core.projection(),
     getTextSearchIndex: () => this.getTextSearchIndex(),
@@ -241,6 +269,11 @@ export class DocumentService implements DocumentSystemHost {
   }
 
   drainTransactionProjectionChanges() {
+    const cached = this.pendingTransactionProjectionChanges;
+    if (cached) {
+      this.pendingTransactionProjectionChanges = null;
+      return cached;
+    }
     return this.core.drainTransactionProjectionChanges();
   }
 
@@ -263,6 +296,10 @@ export class DocumentService implements DocumentSystemHost {
 
   setMutationGuard(guard: DocumentMutationGuard): void {
     this.mutationGuard = guard;
+  }
+
+  setMutationObserver(observer: DocumentMutationObserver): void {
+    this.mutationObserver = observer;
   }
 
   setMutationCoordinator(coordinator: DocumentMutationCoordinator): void {
@@ -326,17 +363,22 @@ export class DocumentService implements DocumentSystemHost {
       const task = this.mutationQueue.then(async () => {
         await this.flushTextEditGroupNow();
         const origin = query.origin ?? 'agent';
-        this.guardMutation(mutationAction, {
+        const guardResult = this.guardMutation(mutationAction, {
           historyOrigin: query.origin,
           steps: query.steps,
           operationId: query.operationId,
           historyMutation: this.historyMutationGuardContext(mutationAction, origin, query),
-        }, effectiveMeta, this.core.projection());
+        }, effectiveMeta);
         const result = this.core.operationHistory(query);
         if (mutatesHistory && result.count > 0) {
           this.refreshTextSearchIndexFromCoreDelta();
           this.scheduleCoreSave();
-          this.emitProjectionChanged(effectiveMeta.origin ?? historyChangeOrigin(query.origin));
+          this.emitProjectionChanged(
+            effectiveMeta.origin ?? historyChangeOrigin(query.origin),
+            effectiveMeta.sourceWebContentsId,
+            effectiveMeta.operationId,
+            { affectsMemory: guardResult?.affectsMemory, operationComplete: true },
+          );
         }
         return result;
       });
@@ -404,18 +446,38 @@ export class DocumentService implements DocumentSystemHost {
         const persistenceRevisionBefore = this.core.persistenceRevision();
         const trustedTransaction = systemContext ? this.createDocumentSystemTransaction(systemContext) : null;
         const coreMetadata = transactionMetadata(meta);
-        const result = await this.core.transaction(meta.origin ?? 'user', async () =>
-          this.transactionContext.run(coreMetadata, () => trustedTransaction
-            ? (operation as (transaction: DocumentSystemTransaction) => Promise<T>)(trustedTransaction)
-            : (operation as () => Promise<T>)()), coreMetadata);
+        this.beginObservedTransaction(meta);
+        let result: T;
+        try {
+          result = await this.core.transaction(meta.origin ?? 'user', async () =>
+            this.transactionContext.run(coreMetadata, () => trustedTransaction
+              ? (operation as (transaction: DocumentSystemTransaction) => Promise<T>)(trustedTransaction)
+              : (operation as () => Promise<T>)()), coreMetadata);
+        } catch (error) {
+          this.rollbackObservedTransaction();
+          throw error;
+        }
+        let observerCommitFailed = false;
+        let observerCommitError: unknown;
+        try {
+          this.commitObservedTransaction(meta, coreMetadata.affectsMemory);
+        } catch (error) {
+          observerCommitFailed = true;
+          observerCommitError = error;
+        }
         if (this.core.persistenceRevision() !== persistenceRevisionBefore) {
           if (systemContext) await this.saveCore();
           else this.scheduleCoreSave();
         }
         if (this.core.revision() !== revisionBefore) {
           this.refreshTextSearchIndexFromCoreDelta();
-          this.emitProjectionChanged(meta.origin ?? 'user', meta.sourceWebContentsId, meta.operationId);
+          this.emitProjectionChanged(meta.origin ?? 'user', meta.sourceWebContentsId, meta.operationId, {
+            affectsMemory: coreMetadata.affectsMemory,
+            operationComplete: true,
+            transactionIndexed: true,
+          });
         }
+        if (observerCommitFailed) throw observerCommitError;
         return result;
       });
       this.mutationQueue = task.then(() => undefined, () => undefined);
@@ -443,10 +505,12 @@ export class DocumentService implements DocumentSystemHost {
         const revisionBefore = this.core.revision();
         const undoGroupStarted = this.core.beginUndoGroup();
         let focus: FocusHint | undefined;
+        let affectsMemory: boolean | undefined;
         const coreMetadata = transactionMetadata({ ...meta, command: meta.command ?? 'create_nodes_from_tree' });
         try {
           focus = await this.transactionContext.run(coreMetadata, async () => {
-            this.guardMutation('create_nodes_from_tree', { parentId, nodes }, meta, this.core.projection());
+            const guardResult = this.guardMutation('create_nodes_from_tree', { parentId, nodes }, meta);
+            affectsMemory = guardResult?.affectsMemory;
             return this.core.transaction(meta.origin ?? 'agent', async () =>
               this.core.createNodesFromTreeYieldingFocus(parentId, nodes, {
                 yieldEveryNodes: options.yieldEveryNodes,
@@ -459,7 +523,10 @@ export class DocumentService implements DocumentSystemHost {
         if (this.core.revision() !== revisionBefore) {
           await this.refreshTextSearchIndexFromCoreDeltaYielding({ yieldEveryNodes: options.yieldEveryNodes });
           this.scheduleCoreSave();
-          this.emitProjectionChanged(meta.origin ?? 'agent', meta.sourceWebContentsId, meta.operationId);
+          this.emitProjectionChanged(meta.origin ?? 'agent', meta.sourceWebContentsId, meta.operationId, {
+            affectsMemory,
+            operationComplete: true,
+          });
         }
         return focus ? { focus } : {};
       });
@@ -511,9 +578,24 @@ export class DocumentService implements DocumentSystemHost {
             ? this.beginMaterializeGroup(String(args.id), mutationMeta)
             : mutationMeta;
         const coreMetadata = transactionMetadata({ ...effectiveMeta, command });
+        let affectsMemory: boolean | undefined;
         const outcome = this.core.withOrigin(
           effectiveMeta.origin ?? 'user',
-          () => this.transactionContext.run(coreMetadata, () => this.runMutation(command, args, effectiveMeta)),
+          () => this.transactionContext.run(coreMetadata, () => this.runMutation(
+            command,
+            args,
+            effectiveMeta,
+            (result) => {
+              affectsMemory = result?.affectsMemory;
+              const group = this.textEditGroup;
+              if (group && group.operationId === effectiveMeta.operationId) {
+                group.affectsMemory = group.guardObserved
+                  ? mergeAffectsMemory(group.affectsMemory, affectsMemory)
+                  : affectsMemory;
+                group.guardObserved = true;
+              }
+            },
+          )),
           coreMetadata,
         );
         const changed = this.core.revision() !== revisionBefore;
@@ -533,6 +615,10 @@ export class DocumentService implements DocumentSystemHost {
           effectiveMeta.origin ?? 'user',
           effectiveMeta.sourceWebContentsId,
           effectiveMeta.operationId,
+          {
+            affectsMemory,
+            operationComplete: command !== 'apply_node_text_patch' && !isMaterialize,
+          },
         );
         const focus = 'focus' in outcome ? outcome.focus : undefined;
         const result: CommandResult = { update: this.buildProjectionUpdate(), ...(focus ? { focus } : {}) };
@@ -558,6 +644,7 @@ export class DocumentService implements DocumentSystemHost {
         nodeId,
         origin,
         operationId: `op:${randomUUID()}`,
+        guardObserved: false,
       };
     }
     return {
@@ -578,6 +665,7 @@ export class DocumentService implements DocumentSystemHost {
       nodeId,
       origin,
       operationId: `op:${randomUUID()}`,
+      guardObserved: false,
     };
     return {
       ...meta,
@@ -608,7 +696,11 @@ export class DocumentService implements DocumentSystemHost {
     this.textEditGroup = undefined;
     this.core.endUndoGroup();
     await this.saveCore();
-    this.emitProjectionChanged(group.origin, undefined, group.operationId);
+    this.emitProjectionChanged(group.origin, undefined, group.operationId, {
+      affectsMemory: group.affectsMemory,
+      operationComplete: true,
+      forceEmptyUpdate: true,
+    });
   }
 
   private scheduleCoreSave() {
@@ -633,7 +725,12 @@ export class DocumentService implements DocumentSystemHost {
     await this.saveCore();
   }
 
-  private runMutation(command: DocumentCommand, args: Record<string, unknown>, meta: DocumentMutationMeta) {
+  private runMutation(
+    command: DocumentCommand,
+    args: Record<string, unknown>,
+    meta: DocumentMutationMeta,
+    onGuarded?: (result: DocumentMutationGuardResult | void) => void,
+  ) {
     if (documentCommandMutatesProtectedSystemTagDefinition(
       command,
       args,
@@ -641,278 +738,283 @@ export class DocumentService implements DocumentSystemHost {
     )) {
       throw new DocumentSystemContractError('document command targets a protected system tag definition');
     }
-    this.guardMutation(command, args, meta, this.core.projection());
-    switch (command) {
-      case 'create_node':
-        return this.core.createNode(
-          String(args.parentId),
-          nullableNumber(args.index),
-          String(args.text ?? ''),
-          typeof args.id === 'string' ? args.id : undefined,
-        );
-      case 'create_rich_text_node':
-        return this.core.createRichTextContentNode(String(args.parentId), nullableNumber(args.index), args.content as RichText);
-      case 'create_tagged_node':
-        return this.core.createTaggedNode(String(args.parentId), args.content as RichText, String(args.tagId));
-      case 'create_tag_and_tagged_node':
-        return this.core.createTagAndTaggedNode(String(args.parentId), args.content as RichText, String(args.name ?? ''));
-      case 'create_nodes_from_tree':
-        return this.core.createNodesFromTree(String(args.parentId), arrayArg(args.nodes));
-      case 'create_capture':
-        return this.core.createCapture(args.input as CreateCaptureInput);
-      case 'paste_nodes_into_node':
-        return this.core.pasteNodesIntoNode(
-          String(args.nodeId),
-          args.content as RichText,
-          arrayArg(args.children),
-          arrayArg(args.siblingsAfter),
-          (args.firstMeta ?? {}) as PasteRowMeta,
-        );
-      case 'split_node':
-        return this.core.splitNode(String(args.nodeId), args.before as RichText, args.after as RichText, {
-          targetParentId: nullableString(args.targetParentId),
-          targetIndex: nullableNumber(args.targetIndex),
-          focusPlacement: args.focusPlacement as FocusPlacement | undefined,
-        });
-      case 'apply_node_text_patch':
-        return this.core.applyNodeTextPatch(String(args.nodeId), args.patch as RichTextPatch);
-      case 'update_node_description':
-        return this.core.updateNodeDescription(String(args.nodeId), nullableString(args.description));
-      case 'set_node_checkbox_visible':
-        return this.core.setNodeCheckboxVisible(String(args.nodeId), Boolean(args.visible));
-      case 'set_code_block':
-        return this.core.setCodeBlock(String(args.nodeId), nullableString(args.codeLanguage) ?? undefined);
-      case 'set_code_language':
-        return this.core.setCodeLanguage(String(args.nodeId), String(args.codeLanguage ?? ''));
-      case 'create_image_node':
-        return this.core.createImageNode(String(args.parentId), nullableNumber(args.index), {
-          assetId: nullableString(args.assetId) ?? undefined,
-          mediaUrl: nullableString(args.mediaUrl) ?? undefined,
-          width: nullableNumber(args.width),
-          height: nullableNumber(args.height),
-          alt: nullableString(args.alt),
-          name: nullableString(args.name),
-        });
-      case 'create_attachment_node':
-        return this.core.createAttachmentNode(String(args.parentId), nullableNumber(args.index), {
-          assetId: nullableString(args.assetId),
-          mimeType: nullableString(args.mimeType),
-          originalFilename: nullableString(args.originalFilename),
-          fileSize: nullableNumber(args.fileSize),
-          thumbnailAssetId: nullableString(args.thumbnailAssetId),
-          pdfPageCount: nullableNumber(args.pdfPageCount),
-          audioDurationMs: nullableNumber(args.audioDurationMs),
-          videoDurationMs: nullableNumber(args.videoDurationMs),
-        });
-      case 'set_node_image':
-        return this.core.setNodeImage(String(args.nodeId), {
-          assetId: nullableString(args.assetId) ?? undefined,
-          mediaUrl: nullableString(args.mediaUrl) ?? undefined,
-          width: nullableNumber(args.width),
-          height: nullableNumber(args.height),
-        });
-      case 'set_view_toolbar_visible':
-        return this.core.setViewToolbarVisible(String(args.nodeId), Boolean(args.visible));
-      case 'set_view_mode':
-        return this.core.setViewMode(String(args.nodeId), viewMode(args.mode));
-      case 'add_sort_rule':
-        return this.core.addSortRule(String(args.nodeId), String(args.field), sortDirection(args.direction) ?? 'asc');
-      case 'update_sort_rule':
-        return this.core.updateSortRule(String(args.ruleId), String(args.field), sortDirection(args.direction) ?? 'asc');
-      case 'remove_sort_rule':
-        return this.core.removeSortRule(String(args.ruleId));
-      case 'clear_sort_rules':
-        return this.core.clearSortRules(String(args.nodeId));
-      case 'add_filter_rule':
-        return this.core.addFilterRule(
-          String(args.nodeId),
-          String(args.field),
-          filterOperator(args.operator),
-          arrayArg(args.values),
-          filterValueLogic(args.valueLogic),
-        );
-      case 'update_filter_rule':
-        return this.core.updateFilterRule(String(args.ruleId), {
-          field: nullableString(args.field),
-          operator: args.operator === undefined ? undefined : filterOperator(args.operator),
-          values: args.values === undefined ? undefined : arrayArg(args.values),
-          valueLogic: args.valueLogic === undefined ? undefined : filterValueLogic(args.valueLogic),
-        });
-      case 'remove_filter_rule':
-        return this.core.removeFilterRule(String(args.ruleId));
-      case 'clear_filter_rules':
-        return this.core.clearFilterRules(String(args.nodeId));
-      case 'set_group_field':
-        return this.core.setGroupField(String(args.nodeId), nullableString(args.field));
-      case 'add_display_field':
-        return this.core.addDisplayField(
-          String(args.nodeId),
-          nullableString(args.field),
-          args.createFieldName === undefined
-            ? undefined
-            : {
-                name: String(args.createFieldName),
-                fieldType: fieldType(args.createFieldType),
-              },
-        );
-      case 'update_display_field':
-        return this.core.updateDisplayField(String(args.displayFieldId), {
-          field: nullableString(args.field),
-          visible: args.visible === undefined ? undefined : Boolean(args.visible),
-          width: nullableNumber(args.width),
-          order: nullableNumber(args.order),
-          label: nullableString(args.label),
-          placement: displayPlacement(args.placement),
-          move: args.move === 'left' || args.move === 'right' ? args.move : undefined,
-        });
-      case 'remove_display_field':
-        return this.core.removeDisplayField(String(args.displayFieldId));
-      case 'set_node_icon':
-        return this.core.setNodeIcon(String(args.nodeId), nullableString(args.icon), iconKind(args.iconKind));
-      case 'set_node_banner':
-        return this.core.setNodeBanner(String(args.nodeId), nullableString(args.assetId), {
-          x: nullableNumber(args.positionX),
-          y: nullableNumber(args.positionY),
-        });
-      case 'set_search_query_outline':
-        return this.setSearchQueryOutline(String(args.nodeId), String(args.queryOutline ?? ''));
-      case 'merge_node_into':
-        return this.core.mergeNodeInto(String(args.nodeId), String(args.targetId));
-      case 'move_node':
-        return this.core.moveNode(String(args.nodeId), String(args.parentId), nullableNumber(args.index));
-      case 'batch_move_nodes':
-        return this.core.batchMoveNodes(batchMoveNodeArgs(args.moves));
-      case 'indent_node':
-        return this.core.indentNode(String(args.nodeId));
-      case 'outdent_node':
-        return this.core.outdentNode(String(args.nodeId));
-      case 'trash_node':
-        return this.core.trashNode(String(args.nodeId));
-      case 'batch_trash_nodes':
-        return this.core.batchTrashNodes(arrayArg(args.nodeIds));
-      case 'batch_indent_nodes':
-        return this.core.batchIndentNodes(arrayArg(args.nodeIds));
-      case 'batch_outdent_nodes':
-        return this.core.batchOutdentNodes(arrayArg(args.nodeIds));
-      case 'batch_toggle_done':
-        return this.core.batchToggleDone(arrayArg(args.nodeIds));
-      case 'batch_cycle_done_state':
-        return this.core.batchCycleDoneState(arrayArg(args.nodeIds));
-      case 'batch_duplicate_nodes':
-        return this.core.batchDuplicateNodes(arrayArg(args.nodeIds));
-      case 'batch_move_nodes_up':
-        return this.core.batchMoveNodesUp(arrayArg(args.nodeIds));
-      case 'batch_move_nodes_down':
-        return this.core.batchMoveNodesDown(arrayArg(args.nodeIds));
-      case 'batch_apply_tag':
-        return this.core.batchApplyTag(arrayArg(args.nodeIds), String(args.tagId));
-      case 'restore_node':
-        return this.core.restoreNode(String(args.nodeId));
-      case 'delete_node':
-        return this.core.deleteNode(String(args.nodeId));
-      case 'toggle_done':
-        return this.core.toggleDone(String(args.nodeId));
-      case 'cycle_done_state':
-        return this.core.cycleDoneState(String(args.nodeId));
-      case 'create_tag':
-        return this.core.createTag(String(args.name ?? ''));
-      case 'apply_tag':
-        return this.core.applyTag(String(args.nodeId), String(args.tagId));
-      case 'remove_tag':
-        return this.core.removeTag(String(args.nodeId), String(args.tagId));
-      case 'set_tag_config':
-        return this.core.setTagConfig(String(args.tagId), args.patch as TagConfigPatch);
-      case 'set_field_config':
-        return this.core.setFieldConfig(String(args.fieldId), args.patch as FieldConfigPatch);
-      case 'create_field_definition':
-        return this.core.createFieldDefinition(String(args.name), fieldType(args.fieldType));
-      case 'create_field_def':
-        return this.core.createFieldDef(String(args.tagId), String(args.name), fieldType(args.fieldType));
-      case 'create_inline_field_after_node':
-        return this.core.createInlineFieldAfterNode(String(args.afterNodeId), String(args.name), fieldType(args.fieldType));
-      case 'create_inline_field':
-        return this.core.createInlineField(
-          String(args.parentId),
-          nullableNumber(args.index),
-          String(args.name),
-          fieldType(args.fieldType),
-          nullableString(args.targetDefId),
-        );
-      case 'reuse_field_definition':
-        return this.core.reuseFieldDefinition(String(args.entryId), String(args.targetDefId));
-      case 'merge_definitions':
-        return this.core.mergeDefinitions(String(args.targetId), stringArray(args.sourceIds));
-      case 'register_collected_option':
-        return this.core.registerCollectedOption(String(args.fieldDefId), String(args.name));
-      case 'create_collected_field_option':
-        return this.core.createCollectedFieldOption(
-          String(args.fieldEntryId),
-          String(args.name),
-          typeof args.id === 'string' ? args.id : undefined,
-        );
-      case 'select_field_option':
-        return this.core.selectFieldOption(
-          String(args.fieldEntryId),
-          String(args.optionNodeId),
-          typeof args.id === 'string' ? args.id : undefined,
-        );
-      case 'set_field_free_text_value':
-        return this.core.setFieldFreeTextValue(
-          String(args.fieldEntryId),
-          String(args.text),
-          typeof args.id === 'string' ? args.id : undefined,
-        );
-      case 'clear_field_value':
-        return this.core.clearFieldValue(String(args.fieldEntryId));
-      case 'remove_field_value':
-        return this.core.removeFieldValue(String(args.valueId));
-      case 'add_reference':
-        return this.core.addReference(String(args.parentId), String(args.targetId), nullableNumber(args.index));
-      case 'add_reference_conversion':
-        return this.core.addReferenceConversion(String(args.parentId), String(args.targetId), nullableNumber(args.index));
-      case 'set_reference_target':
-        return this.core.setReferenceTarget(String(args.referenceId), String(args.targetId));
-      case 'replace_node_with_reference':
-        return this.core.replaceNodeWithReference(String(args.nodeId), String(args.targetId));
-      case 'replace_node_with_reference_conversion':
-        return this.core.replaceNodeWithReferenceConversion(String(args.nodeId), String(args.targetId));
-      case 'replace_node_with_inline_reference':
-        return this.core.replaceNodeWithInlineReference(String(args.nodeId), String(args.targetId));
-      case 'convert_reference_to_inline_node':
-        return this.core.convertReferenceToInlineNode(String(args.referenceId));
-      case 'restore_inline_reference_node_to_reference':
-        return this.core.restoreInlineReferenceNodeToReference(String(args.nodeId), String(args.targetId));
-      case 'ensure_date_node':
-        return this.core.ensureDateNode(Number(args.year), Number(args.month), Number(args.day));
-      case 'ensure_tag_search':
-        return this.core.ensureTagSearch(String(args.tagId));
-      case 'create_search_node':
-        return this.core.createSearchNode(
-          String(args.parentId),
-          nullableNumber(args.index),
-          args.config as SearchNodeConfig,
-          this.textSearchIndexForCoreMutation(),
-        );
-      case 'set_search_node':
-        return this.core.setSearchNode(String(args.nodeId), args.config as SearchNodeConfig, this.textSearchIndexForCoreMutation());
-      case 'refresh_search_node_results':
-        return this.core.refreshSearchNodeResults(String(args.nodeId), this.textSearchIndexForCoreMutation());
-      case 'undo':
-        return this.core.operationHistory({
-          action: 'undo',
-          origin: historyOrigin(args.historyOrigin, meta.origin),
-          steps: nullableNumber(args.steps) ?? 1,
-          operationId: nullableString(args.operationId) ?? undefined,
-        });
-      case 'redo':
-        return this.core.operationHistory({
-          action: 'redo',
-          origin: historyOrigin(args.historyOrigin, meta.origin),
-          steps: nullableNumber(args.steps) ?? 1,
-          operationId: nullableString(args.operationId) ?? undefined,
-        });
-      default:
-        throw new Error(`Unknown command: ${command}`);
+    const guardResult = this.guardMutation(command, args, meta);
+    onGuarded?.(guardResult);
+    try {
+      switch (command) {
+        case 'create_node':
+          return this.core.createNode(
+            String(args.parentId),
+            nullableNumber(args.index),
+            String(args.text ?? ''),
+            typeof args.id === 'string' ? args.id : undefined,
+          );
+        case 'create_rich_text_node':
+          return this.core.createRichTextContentNode(String(args.parentId), nullableNumber(args.index), args.content as RichText);
+        case 'create_tagged_node':
+          return this.core.createTaggedNode(String(args.parentId), args.content as RichText, String(args.tagId));
+        case 'create_tag_and_tagged_node':
+          return this.core.createTagAndTaggedNode(String(args.parentId), args.content as RichText, String(args.name ?? ''));
+        case 'create_nodes_from_tree':
+          return this.core.createNodesFromTree(String(args.parentId), arrayArg(args.nodes));
+        case 'create_capture':
+          return this.core.createCapture(args.input as CreateCaptureInput);
+        case 'paste_nodes_into_node':
+          return this.core.pasteNodesIntoNode(
+            String(args.nodeId),
+            args.content as RichText,
+            arrayArg(args.children),
+            arrayArg(args.siblingsAfter),
+            (args.firstMeta ?? {}) as PasteRowMeta,
+          );
+        case 'split_node':
+          return this.core.splitNode(String(args.nodeId), args.before as RichText, args.after as RichText, {
+            targetParentId: nullableString(args.targetParentId),
+            targetIndex: nullableNumber(args.targetIndex),
+            focusPlacement: args.focusPlacement as FocusPlacement | undefined,
+          });
+        case 'apply_node_text_patch':
+          return this.core.applyNodeTextPatch(String(args.nodeId), args.patch as RichTextPatch);
+        case 'update_node_description':
+          return this.core.updateNodeDescription(String(args.nodeId), nullableString(args.description));
+        case 'set_node_checkbox_visible':
+          return this.core.setNodeCheckboxVisible(String(args.nodeId), Boolean(args.visible));
+        case 'set_code_block':
+          return this.core.setCodeBlock(String(args.nodeId), nullableString(args.codeLanguage) ?? undefined);
+        case 'set_code_language':
+          return this.core.setCodeLanguage(String(args.nodeId), String(args.codeLanguage ?? ''));
+        case 'create_image_node':
+          return this.core.createImageNode(String(args.parentId), nullableNumber(args.index), {
+            assetId: nullableString(args.assetId) ?? undefined,
+            mediaUrl: nullableString(args.mediaUrl) ?? undefined,
+            width: nullableNumber(args.width),
+            height: nullableNumber(args.height),
+            alt: nullableString(args.alt),
+            name: nullableString(args.name),
+          });
+        case 'create_attachment_node':
+          return this.core.createAttachmentNode(String(args.parentId), nullableNumber(args.index), {
+            assetId: nullableString(args.assetId),
+            mimeType: nullableString(args.mimeType),
+            originalFilename: nullableString(args.originalFilename),
+            fileSize: nullableNumber(args.fileSize),
+            thumbnailAssetId: nullableString(args.thumbnailAssetId),
+            pdfPageCount: nullableNumber(args.pdfPageCount),
+            audioDurationMs: nullableNumber(args.audioDurationMs),
+            videoDurationMs: nullableNumber(args.videoDurationMs),
+          });
+        case 'set_node_image':
+          return this.core.setNodeImage(String(args.nodeId), {
+            assetId: nullableString(args.assetId) ?? undefined,
+            mediaUrl: nullableString(args.mediaUrl) ?? undefined,
+            width: nullableNumber(args.width),
+            height: nullableNumber(args.height),
+          });
+        case 'set_view_toolbar_visible':
+          return this.core.setViewToolbarVisible(String(args.nodeId), Boolean(args.visible));
+        case 'set_view_mode':
+          return this.core.setViewMode(String(args.nodeId), viewMode(args.mode));
+        case 'add_sort_rule':
+          return this.core.addSortRule(String(args.nodeId), String(args.field), sortDirection(args.direction) ?? 'asc');
+        case 'update_sort_rule':
+          return this.core.updateSortRule(String(args.ruleId), String(args.field), sortDirection(args.direction) ?? 'asc');
+        case 'remove_sort_rule':
+          return this.core.removeSortRule(String(args.ruleId));
+        case 'clear_sort_rules':
+          return this.core.clearSortRules(String(args.nodeId));
+        case 'add_filter_rule':
+          return this.core.addFilterRule(
+            String(args.nodeId),
+            String(args.field),
+            filterOperator(args.operator),
+            arrayArg(args.values),
+            filterValueLogic(args.valueLogic),
+          );
+        case 'update_filter_rule':
+          return this.core.updateFilterRule(String(args.ruleId), {
+            field: nullableString(args.field),
+            operator: args.operator === undefined ? undefined : filterOperator(args.operator),
+            values: args.values === undefined ? undefined : arrayArg(args.values),
+            valueLogic: args.valueLogic === undefined ? undefined : filterValueLogic(args.valueLogic),
+          });
+        case 'remove_filter_rule':
+          return this.core.removeFilterRule(String(args.ruleId));
+        case 'clear_filter_rules':
+          return this.core.clearFilterRules(String(args.nodeId));
+        case 'set_group_field':
+          return this.core.setGroupField(String(args.nodeId), nullableString(args.field));
+        case 'add_display_field':
+          return this.core.addDisplayField(
+            String(args.nodeId),
+            nullableString(args.field),
+            args.createFieldName === undefined
+              ? undefined
+              : {
+                  name: String(args.createFieldName),
+                  fieldType: fieldType(args.createFieldType),
+                },
+          );
+        case 'update_display_field':
+          return this.core.updateDisplayField(String(args.displayFieldId), {
+            field: nullableString(args.field),
+            visible: args.visible === undefined ? undefined : Boolean(args.visible),
+            width: nullableNumber(args.width),
+            order: nullableNumber(args.order),
+            label: nullableString(args.label),
+            placement: displayPlacement(args.placement),
+            move: args.move === 'left' || args.move === 'right' ? args.move : undefined,
+          });
+        case 'remove_display_field':
+          return this.core.removeDisplayField(String(args.displayFieldId));
+        case 'set_node_icon':
+          return this.core.setNodeIcon(String(args.nodeId), nullableString(args.icon), iconKind(args.iconKind));
+        case 'set_node_banner':
+          return this.core.setNodeBanner(String(args.nodeId), nullableString(args.assetId), {
+            x: nullableNumber(args.positionX),
+            y: nullableNumber(args.positionY),
+          });
+        case 'set_search_query_outline':
+          return this.setSearchQueryOutline(String(args.nodeId), String(args.queryOutline ?? ''));
+        case 'merge_node_into':
+          return this.core.mergeNodeInto(String(args.nodeId), String(args.targetId));
+        case 'move_node':
+          return this.core.moveNode(String(args.nodeId), String(args.parentId), nullableNumber(args.index));
+        case 'batch_move_nodes':
+          return this.core.batchMoveNodes(batchMoveNodeArgs(args.moves));
+        case 'indent_node':
+          return this.core.indentNode(String(args.nodeId));
+        case 'outdent_node':
+          return this.core.outdentNode(String(args.nodeId));
+        case 'trash_node':
+          return this.core.trashNode(String(args.nodeId));
+        case 'batch_trash_nodes':
+          return this.core.batchTrashNodes(arrayArg(args.nodeIds));
+        case 'batch_indent_nodes':
+          return this.core.batchIndentNodes(arrayArg(args.nodeIds));
+        case 'batch_outdent_nodes':
+          return this.core.batchOutdentNodes(arrayArg(args.nodeIds));
+        case 'batch_toggle_done':
+          return this.core.batchToggleDone(arrayArg(args.nodeIds));
+        case 'batch_cycle_done_state':
+          return this.core.batchCycleDoneState(arrayArg(args.nodeIds));
+        case 'batch_duplicate_nodes':
+          return this.core.batchDuplicateNodes(arrayArg(args.nodeIds));
+        case 'batch_move_nodes_up':
+          return this.core.batchMoveNodesUp(arrayArg(args.nodeIds));
+        case 'batch_move_nodes_down':
+          return this.core.batchMoveNodesDown(arrayArg(args.nodeIds));
+        case 'batch_apply_tag':
+          return this.core.batchApplyTag(arrayArg(args.nodeIds), String(args.tagId));
+        case 'restore_node':
+          return this.core.restoreNode(String(args.nodeId));
+        case 'delete_node':
+          return this.core.deleteNode(String(args.nodeId));
+        case 'toggle_done':
+          return this.core.toggleDone(String(args.nodeId));
+        case 'cycle_done_state':
+          return this.core.cycleDoneState(String(args.nodeId));
+        case 'create_tag':
+          return this.core.createTag(String(args.name ?? ''));
+        case 'apply_tag':
+          return this.core.applyTag(String(args.nodeId), String(args.tagId));
+        case 'remove_tag':
+          return this.core.removeTag(String(args.nodeId), String(args.tagId));
+        case 'set_tag_config':
+          return this.core.setTagConfig(String(args.tagId), args.patch as TagConfigPatch);
+        case 'set_field_config':
+          return this.core.setFieldConfig(String(args.fieldId), args.patch as FieldConfigPatch);
+        case 'create_field_definition':
+          return this.core.createFieldDefinition(String(args.name), fieldType(args.fieldType));
+        case 'create_field_def':
+          return this.core.createFieldDef(String(args.tagId), String(args.name), fieldType(args.fieldType));
+        case 'create_inline_field_after_node':
+          return this.core.createInlineFieldAfterNode(String(args.afterNodeId), String(args.name), fieldType(args.fieldType));
+        case 'create_inline_field':
+          return this.core.createInlineField(
+            String(args.parentId),
+            nullableNumber(args.index),
+            String(args.name),
+            fieldType(args.fieldType),
+            nullableString(args.targetDefId),
+          );
+        case 'reuse_field_definition':
+          return this.core.reuseFieldDefinition(String(args.entryId), String(args.targetDefId));
+        case 'merge_definitions':
+          return this.core.mergeDefinitions(String(args.targetId), stringArray(args.sourceIds));
+        case 'register_collected_option':
+          return this.core.registerCollectedOption(String(args.fieldDefId), String(args.name));
+        case 'create_collected_field_option':
+          return this.core.createCollectedFieldOption(
+            String(args.fieldEntryId),
+            String(args.name),
+            typeof args.id === 'string' ? args.id : undefined,
+          );
+        case 'select_field_option':
+          return this.core.selectFieldOption(
+            String(args.fieldEntryId),
+            String(args.optionNodeId),
+            typeof args.id === 'string' ? args.id : undefined,
+          );
+        case 'set_field_free_text_value':
+          return this.core.setFieldFreeTextValue(
+            String(args.fieldEntryId),
+            String(args.text),
+            typeof args.id === 'string' ? args.id : undefined,
+          );
+        case 'clear_field_value':
+          return this.core.clearFieldValue(String(args.fieldEntryId));
+        case 'remove_field_value':
+          return this.core.removeFieldValue(String(args.valueId));
+        case 'add_reference':
+          return this.core.addReference(String(args.parentId), String(args.targetId), nullableNumber(args.index));
+        case 'add_reference_conversion':
+          return this.core.addReferenceConversion(String(args.parentId), String(args.targetId), nullableNumber(args.index));
+        case 'set_reference_target':
+          return this.core.setReferenceTarget(String(args.referenceId), String(args.targetId));
+        case 'replace_node_with_reference':
+          return this.core.replaceNodeWithReference(String(args.nodeId), String(args.targetId));
+        case 'replace_node_with_reference_conversion':
+          return this.core.replaceNodeWithReferenceConversion(String(args.nodeId), String(args.targetId));
+        case 'replace_node_with_inline_reference':
+          return this.core.replaceNodeWithInlineReference(String(args.nodeId), String(args.targetId));
+        case 'convert_reference_to_inline_node':
+          return this.core.convertReferenceToInlineNode(String(args.referenceId));
+        case 'restore_inline_reference_node_to_reference':
+          return this.core.restoreInlineReferenceNodeToReference(String(args.nodeId), String(args.targetId));
+        case 'ensure_date_node':
+          return this.core.ensureDateNode(Number(args.year), Number(args.month), Number(args.day));
+        case 'ensure_tag_search':
+          return this.core.ensureTagSearch(String(args.tagId));
+        case 'create_search_node':
+          return this.core.createSearchNode(
+            String(args.parentId),
+            nullableNumber(args.index),
+            args.config as SearchNodeConfig,
+            this.textSearchIndexForCoreMutation(),
+          );
+        case 'set_search_node':
+          return this.core.setSearchNode(String(args.nodeId), args.config as SearchNodeConfig, this.textSearchIndexForCoreMutation());
+        case 'refresh_search_node_results':
+          return this.core.refreshSearchNodeResults(String(args.nodeId), this.textSearchIndexForCoreMutation());
+        case 'undo':
+          return this.core.operationHistory({
+            action: 'undo',
+            origin: historyOrigin(args.historyOrigin, meta.origin),
+            steps: nullableNumber(args.steps) ?? 1,
+            operationId: nullableString(args.operationId) ?? undefined,
+          });
+        case 'redo':
+          return this.core.operationHistory({
+            action: 'redo',
+            origin: historyOrigin(args.historyOrigin, meta.origin),
+            steps: nullableNumber(args.steps) ?? 1,
+            operationId: nullableString(args.operationId) ?? undefined,
+          });
+        default:
+          throw new Error(`Unknown command: ${command}`);
+      }
+    } finally {
+      this.captureTransactionProjectionChanges();
     }
   }
 
@@ -920,9 +1022,8 @@ export class DocumentService implements DocumentSystemHost {
     command: DocumentCommand,
     args: Readonly<Record<string, unknown>>,
     meta: DocumentMutationMeta,
-    projection: DocumentProjection,
   ) {
-    const result = this.mutationGuard?.(command, args, meta, projection);
+    const result = this.mutationGuard?.(command, args, meta, () => this.core.projection());
     if (result?.affectsMemory) {
       const metadata = this.transactionContext.getStore();
       if (metadata) metadata.affectsMemory = true;
@@ -952,10 +1053,39 @@ export class DocumentService implements DocumentSystemHost {
             return;
           case 'ensure_document_system_tag_definition':
             this.core.ensureDocumentSystemTagDefinition(invocation.args.definition);
+            this.captureTransactionProjectionChanges();
             return;
         }
       },
     });
+  }
+
+  private beginObservedTransaction(meta: DocumentMutationMeta): void {
+    this.pendingTransactionProjectionChanges = null;
+    this.mutationObserver?.beginTransaction(meta, () => this.core.projection());
+  }
+
+  private captureTransactionProjectionChanges(): void {
+    const changes = this.core.drainTransactionProjectionChanges();
+    if (!changes) return;
+    this.mutationObserver?.applyTransactionChanges(changes);
+    this.pendingTransactionProjectionChanges = mergeTransactionProjectionChanges(
+      this.pendingTransactionProjectionChanges,
+      changes,
+    );
+  }
+
+  private commitObservedTransaction(meta: DocumentMutationMeta, affectsMemory: boolean | undefined): void {
+    try {
+      this.mutationObserver?.commitTransaction(meta, affectsMemory);
+    } finally {
+      this.pendingTransactionProjectionChanges = null;
+    }
+  }
+
+  private rollbackObservedTransaction(): void {
+    this.mutationObserver?.rollbackTransaction();
+    this.pendingTransactionProjectionChanges = null;
   }
 
   private searchNodes(query: string) {
@@ -1242,9 +1372,17 @@ export class DocumentService implements DocumentSystemHost {
     origin: DocumentProjectionChangedEvent['origin'],
     sourceWebContentsId?: number,
     operationId?: string,
+    options: ProjectionChangedOptions = {},
   ) {
-    const update = this.buildProjectionUpdate();
-    if (this.projectionChangedListeners.size === 0) return;
+    const update = options.forceEmptyUpdate
+      ? {
+          kind: 'delta' as const,
+          revision: this.core.revision(),
+          todayId: this.core.todayId(),
+          changedNodes: [],
+          removedIds: [],
+        }
+      : this.buildProjectionUpdate();
     const event: DocumentProjectionChangedEvent = {
       type: 'projection_changed',
       origin,
@@ -1255,7 +1393,11 @@ export class DocumentService implements DocumentSystemHost {
       event,
       ...(sourceWebContentsId !== undefined ? { sourceWebContentsId } : {}),
       ...(operationId !== undefined ? { operationId } : {}),
+      ...(options.affectsMemory !== undefined ? { affectsMemory: options.affectsMemory } : {}),
+      ...(options.operationComplete !== undefined ? { operationComplete: options.operationComplete } : {}),
+      ...(options.transactionIndexed ? { transactionIndexed: true } : {}),
     };
+    this.mutationObserver?.projectionChanged(delivery);
     for (const listener of this.projectionChangedListeners) listener(delivery);
   }
 
@@ -1265,6 +1407,43 @@ export class DocumentService implements DocumentSystemHost {
       this.documentReadModel.reseed(this.core.revision(), this.core.projection());
     }
   }
+}
+
+function mergeAffectsMemory(
+  previous: boolean | undefined,
+  next: boolean | undefined,
+): boolean | undefined {
+  if (previous === true || next === true) return true;
+  if (previous === undefined || next === undefined) return undefined;
+  return false;
+}
+
+function mergeTransactionProjectionChanges(
+  previous: DocumentTransactionProjectionChanges | null,
+  next: DocumentTransactionProjectionChanges,
+): DocumentTransactionProjectionChanges {
+  if (!previous) {
+    return {
+      todayId: next.todayId,
+      changedNodes: [...next.changedNodes],
+      removedIds: [...next.removedIds],
+    };
+  }
+  const changedById = new Map(previous.changedNodes.map((node) => [node.id, node]));
+  const removedIds = new Set(previous.removedIds);
+  for (const node of next.changedNodes) {
+    changedById.set(node.id, node);
+    removedIds.delete(node.id);
+  }
+  for (const nodeId of next.removedIds) {
+    changedById.delete(nodeId);
+    removedIds.add(nodeId);
+  }
+  return {
+    todayId: next.todayId,
+    changedNodes: [...changedById.values()],
+    removedIds: [...removedIds],
+  };
 }
 
 function isInProjectionTrash(nodes: ReadonlyMap<string, NodeProjection>, nodeId: string): boolean {

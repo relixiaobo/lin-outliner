@@ -12,6 +12,7 @@ import {
   type MemoryGeneratedNodeRecord,
 } from '../../src/main/agent/extensions/memory/MemoryControlStore';
 import { MemoryExtension, type MemoryThreadHost } from '../../src/main/agent/extensions/memory/MemoryExtension';
+import { MemoryMutationIndex } from '../../src/main/agent/extensions/memory/MemoryMutationIndex';
 import { collectMemoryEvidence } from '../../src/main/agent/extensions/memory/Phase1';
 import { Phase1 } from '../../src/main/agent/extensions/memory/Phase1';
 import { MemoryPipeline } from '../../src/main/agent/extensions/memory/MemoryPipeline';
@@ -33,8 +34,10 @@ import {
   WORKSPACE_ID,
   type DocumentProjection,
   type NodeProjection,
+  type ProjectionUpdate,
 } from '../../src/core/types';
 import type { SqliteDatabase } from '../../src/main/agent/persistence/sqlite';
+import type { ProjectionChangedDelivery } from '../../src/main/documentService';
 import { closeAgentServices } from '../../src/main/agent/closeAgentServices';
 import { replayableModelCall } from '../fixtures/agentToolCallHistory';
 
@@ -799,6 +802,336 @@ describe('Codex Memory contracts', () => {
       nodeId: 'ordinary:2',
       tagId: TAG_DAY_ID,
     }, meta, projection)).not.toThrow();
+  });
+
+  test('keeps incremental mutation membership equivalent to a full projection scan', () => {
+    const projection = memoryProjection();
+    const index = new MemoryMutationIndex(projection);
+    expect(index.debugSnapshot()).toEqual(fullScanMemoryMutationSnapshot(projection));
+
+    applyMemoryIndexDelta(projection, index, [patchProjectionNode(projection, 'ordinary:1', {
+      content: { text: 'Ordinary edit', spans: [] },
+    })]);
+    expect(index.debugSnapshot()).toEqual(fullScanMemoryMutationSnapshot(projection));
+
+    applyMemoryIndexDelta(projection, index, [patchProjectionNode(projection, 'day', {
+      content: { text: '2026-07-25', spans: [] },
+    })]);
+    expect(index.debugSnapshot()).toEqual(fullScanMemoryMutationSnapshot(projection));
+
+    applyMemoryIndexDelta(projection, index, [
+      patchProjectionNode(projection, 'day', { children: [] }),
+      patchProjectionNode(projection, MEMORY_NODE_ID, { parentId: TRASH_ID }),
+    ]);
+    expect(index.debugSnapshot()).toEqual(fullScanMemoryMutationSnapshot(projection));
+    expect(index.fullRebuildCount()).toBe(1);
+  });
+
+  test('reads transaction membership through the overlay and restores it exactly on rollback', () => {
+    const projection = memoryProjection();
+    const index = new MemoryMutationIndex(projection);
+    const initial = index.debugSnapshot();
+    const untaggedContainer = patchProjectionNode(projection, MEMORY_NODE_ID, { tags: [] });
+
+    expect(index.mayChangeMemory('apply_node_text_patch', { nodeId: 'belief:1' }, new Set())).toBe(true);
+    index.beginTransaction();
+    index.applyTransactionChanges({ changedNodes: [untaggedContainer], removedIds: [] });
+    index.applyTransactionChanges({
+      changedNodes: [patchProjectionNode(projection, 'day', { content: { text: '2026-08-01', spans: [] } })],
+      removedIds: [],
+    });
+    expect(index.mayChangeMemory('apply_node_text_patch', { nodeId: 'belief:1' }, new Set())).toBe(false);
+    index.rollbackTransaction();
+    expect(index.debugSnapshot()).toEqual(initial);
+    expect(index.mayChangeMemory('apply_node_text_patch', { nodeId: 'belief:1' }, new Set())).toBe(true);
+
+    index.beginTransaction();
+    index.applyTransactionChanges({ changedNodes: [untaggedContainer], removedIds: [] });
+    index.commitTransaction();
+    expect(index.mayChangeMemory('apply_node_text_patch', { nodeId: 'belief:1' }, new Set())).toBe(false);
+  });
+
+  test('updates by-name tag classification from every sparse delta', () => {
+    const projection = memoryProjection();
+    const index = new MemoryMutationIndex(projection);
+    const definition = projection.nodes.find((entry) => entry.id === 'tag:d-memory')!;
+    expect(index.mayChangeMemory('create_tag_and_tagged_node', { name: ' D-MEMORY ' }, new Set())).toBe(true);
+
+    const renamed = { ...definition, content: { text: 'renamed-memory-tag', spans: [] } } as NodeProjection;
+    index.applyTransactionChanges({
+      changedNodes: [renamed],
+      removedIds: [],
+    });
+    expect(index.mayChangeMemory('create_tag_and_tagged_node', { name: 'd-memory' }, new Set())).toBe(false);
+    expect(index.mayChangeMemory('create_tag_and_tagged_node', { name: 'renamed-memory-tag' }, new Set())).toBe(true);
+
+    index.applyTransactionChanges({
+      changedNodes: [{ ...renamed, parentId: TRASH_ID } as NodeProjection],
+      removedIds: [],
+    });
+    expect(index.mayChangeMemory('create_tag_and_tagged_node', { name: 'renamed-memory-tag' }, new Set())).toBe(false);
+  });
+
+  test('keeps plain typing projection-free and reconciles ancestor-derived generated edits synchronously', async () => {
+    const store = memoryStore();
+    const projection = memoryProjection();
+    projection.nodes.find((entry) => entry.id === WORKSPACE_ID)!.children.push('ordinary:2');
+    projection.nodes.push(node('ordinary:2', WORKSPACE_ID, [], [], 'Ordinary outline node'));
+    const timeline = new TimelineMemoryStore(readOnlyTimelineHost(projection));
+    seedGeneratedGraph(store, timeline);
+    const extension = new MemoryExtension(store, timeline);
+    extension.initializeMutationIndex(projection);
+    const wakes: string[] = [];
+    Object.assign(extension as unknown as Record<string, unknown>, {
+      initialized: true,
+      pipeline: {
+        wakeGlobal: (reason: string) => wakes.push(reason),
+        close: async () => undefined,
+      },
+    });
+    let projectionReads = 0;
+
+    expect(extension.authorizeMutation('apply_node_text_patch', {
+      nodeId: 'ordinary:2',
+      patch: { ops: [] },
+    }, {}, () => {
+      projectionReads += 1;
+      return projection;
+    })).toBe(false);
+    expect(extension.authorizeMutation('apply_node_text_patch', {
+      nodeId: 'belief:1',
+      patch: { ops: [] },
+    }, {}, () => {
+      projectionReads += 1;
+      return projection;
+    })).toBe(true);
+    expect(projectionReads).toBe(0);
+
+    const renamedDay = patchProjectionNode(projection, 'day', {
+      content: { text: '2026-07-25', spans: [] },
+    });
+    replaceProjectionNodes(projection, [renamedDay]);
+    extension.projectionChanged(memoryProjectionDelivery({
+      kind: 'delta',
+      revision: 1,
+      todayId: projection.todayId,
+      changedNodes: [renamedDay],
+      removedIds: [],
+    }, true));
+    expect(store.generatedNodes().every((entry) => entry.userAuthoritative)).toBe(true);
+    expect(extension.mutationIndexFullRebuildCount()).toBe(1);
+    expect(extension.graphDigestComputationCount()).toBe(0);
+
+    const renamedBelief = patchProjectionNode(projection, 'belief:1', {
+      content: { text: 'Edited belief', spans: [] },
+    });
+    replaceProjectionNodes(projection, [renamedBelief]);
+    extension.projectionChanged(memoryProjectionDelivery({
+      kind: 'delta',
+      revision: 2,
+      todayId: projection.todayId,
+      changedNodes: [renamedBelief],
+      removedIds: [],
+    }, true));
+    await extension.stopWorker();
+    expect(extension.graphDigestComputationCount()).toBe(1);
+    expect(wakes).toEqual(['memory-graph-changed']);
+  });
+
+  test('removes every generated descendant when an ancestor enters Trash', async () => {
+    const store = memoryStore();
+    const projection = memoryProjection();
+    const timeline = new TimelineMemoryStore(readOnlyTimelineHost(projection));
+    seedGeneratedGraph(store, timeline);
+    const extension = new MemoryExtension(store, timeline);
+    extension.initializeMutationIndex(projection);
+    const day = patchProjectionNode(projection, 'day', { children: [] });
+    const container = patchProjectionNode(projection, MEMORY_NODE_ID, { parentId: TRASH_ID });
+    replaceProjectionNodes(projection, [day, container]);
+
+    extension.projectionChanged(memoryProjectionDelivery({
+      kind: 'delta',
+      revision: 1,
+      todayId: projection.todayId,
+      changedNodes: [day, container],
+      removedIds: [],
+    }, true));
+    expect(store.generatedNodes()).toEqual([]);
+    expect(extension.mutationIndexFullRebuildCount()).toBe(1);
+    await extension.stopWorker();
+  });
+
+  test('preserves generated cleanup and wake semantics for sparse canonical graph exits', async () => {
+    const scenarios: Array<{
+      readonly name: string;
+      readonly mutate: (projection: DocumentProjection) => ProjectionUpdate;
+      readonly remainingNodeIds: readonly string[];
+    }> = [
+      {
+        name: 'memory tag removal',
+        mutate: (projection) => {
+          const container = patchProjectionNode(projection, MEMORY_NODE_ID, { tags: [] });
+          replaceProjectionNodes(projection, [container]);
+          return {
+            kind: 'delta',
+            revision: 1,
+            todayId: projection.todayId,
+            changedNodes: [container],
+            removedIds: [],
+          };
+        },
+        remainingNodeIds: [],
+      },
+      {
+        name: 'id-only deletion',
+        mutate: (projection) => {
+          replaceProjectionNodes(projection, [], ['belief:1']);
+          return {
+            kind: 'delta',
+            revision: 1,
+            todayId: projection.todayId,
+            changedNodes: [],
+            removedIds: ['belief:1'],
+          };
+        },
+        remainingNodeIds: [MEMORY_NODE_ID, EPISODE_NODE_ID].sort(),
+      },
+      {
+        name: 'day moved out of Daily Notes',
+        mutate: (projection) => {
+          const day = patchProjectionNode(projection, 'day', { parentId: WORKSPACE_ID });
+          replaceProjectionNodes(projection, [day]);
+          return {
+            kind: 'delta',
+            revision: 1,
+            todayId: projection.todayId,
+            changedNodes: [day],
+            removedIds: [],
+          };
+        },
+        remainingNodeIds: [],
+      },
+    ];
+
+    for (const scenario of scenarios) {
+      const store = memoryStore();
+      const projection = memoryProjection();
+      const timeline = new TimelineMemoryStore(readOnlyTimelineHost(projection));
+      seedGeneratedGraph(store, timeline);
+      const extension = new MemoryExtension(store, timeline);
+      extension.initializeMutationIndex(projection);
+      const wakes: string[] = [];
+      Object.assign(extension as unknown as Record<string, unknown>, {
+        initialized: true,
+        pipeline: {
+          wakeGlobal: (reason: string) => wakes.push(reason),
+          close: async () => undefined,
+        },
+      });
+
+      extension.projectionChanged(memoryProjectionDelivery(scenario.mutate(projection), true));
+
+      expect(store.generatedNodes().map((entry) => entry.nodeId).sort(), scenario.name)
+        .toEqual(scenario.remainingNodeIds);
+      expect(extension.mutationIndexFullRebuildCount(), scenario.name).toBe(1);
+      await extension.stopWorker();
+      expect(wakes, scenario.name).toEqual(['memory-graph-changed']);
+    }
+  });
+
+  test('reconciles every generated descendant when its container moves to another day', async () => {
+    const store = memoryStore();
+    const projection = memoryProjection();
+    const timeline = new TimelineMemoryStore(readOnlyTimelineHost(projection));
+    seedGeneratedGraph(store, timeline);
+    const extension = new MemoryExtension(store, timeline);
+    extension.initializeMutationIndex(projection);
+    const wakes: string[] = [];
+    Object.assign(extension as unknown as Record<string, unknown>, {
+      initialized: true,
+      pipeline: {
+        wakeGlobal: (reason: string) => wakes.push(reason),
+        close: async () => undefined,
+      },
+    });
+    const firstDay = patchProjectionNode(projection, 'day', { children: [] });
+    const secondDay = node('day:2', 'week', [MEMORY_NODE_ID], [TAG_DAY_ID], '2026-07-25');
+    const week = patchProjectionNode(projection, 'week', { children: ['day', secondDay.id] });
+    const container = patchProjectionNode(projection, MEMORY_NODE_ID, { parentId: secondDay.id });
+    replaceProjectionNodes(projection, [firstDay, secondDay, week, container]);
+
+    extension.projectionChanged(memoryProjectionDelivery({
+      kind: 'delta',
+      revision: 1,
+      todayId: projection.todayId,
+      changedNodes: [firstDay, secondDay, week, container],
+      removedIds: [],
+    }, true));
+
+    expect(store.generatedNodes()).not.toEqual([]);
+    expect(store.generatedNodes().every((entry) => entry.userAuthoritative)).toBe(true);
+    expect(extension.mutationIndexFullRebuildCount()).toBe(1);
+    await extension.stopWorker();
+    expect(wakes).toEqual(['memory-graph-changed']);
+  });
+
+  test('wakes for a derived source-date change without generated control rows', async () => {
+    const store = memoryStore();
+    const projection = memoryProjection();
+    const timeline = new TimelineMemoryStore(readOnlyTimelineHost(projection));
+    const extension = new MemoryExtension(store, timeline);
+    extension.initializeMutationIndex(projection);
+    extension.documentChanged();
+    const wakes: string[] = [];
+    Object.assign(extension as unknown as Record<string, unknown>, {
+      initialized: true,
+      pipeline: {
+        wakeGlobal: (reason: string) => wakes.push(reason),
+        close: async () => undefined,
+      },
+    });
+    const renamedDay = patchProjectionNode(projection, 'day', {
+      content: { text: '2026-07-25', spans: [] },
+    });
+    replaceProjectionNodes(projection, [renamedDay]);
+
+    extension.projectionChanged(memoryProjectionDelivery({
+      kind: 'delta',
+      revision: 1,
+      todayId: projection.todayId,
+      changedNodes: [renamedDay],
+      removedIds: [],
+    }, true));
+    await extension.stopWorker();
+
+    expect(store.generatedNodes()).toEqual([]);
+    expect(wakes).toEqual(['memory-graph-changed']);
+  });
+
+  test('caches generated Node reads until a write invalidates them', () => {
+    const database = new Database(':memory:');
+    let generatedSelects = 0;
+    const instrumented: SqliteDatabase = {
+      exec: (sql) => database.exec(sql),
+      prepare: (sql) => {
+        if (/^SELECT \* FROM generated_nodes ORDER BY/.test(sql.trim())) generatedSelects += 1;
+        return database.prepare(sql) as unknown as ReturnType<SqliteDatabase['prepare']>;
+      },
+      close: () => database.close(),
+    };
+    const store = new MemoryControlStore(':memory:', instrumented);
+    stores.push(store);
+    store.replaceGeneratedNodes(THREAD_ID, [generatedNode()], []);
+
+    expect(store.generatedNodes()).toHaveLength(1);
+    expect(store.generatedNodeIds().has(MEMORY_NODE_ID)).toBe(true);
+    expect(store.generatedNodesById().get(MEMORY_NODE_ID)).toBeDefined();
+    expect(store.generatedNodes()).toHaveLength(1);
+    expect(generatedSelects).toBe(1);
+
+    store.markNodeUserAuthoritative(MEMORY_NODE_ID);
+    expect(store.generatedNodesById().get(MEMORY_NODE_ID)?.userAuthoritative).toBe(true);
+    expect(generatedSelects).toBe(2);
   });
 
   test('invalidates polluted origins before global reconciliation', () => {
@@ -1658,6 +1991,96 @@ function admissionContext(thread: Thread, turn: Turn) {
     },
     threadBarrier: { kind: 'thread' as const, threadId: thread.id, generation: 0 },
     hostBarrier: { kind: 'hostRootTurns' as const, generation: 0 },
+  };
+}
+
+function memoryProjectionDelivery(
+  update: ProjectionUpdate,
+  affectsMemory: boolean,
+): ProjectionChangedDelivery {
+  return {
+    event: {
+      type: 'projection_changed',
+      origin: 'user',
+      update,
+      timestamp: Date.now(),
+    },
+    affectsMemory,
+    operationComplete: true,
+  };
+}
+
+function patchProjectionNode(
+  projection: DocumentProjection,
+  nodeId: string,
+  patch: Partial<NodeProjection>,
+): NodeProjection {
+  const current = projection.nodes.find((entry) => entry.id === nodeId);
+  if (!current) throw new Error(`Missing test projection Node: ${nodeId}`);
+  return { ...current, ...patch } as NodeProjection;
+}
+
+function replaceProjectionNodes(
+  projection: DocumentProjection,
+  changedNodes: readonly NodeProjection[],
+  removedIds: readonly string[] = [],
+): void {
+  const changedById = new Map(changedNodes.map((entry) => [entry.id, entry]));
+  const removed = new Set(removedIds);
+  projection.nodes = projection.nodes
+    .filter((entry) => !removed.has(entry.id))
+    .map((entry) => changedById.get(entry.id) ?? entry);
+  for (const entry of changedNodes) {
+    if (!projection.nodes.some((candidate) => candidate.id === entry.id)) projection.nodes.push(entry);
+  }
+}
+
+function applyMemoryIndexDelta(
+  projection: DocumentProjection,
+  index: MemoryMutationIndex,
+  changedNodes: readonly NodeProjection[],
+  removedIds: readonly string[] = [],
+): void {
+  index.applyTransactionChanges({ changedNodes, removedIds });
+  replaceProjectionNodes(projection, changedNodes, removedIds);
+}
+
+function fullScanMemoryMutationSnapshot(projection: DocumentProjection) {
+  const nodes = new Map(projection.nodes.map((entry) => [entry.id, entry]));
+  const reservedTagIds = new Set(MEMORY_TAG_DEFINITIONS.map((entry) => entry.tagId));
+  const reservedTagged = projection.nodes.filter((entry) => entry.tags.some((tagId) => reservedTagIds.has(tagId)));
+  const protectedAncestors = new Set<string>();
+  const collectAncestors = (nodeId: string) => {
+    const visited = new Set<string>();
+    let current = nodes.get(nodeId);
+    while (current?.parentId && !visited.has(current.parentId)) {
+      protectedAncestors.add(current.parentId);
+      visited.add(current.parentId);
+      current = nodes.get(current.parentId);
+    }
+  };
+  for (const entry of reservedTagged) collectAncestors(entry.id);
+
+  const graph = canonicalMemoryGraph(projection);
+  const owned = new Set<string>();
+  for (const container of graph.containers) {
+    const pending = [container.node.id];
+    while (pending.length > 0) {
+      const nodeId = pending.pop()!;
+      if (owned.has(nodeId)) continue;
+      owned.add(nodeId);
+      pending.push(...(nodes.get(nodeId)?.children ?? []));
+    }
+    collectAncestors(container.node.id);
+  }
+  return {
+    owned: [...owned].sort(),
+    protectedAncestors: [...protectedAncestors].sort(),
+    reservedTagged: reservedTagged.map((entry) => entry.id).sort(),
+    canonical: graph.nodes.map((entry) => entry.node.id).sort(),
+    canonicalFingerprints: graph.nodes
+      .map((entry) => [entry.node.id, timelineNodeFingerprint(entry)] as const)
+      .sort(([left], [right]) => left.localeCompare(right)),
   };
 }
 
