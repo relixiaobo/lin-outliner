@@ -67,8 +67,9 @@ Other:
 
 - **No tool semantics change**; memory visibility rules unchanged — the
   filtered projection stays byte-identical, only its computation is cached.
-- **Secret-redaction coverage unchanged** — only scheduling/budgeting moves;
-  the fail-open contract in `docs/spec/agent-core.md` stays as specified.
+- **Secret-redaction coverage unchanged** — only scheduling moves (the durable
+  path never gains a budget); the error-only fail-open contract in
+  `docs/spec/agent-core.md` stays as specified.
 - Turn Diagnostics stays able to capture full requests; only its per-step
   redundancy is removed (see Open questions for the gating decision).
 - The streaming delta pipeline (PR #525) and its follow-ups are separate.
@@ -87,34 +88,61 @@ Other:
   join, cached the same way.
 - **Filtered read model instead of no read model.** `ToolRuntime` provides
   `getDocumentReadModel`/`getTextSearchIndex` even when a projection filter is
-  wired, wrapped with the filter's exclusion set: the read model exposes the
-  filtered view (hidden subtrees excluded from lookups and search results
-  post-filtered). `node_search` regains the BM25 index; `node_edit` regains
-  sparse mutation facts instead of per-node `JSON.stringify` diffs.
+  wired, wrapped with the filter's exclusion set. Two constraints the wrapper
+  must honor: (1) hidden ids are excluded **before** candidate generation,
+  scoring, and limit — never post-filtered, or hidden content would consume
+  result slots and skew ranking; (2) switching `node_search` from today's
+  filtered-linear path to the index changes result semantics — the indexed
+  scorer (`scoreTextSearchRecord`) and the fallback scorer (`scoreTerm`)
+  rank differently — so the target semantics is a PM ratification point (the
+  recommendation: indexed scoring everywhere, consistent with unfiltered
+  threads). `node_edit` regains sparse mutation facts instead of per-node
+  `JSON.stringify` diffs.
 
 ### PR-2 — per-model-call context costs
 
-- **Turn-scoped `readOutput` memoization**, mirroring the existing
-  `readContext` memo in `withTurnScopedContextReads`: each payload is read and
-  hash-verified once per Turn, not once per step.
-- **Projector reuse across steps.** Carry the `CanonicalContextProjector`'s
-  payload/projection caches across model calls within a Turn (history prefix is
-  frozen; invalidate only for items appended since the last step), or
-  equivalently cache `projectTurnsWithBoundaries` for the frozen prefix.
-- **Token-count caching.** `ContextBudgetPlanner` keys per-message token counts
-  by message identity so a stable prefix is never re-tokenized.
-- **Diagnostics incrementality.** `TurnDiagnosticsCollector` reuses message
-  fingerprints across steps for the stable prefix instead of re-cloning and
-  re-`stableJson`-ing the entire context each step, and caps retained canonical
-  copies per Turn.
+The governing contract (`docs/spec/agent-model-runtime.md`): **fresh projection
+reducers are constructed at every provider boundary** so environment, view, and
+additional-context deltas replay from canonical state; the only sanctioned
+cross-step cache is the Turn-scoped **immutable context-payload read cache**.
+`CanonicalContextProjector` carries mutable delta state
+(`previousEnvironment`/`previousUserView`/`previousAdditionalContext`), so
+reusing a projector across steps would violate that contract — it is
+explicitly NOT part of this plan.
+
+- **Turn-scoped `readOutput` memoization**, extending the already-sanctioned
+  Turn-scoped immutable read cache (the `readContext` memo in
+  `withTurnScopedContextReads`) to output payloads: each content-addressed
+  payload is read and hash-verified once per Turn, not once per step. This is
+  the contract-compatible bulk of the win.
+- **Token-count caching by content fingerprint.** Message object identity is
+  unstable (each projection builds fresh messages), so `ContextBudgetPlanner`
+  keys per-message token counts by content fingerprint — computed once and
+  shared with the diagnostics fingerprint pass (`rememberMessage` already
+  hashes every message), so the hash is paid once per distinct content, not
+  once per consumer.
+- **Diagnostics: no contract cuts.** `TurnDiagnosticsCollector` already
+  deduplicates canonical fragments via its fingerprint map, and the audit
+  contract requires the complete reconstructable set — retained copies are NOT
+  capped. The remaining cost item is narrow: reuse fingerprints for content the
+  fingerprint pass has already seen this Turn (shared with the token cache
+  above) and avoid the second deep clone where the normalized value is provably
+  the same object graph. Measure-first; if the win is marginal, drop it.
 
 ### PR-3 — small tails
 
 - Hoist the `BELIEF_BEARING_TOOLS` check in front of `indexProjection` in
   `ThreadDocumentBeliefs.observe`.
-- Give the `ToolRuntime` secret scan a budget (as the diagnostics variant has)
-  or chunk long strings so a single rule pass cannot monopolize the event loop;
-  behavior on budget exhaustion follows the existing fail-open contract.
+- **Durable secret scan: full coverage, finer yielding — never a budget.** The
+  durable path's null budget is deliberate (`redactSecretLikeJsonAsync` scans
+  completely; only the diagnostics copy is budget-bounded) — bounding it would
+  let a large crafted output bypass redaction into durable storage
+  deterministically. The fix is scheduling only: chunk long strings so the
+  scanner yields *within* a rule pass (rule × chunk granularity, with overlap
+  windows so patterns spanning chunk boundaries still match), or run the
+  complete scan on a worker thread. Coverage and redaction outcomes stay
+  byte-identical; the existing fail-open applies only to scanner *errors*, as
+  today.
 - `SubagentCollaboration`: read a child's latest-Turn status from Turn metadata
   (a `lastTurn(threadId)` projection query) instead of decoding the entire
   history; hoist the repeated `requireThread` calls out of the per-edge filter
@@ -137,9 +165,10 @@ Other:
 
 ## Open questions
 
-- Diagnostics gating: keep always-on capture with the incremental fingerprint
-  reuse (recommended, preserves the debugging contract), or add a settings
-  gate/sampling? Default is the former; a gate is a PM product call.
-- The filtered read-model wrapper's exact shape (exclusion-set push-down vs
-  post-filter) is the dev's call; the acceptance bound is index-backed
-  `node_search` and sparse `node_edit` facts with the filter active.
+- **PM ratification required for PR-1's search semantics:** re-enabling the
+  index under the filter moves `node_search` from the fallback scorer to the
+  indexed scorer — ranking changes. Recommendation: indexed everywhere.
+- Diagnostics capture stays always-on and contract-complete; a settings gate
+  would be a separate PM product call, not part of this plan.
+- The filtered read-model wrapper's internal shape is the dev's call within
+  the stated bound: exclusion BEFORE candidate/score/limit, never post-filter.

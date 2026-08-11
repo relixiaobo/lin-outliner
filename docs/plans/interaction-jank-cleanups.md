@@ -1,8 +1,13 @@
 # Interaction Jank Cleanups
 
-**Shape:** (a) ONE PR bundling small, independent, individually-complete fixes
-(the established pattern for cleanup batches). Any item can be dropped from the
-bundle without affecting the others.
+**Shape:** (b) a SET of four independent complete features, each its own PR —
+the 2026-08-11 plan review correctly flagged that two of these are mechanism
+changes, not small cleanups, and must not ride a bundle:
+
+- **PR-1 chrome scroll batching** (items 1, 2, 3, 8 — genuinely small, bundled)
+- **PR-2 semantic caches** (items 4, 6)
+- **PR-3 translation geometry** (item 5 — a scheduling-mechanism change)
+- **PR-4 search index reuse** (item 7 — a data-structure change)
 
 ## Goal
 
@@ -53,8 +58,9 @@ Verified items (2026-08-11 audit):
 
 ## Non-goals
 
-- No behavioral change to any menu, overlay anchor semantics, translation
-  scheduling policy, or search ranking.
+- No user-visible behavioral change: menu/overlay anchor semantics, which
+  blocks get translated and when (parity list in PR-3), and search ranking all
+  stay identical — PR-3 and PR-4 change mechanisms, never outcomes.
 - The typing hot path, agent streaming, and startup are separate plans.
 
 ## Design
@@ -63,9 +69,12 @@ Per item, the smallest fix that removes the cost:
 
 1. `useAnchoredOverlay.update` runs through one shared rAF (coalescing all
    scroll/resize triggers per frame); `setStyle` bails when the computed style
-   is shallow-equal; the scroll listener attaches to the scroll parents of the
-   anchor (plus `window`) instead of capture-everything, or at minimum bails
-   early when the anchor's rect is unchanged.
+   is shallow-equal; and the listener filters by **event target**, not by rect
+   comparison — an "early bail when the rect is unchanged" cannot meet the
+   bound, because reading the rect IS the forced layout being removed. Keep one
+   capture listener but return immediately unless the scrolled target is a
+   scroll parent of the anchor (a `contains` walk over cached ancestors, no
+   geometry read); `window`/viewport scrolls still pass.
 2. `handlePanelScroll` routes the dock measurement through the existing
    `requestTitleDockMeasure`.
 3. One module-level scroll dispatcher: a single capture listener that
@@ -74,21 +83,39 @@ Per item, the smallest fix that removes the cost:
 4. Key both option caches on a definition-relevant revision (fieldDef/tagDef
    membership), not on `index` identity — same pattern as the shipped selector
    caches, with the key fixed to survive unrelated deltas.
-5. Coalesce translation geometry scans to one per animation frame and bound the
-   scan to viewport-adjacent records (the controller already tracks priority;
-   hoist the rect read behind the priority window).
+5. Translation geometry needs a mechanism change, not a hoist: "read rects only
+   inside the priority window" is circular, because the priority window is
+   itself computed from a full rect pass. Replace the per-scroll full scan with
+   observed visibility — an `IntersectionObserver` (or maintained viewport
+   buckets keyed by layout position) keeps a near-viewport candidate set
+   incrementally, and `nextBatch` reads rects only for that set. The mechanism
+   must handle: far scrollbar jumps (observer callbacks re-seed the set),
+   dynamically inserted/removed blocks (observe on insert, unobserve on
+   remove), and preemption of an in-flight batch when the viewport moves away —
+   all behaviors the current full-scan approach gets for free and the
+   replacement must not lose.
 6. Key `actionProjection` on the document revision token (exposed by
    `DocumentService`) instead of object identity, and hoist the call out of the
    per-hit map.
-7. Cache the prepared search index on the same revision token; drop the
-   defensive clone in `prepareSearchQueryEvaluation` in favor of a frozen
-   structure.
+7. Cache the prepared search index on the same revision token. The defensive
+   clone in `prepareSearchQueryEvaluation` cannot become a frozen Map — the
+   preparation step **mutates** the map, injecting virtual condition/operand
+   nodes for compiled rules. The correct structure is a composite `ReadonlyMap`:
+   the immutable cached base plus a small per-query overlay holding only the
+   virtual nodes (lookups consult the overlay first). The base is shared across
+   queries at the same revision; the overlay is per-evaluation and tiny.
 8. Drop the unnecessary effect deps; the handler already reads live state
    through `latestStateRef`.
 
 ## Verification
 
-- Unit where the fix is a cache: revision-keyed hit/miss tests (items 4, 6, 7).
+- Unit where the fix is a cache: revision-keyed hit/miss tests (items 4, 6, 7);
+  for item 7, a query with rule conditions resolves virtual nodes through the
+  overlay while the shared base is unmutated (identity check).
+- PR-3: translation behavior parity tests — far scrollbar jump translates the
+  landing viewport, inserted blocks get observed, moving away preempts the
+  in-flight batch; plus the geometry-scan counter bound (rect reads per scroll
+  ≤ candidate-set size, not total blocks).
 - DevTools performance trace (manual): scrolling a long outline with a menu
   open shows no forced-reflow warnings from overlay/panel/table code paths;
   numbers in the PR body (A9).
@@ -97,6 +124,6 @@ Per item, the smallest fix that removes the cost:
 
 ## Open questions
 
-- Item 1's listener scoping (scroll-parents vs early-bail) is the dev's call;
-  the acceptance bound is no overlay re-render and no rect read for a scroll
-  that cannot move the anchor.
+- PR-3's candidate-set mechanism (IntersectionObserver vs maintained viewport
+  buckets) is the dev's call; the bound is no O(all blocks) rect pass on the
+  scroll path and no lost behavior from the parity list above.

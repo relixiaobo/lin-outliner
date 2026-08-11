@@ -674,15 +674,20 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   options rescanned per delta, translated-preview O(blocks) rect scans per
   scroll, launcher `actionProjection` identity-compare cache (never hits, per
   search hit), per-query search-index rebuild (absorbs perf-program P3-11/12),
-  keyboard listener resubscription per delta. One bundled PR. Design:
+  keyboard listener resubscription per delta. Four independent PRs (reshaped
+  2026-08-11 after plan review: translation geometry and search-index reuse are
+  mechanism changes, not bundle-able cleanups). Design:
   [`interaction-jank-cleanups`](plans/interaction-jank-cleanups.md).
 - **startup-window-first** (P2, `draft` 2026-08-11) — `createWindow()` currently
   runs only after workspace init (including the full BM25 text-index build),
   thread service, memory worker, and automations complete in series; first
-  paint waits on all of it. Window first, readiness-gated IPC, parallel service
-  bring-up, index build off the critical path. The audit falsified the perf
-  program's verified-good startup claim (corrected there in the same change).
-  One PR. Design: [`startup-window-first`](plans/startup-window-first.md).
+  paint waits on all of it. Window first, single-flight document init,
+  readiness-gated IPC (incl. node-access store), DAG-ordered service bring-up
+  (thread service before memory worker ∥ automations — blind parallelism races
+  `prepareForTurnAdmission`), chunked/worker BM25 with revisioned install, and
+  a persistent startup-failure surface. The audit falsified the perf program's
+  verified-good startup claim (corrected there in the same change). One PR.
+  Design: [`startup-window-first`](plans/startup-window-first.md).
 
 ### Distribution & updates
 

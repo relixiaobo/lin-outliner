@@ -96,33 +96,48 @@ Renderer (all inside the per-keystroke `flushSync` in `useCommandRunner`):
   memory nodes proceed to graph work. `commandUsesReservedTag`'s active
   tag-definition set is computed once per projection revision and cached, not
   rebuilt per command.
-- **Deferred, delta-driven `documentChanged`.** The projection-changed listener
-  already receives the `ProjectionUpdate` delta; use its changed node ids to
-  bail in O(changed) when no changed node carries a memory-reserved tag and no
-  generated node id is touched. The full digest
-  (`canonicalGraphDigest`) moves off the per-event path: mark dirty and compute
-  on a debounced idle timer (~500 ms) or at the memory pipeline's own wake
-  points. `generatedNodes()` becomes a cached read invalidated by
+- **Deferred, guard-informed `documentChanged`.** A new-state changed-node-id
+  check is NOT a sound bail: memory-graph membership also depends on facts a
+  changed id does not carry — the node's OLD tags (a removal), deletion events
+  (id-only in the delta), the parent day node's date text, Daily-Notes
+  ancestry, and Trash membership (`canonicalMemoryGraph`'s
+  `isDayNodeInsideDailyNotes` / `isInTrash` walks). Instead, the mutation guard
+  — which already evaluates graph relevance for the command — records an
+  `affectsMemory` verdict on the operation, and `documentChanged` consumes that
+  verdict (one source of truth, no second classifier to drift). Non-command
+  projection changes without a verdict take the conservative path. The full
+  digest (`canonicalGraphDigest`) moves off the per-event path: mark dirty and
+  compute on a debounced idle timer (~500 ms) or at the memory pipeline's own
+  wake points. `generatedNodes()` becomes a cached read invalidated by
   `MemoryControlStore` writes instead of a per-event SELECT.
-- Invariant: a real memory-graph change still wakes the pipeline within the
-  debounce window; a keystroke that cannot affect the graph does zero graph
-  work.
+- Invariant: a real memory-graph change — including tag removal, a subtree
+  moving into Trash, and a day-node rename — still wakes the pipeline within
+  the debounce window; a keystroke that cannot affect the graph does zero graph
+  work. The equivalence tests below enumerate exactly these cases.
 
 ### PR-B — document save/export off the typing rhythm (main)
 
 - **Remove forced synchronous saves from the mutation queue.** The undo-group
   boundary (`endUndoGroup`) keeps its grouping semantics, but the disk write it
-  forces joins the existing 700 ms coalescer instead of being awaited inline;
-  likewise the structural-edit → first-keystroke forced flush. Ordering stays
-  correct because all saves already serialize through the mutation queue.
-  Stated trade: a hard crash loses at most the coalescing window — the same
-  window mid-typing text already has today.
-- **Bound the serialize cost.** `serializeState` currently exports a full
-  snapshot per save. Decide, with the probe (A9 — measure before trading):
-  incremental `doc.export({ mode: 'update' })` appends with periodic snapshot
-  compaction, and/or moving export + base64 + stringify off the event loop
-  (worker thread) if the Loro binding permits. Acceptance bound either way: no
-  keystroke ever waits on an O(document) serialize.
+  forces joins the coalescer instead of being awaited inline; likewise the
+  structural-edit → first-keystroke forced flush. Ordering stays correct
+  because all saves already serialize through the mutation queue.
+- **An honest crash window needs a max-wait checkpoint.** The 700 ms coalescer
+  (`scheduleTextEditFlush`) clears and re-arms its timer on every patch, so
+  sustained typing defers the save indefinitely — "loses at most the coalescing
+  window" is false today and would stay false. Add a checkpoint measured from
+  the FIRST unsaved change, not reset by subsequent keystrokes (e.g. 5 s
+  max-wait): the crash window becomes max(idle window, max-wait), stated as
+  such.
+- **Bound the serialize cost — persistence contract, PM decides.**
+  `serializeState` currently produces one atomic single-file envelope with a
+  full Loro snapshot per save. The two ways out — incremental
+  `doc.export({ mode: 'update' })` appends with compaction and crash-recovery
+  rules, or moving export + base64 + stringify to a worker (Loro binding
+  transferability permitting) — change the persistence contract (file format
+  and/or threading model), which is directional: the one-pager presents both
+  with measurements and the PM ratifies one BEFORE build. Acceptance bound
+  either way: no keystroke ever waits on an O(document) serialize.
 - **Fix the text-search map clone.** Maintain `textSearchNodes` as a persistent
   structure mutated under the mutation queue (or COW buckets), so a committed
   text patch costs O(changed), not an O(N) `new Map(previousNodes)` copy (both
@@ -130,25 +145,33 @@ Renderer (all inside the per-keystroke `flushSync` in `useCommandRunner`):
 
 ### PR-C — renderer keystroke commit cost (renderer)
 
-- **`referenceSummary`:** cache on a stable revision token that only
-  invalidates when references/tags actually change (derivable from the
-  `ProjectionUpdate` delta — the reverse-edge index already updates per delta),
-  or patch the summary incrementally from changed ids. The WeakMap-on-`byId`
-  key is the bug: `byId` changes identity per delta by design.
-- **Isolate the agent dock from document deltas.** `ThreadTurnView` (and the
-  transcript subtree generally) must not re-render because `DocumentIndex`
-  changed identity: pass the index through a stable read-at-render accessor
-  (ref/context) or give the memo a comparator that treats `index` as
-  always-equal, letting leaves that resolve node references read the latest
-  index at render time. Memoize `ThreadItemView`. Stop paying for a closed
-  dock: unmount (or fully suspend) the transcript when the rail is closed
-  instead of relying on `inert`.
+- **Semantic revisions, not the projection revision.** The global projection
+  revision bumps on every delta — and typing a picker query is itself a
+  document mutation — so any cache keyed on it still misses on exactly the
+  keystrokes it exists for. This PR introduces narrow semantic revision
+  counters maintained from the `ProjectionUpdate` delta as it is applied: a
+  tag-definition revision, a trash-membership revision, and a
+  reference-presentation revision (titles/colors of referenced nodes). Caches
+  below key on these.
+- **`referenceSummary`:** cache on the reference-relevant semantic revision, or
+  patch the summary incrementally from changed ids. The WeakMap-on-`byId` key
+  is the bug: `byId` changes identity per delta by design.
+- **Decouple the agent dock from irrelevant document deltas.** The transcript
+  cannot be permanently severed from the index — `threadNodeReferenceStyle`
+  and reference labels legitimately read node titles/colors, which must stay
+  fresh. Pass the index through a stable read-at-render accessor (ref/context)
+  so `DocumentIndex` identity stops being a memo input, and re-render reference
+  chips off the reference-presentation semantic revision (or a per-node-id
+  subscription) so a rename/recolor still propagates. Memoize `ThreadItemView`.
+  Stop paying for a closed dock: unmount (or fully suspend) the transcript when
+  the rail is closed instead of relying on `inert`.
 - **Reference/tag pickers:** fix `TriggerPopover`'s memo deps (destructure the
-  props it reads); memoize `referenceItems` on (revision, query); give the `@`
-  path a cached candidate base like the `#` path has, keyed on projection
-  revision rather than `DocumentIndex` identity; share one trash-descendant set
-  per revision (the precomputed-Trash-set precedent from the perf program)
-  instead of per-candidate ancestor walks with `Set` allocations.
+  props it reads); memoize `referenceItems` on (semantic revision, query); give
+  the `@` path a cached candidate base like the `#` path has, keyed on the
+  tag/trash semantic revisions rather than `DocumentIndex` identity; share one
+  trash-descendant set per trash revision (the precomputed-Trash-set precedent
+  from the perf program) instead of per-candidate ancestor walks with `Set`
+  allocations.
 - **`Sidebar`:** memoize rows; use the shared per-revision trash-descendant set.
 - **`buildVisualRows`:** derive rows for the virtual window plus overscan, or
   patch the row model from changed ids, instead of rebuilding every expanded
@@ -162,8 +185,12 @@ Renderer (all inside the per-keystroke `flushSync` in `useCommandRunner`):
   allow/deny as today), with instrumentation counters proving zero full-graph
   builds for a plain text patch and at most one digest computation per debounce
   window (`tests/core`, alongside the existing memory extension tests).
+  Wake-equivalence cases enumerate the non-obvious graph changes: memory-tag
+  REMOVAL, id-only deletion, a day-node date rename, a move out of Daily
+  Notes, and an ancestor entering Trash — each must still wake the pipeline.
 - Unit, PR-B: a text-patch burst performs no synchronous save inside
-  `runMutation`; the search-refresh map is not copied per patch (counter);
+  `runMutation`; sustained typing past the max-wait still checkpoints (fake
+  clock); the search-refresh map is not copied per patch (counter);
   crash-window semantics documented in the test that covers the coalescer.
 - Unit, PR-C: cache-hit tests for referenceSummary / candidate bases across a
   simulated delta (`tests/renderer`); a transcript fixture that asserts no
@@ -174,7 +201,13 @@ Renderer (all inside the per-keystroke `flushSync` in `useCommandRunner`):
 
 ## Open questions
 
-- PR-B's incremental-export vs worker-thread decision is measurement-first;
-  the plan deliberately fixes only the acceptance bound.
+- **PM ratification required before PR-B builds:** incremental-update
+  export (file-format change: append log + compaction + recovery rules) vs
+  worker-thread export (threading change, binding transferability to verify) —
+  a persistence-contract decision, presented with measurements at the
+  one-pager.
 - Whether `referenceSummary` moves to incremental patching or revision-keyed
   caching is the dev's call; both satisfy the bound.
+- PR-A's `affectsMemory` verdict transport (operation metadata vs a
+  guard-to-listener side channel keyed by operationId) is the dev's call; the
+  bound is one classifier, not two.

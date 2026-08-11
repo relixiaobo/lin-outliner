@@ -39,27 +39,47 @@ audit):
 
 ## Design
 
-- **Catalog record cache.** `ThreadMetadataStore` keeps a small per-thread
-  decoded-record cache (invalidated by that thread's own writes —
-  `setPreview`/`setStatus`/`setModel`/`setArchived`/configuration writes — and
-  by delete). `requireThread` on the notification path becomes a Map hit.
-- **Incremental tail lexing.** `splitMarkdownBlocks` caches the previous
-  commit's `(text, blocks)`: when the new text extends the old (the streaming
-  case), re-lex only from the start of the previous **last** block (the only
-  block a pure append can change — earlier block boundaries are final for
-  appended input), reusing the earlier blocks verbatim. Fallback to a full lex
-  when the text did not extend the cache (edit, reset) or when the reused
-  prefix disagrees on re-join. `remend` runs on the tail slice only.
-- **Memoize the streaming Turn's items.** `memo(ThreadItemView)` — item objects
-  keep identity across deltas for all but the item receiving the delta, so a
-  shallow compare suffices once callback props are stabilized (they already
-  come from `useCallback` in `ThreadTurnView`). `projectSubagentsForTurn` /
-  `groupTurnContent` results are memoized on `(turn.items, threadsById,
-  latestTurnByThread)` rather than the `turn` wrapper identity.
-- **Isolate the ticker.** Extract the elapsed label into a leaf component that
-  owns `useSubagentElapsedMs`; `SubagentActivityItem` no longer holds ticking
-  state above `SubagentRunDetail`, so the 1 Hz tick repaints a text span, not
-  the nested transcript.
+- **Catalog record cache with centralized invalidation.** `ThreadMetadataStore`
+  keeps a small per-thread decoded-record cache. Invalidation is NOT a list of
+  known setters — name writes alone have three independent paths (manual,
+  automatic, clear) and the list would drift. Instead every catalog mutation
+  funnels through one internal write helper that updates/invalidates the cache
+  as its last step; a test enumerates the store's public mutators and asserts
+  each one invalidates. `requireThread` on the notification path becomes a Map
+  hit.
+- **Incremental tail lexing — with the definition caveat.** A pure append does
+  NOT only change the last block: `splitMarkdownBlocks` folds the full
+  reference-definition set (`def` tokens) into **every** visible block, so an
+  appended `[ref]: url` definition changes all of them. The incremental path
+  caches the previous commit's `(text, blocks, definitions)`: when the new text
+  extends the old, re-lex from the start of the previous last block; if the
+  tail lex leaves the definition set unchanged, reuse the earlier blocks
+  verbatim — if the definition set changed, fall back to a full lex (rare and
+  worth paying). Also fall back when the text did not extend the cache (edit,
+  reset). `remend` runs on the tail slice only. (Restructuring definitions into
+  a layer passed to blocks separately would remove the caveat entirely; the
+  dev may choose it if the fallback proves frequent in practice.)
+- **Memoize the streaming Turn's items — props first, memo second.** Item
+  objects DO keep identity across deltas for all but the item receiving the
+  delta (`updateItemDelta` replaces only the target), but a bare
+  `memo(ThreadItemView)` would still miss every notification: several
+  `ThreadTurnView` callbacks take the whole `turn` as a `useCallback` dep (new
+  identity per delta), and the recomputed `subagents` projection flows into
+  every item. Order of work: (1) re-key the callbacks on `turn.id` with the
+  live Turn read through a ref; (2) memoize `projectSubagentsForTurn` /
+  `groupTurnContent` on `(turn.items, threadsById, latestTurnByThread)` rather
+  than the `turn` wrapper, with per-item-stable presentation objects (an
+  unchanged item maps to the SAME projected object); (3) only then
+  `memo(ThreadItemView)`, with a render-count test proving the memo actually
+  hits during a streamed delta.
+- **Isolate the ticker — the whole header, not just a span.** The elapsed value
+  also feeds the row's `aria-label` and `title`, so extracting only a visible
+  text span would leave assistive text stale. Extract the complete row
+  header/button subtree (label, `aria-label`, `title`) into a leaf component
+  that owns `useSubagentElapsedMs`; `SubagentActivityItem` no longer holds
+  ticking state above `SubagentRunDetail`, so the 1 Hz tick repaints the
+  header only — accessibility stays fresh and the nested transcript stops
+  re-rendering per second.
 
 ## Verification
 
