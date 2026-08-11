@@ -59,6 +59,14 @@ Entries reference the pull request that introduced them.
 
 - **Opened the 0.4.0 train (main-agent)** — `package.json` dials to `0.4.0`
   after the v0.3.0 tag so dev builds name the next train.
+- **Responses tool-contract hardening plan (PR #526, codex-2, plan-only)** —
+  boards the fix for a dead-Turn class observed on an OpenAI-Responses relay:
+  an explicit boolean `strict` on every Responses-family function-tool payload
+  (absent, or the Codex adapter's `null` sentinel, becomes `false` instead of
+  being left to an intermediary), exact non-coercing kernel admission after
+  each tool's own `prepareArguments`, and a Turn-local repeated-rejection
+  quarantine with an eight-failure ceiling and one final tool-free response.
+  Design only; the implementation ships as one PR.
 
 ## [0.3.1] - 2026-08-10
 

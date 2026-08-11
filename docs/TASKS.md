@@ -21,12 +21,6 @@ See `AGENTS.md` for the full workflow.
 
 Open PRs and claims — the PR queue, not this snapshot, is authoritative.
 
-- **#526 `codex-2/responses-tool-contract-hardening`** (draft 2026-08-11) — plan
-  review only, no implementation: an explicit `strict` invariant on every
-  Responses function-tool payload, exact post-`prepareArguments` admission, and a
-  Turn-local repeated-rejection quarantine. The plan file lands with that PR, so
-  it is not linked from here yet.
-
 
 ## Backlog
 
@@ -51,10 +45,11 @@ theme-section entry below; this list is the ordering, not a second record):
   `scripts-typecheck-coverage` · `plan-reference-guard` · #208 follow-ups).
   `dark-mode-contrast-pass` still runs **last** per its own rule; `performance` P3
   remains an uncapped background lane (trail + remaining items under **Performance**).
-- **Lane B — agent reliability**: cleared 2026-08-10 (`agent-doc-drift-notice` #522;
-  `agent-episodic-transcripts` #511 + #519). Next candidates from the backlog:
-  `agent-tool-artifact-resources`, then `computer-pilot-managed-skill` on top of it.
-  The next *major* agent bet is a PM direction call, not a backlog pop.
+- **Lane B — agent reliability**: `responses-tool-contract-hardening` now leads
+  (P1, plan ratified 2026-08-11 via #526; item under Agent capabilities). Behind
+  it, the earlier candidates stand: `agent-tool-artifact-resources`, then
+  `computer-pilot-managed-skill` on top of it. The next *major* agent bet is a PM
+  direction call, not a backlog pop.
 - **Lane C — product surface**: `update-check-and-prompt` shipped #514; next is the
   `file-preview` Office tail (apply its refresh note first), then the
   `agent-skills-authoring` security tail. `signed-builds-and-auto-update` stays
@@ -456,6 +451,19 @@ see *Recently completed*.
   **agent-tool-artifact-resources** item under standalone agent items.
 Standalone agent items (not part of the program):
 
+- **responses-tool-contract-hardening** (P1, `draft` — plan ratified 2026-08-11,
+  landed via #526; builds as ONE implementation PR) —
+  [`plans/responses-tool-contract-hardening.md`](plans/responses-tool-contract-hardening.md)
+  closes a dead-Turn class observed on an OpenAI-Responses relay with three layers
+  that only hold together: every Responses-family function tool carries an explicit
+  boolean `strict` (absent, and the Codex adapter's `null` sentinel, normalize to
+  `false` — never left to an intermediary to interpret); kernel admission validates
+  the exact prepared JSON with no scalar coercion, replacing the dependency
+  validator's generic conversions; and a Turn-local fingerprint quarantines a tool
+  on the second identical rejected call, with an eight-failure ceiling closing tool
+  exposure for the rest of the Turn. Both open questions were ratified with the
+  plan (the eight-failure ceiling and the cross-family scope). Gate note: the diff
+  touches kernel + wire + runtime + two specs → `/code-review ultra`.
 - **agent-secrets-windows-acl** (P3, *no plan file*) — follow-up from #115: the
   plaintext `agent-secrets.json` is hardened to `0600`/`0700` on POSIX only;
   Windows currently falls back to the user-profile ACL with no extra restriction.
