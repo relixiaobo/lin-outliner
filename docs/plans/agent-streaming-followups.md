@@ -65,13 +65,19 @@ audit):
   `memo(ThreadItemView)` would still miss every notification: several
   `ThreadTurnView` callbacks take the whole `turn` as a `useCallback` dep (new
   identity per delta), and the recomputed `subagents` projection flows into
-  every item. Order of work: (1) re-key the callbacks on `turn.id` with the
-  live Turn read through a ref; (2) memoize `projectSubagentsForTurn` /
-  `groupTurnContent` on `(turn.items, threadsById, latestTurnByThread)` rather
-  than the `turn` wrapper, with per-item-stable presentation objects (an
-  unchanged item maps to the SAME projected object); (3) only then
-  `memo(ThreadItemView)`, with a render-count test proving the memo actually
-  hits during a streamed delta.
+  every item. Note the `items` ARRAY identity also changes per delta (the store
+  maps a fresh array), so keying a helper memo on `turn.items` would miss every
+  time too — array-keyed `useMemo` is not the mechanism. Order of work: (1)
+  re-key the callbacks on `turn.id` with the live Turn read through a ref; (2)
+  make `projectSubagentsForTurn` / `groupTurnContent` incremental via pairwise
+  identity diffing: each keeps its previous `(items, perItemResults, result)`;
+  on a new array it walks pairwise object identities (pointer compares only) —
+  an unchanged item reuses its previous projected object (identity-stable
+  output), a changed item recomputes alone, and group boundaries rebuild only
+  when a grouping-relevant field (type/status/membership) changed. A text delta
+  then costs O(items) pointer compares and O(1) re-projection, not O(items)
+  re-projection; (3) only then `memo(ThreadItemView)`, with a render-count test
+  proving the memo actually hits during a streamed delta.
 - **Isolate the ticker — the whole header, not just a span.** The elapsed value
   also feeds the row's `aria-label` and `title`, so extracting only a visible
   text span would leave assistive text stale. Extract the complete row
@@ -90,8 +96,12 @@ audit):
   markdown shapes (headings, fences, tables, footnote defs — the `def`
   redistribution path in particular); a non-append change falls back correctly.
 - Unit (`tests/renderer`): a delta to one item re-renders only that
-  `ThreadItemView` (probe/counter fixture); the elapsed tick does not re-render
-  the nested transcript fixture.
+  `ThreadItemView` (probe/counter fixture); AND helper-level counters — a text
+  delta performs zero per-item re-projections in `projectSubagentsForTurn` /
+  `groupTurnContent` and returns identity-stable presentation objects for
+  unchanged items (a render-count assertion alone cannot catch helper
+  recomputation, so both are asserted). The elapsed tick does not re-render the
+  nested transcript fixture.
 - **A9 manual:** long streaming answer (100 KB+) with an expanded Subagent row —
   renderer CPU before/after, recorded in the PR body.
 

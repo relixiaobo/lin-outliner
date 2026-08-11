@@ -115,12 +115,16 @@ explicitly NOT part of this plan.
   `withTurnScopedContextReads`) to output payloads: each content-addressed
   payload is read and hash-verified once per Turn, not once per step. This is
   the contract-compatible bulk of the win.
-- **Token-count caching by content fingerprint.** Message object identity is
-  unstable (each projection builds fresh messages), so `ContextBudgetPlanner`
-  keys per-message token counts by content fingerprint — computed once and
-  shared with the diagnostics fingerprint pass (`rememberMessage` already
-  hashes every message), so the hash is paid once per distinct content, not
-  once per consumer.
+- **Token-count caching by a RAW-content key — not the diagnostics
+  fingerprint.** Message object identity is unstable (each projection builds
+  fresh messages), so `ContextBudgetPlanner` keys per-message token counts by a
+  stable hash of the **raw** message. The diagnostics fingerprint cannot be
+  reused for this: `rememberMessage` content-addresses the **redacted**
+  diagnostic copy, and redaction collapses distinct secrets of different
+  lengths into one placeholder — same fingerprint, different real token counts,
+  wrong budget. The two keys stay independent by design; the extra
+  stableJson+hash per distinct raw message is still far cheaper than
+  re-tokenizing every message every step.
 - **Diagnostics: no contract cuts.** `TurnDiagnosticsCollector` already
   deduplicates canonical fragments via its fingerprint map, and the audit
   contract requires the complete reconstructable set — retained copies are NOT
@@ -154,11 +158,16 @@ explicitly NOT part of this plan.
 
 - Unit (`tests/core`, alongside existing memory/tool tests): instrumentation
   counters — one graph build per projection revision, one full-history read per
-  Turn (not per projection access), one payload read+hash per Turn per output;
-  filtered read-model equivalence (same visible results as the wholesale-
-  disabled path today, including hidden-subtree exclusion in `node_search`).
-- Existing agent tool and memory extension suites stay green unchanged — the
-  contract is pure cost.
+  Turn (not per projection access), one payload read+hash per Turn per output.
+- PR-1 search acceptance fixes the **ratified** semantics, not today's: with no
+  hidden nodes, filtered `node_search` returns results identical to ordinary
+  indexed search; with hidden nodes, results equal indexed search over the
+  visible subset — hidden ids consume no candidate, score, or limit slot at any
+  stage. (No equivalence claim against the current filtered-linear path: its
+  fallback-scorer ranking is exactly what the PM decision replaces.)
+- Existing agent tool and memory extension suites stay green, with one scoped
+  exception: `node_search` ranking fixtures under a filter update once to the
+  ratified indexed semantics. Everything else in PR-1/2/3 is pure cost.
 - **A9 manual:** a multi-tool research Turn (10+ tool calls) on the large test
   document — wall-clock and main-process CPU before/after each PR, recorded in
   the PR body.
