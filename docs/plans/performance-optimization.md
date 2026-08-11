@@ -290,11 +290,15 @@ across keystrokes); they are listed so nothing is lost, but should be revisited
   cached regexes/segmenter. Probe confirms incremental search is fine.
 - ProseMirror editors are created once and reused; the Shiki highlighter is a
   cached singleton with lazy per-language loading.
-- No `ipcRenderer.sendSync` on the renderer hot path; startup does not block on
-  the large workspace file (window paints first, `init_workspace` is async); only
+- No `ipcRenderer.sendSync` on the renderer hot path; only
   timer is a dev-only `unref`'d watchdog. (One deliberate seed `sendSync` exists
   in `src/preload/index.ts:109`, added by #110 for the language bootstrap —
   one-time, not hot.)
+- ~~Startup does not block on the large workspace file (window paints first)~~ —
+  **no longer true** (2026-08-11 audit): `createWindow()` now runs only after
+  workspace init (including the full BM25 index build), thread service, memory
+  worker, and automations have all initialized in series. Tracked in
+  `startup-window-first.md`.
 
 **Acknowledged and deliberately deferred** (confirmed, judged not worth a change
 now — recorded so they are not "lost"):

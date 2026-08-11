@@ -21,7 +21,10 @@ See `AGENTS.md` for the full workflow.
 
 Open PRs and claims — the PR queue, not this snapshot, is authoritative.
 
-_Nothing claimed right now._
+- **#525 `codex/agent-streaming-delta-pipeline`** (ready 2026-08-11) — bounds
+  the streaming delta pipeline cost per
+  [`agent-streaming-delta-pipeline`](plans/agent-streaming-delta-pipeline.md);
+  awaiting the main-agent gate.
 
 
 ## Backlog
@@ -56,6 +59,14 @@ theme-section entry below; this list is the ordering, not a second record):
   `agent-skills-authoring` security tail. `signed-builds-and-auto-update` stays
   gated: **PM deferred the Apple Developer membership 2026-08-10** — the shipped
   prompt tier covers reach until that is revisited.
+- **Perf-audit lane (added 2026-08-11)**: a whole-app performance audit landed
+  five items under **Performance** — [`typing-hot-path`](plans/typing-hot-path.md)
+  (**P0**, the only P0 on the board: every keystroke pays multiple O(document)
+  passes in main and renderer) leads and outranks Lane A while it stands;
+  [`agent-tool-call-path`](plans/agent-tool-call-path.md) (P1) and
+  [`agent-streaming-followups`](plans/agent-streaming-followups.md) (P1, after
+  #525 merges) follow; [`interaction-jank-cleanups`](plans/interaction-jank-cleanups.md)
+  and [`startup-window-first`](plans/startup-window-first.md) (P2) trail.
 - **Lane D — test-signal infrastructure**: **still unclaimed and now the oldest
   untouched lane** — e2e stability, starting with the visual-media baseline fixture
   (`test.extend` default), then the run-dependent flaky set as one problem. Wave 1
@@ -609,7 +620,7 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   same index while preserving matching, ranking, creation, existing-tag, and Trash behavior.
   **Remaining P3:** additional localized O(N) cleanups still listed in the plan; the ordinary renderer
   projection delta path no longer rebuilds `new Map(prev.byId)` or the whole render-revision map.
-- **agent-streaming-delta-pipeline** (P1, `draft` 2026-08-10) — bound the per-chunk cost of
+- **agent-streaming-delta-pipeline** (P1, `in-progress` 2026-08-11; PR #525 ready, codex) — bound the per-chunk cost of
   streaming Turns. Today every provider chunk independently pays stat+open+write+fsync+close
   on the rollout log, a full read→decode→append→stringify→UPDATE of the accumulated item in
   the history projection (no WAL, synchronous driver on the main thread), three codec passes,
@@ -622,6 +633,56 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   collision check
   2026-08-10: no open PRs, no overlap. Design:
   [`agent-streaming-delta-pipeline`](plans/agent-streaming-delta-pipeline.md).
+- **typing-hot-path** (P0, `draft` 2026-08-11) — every keystroke pays O(document)
+  several times over. Main: the memory extension's two hooks (`guardMutation`'s
+  eagerly-built projection + `memoryGraphMayChange`'s ~4 full-document passes
+  before every command; `documentChanged`'s double graph build + SHA-256 digest +
+  SQLite per projection change), two forced synchronous full Loro snapshot
+  exports inside the typing rhythm, and a whole-node-map clone per search
+  refresh. Renderer (inside the per-keystroke `flushSync`): `referenceSummary`
+  full rebuild (cache keyed on per-delta-replaced `byId`), the agent dock's
+  transcript re-rendered via `index` identity even with the rail closed, the
+  `@`-popover's double full-document scan (`useMemo` on the `props` object),
+  per-row trash walks in `Sidebar`, whole-branch `buildVisualRows`, per-key
+  Shiki re-highlight. Three independent PRs: memory off the mutation path /
+  save-export off the typing rhythm / renderer commit cost. Design:
+  [`typing-hot-path`](plans/typing-hot-path.md).
+- **agent-tool-call-path** (P1, `draft` 2026-08-11) — host overhead dominates
+  agent Turns. `MemoryExtension.filterProjection` decodes the entire thread
+  history and builds the memory graph 2-3× on every `getProjection()` (1-3 per
+  node tool call, plus N+1 SQLite), and its mere presence disables the read
+  model + text index for ALL agent tools (`node_search` goes linear, `node_edit`
+  does per-node `JSON.stringify` diffs — #414's work is switched off on this
+  path). Each model call re-projects the full history, re-tokenizes every
+  message, re-reads + re-hashes every `full` tool output from disk, and
+  deep-clones the whole context for diagnostics; tool-result secret scans run
+  unbudgeted. Three independent PRs: filter cost + read-model re-enablement /
+  per-model-call costs / small tails. Design:
+  [`agent-tool-call-path`](plans/agent-tool-call-path.md).
+- **agent-streaming-followups** (P1, `draft` 2026-08-11; builds on #525) — the
+  four per-delta/per-tick costs the delta-pipeline plan left: uncached
+  `requireThread` SELECT + full decode per recorded notification, O(full-text)
+  markdown re-lex per 80 ms streaming commit, unmemoized `ThreadItemView`
+  re-rendering every item of the active Turn per notification, and the 1 Hz
+  subagent elapsed ticker re-rendering the nested child transcript. One PR.
+  Design: [`agent-streaming-followups`](plans/agent-streaming-followups.md).
+- **interaction-jank-cleanups** (P2, `draft` 2026-08-11) — scroll/menu-path
+  forced layouts and identity-keyed caches that can never hit:
+  `useAnchoredOverlay` (≈20 consumers) capture-scroll + unbatched rect reads +
+  unconditional re-render, per-view window scroll listeners fanning out across
+  panels, panel title-dock measure off-rAF, `tableFieldChoices`/definition
+  options rescanned per delta, translated-preview O(blocks) rect scans per
+  scroll, launcher `actionProjection` identity-compare cache (never hits, per
+  search hit), per-query search-index rebuild (absorbs perf-program P3-11/12),
+  keyboard listener resubscription per delta. One bundled PR. Design:
+  [`interaction-jank-cleanups`](plans/interaction-jank-cleanups.md).
+- **startup-window-first** (P2, `draft` 2026-08-11) — `createWindow()` currently
+  runs only after workspace init (including the full BM25 text-index build),
+  thread service, memory worker, and automations complete in series; first
+  paint waits on all of it. Window first, readiness-gated IPC, parallel service
+  bring-up, index build off the critical path. The audit falsified the perf
+  program's verified-good startup claim (corrected there in the same change).
+  One PR. Design: [`startup-window-first`](plans/startup-window-first.md).
 
 ### Distribution & updates
 
