@@ -458,13 +458,11 @@ Standalone agent items (not part of the program):
   quarantines a tool on the second identical rejected call under an eight-failure
   ceiling. Design folded into `docs/spec/agent-tool-design.md` and
   `docs/spec/agent-model-runtime.md`; plan archived at
-  `docs/plans/archive/responses-tool-contract-hardening.md`. **Open PM call:**
-  `truncatedArguments` counts toward that ceiling and can quarantine a healthy
-  tool — the plan mandates it (Design §5), but truncation is a property of
-  `max_output_tokens`, not of the tool, and the same code path tells the model to
-  re-issue the call it then refuses to expose. The gate flagged it as the one
-  ratified premise worth revisiting; four sibling objections (coercion removal,
-  the never-reset ceiling, `strict: false` on the official path, fail-closed on a
+  `docs/plans/archive/responses-tool-contract-hardening.md`. The gate's one
+  ratified-premise objection was upheld by the PM and shipped as #528:
+  `truncatedArguments` still counts toward the ceiling but no longer quarantines,
+  superseding the plan's Design §5. Four sibling objections (coercion removal, the
+  never-reset ceiling, `strict: false` on the official path, fail-closed on a
   non-boolean `strict`) were checked against the plan and stand as written.
 - **agent-secrets-windows-acl** (P3, *no plan file*) — follow-up from #115: the
   plaintext `agent-secrets.json` is hardened to `0600`/`0700` on POSIX only;
@@ -860,6 +858,12 @@ One line per merge, newest first; the retrospective lives in the CHANGELOG entry
 and the merged PR, distilled rules in [`lessons.md`](lessons.md). Everything
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
+
+- **truncation-no-quarantine** (main-agent, PR #528, merged 2026-08-11 — fast-track) —
+  `truncatedArguments` still counts toward the eight-failure Turn ceiling but no longer
+  quarantines the tool, so a response that hit the output-token limit no longer answers
+  its own compliant retry with an unresolved-tool rejection. Supersedes Design §5 of the
+  archived `responses-tool-contract-hardening` plan; both specs updated.
 
 - **responses-tool-contract-hardening** (codex-2, PR #527, merged 2026-08-11 — plan
   archived) — a malformed tool contract no longer spins a Turn to death on an

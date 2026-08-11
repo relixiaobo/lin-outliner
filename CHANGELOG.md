@@ -78,6 +78,16 @@ Entries reference the pull request that introduced them.
   canonical key collides with a Core tool, or a Core capability schema that
   cannot compile, stays a structural failure instead of silently deleting a
   built-in tool from the thread.
+- **Hitting the output-token limit no longer takes the tool away (PR #528,
+  main-agent)** — the containment guard above quarantines a tool after two
+  identical rejections, and a truncated tool call fed it like a malformed one.
+  But truncation says the response ran out of output tokens, not that the tool
+  is broken: a large write tends to hit the cap at the same point twice, so the
+  agent was told "re-issue the call with complete arguments" and then answered
+  its own compliant retry with "that tool is not available" — the write never
+  landed. Truncation still counts toward the eight-failure ceiling, so a Turn
+  that only ever truncates is still closed rather than spinning, but the tool
+  itself stays available for the shorter call the message asks for.
 
 ### Internal
 
