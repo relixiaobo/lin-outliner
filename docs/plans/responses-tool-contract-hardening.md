@@ -36,8 +36,9 @@ The design follows two verified precedents:
 - Do not redesign `node_create` as a discriminated union or split it into more
   tools. The fix must protect the existing tool and every peer contract.
 - Do not heuristically delete or rewrite `null`, `""`, `0`, `false`, numeric
-  strings, unknown fields, or array members. Those values are distinct protocol
-  facts.
+  strings, unknown fields, or array members in model arguments. Those values are
+  distinct protocol facts; normalizing the separate wire-level `strict: null`
+  compatibility sentinel is not argument coercion.
 - Do not use `model.compat.supportsStrictMode = true` to force serialization. That
   flag claims provider constrained-sampling capability and can select semantics the
   relay does not implement; the required `strict: false` default is a wire-contract
@@ -57,7 +58,7 @@ The design follows two verified precedents:
 ### Decision summary
 
 - Every function tool in a Responses-family wire payload carries an explicit
-  boolean `strict`; absent means Tenon's current default, `false`.
+  boolean `strict`; absent or `null` means Tenon's current default, `false`.
 - `AgentTool.prepareArguments` is the sole generic admission path allowed to
   normalize model arguments. The shared validator only checks the resulting JSON;
   it never converts it.
@@ -75,26 +76,32 @@ explicit Responses-family function-tool invariant:
 
 1. Walk only top-level tool records whose `type` is `function`.
 2. Preserve an explicit boolean `strict` value.
-3. Add `strict: false` when the field is absent. Do not rewrite `parameters`,
-   `required`, `additionalProperties`, descriptions, names, ordering, or deferred
-   loading metadata.
-4. Treat a present non-boolean value as a local payload-construction defect and
-   stop before network I/O with a bounded diagnostic naming the tool. Never send an
-   ambiguous contract.
+3. Write `strict: false` when the field is absent or `null`. The Codex Responses
+   adapter intentionally emits `null` as its compatibility sentinel, so rejecting it
+   would kill every Codex request carrying a function tool. Do not rewrite
+   `parameters`, `required`, `additionalProperties`, descriptions, names, ordering,
+   or deferred loading metadata.
+4. Treat a present value that is neither boolean nor `null` as a local
+   payload-construction defect and stop before network I/O with a bounded diagnostic
+   naming the tool. Never send an ambiguous contract.
 5. Leave built-in tool records such as native web search, plus custom/grammar tools,
    unchanged.
 
 The invariant applies wherever Tenon's payload hook receives an
 `openai-responses`, `openai-codex-responses`, or `azure-openai-responses` request.
-The custom relay path needs the mutation because `pi-ai` deliberately omits
-`strict` when model compatibility says strict mode is unsupported. Official paths
-normally already serialize a boolean; the same invariant becomes a regression
-assertion rather than a semantic change.
+The custom relay path and the official `api.openai.com` path both need the mutation:
+`pi-ai` omits `strict` whenever model compatibility says strict mode is unsupported,
+including the default official OpenAI model path. The Codex adapter instead emits
+`strict: null`. Converting both wire shapes to an explicit `false` is a deliberate,
+harmless byte-level change that removes intermediary ambiguity while preserving the
+documented non-strict semantics. Explicit booleans remain unchanged.
 
 A transport-level test must use `pi-ai` with a fake `fetch`, capture the actual POST
 body, and prove that every function tool carries `strict: false` by default while
-its original schema is structurally unchanged. Pure tests of the payload helper stay
-as focused edge coverage but are not sufficient evidence for the emitted request.
+its original schema is structurally unchanged. It covers custom relay and official
+OpenAI omission plus Codex `null` normalization; the official-path assertion expects
+the field to be added, not a no-op. Pure tests of the payload helper stay as focused
+edge coverage but are not sufficient evidence for the emitted request.
 
 ### Exact argument admission
 
@@ -127,6 +134,12 @@ not call `Value.Convert` or a fallback coercion helper. Therefore:
 that tool's public contract. It runs once, before validation, and may not inject host
 metadata. A preparation failure is ordinary `invalidArguments` evidence. No later
 layer may mutate the admitted value.
+
+The same exact validator checks the redacted replay candidate. Secret placeholders
+can therefore make an otherwise admitted schema fail more often than under coercion;
+that is expected. The existing `redactedArgumentsReplayable: false` path must degrade
+the durable history to executed `evidenceOnly` while the validated source call still
+executes. A focused test locks that behavior.
 
 Schema compilation is also a lifecycle guard. The built-in catalog has a test that
 compiles every exposed schema. Dynamic, extension, and MCP-backed function schemas
@@ -179,9 +192,9 @@ boundaries.
 
 ### Verification and acceptance
 
-- `openAIResponsesCompat` unit coverage checks absent/false/true/invalid `strict`,
-  mixed function/built-in/custom tools, schema identity, official endpoints, and the
-  custom relay profile.
+- `openAIResponsesCompat` unit coverage checks absent/null/false/true/invalid
+  `strict`, mixed function/built-in/custom tools, schema identity, official
+  endpoints, and the custom relay profile.
 - A fake-fetch integration test captures a real Responses POST body and asserts every
   emitted function contract has an explicit boolean `strict` without schema rewriting.
 - Exact-validator tests cover nullable unions, optional values, strings, numbers,
@@ -195,10 +208,14 @@ boundaries.
   extension/MCP contribution is omitted without suppressing valid siblings.
 - Existing canonical-history tests continue to prove that rejected evidence is not
   replayed as a tool call and admitted execution/history receive the same exact value.
+  They also cover a redacted placeholder that fails exact replay validation and uses
+  the existing executed-`evidenceOnly` disposition without suppressing execution.
 - Production-relay smoke exercises valid and invalid calls for `node_create`,
   `web_search`, and `bash`, captures the outbound tool definitions, and confirms an
-  invalid call corrects or quarantines without a dead Turn. Any observed mutation of
-  explicit `strict: false` or `parameters` is a relay failure, not an application
+  invalid call corrects or quarantines without a dead Turn. It separately sends the
+  final request shape with historical `function_call` evidence but an empty `tools`
+  list, because an intermediary may reject that combination. Any observed mutation
+  of explicit `strict: false` or `parameters` is a relay failure, not an application
   workaround target.
 - Required gate: `bun run typecheck`, `bun run test:core`, and
   `bun run docs:check`.
@@ -237,11 +254,12 @@ No protocol/shared file, dependency, renderer file, `docs/TASKS.md`, or
 
 ### Collision result
 
-The collision self-check on 2026-08-11 found one open significant claim, PR #525
-(`agent-streaming-delta-pipeline`). Its scope is streaming persistence/performance and
-does not overlap this plan's files or behavior. The earlier Responses resilience PR
-#520 is merged and forms the current payload-profile baseline. `docs/TASKS.md` has no
-existing item for this plan; main owns adding the board entry if it ratifies the plan.
+The collision self-check on 2026-08-11 initially found PR #525
+(`agent-streaming-delta-pipeline`) with a non-overlapping streaming
+persistence/performance scope. It is now merged; #526 is the only open PR, so there is
+no active collision. The earlier Responses resilience PR #520 is also merged and forms
+the current payload-profile baseline. `docs/TASKS.md` has no existing item for this
+plan; main owns adding the board entry if it ratifies the plan.
 
 ## Open questions
 
@@ -249,9 +267,9 @@ existing item for this plan; main owns adding the board entry if it ratifies the
   mixed batch with unrelated corrections but finite even when every attempted argument
   differs; the second-identical-call rule handles the common loop earlier.
 - **Responses-family scope:** ratify the cross-family invariant above. Applying the
-  absent-to-false rule only to the currently failing relay would leave the same
-  ambiguity on another Responses adapter; preserving explicit booleans keeps supported
-  strict tools intact.
+  missing-or-null-to-false rule only to the currently failing relay would leave the
+  same ambiguity on another Responses adapter; preserving explicit booleans keeps
+  supported strict tools intact.
 
 ## Implementation checklist
 
