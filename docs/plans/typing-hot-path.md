@@ -89,13 +89,20 @@ Renderer (all inside the per-keystroke `flushSync` in `useCommandRunner`):
 
 - **Lazy guard input.** `guardMutation` receives a projection **thunk** (or the
   maintained `DocumentReadModel`) instead of an eagerly assembled projection;
-  a mutation with no registered guard, or a guard that bails on the command
-  kind, never assembles anything.
-- **O(changed) fast path in the guard.** Reorder `memoryGraphMayChange` so the
-  command-kind switch runs first; only commands that can touch reserved tags or
-  memory nodes proceed to graph work. `commandUsesReservedTag`'s active
-  tag-definition set is computed once per projection revision and cached, not
-  rebuilt per command.
+  a mutation with no registered guard never assembles anything.
+- **A `MemoryMutationIndex`, because a command-kind switch cannot answer
+  membership.** Even a plain `apply_node_text_patch` must be judged against
+  the guard's membership sets — is the target canonical-owned, a protected
+  ancestor, reserved-tagged? — and today those sets exist only as products of
+  the full scan (`memoryGraphMayChange` walks ancestors from every
+  reserved-tagged node and descendants+ancestors of every graph container).
+  Nor can they be cached on the projection revision, which bumps every
+  keystroke. PR-A therefore maintains an incremental `MemoryMutationIndex`
+  holding at least: canonical-owned ids, protected-ancestor ids,
+  reserved-tagged ids, active tag definitions, and generated ids. It updates
+  only from operations whose verdict was `affectsMemory` (and from the memory
+  pipeline's own writes); ordinary revision churn never invalidates it. The
+  guard answers a text patch with O(1) lookups against the index.
 - **Deferred, guard-informed `documentChanged`.** A new-state changed-node-id
   check is NOT a sound bail: memory-graph membership also depends on facts a
   changed id does not carry — the node's OLD tags (a removal), deletion events
@@ -105,11 +112,15 @@ Renderer (all inside the per-keystroke `flushSync` in `useCommandRunner`):
   — which already evaluates graph relevance for the command — records an
   `affectsMemory` verdict on the operation, and `documentChanged` consumes that
   verdict (one source of truth, no second classifier to drift). Non-command
-  projection changes without a verdict take the conservative path. The full
-  digest (`canonicalGraphDigest`) moves off the per-event path: mark dirty and
-  compute on a debounced idle timer (~500 ms) or at the memory pipeline's own
-  wake points. `generatedNodes()` becomes a cached read invalidated by
-  `MemoryControlStore` writes instead of a per-event SELECT.
+  projection changes without a verdict take the conservative path. What defers
+  is ONLY the digest and the wake: `canonicalGraphDigest` computation and the
+  pipeline wake move to a debounced idle timer (~500 ms) or the pipeline's own
+  wake points. The generated-node **ownership reconciliation** (fingerprint
+  comparison → `markNodeUserAuthoritative`) does NOT defer — it completes
+  before the memory write gate releases, so a pipeline write can never act on
+  stale ownership of a node the user just edited. `memory:*` self-publications
+  keep their existing skip. `generatedNodes()` becomes a cached read
+  invalidated by `MemoryControlStore` writes instead of a per-event SELECT.
 - Invariant: a real memory-graph change — including tag removal, a subtree
   moving into Trash, and a day-node rename — still wakes the pipeline within
   the debounce window; a keystroke that cannot affect the graph does zero graph
@@ -136,8 +147,21 @@ Renderer (all inside the per-keystroke `flushSync` in `useCommandRunner`):
   rules, or moving export + base64 + stringify to a worker (Loro binding
   transferability permitting) — change the persistence contract (file format
   and/or threading model), which is directional: the one-pager presents both
-  with measurements and the PM ratifies one BEFORE build. Acceptance bound
-  either way: no keystroke ever waits on an O(document) serialize.
+  with measurements and the PM ratifies one BEFORE build. No product code for
+  PR-B lands ahead of that ratification.
+- **The save leaves the mutation queue entirely — a full handoff contract,
+  not just an off-thread serialize.** Today `flushCoreSave` chains onto
+  `mutationQueue` and `saveCore` awaits the whole `atomicWriteFile`, so a
+  keystroke arriving during a save queues behind the file write and rename —
+  moving only the serialize off-thread would leave that intact. PR-B defines
+  the pipeline explicitly: a mutation marks the document dirty at a
+  **persistence revision** and returns; a background saver (owning snapshot →
+  serialize → write) acknowledges the revision it durably persisted. Failure
+  handling is part of the contract: a failed save keeps the dirty state at its
+  revision, retries with backoff, and surfaces a persistent failure (today's
+  timer `void`s the promise — a silent-drop this PR removes); `before-quit`
+  drains by awaiting the latest revision's ack. Acceptance bound: no keystroke
+  ever waits on an O(document) serialize OR on the file write.
 - **Fix the text-search map clone.** Maintain `textSearchNodes` as a persistent
   structure mutated under the mutation queue (or COW buckets), so a committed
   text patch costs O(changed), not an O(N) `new Map(previousNodes)` copy (both
@@ -145,40 +169,63 @@ Renderer (all inside the per-keystroke `flushSync` in `useCommandRunner`):
 
 ### PR-C — renderer keystroke commit cost (renderer)
 
-- **Semantic revisions, not the projection revision.** The global projection
-  revision bumps on every delta — and typing a picker query is itself a
-  document mutation — so any cache keyed on it still misses on exactly the
-  keystrokes it exists for. This PR introduces narrow semantic revision
-  counters maintained from the `ProjectionUpdate` delta as it is applied: a
-  tag-definition revision, a trash-membership revision, and a
-  reference-presentation revision (titles/colors of referenced nodes). Caches
-  below key on these.
-- **`referenceSummary`:** cache on the reference-relevant semantic revision, or
-  patch the summary incrementally from changed ids. The WeakMap-on-`byId` key
-  is the bug: `byId` changes identity per delta by design.
+- **Semantic revisions where they work, per-node incrementality where they
+  don't.** The global projection revision bumps on every delta — and typing a
+  picker query is itself a document mutation — so any cache keyed on it misses
+  on exactly the keystrokes it exists for. But a coarse "presentation revision"
+  fed by titles has the same trap: the node being edited changes title every
+  keystroke, bumping the revision globally. So the split is: narrow
+  **structural** revisions maintained from the applied `ProjectionUpdate` delta
+  — a tag-definition revision, a trash-membership revision, and a
+  **referenceGraphRevision** (reference edges, `inlineRefs`, `refRole`, source
+  parentage, search/query ancestry) — for the facts that change rarely; and
+  **per-node incremental maintenance** for the facts that change per keystroke
+  (titles, `updatedAt`): caches patch the changed nodes' entries in place
+  rather than invalidating globally.
+- **`referenceSummary`:** maintained incrementally — `buildReferenceSummary`
+  depends on far more than titles (reference edges, `refRole` backlink
+  eligibility, source-parent and search-ancestry resolution, trash state), so
+  its cache patches entries from changed ids and rebuilds only on
+  referenceGraphRevision / trash-revision changes. The WeakMap-on-`byId` key is
+  the bug: `byId` changes identity per delta by design.
 - **Decouple the agent dock from irrelevant document deltas.** The transcript
   cannot be permanently severed from the index — `threadNodeReferenceStyle`
   and reference labels legitimately read node titles/colors, which must stay
   fresh. Pass the index through a stable read-at-render accessor (ref/context)
   so `DocumentIndex` identity stops being a memo input, and re-render reference
-  chips off the reference-presentation semantic revision (or a per-node-id
-  subscription) so a rename/recolor still propagates. (`ThreadItemView`
-  memoization itself belongs to `agent-streaming-followups`, which sequences
-  the prop stabilization it needs — this PR only removes the document-delta
-  trigger and does NOT touch item-level memo.) Stop paying for a closed dock:
-  unmount (or fully suspend) the transcript when the rail is closed instead of
-  relying on `inert`.
+  chips off a per-node-id subscription so a rename/recolor still propagates
+  (a global revision would bump per keystroke via the edited node's title).
+  (`ThreadItemView` memoization itself belongs to `agent-streaming-followups`,
+  which sequences the prop stabilization it needs — this PR only removes the
+  document-delta trigger and does NOT touch item-level memo.) Stop paying for a
+  closed dock via **state-preserving suspension, never a bare unmount**:
+  `ThreadView` owns the composer draft as local state and its cleanup aborts
+  and discards unsent attachments, so unmounting on rail close would destroy
+  the user's draft, staged attachments, and scroll position. Either gate
+  rendering while keeping the component mounted (suspension), or first hoist
+  draft/attachment state above the mount boundary — closing and reopening the
+  rail must be lossless.
 - **Reference/tag pickers:** fix `TriggerPopover`'s memo deps (destructure the
-  props it reads); memoize `referenceItems` on (semantic revision, query); give
-  the `@` path a cached candidate base like the `#` path has, keyed on the
-  tag/trash semantic revisions rather than `DocumentIndex` identity; share one
-  trash-descendant set per trash revision (the precomputed-Trash-set precedent
-  from the perf program) instead of per-candidate ancestor walks with `Set`
-  allocations.
+  props it reads). The `@` candidate base cannot be revision-cached — it reads
+  titles, ancestor breadcrumbs, `updatedAt`, candidate types, and the
+  display-cycle graph, several of which change on the very keystroke being
+  served — so it becomes an **incrementally maintained candidate index**
+  (per-node entries patched from changed ids; full rebuild only on
+  referenceGraphRevision / trash / tag-definition changes), the same shape as
+  the `#` path's cache but with per-node patching instead of identity keying.
+  Share one trash-descendant set per trash revision (the precomputed-Trash-set
+  precedent from the perf program) instead of per-candidate ancestor walks with
+  `Set` allocations.
 - **`Sidebar`:** memoize rows; use the shared per-revision trash-descendant set.
-- **`buildVisualRows`:** derive rows for the virtual window plus overscan, or
-  patch the row model from changed ids, instead of rebuilding every expanded
-  branch per delta.
+- **`buildVisualRows`: incremental row-model patching — window-only derivation
+  is out.** The layout model needs the complete flat row list:
+  `buildRowLayout` sums every row's height for total height and scroll
+  offsets, and forced-index collection scans all rows — deriving only the
+  viewport would force a virtualization-architecture change this plan's
+  non-goals exclude. Instead the full row model is kept and **patched** from
+  changed ids: a text patch touches its row in place; structural changes
+  (sort/filter/group/reference membership) invalidate and rebuild the affected
+  branch only, with the invalidation rules per trigger stated in the PR.
 - **`CodeBlockRow`:** debounce re-highlighting (~150 ms). The text itself lives
   in the editor; the highlight is decoration and may lag a beat.
 
@@ -191,13 +238,23 @@ Renderer (all inside the per-keystroke `flushSync` in `useCommandRunner`):
   Wake-equivalence cases enumerate the non-obvious graph changes: memory-tag
   REMOVAL, id-only deletion, a day-node date rename, a move out of Daily
   Notes, and an ancestor entering Trash — each must still wake the pipeline.
+  `MemoryMutationIndex` equivalence: after an arbitrary mutation corpus, the
+  index's membership sets equal the sets the full scan derives; a text patch
+  to a non-memory node does zero graph work while one to an owned/generated
+  node still authorizes and reconciles ownership synchronously.
 - Unit, PR-B: a text-patch burst performs no synchronous save inside
-  `runMutation`; sustained typing past the max-wait still checkpoints (fake
-  clock); the search-refresh map is not copied per patch (counter);
-  crash-window semantics documented in the test that covers the coalescer.
-- Unit, PR-C: cache-hit tests for referenceSummary / candidate bases across a
-  simulated delta (`tests/renderer`); a transcript fixture that asserts no
-  `ThreadTurnView` re-render on a document-only index change.
+  `runMutation` and never queues behind an in-flight file write; sustained
+  typing past the max-wait still checkpoints (fake clock); a failed background
+  save keeps the dirty revision, retries, and surfaces — never a silent drop;
+  `before-quit` drains to the latest revision's ack; the search-refresh map is
+  not copied per patch (counter).
+- Unit, PR-C: incremental-maintenance equivalence tests — patched
+  referenceSummary / candidate-index state equals a from-scratch build across
+  a mutation corpus (`tests/renderer`); a transcript fixture that asserts no
+  `ThreadTurnView` re-render on a document-only index change; rail
+  close→reopen preserves composer draft, staged attachments, and scroll
+  position; patched visual-row model equals a from-scratch `buildVisualRows`
+  across sort/filter/group/reference mutations.
 - **Probe (A9):** `renderProbe` typing latency on the large test document,
   before/after each PR, with the agent rail open and a Subagent streaming —
   numbers recorded in each PR body.
@@ -209,8 +266,7 @@ Renderer (all inside the per-keystroke `flushSync` in `useCommandRunner`):
   worker-thread export (threading change, binding transferability to verify) —
   a persistence-contract decision, presented with measurements at the
   one-pager.
-- Whether `referenceSummary` moves to incremental patching or revision-keyed
-  caching is the dev's call; both satisfy the bound.
 - PR-A's `affectsMemory` verdict transport (operation metadata vs a
   guard-to-listener side channel keyed by operationId) is the dev's call; the
-  bound is one classifier, not two.
+  bound is one classifier, not two. Likewise the `MemoryMutationIndex`
+  bootstrap (built once from the full scan at startup, then incremental).
