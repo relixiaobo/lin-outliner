@@ -65,11 +65,24 @@ audit):
   `memo(ThreadItemView)` would still miss every notification: several
   `ThreadTurnView` callbacks take the whole `turn` as a `useCallback` dep (new
   identity per delta), and the recomputed `subagents` projection flows into
-  every item. Order of work: (1) re-key the callbacks on `turn.id` with the
-  live Turn read through a ref; (2) memoize `projectSubagentsForTurn` /
-  `groupTurnContent` on `(turn.items, threadsById, latestTurnByThread)` rather
-  than the `turn` wrapper, with per-item-stable presentation objects (an
-  unchanged item maps to the SAME projected object); (3) only then
+  every item. Note the `items` ARRAY identity also changes per delta (the store
+  maps a fresh array), so keying a helper memo on `turn.items` would miss every
+  time too — array-keyed `useMemo` is not the mechanism. Order of work: (1)
+  re-key the callbacks on `turn.id` with the live Turn read through a ref; (2)
+  make `projectSubagentsForTurn` / `groupTurnContent` incremental via pairwise
+  identity diffing: each keeps its previous `(inputs, perItemResults, result)`;
+  on a new array it walks pairwise object identities (pointer compares only) —
+  an unchanged item reuses its previous projected object (identity-stable
+  output), a changed item recomputes alone, and group boundaries rebuild only
+  when a grouping-relevant field (type/status/membership) changed. The
+  subagent-presentation cache's inputs are NOT the items alone:
+  `projectSubagentsForTurn` also reads `threadsById` and `latestTurnByThread`
+  for each related child's nickname, status, error, and duration — so each
+  item's cache entry is additionally keyed on the identity of the child Thread
+  record and latest-Turn entry it consumed, and a child-only change (parent
+  items untouched) invalidates exactly the items referencing that child. A text
+  delta then re-projects exactly the one changed item — and the one group block
+  containing it — with zero recomputation of unchanged items; (3) only then
   `memo(ThreadItemView)`, with a render-count test proving the memo actually
   hits during a streamed delta.
 - **Isolate the ticker — the whole header, not just a span.** The elapsed value
@@ -90,8 +103,15 @@ audit):
   markdown shapes (headings, fences, tables, footnote defs — the `def`
   redistribution path in particular); a non-append change falls back correctly.
 - Unit (`tests/renderer`): a delta to one item re-renders only that
-  `ThreadItemView` (probe/counter fixture); the elapsed tick does not re-render
-  the nested transcript fixture.
+  `ThreadItemView` (probe/counter fixture); AND helper-level counters — a text
+  delta re-projects exactly ONE item (and rebuilds only its group block) with
+  zero recomputation of unchanged items, which keep identity-stable
+  presentation objects (a render-count assertion alone cannot catch helper
+  recomputation, so both are asserted); AND a child-only change (child Thread
+  status/latest-Turn update with parent items untouched) refreshes exactly the
+  items referencing that child — no stale nickname/status/duration, no
+  recomputation of unrelated items. The elapsed tick does not re-render the
+  nested transcript fixture.
 - **A9 manual:** long streaming answer (100 KB+) with an expanded Subagent row —
   renderer CPU before/after, recorded in the PR body.
 
