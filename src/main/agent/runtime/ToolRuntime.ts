@@ -187,10 +187,28 @@ export class ToolRuntime {
       const identity = registry
         ? decodeProviderToolName(tool.name, 'flat', registry)
         : providerIdentity;
-      if (!identity) throw new Error(`Runtime model tool has no canonical contract: ${tool.name}`);
+      if (!identity) {
+        if (subagentPolicy && dynamicToolSet.has(tool)) {
+          this.reportSubagentToolDiagnostic(
+            context,
+            `Skipping dynamic model tool without a canonical contract: ${tool.name}`,
+          );
+          continue;
+        }
+        throw new Error(`Runtime model tool has no canonical contract: ${tool.name}`);
+      }
       const canonical = canonicalModelToolKey(identity);
       const contract = contracts.get(canonical) ?? modelToolContract(canonical);
-      if (!contract) throw new Error(`Runtime model tool has no canonical contract: ${canonical}`);
+      if (!contract) {
+        if (subagentPolicy && dynamicToolSet.has(tool)) {
+          this.reportSubagentToolDiagnostic(
+            context,
+            `Skipping dynamic model tool without a canonical contract: ${canonical}`,
+          );
+          continue;
+        }
+        throw new Error(`Runtime model tool has no canonical contract: ${canonical}`);
+      }
       if (registry && !sameSchema(tool.parameters, contract.inputSchema)) {
         if (dynamicToolSet.has(tool) || extensionOwners.has(canonical)) {
           unavailableCanonical.add(canonical);
@@ -221,6 +239,16 @@ export class ToolRuntime {
         && (allowed.has(canonical) || enabledExtensions.has(owner))
         && !enabledCanonical.has(canonical)
       ) {
+        if (subagentPolicy) {
+          // A child must not lose its whole turn because an optional extension
+          // failed to contribute its runtime handler. The requested-tool
+          // admission check below still rejects a Role that resolves to zero.
+          this.reportSubagentToolDiagnostic(
+            context,
+            `Skipping extension model tool without a runtime implementation: ${canonical}`,
+          );
+          continue;
+        }
         throw new Error(`Enabled extension model tool has no runtime implementation: ${canonical}`);
       }
     }
@@ -230,13 +258,21 @@ export class ToolRuntime {
       && requestedTools.requestedTools !== null
       && requestedTools.requestedTools.length > 0
     ) {
-      const admittedRequested = requestedTools.requestedTools.filter((key) => enabledCanonical.has(key));
+      const admittedRequested = requestedTools.recognizedTools.filter((key) => enabledCanonical.has(key));
       if (admittedRequested.length === 0) {
         const canonicalType = this.subagentType(context);
-        const unresolved = requestedTools.requestedTools.filter((key) => !enabledCanonical.has(key));
+        const unavailableRecognized = requestedTools.recognizedTools.filter((key) => !enabledCanonical.has(key));
+        const reasons = [
+          ...(requestedTools.unrecognizedTools.length === 0
+            ? []
+            : [`unrecognized [${requestedTools.unrecognizedTools.join(', ')}]`]),
+          ...(unavailableRecognized.length === 0
+            ? []
+            : [`not available under this Agent policy [${unavailableRecognized.join(', ')}]`]),
+        ];
         throw new Error(
           `Agent '${canonicalType}' would be spawned with zero tools — refusing. `
-          + `Its tools list resolved to nothing: unrecognized [${unresolved.join(', ')}]. `
+          + `Its tools list resolved to nothing: ${reasons.join('; ') || 'no admitted tools'}. `
           + `Fix the Role's tools configuration or pass a different subagent_type.`,
         );
       }
@@ -246,6 +282,12 @@ export class ToolRuntime {
 
   async prepareProviderContext(context: TurnExecutionContext): Promise<void> {
     if (!context.configuration.tools.includes('skill')) return;
+    const subagentPolicy = this.subagentPolicy(context);
+    if (subagentPolicy && (subagentPolicy.kind === 'explore' || subagentPolicy.kind === 'plan')) {
+      // Specialized children intentionally have no Skill catalog in either
+      // their startup evidence or later provider-context refreshes.
+      return;
+    }
     const runtime = await this.skillRuntime(context);
     const checkpoint = runtime?.catalogRefreshCheckpoint() ?? null;
     if (!runtime || checkpoint === null) return;
