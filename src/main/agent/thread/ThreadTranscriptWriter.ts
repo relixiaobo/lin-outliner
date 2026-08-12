@@ -123,6 +123,15 @@ export class ThreadTranscriptWriter {
   }
 
   /**
+   * Stable destination for a delegated transcript, even before its first Turn
+   * has settled. The Agent launch contract exposes this path immediately; the
+   * writer will materialize that same artifact when completion is appended.
+   */
+  pathForPendingReader(threadId: ThreadId): string {
+    return threadTranscriptPath(this.options.transcriptRoot, threadId);
+  }
+
+  /**
    * Best-effort removal, driven by the Thread-deletion descendant cascade.
    *
    * The order is the whole point. Mark the Thread discarded FIRST so nothing new

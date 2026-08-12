@@ -14,8 +14,8 @@ import type { SqliteDatabase } from './sqlite';
  */
 export const MIN_SUBAGENT_TOKEN_CAP = 1_000_000;
 
-export const MAX_SUBAGENT_DEPTH = 2;
-export const MAX_SUBAGENT_SPAWNS_PER_THREAD = 16;
+export const MAX_SUBAGENT_DEPTH = 3;
+export const DEFAULT_MAX_CONCURRENT_SUBAGENTS = 20;
 
 /**
  * A pool key. A delegating Turn owns one request pool, named by that Turn; an
@@ -43,10 +43,6 @@ interface SubagentRequestMemberRow {
   origin_turn_id: string;
   token_cap: number | null;
   tokens_used: number;
-}
-
-interface SubagentSpawnCountRow {
-  spawn_count: number;
 }
 
 export interface SubagentRequestPool {
@@ -99,7 +95,6 @@ export function cappedChildPoolId(threadId: ThreadId): SubagentRequestPoolId {
 export class SubagentRequestLedger {
   private readonly ephemeralPools = new Map<SubagentRequestPoolId, SubagentRequestPool>();
   private readonly ephemeralMembers = new Map<ThreadId, SubagentRequestMember>();
-  private readonly ephemeralSpawnCounts = new Map<ThreadId, number>();
 
   constructor(private readonly db: SqliteDatabase) {
     // Pre-release clean cut, the same way `thread_budgets` and the Thread-keyed
@@ -108,8 +103,7 @@ export class SubagentRequestLedger {
     // forced rather than cosmetic — `token_budget` becomes nullable, which
     // `CREATE TABLE IF NOT EXISTS` cannot apply to an existing table — and the
     // name follows the concept: the row is the REQUEST, and a budget is one
-    // optional attribute of it. The spawn counter is structural rather than
-    // spend, and survives untouched.
+    // optional attribute of it.
     this.db.exec(`
       DROP TABLE IF EXISTS thread_budgets;
       DROP TABLE IF EXISTS subagent_budget_pools;
@@ -138,10 +132,6 @@ export class SubagentRequestLedger {
         ON subagent_request_members(pool_id);
       CREATE INDEX IF NOT EXISTS subagent_request_members_origin_turn_idx
         ON subagent_request_members(origin_turn_id);
-      CREATE TABLE IF NOT EXISTS subagent_spawn_counts (
-        spawner_thread_id TEXT PRIMARY KEY,
-        spawn_count INTEGER NOT NULL CHECK (spawn_count >= 0)
-      ) STRICT;
     `);
   }
 
@@ -151,10 +141,6 @@ export class SubagentRequestLedger {
 
   readMember(threadId: ThreadId): SubagentRequestMember | null {
     return this.ephemeralMembers.get(threadId) ?? this.readPersistedMember(threadId);
-  }
-
-  readSpawnCount(spawnerThreadId: ThreadId): number {
-    return this.ephemeralSpawnCounts.get(spawnerThreadId) ?? this.readPersistedSpawnCount(spawnerThreadId);
   }
 
   /**
@@ -293,24 +279,6 @@ export class SubagentRequestLedger {
     this.deletePoolRecord(poolId);
   }
 
-  recordSpawnCount(spawnerThreadId: ThreadId, spawnCount: number, ephemeral: boolean): number {
-    if (!Number.isSafeInteger(spawnCount) || spawnCount < 0) {
-      throw new Error('Subagent spawn count must be a non-negative integer');
-    }
-    if (ephemeral) {
-      const recorded = Math.max(this.ephemeralSpawnCounts.get(spawnerThreadId) ?? 0, spawnCount);
-      this.ephemeralSpawnCounts.set(spawnerThreadId, recorded);
-      return recorded;
-    }
-    this.db.prepare(`
-      INSERT INTO subagent_spawn_counts(spawner_thread_id, spawn_count)
-      VALUES (?, ?)
-      ON CONFLICT(spawner_thread_id) DO UPDATE SET
-        spawn_count = MAX(subagent_spawn_counts.spawn_count, excluded.spawn_count)
-    `).run(spawnerThreadId, spawnCount);
-    return this.readPersistedSpawnCount(spawnerThreadId);
-  }
-
   addUsage(
     threadId: ThreadId,
     poolId: SubagentRequestPoolId | null,
@@ -361,7 +329,6 @@ export class SubagentRequestLedger {
    */
   clearThread(threadId: ThreadId): boolean {
     const ephemeralMember = this.ephemeralMembers.delete(threadId);
-    const ephemeralSpawnCount = this.ephemeralSpawnCounts.delete(threadId);
     let ephemeralPool = false;
     for (const [poolId, pool] of [...this.ephemeralPools]) {
       if (pool.originThreadId !== threadId) continue;
@@ -382,16 +349,11 @@ export class SubagentRequestLedger {
       const poolChanges = this.db.prepare(
         'DELETE FROM subagent_request_pools WHERE origin_thread_id = ?',
       ).run(threadId).changes;
-      const spawnCountChanges = this.db.prepare(
-        'DELETE FROM subagent_spawn_counts WHERE spawner_thread_id = ?',
-      ).run(threadId).changes;
       this.db.exec('COMMIT;');
       return ephemeralMember
         || ephemeralPool
-        || ephemeralSpawnCount
         || Number(memberChanges) > 0
-        || Number(poolChanges) > 0
-        || Number(spawnCountChanges) > 0;
+        || Number(poolChanges) > 0;
     } catch (error) {
       this.db.exec('ROLLBACK;');
       throw error;
@@ -449,12 +411,6 @@ export class SubagentRequestLedger {
     return row ? memberFromRow(row) : null;
   }
 
-  private readPersistedSpawnCount(spawnerThreadId: ThreadId): number {
-    const row = this.db.prepare(`
-      SELECT spawn_count FROM subagent_spawn_counts WHERE spawner_thread_id = ?
-    `).get(spawnerThreadId) as SubagentSpawnCountRow | undefined;
-    return row?.spawn_count ?? 0;
-  }
 }
 
 function poolFromRow(row: SubagentRequestPoolRow): SubagentRequestPool {

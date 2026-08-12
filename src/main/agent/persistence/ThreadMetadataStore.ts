@@ -320,6 +320,14 @@ export class ThreadMetadataStore {
     );
   }
 
+  setCwd(threadId: ThreadId, cwd: string, updatedAt: number): void {
+    this.updateOne(
+      'UPDATE threads SET cwd = ?, updated_at = ? WHERE id = ?',
+      [cwd, updatedAt, threadId],
+      threadId,
+    );
+  }
+
   setConfiguration(threadId: ThreadId, configuration: EffectiveThreadConfiguration): void {
     this.updateOne(
       'UPDATE threads SET configuration_json = ? WHERE id = ?',

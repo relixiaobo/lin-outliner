@@ -4,10 +4,7 @@ import {
 decodeAgentCoreRequest,
 decodeAgentCoreResponse
 } from '../../core/agent/codec';
-import {
-type AgentRole,
-type EffectiveThreadConfiguration
-} from '../../core/agent/configuration';
+import type { AgentRole,EffectiveThreadConfiguration } from '../../core/agent/configuration';
 import {
 type ExtensionToolContribution,
 type HostRootTurnAdmissionBarrierSnapshot,
@@ -78,6 +75,7 @@ import type { DocumentProjection } from '../../core/types';
 import {
 BUILT_IN_AGENT_ROLE_DEFINITIONS,
 defaultEffectiveThreadConfiguration,
+type ResolvedAgentType,
 } from './AgentConfigurationLoader';
 import type { ReferencedAssetResolution } from './capabilities/agentReferencedAssets';
 import { ExtensionRegistry } from './ExtensionRegistry';
@@ -92,6 +90,12 @@ import {
 requestPoolIdForTurn,
 SubagentRequestLedger
 } from './persistence/SubagentRequestLedger';
+import {
+  type AgentStartupContextSnapshot,
+  SubagentExecutionLedger,
+  type SubagentExecutionRecord,
+} from './persistence/SubagentExecutionLedger';
+import type { AgentWorktreeMetadata } from './worktree/AgentWorktree';
 import { ThreadHistoryProjectionStore } from './persistence/ThreadHistoryProjectionStore';
 import {
 ThreadMetadataStore
@@ -146,6 +150,7 @@ export interface ThreadServiceStores {
   readonly rollout: RolloutStore;
   readonly goals: GoalStore;
   readonly subagentBudgets: SubagentRequestLedger;
+  readonly subagentExecutions: SubagentExecutionLedger;
   readonly payloads: ToolPayloadStore;
 }
 
@@ -182,6 +187,7 @@ export interface ThreadServiceOptions {
     input: SkillAdmissionResolutionInput,
   ) => SkillAdmissionResolution | Promise<SkillAdmissionResolution>;
   readonly resolveRole?: (name: string, cwd: string) => AgentRole;
+  readonly resolveAgentType?: (name: string | undefined, cwd: string) => ResolvedAgentType;
   readonly resolveRoleCatalog?: (
     cwd: string,
   ) => RoleCatalogContextPayload | Promise<RoleCatalogContextPayload>;
@@ -189,6 +195,22 @@ export interface ThreadServiceOptions {
     providerId: string,
   ) => readonly string[] | Promise<readonly string[]>;
   readonly resolveSubagentTokenBudget?: () => number | null | Promise<number | null>;
+  readonly resolveSubagentLimits?: () => {
+    readonly maxDepth: number;
+    readonly maxConcurrent: number;
+  } | Promise<{ readonly maxDepth: number; readonly maxConcurrent: number }>;
+  readonly resolveAgentStartupContext?: (
+    parent: Pick<Thread, 'id' | 'sessionId' | 'cwd'>,
+  ) => AgentStartupContextSnapshot | null | Promise<AgentStartupContextSnapshot | null>;
+  readonly prepareAgentWorktree?: (input: {
+    readonly agentId: ThreadId;
+    readonly cwd: string;
+    readonly worktree: AgentWorktreeMetadata | null;
+  }) => Promise<{ readonly cwd: string; readonly worktree: AgentWorktreeMetadata }>;
+  readonly settleAgentWorktree?: (worktree: AgentWorktreeMetadata) => Promise<{
+    readonly worktree: AgentWorktreeMetadata;
+    readonly retained: boolean;
+  }>;
   readonly normalizeOutputImage?: OutputImageObservationNormalizer;
   readonly beforeInitialTurnAdmission?: () => void | Promise<void>;
   readonly now?: () => number;
@@ -256,6 +278,8 @@ export interface PersistentThreadExecutionContext {
 }
 
 export interface SpawnChildThreadInput {
+  readonly id?: ThreadId;
+  readonly turnId?: TurnId;
   readonly parentThreadId: ThreadId;
   readonly parentTurnId: string;
   readonly parentItemId: string;
@@ -268,7 +292,8 @@ export interface SpawnChildThreadInput {
    * suffix that is host addressing rather than a name.
    */
   readonly displayName?: string;
-  readonly role?: string;
+  readonly cwd?: string;
+  readonly role?: string | AgentRole;
   readonly nickname?: string;
   readonly model?: string;
   readonly reasoningEffort?: EffectiveThreadConfiguration['reasoningEffort'];
@@ -279,6 +304,15 @@ export interface SpawnChildThreadInput {
   readonly maxTotalTokens?: number;
   /** Selects the parent-facing result channel while retaining one child-Thread mechanism. */
   readonly childKind?: 'collaboration' | 'isolatedSkill';
+  /** Host-owned execution record inserted before the child Turn can settle. */
+  readonly execution?: {
+    readonly description: string;
+    readonly agentType: string;
+    readonly runMode: 'foreground' | 'background';
+    readonly worktree: AgentWorktreeMetadata | null;
+    readonly toolPolicy: SubagentRecordedToolPolicy;
+    readonly startupContext: AgentStartupContextSnapshot | null;
+  };
 }
 
 export interface SpawnChildThreadResult {
@@ -296,34 +330,6 @@ export interface SpawnIsolatedSkillThreadInput {
   readonly allowedTools: readonly string[];
   readonly model?: string;
   readonly reasoningEffort?: EffectiveThreadConfiguration['reasoningEffort'];
-  readonly readOnly: boolean;
-}
-
-export interface CollaborationAgentView {
-  readonly taskPath: string;
-  readonly threadId: ThreadId;
-  readonly parentThreadId: ThreadId;
-  readonly nickname: string | null;
-  readonly role: string | null;
-  readonly status: 'pendingInit' | 'running' | 'interrupted' | 'completed' | 'errored';
-  readonly tokensUsed: number;
-  readonly tokenBudget: number | null;
-}
-
-export interface CollaborationTerminalOutcome {
-  readonly taskPath: string;
-  readonly threadId: ThreadId;
-  readonly status: 'interrupted' | 'completed' | 'errored';
-  readonly result: string | null;
-  /** Account layer: the materialized transcript, or null when the write failed (A12). */
-  readonly transcriptPath: string | null;
-  readonly error: string | null;
-}
-
-export interface CollaborationWaitResult {
-  readonly reason: 'terminal' | 'steering' | 'idle';
-  readonly updates: readonly CollaborationTerminalOutcome[];
-  readonly agents: readonly CollaborationAgentView[];
 }
 
 export class ThreadService implements ThreadServiceExtensionHost {
@@ -377,6 +383,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       invocation: null,
     };
     const resolveRole = options.resolveRole ?? defaultAgentRole;
+    const resolveAgentType = options.resolveAgentType ?? defaultResolvedAgentType;
     this.resolveRoleCatalog = async (cwd) => await options.resolveRoleCatalog?.(cwd) ?? null;
     this.resolveProviderModelIds = async (providerId) => (
       await options.resolveProviderModelIds?.(providerId) ?? []
@@ -459,8 +466,17 @@ export class ThreadService implements ThreadServiceExtensionHost {
       },
       this.turnLifecycle,
       this.subagentBudgets,
+      options.stores.subagentExecutions,
       resolveRole,
+      resolveAgentType,
       async () => await options.resolveSubagentTokenBudget?.() ?? null,
+      async () => await options.resolveSubagentLimits?.() ?? {
+        maxDepth: 3,
+        maxConcurrent: 20,
+      },
+      async (parent) => await options.resolveAgentStartupContext?.(parent) ?? null,
+      options.prepareAgentWorktree,
+      options.settleAgentWorktree,
       this.now,
       applyToolCeiling,
       (message) => new ThreadBusyError(message),
@@ -489,6 +505,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       },
       (threadId) => this.goals.clear(threadId),
       (threadId) => { this.subagentBudgets.clearThread(threadId); },
+      (threadIds) => { options.stores.subagentExecutions.deleteAgents(threadIds); },
       (message) => new ThreadBusyError(message),
     );
     this.goals = new GoalExtension(this.goalStore, (notification) => this.core.recordNotification(notification));
@@ -518,6 +535,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
         rollout: new RolloutStore(paths.rollouts),
         goals: new GoalStore(paths.goals, goalsDatabase),
         subagentBudgets: new SubagentRequestLedger(goalsDatabase),
+        subagentExecutions: new SubagentExecutionLedger(goalsDatabase),
         payloads: new ToolPayloadStore(paths.payloads),
       },
     });
@@ -579,6 +597,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       const { thread } = await this.resumeThread(threadId);
       resumableThreads.push(thread);
     }
+    await this.collaboration.recoverPendingNotifications();
     await this.beforeInitialTurnAdmission();
     this.initialized = true;
     for (const thread of resumableThreads) {
@@ -844,7 +863,10 @@ export class ThreadService implements ThreadServiceExtensionHost {
     this.transcriptIndex.schedule();
   }
   async deleteThread(threadId: ThreadId): Promise<void> { return this.catalogOps.deleteThread(threadId); }
-  async startRendererTurn(request: RendererTurnStartRequest): Promise<TurnStartResponse> { return this.turnLifecycle.startRendererTurn(request); }
+  async startRendererTurn(request: RendererTurnStartRequest): Promise<TurnStartResponse> {
+    this.collaboration.clearUserStop(request.threadId);
+    return this.turnLifecycle.startRendererTurn(request);
+  }
   async startPrivilegedTurn(request: PrivilegedTurnStartRequest): Promise<TurnStartResponse> { return this.turnLifecycle.startPrivilegedTurn(request); }
   async tryStartTurnIfIdle(request: PrivilegedTurnStartRequest): Promise<Turn | null> { return this.turnLifecycle.tryStartTurnIfIdle(request); }
   async steerTurn(
@@ -876,6 +898,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     // close that follows, because it refuses while this Turn is still active
     // and this Turn only settles asynchronously after the abort.
     await this.turnLifecycle.interruptTurn(threadId, turnId);
+    this.collaboration.recordUserStop(threadId);
     const settling = this.requestMembersUnder(threadId, turnId);
     const request = this.subagentBudgets.readPool(requestPoolIdForTurn(turnId));
     if (request && request.originTurnId === turnId) {
@@ -883,8 +906,8 @@ export class ThreadService implements ThreadServiceExtensionHost {
     }
     // Stopped work stays stopped: a member holding only queued work has no Turn
     // to abort, and the queue would otherwise outlive the request.
-    this.collaboration.dropQueuedWork(settling);
     for (const memberThreadId of settling) {
+      this.collaboration.recordUserStop(memberThreadId);
       const activeTurnId = this.turnLifecycle.activeTurnId(memberThreadId);
       if (activeTurnId === null) continue;
       await this.turnLifecycle.interruptTurn(memberThreadId, activeTurnId).catch(() => undefined);
@@ -914,8 +937,6 @@ export class ThreadService implements ThreadServiceExtensionHost {
           && [...direct].some((member) => this.isSelfOrDescendant(candidate, member))),
     ];
   }
-  /** Test seam: work accepted for a child that has not started a Turn yet. */
-  hasQueuedWorkForInspection(threadId: ThreadId): boolean { return this.collaboration.hasQueuedWork(threadId); }
   /** Stop reaches only a user's own conversations, at any depth. */
   private assertUserOwnedLineage(threadId: ThreadId): void {
     const visited = new Set<ThreadId>();
@@ -1175,6 +1196,19 @@ export class ThreadService implements ThreadServiceExtensionHost {
       await this.resolveProviderModelIds(providerId),
     );
   }
+  subagentExecution(threadId: ThreadId): SubagentExecutionRecord | null {
+    return this.collaboration.execution(threadId);
+  }
+  agentWorktree(threadId: ThreadId): AgentWorktreeMetadata | null {
+    return this.collaboration.worktreeForThread(threadId);
+  }
+  async stopAgentTask(
+    senderThreadId: ThreadId,
+    senderTurnId: TurnId,
+    agentId: string,
+  ): Promise<JsonValue | null> {
+    return this.collaboration.stopAgentTask(senderThreadId, senderTurnId, agentId);
+  }
   async spawnCollaborationAgent(input: {
     senderThreadId: ThreadId;
     senderTurnId: string;
@@ -1187,31 +1221,6 @@ export class ThreadService implements ThreadServiceExtensionHost {
     forkTurns?: string;
     maxTotalTokens?: number;
   }): Promise<SpawnChildThreadResult> { return this.collaboration.spawnCollaborationAgent(input); }
-  async sendCollaborationMessage(
-    senderThreadId: ThreadId,
-    senderTurnId: string,
-    target: string,
-    message: string,
-  ): Promise<CollaborationAgentView> { return this.collaboration.sendCollaborationMessage(senderThreadId, senderTurnId, target, message); }
-  async followupCollaborationTask(
-    senderThreadId: ThreadId,
-    senderTurnId: string,
-    parentItemId: string,
-    target: string,
-    message: string,
-  ): Promise<CollaborationAgentView> { return this.collaboration.followupCollaborationTask(senderThreadId, senderTurnId, parentItemId, target, message); }
-  listCollaborationAgents(senderThreadId: ThreadId, pathPrefix?: string): readonly CollaborationAgentView[] { return this.collaboration.listCollaborationAgents(senderThreadId, pathPrefix); }
-  async interruptCollaborationAgent(
-    senderThreadId: ThreadId,
-    senderTurnId: string,
-    target: string,
-  ): Promise<CollaborationAgentView> { return this.collaboration.interruptCollaborationAgent(senderThreadId, senderTurnId, target); }
-  async waitForCollaborationActivity(
-    senderThreadId: ThreadId,
-    senderTurnId: string,
-    signal?: AbortSignal,
-  ): Promise<CollaborationWaitResult> { return this.collaboration.waitForCollaborationActivity(senderThreadId, senderTurnId, signal); }
-
   async withThreadAdmissionBarrier<T>(
     threadId: ThreadId,
     operation: (snapshot: ThreadAdmissionBarrierSnapshot) => Promise<T>,
@@ -1259,6 +1268,23 @@ function defaultAgentRole(name: string): AgentRole {
   const role = BUILT_IN_AGENT_ROLE_DEFINITIONS[name];
   if (!role) throw new Error(`Unknown Agent Role: ${name}`);
   return role;
+}
+
+function defaultResolvedAgentType(name: string | undefined): ResolvedAgentType {
+  const canonicalType = name ?? 'general-purpose';
+  const backingRole = canonicalType === 'general-purpose'
+    ? 'default'
+    : canonicalType === 'explore'
+      ? 'explorer'
+      : canonicalType;
+  const role = defaultAgentRole(backingRole);
+  return {
+    canonicalType,
+    role,
+    kind: canonicalType === 'general-purpose' || canonicalType === 'explore' || canonicalType === 'plan'
+      ? canonicalType
+      : 'role',
+  };
 }
 
 function applyToolCeiling(

@@ -38,6 +38,7 @@ import { defaultEffectiveThreadConfiguration } from '../../src/main/agent/AgentC
 import { SubagentDepthLimitError, SubagentSpawnLimitError } from '../../src/main/agent/SubagentStructuralLimitError';
 import { GoalStore } from '../../src/main/agent/extensions/goal/GoalStore';
 import { RolloutStore } from '../../src/main/agent/persistence/RolloutStore';
+import { SubagentExecutionLedger } from '../../src/main/agent/persistence/SubagentExecutionLedger';
 import {
   cappedChildPoolId,
   MIN_SUBAGENT_TOKEN_CAP,
@@ -10316,6 +10317,7 @@ function createStores(
     rollout: new RolloutStore(join(root, 'agent', 'rollouts')),
     goals: new GoalStore(goalsPath, goalsDatabase),
     subagentBudgets: new SubagentRequestLedger(goalsDatabase),
+    subagentExecutions: new SubagentExecutionLedger(goalsDatabase),
     payloads: new ToolPayloadStore(join(root, 'agent', 'payloads'), payloadOptions),
   };
 }

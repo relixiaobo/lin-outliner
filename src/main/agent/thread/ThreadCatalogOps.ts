@@ -29,7 +29,6 @@ interface PendingThreadNameGeneration {
 }
 
 export interface ThreadCatalogCollaboration {
-  hasQueuedWork(threadId: ThreadId): boolean;
   recordEphemeralSpawnEdge(threadId: ThreadId, edge: {
     readonly sessionId: string;
     readonly parentThreadId: ThreadId;
@@ -69,6 +68,7 @@ export class ThreadCatalogOps {
     private readonly transcripts: ThreadCatalogTranscripts,
     private readonly clearGoal: (threadId: ThreadId) => Promise<void>,
     private readonly clearSubagentBudget: (threadId: ThreadId) => void,
+    private readonly clearSubagentExecutions: (threadIds: readonly ThreadId[]) => void,
     private readonly createThreadBusyError: (message: string) => Error,
   ) {}
   pendingNameShutdownHandles(): readonly { abort: () => void; completion: Promise<void> }[] {
@@ -206,12 +206,7 @@ export class ThreadCatalogOps {
         .filter((threadId) => !this.core.hiddenEphemeralThreads.has(threadId))
         .map((threadId) => this.core.requireThread(threadId).thread)
         .sort((left, right) => right.updatedAt - left.updatedAt || right.id.localeCompare(left.id));
-      return {
-        data,
-        queuedWorkThreadIds: data
-          .filter((thread) => this.collaboration.hasQueuedWork(thread.id))
-          .map((thread) => thread.id),
-      };
+      return { data, queuedWorkThreadIds: [] };
     }
   readThread(request: ThreadReadRequest): ThreadReadResponse {
       const record = this.core.requireThread(request.threadId);
@@ -617,6 +612,7 @@ export class ThreadCatalogOps {
             this.core.metadata.delete(threadId);
           }
           this.clearThreadCoordinationState(subtree.threadIds);
+          this.clearSubagentExecutions(subtree.threadIds);
         });
         // After coordination-state teardown, so no append the cascade raced can
         // land behind the removal and resurrect a transcript the user deleted.
