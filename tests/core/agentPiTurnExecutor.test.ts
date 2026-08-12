@@ -8,8 +8,17 @@ import type {
 } from '../../src/main/agent/runtime/kernel/types';
 import { createAssistantMessageEventStream } from '@earendil-works/pi-ai';
 import type { Api, AssistantMessage, Message, Model, SimpleStreamOptions, UserMessage } from '@earendil-works/pi-ai';
+import { stream as streamAnthropicMessages } from '@earendil-works/pi-ai/api/anthropic-messages';
 import { convertResponsesMessages } from '@earendil-works/pi-ai/api/openai-responses-shared';
 import { decodeThread, decodeTurn } from '../../src/core/agent/codec';
+import {
+  AGENT_MESSAGE_INPUT_SCHEMA,
+  AGENT_MESSAGE_TOOL_DESCRIPTION,
+  AGENT_TOOL_DESCRIPTION,
+  TASK_STOP_INPUT_SCHEMA,
+  TASK_STOP_TOOL_DESCRIPTION,
+  agentInputSchema,
+} from '../../src/core/agent/tools';
 import type {
   AgentCoreNotification,
   ContextEvidenceThreadItem,
@@ -3048,6 +3057,69 @@ describe('PiTurnExecutor provider payload', () => {
     expect(agentProviderPayload({ model: 'test-model' }, testModel)).toBeUndefined();
   });
 
+  test('restores the canonical Agent schemas after the real Anthropic tool conversion', async () => {
+    const models = ['claude-sonnet-test', 'claude-opus-test'];
+    const tools: AgentTool[] = [
+      parityTool('agent', AGENT_TOOL_DESCRIPTION, agentInputSchema(models)),
+      parityTool('agent_message', AGENT_MESSAGE_TOOL_DESCRIPTION, AGENT_MESSAGE_INPUT_SCHEMA),
+      parityTool('task_stop', TASK_STOP_TOOL_DESCRIPTION, TASK_STOP_INPUT_SCHEMA),
+    ];
+    const rawPayloads: unknown[] = [];
+    const restoredPayloads: unknown[] = [];
+    const client = {
+      messages: {
+        create: (payload: unknown) => ({
+          asResponse: async () => {
+            restoredPayloads.push(payload);
+            return anthropicTextResponse('done');
+          },
+        }),
+      },
+    };
+
+    const result = await streamAnthropicMessages(anthropicToolParityModel, {
+      systemPrompt: 'Test system prompt',
+      messages: [{ role: 'user', content: 'Test request', timestamp: 1 }],
+      tools,
+    }, {
+      client: client as never,
+      onPayload: (payload, model) => {
+        rawPayloads.push(structuredClone(payload));
+        return agentProviderPayload(payload, model, null, tools);
+      },
+    }).result();
+
+    expect(result.stopReason).toBe('stop');
+    const rawTools = providerPayloadTools(rawPayloads[0]);
+    expect(rawTools.map((tool) => Object.keys(tool.input_schema as object))).toEqual([
+      ['type', 'properties', 'required'],
+      ['type', 'properties', 'required'],
+      ['type', 'properties', 'required'],
+    ]);
+    expect(rawTools[2]?.input_schema).toMatchObject({ required: [] });
+
+    const restoredTools = providerPayloadTools(restoredPayloads[0]);
+    expect(restoredTools.map((tool) => Object.keys(tool))).toEqual([
+      ['name', 'description', 'input_schema', 'eager_input_streaming'],
+      ['name', 'description', 'input_schema', 'eager_input_streaming'],
+      ['name', 'description', 'input_schema', 'eager_input_streaming', 'cache_control'],
+    ]);
+    expect(restoredTools.map((tool) => tool.input_schema)).toEqual([
+      agentInputSchema(models),
+      AGENT_MESSAGE_INPUT_SCHEMA,
+      TASK_STOP_INPUT_SCHEMA,
+    ]);
+    expect(Object.keys(restoredTools[0]!.input_schema as object)).toEqual([
+      '$schema', 'type', 'properties', 'required', 'additionalProperties',
+    ]);
+    expect(Object.keys((restoredTools[0]!.input_schema as Record<string, any>).properties)).toEqual([
+      'description', 'prompt', 'subagent_type', 'model', 'run_in_background', 'isolation',
+    ]);
+    expect(Object.keys(restoredTools[2]!.input_schema as object)).toEqual([
+      '$schema', 'type', 'properties', 'additionalProperties',
+    ]);
+  });
+
   test('reattaches signed same-Turn thinking without authoring reasoning markers across three provider calls', async () => {
     const fixture = createContext();
     const providerContexts: Message[][] = [];
@@ -3835,6 +3907,102 @@ const testModel = {
   contextWindow: 128_000,
   maxTokens: 8_192,
 } as Model<Api>;
+
+const anthropicToolParityModel = {
+  id: 'claude-sonnet-test',
+  name: 'Claude Sonnet Test',
+  api: 'anthropic-messages',
+  provider: 'anthropic',
+  baseUrl: 'https://api.anthropic.test',
+  reasoning: false,
+  input: ['text'],
+  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+  contextWindow: 128_000,
+  maxTokens: 8_192,
+} satisfies Model<'anthropic-messages'>;
+
+function parityTool(
+  name: string,
+  description: string,
+  parameters: Readonly<Record<string, unknown>>,
+): AgentTool {
+  return {
+    name,
+    label: name,
+    description,
+    parameters: parameters as AgentTool['parameters'],
+    executionMode: 'sequential',
+    execute: async () => ({ content: [{ type: 'text', text: 'unused' }], details: {} }),
+  };
+}
+
+function providerPayloadTools(payload: unknown): Array<{
+  readonly name: string;
+  readonly input_schema: Readonly<Record<string, unknown>>;
+  readonly [key: string]: unknown;
+}> {
+  if (!payload || typeof payload !== 'object' || !Array.isArray((payload as { tools?: unknown }).tools)) {
+    throw new Error('Anthropic provider fixture did not contain tools');
+  }
+  return (payload as { tools: unknown[] }).tools.map((tool) => {
+    if (
+      !tool
+      || typeof tool !== 'object'
+      || typeof (tool as { name?: unknown }).name !== 'string'
+      || !(tool as { input_schema?: unknown }).input_schema
+      || typeof (tool as { input_schema?: unknown }).input_schema !== 'object'
+    ) {
+      throw new Error('Anthropic provider fixture contained an invalid tool');
+    }
+    return tool as {
+      readonly name: string;
+      readonly input_schema: Readonly<Record<string, unknown>>;
+      readonly [key: string]: unknown;
+    };
+  });
+}
+
+function anthropicTextResponse(text: string): Response {
+  const events = [
+    ['message_start', {
+      type: 'message_start',
+      message: {
+        id: 'msg_test',
+        type: 'message',
+        role: 'assistant',
+        content: [],
+        model: anthropicToolParityModel.id,
+        stop_reason: null,
+        stop_sequence: null,
+        usage: { input_tokens: 1, output_tokens: 0 },
+      },
+    }],
+    ['content_block_start', {
+      type: 'content_block_start',
+      index: 0,
+      content_block: { type: 'text', text: '' },
+    }],
+    ['content_block_delta', {
+      type: 'content_block_delta',
+      index: 0,
+      delta: { type: 'text_delta', text },
+    }],
+    ['content_block_stop', { type: 'content_block_stop', index: 0 }],
+    ['message_delta', {
+      type: 'message_delta',
+      delta: { stop_reason: 'end_turn', stop_sequence: null },
+      usage: { output_tokens: 1 },
+    }],
+    ['message_stop', { type: 'message_stop' }],
+  ] as const;
+  const body = events
+    .map(([event, data]) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
+    .join('');
+  return new Response(body, {
+    status: 200,
+    headers: { 'content-type': 'text/event-stream' },
+  });
+}
 
 function runtimeSelection() {
   return {
