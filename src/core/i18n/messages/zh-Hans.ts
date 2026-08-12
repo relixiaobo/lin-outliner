@@ -1159,10 +1159,12 @@ export const zhHans: PartialMessages = {
       none: '无',
       noTurns: '尚未记录轮次。',
       rename: '重命名线程',
-      hideFromThreads: '对其他线程隐藏',
-      showToThreads: '对其他线程显示',
-      recordsHint: '其他线程可以查阅过往对话。隐藏会移除这条记录，随时可以恢复。',
-      recordsUnavailable: '无法读取可见性状态',
+      // Chinese has no coined term to carry, so it says the thing the English
+      // label leaves to the hint: WHO stops reading. It is short either way.
+      hideFromRecall: '对其他线程隐藏',
+      showInRecall: '对其他线程显示',
+      recordsHint: '其他线程可以查阅过往对话。隐藏后这条不再出现，随时可以恢复。',
+      recordsUnavailable: '无法读取状态',
       delete: '删除线程',
       deleteConfirm: ({ name }) => `删除"${name}"及其子线程？`,
       composerPlaceholder: '问点什么...',

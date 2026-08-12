@@ -31,13 +31,14 @@ interface ThreadListProps {
  * the menu at `anchorRight - width` and so cannot size it to its content.
  *
  * It is therefore sized to the LONGEST label rather than to a tidy round
- * number: at `--font-ui-sm` this leaves ~166px of text after the menu padding,
- * the button padding, the icon, and the gap. The previous 168px left 126px,
- * which "Exclude from Records" already overflowed — the label wrapped, and a
- * wrapped item is what made the menu look broken. Growing a label past this
- * ellipsizes rather than wrapping; growing one deliberately means raising this.
+ * number: at `--font-ui-sm` this leaves 126px of text after the menu padding,
+ * the button padding, the icon, and the gap, and the longest label measures
+ * 108px. "Exclude from Records" needed 133px in that space and wrapped, which
+ * is what made the menu look broken — the label is shorter now, not the menu
+ * wider. Growing a label past this ellipsizes rather than wrapping; growing one
+ * deliberately means raising this.
  */
-const ACTION_MENU_WIDTH = 208;
+const ACTION_MENU_WIDTH = 168;
 
 export function ThreadList({
   anchorRef,
@@ -245,7 +246,7 @@ export function ThreadList({
             <span className="thread-action-menu-label">
               {recordedUnavailable
                 ? t.agent.thread.recordsUnavailable
-                : recorded === false ? t.agent.thread.showToThreads : t.agent.thread.hideFromThreads}
+                : recorded === false ? t.agent.thread.showInRecall : t.agent.thread.hideFromRecall}
             </span>
           </button>
           <button onClick={() => runThreadAction(onDelete)} role="menuitem" type="button">
