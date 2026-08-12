@@ -94,6 +94,20 @@ describe('agent capabilities', () => {
     }
   });
 
+  test('keeps both Agent and shell stop blocks on the unified task_stop entry point', async () => {
+    const { workspace } = await workspaceFixture();
+    for (const actionKind of ['agent.subagent.interrupt', 'shell.stop']) {
+      expect(evaluateAgentToolCapability({
+        toolName: 'task_stop',
+        args: { task_id: 'task-or-agent-id' },
+        policy: {
+          workspaceRoot: workspace,
+          capabilityConfig: { blocks: [`Action(${actionKind})`] },
+        },
+      })).toMatchObject({ behavior: 'unavailable', code: 'user_blocked' });
+    }
+  });
+
   test('parses only explicit block rules and reports invalid entries', () => {
     const config = parseAgentCapabilitySettings({
       blocks: ['Action(git.publish_remote)', 'Command(git push origin main)', 'Action(unknown.action)', 42],

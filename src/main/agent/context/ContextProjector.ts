@@ -1188,7 +1188,7 @@ function renderRoleCatalog(payload: RoleCatalogContextPayload): string {
       entry.displayName !== entry.name ? `display_name=${entry.displayName}` : null,
       `description=${entry.description}`,
     ].filter((value): value is string => value !== null).join(' ')),
-    'Pass a matching Role name as agent_type when calling collaboration.spawn_agent.',
+    'Pass a matching Agent type as subagent_type when calling agent.',
   ].join('\n');
 }
 

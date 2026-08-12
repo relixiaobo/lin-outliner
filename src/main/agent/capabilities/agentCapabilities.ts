@@ -104,6 +104,17 @@ export function deriveAgentToolActionDescriptors(input: {
 }): ToolActionDescriptor[] {
   const toolName = normalizeToolName(input.toolName);
   if (toolName === 'bash') return deriveBashActionDescriptors(getStringArg(input.args, 'command'), input.args);
+  if (toolName === 'task_stop') {
+    return [
+      simpleDescriptor(toolName, input.args, 'agent.subagent.interrupt', 'Agent stop', 'Stop a running background Agent.'),
+      descriptor(toolName, 'shell.stop', {
+        accessScope: 'none',
+        title: 'process stop',
+        summary: 'Stop an agent-launched background process.',
+        consequence: 'Stop an agent-launched background process.',
+      }),
+    ];
+  }
 
   const pathArgName = toolPathArgumentName(toolName);
   if (pathArgName) return [derivePathToolActionDescriptor(toolName, input.args, input.policy, input.access, pathArgName)];
@@ -129,7 +140,6 @@ function descriptorForKnownTool(toolName: string, args: unknown): ToolActionDesc
     const actionKind = firstActionKindForTool(toolName, args, 'outline.read') ?? 'outline.read';
     return simpleDescriptor(toolName, args, actionKind, 'outline history', 'Inspect or apply local outline history.', 'local_system');
   }
-  if (toolName === 'bash_stop') return simpleDescriptor(toolName, args, 'shell.stop', 'process stop', 'Stop an agent-launched background process.');
   if (toolName === 'skill') return simpleDescriptor(toolName, args, 'agent.skill.invoke', 'skill invocation', 'Invoke installed skill instructions.');
   const catalogAction = firstActionKindForTool(toolName, args, null);
   if (catalogAction) return simpleDescriptor(toolName, args, catalogAction, catalogAction, `Execute ${catalogAction}.`);

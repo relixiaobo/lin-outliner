@@ -408,7 +408,7 @@ export class TurnLifecycle {
           });
           const roleCatalog = await planRoleCatalogEvidence({
             turns: canonicalTurns,
-            snapshot: active.configuration.tools.includes('collaboration.spawn_agent')
+            snapshot: active.configuration.tools.includes('agent')
               ? await this.resolveRoleCatalog(thread.cwd)
               : null,
             readContext: (ref) => this.core.payloads.readContext(thread.id, ref),
@@ -896,7 +896,7 @@ export class TurnLifecycle {
       });
       const roleCatalog = await planRoleCatalogEvidence({
         turns: canonicalTurns,
-        snapshot: record.configuration.tools.includes('collaboration.spawn_agent')
+        snapshot: record.configuration.tools.includes('agent')
           ? await this.resolveRoleCatalog(record.thread.cwd)
           : null,
         readContext: (ref) => this.core.payloads.readContext(record.thread.id, ref),
