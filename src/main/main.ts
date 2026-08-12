@@ -741,7 +741,7 @@ threadService = ThreadService.open(
         return { catalogSnapshot: null, invocation: null };
       }
       const runtime = new AgentSkillRuntime({
-        localRoot: agentLocalFileRoot,
+        localRoot: thread.cwd,
         threadId: thread.id,
         enabledSkills: configuration.skills,
         provenanceStore: createAgentSkillProvenanceStore(),
@@ -752,7 +752,7 @@ threadService = ThreadService.open(
         ),
         executeSkillShell: ({ command, signal }) => executeAgentSkillShellCommand({
           command,
-          localRoot: agentLocalFileRoot,
+          localRoot: thread.cwd,
           scratchRoot: agentScratchRoot,
           signal,
           processEnvironment: () => managedSkillShellEnvironment!.processEnvironment(thread.id, turnId),
@@ -798,7 +798,7 @@ function skillRuntimeForTurn(context: Parameters<ToolRuntime['createTools']>[0])
   const existing = turnSkillRuntimes.get(context.turn.id);
   if (existing) return existing;
   const runtime = new AgentSkillRuntime({
-    localRoot: agentLocalFileRoot,
+    localRoot: context.thread.cwd,
     threadId: context.thread.id,
     enabledSkills: context.configuration.skills,
     provenanceStore: createAgentSkillProvenanceStore(),
@@ -809,7 +809,7 @@ function skillRuntimeForTurn(context: Parameters<ToolRuntime['createTools']>[0])
     ),
     executeSkillShell: ({ command, signal }) => executeAgentSkillShellCommand({
       command,
-      localRoot: agentLocalFileRoot,
+      localRoot: context.thread.cwd,
       scratchRoot: agentScratchRoot,
       signal,
       processEnvironment: () => managedSkillShellEnvironment!.processEnvironment(context.thread.id, context.turn.id),
@@ -818,7 +818,6 @@ function skillRuntimeForTurn(context: Parameters<ToolRuntime['createTools']>[0])
       skill,
       renderedContent,
       parentToolCallId,
-      readOnlyIsolated,
     }) => {
       if (!parentToolCallId) throw new Error('An isolated Skill requires its parent dynamic-tool Item identity.');
       const spawned = await threadService.spawnIsolatedSkillThread({
@@ -828,7 +827,6 @@ function skillRuntimeForTurn(context: Parameters<ToolRuntime['createTools']>[0])
         skillName: skill.name,
         prompt: renderedContent,
         allowedTools: skill.allowedTools,
-        readOnly: readOnlyIsolated === true,
         ...(skill.model === undefined ? {} : { model: skill.model }),
         ...(skill.effort === undefined ? {} : { reasoningEffort: parseSkillReasoningEffort(skill.effort) }),
       });
@@ -844,7 +842,7 @@ function skillRuntimeForTurn(context: Parameters<ToolRuntime['createTools']>[0])
       const transcriptPath = await threadService.threadTranscriptPath(spawned.thread.id);
       return {
         threadId: spawned.thread.id,
-        agentRole: spawned.thread.agentRole ?? (readOnlyIsolated ? 'explorer' : 'worker'),
+        agentRole: spawned.thread.agentRole ?? 'default',
         status: completed.status,
         ...(result ? { result } : {}),
         ...(transcriptPath ? { transcriptPath } : {}),
@@ -911,7 +909,7 @@ function parseSkillReasoningEffort(value: string): ReasoningEffort {
 
 function localWorkspaceForTurn(context: Parameters<ToolRuntime['createTools']>[0]): AgentLocalWorkspaceContext {
   return createAgentLocalWorkspaceContext(
-    agentLocalFileRoot,
+    context.thread.cwd,
     agentScratchRoot,
     skillRuntimeForTurn(context),
     () => managedSkillShellEnvironment!.processEnvironment(context.thread.id, context.turn.id),

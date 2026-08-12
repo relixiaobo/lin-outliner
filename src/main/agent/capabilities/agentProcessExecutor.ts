@@ -53,13 +53,11 @@ function sandboxedCommand(
   if (process.platform !== 'darwin') {
     throw new Error('Isolated Agent shell execution is supported only on macOS');
   }
-  const writablePaths = [...new Set(sandbox.writablePaths.map((candidate) => (
-    realpathSync.native(path.resolve(candidate))
-  )))];
+  const writablePaths = [...new Set(sandbox.writablePaths.map(canonicalizePotentialPath))];
   if (writablePaths.length === 0) throw new Error('Isolated Agent shell requires at least one writable path');
-  const writable = writablePaths.length === 1
-    ? `(subpath ${sandboxString(writablePaths[0]!)})`
-    : `(require-any ${writablePaths.map((candidate) => `(subpath ${sandboxString(candidate)})`).join(' ')})`;
+  const writable = `(require-any (literal "/dev/null") ${writablePaths
+    .map((candidate) => `(subpath ${sandboxString(candidate)})`)
+    .join(' ')})`;
   const profile = [
     '(version 1)',
     '(allow default)',
@@ -69,6 +67,27 @@ function sandboxedCommand(
     command: '/usr/bin/sandbox-exec',
     args: ['-p', profile, '--', command, ...args],
   };
+}
+
+function canonicalizePotentialPath(candidate: string): string {
+  const resolved = path.resolve(candidate);
+  const suffix: string[] = [];
+  let cursor = resolved;
+  while (true) {
+    try {
+      return path.join(realpathSync.native(cursor), ...suffix.reverse());
+    } catch (error) {
+      if (!isMissingPath(error)) throw error;
+      const parent = path.dirname(cursor);
+      if (parent === cursor) throw error;
+      suffix.push(path.basename(cursor));
+      cursor = parent;
+    }
+  }
+}
+
+function isMissingPath(error: unknown): boolean {
+  return error instanceof Error && 'code' in error && error.code === 'ENOENT';
 }
 
 function sandboxString(value: string): string {
