@@ -1826,6 +1826,31 @@ test.describe('canonical agent Thread surface', () => {
     await expect(trigger).toBeFocused();
   });
 
+  // The menu's width is a constant the anchoring math needs, so a label that
+  // outgrows it cannot widen the menu — it wrapped under the icon before, and
+  // ellipsizes now. Both are the same defect at the point a label is written,
+  // which is where this fails.
+  test('fits every action label on one line', async ({ page }) => {
+    await openSelectedThreadActions(page);
+    await expect(page.getByRole('menu', { name: 'Thread actions' })).toBeVisible();
+
+    const items = await page.locator('.thread-action-menu button').evaluateAll((buttons) => buttons.map((button) => {
+      const label = button.querySelector('.thread-action-menu-label');
+      return {
+        text: label?.textContent ?? '',
+        height: button.getBoundingClientRect().height,
+        overflow: label ? label.scrollWidth - label.clientWidth : 0,
+      };
+    }));
+
+    expect(items).toHaveLength(4);
+    for (const item of items) {
+      expect(item.text, 'every item routes its label through the ellipsizing span').not.toBe('');
+      expect(item.overflow, `"${item.text}" is truncated`).toBeLessThanOrEqual(0);
+      expect(item.height, `"${item.text}" wrapped to a second line`).toBeLessThanOrEqual(32);
+    }
+  });
+
   test('renames and deletes a Thread through in-app dialogs', async ({ page }) => {
     await openSelectedThreadActions(page);
     await page.getByRole('menu', { name: 'Thread actions' }).getByRole('menuitem', { name: 'Rename Thread' }).click();

@@ -1259,7 +1259,7 @@ export const en = {
       hideFromThreads: 'Hide from Other Threads',
       showToThreads: 'Show to Other Threads',
       recordsHint: 'Other Threads can look up past conversations. Hiding removes this one; you can show it again anytime.',
-      recordsUnavailable: 'Visibility state unavailable',
+      recordsUnavailable: 'Visibility unavailable',
       delete: 'Delete Thread',
       deleteConfirm: ({ name }: { name: string }) => `Delete "${name}" and its child Threads?`,
       composerPlaceholder: 'Ask anything...',
