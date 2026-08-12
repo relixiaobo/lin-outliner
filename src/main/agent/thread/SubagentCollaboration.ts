@@ -313,6 +313,11 @@ export class SubagentCollaboration {
       input.signal?.removeEventListener('abort', abort);
     }
     await this.ensureTerminalPipeline(execution.agentId, execution.generation);
+    // A foreground child may have sent `agent_message("main")` while its
+    // provider turn was running. Deliver it only after the normal Agent result
+    // is ready; the parent kernel will consume this queued steering envelope
+    // immediately before its next provider request.
+    await this.deliverParentMessages(execution.parentThreadId, true);
     const settled = this.executions.require(execution.agentId);
     const terminal = this.core.readTurn(execution.agentId, settled.currentTurnId);
     if (!terminal) throw new Error(`Foreground Agent Turn was not recorded: ${settled.currentTurnId}`);
@@ -1098,10 +1103,12 @@ export class SubagentCollaboration {
       ));
     }
 
-  private async deliverParentMessages(parentThreadId: ThreadId): Promise<void> {
+  private async deliverParentMessages(parentThreadId: ThreadId, includeForeground = false): Promise<void> {
       const pending = this.executions.pendingParentMessages(parentThreadId);
       for (const message of pending) {
-        if (message.deliveryMode === 'foreground') continue;
+        if (message.deliveryMode === 'foreground' && !includeForeground) continue;
+        if (includeForeground && message.deliveryMode !== 'foreground') continue;
+        if (message.deliveryMode === 'foreground' && this.turnLifecycle.hasActiveTurn(message.senderAgentId)) continue;
         if (!this.executions.claimParentMessage(message.id)) continue;
         try {
           const content = [{ type: 'text' as const, text: message.content }];
