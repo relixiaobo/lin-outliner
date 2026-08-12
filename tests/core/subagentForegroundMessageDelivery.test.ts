@@ -16,6 +16,32 @@ interface DeliverySeam {
 }
 
 describe('foreground Agent main-message delivery', () => {
+  test('recreates the pre-generation parent-message ledger shape', () => {
+    const database = new Database(':memory:') as unknown as SqliteDatabase;
+    database.exec(`
+      CREATE TABLE subagent_parent_messages (
+        id TEXT PRIMARY KEY,
+        sender_agent_id TEXT NOT NULL,
+        parent_thread_id TEXT NOT NULL,
+        content TEXT NOT NULL,
+        delivery_mode TEXT NOT NULL,
+        state TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        delivered_at INTEGER
+      ) STRICT;
+      INSERT INTO subagent_parent_messages
+        (id, sender_agent_id, parent_thread_id, content, delivery_mode, state, created_at)
+      VALUES ('legacy', 'agent', 'parent-thread', 'stale', 'foreground', 'pending', 1);
+    `);
+
+    const ledger = new SubagentExecutionLedger(database);
+    const columns = database.prepare("PRAGMA table_info('subagent_parent_messages')")
+      .all() as unknown as Array<{ name?: unknown }>;
+    expect(columns.map((column) => column.name)).toContain('generation');
+    expect(ledger.pendingParentMessages(PARENT_ID)).toEqual([]);
+    database.close();
+  });
+
   test('drains only the completing sender generation', async () => {
     const database = new Database(':memory:') as unknown as SqliteDatabase;
     const ledger = new SubagentExecutionLedger(database);
