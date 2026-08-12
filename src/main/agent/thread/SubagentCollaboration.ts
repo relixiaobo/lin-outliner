@@ -1,5 +1,5 @@
 import type { TSchema } from 'typebox';
-import { resolveChildConfiguration,type AgentRole,type EffectiveThreadConfiguration,type ReasoningEffort } from '../../../core/agent/configuration';
+import { resolveChildConfiguration,type AgentRole,type EffectiveThreadConfiguration } from '../../../core/agent/configuration';
 import type { ContextCursor,ContextEvidenceKind,InheritedContextPayload,JsonValue,Thread,ThreadContextPayload,ThreadContextPayloadReference,ThreadId,ThreadItem,ThreadItemOutputReference,ThreadResourceReference,ThreadUserContent,Turn,TurnId } from '../../../core/agent/protocol';
 import {
   AGENT_MESSAGE_INPUT_SCHEMA,
@@ -390,7 +390,6 @@ export class SubagentCollaboration {
     if (execution.stopProvenance === 'user') {
       return { success: false, message: 'A user-stopped Agent cannot be resumed by another Agent.' };
     }
-    await this.adoptIdleChildIntoDelegatingPool(execution.agentId, senderThreadId, senderTurnId);
     this.turnLifecycle.assertSubagentBudgetAvailable(execution.agentId);
     const snapshot = this.executions.generationSnapshot(execution.agentId);
     const prepared = await this.prepareWorktreeForResume(execution);
@@ -856,49 +855,6 @@ export class SubagentCollaboration {
    * Without it a re-driven child would run uncovered, which is the one hole the
    * request-scoped pool could otherwise open.
    */
-  private async adoptIdleChildIntoDelegatingPool(
-      childThreadId: ThreadId,
-      senderThreadId: ThreadId,
-      senderTurnId: TurnId,
-    ): Promise<void> {
-      // A CLOSED request is not live coverage: the user stopped it, and a new
-      // delegation is exactly how that child is legitimately re-driven. Without
-      // this the stopped request would refuse the child forever.
-      if (this.liveRequestFor(childThreadId)) return;
-      const configuredPoolBudget = await this.configuredPoolBudget();
-      await this.core.threadTreeMutex.run(async () => {
-        if (this.liveRequestFor(childThreadId)) return;
-        const sender = this.core.requireThread(senderThreadId).thread;
-        const inherited = this.turnLifecycle.resolveSubagentSpawnBudget(senderThreadId, senderTurnId);
-        if (inherited?.resolutionFailed) return;
-        let pool = inherited?.pool ?? null;
-        if (!pool) {
-          // Opened whether or not a budget is configured, exactly as a spawn
-          // does. Bailing out when the default is disabled left the child bound
-          // to the CLOSED request it was stopped in, and every later attempt
-          // refused — a temporary state made permanent by an unreachable reset.
-          pool = this.subagentBudgets.createPool({
-            poolId: requestPoolIdForTurn(senderTurnId),
-            scope: 'turn',
-            originThreadId: senderThreadId,
-            originTurnId: senderTurnId,
-            tokenBudget: configuredPoolBudget,
-          }, sender.ephemeral);
-          this.turnLifecycle.refreshActiveSubagentBudgetCoverage();
-        }
-        const child = this.core.requireThread(childThreadId).thread;
-        if (this.subagentBudgets.readMember(childThreadId)) {
-          this.subagentBudgets.rebindMemberPool(childThreadId, pool.poolId, senderTurnId);
-        } else {
-          this.subagentBudgets.createMember({
-            threadId: childThreadId,
-            poolId: pool.poolId,
-            originTurnId: senderTurnId,
-            tokenCap: null,
-          }, child.ephemeral);
-        }
-      });
-    }
   private liveRequestFor(threadId: ThreadId): boolean {
       const pool = this.turnLifecycle.resolveSubagentBudget(threadId)?.pool;
       return Boolean(pool && pool.closedAt === null);
@@ -916,31 +872,6 @@ export class SubagentCollaboration {
         if (edge.sessionId === sessionId && edge.taskPath === taskPath) return { childThreadId, taskPath };
       }
       return null;
-    }
-  private resolveCollaborationTarget(senderThreadId: ThreadId, targetInput: string): Thread {
-      const target = nonEmpty(targetInput, 'target');
-      const sender = this.core.requireThread(senderThreadId).thread;
-      const senderPath = this.taskPathForThread(senderThreadId) ?? '/root';
-      const path = target.startsWith('/') ? target : `${senderPath}/${target}`;
-      const edge = this.findSpawnEdgeByPath(sender.sessionId, path);
-      if (!edge) throw new Error(`Subagent task path not found: ${target}`);
-      const thread = this.core.requireThread(edge.childThreadId).thread;
-      if (thread.sessionId !== sender.sessionId) throw new Error('Subagent target is outside the current Thread tree');
-      if (!this.isCollaborationDescendant(senderThreadId, thread.id)) {
-        throw new Error('Subagent target is outside the sender collaboration subtree');
-      }
-      return thread;
-    }
-  private isCollaborationDescendant(senderThreadId: ThreadId, childThreadId: ThreadId): boolean {
-      const visited = new Set<ThreadId>();
-      let current = this.core.requireThread(childThreadId).thread;
-      while (current.parentThreadId !== null && !visited.has(current.id)) {
-        visited.add(current.id);
-        if (current.source !== 'collaboration') return false;
-        if (current.parentThreadId === senderThreadId) return true;
-        current = this.core.requireThread(current.parentThreadId).thread;
-      }
-      return false;
     }
   /**
    * The delegated Thread's identity, and by returning it at all, the answer to
@@ -1237,7 +1168,7 @@ export class SubagentCollaboration {
       const sender = this.core.requireThread(senderThreadId).thread;
       const target = this.core.requireThread(execution.agentId).thread;
       if (sender.sessionId !== target.sessionId) return null;
-      if (execution.parentThreadId === senderThreadId || this.isCollaborationDescendant(senderThreadId, target.id)) {
+      if (execution.parentThreadId === senderThreadId || this.isReachableDescendant(senderThreadId, target.id)) {
         return execution;
       }
       // A child may steer/resume its siblings only through their shared parent.
@@ -1322,6 +1253,17 @@ export class SubagentCollaboration {
     const next = this.executions.setWorktree(execution.agentId, prepared.worktree, this.now());
     await this.persistThreadCwd(execution.agentId, prepared.worktree);
     return next.worktree;
+  }
+
+  private isReachableDescendant(senderThreadId: ThreadId, childThreadId: ThreadId): boolean {
+    const visited = new Set<ThreadId>();
+    let current = this.core.requireThread(childThreadId).thread;
+    while (current.parentThreadId !== null && !visited.has(current.id)) {
+      visited.add(current.id);
+      if (current.parentThreadId === senderThreadId) return true;
+      current = this.core.requireThread(current.parentThreadId).thread;
+    }
+    return false;
   }
 
   private async rollbackPreparedResumeWorktree(
@@ -1520,12 +1462,6 @@ function uniqueOutputReferences(refs: readonly ThreadItemOutputReference[]): Thr
   return [...new Map(refs.map((ref) => [outputReferenceKey(ref), ref])).values()];
 }
 
-function nonEmpty(value: string, field: string): string {
-  const normalized = value.trim();
-  if (!normalized) throw new Error(`${field} must be non-empty`);
-  return normalized;
-}
-
 function agentTool(
   name: 'agent' | 'agent_message',
   label: string,
@@ -1590,63 +1526,6 @@ function notificationClientId(notification: SubagentPendingNotification): string
 
 function executionKey(agentId: ThreadId, generation: number): string {
   return `${agentId}:${generation}`;
-}
-
-function collaborationTool(
-  name: string,
-  label: string,
-  execute: (itemId: string, params: unknown, signal?: AbortSignal) => unknown | Promise<unknown>,
-): AgentTool {
-  const canonical = `collaboration.${name}`;
-  const contract = modelToolContract(canonical);
-  if (!contract?.inputSchema) throw new Error(`Missing Core model-tool contract: ${canonical}`);
-  return {
-    name: `collaboration__${name}`,
-    label,
-    description: contract.description,
-    parameters: contract.inputSchema as TSchema,
-    executionMode: 'sequential',
-    execute: async (itemId, params, signal) => toolResult(await execute(itemId, params, signal)),
-  };
-}
-
-function toolResult(value: unknown): AgentToolResult<JsonValue> {
-  const details = jsonValue(value);
-  return {
-    content: [{ type: 'text', text: JSON.stringify(details, null, 2) }],
-    details,
-  };
-}
-
-function record(value: unknown, path: string): Record<string, unknown> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${path} must be an object`);
-  return value as Record<string, unknown>;
-}
-
-function requiredString(value: unknown, path: string): string {
-  if (typeof value !== 'string' || !value.trim()) throw new Error(`${path} must be a non-empty string`);
-  return value.trim();
-}
-
-function optionalString(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
-}
-
-function optionalReasoningEffort(value: unknown): ReasoningEffort | undefined {
-  const normalized = optionalString(value);
-  if (!normalized) return undefined;
-  if (!['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(normalized)) {
-    throw new Error(`Unknown reasoning_effort: ${normalized}`);
-  }
-  return normalized as ReasoningEffort;
-}
-
-function jsonValue(value: unknown): JsonValue {
-  try {
-    return JSON.parse(JSON.stringify(value ?? null)) as JsonValue;
-  } catch {
-    return String(value);
-  }
 }
 
 function subagentActivityItem(
