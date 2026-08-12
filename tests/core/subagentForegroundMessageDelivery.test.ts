@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { SubagentExecutionLedger } from '../../src/main/agent/persistence/SubagentExecutionLedger';
 import type { SqliteDatabase } from '../../src/main/agent/persistence/sqlite';
@@ -13,6 +13,10 @@ interface DeliverySeam {
     parentThreadId: string,
     foreground?: { readonly senderAgentId: string; readonly generation: number },
   ): Promise<void>;
+}
+
+interface RecoverySeam {
+  discardStaleForegroundParentMessages(): Promise<void>;
 }
 
 describe('foreground Agent main-message delivery', () => {
@@ -150,6 +154,49 @@ describe('foreground Agent main-message delivery', () => {
     // unsolicited root admission.
     expect(ledger.pendingParentMessages(PARENT_ID).map((message) => message.id)).toEqual([]);
 
+    database.close();
+  });
+
+  test('discards foreground envelopes during recovery and preserves background work', async () => {
+    const database = new Database(':memory:') as unknown as SqliteDatabase;
+    const ledger = new SubagentExecutionLedger(database);
+    createExecution(ledger, FIRST_AGENT_ID, 'first-turn', 'first-tool');
+    enqueue(ledger, 'stale-foreground', FIRST_AGENT_ID, 1, 'foreground');
+    enqueue(ledger, 'recoverable-background', FIRST_AGENT_ID, 1, 'background');
+
+    const collaboration = new SubagentCollaboration(
+      {} as never,
+      {} as never,
+      {} as never,
+      // Recovery may start a background parent continuation before the sweep;
+      // that new Turn is never the foreground envelope's invoking Turn.
+      { hasActiveTurn: () => true } as never,
+      {} as never,
+      ledger,
+      (() => { throw new Error('unused'); }) as never,
+      (() => { throw new Error('unused'); }) as never,
+      async () => null,
+      async () => ({ maxDepth: 3, maxConcurrent: 20 }),
+      async () => null,
+      undefined,
+      undefined,
+      () => 100,
+      ((configuration: unknown) => configuration) as never,
+      (message) => new Error(message),
+      {} as never,
+    );
+    const recovery = collaboration as unknown as RecoverySeam;
+    const warning = spyOn(console, 'warn').mockImplementation(() => undefined);
+    await recovery.discardStaleForegroundParentMessages();
+    const warningCalls = warning.mock.calls.map((call) => [...call]);
+    warning.mockRestore();
+
+    expect(ledger.pendingParentMessages(PARENT_ID).map((message) => message.id)).toEqual([
+      'recoverable-background',
+    ]);
+    expect(warningCalls).toEqual([
+      [expect.stringContaining(FIRST_AGENT_ID)],
+    ]);
     database.close();
   });
 });
