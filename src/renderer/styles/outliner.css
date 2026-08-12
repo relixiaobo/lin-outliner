@@ -338,6 +338,9 @@
 }
 
 .outliner-table-scope {
+  --table-title-leading-offset: calc(var(--row-chevron-width) + var(--row-chevron-gap));
+  --table-title-disclosure-gutter: calc(var(--table-title-leading-offset) - var(--row-edge));
+
   width: 100%;
   min-width: 0;
   margin: var(--space-2) 0 var(--space-6);
@@ -353,11 +356,13 @@
 }
 
 .outliner-table-scroll {
-  width: 100%;
+  width: calc(100% + var(--table-title-disclosure-gutter));
   min-width: 0;
+  margin-left: calc(-1 * var(--table-title-disclosure-gutter));
   overflow-x: auto;
   overflow-y: clip;
   overscroll-behavior-x: contain;
+  padding-left: var(--table-title-disclosure-gutter);
   scrollbar-gutter: stable;
 }
 
@@ -568,9 +573,9 @@ button.outliner-table-column-kind:focus-visible {
 }
 
 .outliner-table-title-cell > .row-wrap {
-  width: 100%;
+  width: calc(100% + var(--table-title-leading-offset));
   height: 100%;
-  transform: none;
+  transform: translateX(calc(-1 * var(--table-title-leading-offset)));
 }
 
 .outliner-table-title-cell .row {

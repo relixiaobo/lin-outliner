@@ -71,16 +71,32 @@ test.describe('table view', () => {
       const fields = [...scroll.querySelectorAll<HTMLElement>('.outliner-table-column-header')];
       const add = scroll.querySelector<HTMLElement>('.outliner-table-add-column')!;
       const firstCell = scroll.querySelector<HTMLElement>('.outliner-table-title-cell')!;
+      const firstTitleWrap = firstCell.querySelector<HTMLElement>(':scope > .row-wrap')!;
+      const firstChevron = firstCell.querySelector<HTMLElement>('.row-chevron-button')!;
+      const firstBullet = firstCell.querySelector<HTMLElement>('.row-bullet-button')!;
+      const scrollRect = scroll.getBoundingClientRect();
+      const titleRect = title.getBoundingClientRect();
+      const firstCellRect = firstCell.getBoundingClientRect();
+      const firstTitleWrapRect = firstTitleWrap.getBoundingClientRect();
+      const firstChevronRect = firstChevron.getBoundingClientRect();
+      const firstBulletRect = firstBullet.getBoundingClientRect();
       return {
         addBorderBottom: getComputedStyle(add).borderBottomWidth,
         addWidth: add.getBoundingClientRect().width,
         fieldWidths: fields.map((field) => field.getBoundingClientRect().width),
+        firstBulletLeft: firstBulletRect.left,
         firstCellBackground: getComputedStyle(firstCell).backgroundColor,
         firstCellBorderRight: getComputedStyle(firstCell).borderRightWidth,
+        firstCellRight: firstCellRect.right,
+        firstChevronLeft: firstChevronRect.left,
+        firstChevronRight: firstChevronRect.right,
+        firstTitleWrapRight: firstTitleWrapRect.right,
         headerBorderTop: getComputedStyle(header).borderTopWidth,
         headerWidth: header.getBoundingClientRect().width,
-        scrollWidth: scroll.getBoundingClientRect().width,
-        titleWidth: title.getBoundingClientRect().width,
+        scrollLeft: scrollRect.left,
+        scrollWidth: scrollRect.width,
+        titleLabelLeft: titleRect.left + Number.parseFloat(getComputedStyle(title).paddingLeft),
+        titleWidth: titleRect.width,
       };
     });
     expect(geometry.titleWidth).toBeCloseTo(152, 0);
@@ -91,6 +107,10 @@ test.describe('table view', () => {
     expect(geometry.firstCellBorderRight).toBe('0px');
     expect(geometry.addBorderBottom).toBe('0px');
     expect(geometry.firstCellBackground).toBe('rgba(0, 0, 0, 0)');
+    expect(geometry.firstBulletLeft).toBeCloseTo(geometry.titleLabelLeft, 1);
+    expect(geometry.firstChevronLeft).toBeGreaterThanOrEqual(geometry.scrollLeft);
+    expect(geometry.firstChevronRight).toBeLessThan(geometry.firstBulletLeft);
+    expect(geometry.firstTitleWrapRight).toBeCloseTo(geometry.firstCellRight, 1);
 
     const toolbar = page.locator('.view-toolbar').first();
     await expect(toolbar.getByRole('button', { name: 'Group by', exact: true })).toHaveCount(0);

@@ -145,6 +145,11 @@ keep the surface scannable in light and dark mode. Vertical cell borders and a
 top frame are absent at rest. The header may stick inside the panel but does not
 become translucent chrome.
 
+The Title marker slot aligns with the Title header label. Its disclosure occupies
+the reserved gutter immediately before the column, while the compensated row
+width keeps the Title column boundary fixed across leaf, expanded, hover, and
+selection states.
+
 An active cell wrapper uses the neutral fill ladder plus the shared focus outline
 only while the wrapper itself owns focus; an idle table never paints a synthetic
 first-cell selection. Once focus enters an authored node editor, the wrapper
