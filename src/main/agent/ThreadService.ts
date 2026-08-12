@@ -185,6 +185,9 @@ export interface ThreadServiceOptions {
   readonly resolveRoleCatalog?: (
     cwd: string,
   ) => RoleCatalogContextPayload | Promise<RoleCatalogContextPayload>;
+  readonly resolveProviderModelIds?: (
+    providerId: string,
+  ) => readonly string[] | Promise<readonly string[]>;
   readonly resolveSubagentTokenBudget?: () => number | null | Promise<number | null>;
   readonly normalizeOutputImage?: OutputImageObservationNormalizer;
   readonly beforeInitialTurnAdmission?: () => void | Promise<void>;
@@ -336,6 +339,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
   private readonly resolveRoleCatalog: (
     cwd: string,
   ) => Promise<RoleCatalogContextPayload | null>;
+  private readonly resolveProviderModelIds: (providerId: string) => Promise<readonly string[]>;
   private readonly beforeInitialTurnAdmission: () => void | Promise<void>;
   private readonly now: () => number;
   private readonly goals: GoalExtension;
@@ -374,6 +378,9 @@ export class ThreadService implements ThreadServiceExtensionHost {
     };
     const resolveRole = options.resolveRole ?? defaultAgentRole;
     this.resolveRoleCatalog = async (cwd) => await options.resolveRoleCatalog?.(cwd) ?? null;
+    this.resolveProviderModelIds = async (providerId) => (
+      await options.resolveProviderModelIds?.(providerId) ?? []
+    );
     this.beforeInitialTurnAdmission = options.beforeInitialTurnAdmission ?? (() => undefined);
     this.now = options.now ?? Date.now;
     this.goalStore = options.stores.goals;
@@ -1159,7 +1166,15 @@ export class ThreadService implements ThreadServiceExtensionHost {
     }
     this.transcriptIndex.schedule();
   }
-  collaborationToolContributions(turn: { threadId: ThreadId; turnId: string }): readonly AgentTool[] { return this.collaboration.collaborationToolContributions(turn); }
+  async collaborationToolContributions(
+    turn: { threadId: ThreadId; turnId: string },
+  ): Promise<readonly AgentTool[]> {
+    const providerId = this.core.requireThread(turn.threadId).thread.modelProvider;
+    return this.collaboration.collaborationToolContributions(
+      turn,
+      await this.resolveProviderModelIds(providerId),
+    );
+  }
   async spawnCollaborationAgent(input: {
     senderThreadId: ThreadId;
     senderTurnId: string;

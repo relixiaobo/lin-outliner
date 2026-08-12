@@ -4,7 +4,6 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import {
   assembleModelToolRegistry,
   canonicalModelToolKey,
-  COLLABORATION_NAMESPACE,
   decodeProviderToolName,
   MODEL_TOOL_ACTION_KINDS,
   modelToolContract,
@@ -103,15 +102,16 @@ export class ToolRuntime {
           ...(imageGeneration === undefined ? {} : { imageGeneration }),
         });
     const dynamicTools = await this.options.dynamicTools?.(context) ?? [];
+    const collaborationTools = await this.service.collaborationToolContributions({
+      threadId: context.thread.id,
+      turnId: context.turn.id,
+    });
     const dynamicToolSet = new Set(dynamicTools);
     const tools = [
       ...capabilityTools,
       ...(this.importService ? [this.createDataImportTool()] : []),
       ...this.createControlTools(context),
-      ...this.service.collaborationToolContributions({
-        threadId: context.thread.id,
-        turnId: context.turn.id,
-      }),
+      ...collaborationTools,
       ...dynamicTools,
     ];
     const extensionContributions = await this.service.extensionToolContributions(context.thread.id);
@@ -501,9 +501,6 @@ function assertExtensionContractStructure(contract: ModelToolContract): string {
   const canonical = canonicalModelToolKey(contract.identity);
   if (contract.schemaOwner !== 'extension') {
     throw new Error(`Extension model tool must be owned by extension: ${canonical}`);
-  }
-  if (contract.identity.namespace === COLLABORATION_NAMESPACE) {
-    throw new Error(`The ${COLLABORATION_NAMESPACE} namespace is reserved by Core`);
   }
   if (modelToolContract(canonical)) throw new Error(`Duplicate canonical model tool: ${canonical}`);
   for (const kind of contract.actionKinds) {

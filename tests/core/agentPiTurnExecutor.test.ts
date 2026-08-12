@@ -434,7 +434,7 @@ describe('PiTurnExecutor event normalization', () => {
     });
   });
 
-  test('reads a blank optional collaboration argument as absent', async () => {
+  test('reads Agent task arguments into the retained orchestration Item shape', async () => {
     // A provider that fills an omitted optional parameter with "" rather than
     // omitting the key: the empty string reached the Item, the Item failed to
     // decode, and the Turn died before anything was recorded.
@@ -442,8 +442,8 @@ describe('PiTurnExecutor event normalization', () => {
     const normalizer = new PiEventNormalizer(fixture.context);
     normalizer.handle(toolAdmissionEvent(
       'call-collab-blank',
-      'collaboration__spawn_agent',
-      { task_name: 'beijing', message: 'Check the weather', model: '', reasoning_effort: '   ' },
+      'agent',
+      { description: 'Check weather', prompt: 'Check the weather', model: '' },
     ));
     await normalizer.flush();
 
@@ -467,22 +467,22 @@ describe('PiTurnExecutor event normalization', () => {
     });
   });
 
-  test('uses the provider call id for collaboration control-plane identity', async () => {
+  test('records agentId from an Agent launch result', async () => {
     const fixture = createContext();
     const childThreadId = uuidV7(1_720_000_001_000);
     const normalizer = new PiEventNormalizer(fixture.context);
     normalizer.handle(toolAdmissionEvent(
       'call-collab-1',
-      'collaboration__spawn_agent',
-      { task_name: 'worker', message: 'Inspect it' },
+      'agent',
+      { description: 'Inspect code', prompt: 'Inspect it' },
     ));
     normalizer.handle({
       type: 'tool_execution_end',
       toolCallId: 'call-collab-1',
-      toolName: 'collaboration__spawn_agent',
+      toolName: 'agent',
       result: {
         content: [{ type: 'text', text: 'spawned' }],
-        details: { task_name: '/root/worker', thread_id: childThreadId, nickname: null },
+        details: { agentId: childThreadId },
       },
       isError: false,
     });
@@ -490,13 +490,13 @@ describe('PiTurnExecutor event normalization', () => {
     expect(fixture.recorder.orderedItems()[0]).toMatchObject({
       type: 'collabAgentToolCall',
       id: 'call-collab-1',
-      tool: 'spawn_agent',
+      tool: 'agent',
       status: 'completed',
       prompt: 'Inspect it',
       agentsStates: {
         [childThreadId]: {
           status: 'running',
-          taskPath: '/root/worker',
+          taskPath: null,
           nickname: null,
           role: null,
         },
@@ -504,34 +504,24 @@ describe('PiTurnExecutor event normalization', () => {
     });
   });
 
-  test('records child identities from structured collaboration wait results', async () => {
+  test('records resumedAgentId from an Agent message result', async () => {
     const fixture = createContext();
     const childThreadId = uuidV7(1_720_000_001_100);
     const normalizer = new PiEventNormalizer(fixture.context);
-    normalizer.handle(toolAdmissionEvent('call-collab-wait', 'collaboration__wait_agent', {}));
+    normalizer.handle(toolAdmissionEvent(
+      'call-collab-wait',
+      'agent_message',
+      { to: childThreadId, summary: 'Continue inspection', message: 'Continue' },
+    ));
     normalizer.handle({
       type: 'tool_execution_end',
       toolCallId: 'call-collab-wait',
-      toolName: 'collaboration__wait_agent',
+      toolName: 'agent_message',
       result: {
         content: [{ type: 'text', text: 'completed child result' }],
         details: {
-          reason: 'terminal',
-          updates: [{
-            taskPath: '/root/worker',
-            threadId: childThreadId,
-            status: 'completed',
-            result: 'Done',
-            error: null,
-          }],
-          agents: [{
-            taskPath: '/root/worker',
-            threadId: childThreadId,
-            parentThreadId: fixture.context.thread.id,
-            nickname: null,
-            role: 'worker',
-            status: 'completed',
-          }],
+          resumedAgentId: childThreadId,
+          pin: { id: childThreadId, name: childThreadId, ref: 'short-ref' },
         },
       },
       isError: false,
@@ -541,15 +531,15 @@ describe('PiTurnExecutor event normalization', () => {
     expect(fixture.recorder.orderedItems()[0]).toMatchObject({
       type: 'collabAgentToolCall',
       id: 'call-collab-wait',
-      tool: 'wait_agent',
+      tool: 'agent_message',
       status: 'completed',
       receiverThreadIds: [childThreadId],
       agentsStates: {
         [childThreadId]: {
-          status: 'completed',
-          taskPath: '/root/worker',
+          status: 'running',
+          taskPath: null,
           nickname: null,
-          role: 'worker',
+          role: null,
         },
       },
     });
@@ -561,13 +551,13 @@ describe('PiTurnExecutor event normalization', () => {
     const normalizer = new PiEventNormalizer(fixture.context);
     normalizer.handle(toolAdmissionEvent(
       'call-collab-send',
-      'collaboration__send_message',
-      { target: '/root/worker', message: 'Continue' },
+      'agent_message',
+      { to: childThreadId, summary: 'Continue inspection', message: 'Continue' },
     ));
     normalizer.handle({
       type: 'tool_execution_end',
       toolCallId: 'call-collab-send',
-      toolName: 'collaboration__send_message',
+      toolName: 'agent_message',
       result: {
         content: [{ type: 'text', text: 'message delivery failed' }],
         details: {

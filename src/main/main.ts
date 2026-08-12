@@ -172,6 +172,7 @@ import {
   getProviderSecretStatus,
   getStoredProviderApiKey,
   getProviderSettings,
+  rankedModels,
   reconcileProviderConfig,
   refreshProviderModels,
   setActiveProvider,
@@ -687,6 +688,7 @@ threadService = ThreadService.open(
     ),
     resolveRole: (name, cwd) => agentConfigurationLoader.resolveRole(name, cwd),
     resolveRoleCatalog: (cwd) => agentConfigurationLoader.buildRoleCatalogSnapshot(cwd),
+    resolveProviderModelIds: (providerId) => rankedModels(providerId).map((model) => model.id),
     resolveSubagentTokenBudget: async () => (await getAgentRuntimeSettings()).subagentTokenBudget,
     resolveRendererStartDefaults: async () => {
       const provider = await getActiveProviderRuntimeConfig();

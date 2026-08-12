@@ -1032,13 +1032,7 @@ export interface DynamicToolCallThreadItem extends ThreadToolItemBase {
   readonly durationMs: number | null;
 }
 
-export type CollaborationToolName =
-  | 'spawn_agent'
-  | 'send_message'
-  | 'followup_task'
-  | 'wait_agent'
-  | 'list_agents'
-  | 'interrupt_agent';
+export type AgentTaskToolName = 'agent' | 'agent_message' | 'task_stop';
 
 export type SubagentExecutionStatus =
   | 'pendingInit'
@@ -1057,7 +1051,7 @@ export interface SubagentExecutionState {
 
 export interface CollabAgentToolCallThreadItem extends ThreadToolItemBase {
   readonly type: 'collabAgentToolCall';
-  readonly tool: CollaborationToolName;
+  readonly tool: AgentTaskToolName;
   readonly senderThreadId: ThreadId;
   readonly receiverThreadIds: readonly ThreadId[];
   readonly prompt: string | null;

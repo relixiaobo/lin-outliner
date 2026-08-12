@@ -226,7 +226,7 @@ const allItems: readonly ThreadItem[] = [
     type: 'collabAgentToolCall',
     id: 'item-9',
     provenance: { ...itemProvenance, originItemId: 'item-9' },
-    tool: 'spawn_agent',
+    tool: 'agent',
     status: 'completed',
     senderThreadId: THREAD_ID,
     receiverThreadIds: [CHILD_THREAD_ID],
@@ -242,10 +242,11 @@ const allItems: readonly ThreadItem[] = [
       },
     },
     outputRef: null,
-    modelCall: replayableModelCall('collaboration__spawn_agent', {
-      task_name: 'inspect_tests',
-      message: 'Inspect tests',
-      fork_turns: 'all',
+    modelCall: replayableModelCall('agent', {
+      description: 'Inspect tests',
+      prompt: 'Inspect tests',
+      subagent_type: 'explore',
+      run_in_background: true,
     }),
   },
   {

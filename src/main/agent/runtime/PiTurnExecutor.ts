@@ -286,7 +286,7 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
       const gatewayOptions: PiModelGatewayOptions = {
         onProviderContext: (providerContext) => diagnostics.captureProviderContext(providerContext),
         onPayload: async (payload, model) => {
-          const transformed = agentProviderPayload(payload, model, stablePrompt);
+          const transformed = agentProviderPayload(payload, model, stablePrompt, tools);
           if (diagnostics.available) {
             try {
               await diagnostics.captureProviderRequest(transformed ?? payload);
@@ -641,16 +641,28 @@ export function agentProviderPayload(
   payload: unknown,
   model: Model<Api>,
   stablePrompt?: ReturnType<typeof composeStablePrompt> | null,
+  tools: readonly AgentTool[] = [],
 ): unknown | undefined {
   const compatiblePayload = applyCustomOpenAIResponsesPayloadProfile(payload, model);
+  const anthropicPayload = applyAnthropicAgentToolSchemaProfile(
+    compatiblePayload ?? payload,
+    model,
+    tools,
+  );
   const cachePayload = stablePrompt
-    ? applyAnthropicStablePromptCacheBreakpoints(compatiblePayload ?? payload, model, stablePrompt)
+    ? applyAnthropicStablePromptCacheBreakpoints(
+        anthropicPayload ?? compatiblePayload ?? payload,
+        model,
+        stablePrompt,
+      )
     : undefined;
-  const source = cachePayload ?? compatiblePayload ?? payload;
+  const source = cachePayload ?? anthropicPayload ?? compatiblePayload ?? payload;
   if (!isRecord(source) || !isOpenAIResponsesApi(model.api) || !isRecord(source.reasoning)) {
-    return cachePayload ?? compatiblePayload;
+    return cachePayload ?? anthropicPayload ?? compatiblePayload;
   }
-  if (source.reasoning.summary === 'detailed') return cachePayload ?? compatiblePayload;
+  if (source.reasoning.summary === 'detailed') {
+    return cachePayload ?? anthropicPayload ?? compatiblePayload;
+  }
   return {
     ...source,
     reasoning: {
@@ -658,6 +670,36 @@ export function agentProviderPayload(
       summary: 'detailed',
     },
   };
+}
+
+function applyAnthropicAgentToolSchemaProfile(
+  payload: unknown,
+  model: Model<Api>,
+  tools: readonly AgentTool[],
+): unknown | undefined {
+  if (model.api !== 'anthropic-messages' || !isRecord(payload) || !Array.isArray(payload.tools)) {
+    return undefined;
+  }
+  const schemas = new Map(tools
+    .filter((tool) => isAgentTaskToolName(tool.name))
+    .map((tool) => [tool.name, tool.parameters] as const));
+  if (schemas.size === 0) return undefined;
+
+  let changed = false;
+  const providerTools = payload.tools.map((value) => {
+    if (!isRecord(value) || typeof value.name !== 'string') return value;
+    const schema = schemas.get(value.name);
+    if (!schema) return value;
+    changed = true;
+    const { name, description, input_schema: _inputSchema, ...rest } = value;
+    return {
+      name,
+      description,
+      input_schema: schema,
+      ...rest,
+    };
+  });
+  return changed ? { ...payload, tools: providerTools } : undefined;
 }
 
 export function canonicalizeAgentTools(tools: readonly AgentTool[]): AgentTool[] {
@@ -1037,7 +1079,7 @@ function startedToolItem(
     outputRef: null,
     modelCall,
   };
-  if (identity.namespace === 'collaboration' && isCollaborationToolName(identity.name)) {
+  if (identity.namespace === null && isAgentTaskToolName(identity.name)) {
     const input = isRecord(args) ? args : {};
     return {
       ...base,
@@ -1046,9 +1088,13 @@ function startedToolItem(
       status: 'inProgress',
       senderThreadId: context.thread.id,
       receiverThreadIds: [],
-      prompt: optionalToolArgumentText(input.message),
+      prompt: identity.name === 'agent'
+        ? optionalToolArgumentText(input.prompt)
+        : identity.name === 'agent_message'
+          ? optionalToolArgumentText(input.message)
+          : null,
       model: optionalToolArgumentText(input.model),
-      reasoningEffort: optionalToolArgumentText(input.reasoning_effort),
+      reasoningEffort: null,
       agentsStates: {},
     };
   }
@@ -1386,20 +1432,13 @@ function toolItemLabel(item: ThreadItem): string {
     case 'webSearch': return 'Web search';
     case 'mcpToolCall': return `${item.server}.${item.tool}`;
     case 'dynamicToolCall': return item.namespace ? `${item.namespace}.${item.tool}` : item.tool;
-    case 'collabAgentToolCall': return `Collaboration ${item.tool}`;
+    case 'collabAgentToolCall': return `Agent task ${item.tool}`;
     default: return 'Tool';
   }
 }
 
-function isCollaborationToolName(value: string): value is Extract<ThreadItem, { type: 'collabAgentToolCall' }>['tool'] {
-  return [
-    'spawn_agent',
-    'send_message',
-    'followup_task',
-    'wait_agent',
-    'list_agents',
-    'interrupt_agent',
-  ].includes(value);
+function isAgentTaskToolName(value: string): value is Extract<ThreadItem, { type: 'collabAgentToolCall' }>['tool'] {
+  return ['agent', 'agent_message', 'task_stop'].includes(value);
 }
 
 function isFileMutationTool(value: string): boolean {
@@ -1438,6 +1477,15 @@ function collaborationViews(result: unknown): Array<Record<string, unknown>> {
   if (Array.isArray(details)) return details.filter(isRecord);
   if (!isRecord(details)) return [];
   if (Array.isArray(details.agents)) return details.agents.filter(isRecord);
+  if (typeof details.agentId === 'string') {
+    return [{ ...details, threadId: details.agentId, status: 'running' }];
+  }
+  if (typeof details.resumedAgentId === 'string') {
+    return [{ ...details, threadId: details.resumedAgentId, status: 'running' }];
+  }
+  if (isRecord(details.pin) && typeof details.pin.id === 'string') {
+    return [{ ...details, threadId: details.pin.id, status: 'running' }];
+  }
   if (typeof details.thread_id === 'string') {
     return [{ ...details, status: 'running' }];
   }

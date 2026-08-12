@@ -347,7 +347,7 @@ export function decodeThreadItem(value: unknown): ThreadItem {
         type,
         tool: enumValue(
           record.tool,
-          ['spawn_agent', 'send_message', 'followup_task', 'wait_agent', 'list_agents', 'interrupt_agent'],
+          ['agent', 'agent_message', 'task_stop'],
           'item.tool',
         ),
         status: itemExecutionStatus(record.status, 'item.status'),
