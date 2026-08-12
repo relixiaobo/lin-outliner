@@ -4393,6 +4393,40 @@ test.describe('canonical agent Thread surface', () => {
     await expect(group).toHaveClass(/thread-tool-inProgress/);
     const groupToggle = group.locator(':scope > .thread-tool-activity-toggle');
     await expect(groupToggle.locator('.working-text')).toHaveCount(1);
+    const animationSurface = await groupToggle.locator('.working-text').evaluate((root) => {
+      const rootRect = root.getBoundingClientRect();
+      const metadata = new Set(['offset', 'computedOffset', 'easing', 'composite']);
+      return {
+        contain: getComputedStyle(root).contain,
+        animations: root.getAnimations({ subtree: true }).map((animation) => {
+          const effect = animation.effect;
+          if (!(effect instanceof KeyframeEffect) || !(effect.target instanceof HTMLElement)) {
+            throw new Error('WorkingText must use an element keyframe effect');
+          }
+          const targetRect = effect.target.getBoundingClientRect();
+          const properties = Array.from(new Set(
+            effect.getKeyframes().flatMap((keyframe) => Object.keys(keyframe)),
+          )).filter((property) => !metadata.has(property)).sort();
+          return {
+            targetClass: effect.target.className,
+            properties,
+            insideRoot:
+              targetRect.left >= rootRect.left - 0.5
+              && targetRect.top >= rootRect.top - 0.5
+              && targetRect.right <= rootRect.right + 0.5
+              && targetRect.bottom <= rootRect.bottom + 0.5,
+          };
+        }),
+      };
+    });
+    expect(animationSurface).toEqual({
+      contain: 'paint',
+      animations: [{
+        targetClass: 'working-text-sweep-copy',
+        properties: ['backgroundPositionX', 'backgroundPositionY'],
+        insideRoot: true,
+      }],
+    });
     await expect(groupToggle.locator('.thread-disclosure-status svg')).toHaveCSS('animation-name', 'none');
     await expect(group.locator('.thread-tool-activity-members')).toHaveCount(0);
 

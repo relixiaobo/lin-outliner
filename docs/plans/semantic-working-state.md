@@ -111,7 +111,7 @@ cadenced implementation:
 | Continuous variant | a text-clipped gradient moves continuously for `2s` with `steps(48, end)`; reduced motion disables it | Reject it because several concurrent tools or Subagents would create continuous motion |
 | Cadenced timing | first activation after `600ms`, active for `1s`, repeated every `4s` | Adopt these tokenized values without a feature flag |
 | Cadenced structure | normal readable text remains in place while an `aria-hidden` duplicate supplies the sweep | Adopt the accessibility and geometry split through `WorkingText` |
-| Sweep shape | a `0% -> 20%-30% -> 50%` mask window crosses the label while paired layers translate in opposite directions; the observed endpoints are `-50% -> 125%` and `50% -> -125%` | Recreate the behavior with Tenon tokens and independently authored CSS |
+| Sweep shape | a `0% -> 20%-30% -> 50%` mask window crosses the label while paired layers translate in opposite directions; the observed endpoints are `-50% -> 125%` and `50% -> -125%` | Preserve the narrow crossing band, but implement it as a paint-contained, background-clipped text gradient because Tenon's translucent Agent Deck is already a composited material surface |
 | Cadenced stepping | 48 stepped positions occur during the active interval | A `4s` CSS cycle places the sweep in its first 25%; CSS applies `steps(48, end)` to that keyframe interval and holds for the remaining `3s` |
 | Consumer split | identity remains static while action metadata such as `Thinking`, running tool text, and an Agent's `is working` status carries motion | Adopt this identity/action split across the mapped Tenon consumers |
 
@@ -135,10 +135,11 @@ Add `src/renderer/styles/working-text.css` and import it once from
 `currentColor`. The sweep copy uses a dedicated
 `--working-text-highlight` alpha-on-ink token declared in `tokens.css`
 instead of relying on current-color overdraw, whose strength changes with every
-consumer's base alpha. Start the token at `rgb(var(--ink) / 0.72)` and restrict
-its animated resting-color range to `--text-tertiary` through `--text-soft`.
-Overdraw composes those endpoints from `0.30` to approximately `0.804` and from
-`0.55` to approximately `0.874`; both remain visible, while the
+consumer's base alpha. Restrict its animated resting-color range to
+`--text-tertiary` through `--text-soft` and start the token at
+`rgb(var(--ink) / 0.82)`. Overdraw composes those endpoints from `0.30` to
+approximately `0.874` and from `0.55` to approximately `0.919`; both remain
+visible, while the
 `--text-strong` Plan current step is deliberately static rather than asking one
 token to cover its much smaller delta. Light/dark evidence validates the two
 remaining animated endpoints before the Thread PR is ready.
@@ -150,10 +151,12 @@ width. This prevents a narrow base label ending in an ellipsis while the moving
 copy exposes hard-clipped source characters.
 
 One four-second keyframe cycle performs the one-second sweep in its first
-quarter and holds the terminal transform for the remaining three seconds. A
-tokenized `600ms` initial delay matches the observed behavior. The masked
-overlay uses paired opposite transforms so the highlight crosses the complete
-text without changing layout.
+quarter and holds the terminal background position for the remaining three
+seconds. A tokenized `600ms` initial delay matches the observed behavior. The
+duplicate clips a narrow gradient to its glyphs and animates only
+`background-position` inside a `contain: paint` root. It uses no transform,
+mask, or persistent `will-change`, so the Agent Deck's composited translucent
+material cannot become the sweep's animation layer.
 
 Retire the Thread-only spinner uses of `--motion-working-cycle` and redefine
 the working motion tokens for cadence and initial delay. Timing literals outside
@@ -332,6 +335,7 @@ Focused automated coverage should update or add these test titles:
 - `WorkingText renders one accessible text layer and an aria-hidden sweep copy`
 - `WorkingText mirrors truncation geometry and ellipsis onto its visual copy`
 - `WorkingText uses a cadenced tokenized sweep and becomes static for motion and contrast preferences`
+- `WorkingText confines its animation to a paint-contained glyph layer`
 - `keeps the tool own glyph in every status and shimmers only the running action`
 - `keeps described command copy exact and uses running weight as its static cue`
 - `hands running group motion between its summary and expanded members`
@@ -414,8 +418,10 @@ both PRs use GitHub's comment CDN rather than a side-branch asset URL.
   text layer; the entire sweep subtree is `aria-hidden`. Live regions continue
   to announce state changes through the base string.
 - **Continuous animation would look busy and consume more paint.** The selected
-  cadence moves for one quarter of each cycle, uses transforms and masks only,
-  and creates no React interval per row.
+  cadence moves for one quarter of each cycle, confines background paint to the
+  text bounds, and creates no React interval per row. Transform and mask
+  animation is deliberately excluded because it can invalidate the translucent
+  Agent Deck's compositor surface.
 - **Sweep strength can drift across base text alphas.** A dedicated
   alpha-on-ink highlight token replaces current-color doubling, and the
   `--text-strong` Plan step is excluded rather than forcing one token across the
