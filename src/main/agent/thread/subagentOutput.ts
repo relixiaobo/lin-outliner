@@ -73,14 +73,14 @@ export function taskNotificationText(input: {
     NON_USER_BOUNDARY,
     '',
     '<task-notification>',
-    `<task-id>${escapeXml(input.execution.agentId)}</task-id>`,
-    `<tool-use-id>${escapeXml(input.notification.toolUseId)}</tool-use-id>`,
-    `<output-file>${escapeXml(input.outputFile ?? '(unavailable)')}</output-file>`,
+    `<task-id>${escapeXmlText(input.execution.agentId)}</task-id>`,
+    `<tool-use-id>${escapeXmlText(input.notification.toolUseId)}</tool-use-id>`,
+    `<output-file>${escapeXmlText(input.outputFile ?? '(unavailable)')}</output-file>`,
     `<status>${status}</status>`,
-    `<summary>${escapeXml(summary)}</summary>`,
-    `<note>${escapeXml(REPEATED_GENERATION_NOTE)}</note>`,
-    ...(includeResult && result ? [`<result>${escapeXml(result)}</result>`] : []),
-    ...(error ? [`<error>${escapeXml(error)}</error>`] : []),
+    `<summary>${escapeXmlText(summary)}</summary>`,
+    `<note>${escapeXmlText(REPEATED_GENERATION_NOTE)}</note>`,
+    ...(includeResult && result ? [`<result>${escapeXmlText(result)}</result>`] : []),
+    ...(error ? [`<error>${escapeXmlText(error)}</error>`] : []),
     ...(includeUsage ? [
       `<usage><subagent_tokens>${input.turn.execution.usage.totalTokens}</subagent_tokens><tool_uses>${toolUseCount(input.turn)}</tool_uses><duration_ms>${input.turn.durationMs ?? 0}</duration_ms></usage>`,
     ] : []),
@@ -97,7 +97,7 @@ function worktreeResultLines(worktree: SubagentExecutionRecord['worktree']): str
 
 function worktreeNotificationLines(worktree: SubagentExecutionRecord['worktree']): string[] {
   return worktree?.removedAt === null
-    ? [`<worktree><worktreePath>${escapeXml(worktree.path)}</worktreePath><worktreeBranch>${escapeXml(worktree.branch)}</worktreeBranch></worktree>`]
+    ? [`<worktree><worktreePath>${escapeXmlText(worktree.path)}</worktreePath><worktreeBranch>${escapeXmlText(worktree.branch)}</worktreeBranch></worktree>`]
     : [];
 }
 
@@ -112,7 +112,7 @@ export function agentMessageToMainText(agentType: string, message: string, foreg
     foreground
       ? 'Another Agent sent a message while you were working:'
       : 'Another Agent sent a message:',
-    `<agent-message from="${escapeXml(agentType)}">`,
+    `<agent-message from="${escapeXmlAttribute(agentType)}">`,
     message,
     '</agent-message>',
     '',
@@ -139,11 +139,15 @@ function toolUseCount(turn: Turn): number {
   return turn.items.filter((item) => 'modelCall' in item).length;
 }
 
-function escapeXml(value: string): string {
+function escapeXmlText(value: string): string {
   return value
     .replaceAll('&', '&amp;')
     .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
+    .replaceAll('>', '&gt;');
+}
+
+function escapeXmlAttribute(value: string): string {
+  return escapeXmlText(value)
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&apos;');
 }

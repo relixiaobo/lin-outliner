@@ -66,8 +66,21 @@ describe('Codex Agent Core model-tool contract', () => {
       expect(encodeProviderToolName(identity, 'flat')).toBe(name);
       expect(decodeProviderToolName(name, 'flat')).toEqual(identity);
     }
-    expect(decodeProviderToolName('spawn_agent', 'flat')).toBeNull();
-    expect(decodeProviderToolName('collaboration__spawn_agent', 'flat')).toBeNull();
+    for (const retired of [
+      'spawn_agent',
+      'send_message',
+      'followup_task',
+      'wait_agent',
+      'list_agents',
+      'interrupt_agent',
+      'collaboration__spawn_agent',
+      'collaboration__send_message',
+      'collaboration__followup_task',
+      'collaboration__wait_agent',
+      'collaboration__list_agents',
+      'collaboration__interrupt_agent',
+      'bash_stop',
+    ]) expect(decodeProviderToolName(retired, 'flat')).toBeNull();
   });
 
   test('freezes the exact Agent task schemas and property ordering', () => {
