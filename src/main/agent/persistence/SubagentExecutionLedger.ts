@@ -57,6 +57,7 @@ export interface SubagentParentMessage {
   readonly id: string;
   readonly senderAgentId: ThreadId;
   readonly parentThreadId: ThreadId;
+  readonly generation: number;
   readonly content: string;
   readonly deliveryMode: SubagentRunMode;
   readonly state: SubagentNotificationState;
@@ -97,6 +98,7 @@ interface ParentMessageRow {
   id: string;
   sender_agent_id: string;
   parent_thread_id: string;
+  generation: number;
   content: string;
   delivery_mode: string;
   state: string;
@@ -113,6 +115,14 @@ export class SubagentExecutionLedger {
   private readonly deletedAgentIds = new Set<ThreadId>();
 
   constructor(private readonly db: SqliteDatabase) {
+    // Pre-release clean cut: the parent-message ledger is an internal
+    // delivery queue, not a user data format. Recreate an older shape instead
+    // of guessing at a migration or allowing the first enqueue to fail.
+    const parentMessageColumns = this.db.prepare("PRAGMA table_info('subagent_parent_messages')")
+      .all() as unknown as Array<{ name?: unknown }>;
+    if (parentMessageColumns.length > 0 && !parentMessageColumns.some((column) => column.name === 'generation')) {
+      this.db.exec('DROP TABLE IF EXISTS subagent_parent_messages;');
+    }
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS subagent_executions (
         agent_id TEXT PRIMARY KEY,
@@ -152,14 +162,16 @@ export class SubagentExecutionLedger {
         id TEXT PRIMARY KEY,
         sender_agent_id TEXT NOT NULL,
         parent_thread_id TEXT NOT NULL,
+        generation INTEGER NOT NULL CHECK (generation > 0),
         content TEXT NOT NULL,
         delivery_mode TEXT NOT NULL CHECK (delivery_mode IN ('foreground', 'background')),
         state TEXT NOT NULL CHECK (state IN ('pending', 'delivering', 'delivered')),
         created_at INTEGER NOT NULL,
         delivered_at INTEGER
       ) STRICT;
+      DROP INDEX IF EXISTS subagent_parent_messages_pending_idx;
       CREATE INDEX IF NOT EXISTS subagent_parent_messages_pending_idx
-        ON subagent_parent_messages(parent_thread_id, state, created_at, id);
+        ON subagent_parent_messages(parent_thread_id, state, delivery_mode, sender_agent_id, generation, created_at, id);
     `);
     // A process may die after claiming but before admitting the parent Turn.
     // Client-input idempotency makes replay safe, so claims are recoverable.
@@ -436,13 +448,14 @@ export class SubagentExecutionLedger {
     if (this.deletedAgentIds.has(input.senderAgentId)) return;
     this.db.prepare(`
       INSERT INTO subagent_parent_messages(
-        id, sender_agent_id, parent_thread_id, content, delivery_mode, state, created_at, delivered_at
-      ) VALUES (?, ?, ?, ?, ?, 'pending', ?, NULL)
+        id, sender_agent_id, parent_thread_id, generation, content, delivery_mode, state, created_at, delivered_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, NULL)
       ON CONFLICT(id) DO NOTHING
     `).run(
       input.id,
       input.senderAgentId,
       input.parentThreadId,
+      input.generation,
       input.content,
       input.deliveryMode,
       input.createdAt,
@@ -457,12 +470,17 @@ export class SubagentExecutionLedger {
     return rows.map(parentMessageFromRow);
   }
 
-  pendingForegroundParentMessages(parentThreadId: ThreadId): readonly SubagentParentMessage[] {
+  pendingForegroundParentMessages(
+    parentThreadId: ThreadId,
+    senderAgentId: ThreadId,
+    generation: number,
+  ): readonly SubagentParentMessage[] {
     const rows = this.db.prepare(`
       SELECT * FROM subagent_parent_messages
       WHERE parent_thread_id = ? AND state = 'pending' AND delivery_mode = 'foreground'
+        AND sender_agent_id = ? AND generation = ?
       ORDER BY created_at, id
-    `).all(parentThreadId) as unknown as ParentMessageRow[];
+    `).all(parentThreadId, senderAgentId, generation) as unknown as ParentMessageRow[];
     return rows.map(parentMessageFromRow);
   }
 
@@ -602,6 +620,7 @@ function parentMessageFromRow(row: ParentMessageRow): SubagentParentMessage {
     id: row.id,
     senderAgentId: row.sender_agent_id,
     parentThreadId: row.parent_thread_id,
+    generation: row.generation,
     content: row.content,
     deliveryMode: row.delivery_mode as SubagentRunMode,
     state: row.state as SubagentNotificationState,
