@@ -967,6 +967,23 @@ export class SubagentCollaboration {
       ]) {
         await this.deliverParentWork(parentThreadId);
       }
+      // Foreground main-route envelopes are tied to the parent Turn that
+      // invoked the child. They cannot be resumed after a host restart: doing
+      // so would inject stale model-authored input into a later user Turn.
+      // Sweep them explicitly because the normal recovery path intentionally
+      // delivers background messages only.
+      await this.discardStaleForegroundParentMessages();
+    }
+
+    private async discardStaleForegroundParentMessages(): Promise<void> {
+      for (const parentThreadId of this.executions.parentsWithPendingMessages()) {
+        for (const message of this.executions.pendingParentMessages(parentThreadId)) {
+          if (message.deliveryMode !== 'foreground') continue;
+          if (!this.executions.claimParentMessage(message.id)) continue;
+          this.executions.discardParentMessage(message.id);
+          console.warn(`[agent] Discarded stale foreground Agent main-route message during recovery: ${message.senderAgentId}`);
+        }
+      }
     }
 
   private persistAgentTerminal(thread: Thread, turn: Turn): void {
@@ -1158,7 +1175,14 @@ export class SubagentCollaboration {
           }
           this.executions.markParentMessageDelivered(message.id, this.now());
         } catch (error) {
-          this.executions.releaseParentMessage(message.id);
+          if (foreground) {
+            // A foreground envelope has no independent retry lifecycle. The
+            // invoking Turn is already finishing; retaining the claimed row
+            // would leak stale model-authored input forever.
+            this.executions.discardParentMessage(message.id);
+          } else {
+            this.executions.releaseParentMessage(message.id);
+          }
           console.warn(`[agent] Agent main-route message delivery deferred for ${message.senderAgentId}`, error);
           return;
         }
