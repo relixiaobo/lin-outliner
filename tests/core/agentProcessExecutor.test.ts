@@ -51,6 +51,29 @@ describe('agent process executor', () => {
     expect(stdout).toBe('shell-ok');
   });
 
+  test('isolated shell permits worktree writes and blocks writes elsewhere', async () => {
+    if (process.platform !== 'darwin') return;
+    const root = await mkdtemp(path.join(tmpdir(), 'tenon-process-sandbox-'));
+    roots.push(root);
+    const worktree = path.join(root, 'worktree');
+    const outside = path.join(root, 'outside.txt');
+    await mkdir(worktree);
+    const executor = new AgentProcessExecutor();
+    const child = await executor.spawnShell({
+      command: `printf inside > ${JSON.stringify(path.join(worktree, 'inside.txt'))}; printf outside > ${JSON.stringify(outside)}`,
+      cwd: worktree,
+      sandbox: { writablePaths: [worktree] },
+    });
+    const code = await new Promise<number | null>((resolve, reject) => {
+      child.once('error', reject);
+      child.once('close', resolve);
+    });
+
+    expect(code).not.toBe(0);
+    expect(await readFile(path.join(worktree, 'inside.txt'), 'utf8')).toBe('inside');
+    await expect(readFile(outside, 'utf8')).rejects.toThrow();
+  });
+
   test('preserves ambient credentials and removes only explicitly private values', () => {
     expect(sanitizeAgentProcessEnv({
       PATH: '/usr/bin',
