@@ -17,6 +17,7 @@ import {
   type SystemFieldContext,
 } from '../../core/systemFields';
 import type { ReferenceSummary } from '../../core/references';
+import { resolveReferenceChainTargetId } from '../../core/actions/rowFacets';
 
 const INTERNAL_NODE_TYPES = new Set<NodeProjection['type']>([
   'queryCondition',
@@ -44,7 +45,7 @@ export type OutlinerRowItem =
 
 export interface RowBuildOptions {
   expandedHiddenFields?: Set<string>;
-  suppressedFieldDefIds?: ReadonlySet<string>;
+  suppressFieldEntries?: boolean;
   systemFieldContext?: SystemFieldContext;
 }
 
@@ -165,11 +166,11 @@ function nodeTitle(node: NodeProjection | undefined): string {
   return node?.content.text || 'Untitled';
 }
 
-function displayNode(node: NodeProjection, byId: Map<NodeId, NodeProjection>): NodeProjection {
-  if (node.type === 'reference' && node.targetId) {
-    return byId.get(node.targetId) ?? node;
-  }
-  return node;
+function displayNode(node: NodeProjection, byId: Map<NodeId, NodeProjection>): NodeProjection | undefined {
+  if (node.type !== 'reference') return node;
+  if (!node.targetId) return undefined;
+  const targetId = resolveReferenceChainTargetId(node.targetId, byId);
+  return targetId ? byId.get(targetId) : undefined;
 }
 
 function fieldLabel(entry: NodeProjection, byId: Map<NodeId, NodeProjection>): string {
@@ -181,6 +182,7 @@ function fieldLabel(entry: NodeProjection, byId: Map<NodeId, NodeProjection>): s
 function childText(node: NodeProjection | undefined, byId: Map<NodeId, NodeProjection>): string {
   if (!node) return '';
   const displayed = displayNode(node, byId);
+  if (!displayed) return '';
   const own = displayed.content.text;
   if (own) return own;
   return displayed.children
@@ -196,6 +198,7 @@ function displayFieldValuesFor(
   systemFieldContext?: SystemFieldContext,
 ): string[] {
   const displayed = displayNode(rowNode, byId);
+  if (!displayed) return [];
   if (!isSystemFieldId(fieldId)) return viewFieldValuesFor(rowNode, fieldId, byId, systemFieldContext);
   if (fieldId === NAME_FIELD) return viewFieldValuesFor(rowNode, fieldId, byId, systemFieldContext);
 
@@ -225,6 +228,7 @@ export function viewFieldValuesFor(
   systemFieldContext?: SystemFieldContext,
 ): string[] {
   const displayed = displayNode(rowNode, byId);
+  if (!displayed) return [];
   // Name reads the node's own (possibly nested) text; every other system field is
   // a computed projection resolved by the shared `systemFields` module.
   if (fieldId === NAME_FIELD) return [childText(displayed, byId)].filter(Boolean);
@@ -352,8 +356,8 @@ function compareRowsByField(
     return leftNumber - rightNumber;
   }
   if (fieldId === DONE_FIELD) {
-    const leftDone = displayNode(leftNode, byId).completedAt ? 1 : 0;
-    const rightDone = displayNode(rightNode, byId).completedAt ? 1 : 0;
+    const leftDone = displayNode(leftNode, byId)?.completedAt ? 1 : 0;
+    const rightDone = displayNode(rightNode, byId)?.completedAt ? 1 : 0;
     return leftDone - rightDone;
   }
 
@@ -557,8 +561,7 @@ function buildChildRows(
     if (child.type && INTERNAL_NODE_TYPES.has(child.type)) continue;
     if (
       child.type === 'fieldEntry'
-      && child.fieldDefId
-      && options.suppressedFieldDefIds?.has(child.fieldDefId)
+      && options.suppressFieldEntries
     ) {
       continue;
     }
@@ -684,6 +687,7 @@ export function fieldEntryForViewCell(
 ): NodeProjection | undefined {
   if (isSystemFieldId(fieldId)) return undefined;
   const displayed = displayNode(rowNode, byId);
+  if (!displayed) return undefined;
   return displayed.children
     .map((childId) => byId.get(childId))
     .find((child) => child?.type === 'fieldEntry' && child.fieldDefId === fieldId);
@@ -725,6 +729,7 @@ export function collectViewFieldChoices(
 
   for (const child of candidateRows) {
     const displayed = displayNode(child, byId);
+    if (!displayed) continue;
     for (const nestedId of displayed.children) {
       const nested = byId.get(nestedId);
       if (nested?.type !== 'fieldEntry' || !nested.fieldDefId || isSystemFieldId(nested.fieldDefId)) continue;
@@ -779,7 +784,9 @@ function fieldCandidateRows(parent: NodeProjection, byId: Map<NodeId, NodeProjec
 export function customViewFieldIdsOnRows(parent: NodeProjection, byId: Map<NodeId, NodeProjection>): Set<string> {
   const fields = new Set<string>();
   for (const child of fieldCandidateRows(parent, byId)) {
+    if (child.type === 'fieldEntry') continue;
     const displayed = displayNode(child, byId);
+    if (!displayed) continue;
     for (const nestedId of displayed.children) {
       const nested = byId.get(nestedId);
       if (nested?.type !== 'fieldEntry' || !nested.fieldDefId || isSystemFieldId(nested.fieldDefId)) continue;
@@ -813,11 +820,14 @@ function systemFieldPresentInRows(
   referenceSummary: ReferenceSummary,
 ): boolean {
   if (fieldId === NAME_FIELD || fieldId === CREATED_FIELD || fieldId === UPDATED_FIELD) return rows.length > 0;
-  if (fieldId === OWNER_FIELD) return rows.some((row) => Boolean(displayNode(row, byId).parentId));
-  if (fieldId === DONE_FIELD) return rows.some((row) => nodeShowsCheckbox(byId, displayNode(row, byId)));
-  if (fieldId === TAGS_FIELD) return rows.some((row) => displayNode(row, byId).tags.length > 0);
+  if (fieldId === OWNER_FIELD) return rows.some((row) => Boolean(displayNode(row, byId)?.parentId));
+  if (fieldId === DONE_FIELD) return rows.some((row) => {
+    const displayed = displayNode(row, byId);
+    return displayed ? nodeShowsCheckbox(byId, displayed) : false;
+  });
+  if (fieldId === TAGS_FIELD) return rows.some((row) => (displayNode(row, byId)?.tags.length ?? 0) > 0);
   if (fieldId === DONE_AT_FIELD) return rows.some((row) => {
-    const completedAt = displayNode(row, byId).completedAt;
+    const completedAt = displayNode(row, byId)?.completedAt;
     return completedAt !== undefined && completedAt > 0;
   });
   if (fieldId === DAY_FIELD) {
@@ -826,7 +836,9 @@ function systemFieldPresentInRows(
   if (fieldId === REF_COUNT_FIELD) {
     return rows.some((row) => {
       const displayed = displayNode(row, byId);
-      return (referenceSummary.countsByTarget.get(displayed.id)?.linked ?? 0) > 0;
+      return displayed
+        ? (referenceSummary.countsByTarget.get(displayed.id)?.linked ?? 0) > 0
+        : false;
     });
   }
   return false;

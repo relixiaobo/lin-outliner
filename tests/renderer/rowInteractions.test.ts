@@ -48,10 +48,12 @@ import {
 import {
   buildOutlinerRows,
   collectViewFieldChoices,
+  customViewFieldIdsOnRows,
   fieldEntryForViewCell,
   hiddenFieldKey,
   readViewConfig,
   viewDisplayValuesFor,
+  viewFieldValuesFor,
 } from '../../src/renderer/ui/outliner/row-model';
 import { CREATED_FIELD, DAY_FIELD, DONE_FIELD, NAME_FIELD, REF_COUNT_FIELD, TAGS_FIELD } from '../../src/core/systemFields';
 import { searchQueryOutlineText, searchQuerySummaryModel } from '../../src/renderer/ui/search/SearchQuerySummaryBar';
@@ -254,18 +256,49 @@ describe('row interaction resolvers', () => {
     ]);
   });
 
-  test('resolves existing table field entries through references', () => {
+  test('resolves table fields through reference chains and degrades broken chains', () => {
+    const parent = makeNode('parent', 'Parent', { children: ['owner-entry', 'result', 'broken', 'cycle-a'] });
     const target = makeNode('target', 'Target', { children: ['entry'] });
-    const reference = makeNode('reference', '', { type: 'reference', targetId: 'target' });
-    const entry = makeNode('entry', '', { type: 'fieldEntry', parentId: 'target', fieldDefId: 'status' });
+    const intermediate = makeNode('intermediate', '', { type: 'reference', targetId: 'target' });
+    const result = makeNode('result', '', { type: 'reference', parentId: 'parent', targetId: 'intermediate' });
+    const entry = makeNode('entry', '', {
+      type: 'fieldEntry',
+      parentId: 'target',
+      fieldDefId: 'status',
+      children: ['value'],
+    });
     const byId = new Map<string, any>([
+      ['parent', parent],
+      ['owner-entry', makeNode('owner-entry', '', {
+        type: 'fieldEntry',
+        parentId: 'parent',
+        fieldDefId: 'owner-field',
+        children: ['nested-owner-entry'],
+      })],
+      ['nested-owner-entry', makeNode('nested-owner-entry', '', {
+        type: 'fieldEntry',
+        parentId: 'owner-entry',
+        fieldDefId: 'nested-owner-field',
+      })],
       ['target', target],
-      ['reference', reference],
+      ['intermediate', intermediate],
+      ['result', result],
       ['entry', entry],
+      ['value', makeNode('value', 'In progress', { parentId: 'entry' })],
+      ['status', makeNode('status', 'Status', { type: 'fieldDef' })],
+      ['broken', makeNode('broken', '', { type: 'reference', parentId: 'parent', targetId: 'missing' })],
+      ['cycle-a', makeNode('cycle-a', '', { type: 'reference', parentId: 'parent', targetId: 'cycle-b' })],
+      ['cycle-b', makeNode('cycle-b', '', { type: 'reference', targetId: 'cycle-a' })],
     ]);
 
-    expect(fieldEntryForViewCell(reference as any, 'status', byId)?.id).toBe('entry');
-    expect(fieldEntryForViewCell(reference as any, 'missing', byId)).toBeUndefined();
+    expect(fieldEntryForViewCell(result as any, 'status', byId)?.id).toBe('entry');
+    expect(viewFieldValuesFor(result as any, 'status', byId)).toEqual(['In progress']);
+    expect(customViewFieldIdsOnRows(parent as any, byId)).toEqual(new Set(['status']));
+    expect(fieldEntryForViewCell(result as any, 'missing', byId)).toBeUndefined();
+    expect(fieldEntryForViewCell(byId.get('broken'), 'status', byId)).toBeUndefined();
+    expect(viewFieldValuesFor(byId.get('broken'), 'status', byId)).toEqual([]);
+    expect(fieldEntryForViewCell(byId.get('cycle-a'), 'status', byId)).toBeUndefined();
+    expect(viewFieldValuesFor(byId.get('cycle-a'), CREATED_FIELD, byId)).toEqual([]);
   });
 
   test('hides search query condition nodes from normal outliner rows', () => {

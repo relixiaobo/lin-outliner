@@ -1207,6 +1207,68 @@ describe('Core', () => {
     expect(updatedViewDef.children.filter((childId) => core.state().nodes[childId]?.type === 'displayField')).toHaveLength(3);
   });
 
+  test('defaults used custom table columns once while preserving configured fields', () => {
+    const core = Core.new();
+    const owner = mustFocus(core.createNode(core.projection().todayId, null, 'Project'));
+    const firstRecord = mustFocus(core.createNode(owner, null, 'First record'));
+    const secondRecord = mustFocus(core.createNode(owner, null, 'Second record'));
+    const definitionSource = mustFocus(core.createNode(core.projection().libraryId, null, 'Field definitions'));
+    const createDefinition = (name: string) => {
+      const entryId = mustFocus(core.createInlineField(definitionSource, null, name, 'plain'));
+      return core.state().nodes[entryId]!.fieldDefId!;
+    };
+    const hiddenField = createDefinition('Hidden field');
+    const firstMissingField = createDefinition('Schema first');
+    const secondMissingField = createDefinition('Schema second');
+    const unusedField = createDefinition('Unused field');
+
+    core.createInlineField(firstRecord, null, '', 'plain', hiddenField);
+    core.createInlineField(firstRecord, null, '', 'plain', secondMissingField);
+    core.createInlineField(secondRecord, null, '', 'plain', firstMissingField);
+
+    const hiddenDisplayId = mustFocus(core.addDisplayField(owner, hiddenField));
+    core.updateDisplayField(hiddenDisplayId, { visible: false });
+    const systemDisplayId = mustFocus(core.addDisplayField(owner, DONE_FIELD));
+
+    const displayFields = () => {
+      const state = core.state();
+      const view = state.nodes[owner]!.children
+        .map((childId) => state.nodes[childId])
+        .find((node) => node?.type === 'viewDef')!;
+      return view.children
+        .map((childId) => state.nodes[childId])
+        .filter((node) => node?.type === 'displayField')
+        .sort((left, right) => (left.displayOrder ?? Infinity) - (right.displayOrder ?? Infinity));
+    };
+
+    core.setViewMode(owner, 'table');
+    expect(displayFields().map((display) => display.displayField)).toEqual([
+      hiddenField,
+      DONE_FIELD,
+      firstMissingField,
+      secondMissingField,
+    ]);
+    expect(core.state().nodes[hiddenDisplayId]).toMatchObject({ displayVisible: false });
+    expect(core.state().nodes[systemDisplayId]).toMatchObject({ displayField: DONE_FIELD });
+    expect(displayFields().some((display) => display.displayField === unusedField)).toBe(false);
+
+    const laterField = createDefinition('Later field');
+    core.createInlineField(secondRecord, null, '', 'plain', laterField);
+    core.setViewMode(owner, 'table');
+    expect(displayFields().some((display) => display.displayField === laterField)).toBe(false);
+
+    core.setViewMode(owner, 'list');
+    core.setViewMode(owner, 'table');
+    expect(displayFields().map((display) => display.displayField)).toEqual([
+      hiddenField,
+      DONE_FIELD,
+      firstMissingField,
+      secondMissingField,
+      laterField,
+    ]);
+    expect(core.state().nodes[hiddenDisplayId]).toMatchObject({ displayVisible: false });
+  });
+
   test('empty draft fields do not reserve the display placeholder name', () => {
     const core = Core.new();
     const today = core.projection().todayId;

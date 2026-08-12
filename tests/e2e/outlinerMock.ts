@@ -29,6 +29,10 @@ export const ids = {
   dueEntry: 'field-entry-due',
   referencesField: 'field-references',
   referencesEntry: 'field-entry-references',
+  searchIntermediate: 'search-intermediate-reference',
+  searchResult: 'search-result-reference',
+  searchStatusEntry: 'search-status-entry',
+  searchStatusValue: 'search-status-value',
   alpha: 'node-alpha',
   beta: 'node-beta',
   gamma: 'node-gamma',
@@ -38,6 +42,8 @@ interface MockFixtureOptions {
   dateField?: boolean;
   optionsField?: boolean;
   relatedField?: boolean;
+  /** Seeds Recents with a search-result reference whose target is another reference. */
+  searchReferenceChain?: boolean;
   /** Appends deterministic content rows under Today for table-windowing specs. */
   tableRowCount?: number;
   /** Adds an OAuth sign-in provider (GitHub Copilot) to the catalog for the OAuth specs. */
@@ -1551,6 +1557,58 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
 	      appendChild(nodeId, viewId, 0);
 	      return view;
 	    };
+	    const addMissingTableDisplayFields = (nodeId: string, view: MockNode) => {
+	      const owner = nodes.get(nodeId);
+	      const schema = nodes.get(ids.schema);
+	      if (!owner || !schema) return;
+	      const displayFields = directChildrenOfType(view.id, 'displayField');
+	      const configuredFields = new Set(displayFields.flatMap((display) => (
+	        display.displayField ? [display.displayField] : []
+	      )));
+	      const usedFields = new Set<string>();
+	      for (const childId of owner.children) {
+	        const child = nodes.get(childId);
+	        if (!child || [
+	          'fieldEntry',
+	          'queryCondition',
+	          'viewDef',
+	          'sortRule',
+	          'filterRule',
+	          'displayField',
+	          'defConfig',
+	          'systemOption',
+	        ].includes(child.type ?? '')) continue;
+	        const recordId = child.type === 'reference'
+	          ? (child.targetId ? resolveReferenceTargetId(child.targetId) : null)
+	          : child.id;
+	        const record = recordId ? nodes.get(recordId) : undefined;
+	        for (const nestedId of record?.children ?? []) {
+	          const nested = nodes.get(nestedId);
+	          if (nested?.type === 'fieldEntry' && nested.fieldDefId) usedFields.add(nested.fieldDefId);
+	        }
+	      }
+	      const missingFields = schema.children.filter((fieldId) => {
+	        const field = nodes.get(fieldId);
+	        return field?.type === 'fieldDef'
+	          && usedFields.has(fieldId)
+	          && !configuredFields.has(fieldId);
+	      });
+	      const allExistingOrdersAreFinite = displayFields.every((display) => Number.isFinite(display.displayOrder));
+	      let nextOrder = allExistingOrdersAreFinite
+	        ? displayFields.reduce((max, display) => Math.max(max, display.displayOrder!), -1) + 1
+	        : undefined;
+	      for (const fieldId of missingFields) {
+	        const displayId = `display-${++sequence}`;
+	        makeNode(displayId, '', {
+	          type: 'displayField',
+	          parentId: view.id,
+	          displayField: fieldId,
+	          displayVisible: true,
+	          ...(nextOrder === undefined ? {} : { displayOrder: nextOrder++ }),
+	        });
+	        appendChild(view.id, displayId);
+	      }
+	    };
 
 	    makeNode(ids.workspace, 'Workspace', { locked: true });
     makeNode(ids.root, 'Root', { parentId: ids.workspace, locked: true });
@@ -1641,6 +1699,26 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     makeNode(ids.alpha, 'Alpha', { parentId: ids.today, completedAt: 0 });
     makeNode(ids.beta, 'Beta', { parentId: ids.today, completedAt: 0 });
     makeNode(ids.gamma, 'Gamma', { parentId: ids.today, completedAt: 0 });
+    if (options.searchReferenceChain) {
+      makeNode(ids.searchStatusEntry, '', {
+        type: 'fieldEntry',
+        parentId: ids.alpha,
+        fieldDefId: ids.statusField,
+        fieldType: 'plain',
+      });
+      makeNode(ids.searchStatusValue, 'Chain value', { parentId: ids.searchStatusEntry });
+      makeNode(ids.searchIntermediate, '', {
+        type: 'reference',
+        parentId: ids.library,
+        targetId: ids.alpha,
+      });
+      makeNode(ids.searchResult, '', {
+        type: 'reference',
+        parentId: ids.recents,
+        targetId: ids.searchIntermediate,
+        refRole: 'searchResult',
+      });
+    }
     const tableRowIds = Array.from({ length: options.tableRowCount ?? 0 }, (_, index) => {
       const rowId = `table-row-${String(index).padStart(3, '0')}`;
       makeNode(rowId, `Table row ${String(index + 1).padStart(3, '0')}`, { parentId: ids.today });
@@ -1653,6 +1731,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
 	    appendChild(ids.recents, 'recents-view');
 	    appendChild('recents-view', 'recents-sort');
 	    appendChild('recents-query', 'recents-query-value');
+    if (options.searchReferenceChain) appendChild(ids.recents, ids.searchResult);
     appendChild(ids.schema, ids.dayTag);
     appendChild(ids.schema, ids.projectTag);
     appendChild(ids.schema, ids.statusField);
@@ -1664,6 +1743,11 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     if (options.dateField) appendChild(ids.schema, ids.dueField);
     if (options.relatedField) appendChild(ids.schema, ids.referencesField);
     appendChild(ids.daily, ids.today);
+    if (options.searchReferenceChain) {
+      appendChild(ids.library, ids.searchIntermediate);
+      appendChild(ids.alpha, ids.searchStatusEntry);
+      appendChild(ids.searchStatusEntry, ids.searchStatusValue);
+    }
     if (options.optionsField) appendChild(ids.today, ids.priorityEntry);
     if (options.dateField) appendChild(ids.today, ids.dueEntry);
     if (options.relatedField) appendChild(ids.today, ids.referencesEntry);
@@ -3689,7 +3773,14 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
 	          return clone(outcome());
 	        }
 	        if (cmd === 'set_view_mode') {
-	          if (nodes.has(String(args.nodeId))) ensureViewDef(String(args.nodeId)).viewMode = String(args.mode ?? 'list');
+	          const nodeId = String(args.nodeId);
+	          if (nodes.has(nodeId)) {
+	            const view = ensureViewDef(nodeId);
+	            const previousMode = view.viewMode ?? 'list';
+	            const nextMode = String(args.mode ?? 'list');
+	            view.viewMode = nextMode;
+	            if (previousMode === 'list' && nextMode === 'table') addMissingTableDisplayFields(nodeId, view);
+	          }
 	          return clone(outcome());
 	        }
 	        if (cmd === 'add_sort_rule') {

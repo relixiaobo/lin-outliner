@@ -194,7 +194,7 @@ describe('renderer Agent user-view hints', () => {
     expect(hints.panels[0]?.visibleOutlineTruncated).toBe(false);
   });
 
-  test('omits table-column fields from expanded record descendants', () => {
+  test('omits all field rows from expanded table record descendants', () => {
     const index = buildIndex(projection([
       node('root', 'Root', { children: ['view', 'record'] }),
       node('view', 'View', {
@@ -210,7 +210,7 @@ describe('renderer Agent user-view hints', () => {
       }),
       node('record', 'Record', {
         parentId: 'root',
-        children: ['shown-entry', 'child'],
+        children: ['shown-entry', 'hidden-entry', 'other-entry', 'child'],
       }),
       node('shown-entry', 'Shown entry', {
         parentId: 'record',
@@ -219,6 +219,20 @@ describe('renderer Agent user-view hints', () => {
         children: ['shown-value'],
       }),
       node('shown-value', 'Shown value', { parentId: 'shown-entry' }),
+      node('hidden-entry', 'Hidden entry', {
+        parentId: 'record',
+        type: 'fieldEntry',
+        fieldDefId: 'hidden-field',
+        children: ['hidden-value'],
+      }),
+      node('hidden-value', 'Hidden value', { parentId: 'hidden-entry' }),
+      node('other-entry', 'Other entry', {
+        parentId: 'record',
+        type: 'fieldEntry',
+        fieldDefId: 'other-field',
+        children: ['other-value'],
+      }),
+      node('other-value', 'Other value', { parentId: 'other-entry' }),
       node('child', 'Child', { parentId: 'record' }),
     ]));
     const expanded = new Set(['record']);

@@ -771,6 +771,9 @@ export const zhHans: PartialMessages = {
       add: '添加',
       searchFields: '搜索字段',
       noMatchingFields: '没有匹配的字段',
+      usedFields: '当前使用的字段',
+      otherCustomFields: '其他自定义字段',
+      systemFieldGroup: '系统字段',
       newField: '新建字段',
       fieldName: '字段名称',
       fieldType: '字段类型',
@@ -784,7 +787,6 @@ export const zhHans: PartialMessages = {
       moveColumnLeft: '向左移动',
       moveColumnRight: '向右移动',
       hideColumn: '隐藏列',
-      removeColumn: '从视图中移除',
       systemFields: {
         name: '名称',
         created: '创建时间',

@@ -1500,9 +1500,17 @@ export class Core {
 
   setViewMode(nodeId: string, mode: ViewMode): CommandOutcome {
     return this.mutate(() => {
+      const state = this.snapshot();
+      const owner = requiredNode(state, nodeId);
+      const previousView = owner.children
+        .map((childId) => state.nodes[childId])
+        .find((child): child is ViewDefNode => child?.type === 'viewDef');
+      const enteringTable = mode === 'table'
+        && (previousView?.viewMode ?? 'list') === 'list';
       this.patchViewDefDirect(nodeId, (viewDef) => {
         viewDef.viewMode = mode;
       });
+      if (enteringTable) this.addMissingTableDisplayFieldsDirect(nodeId);
       return focus(nodeId);
     });
   }
@@ -3163,6 +3171,60 @@ export class Core {
     return viewDef.children
       .map((childId) => state.nodes[childId])
       .filter((child): child is Node => child?.type === type);
+  }
+
+  private addMissingTableDisplayFieldsDirect(nodeId: string): void {
+    const state = this.snapshot();
+    const owner = requiredNode(state, nodeId);
+    const viewDef = owner.children
+      .map((childId) => state.nodes[childId])
+      .find((child): child is ViewDefNode => child?.type === 'viewDef');
+    if (!viewDef) return;
+
+    const configuredFields = new Set<string>();
+    const displayFields: DisplayFieldNode[] = [];
+    for (const childId of viewDef.children) {
+      const child = state.nodes[childId];
+      if (child?.type !== 'displayField' || !child.displayField) continue;
+      configuredFields.add(child.displayField);
+      displayFields.push(child);
+    }
+
+    const usedFields = new Set<string>();
+    for (const childId of owner.children) {
+      const child = state.nodes[childId];
+      if (!child || !isTableRecordNode(child)) continue;
+      const record = resolveReferenceNodeForRead(state, child);
+      if (!record) continue;
+      for (const nestedId of record.children) {
+        const nested = state.nodes[nestedId];
+        if (nested?.type === 'fieldEntry' && nested.fieldDefId) usedFields.add(nested.fieldDefId);
+      }
+    }
+    if (usedFields.size === 0) return;
+
+    const schema = state.nodes[SCHEMA_ID];
+    if (!schema) return;
+    const missingFields = schema.children.filter((fieldId) => {
+      const field = state.nodes[fieldId];
+      return field?.type === 'fieldDef'
+        && usedFields.has(fieldId)
+        && !configuredFields.has(fieldId)
+        && !isInTrash(state, fieldId);
+    });
+    if (missingFields.length === 0) return;
+
+    const allExistingOrdersAreFinite = displayFields.every((display) => Number.isFinite(display.displayOrder));
+    let nextOrder = allExistingOrdersAreFinite
+      ? displayFields.reduce((max, display) => Math.max(max, display.displayOrder!), -1) + 1
+      : undefined;
+    for (const fieldId of missingFields) {
+      this.loro.createNodeWithId<DisplayFieldNode>(freshId('display'), viewDef.id, undefined, 'displayField', (node) => {
+        node.displayField = fieldId;
+        node.displayVisible = true;
+        if (nextOrder !== undefined) node.displayOrder = nextOrder++;
+      });
+    }
   }
 
   private mutate(mutator: Mutator): CommandOutcome {
@@ -6065,6 +6127,28 @@ function resolveReferenceTargetId(state: DocumentState, targetId: string) {
     if (!current.targetId) throw CoreError.invalidOperation('reference node has no target');
     currentId = current.targetId;
   }
+}
+
+function resolveReferenceNodeForRead(state: DocumentState, node: Node): Node | null {
+  let current: Node | undefined = node;
+  const visited = new Set<NodeId>();
+  while (current?.type === 'reference') {
+    if (visited.has(current.id) || !current.targetId) return null;
+    visited.add(current.id);
+    current = state.nodes[current.targetId];
+  }
+  return current ?? null;
+}
+
+function isTableRecordNode(node: Node): boolean {
+  return node.type !== 'fieldEntry'
+    && node.type !== 'queryCondition'
+    && node.type !== 'viewDef'
+    && node.type !== 'sortRule'
+    && node.type !== 'filterRule'
+    && node.type !== 'displayField'
+    && node.type !== 'defConfig'
+    && node.type !== 'systemOption';
 }
 
 function isOnlyInlineReference(content: RichText, targetId: string) {

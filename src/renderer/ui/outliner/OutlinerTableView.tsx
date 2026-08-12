@@ -54,7 +54,6 @@ import {
   ICON_SIZE,
   MoreIcon,
   PencilIcon,
-  TrashIcon,
 } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { Input } from '../primitives/Input';
@@ -80,8 +79,8 @@ import {
   fieldEntryForViewCell,
   hiddenFieldKey,
   readViewConfig,
+  customViewFieldIdsOnRows,
   viewFieldValuesFor,
-  visibleAuthoredTableFieldIds,
   visibleDisplayFields,
   type OutlinerRowItem,
   type ViewDisplayField,
@@ -163,7 +162,7 @@ export interface OutlinerTableViewProps {
   trailingDraft?: 'always' | 'auto' | 'none';
   draftPlaceholder?: string;
   scrollParentRef?: RefObject<HTMLElement | null>;
-  suppressedOwnerFieldDefIds?: ReadonlySet<string>;
+  suppressOwnerFieldEntries?: boolean;
 }
 
 function clampColumnWidth(width: number | undefined): number {
@@ -255,7 +254,31 @@ function tableFieldTypeLabel(fieldType: FieldType, tt: TableMessages): string {
   return tt.fieldTypes[fieldType];
 }
 
-function tableFieldChoices(index: DocumentIndex, tt: TableMessages): Array<{ id: string; label: string }> {
+type TableFieldChoiceGroup = 'used' | 'custom' | 'system';
+
+const TABLE_FIELD_CHOICE_GROUP_ORDER: readonly TableFieldChoiceGroup[] = [
+  'used',
+  'custom',
+  'system',
+];
+
+interface TableFieldChoice {
+  id: string;
+  label: string;
+  group: TableFieldChoiceGroup;
+}
+
+function tableFieldChoiceGroupLabel(group: TableFieldChoiceGroup, tt: TableMessages): string {
+  if (group === 'used') return tt.usedFields;
+  if (group === 'custom') return tt.otherCustomFields;
+  return tt.systemFieldGroup;
+}
+
+function tableFieldChoices(
+  parent: NodeProjection,
+  index: DocumentIndex,
+  tt: TableMessages,
+): TableFieldChoice[] {
   const systemIds = [
     CREATED_FIELD,
     DAY_FIELD,
@@ -266,12 +289,22 @@ function tableFieldChoices(index: DocumentIndex, tt: TableMessages): Array<{ id:
     OWNER_FIELD,
     TAGS_FIELD,
   ];
-  const choices = systemIds.map((id) => ({ id, label: tableFieldLabel(id, index, tt) }));
-  for (const node of index.projection.nodes) {
-    if (node.type !== 'fieldDef' || node.parentId !== index.projection.schemaId) continue;
-    choices.push({ id: node.id, label: node.content.text || node.id });
+  const usedFieldIds = customViewFieldIdsOnRows(parent, index.byId);
+  const choices: TableFieldChoice[] = [];
+  const schema = index.byId.get(index.projection.schemaId);
+  for (const fieldId of schema?.children ?? []) {
+    const field = index.byId.get(fieldId);
+    if (field?.type !== 'fieldDef') continue;
+    choices.push({
+      id: field.id,
+      label: field.content.text || field.id,
+      group: usedFieldIds.has(field.id) ? 'used' : 'custom',
+    });
   }
-  return choices.sort((left, right) => left.label.localeCompare(right.label, undefined, { sensitivity: 'base' }));
+  for (const id of systemIds) {
+    choices.push({ id, label: tableFieldLabel(id, index, tt), group: 'system' });
+  }
+  return choices;
 }
 
 function tableRenderRows(
@@ -351,11 +384,10 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
     [parent, props.index.byId],
   );
   const columns = useMemo(() => visibleDisplayFields(view), [view]);
-  const displayedFieldDefIds = useMemo(() => visibleAuthoredTableFieldIds(view), [view]);
   const builtRows = useMemo(() => buildOutlinerRows(parent, props.index.byId, {
     expandedHiddenFields: props.ui.expandedHiddenFields,
-    suppressedFieldDefIds: props.suppressedOwnerFieldDefIds,
-  }), [parent, props.index.byId, props.suppressedOwnerFieldDefIds, props.ui.expandedHiddenFields]);
+    suppressFieldEntries: props.suppressOwnerFieldEntries,
+  }), [parent, props.index.byId, props.suppressOwnerFieldEntries, props.ui.expandedHiddenFields]);
   const ownerRows = useMemo(
     () => builtRows.filter((row) => row.type === 'field' || row.type === 'hiddenField'),
     [builtRows],
@@ -403,7 +435,10 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
     column.id,
     column.label?.trim() || tableFieldLabel(column.field, props.index, tt),
   ])), [columns, props.index, tt]);
-  const fieldChoices = useMemo(() => tableFieldChoices(props.index, tt), [props.index, tt]);
+  const fieldChoices = useMemo(
+    () => parent ? tableFieldChoices(parent, props.index, tt) : [],
+    [parent, props.index, tt],
+  );
   const gridRef = useRef<HTMLDivElement | null>(null);
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const previewsRef = useRef(new Map<string, number>());
@@ -452,7 +487,8 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
   const beginFieldEdit = useCallback(async (rowId: NodeId, column: ViewDisplayField, seed?: string) => {
     const rowNode = props.index.byId.get(rowId);
     if (!rowNode) return;
-    const ownerId = outlinerChildParentId(rowId, props.index.byId) ?? rowId;
+    const ownerId = outlinerChildParentId(rowId, props.index.byId);
+    if (!ownerId) return;
     const owner = props.index.byId.get(ownerId);
     if (!owner || owner.locked) return;
     const address = { rowId, columnId: column.id };
@@ -732,15 +768,15 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
     const titleAddress = { rowId: row.id, columnId: TABLE_TITLE_COLUMN_ID };
     const activeTitle = effectiveActiveCell?.rowId === row.id
       && effectiveActiveCell.columnId === TABLE_TITLE_COLUMN_ID;
-    const ownerId = rowNode ? outlinerChildParentId(row.id, props.index.byId) ?? row.id : row.id;
-    const childParent = props.index.byId.get(ownerId);
-    const childReferencePath = [...referencePath, ownerId];
-    const referenceCycle = referencePath.includes(ownerId) && ownerId !== row.id;
+    const ownerId = rowNode ? outlinerChildParentId(row.id, props.index.byId) : null;
+    const childParent = ownerId ? props.index.byId.get(ownerId) : undefined;
+    const childReferencePath = ownerId ? [...referencePath, ownerId] : referencePath;
+    const referenceCycle = Boolean(ownerId && referencePath.includes(ownerId) && ownerId !== row.id);
     const expanded = !row.draft && props.ui.expanded.has(row.id) && !referenceCycle;
     const nestedRows = expanded && childParent
       ? buildOutlinerRows(childParent, props.index.byId, {
         expandedHiddenFields: props.ui.expandedHiddenFields,
-        suppressedFieldDefIds: displayedFieldDefIds,
+        suppressFieldEntries: true,
       })
       : [];
     const nestedView = childParent ? readViewConfig(childParent, props.index.byId) : null;
@@ -805,7 +841,7 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
               flat
               semanticRole="presentation"
               hideDisplayFields
-              suppressedChildFieldDefIds={displayedFieldDefIds}
+              suppressChildFieldEntries
               tableNextRowId={nextStoredRow?.kind === 'data' ? nextStoredRow.id : null}
             />
           </div>
@@ -844,7 +880,7 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
           })}
           <div className="outliner-table-row-actions" role="presentation" />
         </div>
-        {showNested && childParent ? (
+        {showNested && childParent && ownerId ? (
           <div
             aria-label={nestedIsTable ? undefined : childParent.content.text.trim() || t.common.untitled}
             aria-multiselectable={nestedIsTable ? undefined : 'true'}
@@ -871,7 +907,7 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
               setDragId={props.setDragId}
               referencePath={childReferencePath}
               rows={nestedRows}
-              suppressedFieldDefIds={displayedFieldDefIds}
+              suppressFieldEntries
               trailingDraft="auto"
             />
           </div>
@@ -1064,7 +1100,7 @@ interface TableFieldCellProps {
 function TableFieldCell(props: TableFieldCellProps) {
   const tt = useT().outliner.table;
   const ownerId = props.rowNode
-    ? outlinerChildParentId(props.rowNode.id, props.index.byId) ?? props.rowNode.id
+    ? outlinerChildParentId(props.rowNode.id, props.index.byId)
     : null;
   const owner = ownerId ? props.index.byId.get(ownerId) : undefined;
   const entry = props.rowNode
@@ -1379,16 +1415,6 @@ function TableColumnHeader({
                 }}
                 role="menuitem"
               />
-              <MenuItem
-                className="node-context-item is-danger"
-                icon={<TrashIcon size={ICON_SIZE.menu} />}
-                label={tt.removeColumn}
-                onClick={() => {
-                  void run(() => api.removeDisplayField(column.id));
-                  closeMenu();
-                }}
-                role="menuitem"
-              />
             </>
           )}
         </MenuSurface>,
@@ -1404,7 +1430,7 @@ function TableAddColumn({
   nodeId,
   run,
 }: {
-  choices: Array<{ id: string; label: string }>;
+  choices: TableFieldChoice[];
   displayFields: readonly ViewDisplayField[];
   nodeId: NodeId;
   run: CommandRunner;
@@ -1433,6 +1459,12 @@ function TableAddColumn({
     !visibleFieldIds.has(choice.id)
     && (!normalized || choice.label.toLocaleLowerCase().includes(normalized))
   ));
+  const availableGroups = TABLE_FIELD_CHOICE_GROUP_ORDER.flatMap((group) => {
+    const groupChoices = available.filter((choice) => choice.group === group);
+    return groupChoices.length > 0
+      ? [{ group, label: tableFieldChoiceGroupLabel(group, tt), choices: groupChoices }]
+      : [];
+  });
 
   const createField = () => {
     const trimmed = name.trim();
@@ -1508,17 +1540,27 @@ function TableAddColumn({
                 onChange={(event) => setQuery(event.currentTarget.value)}
               />
               <div className="outliner-table-field-options">
-                {available.map((choice) => (
-                  <MenuItem
-                    key={choice.id}
-                    className="node-context-item"
-                    icon={<FieldIcon size={ICON_SIZE.menu} />}
-                    label={choice.label}
-                    onClick={() => {
-                      void run(() => api.addDisplayField(nodeId, choice.id));
-                      setOpen(false);
-                    }}
-                  />
+                {availableGroups.map((group) => (
+                  <div
+                    key={group.group}
+                    aria-label={group.label}
+                    className="outliner-table-field-group"
+                    role="group"
+                  >
+                    <div className="popover-section-header" aria-hidden="true">{group.label}</div>
+                    {group.choices.map((choice) => (
+                      <MenuItem
+                        key={choice.id}
+                        className="node-context-item"
+                        icon={<FieldIcon size={ICON_SIZE.menu} />}
+                        label={choice.label}
+                        onClick={() => {
+                          void run(() => api.addDisplayField(nodeId, choice.id));
+                          setOpen(false);
+                        }}
+                      />
+                    ))}
+                  </div>
                 ))}
                 {available.length === 0 ? <div className="outliner-table-no-fields">{tt.noMatchingFields}</div> : null}
               </div>

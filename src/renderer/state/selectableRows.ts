@@ -101,7 +101,7 @@ function visitSelectableRows(
   const visit = (
     parentId: NodeId,
     referencePath: NodeId[],
-    suppressedFieldDefIds?: ReadonlySet<string>,
+    suppressFieldEntries = false,
   ) => {
     const parent = byId.get(parentId);
     if (!parent) return;
@@ -111,7 +111,7 @@ function visitSelectableRows(
       : undefined;
     const rows = buildOutlinerRows(parent, byId, {
       expandedHiddenFields,
-      suppressedFieldDefIds,
+      suppressFieldEntries,
     });
     const visitRows = (currentRows: OutlinerRowItem[]) => {
       for (const row of currentRows) {
@@ -154,7 +154,7 @@ function visitSelectableRows(
             visit(
               childParentId,
               [...referencePath, childParentId],
-              row.type === 'content' ? tableFieldDefIds : undefined,
+              row.type === 'content' && tableFieldDefIds !== undefined,
             );
           }
         }

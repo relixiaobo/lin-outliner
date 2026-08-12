@@ -852,6 +852,9 @@ export const en = {
       add: 'Add',
       searchFields: 'Search fields',
       noMatchingFields: 'No matching fields',
+      usedFields: 'Fields in use',
+      otherCustomFields: 'Other custom fields',
+      systemFieldGroup: 'System fields',
       newField: 'New field',
       fieldName: 'Field name',
       fieldType: 'Field type',
@@ -865,7 +868,6 @@ export const en = {
       moveColumnLeft: 'Move left',
       moveColumnRight: 'Move right',
       hideColumn: 'Hide column',
-      removeColumn: 'Remove from view',
       systemFields: {
         name: 'Name',
         created: 'Created time',

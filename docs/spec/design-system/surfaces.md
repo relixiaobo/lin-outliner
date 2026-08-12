@@ -159,10 +159,12 @@ Selecting a record through its Title node paints one continuous neutral surface
 across the complete table row; the nested Title row suppresses its local
 selection fill so the result never becomes a stack of cell-sized pills. Selection
 of an authored value node remains node-local and does not select its record.
-When a record expands, authored fields already represented by visible columns do
-not repeat as field rows beneath it. Ordinary children and fields not represented
-by visible columns keep their normal outline presentation; the Title node's
-child/disclosure state follows that same visible child set.
+When a record expands, no authored field repeats as a field row beneath it:
+visible, hidden, and not-yet-configured fields all belong to the column model.
+Ordinary children keep their normal outline presentation, while the Title
+node's child/disclosure state, keyboard order, and agent-visible structure follow
+that same field-free child set. Hidden fields remain recoverable through the
+column controls rather than through duplicate body rows.
 An authored field's header glyph is an icon-only navigation control into that
 field definition's configuration page. Hover deepens only the glyph without a
 background box, owning-header outline, or geometry change. System-field glyphs
@@ -175,9 +177,12 @@ Hover, focus, selection, resizing, and editor entry never change row or control
 dimensions.
 
 Column and add-field overlays are level-1 material popovers with the shared
-reduced-transparency fallback. A nested table is an unframed indented scope with
-one quiet separating edge, not a card inside the parent table. Each nested scope
-owns its own column template and local horizontal overflow.
+reduced-transparency fallback. Column headers use Hide as their only removal
+action. Add column groups current-record custom fields first, other Schema custom
+fields second, and system fields last; section labels remain compact metadata,
+not selectable rows. A nested table is an unframed indented scope with one quiet
+separating edge, not a card inside the parent table. Each nested scope owns its
+own column template and local horizontal overflow.
 
 ### References
 

@@ -9,7 +9,6 @@ import {
   buildOutlinerRows,
   flattenExpandedOutlinerRows,
   readViewConfig,
-  visibleAuthoredTableFieldIds,
 } from '../../state/outlinerRows';
 import { buildSelectableRows } from '../../state/selectableRows';
 import type { WorkspacePanelState } from '../workspaceLayoutTypes';
@@ -104,7 +103,7 @@ function visibleNodeHints(
     depth: number,
     referencePath: readonly NodeId[],
     forceExpanded = false,
-    suppressedFieldDefIds: ReadonlySet<string> | undefined = undefined,
+    suppressFieldEntries = false,
   ): boolean => {
     const node = index.byId.get(nodeId);
     if (!node) return true;
@@ -117,11 +116,8 @@ function visibleNodeHints(
     const childParentId = outlinerChildParentId(nodeId, index.byId);
     if (!childParentId || referencePath.includes(childParentId)) return true;
     const displayedParent = index.byId.get(childParentId);
-    const view = readViewConfig(displayedParent, index.byId);
-    const tableFieldDefIds = view.viewMode === 'table'
-      ? visibleAuthoredTableFieldIds(view)
-      : undefined;
-    const children = visibleChildren(childParentId, index, ui, suppressedFieldDefIds);
+    const tableMode = readViewConfig(displayedParent, index.byId).viewMode === 'table';
+    const children = visibleChildren(childParentId, index, ui, suppressFieldEntries);
     if (!expanded || children.length === 0) return true;
     if (depth >= MAX_VISIBLE_DEPTH) {
       truncated = true;
@@ -130,15 +126,15 @@ function visibleNodeHints(
     const nextReferencePath = [...referencePath, childParentId];
     for (const childId of children) {
       const child = index.byId.get(childId);
-      const childSuppressedFieldDefIds = child?.type === 'fieldEntry'
-        ? undefined
-        : tableFieldDefIds;
+      const childSuppressFieldEntries = child?.type === 'fieldEntry'
+        ? false
+        : tableMode;
       if (!append(
         childId,
         depth + 1,
         nextReferencePath,
         false,
-        childSuppressedFieldDefIds,
+        childSuppressFieldEntries,
       )) return false;
     }
     return true;
@@ -151,14 +147,14 @@ function visibleChildren(
   parentId: NodeId,
   index: DocumentIndex,
   ui: UiState,
-  suppressedFieldDefIds?: ReadonlySet<string>,
+  suppressFieldEntries = false,
 ): NodeId[] {
   const node = index.byId.get(parentId);
   if (!node) return [];
   return flattenExpandedOutlinerRows(
     buildOutlinerRows(node, index.byId, {
       expandedHiddenFields: ui.expandedHiddenFields,
-      suppressedFieldDefIds,
+      suppressFieldEntries,
     }),
     ui.expanded,
   ).flatMap((row) => row.type === 'field' || row.type === 'content' ? [row.id] : []);

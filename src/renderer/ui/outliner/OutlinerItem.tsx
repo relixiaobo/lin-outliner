@@ -168,7 +168,7 @@ interface OutlinerItemProps {
   flat?: boolean;
   semanticRole?: 'treeitem' | 'presentation';
   hideDisplayFields?: boolean;
-  suppressedChildFieldDefIds?: ReadonlySet<string>;
+  suppressChildFieldEntries?: boolean;
   tableNextRowId?: NodeId | null;
   onDisclosureToggleAnchor?: (anchorElement: HTMLElement | null) => void;
 }
@@ -220,8 +220,7 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   const rowChildIds = referenceCycle ? [] : outlinerChildren(childParentNode, props.index.byId).filter((childId) => {
     const child = props.index.byId.get(childId);
     return child?.type !== 'fieldEntry'
-      || !child.fieldDefId
-      || !props.suppressedChildFieldDefIds?.has(child.fieldDefId);
+      || !props.suppressChildFieldEntries;
   });
   const parentView = readViewConfig(parentNode, props.index.byId);
   const referenceSummary = referenceSummaryForIndex(props.index);
@@ -2800,7 +2799,7 @@ function outlinerItemPropsEqual(prev: OutlinerItemProps, next: OutlinerItemProps
   if (prev.depth !== next.depth) return false;
   if (prev.semanticRole !== next.semanticRole) return false;
   if (prev.hideDisplayFields !== next.hideDisplayFields) return false;
-  if (prev.suppressedChildFieldDefIds !== next.suppressedChildFieldDefIds) return false;
+  if (prev.suppressChildFieldEntries !== next.suppressChildFieldEntries) return false;
   if (prev.tableNextRowId !== next.tableNextRowId) return false;
   // Drag start/end is infrequent; re-render every row so drag handlers close over
   // the current dragId and the dragged row picks up its 'dragging' class.

@@ -117,6 +117,82 @@ test.describe('table view', () => {
     await expect(rootGrid(page)).toBeVisible();
   });
 
+  test('defaults used custom fields as columns and preserves hidden choices across view switches', async ({ page }) => {
+    await invokeCommands(page, [
+      {
+        cmd: 'create_inline_field',
+        args: {
+          parentId: ids.alpha,
+          index: null,
+          name: '',
+          fieldType: 'plain',
+          targetDefId: ids.statusField,
+        },
+      },
+      {
+        cmd: 'create_inline_field',
+        args: {
+          parentId: ids.beta,
+          index: null,
+          name: '',
+          fieldType: 'plain',
+          targetDefId: ids.dueField,
+        },
+      },
+    ]);
+    const beforeTable = await e2eProjection(page);
+    const alpha = beforeTable.nodes.find((node) => node.id === ids.alpha)!;
+    const beta = beforeTable.nodes.find((node) => node.id === ids.beta)!;
+    const statusEntry = beforeTable.nodes.find((node) => (
+      alpha.children.includes(node.id)
+      && node.type === 'fieldEntry'
+      && (node as typeof node & { fieldDefId?: string }).fieldDefId === ids.statusField
+    ))!;
+    const dueEntry = beforeTable.nodes.find((node) => (
+      beta.children.includes(node.id)
+      && node.type === 'fieldEntry'
+      && (node as typeof node & { fieldDefId?: string }).fieldDefId === ids.dueField
+    ))!;
+    await invokeCommands(page, [
+      {
+        cmd: 'set_field_free_text_value',
+        args: { fieldEntryId: statusEntry.id, text: 'Active', id: 'automatic-status-value' },
+      },
+      {
+        cmd: 'set_field_free_text_value',
+        args: { fieldEntryId: dueEntry.id, text: '2026-05-20', id: 'automatic-due-value' },
+      },
+      { cmd: 'set_view_mode', args: { nodeId: ids.today, mode: 'table' } },
+    ]);
+
+    const grid = rootGrid(page);
+    await expect(grid.getByRole('columnheader')).toHaveText(['Title', 'Status', 'Due']);
+    await expect(grid.locator(`.outliner-table-cell[data-table-row-id="${ids.alpha}"]`).first()).toContainText('Active');
+    await expect(grid.locator(`.outliner-table-cell[data-table-row-id="${ids.beta}"]`).nth(1)).toContainText('2026-05-20');
+    await expect(grid.getByRole('columnheader').filter({ hasText: 'Done' })).toHaveCount(0);
+
+    const tableProjection = await e2eProjection(page);
+    const statusDisplay = tableProjection.nodes.find((node) => (
+      node.type === 'displayField' && node.displayField === ids.statusField
+    ))!;
+    await invokeCommands(page, [
+      {
+        cmd: 'update_display_field',
+        args: { displayFieldId: statusDisplay.id, visible: false },
+      },
+      { cmd: 'set_view_mode', args: { nodeId: ids.today, mode: 'list' } },
+      { cmd: 'set_view_mode', args: { nodeId: ids.today, mode: 'table' } },
+    ]);
+
+    await expect(grid.getByRole('columnheader')).toHaveText(['Title', 'Due']);
+    const switchedProjection = await e2eProjection(page);
+    const switchedStatusDisplays = switchedProjection.nodes.filter((node) => (
+      node.type === 'displayField' && node.displayField === ids.statusField
+    ));
+    expect(switchedStatusDisplays).toHaveLength(1);
+    expect(switchedStatusDisplays[0]?.displayVisible).toBe(false);
+  });
+
   test('keeps an empty field cell inert until editing starts', async ({ page }) => {
     await configureRootTable(page);
     await invokeCommands(page, [{ cmd: 'set_view_mode', args: { nodeId: ids.today, mode: 'table' } }]);
@@ -256,37 +332,85 @@ test.describe('table view', () => {
     expect(selectionVisual.cellBackgrounds.every((background) => background === 'rgba(0, 0, 0, 0)')).toBe(true);
   });
 
-  test('does not repeat visible column fields under an expanded record', async ({ page }) => {
+  test('does not render any field rows under an expanded table record', async ({ page }) => {
     await configureRootTable(page);
-    await invokeCommands(page, [{
-      cmd: 'create_inline_field',
-      args: {
-        parentId: ids.alpha,
-        index: null,
-        name: '',
-        fieldType: 'plain',
-        targetDefId: ids.statusField,
+    const configuredProjection = await e2eProjection(page);
+    const dueDisplay = configuredProjection.nodes.find((node) => (
+      node.type === 'displayField' && node.displayField === ids.dueField
+    ))!;
+    await invokeCommands(page, [
+      {
+        cmd: 'update_display_field',
+        args: { displayFieldId: dueDisplay.id, visible: false },
       },
-    }]);
+      {
+        cmd: 'create_inline_field',
+        args: {
+          parentId: ids.alpha,
+          index: null,
+          name: '',
+          fieldType: 'plain',
+          targetDefId: ids.statusField,
+        },
+      },
+      {
+        cmd: 'create_inline_field',
+        args: {
+          parentId: ids.alpha,
+          index: null,
+          name: '',
+          fieldType: 'plain',
+          targetDefId: ids.dueField,
+        },
+      },
+    ]);
     const projection = await e2eProjection(page);
     const alpha = projection.nodes.find((node) => node.id === ids.alpha)!;
-    const entry = projection.nodes.find((node) => (
+    const statusEntry = projection.nodes.find((node) => (
       alpha.children.includes(node.id)
       && node.type === 'fieldEntry'
       && (node as typeof node & { fieldDefId?: string }).fieldDefId === ids.statusField
-    ));
-    expect(entry).toBeTruthy();
+    ))!;
+    const hiddenDueEntry = projection.nodes.find((node) => (
+      alpha.children.includes(node.id)
+      && node.type === 'fieldEntry'
+      && (node as typeof node & { fieldDefId?: string }).fieldDefId === ids.dueField
+    ))!;
     await invokeCommands(page, [
       {
         cmd: 'set_field_free_text_value',
-        args: { fieldEntryId: entry!.id, text: 'Column value', id: 'table-column-value' },
+        args: { fieldEntryId: statusEntry.id, text: 'Column value', id: 'table-column-value' },
+      },
+      {
+        cmd: 'set_field_free_text_value',
+        args: { fieldEntryId: hiddenDueEntry.id, text: 'Hidden value', id: 'table-hidden-value' },
       },
       {
         cmd: 'create_node',
         args: { parentId: ids.alpha, index: null, text: 'Nested child', id: 'table-record-child' },
       },
       { cmd: 'set_view_mode', args: { nodeId: ids.today, mode: 'table' } },
+      {
+        cmd: 'create_inline_field',
+        args: {
+          parentId: ids.alpha,
+          index: null,
+          name: 'Internal notes',
+          fieldType: 'plain',
+        },
+      },
     ]);
+    const tableProjection = await e2eProjection(page);
+    const currentAlpha = tableProjection.nodes.find((node) => node.id === ids.alpha)!;
+    const undisplayedEntry = tableProjection.nodes.find((node) => (
+      currentAlpha.children.includes(node.id)
+      && node.type === 'fieldEntry'
+      && tableProjection.nodes.some((field) => (
+        field.id === (node as typeof node & { fieldDefId?: string }).fieldDefId
+        && field.type === 'fieldDef'
+        && field.content.text === 'Internal notes'
+      ))
+    ))!;
 
     const grid = rootGrid(page);
     const titleCell = grid.locator(
@@ -304,7 +428,9 @@ test.describe('table view', () => {
     await expect(nested).toHaveAccessibleName('Alpha');
     await expect(nested).toHaveAttribute('aria-multiselectable', 'true');
     await expect(nested.locator('[data-node-id="table-record-child"]')).toContainText('Nested child');
-    await expect(nested.locator(`[data-node-id="${entry!.id}"]`)).toHaveCount(0);
+    await expect(nested.locator(`[data-node-id="${statusEntry.id}"]`)).toHaveCount(0);
+    await expect(nested.locator(`[data-node-id="${hiddenDueEntry.id}"]`)).toHaveCount(0);
+    await expect(nested.locator(`[data-node-id="${undisplayedEntry.id}"]`)).toHaveCount(0);
     await expect(statusCell).toContainText('Column value');
   });
 
@@ -482,9 +608,21 @@ test.describe('table view', () => {
     await expect(rootGrid(page).getByRole('row')).toHaveCount(6);
   });
 
-  test('adds, creates, reorders, relabels, resizes, hides, and removes columns', async ({ page }) => {
+  test('adds, creates, reorders, relabels, resizes, and hides columns', async ({ page }) => {
     await configureRootTable(page);
-    await invokeCommands(page, [{ cmd: 'set_view_mode', args: { nodeId: ids.today, mode: 'table' } }]);
+    await invokeCommands(page, [
+      {
+        cmd: 'create_inline_field',
+        args: {
+          parentId: ids.alpha,
+          index: null,
+          name: '',
+          fieldType: 'plain',
+          targetDefId: ids.statusField,
+        },
+      },
+      { cmd: 'set_view_mode', args: { nodeId: ids.today, mode: 'table' } },
+    ]);
 
     const grid = rootGrid(page);
     const configuredProjection = await e2eProjection(page);
@@ -580,8 +718,23 @@ test.describe('table view', () => {
     await expect(grid.getByRole('columnheader')).toHaveText(['Title', 'Done', 'Status', 'Deadline']);
 
     await grid.getByRole('button', { name: 'Done column menu' }).click();
-    await page.getByRole('menuitem', { name: 'Remove from view' }).click();
-    await expect(grid.getByRole('columnheader').filter({ hasText: 'Done' })).toHaveCount(0);
+    await expect(page.getByRole('menuitem', { name: 'Remove from view' })).toHaveCount(0);
+    await page.keyboard.press('Escape');
+
+    await grid.getByRole('button', { name: 'Status column menu' }).click();
+    await page.getByRole('menuitem', { name: 'Hide column' }).click();
+    await grid.getByRole('button', { name: 'Add column' }).click();
+    const groupedDialog = page.getByRole('dialog', { name: 'Add column' });
+    await expect(groupedDialog.locator('.outliner-table-field-group > .popover-section-header')).toHaveText([
+      'Fields in use',
+      'Other custom fields',
+      'System fields',
+    ]);
+    await groupedDialog.getByLabel('Search fields').fill('Status');
+    await expect(groupedDialog.locator('.outliner-table-field-group > .popover-section-header')).toHaveText([
+      'Fields in use',
+    ]);
+    await expect(groupedDialog.getByRole('button', { name: 'Status', exact: true })).toBeVisible();
   });
 
   test('toggles a column menu from its trigger and commits rename on outside dismissal', async ({ page }) => {
@@ -683,6 +836,44 @@ test.describe('table view', () => {
       call.cmd === 'refresh_search_node_results' && call.args.nodeId === ids.recents
     )).length - refreshesBefore).toBe(1);
   });
+});
+
+test('reads and edits saved-search table fields through the complete reference chain', async ({ page }) => {
+  await openMockedApp(page, { dateField: true, searchReferenceChain: true });
+  await invokeCommands(page, [
+    { cmd: 'set_view_mode', args: { nodeId: ids.recents, mode: 'table' } },
+    { cmd: 'add_display_field', args: { nodeId: ids.recents, field: ids.dueField } },
+  ]);
+  await page.locator('.sidebar-primary-nav .sidebar-nav-item').filter({ hasText: 'Recents' }).click();
+
+  const grid = page.getByRole('grid', { name: 'Recents table' });
+  await expect(grid.getByRole('columnheader')).toHaveText(['Title', 'Status', 'Due']);
+  const statusCell = grid.locator(
+    `.outliner-table-cell[data-table-row-id="${ids.searchResult}"]`,
+  ).first();
+  const dueCell = grid.locator(
+    `.outliner-table-cell[data-table-row-id="${ids.searchResult}"]`,
+  ).nth(1);
+  await expect(statusCell).toContainText('Chain value');
+  await expect(statusCell.locator(`[data-node-id="${ids.searchStatusValue}"]`)).toBeVisible();
+
+  const createsBefore = (await commandCalls(page)).filter((call) => call.cmd === 'create_inline_field').length;
+  await dueCell.focus();
+  await dueCell.press('Enter');
+  await expect.poll(async () => (await commandCalls(page)).filter((call) => (
+    call.cmd === 'create_inline_field'
+    && call.args.parentId === ids.alpha
+    && call.args.targetDefId === ids.dueField
+  )).length).toBe(1);
+  expect((await commandCalls(page)).filter((call) => call.cmd === 'create_inline_field')).toHaveLength(createsBefore + 1);
+
+  const projection = await e2eProjection(page);
+  const alpha = projection.nodes.find((node) => node.id === ids.alpha)!;
+  expect(projection.nodes.some((node) => (
+    alpha.children.includes(node.id)
+    && node.type === 'fieldEntry'
+    && (node as typeof node & { fieldDefId?: string }).fieldDefId === ids.dueField
+  ))).toBe(true);
 });
 
 test('table keeps a bounded DOM window for long outlines', async ({ page }) => {

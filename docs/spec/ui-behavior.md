@@ -367,6 +367,16 @@ filtered-out disclosure remains recoverable inside the grid and reveals rows in
 the same columns. Search nodes can use the same renderer, but never receive a
 writable trailing draft because their result references are derived.
 
+On a real Outline (`list`) to Table transition, the same `set_view_mode`
+transaction inspects the current direct records, resolves every reference chain
+to its final target, and adds visible columns for active custom fields used by
+those targets but never configured in this view. Existing display-field nodes
+are authoritative: their order and settings stay intact, hidden columns remain
+hidden, and only missing fields are appended in Schema order. System fields and
+unused custom fields are never defaulted. Repeating Table mode does nothing;
+fields first used while Table remains active are considered on the next
+Outline-to-Table transition.
+
 The first column is the synthetic, non-removable **Title** column. It contains
 the ordinary bullet/disclosure, checkbox, rich title editor, reference behavior,
 and row context menu. Each visible `displayField` contributes one additional
@@ -374,8 +384,10 @@ column. Columns use finite `displayOrder` first, then stored child order and id 
 deterministic fallbacks. `displayLabel` overrides the live field label,
 `displayWidth` is clamped to the supported range, and `displayVisible` controls
 visibility. Header menus rename a column for this view, move it left or right,
-hide it, or remove it. The resize separator supports pointer drag, keyboard
-increments, and double-click reset. A resize preview exists only while dragging
+or hide it. The persisted remove command remains protocol-compatible, but the
+Table header exposes Hide as its only removal action. The resize separator
+supports pointer drag, keyboard increments, and double-click reset. A resize
+preview exists only while dragging
 or awaiting that commit; once the command settles it yields to the latest
 projected width, so undo, collaboration, and external updates cannot be masked by
 stale renderer state. The default geometry follows the compact Tana composition:
@@ -389,14 +401,16 @@ system field has no definition node, so its kind icon remains non-interactive an
 does not expose that hover state. Column labels and menus keep their existing
 view-local behavior.
 
-**Add column** lists active reusable definitions not currently visible and the
-supported system fields. A hidden display field therefore remains available;
-selecting it restores that same column with its width, order, view-local label,
-and row values intact. The Display popover provides the equivalent checkbox
-toggle. Selecting a definition with no display field creates only a display-field
-node. The new-field path accepts a localized field type and atomically creates
-the field definition plus its display-field node. None of these paths bulk-create
-empty values on records.
+**Add column** lists fields that are not currently visible in three searchable
+groups: custom fields used by a current record, other active custom fields, then
+supported system fields. Both custom groups follow Schema order; system fields
+keep their established order. A hidden display field therefore remains
+available; selecting it restores that same column with its width, order,
+view-local label, and row values intact. The Display popover provides the
+equivalent checkbox toggle. Selecting a definition with no display field creates
+only a display-field node. The new-field path accepts a localized field type and
+atomically creates the field definition plus its display-field node. None of
+these paths bulk-create empty values on records.
 
 An existing authored value renders through the ordinary node surface, including
 the standard bullet, single-click editing, disclosure, children, context menu,
@@ -415,13 +429,20 @@ system fields remain derived; Done keeps its direct toggle behavior. The trailin
 Title draft creates an ordinary direct child, and Enter at the end of the final
 stored Title creates and focuses the next record.
 
-Expanding a table record shows its ordinary child outline without duplicating
-authored field entries already represented by visible columns. Those entries and
-their values remain editable through their cells, but are omitted from the
-expanded render and child count. The entry wrapper is absent from row navigation;
-its visible value nodes remain ordinary selectable nodes in cell order. Field
-entries for hidden or undisplayed columns remain ordinary expanded child rows so
-hiding a column never makes its data unreachable.
+Reference-backed records use one final target for field text, sort, filter,
+grouping, choice discovery, system-field projection, and edit attachment. This
+includes saved-search results whose target is another reference. A missing or
+cyclic chain renders empty, does not accept a field write, and never blocks the
+rest of the Table.
+
+Expanding a table record shows its ordinary child outline without any authored
+field-entry rows. In Table, fields are columns whether their columns are visible,
+hidden, or not yet configured. Visible-column values remain editable through
+their cells and their ordinary value nodes remain in cell selection order, but
+field-entry wrappers and values for hidden or undisplayed fields are absent from
+the expanded tree, disclosure child count, keyboard navigation, selectable-row
+model, and agent-visible outline. Hidden data stays discoverable and recoverable
+through Display and Add column.
 
 Each table is an independently named ARIA `grid` with `row`, `columnheader`, and
 `gridcell` descendants and one roving tab stop. An expanded nested Outline inside
