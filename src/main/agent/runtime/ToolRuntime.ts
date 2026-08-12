@@ -7,6 +7,7 @@ import {
   decodeProviderToolName,
   MODEL_TOOL_ACTION_KINDS,
   modelToolContract,
+  normalizeTaskStopToolInput,
   type ModelToolContract,
   type ModelToolIdentity,
   type ModelToolSchemaContribution,
@@ -15,9 +16,11 @@ import type { AgentMutationCausation, JsonValue } from '../../../core/agent/prot
 import type { DocumentProjection } from '../../../core/types';
 import type { AgentImageGenerationRuntime } from '../capabilities/agentImageGenerationTool';
 import { AgentImportService, visibleImportServiceResult } from '../capabilities/agentImportService';
-import type {
-  AgentFileReadImageNormalizer,
-  AgentLocalWorkspaceContext,
+import {
+  stopBackgroundShellTask,
+  type BackgroundShellStopData,
+  type AgentFileReadImageNormalizer,
+  type AgentLocalWorkspaceContext,
 } from '../capabilities/agentLocalTools';
 import type { OutlinerToolHost } from '../capabilities/agentNodeTools';
 import type { AgentSkillRuntime } from '../capabilities/agentSkills';
@@ -242,6 +245,15 @@ export class ToolRuntime {
         }
         return this.service.updateGoalForTurn(threadId, turnId, status);
       }),
+      coreTool('task_stop', 'Task Stop', async (_itemId, params) => {
+        const input = normalizeTaskStopToolInput(params);
+        const taskId = input.task_id ?? input.shell_id!;
+        const agent = await this.service.stopAgentTask(threadId, turnId, taskId);
+        if (agent !== null) return agent;
+        const shell = await stopBackgroundShellTask(taskId);
+        if (shell !== null) return shellTaskStopResult(shell);
+        throw new Error(`No task found with ID: ${taskId}`);
+      }, normalizeTaskStopToolInput),
     ];
   }
 
@@ -469,6 +481,7 @@ function coreTool(
   name: string,
   label: string,
   execute: (itemId: string, params: unknown, signal?: AbortSignal) => unknown | Promise<unknown>,
+  prepareArguments?: (value: unknown) => unknown,
 ): AgentTool {
   const contract = modelToolContract(name);
   if (!contract?.inputSchema) throw new Error(`Missing Core model-tool contract: ${name}`);
@@ -477,8 +490,18 @@ function coreTool(
     label,
     description: contract.description,
     parameters: contract.inputSchema as TSchema,
+    ...(prepareArguments === undefined ? {} : { prepareArguments }),
     executionMode: 'sequential',
     execute: async (itemId, params, signal) => toolResult(await execute(itemId, params, signal)),
+  };
+}
+
+function shellTaskStopResult(data: BackgroundShellStopData): JsonValue {
+  return {
+    message: data.message,
+    task_id: data.task_id,
+    task_type: data.task_type,
+    ...(data.command === undefined ? {} : { command: data.command }),
   };
 }
 

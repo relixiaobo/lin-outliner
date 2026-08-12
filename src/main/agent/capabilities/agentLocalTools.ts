@@ -1551,7 +1551,7 @@ export async function stopBackgroundShellTask(taskId: string): Promise<Backgroun
   if (task.status !== 'running') {
     throw new LocalToolFailure(
       'task_not_running',
-      `Task ${taskId} is not running.`,
+      `Task ${taskId} is not running (status: ${task.status})`,
       'No stop is needed for completed, failed, or already stopped tasks.',
     );
   }
