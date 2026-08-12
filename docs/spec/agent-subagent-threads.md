@@ -572,6 +572,14 @@ shares one `sessionId`, so one entry covers the subtree and the check stays O(1)
 on the turn-completion path; a fork starts a new session, which is right, because
 it is a new conversation.
 
+The menu item names the CONSEQUENCE — "Hide from Other Threads" / "Show to
+Other Threads" — not the subsystem. "Records" names a directory the user never
+sees and has no other entry point to, so beside Rename and Delete it read as a
+fourth way to destroy a conversation, which is the one thing it does not do. The
+mechanism does not fit a menu label, so it rides in a hover hint on both states:
+what other Threads read, that hiding removes this one, and that it can be shown
+again at any time. The eye/eye-off icon carries the same distinction.
+
 The state lives beside the records — `excluded.txt` in the same directory, loaded
 once at startup and rewritten whole — not on the Thread record: it is a property
 of this subsystem, it must be answerable synchronously while a Turn completes,

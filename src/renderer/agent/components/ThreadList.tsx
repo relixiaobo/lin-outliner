@@ -213,7 +213,10 @@ export function ThreadList({
           </button>
           <button
             disabled={recorded === null}
-            title={recordedUnavailable ? t.agent.thread.recordsUnavailable : undefined}
+            // The label names only the consequence, so the hint is where the
+            // mechanism is stated: what "other Threads" read, and that hiding is
+            // reversible. Without it the item reads as a destructive delete.
+            title={recordedUnavailable ? t.agent.thread.recordsUnavailable : t.agent.thread.recordsHint}
             onClick={() => {
               const target = actionsTarget;
               if (recorded === null || !target) return;
@@ -226,7 +229,7 @@ export function ThreadList({
             {recorded === false ? <ShowIcon size={ICON_SIZE.menu} /> : <HideIcon size={ICON_SIZE.menu} />}
             {recordedUnavailable
               ? t.agent.thread.recordsUnavailable
-              : recorded === false ? t.agent.thread.includeInRecords : t.agent.thread.excludeFromRecords}
+              : recorded === false ? t.agent.thread.showToThreads : t.agent.thread.hideFromThreads}
           </button>
           <button onClick={() => runThreadAction(onDelete)} role="menuitem" type="button">
             <TrashIcon size={ICON_SIZE.menu} />{t.agent.thread.delete}
