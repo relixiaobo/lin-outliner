@@ -73,9 +73,12 @@ describe('thread tool row status CSS guards', () => {
     }
   });
 
-  test('uses metric-stable running colour as the static cue and never spins the semantic glyph', () => {
-    expect(threadCss).toMatch(
-      /\.thread-tool-inProgress > \.thread-tool-toggle \.thread-tool-summary-act,\s*\.thread-tool-inProgress > \.thread-tool-activity-toggle \.thread-tool-summary-act \{\s*color:\s*var\(--text-strong\);/,
+  test('keeps the running action on the same neutral colour as settled rows', () => {
+    // The shimmer needs a consistent resting colour across the lifecycle. A
+    // running-only text-strong override leaves too little contrast for the
+    // current-colour highlight, especially in dark mode.
+    expect(threadCss).not.toMatch(
+      /\.thread-tool-inProgress > \.thread-tool-toggle \.thread-tool-summary-act\s*,?\s*\.thread-tool-inProgress > \.thread-tool-activity-toggle \.thread-tool-summary-act\s*\{/,
     );
     expect(threadCss).not.toMatch(/\.thread-tool-inProgress[^}]*font-weight:/s);
     expect(threadCss).not.toMatch(/\.thread-tool-inProgress[^{]*\.thread-disclosure-status svg\s*\{[^}]*animation:/);
@@ -89,7 +92,7 @@ describe('thread tool row status CSS guards', () => {
       /\.thread-turn:has\(\.working-text\) \.thread-streaming-shape,\s*\.thread-turn:has\(\.working-text\) \.thread-streaming-shape path \{\s*animation:\s*none;/,
     );
     expect(threadCss).toMatch(
-      /\.thread-turn:has\(\.thread-provider-retry\) \.working-text-sweep \{\s*display:\s*none;/,
+      /\.thread-turn:has\(\.thread-provider-retry\) \.working-text-base \{[^}]*animation:\s*none;[^}]*background:\s*none;[^}]*-webkit-text-fill-color:\s*currentColor;/s,
     );
   });
 

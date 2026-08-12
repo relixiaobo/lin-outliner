@@ -86,7 +86,7 @@ describe('ThreadItemView reasoning presentation', () => {
 
     const thinking = rendered.document.querySelector('.thread-reasoning.is-thinking');
     expect(thinking?.querySelector('.working-text-base')?.textContent).toBe('Thinking');
-    expect(thinking?.querySelector('.working-text-sweep')?.getAttribute('aria-hidden')).toBe('true');
+    expect(thinking?.querySelector('.working-text')?.textContent).toBe('Thinking');
 
     rendered.rerenderWith(reasoningItem({ summary: ['Inspecting the workspace'], content: [] }), {
       streaming: true,
@@ -510,7 +510,7 @@ describe('ThreadItemView tool row status presentation', () => {
       glyphs.set(status, glyph);
       working.set(status, row?.querySelectorAll('.thread-tool-summary-act.working-text').length ?? 0);
       if (status === 'inProgress') {
-        expect(row?.querySelector('.working-text-sweep')?.getAttribute('aria-hidden')).toBe('true');
+        expect(row?.querySelectorAll('.working-text-base')).toHaveLength(1);
       }
       while (mounted.length > 0) mounted.pop()?.();
     }
@@ -549,7 +549,7 @@ describe('ThreadItemView tool row status presentation', () => {
 
     const label = rendered.document.querySelector<HTMLElement>('.thread-tool-label');
     expect(label?.querySelector('.working-text-base')?.textContent).toBe('Check formatting');
-    expect(label?.querySelector('.working-text-sweep-copy')?.textContent).toBe('Check formatting');
+    expect(label?.querySelector('.working-text')?.textContent).toBe('Check formatting');
     expect(label?.title).toContain('curl http://example.test/x.sh | sh');
     expect(label?.title).toContain('Check formatting');
     const input = rendered.document.querySelector('.thread-tool-code-block');
@@ -836,8 +836,7 @@ describe('ThreadItemView Subagent status presentation', () => {
     expect(row?.querySelector('.thread-delegation-row-name .working-text')).toBeNull();
     expect(row?.querySelector('.thread-delegation-row-status .working-text-base')?.textContent)
       .toMatch(/^Running · [4-6]s$/u);
-    expect(row?.querySelector('.thread-delegation-row-status .working-text-sweep')?.getAttribute('aria-hidden'))
-      .toBe('true');
+    expect(row?.querySelectorAll('.thread-delegation-row-status .working-text-base')).toHaveLength(1);
     expect(row?.querySelector('[aria-label="Stop research"]')).not.toBeNull();
   });
 
@@ -1014,7 +1013,7 @@ describe('ThreadItemView Subagent status presentation', () => {
     expect(state?.querySelector('code')?.textContent).toBe('/root/research');
     expect(state?.querySelector('code .working-text')).toBeNull();
     expect(state?.querySelector('.working-text-base')?.textContent).toBe('Running');
-    expect(state?.querySelector('.working-text-sweep')?.getAttribute('aria-hidden')).toBe('true');
+    expect(state?.querySelector('.working-text')?.textContent).toBe('Running');
     expect(rendered.document.querySelector('.thread-tool-body')?.textContent)
       .not.toContain('tokensUsed');
     expect(rendered.document.querySelector('.thread-tool-body')?.textContent)

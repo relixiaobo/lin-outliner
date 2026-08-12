@@ -3074,7 +3074,7 @@ test.describe('canonical agent Thread surface', () => {
       // Identity stays still while only each live status phrase owns motion.
       await expect(rows.locator('.thread-delegation-row-name .working-text')).toHaveCount(0);
       await expect(rows.locator('.thread-delegation-row-status.working-text')).toHaveCount(2);
-      await expect(rows.locator('.thread-delegation-row-status .working-text-sweep')).toHaveCount(2);
+      await expect(rows.locator('.thread-delegation-row-status .working-text-base')).toHaveCount(2);
       // Every colour comes from the ink tokens, so the row follows the scheme
       // instead of carrying a hardcoded value that only works in light. The row
       // also has to share the tool rows' type ramp: it is one more thing the
@@ -4492,7 +4492,7 @@ test.describe('canonical agent Thread surface', () => {
     expect(animationSurface).toEqual({
       contain: 'paint',
       animations: [{
-        targetClass: 'working-text-sweep-copy',
+        targetClass: 'working-text-base',
         properties: ['backgroundPositionX', 'backgroundPositionY'],
         insideRoot: true,
       }],
@@ -4500,8 +4500,8 @@ test.describe('canonical agent Thread surface', () => {
     await expect(turn.locator('.thread-streaming-shape')).toHaveCSS('animation-name', 'none');
     await expect(turn.locator('.thread-streaming-shape path')).toHaveCSS('animation-name', 'none');
     await expect(groupToggle.locator('.thread-disclosure-status svg')).toHaveCSS('animation-name', 'none');
-    const groupSweep = groupToggle.locator('.working-text-sweep');
-    await expect(groupSweep).toHaveCSS('display', 'block');
+    const groupSweep = groupToggle.locator('.working-text-base');
+    await expect(groupSweep).toHaveCSS('animation-name', 'working-text-sweep');
     await page.evaluate(({ threadId, turnId }) => {
       const target = window as Window & {
         __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
@@ -4514,7 +4514,7 @@ test.describe('canonical agent Thread surface', () => {
       });
     }, ids);
     await expect(turn.locator('.thread-provider-retry')).toHaveText('Reconnecting 1/3');
-    await expect(groupSweep).toHaveCSS('display', 'none');
+    await expect(groupSweep).toHaveCSS('animation-name', 'none');
     await page.evaluate(({ threadId, turnId }) => {
       const target = window as Window & {
         __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
@@ -4541,6 +4541,11 @@ test.describe('canonical agent Thread surface', () => {
     await expect(running.locator('.working-text')).toHaveCount(1);
     await expect(done.locator('.working-text')).toHaveCount(0);
     await expect(running.locator('.thread-disclosure-status svg')).toHaveCSS('animation-name', 'none');
+    expect(await running.locator('.thread-tool-summary-act').evaluate((element) => (
+      getComputedStyle(element).color
+    ))).toBe(await done.locator('.thread-tool-summary-act').evaluate((element) => (
+      getComputedStyle(element).color
+    )));
 
     await groupToggle.click();
     await expect(group.locator('.thread-tool-activity-members')).toHaveCount(0);
@@ -4893,7 +4898,7 @@ test.describe('canonical agent Thread surface', () => {
     const workingLabel = progress.locator('.thread-plan-progress-label.working-text');
     await expect(workingLabel.locator('.working-text-base'))
       .toHaveText('2/24 · Implement the transient projection');
-    await expect(workingLabel.locator('.working-text-sweep')).toHaveAttribute('aria-hidden', 'true');
+    await expect(workingLabel.locator('.working-text-base')).toHaveCount(1);
     await expect(progress).toHaveAccessibleName('2/24 · Implement the transient projection');
     await expect(progress).toHaveAttribute('aria-expanded', 'false');
     await progress.hover();

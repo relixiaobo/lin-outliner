@@ -186,8 +186,9 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
   interpret shell syntax
 - a tool row keeps its own tool-type icon in every state, so a running or broken
   row still says which tool is involved. While running, only the neutral action
-  segment uses `WorkingText`, and that segment uses `--text-strong` at the same
-  400 weight as its terminal state so settling does not change glyph metrics;
+  segment uses `WorkingText`, and that segment keeps the same `--text-soft`
+  resting colour and 400 weight as its terminal state so the sweep remains
+  visible and settling does not change glyph metrics;
   a caller-authored command description remains exact rather than being rewritten
   into progressive copy. Failure still tints the glyph plus label with
   `--status-danger`, and an interrupted row is muted rather than alarmed. The
@@ -436,11 +437,11 @@ latch are Thread-session state, not persisted overrides. The empty placeholder
 carries the same classes as the populated one so the first token does not
 restyle the element. Reconnect recovery belongs to the matching Turn's response
 footer and replaces its rose generating indicator; it does not append a second
-row below that indicator. While reconnect is visible, the Turn's decorative
-`WorkingText` layers are hidden so the retry spinner is its sole motion owner.
-Its spinner honors `prefers-reduced-motion` and the state is cleared when a new
-Turn starts or the Thread list reloads, so it cannot outlive the attempt it
-describes.
+row below that indicator. While reconnect is visible, the Turn's `WorkingText`
+gradient animations are paused so the retry spinner is its sole motion owner.
+The text remains in place and readable. Its spinner honors
+`prefers-reduced-motion` and the state is cleared when a new Turn starts or the
+Thread list reloads, so it cannot outlive the attempt it describes.
 
 An active Turn ends with one rose shape indicator after all currently visible
 process and response content. It is the stable generating affordance for both

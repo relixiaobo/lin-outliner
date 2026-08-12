@@ -668,8 +668,10 @@
 
 /* Recovery owns the Turn's motion while it is visible. Keep the underlying
    working phrases readable, but do not sweep them beside the retry spinner. */
-.thread-turn:has(.thread-provider-retry) .working-text-sweep {
-  display: none;
+.thread-turn:has(.thread-provider-retry) .working-text-base {
+  animation: none;
+  background: none;
+  -webkit-text-fill-color: currentColor;
 }
 
 .thread-shape-stop-0 {
@@ -1387,13 +1389,6 @@
   text-overflow: ellipsis;
   transition: color var(--motion-fast);
   white-space: nowrap;
-}
-
-/* Progressive wording plus a stronger neutral colour remains readable when
-   motion is disabled without changing glyph metrics as the tool settles. */
-.thread-tool-inProgress > .thread-tool-toggle .thread-tool-summary-act,
-.thread-tool-inProgress > .thread-tool-activity-toggle .thread-tool-summary-act {
-  color: var(--text-strong);
 }
 
 .thread-tool-activity-count-failed,

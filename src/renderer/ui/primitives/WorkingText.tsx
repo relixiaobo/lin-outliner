@@ -6,7 +6,7 @@ interface WorkingTextProps extends Omit<HTMLAttributes<HTMLSpanElement>, 'childr
   readonly truncate?: boolean;
 }
 
-/** Readable text stays in normal flow; the hidden duplicate supplies motion. */
+/** One readable text layer carries paint-only motion without glyph overdraw. */
 export function WorkingText({
   className,
   text,
@@ -19,9 +19,6 @@ export function WorkingText({
       className={cx('working-text', truncate && 'working-text-truncate', className)}
     >
       <span className="working-text-base">{text}</span>
-      <span aria-hidden="true" className="working-text-sweep">
-        <span className="working-text-sweep-copy">{text}</span>
-      </span>
     </span>
   );
 }

@@ -159,18 +159,20 @@ remain in the dock and never become authorization overlays.
   pages do **not** get a centered empty-state block; the trailing editor line is
   the action point.
 - **Working:** a named action that Tenon is actively advancing keeps its semantic
-  glyph and puts motion on its action phrase through `WorkingText`. The normal
-  text layer stays readable and accessible; an absolute, pointer-inert,
-  `aria-hidden` copy supplies a paint-contained, background-clipped smooth sweep
-  after a `600ms` delay, crosses in `1s`, and repeats every `4s`. The effect never
-  animates transforms or masks, so a translucent parent material does not become
-  the animation surface. A truncated copy must share the base layer's width,
-  white-space, overflow, and ellipsis. Within a disclosure hierarchy, only the
+  glyph and puts motion on its action phrase through `WorkingText`. One normal,
+  accessible text layer supplies its own paint-contained, background-clipped
+  smooth sweep: it starts after `300ms`, crosses in approximately `1.4s`, and
+  repeats every `2.4s`. Rendering the glyph only once is required; overlaid text
+  copies change anti-aliasing density and look like a font-weight shift. The
+  effect never animates transforms or masks, so a translucent parent material
+  does not become the animation surface. Truncation, white-space, overflow, and
+  ellipsis belong to that same text layer. Within a disclosure hierarchy, only the
   most specific mounted eligible representation moves: a collapsed summary hands
   motion to an expanded live child, or stops when the expanded child has sufficient
-  static cues. `prefers-reduced-motion: reduce` and `prefers-contrast: more` hide
-  the sweep, so progressive wording, neutral colour, or a status mark must identify the
-  state without it. Waiting on a person or external authorization, retry backoff,
+  static cues. `prefers-reduced-motion: reduce` and `prefers-contrast: more`
+  restore ordinary static text fill, so progressive wording, neutral colour, or
+  a status mark must identify the state without motion. Waiting on a person or
+  external authorization, retry backoff,
   disconnected dependencies, terminal outcomes, and ordinary resource loading do
   not use `WorkingText`.
 - **Loading:** the first frame is the working surface, not a splash. Persistent
