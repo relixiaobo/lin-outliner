@@ -39,15 +39,27 @@ prompt bytes across Turns and restarts.
 
 L1 capability selection matches exact Core canonical tool keys. A namespaced extension
 or provider-encoded tool whose local name resembles a built-in never enables built-in
-filesystem, Outliner, Memory, Skill, or collaboration guidance.
+filesystem, Outliner, Memory, Skill, or Agent-orchestration guidance.
 
 The stable modules retain the established operational contract: renderer-safe
 deliverables use `[[file:Display name^/absolute/path]]`; Memory lookup searches and
 reads the `#d-memory`/`#d-episode`/`#d-belief` family; a Skill's declared dependency
-is verified and installed or enabled before an approximation is considered; and child
-Threads explicitly account for shared files, processes, ports, credentials, application
-state, and services. Tool-owned syntax such as generated-image placement remains on
-the owning tool description/result rather than being duplicated in the prompt.
+is verified and installed or enabled before an approximation is considered; and Agents
+explicitly account for shared files, processes, ports, credentials, application state,
+and services. Tool-owned syntax such as generated-image placement remains on the owning
+tool description/result rather than being duplicated in the prompt.
+
+Fresh Agent startup is a separate composition mode, not a parent-history
+projection. `general-purpose` and configured Roles receive their own system
+identity, the exact delegated prompt, repository instructions, the session-start
+git-status snapshot, an available-Skill catalog, and complete Role-preloaded
+Skill content. `explore` and `plan` receive their specialized prompt and small
+environment envelope without repository/status or catalog blocks. No Agent
+receives parent messages, reasoning, calls/results, read-file residue,
+parent-only Skill content, Memory prompt/data, or address roster. A resume then
+projects the Agent's own canonical history under its recorded configuration.
+The complete matrix is specified in
+[`agent-subagent-threads.md`](agent-subagent-threads.md).
 
 Every provider request, including requests after tools and steering, passes
 through `CanonicalContextProjector` at the native kernel's projection port. The
@@ -180,7 +192,7 @@ Messages become assistant content, while canonical reasoning contributes no
 provider message because canonical history does not retain provider-private
 reasoning signatures. The runtime never substitutes `[Reasoning]` or another
 text marker. Command, file, MCP, dynamic,
-collaboration, and web Items become paired provider tool-call and tool-result
+Agent-task, and web Items become paired provider tool-call and tool-result
 messages using the frozen projection recorded for each complete output. Dynamic tool
 results retain their ordered text, JSON, and actual image content at the provider
 boundary. Each image is preceded by a stable identity marker derived from its alt text
@@ -298,7 +310,7 @@ Provider events are converted as follows:
 - patch activity becomes `fileChange`
 - MCP calls become `mcpToolCall`
 - configured extension tools become `dynamicToolCall`
-- collaboration tools produce collaboration Items
+- `agent`, `agent_message`, and `task_stop` produce Agent-task Items
 - web and image activity use their canonical Item kinds
 
 OpenAI Responses requests use the provider's detailed reasoning-summary mode.
@@ -416,13 +428,10 @@ while its optional original remains available to file-oriented consumers. The ad
 provider text identifies the artifact and reports source size, observation size, both
 scale factors, and the observation-to-source affine matrix. This gives the model enough
 information to relate the bounded observation to the admitted source-image pixel plane.
-The runtime does not inspect, validate, convert, or rewrite later tool arguments,
-with one exception at the delegation boundary: a model-named `max_total_tokens`
-is raised to a fixed floor. A per-child cap is a circuit breaker sized at
-definitely-anomalous, not an allocation, and a model guessing at one guesses low
-— caps in the thousands starved children mid-answer and handed the parent a
-refusal instead of the work it delegated. A programmatic caller naming a cap is
-asking for a specific number and is left alone.
+The runtime does not inspect, validate, convert, or rewrite later tool arguments.
+Delegated-work request budgets are host-owned circuit breakers, not model tool
+arguments or per-child allocations; their admission and accounting contract is
+specified in [`agent-subagent-threads.md`](agent-subagent-threads.md).
 
 A tool result that reports its OWN failure is delivered to the model as an
 ordinary result, not raised as a host error: the envelope carries guidance
@@ -532,6 +541,16 @@ durable `userMessage` rather than a private runtime message. Warning delivery is
 advisory: failure is logged and execution continues. Steering diagnostics become
 consumed only when the native queue is drained into a later provider context; queue
 acceptance alone does not mark delivery.
+
+Background Agent completion is host-pushed, never model-polled. Once the child
+Turn and transcript append settle, a persisted `{agentId, generation}` event
+materializes at the direct parent's next idle admission boundary as canonical
+input with a typed non-user notification prefix. Foreground execution instead
+returns once through its original `agent` tool result and emits no notification.
+The output scanner runs exactly once before either boundary. Pending completion
+events are idempotent across restart and cannot overtake already-admitted genuine
+user input. Nested delivery advances one parent edge at a time so only a parent's
+synthesized result reaches its own parent.
 
 Interrupt aborts provider and tool work through the Turn signal, including
 provider and tool initialization before `prompt()`. Any execution

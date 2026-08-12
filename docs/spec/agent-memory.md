@@ -69,10 +69,15 @@ makes activity admitted during a disabled interval eligible.
 
 Only persistent root user Turns admitted while both modes are enabled may use or
 generate implicit Memory. Automation-origin Turns inside an otherwise ordinary
-Thread, Subagent Threads, inherited fork Items, internal Memory Threads,
+Thread, Agent child Threads, inherited fork Items, internal Memory Threads,
 ephemeral Threads, and external-context-polluted Threads are excluded by their
 canonical provenance. One ultimate `originItemId` can belong to only one
 extraction source.
+
+Fresh Agent context also excludes the Memory stable-prompt block, Memory data,
+and Memory projection filtering even when the child can call `node_read` or
+`node_search`. Memory is root-only by Thread provenance, not inferred from the
+child's tool pool.
 
 [`agent-automations.md`](agent-automations.md) owns the immutable Automation
 trigger and reciprocal run binding that this exclusion consumes. Memory never
@@ -117,8 +122,8 @@ reconstruct provider tool-call history or override the Item's frozen `modelCall`
 envelope.
 
 An internal hidden ephemeral `memory_consolidation` Thread runs the configured
-model with tools, Skills, plugins, MCP servers, network, collaboration, and
-Memory disabled. Hidden internal Threads do not publish renderer notifications
+model with model tools, Skills, plugins, MCP servers, network, Agent orchestration,
+and Memory disabled. Hidden internal Threads do not publish renderer notifications
 or invoke ordinary extension admission, context, Item, lifecycle, or tool hooks;
 the model receives the exact Memory system prompt without Skill preparation or
 the general interactive-agent prompt. Strict bounded JSON produces zero or more

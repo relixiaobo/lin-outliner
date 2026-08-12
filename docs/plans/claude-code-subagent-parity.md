@@ -40,8 +40,8 @@ and event-sourced persistence; Claude Code's private storage is not copied.
   profile with `CLAUDE_CODE_FORK_SUBAGENT` unset: every `Agent` call starts
   fresh, `run_in_background` is model-visible, and background is the default.
 - **Hard constraints:** preserve Tenon's process boundary, event-sourced
-  Thread/Turn/Item authority, permission checks, token circuit breaker, and
-  current Subagent transcript account.
+  Thread/Turn/Item authority, Full Access and explicit capability blocks, token
+  circuit breaker, and current Subagent transcript account.
 - **Accepted tradeoff:** the provider-facing names are Tenon catalog names:
   `Agent` -> `agent`, `SendMessage` -> `agent_message`, and `TaskStop` ->
   `task_stop`. The three special built-in Agent types are `general-purpose`,
@@ -151,7 +151,7 @@ Before changing runtime code, add sanitized parity fixtures for:
 | `fresh-general`, `fresh-explore`, `fresh-plan` | first provider request: system blocks, initial messages, model settings, tools, stable-prompt block matrix, and a fresh Skill catalog with no built-in `research` entry |
 | `agent-type-resolution` | exact-match priority, case/separator normalization, unique match, ambiguity, and missing-type diagnostics |
 | `zero-tools`, `partial-invalid-tools`, `invalid-tools-zero` | explicit-empty execution, partial unknown-tool degradation, and pre-I/O refusal when a non-empty list resolves to nothing |
-| `foreground`, `background` | blocking, cancellation ownership, every result content block, launch text, terminal text, usage, and permission prompts |
+| `foreground`, `background` | blocking, cancellation ownership, every result content block, launch text, terminal text, usage, and unchanged Full Access boundary |
 | `send-main-background`, `send-main-foreground`, `send-validation`, `steer`, `resume` | background and foreground `main` safety envelopes, foreground reply-clause variants, blank/overlong summary, blank/spaced `to`, Agent ID continuity, exact success JSON, and delivery timing |
 | `model-stop`, `user-stop`, `task-stop` | stop provenance, killed notification, `task_id`/`shell_id` precedence, unified Agent/shell dispatch, and exact validation failures |
 | `nested`, `depth-limit`, `concurrency-limit` | direct-parent delivery, visible tools, refusal text, and slot accounting |
@@ -525,13 +525,13 @@ list.
 
 Fresh context composition gets one dedicated builder. Initial spawn records its
 resolved system/tool configuration. Every model-addressable child persists its
-selected Agent definition, model choice, effective permissions, tool policy,
+selected Agent definition, model choice, effective capability set, tool policy,
 preloaded Skills, and session-start inputs. Resume appends to that child history
 and reuses the recorded configuration; it does not rebuild startup messages or
 silently adopt later Role changes. A foreground `explore`/`plan` transcript has
 an internal execution identity but does not expose an address to the model.
 
-### 4. Tool resolution and permissions
+### 4. Tool resolution and capability policy
 
 Agents begin with the parent's available built-in and MCP tools, then apply the
 same ordered filters as the default `2.1.227` profile. The raw fixture matrix is
@@ -562,7 +562,7 @@ Tenon's action-category mapping is explicit so every current tool has a result:
 | `node_create`, `node_edit`, `node_delete` / file mutation tools | Inherited | Kept | Removed |
 | `node_create`, `node_edit`, `node_delete` in `isolation: "worktree"` | Removed | Removed | Removed; worktree Agents cannot touch live outline state |
 | `outline_undo_stack` | Removed | Removed | Removed; undo/redo is root-only shared document history |
-| `bash` | Inherited | Kept | May remain; system/permission policy enforces the repository-mutation restriction |
+| `bash` | Inherited | Kept | May remain; system/capability policy enforces the repository-mutation restriction |
 | `web_search`, `web_fetch`, and `skill` | Inherited | Kept | Role policy, fixture-backed |
 | `generate_image` and `data_import` | Inherited | Removed | Removed unless an explicit Role fixture says otherwise |
 | `agent` | Kept below the depth limit | Kept below the depth limit | Removed |
@@ -576,21 +576,21 @@ spawn, resume, provider schema, and tests cannot drift. Role-tool resolution
 then follows the explicit-empty/partial-invalid/all-invalid distinction in the
 fresh-context section.
 
-Subagents inherit the parent's permission mode unless the selected Role narrows
-it. A tool call that needs approval pauses the child and surfaces the existing
-approval UI in the root conversation, labeled with the Agent. Approval resumes
-that exact child call; Esc denies the call without stopping the Agent. An
-`agent_message` call is ordinary task direction and can never grant permission,
-alter the permission mode, replace repository instructions, or change Agent
-configuration. `request_user_input` is never in an Agent tool pool.
+Tenon's existing Full Access contract remains authoritative: it has no
+permission mode or approval pause/resume flow. Parent/Role capability ceilings
+and explicit blocks still narrow the child. An `agent_message` call is ordinary
+task direction and can never grant permission, alter capability configuration,
+replace repository instructions, approve a plan, answer a pending user question,
+or turn a denied operation into an allowed one. `request_user_input` is never in
+an Agent tool pool.
 
 ### 5. Foreground and background execution
 
 Background is the default. `run_in_background: false` makes the `agent` tool
 call foreground and blocking.
 
-- A foreground Agent shares the invoking Turn's cancellation lifetime, streams
-  permission requests to the root UI, and returns its scanned final or partial
+- A foreground Agent shares the invoking Turn's cancellation lifetime and returns
+  its scanned final or partial
   report in the original tool result. It emits no later task notification.
 - A background Agent gets an independent AbortController. Cancelling or ending
   the parent's current Turn does not cancel it. The tool call returns after the
@@ -863,7 +863,7 @@ the isolation promise and the repository's security boundary.
 
 ### 10. Tenon integration and spec cleanup
 
-Thread, Turn, Item, spawn-edge, transcript, budget, permission, and renderer
+Thread, Turn, Item, spawn-edge, transcript, budget, capability, and renderer
 projections remain the internal source of truth. Agent IDs replace task paths at
 the model boundary only; UI labels can still use Role-derived nicknames. Running,
 needs-input, completed, failed, and stopped presentation derives from canonical
@@ -932,7 +932,7 @@ note.
 | **FR-2 Context contract** | Every Agent starts fresh with the captured `general-purpose` / `explore` / `plan` context matrix. | AC-2 |
 | **FR-3 Capability contract** | Agent type normalization, run mode, depth, and Role policy resolve the captured tool pool; intentional empty remains runnable while non-empty-all-invalid refuses. | AC-4, AC-10 |
 | **FR-4 Execution contract** | Foreground blocks; background detaches and completes through host delivery. | AC-5, AC-7 |
-| **FR-5 Authority contract** | User approval and user stop remain distinguishable from `main` delivery, Agent messages, and model stop. | AC-6, AC-9 |
+| **FR-5 Authority contract** | User-authored input and user stop remain distinguishable from `main` delivery, Agent messages, and model stop; model traffic cannot manufacture user authority. | AC-6, AC-9 |
 | **FR-6 Handoff safety** | Every final report is scanned and framed exactly once before parent consumption. | AC-7, AC-8 |
 | **FR-7 Scheduling contract** | Direct-parent nesting, depth 3, live cap 20, resume bypass, and no lifetime cap match the target. | AC-10, AC-11 |
 | **FR-8 Isolation contract** | Worktree Agents cannot mutate the main checkout or the user's live outline, all Agent pools cannot mutate shared undo history, and changed work remains recoverable. | AC-12 |
@@ -944,9 +944,9 @@ note.
 - **FLOW-1 Fresh background:** `agent` admission -> independent child Turn ->
   immediate launch result -> scanned direct-parent notification -> parent
   continuation. Failure before output is terminal; partial output is preserved.
-- **FLOW-2 Foreground:** `agent` admission -> blocking child Turn -> root-labeled
-  permission interaction when needed -> one scanned tool result. Parent
-  cancellation cancels the child and no later notification appears.
+- **FLOW-2 Foreground:** `agent` admission -> blocking child Turn -> one scanned
+  tool result. Parent cancellation cancels the child and no later notification
+  appears. Full Access and explicit capability blocks remain unchanged.
 - **FLOW-3 Nested:** child `agent` admission -> descendant notification to its
   direct parent -> parent synthesis -> top-level notification to root. Capacity,
   depth, invalid type, or non-empty-all-invalid tool refusal creates no child
@@ -1005,9 +1005,10 @@ note.
 - **AC-5 Execution modes:** background returns before completion and survives
   parent Turn cancellation; foreground blocks, shares cancellation, returns the
   scanned outcome once, and never emits a later notification.
-- **AC-6 Permissions:** child approval prompts identify the Agent in the root
-  UI; allow/deny resumes the exact call, while Agent messages and the reserved
-  `main` route cannot approve, answer user questions, or alter configuration.
+- **AC-6 Authority:** Full Access adds no approval prompt or permission mode.
+  Agent messages and the reserved `main` route cannot approve a plan, answer
+  user questions, alter configuration or capability blocks, clear user-stop
+  provenance, or launder a denied operation.
 - **AC-7 Notification:** success, API failure with/without partial text, model
   stop, `task_stop`-killed, budget exhaustion, worktree, and empty-final-report
   fixtures produce the exact non-user prefix, tag order, note, optional
@@ -1058,11 +1059,11 @@ note.
 | --- | --- |
 | Protocol and tools | `src/core/agent/tools.ts` model-tool contracts/model-visible budget views; `src/core/agent/protocol.ts` Agent task/item/status DTOs; `src/core/agent/configuration.ts` Role types; `AgentConfigurationLoader` built-in definitions/catalog projection; codec tests |
 | Context/runtime | `stablePrompt.ts` root-only Memory gate and Agent guidance; context composition; `PiTurnExecutor.canonicalizeAgentTools` plus provider-layer fixtures; `ToolRuntime` exact handlers/tool filtering |
-| Orchestration | `SubagentCollaboration` fresh-spawn/message/stop/resume and isolated-Skill default backing; `TurnLifecycle` admission, budget steering/refusal, permission pause, terminal settlement, and continuation; `ThreadService` facade/recovery |
+| Orchestration | `SubagentCollaboration` fresh-spawn/message/stop/resume and isolated-Skill default backing; `TurnLifecycle` admission, budget steering/refusal, terminal settlement, and continuation; `ThreadService` facade/recovery |
 | Shell task integration | `agentLocalTools.ts` contributes unified `task_stop` dispatch while retiring `bash_stop`; background-process task identity and process-tree termination stay canonical |
 | Skills/configuration | `agentSkills.ts` removes `research` and the `readOnlyIsolated` partition while retaining generic isolated execution; `AgentConfigurationLoader` removes the built-in `worker`; `main.ts` removes read-only isolated spawn/fallback plumbing |
 | Persistence/safety | `ThreadMetadataStore`, `SubagentRequestLedger` with lifetime counting removed, a persisted Agent notification record, output scanner, and Agent worktree lifecycle built on `AutomationWorktree` primitives |
-| Renderer | Subagent presentation/detail components, user-stop provenance, explicit user resume, permission attribution, process summary, and typed i18n |
+| Renderer | Subagent presentation/detail components, user-stop provenance, explicit user resume, process summary, and typed i18n |
 | Tests | `agentThreadService.test.ts`, `agentCodexTools.test.ts`, `agentContextComposer.test.ts`, `agentPiTurnExecutor.test.ts`, permission/transcript/codec tests, `subagentPresentation.test.ts`, renderer store/item tests, and `agent-thread.spec.ts` |
 | Documents | the nine current specs and two active plans named above; production-code grep gates for retired collaboration, `research`, and `readOnlyIsolated` surfaces |
 
@@ -1104,10 +1105,11 @@ complete-feature rule.
   Dispatch through one typed registry and reject ambiguous IDs rather than
   guessing a task owner.
 - **Notification injection:** child output is untrusted. The exact scanner runs
-  before host-authored notification framing, and permission checks remain the
+  before host-authored notification framing, and capability checks remain the
   authority for any downstream tool call.
-- **Wrong-authority approval:** steering must not resolve a permission prompt.
-  Approval identity remains user/UI-owned and binds to one child tool call.
+- **Wrong-authority escalation:** Agent traffic must not be mistaken for user
+  input or used to bypass explicit blocks. `main` delivery remains non-user
+  content and cannot approve, configure, or clear user-stop provenance.
 - **Attribution/address confusion:** `agent-message from` carries a canonical
   type for provenance, not a routable ID. Fixture-lock the addressable and
   unaddressable foreground suffixes so model guidance never routes to `from`.
@@ -1158,8 +1160,8 @@ Checked `gh pr list`, `docs/TASKS.md`, active plans, and intended file scopes on
   refusal, separate foreground/background `agent_message({ to: "main", ... })`
   envelopes, blank/truncated summary, blank/spaced
   recipient, next-tool-round steering, steer-at-finish, unified Agent/shell stop,
-  killed notification, model/user stop, same-ID resume with `pin`, permission
-  prompt, output scan, budget interruption/refusal without live budget fields,
+  killed notification, model/user stop, same-ID resume with `pin`, Full Access
+  and explicit-block behavior, output scan, budget interruption/refusal without live budget fields,
   root-only Memory context, worktree outline containment, and all-Agent undo
   exclusion.
 - Require empty production-code grep output for `research`, `readOnlyIsolated`,
@@ -1189,6 +1191,6 @@ parity defect, not as a local design choice.
   foreground/background ownership, direct-parent notifications, output scanning,
   budget-interrupted/refusal mappings, `agent_message`, `task_stop`, resume, and
   the 20-slot admission gate.
-- [ ] Add child permission attribution and worktree isolation, then update
+- [ ] Add worktree isolation, then update
   renderer projections, current specs, affected active plans, automated suites,
   and production-provider evidence.
