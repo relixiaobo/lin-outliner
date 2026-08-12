@@ -721,6 +721,18 @@ test.describe('canonical agent Thread surface', () => {
     const liveTurn = page.locator(`[data-thread-turn-row="${ids.liveTurnId}"]`);
     await expect(liveTurn.locator('.thread-process-block')).toHaveCount(1);
     await expect(liveTurn.locator('.thread-process-title')).toHaveText('Working');
+    const liveTitleGeometry = await liveTurn.locator('.thread-process-title').evaluate((element) => {
+      const divider = element.closest('.thread-work-divider');
+      if (!(divider instanceof HTMLElement)) throw new Error('Expected live process divider');
+      return {
+        numericVariant: getComputedStyle(element).fontVariantNumeric,
+        widthDelta: Math.abs(
+          element.getBoundingClientRect().width - divider.getBoundingClientRect().width,
+        ),
+      };
+    });
+    expect(liveTitleGeometry.numericVariant).toContain('tabular-nums');
+    expect(liveTitleGeometry.widthDelta).toBeLessThan(1);
     await expect(liveTurn.getByText('Initiating web search.')).toBeVisible();
     const liveIndicator = liveTurn.getByLabel('Assistant is responding');
     await expect(liveIndicator).toBeVisible();
@@ -767,6 +779,44 @@ test.describe('canonical agent Thread surface', () => {
       };
     });
     expect(Math.abs(liveProcessGaps.above - liveProcessGaps.below)).toBeLessThan(1);
+
+    await page.evaluate(({ liveTurnId, threadId }) => {
+      const target = window as Window & {
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/providerRetry/changed',
+        threadId,
+        turnId: liveTurnId,
+        status: { kind: 'stream', attempt: 1, maxRetries: 3 },
+      });
+    }, ids);
+    const reconnect = liveTurn.locator('.thread-response-footer .thread-provider-retry');
+    await expect(reconnect).toHaveText('Reconnecting 1/3');
+    await expect(liveTurn.getByLabel('Assistant is responding')).toHaveCount(0);
+    await expect(page.locator('.thread-transcript-content > .thread-provider-retry')).toHaveCount(0);
+    const reconnectAlignment = await reconnect.evaluate((element) => {
+      const footer = element.closest('.thread-response-footer');
+      if (!(footer instanceof HTMLElement)) throw new Error('Expected response footer');
+      const footerRect = footer.getBoundingClientRect();
+      const retryRect = element.getBoundingClientRect();
+      return Math.abs(
+        (footerRect.top + footerRect.height / 2) - (retryRect.top + retryRect.height / 2),
+      );
+    });
+    expect(reconnectAlignment).toBeLessThan(1);
+    await page.evaluate(({ liveTurnId, threadId }) => {
+      const target = window as Window & {
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/providerRetry/changed',
+        threadId,
+        turnId: liveTurnId,
+        status: null,
+      });
+    }, ids);
+    await expect(liveTurn.getByLabel('Assistant is responding')).toBeVisible();
 
     await page.evaluate(({ liveTurnId, threadId }) => {
       const target = window as Window & {
@@ -4335,7 +4385,7 @@ test.describe('canonical agent Thread surface', () => {
 
   test('hands running group motion between its summary and expanded members', async ({ page }) => {
     await createNewThread(page);
-    const turnId = await page.evaluate(async () => {
+    const ids = await page.evaluate(async () => {
       const target = window as Window & {
         lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
         __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
@@ -4385,10 +4435,10 @@ test.describe('canonical agent Thread surface', () => {
           durationMs: null,
         },
       });
-      return liveTurnId;
+      return { threadId, turnId: liveTurnId };
     });
 
-    const turn = page.locator(`[data-thread-turn-row="${turnId}"]`);
+    const turn = page.locator(`[data-thread-turn-row="${ids.turnId}"]`);
     const group = turn.locator('.thread-tool-activity-group');
     await expect(group).toHaveClass(/thread-tool-inProgress/);
     const groupToggle = group.locator(':scope > .thread-tool-activity-toggle');
@@ -4427,7 +4477,36 @@ test.describe('canonical agent Thread surface', () => {
         insideRoot: true,
       }],
     });
+    await expect(turn.locator('.thread-streaming-shape')).toHaveCSS('animation-name', 'none');
+    await expect(turn.locator('.thread-streaming-shape path')).toHaveCSS('animation-name', 'none');
     await expect(groupToggle.locator('.thread-disclosure-status svg')).toHaveCSS('animation-name', 'none');
+    const groupSweep = groupToggle.locator('.working-text-sweep');
+    await expect(groupSweep).toHaveCSS('display', 'block');
+    await page.evaluate(({ threadId, turnId }) => {
+      const target = window as Window & {
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/providerRetry/changed',
+        threadId,
+        turnId,
+        status: { kind: 'stream', attempt: 1, maxRetries: 3 },
+      });
+    }, ids);
+    await expect(turn.locator('.thread-provider-retry')).toHaveText('Reconnecting 1/3');
+    await expect(groupSweep).toHaveCSS('display', 'none');
+    await page.evaluate(({ threadId, turnId }) => {
+      const target = window as Window & {
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/providerRetry/changed',
+        threadId,
+        turnId,
+        status: null,
+      });
+    }, ids);
+    await expect(groupSweep).toHaveCSS('display', 'block');
     await expect(group.locator('.thread-tool-activity-members')).toHaveCount(0);
 
     // The semantic group glyph uses the ordinary disclosure handoff on hover.

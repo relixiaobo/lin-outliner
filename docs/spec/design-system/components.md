@@ -150,7 +150,8 @@ between rest, hover, focus, loading, and expansion. Stop/close actions in dense
 rows default to unboxed icon controls whose glyph colour deepens on hover/focus.
 Active tool and Subagent rows retain their semantic glyph and apply
 `WorkingText` only to the advancing action/status phrase; an in-progress tool
-action also uses 600 weight as its non-motion cue. A collapsed running group owns
+action also uses stronger neutral colour at the same weight as its metric-stable
+non-motion cue. A collapsed running group owns
 the sweep on its summary, while expansion freezes that summary and transfers the
 sweep to its running members. Finished members remain static.
 Turn-local Plan progress uses the same compact status register above the

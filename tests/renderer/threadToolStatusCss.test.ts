@@ -73,11 +73,24 @@ describe('thread tool row status CSS guards', () => {
     }
   });
 
-  test('uses running action weight as the static cue and never spins the semantic glyph', () => {
+  test('uses metric-stable running colour as the static cue and never spins the semantic glyph', () => {
     expect(threadCss).toMatch(
-      /\.thread-tool-inProgress > \.thread-tool-toggle \.thread-tool-summary-act,\s*\.thread-tool-inProgress > \.thread-tool-activity-toggle \.thread-tool-summary-act \{\s*font-weight:\s*600;/,
+      /\.thread-tool-inProgress > \.thread-tool-toggle \.thread-tool-summary-act,\s*\.thread-tool-inProgress > \.thread-tool-activity-toggle \.thread-tool-summary-act \{\s*color:\s*var\(--text-strong\);/,
     );
+    expect(threadCss).not.toMatch(/\.thread-tool-inProgress[^}]*font-weight:/s);
     expect(threadCss).not.toMatch(/\.thread-tool-inProgress[^{]*\.thread-disclosure-status svg\s*\{[^}]*animation:/);
+  });
+
+  test('reserves stable live elapsed geometry and one Turn motion owner', () => {
+    expect(threadCss).toMatch(
+      /\.thread-process-title-live \{\s*width:\s*100%;\s*font-variant-numeric:\s*tabular-nums;/,
+    );
+    expect(threadCss).toMatch(
+      /\.thread-turn:has\(\.working-text\) \.thread-streaming-shape,\s*\.thread-turn:has\(\.working-text\) \.thread-streaming-shape path \{\s*animation:\s*none;/,
+    );
+    expect(threadCss).toMatch(
+      /\.thread-turn:has\(\.thread-provider-retry\) \.working-text-sweep \{\s*display:\s*none;/,
+    );
   });
 
   test('lets running rows use the ordinary disclosure glyph and chevron handoff', () => {

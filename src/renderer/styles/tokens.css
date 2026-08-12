@@ -66,7 +66,7 @@
   --text-secondary: rgb(var(--ink) / 0.55);
   --text-tertiary: rgb(var(--ink) / 0.30);
   --text-quaternary: rgb(var(--ink) / 0.16);
-  --working-text-highlight: rgb(var(--ink) / 0.82);
+  --working-text-highlight: rgb(var(--ink) / 0.68);
 
   /* neutral fills — control / hover / active / selection backgrounds */
   --fill-1: rgb(var(--ink) / 0.04);

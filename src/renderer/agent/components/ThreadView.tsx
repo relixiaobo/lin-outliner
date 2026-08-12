@@ -1690,6 +1690,7 @@ export function ThreadView({
                         onReadToolOutput={onReadToolOutput}
                         latchedReasoning={latchedReasoning}
                         liveReasoningSeen={liveReasoningSeen}
+                        providerRetry={providerRetry?.turnId === turn.id ? providerRetry.status : null}
                         threadId={threadId}
                         threadCwd={threadCwd}
                         threadsById={threadsById}
@@ -1702,7 +1703,6 @@ export function ThreadView({
                 })}
               </div>
             ) : null}
-            {providerRetry ? <ThreadProviderRetryStatus status={providerRetry.status} /> : null}
             {sendAnchorSpacer ? (
               <div
                 aria-hidden
@@ -1947,6 +1947,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
   onOpenTurnDetails,
   onReadToolArguments,
   onReadToolOutput,
+  providerRetry,
   threadId,
   threadCwd,
   threadsById,
@@ -1978,6 +1979,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
   readonly onOpenTurnDetails: (turn: Turn) => void;
   readonly onReadToolArguments: (turnId: string, item: ThreadToolItem) => Promise<JsonValue | null>;
   readonly onReadToolOutput: (turnId: string, item: ThreadToolItem) => Promise<string | null>;
+  readonly providerRetry: ProviderRetryStatus | null;
   readonly threadId: string;
   readonly threadCwd: string;
   readonly threadsById: ReadonlyMap<ThreadId, Thread>;
@@ -2075,6 +2077,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
       onContinueInNewChat={continueInNewChat}
       onOpenDetails={() => onOpenTurnDetails(turn)}
       onRetry={retryContent ? () => onEditUserMessage(turn, retryContent) : null}
+      providerRetry={providerRetry}
       // The process divider states the terminal status when there is no
       // response Item — but only if a process block renders at all. Without
       // one, suppressing it here would erase the status from the Turn.
@@ -2169,6 +2172,7 @@ function ThreadResponseTail({
   onContinueInNewChat,
   onOpenDetails,
   onRetry,
+  providerRetry,
   statusOwnedElsewhere,
   turn,
 }: {
@@ -2183,6 +2187,7 @@ function ThreadResponseTail({
   readonly onOpenDetails: () => void;
   /** Present only where running the same request again could go differently. */
   readonly onRetry: (() => Promise<void>) | null;
+  readonly providerRetry: ProviderRetryStatus | null;
   readonly statusOwnedElsewhere: boolean;
   readonly turn: Turn;
 }) {
@@ -2217,7 +2222,11 @@ function ThreadResponseTail({
         </div>
       ) : null}
       <div className="thread-response-footer">
-        {streaming ? <ThreadStreamingIndicator /> : (
+        {streaming ? (
+          providerRetry
+            ? <ThreadProviderRetryStatus status={providerRetry} />
+            : <ThreadStreamingIndicator />
+        ) : (
           <div className="thread-message-actions thread-response-actions">
             {onRetry ? (
               <IconButton
@@ -2601,6 +2610,9 @@ function ThreadProcessBlock({
   const summaryWorking = turn.status === 'inProgress'
     && !blockedOnUser
     && !hasSpecificLiveProcessState(turn, items, subagents);
+  const processTitleClassName = `thread-process-title${turn.status === 'inProgress'
+    ? ' thread-process-title-live'
+    : ''}`;
   return (
     <div className={`thread-process-block${turn.status === 'failed' && !hasFinalResponse ? ' is-error' : ''}`}>
       {terminalResponseOwnsStatus ? null : collapsible ? (
@@ -2620,8 +2632,8 @@ function ThreadProcessBlock({
       ) : (
         <div className="thread-work-divider">
           {summaryWorking
-            ? <WorkingText className="thread-process-title" text={summary} truncate />
-            : <span className="thread-process-title">{summary}</span>}
+            ? <WorkingText className={processTitleClassName} text={summary} truncate />
+            : <span className={processTitleClassName}>{summary}</span>}
         </div>
       )}
       {terminalResponseOwnsStatus ? null : <div aria-hidden className="thread-process-rule" />}

@@ -592,6 +592,11 @@
   white-space: nowrap;
 }
 
+.thread-process-title-live {
+  width: 100%;
+  font-variant-numeric: tabular-nums;
+}
+
 .thread-process-toggle {
   width: fit-content;
   max-width: min(100%, 520px);
@@ -652,6 +657,19 @@
 .thread-streaming-shape path {
   d: path("M 23.9 7.81 L 24.1 7.81 Q 28.87 7.81 30.57 12.27 L 37.28 29.8 Q 39.42 35.41 33.42 35.41 L 14.58 35.41 Q 8.58 35.41 10.72 29.8 L 17.43 12.27 Q 19.13 7.81 23.9 7.81 Z");
   animation: thread-shape var(--motion-shape-cycle) ease-in-out infinite;
+}
+
+/* One Turn gets one motion owner. While a named process phrase is sweeping,
+   the response glyph keeps its identity but does not add a second cadence. */
+.thread-turn:has(.working-text) .thread-streaming-shape,
+.thread-turn:has(.working-text) .thread-streaming-shape path {
+  animation: none;
+}
+
+/* Recovery owns the Turn's motion while it is visible. Keep the underlying
+   working phrases readable, but do not sweep them beside the retry spinner. */
+.thread-turn:has(.thread-provider-retry) .working-text-sweep {
+  display: none;
 }
 
 .thread-shape-stop-0 {
@@ -1085,20 +1103,26 @@
 
 .thread-provider-retry {
   display: flex;
+  max-width: 100%;
   min-width: 0;
-  min-height: var(--control-size-sm);
-  flex: 0 0 var(--control-size-sm);
   align-items: center;
   gap: var(--space-3);
   color: var(--text-soft);
-  font-size: var(--font-ui-sm);
-  line-height: var(--line-ui-sm);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
   user-select: none;
 }
 
 .thread-provider-retry svg {
   flex: 0 0 auto;
   animation: thread-tool-spin var(--motion-spin-cycle) linear infinite;
+}
+
+.thread-provider-retry span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .thread-agent-message-body {
@@ -1361,15 +1385,15 @@
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  transition: color var(--motion-fast);
   white-space: nowrap;
 }
 
-/* Motion disappears for reduced-motion and increased-contrast users, so the
-   active tool's action keeps one quiet non-motion cue. The act is the row's
-   shrinking segment; controls and the fixed status slot retain their geometry. */
+/* Progressive wording plus a stronger neutral colour remains readable when
+   motion is disabled without changing glyph metrics as the tool settles. */
 .thread-tool-inProgress > .thread-tool-toggle .thread-tool-summary-act,
 .thread-tool-inProgress > .thread-tool-activity-toggle .thread-tool-summary-act {
-  font-weight: 600;
+  color: var(--text-strong);
 }
 
 .thread-tool-activity-count-failed,

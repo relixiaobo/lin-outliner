@@ -36,14 +36,14 @@ describe('WorkingText', () => {
   });
 
   test('WorkingText uses a cadenced tokenized sweep and becomes static for motion and contrast preferences', () => {
-    expect(tokensCss).toContain('--working-text-highlight: rgb(var(--ink) / 0.82);');
+    expect(tokensCss).toContain('--working-text-highlight: rgb(var(--ink) / 0.68);');
     expect(tokensCss).toContain('--motion-working-cycle: 4s;');
     expect(tokensCss).toContain('--motion-working-delay: 600ms;');
     expect(tokensCss).not.toContain('--motion-working-stagger');
     expect(workingTextCss).toMatch(
       /animation:\s*working-text-sweep var\(--motion-working-cycle\) linear var\(--motion-working-delay\) infinite;/,
     );
-    expect(workingTextCss).toMatch(/0% \{[^}]*animation-timing-function:\s*steps\(48, end\);/s);
+    expect(workingTextCss).not.toMatch(/steps\(/);
     expect(workingTextCss).toMatch(/25%,\s*100% \{[^}]*background-position:\s*250% 0;/s);
     expect(workingTextCss).toMatch(
       /@media \(prefers-reduced-motion: reduce\), \(prefers-contrast: more\) \{\s*\.working-text-sweep \{\s*display:\s*none;/,

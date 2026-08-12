@@ -537,7 +537,7 @@ describe('ThreadItemView tool row status presentation', () => {
     expect(label?.textContent).toBe(label?.title);
   });
 
-  test('keeps described command copy exact and uses running weight as its static cue', async () => {
+  test('keeps described command copy exact while the running action stays metric-stable', async () => {
     // The description is a claim; the command is the fact. A row that shows only
     // the claim would let "Check formatting" stand in for `curl … | sh`.
     const rendered = renderItem(command({

@@ -186,7 +186,8 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
   interpret shell syntax
 - a tool row keeps its own tool-type icon in every state, so a running or broken
   row still says which tool is involved. While running, only the neutral action
-  segment uses `WorkingText`, and that segment has 600 weight as its static cue;
+  segment uses `WorkingText`, and that segment uses `--text-strong` at the same
+  400 weight as its terminal state so settling does not change glyph metrics;
   a caller-authored command description remains exact rather than being rewritten
   into progressive copy. Failure still tints the glyph plus label with
   `--status-danger`, and an interrupted row is muted rather than alarmed. The
@@ -401,7 +402,9 @@ The live status row uses `WorkingText` only while no more-specific mounted live
 tool, empty `Thinking` placeholder, Subagent status, or readable streaming Item
 owns or statically suppresses that cue. Once a specific process representation
 exists, the Turn summary stays static. Completed collapsible summaries and
-terminal summaries are always static.
+terminal summaries are always static. A live status title occupies its full
+divider width and uses tabular numerals, so its once-per-second elapsed update
+does not resize the visible title slot.
 
 The status line never claims more than the run is doing. A settled Turn is
 described in the past — it never falls through to the live `Working` label —
@@ -428,9 +431,13 @@ lone multi-line terminal reasoning Item first observed only after settlement
 still opens for readability; that terminal default and the live-observation
 latch are Thread-session state, not persisted overrides. The empty placeholder
 carries the same classes as the populated one so the first token does not
-restyle the element. The reconnect
-banner honors `prefers-reduced-motion` and is cleared when a new Turn starts or
-the Thread list reloads, so it cannot outlive the attempt it describes.
+restyle the element. Reconnect recovery belongs to the matching Turn's response
+footer and replaces its rose generating indicator; it does not append a second
+row below that indicator. While reconnect is visible, the Turn's decorative
+`WorkingText` layers are hidden so the retry spinner is its sole motion owner.
+Its spinner honors `prefers-reduced-motion` and the state is cleared when a new
+Turn starts or the Thread list reloads, so it cannot outlive the attempt it
+describes.
 
 An active Turn ends with one rose shape indicator after all currently visible
 process and response content. It is the stable generating affordance for both
@@ -439,7 +446,10 @@ indicator occupies the same persistent response-footer slot as the terminal
 Copy, Continue in new chat, and Details controls, and swaps to those controls
 without moving the response. User-message actions likewise fill a persistent
 slot that remains empty and non-interactive while the Turn is live. The indicator
-stops animating under reduced-motion preferences. A failed or interrupted Turn
+stays present but static while that Turn has a `WorkingText` owner, and reconnect
+recovery replaces it in the same footer slot; one Turn therefore never presents
+two concurrent motion owners. It also stops animating under reduced-motion
+preferences. A failed or interrupted Turn
 with partial response prose keeps its process presentation neutral because the
 response tail already owns the terminal error or stopped state.
 
@@ -965,8 +975,9 @@ terminal state, so completion never swaps a measured live height for an intrinsi
 fallback.
 
 Provider request and stream retries are transient execution state, not Items.
-The selected Thread shows the established live reconnecting row while retrying
-and removes it when the provider recovers or the Turn becomes terminal.
+The selected Thread shows reconnecting status in the matching Turn's response
+footer while retrying, replacing the rose generating indicator in that fixed
+slot, and removes it when the provider recovers or the Turn becomes terminal.
 
 `update_plan` is an ordinary tool call and is recorded like any other: the
 session shows the complete, actual process, so a Plan update the agent
