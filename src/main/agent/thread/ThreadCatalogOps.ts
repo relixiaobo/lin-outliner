@@ -69,6 +69,7 @@ export class ThreadCatalogOps {
     private readonly clearGoal: (threadId: ThreadId) => Promise<void>,
     private readonly clearSubagentBudget: (threadId: ThreadId) => void,
     private readonly clearSubagentExecutions: (threadIds: readonly ThreadId[]) => void,
+    private readonly clearAgentStartupContexts: (sessionIds: readonly string[]) => void,
     private readonly createThreadBusyError: (message: string) => Error,
   ) {}
   pendingNameShutdownHandles(): readonly { abort: () => void; completion: Promise<void> }[] {
@@ -594,6 +595,12 @@ export class ThreadCatalogOps {
           }
           this.clearThreadCoordinationState(subtree.threadIds);
           this.clearSubagentExecutions(subtree.threadIds);
+          // A session snapshot belongs to its root. Deleting one child must not
+          // invalidate startup inputs still used by the surviving parent and
+          // sibling Agents in the same session.
+          this.clearAgentStartupContexts(subtree.records
+            .filter((record) => record.thread.parentThreadId === null)
+            .map((record) => record.thread.sessionId));
         });
         // After coordination-state teardown, so no append the cascade raced can
         // land behind the removal and resurrect a transcript the user deleted.

@@ -718,6 +718,7 @@ export class SubagentCollaboration {
         ...(input.reasoningEffort === undefined ? {} : { reasoningEffort: input.reasoningEffort }),
       });
     }
+  /** Host-only compatibility seam; never contributed to model tools. */
   async spawnCollaborationAgent(input: {
       senderThreadId: ThreadId;
       senderTurnId: string;

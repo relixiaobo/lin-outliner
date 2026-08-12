@@ -39,6 +39,7 @@ import { SubagentDepthLimitError, SubagentSpawnLimitError } from '../../src/main
 import { GoalStore } from '../../src/main/agent/extensions/goal/GoalStore';
 import { RolloutStore } from '../../src/main/agent/persistence/RolloutStore';
 import { SubagentExecutionLedger } from '../../src/main/agent/persistence/SubagentExecutionLedger';
+import { AgentStartupContextStore } from '../../src/main/agent/context/AgentStartupContext';
 import {
   cappedChildPoolId,
   MIN_SUBAGENT_TOKEN_CAP,
@@ -10219,6 +10220,7 @@ async function createFixture(
     | 'resolveReferencedAsset'
     | 'resolveRendererStartDefaults'
     | 'resolveRole'
+    | 'resolveAgentStartupContext'
     | 'resolveRoleCatalog'
     | 'resolveSubagentTokenBudget'
     | 'resolveSkillAdmission'
@@ -10252,6 +10254,7 @@ async function openFixture(
     | 'resolveReferencedAsset'
     | 'resolveRendererStartDefaults'
     | 'resolveRole'
+    | 'resolveAgentStartupContext'
     | 'resolveRoleCatalog'
     | 'resolveSubagentTokenBudget'
     | 'resolveSkillAdmission'
@@ -10318,6 +10321,7 @@ function createStores(
     goals: new GoalStore(goalsPath, goalsDatabase),
     subagentBudgets: new SubagentRequestLedger(goalsDatabase),
     subagentExecutions: new SubagentExecutionLedger(goalsDatabase),
+    agentStartupContexts: new AgentStartupContextStore(goalsDatabase),
     payloads: new ToolPayloadStore(join(root, 'agent', 'payloads'), payloadOptions),
   };
 }

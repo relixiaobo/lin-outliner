@@ -487,8 +487,10 @@ and canonical registry identity. It compiles each runtime-provided schema before
 exposure; one invalid dynamic, extension, or MCP contribution is skipped with a bounded
 diagnostic while valid siblings remain available. Static catalog schemas are guarded in
 the test suite. Dynamic and extension implementation mismatches degrade like malformed
-runtime schemas; Core/capability mismatches, duplicate identities, and enabled valid
-extension contracts with no implementation remain hard registry defects.
+runtime schemas. Core/capability mismatches, duplicate identities, and enabled
+valid extension contracts with no implementation remain hard registry defects
+for root Threads; child Agents skip unavailable extension handlers and retain a
+bounded diagnostic under A12.
 The kernel freezes a schema-valid canonical call
 before `ToolRuntime` evaluates argument-dependent capability blocks. A valid blocked
 call therefore retains its call/result pair and structured `operation_unavailable`

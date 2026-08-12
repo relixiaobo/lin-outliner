@@ -30,7 +30,10 @@ canonical contribution and emits one bounded diagnostic; valid siblings remain
 available. A valid dynamic or extension implementation whose schema disagrees with
 its canonical contract is omitted by the same boundary. Core/capability contract
 mismatches, duplicate contracts, and enabled valid extension contracts with no
-implementation remain structural failures rather than degraded runtime input.
+implementation remain structural failures for root Threads. For child Agents,
+an extension contract with no runtime handler is inspection-only runtime input:
+it is skipped and recorded as a bounded diagnostic so one unavailable extension
+cannot kill the child Turn.
 
 Domain-owned tool handlers are contributed by their owning modules; `runtime/`
 only distributes those contributions through the same assembly seam used by

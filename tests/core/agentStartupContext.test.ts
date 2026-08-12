@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import {
+  AgentStartupContextResolver,
   AgentStartupContextStore,
   collectAgentStartupContext,
   collectRepositoryInstructions,
@@ -67,6 +68,49 @@ describe('Agent startup context', () => {
       VALUES ('invalid', '{"repositoryInstructions":"bad","gitStatus":null}', 1)
     `).run();
     expect(() => store.read('invalid')).toThrow('Invalid persisted Agent startup context');
+    database.close();
+  });
+
+  test('coalesces concurrent collection and reuses the persisted session snapshot', async () => {
+    const database = new Database(':memory:') as unknown as SqliteDatabase;
+    const store = new AgentStartupContextStore(database);
+    let collectionCount = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const resolver = new AgentStartupContextResolver(
+      store,
+      async (cwd) => {
+        collectionCount += 1;
+        await gate;
+        return { repositoryInstructions: [`instructions:${cwd}`], gitStatus: 'status' };
+      },
+      () => 42,
+    );
+
+    const first = resolver.resolve({ sessionId: 'session-1', cwd: '/workspace' });
+    const second = resolver.resolve({ sessionId: 'session-1', cwd: '/workspace/child' });
+    release();
+
+    await expect(first).resolves.toEqual({
+      repositoryInstructions: ['instructions:/workspace'],
+      gitStatus: 'status',
+    });
+    await expect(second).resolves.toEqual({
+      repositoryInstructions: ['instructions:/workspace'],
+      gitStatus: 'status',
+    });
+    expect(collectionCount).toBe(1);
+
+    const restarted = new AgentStartupContextResolver(
+      store,
+      async () => {
+        throw new Error('the persisted snapshot should win');
+      },
+    );
+    await expect(restarted.resolve({ sessionId: 'session-1', cwd: '/changed' })).resolves.toEqual({
+      repositoryInstructions: ['instructions:/workspace'],
+      gitStatus: 'status',
+    });
     database.close();
   });
 

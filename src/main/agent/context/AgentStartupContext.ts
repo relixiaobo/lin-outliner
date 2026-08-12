@@ -14,6 +14,15 @@ export interface AgentStartupContextSnapshot {
   readonly gitStatus: string | null;
 }
 
+export interface AgentStartupContextSubject {
+  readonly sessionId: string;
+  readonly cwd: string;
+}
+
+export type AgentStartupContextCollector = (
+  cwd: string,
+) => AgentStartupContextSnapshot | Promise<AgentStartupContextSnapshot>;
+
 interface SessionContextRow {
   snapshot_json: string;
 }
@@ -54,6 +63,62 @@ export class AgentStartupContextStore {
     for (const sessionId of sessionIds) {
       this.db.prepare('DELETE FROM agent_session_startup_context WHERE session_id = ?').run(sessionId);
     }
+  }
+}
+
+/**
+ * Resolves one immutable repository snapshot per root session. Concurrent Agent
+ * spawns share the same collection promise, while the SQLite row carries the
+ * snapshot across host restarts.
+ */
+export class AgentStartupContextResolver {
+  private readonly pending = new Map<string, Promise<AgentStartupContextSnapshot | null>>();
+
+  constructor(
+    private readonly store: AgentStartupContextStore,
+    private readonly collect: AgentStartupContextCollector = collectAgentStartupContext,
+    private readonly now: () => number = Date.now,
+    private readonly reportError: (error: unknown, sessionId: string) => void = (error, sessionId) => {
+      console.warn(`[agent] startup context unavailable for session ${sessionId}`, error);
+    },
+  ) {}
+
+  async resolve(subject: AgentStartupContextSubject): Promise<AgentStartupContextSnapshot | null> {
+    try {
+      const stored = this.store.read(subject.sessionId);
+      if (stored) return stored;
+    } catch (error) {
+      this.reportError(error, subject.sessionId);
+      // The snapshot is optional inspection input. Remove a malformed row so
+      // the next resolution can rebuild it instead of permanently suppressing
+      // startup context for the session.
+      this.store.delete([subject.sessionId]);
+    }
+
+    const existing = this.pending.get(subject.sessionId);
+    if (existing) return existing;
+
+    const resolution = Promise.resolve()
+      .then(async () => this.store.writeOnce(
+        subject.sessionId,
+        await this.collect(subject.cwd),
+        this.now(),
+      ))
+      .catch((error) => {
+        this.reportError(error, subject.sessionId);
+        return null;
+      })
+      .finally(() => {
+        if (this.pending.get(subject.sessionId) === resolution) {
+          this.pending.delete(subject.sessionId);
+        }
+      });
+    this.pending.set(subject.sessionId, resolution);
+    return resolution;
+  }
+
+  delete(sessionIds: readonly string[]): void {
+    this.store.delete(sessionIds);
   }
 }
 

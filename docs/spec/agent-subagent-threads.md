@@ -103,6 +103,14 @@ Fresh startup and resume are deliberately different. A new `agent` call always
 uses the matrix above; `agent_message` to a terminal Agent appends to that
 Agent's existing history and retains its recorded identity and configuration.
 
+The repository instructions and git-status input are collected once for the
+root's `sessionId`, persisted with the Agent execution ledger database, and
+reused by every descendant and after host restart. Concurrent first spawns
+coalesce onto one collection promise. Deleting a child does not remove the
+session snapshot; deleting the session root removes it with the subtree. A
+collection failure degrades to a child without the optional startup block and
+records the host diagnostic rather than killing the user turn.
+
 ## Tool And Capability Policy
 
 The child starts from tools available to the parent, then applies Core scope,

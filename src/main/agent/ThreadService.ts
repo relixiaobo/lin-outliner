@@ -78,6 +78,10 @@ defaultEffectiveThreadConfiguration,
 type ResolvedAgentType,
 } from './AgentConfigurationLoader';
 import type { ReferencedAssetResolution } from './capabilities/agentReferencedAssets';
+import {
+  AgentStartupContextResolver,
+  AgentStartupContextStore,
+} from './context/AgentStartupContext';
 import { ExtensionRegistry } from './ExtensionRegistry';
 import { GoalExtension } from './extensions/goal/GoalExtension';
 import { GoalStore } from './extensions/goal/GoalStore';
@@ -152,6 +156,7 @@ export interface ThreadServiceStores {
   readonly goals: GoalStore;
   readonly subagentBudgets: SubagentRequestLedger;
   readonly subagentExecutions: SubagentExecutionLedger;
+  readonly agentStartupContexts: AgentStartupContextStore;
   readonly payloads: ToolPayloadStore;
 }
 
@@ -347,6 +352,9 @@ export class ThreadService implements ThreadServiceExtensionHost {
     cwd: string,
   ) => Promise<RoleCatalogContextPayload | null>;
   private readonly resolveProviderModelIds: (providerId: string) => Promise<readonly string[]>;
+  private readonly resolveAgentStartupContext: (
+    parent: Pick<Thread, 'id' | 'sessionId' | 'cwd'>,
+  ) => Promise<AgentStartupContextSnapshot | null>;
   private readonly beforeInitialTurnAdmission: () => void | Promise<void>;
   private readonly now: () => number;
   private readonly goals: GoalExtension;
@@ -388,6 +396,9 @@ export class ThreadService implements ThreadServiceExtensionHost {
     this.resolveRoleCatalog = async (cwd) => await options.resolveRoleCatalog?.(cwd) ?? null;
     this.resolveProviderModelIds = async (providerId) => (
       await options.resolveProviderModelIds?.(providerId) ?? []
+    );
+    this.resolveAgentStartupContext = async (parent) => (
+      await options.resolveAgentStartupContext?.(parent) ?? null
     );
     this.beforeInitialTurnAdmission = options.beforeInitialTurnAdmission ?? (() => undefined);
     this.now = options.now ?? Date.now;
@@ -476,7 +487,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
         maxDepth: 3,
         maxConcurrent: 20,
       },
-      async (parent) => await options.resolveAgentStartupContext?.(parent) ?? null,
+      this.resolveAgentStartupContext,
       options.prepareAgentWorktree,
       options.settleAgentWorktree,
       this.now,
@@ -508,6 +519,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       (threadId) => this.goals.clear(threadId),
       (threadId) => { this.subagentBudgets.clearThread(threadId); },
       (threadIds) => { options.stores.subagentExecutions.deleteAgents(threadIds); },
+      (sessionIds) => { options.stores.agentStartupContexts.delete(sessionIds); },
       (message) => new ThreadBusyError(message),
     );
     this.goals = new GoalExtension(this.goalStore, (notification) => this.core.recordNotification(notification));
@@ -527,9 +539,17 @@ export class ThreadService implements ThreadServiceExtensionHost {
     const paths = agentCorePaths(userDataPath);
     const metadata = new ThreadMetadataStore(paths.state);
     const goalsDatabase = openSqlite(paths.goals);
+    const agentStartupContexts = new AgentStartupContextStore(goalsDatabase);
+    const startupContextResolver = new AgentStartupContextResolver(
+      agentStartupContexts,
+      undefined,
+      options.now ?? Date.now,
+    );
     return new ThreadService({
       executor,
       ...options,
+      resolveAgentStartupContext: options.resolveAgentStartupContext
+        ?? ((parent) => startupContextResolver.resolve(parent)),
       transcriptRoot: paths.transcripts,
       stores: {
         metadata,
@@ -538,6 +558,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
         goals: new GoalStore(paths.goals, goalsDatabase),
         subagentBudgets: new SubagentRequestLedger(goalsDatabase),
         subagentExecutions: new SubagentExecutionLedger(goalsDatabase),
+        agentStartupContexts,
         payloads: new ToolPayloadStore(paths.payloads),
       },
     });
@@ -648,7 +669,9 @@ export class ThreadService implements ThreadServiceExtensionHost {
   persistentThreadExecutionContext(threadId: ThreadId): PersistentThreadExecutionContext { return this.catalogOps.persistentThreadExecutionContext(threadId); }
   readTurnForHost(threadId: ThreadId, turnId: TurnId): Turn | null { return this.core.readTurn(threadId, turnId); }
   readTurnByClientUserMessageIdForHost(threadId: ThreadId, clientId: string): Turn | null { return this.turnLifecycle.readTurnByClientUserMessageIdForHost(threadId, clientId); }
-  async ensureFeatureRootThread(input: FeatureRootThreadInput): Promise<Thread> { return this.catalogOps.ensureFeatureRootThread(input); }
+  async ensureFeatureRootThread(input: FeatureRootThreadInput): Promise<Thread> {
+    return this.catalogOps.ensureFeatureRootThread(input);
+  }
   activeRootUserTurns(): readonly { threadId: ThreadId; turnId: TurnId }[] { return this.turnLifecycle.activeRootUserTurns(); }
   isThreadNavigable(threadId: ThreadId): boolean { return this.catalogOps.isThreadNavigable(threadId); }
   async interruptRootTurns(turns: readonly { threadId: ThreadId; turnId: TurnId }[]): Promise<void> { return this.turnLifecycle.interruptRootTurns(turns); }
@@ -842,9 +865,13 @@ export class ThreadService implements ThreadServiceExtensionHost {
   readThread(request: ThreadReadRequest): ThreadReadResponse { return this.catalogOps.readThread(request); }
   getThreadConfiguration(threadId: ThreadId): ThreadConfigurationResponse { return this.catalogOps.getThreadConfiguration(threadId); }
   async setThreadConfiguration(request: ThreadConfigurationSetRequest): Promise<ThreadConfigurationResponse> { return this.catalogOps.setThreadConfiguration(request); }
-  async startThread(requestInput: AgentCoreRequestByMethod['thread/start']): Promise<ThreadStartResponse> { return this.catalogOps.startThread(requestInput); }
+  async startThread(requestInput: AgentCoreRequestByMethod['thread/start']): Promise<ThreadStartResponse> {
+    return this.catalogOps.startThread(requestInput);
+  }
   async resumeThread(threadId: ThreadId): Promise<{ thread: Thread }> { return this.catalogOps.resumeThread(threadId); }
-  async forkThread(request: ThreadForkRequest): Promise<{ thread: Thread }> { return this.catalogOps.forkThread(request); }
+  async forkThread(request: ThreadForkRequest): Promise<{ thread: Thread }> {
+    return this.catalogOps.forkThread(request);
+  }
   async rollbackThread(request: ThreadRollbackRequest): Promise<{ thread: Thread }> { return this.catalogOps.rollbackThread(request); }
   historyProjectionVersion(threadId: ThreadId): number { return this.catalogOps.historyProjectionVersion(threadId); }
   hasHistoryRollbackMarker(rollbackId: string): boolean { return this.catalogOps.hasHistoryRollbackMarker(rollbackId); }
@@ -1211,6 +1238,10 @@ export class ThreadService implements ThreadServiceExtensionHost {
   ): Promise<JsonValue | null> {
     return this.collaboration.stopAgentTask(senderThreadId, senderTurnId, agentId);
   }
+  /**
+   * Host-only legacy seam retained for persisted/test callers. It is not a
+   * model tool and is intentionally absent from the canonical tool catalog.
+   */
   async spawnCollaborationAgent(input: {
     senderThreadId: ThreadId;
     senderTurnId: string;
