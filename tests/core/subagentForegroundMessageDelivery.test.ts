@@ -103,10 +103,29 @@ describe('foreground Agent main-message delivery', () => {
     expect(deliveredIds).toEqual(['first-generation-1']);
 
     activeAgents.delete(SECOND_AGENT_ID);
+    enqueue(ledger, 'first-generation-1-after-resume', FIRST_AGENT_ID, 1, 'foreground');
     await delivery.deliverParentMessages(PARENT_ID, {
       senderAgentId: SECOND_AGENT_ID,
       generation: 1,
     });
+    ledger.beginNextGeneration({
+      agentId: FIRST_AGENT_ID,
+      turnId: 'first-turn-2',
+      toolUseId: 'first-tool-2',
+      runMode: 'foreground',
+      updatedAt: 2,
+    });
+    activeAgents.add(FIRST_AGENT_ID);
+    await delivery.deliverParentMessages(PARENT_ID, {
+      senderAgentId: FIRST_AGENT_ID,
+      generation: 1,
+    });
+    expect(deliveredIds).toEqual([
+      'first-generation-1',
+      'second-generation-1',
+      'first-generation-1-after-resume',
+    ]);
+    activeAgents.delete(FIRST_AGENT_ID);
     parentActive = false;
     await delivery.deliverParentMessages(PARENT_ID, {
       senderAgentId: FIRST_AGENT_ID,
@@ -115,6 +134,7 @@ describe('foreground Agent main-message delivery', () => {
     expect(deliveredIds).toEqual([
       'first-generation-1',
       'second-generation-1',
+      'first-generation-1-after-resume',
     ]);
     parentActive = true;
     await delivery.deliverParentMessages(PARENT_ID);
@@ -122,6 +142,7 @@ describe('foreground Agent main-message delivery', () => {
     expect(deliveredIds).toEqual([
       'first-generation-1',
       'second-generation-1',
+      'first-generation-1-after-resume',
       'background-message',
     ]);
     expect(ledger.pendingParentMessages(PARENT_ID).map((message) => message.id)).toEqual([
