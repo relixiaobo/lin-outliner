@@ -145,9 +145,10 @@ describe('foreground Agent main-message delivery', () => {
       'first-generation-1-after-resume',
       'background-message',
     ]);
-    expect(ledger.pendingParentMessages(PARENT_ID).map((message) => message.id)).toEqual([
-      'first-generation-2',
-    ]);
+    // A foreground envelope is bound to the invoking parent Turn. Once that
+    // Turn has settled, it is discarded rather than replayed into a later
+    // unsolicited root admission.
+    expect(ledger.pendingParentMessages(PARENT_ID).map((message) => message.id)).toEqual([]);
 
     database.close();
   });

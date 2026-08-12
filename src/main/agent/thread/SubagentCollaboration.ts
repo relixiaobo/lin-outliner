@@ -1132,6 +1132,14 @@ export class SubagentCollaboration {
               input: content,
               clientUserMessageId: message.id,
             }, 'advisory');
+          } else if (foreground) {
+            // A foreground envelope belongs to the invoking parent Turn. If
+            // that Turn was cancelled or already settled, discard the stale
+            // envelope rather than starting an unsolicited root Turn or
+            // leaving a queue item that can never be admitted.
+            this.executions.discardParentMessage(message.id);
+            console.warn(`[agent] Foreground Agent main-route message discarded after parent Turn settled: ${message.senderAgentId}`);
+            continue;
           } else {
             const accepted = await this.turnLifecycle.tryStartTurnIfIdle({
               threadId: parentThreadId,
@@ -1144,15 +1152,7 @@ export class SubagentCollaboration {
               },
             });
             if (!accepted) {
-              if (foreground) {
-                // A foreground envelope belongs to the invoking parent Turn.
-                // The parent may have been cancelled or settled while the
-                // child was finishing; do not retain stale input or create an
-                // unsolicited root Turn.
-                this.executions.discardParentMessage(message.id);
-              } else {
-                this.executions.releaseParentMessage(message.id);
-              }
+              this.executions.releaseParentMessage(message.id);
               return;
             }
           }
