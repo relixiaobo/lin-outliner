@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { evaluateAgentToolCapability } from '../../src/main/agent/capabilities/agentCapabilities';
@@ -123,6 +123,23 @@ describe('agent capabilities', () => {
       localRoot: workspace,
       capabilityConfig: parseAgentCapabilitySettings({ blocks: ['Command(git push origin main)'] }),
     })).rejects.toMatchObject({ code: 'operation_unavailable' });
+  });
+
+  test('contains embedded Skill shell writes inside an isolated workspace', async () => {
+    if (process.platform !== 'darwin') return;
+    const { workspace, outside } = await workspaceFixture();
+    const inside = path.join(workspace, 'inside.txt');
+    const escaped = path.join(outside, 'escaped.txt');
+
+    await expect(executeAgentSkillShellCommand({
+      command: `printf inside > ${JSON.stringify(inside)}; printf escaped > ${JSON.stringify(escaped)}`,
+      localRoot: workspace,
+      capabilityConfig: parseAgentCapabilitySettings({ blocks: [] }),
+      writeBoundary: { root: workspace },
+    })).rejects.toMatchObject({ code: 'command_failed' });
+
+    expect(await readFile(inside, 'utf8')).toBe('inside');
+    await expect(readFile(escaped, 'utf8')).rejects.toThrow();
   });
 
   test('injects the host process environment into embedded Skill shell', async () => {

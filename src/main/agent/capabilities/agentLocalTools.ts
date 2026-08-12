@@ -673,13 +673,15 @@ export async function runLocalBashCommand(
     timeout?: number;
     signal?: AbortSignal;
     processEnvironment?: AgentShellProcessEnvironmentProvider;
+    writeBoundary?: AgentWorkspaceWriteBoundary;
   },
 ): Promise<LocalBashRunResult> {
-  const workspace = createWorkspaceContext(
+  const workspace = createAgentLocalWorkspaceContext(
     options.localRoot,
     options.scratchRoot,
     undefined,
     options.processEnvironment,
+    options.writeBoundary,
   );
   const params = normalizeBashParams({
     command: options.command,

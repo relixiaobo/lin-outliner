@@ -7,6 +7,7 @@ import {
 import {
   runLocalBashCommand,
   type AgentShellProcessEnvironmentProvider,
+  type AgentWorkspaceWriteBoundary,
   type LocalBashRunResult,
 } from './agentLocalTools';
 import {
@@ -23,6 +24,7 @@ export interface AgentSkillShellCommandInput {
   signal?: AbortSignal;
   toolCallId?: string;
   processEnvironment?: AgentShellProcessEnvironmentProvider;
+  writeBoundary?: AgentWorkspaceWriteBoundary;
 }
 
 export class AgentSkillShellError extends Error {
@@ -72,6 +74,7 @@ export async function executeAgentSkillShellCommand(input: AgentSkillShellComman
       command: input.command,
       signal: input.signal,
       processEnvironment: input.processEnvironment,
+      writeBoundary: input.writeBoundary,
     });
   } catch (error) {
     throw new AgentSkillShellError('command_failed', errorMessage(error));
