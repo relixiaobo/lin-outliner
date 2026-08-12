@@ -51,7 +51,9 @@ import {
   createAgentLocalWorkspaceContext,
   resolveAgentLocalReadPath,
   type AgentLocalWorkspaceContext,
+  type AgentWorkspaceWriteBoundary,
 } from './agent/capabilities/agentLocalTools';
+import { AgentWorktree } from './agent/worktree/AgentWorktree';
 import type { AgentImageGenerationRuntime } from './agent/capabilities/agentImageGenerationTool';
 import {
   piFindImageModel,
@@ -647,6 +649,7 @@ async function findUnmanagedSkillNameConflict(name: string) {
 }
 let toolRuntime!: ToolRuntime;
 const agentConfigurationLoader = new AgentConfigurationLoader(resolvedUserDataDir);
+const agentWorktree = new AgentWorktree(resolvedUserDataDir);
 let threadService!: ThreadService;
 const agentImageObservationMutex = new Mutex();
 const attachmentResolver = new AttachmentResolver({
@@ -687,9 +690,19 @@ threadService = ThreadService.open(
       request.cwd,
     ),
     resolveRole: (name, cwd) => agentConfigurationLoader.resolveRole(name, cwd),
+    resolveAgentType: (name, cwd) => agentConfigurationLoader.resolveAgentType(name, cwd),
     resolveRoleCatalog: (cwd) => agentConfigurationLoader.buildRoleCatalogSnapshot(cwd),
     resolveProviderModelIds: (providerId) => rankedModels(providerId).map((model) => model.id),
     resolveSubagentTokenBudget: async () => (await getAgentRuntimeSettings()).subagentTokenBudget,
+    resolveSubagentLimits: async () => {
+      const settings = await getAgentRuntimeSettings();
+      return {
+        maxDepth: settings.subagentMaxDepth,
+        maxConcurrent: settings.subagentMaxConcurrent,
+      };
+    },
+    prepareAgentWorktree: (input) => agentWorktree.prepare(input),
+    settleAgentWorktree: (worktree) => agentWorktree.settle(worktree),
     resolveRendererStartDefaults: async () => {
       const provider = await getActiveProviderRuntimeConfig();
       if (!provider) throw new Error('Configure an AI provider before starting a Thread.');
@@ -758,6 +771,7 @@ threadService = ThreadService.open(
           scratchRoot: agentScratchRoot,
           signal,
           processEnvironment: () => managedSkillShellEnvironment!.processEnvironment(thread.id, turnId),
+          writeBoundary: agentWriteBoundaryForThread(thread.id, thread.cwd),
         }),
       });
       const settings = await getAgentRuntimeSettings();
@@ -815,6 +829,7 @@ function skillRuntimeForTurn(context: Parameters<ToolRuntime['createTools']>[0])
       scratchRoot: agentScratchRoot,
       signal,
       processEnvironment: () => managedSkillShellEnvironment!.processEnvironment(context.thread.id, context.turn.id),
+      writeBoundary: agentWriteBoundaryForThread(context.thread.id, context.thread.cwd),
     }),
     executeIsolatedSkill: async ({
       skill,
@@ -915,7 +930,20 @@ function localWorkspaceForTurn(context: Parameters<ToolRuntime['createTools']>[0
     agentScratchRoot,
     skillRuntimeForTurn(context),
     () => managedSkillShellEnvironment!.processEnvironment(context.thread.id, context.turn.id),
+    agentWriteBoundaryForThread(context.thread.id, context.thread.cwd),
   );
+}
+
+function agentWriteBoundaryForThread(
+  threadId: string,
+  cwd: string,
+): AgentWorkspaceWriteBoundary | undefined {
+  const worktree = threadService.agentWorktree(threadId);
+  if (!worktree) return undefined;
+  return {
+    root: cwd,
+    shellWritablePaths: agentWorktree.sandboxWritePaths(worktree),
+  };
 }
 
 const automationStore = new AutomationStore(join(resolvedUserDataDir, 'agent', 'automations.sqlite'));
