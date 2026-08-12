@@ -8,7 +8,6 @@ import {
   normalizeAgentMessageToolInput,
   normalizeAgentToolInput,
 } from '../../../core/agent/tools';
-import { turnTerminalAnswer } from '../../../core/agent/turnAnswer';
 import { isolatedSkillIdentity, isolatedSkillTaskName } from '../../../core/agent/subagentTaskPath';
 import {
   contextPayloadReferenceKey,
@@ -943,79 +942,6 @@ export class SubagentCollaboration {
       }
       return false;
     }
-  private collaborationView(threadId: ThreadId): CollaborationAgentView {
-      const thread = this.core.requireThread(threadId).thread;
-      const edge = this.ephemeralSpawnEdges.get(threadId) ?? this.core.metadata.spawnEdgeForChild(threadId);
-      if (!edge || !thread.parentThreadId) throw new Error(`Thread is not a Subagent: ${threadId}`);
-      const budget = this.turnLifecycle.subagentBudgetView(threadId);
-      const latest = this.core.allTurns(threadId).at(-1);
-      const status: CollaborationAgentView['status'] = this.turnLifecycle.activeTurnId(threadId) !== null
-        ? 'running'
-        : !latest
-          ? 'pendingInit'
-          : latest.status === 'failed'
-            ? 'errored'
-            : latest.status === 'interrupted'
-              ? 'interrupted'
-              : 'completed';
-      return {
-        taskPath: edge.taskPath,
-        threadId,
-        parentThreadId: thread.parentThreadId,
-        nickname: thread.agentNickname,
-        role: thread.agentRole,
-        status,
-        tokensUsed: budget?.tokensUsed ?? 0,
-        tokenBudget: budget?.tokenBudget ?? null,
-      };
-    }
-  private async collaborationWaitResult(
-      senderThreadId: ThreadId,
-      reason: CollaborationWaitResult['reason'],
-      activities: readonly PendingSubagentActivity[],
-    ): Promise<CollaborationWaitResult> {
-      const updates: CollaborationTerminalOutcome[] = [];
-      for (const activity of activities) {
-        // An isolated Skill child is absent from this channel by contract: its
-        // `skill` tool call is the single parent-facing owner of its outcome,
-        // and replaying it here would offer the same work twice.
-        if (activity.form !== 'collaboration') continue;
-        if (activity.kind === 'started') continue;
-        updates.push(await this.collaborationTerminalOutcome(
-          activity.agentThreadId,
-          activity.agentPath,
-          activity.kind === 'errored' ? 'errored' : activity.kind,
-          activity.agentTurnId,
-        ));
-      }
-      return {
-        reason,
-        updates,
-        agents: this.listCollaborationAgents(senderThreadId),
-      };
-    }
-  private async collaborationTerminalOutcome(
-      threadId: ThreadId,
-      taskPath: string,
-      status: CollaborationTerminalOutcome['status'],
-      turnId?: TurnId,
-    ): Promise<CollaborationTerminalOutcome> {
-      // A queued activity names its Turn, so read that one Turn rather than
-      // paging the child's whole history on the parent's wait path.
-      const terminalTurn = turnId === undefined
-        ? this.core.allTurns(threadId).at(-1)
-        : this.core.readTurn(threadId, turnId);
-      const result = terminalTurn ? turnTerminalAnswer(terminalTurn.items) : '';
-      return {
-        taskPath,
-        threadId,
-        status,
-        result: result || null,
-        error: terminalTurn?.error?.message ?? null,
-        transcriptPath: await this.transcripts.pathForReader(threadId),
-      };
-    }
-
   /**
    * The delegated Thread's identity, and by returning it at all, the answer to
    * whether that Thread keeps an account. Spawn metadata is the authority here,

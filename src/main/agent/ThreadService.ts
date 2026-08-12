@@ -94,6 +94,7 @@ import {
   type AgentStartupContextSnapshot,
   SubagentExecutionLedger,
   type SubagentExecutionRecord,
+  type SubagentRecordedToolPolicy,
 } from './persistence/SubagentExecutionLedger';
 import type { AgentWorktreeMetadata } from './worktree/AgentWorktree';
 import { ThreadHistoryProjectionStore } from './persistence/ThreadHistoryProjectionStore';
