@@ -686,6 +686,21 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   re-rendering every item of the active Turn per notification, and the 1 Hz
   subagent elapsed ticker re-rendering the nested child transcript. One PR.
   Design: [`agent-streaming-followups`](plans/agent-streaming-followups.md).
+- **subagent-interaction** (P2, `draft` 2026-08-12) — process-shaped subagent
+  presentation for the fresh/background-default protocol inside the 344px agent
+  deck: worker-registry projection (keyed by agent ID + generation) replacing
+  turn-anchored `projectSubagentsForTurn`; lifecycle anchors in the
+  conversation (spawn/resume chips, clickable completion dividers, stopped
+  notes); header work strip (needs-input > running > just-finished, fade-out,
+  amber needs-input badge as the only interruption); full-deck stacked detail
+  view (generations, nested recursion ≤ depth 3, composer-as-user-authority,
+  retained-worktree footer); foreground children placed on the main agent's
+  working line and never in the strip; strict OS-notification policy
+  (needs-input + terminal, unfocused only). PM-ratified 2026-08-12 through an
+  interactive prototype. One PR. **Sequenced after** the
+  `claude-code-subagent-parity` implementation (plan PR #532) and
+  `semantic-working-state` (#531) — both are its foundations (A7).
+  Design: [`subagent-interaction`](plans/subagent-interaction.md).
 - **interaction-jank-cleanups** (P2, `draft` 2026-08-11) — scroll/menu-path
   forced layouts and identity-keyed caches that can never hit:
   `useAnchoredOverlay` (≈20 consumers) capture-scroll + unbatched rect reads +
