@@ -507,6 +507,18 @@ export class SubagentExecutionLedger {
     `).run(id);
   }
 
+  /**
+   * Permanently drops a foreground envelope whose invoking parent Turn no
+   * longer exists. Such input is bound to that Turn and must not be replayed
+   * into a later root admission.
+   */
+  discardParentMessage(id: string): void {
+    this.db.prepare(`
+      DELETE FROM subagent_parent_messages
+      WHERE id = ? AND state = 'delivering'
+    `).run(id);
+  }
+
   markParentMessageDelivered(id: string, deliveredAt: number): void {
     this.db.prepare(`
       UPDATE subagent_parent_messages SET state = 'delivered', delivered_at = ?

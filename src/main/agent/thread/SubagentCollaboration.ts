@@ -313,11 +313,14 @@ export class SubagentCollaboration {
       input.signal?.removeEventListener('abort', abort);
     }
     await this.ensureTerminalPipeline(execution.agentId, execution.generation);
-    // A foreground child may have sent `agent_message("main")` while its
-    // provider turn was running. Deliver it only after the normal Agent result
-    // is ready; the parent kernel will consume this queued steering envelope
-    // immediately before its next provider request.
-    await this.deliverParentMessages(execution.parentThreadId, true);
+    // A foreground child may send `agent_message("main")` while its provider
+    // turn is running. Deliver that envelope only after the ordinary Agent
+    // result is ready, so the parent consumes it immediately before its next
+    // provider request rather than as an unsolicited root Turn.
+    await this.deliverParentMessages(execution.parentThreadId, {
+      senderAgentId: execution.agentId,
+      generation: execution.generation,
+    });
     const settled = this.executions.require(execution.agentId);
     const terminal = this.core.readTurn(execution.agentId, settled.currentTurnId);
     if (!terminal) throw new Error(`Foreground Agent Turn was not recorded: ${settled.currentTurnId}`);
@@ -1104,12 +1107,20 @@ export class SubagentCollaboration {
       ));
     }
 
-  private async deliverParentMessages(parentThreadId: ThreadId, includeForeground = false): Promise<void> {
-      const pending = this.executions.pendingParentMessages(parentThreadId);
+  private async deliverParentMessages(
+    parentThreadId: ThreadId,
+    foreground?: { readonly senderAgentId: ThreadId; readonly generation: number },
+  ): Promise<void> {
+      const pending = foreground
+        ? this.executions.pendingForegroundParentMessages(
+          parentThreadId,
+          foreground.senderAgentId,
+          foreground.generation,
+        )
+        : this.executions.pendingParentMessages(parentThreadId)
+          .filter((message) => message.deliveryMode === 'background');
       for (const message of pending) {
-        if (message.deliveryMode === 'foreground' && !includeForeground) continue;
-        if (includeForeground && message.deliveryMode !== 'foreground') continue;
-        if (message.deliveryMode === 'foreground' && this.turnLifecycle.hasActiveTurn(message.senderAgentId)) continue;
+        if (message.deliveryMode === 'foreground' && this.isForegroundMessageSenderActive(message)) continue;
         if (!this.executions.claimParentMessage(message.id)) continue;
         try {
           const content = [{ type: 'text' as const, text: message.content }];
@@ -1133,7 +1144,15 @@ export class SubagentCollaboration {
               },
             });
             if (!accepted) {
-              this.executions.releaseParentMessage(message.id);
+              if (foreground) {
+                // A foreground envelope belongs to the invoking parent Turn.
+                // The parent may have been cancelled or settled while the
+                // child was finishing; do not retain stale input or create an
+                // unsolicited root Turn.
+                this.executions.discardParentMessage(message.id);
+              } else {
+                this.executions.releaseParentMessage(message.id);
+              }
               return;
             }
           }
@@ -1146,6 +1165,16 @@ export class SubagentCollaboration {
       }
     }
 
+  private isForegroundMessageSenderActive(message: {
+    readonly senderAgentId: ThreadId;
+    readonly generation: number;
+  }): boolean {
+      const active = this.turnLifecycle.hasActiveTurn(message.senderAgentId);
+      if (!active) return false;
+      const execution = this.executions.read(message.senderAgentId);
+      return execution !== null && execution.generation === message.generation;
+    }
+
   private async sendAgentMessageToMain(senderThreadId: ThreadId, message: string): Promise<JsonValue> {
       const execution = this.executions.read(senderThreadId);
       if (!execution) {
@@ -1156,6 +1185,7 @@ export class SubagentCollaboration {
         id,
         senderAgentId: senderThreadId,
         parentThreadId: execution.parentThreadId,
+        generation: execution.generation,
         content: agentMessageToMainText(
           execution.agentType,
           message,
