@@ -314,7 +314,10 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
   terminal Item after a reload states the status alone rather than inventing a
   span. The form glyph and identity name stay static while a `pendingInit` or
   running status phrase alone uses `WorkingText`; the separate fixed-size Stop
-  action remains available while the child can be interrupted.
+  action remains available while the child can be interrupted. The lifecycle
+  line reserves its available width, its disclosure consumes the flexible
+  slot, and the elapsed phrase uses tabular numerals, so digit and unit changes
+  never move Stop.
   The name ellipsizes and the status never does, so a row can never truncate
   away the outcome it is reporting. A failed row exposes a
   bounded user-facing error on its own wrapping line and tints its glyph and label with

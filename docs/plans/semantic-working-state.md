@@ -172,7 +172,7 @@ This surface belongs to the first implementation PR.
 | `ReasoningDisclosure` | An empty live Item shows static `Thinking`; the Turn spinner supplies motion | Wrap only the empty live `Thinking` label in `WorkingText`. Populated reasoning stays readable and static while it streams. |
 | `executionStatusNode` / `ToolItemDisclosure` | `inProgress` replaces the tool glyph with `LoaderIcon` | Always return the tool glyph. Shimmer only the neutral action segment of an in-progress row and apply `--text-strong` without changing its 400 weight; failure/interruption tallies remain static. A command with `item.description` keeps that exact sentence in every status rather than routing it through command-oriented i18n. |
 | `ThreadToolActivityGroup` | A running group spins its group glyph | A collapsed running group shimmers its neutral action segment. When expanded in the DOM, its summary is static and each in-progress member shimmers instead. Finished members never inherit motion. Collapsing or expanding mid-run transfers ownership without a frame where both levels animate. |
-| `SubagentActivityItem` | Running status appends a loader to the `.thread-delegation-row` | Keep the form/Agent glyph and name static; shimmer only the running status phrase. Stop remains a separate fixed-size action. |
+| `SubagentActivityItem` | Running status appends a loader to the `.thread-delegation-row` | Keep the form/Agent glyph and name static; shimmer only the running status phrase. Its lifecycle line reserves the available width, the disclosure consumes the flexible slot, elapsed numerals are tabular, and Stop remains a separate fixed-size action at the stable row edge. |
 | `SubagentStateItem` | An expanded collaboration tool detail shows static Agent identity and status text | Include this surface: keep `AgentIcon` and identity static and shimmer only a running status phrase. Because it is mounted only inside the expanded tool detail, the collapsed parent summary owns motion and the expanded child status owns it after transfer. |
 | `ThreadPlanProgress` | The summary and current checklist step spin; the step also already has strong text while pending steps use a hollow dot | Use the existing `PlanToolIcon` as the stable summary glyph. When closed, shimmer the current-step summary. When open, freeze the summary and keep the current checklist step fully static: replace its loader with a neutral filled dot in the existing fixed status slot, retain strong text and 600 weight, and add `aria-current="step"`. Completed steps keep `CheckIcon`; pending steps keep their static hollow dot. |
 
@@ -301,7 +301,8 @@ outside both PRs.
   geometry swap on the container.
 - **AC-4:** `SubagentActivityItem` and `SubagentStateItem` keep identity
   static and mark only a running status phrase as working. Stop remains
-  available on the lifecycle row.
+  available on the lifecycle row and does not move when elapsed copy crosses a
+  digit or unit boundary.
 - **AC-5:** A collapsed running group shimmers only its summary. Expanding it
   mid-run freezes the summary and starts only its running members; collapsing
   reverses ownership without simultaneous parent/child motion.
@@ -346,6 +347,7 @@ Focused automated coverage should update or add these test titles:
 - `projects live and settled Turn process before the final response`
 - `hands running group motion between its summary and expanded members`
 - `reads Subagent identity statically and marks only live status as working`
+- `pins the Subagent Stop action while its elapsed status changes`
 - `stops Plan motion when its static current step is expanded and resumes only the collapsed summary`
 - `shows Turn-local Plan progress only while the Turn is active`
 - `stops working motion while the Turn is blocked on user input`

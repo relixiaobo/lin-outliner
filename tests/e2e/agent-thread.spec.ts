@@ -2917,6 +2917,7 @@ test.describe('canonical agent Thread surface', () => {
     test(`projects live Subagent status and wait progress into the parent Turn in ${colorScheme}`, async ({ page }) => {
       await page.emulateMedia({ colorScheme });
       await createNewThread(page);
+      await page.clock.install({ time: new Date('2026-08-12T09:00:00Z') });
       const fixture = await page.evaluate(async () => {
         const target = window as Window & {
           lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
@@ -2928,7 +2929,7 @@ test.describe('canonical agent Thread surface', () => {
         const parentThreadId = String(root.id);
         const parentTurnId = '01910000-0000-7000-8000-00000000de01';
         const waitItemId = '01910000-0000-7000-8000-00000000de02';
-        const startedAt = Date.now() - 6_000;
+        const startedAt = Date.now() - 9_000;
         const children = [
           {
             id: '01910000-0000-7000-8000-00000000de10',
@@ -3051,6 +3052,25 @@ test.describe('canonical agent Thread surface', () => {
       await expect(rows).toHaveCount(2);
       await expect(rows.locator('.thread-delegation-row-status').first())
         .toContainText(/Running · \d+[smhd]/u);
+      // The disclosure owns the flexible space and Stop owns the fixed edge.
+      // Crossing the first digit-count boundary must not move the action.
+      const researchRow = parentTurn.locator('.thread-delegation-row', { hasText: 'research' });
+      const researchElapsed = researchRow.locator('.thread-delegation-row-status .working-text-base');
+      const researchStop = parentTurn.getByRole('button', { name: 'Stop research' });
+      await expect(researchElapsed).toHaveText('Running · 9s');
+      await expect(researchRow.locator('.thread-delegation-row-status')).toHaveCSS(
+        'font-variant-numeric',
+        /tabular-nums/u,
+      );
+      const stopAtNineSeconds = await researchStop.boundingBox();
+      expect(stopAtNineSeconds).not.toBeNull();
+      await page.clock.runFor(1_000);
+      await expect(researchElapsed).toHaveText('Running · 10s');
+      const stopAtTenSeconds = await researchStop.boundingBox();
+      expect(stopAtTenSeconds).not.toBeNull();
+      expect(Math.abs(stopAtTenSeconds!.x - stopAtNineSeconds!.x)).toBeLessThan(0.01);
+      expect(Math.abs(stopAtTenSeconds!.width - stopAtNineSeconds!.width)).toBeLessThan(0.01);
+      await page.clock.resume();
       // Identity stays still while only each live status phrase owns motion.
       await expect(rows.locator('.thread-delegation-row-name .working-text')).toHaveCount(0);
       await expect(rows.locator('.thread-delegation-row-status.working-text')).toHaveCount(2);

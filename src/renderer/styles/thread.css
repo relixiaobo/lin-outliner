@@ -1607,11 +1607,13 @@
   line-height: var(--line-meta);
 }
 
-/* The row proper never wraps: its status, spinner, and Stop belong beside the
-   name, and a long name must shorten rather than push them onto a line of their
-   own. Only the failure reason below is allowed to run to several lines. */
+/* The row proper never wraps: its status and Stop belong beside the name, and
+   a long name must shorten rather than push them onto a line of their own. The
+   line reserves its full slot so an elapsed-time update cannot move Stop. Only
+   the failure reason below is allowed to run to several lines. */
 .thread-delegation-row-line {
   display: flex;
+  width: 100%;
   min-width: 0;
   align-items: center;
   gap: var(--space-2);
@@ -1621,7 +1623,7 @@
   display: flex;
   min-width: 0;
   max-width: min(100%, 520px);
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   align-items: center;
   gap: var(--space-3);
   padding: 0;
@@ -1657,6 +1659,7 @@
 .thread-delegation-row-status {
   flex: 0 0 auto;
   color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
 }
 
 .thread-delegation-row .icon-button {
