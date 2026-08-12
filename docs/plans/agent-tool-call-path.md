@@ -58,10 +58,6 @@ Other:
   `file_read` result is uninterruptible on the main thread.
 - Turn boundaries perform 5–7 independent `allTurns` full-history decodes
   (`TurnLifecycle` and the two payload prune sweeps in `ThreadResourceOps`).
-- `SubagentCollaboration.collaborationView` decodes a child's **entire
-  history** (`allTurns(threadId).at(-1)`) just to read the last Turn's status,
-  per child, on every `list_agents`/`wait_agent` call; its filter chain also
-  repeats `requireThread` per edge.
 
 ## Non-goals
 
@@ -151,10 +147,6 @@ explicitly NOT part of this plan.
   complete scan on a worker thread. Coverage and redaction outcomes stay
   byte-identical; the existing fail-open applies only to scanner *errors*, as
   today.
-- `SubagentCollaboration`: read a child's latest-Turn status from Turn metadata
-  (a `lastTurn(threadId)` projection query) instead of decoding the entire
-  history; hoist the repeated `requireThread` calls out of the per-edge filter
-  chain.
 - Turn completion computes `allTurns` once and passes the result to both prune
   sweeps (and any other same-boundary consumer in `TurnLifecycle`).
 
