@@ -32,7 +32,7 @@ export interface AgentRole {
   readonly overrides?: AgentRoleOverrides;
 }
 
-export const BUILT_IN_AGENT_ROLES = ['default', 'worker', 'explorer'] as const;
+export const BUILT_IN_AGENT_ROLES = ['default', 'explorer', 'plan'] as const;
 export type BuiltInAgentRoleName = typeof BUILT_IN_AGENT_ROLES[number];
 
 export interface EffectiveThreadConfiguration {
@@ -60,10 +60,7 @@ export function resolveChildConfiguration(
 
   return Object.freeze({
     profileName: parent.profileName,
-    developerInstructions: Object.freeze([
-      ...parent.developerInstructions,
-      request.role.developerInstructions,
-    ]),
+    developerInstructions: Object.freeze([request.role.developerInstructions]),
     model: request.model ?? overrides?.model ?? parent.model,
     reasoningEffort: request.reasoningEffort ?? overrides?.reasoningEffort ?? parent.reasoningEffort,
     tools: constrainChildCapabilities(parent.tools, overrides?.tools),

@@ -20,7 +20,7 @@ const parent: EffectiveThreadConfiguration = {
 
 describe('Codex Agent Core configuration and Goal contracts', () => {
   test('keeps Profiles, Roles, and child Threads as separate concepts', () => {
-    expect(BUILT_IN_AGENT_ROLES).toEqual(['default', 'worker', 'explorer']);
+    expect(BUILT_IN_AGENT_ROLES).toEqual(['default', 'explorer', 'plan']);
     const role: AgentRole = {
       name: 'explorer',
       source: 'builtIn',
@@ -45,7 +45,7 @@ describe('Codex Agent Core configuration and Goal contracts', () => {
     expect(child.skills).toEqual(['repo-rules']);
     expect(child.plugins).toEqual(['github']);
     expect(child.mcpServers).toEqual(['docs']);
-    expect(child.developerInstructions).toEqual(['Parent instructions', 'Inspect and report.']);
+    expect(child.developerInstructions).toEqual(['Inspect and report.']);
     expect(Object.isFrozen(child)).toBe(true);
     expect(Object.isFrozen(child.tools)).toBe(true);
     expect(Object.isFrozen(child.skills)).toBe(true);

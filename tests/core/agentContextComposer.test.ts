@@ -45,7 +45,7 @@ const configuration: EffectiveThreadConfiguration = {
   developerInstructions: ['Keep project terminology exact.'],
   model: 'test-model',
   reasoningEffort: 'medium',
-  tools: ['file_read', 'node_read', 'node_search', 'skill', 'collaboration.spawn_agent'],
+  tools: ['file_read', 'node_read', 'node_search', 'skill', 'agent'],
   skills: [],
   plugins: [],
   mcpServers: [],
@@ -92,12 +92,12 @@ describe('stable agent prompt composition', () => {
       'outliner',
       'memory',
       'skills',
-      'collaboration',
+      'agent',
       'neva-identity',
     ]);
-    expect(prompt.text).toContain('# Collaboration');
-    expect(prompt.text).toContain('not a plan to re-execute');
-    expect(prompt.text).toContain('Do not poll with list_agents');
+    expect(prompt.text).toContain('# Agents');
+    expect(prompt.text).toContain('work product to synthesize');
+    expect(prompt.text).toContain('Background completion is delivered automatically');
     expect(prompt.text).toContain('# Skills');
     expect(prompt.text).toContain('the latest invocation is authoritative');
     expect(prompt.text).toContain('[[file:Display name^/absolute/path]]');
@@ -158,13 +158,13 @@ describe('stable agent prompt composition', () => {
       'neva-identity',
     ]);
 
-    const collaborationOnly = composeStablePrompt({
+    const agentOnly = composeStablePrompt({
       thread: rootThread(1),
-      configuration: { ...configuration, tools: ['collaboration.list_agents'] },
+      configuration: { ...configuration, tools: ['agent_message'] },
     });
-    expect(collaborationOnly.blocks.map((block) => block.id)).toEqual([
+    expect(agentOnly.blocks.map((block) => block.id)).toEqual([
       'framework-firmware',
-      'collaboration',
+      'agent',
       'neva-identity',
     ]);
   });
@@ -183,12 +183,13 @@ describe('stable agent prompt composition', () => {
       },
     });
     expect(child.fingerprints.l0).toBe(first.fingerprints.l0);
-    expect(child.fingerprints.l1).toBe(first.fingerprints.l1);
+    expect(child.fingerprints.l1).not.toBe(first.fingerprints.l1);
     expect(child.fingerprints.l2).not.toBe(first.fingerprints.l2);
     expect(child.text).not.toContain(NEVA_AGENT_PERSONA);
     expect(child.text).toContain('You are a headless Tenon Subagent Thread');
     expect(child.text).toContain('concurrent Threads share files, processes, ports, credentials');
     expect(child.text).toContain('Execute the assigned implementation and verify it.');
+    expect(child.text).not.toContain('# Memory');
   });
 });
 

@@ -57,7 +57,7 @@ export function composeStablePrompt(input: {
 }): StablePrompt {
   const blocks: Array<Omit<StablePromptBlock, 'fingerprint'>> = [
     { id: 'framework-firmware', layer: 'L0', text: L0_TEXT },
-    ...capabilityBlocks(input.configuration),
+    ...capabilityBlocks(input.thread, input.configuration),
     ...recordsBlocks(input.thread, input.configuration, input.transcriptIndexPath ?? null),
     identityBlock(input.thread, input.configuration),
   ];
@@ -111,6 +111,7 @@ function recordsBlocks(
 }
 
 function capabilityBlocks(
+  thread: Thread,
   configuration: EffectiveThreadConfiguration,
 ): Array<Omit<StablePromptBlock, 'fingerprint'>> {
   const tools = new Set(configuration.tools);
@@ -140,7 +141,7 @@ function capabilityBlocks(
       ].join('\n'),
     });
   }
-  if (has('node_read', 'node_search')) {
+  if (thread.parentThreadId === null && has('node_read', 'node_search')) {
     blocks.push({
       id: 'memory',
       layer: 'L1',
@@ -166,23 +167,17 @@ function capabilityBlocks(
       ].join('\n'),
     });
   }
-  if (has(
-    'collaboration.spawn_agent',
-    'collaboration.send_message',
-    'collaboration.followup_task',
-    'collaboration.wait_agent',
-    'collaboration.list_agents',
-    'collaboration.interrupt_agent',
-  )) {
+  if (has('agent', 'agent_message', 'task_stop')) {
     blocks.push({
-      id: 'collaboration',
+      id: 'agent',
       layer: 'L1',
       text: [
-        '# Collaboration',
-        '- Subagents are separate-context Threads that share host files, processes, credentials, ports, and application state.',
-        '- Delegate bounded independent work only, avoid conflicting mutations, and integrate returned evidence yourself.',
-        '- A completed child or isolated Skill result is work product to synthesize, not a plan to re-execute. Repeat covered work only for an explicit verification need or a reported gap.',
-        '- After parallel fan-out, call wait_agent; it blocks until meaningful activity and batches terminal outcomes. Do not poll with list_agents.',
+        '# Agents',
+        '- A new agent call starts a fresh Agent with no parent conversation history. Give it a complete, bounded task.',
+        '- Agents share host files, processes, credentials, ports, and application state unless worktree isolation is selected. Avoid conflicting mutations.',
+        '- Background completion is delivered automatically. Do not poll for it or fabricate a pending Agent\'s result.',
+        '- Use agent_message with the Agent ID to steer or resume an existing Agent with its context intact.',
+        '- A completed Agent or isolated Skill result is work product to synthesize. Repeat covered work only for an explicit verification need or a reported gap.',
       ].join('\n'),
     });
   }

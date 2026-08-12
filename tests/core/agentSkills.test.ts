@@ -738,9 +738,10 @@ describe('agent skills', () => {
       expect(await runtime.getSkill(name)).toBeNull();
       expect(catalog.entries.some((entry) => entry.name === name)).toBe(false);
     }
-    for (const name of ['skillify', 'research', 'tenon-import']) {
+    for (const name of ['skillify', 'tenon-import']) {
       expect(await runtime.getSkill(name)).not.toBeNull();
     }
+    expect(await runtime.getSkill('research')).toBeNull();
   });
 
   test('loads bundled built-in skills with real resource directories', async () => {
@@ -967,17 +968,16 @@ describe('agent skills', () => {
     const runtime = new AgentSkillRuntime({ includeUserSkills: false });
     const results = await Promise.allSettled([
       runtime.getSkill('skillify'),
-      runtime.getSkill('research'),
+      runtime.getSkill('tenon-import'),
       runtime.listAllSkills(),
       runtime.buildSkillCatalogSnapshot(),
     ]);
 
     expect(results.map((result) => result.status)).toEqual(['fulfilled', 'fulfilled', 'fulfilled', 'fulfilled']);
     expect(results[0]).toMatchObject({ status: 'fulfilled', value: { name: 'skillify', source: 'built-in' } });
-    expect(results[1]).toMatchObject({ status: 'fulfilled', value: { name: 'research', source: 'built-in' } });
+    expect(results[1]).toMatchObject({ status: 'fulfilled', value: { name: 'tenon-import', source: 'built-in' } });
     const allSkills = results[2].status === 'fulfilled' ? results[2].value : [];
     expect(allSkills.map((skill) => skill.name).sort()).toEqual([
-      'research',
       'skillify',
       'tenon-import',
     ]);
@@ -1002,70 +1002,6 @@ describe('agent skills', () => {
       .toBe(path.join(repoRoot, 'src', 'main', 'builtInSkills'));
     expect(resolveBuiltInSkillResourceRoot({ isPackaged: true, resourcesPath }))
       .toBe(path.join(resourcesPath, 'built-in-skills'));
-  });
-
-  test('ships research as a built-in read-only isolated skill', async () => {
-    const runtime = new AgentSkillRuntime({
-      includeUserSkills: false,
-      executeIsolatedSkill: async ({ renderedContent, readOnlyIsolated }) => ({
-        threadId: 'research-thread',
-        agentRole: 'explorer',
-        status: readOnlyIsolated ? 'completed' : 'failed',
-        result: renderedContent,
-      }),
-    });
-
-    const catalog = await runtime.buildSkillCatalogSnapshot();
-    const skill = await runtime.getSkill('research');
-
-    expect(catalog.entries.some((entry) => entry.name === 'research')).toBe(true);
-    expect(catalog.entries.find((entry) => entry.name === 'research')?.description)
-      .toContain('Read-only isolated child');
-    expect(catalog.entries.find((entry) => entry.name === 'research')?.description)
-      .toContain('cannot spawn Subagents');
-    expect(skill).toMatchObject({
-      name: 'research',
-      source: 'built-in',
-      execution: 'isolated',
-      modelInvocable: true,
-      userInvocable: true,
-      argumentHint: '<question or area to research>',
-      argumentNames: ['question'],
-    });
-    expect(skill?.allowedTools).toEqual([
-      'node_search',
-      'node_read',
-      'file_read',
-      'file_glob',
-      'file_grep',
-      'web_search',
-      'web_fetch',
-    ]);
-    expect(skill?.body).toContain('codebase research specialist');
-    expect(skill?.body).toContain('READ-ONLY MODE - NO MODIFICATIONS');
-    expect(skill?.body).toContain('file_glob for broad file pattern matching');
-    expect(skill?.body).toContain('file_grep for content and regex search');
-    expect(skill?.body).toContain('Adapt thoroughness to the caller');
-    expect(skill?.body).toContain('issue them in parallel');
-
-    const invocation = await runtime.invokeSkill({
-      skill: 'research',
-      args: 'map the current spec',
-      trigger: 'agent',
-    });
-    expect(invocation.ok).toBe(true);
-    if (!invocation.ok) return;
-    expect(invocation.execution).toBe('isolated');
-    expect(invocation.isolated?.status).toBe('completed');
-
-    const toolResult = await createSkillTool(runtime).execute('research-tool-call', {
-      skill: 'research',
-      args: 'map the current spec',
-    });
-    const text = toolResult.content.flatMap((part) => part.type === 'text' ? [part.text] : []).join('\n');
-    expect(text).toContain('outcome: completed');
-    expect(text).toContain('Synthesize the completed result below; do not repeat covered work');
-    expect(text).toContain('<skill-result>');
   });
 
   test('preserves isolated capability contracts when the catalog description budget is shared', async () => {
@@ -1107,15 +1043,15 @@ describe('agent skills', () => {
     ), 0)).toBeLessThanOrEqual(8_000);
   });
 
-  test('disabled skill gates apply to built-in research', async () => {
+  test('disabled skill gates apply to built-in Skills', async () => {
     const runtime = new AgentSkillRuntime({ includeUserSkills: false });
-    runtime.updateDisabledSkills(['research']);
+    runtime.updateDisabledSkills(['skillify']);
     expect(acknowledgePendingCatalogRefresh(runtime)).toBe(true);
-    runtime.updateDisabledSkills(['research']);
+    runtime.updateDisabledSkills(['skillify']);
     expect(acknowledgePendingCatalogRefresh(runtime)).toBe(false);
 
-    expect((await runtime.buildSkillCatalogSnapshot()).entries.some((entry) => entry.name === 'research')).toBe(false);
-    const invocation = await runtime.invokeSkill({ skill: 'research', trigger: 'agent' });
+    expect((await runtime.buildSkillCatalogSnapshot()).entries.some((entry) => entry.name === 'skillify')).toBe(false);
+    const invocation = await runtime.invokeSkill({ skill: 'skillify', trigger: 'agent' });
 
     expect(invocation.ok).toBe(false);
     if (invocation.ok) return;
@@ -1125,17 +1061,24 @@ describe('agent skills', () => {
   test('labels failed isolated Skill output as partial evidence', async () => {
     const runtime = new AgentSkillRuntime({
       includeUserSkills: false,
+      builtInSkills: [{
+        name: 'isolated-failure',
+        description: 'Isolated failure fixture',
+        body: 'Inspect the failure path for $ARGUMENTS.',
+        execution: 'isolated',
+        allowedTools: ['file_read'],
+      }],
       executeIsolatedSkill: async () => ({
-        threadId: 'failed-research-thread',
-        agentRole: 'explorer',
+        threadId: 'failed-isolated-thread',
+        agentRole: 'default',
         status: 'failed',
         result: 'Partial evidence',
         error: 'Provider unavailable',
       }),
     });
 
-    const toolResult = await createSkillTool(runtime).execute('failed-research-tool-call', {
-      skill: 'research',
+    const toolResult = await createSkillTool(runtime).execute('failed-isolated-tool-call', {
+      skill: 'isolated-failure',
       args: 'inspect the failure path',
     });
     const text = toolResult.content.flatMap((part) => part.type === 'text' ? [part.text] : []).join('\n');

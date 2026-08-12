@@ -511,13 +511,21 @@ export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy
   }
 
   filterProjection(projection: DocumentProjection, causation: AgentMutationCausation): DocumentProjection {
-    const explicit = this.explicitNodeReferences(causation.threadId, causation.turnId);
+    const thread = this.requireHost().readThread({
+      threadId: causation.threadId,
+      includeTurns: true,
+    }).thread;
+    const rootUserThread = thread.parentThreadId === null && thread.threadSource === 'user';
+    const explicit = rootUserThread
+      ? this.explicitNodeReferences(causation.threadId, causation.turnId)
+      : new Set<string>();
     const graph = this.timeline.graph(projection);
     const generated = new Set(this.control.generatedNodes()
       .filter((entry) => !entry.userAuthoritative)
       .map((entry) => entry.nodeId));
     const admission = this.control.admission(causation.turnId);
-    const implicitEnabled = Boolean(admission?.eligibleAtAdmission)
+    const implicitEnabled = rootUserThread
+      && Boolean(admission?.eligibleAtAdmission)
       && !this.control.isTurnExcluded(causation.turnId)
       && this.control.featureMode() === 'enabled'
       && admission?.featureModeGeneration === this.control.status().featureModeGeneration;

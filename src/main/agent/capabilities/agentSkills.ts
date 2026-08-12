@@ -90,68 +90,6 @@ const DEFAULT_BUILT_IN_SKILLS: readonly BuiltInSkillInput[] = [{
     '',
     'Do not write executable or binary support files in this workflow. Do not copy secrets into skills.',
   ].join('\n'),
-}, {
-  name: 'research',
-  description: 'Research or explore a question in an isolated read-only child Thread.',
-  whenToUse: 'Use when the user asks to research, explore, inspect, map, survey, or verify context before deciding or editing. Examples: "research this area", "explore how backlinks work", "verify this assumption", "find the relevant files". Do not use for direct implementation or edits.',
-  argumentHint: '<question or area to research>',
-  argumentNames: ['question'],
-  execution: 'isolated',
-  readOnlyIsolated: true,
-  allowedTools: [
-    'node_search',
-    'node_read',
-    'file_read',
-    'file_glob',
-    'file_grep',
-    'web_search',
-    'web_fetch',
-  ],
-  body: [
-    'You are a codebase research specialist running in an isolated child Thread. You excel at thoroughly navigating and exploring existing context.',
-    '',
-    '=== CRITICAL: READ-ONLY MODE - NO MODIFICATIONS ===',
-    'This is a read-only exploration task. You are strictly prohibited from:',
-    '- Creating new files or support artifacts anywhere, including temporary files',
-    '- Modifying, deleting, moving, or copying existing files or outliner nodes',
-    '- Changing settings, installing dependencies, committing, or running shell commands',
-    '- Invoking skills or spawning, messaging, or stopping child agents',
-    '',
-    'Your role is exclusively to search, read, analyze, and report. The runtime also narrows your tool catalog to read-only tools; if a task needs edits, report the relevant findings and stop.',
-    '',
-    'Your strengths:',
-    '- Rapidly finding relevant files, nodes, specs, tests, and prior context',
-    '- Searching code and text with multiple keyword, symbol, and naming strategies',
-    '- Reading and connecting several files or nodes to understand architecture and behavior',
-    '- Investigating complex questions that require multi-step exploration',
-    '',
-    'Guidelines:',
-    '1. Restate the concrete research question and scope before searching.',
-    '2. Prefer local evidence first: node_search/node_read for outline context and timeline memory nodes, file_glob for broad file pattern matching, file_grep for content and regex search, and file_read when you know the specific path.',
-    '3. Start broad and narrow down. Use multiple search strategies if the first one does not find the right files; check related names, conventions, tests, specs, and call sites.',
-    '4. Adapt thoroughness to the caller: quick means basic targeted searches; medium means moderate exploration across likely locations; very thorough means comprehensive analysis across multiple locations and naming conventions.',
-    '5. Make efficient use of read/search tools. When independent searches or reads do not depend on each other, issue them in parallel.',
-    '6. Use web_search/web_fetch only when the question needs current or external information, or cannot be answered from local context.',
-    '7. Distinguish direct evidence from inference. Cite file paths, node references, memory references, or web URLs for every important finding.',
-    '8. Keep the result compact and useful to the caller. Do not include a tool-by-tool diary.',
-    '',
-    'Return this shape:',
-    '',
-    'Findings',
-    '- ...',
-    '',
-    'Evidence',
-    '- ...',
-    '',
-    'Confidence',
-    '- High/medium/low, with the reason.',
-    '',
-    'Open questions',
-    '- ...',
-    '',
-    'Next probes',
-    '- ...',
-  ].join('\n'),
 }];
 
 const SKILL_TOOL_PARAMETERS = {
@@ -256,7 +194,6 @@ export interface BuiltInSkillInput {
   effort?: string;
   execution?: 'inline' | 'isolated';
   paths?: string[];
-  readOnlyIsolated?: boolean;
 }
 
 export interface SkillShellExecutionInput {
@@ -283,7 +220,6 @@ export interface SkillIsolatedExecutionInput {
   args: string;
   trigger: 'agent' | 'slash' | 'runtime';
   parentToolCallId?: string;
-  readOnlyIsolated?: boolean;
 }
 
 export interface SkillIsolatedExecutionResult {
@@ -370,10 +306,7 @@ export class AgentSkillRuntime {
     const skills = (await this.registry.getModelInvocableSkills())
       .filter((skill) => this.isEnabledByConfiguration(skill) && !this.isDisabledByRuntimeSettings(skill))
       .sort((left, right) => compareStableText(left.name, right.name));
-    const descriptions = boundedSkillCatalogDescriptions(
-      skills,
-      (skill) => this.registry.isBuiltInReadOnlyIsolatedSkill(skill),
-    );
+    const descriptions = boundedSkillCatalogDescriptions(skills);
     const entries = skills.map((skill) => ({
       change: 'available' as const,
       name: skill.name,
@@ -557,7 +490,6 @@ export class AgentSkillRuntime {
           args: input.args ?? '',
           trigger: input.trigger,
           parentToolCallId: input.parentToolCallId,
-          readOnlyIsolated: this.registry.isBuiltInReadOnlyIsolatedSkill(skill),
         });
         return {
           ok: true,
@@ -820,7 +752,6 @@ class SkillRegistry {
   private readonly builtInSkillDirectories: string[];
   private readonly builtInSkillRoots: string[];
   private readonly builtInSkills: BuiltInSkillInput[];
-  private readonly builtInReadOnlyIsolatedSkills: Set<string>;
   private additionalSkillDirectories: string[];
   private loadedBoundSkillRoots: LoadedBoundSkillRoot[] = [];
   private loadedSkillSearchDirectories: SkillSearchDirectory[] = [];
@@ -856,11 +787,6 @@ class SkillRegistry {
       this.root,
     );
     this.builtInSkills = options.builtInSkills ?? [...DEFAULT_BUILT_IN_SKILLS];
-    this.builtInReadOnlyIsolatedSkills = new Set(
-      this.builtInSkills
-        .filter((skill) => skill.readOnlyIsolated === true)
-        .map((skill) => normalizeSkillName(skill.name)),
-    );
     this.additionalSkillDirectories = normalizeAdditionalSkillDirectories(options.additionalSkillDirectories, this.root);
     this.provenanceStore = options.provenanceStore;
     this.managedSkillRoots = options.managedSkillRoots;
@@ -872,10 +798,6 @@ class SkillRegistry {
   /** The managed index's activation flag as of the last load. */
   activatedManagedSkillNames(): ReadonlySet<string> {
     return this.activeManagedSkillNames;
-  }
-
-  isBuiltInReadOnlyIsolatedSkill(skill: SkillDefinition): boolean {
-    return skill.source === 'built-in' && this.builtInReadOnlyIsolatedSkills.has(normalizeSkillName(skill.name));
   }
 
   async recordAgentSkillWrite(
@@ -1943,13 +1865,12 @@ function skillListingIdentity(skill: SkillDefinition): string {
 function formatSkillDescription(
   skill: SkillDefinition,
   maxChars = MAX_LISTING_DESCRIPTION_CHARS,
-  readOnlyIsolated = false,
 ): string {
   const budget = Math.max(0, Math.min(maxChars, MAX_LISTING_DESCRIPTION_CHARS));
   if (budget === 0) return '';
   const authored = authoredSkillDescription(skill);
   if (skill.execution !== 'isolated') return truncate(authored, budget);
-  const constraint = isolatedSkillExecutionContract(skill, readOnlyIsolated);
+  const constraint = isolatedSkillExecutionContract(skill);
   if (budget <= constraint.length) return truncate(constraint, budget);
   const authoredBudget = budget - constraint.length - 1;
   return `${truncate(authored, authoredBudget)} ${constraint}`.trim();
@@ -1957,19 +1878,18 @@ function formatSkillDescription(
 
 function boundedSkillCatalogDescriptions(
   skills: readonly SkillDefinition[],
-  isReadOnlyIsolated: (skill: SkillDefinition) => boolean,
 ): ReadonlyMap<string, string> {
   if (skills.length === 0) return new Map();
   const full = skills.map((skill) => [
     skill.name,
-    formatSkillDescription(skill, MAX_LISTING_DESCRIPTION_CHARS, isReadOnlyIsolated(skill)),
+    formatSkillDescription(skill, MAX_LISTING_DESCRIPTION_CHARS),
   ] as const);
   const fullLength = full.reduce((total, [name, description]) => total + name.length + description.length + 4, 0);
   if (fullLength <= DEFAULT_SKILL_LISTING_CHAR_BUDGET) return new Map(full);
   const nameOverhead = skills.reduce((total, skill) => total + skill.name.length + 4, 0);
   const contractOverhead = skills.reduce((total, skill) => (
     total + (skill.execution === 'isolated'
-      ? isolatedSkillExecutionContract(skill, isReadOnlyIsolated(skill)).length + 1
+      ? isolatedSkillExecutionContract(skill).length + 1
       : 0)
   ), 0);
   const authoredBudget = Math.max(0, DEFAULT_SKILL_LISTING_CHAR_BUDGET - nameOverhead - contractOverhead);
@@ -1979,8 +1899,7 @@ function boundedSkillCatalogDescriptions(
     skill.execution === 'isolated'
       ? formatSkillDescription(
           skill,
-          isolatedSkillExecutionContract(skill, isReadOnlyIsolated(skill)).length + 1 + perAuthoredDescription,
-          isReadOnlyIsolated(skill),
+          isolatedSkillExecutionContract(skill).length + 1 + perAuthoredDescription,
         )
       : perAuthoredDescription < MIN_NON_EMPTY_DESCRIPTION_CHARS
         ? ''
@@ -1994,11 +1913,8 @@ function authoredSkillDescription(skill: SkillDefinition): string {
     : skill.description;
 }
 
-function isolatedSkillExecutionContract(skill: SkillDefinition, readOnlyIsolated: boolean): string {
-  if (readOnlyIsolated) {
-    return 'Read-only isolated child; cannot spawn Subagents; parent handles fan-out.';
-  }
-  return skill.allowedTools.includes('collaboration.spawn_agent')
+function isolatedSkillExecutionContract(skill: SkillDefinition): string {
+  return skill.allowedTools.includes('agent')
     ? 'Isolated child; Subagent spawn declared; parent ceiling applies.'
     : 'Isolated child; no Subagents; parent handles fan-out.';
 }

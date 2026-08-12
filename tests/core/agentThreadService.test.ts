@@ -6142,7 +6142,7 @@ describe('ThreadService', () => {
     await fixture.service.close();
   });
 
-  test('re-resolves a child Role and current parent ceiling on resume', async () => {
+  test('re-resolves a child Role and current parent ceiling without inheriting parent instructions on resume', async () => {
     const parentConfiguration: EffectiveThreadConfiguration = {
       profileName: 'root',
       developerInstructions: ['Initial parent instructions'],
@@ -6228,7 +6228,7 @@ describe('ThreadService', () => {
     });
     await fixture.executor.waitUntilWaiting(2);
     expect(fixture.executor.contexts[2]?.configuration).toMatchObject({
-      developerInstructions: ['Current parent instructions', 'Current role instructions'],
+      developerInstructions: ['Current role instructions'],
       model: 'current-role-model',
       reasoningEffort: 'high',
       tools: ['node_read'],
