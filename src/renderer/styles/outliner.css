@@ -346,9 +346,22 @@
   margin: var(--space-2) 0 var(--space-6);
 }
 
-.outliner-table-scope > .view-toolbar {
+.view-toolbar.is-table-header {
   width: auto;
-  margin-right: var(--row-selection-start);
+  flex: 0 0 auto;
+  margin: 0 0 0 auto;
+  padding: 0;
+}
+
+.view-toolbar.is-table-header::before,
+.view-toolbar.is-table-header::after {
+  display: none;
+}
+
+.view-toolbar.is-table-header > .view-toolbar-button-row {
+  min-height: var(--control-size-xl);
+  flex-wrap: nowrap;
+  gap: 0;
 }
 
 .outliner-table-owner-fields {
@@ -369,7 +382,7 @@
 .outliner-table-header,
 .outliner-table-row {
   display: grid;
-  width: var(--table-min-width);
+  width: max(100%, var(--table-min-width));
   min-width: var(--table-min-width);
   grid-template-columns: var(--table-columns);
 }
@@ -401,6 +414,13 @@
 .outliner-table-column-header {
   border-bottom: 1px solid var(--separator);
   padding: 0 var(--space-3);
+}
+
+.outliner-table-title-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .outliner-table-column-header {
@@ -521,7 +541,7 @@ button.outliner-table-column-kind:focus-visible {
 
 .outliner-table-body {
   position: relative;
-  width: var(--table-min-width);
+  width: max(100%, var(--table-min-width));
   min-width: var(--table-min-width);
 }
 
@@ -651,7 +671,7 @@ button.outliner-table-column-kind:focus-visible {
 
 .outliner-table-filtered-row {
   display: grid;
-  width: var(--table-min-width);
+  width: max(100%, var(--table-min-width));
   min-width: var(--table-min-width);
   grid-template-columns: var(--table-columns);
 }

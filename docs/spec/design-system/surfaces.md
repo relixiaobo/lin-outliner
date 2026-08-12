@@ -130,25 +130,31 @@ the same row geometry and renders that toggle in place of editable text.
 ### Table View
 
 Table is a dense, unframed content surface, never a card or a stack of row cards.
-Its scroll scope may use the full panel width, but the data strip remains
-content-sized instead of stretching empty columns across the pane. Optional
-columns overflow through a table-local native horizontal scroller without
-widening the panel or adjacent panes; the panel remains the only vertical
-scroller.
+Its header and rows fill the available content width whenever their minimum
+tracks fit. Title absorbs spare space so long record names remain scannable and
+Add field stays at the trailing edge. Optional columns overflow through a
+table-local native horizontal scroller without widening the panel or adjacent
+panes; the panel remains the only vertical scroller.
 
-Header and body use one shared grid template. Title has a compact fixed default;
-field columns use narrower clamped persisted widths; the trailing `+ Add` command
-sits outside the data separators. The opaque content base, quiet horizontal row
-separators, a hierarchy guide aligned with the owner bullet,
-`--field-row-min-height` rhythm, content type scale, and neutral text hierarchy
-keep the surface scannable in light and dark mode. Vertical cell borders and a
-top frame are absent at rest. The header may stick inside the panel but does not
-become translucent chrome.
+Header and body use one shared responsive grid template. Title is
+`minmax(260px, 1fr)`; field columns default to 180px, clamp no narrower than
+112px, and honor persisted widths; the stable trailing Add field command sits
+outside the data separators. Header labels and Add field use `--font-ui-sm`,
+while titles and values use `--font-content` / `--line-content`; all inherit the
+shared sans family. The opaque content base, quiet horizontal row separators, a
+hierarchy guide aligned with the owner bullet, `--field-row-min-height` rhythm,
+and neutral text hierarchy keep the surface scannable in light and dark mode.
+Vertical cell borders and a top frame are absent at rest. The header may stick
+inside the panel but does not become translucent chrome.
 
 The Title marker slot aligns with the Title header label. Its disclosure occupies
 the reserved gutter immediately before the column, while the compensated row
 width keeps the Title column boundary fixed across leaf, expanded, hover, and
 selection states.
+
+In a Search Table, the redundant query summary row is absent. Table view actions
+sit inside the Title header instead of occupying a standalone toolbar band.
+Header and row separators therefore provide the only horizontal structure.
 
 An active cell wrapper uses the neutral fill ladder plus the shared focus outline
 only while the wrapper itself owns focus; an idle table never paints a synthetic
@@ -184,10 +190,13 @@ dimensions.
 Column and add-field overlays are level-1 material popovers with the shared
 reduced-transparency fallback. Column headers use Hide as their only removal
 action. Add column groups current-record custom fields first, other Schema custom
-fields second, and system fields last; section labels remain compact metadata,
-not selectable rows. A nested table is an unframed indented scope with one quiet
-separating edge, not a card inside the parent table. Each nested scope owns its
-own column template and local horizontal overflow.
+fields second, and system fields last; the Outline Display editor likewise places
+custom Fields before System fields. Section labels remain compact metadata, not
+selectable rows. A Search Table keeps compact Outline, Sort, and Filter actions
+inside its Title header, while hidden columns remain directly recoverable through
+Add field. A nested table is an unframed indented scope with one
+quiet separating edge, not a card inside the parent table. Each nested scope owns
+its own column template and local horizontal overflow.
 
 ### References
 

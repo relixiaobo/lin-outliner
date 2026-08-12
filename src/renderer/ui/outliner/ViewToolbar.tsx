@@ -136,6 +136,7 @@ interface ViewToolbarProps {
   run: CommandRunner;
   dropdownRequest: ToolbarDropdownRequest | null;
   onDropdownRequestConsumed: (request: ToolbarDropdownRequest) => void;
+  variant?: 'bar' | 'tableHeader';
 }
 
 // Every dropdown section maps to a real view operation. The fake
@@ -249,8 +250,13 @@ function normalizeValues(raw: string): string[] {
     .filter(Boolean);
 }
 
-function bySection(choices: FieldChoice[]): Array<{ section: FieldChoice['section']; items: FieldChoice[] }> {
-  const order: FieldChoice['section'][] = ['System fields', 'Fields'];
+const SYSTEM_FIRST_FIELD_SECTIONS: readonly FieldChoice['section'][] = ['System fields', 'Fields'];
+const CUSTOM_FIRST_FIELD_SECTIONS: readonly FieldChoice['section'][] = ['Fields', 'System fields'];
+
+function bySection(
+  choices: FieldChoice[],
+  order: readonly FieldChoice['section'][] = SYSTEM_FIRST_FIELD_SECTIONS,
+): Array<{ section: FieldChoice['section']; items: FieldChoice[] }> {
   return order
     .map((section) => ({ section, items: choices.filter((choice) => choice.section === section) }))
     .filter((group) => group.items.length > 0);
@@ -344,6 +350,7 @@ export function ViewToolbar({
   run,
   dropdownRequest,
   onDropdownRequestConsumed,
+  variant = 'bar',
 }: ViewToolbarProps) {
   const t = useT();
   const tv = t.outliner.viewToolbar;
@@ -362,6 +369,7 @@ export function ViewToolbar({
   const nameFilter = view.filterRules.find(isNameFilterRule);
   const firstSortRule = view.sortRules[0];
   const SortStateIcon = firstSortRule?.direction === 'desc' ? SortDescIcon : SortAscIcon;
+  const tableHeader = variant === 'tableHeader';
   const buttonRefs: Record<ToolbarSection, RefObject<HTMLButtonElement | null>> = {
     display: displayRef,
     group: groupRef,
@@ -490,8 +498,8 @@ export function ViewToolbar({
 
   const includeSortSummary = open === 'sort';
   const summaryChips = useMemo(
-    () => summarizeView(view, choices, tv, { includeSort: includeSortSummary }),
-    [view, choices, tv, includeSortSummary],
+    () => tableHeader ? [] : summarizeView(view, choices, tv, { includeSort: includeSortSummary }),
+    [view, choices, tv, includeSortSummary, tableHeader],
   );
   const titles = sectionTitles(tv);
   const renderSummaryChip = (chip: ViewSummaryChip) => {
@@ -528,7 +536,7 @@ export function ViewToolbar({
 
   return (
     <div
-      className="view-toolbar"
+      className={`view-toolbar${tableHeader ? ' is-table-header' : ''}`}
       aria-label={tv.toolbarAriaLabel}
       ref={toolbarRef}
       onBlur={hideTooltipFromEvent}
@@ -538,41 +546,54 @@ export function ViewToolbar({
       onPointerOver={showTooltipFromEvent}
     >
       <div className="view-toolbar-button-row">
-        <div className="view-toolbar-mode" role="group" aria-label={tv.viewMode}>
+        {tableHeader ? (
           <ButtonControl
-            aria-pressed={view.viewMode !== 'table'}
-            className={`view-toolbar-mode-button ${view.viewMode !== 'table' ? 'is-active' : ''}`}
+            aria-label={tv.outline}
+            className="view-toolbar-pill view-toolbar-tooltip-anchor"
+            data-tooltip={tv.outline}
             onClick={() => void run(() => api.setViewMode(node.id, 'list'))}
           >
             <NodeReadToolIcon size={ICON_SIZE.menu} />
-            <span>{tv.outline}</span>
           </ButtonControl>
-          <ButtonControl
-            aria-pressed={view.viewMode === 'table'}
-            className={`view-toolbar-mode-button ${view.viewMode === 'table' ? 'is-active' : ''}`}
-            onClick={() => void run(() => api.setViewMode(node.id, 'table'))}
-          >
-            <TableIcon size={ICON_SIZE.menu} />
-            <span>{tv.table}</span>
-          </ButtonControl>
-        </div>
-        <NameFilterControl
-          nameFilter={nameFilter}
-          nodeId={node.id}
-          run={run}
-          label={tv.filterByName}
-          clearLabel={tv.clearNameFilter}
-          placeholder={tv.nameFilterPlaceholder}
-        />
-        <ToolbarButton
-          ref={displayRef}
-          label={tv.display}
-          open={open === 'display'}
-          onClick={() => toggle('display')}
-        >
-          <FieldIcon size={ICON_SIZE.menu} />
-        </ToolbarButton>
-        {view.viewMode !== 'table' ? (
+        ) : (
+          <>
+            <div className="view-toolbar-mode" role="group" aria-label={tv.viewMode}>
+              <ButtonControl
+                aria-pressed={view.viewMode !== 'table'}
+                className={`view-toolbar-mode-button ${view.viewMode !== 'table' ? 'is-active' : ''}`}
+                onClick={() => void run(() => api.setViewMode(node.id, 'list'))}
+              >
+                <NodeReadToolIcon size={ICON_SIZE.menu} />
+                <span>{tv.outline}</span>
+              </ButtonControl>
+              <ButtonControl
+                aria-pressed={view.viewMode === 'table'}
+                className={`view-toolbar-mode-button ${view.viewMode === 'table' ? 'is-active' : ''}`}
+                onClick={() => void run(() => api.setViewMode(node.id, 'table'))}
+              >
+                <TableIcon size={ICON_SIZE.menu} />
+                <span>{tv.table}</span>
+              </ButtonControl>
+            </div>
+            <NameFilterControl
+              nameFilter={nameFilter}
+              nodeId={node.id}
+              run={run}
+              label={tv.filterByName}
+              clearLabel={tv.clearNameFilter}
+              placeholder={tv.nameFilterPlaceholder}
+            />
+            <ToolbarButton
+              ref={displayRef}
+              label={tv.display}
+              open={open === 'display'}
+              onClick={() => toggle('display')}
+            >
+              <FieldIcon size={ICON_SIZE.menu} />
+            </ToolbarButton>
+          </>
+        )}
+        {!tableHeader && view.viewMode !== 'table' ? (
           <ToolbarButton
             ref={groupRef}
             label={tv.groupBy}
@@ -598,6 +619,7 @@ export function ViewToolbar({
         )}
         <ToolbarButton
           ref={filterRef}
+          active={tableHeader && view.filterRules.length > 0}
           label={tv.filterBy}
           open={open === 'filter'}
           onClick={() => toggle('filter')}
@@ -874,7 +896,7 @@ function DisplaySection({
   // Name is the row text itself and is always shown, so it is not a toggle here.
   const displayable = choices.filter((choice) => choice.id !== NAME_FIELD);
   const byField = new Map(view.displayFields.map((field) => [field.field, field]));
-  const groups = bySection(displayable);
+  const groups = bySection(displayable, CUSTOM_FIRST_FIELD_SECTIONS);
   return (
     <div className="view-toolbar-options">
       {groups.map((group) => (

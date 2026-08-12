@@ -52,6 +52,9 @@ test.describe('table view', () => {
   });
 
   test('switches the same children through View as and preserves the saved group rule', async ({ page }) => {
+    const originalViewport = page.viewportSize();
+    if (!originalViewport) throw new Error('Missing viewport');
+    await page.setViewportSize({ width: 1700, height: originalViewport.height });
     await configureRootTable(page);
     await switchRootFromContextMenu(page, 'Table');
 
@@ -60,7 +63,7 @@ test.describe('table view', () => {
     await expect(grid).toHaveAttribute('aria-colcount', '3');
     await expect(grid.getByRole('columnheader')).toHaveText(['Title', 'Status', 'Due']);
     await expect(grid.locator('.outliner-table-column-kind')).toHaveCount(2);
-    await expect(grid.getByRole('button', { name: 'Add column' })).toHaveText('Add');
+    await expect(grid.getByRole('button', { name: 'Add column' })).toHaveText('Add field');
     await expect(grid.getByRole('row')).toHaveCount(5);
     await expect(grid.locator(`[data-table-row-id="${ids.alpha}"][data-table-column-id="__title__"]`)).toContainText('Alpha');
 
@@ -80,9 +83,24 @@ test.describe('table view', () => {
       const firstTitleWrapRect = firstTitleWrap.getBoundingClientRect();
       const firstChevronRect = firstChevron.getBoundingClientRect();
       const firstBulletRect = firstBullet.getBoundingClientRect();
+      const rootStyle = getComputedStyle(document.documentElement);
+      const scrollStyle = getComputedStyle(scroll);
+      const resolveFontSize = (token: string) => {
+        const probe = document.createElement('span');
+        probe.style.fontSize = `var(${token})`;
+        document.body.append(probe);
+        const fontSize = getComputedStyle(probe).fontSize;
+        probe.remove();
+        return fontSize;
+      };
+      const addRect = add.getBoundingClientRect();
       return {
         addBorderBottom: getComputedStyle(add).borderBottomWidth,
-        addWidth: add.getBoundingClientRect().width,
+        addRight: addRect.right,
+        addWidth: addRect.width,
+        contentFontFamily: getComputedStyle(firstCell).fontFamily,
+        contentFontSize: getComputedStyle(firstCell).fontSize,
+        contentFontToken: resolveFontSize('--font-content'),
         fieldWidths: fields.map((field) => field.getBoundingClientRect().width),
         firstBulletLeft: firstBulletRect.left,
         firstCellBackground: getComputedStyle(firstCell).backgroundColor,
@@ -92,17 +110,24 @@ test.describe('table view', () => {
         firstChevronRight: firstChevronRect.right,
         firstTitleWrapRight: firstTitleWrapRect.right,
         headerBorderTop: getComputedStyle(header).borderTopWidth,
+        headerFontFamily: getComputedStyle(header).fontFamily,
+        headerFontSize: getComputedStyle(header).fontSize,
+        headerFontToken: resolveFontSize('--font-ui-sm'),
         headerWidth: header.getBoundingClientRect().width,
+        rootFontFamily: rootStyle.fontFamily,
+        scrollContentWidth: scroll.clientWidth - Number.parseFloat(scrollStyle.paddingLeft),
         scrollLeft: scrollRect.left,
+        scrollRight: scrollRect.right,
         scrollWidth: scrollRect.width,
         titleLabelLeft: titleRect.left + Number.parseFloat(getComputedStyle(title).paddingLeft),
         titleWidth: titleRect.width,
       };
     });
-    expect(geometry.titleWidth).toBeCloseTo(152, 0);
-    expect(geometry.fieldWidths).toEqual([86, 86]);
-    expect(geometry.addWidth).toBeCloseTo(82, 0);
-    expect(geometry.headerWidth).toBeLessThan(geometry.scrollWidth - 100);
+    expect(geometry.titleWidth).toBeGreaterThanOrEqual(260);
+    expect(geometry.fieldWidths).toEqual([180, 180]);
+    expect(geometry.addWidth).toBeCloseTo(104, 0);
+    expect(geometry.headerWidth).toBeCloseTo(geometry.scrollContentWidth, 0);
+    expect(geometry.addRight).toBeCloseTo(geometry.scrollRight, -1);
     expect(geometry.headerBorderTop).toBe('0px');
     expect(geometry.firstCellBorderRight).toBe('0px');
     expect(geometry.addBorderBottom).toBe('0px');
@@ -111,12 +136,39 @@ test.describe('table view', () => {
     expect(geometry.firstChevronLeft).toBeGreaterThanOrEqual(geometry.scrollLeft);
     expect(geometry.firstChevronRight).toBeLessThan(geometry.firstBulletLeft);
     expect(geometry.firstTitleWrapRight).toBeCloseTo(geometry.firstCellRight, 1);
+    expect(geometry.headerFontFamily).toBe(geometry.rootFontFamily);
+    expect(geometry.contentFontFamily).toBe(geometry.rootFontFamily);
+    expect(geometry.headerFontSize).toBe(geometry.headerFontToken);
+    expect(geometry.contentFontSize).toBe(geometry.contentFontToken);
 
-    const toolbar = page.locator('.view-toolbar').first();
-    await expect(toolbar.getByRole('button', { name: 'Group by', exact: true })).toHaveCount(0);
-    await toolbar.getByRole('button', { name: 'Outline', exact: true }).click();
+    await page.setViewportSize({ width: 760, height: originalViewport.height });
+    const narrowGeometry = await grid.evaluate((element) => {
+      const scroll = element as HTMLElement;
+      const title = scroll.querySelector<HTMLElement>('.outliner-table-title-header')!;
+      const fields = [...scroll.querySelectorAll<HTMLElement>('.outliner-table-column-header')];
+      const add = scroll.querySelector<HTMLElement>('.outliner-table-add-column')!;
+      return {
+        addWidth: add.getBoundingClientRect().width,
+        clientWidth: scroll.clientWidth,
+        fieldWidths: fields.map((field) => field.getBoundingClientRect().width),
+        scrollWidth: scroll.scrollWidth,
+        titleWidth: title.getBoundingClientRect().width,
+      };
+    });
+    expect(narrowGeometry.scrollWidth).toBeGreaterThan(narrowGeometry.clientWidth);
+    expect(narrowGeometry.titleWidth).toBeCloseTo(260, 0);
+    expect(narrowGeometry.fieldWidths).toEqual([180, 180]);
+    expect(narrowGeometry.addWidth).toBeCloseTo(104, 0);
+    await page.setViewportSize(originalViewport);
+
+    const tableScope = page.locator(`[data-table-owner-id="${ids.today}"]`);
+    const tableHeaderActions = grid.locator('.outliner-table-title-header .view-toolbar.is-table-header');
+    await expect(tableScope.locator(':scope > .view-toolbar')).toHaveCount(0);
+    await expect(tableHeaderActions.getByRole('button', { name: 'Group by', exact: true })).toHaveCount(0);
+    await tableHeaderActions.getByRole('button', { name: 'Outline', exact: true }).click();
     await expect(rootGrid(page)).toHaveCount(0);
-    await expect(toolbar.getByRole('button', { name: 'Group by', exact: true })).toBeVisible();
+    const outlineToolbar = page.locator('.view-toolbar:not(.is-table-header)').first();
+    await expect(outlineToolbar.getByRole('button', { name: 'Group by', exact: true })).toBeVisible();
 
     const groupField = await page.evaluate((todayId) => {
       const win = window as typeof window & {
@@ -133,7 +185,7 @@ test.describe('table view', () => {
     }, ids.today);
     expect(groupField).toBe('sys:done');
 
-    await toolbar.getByRole('button', { name: 'Table', exact: true }).click();
+    await outlineToolbar.getByRole('button', { name: 'Table', exact: true }).click();
     await expect(rootGrid(page)).toBeVisible();
   });
 
@@ -689,7 +741,7 @@ test.describe('table view', () => {
       const projection = await e2eProjection(page);
       const display = projection.nodes.find((node) => node.id === dueDisplay!.id);
       return display?.type === 'displayField' ? display.displayWidth : null;
-    }).toBe(102);
+    }).toBe(196);
 
     await invokeCommands(page, [{
       cmd: 'update_display_field',
@@ -732,9 +784,10 @@ test.describe('table view', () => {
     await page.getByRole('menuitem', { name: 'Move left' }).click();
     await expect(grid.getByRole('columnheader')).toHaveText(['Title', 'Done', 'Deadline']);
 
-    const toolbar = page.locator('.view-toolbar').first();
-    await toolbar.getByRole('button', { name: 'Display', exact: true }).click();
-    await page.getByRole('dialog', { name: 'Display' }).getByText('Status', { exact: true }).click();
+    await grid.getByRole('button', { name: 'Add column' }).click();
+    await page.getByRole('dialog', { name: 'Add column' })
+      .getByRole('button', { name: 'Status', exact: true })
+      .click();
     await expect(grid.getByRole('columnheader')).toHaveText(['Title', 'Done', 'Status', 'Deadline']);
 
     await grid.getByRole('button', { name: 'Done column menu' }).click();
@@ -826,15 +879,61 @@ test.describe('table view', () => {
     await page.locator('.sidebar-primary-nav .sidebar-nav-item').filter({ hasText: 'Recents' }).click();
 
     const grid = page.getByRole('grid', { name: 'Recents table' });
+    const tableScope = page.locator(`[data-table-owner-id="${ids.recents}"]`);
+    const headerActions = grid.locator('.outliner-table-title-header .view-toolbar.is-table-header');
+    const summary = page.locator('.search-query-summary-bar');
+    await expect(tableScope.locator(':scope > .view-toolbar')).toHaveCount(0);
+    await expect(headerActions.getByRole('button', { name: 'Outline', exact: true })).toBeVisible();
+    await expect(headerActions.getByRole('button', { name: 'Sort by', exact: true })).toBeVisible();
+    await expect(headerActions.getByRole('button', { name: 'Filter by', exact: true })).toBeVisible();
+    await expect(summary).toHaveCount(0);
+    const searchTableGeometry = await page.locator('.panel-inner').evaluate((panel) => {
+      const header = panel.querySelector<HTMLElement>('.outliner-table-header')!;
+      const title = panel.querySelector<HTMLElement>('.outliner-table-title-header')!;
+      const headerActions = title.querySelector<HTMLElement>('.view-toolbar.is-table-header')!;
+      const headerRect = header.getBoundingClientRect();
+      const titleRect = title.getBoundingClientRect();
+      const headerActionsRect = headerActions.getBoundingClientRect();
+      return {
+        actionsBottom: headerActionsRect.bottom,
+        actionsTop: headerActionsRect.top,
+        directToolbarCount: panel.querySelectorAll('.outliner-table-scope > .view-toolbar').length,
+        headerLeft: headerRect.left,
+        headerRight: headerRect.right,
+        titleBottom: titleRect.bottom,
+        titleLabelLeft: titleRect.left + Number.parseFloat(getComputedStyle(title).paddingLeft),
+        titleTop: titleRect.top,
+      };
+    });
+    expect(searchTableGeometry.directToolbarCount).toBe(0);
+    expect(searchTableGeometry.actionsTop).toBeGreaterThanOrEqual(searchTableGeometry.titleTop);
+    expect(searchTableGeometry.actionsBottom).toBeLessThanOrEqual(searchTableGeometry.titleBottom);
+    expect(searchTableGeometry.titleLabelLeft).toBeGreaterThan(searchTableGeometry.headerLeft);
+    expect(searchTableGeometry.headerRight).toBeGreaterThan(searchTableGeometry.titleLabelLeft);
+
+    // The in-flight gate coalesces React StrictMode's extra setup cycle. A second
+    // call before another view mutation would mean the search has more than one
+    // refresh owner.
+    await expect.poll(async () => (await commandCalls(page)).filter((call) => (
+      call.cmd === 'refresh_search_node_results' && call.args.nodeId === ids.recents
+    )).length).toBe(1);
+
+    await headerActions.getByRole('button', { name: 'Sort by', exact: true }).click();
+    await expect(page.getByRole('dialog', { name: 'Sort by' })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await headerActions.getByRole('button', { name: 'Filter by', exact: true }).click();
+    await expect(page.getByRole('dialog', { name: 'Filter by' })).toBeVisible();
+    await page.keyboard.press('Escape');
+
+    await page.locator('.panel-title-editor').first().click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Edit displayed fields', exact: true }).click();
+    await expect(page.getByRole('dialog', { name: 'Add column' })).toBeVisible();
+    await expect(tableScope.locator(':scope > .view-toolbar')).toHaveCount(0);
+    await page.keyboard.press('Escape');
     await expect(grid).toHaveAttribute('aria-rowcount', '1');
     await expect(grid.getByRole('row')).toHaveCount(1);
     await expect(grid.getByRole('gridcell')).toHaveCount(0);
     await expect(page.locator(`[data-trailing-parent-id="${ids.recents}"]`)).toHaveCount(0);
-    // The in-flight gate coalesces React StrictMode's extra setup cycle. A second
-    // call would mean the search has more than one refresh owner.
-    await expect.poll(async () => (await commandCalls(page)).filter((call) => (
-      call.cmd === 'refresh_search_node_results' && call.args.nodeId === ids.recents
-    )).length).toBe(1);
   });
 
   test('gives a nested search table a single refresh owner', async ({ page }) => {

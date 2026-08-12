@@ -32,7 +32,7 @@ import {
   isSystemFieldId,
   systemFieldDisplay,
 } from '../../../core/systemFields';
-import type { DocumentIndex, UiState } from '../../state/document';
+import type { DocumentIndex, ToolbarDropdownRequest, UiState } from '../../state/document';
 import { outlinerChildParentId } from '../../state/document';
 import { referenceSummaryForIndex } from '../../state/referenceSummary';
 import {
@@ -100,11 +100,11 @@ import {
 const TABLE_VIRTUALIZE_MIN_ROWS = 60;
 const TABLE_ROW_ESTIMATE_PX = 34;
 const TABLE_OVERSCAN_PX = 800;
-const TABLE_TITLE_WIDTH = 152;
-const TABLE_COLUMN_DEFAULT_WIDTH = 86;
-const TABLE_COLUMN_MIN_WIDTH = 72;
+const TABLE_TITLE_MIN_WIDTH = 260;
+const TABLE_COLUMN_DEFAULT_WIDTH = 180;
+const TABLE_COLUMN_MIN_WIDTH = 112;
 const TABLE_COLUMN_MAX_WIDTH = 520;
-const TABLE_ACTION_WIDTH = 82;
+const TABLE_ACTION_WIDTH = 104;
 
 type TableMessages = Messages['outliner']['table'];
 
@@ -172,11 +172,11 @@ function clampColumnWidth(width: number | undefined): number {
 
 function tableGridTemplate(columns: readonly ViewDisplayField[], previews: ReadonlyMap<string, number>): string {
   const fields = columns.map((column) => `${clampColumnWidth(previews.get(column.id) ?? column.width)}px`);
-  return [`${TABLE_TITLE_WIDTH}px`, ...fields, `${TABLE_ACTION_WIDTH}px`].join(' ');
+  return [`minmax(${TABLE_TITLE_MIN_WIDTH}px, 1fr)`, ...fields, `${TABLE_ACTION_WIDTH}px`].join(' ');
 }
 
 function tableGridMinWidth(columns: readonly ViewDisplayField[], previews: ReadonlyMap<string, number>): number {
-  return TABLE_TITLE_WIDTH
+  return TABLE_TITLE_MIN_WIDTH
     + columns.reduce((total, column) => total + clampColumnWidth(previews.get(column.id) ?? column.width), 0)
     + TABLE_ACTION_WIDTH;
 }
@@ -446,6 +446,13 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
   const columnsRef = useRef(columns);
   columnsRef.current = columns;
   const pendingFieldMaterializationsRef = useRef(new Map<string, PendingFieldMaterialization>());
+  const consumeToolbarRequest = useCallback((request: ToolbarDropdownRequest) => {
+    props.setUi((previous) => (
+      previous.toolbarDropdownRequest === request
+        ? { ...previous, toolbarDropdownRequest: null }
+        : previous
+    ));
+  }, [props.setUi]);
 
   const effectiveActiveCell = nearestTableCell(rowIds, columnIds, activeCell);
   useEffect(() => {
@@ -937,6 +944,8 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
   };
 
   if (!parent) return null;
+  const tableViewActionsVisible = props.showViewToolbar !== false
+    && (view.toolbarVisible || parent.type === 'search');
   const gridStyle = {
     '--table-columns': tableGridTemplate(columns, previewsRef.current),
     '--table-min-width': `${tableGridMinWidth(columns, previewsRef.current)}px`,
@@ -944,20 +953,6 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
 
   return (
     <div className="outliner-table-scope" data-table-owner-id={props.parentId} ref={gridRef} style={gridStyle}>
-      {props.showViewToolbar !== false && view.toolbarVisible ? (
-        <ViewToolbar
-          node={parent}
-          view={view}
-          index={props.index}
-          run={props.run}
-          dropdownRequest={props.ui.toolbarDropdownRequest}
-          onDropdownRequestConsumed={(request) => props.setUi((previous) => (
-            previous.toolbarDropdownRequest === request
-              ? { ...previous, toolbarDropdownRequest: null }
-              : previous
-          ))}
-        />
-      ) : null}
       {ownerRows.length > 0 ? (
         <div className="outliner-table-owner-fields" role="tree" aria-label={t.outliner.treeAriaLabel}>
           <RowHost
@@ -1018,7 +1013,22 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
         role="grid"
       >
         <div className="outliner-table-header" role="row" aria-rowindex={1}>
-          <div className="outliner-table-title-header" role="columnheader" aria-colindex={1}>{tt.title}</div>
+          <div className="outliner-table-title-header" role="columnheader" aria-colindex={1}>
+            <span className="outliner-table-title-label">{tt.title}</span>
+            {tableViewActionsVisible ? (
+              <ViewToolbar
+                node={parent}
+                view={view}
+                index={props.index}
+                run={props.run}
+                dropdownRequest={props.ui.toolbarDropdownRequest?.section === 'display'
+                  ? null
+                  : props.ui.toolbarDropdownRequest}
+                onDropdownRequestConsumed={consumeToolbarRequest}
+                variant="tableHeader"
+              />
+            ) : null}
+          </div>
           {columns.map((column, index) => {
             const fieldNode = props.index.byId.get(column.field);
             return (
@@ -1040,7 +1050,11 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
           <TableAddColumn
             choices={fieldChoices}
             displayFields={view.displayFields}
+            dropdownRequest={props.ui.toolbarDropdownRequest?.section === 'display'
+              ? props.ui.toolbarDropdownRequest
+              : null}
             nodeId={props.parentId}
+            onDropdownRequestConsumed={consumeToolbarRequest}
             run={props.run}
           />
         </div>
@@ -1427,12 +1441,16 @@ function TableColumnHeader({
 function TableAddColumn({
   choices,
   displayFields,
+  dropdownRequest,
   nodeId,
+  onDropdownRequestConsumed,
   run,
 }: {
   choices: TableFieldChoice[];
   displayFields: readonly ViewDisplayField[];
+  dropdownRequest: ToolbarDropdownRequest | null;
   nodeId: NodeId;
+  onDropdownRequestConsumed: (request: ToolbarDropdownRequest) => void;
   run: CommandRunner;
 }) {
   const tt = useT().outliner.table;
@@ -1451,6 +1469,13 @@ function TableAddColumn({
     maxHeight: 420,
   });
   useDismissibleOverlay(menuRef, () => setOpen(false), { disabled: !open });
+  useEffect(() => {
+    if (!dropdownRequest || dropdownRequest.nodeId !== nodeId || dropdownRequest.section !== 'display') return;
+    setCreating(false);
+    setQuery('');
+    setOpen(true);
+    onDropdownRequestConsumed(dropdownRequest);
+  }, [dropdownRequest, nodeId, onDropdownRequestConsumed]);
   const visibleFieldIds = useMemo(() => new Set(
     displayFields.filter((field) => field.visible).map((field) => field.field),
   ), [displayFields]);

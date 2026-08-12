@@ -768,7 +768,7 @@ export const zhHans: PartialMessages = {
       ariaLabel: ({ title }: { title: string }) => `${title}表格`,
       title: '标题',
       addColumn: '添加列',
-      add: '添加',
+      add: '添加字段',
       searchFields: '搜索字段',
       noMatchingFields: '没有匹配的字段',
       usedFields: '当前使用的字段',

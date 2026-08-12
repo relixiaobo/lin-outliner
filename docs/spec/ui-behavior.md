@@ -255,13 +255,17 @@ longer derives candidates from nodes carrying that deleted tag.
 
 ## View Toolbar
 
-The node-level view toolbar is the presentation control for a node's child rows
-and for saved-search result views. It lives above the rendered child/result rows
-when the node's `viewDef.toolbarVisible` flag is true. The supported render modes
-are **Outline** (persisted as `list`) and **Table**, selected through the toolbar's
-compact segmented control or the node context menu's **View as** subview. Filter
-by name, Display, Sort by, and Filter by apply in both modes. Group by applies
-only in Outline: Table hides the control and ignores a saved group rule without
+The node-level view toolbar is the presentation control for Outline child rows
+and saved-search results. It lives above the rendered rows when the node's
+`viewDef.toolbarVisible` flag is true. Table deliberately does not render that
+standalone band: Add field owns visible-column configuration, while compact
+Outline, Sort, and Filter actions sit inside the Title header when view controls
+are visible. A Search Table always exposes those header actions and omits the
+redundant query summary and View reveal step. The supported render modes are
+**Outline** (persisted as `list`) and **Table**, selected through Outline's compact
+segmented control, Table's Outline action, or the node context menu's **View as**
+subview. Filter by name, Display, and Group by belong to the full Outline toolbar;
+Sort and Filter apply in both modes. Table ignores a saved group rule without
 clearing it, so returning to Outline restores the same grouping. These controls
 all read and write `viewDef` child nodes
 (`displayField`, `sortRule`, `filterRule`, plus the view's `groupField`) rather
@@ -390,9 +394,13 @@ supports pointer drag, keyboard increments, and double-click reset. A resize
 preview exists only while dragging
 or awaiting that commit; once the command settles it yields to the latest
 projected width, so undo, collaboration, and external updates cannot be masked by
-stale renderer state. The default geometry follows the compact Tana composition:
-a 152px Title column, 86px authored fields, and an 82px trailing `+ Add` slot.
-The data strip does not expand merely because its panel is wider.
+stale renderer state. The default geometry follows Tana's scan-first composition:
+Title is `minmax(260px, 1fr)`, authored and system fields default to 180px and
+clamp no narrower than 112px, and the trailing 104px Add field track remains
+stable. Header and rows fill the available content width whenever those minimums
+fit; Title absorbs the remainder. Narrower panes retain the minimum tracks and
+use the Table-local horizontal scroller instead of wrapping columns into an
+unreadable strip.
 
 An authored column's field-kind icon opens that field definition in the current
 pane, providing direct access to its configuration surface. Hover visibly
@@ -401,16 +409,18 @@ system field has no definition node, so its kind icon remains non-interactive an
 does not expose that hover state. Column labels and menus keep their existing
 view-local behavior.
 
-**Add column** lists fields that are not currently visible in three searchable
+**Add field** lists fields that are not currently visible in three searchable
 groups: custom fields used by a current record, other active custom fields, then
 supported system fields. Both custom groups follow Schema order; system fields
 keep their established order. A hidden display field therefore remains
 available; selecting it restores that same column with its width, order,
-view-local label, and row values intact. The Display popover provides the
-equivalent checkbox toggle. Selecting a definition with no display field creates
-only a display-field node. The new-field path accepts a localized field type and
-atomically creates the field definition plus its display-field node. None of
-these paths bulk-create empty values on records.
+view-local label, and row values intact. Table's Edit displayed fields action
+opens this same Add field surface rather than restoring a second toolbar row. The
+Outline Display popover provides the equivalent checkbox toggle and presents
+custom Fields before System fields. Selecting a definition with no display field
+creates only a display-field node. The new-field path accepts a localized field
+type and atomically creates the field definition plus its display-field node.
+None of these paths bulk-create empty values on records.
 
 An existing authored value renders through the ordinary node surface, including
 the standard bullet, single-click editing, disclosure, children, context menu,
@@ -442,7 +452,7 @@ their cells and their ordinary value nodes remain in cell selection order, but
 field-entry wrappers and values for hidden or undisplayed fields are absent from
 the expanded tree, disclosure child count, keyboard navigation, selectable-row
 model, and agent-visible outline. Hidden data stays discoverable and recoverable
-through Display and Add column.
+through Add field.
 
 Each table is an independently named ARIA `grid` with `row`, `columnheader`, and
 `gridcell` descendants and one roving tab stop. An expanded nested Outline inside
@@ -476,28 +486,35 @@ row.
 
 The grid uses the panel as its vertical scroll owner and a local native
 horizontal scroll area for overflowing columns. Header and mounted rows share
-one content-sized column template. Only data columns receive quiet horizontal
-separators; `+ Add` remains outside those lines, while a vertical hierarchy guide
-aligns with the owning row bullet. More than 60 logical rows use a bounded measured window
+one responsive full-width column template. Header labels and Add field use
+`--font-ui-sm`; row titles and values keep `--font-content` and
+`--line-content`, all over the shared `--font-family-sans`. Only data columns
+receive quiet horizontal separators; Add field remains outside those lines,
+while a vertical hierarchy guide aligns with the owning row bullet. More than 60 logical rows use a bounded measured window
 with overscan; focused rows and the trailing draft stay mountable, and height
 corrections above the viewport compensate `scrollTop` before paint. Expanded
 children may own independent nested Outline or Table scopes with their own
-columns, filters, sorting, toolbar, accessible name, and horizontal scroll.
+columns, filters, sorting, view actions, accessible name, and horizontal scroll.
 Visible saved searches have one refresh owner: Table owns Table-mode search
 scopes, while the surrounding flat Outline renderer excludes those scopes and
 continues to own visible Outline-mode searches.
 
 ## Search Nodes
 
-Search nodes render a compact query summary below the page title and above the
-materialized result rows while the inline query builder is closed. The summary
-shows read-only chips for the query semantics and the current materialized result
-count; it does not configure how the results are presented.
+Outline search nodes render a compact query summary below the page title and
+above the materialized result rows while the inline query builder is closed. The
+summary shows read-only chips for the query semantics and the current materialized
+result count; it does not configure how the results are presented. Table search
+nodes omit this redundant row because the title/query action already identifies
+the search and the table itself presents its results.
 
-The summary exposes a **View** action that reveals the same node-level View
-Toolbar used by normal node pages. Query chips describe *what the search returns*;
-the View Toolbar controls *how the result references are displayed, grouped,
-sorted, and filtered*.
+In Outline, the summary exposes a **View** action that reveals the same node-level
+View Toolbar used by normal node pages. In Table, the entire summary row and the
+standalone toolbar row are absent. Compact Outline, Sort, and Filter actions live
+inside the Title header, while Add field owns visible columns. Header and row
+separators remain the only horizontal lines. Query chips describe *what the search
+returns* in Outline; the Table header actions control *how the result references
+are sorted and filtered*.
 
 ## NodePanel References Footer
 

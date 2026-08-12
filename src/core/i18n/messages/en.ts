@@ -849,7 +849,7 @@ export const en = {
       ariaLabel: ({ title }: { title: string }) => `${title} table`,
       title: 'Title',
       addColumn: 'Add column',
-      add: 'Add',
+      add: 'Add field',
       searchFields: 'Search fields',
       noMatchingFields: 'No matching fields',
       usedFields: 'Fields in use',
