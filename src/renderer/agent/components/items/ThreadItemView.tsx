@@ -1163,6 +1163,7 @@ function SubagentActivityItem({
   item,
   onInterruptThread,
   onOpenNodeReference,
+  onOpenThread,
   onOpenSubagentTurnDetails,
   onSubagentDrill,
   subagents,
@@ -1173,6 +1174,7 @@ function SubagentActivityItem({
   readonly item: Extract<ThreadItem, { type: 'subAgentActivity' }>;
   readonly onInterruptThread?: (threadId: string) => Promise<void>;
   readonly onOpenNodeReference: ThreadNodeReferenceOpenHandler;
+  readonly onOpenThread: (threadId: string) => Promise<void>;
   readonly onOpenSubagentTurnDetails?: (threadId: string, turnId: string) => void;
   readonly onSubagentDrill?: (threadId: string) => void;
   readonly subagents?: ReadonlyMap<string, SubagentPresentation>;
@@ -1239,6 +1241,7 @@ function SubagentActivityItem({
           index={index}
           {...(onInterruptThread ? { onInterruptThread } : {})}
           onOpenNodeReference={onOpenNodeReference}
+          onOpenThread={onOpenThread}
           {...(onOpenSubagentTurnDetails ? { onOpenTurnDetails: onOpenSubagentTurnDetails } : {})}
           rootThreadId={item.agentThreadId}
           userView={userView}
@@ -1377,7 +1380,7 @@ function toolItemAct(
       return toolActivityPhrase(kind, subjects.keys.length, subjects.names, running, labels, limit);
     }
     case 'collabAgentToolCall':
-      return collaborationAct(item.tool, running, labels);
+      return collaborationAct(item, running, labels);
     case 'webSearch': {
       // The Item's own fallback for a call the model made without a query is
       // the empty string, and `Searching the web for ""` names nothing. The
@@ -1402,15 +1405,16 @@ function namedToolAct(
 /** The collaboration tools are a closed set, so each one gets real copy rather
  *  than leaking model-facing identifiers into the transcript. */
 function collaborationAct(
-  tool: AgentTaskToolName,
+  item: Extract<ThreadToolItem, { readonly type: 'collabAgentToolCall' }>,
   running: boolean,
   labels: Messages['agent']['thread']['activity'],
 ): string {
-  switch (tool) {
+  if (item.tool === 'agent_message' && item.summary) return item.summary;
+  switch (item.tool) {
     case 'agent': return running ? labels.startingAgent : labels.startedAgent;
     case 'agent_message': return running ? labels.messagingAgent : labels.messagedAgent;
     case 'task_stop': return running ? labels.stoppingTask : labels.stoppedTask;
-    default: return assertNever(tool);
+    default: return assertNever(item.tool);
   }
 }
 

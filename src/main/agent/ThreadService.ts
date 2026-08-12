@@ -22,7 +22,6 @@ AgentCoreMethod,
 AgentCoreRequestByMethod,
 AgentCoreResponseByMethod,
 EmptyAgentCoreResponse,
-InheritedContextPayload,
 JsonValue,
 PrivilegedTurnStartRequest,
 RendererTurnStartRequest,
@@ -100,7 +99,7 @@ import {
   type SubagentExecutionRecord,
   type SubagentRecordedToolPolicy,
 } from './persistence/SubagentExecutionLedger';
-import type { AgentWorktreeMetadata } from './worktree/AgentWorktree';
+import type { AgentWorktreeMetadata,SettleAgentWorktreeOptions } from './worktree/AgentWorktree';
 import { ThreadHistoryProjectionStore } from './persistence/ThreadHistoryProjectionStore';
 import {
 ThreadMetadataStore
@@ -213,7 +212,10 @@ export interface ThreadServiceOptions {
     readonly cwd: string;
     readonly worktree: AgentWorktreeMetadata | null;
   }) => Promise<{ readonly cwd: string; readonly worktree: AgentWorktreeMetadata }>;
-  readonly settleAgentWorktree?: (worktree: AgentWorktreeMetadata) => Promise<{
+  readonly settleAgentWorktree?: (
+    worktree: AgentWorktreeMetadata,
+    options?: SettleAgentWorktreeOptions,
+  ) => Promise<{
     readonly worktree: AgentWorktreeMetadata;
     readonly retained: boolean;
   }>;
@@ -226,6 +228,7 @@ export interface SkillAdmissionResolutionInput {
   readonly thread: Thread;
   readonly turnId: TurnId;
   readonly configuration: EffectiveThreadConfiguration;
+  readonly preloadedSkills: readonly string[];
   readonly content: readonly ThreadUserContent[];
   readonly acceptedAt: number;
   readonly observedFilePaths: readonly string[];
@@ -233,6 +236,7 @@ export interface SkillAdmissionResolutionInput {
 
 export interface SkillAdmissionResolution {
   readonly catalogSnapshot: SkillCatalogContextPayload | null;
+  readonly preloadedInvocations: readonly SkillInvocationContextPayload[];
   readonly invocation: SkillInvocationContextPayload | null;
 }
 
@@ -240,6 +244,11 @@ export interface RendererThreadStartDefaults {
   readonly modelProvider: string;
   readonly cwd: string;
 }
+
+const EMPTY_AGENT_STARTUP_CONTEXT: AgentStartupContextSnapshot = Object.freeze({
+  repositoryInstructions: Object.freeze([]),
+  gitStatus: null,
+});
 
 export interface ThreadUserContentResolutionContext {
   readonly threadId: ThreadId;
@@ -306,7 +315,6 @@ export interface SpawnChildThreadInput {
   /** Additional child-only ceiling. Values absent from the parent/role result are ignored. */
   readonly allowedTools?: readonly string[];
   readonly additionalContext?: AdditionalContext;
-  readonly inheritedContext?: InheritedContextPayload;
   readonly maxTotalTokens?: number;
   /** Selects the parent-facing result channel while retaining one child-Thread mechanism. */
   readonly childKind?: 'collaboration' | 'isolatedSkill';
@@ -389,6 +397,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     this.resolveReferencedAsset = options.resolveReferencedAsset;
     this.resolveSkillAdmission = async (input) => await options.resolveSkillAdmission?.(input) ?? {
       catalogSnapshot: null,
+      preloadedInvocations: [],
       invocation: null,
     };
     const resolveRole = options.resolveRole ?? defaultAgentRole;
@@ -397,9 +406,42 @@ export class ThreadService implements ThreadServiceExtensionHost {
     this.resolveProviderModelIds = async (providerId) => (
       await options.resolveProviderModelIds?.(providerId) ?? []
     );
-    this.resolveAgentStartupContext = async (parent) => (
-      await options.resolveAgentStartupContext?.(parent) ?? null
-    );
+    const configuredStartupContextResolver = options.resolveAgentStartupContext;
+    this.resolveAgentStartupContext = async (parent) => {
+      if (!configuredStartupContextResolver) return null;
+      try {
+        const stored = options.stores.agentStartupContexts.read(parent.sessionId);
+        if (stored) return nonEmptyAgentStartupContext(stored);
+      } catch (error) {
+        console.warn(`[agent] startup context unavailable for session ${parent.sessionId}`, error);
+        try {
+          options.stores.agentStartupContexts.delete([parent.sessionId]);
+        } catch (deleteError) {
+          console.warn(`[agent] startup context cleanup failed for session ${parent.sessionId}`, deleteError);
+        }
+      }
+      try {
+        const resolved = await configuredStartupContextResolver(parent);
+        const frozen = options.stores.agentStartupContexts.writeOnce(
+          parent.sessionId,
+          resolved ?? EMPTY_AGENT_STARTUP_CONTEXT,
+          this.now(),
+        );
+        return nonEmptyAgentStartupContext(frozen);
+      } catch (error) {
+        console.warn(`[agent] startup context unavailable for session ${parent.sessionId}`, error);
+        try {
+          options.stores.agentStartupContexts.writeOnce(
+            parent.sessionId,
+            EMPTY_AGENT_STARTUP_CONTEXT,
+            this.now(),
+          );
+        } catch (writeError) {
+          console.warn(`[agent] startup context tombstone failed for session ${parent.sessionId}`, writeError);
+        }
+        return null;
+      }
+    };
     this.beforeInitialTurnAdmission = options.beforeInitialTurnAdmission ?? (() => undefined);
     this.now = options.now ?? Date.now;
     this.goalStore = options.stores.goals;
@@ -453,6 +495,8 @@ export class ThreadService implements ThreadServiceExtensionHost {
         signalCollaborationActivity: (threadId) => this.collaboration.signalCollaborationActivity(threadId),
         flushPendingSubagentActivities: (...args) => this.collaboration.flushPendingSubagentActivities(...args),
         queueChildTurnActivity: (...args) => this.collaboration.queueChildTurnActivity(...args),
+        prepareChildTerminalSettlement: (...args) => this.collaboration.prepareChildTerminalSettlement(...args),
+        threadBecameIdle: (threadId) => this.collaboration.threadBecameIdle(threadId),
         startupContextForTurn: (threadId, turnId) => options.stores.subagentExecutions.startupContextForTurn(threadId, turnId),
       },
       { enqueueTurn: (...args) => this.transcripts.enqueueTurn(...args) },
@@ -520,6 +564,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       (threadId) => { this.subagentBudgets.clearThread(threadId); },
       (threadIds) => { options.stores.subagentExecutions.deleteAgents(threadIds); },
       (sessionIds) => { options.stores.agentStartupContexts.delete(sessionIds); },
+      async (thread) => { await this.resolveAgentStartupContext(thread); },
       (message) => new ThreadBusyError(message),
     );
     this.goals = new GoalExtension(this.goalStore, (notification) => this.core.recordNotification(notification));
@@ -631,15 +676,20 @@ export class ThreadService implements ThreadServiceExtensionHost {
   }
   async close(): Promise<void> {
     this.closing = true;
-    const active = [...this.activeTurns.values()];
+    this.collaboration.beginClose();
     const pendingNames = this.catalogOps.pendingNameShutdownHandles();
-    for (const turn of active) turn.controller.abort();
     for (const pending of pendingNames) pending.abort();
     for (const pending of this.pendingUserInputs.values()) pending.abort();
-    await Promise.allSettled([
-      ...active.map((turn) => turn.completion),
-      ...pendingNames.map((pending) => pending.completion),
-    ]);
+    await Promise.allSettled(pendingNames.map((pending) => pending.completion));
+    for (;;) {
+      const active = [...this.activeTurns.values()];
+      for (const turn of active) turn.controller.abort();
+      await Promise.allSettled(active.map((turn) => turn.completion));
+      await this.collaboration.drainForClose();
+      if (this.activeTurns.size === 0) break;
+    }
+    await this.transcripts.flushAll();
+    await this.transcriptIndex.flush();
     const failures: unknown[] = [];
     const operations = await Promise.allSettled([
       this.core.flush(),
@@ -893,8 +943,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
   }
   async deleteThread(threadId: ThreadId): Promise<void> { return this.catalogOps.deleteThread(threadId); }
   async startRendererTurn(request: RendererTurnStartRequest): Promise<TurnStartResponse> {
-    this.collaboration.clearUserStop(request.threadId);
-    return this.turnLifecycle.startRendererTurn(request);
+    return this.collaboration.startRendererTurn(request);
   }
   async startPrivilegedTurn(request: PrivilegedTurnStartRequest): Promise<TurnStartResponse> { return this.turnLifecycle.startPrivilegedTurn(request); }
   async tryStartTurnIfIdle(request: PrivilegedTurnStartRequest): Promise<Turn | null> { return this.turnLifecycle.tryStartTurnIfIdle(request); }
@@ -920,26 +969,38 @@ export class ThreadService implements ThreadServiceExtensionHost {
    */
   async interruptUserWork(threadId: ThreadId, turnId: string): Promise<void> {
     this.assertUserOwnedLineage(threadId);
-    // The addressed Turn goes first, and its own mutex-held check is the only
-    // verification: anything written before it would survive a Stop that then
-    // rejected because the Turn had just settled — a half-executed Stop that
-    // leaves a permanently closed request behind. Reclamation cannot race the
-    // close that follows, because it refuses while this Turn is still active
-    // and this Turn only settles asynchronously after the abort.
-    await this.turnLifecycle.interruptTurn(threadId, turnId);
-    this.collaboration.recordUserStop(threadId);
-    const settling = this.requestMembersUnder(threadId, turnId);
-    const request = this.subagentBudgets.readPool(requestPoolIdForTurn(turnId));
-    if (request && request.originTurnId === turnId) {
-      this.subagentBudgets.closePool(request.poolId, this.now());
-    }
+    let settling: readonly {
+      readonly memberThreadId: ThreadId;
+      readonly execution: SubagentExecutionRecord | null;
+      readonly activeTurnId: string | null;
+    }[] = [];
+    await this.core.threadTreeMutex.run(async () => {
+      const addressedExecution = this.collaboration.execution(threadId);
+      // Spawn and Stop share this admission lock. A child committed first is in
+      // this snapshot; a spawn arriving second observes the aborted parent and
+      // is rejected by requireActiveTurn.
+      await this.turnLifecycle.interruptTurn(threadId, turnId);
+      if (addressedExecution) this.collaboration.recordUserStopIfCurrent(addressedExecution);
+      const request = this.subagentBudgets.readPool(requestPoolIdForTurn(turnId));
+      if (request && request.originTurnId === turnId) {
+        this.subagentBudgets.closePool(request.poolId, this.now());
+      }
+      settling = this.requestMembersUnder(threadId, turnId).map((memberThreadId) => ({
+        memberThreadId,
+        execution: this.collaboration.execution(memberThreadId),
+        activeTurnId: this.turnLifecycle.activeTurnId(memberThreadId),
+      }));
+    });
     // Stopped work stays stopped: a member holding only queued work has no Turn
     // to abort, and the queue would otherwise outlive the request.
-    for (const memberThreadId of settling) {
-      this.collaboration.recordUserStop(memberThreadId);
-      const activeTurnId = this.turnLifecycle.activeTurnId(memberThreadId);
-      if (activeTurnId === null) continue;
-      await this.turnLifecycle.interruptTurn(memberThreadId, activeTurnId).catch(() => undefined);
+    for (const { memberThreadId, execution, activeTurnId } of settling) {
+      if (activeTurnId === null) {
+        if (execution) this.collaboration.recordUserStopIfCurrent(execution);
+        continue;
+      }
+      const interrupted = await this.turnLifecycle.interruptTurn(memberThreadId, activeTurnId)
+        .then(() => true, () => false);
+      if (interrupted && execution) this.collaboration.recordUserStopIfCurrent(execution);
     }
   }
   /**
@@ -1238,22 +1299,9 @@ export class ThreadService implements ThreadServiceExtensionHost {
   ): Promise<JsonValue | null> {
     return this.collaboration.stopAgentTask(senderThreadId, senderTurnId, agentId);
   }
-  /**
-   * Host-only legacy seam retained for persisted/test callers. It is not a
-   * model tool and is intentionally absent from the canonical tool catalog.
-   */
-  async spawnCollaborationAgent(input: {
-    senderThreadId: ThreadId;
-    senderTurnId: string;
-    parentItemId: string;
-    taskName: string;
-    message: string;
-    role?: string;
-    model?: string;
-    reasoningEffort?: EffectiveThreadConfiguration['reasoningEffort'];
-    forkTurns?: string;
-    maxTotalTokens?: number;
-  }): Promise<SpawnChildThreadResult> { return this.collaboration.spawnCollaborationAgent(input); }
+  hasAgentTask(senderThreadId: ThreadId, agentId: string): boolean {
+    return this.collaboration.hasAgentTask(senderThreadId, agentId);
+  }
   async withThreadAdmissionBarrier<T>(
     threadId: ThreadId,
     operation: (snapshot: ThreadAdmissionBarrierSnapshot) => Promise<T>,
@@ -1330,6 +1378,14 @@ function applyToolCeiling(
     ...configuration,
     tools: Object.freeze(configuration.tools.filter((tool) => allowed.has(tool))),
   });
+}
+
+function nonEmptyAgentStartupContext(
+  snapshot: AgentStartupContextSnapshot,
+): AgentStartupContextSnapshot | null {
+  return snapshot.repositoryInstructions.length === 0 && snapshot.gitStatus === null
+    ? null
+    : snapshot;
 }
 
 function emptyResponse(): EmptyAgentCoreResponse {

@@ -449,6 +449,7 @@ function effectiveConfiguration(profile: ConfigurationProfile): EffectiveThreadC
     reasoningEffort: profile.reasoningEffort ?? DEFAULT_PROFILE.reasoningEffort!,
     tools: Object.freeze([...(profile.tools ?? DEFAULT_PROFILE.tools!)]),
     skills: Object.freeze([...(profile.skills ?? DEFAULT_PROFILE.skills!)]),
+    preloadedSkills: Object.freeze([]),
     plugins: Object.freeze([...(profile.plugins ?? DEFAULT_PROFILE.plugins!)]),
     mcpServers: Object.freeze([...(profile.mcpServers ?? DEFAULT_PROFILE.mcpServers!)]),
   });

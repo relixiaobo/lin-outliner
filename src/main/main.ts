@@ -28,7 +28,12 @@ import { observedSkillFilePaths } from './agent/context/SkillContextReducer';
 import { AttachmentResolver } from './agent/tools/attachments';
 import { createImageArtifactReference, ImageObservationNormalizationError } from './agent/imageArtifacts';
 import { Mutex } from './agent/Mutex';
-import { AgentSkillRuntime, expandSkillDirectory, resolveUserSkillInvocation } from './agent/capabilities/agentSkills';
+import {
+  AgentSkillRuntime,
+  expandSkillDirectory,
+  resolvePreloadedSkillInvocations,
+  resolveUserSkillInvocation,
+} from './agent/capabilities/agentSkills';
 import { isValidSkillName } from './agent/capabilities/agentSkillAuthoring';
 import { createAgentSkillProvenanceStore } from './agent/capabilities/agentSkillProvenanceStore';
 import { executeAgentSkillShellCommand } from './agent/capabilities/agentSkillShell';
@@ -702,7 +707,7 @@ threadService = ThreadService.open(
       };
     },
     prepareAgentWorktree: (input) => agentWorktree.prepare(input),
-    settleAgentWorktree: (worktree) => agentWorktree.settle(worktree),
+    settleAgentWorktree: (worktree, options) => agentWorktree.settle(worktree, options),
     resolveRendererStartDefaults: async () => {
       const provider = await getActiveProviderRuntimeConfig();
       if (!provider) throw new Error('Configure an AI provider before starting a Thread.');
@@ -748,12 +753,14 @@ threadService = ThreadService.open(
       thread,
       turnId,
       configuration,
+      preloadedSkills,
       content,
       acceptedAt,
       observedFilePaths,
     }) => {
-      if (!configuration.tools.includes('skill')) {
-        return { catalogSnapshot: null, invocation: null };
+      const hasSkillTool = configuration.tools.includes('skill');
+      if (!hasSkillTool && preloadedSkills.length === 0) {
+        return { catalogSnapshot: null, preloadedInvocations: [], invocation: null };
       }
       const runtime = new AgentSkillRuntime({
         localRoot: thread.cwd,
@@ -772,18 +779,24 @@ threadService = ThreadService.open(
           signal,
           processEnvironment: () => managedSkillShellEnvironment!.processEnvironment(thread.id, turnId),
           writeBoundary: agentWriteBoundaryForThread(thread.id, thread.cwd),
+          subagentPolicy: threadService.subagentExecution(thread.id)?.toolPolicy,
         }),
       });
       const settings = await getAgentRuntimeSettings();
       runtime.updateAdditionalSkillDirectories(settings.additionalSkillDirectories);
       runtime.updateDisabledSkills(settings.disabledSkills ?? []);
       await runtime.notifyFileTouched([...observedFilePaths]);
-      const directInput = directSkillAdmissionInput(content);
+      const preloaded = await resolvePreloadedSkillInvocations(runtime, preloadedSkills, acceptedAt);
+      for (const diagnostic of preloaded.diagnostics) {
+        console.warn(`[agent][skill-preload] ${diagnostic}`);
+      }
+      const directInput = hasSkillTool ? directSkillAdmissionInput(content) : null;
       const invocation = directInput
         ? await resolveUserSkillInvocation(runtime, directInput, { invokedAt: acceptedAt })
         : null;
       return {
-        catalogSnapshot: await runtime.buildSkillCatalogSnapshot(),
+        catalogSnapshot: hasSkillTool ? await runtime.buildSkillCatalogSnapshot() : null,
+        preloadedInvocations: preloaded.invocations,
         invocation: invocation?.ok ? invocation.evidence : null,
       };
     },
@@ -830,6 +843,7 @@ function skillRuntimeForTurn(context: Parameters<ToolRuntime['createTools']>[0])
       signal,
       processEnvironment: () => managedSkillShellEnvironment!.processEnvironment(context.thread.id, context.turn.id),
       writeBoundary: agentWriteBoundaryForThread(context.thread.id, context.thread.cwd),
+      subagentPolicy: threadService.subagentExecution(context.thread.id)?.toolPolicy,
     }),
     executeIsolatedSkill: async ({
       skill,
@@ -940,9 +954,11 @@ function agentWriteBoundaryForThread(
 ): AgentWorkspaceWriteBoundary | undefined {
   const worktree = threadService.agentWorktree(threadId);
   if (!worktree) return undefined;
+  const sandbox = agentWorktree.sandboxPaths(worktree);
   return {
     root: cwd,
-    shellWritablePaths: agentWorktree.sandboxWritePaths(worktree),
+    shellWritablePaths: sandbox.writablePaths,
+    protectedGitObjectStores: sandbox.protectedGitObjectStores,
   };
 }
 

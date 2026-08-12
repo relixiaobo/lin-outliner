@@ -504,6 +504,7 @@ const configuration: EffectiveThreadConfiguration = {
   reasoningEffort: 'medium',
   tools: [],
   skills: [],
+  preloadedSkills: [],
   plugins: [],
   mcpServers: [],
 };

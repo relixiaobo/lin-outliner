@@ -554,6 +554,36 @@ describe('PiTurnExecutor event normalization', () => {
     });
   });
 
+  test('writes the prepared Agent message summary without mutating canonical model history', async () => {
+    const fixture = createContext();
+    const normalizer = new PiEventNormalizer(fixture.context);
+    const rawArguments = {
+      to: uuidV7(1_720_000_001_150),
+      message: 'First line\nSecond line',
+    };
+    const modelCall = replayableModelCall('agent_message', rawArguments);
+    normalizer.handle({
+      type: 'tool_call_admission',
+      toolCallId: 'call-collab-summary',
+      providerToolCallId: 'call-collab-summary',
+      toolName: 'agent_message',
+      decision: {
+        execute: true,
+        modelCall,
+        displayArguments: { ...rawArguments, summary: 'First line' },
+      },
+    });
+    await normalizer.flush();
+
+    expect(fixture.recorder.orderedItems()[0]).toMatchObject({
+      type: 'collabAgentToolCall',
+      prompt: rawArguments.message,
+      summary: 'First line',
+      modelCall,
+    });
+    expect(modelCall).toEqual(replayableModelCall('agent_message', rawArguments));
+  });
+
   test('does not turn a collaboration tool failure into a child failure', async () => {
     const fixture = createContext();
     const childThreadId = uuidV7(1_720_000_001_200);
@@ -2837,6 +2867,7 @@ describe('PiTurnExecutor event normalization', () => {
           arguments: largeArguments,
           redactedArguments: largeArguments,
           redactedPaths: [],
+          displayArguments: largeArguments,
           schemaDigest: TEST_TOOL_SCHEMA_DIGEST,
           redactedArgumentsReplayable: true,
         },
@@ -2971,6 +3002,7 @@ describe('PiTurnExecutor event normalization', () => {
         arguments: argumentsValue,
         redactedArguments: argumentsValue,
         redactedPaths: [],
+        displayArguments: argumentsValue,
         schemaDigest: TEST_TOOL_SCHEMA_DIGEST,
         redactedArgumentsReplayable: true,
       },

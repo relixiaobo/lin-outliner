@@ -1,11 +1,15 @@
 import type { ThreadId } from '../../../core/agent/protocol';
 
+interface ThreadLineageRecord {
+  readonly parentThreadId: ThreadId | null;
+}
+
 /**
- * "Open this child, which lives two levels down."
+ * "Open this child, which lives deeper in the delegated subtree."
  *
  * Thread Details lists a conversation's whole descendant subtree, but a child is
- * read from the delegation row that spawned it — and a GRANDCHILD's row lives
- * inside its parent's run detail, not in this transcript. Expanding the row that
+ * read from the delegation row that spawned it, while deeper descendant rows
+ * live inside their parent's run detail. Expanding the row that
  * exists would open the right container on the wrong subject.
  *
  * So the request carries the path: the row to expand, and where to drill once it
@@ -36,6 +40,27 @@ export function consumeSubagentDrill(rowThreadId: ThreadId): readonly ThreadId[]
   const path = intents.get(rowThreadId);
   if (!path) return null;
   intents.delete(rowThreadId);
+  return path;
+}
+
+/** The descendants between `ancestorThreadId` and `targetThreadId`, in display order. */
+export function descendantDrillPath(
+  ancestorThreadId: ThreadId,
+  targetThreadId: ThreadId,
+  threadsById: ReadonlyMap<ThreadId, ThreadLineageRecord>,
+): readonly ThreadId[] | null {
+  if (ancestorThreadId === targetThreadId) return [];
+  const path: ThreadId[] = [];
+  const visited = new Set<ThreadId>();
+  let current: ThreadId | null = targetThreadId;
+  while (current !== ancestorThreadId) {
+    if (current === null || visited.has(current)) return null;
+    visited.add(current);
+    const thread = threadsById.get(current);
+    if (!thread) return null;
+    path.unshift(current);
+    current = thread.parentThreadId;
+  }
   return path;
 }
 

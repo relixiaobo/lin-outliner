@@ -53,6 +53,7 @@ const THREAD_ID = '018f0f24-7b2e-7a3f-8a4b-123456789abc';
 const SESSION_ID = '018f0f24-7b2e-7a3f-8a4b-123456789abd';
 const TURN_ID = '018f0f24-7b2e-7a3f-8a4b-123456789abe';
 const CHILD_THREAD_ID = '018f0f24-7b2e-7a3f-8a4b-123456789abf';
+const CHILD_TURN_ID = '018f0f24-7b2e-7a3f-8a4b-123456789ac0';
 const OUTPUT_ID = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 const imageResourceRef = {
   id: '9'.repeat(64),
@@ -231,6 +232,7 @@ const allItems: readonly ThreadItem[] = [
     senderThreadId: THREAD_ID,
     receiverThreadIds: [CHILD_THREAD_ID],
     prompt: 'Inspect tests',
+    summary: null,
     model: null,
     reasoningEffort: null,
     agentsStates: {
@@ -255,6 +257,7 @@ const allItems: readonly ThreadItem[] = [
     provenance: { ...itemProvenance, originItemId: 'item-10' },
     kind: 'started',
     agentThreadId: CHILD_THREAD_ID,
+    agentTurnId: CHILD_TURN_ID,
     agentPath: '/root/inspect_tests',
     error: null,
     spawnItemId: 'item-9',
@@ -551,6 +554,29 @@ describe('Codex Agent Core protocol codec', () => {
     });
   });
 
+  test('round-trips Agent message summaries and reads Items written before the field existed', () => {
+    const collab = JSON.parse(encodeThreadItem(
+      allItems.find((item) => item.type === 'collabAgentToolCall')!,
+    )) as Record<string, unknown>;
+
+    expect(decodeThreadItem({ ...collab, tool: 'agent_message', summary: 'Request review' }))
+      .toMatchObject({ type: 'collabAgentToolCall', summary: 'Request review' });
+
+    delete collab.summary;
+    expect(decodeThreadItem(collab)).toMatchObject({
+      type: 'collabAgentToolCall',
+      summary: null,
+    });
+  });
+
+  test('rejects malformed or oversized Agent message summaries at the decode boundary', () => {
+    const collab = allItems.find((item) => item.type === 'collabAgentToolCall')!;
+
+    expect(() => decodeThreadItem({ ...collab, summary: 1 })).toThrow('item.summary');
+    expect(() => decodeThreadItem({ ...collab, summary: 'x'.repeat(201) }))
+      .toThrow('must not exceed 200 characters');
+  });
+
   test('reads a Subagent activity persisted before it carried a spawn reference', () => {
     // Additive and nullable: a delegation already on disk must still decode, or
     // the Thread's transcript fails to load until its userData is wiped by hand
@@ -561,6 +587,15 @@ describe('Codex Agent Core protocol codec', () => {
     delete legacy.spawnItemId;
 
     expect(decodeThreadItem(legacy)).toMatchObject({ type: 'subAgentActivity', spawnItemId: null });
+  });
+
+  test('reads a Subagent activity persisted before it carried an exact child Turn anchor', () => {
+    const legacy = JSON.parse(encodeThreadItem(
+      allItems.find((item) => item.type === 'subAgentActivity')!,
+    )) as Record<string, unknown>;
+    delete legacy.agentTurnId;
+
+    expect(decodeThreadItem(legacy)).toMatchObject({ type: 'subAgentActivity', agentTurnId: null });
   });
 
   test('reads a command Item persisted before it carried a description', () => {

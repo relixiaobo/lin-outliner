@@ -49,7 +49,7 @@ interface TurnLifecycleCollaboration {
   pendingActivities(threadId: ThreadId): readonly PendingSubagentActivity[]; hasPendingActivities(threadId: ThreadId): boolean;
   materializePendingActivityItems(threadId: ThreadId, turnId: TurnId, activities: readonly PendingSubagentActivity[]): ThreadItem[]; consumePendingSubagentActivities(threadId: ThreadId, consumed: readonly PendingSubagentActivity[]): void;
   takePendingCollaborationActivity(threadId: ThreadId): boolean; signalCollaborationActivity(threadId: ThreadId): void;
-  flushPendingSubagentActivities(threadId: ThreadId, turnId: TurnId): Promise<readonly PendingSubagentActivity[]>; queueChildTurnActivity(thread: Thread, turn: Turn): void;
+  flushPendingSubagentActivities(threadId: ThreadId, turnId: TurnId): Promise<readonly PendingSubagentActivity[]>; prepareChildTerminalSettlement(thread: Thread, turn: Turn): void; queueChildTurnActivity(thread: Thread, turn: Turn): void; threadBecameIdle(threadId: ThreadId): void;
   startupContextForTurn(threadId: ThreadId, turnId: TurnId): import('../context/AgentStartupContext').AgentStartupContextSnapshot | null;
 }
 /**
@@ -107,6 +107,7 @@ export class TurnLifecycle {
     ownerThreadId: ThreadId,
     ownerTurnId: string,
     agentThreadId: ThreadId,
+    agentTurnId: TurnId,
     agentPath: string,
     kind: PendingSubagentActivity['kind'],
     error: Turn['error'],
@@ -121,6 +122,7 @@ export class TurnLifecycle {
       provenance: active.recorder.localProvenance(id),
       kind,
       agentThreadId,
+      agentTurnId,
       agentPath,
       error,
       spawnItemId,
@@ -166,6 +168,7 @@ export class TurnLifecycle {
         developerInstructions: Object.freeze([input.systemPrompt]),
         tools: Object.freeze([]),
         skills: Object.freeze([]),
+        preloadedSkills: Object.freeze([]),
         plugins: Object.freeze([]),
         mcpServers: Object.freeze([]),
       });
@@ -217,11 +220,21 @@ export class TurnLifecycle {
         await this.catalog.deleteThread(thread.id).catch(() => undefined);
       }
     }
-  async startRendererTurn(request: RendererTurnStartRequest): Promise<TurnStartResponse> {
+  async startRendererTurn(
+      request: RendererTurnStartRequest,
+      reservedTurnId?: TurnId,
+    ): Promise<TurnStartResponse> {
       const contextCommand = parseContextCommand(request.input);
       if (contextCommand) return this.startContextCommand(request, contextCommand);
-      const privileged: PrivilegedTurnStartRequest = { ...request, trigger: { kind: 'user' } };
+      const privileged: PrivilegedTurnStartRequest = {
+        ...request,
+        ...(reservedTurnId === undefined ? {} : { turnId: reservedTurnId }),
+        trigger: { kind: 'user' },
+      };
       return (await this.acceptAndLaunch(privileged)).response;
+    }
+  isRendererContextCommand(input: readonly ThreadUserContent[]): boolean {
+      return parseContextCommand(input) !== null;
     }
   private async startContextCommand(
       request: RendererTurnStartRequest,
@@ -398,11 +411,12 @@ export class TurnLifecycle {
             : await this.extensions.threadContext(thread);
           const canonicalTurns = this.core.allTurns(request.threadId);
           const skillAdmission = this.core.hiddenEphemeralThreads.has(request.threadId)
-              ? { catalogSnapshot: null, invocation: null }
+              ? { catalogSnapshot: null, preloadedInvocations: [], invocation: null }
               : await this.resolveSkillAdmission({
                 thread,
                 turnId: active.turnId,
                 configuration: active.configuration,
+                preloadedSkills: [],
                 content: admission.content,
                 acceptedAt,
                 observedFilePaths: observedSkillFilePaths(canonicalTurns),
@@ -437,6 +451,7 @@ export class TurnLifecycle {
             extensionContext,
             skillCatalog,
             roleCatalog,
+            preloadedSkillInvocations: skillAdmission.preloadedInvocations,
             skillInvocation: skillAdmission.invocation,
             includeHostContext: !this.core.hiddenEphemeralThreads.has(request.threadId),
             projection: admissionProjection,
@@ -883,16 +898,20 @@ export class TurnLifecycle {
       const extensionContext = this.core.hiddenEphemeralThreads.has(request.threadId)
         ? []
         : await this.extensions.threadContext(record.thread);
+      const priorTurns = this.core.allTurns(request.threadId);
       const canonicalTurns = [
-        ...this.core.allTurns(request.threadId),
+        ...priorTurns,
         ...(stagedItems.length > 0 ? [{ ...provisionalTurn, items: stagedItems }] : []),
       ];
       const skillAdmission = this.core.hiddenEphemeralThreads.has(request.threadId)
-        ? { catalogSnapshot: null, invocation: null }
+        ? { catalogSnapshot: null, preloadedInvocations: [], invocation: null }
         : await this.resolveSkillAdmission({
             thread: record.thread,
             turnId,
             configuration: record.configuration,
+            preloadedSkills: priorTurns.length === 0
+              ? record.configuration.preloadedSkills ?? []
+              : [],
             content: input,
             acceptedAt: startedAt,
             observedFilePaths: observedSkillFilePaths(canonicalTurns),
@@ -925,6 +944,7 @@ export class TurnLifecycle {
         extensionContext,
         skillCatalog,
         roleCatalog,
+        preloadedSkillInvocations: skillAdmission.preloadedInvocations,
         skillInvocation: skillAdmission.invocation,
         includeHostContext: !this.core.hiddenEphemeralThreads.has(request.threadId),
         projection: admissionProjection,
@@ -1209,6 +1229,10 @@ export class TurnLifecycle {
         ).catch(() => undefined);
         this.accrueSubagentBudgetUsage(active, thread, turn.execution);
         this.settleSubagentInFlightUsage(active);
+        // Reserve the child terminal pipeline before releasing active-turn
+        // ownership. Admission must keep the concurrency slot occupied across
+        // the small idle-to-settlement window.
+        this.collaboration.prepareChildTerminalSettlement(thread, turn);
         this.activeTurns.delete(active.threadId);
         this.reapSettledSubagentPools(active.threadId, active.turnId);
         await this.setStatus(active.threadId, { type: 'idle' });
@@ -1232,6 +1256,7 @@ export class TurnLifecycle {
       }
       this.transcripts.enqueueTurn(thread, turn);
       this.collaboration.queueChildTurnActivity(thread, turn);
+      this.collaboration.threadBecameIdle(active.threadId);
       if (!hidden) await this.extensions.threadIdle(this.core.requireThread(active.threadId).thread);
     }
   private accrueSubagentBudgetUsage(
@@ -1542,6 +1567,11 @@ export class TurnLifecycle {
           }
         }
         this.settleSubagentInFlightUsage(active);
+        if (thread && failedTurn) {
+          // Register terminal settlement while this failed Turn still owns the
+          // Thread, closing the same concurrency admission window as success.
+          this.collaboration.prepareChildTerminalSettlement(thread, failedTurn);
+        }
         await Promise.all([
           this.core.payloads.pruneUnreferencedContexts(
             active.threadId,
@@ -1560,6 +1590,11 @@ export class TurnLifecycle {
       if (thread && failedTurn) {
         this.transcripts.enqueueTurn(thread, failedTurn);
         this.collaboration.queueChildTurnActivity(thread, failedTurn);
+        // A failed child follows the same idle transition as a completed or
+        // interrupted Turn. Parent delivery may have been deferred while the
+        // failure was being finalized, so give the collaboration layer an
+        // explicit retry edge after ownership is released.
+        this.collaboration.threadBecameIdle(active.threadId);
       }
     }
   async setStatus(threadId: ThreadId, status: ThreadStatus): Promise<void> {
@@ -1616,7 +1651,11 @@ export class TurnLifecycle {
     }
   requireActiveTurn(threadId: ThreadId, turnId: string): ActiveTurn {
       const active = this.activeTurns.get(threadId);
-      if (!active || active.turnId !== turnId) throw this.createThreadBusyError('Expected Turn is not active');
+      if (
+        !active
+        || active.turnId !== turnId
+        || active.controller.signal.aborted
+      ) throw this.createThreadBusyError('Expected Turn is not active');
       return active;
     }
   private async resolveUserInput(response: RequestUserInputResponse): Promise<void> {

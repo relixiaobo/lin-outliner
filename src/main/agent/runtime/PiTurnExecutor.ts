@@ -49,10 +49,7 @@ import {
 import { freezePendingToolOutputProjections } from '../context/ToolOutputProjection';
 import { cursorFor, latestContextEpochId, selectEffectiveContext } from '../context/ContextEpoch';
 import { composeStablePrompt } from '../context/stablePrompt';
-import {
-  applyAnthropicStablePromptCacheBreakpoints,
-  providerCacheAffinity,
-} from '../context/ProviderCache';
+import { providerCacheAffinity } from '../context/ProviderCache';
 import { contextPayloadReferenceKey } from '../context/contextDependencies';
 import { TurnDiagnosticsCollector } from '../context/TurnDiagnostics';
 import {
@@ -82,10 +79,7 @@ import {
   piCompleteSimple,
   piRequestApiKeyOverride,
 } from '../../piModels';
-import {
-  applyCustomOpenAIResponsesPayloadProfile,
-  customOpenAIResponsesPayloadProfileOption,
-} from '../../openAIResponsesCompat';
+import { customOpenAIResponsesPayloadProfileOption } from '../../openAIResponsesCompat';
 import type {
   ThreadNameGenerationContext,
   ThreadNameGenerator,
@@ -94,6 +88,9 @@ import type {
   TurnExecutor,
 } from './types';
 import { persistToolCallAdmission } from './toolCallHistory';
+import { agentProviderPayload } from './agentProviderPayload';
+
+export { agentProviderPayload } from './agentProviderPayload';
 
 export const MAX_PERSISTED_TOOL_ARGUMENT_CHARS = 32_000;
 export const MAX_PERSISTED_TOOL_OUTPUT_CHARS = 50_000;
@@ -638,83 +635,12 @@ function reasoningReplayIdentity(turnId: string, provider: string, api: Api, mod
   return `${turnId}\0${provider}\0${api}\0${model}`;
 }
 
-export function agentProviderPayload(
-  payload: unknown,
-  model: Model<Api>,
-  stablePrompt?: ReturnType<typeof composeStablePrompt> | null,
-  tools: readonly AgentTool[] = [],
-): unknown | undefined {
-  const compatiblePayload = applyCustomOpenAIResponsesPayloadProfile(payload, model);
-  const anthropicPayload = applyAnthropicAgentToolSchemaProfile(
-    compatiblePayload ?? payload,
-    model,
-    tools,
-  );
-  const cachePayload = stablePrompt
-    ? applyAnthropicStablePromptCacheBreakpoints(
-        anthropicPayload ?? compatiblePayload ?? payload,
-        model,
-        stablePrompt,
-      )
-    : undefined;
-  const source = cachePayload ?? anthropicPayload ?? compatiblePayload ?? payload;
-  if (!isRecord(source) || !isOpenAIResponsesApi(model.api) || !isRecord(source.reasoning)) {
-    return cachePayload ?? anthropicPayload ?? compatiblePayload;
-  }
-  if (source.reasoning.summary === 'detailed') {
-    return cachePayload ?? anthropicPayload ?? compatiblePayload;
-  }
-  return {
-    ...source,
-    reasoning: {
-      ...source.reasoning,
-      summary: 'detailed',
-    },
-  };
-}
-
-function applyAnthropicAgentToolSchemaProfile(
-  payload: unknown,
-  model: Model<Api>,
-  tools: readonly AgentTool[],
-): unknown | undefined {
-  if (model.api !== 'anthropic-messages' || !isRecord(payload) || !Array.isArray(payload.tools)) {
-    return undefined;
-  }
-  const schemas = new Map(tools
-    .filter((tool) => isAgentTaskToolName(tool.name))
-    .map((tool) => [tool.name, tool.parameters] as const));
-  if (schemas.size === 0) return undefined;
-
-  let changed = false;
-  const providerTools = payload.tools.map((value) => {
-    if (!isRecord(value) || typeof value.name !== 'string') return value;
-    const schema = schemas.get(value.name);
-    if (!schema) return value;
-    changed = true;
-    const { name, description, input_schema: _inputSchema, ...rest } = value;
-    return {
-      name,
-      description,
-      input_schema: schema,
-      ...rest,
-    };
-  });
-  return changed ? { ...payload, tools: providerTools } : undefined;
-}
-
 export function canonicalizeAgentTools(tools: readonly AgentTool[]): AgentTool[] {
   return [...tools].sort((left, right) => {
     if (left.name < right.name) return -1;
     if (left.name > right.name) return 1;
     return 0;
   });
-}
-
-function isOpenAIResponsesApi(api: Api): boolean {
-  return api === 'openai-responses'
-    || api === 'openai-codex-responses'
-    || api === 'azure-openai-responses';
 }
 
 async function resolveDefaultRuntime(context: PiRuntimeContext): Promise<PiRuntimeSelection> {
@@ -1094,6 +1020,9 @@ function startedToolItem(
         : identity.name === 'agent_message'
           ? optionalToolArgumentText(input.message)
           : null,
+      summary: identity.name === 'agent_message'
+        ? optionalToolArgumentText(input.summary)
+        : null,
       model: optionalToolArgumentText(input.model),
       reasoningEffort: null,
       agentsStates: {},

@@ -15,6 +15,10 @@ import type {
 } from '../../src/main/agent/runtime/kernel/ModelGateway';
 import { PiModelGateway } from '../../src/main/agent/runtime/kernel/ModelGateway';
 import { persistToolCallAdmission } from '../../src/main/agent/runtime/toolCallHistory';
+import {
+  AGENT_MESSAGE_INPUT_SCHEMA,
+  normalizeAgentMessageToolInput,
+} from '../../src/core/agent/tools';
 import type {
   AgentEvent,
   AgentTool,
@@ -341,6 +345,60 @@ describe('native turn kernel parity', () => {
 
     expect(preparations).toBe(1);
     expect(executions).toEqual([argumentsValue]);
+  });
+
+  test('prepares Agent message summaries for execution without rewriting provider history', async () => {
+    const longSummary = 'x'.repeat(201);
+    const providerCalls = [
+      { to: 'agent-one', message: 'First line\nSecond line' },
+      { to: 'agent-two', summary: '   ', message: 'Blank fallback\nSecond line' },
+      { to: 'agent-three', summary: longSummary, message: 'Explicit summary' },
+    ];
+    const executions: unknown[] = [];
+    const messageTool = parameterTool(
+      'agent_message',
+      AGENT_MESSAGE_INPUT_SCHEMA as unknown as Record<string, unknown>,
+      async (_id, args) => {
+        executions.push(args);
+        return toolResult('sent');
+      },
+    );
+    messageTool.prepareArguments = normalizeAgentMessageToolInput;
+    const gateway = new ScriptedGateway([
+      () => terminalStream(assistant(providerCalls.map((argumentsValue, index) => ({
+        type: 'toolCall' as const,
+        id: `message-${index + 1}`,
+        name: 'agent_message',
+        arguments: argumentsValue,
+      })), 'toolUse')),
+      () => terminalStream(assistant([{ type: 'text', text: 'done' }])),
+    ]);
+    const admissions: Array<Extract<AgentEvent, { readonly type: 'tool_call_admission' }>> = [];
+    const runtime = createRuntime(gateway, { tools: [messageTool] });
+    runtime.subscribe((event) => {
+      if (event.type === 'tool_call_admission') admissions.push(event);
+    });
+
+    await runtime.prompt(USER);
+
+    expect(executions).toEqual([
+      { ...providerCalls[0], summary: 'First line' },
+      { ...providerCalls[1], summary: 'Blank fallback' },
+      { ...providerCalls[2], summary: `${'x'.repeat(199)}…` },
+    ]);
+    expect(admissions.map((event) => event.decision.displayArguments)).toEqual(executions);
+    expect(admissions.map((event) => (
+      event.decision.modelCall.disposition === 'replayable'
+        && event.decision.modelCall.arguments.storage === 'inline'
+        ? event.decision.modelCall.arguments.value
+        : null
+    ))).toEqual(providerCalls);
+    const replayedCalls = gateway.requests[1]!.context.messages.flatMap((message) => (
+      message.role === 'assistant'
+        ? message.content.filter((part) => part.type === 'toolCall').map((part) => part.arguments)
+        : []
+    ));
+    expect(replayedCalls).toEqual(providerCalls);
   });
 
   test('isolates canonical history from mutations inside a tool handler', async () => {

@@ -250,6 +250,11 @@ export type SkillInvocationResult =
     skill?: SkillDefinition;
   };
 
+export interface PreloadedSkillResolution {
+  readonly invocations: readonly SkillInvocationContextPayload[];
+  readonly diagnostics: readonly string[];
+}
+
 export interface SkillToolData {
   success: boolean;
   skill: string;
@@ -534,6 +539,49 @@ export class AgentSkillRuntime {
     this.catalogRefreshVersion += 1;
   }
 
+}
+
+/**
+ * Resolve Role-declared startup Skills without turning an unavailable entry into
+ * a failed Agent spawn. Preloading is instruction admission, so one-shot isolated
+ * Skills are intentionally skipped rather than executed as a side effect.
+ */
+export async function resolvePreloadedSkillInvocations(
+  runtime: AgentSkillRuntime,
+  names: readonly string[],
+  invokedAt: number,
+): Promise<PreloadedSkillResolution> {
+  const invocations: SkillInvocationContextPayload[] = [];
+  const diagnostics: string[] = [];
+  for (const requestedName of names) {
+    try {
+      const skill = await runtime.getSkill(requestedName);
+      if (!skill) {
+        diagnostics.push(`Role-preloaded Skill "${requestedName}" is unavailable and was skipped.`);
+        continue;
+      }
+      if (skill.execution === 'isolated') {
+        diagnostics.push(`Role-preloaded Skill "${skill.name}" uses isolated execution and was skipped.`);
+        continue;
+      }
+      const invocation = await runtime.invokeSkill({
+        skill: skill.name,
+        args: '',
+        trigger: 'runtime',
+        invokedAt,
+      });
+      if (!invocation.ok) {
+        diagnostics.push(`Role-preloaded Skill "${skill.name}" was skipped: ${invocation.message}`);
+        continue;
+      }
+      invocations.push(invocation.evidence);
+    } catch (error) {
+      diagnostics.push(
+        `Role-preloaded Skill "${requestedName}" was skipped: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+  return { invocations, diagnostics };
 }
 
 function skillInvocationEvidence(

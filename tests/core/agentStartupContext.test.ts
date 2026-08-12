@@ -127,6 +127,26 @@ describe('Agent startup context', () => {
     ].join('\n\n'));
     expect(renderAgentStartupContext({ repositoryInstructions: [], gitStatus: null })).toBeNull();
   });
+
+  test('degrades when malformed-row cleanup also fails', async () => {
+    const errors: unknown[] = [];
+    const resolver = new AgentStartupContextResolver(
+      {
+        read: () => { throw new Error('read failed'); },
+        delete: () => { throw new Error('delete failed'); },
+        writeOnce: () => { throw new Error('write failed'); },
+      } as never,
+      async () => ({ repositoryInstructions: [], gitStatus: null }),
+      Date.now,
+      (error) => errors.push(error),
+    );
+
+    await expect(resolver.resolve({ sessionId: 'broken-session', cwd: '/workspace' })).resolves.toBeNull();
+    expect(errors).toHaveLength(3);
+    expect((errors[0] as Error).message).toBe('read failed');
+    expect((errors[1] as Error).message).toBe('delete failed');
+    expect((errors[2] as Error).message).toBe('write failed');
+  });
 });
 
 async function repository(): Promise<string> {

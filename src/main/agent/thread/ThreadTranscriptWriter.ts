@@ -247,6 +247,23 @@ export class ThreadTranscriptWriter {
   }
 
   /**
+   * Best-effort production drain before terminal collaboration settlement.
+   * Transcript I/O is inspection-only, so a wedged append may delay this
+   * boundary only up to the account-layer deadline; notification and deletion
+   * settlement must still continue under A12.
+   */
+  async flushForTerminalSettlement(threadId: ThreadId): Promise<void> {
+    await settledWithin(this.writes.get(threadId), TRANSCRIPT_READY_TIMEOUT_MS);
+  }
+
+  /** Drain every append chain before the stores and transcript root go away. */
+  async flushAll(): Promise<void> {
+    while (this.writes.size > 0) {
+      await Promise.allSettled([...new Set(this.writes.values())]);
+    }
+  }
+
+  /**
    * Extend the account by exactly the Turn that just completed.
    *
    * A completed Turn is immutable, so appending is monotonic and never rewrites

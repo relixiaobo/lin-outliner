@@ -126,6 +126,7 @@ function collaboration(
     senderThreadId: 'thread-parent',
     receiverThreadIds: [],
     prompt: null,
+    summary: null,
     model: null,
     reasoningEffort: null,
     agentsStates: {},

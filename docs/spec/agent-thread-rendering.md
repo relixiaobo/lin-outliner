@@ -43,25 +43,30 @@ something. The row that was opened does not move: the container grows below it,
 so there is no reading position to lose and none to restore. Scrolling is
 contained, so the inner region never chains into the transcript's.
 
-A GRANDCHILD replaces the container's contents rather than nesting inside them,
-and the header keeps a crumb naming the container it came from — a swap replaces
+A DESCENDANT replaces the container's contents rather than nesting inside them,
+and the header keeps a crumb naming its immediate parent — a swap replaces
 everything at once, so without one it reads as a jump with nothing left to
-orient against. Nesting would put a scroll region inside a
-scroll region, which fights at the boundary, and would draw depth as indentation
-the reader has to measure. Delegation is capped at depth two, so that header is
-never more than one step. The container carries the child's name, the delegated
-form's glyph, Stop while its Turn is active and its lineage root is a user
-Thread, and a standing note where a composer would be, since the absence of one
-is a contract rather than an omission.
+orient against. Nesting would put a scroll region inside a scroll region, which
+fights at the boundary, and would draw depth as indentation the reader has to
+measure. Delegation is capped at depth three beneath the user Thread. The one
+detail container therefore holds d1, d2, or d3 in turn; at d2 and d3 its single
+crumb steps back to the immediately preceding depth, so repeated Back actions
+unwind d3 → d2 → d1 without exposing or nesting another container. The
+container carries the current child's name, the delegated form's glyph, and Stop
+while its Turn is active and its lineage root is a user Thread. A collaboration
+Agent also carries a composer that starts an explicit user-authored continuation
+on that Agent. An isolated Skill remains read-only and carries a standing note
+where the composer would be.
 
 Inside the container the transcript renders EXACTLY as the main conversation
 does — same message stream, same bubbles, same rows — because it is the same
-thing: a request and the work it produced. What differs is only what cannot act
-there. A read-only embedded view has no composer, and it drops Edit and Continue
-in new chat, since neither can run against a child Thread; they are hidden
-rather than disabled, because a control that never works is not a control, and
-the actions that remain hold the row's height. Copy and Turn Details stay,
-because both work.
+thing: a request and the work it produced. What differs is which actions are
+valid there. Collaboration Agents accept new renderer-authored Turns through
+their Agent-resume admission path, while isolated Skills have no composer. Every
+embedded child drops Edit and Continue in new chat because neither rewrites or
+forks child history; they are hidden rather than disabled, because a control
+that never works is not a control, and the actions that remain hold the row's
+height. Copy and Turn Details stay, because both work.
 
 Parent Thread Details lists the descendant subtree newest-activity first with a
 readable name, status, and last activity; the read names the subtree while the
@@ -779,10 +784,13 @@ or launching the model. A case variant submitted without accepting its canonical
 menu completion, `/new` with additional text, messages with attachments that are
 not exact `/new`, and unknown slash text remain ordinary Turn input.
 
-Only a root user Thread exposes the composer. Child, Automation, Memory, and
-other feature Threads remain fully inspectable but are driven through their
-own canonical admission path instead of accepting renderer-authored Turns. A
-user can fork terminal history into a root user Thread before continuing it.
+Root user Threads and collaboration Agent children expose the composer. A child
+Agent submission uses the persisted Agent identity and resume admission path;
+it does not turn the child into a root conversation. Isolated Skills,
+Automation, Memory, and other feature Threads remain fully inspectable but are
+driven through their own canonical admission paths instead of accepting
+renderer-authored Turns. A user can fork terminal root history into a new root
+user Thread before continuing it.
 
 Provider settings distinguish initial loading from a completed unavailable or
 failed read. Loading is neutral; once loaded, the selected Thread provider must

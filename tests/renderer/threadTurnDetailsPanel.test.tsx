@@ -94,6 +94,7 @@ describe('ThreadTurnDetailsPanel', () => {
             senderThreadId: base.thread.id,
             receiverThreadIds: ['thread-child'],
             prompt: 'Research the issue',
+            summary: null,
             model: null,
             reasoningEffort: null,
             agentsStates: {

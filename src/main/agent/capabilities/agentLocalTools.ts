@@ -99,6 +99,7 @@ export interface AgentWorkspaceWriteBoundary {
   readonly root: string;
   /** Additional Git metadata paths required to commit inside a linked worktree. */
   readonly shellWritablePaths?: readonly string[];
+  readonly protectedGitObjectStores?: readonly string[];
 }
 
 type WorkspaceContext = AgentLocalWorkspaceContext;
@@ -1572,6 +1573,12 @@ export async function stopBackgroundShellTask(taskId: string): Promise<Backgroun
   };
 }
 
+/** Read-only ownership probe for the unified background-task dispatcher. */
+export function hasBackgroundShellTask(taskId: string): boolean {
+  pruneBackgroundTasks();
+  return backgroundTasks.has(taskId);
+}
+
 function normalizeFileReadParams(rawParams: unknown): FileReadParams {
   const input = asRecord(rawParams);
   const filePath = requiredLocalString(input.file_path, 'file_path');
@@ -2158,6 +2165,7 @@ function workspaceShellSandbox(workspace: WorkspaceContext) {
   if (!boundary) return undefined;
   return {
     writablePaths: [boundary.root, ...(boundary.shellWritablePaths ?? [])],
+    protectedGitObjectStores: boundary.protectedGitObjectStores ?? [],
   };
 }
 

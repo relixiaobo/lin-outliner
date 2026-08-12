@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
 import {
   consumeSubagentDrill,
+  descendantDrillPath,
   requestSubagentDrill,
   resetSubagentDrillIntents,
   subscribeSubagentDrill,
@@ -37,5 +38,20 @@ describe('Subagent drill intents', () => {
 
     expect(consumeSubagentDrill('other-child')).toBeNull();
     expect(consumeSubagentDrill('child')).toEqual(['child', 'grandchild']);
+  });
+
+  test('drills only through descendants and never invents sibling lineage', () => {
+    const threads = new Map([
+      ['root', { parentThreadId: null }],
+      ['child-a', { parentThreadId: 'root' }],
+      ['child-b', { parentThreadId: 'root' }],
+      ['grandchild', { parentThreadId: 'child-a' }],
+      ['great-grandchild', { parentThreadId: 'grandchild' }],
+    ]);
+
+    expect(descendantDrillPath('child-a', 'great-grandchild', threads))
+      .toEqual(['grandchild', 'great-grandchild']);
+    expect(descendantDrillPath('child-a', 'child-b', threads)).toBeNull();
+    expect(descendantDrillPath('child-a', 'root', threads)).toBeNull();
   });
 });

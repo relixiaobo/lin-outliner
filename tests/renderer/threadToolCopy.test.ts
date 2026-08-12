@@ -92,6 +92,7 @@ function collab(
     senderThreadId: 't',
     receiverThreadIds: [receiver],
     prompt: null,
+    summary: null,
     model: null,
     reasoningEffort: null,
     agentsStates: {},

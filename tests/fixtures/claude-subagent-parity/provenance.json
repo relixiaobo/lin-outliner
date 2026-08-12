@@ -1,0 +1,231 @@
+{
+  "schemaVersion": 1,
+  "projectionVersion": 1,
+  "binary": {
+    "path": "$HOME/.local/share/claude/versions/2.1.227",
+    "version": "2.1.227 (Claude Code)",
+    "sha256": "7432511ba3be818e01f23f6eef8630d214a8b618451e188c3c7d61a987eef6c7",
+    "signer": "Anthropic PBC",
+    "teamId": "Q6L2SF6YDW",
+    "codesignVerified": true
+  },
+  "captureScripts": [
+    {
+      "id": "tool-schema",
+      "researchArtifact": "capture-claude-tool-schema.mjs",
+      "sha256": "e2d28f54f4d02f89e6db806250ae38653d9ce291c245d92f28aa7fe22b918bc0",
+      "method": "Select named tool objects from a request sent to a loopback Anthropic endpoint"
+    },
+    {
+      "id": "agent-flow",
+      "researchArtifact": "capture-claude-agent-flow.mjs",
+      "sha256": "881ef3b2d25f0667a9d01923589dea65aa60b806852cf276a8dfe198b08c64e0",
+      "method": "Drive a deterministic tool-use scenario against a loopback Anthropic endpoint and retain request structure"
+    }
+  ],
+  "captureProfiles": [
+    {
+      "id": "default",
+      "environment": {
+        "CLAUDE_CODE_FORK_SUBAGENT": "unset",
+        "ANTHROPIC_BASE_URL": "loopback capture endpoint"
+      },
+      "invocation": "Non-interactive Claude Agent SDK CLI session with deterministic local responses"
+    },
+    {
+      "id": "fork-env",
+      "environment": {
+        "CLAUDE_CODE_FORK_SUBAGENT": "1",
+        "ANTHROPIC_BASE_URL": "loopback capture endpoint"
+      },
+      "invocation": "Non-interactive Claude Agent SDK CLI session with deterministic local responses"
+    }
+  ],
+  "sourceCaptures": [
+    {
+      "id": "tool-catalog-default",
+      "researchArtifact": "claude-tools-2.1.227-recheck.json",
+      "sha256": "4cfeaf3b66e28ca9dc43fb0c726493fe12c916adb378ff41b99b18c1251edda1",
+      "capturedAt": "2026-08-12T09:32:45+08:00",
+      "timestampBasis": "research artifact mtime",
+      "profile": "default",
+      "script": "tool-schema",
+      "admitted": true,
+      "admission": "version-bound"
+    },
+    {
+      "id": "tool-catalog-fork-profile",
+      "researchArtifact": "claude-tools-fork-env.json",
+      "sha256": "c81f0df6be15947e54c9575a93317464f17db1ddb389f9de845b389dcc0bd8bc",
+      "capturedAt": "2026-08-11T17:38:03+08:00",
+      "timestampBasis": "research artifact mtime",
+      "profile": "fork-env",
+      "script": "tool-schema",
+      "admitted": false,
+      "admission": "capture available; no committed digest-bound session record"
+    },
+    {
+      "id": "foreground-general-full",
+      "researchArtifact": "claude-agent-foreground-full.json",
+      "sha256": "9963139f20c200c20c2e0eb7a4276ae4a068cd883178c29507a3539005801340",
+      "capturedAt": "2026-08-11T18:15:55+08:00",
+      "timestampBasis": "research artifact mtime",
+      "profile": "default",
+      "script": "agent-flow",
+      "admitted": true,
+      "admission": "self-identifies cc_version 2.1.227"
+    },
+    {
+      "id": "foreground-explore-full",
+      "researchArtifact": "claude-agent-foreground-explore-full.json",
+      "sha256": "234e9b15afd49a826bc78dfe1ac3167c660d1f958004e2c9b408148a4713b6e4",
+      "capturedAt": "2026-08-11T18:15:55+08:00",
+      "timestampBasis": "research artifact mtime",
+      "profile": "default",
+      "script": "agent-flow",
+      "admitted": true,
+      "admission": "self-identifies cc_version 2.1.227"
+    },
+    {
+      "id": "foreground-general-send-main",
+      "researchArtifact": "claude-2.1.227-foreground-send-main.json",
+      "sha256": "248ea6cadb4a6bb88fba273400c54629349e9028d1d23105b740b2e5df1fc9bc",
+      "capturedAt": "2026-08-12T09:33:26+08:00",
+      "timestampBasis": "research artifact mtime",
+      "profile": "default",
+      "script": "agent-flow",
+      "admitted": true,
+      "admission": "version-bound"
+    },
+    {
+      "id": "foreground-explore-send-main",
+      "researchArtifact": "claude-2.1.227-foreground-explore-send-main.json",
+      "sha256": "d3e6727152d1c20862831687d18e3bb33815b37eb5a417bf453d52ebd61777c9",
+      "capturedAt": "2026-08-12T09:33:25+08:00",
+      "timestampBasis": "research artifact mtime",
+      "profile": "default",
+      "script": "agent-flow",
+      "admitted": true,
+      "admission": "version-bound"
+    },
+    {
+      "id": "foreground-plan-send-main",
+      "researchArtifact": "claude-2.1.227-foreground-plan-send-main.json",
+      "sha256": "58cd89a90dc7aa2c5ec7ecf48dbdcbaccc517f76c3917b8888b7c4a13ccf9823",
+      "capturedAt": "2026-08-12T09:33:25+08:00",
+      "timestampBasis": "research artifact mtime",
+      "profile": "default",
+      "script": "agent-flow",
+      "admitted": true,
+      "admission": "version-bound"
+    },
+    {
+      "id": "background-general",
+      "researchArtifact": "claude-agent-background.json",
+      "sha256": "cbb1bd5483f641f7210dc7038f3f0ef4272ef239b17447e51ecb718ef2fe93e1",
+      "capturedAt": "2026-08-11T17:42:24+08:00",
+      "timestampBasis": "research artifact mtime",
+      "profile": "default",
+      "script": "agent-flow",
+      "admitted": false,
+      "admission": "capture available; no committed version identity"
+    },
+    {
+      "id": "background-send-main-full",
+      "researchArtifact": "claude-agent-send-main-full.json",
+      "sha256": "658af3f05f5898d20c4e1982e46d5879de2ffffe8427aa9127a1ddf58c3ea75c",
+      "capturedAt": "2026-08-11T18:30:38+08:00",
+      "timestampBasis": "research artifact mtime",
+      "profile": "default",
+      "script": "agent-flow",
+      "admitted": true,
+      "admission": "self-identifies cc_version 2.1.227"
+    },
+    {
+      "id": "foreground-general-legacy",
+      "researchArtifact": "claude-agent-foreground.json",
+      "sha256": "cb57b2091c2c4d4d42c3e4ad34e7377a972fc6a1af8f1b890ee1e68f6a3bd901",
+      "capturedAt": "2026-08-11T17:43:16+08:00",
+      "timestampBasis": "research artifact mtime",
+      "profile": "default",
+      "script": "agent-flow",
+      "admitted": false,
+      "admission": "capture available; no committed version identity"
+    },
+    {
+      "id": "steer-running",
+      "researchArtifact": "claude-agent-steer-running.json",
+      "sha256": "3ae84f25bb0ab0c8a701bfca006e55b67068ab1b465f6b7764ff3c4dd4439811",
+      "capturedAt": "2026-08-11T18:27:11+08:00",
+      "timestampBasis": "research artifact mtime",
+      "profile": "default",
+      "script": "agent-flow",
+      "admitted": false,
+      "admission": "capture available; no committed version identity"
+    },
+    {
+      "id": "resume-explore",
+      "researchArtifact": "claude-agent-resume-explore.json",
+      "sha256": "059948552d02f80f3d4ea8bbdb793ad948b98ec44ee22985198d9015ecbd0b21",
+      "capturedAt": "2026-08-11T18:11:22+08:00",
+      "timestampBasis": "research artifact mtime",
+      "profile": "default",
+      "script": "agent-flow",
+      "admitted": false,
+      "admission": "capture available; no committed version identity"
+    }
+  ],
+  "projections": [
+    {
+      "path": "captured/tool-catalog-default.json",
+      "sha256": "4cfeaf3b66e28ca9dc43fb0c726493fe12c916adb378ff41b99b18c1251edda1",
+      "sources": ["tool-catalog-default"],
+      "scope": "Complete selected tool objects, descriptions, schemas, and JSON key order"
+    },
+    {
+      "path": "captured/tool-catalog-fork-profile.json",
+      "sha256": "c81f0df6be15947e54c9575a93317464f17db1ddb389f9de845b389dcc0bd8bc",
+      "sources": ["tool-catalog-fork-profile"],
+      "scope": "Unadmitted selected Fork-profile tool objects and absence of run_in_background"
+    },
+    {
+      "path": "captured/fresh-context.json",
+      "sha256": "10dc2b65cc59a3d594effff5feffe0ca80dc78083f4e098f2361eaf86eb86204",
+      "sources": ["foreground-general-full", "foreground-explore-full", "foreground-plan-send-main"],
+      "scope": "Selected block counts, roles, context-presence flags, and collaboration tool names"
+    },
+    {
+      "path": "captured/execution-messaging.json",
+      "sha256": "e2dc27559ff73aca361ef843e508b16871db44bb92e4f8725407238ea4f74de7",
+      "sources": ["foreground-general-full", "foreground-explore-full", "foreground-plan-send-main", "background-general", "background-send-main-full", "steer-running", "resume-explore"],
+      "scope": "Selected foreground/background ordering, main delivery, steering, and resume facts"
+    },
+    {
+      "path": "captured/output-helpers.json",
+      "sha256": "f439afa01ce78b257f774dd3dea0a887d3ac71751a18f7bd1151cb74234c1d8d",
+      "sources": ["background-general", "foreground-general-legacy", "foreground-general-send-main", "foreground-explore-send-main", "foreground-plan-send-main"],
+      "scope": "Selected launch, result, notification, and foreground main-delivery helper text"
+    }
+  ],
+  "sanitization": {
+    "excluded": [
+      "Repository instruction text",
+      "Absolute local paths",
+      "Git status prose",
+      "Unselected prompt and message text",
+      "Credentials and request headers unrelated to version identity"
+    ],
+    "placeholders": [
+      "Opaque agent and tool-use IDs",
+      "Output and worktree paths",
+      "Timestamps and usage counters where their exact value is not the claim"
+    ],
+    "normalization": "Tenon transformations are exact JSON-path or declared text-slot replacements in normalizer.ts; captured files retain Claude names."
+  },
+  "licensing": {
+    "repositoryLicense": "MIT",
+    "upstreamCaptureTerms": "No upstream license is asserted. Committed captures are minimized interoperability observations from the provider request boundary, not copied proprietary source files.",
+    "captureObservationStatus": "Upstream copyright and applicable terms remain with their owners.",
+    "sourceCodeIncluded": false
+  }
+}

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -100,7 +100,7 @@ describe('agent process executor', () => {
     const child = await executor.spawnShell({
       command: 'git add tracked.txt && git commit -m Isolated-change',
       cwd: prepared.cwd,
-      sandbox: { writablePaths: worktrees.sandboxWritePaths(prepared.worktree) },
+      sandbox: worktrees.sandboxPaths(prepared.worktree),
     });
     let stderr = '';
     child.stderr?.setEncoding('utf8');
@@ -113,6 +113,51 @@ describe('agent process executor', () => {
     expect(code, stderr).toBe(0);
     expect(await gitOutput(prepared.cwd, ['log', '-1', '--format=%s'])).toBe('Isolated-change');
     expect(await readFile(canonicalSource + '/tracked.txt', 'utf8')).toBe('before\n');
+  });
+
+  test('isolated shell cannot mutate the shared Git object database', async () => {
+    if (process.platform !== 'darwin') return;
+    const root = await mkdtemp(path.join(tmpdir(), 'tenon-process-object-sandbox-'));
+    roots.push(root);
+    const source = path.join(root, 'source');
+    const userData = path.join(root, 'user-data');
+    await mkdir(userData);
+    await git(root, ['init', source]);
+    await git(source, ['config', 'user.name', 'Agent Process Test']);
+    await git(source, ['config', 'user.email', 'agent-process@example.test']);
+    await writeFile(path.join(source, 'tracked.txt'), 'before\n');
+    await git(source, ['add', 'tracked.txt']);
+    await git(source, ['commit', '-m', 'Initial']);
+    const canonicalSource = await realpath(source);
+    const worktrees = new AgentWorktree(userData);
+    const prepared = await worktrees.prepare({ agentId: 'object-agent', cwd: canonicalSource });
+    const sandbox = worktrees.sandboxPaths(prepared.worktree);
+    const objectStore = sandbox.protectedGitObjectStores[0]!;
+    const head = await gitOutput(source, ['rev-parse', 'HEAD']);
+    const objectPath = path.join(objectStore, head.slice(0, 2), head.slice(2));
+    const before = await readFile(objectPath);
+    const beforeMode = (await stat(objectPath)).mode;
+    const attack = [
+      `printf corrupt > ${JSON.stringify(objectPath)}`,
+      `unlink ${JSON.stringify(objectPath)}`,
+      `chmod 000 ${JSON.stringify(objectPath)}`,
+      `touch ${JSON.stringify(path.join(objectStore, 'pack', 'evil.pack'))}`,
+      `touch ${JSON.stringify(path.join(objectStore, 'info', 'alternates'))}`,
+    ].join('; ');
+
+    const executor = new AgentProcessExecutor();
+    const child = await executor.spawnShell({ command: attack, cwd: prepared.cwd, sandbox });
+    const code = await new Promise<number | null>((resolve, reject) => {
+      child.once('error', reject);
+      child.once('close', resolve);
+    });
+
+    expect(code).not.toBe(0);
+    expect(await readFile(objectPath)).toEqual(before);
+    expect((await stat(objectPath)).mode).toBe(beforeMode);
+    await expect(stat(path.join(objectStore, 'pack', 'evil.pack'))).rejects.toThrow();
+    await expect(stat(path.join(objectStore, 'info', 'alternates'))).rejects.toThrow();
+    await expect(git(source, ['fsck', '--no-dangling'])).resolves.toBeUndefined();
   });
 
   test('preserves ambient credentials and removes only explicitly private values', () => {

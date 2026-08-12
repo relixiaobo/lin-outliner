@@ -67,9 +67,9 @@ export class AgentStartupContextStore {
 }
 
 /**
- * Resolves one immutable repository snapshot per root session. Concurrent Agent
- * spawns share the same collection promise, while the SQLite row carries the
- * snapshot across host restarts.
+ * Resolves one immutable repository snapshot per root session. Concurrent
+ * resolution shares the same collection promise, while the SQLite row carries
+ * the snapshot across host restarts.
  */
 export class AgentStartupContextResolver {
   private readonly pending = new Map<string, Promise<AgentStartupContextSnapshot | null>>();
@@ -92,7 +92,14 @@ export class AgentStartupContextResolver {
       // The snapshot is optional inspection input. Remove a malformed row so
       // the next resolution can rebuild it instead of permanently suppressing
       // startup context for the session.
-      this.store.delete([subject.sessionId]);
+      try {
+        this.store.delete([subject.sessionId]);
+      } catch (deleteError) {
+        // Cleanup is best-effort. Startup context is optional inspection
+        // input; a failed delete must not turn an Agent spawn into a hard
+        // failure or suppress the fresh collection attempt below.
+        this.reportError(deleteError, subject.sessionId);
+      }
     }
 
     const existing = this.pending.get(subject.sessionId);

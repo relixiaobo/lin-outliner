@@ -322,7 +322,7 @@ export function decodeThreadItem(value: unknown): ThreadItem {
     case 'collabAgentToolCall': {
       exactKeys(record, [
         'type', 'id', 'provenance', 'tool', 'status', 'senderThreadId', 'receiverThreadIds', 'prompt',
-        'model', 'reasoningEffort', 'agentsStates', 'outputRef',
+        'summary', 'model', 'reasoningEffort', 'agentsStates', 'outputRef',
         'modelCall',
       ], 'item');
       const states = recordValue(record.agentsStates, 'item.agentsStates');
@@ -357,6 +357,7 @@ export function decodeThreadItem(value: unknown): ThreadItem {
         receiverThreadIds: arrayValue(record.receiverThreadIds, 'item.receiverThreadIds')
           .map((entry, index) => uuidV7(entry, `item.receiverThreadIds[${index}]`)),
         prompt: nullableString(record.prompt, 'item.prompt', true),
+        summary: boundedAgentMessageSummary(record.summary ?? null, 'item.summary'),
         // Empty is tolerated here for the same reason it always was on `prompt`:
         // these are optional display strings, and an Item already carrying one
         // must stay readable. Rejecting it makes a whole Thread undecodable over
@@ -371,7 +372,10 @@ export function decodeThreadItem(value: unknown): ThreadItem {
     case 'subAgentActivity':
       exactKeys(
         record,
-        ['type', 'id', 'provenance', 'kind', 'agentThreadId', 'agentPath', 'error', 'spawnItemId'],
+        [
+          'type', 'id', 'provenance', 'kind', 'agentThreadId', 'agentTurnId',
+          'agentPath', 'error', 'spawnItemId',
+        ],
         'item',
       );
       result = {
@@ -379,6 +383,9 @@ export function decodeThreadItem(value: unknown): ThreadItem {
         type,
         kind: enumValue(record.kind, ['started', 'completed', 'interrupted', 'errored'], 'item.kind'),
         agentThreadId: uuidV7(record.agentThreadId, 'item.agentThreadId'),
+        // Old activity Items predate the exact child-Turn anchor. They remain
+        // readable, but consumers must not infer an unrelated latest Turn.
+        agentTurnId: nullableUuidV7(record.agentTurnId ?? null, 'item.agentTurnId'),
         agentPath: stringValue(record.agentPath, 'item.agentPath'),
         error: decodeTurnError(record.error, 'item.error'),
         // Additive and nullable, so an Item written before it existed decodes
@@ -3767,6 +3774,12 @@ function nonEmptyTrimmedString(value: unknown, path: string): string {
 
 function nullableString(value: unknown, path: string, allowEmpty = false): string | null {
   return value === null ? null : stringValue(value, path, allowEmpty);
+}
+
+function boundedAgentMessageSummary(value: unknown, path: string): string | null {
+  const summary = nullableString(value, path, true);
+  if (summary !== null && summary.length > 200) fail(path, 'must not exceed 200 characters');
+  return summary;
 }
 
 function booleanValue(value: unknown, path: string): boolean {

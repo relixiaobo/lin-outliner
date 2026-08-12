@@ -11,7 +11,7 @@ import type { AgentTool } from '../../src/main/agent/runtime/kernel/types';
 import type { TurnExecutionContext } from '../../src/main/agent/runtime/types';
 
 describe('unified task_stop dispatcher', () => {
-  test('prefers task_id and resolves the Agent owner before shell tasks', async () => {
+  test('rejects an ID owned by both an Agent and a shell task', async () => {
     const shellId = await startBackgroundShell();
     const calls: string[] = [];
     const agentResult = {
@@ -23,20 +23,38 @@ describe('unified task_stop dispatcher', () => {
     const tools = await runtimeTools(async (_threadId, _turnId, taskId) => {
       calls.push(taskId);
       return agentResult;
-    });
+    }, true);
 
     try {
-      const result = await executeTaskStop(tools, { task_id: shellId, shell_id: 'ignored-shell-id' });
-      expect(calls).toEqual([shellId]);
-      expect(result.details).toMatchObject(agentResult);
-      expect(JSON.parse(result.content[0]!.type === 'text' ? result.content[0]!.text : 'null'))
-        .toEqual(agentResult);
+      await expect(executeTaskStop(tools, { task_id: shellId, shell_id: 'ignored-shell-id' }))
+        .rejects.toThrow(`Task ID is ambiguous between an Agent and shell task: ${shellId}`);
+      expect(calls).toEqual([]);
 
       const shell = await stopBackgroundShellTask(shellId);
       expect(shell).toMatchObject({ task_id: shellId, status: 'stopped' });
     } finally {
       await stopBackgroundShellTask(shellId).catch(() => null);
     }
+  });
+
+  test('gives task_id precedence over deprecated shell_id', async () => {
+    const calls: string[] = [];
+    const tools = await runtimeTools(async (_threadId, _turnId, taskId) => {
+      calls.push(taskId);
+      return {
+        message: `Successfully stopped task: ${taskId} (Inspect runtime)`,
+        task_id: taskId,
+        task_type: 'local_agent',
+        command: 'Inspect runtime',
+      };
+    }, true);
+
+    const result = await executeTaskStop(tools, {
+      task_id: 'agent-task-id',
+      shell_id: 'ignored-shell-id',
+    });
+    expect(calls).toEqual(['agent-task-id']);
+    expect(result.details).toMatchObject({ task_id: 'agent-task-id', task_type: 'local_agent' });
   });
 
   test('falls back to the shell owner and returns the canonical stop fields', async () => {
@@ -85,19 +103,13 @@ describe('unified task_stop dispatcher', () => {
   });
 
   test('does not fall through to shell when an Agent finishes during stop', async () => {
-    const shellId = await startBackgroundShell();
+    const agentId = 'terminal-agent-id';
     const tools = await runtimeTools(async (_threadId, _turnId, taskId) => {
       throw new Error(`Task ${taskId} is not running (status: completed)`);
-    });
+    }, true);
 
-    try {
-      await expect(executeTaskStop(tools, { task_id: shellId }))
-        .rejects.toThrow(`Task ${shellId} is not running (status: completed)`);
-      const shell = await stopBackgroundShellTask(shellId);
-      expect(shell).toMatchObject({ task_id: shellId, status: 'stopped' });
-    } finally {
-      await stopBackgroundShellTask(shellId).catch(() => null);
-    }
+    await expect(executeTaskStop(tools, { task_id: agentId }))
+      .rejects.toThrow(`Task ${agentId} is not running (status: completed)`);
   });
 
   test('exposes one canonical task_stop and no bash_stop alias', async () => {
@@ -114,6 +126,7 @@ const CONFIGURATION: EffectiveThreadConfiguration = {
   reasoningEffort: 'medium',
   tools: ['task_stop'],
   skills: [],
+  preloadedSkills: [],
   plugins: [],
   mcpServers: [],
 };
@@ -130,12 +143,14 @@ const CONTEXT = {
 
 async function runtimeTools(
   stopAgentTask: (threadId: string, turnId: string, taskId: string) => Promise<JsonValue | null>,
+  agentOwnsTask = false,
 ): Promise<readonly AgentTool[]> {
   const service = {
     collaborationToolContributions: async () => [],
     extensionToolContributions: async () => [],
     notifyToolStarted: async () => undefined,
     notifyToolCompleted: async () => undefined,
+    hasAgentTask: () => agentOwnsTask,
     stopAgentTask,
   } as unknown as ThreadService;
   return new ToolRuntime(service, {

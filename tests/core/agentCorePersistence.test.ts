@@ -36,6 +36,7 @@ const configuration: EffectiveThreadConfiguration = {
   reasoningEffort: 'medium',
   tools: [],
   skills: [],
+  preloadedSkills: [],
   plugins: [],
   mcpServers: [],
 };
@@ -835,7 +836,6 @@ describe('Agent Core persistence', () => {
     }, false);
     budgets.addUsage(persistentChildId, persistentPoolId, 40);
     budgets.addUsage(persistentSiblingId, persistentPoolId, 10);
-    budgets.recordSpawnCount(persistentHolderId, 2, false);
     budgets.createPool({
       poolId: ephemeralPoolId,
       scope: 'turn',
@@ -850,32 +850,25 @@ describe('Agent Core persistence', () => {
       tokenCap: null,
     }, true);
     budgets.addUsage(ephemeralChildId, ephemeralPoolId, 10);
-    budgets.recordSpawnCount(ephemeralHolderId, 1, true);
     expect(goals.read(persistentChildId)?.goal.objective).toBe('Child-owned Goal');
     expect(budgets.readPool(persistentPoolId)).toMatchObject({ tokenBudget: 100, tokensUsed: 50 });
     expect(budgets.readMember(persistentChildId)).toMatchObject({ tokenCap: 60, tokensUsed: 40 });
     expect(budgets.readMember(persistentSiblingId)).toMatchObject({ tokenCap: null, tokensUsed: 10 });
-    expect(budgets.readSpawnCount(persistentHolderId)).toBe(2);
     expect(budgets.readPool(ephemeralPoolId)).toMatchObject({ tokenBudget: 50, tokensUsed: 10 });
-    expect(budgets.readSpawnCount(ephemeralHolderId)).toBe(1);
     goals.close();
 
     const reopenedDatabase = testDatabase(goalsPath);
     const reopened = new SubagentRequestLedger(reopenedDatabase);
     expect(reopened.readPool(persistentPoolId)).toMatchObject({ tokenBudget: 100, tokensUsed: 50 });
     expect(reopened.readMember(persistentChildId)).toMatchObject({ tokenCap: 60, tokensUsed: 40 });
-    expect(reopened.readSpawnCount(persistentHolderId)).toBe(2);
     expect(reopened.readPool(ephemeralPoolId)).toBeNull();
-    expect(reopened.readSpawnCount(ephemeralHolderId)).toBe(0);
     expect(reopened.clearThread(persistentChildId)).toBe(true);
     expect(reopened.readPool(persistentPoolId)).toMatchObject({ tokenBudget: 100, tokensUsed: 50 });
-    expect(reopened.readSpawnCount(persistentHolderId)).toBe(2);
     // Deleting the Thread that originated the pool takes the pool and every
     // remaining member with it.
     expect(reopened.clearThread(persistentHolderId)).toBe(true);
     expect(reopened.readPool(persistentPoolId)).toBeNull();
     expect(reopened.readMember(persistentSiblingId)).toBeNull();
-    expect(reopened.readSpawnCount(persistentHolderId)).toBe(0);
     reopenedDatabase.close();
   });
 });

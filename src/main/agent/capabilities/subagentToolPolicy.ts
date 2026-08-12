@@ -25,16 +25,6 @@ export interface ResolvedSubagentToolRequest {
   readonly unrecognizedTools: readonly string[];
 }
 
-const RETIRED_TOOL_KEYS = new Set([
-  'collaboration.spawn_agent',
-  'collaboration.send_message',
-  'collaboration.followup_task',
-  'collaboration.wait_agent',
-  'collaboration.list_agents',
-  'collaboration.interrupt_agent',
-  'bash_stop',
-]);
-
 const ROOT_ONLY_ACTION_KINDS = new Set<ModelToolActionKind>([
   'agent.user_input.request',
   'agent.automation.manage',
@@ -50,9 +40,22 @@ const REPOSITORY_MUTATION_ACTION_KINDS = new Set<ModelToolActionKind>([
   'file.write.sensitive_local_path',
   'file.delete.local_path',
 ]);
+const SPECIALIZED_REPOSITORY_MUTATION_ACTION_KINDS = new Set<ModelToolActionKind>([
+  ...REPOSITORY_MUTATION_ACTION_KINDS,
+  'shell.project_script',
+  'shell.local_code_execution',
+  'shell.dependency_install',
+  'shell.destructive_cleanup',
+  'shell.unknown',
+  'git.publish_remote',
+]);
 const SPECIALIZED_EXCLUDED_ACTION_KINDS = new Set<ModelToolActionKind>([
   'agent.image.generate',
   'agent.data.import',
+]);
+const SPECIALIZED_BASH_ACTION_KINDS = new Set<ModelToolActionKind>([
+  'shell.read_search',
+  'shell.background_process',
 ]);
 const BACKGROUND_TOOL_KEYS = new Set([
   'node_search',
@@ -120,8 +123,7 @@ export function subagentToolAllowed(
 ): boolean {
   const key = canonicalModelToolKey(tool.identity);
   if (
-    RETIRED_TOOL_KEYS.has(key)
-    || tool.scope === 'rootThread'
+    tool.scope === 'rootThread'
     || hasActionKind(tool, ROOT_ONLY_ACTION_KINDS)
     || key === 'outline_undo_stack'
   ) return false;
@@ -139,6 +141,31 @@ export function subagentToolAllowed(
   if (!policy.runInBackground) return true;
   if (extensionTool) return true;
   return BACKGROUND_TOOL_KEYS.has(key);
+}
+
+/**
+ * Explore and Plan retain Bash for captured provider parity, but only commands
+ * that the capability classifier can prove are repository inspections may run.
+ */
+export function subagentBashExecutionAllowed(
+  policy: SubagentToolPolicy,
+  actionKinds: readonly ModelToolActionKind[],
+): boolean {
+  if (policy.kind !== 'explore' && policy.kind !== 'plan') return true;
+  return actionKinds.length > 0 && actionKinds.every((kind) => SPECIALIZED_BASH_ACTION_KINDS.has(kind));
+}
+
+/**
+ * Dynamic extension and MCP tools remain provider-visible for parity, but their
+ * declared actions must not bypass the specialized repository-write boundary.
+ */
+export function subagentToolExecutionAllowed(
+  policy: SubagentToolPolicy,
+  actionKinds: readonly ModelToolActionKind[],
+): boolean {
+  if (policy.kind !== 'explore' && policy.kind !== 'plan') return true;
+  return actionKinds.length > 0
+    && actionKinds.every((kind) => !SPECIALIZED_REPOSITORY_MUTATION_ACTION_KINDS.has(kind));
 }
 
 function hasActionKind(

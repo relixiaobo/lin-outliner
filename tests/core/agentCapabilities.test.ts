@@ -6,6 +6,7 @@ import { evaluateAgentToolCapability } from '../../src/main/agent/capabilities/a
 import { unavailableToolResultMessage } from '../../src/main/agent/capabilities/agentCapabilityEvents';
 import { parseAgentCapabilitySettings } from '../../src/main/agent/capabilities/agentCapabilityRules';
 import { executeAgentSkillShellCommand } from '../../src/main/agent/capabilities/agentSkillShell';
+import type { SubagentToolPolicy } from '../../src/main/agent/capabilities/subagentToolPolicy';
 
 const roots: string[] = [];
 
@@ -154,6 +155,32 @@ describe('agent capabilities', () => {
 
     expect(await readFile(inside, 'utf8')).toBe('inside');
     await expect(readFile(escaped, 'utf8')).rejects.toThrow();
+  });
+
+  test('restricts embedded Skill shell for Explore and Plan Agents before execution', async () => {
+    const { workspace } = await workspaceFixture();
+    const policy = (kind: 'explore' | 'plan'): SubagentToolPolicy => ({
+      kind,
+      runInBackground: false,
+      worktree: false,
+      allowNesting: false,
+    });
+
+    for (const kind of ['explore', 'plan'] as const) {
+      await expect(executeAgentSkillShellCommand({
+        command: 'find . -type f',
+        localRoot: workspace,
+        capabilityConfig: parseAgentCapabilitySettings({ blocks: [] }),
+        subagentPolicy: policy(kind),
+      })).resolves.toEqual(expect.any(String));
+      await expect(executeAgentSkillShellCommand({
+        command: 'printf changed > tracked.txt',
+        localRoot: workspace,
+        capabilityConfig: parseAgentCapabilitySettings({ blocks: [] }),
+        subagentPolicy: policy(kind),
+      })).rejects.toMatchObject({ code: 'operation_unavailable' });
+      await expect(readFile(path.join(workspace, 'tracked.txt'), 'utf8')).rejects.toThrow();
+    }
   });
 
   test('injects the host process environment into embedded Skill shell', async () => {

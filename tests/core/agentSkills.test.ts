@@ -10,6 +10,7 @@ import {
   createSkillTool,
   parseNaturalLanguageSkillifyRequest,
   parseSkillSlashCommand,
+  resolvePreloadedSkillInvocations,
   resolveUserSkillInvocation,
   resolveBuiltInSkillResourceRoot,
   resolveSkillContentTarget,
@@ -346,6 +347,70 @@ describe('skill provenance and undo', () => {
 });
 
 describe('agent skills', () => {
+  test('preloads explicit inline Skills in Role order and degrades unavailable entries', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'lin-skills-preload-'));
+    await createSkillInRoot(root, 'alpha', {
+      frontmatter: ['description: Alpha preload'],
+      body: 'ALPHA ROLE PRELOAD BODY',
+    });
+    await createSkillInRoot(root, 'beta', {
+      frontmatter: ['description: Beta preload'],
+      body: 'BETA ROLE PRELOAD BODY',
+    });
+    const runtime = new AgentSkillRuntime({
+      localRoot: root,
+      includeUserSkills: false,
+      enabledSkills: ['alpha', 'beta', 'missing'],
+    });
+
+    const resolved = await resolvePreloadedSkillInvocations(
+      runtime,
+      ['beta', 'missing', 'alpha'],
+      42,
+    );
+
+    expect(resolved.invocations.map((invocation) => invocation.name)).toEqual(['beta', 'alpha']);
+    expect(resolved.invocations.map((invocation) => invocation.invocationSource)).toEqual(['runtime', 'runtime']);
+    expect(resolved.invocations.map((invocation) => invocation.invokedAt)).toEqual([42, 42]);
+    expect(resolved.invocations[0]?.instructions).toContain('BETA ROLE PRELOAD BODY');
+    expect(resolved.invocations[1]?.instructions).toContain('ALPHA ROLE PRELOAD BODY');
+    expect(resolved.diagnostics).toEqual([
+      'Role-preloaded Skill "missing" is unavailable and was skipped.',
+    ]);
+  });
+
+  test('never executes isolated Role-preloaded Skills', async () => {
+    const root = await createSkillFixture('isolated', {
+      frontmatter: [
+        'description: Isolated preload',
+        'execution: isolated',
+        'allowed-tools: bash',
+      ],
+      body: 'Do isolated work.',
+    });
+    let isolatedExecutions = 0;
+    const runtime = new AgentSkillRuntime({
+      localRoot: root,
+      includeUserSkills: false,
+      executeIsolatedSkill: async () => {
+        isolatedExecutions += 1;
+        return {
+          threadId: 'must-not-run',
+          agentRole: 'default',
+          status: 'completed',
+        };
+      },
+    });
+
+    const resolved = await resolvePreloadedSkillInvocations(runtime, ['isolated'], 42);
+
+    expect(resolved.invocations).toEqual([]);
+    expect(isolatedExecutions).toBe(0);
+    expect(resolved.diagnostics).toEqual([
+      'Role-preloaded Skill "isolated" uses isolated execution and was skipped.',
+    ]);
+  });
+
   test('builds deterministic admission-time catalogs and refreshes existing Threads', async () => {
     const root = await createSkillFixture('demo', {
       frontmatter: ['description: Demo skill', 'when_to_use: Use for demo work'],

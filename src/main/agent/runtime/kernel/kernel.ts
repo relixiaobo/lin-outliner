@@ -557,26 +557,26 @@ async function prepareToolCall(
   }
   const identity = canonicalToolIdentity(tool);
   try {
+    // Keep provider-authored history independent from tool-owned defaults and
+    // presentation normalization. Execution receives its own clone below.
+    const providerArguments = structuredClone(toolCall.arguments);
     const preparedArguments = tool.prepareArguments
-      ? tool.prepareArguments(toolCall.arguments)
-      : toolCall.arguments;
+      ? tool.prepareArguments(structuredClone(providerArguments))
+      : providerArguments;
     const args = structuredClone(validateExactToolArguments(tool, preparedArguments));
-    const admissionArguments = await prepareToolCallArguments(args ?? null);
-    const canonicalCall = {
-      ...toolCall,
-      arguments: admissionArguments.arguments as Record<string, any>,
-    };
+    const historyArguments = await prepareToolCallArguments(providerArguments ?? null);
+    const displayArguments = await prepareToolCallArguments(args ?? null);
     let redactedArgumentsReplayable = true;
-    if (admissionArguments.redactedPaths.length > 0) {
+    if (historyArguments.redactedPaths.length > 0) {
       try {
-        validateExactToolArguments(tool, admissionArguments.redactedArguments);
+        validateExactToolArguments(tool, historyArguments.redactedArguments);
       } catch {
         redactedArgumentsReplayable = false;
       }
     }
     return {
       kind: 'prepared',
-      toolCall: canonicalCall,
+      toolCall,
       tool,
       args,
       admission: {
@@ -585,9 +585,10 @@ async function prepareToolCall(
         outcome: {
           type: 'admitted',
           identity,
-          arguments: admissionArguments.arguments,
-          redactedArguments: admissionArguments.redactedArguments,
-          redactedPaths: admissionArguments.redactedPaths,
+          arguments: historyArguments.arguments,
+          redactedArguments: historyArguments.redactedArguments,
+          redactedPaths: historyArguments.redactedPaths,
+          displayArguments: displayArguments.redactedArguments,
           schemaDigest: modelToolSchemaDigest(tool.parameters),
           redactedArgumentsReplayable,
         },

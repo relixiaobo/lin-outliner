@@ -58,6 +58,8 @@ export type AgentCapabilityDecision =
 export interface AgentCapabilityEvaluationInput {
   toolName: string;
   args: unknown;
+  /** Resolved runtime contract actions for extension and MCP tools. */
+  actionKinds?: readonly AgentToolActionKind[];
   policy: AgentCapabilityPolicyInput;
 }
 
@@ -72,8 +74,14 @@ export function createAgentCapabilityPolicy(input: AgentCapabilityPolicyInput = 
 export function evaluateAgentToolCapability(input: AgentCapabilityEvaluationInput): AgentCapabilityDecision {
   const policy = createAgentCapabilityPolicy(input.policy);
   const toolName = normalizeToolName(input.toolName);
-  const access = classifyToolAccess(toolName, input.args);
-  const descriptors = deriveAgentToolActionDescriptors({ toolName, args: input.args, policy, access });
+  const access = classifyToolAccess(toolName, input.args, input.actionKinds);
+  const descriptors = deriveAgentToolActionDescriptors({
+    toolName,
+    args: input.args,
+    ...(input.actionKinds === undefined ? {} : { actionKinds: input.actionKinds }),
+    policy,
+    access,
+  });
 
   const userBlock = descriptors
     .map((descriptor) => ({ descriptor, rule: matchingBlockForDescriptor(descriptor, policy.capabilityConfig) }))
@@ -99,6 +107,7 @@ export function evaluateAgentToolCapability(input: AgentCapabilityEvaluationInpu
 export function deriveAgentToolActionDescriptors(input: {
   toolName: string;
   args: unknown;
+  actionKinds?: readonly AgentToolActionKind[];
   policy: AgentCapabilityPolicy;
   access: AgentCapabilityAccess;
 }): ToolActionDescriptor[] {
@@ -120,7 +129,16 @@ export function deriveAgentToolActionDescriptors(input: {
   if (pathArgName) return [derivePathToolActionDescriptor(toolName, input.args, input.policy, input.access, pathArgName)];
 
   const known = descriptorForKnownTool(toolName, input.args);
-  return [known ?? descriptor(toolName, 'shell.unknown', {
+  if (known) return [known];
+  if (input.actionKinds && input.actionKinds.length > 0) {
+    return input.actionKinds.map((actionKind) => descriptor(toolName, actionKind, {
+      accessScope: actionKind.startsWith('web.') ? 'external_system' : 'none',
+      title: actionKind,
+      summary: `Execute ${actionKind}.`,
+      consequence: `Execute ${actionKind}.`,
+    }));
+  }
+  return [descriptor(toolName, 'shell.unknown', {
     accessScope: 'none',
     title: 'unclassified tool action',
     summary: `Use ${toolName}.`,
@@ -214,7 +232,9 @@ function deriveBashActionDescriptors(
 
 function classifyShellSegment(segmentInput: string, fullCommand: string): ToolActionDescriptor {
   const segment = segmentInput.trim();
-  const head = parseShellWords(segment)[0]?.toLowerCase() ?? '';
+  const words = parseShellWords(segment);
+  const head = words[0]?.toLowerCase() ?? '';
+  const findAction = classifyFindAction(words);
   const values = (actionKind: AgentToolActionKind, title: string, summary: string): ToolActionDescriptor => descriptor('bash', actionKind, {
     accessScope: actionKind === 'shell.network_write' || actionKind === 'git.publish_remote' || actionKind === 'deploy.publish_remote'
       ? 'external_system'
@@ -235,8 +255,14 @@ function classifyShellSegment(segmentInput: string, fullCommand: string): ToolAc
   if (/\b(?:npm|pnpm|yarn|bun)\s+(?:add|install|i|remove|uninstall|update)\b|\b(?:pip|pip3)\s+install\b|\bbrew\s+(?:install|uninstall|upgrade)\b/i.test(segment)) {
     return values('shell.dependency_install', 'dependency change', segment);
   }
-  if (/\brm\s+[^;&|]*-[^\s]*r|\bfind\b[^;&|]*(?:-delete|-exec\s+rm)\b/i.test(segment)) {
+  if (/\brm\s+[^;&|]*-[^\s]*r/i.test(segment) || findAction === 'destructive') {
     return values('shell.destructive_cleanup', 'local cleanup', segment);
+  }
+  if (findAction === 'execute') {
+    return values('shell.local_code_execution', 'local code execution', segment);
+  }
+  if (findAction === 'write') {
+    return values('file.edit.local_path', 'shell file edit', segment);
   }
   if (/\b(?:npm|pnpm|yarn|bun)\s+(?:run|test|build|dev|lint|check)\b/i.test(segment)) {
     return values('shell.project_script', 'project script', segment);
@@ -320,9 +346,13 @@ function unavailable(
   };
 }
 
-function classifyToolAccess(toolName: string, args?: unknown): AgentCapabilityAccess {
+function classifyToolAccess(
+  toolName: string,
+  args?: unknown,
+  resolvedActionKinds?: readonly AgentToolActionKind[],
+): AgentCapabilityAccess {
   if (toolName === 'bash') return 'execute';
-  const actionKinds = modelToolActionKinds(toolName, args);
+  const actionKinds = resolvedActionKinds ?? modelToolActionKinds(toolName, args);
   if (!actionKinds || actionKinds.length === 0) return 'unknown';
   if (actionKinds.every(isReadOnlyModelToolActionKind)) return 'read';
   if (actionKinds.some((kind) => kind.startsWith('file.') || kind === 'outline.edit' || kind === 'outline.delete')) return 'write';
@@ -351,6 +381,34 @@ function containsShellWriteOperator(command: string): boolean {
     if (char === '>') return true;
   }
   return false;
+}
+
+const FIND_SINGLE_ARGUMENT_PREDICATES = new Set([
+  '-amin', '-anewer', '-atime', '-cmin', '-cnewer', '-context', '-ctime', '-fstype',
+  '-gid', '-group', '-ilname', '-iname', '-inum', '-ipath', '-iregex', '-iwholename',
+  '-links', '-lname', '-maxdepth', '-mindepth', '-mmin', '-mtime', '-name', '-newer',
+  '-newerat', '-newerct', '-newermt', '-path', '-perm', '-printf', '-regex', '-size',
+  '-type', '-uid', '-used', '-user', '-wholename', '-xtype',
+]);
+
+function classifyFindAction(words: readonly string[]): 'destructive' | 'execute' | 'write' | null {
+  const findIndex = words.findIndex((word) => /(?:^|\/)find$/i.test(word));
+  if (findIndex < 0) return null;
+  for (let index = findIndex + 1; index < words.length; index += 1) {
+    const word = words[index]!.toLowerCase();
+    if (FIND_SINGLE_ARGUMENT_PREDICATES.has(word) || /^-newer[a-z]{2}$/i.test(word)) {
+      index += 1;
+      continue;
+    }
+    if (word === '-delete') return 'destructive';
+    if (word === '-exec' || word === '-execdir' || word === '-ok' || word === '-okdir') {
+      return /(?:^|\/)rm$/i.test(words[index + 1] ?? '') ? 'destructive' : 'execute';
+    }
+    if (word === '-fls' || word === '-fprint' || word === '-fprint0' || word === '-fprintf') {
+      return 'write';
+    }
+  }
+  return null;
 }
 
 function splitShellSegments(command: string): string[] {

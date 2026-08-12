@@ -2092,7 +2092,7 @@ test.describe('canonical agent Thread surface', () => {
     await expect(list.locator('.thread-list-row small').filter({ hasText: 'Subagent' })).toHaveCount(0);
   });
 
-  test('swaps a grandchild into the same container, never nesting a second scroll region', async ({ page }) => {
+  test('drills root to depth three in one Subagent container and backs out one level at a time', async ({ page }) => {
     await createNewThread(page);
     const fixture = await page.evaluate(async () => {
       const target = window as Window & {
@@ -2120,7 +2120,18 @@ test.describe('canonical agent Thread surface', () => {
         parentThreadId: child.id,
         name: 'audit',
       };
-      for (const thread of [child, grandchild]) {
+      const greatGrandchild = {
+        ...grandchild,
+        id: '01910000-0000-7000-8000-00000000ea03',
+        parentThreadId: grandchild.id,
+        name: 'verify',
+      };
+      const sibling = {
+        ...child,
+        id: '01910000-0000-7000-8000-00000000ea04',
+        name: 'review',
+      };
+      for (const thread of [child, grandchild, greatGrandchild, sibling]) {
         target.__LIN_E2E__?.emitAgentCoreNotification({ type: 'thread/started', threadId: thread.id, thread });
       }
       const provenance = (threadId: string, turnId: string, itemId: string) => ({
@@ -2146,12 +2157,25 @@ test.describe('canonical agent Thread surface', () => {
                   agentPath: '/root/research',
                   error: null,
                   spawnItemId: null,
+                }, {
+                  id: '01910000-0000-7000-8000-00000000ecff',
+                  type: 'subAgentActivity',
+                  provenance: provenance(
+                    parentThreadId,
+                    turnId,
+                    '01910000-0000-7000-8000-00000000ecff',
+                  ),
+                  kind: 'completed',
+                  agentThreadId: sibling.id,
+                  agentPath: '/root/review',
+                  error: null,
+                  spawnItemId: null,
                 }]
               : [{
                   id: itemId,
                   type: 'agentMessage',
                   provenance: provenance(parentThreadId, turnId, itemId),
-                  phase: 'final',
+                  phase: 'final_answer',
                   text: `Answer ${index}\n\nwith enough body to give the transcript some height.`,
                 }],
             itemsView: 'full',
@@ -2188,6 +2212,38 @@ test.describe('canonical agent Thread surface', () => {
               error: null,
               spawnItemId: null,
             },
+            {
+              id: '01910000-0000-7000-8000-00000000ed04',
+              type: 'collabAgentToolCall',
+              provenance: provenance(child.id, childTurnId, '01910000-0000-7000-8000-00000000ed04'),
+              tool: 'agent_message',
+              modelCall: {
+                disposition: 'replayable',
+                identity: { namespace: null, name: 'agent_message' },
+                providerName: 'agent_message',
+                arguments: {
+                  storage: 'inline',
+                  value: { to: sibling.id, summary: 'ask for review', message: 'Review the evidence.' },
+                },
+                schemaDigest: '0'.repeat(64),
+              },
+              status: 'completed',
+              outputRef: null,
+              senderThreadId: child.id,
+              receiverThreadIds: [sibling.id],
+              prompt: 'Review the evidence.',
+              summary: 'ask for review',
+              model: null,
+              reasoningEffort: null,
+              agentsStates: {
+                [sibling.id]: {
+                  status: 'completed',
+                  taskPath: '/root/review',
+                  nickname: null,
+                  role: 'worker',
+                },
+              },
+            },
           ],
           itemsView: 'full',
           provenance: {
@@ -2202,6 +2258,51 @@ test.describe('canonical agent Thread surface', () => {
           durationMs: 1,
         },
       ]);
+      const grandchildTurnId = '01910000-0000-7000-8000-00000000ee01';
+      target.__LIN_E2E__?.setMockThreadTurns(grandchild.id, [
+        {
+          id: grandchildTurnId,
+          items: [
+            {
+              id: '01910000-0000-7000-8000-00000000ee02',
+              type: 'userMessage',
+              provenance: provenance(
+                grandchild.id,
+                grandchildTurnId,
+                '01910000-0000-7000-8000-00000000ee02',
+              ),
+              content: [{ type: 'text', text: 'Audit the deployment evidence.' }],
+            },
+            {
+              id: '01910000-0000-7000-8000-00000000ee03',
+              type: 'subAgentActivity',
+              provenance: provenance(
+                grandchild.id,
+                grandchildTurnId,
+                '01910000-0000-7000-8000-00000000ee03',
+              ),
+              kind: 'completed',
+              agentThreadId: greatGrandchild.id,
+              agentPath: '/root/research/audit/verify',
+              error: null,
+              spawnItemId: null,
+            },
+          ],
+          itemsView: 'full',
+          provenance: {
+            originThreadId: grandchild.id,
+            originTurnId: grandchildTurnId,
+            trigger: { kind: 'subagent', parentThreadId: child.id, parentItemId: 'spawn-audit' },
+          },
+          status: 'completed',
+          error: null,
+          startedAt: 1,
+          completedAt: 2,
+          durationMs: 1,
+        },
+      ]);
+      target.__LIN_E2E__?.setMockThreadTurns(greatGrandchild.id, []);
+      target.__LIN_E2E__?.setMockThreadTurns(sibling.id, []);
       return { parentThreadId };
     });
 
@@ -2230,7 +2331,7 @@ test.describe('canonical agent Thread surface', () => {
 
     const outerHeight = await detail.evaluate((element) => element.getBoundingClientRect().height);
 
-    // Depth 2 REPLACES these contents and names the way back. A second box
+    // D2 REPLACES these contents and names the immediate way back. A second box
     // inside this one would put a scroll region inside a scroll region, which
     // fights the trackpad at the boundary and draws depth as indentation.
     await detail.getByRole('button', { name: /^Open Subagent Thread audit/u }).click();
@@ -2239,12 +2340,36 @@ test.describe('canonical agent Thread surface', () => {
     // Same box, same height: swapping cannot move the transcript around it.
     expect(await detail.evaluate((element) => element.getBoundingClientRect().height)).toBe(outerHeight);
 
-    // The crumb keeps the way back visible by name, so the swap has something
-    // to orient against rather than reading as a jump.
+    // D3 uses that same container and keeps only its immediate parent crumb.
+    await expect(detail.locator('.thread-subagent-detail-crumb')).toHaveText('research');
+    await detail.getByRole('button', { name: /^Open Subagent Thread verify/u }).click();
+    await expect(detail).toHaveCount(1);
+    await expect(detail.locator('.thread-subagent-detail-title')).toHaveText('verify');
+    await expect(detail.locator('.thread-subagent-detail-crumb')).toHaveText('audit');
+    expect(await detail.evaluate((element) => element.getBoundingClientRect().height)).toBe(outerHeight);
+
+    // Back unwinds the detail stack one depth at a time: d3 -> d2 -> d1.
+    await detail.locator('.thread-subagent-detail-crumb').click();
+    await expect(detail.locator('.thread-subagent-detail-title')).toHaveText('audit');
     await expect(detail.locator('.thread-subagent-detail-crumb')).toHaveText('research');
     await detail.locator('.thread-subagent-detail-crumb').click();
     await expect(detail.locator('.thread-subagent-detail-title')).toHaveText('research');
     await expect(detail.locator('.thread-subagent-detail-crumb')).toHaveCount(0);
+
+    // agent_message may address a sibling, but reachability is not lineage.
+    // Clicking that result opens the sibling's own root row; it must never draw
+    // a false research -> review crumb inside this detail stack.
+    await detail.locator('.thread-tool-toggle').click();
+    await detail.locator('.thread-agent-state button').click();
+    const siblingDetail = page.locator('.thread-subagent-detail').filter({
+      has: page.locator('.thread-subagent-detail-title', { hasText: /^review$/u }),
+    });
+    await expect(siblingDetail).toHaveCount(1);
+    await expect(siblingDetail.locator('.thread-subagent-detail-crumb')).toHaveCount(0);
+    const researchDetail = page.locator('.thread-subagent-detail').filter({
+      has: page.locator('.thread-subagent-detail-title', { hasText: /^research$/u }),
+    });
+    await expect(researchDetail).toHaveCount(1);
   });
 
   test('browses and cleans up Subagents from parent Thread Details', async ({ page }) => {
@@ -2702,6 +2827,7 @@ test.describe('canonical agent Thread surface', () => {
               provenance: provenance(activityId),
               kind: 'started',
               agentThreadId: childId,
+              agentTurnId: childTurnId,
               agentPath: '/root/research',
               error: null,
               // This test's subject is the fold, not the stand-in: the call that
@@ -2712,7 +2838,8 @@ test.describe('canonical agent Thread surface', () => {
               id: answerId,
               type: 'agentMessage',
               provenance: provenance(answerId),
-              phase: 'final',
+              phase: 'final_answer',
+              memoryCitation: null,
               text: 'Delegated and answered.',
             },
       ];
@@ -2994,6 +3121,7 @@ test.describe('canonical agent Thread surface', () => {
                   senderThreadId: parentThreadId,
                   receiverThreadIds: [child.id],
                   prompt: `Run ${child.taskPath}`,
+                  summary: null,
                   model: null,
                   reasoningEffort: null,
                   agentsStates: {},
@@ -4941,9 +5069,25 @@ test.describe('canonical agent Thread surface', () => {
             memoryCitation: null,
           },
         ],
+        itemsView: 'full',
+        provenance: { originThreadId: threadId, originTurnId: turnId, trigger: { kind: 'user' } },
         status: 'completed',
         error: null,
-        createdAt: Date.now(),
+        execution: {
+          modelProvider: 'openai',
+          model: 'openai/gpt-5.4',
+          reasoningEffort: 'medium',
+          diagnosticsRef: null,
+          usage: {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 0,
+            cost: null,
+          },
+        },
+        startedAt: Date.now() - 28,
         completedAt: Date.now(),
         durationMs: 28,
       };

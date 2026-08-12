@@ -1055,6 +1055,8 @@ export interface CollabAgentToolCallThreadItem extends ThreadToolItemBase {
   readonly senderThreadId: ThreadId;
   readonly receiverThreadIds: readonly ThreadId[];
   readonly prompt: string | null;
+  /** Normalized one-line preview for `agent_message`; null for other tools and legacy Items. */
+  readonly summary: string | null;
   readonly model: string | null;
   readonly reasoningEffort: string | null;
   readonly agentsStates: Readonly<Record<ThreadId, SubagentExecutionState>>;
@@ -1064,6 +1066,8 @@ export interface SubAgentActivityThreadItem extends ThreadItemBase {
   readonly type: 'subAgentActivity';
   readonly kind: 'started' | 'completed' | 'interrupted' | 'errored';
   readonly agentThreadId: ThreadId;
+  /** Exact child Turn represented by this activity; null only for legacy Items. */
+  readonly agentTurnId: TurnId | null;
   readonly agentPath: string;
   readonly error: TurnError | null;
   /**

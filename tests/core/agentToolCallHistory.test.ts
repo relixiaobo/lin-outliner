@@ -220,6 +220,7 @@ async function admittedRequest(
       arguments: redacted.arguments,
       redactedArguments: redacted.redactedArguments,
       redactedPaths: redacted.redactedPaths,
+      displayArguments: redacted.redactedArguments,
       schemaDigest: SCHEMA_DIGEST,
       redactedArgumentsReplayable,
     },

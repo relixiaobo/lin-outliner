@@ -10,16 +10,18 @@ releases.
 Replace Tenon's model-managed collaboration protocol with the observable
 in-session Subagent orchestration contract of Claude Code `2.1.227`.
 
-Parity in this plan has a precise meaning: for the same scenario, the model sees
-the same Subagent tool semantics, schema structure, descriptions, parameter
-descriptions, and result envelopes after the explicit Tenon name map; a fresh
-Agent receives the same categories of context and tools; and
-foreground/background execution produces the same lifecycle transitions,
-delivery, stop, resume, depth, and concurrency behavior. This is semantic,
-structural, and behavioral parity, not literal reuse of Claude's public tool
-names. Only the capability-backed differences named below may vary. Dynamic
-values such as IDs, paths, configured agent types, provider model names, and
-usage counters may differ; their shape and semantics may not.
+Parity in this plan is surface-specific. A behavior is a Claude-parity claim
+only when a version-bound black-box capture supports it and a sanitized
+projection preserves the compared fields. Tool semantics, schema structure,
+descriptions, selected fresh-context categories, and selected
+foreground/background result envelopes use that standard after the explicit
+Tenon name map. Depth, concurrency, stop provenance, provider conversion,
+output scanning, persistence, and other uncaptured behavior remain explicit
+Tenon contracts even when Claude documentation informed the choice. This is
+semantic and structural interoperability, not literal reuse of Claude's public
+tool names or an assertion that every lifecycle byte was captured. Dynamic
+values such as IDs, paths, configured Agent types, provider model names, and
+usage counters may differ according to the declared projection.
 
 Today Tenon exposes six collaboration tools and defaults `spawn_agent` to
 `fork_turns=all`. Ordinary delegation therefore copies the parent context,
@@ -53,7 +55,8 @@ and event-sourced persistence; Claude Code's private storage is not copied.
   and isolated resume never falls back to the parent cwd. These name and
   capability differences are PM-ratified. The renamed tools deliberately
   forfeit Claude-trained PascalCase name priors in favor of Tenon's catalog
-  convention; fixtures still gate semantics, structure, and behavior.
+  convention; captured projections gate the observed surfaces, while Tenon-local
+  fixtures gate the remaining product contracts.
 - The built-in `worker` Role retires with the old collaboration protocol. The
   hidden `default` Role backs ordinary `general-purpose` Agents, and ordinary
   isolated Skills use that `default` backing Role; a user/project Role named
@@ -108,65 +111,127 @@ and event-sourced persistence; Claude Code's private storage is not copied.
 
 ### 1. Evidence and parity fixtures
 
-The normative target is the public Subagents documentation at
-`https://code.claude.com/docs/en/sub-agents.md` plus black-box captures from the
-local Claude Code CLI `2.1.227`. The public changelog at tag `v2.1.227`
-establishes the versioned defaults: background execution from `2.1.198`, a
-default concurrency cap of 20 from `2.1.217`, nesting depth 3 from `2.1.219`,
-and no lifetime spawn cap from `2.1.224`.
+The evidence model has three levels and every fixture declares one:
 
-The supplied `cc-2.1` source snapshot is explanatory implementation evidence.
-In particular, `AgentTool.call`, `runAgent`, `resumeAgentBackground`,
-`enqueueAgentNotification`, `SendMessageTool.call`, and `TaskStopTool.call`
-explain fresh startup, tool filtering, detached cancellation, resume,
-notification, and stop mechanics. The snapshot is older than the installed
-binary: it still requires `SendMessage.summary`, lacks current schema fields,
-and carries different feature gates. Documentation and `2.1.227` black-box
-captures win every disagreement.
+1. **Claude capture.** A request observed from an exact local Claude Code
+   binary. Its provenance record includes CLI version, binary SHA-256, code
+   signature identity, capture date, profile/environment, capture-script
+   SHA-256, and full-source SHA-256. Full provider captures stay outside the
+   repository because they contain repository instructions, local paths, and
+   git status.
+2. **Sanitized projection.** The minimal committed JSON derived from a captured
+   source. It retains only the fields needed for one interoperability assertion,
+   replaces opaque IDs/paths/counters with typed placeholders, and records the
+   source digest plus an explicit projection schema. A projection supports only
+   the fields it retains; it does not turn a partial observation into full
+   request-byte parity.
+3. **Tenon-local contract.** Product behavior selected for Tenon's architecture
+   and protected by ordinary fixtures or tests. Public Claude documentation or
+   explanatory source may motivate it, but it is not labeled captured parity.
 
-The specialized Role prompt evidence comes from
-`cc-2.1/src/tools/AgentTool/built-in/exploreAgent.ts` and
-`cc-2.1/src/tools/AgentTool/built-in/planAgent.ts`. These files identify the
-tool-name tokens to extract; the frozen `2.1.227` prompt capture remains the
-authority for the complete prompt bytes and for whether additional tokens
-exist.
+The exact capture binary is Claude Code `2.1.227`, SHA-256
+`7432511ba3be818e01f23f6eef8630d214a8b618451e188c3c7d61a987eef6c7`,
+signed by Anthropic PBC with Team ID `Q6L2SF6YDW`. The capture scripts are
+`capture-claude-tool-schema.mjs`, SHA-256
+`e2d28f54f4d02f89e6db806250ae38653d9ce291c245d92f28aa7fe22b918bc0`,
+and `capture-claude-agent-flow.mjs`, SHA-256
+`881ef3b2d25f0667a9d01923589dea65aa60b806852cf276a8dfe198b08c64e0`.
+The fixture provenance manifest records those facts plus the source-capture
+digest, capture timestamp, command profile, and projection version. A filename,
+CLI version string embedded in a system block, or the unversioned `cc-2.1`
+directory is not sufficient provenance by itself. Feature configuration may
+change remotely for the same binary version, so capture date and profile are
+part of the frozen identity.
 
-Capture both installed profiles as evidence but implement only the default:
+The following local sources are the only currently identified full captures
+whose contents explicitly self-report `cc_version=2.1.227`. They are source
+material for minimized projections, never files to commit wholesale:
 
-| `2.1.227` profile | `Agent` schema and behavior |
+| Source ID | Full-source SHA-256 | Supported projection |
+| --- | --- | --- |
+| `foreground-general-full` | `9963139f20c200c20c2e0eb7a4276ae4a068cd883178c29507a3539005801340` | Fresh general task isolation, selected context/tool presence, foreground ordering, and result shape |
+| `foreground-explore-full` | `234e9b15afd49a826bc78dfe1ac3167c660d1f958004e2c9b408148a4713b6e4` | Fresh Explore task isolation, selected context/tool absence/presence, foreground ordering, and result shape |
+| `background-send-main-full` | `658af3f05f5898d20c4e1982e46d5879de2ffffe8427aa9127a1ddf58c3ea75c` | Background launch/notification shapes and background `main` delivery ordering |
+| `foreground-main-general` | `248ea6cadb4a6bb88fba273400c54629349e9028d1d23105b740b2e5df1fc9bc` | Foreground general `main` success, result-before-envelope ordering, and addressable suffix |
+| `foreground-main-explore` | `d3e6727152d1c20862831687d18e3bb33815b37eb5a417bf453d52ebd61777c9` | Foreground Explore `main` success, ordering, leaf tool presence, and unaddressable suffix |
+| `foreground-main-plan` | `58cd89a90dc7aa2c5ec7ecf48dbdcbaccc517f76c3917b8888b7c4a13ccf9823` | Fresh Plan task isolation, selected context/tool presence, foreground `main` ordering, and unaddressable suffix |
+
+The default tool-catalog source has SHA-256
+`4cfeaf3b66e28ca9dc43fb0c726493fe12c916adb378ff41b99b18c1251edda1`
+and is byte-identical to the committed catalog artifact, but the JSON itself
+does not contain a CLI version. Its `2.1.227` claim becomes durable only when the
+manifest binds that digest to the exact binary and capture run above. The Fork
+catalog source, SHA-256
+`c81f0df6be15947e54c9575a93317464f17db1ddb389f9de845b389dcc0bd8bc`,
+also lacks version self-identification and remains unversioned evidence until
+the same binding is supplied.
+
+The public Subagents documentation and changelog establish documented defaults
+such as background execution, a concurrency cap of 20, nesting depth 3, and no
+lifetime spawn cap. They are design references, not substitutes for black-box
+capture. The supplied `cc-2.1` source snapshot has no repository or package
+metadata proving that it is `2.1.227`; it is explanatory implementation evidence
+only. In particular, `AgentTool.call`, `runAgent`,
+`resumeAgentBackground`, `enqueueAgentNotification`, `SendMessageTool.call`,
+and `TaskStopTool.call` can explain candidate mechanics, but a version-bound
+capture wins every disagreement. No proprietary source excerpt enters the
+repository.
+
+The specialized `explore` and `plan` source files may identify prompt concepts
+to inspect, but no committed full prompt capture currently proves complete Role
+prompt bytes. Role prompt wording and its Tenon tool-name substitutions are
+therefore Tenon-local until a minimized version-bound projection is frozen.
+
+Retain both installed-profile observations but implement only the admitted
+default. The Fork observation remains unadmitted until a digest-bound capture
+session record is committed:
+
+| Observed profile | `Agent` schema and behavior |
 | --- | --- |
-| Default, fork env unset | Includes optional `run_in_background`; omission means background; all calls start fresh |
-| `CLAUDE_CODE_FORK_SUBAGENT=1` | Removes `run_in_background`, changes the tool description, enables Fork, and forces background |
+| Admitted `2.1.227` default, fork env unset | Includes optional `run_in_background`; omission means background; all calls start fresh |
+| Unadmitted `CLAUDE_CODE_FORK_SUBAGENT=1` observation | Removes `run_in_background`, changes the tool description, enables Fork, and forces background |
 
-There is no observed profile in which Fork and model-visible
-`run_in_background` coexist. A guard fixture records this negative fact so a
-future implementation cannot accidentally recreate the former hybrid design.
+No retained observation combines Fork with model-visible `run_in_background`.
+A guard fixture records that provisional contrast, but it is not a Claude Code
+`2.1.227` parity claim until the Fork source is admitted.
 
-Before changing runtime code, add sanitized parity fixtures for:
+The fixture inventory is explicit about evidence strength:
 
-| Fixture | Compared surface |
+| Fixture group | Evidence class and supported claim |
 | --- | --- |
-| `tool-catalog-default` | canonical `ModelToolContract` / `AgentTool` names, complete descriptions, JSON schemas, required/optional fields, property descriptions, and `additionalProperties`; only its `anthropic-messages` case also compares converted wire bytes |
-| `tool-catalog-fork-profile` | evidence-only diff proving that the unselected Fork profile removes `run_in_background` |
-| `fresh-general`, `fresh-explore`, `fresh-plan` | first provider request: system blocks, initial messages, model settings, tools, stable-prompt block matrix, and a fresh Skill catalog with no built-in `research` entry |
-| `agent-type-resolution` | exact-match priority, case/separator normalization, unique match, ambiguity, and missing-type diagnostics |
-| `zero-tools`, `partial-invalid-tools`, `invalid-tools-zero` | explicit-empty execution, partial unknown-tool degradation, and pre-I/O refusal when a non-empty list resolves to nothing |
-| `foreground`, `background` | blocking, cancellation ownership, every result content block, launch text, terminal text, usage, and unchanged Full Access boundary |
-| `send-main-background`, `send-main-foreground`, `send-validation`, `steer`, `resume` | background and foreground `main` safety envelopes, foreground reply-clause variants, blank/overlong summary, blank/spaced `to`, Agent ID continuity, exact success JSON, and delivery timing |
-| `model-stop`, `user-stop`, `task-stop` | stop provenance, killed notification, `task_id`/`shell_id` precedence, unified Agent/shell dispatch, and exact validation failures |
-| `nested`, `depth-limit`, `concurrency-limit` | direct-parent delivery, visible tools, refusal text, and slot accounting |
-| `notification` | complete non-user prefix, tag order, status variants, note, result, usage, worktree metadata, and repeated generations |
-| `budget-breaker` | Tenon-local exhaustion notification, `agent` spawn refusal, `agent_message` resume refusal, partial-output/resume semantics, and the absence of remaining/total budget fields |
-| `role-prompt-tool-map` | exact `explore`/`plan` prompt tokens after the closed Tenon tool-name map, including an explicit decision for every captured token |
-| `provider-contract-families` | canonical contract equality across providers and `anthropic-messages` wire conversion; OpenAI-family conversion is checked before pi-ai serialization |
-| `worktree-capabilities`, `memory-blocks`, `undo-pool` | worktree outline containment, root-only Memory blocks/data, and root-only `outline_undo_stack` |
-| `output-scan` | instruction-shaped marker and escaping transformations |
+| `tool-catalog-default` | Committed sanitized catalog projection. It supports the retained tool objects, complete retained descriptions/schemas, and raw JSON key order after the source digest is bound by the provenance manifest. It does not prove adapter-generated request bytes. |
+| `tool-catalog-fork-profile` | Committed unadmitted catalog projection. It retains the provisional Fork-profile difference, including absence of `run_in_background`, but no committed digest-bound session record proves its `2.1.227` identity. The profile remains evidence-only and is not implemented. |
+| `fresh-general`, `fresh-explore`, `fresh-plan` | Committed captured-structural projections retain selected system/message block shapes, presence flags, model settings, and tool-name arrays without repository text. They support fresh task input, absence of the parent task sentinel, and observed general versus `Explore`/`Plan` differences; Tenon-only stable-prompt and Skill assertions stay labeled local. |
+| `foreground`, `send-main-background`, `send-main-foreground` | Admitted structural projections support selected foreground completion ordering, foreground `main` envelope variants, and background `main` delivery ordering. Cancellation, persistence, and every unretained result byte remain Tenon-local. |
+| `background-launch`, `steer`, `resume` | Sanitized observations exist, but their sources lack admitted version identity. They remain `capture-available-unadmitted` until a version-bound recapture or complete provenance binding exists. |
+| `agent-type-resolution`, `zero-tools`, `partial-invalid-tools`, `invalid-tools-zero`, `send-validation`, `steer`, `resume`, `task-stop` | Captures exist but are not version-self-identifying. Re-capture or bind them through a complete provenance manifest before calling their exact strings Claude `2.1.227` parity; until then their normalized behavior is a Tenon-local compatibility contract. |
+| `output-helpers` | Committed mixed sanitized projection. The foreground `main` rows are backed by version-self-identifying `2.1.227` sources; legacy launch/foreground/notification rows currently cite unversioned sources and require reprojection from the versioned sources above or manifest binding. Source paths and full prompt content never ship. |
+| `anthropic-pi-ai-serializer`, `provider-contract-families` | Tenon-local adapter contract. The expected Anthropic tool objects include Tenon-only fields and transformations and are not a raw Claude provider capture. Canonical provider-family equality is checked before adapter conversion. |
+| `model-stop`, `user-stop`, `nested`, `depth-limit`, `concurrency-limit`, `role-prompt-tool-map` | Missing version-bound black-box evidence. These remain documentation-informed or Tenon-local contracts and tests; they must not be described as captured bytes or observed execution parity. |
+| `budget-breaker`, `worktree-capabilities`, `memory-blocks`, `undo-pool` | Tenon-local architecture and safety contracts. |
+| `output-scan` | Tenon safety corpus of synthetic adversarial strings. It tests Tenon's scanner only and is not Claude raw evidence or a Claude output transformation oracle. |
 
-The raw fixture and the expected Tenon fixture are separate artifacts. The
-normalizer is a closed, JSON-path-aware manifest; it cannot search/replace
-arbitrary prose. The raw capture keeps Claude's names for traceability. The
-selected Tenon provider catalog applies this closed name map only at the listed
-JSON paths and template slots:
+The repository layout makes that distinction inspectable:
+
+- `captured/` contains minimized Claude observations only.
+- `normalized/` contains the closed exact-path and declared text-slot mappings
+  from those observations to Tenon contracts.
+- `tenon-local/` contains serializer, budget, and scanner goldens that make no
+  Claude capture claim.
+- `provenance.json` binds binary, script, source-capture, and projection digests.
+- `evidence-index.json` scopes every claim as `captured-byte`,
+  `captured-structural`, `capture-available-unadmitted`, `tenon-local`, or
+  `missing`.
+
+Full provider captures, capture scripts, proprietary source excerpts, and the
+unversioned `cc-2.1` snapshot never enter the repository. Only their
+non-sensitive provenance and minimized projections may be committed.
+
+Each committed captured projection and its expected Tenon artifact are separate.
+The projection schema and normalizer form a closed, JSON-path-aware manifest;
+they cannot search/replace arbitrary prose. The projected capture keeps Claude's
+names for traceability. The selected Tenon provider catalog applies this closed
+name map only at the listed JSON paths and template slots:
 
 | Claude raw name | Tenon provider name | Name-bearing locations covered by the map |
 | --- | --- | --- |
@@ -232,21 +297,19 @@ personal transcript content enters the repository.
 
 Provider scope is deliberately split by serialization boundary. Tenon compares
 all provider families at the canonical `ModelToolContract` / `AgentTool` layer
-(name, description, and parameter bytes before pi-ai conversion). Only the
-`anthropic-messages` fixture is compared byte-for-byte with the Claude capture,
-because that is the wire shape Claude emits. OpenAI Responses, Chat
-Completions, Codex Responses, and Azure Responses are checked only before their
-pi-ai conversion; their provider-specific wire objects remain pi-ai's
-responsibility, with the existing OpenAI-family `strict` invariant still in
-force. `canonicalizeAgentTools` is the sole Tenon tool-order authority for the
-canonical layer and sorts by tool name in deterministic dictionary order before
-every provider request. The anthropic fixture then asserts the converted wire
-bytes against the frozen capture order after the closed name/value map; the
-capture is the authority for that wire order, while the Tenon sort remains the
-authority for every non-Anthropic canonical comparison.
+(name, description, and parameter structure before pi-ai conversion). The
+`anthropic-pi-ai-serializer` expected fixture tests Tenon's Anthropic conversion from that
+canonical contract; it is not compared as raw Claude request-byte parity. Its
+extra adapter fields and Tenon-normalized values make that distinction
+observable. OpenAI Responses, Chat Completions, Codex Responses, and Azure
+Responses are checked only before their pi-ai conversion; their provider-
+specific wire objects remain pi-ai's responsibility, with the existing OpenAI-
+family `strict` invariant still in force. `canonicalizeAgentTools` is the sole
+Tenon tool-order authority for the canonical layer and sorts by tool name in
+deterministic dictionary order before every provider request.
 
-The captured `explore` and `plan` prompts receive a second, independent closed
-name-map layer. The initial frozen mappings are:
+The `explore` and `plan` prompts use a separate, closed Tenon name-map layer.
+The initial mappings to verify against a future minimized capture are:
 
 | Claude prompt token | Tenon token |
 | --- | --- |
@@ -256,8 +319,9 @@ name-map layer. The initial frozen mappings are:
 | `Bash` | `bash` |
 | `WebFetch` | `web_fetch` |
 
-At fixture freeze, extract every actual tool token from both captured prompts
-and add a row and an explicit keep/remove decision for any additional
+Before any prompt-byte parity claim, extract every actual tool token from a
+version-bound sanitized prompt projection and add a row and an explicit
+keep/remove decision for any additional
 `WebSearch`, `Write`, `Edit`, `NotebookEdit`, `ExitPlanMode`, or other token.
 Apply the map only at the enumerated prompt paths and template slots; do not
 rewrite surrounding prose or run a global replacement. The resulting prompts
@@ -303,24 +367,24 @@ closed name map above is the only reason the Tenon names differ.
 
 At the canonical contract layer, `canonicalizeAgentTools` is the sole Tenon
 ordering authority and sorts tools by name in deterministic dictionary order.
-For the `anthropic-messages` wire fixture only, the frozen raw 2.1.227 provider
-capture is the sole authority for serialized key order and bytes. Direct wire
-captures show the raw `Agent` properties in the order `description`, `prompt`,
-`subagent_type`, `model`, `run_in_background`, `isolation`; the observed inner
-keyword order is `description`, `type`, then the captured `enum`, `pattern`, or
-`maxLength`. Those observations are a transcription of the frozen bytes, not a
-second semantic ordering contract. Fixtures compare the anthropic payload
-after only the declared name/value normalization. OpenAI Responses, Chat
-Completions, Codex Responses, and Azure Responses are checked before pi-ai
-conversion at the canonical layer and do not inherit Claude wire-order claims.
+The version-bound tool-catalog projection preserves Claude's raw tool and
+schema key order. It records `Agent` properties in the order `description`,
+`prompt`, `subagent_type`, `model`, `run_in_background`, `isolation`, with inner
+keywords in their captured order. These are projection-level provenance facts,
+not a requirement that Tenon's complete provider request match Claude byte for
+byte. The Tenon `anthropic-pi-ai-serializer` fixture separately locks the adapter order
+chosen for the normalized contract. OpenAI Responses, Chat Completions, Codex
+Responses, and Azure Responses are checked before pi-ai conversion and inherit
+no Claude wire-order claim.
 
-In the anthropic fixture, every tool object preserves the raw top-level key
-order `name`, `description`, `input_schema`. Every input schema preserves
-`$schema`, `type`, `properties`, `required` when present, then
-`additionalProperties`; `$schema` is exactly
+In Tenon's Anthropic adapter fixture, every tool object uses the top-level key
+order `name`, `description`, `input_schema`, followed by any Tenon adapter field.
+Every input schema uses `$schema`, `type`, `properties`, `required` when present,
+then `additionalProperties`; `$schema` is exactly
 `https://json-schema.org/draft/2020-12/schema`, `type` is `object`, and
-`additionalProperties` is `false`. The following table documents the captured
-property order and field contracts for that wire:
+`additionalProperties` is `false`. The following table documents the normalized
+Tenon field contract, with captured parameter facts limited to the catalog
+projection:
 
 | Tool.field | Type and constraints | Exact or normalized parameter description |
 | --- | --- | --- |
@@ -432,7 +496,7 @@ diagnostics to lowercase. User/project Roles are listed dynamically in a cache-s
 `general-purpose` resolves exclusively through the built-in `default` Role and
 `explore` absorbs `explorer` as its implementation Role; the backing names
 `default` and `explorer` are hidden from the Agent type catalog rather than
-listed as duplicates. Add a built-in `plan` Role with the captured prompt and
+listed as duplicates. Add a built-in `plan` Role with the selected Tenon prompt and
 tool policy. Retire the built-in `worker` Role definition and its implicit
 fallback with the old collaboration protocol. A user/project Role named
 `worker` remains an ordinary dynamic Role only when explicitly configured; it
@@ -465,17 +529,24 @@ executable or receives a compatibility handler.
 
 ### 3. Fresh Agent context
 
-Every `agent` call is built independently and never calls
-`collaborationInheritedContext`. Its first provider request contains only:
+Every `agent` call is built independently and never copies the parent's Turn
+epoch. Its first provider request contains only:
 
-1. The selected Agent's own system prompt plus the captured date, environment,
+1. The selected Agent's own system prompt plus the observed date, environment,
    model, and adaptive-thinking envelope.
 2. The exact `prompt` as its initial task message.
 3. For general/Role Agents, the repository instruction hierarchy and the
-   parent's session-start git-status snapshot, in the captured block order.
+   parent's session-start git-status snapshot, in the observed block order.
 4. For general/Role Agents, the available Skill catalog (name, description, and
    load instructions), which is distinct from the complete content of any
    Skills explicitly preloaded by the selected Role.
+
+The repository instruction and git-status snapshot freezes while the root
+Thread is created, before its first Turn can be admitted. The root `sessionId`
+keys one durable value reused by every descendant and after restart. Collection
+failure freezes an empty optional snapshot for that session instead of retrying
+at the first later `agent` call and mislabeling changed repository state as the
+session start.
 
 Built-in `explore` and `plan` omit repository instructions and git status. All
 other built-in and Role-backed agents include them. Built-in `explore`/`plan`
@@ -534,8 +605,10 @@ an internal execution identity but does not expose an address to the model.
 ### 4. Tool resolution and capability policy
 
 Agents begin with the parent's available built-in and MCP tools, then apply the
-same ordered filters as the default `2.1.227` profile. The raw fixture matrix is
-normative for ordering and filtering. In the latest extended capture,
+Tenon policy below. Version-bound captures support the observed general and
+`Explore`/`Plan` tool-name sets for those requests; they do not establish a
+complete dynamic filtering algorithm for every tool or nesting state. In the
+latest captured projection,
 foreground `general-purpose` removes the dynamic root-only
 `ScheduleWakeup`, `TaskOutput`, `WaitForMcpServers`, and `Workflow` entries; it
 does not support the earlier plan's assumption that exactly three fixed names
@@ -557,13 +630,13 @@ Tenon's action-category mapping is explicit so every current tool has a result:
 | Retired collaboration names and `bash_stop` | Removed | Removed | Removed |
 | `request_user_input` and capability-marked root-only host controls | Removed | Removed | Removed |
 | `automation_update` and scheduled-work controls | Removed | Removed | Removed |
-| `update_plan` and Goal tools | Inherited | Removed | Role policy, fixture-backed |
-| `node_read` / file read tools | Inherited | Kept | Kept by captured policy |
+| `update_plan` and Goal tools | Inherited | Removed | Tenon Role policy |
+| `node_read` / file read tools | Inherited | Kept | Kept by Tenon Role policy |
 | `node_create`, `node_edit`, `node_delete` / file mutation tools | Inherited | Kept | Removed |
 | `node_create`, `node_edit`, `node_delete` in `isolation: "worktree"` | Removed | Removed | Removed; worktree Agents cannot touch live outline state |
 | `outline_undo_stack` | Removed | Removed | Removed; undo/redo is root-only shared document history |
 | `bash` | Inherited | Kept | May remain; system/capability policy enforces the repository-mutation restriction |
-| `web_search`, `web_fetch`, and `skill` | Inherited | Kept | Role policy, fixture-backed |
+| `web_search`, `web_fetch`, and `skill` | Inherited | Kept | Tenon Role policy |
 | `generate_image` and `data_import` | Inherited | Removed | Removed unless an explicit Role fixture says otherwise |
 | `agent` | Kept below the depth limit | Kept below the depth limit | Removed |
 | `agent_message` and unified `task_stop` | Kept | Kept | Kept |
@@ -666,7 +739,7 @@ around untrusted child output, and the API/renderer origin remains typed as
 `task-notification` rather than inferred from the string.
 
 Before foreground return or background notification, scan the final report with
-the Claude behavior:
+Tenon's safety transform:
 
 - insert a backslash into text that imitates harness output such as a
   `system-reminder` tag or a line beginning `Human:` / `Assistant:`;
@@ -714,9 +787,11 @@ the normalized UI preview. There are two in-session recipient forms:
 - Reserved `main`: foreground and background general/Role, `explore`, and `plan`
   children all accept this route and receive exactly
   `{"success":true,"message":"Message queued for the main conversation's next turn."}`.
-  The raw description's “background subagents only” row is an observed 2.1.227
-  description/handler mismatch, so the canonical description preserves those
-  captured bytes while behavior fixtures are authoritative for execution.
+  The raw catalog description's “background subagents only” row and the
+  version-bound foreground flow form an observed `2.1.227`
+  description/handler mismatch. The canonical description preserves the
+  projected catalog bytes while the foreground projection is authoritative only
+  for the retained execution ordering and envelope fields.
 
   A background child delivers one user-role message at the root's next idle
   admission boundary using this complete fixture-locked host envelope:
@@ -734,10 +809,10 @@ the normalized UI preview. There are two in-session recipient forms:
   raw Agent ID. This delivery cannot satisfy a pending user question, grant
   permission, approve a plan, or clear user-stop provenance.
 
-  A foreground child does not wait for a new user turn. Its `agent_message`
-  handler succeeds immediately; after the child finishes, the parent first
-  receives the normal foreground `agent` tool result and then a separate
-  system-role message before the parent's next provider round. The normalized
+  A foreground child directly invoked by root does not wait for a new user turn.
+  Its `agent_message` handler succeeds immediately; after the child finishes,
+  root first receives the normal foreground `agent` tool result and then a
+  separate system-role message before its next provider round. The normalized
   foreground envelope is fixture-locked separately because it adds “while you
   were working” and one of two capability-backed response suffixes. For an
   addressable foreground `general-purpose` or user/project Role child, the
@@ -767,13 +842,20 @@ the normalized UI preview. There are two in-session recipient forms:
   and `plan` return only the child report and contain no `agent_message` reply
   instruction. The envelope is neither an error nor user-authored input.
 
-The running result acknowledges queueing, not eventual application. The
-captured finish race queued a message and then the Agent ended without another
-tool round; Claude did not automatically resume it. Tenon does not claim a
-stronger exactly-once or automatic-resume guarantee as parity. A later explicit
+  A nested foreground child has no adjacent `agent` result in root. Its `main`
+  message therefore follows the durable background-envelope path after the
+  sender settles: when root is idle, the host starts a non-user root Turn to
+  deliver it. The pending message survives restart and never becomes user
+  authority.
+
+The running result acknowledges queueing, not eventual application. An
+unversioned exploratory capture showed a finish race in which the queued message
+did not automatically resume the Agent; this is supporting evidence, not a
+`2.1.227` parity fixture. Tenon promises no stronger exactly-once or automatic-
+resume guarantee. A later explicit
 send to the now-terminal ID follows the resume branch above. Missing, deleted,
 malformed, unexposed foreground `explore`/`plan`, or wrong-session targets return
-the captured local-profile error and create no Thread or message. The normalized
+Tenon's local compatibility error and create no Thread or message. The normalized
 missing-target result is
 `{"success":false,"message":"No agent with ID '{to}' is reachable.\nUse the agent ID from a background agent's spawn result."}`.
 The `{to}` interpolation preserves leading and trailing spaces.
@@ -811,7 +893,8 @@ authoritative. It never revives a `bash_stop` alias at the provider boundary.
 Depth is derived from persisted parent lineage, not the display task path. The
 default maximum is three Agent layers below root. An Agent at maximum depth does
 not receive `agent`; any stale or raced call that reaches the handler still
-returns the observed depth error without creating a child.
+fails locally without creating a child. This is a documentation-informed Tenon
+contract; there is no version-bound nested or depth-limit black-box capture.
 
 The depth limit and concurrent limit are host runtime settings with defaults of
 3 and 20. Their Tenon setting names are internal configuration, not additional
@@ -820,15 +903,13 @@ model tool fields.
 The default session-wide running limit is 20 and may be changed to any positive
 integer through a Tenon runtime setting. Admission is atomic across foreground,
 background, and nested `agent` calls. At capacity, a new model-issued `agent`
-call fails without creating a child. The raw 2.1.227 error is
-`Concurrent subagent limit reached. You can run {limit} subagents at once. Do not retry. If the user wants more concurrent subagents, ask them to increase CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS.`
-Tenon's normalized byte contract changes only the final setting reference:
+call fails without creating a child. Tenon's local refusal contract is
 `Concurrent subagent limit reached. You can run {limit} subagents at once. Do not retry. If the user wants more concurrent subagents, ask them to increase the Tenon maximum concurrent Agents setting.`
-The `concurrency-limit` fixture freezes both strings and their one permitted
-normalization. Slots are released at terminal settlement; there is no lifetime
-spawn counter.
+No version-bound concurrency-limit capture currently supports an upstream raw
+error string or resume-over-cap claim. Local tests freeze Tenon's refusal, slot
+release, and absence of a lifetime spawn counter.
 
-To match Claude Code rather than regularize it, an existing Agent resumed by
+As an explicit Tenon scheduling choice, an existing Agent resumed by
 `agent_message` occupies a new slot but bypasses the new-spawn gate and can push
 the live count over the configured cap. User-launched execution from the child
 panel follows the same rule. Isolated Skills, Workflow/scheduled runs, and root
@@ -852,7 +933,11 @@ by the `worktree-capabilities` and `undo-pool` fixtures and does not remove the
 root tool or its existing core tests.
 
 The sandbox must reject file and shell paths that redirect mutations into the
-main checkout, including git-directory overrides. An unchanged worktree is
+main checkout, including git-directory overrides. It permits Git to create new
+loose objects for commits but denies modification or removal of existing shared
+objects and all writes under `objects/pack` and `objects/info`. Worktree Agents
+may preview `data_import` packs but cannot commit them into the live outline.
+An unchanged worktree is
 removed after terminal settlement; a changed one is retained and its path /
 branch appears in the result and notification. Resume reuses a retained changed
 worktree. If the prior worktree was clean and auto-removed, resume creates a new
@@ -928,13 +1013,13 @@ note.
 
 | Requirement | Observable outcome | Acceptance |
 | --- | --- | --- |
-| **FR-1 Tool contract** | `agent`, `agent_message`, and `task_stop` use the closed name map; complete descriptions, schemas, parameter descriptions, validation, defaults, and results match the selected profile after only declared normalizations; `task_stop` replaces `bash_stop`. | AC-1, AC-3 |
-| **FR-2 Context contract** | Every Agent starts fresh with the captured `general-purpose` / `explore` / `plan` context matrix. | AC-2 |
-| **FR-3 Capability contract** | Agent type normalization, run mode, depth, and Role policy resolve the captured tool pool; intentional empty remains runnable while non-empty-all-invalid refuses. | AC-4, AC-10 |
+| **FR-1 Tool contract** | `agent`, `agent_message`, and `task_stop` use the closed name map; captured catalog fields match their sanitized projection and Tenon-local validation/default/result behavior remains explicit; `task_stop` replaces `bash_stop`. | AC-1, AC-3 |
+| **FR-2 Context contract** | Every Agent starts fresh; captured projections gate only their retained `general-purpose` / `explore` / `plan` context categories, while Tenon-only blocks have local tests. | AC-2 |
+| **FR-3 Capability contract** | Agent type normalization, run mode, depth, and Role policy resolve the Tenon pool, with captured tool-name observations used only where provenance supports them; intentional empty remains runnable while non-empty-all-invalid refuses. | AC-4, AC-10 |
 | **FR-4 Execution contract** | Foreground blocks; background detaches and completes through host delivery. | AC-5, AC-7 |
 | **FR-5 Authority contract** | User-authored input and user stop remain distinguishable from `main` delivery, Agent messages, and model stop; model traffic cannot manufacture user authority. | AC-6, AC-9 |
 | **FR-6 Handoff safety** | Every final report is scanned and framed exactly once before parent consumption. | AC-7, AC-8 |
-| **FR-7 Scheduling contract** | Direct-parent nesting, depth 3, live cap 20, resume bypass, and no lifetime cap match the target. | AC-10, AC-11 |
+| **FR-7 Scheduling contract** | Direct-parent nesting, depth 3, live cap 20, resume bypass, and no lifetime cap are documentation-informed Tenon scheduling contracts. | AC-10, AC-11 |
 | **FR-8 Isolation contract** | Worktree Agents cannot mutate the main checkout or the user's live outline, all Agent pools cannot mutate shared undo history, and changed work remains recoverable. | AC-12 |
 | **FR-9 Persistence contract** | Agent identity, configuration, stop provenance, and pending terminal delivery survive restart. | AC-9, AC-13 |
 | **FR-10 Boundary contract** | Isolated Skills and scheduled work remain separate consumers of internal child primitives; the built-in `research`/`readOnlyIsolated` path is retired without removing generic isolated execution. | AC-14 |
@@ -952,22 +1037,26 @@ note.
   depth, invalid type, or non-empty-all-invalid tool refusal creates no child
   edge; an explicitly zero-tool Role still runs as a text-only child.
 - **FLOW-4 Continue or stop:** `agent_message({ to: "main", ... })` from a
-  background child queues a non-user root message; from a foreground child it
-  returns success, then inserts the system-role safety envelope after the child
-  result and before the parent's next provider round. A running raw-ID send
-  queues for the next tool round; terminal or model-stopped send resumes the
-  same ID; user-stopped refuses until a user transcript message clears the
-  stop. `task_stop` dispatches Agent and shell IDs and still produces an Agent
-  killed notification. Missing
-  transcript, missing worktree, restart, and send/finish races follow the
-  captured explicit results rather than fallback execution in the parent.
+  background child queues a non-user root message. A foreground child directly
+  invoked by root returns success, then inserts the system-role safety envelope
+  after the adjacent child result and before root's next provider round. A nested
+  foreground child instead uses the durable background envelope after its sender
+  settles, starting a non-user root Turn when root is idle and recovering pending
+  delivery after restart. A running raw-ID send queues for the next tool round;
+  terminal or model-stopped send resumes the same ID; user-stopped refuses until
+  a user transcript message clears the stop. `task_stop` dispatches Agent and
+  shell IDs and still produces an Agent killed notification. Missing
+  transcript, missing worktree, restart, and send/finish races follow explicit
+  Tenon results rather than fallback execution in the parent.
 
 ## Acceptance Criteria
 
 - **AC-1 Tool surface:** every provider matches the canonical
   `ModelToolContract` / `AgentTool` after only the frozen `Agent` -> `agent`,
   `SendMessage` -> `agent_message`, and `TaskStop` -> `task_stop` name map;
-  only `anthropic-messages` also matches Claude wire bytes. Fixtures cover
+  the captured catalog projection gates its retained raw fields, while
+  `anthropic-pi-ai-serializer` gates Tenon's adapter output without claiming Claude request-
+  byte parity. Fixtures cover
   complete descriptions (including `task_stop` boundary newlines), `$schema`,
   property order, parameter descriptions, required arrays, constraints, and
   `additionalProperties: false`; `canonicalizeAgentTools` remains the
@@ -977,14 +1066,17 @@ note.
   orchestration profile; no retired collaboration name or `bash_stop` appears.
   Omitted/blank/201-character
   `summary`, empty/spaced `to`, deprecated `shell_id`, and exact validation
-  errors match their black-box fixtures.
+  errors match Tenon's compatibility fixtures; only provenance-bound cases may
+  be labeled Claude black-box parity.
 - **AC-2 Fresh context:** `general-purpose`, `explore`, and `plan` first-request
   fixtures match the startup matrix, including available-Skill catalog versus
   Role-preloaded full Skill content; the fresh catalog has no `research`; the
   matrix enumerates `files`, `outliner`, `memory`, `skills`, and `agent`
   stable-prompt blocks; no Memory block/data, address roster, parent history,
   read-file residue, or parent-only invoked-Skill content leaks into a child.
-  Captured `explore`/`plan` prompts contain no unmapped Claude tool token.
+  Tenon's `explore`/`plan` prompts contain no unmapped provider tool token; no
+  complete Claude prompt-byte parity is claimed without a future sanitized
+  prompt projection.
 - **AC-3 Result contract:** background launch, resumable foreground, `explore`,
   `plan`, running/resume `agent_message` success with `pin`, missing-target
   failure, separate foreground/background `main` envelopes, `task_stop`
@@ -993,7 +1085,8 @@ note.
   refuses before a new Turn while steering an already-running child remains
   accepted.
 - **AC-4 Tool policy:** foreground, background, `plan`, depth-limited, Role-
-  narrowed, and MCP tool pools match the captured filter matrix; `explore`/`plan`
+  narrowed, and MCP tool pools match Tenon's explicit policy; version-bound
+  projections check only the captured request tool-name sets. `explore`/`plan`
   are repository-mutation-restricted rather than falsely modeled as a literal
   read-only set. Exact, normalized, ambiguous, and missing Agent types match the
   resolver fixtures. Omission maps only to `general-purpose`; backing `default`
@@ -1016,20 +1109,24 @@ note.
   each persistence boundary. Budget exhaustion is `interrupted`, preserves
   partial output, remains resumable, and uses the exact Tenon-local error
   mapping; no live budget totals enter the model surface.
-- **AC-8 Output scan:** every documented instruction-shaped fixture gets the
-  same escaping and marker as `2.1.227`; ordinary output is byte-unchanged.
+- **AC-8 Output scan:** every Tenon safety-corpus case gets the documented
+  escaping and marker; ordinary output is byte-unchanged. This is not a Claude
+  transformation-parity assertion.
 - **AC-9 Messaging and stop:** `main` delivery, summary fallback/truncation,
   whitespace-preserving recipient lookup, running next-tool-round queueing, and
   the observed no-tool-round finish race match their fixtures without promising
-  stronger delivery. Foreground general/Role, `explore`, and `plan` sends to
-  `main` return the exact success JSON and insert a system-role envelope after
-  the foreground result. That envelope preserves canonical-type attribution but
-  never treats `from` as an address: general/Role reply guidance points to the
-  immediately preceding result's `agentId`, while `explore`/`plan` contain no
-  tool-reply instruction. Completion, model-stop, and background `explore`/`plan`
-  resume under the same ID/history/model/type; foreground `explore`/`plan`
-  expose no address; user-stop refuses; unified `task_stop` stops Agent and shell
-  tasks with target results and emits the captured killed notification.
+  stronger delivery. Root-direct foreground general/Role, `explore`, and `plan`
+  sends to `main` return the exact success JSON and insert a system-role envelope
+  after the adjacent foreground result. That envelope preserves canonical-type
+  attribution but never treats `from` as an address: general/Role reply guidance
+  points to the immediately preceding result's `agentId`, while `explore`/`plan`
+  contain no tool-reply instruction. Nested foreground sends use the durable
+  background envelope after sender settlement, admit a non-user root Turn only
+  when root is idle, and recover pending delivery after restart. Completion,
+  model-stop, and background `explore`/`plan` resume under the same
+  ID/history/model/type; foreground `explore`/`plan` expose no address; user-stop
+  refuses; unified `task_stop` stops Agent and shell tasks with target results and
+  emits Tenon's killed notification contract.
 - **AC-10 Nesting:** general/Role Agents can reach depth 3; depth-limit,
   `explore`, and `plan` tool pools lack `agent`; a raced depth-limit call fails
   locally. Only the top-level synthesized final result reaches root, apart from
@@ -1076,7 +1173,8 @@ complete-feature rule.
 ## Risks
 
 - **False parity:** prose can hide subtle differences in schemas, provider
-  ordering, or stop/resume behavior. Versioned black-box fixtures are the gate.
+  ordering, or stop/resume behavior. A claim is no stronger than its provenance-
+  bound projection; uncovered surfaces stay labeled Tenon-local.
 - **Description drift:** dynamic prose assembly or a broad normalization regex
   can silently change model behavior and prompt-cache identity. Keep three
   constant descriptions and reject normalization paths outside the manifest.
@@ -1084,13 +1182,13 @@ complete-feature rule.
   root-only, cross-session, cloud, and general background tools. Keep the
   local-Subagent profile explicit, classify Tenon tools by capability, and fail
   snapshots when an undeclared tool or normalization enters the profile.
-- **Provider-boundary drift:** byte-locking an OpenAI-family wire would couple
-  Tenon to pi-ai's conversion details. Keep canonical-contract assertions
-  separate from the `anthropic-messages` wire fixture and retain the existing
-  OpenAI `strict` invariant.
-- **Prompt tool drift:** a captured `explore`/`plan` prompt can name a tool that
-  Tenon does not expose. Freeze every token in the closed Role prompt map and
-  fail when an unmapped token remains.
+- **Provider-boundary drift:** byte-locking a provider wire to Claude would
+  confuse an upstream capture with Tenon's adapter output. Keep canonical-
+  contract assertions separate from the Tenon-local `anthropic-pi-ai-serializer` fixture
+  and retain the existing OpenAI `strict` invariant.
+- **Prompt tool drift:** an `explore`/`plan` prompt can name a tool that Tenon
+  does not expose. Keep a closed local Role-prompt map; only call it captured
+  parity after a minimized, provenance-bound prompt projection exists.
 - **Live-state escape:** a worktree cwd does not isolate outline mutations or
   undo history. Capability-filter those tools explicitly and retain root-only
   tests for the underlying commands.
@@ -1115,7 +1213,7 @@ complete-feature rule.
   unaddressable foreground suffixes so model guidance never routes to `from`.
 - **Resume misrouting:** Agent ID, session ownership, one-shot status, task type,
   and user-stop provenance are checked before appending any message.
-- **Intentional cap overflow:** resume bypass is surprising but target behavior.
+- **Intentional cap overflow:** resume bypass is surprising Tenon behavior.
   Tests distinguish new-spawn refusal from resume accounting so a later cleanup
   does not accidentally change parity.
 - **Worktree escape or loss:** reuse containment validation, bind every mutation
@@ -1147,9 +1245,9 @@ Checked `gh pr list`, `docs/TASKS.md`, active plans, and intended file scopes on
 
 ## Verification
 
-- Run the parity fixture suite against normalized Claude Code `2.1.227`
-  captures, Tenon's canonical tool contracts for every provider family, and the
-  `anthropic-messages` wire output only.
+- Verify every committed captured projection against its provenance manifest
+  and closed normalizer, then run Tenon's canonical provider-contract and
+  `anthropic-pi-ai-serializer` adapter fixtures separately.
 - Run `bun run typecheck`, `bun run test:core`, `bun run test:renderer`,
   `bun run test:e2e`, `bun run docs:check`, and `git diff --check`.
 - Run focused crash-point tests for terminal recording, transcript append,
@@ -1169,7 +1267,8 @@ Checked `gh pr list`, `docs/TASKS.md`, active plans, and intended file scopes on
   references where they document the retirement.
 - Record before/after provider-context token evidence proving that every Agent
   spawn carries no parent epoch and that `general-purpose` versus
-  `explore`/`plan` startup matches the captured instruction matrix.
+  `explore`/`plan` startup matches the declared context matrix. Compare only the
+  fields retained by the sanitized Claude projections.
 
 ## Open Questions
 
@@ -1178,7 +1277,8 @@ parity defect, not as a local design choice.
 
 ## Build Order
 
-- [ ] Freeze sanitized `2.1.227` parity fixtures; replace the model-visible tool
+- [ ] Freeze sanitized, provenance-bound `2.1.227` projections for captured
+  surfaces and label all remaining fixtures Tenon-local; replace the model-visible tool
   and Role adapter contract, including canonical-versus-anthropic provider
   boundaries, exact/normalized type resolution, Role-prompt name mapping, and
   the three tool-list admission cases; remove live legacy collaboration,

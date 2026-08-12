@@ -18,6 +18,7 @@ import type { DocumentProjection } from '../../../core/types';
 import type { AgentImageGenerationRuntime } from '../capabilities/agentImageGenerationTool';
 import { AgentImportService, visibleImportServiceResult } from '../capabilities/agentImportService';
 import {
+  hasBackgroundShellTask,
   stopBackgroundShellTask,
   type BackgroundShellStopData,
   type AgentFileReadImageNormalizer,
@@ -28,6 +29,8 @@ import type { AgentSkillRuntime } from '../capabilities/agentSkills';
 import { evaluateAgentToolCapability } from '../capabilities/agentCapabilities';
 import {
   resolveSubagentToolRequest,
+  subagentBashExecutionAllowed,
+  subagentToolExecutionAllowed,
   subagentToolAllowed,
   type PersistedSubagentToolPolicy,
 } from '../capabilities/subagentToolPolicy';
@@ -226,7 +229,7 @@ export class ToolRuntime {
       if (!enabled) continue;
       if (contract?.scope === 'rootThread' && context.thread.parentThreadId !== null) continue;
       if (unique.has(tool.name)) throw new Error(`Duplicate runtime model tool: ${tool.name}`);
-      unique.set(tool.name, this.instrumentTool(context, tool, identity));
+      unique.set(tool.name, this.instrumentTool(context, tool, identity, contract));
       enabledCanonical.add(canonical);
     }
     for (const contract of extensionContracts) {
@@ -357,6 +360,11 @@ export class ToolRuntime {
       coreTool('task_stop', 'Task Stop', async (_itemId, params) => {
         const input = normalizeTaskStopToolInput(params);
         const taskId = input.task_id ?? input.shell_id!;
+        const shellOwnsTask = hasBackgroundShellTask(taskId);
+        const agentOwnsTask = this.service.hasAgentTask(threadId, taskId);
+        if (agentOwnsTask && shellOwnsTask) {
+          throw new Error(`Task ID is ambiguous between an Agent and shell task: ${taskId}`);
+        }
         const agent = await this.service.stopAgentTask(threadId, turnId, taskId);
         if (agent !== null) return agent;
         const shell = await stopBackgroundShellTask(taskId);
@@ -416,6 +424,7 @@ export class ToolRuntime {
     context: TurnExecutionContext,
     tool: AgentTool,
     identity: ModelToolIdentity,
+    contract: ModelToolContract,
   ): AgentTool {
     return {
       ...tool,
@@ -434,24 +443,50 @@ export class ToolRuntime {
         const capability = evaluateAgentToolCapability({
           toolName: canonicalIdentity,
           args,
+          ...(contract.schemaOwner === 'extension' ? { actionKinds: contract.actionKinds } : {}),
           policy: {
             workspaceRoot: context.thread.cwd,
             capabilityConfig: await this.capabilityConfig(),
           },
         });
-        if (capability.behavior === 'unavailable') {
+        const activeSubagentPolicy = this.subagentPolicy(context) ?? ROOT_SUBAGENT_POLICY;
+        const specializedBashBlocked = canonicalIdentity === 'bash'
+          && !subagentBashExecutionAllowed(
+            activeSubagentPolicy,
+            capability.descriptors.map((descriptor) => descriptor.actionKind),
+          );
+        const specializedMutationBlocked = contract.schemaOwner === 'extension'
+          && !subagentToolExecutionAllowed(
+            activeSubagentPolicy,
+            capability.descriptors.map((descriptor) => descriptor.actionKind),
+          );
+        const worktreeImportCommitBlocked = canonicalIdentity === 'data_import'
+          && activeSubagentPolicy.worktree
+          && isDataImportCommit(args);
+        const specializedPolicyBlocked = specializedBashBlocked || specializedMutationBlocked || worktreeImportCommitBlocked;
+        if (capability.behavior === 'unavailable' || specializedPolicyBlocked) {
+          const reason = capability.behavior === 'unavailable'
+            ? capability.reason
+            : specializedBashBlocked
+              ? 'Explore and Plan Agents may use Bash only for repository inspection.'
+              : worktreeImportCommitBlocked
+                ? 'Worktree Agents may preview import packs but cannot commit them to the live outline.'
+                : 'Explore and Plan Agents cannot execute repository mutations.';
+          const code = capability.behavior === 'unavailable'
+            ? capability.code
+            : 'subagent_repository_mutation_restricted';
           const result = toolResult({
             ok: false,
             tool: canonicalIdentity,
             status: 'unavailable',
             error: {
               code: 'operation_unavailable',
-              message: capability.reason,
+              message: reason,
               recoverable: false,
-              details: { reason: capability.code },
+              details: { reason: code },
             },
             instructions: 'This operation is unavailable in the current context. Continue with another available approach.',
-            capabilityAudit: capabilityAudit(capability),
+            capabilityAudit: capabilityAudit(capability, specializedPolicyBlocked),
           });
           await this.service.notifyToolCompleted(
             context.thread.id,
@@ -460,7 +495,7 @@ export class ToolRuntime {
             identity,
             observableArgs,
             (await redactSecretLikeJsonAsync(jsonValue(result.details))).value,
-            capability.reason,
+            reason,
           );
           return result;
         }
@@ -569,13 +604,28 @@ function outlinerWithCausation(
   };
 }
 
-function capabilityAudit(capability: ReturnType<typeof evaluateAgentToolCapability>): JsonValue {
+const ROOT_SUBAGENT_POLICY: PersistedSubagentToolPolicy = {
+  kind: 'general-purpose',
+  runInBackground: false,
+  worktree: false,
+  allowNesting: true,
+  requestedTools: null,
+};
+
+function capabilityAudit(
+  capability: ReturnType<typeof evaluateAgentToolCapability>,
+  specializedPolicyBlocked = false,
+): JsonValue {
   return jsonValue({
-    behavior: capability.behavior,
+    behavior: specializedPolicyBlocked ? 'unavailable' : capability.behavior,
     access: capability.access,
-    source: capability.source,
+    source: specializedPolicyBlocked ? 'subagent_policy' : capability.source,
     descriptors: capability.descriptors,
-    ...(capability.behavior === 'unavailable' ? { code: capability.code } : {}),
+    ...(specializedPolicyBlocked
+      ? { code: 'subagent_repository_mutation_restricted' }
+      : capability.behavior === 'unavailable'
+        ? { code: capability.code }
+        : {}),
   });
 }
 
@@ -627,6 +677,11 @@ function identityFromProviderName(name: string): ModelToolIdentity {
   return separator < 0
     ? { namespace: null, name }
     : { namespace: name.slice(0, separator), name: name.slice(separator + 2) };
+}
+
+function isDataImportCommit(args: JsonValue): boolean {
+  if (!isRecord(args)) return false;
+  return args.operation === 'commit_file' || args.operation === 'commit_content';
 }
 
 function assertExtensionContractStructure(contract: ModelToolContract): string {

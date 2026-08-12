@@ -9,6 +9,28 @@ Isolated Skills also use child Threads, but remain a separate executor form.
 Their invoking `skill` call owns the result, and they do not participate in Agent
 messaging, depth, concurrency, or completion notifications.
 
+## Evidence Boundary
+
+This specification is Tenon's current product contract. Claude Code `2.1.227`
+black-box captures can support only surfaces retained by provenance-bound
+sanitized projections: selected tool catalog fields, fresh-task isolation and
+selected context/tool presence, foreground/background ordering and result
+shapes, and selected `main` delivery envelopes. The catalog and output-helper
+projections are committed under `captured/`; their closed Tenon mappings live
+under `normalized/`. `provenance.json` binds capture identity and
+`evidence-index.json` limits each claim to its admitted evidence level. Full
+provider captures are not committed because they contain repository
+instructions, local paths, and git status.
+
+A projection is treated as captured evidence only when the fixture provenance
+manifest binds it to the exact CLI version, binary SHA-256, signature identity,
+capture date/profile, capture-script SHA-256, full-source SHA-256, and
+projection version. A filename or an embedded version string alone is not
+provenance. Depth, concurrency, direct-parent synthesis, model stop, renderer
+user stop, persistence, worktree, budget, and output scanning below are Tenon-
+local contracts informed by product requirements or public documentation; they
+are not described as black-box Claude parity without a version-bound capture.
+
 ## Lineage And Identity
 
 `parentThreadId` records the canonical delegation edge. Root and descendants
@@ -103,13 +125,15 @@ Fresh startup and resume are deliberately different. A new `agent` call always
 uses the matrix above; `agent_message` to a terminal Agent appends to that
 Agent's existing history and retains its recorded identity and configuration.
 
-The repository instructions and git-status input are collected once for the
-root's `sessionId`, persisted with the Agent execution ledger database, and
-reused by every descendant and after host restart. Concurrent first spawns
-coalesce onto one collection promise. Deleting a child does not remove the
-session snapshot; deleting the session root removes it with the subtree. A
-collection failure degrades to a child without the optional startup block and
-records the host diagnostic rather than killing the user turn.
+The repository instructions and git-status input are collected once while the
+root Thread is created, before that root becomes available for its first Turn.
+The snapshot is keyed by the root's `sessionId`, persisted with the Agent
+execution ledger database, and reused by every descendant and after host
+restart. Concurrent resolution coalesces onto one collection promise. Deleting
+a child does not remove the session snapshot; deleting the session root removes
+it with the subtree. A collection failure degrades to descendants without the
+optional startup block and records the host diagnostic rather than killing root
+creation or a user Turn.
 
 ## Tool And Capability Policy
 
@@ -198,7 +222,9 @@ Before any Agent report enters a foreground result or background notification,
 the host scans it once. Harness-shaped markers and lines that imitate user or
 assistant framing are escaped, and instruction-shaped output receives the
 host-authored untrusted-output marker. Ordinary output is byte-preserved; the
-scanner never summarizes or silently removes findings.
+scanner never summarizes or silently removes findings. This scanner is a Tenon
+safety contract tested with a synthetic adversarial corpus, not a Claude output-
+transformation oracle.
 
 ## Background Delivery
 
@@ -275,11 +301,16 @@ There are two recipient forms:
 - The reserved `main` recipient queues a non-user message for the main
   conversation and returns exactly
   `{"success":true,"message":"Message queued for the main conversation's next turn."}`.
-  Background delivery waits for the root's next idle boundary. Foreground
-  delivery succeeds immediately, then appears as a separate system-role envelope
-  after the foreground Agent result and before the parent's next provider round.
+  Background delivery waits for the root's next idle boundary. A foreground
+  child directly invoked by root succeeds immediately, then adds a separate
+  system-role envelope after its Agent result and before root's next provider
+  round. A nested foreground child has no adjacent Agent result in root, so its
+  message uses the durable background envelope after the sender settles; it
+  starts a non-user root Turn when root is idle and survives restart as pending
+  delivery.
   The tool description's `main` row says "background subagents only" to preserve
-  the captured compatibility bytes; behavior accepts both modes.
+  the captured catalog projection; a version-bound foreground flow projection
+  proves that behavior accepts both modes.
 
 A background message to `main` uses this complete host envelope:
 
@@ -347,6 +378,11 @@ rejected rather than guessed.
 
 ## Depth And Concurrency
 
+The values and admission behavior in this section are documentation-informed
+Tenon scheduling decisions. No version-bound nested, depth-limit, or
+concurrency-limit black-box projection currently supports stronger observed-
+parity language.
+
 Depth is derived from persisted parent lineage, never display text. The default
 maximum is three Agent layers below root. At the maximum depth, `agent` is absent
 from the child's tool pool; a stale or raced call still fails locally without
@@ -366,9 +402,13 @@ rule. Root Turns, scheduled work, and isolated Skills do not share this counter.
 
 `isolation: "worktree"` creates a host-managed temporary git worktree before
 provider I/O and makes it the Agent cwd for file and shell tools. Path and git
-containment checks reject mutation redirection into the main checkout. The tool
-pool also removes `node_create`, `node_edit`, and `node_delete`, because a git
-worktree cannot isolate the user's live outline; read operations remain
+containment checks reject mutation redirection into the main checkout. The shell
+sandbox treats the shared Git object database as append-only: commits may create
+new loose objects, while existing objects plus `objects/pack` and `objects/info`
+cannot be modified or removed. The tool pool also removes `node_create`,
+`node_edit`, and `node_delete`, because a git worktree cannot isolate the user's
+live outline; `data_import` previews remain available but commit operations are
+rejected before they can change the live outline. Read operations remain
 available when otherwise permitted.
 
 An unchanged worktree is removed at terminal settlement. Resume then creates a
@@ -420,12 +460,14 @@ Spawning records the canonical `agent` tool Item and a parent-visible
 `subAgentActivity` start tied to its tool-use Item. Terminal activity records
 the exact child Turn, terminal state, and typed error when present. A terminal
 activity may materialize in a later parent Turn and therefore does not claim an
-unrelated spawn position.
+unrelated spawn position. Duration is read only from the child Turn whose ID is
+stored on that activity; a later resumed generation can never supply an earlier
+row's elapsed time. Legacy activity without a Turn anchor renders no duration.
 
 The child Thread and Agent execution record are live truth. Parent activity
 Items are durable presentation evidence, not another scheduler. Renderer
 projection combines canonical lineage, Agent ID/generation, child Thread state,
-latest Turn state, and pending notification state. It never depends on a wait
+the activity's exact Turn state, and pending notification state. It never depends on a wait
 Item or a model-maintained roster. Isolated Skills may produce the same visible
 child row, but their terminal output remains owned only by `skill`.
 

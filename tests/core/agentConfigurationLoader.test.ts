@@ -161,6 +161,7 @@ describe('AgentConfigurationLoader', () => {
       reasoningEffort: 'medium',
       tools: ['node_read'],
       skills: ['*'],
+      preloadedSkills: [],
       plugins: [],
       mcpServers: [],
     });

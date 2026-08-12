@@ -1,7 +1,10 @@
 import { createHash } from 'node:crypto';
 import type { EffectiveThreadConfiguration } from '../../../core/agent/configuration';
 import type { Thread } from '../../../core/agent/protocol';
-import type { AgentStartupContextSnapshot } from './AgentStartupContext';
+import {
+  renderAgentStartupContext,
+  type AgentStartupContextSnapshot,
+} from './AgentStartupContext';
 
 export type StablePromptLayer = 'L0' | 'L1' | 'L2';
 
@@ -86,15 +89,12 @@ function startupContextBlocks(
   snapshot: AgentStartupContextSnapshot | null,
 ): Array<Omit<StablePromptBlock, 'fingerprint'>> {
   if (!snapshot) return [];
-  const rendered = [
-    ...snapshot.repositoryInstructions,
-    snapshot.gitStatus === null ? null : snapshot.gitStatus,
-  ].filter((entry): entry is string => entry !== null && entry.trim().length > 0);
-  if (rendered.length === 0) return [];
+  const rendered = renderAgentStartupContext(snapshot);
+  if (!rendered) return [];
   return [{
     id: 'repository-startup',
     layer: 'L1',
-    text: rendered.join('\n\n'),
+    text: rendered,
   }];
 }
 

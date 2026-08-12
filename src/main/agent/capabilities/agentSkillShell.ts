@@ -5,6 +5,10 @@ import {
   type AgentCapabilityConfig,
 } from './agentCapabilities';
 import {
+  subagentBashExecutionAllowed,
+  type SubagentToolPolicy,
+} from './subagentToolPolicy';
+import {
   runLocalBashCommand,
   type AgentShellProcessEnvironmentProvider,
   type AgentWorkspaceWriteBoundary,
@@ -25,6 +29,7 @@ export interface AgentSkillShellCommandInput {
   toolCallId?: string;
   processEnvironment?: AgentShellProcessEnvironmentProvider;
   writeBoundary?: AgentWorkspaceWriteBoundary;
+  subagentPolicy?: SubagentToolPolicy;
 }
 
 export class AgentSkillShellError extends Error {
@@ -55,7 +60,19 @@ export async function executeAgentSkillShellCommand(input: AgentSkillShellComman
     },
   });
   const append = () => input.capabilityEventHandler?.({ requestId, toolCall, decision });
+  const specializedBlocked = input.subagentPolicy !== undefined
+    && !subagentBashExecutionAllowed(
+      input.subagentPolicy,
+      decision.descriptors.map((descriptor) => descriptor.actionKind),
+    );
 
+  if (specializedBlocked) {
+    await append();
+    throw new AgentSkillShellError(
+      'operation_unavailable',
+      'Explore and Plan Agents may use embedded Skill shell only for repository inspection.',
+    );
+  }
   if (decision.behavior === 'unavailable') {
     await append();
     throw new AgentSkillShellError('operation_unavailable', unavailableToolResultMessage({

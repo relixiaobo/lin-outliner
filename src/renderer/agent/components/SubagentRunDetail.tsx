@@ -5,7 +5,11 @@ import { useT } from '../../i18n/I18nProvider';
 import { AgentIcon, BackIcon, ICON_SIZE, SkillIcon, StopIcon } from '../../ui/icons';
 import { IconButton } from '../../ui/primitives/IconButton';
 import type { ThreadNodeReferenceOpenHandler } from '../threadReferences';
-import { consumeSubagentDrill, subscribeSubagentDrill } from '../store/subagentDrillIntent';
+import {
+  consumeSubagentDrill,
+  descendantDrillPath,
+  subscribeSubagentDrill,
+} from '../store/subagentDrillIntent';
 import { threadStore, useThreadStore } from '../store/threadStore';
 import { ThreadView } from './ThreadView';
 
@@ -22,17 +26,19 @@ import { ThreadView } from './ThreadView';
  * open would move the reader's place every time they looked at something. One
  * scroll region lives inside; the transcript outside keeps its own.
  *
- * A grandchild REPLACES the contents rather than nesting inside them. Nesting
+ * A descendant REPLACES the contents rather than nesting inside them. Nesting
  * would put a scroll region inside a scroll region, which fights the trackpad
  * at the boundary, and would express depth through indentation the reader has
  * to measure. Swapping keeps one viewport and says the depth out loud, in a
- * header that names the way back. Delegation is capped at depth two, so that
- * header is never more than one step.
+ * header that names the immediate way back. Delegation is capped at depth three;
+ * the stack walks d1 -> d2 -> d3 in this one container, and Back unwinds it one
+ * depth at a time.
  */
 export function SubagentRunDetail({
   index,
   onInterruptThread,
   onOpenNodeReference,
+  onOpenThread,
   onOpenTurnDetails,
   rootThreadId,
   userView,
@@ -40,6 +46,7 @@ export function SubagentRunDetail({
   readonly index: DocumentIndex;
   readonly onInterruptThread?: (threadId: string) => Promise<void>;
   readonly onOpenNodeReference: ThreadNodeReferenceOpenHandler;
+  readonly onOpenThread: (threadId: ThreadId) => Promise<void>;
   readonly onOpenTurnDetails?: (threadId: string, turnId: string) => void;
   readonly rootThreadId: ThreadId;
   readonly userView: RendererUserViewHints;
@@ -83,9 +90,17 @@ export function SubagentRunDetail({
     });
   }, [threadId]);
 
-  const drillTo = useCallback((target: ThreadId) => {
-    setStack((current) => (current[current.length - 1] === target ? current : [...current, target]));
-  }, []);
+  const openRelatedThread = useCallback(async (target: ThreadId) => {
+    const path = descendantDrillPath(threadId, target, threadsById);
+    if (path === null) {
+      await onOpenThread(target);
+      return;
+    }
+    if (path.length === 0) return;
+    setStack((current) => (
+      current[current.length - 1] === threadId ? [...current, ...path] : current
+    ));
+  }, [onOpenThread, threadId, threadsById]);
 
   const turns = snapshot.turnsByThread.get(threadId);
   const name = subagentName(thread, t.agent.thread.untitled);
@@ -150,12 +165,11 @@ export function SubagentRunDetail({
             onInterrupt={() => threadStore.interruptThread(threadId)}
             {...(onInterruptThread ? { onInterruptThread } : { onInterruptThread: noop })}
             onOpenNodeReference={onOpenNodeReference}
-            // Every route to a grandchild swaps these contents: the delegation
-            // row AND the child links inside an expanded collaboration tool
-            // call, which reach the same Thread by another path. One of them
-            // silently doing nothing reads as a broken app, not a disabled one.
-            onOpenThread={async (target) => drillTo(target)}
-            onSubagentDrill={drillTo}
+            // Descendants swap this container. A sibling link from
+            // agent_message returns to the root navigation path instead of
+            // inventing a parent-child crumb between peers.
+            onOpenThread={openRelatedThread}
+            onSubagentDrill={(target) => { void openRelatedThread(target); }}
             onOpenTurnDetails={(turn: Turn) => onOpenTurnDetails?.(threadId, turn.id)}
             onReadToolArguments={(turnId, item) => threadStore.readToolArguments(threadId, turnId, item)}
             onReadToolOutput={(turnId, item) => threadStore.readItemOutput(threadId, turnId, item)}

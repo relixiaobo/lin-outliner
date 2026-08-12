@@ -1,0 +1,62 @@
+{
+  "profile": "default",
+  "availableAgentTypes": [
+    "general-purpose",
+    "explore",
+    "plan"
+  ],
+  "captures": [
+    {
+      "sourceId": "foreground-general-full",
+      "agentType": "general-purpose",
+      "systemBlockCount": 3,
+      "messageRoles": [
+        "user",
+        "system"
+      ],
+      "parentSentinelPresent": false,
+      "taskPromptPresent": true,
+      "projectInstructionsPresent": true,
+      "gitStatusSnapshotPresent": true,
+      "collaborationTools": [
+        "agent",
+        "agent_message",
+        "task_stop"
+      ]
+    },
+    {
+      "sourceId": "foreground-explore-full",
+      "agentType": "explore",
+      "systemBlockCount": 3,
+      "messageRoles": [
+        "user",
+        "system"
+      ],
+      "parentSentinelPresent": false,
+      "taskPromptPresent": true,
+      "projectInstructionsPresent": false,
+      "gitStatusSnapshotPresent": false,
+      "collaborationTools": [
+        "agent_message",
+        "task_stop"
+      ]
+    },
+    {
+      "sourceId": "foreground-plan-send-main",
+      "agentType": "plan",
+      "systemBlockCount": 3,
+      "messageRoles": [
+        "user",
+        "system"
+      ],
+      "parentSentinelPresent": false,
+      "taskPromptPresent": true,
+      "projectInstructionsPresent": false,
+      "gitStatusSnapshotPresent": false,
+      "collaborationTools": [
+        "agent_message",
+        "task_stop"
+      ]
+    }
+  ]
+}

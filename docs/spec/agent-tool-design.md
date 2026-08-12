@@ -182,6 +182,10 @@ a later Turn.
 - `generate_image`: configured image-provider generation
 - `data_import`: preview and commit a validated import pack
 
+Worktree-isolated Agents may use `data_import` preview operations, but its
+`commit_file` and `commit_content` operations are unavailable because the
+Outliner is live shared state rather than part of the Git worktree.
+
 `web_fetch` uses a credential-free Electron `Session.fetch` partition with
 automatic redirect following, then applies its byte, timeout, and extraction
 bounds before returning content. Requests present the configured Chrome user
@@ -280,6 +284,20 @@ These are top-level tools. There is no model-managed roster, inbox, follow-up,
 wait, or polling tool. Child completion is pushed by the host as specified in
 [`agent-subagent-threads.md`](agent-subagent-threads.md).
 
+Claude Code evidence and Tenon contracts are intentionally distinct. The
+committed Claude tool catalog is a sanitized projection. It supports only the
+projected names, descriptions,
+schemas, constraints, and raw key order. The canonical lowercase tools and
+capability substitutions below are the closed Tenon normalization of that
+projection; its `2.1.227` label is authoritative only when the fixture provenance
+manifest binds its source digest to the exact capture run. The
+`anthropic-pi-ai-serializer`
+fixture is Tenon's adapter output and is not a
+raw Claude request-byte fixture. Other provider families are compared at the
+canonical contract before adapter conversion. Validation, summary fallback,
+unified stop dispatch, and any behavior without a provenance-bound projection
+remain Tenon-local compatibility contracts.
+
 `agent` requires `description` and `prompt`. It optionally accepts
 `subagent_type`, `model`, `run_in_background`, and `isolation`. Omission selects
 `subagent_type: "general-purpose"` and `run_in_background: true`; these are
@@ -339,8 +357,9 @@ Send a message to another agent.
 Your plain text output is NOT visible to other agents — to communicate, you MUST call this tool. Messages from agents are delivered automatically; you don't check an inbox. Use the raw `agentId` from the spawn result to steer or resume an agent. When relaying, don't quote the original — it's already rendered to the user.
 ````
 
-The description's background-only wording is a captured compatibility byte; the
-handler also accepts `main` from foreground Agents. `to` is described as
+The description's background-only wording is preserved from the captured
+catalog projection; a version-bound foreground flow projection separately
+shows that the handler accepts `main` from foreground Agents. `to` is described as
 `Recipient: agent ID or "main"` and must match `^[^\n\r]{0,200}$`; after schema
 admission, whitespace-only input receives `to must not be empty`. Lookup retains
 the original string, including leading and trailing whitespace. `message` is
@@ -374,9 +393,10 @@ All three schemas use JSON Schema draft 2020-12, `type: "object"`, and
 `["description", "prompt"]` and `["to", "message"]`; `task_stop` has none.
 Canonical tool order is deterministic dictionary order before every provider
 request. Provider families compare the canonical names, descriptions, and
-schemas before adapter conversion. The Anthropic adapter additionally restores
-the frozen wire key order; OpenAI-family wire conversion remains adapter-owned
-and retains the strict-field invariant.
+schemas before adapter conversion. The Anthropic adapter uses Tenon's frozen
+adapter key order; this is tested as a local conversion contract rather than
+Claude full-request byte parity. OpenAI-family wire conversion remains adapter-
+owned and retains the strict-field invariant.
 
 The request budget, foreground/background lifecycle, exact launch and terminal
 result envelopes, direct-parent notification, resume, stop provenance, depth,
@@ -393,15 +413,18 @@ Thread catalog and explicit blocks.
 ## Canonical Call History
 
 Every raw provider call crosses one ordered admission boundary: resolve canonical
-identity, run that tool's `prepareArguments` once when present, validate the resulting
-JSON exactly against the exposed schema, persist the canonical history envelope,
-evaluate argument-dependent capability blocks, bind host execution context, then
-execute. The shared boundary never converts scalar types: `null`, strings, numbers,
+identity, freeze the provider-authored arguments for history, run that tool's
+`prepareArguments` once when present, validate the resulting execution JSON exactly
+against the exposed schema, persist the canonical history envelope, evaluate
+argument-dependent capability blocks, bind host execution context, then execute. The
+shared boundary never converts scalar types: `null`, strings, numbers,
 integers, and booleans remain distinct; arrays retain order and cardinality; and unknown
 fields remain present for schema rejection. Valid empty strings, zeroes, and false values
 are not treated as missing. A tool-owned preparation may implement a specific public
-normalization, but no generic layer performs coercion after it. The same prepared value
-is used for canonical history, capability evaluation, and execution.
+normalization, but no generic layer performs coercion after it. The prepared value is
+used for capability evaluation, execution, and Item presentation; the frozen original
+remains the model-call history authority. This distinction lets a tool derive a UI-only
+default without rewriting what the provider actually submitted.
 
 Host context such as Thread `cwd`, workspace and scratch roots, environment,
 credentials, and private handles is never added to the model arguments. `bash` history

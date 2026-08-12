@@ -38,6 +38,9 @@ export interface ThreadCatalogCollaboration {
   deleteEphemeralSpawnEdge(threadId: ThreadId): void;
   ephemeralChildThreadIds(parentThreadId: ThreadId): readonly ThreadId[];
   clearThreadCoordinationState(threadIds: readonly ThreadId[]): void;
+  beginThreadDeletion(threadIds: readonly ThreadId[]): void;
+  drainTerminalSettlements(threadIds: readonly ThreadId[]): Promise<void>;
+  finishThreadDeletion(threadIds: readonly ThreadId[]): void;
 }
 
 /** What the catalog's descendant cascade owes the account layer. */
@@ -70,6 +73,9 @@ export class ThreadCatalogOps {
     private readonly clearSubagentBudget: (threadId: ThreadId) => void,
     private readonly clearSubagentExecutions: (threadIds: readonly ThreadId[]) => void,
     private readonly clearAgentStartupContexts: (sessionIds: readonly string[]) => void,
+    private readonly freezeAgentStartupContext: (
+      thread: Pick<Thread, 'id' | 'sessionId' | 'cwd'>,
+    ) => Promise<void>,
     private readonly createThreadBusyError: (message: string) => Error,
   ) {}
   pendingNameShutdownHandles(): readonly { abort: () => void; completion: Promise<void> }[] {
@@ -568,9 +574,10 @@ export class ThreadCatalogOps {
       }
     }
   async deleteThread(threadId: ThreadId): Promise<void> {
-      const subtree = await this.beginThreadSubtreeStop(threadId);
+      const subtree = await this.beginThreadSubtreeStop(threadId, true);
       try {
         await this.stopThreadSubtree(subtree.threadIds);
+        await this.collaboration.drainTerminalSettlements(subtree.threadIds);
         for (const descendantId of [...subtree.threadIds].reverse()) {
           await this.flushThreadNotificationsBestEffort(descendantId);
           await this.clearGoal(descendantId);
@@ -584,6 +591,10 @@ export class ThreadCatalogOps {
           await this.extensions.threadStopped(record.thread);
         }
         await this.core.threadTreeMutex.run(async () => {
+          // Keep metadata as the retry authority unless the durable execution
+          // cascade commits. Ledger tombstones become visible only after that
+          // transaction, so a failed deletion remains fully retryable.
+          this.clearSubagentExecutions(subtree.threadIds);
           if (subtree.records[0]?.thread.ephemeral) {
             for (const descendantId of [...subtree.threadIds].reverse()) {
               this.collaboration.deleteEphemeralSpawnEdge(descendantId);
@@ -594,7 +605,6 @@ export class ThreadCatalogOps {
             this.core.metadata.delete(threadId);
           }
           this.clearThreadCoordinationState(subtree.threadIds);
-          this.clearSubagentExecutions(subtree.threadIds);
           // A session snapshot belongs to its root. Deleting one child must not
           // invalidate startup inputs still used by the surviving parent and
           // sibling Agents in the same session.
@@ -609,11 +619,12 @@ export class ThreadCatalogOps {
         }
         await this.transcripts.forgetExclusions(subtree.records.map((record) => record.thread.sessionId));
       } finally {
+        this.collaboration.finishThreadDeletion(subtree.threadIds);
         this.finishThreadSubtreeStop(subtree.threadIds);
       }
     }
 
-  private async beginThreadSubtreeStop(threadId: ThreadId): Promise<{
+  private async beginThreadSubtreeStop(threadId: ThreadId, deleting = false): Promise<{
       readonly threadIds: readonly ThreadId[];
       readonly records: readonly ThreadCatalogRecord[];
     }> {
@@ -624,6 +635,7 @@ export class ThreadCatalogOps {
         }
         const records = threadIds.map((id) => this.core.requireThread(id));
         for (const id of threadIds) this.core.stoppingThreads.add(id);
+        if (deleting) this.collaboration.beginThreadDeletion(threadIds);
         return { threadIds, records };
       });
     }
@@ -757,6 +769,9 @@ export class ThreadCatalogOps {
         });
       } else {
         this.core.metadata.create(record);
+      }
+      if (thread.parentThreadId === null && !lineage.hidden) {
+        await this.freezeAgentStartupContext(thread);
       }
       await this.core.recordNotification({ type: 'thread/started', threadId: thread.id, thread });
       if (!this.core.hiddenEphemeralThreads.has(thread.id)) await this.extensions.threadStarted(thread);

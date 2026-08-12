@@ -126,7 +126,7 @@ export function projectSubagentsForTurn(
  * One delegation, one row, at the position where it was decided.
  *
  * A delegated child otherwise reaches the reader twice in two vocabularies: the
- * tool call that delegated (`Used the research skill`) and the child's own
+ * tool call that delegated (`Used the skill`) and the child's own
  * activity row, which is the same event named differently. The activity row is
  * the one that can carry live status, elapsed time, a Stop, and a way into the
  * child, so it stands in for the call and takes its canonical slot — the slot
@@ -258,7 +258,11 @@ function livePresentationState(
     // Turn DTO is still around it supplies the duration below; after a reload
     // that leaves only this Item, the row honestly says the status alone.
     return {
-      durationMs: durationFromTurn(latestTurn, activity.terminal.agentThreadId),
+      durationMs: durationFromTurn(
+        latestTurn,
+        activity.terminal.agentThreadId,
+        activity.terminal.agentTurnId,
+      ),
       error: activity.terminal.error,
       startedAt: null,
       status: activity.terminal.kind === 'started' ? 'running' : activity.terminal.kind,
@@ -300,8 +304,17 @@ function livePresentationState(
 }
 
 /** The child Turn's own recorded span, when the DTO in hand is that child's. */
-function durationFromTurn(turn: Turn | null, agentThreadId: ThreadId): number | null {
-  if (!turn || turn.provenance.originThreadId !== agentThreadId) return null;
+function durationFromTurn(
+  turn: Turn | null,
+  agentThreadId: ThreadId,
+  agentTurnId: string | null,
+): number | null {
+  if (
+    !turn
+    || agentTurnId === null
+    || turn.id !== agentTurnId
+    || turn.provenance.originThreadId !== agentThreadId
+  ) return null;
   return turn.durationMs;
 }
 

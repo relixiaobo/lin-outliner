@@ -252,8 +252,9 @@ describe('Subagent parent-Turn presentation projection', () => {
   test('carries the settled child Turn duration, since a finished row has no clock', () => {
     const started = activity('activity-started', 'started', null);
     const done = childTurn('child-done', 'completed', 100, 'spawn-item', 192_100);
+    const terminal = activity('activity-done', 'completed', null, null, done.id);
     const projection = projectSubagentsForTurn(
-      parentTurn([started]),
+      parentTurn([started, terminal]),
       new Map([[CHILD_ID, childThread({ type: 'idle' })]]),
       new Map([[CHILD_ID, done]]),
     );
@@ -261,6 +262,22 @@ describe('Subagent parent-Turn presentation projection', () => {
     expect(projection.byThreadId.get(CHILD_ID)).toMatchObject({
       status: 'completed',
       durationMs: done.durationMs,
+    });
+  });
+
+  test('does not borrow a resumed generation duration for an earlier terminal activity', () => {
+    const generationOne = activity('activity-generation-one', 'completed', null, null, 'child-generation-one');
+    const generationTwo = childTurn('child-generation-two', 'completed', 300, 'resume-item', 1_077);
+    const projection = projectSubagentsForTurn(
+      parentTurn([generationOne], 100, 'completed'),
+      new Map([[CHILD_ID, childThread({ type: 'idle' })]]),
+      new Map([[CHILD_ID, generationTwo]]),
+    );
+
+    expect(generationTwo.durationMs).not.toBeNull();
+    expect(projection.byThreadId.get(CHILD_ID)).toMatchObject({
+      status: 'completed',
+      durationMs: null,
     });
   });
 
@@ -382,6 +399,7 @@ function activity(
   kind: SubAgentActivityThreadItem['kind'],
   error: SubAgentActivityThreadItem['error'],
   spawnItemId: string | null = null,
+  agentTurnId: string | null = 'child-initial',
 ): SubAgentActivityThreadItem {
   return {
     id,
@@ -389,6 +407,7 @@ function activity(
     type: 'subAgentActivity',
     kind,
     agentThreadId: CHILD_ID,
+    agentTurnId,
     agentPath: '/root/research',
     error,
     spawnItemId,
@@ -429,6 +448,7 @@ function collaborationItem(
     senderThreadId: PARENT_ID,
     receiverThreadIds: receiverThreadId ? [receiverThreadId] : [],
     prompt: null,
+    summary: null,
     model: null,
     reasoningEffort: null,
     agentsStates: receiverThreadId ? {

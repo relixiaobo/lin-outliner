@@ -7,6 +7,8 @@ import {
 import {
   filterSubagentToolContracts,
   filterSubagentToolKeys,
+  subagentBashExecutionAllowed,
+  subagentToolExecutionAllowed,
 } from '../../src/main/agent/capabilities/subagentToolPolicy';
 
 const foreground = {
@@ -17,13 +19,11 @@ const foreground = {
 };
 
 describe('Subagent tool policy', () => {
-  test('removes root-only controls, retired tools, and undo from every Agent pool', () => {
+  test('removes root-only controls and undo from every Agent pool', () => {
     const keys = filterSubagentToolContracts(MODEL_TOOL_CATALOG, foreground).map(toolKey);
     expect(keys).not.toContain('request_user_input');
     expect(keys).not.toContain('codex_app.automation_update');
     expect(keys).not.toContain('outline_undo_stack');
-    expect(keys).not.toContain('bash_stop');
-    expect(keys.some((key) => key.startsWith('collaboration.'))).toBe(false);
   });
 
   test('keeps general foreground mutations but contains live outline state in worktrees', () => {
@@ -56,6 +56,37 @@ describe('Subagent tool policy', () => {
       ]));
       expect(keys).toEqual(expect.arrayContaining(['node_read', 'file_read', 'bash', 'web_fetch', 'skill']));
     }
+  });
+
+  test('admits only classified repository inspection through specialized Bash', () => {
+    for (const kind of ['explore', 'plan'] as const) {
+      const policy = { ...foreground, kind };
+      expect(subagentBashExecutionAllowed(policy, ['shell.read_search'])).toBe(true);
+      expect(subagentBashExecutionAllowed(policy, ['shell.read_search', 'shell.background_process'])).toBe(true);
+      expect(subagentBashExecutionAllowed(policy, ['file.edit.local_path'])).toBe(false);
+      expect(subagentBashExecutionAllowed(policy, ['shell.local_code_execution'])).toBe(false);
+      expect(subagentBashExecutionAllowed(policy, ['shell.unknown'])).toBe(false);
+    }
+    expect(subagentBashExecutionAllowed(foreground, ['file.edit.local_path'])).toBe(true);
+  });
+
+  test('keeps extension tools visible while enforcing specialized mutation actions at execution', () => {
+    for (const kind of ['explore', 'plan'] as const) {
+      const policy = { ...foreground, kind };
+      expect(subagentToolExecutionAllowed(policy, [])).toBe(false);
+      expect(subagentToolExecutionAllowed(policy, ['file.read.local_path'])).toBe(true);
+      expect(subagentToolExecutionAllowed(policy, ['web.fetch'])).toBe(true);
+      expect(subagentToolExecutionAllowed(policy, ['agent.subagent.send'])).toBe(true);
+      expect(subagentToolExecutionAllowed(policy, ['file.read.local_path', 'file.write.local_path'])).toBe(false);
+      expect(subagentToolExecutionAllowed(policy, ['outline.edit'])).toBe(false);
+      expect(subagentToolExecutionAllowed(policy, ['shell.local_code_execution'])).toBe(false);
+      expect(subagentToolExecutionAllowed(policy, ['shell.project_script'])).toBe(false);
+      expect(subagentToolExecutionAllowed(policy, ['shell.dependency_install'])).toBe(false);
+      expect(subagentToolExecutionAllowed(policy, ['shell.destructive_cleanup'])).toBe(false);
+      expect(subagentToolExecutionAllowed(policy, ['shell.unknown'])).toBe(false);
+      expect(subagentToolExecutionAllowed(policy, ['git.publish_remote'])).toBe(false);
+    }
+    expect(subagentToolExecutionAllowed(foreground, ['file.write.local_path'])).toBe(true);
   });
 
   test('uses the background allowlist while preserving MCP contracts', () => {

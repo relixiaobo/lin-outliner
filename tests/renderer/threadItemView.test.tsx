@@ -647,6 +647,11 @@ describe('ThreadItemView tool row status presentation', () => {
       tool: 'agent',
       arguments: { prompt: 'investigate' },
       receiverThreadIds: [],
+      senderThreadId: 'thread-1',
+      prompt: 'investigate',
+      summary: null,
+      model: null,
+      reasoningEffort: null,
       agentsStates: {},
       modelCall: replayableModelCall('agent', { prompt: 'investigate' }),
     };
@@ -656,6 +661,31 @@ describe('ThreadItemView tool row status presentation', () => {
     const outputSection = [...rendered.document.querySelectorAll('.thread-tool-section')].at(-1);
     expect(outputSection?.querySelector('header')?.textContent).toBe('Result');
     expect(outputSection?.className).toContain('is-failed');
+  });
+
+  test('uses Agent message summaries while preserving failed and interrupted outcomes', async () => {
+    for (const [status, expected] of [
+      ['inProgress', 'Request reviewer feedback'],
+      ['completed', 'Request reviewer feedback'],
+      ['failed', 'Request reviewer feedback · failed'],
+      ['interrupted', 'Request reviewer feedback · interrupted'],
+    ] as const) {
+      const rendered = renderItem(agentMessage({ status, summary: 'Request reviewer feedback' }));
+      await flush();
+
+      const label = rendered.document.querySelector<HTMLElement>('.thread-tool-label');
+      expect(label?.textContent).toBe(expected);
+      expect(label?.title).toBe(expected);
+      while (mounted.length > 0) mounted.pop()?.();
+    }
+  });
+
+  test('falls back to generic Agent message copy for legacy Items without a summary', async () => {
+    const rendered = renderItem(agentMessage({ summary: null }));
+    await flush();
+
+    expect(rendered.document.querySelector('.thread-tool-label')?.textContent)
+      .toBe('Messaged an agent');
   });
 
   test('fills the produced-value section with a failed MCP call own message', async () => {
@@ -1061,6 +1091,30 @@ function command(overrides: Partial<CommandExecutionThreadItem> = {}): CommandEx
       command: item.command,
       ...(item.description ? { description: item.description } : {}),
     }),
+  };
+}
+
+function agentMessage(
+  overrides: Partial<Extract<ThreadItem, { type: 'collabAgentToolCall' }>> = {},
+): Extract<ThreadItem, { type: 'collabAgentToolCall' }> {
+  return {
+    ...base('agent-message-1'),
+    type: 'collabAgentToolCall',
+    tool: 'agent_message',
+    status: 'completed',
+    outputRef: null,
+    senderThreadId: 'thread-1',
+    receiverThreadIds: ['thread-child'],
+    prompt: 'Please review the findings.',
+    summary: 'Request reviewer feedback',
+    model: null,
+    reasoningEffort: null,
+    agentsStates: {},
+    modelCall: replayableModelCall('agent_message', {
+      to: 'thread-child',
+      message: 'Please review the findings.',
+    }),
+    ...overrides,
   };
 }
 

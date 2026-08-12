@@ -1012,6 +1012,7 @@ describe('renderer Thread store', () => {
       senderThreadId: 'thread-1',
       receiverThreadIds: [],
       prompt: null,
+      summary: null,
       model: null,
       reasoningEffort: null,
       agentsStates: {},

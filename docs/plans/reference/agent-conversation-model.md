@@ -850,10 +850,11 @@ a fork runs AS the parent agent and stays unattributed. Further surfacing polish
 (framing a run as "consulted @B" vs a generic task; a user-facing "consult @X"
 entry) is **deferred** — the Task Panel already makes consultations observable.
 
-**Relationship to `/research`.** Generic research is the agent using its **own**
-capability (a read-only `context: fork`), not a consultation — no second
-principal. Consultation is for when a real **specialist's** judgment is the point.
-(See the `research-skill` plan / #232.)
+**Relationship to research.** The former `/research` Skill and its read-only
+`context: fork` were retired. Generic research now uses the current Agent's normal
+tools, or the canonical `agent` tool when fresh delegated context is useful.
+Consultation remains distinct: use it when a real **specialist's** judgment is the
+point. The `research-skill` plan / #232 is historical only.
 
 This consolidates and supersedes the closed `agent-private-consultation`
 exploration (#233).

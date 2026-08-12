@@ -47,6 +47,7 @@ const configuration: EffectiveThreadConfiguration = {
   reasoningEffort: 'medium',
   tools: ['file_read', 'node_read', 'node_search', 'skill', 'agent'],
   skills: [],
+  preloadedSkills: [],
   plugins: [],
   mcpServers: [],
 };
@@ -137,6 +138,27 @@ describe('stable agent prompt composition', () => {
     // And an install that keeps no index has nothing to point at.
     expect(composeStablePrompt({ thread: rootThread(1), configuration }).blocks
       .map((block) => block.id)).not.toContain('episodic-records');
+  });
+
+  test('frames the frozen repository status on the production prompt path', () => {
+    const prompt = composeStablePrompt({
+      thread: rootThread(1),
+      configuration,
+      startupContext: {
+        repositoryInstructions: ['ROOT INSTRUCTIONS', 'NESTED INSTRUCTIONS'],
+        gitStatus: 'STATUS SNAPSHOT',
+      },
+    });
+    const block = prompt.blocks.find((candidate) => candidate.id === 'repository-startup');
+
+    expect(block?.text).toBe([
+      'ROOT INSTRUCTIONS',
+      'NESTED INSTRUCTIONS',
+      '# Session-start repository state\n\n<git-status>\nSTATUS SNAPSHOT\n</git-status>',
+    ].join('\n\n'));
+    expect(prompt.text.indexOf('ROOT INSTRUCTIONS')).toBeLessThan(
+      prompt.text.indexOf('<git-status>'),
+    );
   });
 
   test('does not infer built-in capabilities from extension or provider-name suffixes', () => {
@@ -910,6 +932,7 @@ describe('canonical context projection', () => {
         senderThreadId: rootThread(1).id,
         receiverThreadIds: [],
         prompt: 'presentation only',
+        summary: null,
         model: null,
         reasoningEffort: null,
         agentsStates: {},
