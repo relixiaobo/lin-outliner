@@ -50,6 +50,7 @@ interface TurnLifecycleCollaboration {
   materializePendingActivityItems(threadId: ThreadId, turnId: TurnId, activities: readonly PendingSubagentActivity[]): ThreadItem[]; consumePendingSubagentActivities(threadId: ThreadId, consumed: readonly PendingSubagentActivity[]): void;
   takePendingCollaborationActivity(threadId: ThreadId): boolean; signalCollaborationActivity(threadId: ThreadId): void;
   flushPendingSubagentActivities(threadId: ThreadId, turnId: TurnId): Promise<readonly PendingSubagentActivity[]>; queueChildTurnActivity(thread: Thread, turn: Turn): void;
+  startupContextForTurn(threadId: ThreadId, turnId: TurnId): import('../context/AgentStartupContext').AgentStartupContextSnapshot | null;
 }
 /**
  * The account layer's hook. It is deliberately NOT part of the collaboration
@@ -1023,6 +1024,7 @@ export class TurnLifecycle {
         result = await this.executor.execute({
           thread,
           turn: initialTurn,
+          startupContext: this.collaboration.startupContextForTurn(active.threadId, active.turnId),
           historyBeforeTurn: this.core.allTurns(active.threadId).filter((turn) => turn.id !== active.turnId),
           configuration: active.configuration,
           signal: active.controller.signal,

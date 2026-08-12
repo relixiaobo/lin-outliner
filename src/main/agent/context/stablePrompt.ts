@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { EffectiveThreadConfiguration } from '../../../core/agent/configuration';
 import type { Thread } from '../../../core/agent/protocol';
+import type { AgentStartupContextSnapshot } from './AgentStartupContext';
 
 export type StablePromptLayer = 'L0' | 'L1' | 'L2';
 
@@ -54,10 +55,12 @@ export function composeStablePrompt(input: {
   readonly configuration: EffectiveThreadConfiguration;
   /** Absolute path to the episodic index, or null when this install keeps none. */
   readonly transcriptIndexPath?: string | null;
+  readonly startupContext?: AgentStartupContextSnapshot | null;
 }): StablePrompt {
   const blocks: Array<Omit<StablePromptBlock, 'fingerprint'>> = [
     { id: 'framework-firmware', layer: 'L0', text: L0_TEXT },
     ...capabilityBlocks(input.thread, input.configuration),
+    ...startupContextBlocks(input.startupContext ?? null),
     ...recordsBlocks(input.thread, input.configuration, input.transcriptIndexPath ?? null),
     identityBlock(input.thread, input.configuration),
   ];
@@ -77,6 +80,22 @@ export function composeStablePrompt(input: {
       complete: fingerprint(text),
     },
   };
+}
+
+function startupContextBlocks(
+  snapshot: AgentStartupContextSnapshot | null,
+): Array<Omit<StablePromptBlock, 'fingerprint'>> {
+  if (!snapshot) return [];
+  const rendered = [
+    ...snapshot.repositoryInstructions,
+    snapshot.gitStatus === null ? null : snapshot.gitStatus,
+  ].filter((entry): entry is string => entry !== null && entry.trim().length > 0);
+  if (rendered.length === 0) return [];
+  return [{
+    id: 'repository-startup',
+    layer: 'L1',
+    text: rendered.join('\n\n'),
+  }];
 }
 
 /**

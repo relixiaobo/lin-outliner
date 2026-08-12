@@ -2,16 +2,14 @@ import type { ThreadId, TurnId } from '../../../core/agent/protocol';
 import type { SubagentToolPolicy } from '../capabilities/subagentToolPolicy';
 import type { AgentWorktreeMetadata } from '../worktree/AgentWorktree';
 import type { SqliteDatabase } from './sqlite';
+import type { AgentStartupContextSnapshot } from '../context/AgentStartupContext';
+
+export type { AgentStartupContextSnapshot } from '../context/AgentStartupContext';
 
 export type SubagentRunMode = 'foreground' | 'background';
 export type SubagentStopProvenance = 'none' | 'model' | 'user' | 'budget' | 'hostRestart';
 export type SubagentTerminalStatus = 'completed' | 'failed' | 'interrupted' | 'killed';
 export type SubagentNotificationState = 'pending' | 'delivering' | 'delivered';
-
-export interface AgentStartupContextSnapshot {
-  readonly repositoryInstructions: readonly string[];
-  readonly gitStatus: string | null;
-}
 
 export interface SubagentRecordedToolPolicy extends SubagentToolPolicy {
   readonly requestedTools: readonly string[] | null;
@@ -198,6 +196,12 @@ export class SubagentExecutionLedger {
     const row = this.db.prepare('SELECT * FROM subagent_executions WHERE agent_id = ?')
       .get(agentId) as ExecutionRow | undefined;
     return row ? executionFromRow(row) : null;
+  }
+
+  startupContextForTurn(agentId: ThreadId, turnId: TurnId): AgentStartupContextSnapshot | null {
+    const record = this.read(agentId);
+    if (!record || record.generation !== 1 || record.currentTurnId !== turnId) return null;
+    return record.startupContext;
   }
 
   require(agentId: ThreadId): SubagentExecutionRecord {

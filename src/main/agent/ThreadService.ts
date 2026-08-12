@@ -442,6 +442,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
         signalCollaborationActivity: (threadId) => this.collaboration.signalCollaborationActivity(threadId),
         flushPendingSubagentActivities: (...args) => this.collaboration.flushPendingSubagentActivities(...args),
         queueChildTurnActivity: (...args) => this.collaboration.queueChildTurnActivity(...args),
+        startupContextForTurn: (threadId, turnId) => options.stores.subagentExecutions.startupContextForTurn(threadId, turnId),
       },
       { enqueueTurn: (...args) => this.transcripts.enqueueTurn(...args) },
       { noticeFor: (threadId, projection) => this.documentDriftContext(threadId, projection) },

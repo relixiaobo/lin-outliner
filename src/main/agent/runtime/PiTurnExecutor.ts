@@ -173,6 +173,7 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
             thread: context.thread,
             configuration: context.configuration,
             transcriptIndexPath: this.options.transcriptIndexPath ?? null,
+            startupContext: context.startupContext ?? null,
           });
       const systemPrompt = stablePrompt?.text
         ?? context.configuration.developerInstructions.join('\n\n');
