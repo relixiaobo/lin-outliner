@@ -1008,6 +1008,10 @@ export const zhHans: PartialMessages = {
   dialog: {
     confirm: '确认',
     cancel: '取消',
+    saveFailedTitle: '无法保存工作区',
+    saveFailedDetail: '最新的文档更改尚未可靠写入磁盘。',
+    retrySave: '重试',
+    quitAnyway: '仍然退出',
   },
   timePicker: {
     title: '时间选择器',

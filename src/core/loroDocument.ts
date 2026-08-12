@@ -39,8 +39,14 @@ export interface SharedLoroDocumentState {
 
 export interface LoroDocumentInit {
   shared?: SharedLoroDocumentState;
+  replayedUpdates?: readonly LoroPersistenceReplayUpdate[];
   pendingUpdates?: readonly string[];
   peerId?: string;
+}
+
+export interface LoroPersistenceReplayUpdate {
+  update: Uint8Array;
+  version: Uint8Array;
 }
 
 export interface LoroImportResult {
@@ -180,6 +186,14 @@ export class LoroOutlinerDocument {
     });
     this.tree = this.doc.getTree(LORO_TREE_NAME);
     if (init.shared?.snapshot) this.doc.import(decodeBase64(init.shared.snapshot));
+    if (init.replayedUpdates?.length) {
+      for (const replay of init.replayedUpdates) {
+        this.doc.importBatch([replay.update.slice()]);
+        if (!versionVectorEquals(this.doc, replay.version)) {
+          throw CoreError.invalidOperation('workspace persistence replay version mismatch');
+        }
+      }
+    }
     if (init.pendingUpdates?.length) {
       const updates = uniqueEncodedUpdates(init.pendingUpdates.map(decodeBase64));
       this.doc.importBatch([...updates.values()]);
@@ -802,6 +816,29 @@ export class LoroOutlinerDocument {
       return;
     }
     this.statePatch.add(nodeId);
+  }
+}
+
+function versionVectorEquals(doc: LoroDoc, expectedBytes: Uint8Array): boolean {
+  const actual = doc.oplogVersion();
+  const expected = VersionVector.decode(expectedBytes);
+  try {
+    return actual.compare(expected) === 0;
+  } finally {
+    actual.free();
+    expected.free();
+  }
+}
+
+export function versionVectorIncludes(actualBytes: Uint8Array, expectedBytes: Uint8Array): boolean {
+  const actual = VersionVector.decode(actualBytes);
+  const expected = VersionVector.decode(expectedBytes);
+  try {
+    const comparison = actual.compare(expected);
+    return comparison === 0 || comparison === 1;
+  } finally {
+    actual.free();
+    expected.free();
   }
 }
 

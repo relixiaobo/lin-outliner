@@ -12,7 +12,11 @@ import {
   type DocumentSystemTagObservedState,
 } from './documentSystem';
 import { CoreError } from './errors';
-import { LoroOutlinerDocument, type SharedLoroDocumentState } from './loroDocument';
+import {
+  LoroOutlinerDocument,
+  type LoroPersistenceReplayUpdate,
+  type SharedLoroDocumentState,
+} from './loroDocument';
 import { mediaKindForMimeType } from './mediaKind';
 import { freshNodeId, isClientNodeId } from './nodeId';
 import {
@@ -223,6 +227,8 @@ export interface WorkspaceReplicaState {
 export interface WorkspacePersistenceEnvelopeV3 {
   kind: 'tenon-workspace';
   schemaVersion: 3;
+  persistenceRevision?: number;
+  persistenceMetadataSequence?: number;
   shared: WorkspaceSharedState;
   local: WorkspaceReplicaState;
 }
@@ -231,9 +237,45 @@ export interface CorePersistenceOptions {
   installationId?: string;
 }
 
+export interface WorkspacePersistenceLocalDelta {
+  installationId: string;
+  replicaId: string;
+  operationHistoryUpserts: OperationHistoryEntry[];
+  operationHistoryDeletes: string[];
+  loroPendingUpdates?: string[];
+}
+
+export interface WorkspacePersistenceReplayEntry {
+  persistenceRevision: number;
+  metadataSequence: number;
+  version: Uint8Array;
+  update: Uint8Array;
+  local: WorkspacePersistenceLocalDelta;
+}
+
+export interface CorePersistenceCapture {
+  persistenceRevision: number;
+  metadataSequence: number;
+  update: Uint8Array;
+  version: Uint8Array;
+  local: WorkspacePersistenceLocalDelta;
+}
+
 interface CoreInitialState {
   shared?: WorkspaceSharedState;
   local?: WorkspaceReplicaState;
+  replayedUpdates?: readonly LoroPersistenceReplayUpdate[];
+  persistenceRevision?: number;
+  persistenceMetadataSequence?: number;
+  replayedPersistenceRevision?: number;
+  replayedMetadataSequence?: number;
+}
+
+interface PersistenceMetadataChange {
+  sequence: number;
+  operationHistoryUpsert?: OperationHistoryEntry;
+  operationHistoryDeletes?: string[];
+  loroPendingUpdates?: string[];
 }
 
 const DEFAULT_COMMIT_ORIGIN = 'user:implicit';
@@ -343,6 +385,9 @@ export class Core {
   // instead of stringifying the whole document.
   private revisionValue = 0;
   private persistenceRevisionValue = 0;
+  private persistenceMetadataSequenceValue = 0;
+  private persistenceMetadataChanges: PersistenceMetadataChange[] = [];
+  private loadedPersistenceVersionValue = new Uint8Array();
   private lastRevisionDelta: CoreRevisionDelta = {
     revision: 0,
     changedNodeIds: [],
@@ -370,9 +415,22 @@ export class Core {
     this.workspaceIdValue = initial.shared?.workspaceId ?? createPersistenceId();
     this.documentIdValue = initial.shared?.documentId ?? createPersistenceId();
     this.replicaIdValue = replicaId;
-    this.loro = new LoroOutlinerDocument({ shared: initial.shared?.document, pendingUpdates });
+    this.loro = new LoroOutlinerDocument({
+      shared: initial.shared?.document,
+      replayedUpdates: initial.replayedUpdates,
+      pendingUpdates,
+    });
     this.history = new OperationJournal(reuseLocalReplica ? initial.local!.operationHistory : undefined);
     if (initial.shared && !reuseLocalReplica) this.initialPersistRequired = true;
+    this.loadedPersistenceVersionValue = new Uint8Array(this.loro.versionVector());
+    this.persistenceRevisionValue = Math.max(
+      0,
+      Math.trunc(initial.replayedPersistenceRevision ?? initial.persistenceRevision ?? 0),
+    );
+    this.persistenceMetadataSequenceValue = Math.max(
+      0,
+      Math.trunc(initial.replayedMetadataSequence ?? initial.persistenceMetadataSequence ?? 0),
+    );
 
     if (this.loro.isEmpty()) {
       this.ensureSystemNodesDirect();
@@ -394,6 +452,7 @@ export class Core {
         // not become hidden dependencies of the replica's first real update.
         this.loro = new LoroOutlinerDocument({
           shared: initial.shared!.document,
+          replayedUpdates: initial.replayedUpdates,
           pendingUpdates,
           peerId: this.loro.peerId(),
         });
@@ -402,6 +461,7 @@ export class Core {
 
     this.stateValue = this.loro.materializeState();
     this.loro.clearTouchedNodeIds();
+    if (this.initialPersistRequired) this.persistenceRevisionValue = Math.max(this.persistenceRevisionValue, 1);
   }
 
   /** Whether construction created/changed nodes that are not yet on disk (system
@@ -416,7 +476,30 @@ export class Core {
   }
 
   static fromState(state: WorkspacePersistenceEnvelopeV3, options: CorePersistenceOptions = {}) {
-    return new Core({ shared: state.shared, local: state.local }, options);
+    return new Core({
+      shared: state.shared,
+      local: state.local,
+      persistenceRevision: state.persistenceRevision,
+      persistenceMetadataSequence: state.persistenceMetadataSequence,
+    }, options);
+  }
+
+  static fromPersistenceState(
+    state: WorkspacePersistenceEnvelopeV3,
+    entries: readonly WorkspacePersistenceReplayEntry[],
+    options: CorePersistenceOptions = {},
+  ) {
+    const local = mergeWorkspaceReplicaState(state.local, entries.map((entry) => entry.local));
+    return new Core({
+      shared: state.shared,
+      local,
+      replayedUpdates: entries.map((entry) => ({
+        update: entry.update,
+        version: entry.version,
+      })),
+      replayedPersistenceRevision: entries.at(-1)?.persistenceRevision ?? state.persistenceRevision,
+      replayedMetadataSequence: entries.at(-1)?.metadataSequence ?? state.persistenceMetadataSequence,
+    }, options);
   }
 
   static fromSharedState(shared: WorkspaceSharedState, options: CorePersistenceOptions = {}) {
@@ -441,6 +524,8 @@ export class Core {
     const serialized: WorkspacePersistenceEnvelopeV3 = {
       kind: 'tenon-workspace',
       schemaVersion: 3,
+      persistenceRevision: this.persistenceRevisionValue,
+      persistenceMetadataSequence: this.persistenceMetadataSequenceValue,
       shared: this.exportSharedState(),
       local: {
         installationId: this.installationIdValue,
@@ -476,6 +561,69 @@ export class Core {
     return this.loro.versionVector();
   }
 
+  loadedPersistenceVersion(): Uint8Array {
+    return this.loadedPersistenceVersionValue.slice();
+  }
+
+  persistenceMetadataSequence(): number {
+    return this.persistenceMetadataSequenceValue;
+  }
+
+  persistenceCaptureAvailable(): boolean {
+    return !this.activeTransaction && this.activeAsyncMutations === 0;
+  }
+
+  markPersistenceBaseline(): void {
+    this.assertReplicationIdle();
+    this.loadedPersistenceVersionValue = new Uint8Array(this.loro.versionVector());
+    this.persistenceMetadataChanges = [];
+  }
+
+  capturePersistenceUpdate(fromVersion: Uint8Array, afterMetadataSequence: number): CorePersistenceCapture {
+    this.assertReplicationIdle();
+    const metadataSequence = this.persistenceMetadataSequenceValue;
+    const changes = this.persistenceMetadataChanges.filter((change) => (
+      change.sequence > afterMetadataSequence && change.sequence <= metadataSequence
+    ));
+    const operationHistoryUpserts = new Map<string, OperationHistoryEntry>();
+    const operationHistoryDeletes = new Set<string>();
+    let loroPendingUpdates: string[] | undefined;
+    for (const change of changes) {
+      for (const operationId of change.operationHistoryDeletes ?? []) {
+        operationHistoryUpserts.delete(operationId);
+        operationHistoryDeletes.add(operationId);
+      }
+      if (change.operationHistoryUpsert) {
+        operationHistoryDeletes.delete(change.operationHistoryUpsert.operationId);
+        operationHistoryUpserts.set(
+          change.operationHistoryUpsert.operationId,
+          clone(change.operationHistoryUpsert),
+        );
+      }
+      if (change.loroPendingUpdates) loroPendingUpdates = [...change.loroPendingUpdates];
+    }
+    const update = this.loro.exportUpdate(fromVersion);
+    const version = this.loro.versionVector();
+    return {
+      persistenceRevision: this.persistenceRevisionValue,
+      metadataSequence,
+      update,
+      version,
+      local: {
+        installationId: this.installationIdValue,
+        replicaId: this.replicaIdValue,
+        operationHistoryUpserts: [...operationHistoryUpserts.values()],
+        operationHistoryDeletes: [...operationHistoryDeletes].sort(),
+        ...(loroPendingUpdates ? { loroPendingUpdates } : {}),
+      },
+    };
+  }
+
+  acknowledgePersistenceMetadata(sequence: number): void {
+    const acknowledged = Math.max(0, Math.min(Math.trunc(sequence), this.persistenceMetadataSequenceValue));
+    this.persistenceMetadataChanges = this.persistenceMetadataChanges.filter((change) => change.sequence > acknowledged);
+  }
+
   exportReplicationUpdate(from?: Uint8Array): Uint8Array {
     this.assertReplicationIdle();
     return this.loro.exportUpdate(from);
@@ -488,7 +636,10 @@ export class Core {
   applyReplicationUpdates(updates: readonly Uint8Array[]): CoreReplicationImportResult {
     this.assertReplicationIdle();
     const importResult = this.loro.importUpdates(updates);
-    if (importResult.persistenceChanged) this.persistenceRevisionValue += 1;
+    if (importResult.persistenceChanged) {
+      this.persistenceRevisionValue += 1;
+      this.recordPersistenceMetadataChange({ loroPendingUpdates: this.loro.pendingUpdateState() });
+    }
     if (importResult.requiresFullStateDiff) {
       const after = this.loro.materializeState();
       const changedNodeIds = changedNodeIdsBetweenStates(this.stateValue, after);
@@ -3154,9 +3305,23 @@ export class Core {
     this.loro.commit(origin, entry);
     this.persistenceRevisionValue += 1;
     if (entry) {
-      this.history.record(entry);
+      const recorded = this.history.record(entry);
+      this.recordPersistenceMetadataChange({
+        operationHistoryUpsert: clone(recorded.entry),
+        operationHistoryDeletes: recorded.evictedOperationIds,
+      });
       this.loro.clearRedo();
     }
+  }
+
+  private recordPersistenceMetadataChange(
+    change: Omit<PersistenceMetadataChange, 'sequence'>,
+  ): void {
+    this.persistenceMetadataSequenceValue += 1;
+    this.persistenceMetadataChanges.push({
+      sequence: this.persistenceMetadataSequenceValue,
+      ...change,
+    });
   }
 
   private currentCommitOrigin() {
@@ -3191,7 +3356,10 @@ export class Core {
       changed.push(decorateHistoryItem(entry ?? synthesizeHistoryEntry(action, origin, before, after), stackAfter));
     }
 
-    if (changed.length > 0) this.bumpRevision([], true);
+    if (changed.length > 0) {
+      this.persistenceRevisionValue += 1;
+      this.bumpRevision([], true);
+    }
     // Undo/redo rewrites the tree without per-node touch tracking, so the
     // incremental caches cannot be patched — rebuild them from scratch.
     this.invalidateProjectionCache();
@@ -4512,6 +4680,14 @@ function parseWorkspacePersistenceEnvelope(value: unknown): WorkspacePersistence
   }
   assertWorkspaceSharedState(value.shared);
   assertWorkspaceReplicaState(value.local);
+  if (
+    value.persistenceRevision !== undefined
+    && (!Number.isSafeInteger(value.persistenceRevision) || (value.persistenceRevision as number) < 0)
+  ) throw CoreError.invalidOperation('invalid workspace persistence revision');
+  if (
+    value.persistenceMetadataSequence !== undefined
+    && (!Number.isSafeInteger(value.persistenceMetadataSequence) || (value.persistenceMetadataSequence as number) < 0)
+  ) throw CoreError.invalidOperation('invalid workspace persistence metadata sequence');
   return value as unknown as WorkspacePersistenceEnvelopeV3;
 }
 
@@ -4544,6 +4720,25 @@ function assertWorkspaceReplicaState(value: unknown): asserts value is Workspace
   ) {
     throw CoreError.invalidOperation('invalid local workspace replica state');
   }
+}
+
+function mergeWorkspaceReplicaState(
+  base: WorkspaceReplicaState,
+  deltas: readonly WorkspacePersistenceLocalDelta[],
+): WorkspaceReplicaState {
+  const byOperationId = new Map(base.operationHistory.map((entry) => [entry.operationId, clone(entry)]));
+  let pendingUpdates = [...base.loroPendingUpdates];
+  for (const delta of deltas) {
+    for (const operationId of delta.operationHistoryDeletes) byOperationId.delete(operationId);
+    for (const entry of delta.operationHistoryUpserts) byOperationId.set(entry.operationId, clone(entry));
+    if (delta.loroPendingUpdates) pendingUpdates = [...delta.loroPendingUpdates];
+  }
+  return {
+    installationId: base.installationId,
+    replicaId: base.replicaId,
+    loroPendingUpdates: pendingUpdates,
+    operationHistory: [...byOperationId.values()],
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

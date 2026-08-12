@@ -79,6 +79,78 @@ describe('Document system runtime', () => {
     expect(JSON.stringify(reloaded.getProjection())).not.toContain('publish-1');
   });
 
+  test('does not resolve a trusted transaction before its workspace revision is durable', async () => {
+    const instance = await service();
+    const saver = (instance as unknown as { workspaceSaver: {
+      scheduleSave: () => void;
+      waitForDurable: (revision?: number) => Promise<void>;
+    } }).workspaceSaver;
+    const originalWait = saver.waitForDurable.bind(saver);
+    let releaseDurability!: () => void;
+    const durabilityGate = new Promise<void>((resolve) => { releaseDurability = resolve; });
+    let requestedRevision = 0;
+    saver.waitForDurable = async (revision) => {
+      requestedRevision = revision ?? 0;
+      await durabilityGate;
+      await originalWait(revision);
+    };
+    let resolved = false;
+
+    const transaction = instance.transaction({ namespace: 'memory', operationId: 'durable-ordering' }, async (tx) => {
+      await tx.executeHostCommand('put_document_system_receipt', {
+        receipt: {
+          namespace: 'memory',
+          scopeId: 'durable-ordering',
+          operationId: 'durable-ordering',
+          generation: 1,
+          digest: 'd'.repeat(64),
+        },
+      });
+    }).then(() => { resolved = true; });
+
+    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(requestedRevision).toBeGreaterThan(0);
+    expect(resolved).toBe(false);
+
+    releaseDurability();
+    await transaction;
+    expect(resolved).toBe(true);
+    expect(instance.durablePersistenceRevision()).toBeGreaterThanOrEqual(requestedRevision);
+  });
+
+  test('keeps a committed trusted mutation visible when its durable acknowledgement fails', async () => {
+    const instance = await service();
+    const saver = (instance as unknown as { workspaceSaver: {
+      waitForDurable: (revision?: number) => Promise<void>;
+    } }).workspaceSaver;
+    const originalWait = saver.waitForDurable.bind(saver);
+    saver.waitForDurable = async () => { throw new Error('injected durable failure'); };
+    const nodeId = `node:${crypto.randomUUID()}`;
+    const events: ProjectionChangedDelivery[] = [];
+    instance.onProjectionChanged((delivery) => events.push(delivery));
+
+    try {
+      await expect(instance.transaction({
+        namespace: 'memory',
+        operationId: 'durable-failure-visibility',
+      }, async (transaction) => {
+        await transaction.executeDocumentCommand('create_node', {
+          id: nodeId,
+          parentId: instance.getProjection().todayId,
+          index: null,
+          text: 'Committed despite failed acknowledgement',
+        });
+      })).rejects.toThrow('injected durable failure');
+    } finally {
+      saver.waitForDurable = originalWait;
+    }
+
+    expect(instance.getProjection().nodes.some((node) => node.id === nodeId)).toBe(true);
+    expect(events.some((delivery) => delivery.event.update.kind === 'delta'
+      && delivery.event.update.changedNodes.some((node) => node.id === nodeId))).toBe(true);
+  });
+
   test('publishes Phase 1 Memory with canonical Node IDs through the real document service', async () => {
     const instance = await service();
     const timeline = new TimelineMemoryStore(instance);

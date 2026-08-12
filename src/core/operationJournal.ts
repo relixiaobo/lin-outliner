@@ -118,7 +118,10 @@ export class OperationJournal {
     };
   }
 
-  record(entry: OperationHistoryEntry) {
+  record(entry: OperationHistoryEntry): {
+    entry: OperationHistoryEntry;
+    evictedOperationIds: string[];
+  } {
     const existing = this.entryByOperationId.get(entry.operationId);
     if (existing) {
       applyMergedAffectedNodeSummary(existing, entry);
@@ -128,10 +131,10 @@ export class OperationJournal {
       existing.action = entry.action;
       existing.summary = entry.summary;
       existing.affectsMemory = existing.affectsMemory === true || entry.affectsMemory === true;
-      return;
+      return { entry: existing, evictedOperationIds: [] };
     }
     this.appendEntry(entry);
-    this.evictOverflow();
+    return { entry, evictedOperationIds: this.evictOverflow() };
   }
 
   findByOperationId(operationId: string): OperationHistoryEntry | undefined {
@@ -166,7 +169,8 @@ export class OperationJournal {
     this.entryByOperationId.set(entry.operationId, entry);
   }
 
-  private evictOverflow() {
+  private evictOverflow(): string[] {
+    const evictedOperationIds: string[] = [];
     while (this.entries.length > this.maxEntries) {
       const evicted = this.entries.shift();
       if (!evicted) continue;
@@ -179,8 +183,10 @@ export class OperationJournal {
       }
       if (this.entryByOperationId.get(evicted.operationId) === evicted) {
         this.entryByOperationId.delete(evicted.operationId);
+        evictedOperationIds.push(evicted.operationId);
       }
     }
+    return evictedOperationIds;
   }
 }
 

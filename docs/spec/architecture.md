@@ -141,18 +141,51 @@ A renderer may NAME an action; it may never author one. Effect plans travel
 main -> renderer only.
 
 The document service keeps command application and projection emission
-synchronous from the renderer's point of view, but it does not write the whole
-workspace snapshot after every bursty mutation. Text edits keep a 700 ms undo
-group before save, and structural mutations use the same 700 ms coalescing
-window. Starting a text edit, starting an eager-materialized row, undo/redo
-history work, explicit transactions, and app `before-quit` all flush pending
-document writes before continuing.
+synchronous from the renderer's point of view, while workspace persistence is a
+separate handoff. A changed command advances a monotonic persistence revision and
+returns at the **accepted** tier; the background `WorkspaceSaver` captures an
+incremental Loro update and appends it durably after a 700 ms idle window. A
+first-dirty max-wait of 5 seconds bounds the crash window during sustained
+typing. Structural edits, undo/redo, and the text-edit undo-group boundary use
+the same saver; they do not wait for a whole-document snapshot or file write on
+the mutation queue. Trusted document-system transactions are the explicit
+exception and await the **durable** acknowledgement before their control-plane
+commit is considered complete. Failed background writes remain dirty and retry
+with exponential backoff capped at 30 seconds; an explicit trusted-transaction,
+flush, or quit retry starts immediately.
+
+`WorkspacePersistenceStore` owns two files under `userData`: the authoritative
+`workspace.loro.json` v3 snapshot and
+`workspace.loro.updates.jsonl`. Every log header carries the SHA-256 digest of
+the snapshot it extends. The snapshot records the persistence-revision and
+local-metadata-sequence baselines. Each append contains the update bytes,
+version vector, later persistence revision, and local operation-history delta; the record is written
+and fsynced before the saver acknowledges durability. Compaction atomically
+writes a complete snapshot, fsyncs it and its parent directory, then replaces
+the log header. It is considered after 64 log records or 2 MiB (including the
+matching log loaded at startup), but the full snapshot capture waits for a real
+700 ms idle window rather than running at the sustained-typing max-wait
+checkpoint. On startup the store validates the header, replica identity, and
+monotonic metadata, then replays the matching log. A missing newline with an
+incomplete final JSON record is a recoverable torn tail; a complete but invalid
+record is corruption and fails closed. A log whose digest belongs to an older
+snapshot is ignored only when every intact record has the same replica identity
+and falls at or behind the snapshot's revision baselines; otherwise the digest
+mismatch fails closed. Replay also verifies that each imported update reaches
+the version vector recorded with that log entry.
+
+Quit is a two-phase operation. Phase 1 freezes new mutation admission, waits for
+all admissions that already passed the gate, closes any open text undo group, and
+drains to a linearizable durable-revision barrier. Retry and cancel leave all
+services live; only after the barrier holds does Phase 2 tear down auxiliary
+services and force the process exit. Concurrent quit requests share one drain
+promise and cannot run teardown twice.
 
 ## Workspace Persistence And Replication Boundary
 
 `DocumentService` atomically persists `workspace.loro.json` as a versioned v3
 envelope. The envelope separates portable workspace facts from state owned by
-one local replica while keeping both sections in one atomic save:
+one local replica while keeping both sections in one atomic snapshot:
 
 ```ts
 interface WorkspacePersistenceEnvelopeV3 {

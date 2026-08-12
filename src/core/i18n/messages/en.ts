@@ -1094,6 +1094,10 @@ export const en = {
   dialog: {
     confirm: 'Confirm',
     cancel: 'Cancel',
+    saveFailedTitle: 'Could not save workspace',
+    saveFailedDetail: 'Your latest document changes are not durable yet.',
+    retrySave: 'Retry',
+    quitAnyway: 'Quit Anyway',
   },
   timePicker: {
     title: 'Time picker',

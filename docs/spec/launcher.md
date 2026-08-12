@@ -64,6 +64,20 @@ navigation commands.
   dropped). Dev escape hatch: `LIN_LAUNCHER_NO_BLUR_HIDE=1` keeps it open while
   devtools steal focus.
 
+## Application Quit
+
+The app's `before-quit` handler uses the document service's two-phase quit
+coordinator. Phase 1 is reversible: it freezes new document mutation admission,
+waits for already-admitted work, closes the active text undo group, and drains
+the workspace saver to the latest accepted revision's durable acknowledgement.
+If the drain fails or times out, the native dialog offers Retry, Quit Anyway, or
+Cancel. Cancel restores mutation admission and leaves the launcher and all
+auxiliary services running; Quit Anyway proceeds with admission frozen. Only a
+successful barrier (or an explicit Quit Anyway choice) enters Phase 2, where the
+global hotkey and auxiliary services are torn down and the process exits. A
+second quit request while a drain is in flight shares that request and cannot
+duplicate teardown.
+
 ## Security posture (A3 — must not regress)
 
 - Launcher `webPreferences`: `contextIsolation: true`, `sandbox: true`,

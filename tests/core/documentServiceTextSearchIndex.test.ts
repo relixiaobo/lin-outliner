@@ -131,6 +131,113 @@ describe('DocumentService text search index', () => {
     await service.flushPendingChanges();
   });
 
+  test('updates the text-search node map in place without cloning the document map', async () => {
+    const service = await createService();
+    const target = service as unknown as { textSearchNodes: Map<string, unknown> };
+    const nodes = target.textSearchNodes;
+    const rootId = service.getProjection().rootId;
+
+    const created = focusNodeId(await service.handle('create_node', {
+      parentId: rootId,
+      index: null,
+      text: 'Map identity row',
+    }));
+    expect(target.textSearchNodes).toBe(nodes);
+
+    await service.handle('apply_node_text_patch', {
+      nodeId: created,
+      patch: replaceAllRichTextPatch(plainText('Map identity changed')),
+    });
+    expect(target.textSearchNodes).toBe(nodes);
+    expect(await searchNodeIds(service, 'map identity changed')).toContain(created);
+  });
+
+  test('removes and restores every descendant when a subtree crosses Trash', async () => {
+    const service = await createService();
+    const rootId = service.getProjection().rootId;
+    const parentId = focusNodeId(await service.handle('create_node', {
+      parentId: rootId,
+      index: null,
+      text: 'Trash parent needle',
+    }));
+    const childId = focusNodeId(await service.handle('create_node', {
+      parentId,
+      index: null,
+      text: 'Trash child needle',
+    }));
+
+    await service.handle('trash_node', { nodeId: parentId });
+    expect(await searchNodeIds(service, 'trash child needle')).not.toContain(childId);
+
+    await service.handle('restore_node', { nodeId: parentId });
+    expect(await searchNodeIds(service, 'trash child needle')).toContain(childId);
+  });
+
+  test('prunes descendants when a parent is deleted in the same sparse delta', async () => {
+    const service = await createService();
+    const rootId = service.getProjection().rootId;
+    const parentId = focusNodeId(await service.handle('create_node', {
+      parentId: rootId,
+      index: null,
+      text: 'Deleted parent needle',
+    }));
+    const childId = focusNodeId(await service.handle('create_node', {
+      parentId,
+      index: null,
+      text: 'Deleted child needle',
+    }));
+
+    await service.handle('delete_node', { nodeId: parentId });
+
+    expect(await searchNodeIds(service, 'deleted parent needle')).not.toContain(parentId);
+    expect(await searchNodeIds(service, 'deleted child needle')).not.toContain(childId);
+  });
+
+  test('refreshes tag, field, and reference dependents when definitions or targets change', async () => {
+    const service = await createService();
+    const rootId = service.getProjection().rootId;
+    const ownerId = focusNodeId(await service.handle('create_node', {
+      parentId: rootId,
+      index: null,
+      text: 'Dependency owner',
+    }));
+    const tagId = focusNodeId(await service.handle('create_tag', { name: 'Original tag label' }));
+    await service.handle('apply_tag', { nodeId: ownerId, tagId });
+    const fieldEntryId = focusNodeId(await service.handle('create_inline_field', {
+      parentId: ownerId,
+      index: null,
+      name: 'Original field label',
+      fieldType: 'plain',
+    }));
+    const fieldDefId = service.getProjection().nodes.find((node) => node.id === fieldEntryId)!.fieldDefId!;
+    const referenceTargetId = focusNodeId(await service.handle('create_node', {
+      parentId: rootId,
+      index: null,
+      text: 'Original reference label',
+    }));
+    await service.handle('add_reference', { parentId: fieldEntryId, targetId: referenceTargetId, index: null });
+
+    await service.handle('apply_node_text_patch', {
+      nodeId: tagId,
+      patch: replaceAllRichTextPatch(plainText('Renamed tag label')),
+    });
+    await service.handle('apply_node_text_patch', {
+      nodeId: fieldDefId,
+      patch: replaceAllRichTextPatch(plainText('Renamed field label')),
+    });
+    await service.handle('apply_node_text_patch', {
+      nodeId: referenceTargetId,
+      patch: replaceAllRichTextPatch(plainText('Renamed reference label')),
+    });
+
+    expect(await searchNodeIds(service, 'renamed tag label')).toContain(ownerId);
+    expect(await searchNodeIds(service, 'renamed field label')).toContain(ownerId);
+    expect(await searchNodeIds(service, 'renamed reference label')).toContain(ownerId);
+    expect(await searchNodeIds(service, 'original tag label')).not.toContain(ownerId);
+    expect(await searchNodeIds(service, 'original field label')).not.toContain(ownerId);
+    expect(await searchNodeIds(service, 'original reference label')).not.toContain(ownerId);
+  });
+
   test('coalesces bursty structural saves until flush', async () => {
     const service = await createService();
     const saveCount = countCoreSaves(service);
@@ -146,6 +253,37 @@ describe('DocumentService text search index', () => {
     expect(saveCount()).toBe(1);
     expect(await searchNodeIds(service, 'first structural write')).toHaveLength(1);
     expect(await searchNodeIds(service, 'second structural write')).toHaveLength(1);
+  });
+
+  test('drain waits for a mutation already admitted through the coordinator gate', async () => {
+    const service = await createService();
+    const rootId = service.getProjection().rootId;
+    let releaseGate!: () => void;
+    let signalAdmitted!: () => void;
+    const gate = new Promise<void>((resolve) => { releaseGate = resolve; });
+    const admitted = new Promise<void>((resolve) => { signalAdmitted = resolve; });
+    service.setMutationCoordinator(async (_meta, operation) => {
+      signalAdmitted();
+      await gate;
+      return operation();
+    });
+
+    const mutation = service.handle('create_node', {
+      parentId: rootId,
+      index: null,
+      text: 'Admission drain row',
+    });
+    await admitted;
+    service.freezeMutationAdmission();
+    let drained = false;
+    const drain = service.drainPersistenceForQuit().then(() => { drained = true; });
+    await Promise.resolve();
+    expect(drained).toBe(false);
+
+    releaseGate();
+    await mutation;
+    await drain;
+    expect(service.durablePersistenceRevision()).toBe(service.latestAcceptedPersistenceRevision());
   });
 
   test('uses indexed relevance when materializing saved searches inside agent transactions', async () => {
@@ -207,6 +345,54 @@ describe('DocumentService text search index', () => {
     expect(undo.count).toBe(1);
     expect(service.getProjection().nodes.some((node) => node.id === rootId)).toBe(false);
     expect(await searchNodeIds(service, 'imported beta')).toEqual([]);
+  });
+
+  test('keeps the previous search generation readable during a yielding refresh', async () => {
+    const service = await createService();
+    const todayId = service.getProjection().todayId;
+    const existingId = focusNodeId(await service.handle('create_node', {
+      parentId: todayId,
+      index: null,
+      text: 'Existing generation marker',
+    }));
+    const target = service as unknown as {
+      refreshTextSearchIndexFromCoreDeltaYielding: (options?: {
+        yieldEveryNodes?: number;
+        yield?: () => Promise<void>;
+      }) => Promise<void>;
+    };
+    const originalRefresh = target.refreshTextSearchIndexFromCoreDeltaYielding.bind(service);
+    let releaseRefresh!: () => void;
+    let signalRefresh!: () => void;
+    const blocked = new Promise<void>((resolve) => { releaseRefresh = resolve; });
+    const reached = new Promise<void>((resolve) => { signalRefresh = resolve; });
+    let firstYield = true;
+    target.refreshTextSearchIndexFromCoreDeltaYielding = (options = {}) => originalRefresh({
+      ...options,
+      yieldEveryNodes: 1,
+      yield: async () => {
+        if (!firstYield) return;
+        firstYield = false;
+        signalRefresh();
+        await blocked;
+      },
+    });
+
+    const importTask = service.createNodesFromTreeYielding(todayId, [{
+      content: plainText('Hidden working generation marker'),
+      children: [],
+    }], { origin: 'agent', tool: 'tenon-import', summary: 'Imported atomically.' }, {
+      yieldEveryNodes: 100,
+      commitEveryNodes: 100,
+    });
+    await reached;
+
+    expect(await searchNodeIds(service, 'existing generation marker')).toContain(existingId);
+    expect(await searchNodeIds(service, 'hidden working generation marker')).toEqual([]);
+
+    releaseRefresh();
+    await importTask;
+    expect(await searchNodeIds(service, 'hidden working generation marker')).toHaveLength(1);
   });
 
   test('rebuilds the text index when core revision deltas skip ahead', async () => {
