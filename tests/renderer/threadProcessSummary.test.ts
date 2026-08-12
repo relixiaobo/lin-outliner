@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { ThreadItem, Turn } from '../../src/core/agent/protocol';
+import type { AgentTaskToolName, ThreadItem, Turn } from '../../src/core/agent/protocol';
 import { en } from '../../src/core/i18n';
 import {
   groupTurnContent,
@@ -13,36 +13,36 @@ import {
 import type { DocumentIndex } from '../../src/renderer/state/document';
 
 describe('active Turn process summary', () => {
-  test('names wait_agent as the only live bottleneck with a distinct child count', () => {
-    const wait = collaboration('wait', 'wait_agent');
+  test('does not infer waiting from live Agent projections', () => {
+    const launch = collaboration('launch', 'agent');
     const projection = subagents(['child-a', 'child-b']);
 
-    expect(threadProcessSummary(turn([wait]), [wait], false, 5_000, en, emptyIndex(), projection))
-      .toBe('Waiting on 2 subagents · 5s');
+    expect(threadProcessSummary(turn([launch]), [launch], false, 5_000, en, emptyIndex(), projection))
+      .toBe('Working for 5s');
   });
 
-  test('keeps the generic summary when another tool is still in progress', () => {
-    const wait = collaboration('wait', 'wait_agent');
-    const list = collaboration('list', 'list_agents');
-    const items = [wait, list];
+  test('keeps the generic summary while Agent messaging is in progress', () => {
+    const launch = collaboration('launch', 'agent');
+    const message = collaboration('message', 'agent_message');
+    const items = [launch, message];
 
     expect(threadProcessSummary(turn(items), items, false, 5_000, en, emptyIndex(), subagents(['child-a'])))
       .toBe('Working for 5s');
   });
 
-  test('does not count a live isolated Skill child as something the wait is waiting for', () => {
-    const wait = collaboration('wait', 'wait_agent');
-    const projection = subagents(['child-a'], ['skill-child']);
+  test('only an explicit user-input block replaces the active work summary', () => {
+    const message = collaboration('message', 'agent_message');
 
-    expect(threadProcessSummary(turn([wait]), [wait], false, 5_000, en, emptyIndex(), projection))
-      .toBe('Waiting on 1 subagent · 5s');
-  });
-
-  test('does not claim to wait on a child after every projected child becomes terminal', () => {
-    const wait = collaboration('wait', 'wait_agent');
-
-    expect(threadProcessSummary(turn([wait]), [wait], false, 5_000, en, emptyIndex(), subagents([])))
-      .toBe('Working for 5s');
+    expect(threadProcessSummary(
+      turn([message]),
+      [message],
+      false,
+      5_000,
+      en,
+      emptyIndex(),
+      subagents(['child-a'], ['skill-child']),
+      true,
+    )).toBe('Waiting for input');
   });
 });
 
@@ -114,7 +114,7 @@ function turn(items: readonly ThreadItem[]): Turn {
 
 function collaboration(
   id: string,
-  tool: 'wait_agent' | 'list_agents',
+  tool: AgentTaskToolName,
 ): Extract<ThreadItem, { type: 'collabAgentToolCall' }> {
   return {
     id,
@@ -182,6 +182,7 @@ function subagents(
     byThreadId.set(threadId, {
       agentThreadId: threadId,
       displayName: threadId,
+      durationMs: null,
       error: null,
       form: skillThreadIds.includes(threadId) ? 'isolatedSkill' : 'collaboration',
       nickname: null,

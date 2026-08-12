@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Thread, ThreadId, Turn } from '../../../core/agent/protocol';
+import type { RendererUserViewHints, Thread, ThreadId, Turn } from '../../../core/agent/protocol';
 import type { DocumentIndex } from '../../state/document';
 import { useT } from '../../i18n/I18nProvider';
 import { AgentIcon, BackIcon, ICON_SIZE, SkillIcon, StopIcon } from '../../ui/icons';
@@ -35,12 +35,14 @@ export function SubagentRunDetail({
   onOpenNodeReference,
   onOpenTurnDetails,
   rootThreadId,
+  userView,
 }: {
   readonly index: DocumentIndex;
   readonly onInterruptThread?: (threadId: string) => Promise<void>;
   readonly onOpenNodeReference: ThreadNodeReferenceOpenHandler;
   readonly onOpenTurnDetails?: (threadId: string, turnId: string) => void;
   readonly rootThreadId: ThreadId;
+  readonly userView: RendererUserViewHints;
 }) {
   const t = useT();
   const snapshot = useThreadStore();
@@ -88,6 +90,7 @@ export function SubagentRunDetail({
   const turns = snapshot.turnsByThread.get(threadId);
   const name = subagentName(thread, t.agent.thread.untitled);
   const FormIcon = thread?.source === 'agent.skill' ? SkillIcon : AgentIcon;
+  const agentComposerEnabled = thread?.source === 'collaboration';
   const running = thread?.status.type === 'active';
 
   return (
@@ -132,11 +135,9 @@ export function SubagentRunDetail({
       ) : (
         <div className="thread-subagent-detail-body" key={threadId}>
           <ThreadView
-            // Read-only by contract: a child is driven by its parent, and user
-            // control on it is interrupt-only.
-            composerEnabled={false}
+            composerEnabled={agentComposerEnabled}
             composerFocusToken={0}
-            configuration={snapshot.configurationsByThread.get(threadId) ?? null}
+            configuration={null}
             goal={snapshot.goalsByThread.get(threadId) ?? null}
             index={index}
             inputRequest={null}
@@ -146,7 +147,7 @@ export function SubagentRunDetail({
             onContinueInNewChat={noop}
             onCreateThread={noFallback}
             onEditUserMessage={noop}
-            onInterrupt={noop}
+            onInterrupt={() => threadStore.interruptThread(threadId)}
             {...(onInterruptThread ? { onInterruptThread } : { onInterruptThread: noop })}
             onOpenNodeReference={onOpenNodeReference}
             // Every route to a grandchild swaps these contents: the delegation
@@ -158,12 +159,12 @@ export function SubagentRunDetail({
             onOpenTurnDetails={(turn: Turn) => onOpenTurnDetails?.(threadId, turn.id)}
             onReadToolArguments={(turnId, item) => threadStore.readToolArguments(threadId, turnId, item)}
             onReadToolOutput={(turnId, item) => threadStore.readItemOutput(threadId, turnId, item)}
-            onSend={noSend}
+            onSend={(content) => threadStore.sendToThread(threadId, content, userView)}
             onSubmitUserInput={noop}
             plan={snapshot.planByThread.get(threadId) ?? null}
             providerRetry={snapshot.providerRetryByThread.get(threadId) ?? null}
             providerSettings={null}
-            providerSettingsLoaded
+            providerSettingsLoaded={false}
             slashCommands={[]}
             threadCreationBlocked
             threadCreationPending={false}
@@ -172,19 +173,19 @@ export function SubagentRunDetail({
             threadModelProvider={thread.modelProvider}
             threadsById={threadsById}
             turns={turns}
+            userView={userView}
             waitingOnUserInput={false}
           />
         </div>
       )}
-      {/* Where a composer would be. Not an input: the sentence explains the
-          absence rather than leaving a reader to wonder why they cannot type. */}
-      <p className="thread-subagent-detail-note">{t.agent.thread.subagentReadOnly}</p>
+      {agentComposerEnabled ? null : (
+        <p className="thread-subagent-detail-note">{t.agent.thread.subagentReadOnly}</p>
+      )}
     </div>
   );
 }
 
 async function noop(): Promise<void> { return undefined; }
-async function noSend(): Promise<null> { return null; }
 async function noFallback(): Promise<boolean> { return false; }
 
 function errorMessage(error: unknown): string {

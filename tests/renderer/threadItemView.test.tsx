@@ -77,6 +77,34 @@ describe('ThreadItemView user message presentation', () => {
     ]);
     expect(narrative?.textContent).toBe('Compare first.png notes.pdf second.png with the notes.');
   });
+
+  test('renders a host-authored user-role Item as a copyable Agent event even when edit is offered', async () => {
+    const item: UserMessageThreadItem = {
+      id: 'message-host-event',
+      provenance: {
+        originThreadId: 'thread-child',
+        originTurnId: 'turn-child',
+        originItemId: 'message-host-event',
+      },
+      type: 'userMessage',
+      clientId: null,
+      content: [{ type: 'text', text: 'Investigate the deployment story.' }],
+      acceptedAt: 1,
+    };
+    const rendered = renderItem(item, {
+      canEditUserMessage: true,
+      hostAuthoredEvent: true,
+      showMessageActions: true,
+    });
+    await flush();
+
+    expect(rendered.document.querySelector('.thread-host-event')?.textContent)
+      .toContain('Agent event');
+    expect(rendered.document.querySelector('.thread-host-event')?.textContent)
+      .toContain('Investigate the deployment story.');
+    expect(rendered.document.querySelector('[aria-label="Edit message"]')).toBeNull();
+    expect(rendered.document.querySelector('[aria-label="Copy message"]')).not.toBeNull();
+  });
 });
 
 describe('ThreadItemView reasoning presentation', () => {
@@ -616,11 +644,11 @@ describe('ThreadItemView tool row status presentation', () => {
       ...base('collab-1'),
       type: 'collabAgentToolCall',
       status: 'failed',
-      tool: 'spawn_agent',
+      tool: 'agent',
       arguments: { prompt: 'investigate' },
       receiverThreadIds: [],
       agentsStates: {},
-      modelCall: replayableModelCall('spawn_agent', { prompt: 'investigate' }),
+      modelCall: replayableModelCall('agent', { prompt: 'investigate' }),
     };
     const rendered = renderItem(item, { expanded: true });
     await flush();
@@ -915,7 +943,7 @@ describe('ThreadItemView Subagent status presentation', () => {
     const item: ThreadItem = {
       ...base('collaboration-state'),
       type: 'collabAgentToolCall',
-      tool: 'spawn_agent',
+      tool: 'agent',
       status: 'completed',
       outputRef: {
         id: 'c'.repeat(64),
@@ -936,10 +964,10 @@ describe('ThreadItemView Subagent status presentation', () => {
           role: 'worker',
         },
       },
-      modelCall: replayableModelCall('collaboration__spawn_agent', {
-        task_name: 'research',
-        message: 'Research the issue',
-        fork_turns: 'all',
+      modelCall: replayableModelCall('agent', {
+        description: 'Research deployment',
+        prompt: 'Research the issue',
+        subagent_type: 'general-purpose',
       }),
     };
     const rendered = renderItem(item, {
@@ -1064,9 +1092,11 @@ function renderGroup(items: readonly ThreadToolItem[]): { readonly document: Doc
 }
 
 interface RenderItemOptions {
+  readonly canEditUserMessage?: boolean;
   readonly expanded?: boolean;
   readonly expandState?: ThreadDisclosureState;
   readonly holdAnchorUntilSettled?: ThreadDisclosureState['holdAnchorUntilSettled'];
+  readonly hostAuthoredEvent?: boolean;
   readonly onReasoningResizeObserver?: () => void;
   readonly onReadToolOutput?: (item: ThreadToolItem) => Promise<string | null>;
   readonly onReadToolArguments?: (item: ThreadToolItem) => Promise<import('../../src/core/agent/protocol').JsonValue | null>;
@@ -1076,6 +1106,7 @@ interface RenderItemOptions {
   };
   readonly onInterruptThread?: (threadId: string) => Promise<void>;
   readonly streaming?: boolean;
+  readonly showMessageActions?: boolean;
   readonly subagents?: ReadonlyMap<string, SubagentPresentation>;
 }
 
@@ -1092,12 +1123,15 @@ function renderItem(item: ThreadItem, options: RenderItemOptions = {}): {
       <ThreadItemProbe
         expandState={next.expandState ?? options.expandState}
         holdAnchorUntilSettled={next.holdAnchorUntilSettled ?? options.holdAnchorUntilSettled ?? (() => null)}
+        canEditUserMessage={next.canEditUserMessage ?? options.canEditUserMessage ?? false}
+        hostAuthoredEvent={next.hostAuthoredEvent ?? options.hostAuthoredEvent ?? false}
         initiallyExpanded={(next.expanded ?? options.expanded) === true}
         item={nextItem}
         onInterruptThread={options.onInterruptThread}
         onReadToolArguments={onReadToolArguments}
         onReadToolOutput={onReadToolOutput}
         streaming={(next.streaming ?? options.streaming) === true}
+        showMessageActions={next.showMessageActions ?? options.showMessageActions ?? false}
         subagents={options.subagents}
       />
     </I18nProvider>,
@@ -1179,29 +1213,35 @@ function installDom(options: RenderItemOptions = {}): {
 function ThreadItemProbe({
   expandState,
   holdAnchorUntilSettled,
+  canEditUserMessage,
+  hostAuthoredEvent,
   initiallyExpanded,
   item,
   onReadToolOutput,
   onReadToolArguments,
   streaming,
+  showMessageActions,
   subagents,
   onInterruptThread,
 }: {
   readonly expandState?: ThreadDisclosureState;
   readonly holdAnchorUntilSettled: ThreadDisclosureState['holdAnchorUntilSettled'];
+  readonly canEditUserMessage: boolean;
+  readonly hostAuthoredEvent: boolean;
   readonly initiallyExpanded: boolean;
   readonly item: ThreadItem;
   readonly onReadToolOutput: (item: ThreadToolItem) => Promise<string | null>;
   readonly onReadToolArguments: (item: ThreadToolItem) => Promise<import('../../src/core/agent/protocol').JsonValue | null>;
   readonly onInterruptThread?: (threadId: string) => Promise<void>;
   readonly streaming: boolean;
+  readonly showMessageActions: boolean;
   readonly subagents?: ReadonlyMap<string, SubagentPresentation>;
 }) {
   const [expanded, setExpanded] = useState(initiallyExpanded);
   return (
     <ThreadItemView
       agentResponseTail={null}
-      canEditUserMessage={false}
+      canEditUserMessage={canEditUserMessage}
       defaultReasoningExpanded={false}
       expandState={expandState ?? {
         captureAnchor: () => undefined,
@@ -1212,17 +1252,27 @@ function ThreadItemProbe({
       }}
       index={buildIndex(emptyProjection())}
       item={item}
+      hostAuthoredEvent={hostAuthoredEvent}
       onEditUserMessage={async () => undefined}
       onInterruptThread={onInterruptThread}
       onOpenNodeReference={() => undefined}
       onOpenThread={async () => undefined}
       onReadToolArguments={onReadToolArguments}
       onReadToolOutput={onReadToolOutput}
-      showMessageActions={false}
+      showMessageActions={showMessageActions}
       streaming={streaming}
       subagents={subagents}
       threadCwd="/workspace"
       threadId="thread-1"
+      userView={{
+        activePanelId: null,
+        focusedPanelId: null,
+        focusSurface: null,
+        focusedNodeId: null,
+        selectedNodeIds: [],
+        panels: [],
+        truncated: false,
+      }}
     />
   );
 }

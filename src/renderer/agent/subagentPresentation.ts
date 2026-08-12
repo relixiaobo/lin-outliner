@@ -14,12 +14,8 @@ import { userFacingAgentErrorRecord } from './threadErrorMessage';
 
 export type SubagentPresentationStatus = SubagentExecutionStatus | 'idle';
 
-/**
- * Which delegated form a row describes. Every form is shown as process, but only
- * collaboration children are what `wait_agent` waits on and what a collaboration
- * tool row is accountable for — counting an isolated Skill child there would
- * describe work the parent is not actually waiting on.
- */
+/** Which delegated form a row describes. Both render as process, but only an
+ * Agent is addressable and resumable; an isolated Skill remains read-only. */
 export type SubagentDelegationForm = 'collaboration' | 'isolatedSkill';
 
 export interface SubagentPresentation {
@@ -44,11 +40,7 @@ export interface SubagentPresentation {
 export interface SubagentTurnProjection {
   readonly activeThreadIds: readonly ThreadId[];
   readonly byThreadId: ReadonlyMap<ThreadId, SubagentPresentation>;
-  /**
-   * The children a wait blocks on and a collaboration tool row is accountable
-   * for. Derived once here: every consumer that re-derived it would have to be
-   * found again when a third delegation form appears.
-   */
+  /** The Agent children that model-visible Agent task calls are accountable for. */
   readonly collaborationThreadIds: readonly ThreadId[];
   readonly items: readonly ThreadItem[];
 }
@@ -91,22 +83,6 @@ export function projectSubagentsForTurn(
     for (const [threadId, state] of Object.entries(item.agentsStates)) {
       relatedThreadIds.add(threadId);
       snapshots.set(threadId, mergeSnapshot(snapshots.get(threadId), state));
-    }
-  }
-
-  const waitingForSubagents = turn.items.some((item) => (
-    item.type === 'collabAgentToolCall'
-    && item.tool === 'wait_agent'
-    && item.status === 'inProgress'
-  ));
-  if (waitingForSubagents) {
-    for (const thread of threadsById.values()) {
-      // Only collaboration children: a wait is never blocked on an isolated
-      // Skill child, so pulling one in here would inflate what the parent
-      // claims to be waiting for.
-      if (thread.parentThreadId === turn.provenance.originThreadId && thread.source === 'collaboration') {
-        relatedThreadIds.add(thread.id);
-      }
     }
   }
 
@@ -196,11 +172,7 @@ function delegationCollapsedItems(
   return items;
 }
 
-/**
- * The children a wait blocks on and a collaboration tool row is accountable
- * for. One definition, because a consumer that re-derives it is a consumer that
- * has to be found again when a third delegation form appears.
- */
+/** Agent children a model-visible Agent task call is accountable for. */
 export function collaborationThreadIds(
   byThreadId: ReadonlyMap<ThreadId, SubagentPresentation>,
 ): readonly ThreadId[] {
@@ -358,9 +330,8 @@ function disambiguateDisplayNames(byThreadId: Map<ThreadId, SubagentPresentation
 /**
  * The child Thread's own `source` decides the form. When the record is gone the
  * address is the only surviving evidence, and reading it beats the previous
- * unconditional `collaboration`: that made a deleted Skill child count into
- * `collaborationThreadIds`, inflating `Waiting on N subagents` with work no
- * wait was ever blocked on.
+ * unconditional `collaboration`: that made a deleted Skill child count as an
+ * addressable Agent even though it has no Agent resume semantics.
  *
  * Shape is evidence, not proof — a model-chosen collaboration `task_name` could
  * coincide with it — which is exactly why a live record always wins.
@@ -405,8 +376,8 @@ function mergeSnapshot(
  * to the recorded Skill name (or, with no record left, to the slug alone).
  * Gated on the resolved FORM rather than on the address shape: a collaboration
  * child whose model-chosen `task_name` happens to look like the address keeps
- * its task name, which is the identity `list_agents` and `send_message` use and
- * therefore the only one a reader can correlate a row with.
+ * its task name, which remains the only identity a reader can correlate with
+ * the recorded delegation.
  */
 function subagentDisplayName(
   taskPath: string | null,

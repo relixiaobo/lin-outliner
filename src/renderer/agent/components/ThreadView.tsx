@@ -27,6 +27,7 @@ import type {
   RequestUserInputRequest,
   JsonValue,
   ProviderRetryStatus,
+  RendererUserViewHints,
   ThreadAttachmentContent,
   ThreadConfigurationSummary,
   Thread,
@@ -168,6 +169,7 @@ interface ThreadViewProps {
   readonly onReadToolArguments: (turnId: string, item: ThreadToolItem) => Promise<JsonValue | null>;
   readonly onSend: (content: readonly ThreadUserContent[]) => Promise<Turn | null>;
   readonly onSubmitUserInput: (answers: readonly RequestUserInputAnswer[]) => Promise<void>;
+  readonly userView: RendererUserViewHints;
 }
 
 const MAX_ATTACHMENTS = 6;
@@ -460,6 +462,7 @@ export function ThreadView({
   onReadToolOutput,
   onSend,
   onSubmitUserInput,
+  userView,
 }: ThreadViewProps) {
   const t = useT();
   const waitingForInput = Boolean(inputRequest);
@@ -1670,7 +1673,8 @@ export function ThreadView({
                     >
                       <ThreadTurnView
                         onInterruptThread={onInterruptThread}
-                        canEditUserMessage={composerEnabled
+                        canEditUserMessage={onSubagentDrill === undefined
+                          && composerEnabled
                           && turn.id === editableTurnId
                           && turn.status !== 'inProgress'}
                         composerEnabled={composerEnabled}
@@ -1693,6 +1697,7 @@ export function ThreadView({
                         threadsById={threadsById}
                         latestTurnByThread={latestTurnByThread}
                         turn={turn}
+                        userView={userView}
                         waitingOnUserInput={waitingOnUserInput}
                       />
                     </ThreadTranscriptTurnShell>
@@ -1751,7 +1756,12 @@ export function ThreadView({
           onDragOver={handleDragOver}
           onDrop={handleDrop}
         >
-          {inputRequest ? <UserInputRequest onSubmit={onSubmitUserInput} request={inputRequest} /> : null}
+          {inputRequest ? (
+            <UserInputRequest
+              onSubmit={onSubmitUserInput}
+              request={inputRequest}
+            />
+          ) : null}
           <div className="thread-composer-main" hidden={waitingForInput}>
               {dragActive ? <div className="thread-composer-drop-overlay">{t.agent.thread.dropFilesToAttach}</div> : null}
               {error ? <p className="thread-inline-error" role="status">{error}</p> : null}
@@ -1783,7 +1793,7 @@ export function ThreadView({
               <ThreadComposerEditor
                 allowFileReferences={!activeTurn && !providerBlocksSend && !waitingForInput && !threadCreationPending}
                 allowNodeReferences={!waitingForInput && !threadCreationPending}
-                allowSlashCommands
+                allowSlashCommands={slashCommands.length > 0}
                 currentNodeId={null}
                 disabled={waitingForInput || threadCreationPending}
                 index={index}
@@ -1946,6 +1956,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
   threadsById,
   latestTurnByThread,
   turn,
+  userView,
   waitingOnUserInput,
 }: {
   readonly canEditUserMessage: boolean;
@@ -1977,6 +1988,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
   readonly threadsById: ReadonlyMap<ThreadId, Thread>;
   readonly latestTurnByThread: ReadonlyMap<ThreadId, Turn>;
   readonly turn: Turn;
+  readonly userView: RendererUserViewHints;
   readonly waitingOnUserInput: boolean;
 }) {
   const t = useT();
@@ -1996,6 +2008,8 @@ const ThreadTurnView = memo(function ThreadTurnView({
   };
   const standaloneContextBoundary = turn.status !== 'inProgress'
     && isStandaloneContextBoundaryTurn(turn);
+  const hostAuthoredEvent = turn.provenance.trigger.kind === 'subagent'
+    && turn.provenance.originThreadId === threadId;
   const subagents = useMemo(
     () => projectSubagentsForTurn(turn, threadsById, latestTurnByThread),
     [latestTurnByThread, threadsById, turn],
@@ -2032,15 +2046,16 @@ const ThreadTurnView = memo(function ThreadTurnView({
   }, [readToolArguments, readToolOutput, t.agent.thread.resourceLimitReached, turn]);
   const handleResponseContextMenu = useCallback(async (event: MouseEvent<HTMLElement>) => {
     event.preventDefault();
+    const canContinueInNewChat = onSubagentDrill === undefined;
     const action = await window.lin?.showThreadMessageContextMenu?.({
       canCopy: hasTurnCopyContent(turn),
-      canContinueInNewChat: true,
+      canContinueInNewChat,
       canShowDetails: true,
     });
     if (action === 'copy') await copyTurn();
     else if (action === 'continueInNewChat') await continueInNewChat();
     else if (action === 'details') onOpenTurnDetails(turn);
-  }, [continueInNewChat, copyTurn, onOpenTurnDetails, turn]);
+  }, [continueInNewChat, copyTurn, onOpenTurnDetails, onSubagentDrill, turn]);
   /**
    * Running the same request again, for a Turn where that could go differently.
    *
@@ -2058,10 +2073,14 @@ const ThreadTurnView = memo(function ThreadTurnView({
     // The same condition the composer uses: rollback is available only on a
     // persistent root user Thread, so anywhere the user cannot type they must
     // not be offered a button that can only fail.
-    if (!composerEnabled || !isLastTurn || !isRetryableTurn(turn)) return null;
+    if (hostAuthoredEvent
+      || onSubagentDrill !== undefined
+      || !composerEnabled
+      || !isLastTurn
+      || !isRetryableTurn(turn)) return null;
     const request = turn.items.find((item) => item.type === 'userMessage');
     return request?.content ?? null;
-  }, [composerEnabled, isLastTurn, turn]);
+  }, [composerEnabled, hostAuthoredEvent, isLastTurn, onSubagentDrill, turn]);
   const responseTail = standaloneContextBoundary ? null : (
     <ThreadResponseTail
       canContinueInNewChat={onSubagentDrill === undefined}
@@ -2084,6 +2103,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
       expandState={expandState}
       index={index}
       item={item}
+      hostAuthoredEvent={hostAuthoredEvent}
       key={item.id}
       onAgentMessageContextMenu={item.id === responseItem?.id ? handleResponseContextMenu : undefined}
       onEditUserMessage={editUserMessage}
@@ -2100,6 +2120,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
       subagents={subagents.byThreadId}
       threadId={threadId}
       threadCwd={threadCwd}
+      userView={userView}
     />
   );
   return (
@@ -2136,7 +2157,10 @@ const ThreadTurnView = memo(function ThreadTurnView({
           );
         }
         const item = block.item;
-        return renderItem(item, turn.status !== 'inProgress' && item.type === 'userMessage');
+        return renderItem(
+          item,
+          turn.status !== 'inProgress' && item.type === 'userMessage',
+        );
       })}
       {responseItem === null && responseTail ? (
         <article
@@ -2538,7 +2562,8 @@ function findActiveTurn(turns: readonly Turn[]): Turn | null {
 function latestUserMessageTurnId(turns: readonly Turn[]): string | null {
   for (let index = turns.length - 1; index >= 0; index -= 1) {
     const turn = turns[index];
-    if (turn?.items.some((item) => item.type === 'userMessage')) return turn.id;
+    if (turn?.provenance.trigger.kind === 'user'
+      && turn.items.some((item) => item.type === 'userMessage')) return turn.id;
   }
   return null;
 }
@@ -2678,15 +2703,6 @@ export function threadProcessSummary(
   // label: "Working for 4m" while the run waits on an answer is a lie.
   if (blockedOnUser) return t.agent.thread.waitingOnUserInput;
   if (turn.status === 'inProgress') {
-    const waitingCount = waitingSubagentCount(items, subagents);
-    if (waitingCount > 0) {
-      return liveElapsedMs !== null && liveElapsedMs >= 1_000
-        ? t.agent.thread.waitingOnSubagentsFor({
-            count: waitingCount,
-            duration: formatProcessDuration(liveElapsedMs),
-          })
-        : t.agent.thread.waitingOnSubagents({ count: waitingCount });
-    }
     return liveElapsedMs !== null && liveElapsedMs >= 1_000
       ? t.agent.thread.workingFor({ duration: formatProcessDuration(liveElapsedMs) })
       : t.agent.thread.working;
@@ -2734,22 +2750,6 @@ function threadProcessNeutralHeader(
       : t.agent.thread.worked;
   }
   return t.agent.thread.working;
-}
-
-function waitingSubagentCount(
-  items: readonly ThreadItem[],
-  subagents: SubagentTurnProjection,
-): number {
-  const inProgressTools = items.filter((item): item is ThreadToolItem => (
-    isThreadToolItem(item) && item.status === 'inProgress'
-  ));
-  if (inProgressTools.length === 0 || inProgressTools.some((item) => (
-    item.type !== 'collabAgentToolCall' || item.tool !== 'wait_agent'
-  ))) return 0;
-  // A wait blocks on collaboration children only; a live isolated Skill child is
-  // delegated work in the same Turn, but not work this wait is waiting for.
-  const collaboration = new Set(subagents.collaborationThreadIds);
-  return subagents.activeThreadIds.filter((threadId) => collaboration.has(threadId)).length;
 }
 
 function firstProcessLine(value: string): string {

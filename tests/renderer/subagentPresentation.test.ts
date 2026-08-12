@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type {
+  AgentTaskToolName,
   SubAgentActivityThreadItem,
   SubagentExecutionState,
   Thread,
@@ -45,7 +46,7 @@ describe('Subagent parent-Turn presentation projection', () => {
   });
 
   test('uses a current child completion immediately, but renders an older completed child as idle', () => {
-    const turn = parentTurn([collaborationItem('list', 'list_agents', 'completed', CHILD_ID)], 100);
+    const turn = parentTurn([collaborationItem('message', 'agent_message', 'completed', CHILD_ID)], 100);
     const idleChild = childThread({ type: 'idle' });
     const completedNow = childTurn('child-current', 'completed', 120, 'older-parent-item', 180);
     const completedBefore = childTurn('child-old', 'completed', 20, 'older-parent-item', 80);
@@ -63,7 +64,7 @@ describe('Subagent parent-Turn presentation projection', () => {
   });
 
   test('does not let a later follow-up Turn rewrite a settled parent Turn', () => {
-    const spawn = collaborationItem('spawn-item', 'spawn_agent', 'completed', CHILD_ID);
+    const spawn = collaborationItem('spawn-item', 'agent', 'completed', CHILD_ID);
     const settledParent = parentTurn([activity('activity-started', 'started', null), spawn], 100, 'completed');
     const laterFollowup = childTurn('child-followup', 'inProgress', 300, 'followup-item');
     const projection = projectSubagentsForTurn(
@@ -76,31 +77,25 @@ describe('Subagent parent-Turn presentation projection', () => {
     expect(projection.byThreadId.get(CHILD_ID)?.status).toBe('running');
   });
 
-  test('derives a wait-only bottleneck from direct child catalog state', () => {
-    const wait = collaborationItem('wait-item', 'wait_agent', 'inProgress');
+  test('does not infer an Agent row from unrelated direct-child catalog state', () => {
     const projection = projectSubagentsForTurn(
-      parentTurn([wait]),
+      parentTurn([]),
       new Map([[CHILD_ID, childThread({ type: 'active', activeFlags: [] })]]),
       new Map([[CHILD_ID, childTurn('child-active', 'inProgress', 150, 'spawn-from-prior-turn')]]),
     );
 
-    expect(projection.activeThreadIds).toEqual([CHILD_ID]);
-    expect(projection.byThreadId.get(CHILD_ID)).toMatchObject({
-      displayName: 'Researcher',
-      status: 'running',
-      startedAt: 150,
-    });
+    expect(projection.activeThreadIds).toEqual([]);
+    expect(projection.byThreadId.size).toBe(0);
   });
 
-  test('projects an isolated Skill child as delegated work a wait is not waiting for', () => {
+  test('projects only an explicitly recorded isolated Skill without scanning sibling Agents', () => {
     const skillStarted: SubAgentActivityThreadItem = {
       ...activity('activity-skill-started', 'started', null),
       agentThreadId: SKILL_CHILD_ID,
       agentPath: '/root/skill_research_ab12cd34ef56',
     };
-    const wait = collaborationItem('wait-item', 'wait_agent', 'inProgress');
     const projection = projectSubagentsForTurn(
-      parentTurn([wait, skillStarted]),
+      parentTurn([skillStarted]),
       new Map([
         [CHILD_ID, childThread({ type: 'active', activeFlags: [] })],
         [SKILL_CHILD_ID, skillChildThread()],
@@ -110,15 +105,13 @@ describe('Subagent parent-Turn presentation projection', () => {
       ]),
     );
 
-    // Both are live delegated children and both get a row...
-    expect(projection.activeThreadIds).toEqual(expect.arrayContaining([CHILD_ID, SKILL_CHILD_ID]));
+    expect(projection.activeThreadIds).toEqual([SKILL_CHILD_ID]);
     expect(projection.byThreadId.get(SKILL_CHILD_ID)).toMatchObject({
       displayName: 'research',
       form: 'isolatedSkill',
       status: 'running',
     });
-    // ...but only the collaboration child is what the wait is blocked on.
-    expect(projection.byThreadId.get(CHILD_ID)?.form).toBe('collaboration');
+    expect(projection.byThreadId.has(CHILD_ID)).toBe(false);
   });
 
   test('names an isolated Skill child by its recorded Skill name, not its address', () => {
@@ -156,9 +149,9 @@ describe('Subagent parent-Turn presentation projection', () => {
   test('leaves a collaboration task name that merely looks addressed alone', () => {
     // A model-chosen task_name may legitimately carry this exact shape, hex tail
     // and all. The child Thread's own source is what decides, so the row keeps
-    // the identity `list_agents` and `send_message` address it by.
+    // the persisted Agent identity recorded for it.
     const skillShaped = '/root/skill_audit_0123456789ab';
-    const item = collaborationItem('spawn-item', 'spawn_agent', 'completed', CHILD_ID, {
+    const item = collaborationItem('spawn-item', 'agent', 'completed', CHILD_ID, {
       status: 'completed',
       taskPath: skillShaped,
       nickname: 'Researcher',
@@ -184,8 +177,8 @@ describe('Subagent parent-Turn presentation projection', () => {
     };
     const projection = projectSubagentsForTurn(parentTurn([skillStarted]), new Map(), new Map());
 
-    // Defaulting a dead Skill child to collaboration counted it into the set
-    // `Waiting on N subagents` is derived from — work no wait blocks on.
+    // Defaulting a dead Skill child to collaboration would incorrectly expose
+    // Agent resume semantics for an isolated Skill.
     expect(projection.byThreadId.get(SKILL_CHILD_ID)?.form).toBe('isolatedSkill');
     expect(projection.collaborationThreadIds).toEqual([]);
   });
@@ -285,10 +278,9 @@ describe('Subagent parent-Turn presentation projection', () => {
     });
   });
 
-  test('leaves a Skill child out of the wait-time direct-child expansion', () => {
-    const wait = collaborationItem('wait-item', 'wait_agent', 'inProgress');
+  test('does not project an unrelated Skill child from the catalog alone', () => {
     const projection = projectSubagentsForTurn(
-      parentTurn([wait]),
+      parentTurn([]),
       new Map([[SKILL_CHILD_ID, skillChildThread()]]),
       new Map(),
     );
@@ -298,7 +290,7 @@ describe('Subagent parent-Turn presentation projection', () => {
   });
 
   test('keeps persisted identity after deletion without treating the snapshot as live truth', () => {
-    const item = collaborationItem('spawn-item', 'spawn_agent', 'completed', CHILD_ID);
+    const item = collaborationItem('spawn-item', 'agent', 'completed', CHILD_ID);
     const projection = projectSubagentsForTurn(parentTurn([item]), new Map(), new Map());
 
     expect(projection.byThreadId.get(CHILD_ID)).toMatchObject({
@@ -422,7 +414,7 @@ function skillToolCall(id: string): ThreadItem {
 
 function collaborationItem(
   id: string,
-  tool: 'spawn_agent' | 'list_agents' | 'wait_agent',
+  tool: AgentTaskToolName,
   status: 'inProgress' | 'completed',
   receiverThreadId?: string,
   state?: SubagentExecutionState,

@@ -1988,9 +1988,9 @@ test.describe('canonical agent Thread surface', () => {
     await expect(composer).toHaveText('Keep this draft.');
   });
 
-  test('expands a Subagent run in place, like every other process row', async ({ page }) => {
+  test('opens a resumable Agent in place without switching the root conversation', async ({ page }) => {
     await createNewThread(page);
-    await page.evaluate(async () => {
+    const childId = await page.evaluate(async () => {
       const target = window as Window & {
         lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
         __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
@@ -2005,6 +2005,7 @@ test.describe('canonical agent Thread surface', () => {
         agentNickname: 'research',
         agentRole: 'explorer',
         name: 'Research child',
+        source: 'collaboration',
         threadSource: 'subagent',
         updatedAt: Number(root.updatedAt) + 1,
       };
@@ -2036,6 +2037,7 @@ test.describe('canonical agent Thread surface', () => {
           durationMs: 1,
         },
       });
+      return child.id;
     });
 
     const parentTitle = await page.locator('.thread-dock-title').innerText();
@@ -2053,10 +2055,22 @@ test.describe('canonical agent Thread surface', () => {
     // Nothing was navigated to and nothing was covered: the dock still names
     // the conversation the user chose, and its composer still belongs to it.
     await expect(page.locator('.thread-dock-title')).toHaveText(parentTitle);
-    await expect(detail.getByRole('textbox', { name: 'Message this Thread' })).toHaveCount(0);
-    await expect(detail).toContainText('Driven by this conversation');
-    // A settled child offers no Stop; there is no Turn to stop.
-    await expect(detail.getByRole('button', { name: /^Stop / })).toHaveCount(0);
+    const childComposer = detail.getByRole('textbox', { name: 'Message this Thread' });
+    await expect(childComposer).toBeVisible();
+    await expect(detail.locator('.thread-composer-model-control')).toHaveCount(0);
+    await childComposer.fill('/');
+    await expect(detail.getByRole('listbox', { name: 'Thread slash commands' })).toHaveCount(0);
+    await childComposer.fill('Continue with deployment logs.');
+    await detail.getByRole('button', { name: 'Send' }).click();
+    const childStart = (await commandCalls(page)).filter((call) => call.cmd === 'turn/start').at(-1);
+    expect(childStart?.args).toMatchObject({
+      threadId: childId,
+      input: [{ type: 'text', text: 'Continue with deployment logs.' }],
+    });
+    expect(childStart?.args.userView).toBeDefined();
+    await expect(page.locator('.thread-dock-title')).toHaveText(parentTitle);
+    // The mock settles the resumed Turn synchronously, so no Stop remains.
+    await expect(detail.getByRole('button', { name: 'Interrupt Turn' })).toHaveCount(0);
 
     // The container is BOUNDED and scrolls itself, so opening it cannot push
     // the transcript around however long the child ran.
@@ -2206,11 +2220,11 @@ test.describe('canonical agent Thread surface', () => {
     const detail = page.locator('.thread-subagent-detail');
     await expect(detail).toBeVisible();
 
-    // A child transcript reads exactly like the main chat — same message stream,
-    // same bubble — because it is the same thing: one request and the work it
-    // produced. What differs is only what cannot act here: no composer, and no
-    // Edit or Continue-in-new-chat, since neither can run on a child Thread.
-    await expect(detail.locator('.thread-user-message')).toContainText('Investigate the deployment story.');
+    // Host-authored child input is an Agent event rather than a user bubble.
+    // The child can receive new direction, but its existing history cannot be
+    // rewritten or forked through root-only actions.
+    await expect(detail.locator('.thread-host-event')).toContainText('Investigate the deployment story.');
+    await expect(detail.getByRole('textbox', { name: 'Message this Thread' })).toBeVisible();
     await expect(detail.getByRole('button', { name: 'Edit message' })).toHaveCount(0);
     await expect(detail.getByRole('button', { name: 'Continue in new chat' })).toHaveCount(0);
 
@@ -2864,7 +2878,7 @@ test.describe('canonical agent Thread surface', () => {
     ]);
   });
   for (const colorScheme of ['light', 'dark'] as const) {
-    test(`projects live Subagent status and wait progress into the parent Turn in ${colorScheme}`, async ({ page }) => {
+    test(`projects live Agent status without inferring wait progress in ${colorScheme}`, async ({ page }) => {
       await page.emulateMedia({ colorScheme });
       await createNewThread(page);
       const fixture = await page.evaluate(async () => {
@@ -2877,13 +2891,13 @@ test.describe('canonical agent Thread surface', () => {
         if (!root) throw new Error('Mock root Thread not found');
         const parentThreadId = String(root.id);
         const parentTurnId = '01910000-0000-7000-8000-00000000de01';
-        const waitItemId = '01910000-0000-7000-8000-00000000de02';
         const startedAt = Date.now() - 6_000;
         const children = [
           {
             id: '01910000-0000-7000-8000-00000000de10',
             turnId: '01910000-0000-7000-8000-00000000de11',
             activityId: '01910000-0000-7000-8000-00000000de12',
+            callItemId: '01910000-0000-7000-8000-00000000de13',
             taskPath: '/root/research',
             nickname: 'Researcher',
           },
@@ -2891,6 +2905,7 @@ test.describe('canonical agent Thread surface', () => {
             id: '01910000-0000-7000-8000-00000000de20',
             turnId: '01910000-0000-7000-8000-00000000de21',
             activityId: '01910000-0000-7000-8000-00000000de22',
+            callItemId: '01910000-0000-7000-8000-00000000de23',
             taskPath: '/root/audit',
             nickname: 'Auditor',
           },
@@ -2927,7 +2942,7 @@ test.describe('canonical agent Thread surface', () => {
                 trigger: {
                   kind: 'subagent',
                   parentThreadId,
-                  parentItemId: waitItemId,
+                  parentItemId: child.callItemId,
                 },
               },
               status: 'inProgress',
@@ -2950,37 +2965,39 @@ test.describe('canonical agent Thread surface', () => {
           turn: {
             id: parentTurnId,
             items: [
-              ...children.map((child) => ({
-                id: child.activityId,
-                type: 'subAgentActivity',
-                provenance: provenance(child.activityId),
-                kind: 'started',
-                agentThreadId: child.id,
-                agentPath: child.taskPath,
-                error: null,
-                spawnItemId: null,
-              })),
-              {
-                id: waitItemId,
-                type: 'collabAgentToolCall',
-                provenance: provenance(waitItemId),
-                tool: 'wait_agent',
-                modelCall: {
-                  disposition: 'replayable',
-                  identity: { namespace: null, name: 'wait_agent' },
-                  providerName: 'wait_agent',
-                  arguments: { storage: 'inline', value: {} },
-                  schemaDigest: '0'.repeat(64),
-                },
-                status: 'inProgress',
-                outputRef: null,
-                senderThreadId: parentThreadId,
-                receiverThreadIds: [],
-                prompt: null,
-                model: null,
-                reasoningEffort: null,
-                agentsStates: {},
-              },
+              ...children.flatMap((child) => [{
+                  id: child.activityId,
+                  type: 'subAgentActivity',
+                  provenance: provenance(child.activityId),
+                  kind: 'started',
+                  agentThreadId: child.id,
+                  agentPath: child.taskPath,
+                  error: null,
+                  spawnItemId: child.callItemId,
+                }, {
+                  id: child.callItemId,
+                  type: 'collabAgentToolCall',
+                  provenance: provenance(child.callItemId),
+                  tool: 'agent',
+                  modelCall: {
+                    disposition: 'replayable',
+                    identity: { namespace: null, name: 'agent' },
+                    providerName: 'agent',
+                    arguments: {
+                      storage: 'inline',
+                      value: { description: child.nickname, prompt: `Run ${child.taskPath}` },
+                    },
+                    schemaDigest: '0'.repeat(64),
+                  },
+                  status: 'inProgress',
+                  outputRef: null,
+                  senderThreadId: parentThreadId,
+                  receiverThreadIds: [child.id],
+                  prompt: `Run ${child.taskPath}`,
+                  model: null,
+                  reasoningEffort: null,
+                  agentsStates: {},
+                }]),
             ],
             itemsView: 'full',
             provenance: { originThreadId: parentThreadId, originTurnId: parentTurnId, trigger: { kind: 'user' } },
@@ -2996,7 +3013,7 @@ test.describe('canonical agent Thread surface', () => {
 
       const parentTurn = page.locator(`[data-thread-turn-row="${fixture.parentTurnId}"]`);
       await expect(parentTurn.locator('.thread-process-title'))
-        .toContainText(/Waiting on 2 subagents · \d+[smhd]/u);
+        .toContainText(/Working for \d+[smhd]/u);
       const rows = parentTurn.locator('.thread-delegation-row');
       await expect(rows).toHaveCount(2);
       await expect(rows.locator('.thread-delegation-row-status').first())
@@ -3014,12 +3031,12 @@ test.describe('canonical agent Thread surface', () => {
           probe.style.color = `var(${token})`;
           return getComputedStyle(probe).color;
         };
-        const sibling = element.closest('.thread-process-timeline')?.querySelector('.thread-tool-toggle');
         const status = element.querySelector('.thread-delegation-row-status');
+        probe.style.fontSize = 'var(--font-meta)';
         const paint = {
           fontSize: getComputedStyle(element).fontSize,
           ink: root.getPropertyValue('--ink').trim(),
-          siblingFontSize: sibling ? getComputedStyle(sibling).fontSize : '',
+          metaFontSize: getComputedStyle(probe).fontSize,
           status: status ? getComputedStyle(status).color : '',
           text: getComputedStyle(element).color,
           textSoft: resolve('--text-soft'),
@@ -3033,7 +3050,7 @@ test.describe('canonical agent Thread surface', () => {
       // this file for a change made in `tokens.css`.
       expect(rowPaint.text).toBe(rowPaint.textSoft);
       expect(rowPaint.status).toBe(rowPaint.textTertiary);
-      expect(rowPaint.fontSize).toBe(rowPaint.siblingFontSize);
+      expect(rowPaint.fontSize).toBe(rowPaint.metaFontSize);
       expect(rowPaint.ink).toBe(colorScheme === 'dark' ? '255 255 255' : '0 0 0');
       const auditRow = parentTurn.locator('.thread-delegation-row', { hasText: 'audit' });
 
@@ -3064,7 +3081,7 @@ test.describe('canonical agent Thread surface', () => {
       }, { child: fixture.children[0]!, parentThreadId: fixture.parentThreadId, startedAt: fixture.startedAt });
 
       await expect(parentTurn.locator('.thread-process-title'))
-        .toContainText(/Waiting on 1 subagent ·/u);
+        .toContainText(/Working for \d+[smhd]/u);
       await expect(parentTurn.locator('.thread-delegation-row.thread-subagent-completed')).toHaveCount(1);
 
       await page.evaluate(({ child, parentThreadId, startedAt }) => {

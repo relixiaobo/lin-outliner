@@ -235,6 +235,106 @@ describe('renderer Thread store', () => {
     expect(acceptedTurn).toEqual(startedTurn);
   });
 
+  test('steers an active child with the user view without selecting it', async () => {
+    const owner = thread('thread-root', 2);
+    const child = {
+      ...thread('thread-child', 1),
+      parentThreadId: owner.id,
+      source: 'collaboration' as const,
+      threadSource: 'subagent' as const,
+    };
+    const active = childTurn(child.id, 'turn-child-active', 'inProgress');
+    const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
+    const client = {
+      onAgentCoreNotification: () => () => undefined,
+      agentCoreRequest: async (method: string, input: Record<string, unknown>) => {
+        calls.push({ method, input });
+        if (method === 'thread/list') return { data: [owner], nextCursor: null };
+        if (method === 'thread/read') return { thread: child };
+        if (method === 'thread/turns/list') {
+          return {
+            data: input.threadId === child.id ? [active] : [],
+            nextCursor: null,
+            backwardsCursor: null,
+          };
+        }
+        if (method === 'goal/get') return { goal: null };
+        if (method === 'thread/configuration/get') return configurationResponse(owner);
+        if (method === 'turn/steer') return { acceptedItemId: 'steer-item', deduplicated: false };
+        throw new Error(`Unexpected method: ${method}`);
+      },
+    } as unknown as ThreadStoreClient;
+    const store = new ThreadStore(client);
+    await store.initialize();
+    await store.ensureThreadHistory(child.id);
+    const userView = rendererUserView();
+
+    expect(await store.sendToThread(child.id, [{ type: 'text', text: '  Check logs next.  ' }], userView))
+      .toBeNull();
+
+    const steer = calls.find((call) => call.method === 'turn/steer');
+    expect(steer?.input).toMatchObject({
+      threadId: child.id,
+      expectedTurnId: active.id,
+      input: [{ type: 'text', text: 'Check logs next.' }],
+      userView,
+    });
+    expect(typeof steer?.input.clientUserMessageId).toBe('string');
+    expect(store.getSnapshot().selectedThreadId).toBe(owner.id);
+    expect(calls.some((call) => call.method === 'turn/start')).toBe(false);
+  });
+
+  test('starts a new user Turn for a terminal child without selecting it', async () => {
+    const owner = thread('thread-root', 2);
+    const child = {
+      ...thread('thread-child', 1),
+      parentThreadId: owner.id,
+      source: 'collaboration' as const,
+      threadSource: 'subagent' as const,
+    };
+    const terminal = childTurn(child.id, 'turn-child-done', 'completed');
+    const started = childTurn(child.id, 'turn-child-resumed', 'inProgress');
+    const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
+    const client = {
+      onAgentCoreNotification: () => () => undefined,
+      agentCoreRequest: async (method: string, input: Record<string, unknown>) => {
+        calls.push({ method, input });
+        if (method === 'thread/list') return { data: [owner], nextCursor: null };
+        if (method === 'thread/read') return { thread: child };
+        if (method === 'thread/turns/list') {
+          return {
+            data: input.threadId === child.id ? [terminal] : [],
+            nextCursor: null,
+            backwardsCursor: null,
+          };
+        }
+        if (method === 'goal/get') return { goal: null };
+        if (method === 'thread/configuration/get') return configurationResponse(owner);
+        if (method === 'turn/start') {
+          return { acceptedItemId: 'start-item', deduplicated: false, turn: started };
+        }
+        throw new Error(`Unexpected method: ${method}`);
+      },
+    } as unknown as ThreadStoreClient;
+    const store = new ThreadStore(client);
+    await store.initialize();
+    await store.ensureThreadHistory(child.id);
+    const userView = rendererUserView();
+
+    expect(await store.sendToThread(child.id, [{ type: 'text', text: 'Continue.' }], userView))
+      .toEqual(started);
+
+    const start = calls.find((call) => call.method === 'turn/start');
+    expect(start?.input).toMatchObject({
+      threadId: child.id,
+      input: [{ type: 'text', text: 'Continue.' }],
+      userView,
+    });
+    expect(typeof start?.input.clientUserMessageId).toBe('string');
+    expect(store.getSnapshot().selectedThreadId).toBe(owner.id);
+    expect(calls.some((call) => call.method === 'turn/steer')).toBe(false);
+  });
+
   test('loads Turns and Goal for the replacement selected after deleting the current Thread', async () => {
     const replacement = thread('thread-1', 1);
     const selected = thread('thread-2', 2);
@@ -901,7 +1001,7 @@ describe('renderer Thread store', () => {
         originItemId: 'collaboration-item',
       },
       type: 'collabAgentToolCall',
-      tool: 'wait_agent',
+      tool: 'task_stop',
       status: 'completed',
       outputRef: {
         id: 'c'.repeat(64),
@@ -1088,6 +1188,52 @@ function commandTurn(id: string, itemStatus: 'inProgress' | 'completed'): Turn {
     completedAt: null,
     durationMs: null,
   };
+}
+
+function childTurn(threadId: string, id: string, status: Turn['status']): Turn {
+  const itemId = `${id}-item`;
+  return {
+    id,
+    items: [{
+      type: 'agentMessage',
+      id: itemId,
+      provenance: { originThreadId: threadId, originTurnId: id, originItemId: itemId },
+      text: 'Child response',
+      phase: 'final_answer',
+      memoryCitation: null,
+    }],
+    itemsView: 'full',
+    provenance: {
+      originThreadId: threadId,
+      originTurnId: id,
+      trigger: { kind: 'subagent', parentThreadId: 'thread-root', parentItemId: 'agent-call' },
+    },
+    status,
+    error: null,
+    startedAt: 1,
+    completedAt: status === 'inProgress' ? null : 2,
+    durationMs: status === 'inProgress' ? null : 1,
+  };
+}
+
+function rendererUserView() {
+  return {
+    activePanelId: 'panel-1',
+    focusedPanelId: 'panel-1',
+    focusSurface: 'outline',
+    focusedNodeId: 'node-1',
+    selectedNodeIds: ['node-1'],
+    panels: [{
+      panelId: 'panel-1',
+      rootNodeId: 'root-1',
+      order: 0,
+      active: true,
+      focused: true,
+      visibleNodes: [{ nodeId: 'node-1', depth: 1, expanded: false }],
+      visibleOutlineTruncated: false,
+    }],
+    truncated: false,
+  } as const;
 }
 
 function deferred<T>() {
