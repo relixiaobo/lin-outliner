@@ -153,7 +153,12 @@ function capabilityBlocks(
       ].join('\n'),
     });
   }
-  if (has('skill')) {
+  // Explore and Plan Agents may retain the Skill executable for captured
+  // workflows, but their fresh startup deliberately omits the available
+  // catalog. The Role's own instructions remain in the identity block.
+  const specializedChild = thread.parentThreadId !== null
+    && (thread.agentRole === 'explorer' || thread.agentRole === 'plan');
+  if (has('skill') && !specializedChild) {
     blocks.push({
       id: 'skills',
       layer: 'L1',

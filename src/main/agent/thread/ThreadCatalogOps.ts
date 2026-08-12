@@ -281,25 +281,6 @@ export class ThreadCatalogOps {
     }
   async resumeThread(threadId: ThreadId): Promise<{ thread: Thread }> {
       return this.core.threadMutex.run(threadId, async () => {
-        const record = this.core.requireThread(threadId);
-        if (record.thread.parentThreadId && record.thread.agentRole) {
-          const parent = this.core.requireThread(record.thread.parentThreadId);
-          const role = this.resolveRole(record.thread.agentRole, record.thread.cwd);
-          const resolved = resolveChildConfiguration(parent.configuration, {
-            role,
-            ...(record.modelOverride === null ? {} : { model: record.modelOverride }),
-            ...(record.reasoningEffortOverride === null
-              ? {}
-              : { reasoningEffort: record.reasoningEffortOverride }),
-          });
-          const configuration = this.applyToolCeiling(resolved, record.toolCeiling);
-          if (record.thread.ephemeral) {
-            const state = this.core.ephemeral.get(threadId)!;
-            state.record = { ...record, configuration };
-          } else {
-            this.core.metadata.setConfiguration(threadId, configuration);
-          }
-        }
         const thread = this.core.requireThread(threadId).thread;
         await this.extensions.threadResumed(thread);
         return { thread };

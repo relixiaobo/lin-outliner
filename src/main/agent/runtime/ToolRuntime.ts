@@ -5,6 +5,7 @@ import {
   assembleModelToolRegistry,
   canonicalModelToolKey,
   decodeProviderToolName,
+  MODEL_TOOL_CATALOG,
   MODEL_TOOL_ACTION_KINDS,
   modelToolContract,
   normalizeTaskStopToolInput,
@@ -25,6 +26,11 @@ import {
 import type { OutlinerToolHost } from '../capabilities/agentNodeTools';
 import type { AgentSkillRuntime } from '../capabilities/agentSkills';
 import { evaluateAgentToolCapability } from '../capabilities/agentCapabilities';
+import {
+  resolveSubagentToolRequest,
+  subagentToolAllowed,
+  type PersistedSubagentToolPolicy,
+} from '../capabilities/subagentToolPolicy';
 import { redactSecretLikeJsonAsync } from '../capabilities/agentSecretRedaction';
 import type { AgentCapabilityConfig } from '../capabilities/agentCapabilityRules';
 import type { ThreadService } from '../ThreadService';
@@ -145,6 +151,22 @@ export class ToolRuntime {
       canonicalModelToolKey(contract.identity),
       contract,
     ]));
+    const policyRegistry = registry ?? [...MODEL_TOOL_CATALOG, ...extensionContracts];
+    const subagentPolicy = this.subagentPolicy(context);
+    const requestedTools = subagentPolicy
+      ? resolveSubagentToolRequest(subagentPolicy.requestedTools, policyRegistry)
+      : null;
+    const requestedSet = requestedTools?.requestedTools === null
+      ? null
+      : requestedTools
+        ? new Set(requestedTools.recognizedTools)
+        : null;
+    if (subagentPolicy && requestedTools && requestedTools.unrecognizedTools.length > 0) {
+      this.reportSubagentToolDiagnostic(
+        context,
+        `Ignoring unrecognized Role tools: [${requestedTools.unrecognizedTools.join(', ')}]`,
+      );
+    }
     const allowed = new Set(context.configuration.tools);
     const enabledExtensions = new Set([...context.configuration.plugins, ...context.configuration.mcpServers]);
     const unique = new Map<string, AgentTool>();
@@ -177,6 +199,8 @@ export class ToolRuntime {
         }
         throw new Error(`Runtime model-tool schema does not match its contract: ${canonical}`);
       }
+      if (subagentPolicy && !subagentToolAllowed(contract, subagentPolicy)) continue;
+      if (requestedSet !== null && !requestedSet.has(canonical)) continue;
       const extensionOwner = extensionOwners.get(canonical);
       const enabled = extensionOwner
         ? allowed.has(canonical) || enabledExtensions.has(extensionOwner)
@@ -192,10 +216,29 @@ export class ToolRuntime {
       const owner = extensionOwners.get(canonical)!;
       if (
         !unavailableCanonical.has(canonical)
+        && (!subagentPolicy || subagentToolAllowed(contract, subagentPolicy))
+        && (requestedSet === null || requestedSet.has(canonical))
         && (allowed.has(canonical) || enabledExtensions.has(owner))
         && !enabledCanonical.has(canonical)
       ) {
         throw new Error(`Enabled extension model tool has no runtime implementation: ${canonical}`);
+      }
+    }
+    if (
+      subagentPolicy
+      && requestedTools
+      && requestedTools.requestedTools !== null
+      && requestedTools.requestedTools.length > 0
+    ) {
+      const admittedRequested = requestedTools.requestedTools.filter((key) => enabledCanonical.has(key));
+      if (admittedRequested.length === 0) {
+        const canonicalType = this.subagentType(context);
+        const unresolved = requestedTools.requestedTools.filter((key) => !enabledCanonical.has(key));
+        throw new Error(
+          `Agent '${canonicalType}' would be spawned with zero tools — refusing. `
+          + `Its tools list resolved to nothing: unrecognized [${unresolved.join(', ')}]. `
+          + `Fix the Role's tools configuration or pass a different subagent_type.`,
+        );
       }
     }
     return [...unique.values()];
@@ -215,6 +258,30 @@ export class ToolRuntime {
     return typeof this.options.skillRuntime === 'function'
       ? this.options.skillRuntime(context)
       : this.options.skillRuntime;
+  }
+
+  private subagentPolicy(context: TurnExecutionContext): PersistedSubagentToolPolicy | null {
+    if (context.thread.parentThreadId === null) return null;
+    const host = this.service as unknown as {
+      subagentExecution?: (threadId: string) => { readonly toolPolicy?: PersistedSubagentToolPolicy } | null;
+    };
+    return host.subagentExecution?.(context.thread.id)?.toolPolicy ?? null;
+  }
+
+  private subagentType(context: TurnExecutionContext): string {
+    const host = this.service as unknown as {
+      subagentExecution?: (threadId: string) => { readonly agentType?: string } | null;
+    };
+    return host.subagentExecution?.(context.thread.id)?.agentType
+      ?? context.thread.agentRole
+      ?? 'general-purpose';
+  }
+
+  private reportSubagentToolDiagnostic(context: TurnExecutionContext, message: string): void {
+    const key = `${context.thread.id}:${message}`;
+    if (this.reportedUnavailableToolSchemas.has(key)) return;
+    this.reportedUnavailableToolSchemas.add(key);
+    console.warn(`[agent] ${message}.`);
   }
 
   private createControlTools(context: TurnExecutionContext): AgentTool[] {

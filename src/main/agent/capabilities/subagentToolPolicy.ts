@@ -14,6 +14,17 @@ export interface SubagentToolPolicy {
   readonly allowNesting: boolean;
 }
 
+export interface PersistedSubagentToolPolicy extends SubagentToolPolicy {
+  /** null means the selected Agent type did not declare a Role tool restriction. */
+  readonly requestedTools: readonly string[] | null;
+}
+
+export interface ResolvedSubagentToolRequest {
+  readonly requestedTools: readonly string[] | null;
+  readonly recognizedTools: readonly string[];
+  readonly unrecognizedTools: readonly string[];
+}
+
 const RETIRED_TOOL_KEYS = new Set([
   'collaboration.spawn_agent',
   'collaboration.send_message',
@@ -81,6 +92,26 @@ export function filterSubagentToolKeys(
     const contract = contracts.get(key);
     return contract ? subagentToolAllowed(contract, policy) : false;
   });
+}
+
+export function resolveSubagentToolRequest(
+  requestedTools: readonly string[] | null,
+  registry: readonly ModelToolContract[],
+): ResolvedSubagentToolRequest {
+  if (requestedTools === null) {
+    return {
+      requestedTools: null,
+      recognizedTools: [],
+      unrecognizedTools: [],
+    };
+  }
+  const available = new Set(registry.map((contract) => canonicalModelToolKey(contract.identity)));
+  const requested = [...new Set(requestedTools)];
+  return {
+    requestedTools: requested,
+    recognizedTools: requested.filter((key) => available.has(key)),
+    unrecognizedTools: requested.filter((key) => !available.has(key)),
+  };
 }
 
 export function subagentToolAllowed(

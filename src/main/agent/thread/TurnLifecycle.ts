@@ -69,6 +69,11 @@ interface TurnLifecycleDocumentDrift {
   ): Promise<{ readonly context: AdditionalContext | null; readonly settle: () => void }>;
 }
 interface TurnLifecycleGoalUsage { addUsage(threadId: ThreadId, tokens: number, elapsedSeconds: number, turnId: TurnId, terminalStatus: TurnStatus): Promise<void>; }
+
+function specializedChildSkillCatalogOmitted(thread: Thread): boolean {
+  return thread.parentThreadId !== null
+    && (thread.agentRole === 'explorer' || thread.agentRole === 'plan');
+}
 export interface ResolvedSubagentBudget {
   readonly member: SubagentRequestMember | null;
   readonly pool: SubagentRequestPool | null;
@@ -403,7 +408,9 @@ export class TurnLifecycle {
               });
           const skillCatalog = await planSkillCatalogEvidence({
             turns: canonicalTurns,
-            snapshot: skillAdmission.catalogSnapshot,
+            snapshot: specializedChildSkillCatalogOmitted(thread)
+              ? null
+              : skillAdmission.catalogSnapshot,
             readContext: (ref) => this.core.payloads.readContext(thread.id, ref),
           });
           const roleCatalog = await planRoleCatalogEvidence({
@@ -891,7 +898,9 @@ export class TurnLifecycle {
           });
       const skillCatalog = await planSkillCatalogEvidence({
         turns: canonicalTurns,
-        snapshot: skillAdmission.catalogSnapshot,
+        snapshot: specializedChildSkillCatalogOmitted(record.thread)
+          ? null
+          : skillAdmission.catalogSnapshot,
         readContext: (ref) => this.core.payloads.readContext(record.thread.id, ref),
       });
       const roleCatalog = await planRoleCatalogEvidence({
