@@ -12,7 +12,11 @@ import type {
   TurnAdmissionContext,
 } from '../../src/core/agent/extensions';
 import type { AgentRole, EffectiveThreadConfiguration } from '../../src/core/agent/configuration';
-import { MODEL_TOOL_CATALOG, canonicalModelToolKey } from '../../src/core/agent/tools';
+import {
+  AGENT_TASK_TOOL_NAMES,
+  MODEL_TOOL_CATALOG,
+  canonicalModelToolKey,
+} from '../../src/core/agent/tools';
 import { threadFeatureSource } from '../../src/core/agent/protocol';
 import type {
   AgentCoreNotification,
@@ -10166,6 +10170,7 @@ class ToolContributionProbe implements AgentCoreExtension {
 
 function runtimeSchemaTools(): import('../../src/main/agent/runtime/kernel/types').AgentTool[] {
   return MODEL_TOOL_CATALOG.flatMap((contract) => contract.inputSchema === null
+    && !AGENT_TASK_TOOL_NAMES.includes(contract.identity.name as typeof AGENT_TASK_TOOL_NAMES[number])
     ? [{
         name: canonicalModelToolKey(contract.identity),
         label: contract.identity.name,
@@ -10404,7 +10409,7 @@ async function recordCollaborationSpawnBoundary(
     type: 'collabAgentToolCall',
     id: itemId,
     provenance: context.recorder.localProvenance(itemId),
-    tool: 'spawn_agent',
+    tool: 'agent',
     status: 'inProgress',
     senderThreadId: context.thread.id,
     receiverThreadIds: [],
@@ -10413,10 +10418,11 @@ async function recordCollaborationSpawnBoundary(
     reasoningEffort: null,
     agentsStates: {},
     outputRef: null,
-    modelCall: replayableModelCall('collaboration__spawn_agent', {
-      task_name: 'test_agent',
-      message: 'Test collaboration spawn',
-      fork_turns: 'all',
+    modelCall: replayableModelCall('agent', {
+      description: 'Test agent',
+      prompt: 'Test collaboration spawn',
+      subagent_type: 'general-purpose',
+      run_in_background: true,
     }),
   });
 }

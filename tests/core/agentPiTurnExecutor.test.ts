@@ -4122,7 +4122,7 @@ function createContext(): {
       developerInstructions: [],
       model: 'test-model',
       reasoningEffort: 'medium',
-      tools: ['bash', 'collaboration.spawn_agent'],
+      tools: ['bash', 'agent'],
       skills: [],
       plugins: [],
       mcpServers: [],
