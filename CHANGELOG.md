@@ -127,6 +127,23 @@ Entries reference the pull request that introduced them.
   session, and three duplicated copies of the canonical-Memory classification
   rules — now one shared implementation, so the mutation guard and the Memory
   pipeline cannot drift apart about which Nodes are Memory.
+- **The Thread menu now says what it does to Recall (PR #536, cc)** — the records
+  toggle read `Exclude from Records`, sitting between Rename and Delete and naming
+  `thread-transcripts/`, a directory you have no other entry point to; read cold it
+  parses as a third way to destroy a conversation, which is the one thing it does
+  not do. It is now **Hide from Recall** / **Show in Recall** (`Recall unavailable`
+  when the state cannot be read), and the hover hint — *Other Threads can look up
+  past conversations. Hiding keeps this one out; show it again anytime.* — rides on
+  both states instead of only the failure path. The old label also wrapped under its
+  icon: it needed 133px and the menu allowed 126px. The menu's 168px width now lives
+  once, in `ThreadList.tsx`, where the anchoring math reads it; labels ellipsize
+  inside it through a `.thread-action-menu-label` span (`min-width: 0` on both the
+  button and the label, whose `auto` minimum is the nowrap label's full width); and
+  the menu clips only the inline axis, so a very short viewport scrolls to the last
+  item instead of swallowing it. The e2e guard measures every label of every locale
+  through a real label element — the mock renders one records state, so measuring
+  only what appeared on screen would have left `Show in Recall`, the failure label,
+  and every zh-Hans string unguarded.
 
 ### Internal
 

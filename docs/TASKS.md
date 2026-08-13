@@ -905,7 +905,18 @@ anything.
   **16 scripts**, incl. the load-bearing `e2e-classify.ts` / `e2e-compare.ts` and
   `docs-check.ts`). Fix = a
   `tsconfig.scripts.json` (or widened `include`) wired into `bun run typecheck`, plus whatever
-  the first real check surfaces.
+  the first real check surfaces. **`tests/` is the same hole** (found at the #536 gate): the
+  e2e specs import product modules — `agent-thread.spec.ts` reads `en.agent.thread` by key
+  precisely so a rename is a compile error — and none of it is typechecked, so that
+  protection does not exist today and the test had to re-assert the key set at runtime.
+  Whatever shape the fix takes, cover both.
+- **thread-fold-e2e-failure** (P2, *fast-track, no plan file*, filed 2026-08-13 at the #536
+  gate) — `agent-thread.spec.ts` › *"never folds a settled Turn over a child that is still
+  running"* fails on `main`: the parent Turn renders no `.thread-process-toggle` while the
+  child is still running, so the fold never appears. Not the #536 branch and not a stale dev
+  server — reproduced on `origin/main` at `ffd5abff` in a clean worktree on its own
+  Playwright port, deterministically, twice. The `main` e2e job is the only signal covering
+  this and it is red until someone bisects it.
 
 
 ## Recently completed
@@ -914,6 +925,17 @@ One line per merge, newest first; the retrospective lives in the CHANGELOG entry
 and the merged PR, distilled rules in [`lessons.md`](lessons.md). Everything
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
+
+- **thread-records-copy** (cc, PR #536, merged 2026-08-13 — fast-track, no plan file) —
+  the Thread action menu's records toggle is now `Hide from Recall` / `Show in Recall`
+  (`Recall unavailable` on a failed read), with the hint on both states instead of only
+  the failure path, and it no longer wraps under its icon: the 168px width lives once in
+  `ThreadList.tsx`, labels ellipsize through `.thread-action-menu-label`, and only the
+  inline axis clips. Gate ran `/code-review medium` (3 findings — a guard that measured
+  one string, block-axis clipping, a stale PR body — all closed in f55ca37e + b9af9ee4),
+  typecheck + `test:core` + `test:renderer` green, `agent-thread.spec.ts` at 76 passed
+  (the one failure is `thread-fold-e2e-failure`, filed below, and reproduces on
+  `origin/main` without this branch), and light + dark visual verification.
 
 - **truncation-no-quarantine** (main-agent, PR #528, merged 2026-08-11 — fast-track) —
   `truncatedArguments` still counts toward the eight-failure Turn ceiling but no longer
