@@ -85,6 +85,28 @@ describe('AppQuitCoordinator', () => {
     expect(host.commitFreezeCount).toBe(1);
   });
 
+  test('honors repeated retry decisions until the user cancels', async () => {
+    const host = new FakeQuitHost();
+    host.drainToRevision = async () => {
+      host.drains += 1;
+      throw new Error('disk offline');
+    };
+    host.decisions = [
+      'retry', 'retry', 'retry', 'retry', 'retry',
+      'retry', 'retry', 'retry', 'retry', 'retry',
+      'cancel',
+    ];
+    const coordinator = new AppQuitCoordinator(host, { drainTimeoutMs: 50 });
+
+    await coordinator.requestQuit();
+
+    expect(host.drains).toBe(11);
+    expect(coordinator.phase()).toBe('idle');
+    expect(host.frozen).toBe(false);
+    expect(host.teardownCount).toBe(0);
+    expect(host.exitCount).toBe(0);
+  });
+
   test('rechecks the barrier when a revision is accepted during drain', async () => {
     const host = new FakeQuitHost();
     host.injectRevisionOnDrain = true;

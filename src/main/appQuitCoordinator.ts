@@ -52,6 +52,10 @@ export class AppQuitCoordinator {
     if (this.phaseValue === 'tearing-down' || this.phaseValue === 'done') return;
     this.phaseValue = 'draining';
     this.host.freezeAdmission();
+    // There is intentionally no total-attempt cap here. The 2.5 s deadline
+    // bounds each drain attempt, while this dialog is the user-decision
+    // boundary: an automatic exit after repeated failures would discard
+    // accepted-but-not-durable document changes without an explicit choice.
     while (true) {
       const result = await this.drainOnce();
       if (result.outcome === 'ready' && this.barrierHolds()) break;

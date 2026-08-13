@@ -202,7 +202,10 @@ choice rejects the still-unaccepted queue and enters Phase 2, which tears down
 auxiliary services and force-exits the process. The coordinator exists before
 workspace initialization so startup-time quits still run auxiliary teardown.
 Concurrent quit requests share one request and cannot bypass the drain or run
-teardown twice.
+teardown twice. There is no automatic total-attempt exit after a failed drain:
+the per-attempt deadline returns to the native Retry / Quit Anyway / Cancel
+decision, and the app remains in reversible Phase 1 until the user chooses a
+terminal outcome.
 
 ## Workspace Persistence And Replication Boundary
 

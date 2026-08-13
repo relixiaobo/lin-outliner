@@ -77,7 +77,10 @@ explicit Quit Anyway choice) enters Phase 2, where the global hotkey and
 auxiliary services are torn down and the process exits. Repeated quit requests
 while a drain is in flight share that request; they neither bypass persistence
 nor duplicate teardown. The coordinator is installed before workspace startup,
-so an early quit still performs auxiliary teardown.
+so an early quit still performs auxiliary teardown. A failed drain has no
+automatic total-attempt fallback: each deadline returns to the native decision
+dialog, and Phase 1 remains reversible until Retry succeeds, Cancel is chosen,
+or the user explicitly chooses Quit Anyway.
 
 ## Security posture (A3 — must not regress)
 
