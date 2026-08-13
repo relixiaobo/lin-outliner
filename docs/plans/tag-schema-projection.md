@@ -93,7 +93,21 @@ being `outlinerRows`, `OutlinerItem` / `OutlinerFieldRow`, `OutlinerTableView`,
 (`rowFacets`, `candidates`, `objects`).
 
 **Storage rule.** A `fieldEntry` node exists only once it holds a value.
-`apply_tag` writes no field entries at all.
+`apply_tag` writes no field entries — with one exception, below.
+
+**The auto-init exception.** Slots whose field has `autoInitialize` configured
+must still be materialized at `apply_tag`, because every strategy in
+`autoInitStrategiesForFieldType` — `current_date`, `ancestor_day_node`,
+`ancestor_field_value`, `ancestor_supertag_ref` — resolves against the moment and
+the tree position at which the tag was applied. Those values have to be frozen
+right then: a `current_date` that stayed virtual would re-resolve to *today*
+every time it was read, so a node tagged in January would silently start
+claiming August, and an `ancestor_*` value would change the moment someone moved
+the node. So `apply_tag` keeps calling `applyAutoInitializeDirect` for
+auto-init slots and writes nothing for the rest. This is a genuinely
+write-once statement, and it is not retroactive — a field given auto-init
+afterwards leaves already-tagged nodes empty, which is the correct answer, not a
+limitation.
 
 **Materialize on write.** The first keystroke or option pick in a virtual slot
 creates the entry. This pattern is already shipped: `OutlinerTableView`'s
@@ -139,11 +153,20 @@ express.
 
 ### 2. Inherited defaults as ghost values
 
-The default stays where it is today, on the tag's field slot. An unmaterialized
-slot renders it as a placeholder, visually marked as inherited using the neutral
-`--text-*` ladder (B3/B4: no accent, no status color). It materializes into a
-real value when the user edits the slot or explicitly accepts it, and from that
-moment it is theirs and never tracks the template again.
+Two kinds of default exist and only one of them can be a ghost:
+
+- **Static default** — a literal value typed into the tag's field slot
+  (`Status: Inbox`). Context-free, so it reads the same on every instance at
+  every moment. This one becomes a ghost.
+- **Auto-init** — `current_date` and the `ancestor_*` strategies. Resolved
+  against a moment and a tree position, so it must be written once at
+  `apply_tag` and left alone (see the auto-init exception above). Never a ghost.
+
+For a static default: it stays where it is today, on the tag's field slot. An
+unmaterialized slot renders it as a placeholder, visually marked as inherited
+using the neutral `--text-*` ladder (B3/B4: no accent, no status color). It
+materializes into a real value when the user edits the slot or explicitly accepts
+it, and from that moment it is theirs and never tracks the template again.
 
 Retroactive by construction: a default added to a tag today is visible on every
 instance that has not set a value, with zero writes and no risk of overwriting
@@ -174,9 +197,12 @@ triggered when a node gets the supertag applied to it. If the supertag gets
 updated with a field with initialization switched on, and the supertag was
 already applied to nodes, these nodes will only see the field added without any
 content initialized in it."* — the field appears retroactively (it is schema),
-the default does not (it is a write). This plan matches that on fields and goes
-one better on defaults, because a ghost value is not a write and therefore costs
-nothing to make retroactive.
+the initialization does not (it is a write). Their "initialization" is our
+`autoInitialize`, and this plan draws the same line in the same place: it stays a
+write, and it stays non-retroactive. Where the plan goes further is that it
+splits out the *static* default, which Tana leaves on the write side of that line
+along with everything else; a static default is context-free, so it can be a
+ghost, and a ghost costs nothing to make retroactive.
 
 ## Open questions
 
@@ -205,7 +231,9 @@ nothing to make retroactive.
       `OutlinerTableView`'s local absent-cell path folded into the shared one
 - [ ] `templateId` dropped from field entries (kept for seed clones)
 - [ ] Search: slot-aware `has field` vs `field is empty`
-- [ ] Core tests: field added to a tag appears on nodes tagged before it; field
+- [ ] Core tests: auto-init slots still materialize and freeze at `apply_tag`
+      while every other slot writes nothing; field added to a tag appears on
+      nodes tagged before it; field
       removed from a tag vanishes from valueless nodes and survives as an own
       field where a value exists; clearing a tag slot's value dematerializes it
       while an own field survives; extends-chain order preserved
@@ -213,7 +241,8 @@ nothing to make retroactive.
 
 **PR 2 — ghost defaults**
 
-- [ ] Placeholder rendering for unmaterialized slots (light + dark, `--text-*`)
+- [ ] Placeholder rendering for unmaterialized slots (light + dark, `--text-*`),
+      static defaults only — a slot with auto-init never renders a ghost
 - [ ] Materialize on edit / explicit accept
 - [ ] Search participation per Open question 2
 - [ ] Tests: default added after tagging shows everywhere; a typed value is never
