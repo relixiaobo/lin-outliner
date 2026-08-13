@@ -6,7 +6,13 @@ import type { CommandRunner, NavigateRootOptions, TriggerState } from '../shared
 import { OutlinerFieldRow } from './OutlinerFieldRow';
 import { OutlinerItem } from './OutlinerItem';
 import { RowHost } from './RowHost';
-import { buildOutlinerRows, hiddenFieldKey, readViewConfig, type OutlinerRowItem } from './row-model';
+import {
+  buildOutlinerRows,
+  hiddenFieldKey,
+  readViewConfig,
+  showsResultViewControls,
+  type OutlinerRowItem,
+} from './row-model';
 import { useTrailingDraftId } from './draftRow';
 import { insertTrailingDraftRow, resolveTrailingDraftAfterId } from '../../state/trailingDraftPlacement';
 import { ViewToolbar } from './ViewToolbar';
@@ -149,7 +155,7 @@ export function OutlinerView(props: OutlinerViewProps) {
 
   return (
     <>
-      {props.showViewToolbar !== false && parent && (view.toolbarVisible || parent.type === 'search') && (
+      {props.showViewToolbar !== false && parent && showsResultViewControls(parent, view) && (
         <ViewToolbar
           node={parent}
           view={view}

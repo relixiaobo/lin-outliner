@@ -47,7 +47,12 @@ import { SelectControl } from '../primitives/SelectControl';
 import { useAnchoredOverlay, type OverlayAnchorRect } from '../primitives/useAnchoredOverlay';
 import { resolveMenuNavigation, useMenuKeyboard } from '../primitives/useMenuKeyboard';
 import type { CommandRunner } from '../shared';
-import { collectViewFieldChoices, customFilterFieldIdsOnRows, type ViewConfig } from './row-model';
+import {
+  collectViewFieldChoices,
+  customFilterFieldIdsOnRows,
+  fieldChoiceLabel,
+  type ViewConfig,
+} from './row-model';
 import {
   CREATED_FIELD,
   DAY_FIELD,
@@ -333,7 +338,7 @@ function collectFilterFieldChoices(
   const customChoices = [...fields]
     .map((fieldId): FieldChoice => ({
       id: fieldId,
-      label: labelsById.get(fieldId) ?? fieldId,
+      label: labelsById.get(fieldId) ?? fieldChoiceLabel(fieldId, byId),
       section: 'Fields',
     }))
     .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }));
@@ -441,6 +446,7 @@ export function ViewToolbar({
     anchorRect: tooltip?.anchorRect ?? null,
     disabled: !tooltip,
     gap: 0,
+    layoutKey: tooltip?.label,
     maxHeight: 80,
     placement: 'bottom-start',
     width: 'content',
@@ -514,11 +520,7 @@ export function ViewToolbar({
       setTooltip(null);
       return;
     }
-    const controlRow = toolbarRef.current?.querySelector<HTMLElement>('.view-toolbar-button-row');
-    const lastControl = controlRow?.lastElementChild instanceof HTMLElement
-      ? controlRow.lastElementChild
-      : element;
-    const rect = lastControl.getBoundingClientRect();
+    const rect = element.getBoundingClientRect();
     const left = rect.right + 8;
     setTooltip({
       label,
@@ -560,6 +562,29 @@ export function ViewToolbar({
     [view, choices, tv, includeSortSummary, compact],
   );
   const titles = sectionTitles(tv);
+  const viewModeControl = (
+    <ViewModeControl
+      compact={compact}
+      key="view-mode"
+      labels={tv}
+      onChange={(mode) => void run(() => api.setViewMode(node.id, mode))}
+      viewMode={view.viewMode === 'table' ? 'table' : 'list'}
+    />
+  );
+  const nameFilterControl = (
+    <NameFilterControl
+      clearLabel={tv.clearNameFilter}
+      key="name-filter"
+      label={tv.filterByName}
+      nameFilter={nameFilter}
+      nodeId={node.id}
+      placeholder={tv.nameFilterPlaceholder}
+      run={run}
+    />
+  );
+  const leadingControls = compact
+    ? [nameFilterControl, viewModeControl]
+    : [viewModeControl, nameFilterControl];
   const renderSummaryChip = (chip: ViewSummaryChip) => {
     if (chip.filterTarget?.ruleId) {
       return (
@@ -604,40 +629,7 @@ export function ViewToolbar({
       onPointerOver={showTooltipFromEvent}
     >
       <div className="view-toolbar-button-row">
-        {compact ? (
-          <>
-            <NameFilterControl
-              nameFilter={nameFilter}
-              nodeId={node.id}
-              run={run}
-              label={tv.filterByName}
-              clearLabel={tv.clearNameFilter}
-              placeholder={tv.nameFilterPlaceholder}
-            />
-            <ViewModeControl
-              compact
-              labels={tv}
-              onChange={(mode) => void run(() => api.setViewMode(node.id, mode))}
-              viewMode={view.viewMode === 'table' ? 'table' : 'list'}
-            />
-          </>
-        ) : (
-          <>
-            <ViewModeControl
-              labels={tv}
-              onChange={(mode) => void run(() => api.setViewMode(node.id, mode))}
-              viewMode={view.viewMode === 'table' ? 'table' : 'list'}
-            />
-            <NameFilterControl
-              nameFilter={nameFilter}
-              nodeId={node.id}
-              run={run}
-              label={tv.filterByName}
-              clearLabel={tv.clearNameFilter}
-              placeholder={tv.nameFilterPlaceholder}
-            />
-          </>
-        )}
+        {leadingControls}
         {view.viewMode !== 'table' ? (
           <>
             <ToolbarButton

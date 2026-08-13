@@ -300,6 +300,8 @@ describe('row interaction resolvers', () => {
       'nested-owner-field',
       'status',
     ]));
+    expect(fieldChoices(parent as any, byId).map((choice) => choice.id)).toContain('status');
+    expect(fieldChoices(parent as any, byId).map((choice) => choice.id)).not.toContain('nested-owner-field');
     expect(fieldEntryForViewCell(result as any, 'missing', byId)).toBeUndefined();
     expect(fieldEntryForViewCell(byId.get('broken'), 'status', byId)).toBeUndefined();
     expect(viewFieldValuesFor(byId.get('broken'), 'status', byId)).toEqual([]);

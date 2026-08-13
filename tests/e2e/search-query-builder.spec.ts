@@ -81,15 +81,14 @@ test.describe('search query builder', () => {
     await nameFilter.hover();
     const tooltip = page.getByRole('tooltip');
     await expect(tooltip).toHaveText('Filter by name');
+    const nameFilterBox = await nameFilter.boundingBox();
+    expect(nameFilterBox).not.toBeNull();
     const tooltipGeometry = await tooltip.evaluate((element) => {
-      const controlRow = document.querySelector<HTMLElement>('.view-toolbar-button-row')!;
-      const lastControl = controlRow.lastElementChild as HTMLElement;
       const title = document.querySelector<HTMLElement>('.panel-title-editor')!;
       const firstRow = document.querySelector<HTMLElement>('.outliner-flat-flow-row .row')!;
       const tooltipRect = element.getBoundingClientRect();
       return {
         firstRowTop: firstRow.getBoundingClientRect().top,
-        lastControlRight: lastControl.getBoundingClientRect().right,
         titleBottom: title.getBoundingClientRect().bottom,
         tooltipBottom: tooltipRect.bottom,
         tooltipLeft: tooltipRect.left,
@@ -97,10 +96,15 @@ test.describe('search query builder', () => {
         tooltipWidth: tooltipRect.width,
       };
     });
-    expect(tooltipGeometry.tooltipLeft).toBeGreaterThan(tooltipGeometry.lastControlRight);
+    expect(tooltipGeometry.tooltipLeft).toBeGreaterThan(nameFilterBox!.x + nameFilterBox!.width);
     expect(tooltipGeometry.tooltipTop).toBeGreaterThan(tooltipGeometry.titleBottom);
     expect(tooltipGeometry.tooltipBottom).toBeLessThanOrEqual(tooltipGeometry.firstRowTop);
     expect(tooltipGeometry.tooltipWidth).toBeLessThan(180);
+
+    await controls.getByRole('button', { name: 'Sort by', exact: true }).hover();
+    await expect(tooltip).toHaveText('Sort by');
+    const shortTooltipWidth = await tooltip.evaluate((element) => element.getBoundingClientRect().width);
+    expect(shortTooltipWidth).toBeLessThan(tooltipGeometry.tooltipWidth);
 
     await page.setViewportSize({ width: 760, height: originalViewport.height });
     const narrowGeometry = await controls.evaluate((toolbar) => {

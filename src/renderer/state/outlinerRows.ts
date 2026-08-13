@@ -145,6 +145,13 @@ export function readViewConfig(parent: NodeProjection | undefined, byId: Map<Nod
   };
 }
 
+export function showsResultViewControls(
+  node: NodeProjection | undefined,
+  view: Pick<ViewConfig, 'toolbarVisible'> | null | undefined,
+): boolean {
+  return Boolean(node && (node.type === 'search' || view?.toolbarVisible));
+}
+
 function directChildren(parent: NodeProjection | undefined, byId: Map<NodeId, NodeProjection>): NodeProjection[] {
   return parent?.children
     .map((childId) => byId.get(childId))
@@ -713,7 +720,7 @@ export function collectViewFieldChoices(
   referenceSummary: ReferenceSummary,
 ): Array<{ id: string; label: string; section: 'System fields' | 'Fields' }> {
   const choices = new Map<string, { label: string; section: 'System fields' | 'Fields' }>();
-  const candidateRows = fieldCandidateRows(parent, byId);
+  const candidateRows = fieldCandidateRows(parent, byId, false);
 
   for (const system of SYSTEM_VIEW_FIELD_CHOICES) {
     if (systemFieldPresentInRows(system.id, candidateRows, byId, referenceSummary)) {
@@ -764,12 +771,17 @@ const SYSTEM_VIEW_FIELD_CHOICES = [
 
 const SYSTEM_VIEW_FIELD_ORDER = new Map(SYSTEM_VIEW_FIELD_CHOICES.map((choice, index) => [choice.id, index]));
 
-function fieldCandidateRows(parent: NodeProjection, byId: Map<NodeId, NodeProjection>): NodeProjection[] {
+function fieldCandidateRows(
+  parent: NodeProjection,
+  byId: Map<NodeId, NodeProjection>,
+  includeOwnerFieldEntries: boolean,
+): NodeProjection[] {
   const rows: NodeProjection[] = [];
   for (const childId of parent.children) {
     const child = byId.get(childId);
     if (!child) continue;
     if (child.type && INTERNAL_VIEW_NODE_TYPES.has(child.type)) continue;
+    if (!includeOwnerFieldEntries && child.type === 'fieldEntry') continue;
     rows.push(child);
   }
   return rows;
@@ -789,8 +801,7 @@ function customFieldIdsOnRows(
   includeOwnerFieldEntries: boolean,
 ): Set<string> {
   const fields = new Set<string>();
-  for (const child of fieldCandidateRows(parent, byId)) {
-    if (!includeOwnerFieldEntries && child.type === 'fieldEntry') continue;
+  for (const child of fieldCandidateRows(parent, byId, includeOwnerFieldEntries)) {
     const displayed = displayNode(child, byId);
     if (!displayed) continue;
     for (const nestedId of displayed.children) {

@@ -1323,6 +1323,31 @@ describe('Core', () => {
       .map((node) => node.displayField)).toEqual([fieldDefId]);
   });
 
+  test('enters table when a saved search can no longer be evaluated', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const parentId = mustFocus(core.createNode(today, null, 'Target parent'));
+    mustFocus(core.createNode(parentId, null, 'Target child'));
+    const searchId = mustFocus(core.createSearchNode(core.projection().searchesId, null, {
+      title: 'Broken table search',
+      query: {
+        kind: 'rule',
+        op: 'CHILD_OF',
+        targetId: parentId,
+      },
+    }));
+    core.deleteNode(parentId);
+
+    expect(() => core.refreshSearchNodeResults(searchId)).toThrow('missing target id');
+    expect(() => core.setViewMode(searchId, 'table')).not.toThrow();
+
+    const state = core.state();
+    const viewDef = state.nodes[searchId]!.children
+      .map((childId) => state.nodes[childId])
+      .find((child) => child?.type === 'viewDef');
+    expect(viewDef?.viewMode).toBe('table');
+  });
+
   test('normalizes incomplete display order before appending default columns', () => {
     const core = Core.new();
     const owner = mustFocus(core.createNode(core.projection().todayId, null, 'Project'));

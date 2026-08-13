@@ -1,4 +1,4 @@
-import { useLayoutEffect, useState, type CSSProperties, type RefObject } from 'react';
+import { useLayoutEffect, useRef, useState, type CSSProperties, type RefObject } from 'react';
 
 export type OverlayPlacement =
   | 'bottom-start'
@@ -39,6 +39,13 @@ const HIDDEN_STYLE: CSSProperties = {
   left: -9999,
 };
 
+const CONTENT_MEASUREMENT_STYLE: CSSProperties = {
+  ...HIDDEN_STYLE,
+  width: 'max-content',
+};
+
+const UNMEASURED_CONTENT = Symbol('unmeasured-content');
+
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
@@ -72,9 +79,15 @@ export function useAnchoredOverlay(
   options: UseAnchoredOverlayOptions,
 ): CSSProperties | undefined {
   const [style, setStyle] = useState<CSSProperties>(HIDDEN_STYLE);
+  const measuredContentLayoutKeyRef = useRef<string | undefined | symbol>(UNMEASURED_CONTENT);
+  const needsContentMeasurement = options.width === 'content'
+    && measuredContentLayoutKeyRef.current !== options.layoutKey;
 
   useLayoutEffect(() => {
-    if (options.disabled) return undefined;
+    if (options.disabled) {
+      measuredContentLayoutKeyRef.current = UNMEASURED_CONTENT;
+      return undefined;
+    }
 
     const update = () => {
       const anchor = readAnchorRect(options);
@@ -88,8 +101,12 @@ export function useAnchoredOverlay(
       const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 1024;
       const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 768;
       const maxWidth = Math.max(1, viewportWidth - margin * 2);
+      const overlay = overlayRef.current;
+      const intrinsicWidth = options.width === 'content' && overlay
+        ? overlay.getBoundingClientRect().width || overlay.scrollWidth
+        : 0;
       const requestedWidth = options.width === 'content'
-        ? Math.max(anchor.width ?? 0, overlayRef.current?.scrollWidth ?? 0)
+        ? Math.max(anchor.width ?? 0, intrinsicWidth)
         : options.width ?? Math.max(anchor.width ?? 0, 220);
       const width = Math.min(requestedWidth, maxWidth);
       const maxHeight = Math.min(
@@ -117,6 +134,9 @@ export function useAnchoredOverlay(
       const topTarget = shouldPlaceAbove ? anchor.top - gap - height : anchor.bottom + gap;
       const top = clamp(topTarget, margin, viewportHeight - height - margin);
 
+      if (options.width === 'content') {
+        measuredContentLayoutKeyRef.current = options.layoutKey;
+      }
       setStyle({
         position: 'fixed',
         left,
@@ -151,5 +171,6 @@ export function useAnchoredOverlay(
     overlayRef,
   ]);
 
-  return options.disabled ? options.fallbackStyle : style;
+  if (options.disabled) return options.fallbackStyle;
+  return needsContentMeasurement ? CONTENT_MEASUREMENT_STYLE : style;
 }

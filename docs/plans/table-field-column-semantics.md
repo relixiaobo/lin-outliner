@@ -39,9 +39,13 @@ transition from any non-Table mode (`list`, `cards`, or `calendar`) to Table,
 core inspects the current direct record rows, resolves reference chains to their
 final targets, and collects the active custom field definitions used by those
 targets. A saved search refreshes its materialized result references in the same
-transaction before this inspection. For each collected definition that has
-never had a display-field node in this view, the transaction creates a visible
-display field after the existing configured columns.
+transaction before this inspection, using the main process's live text index so
+the transition cannot temporarily replace indexed results with compatibility
+scorer results. If an existing query can no longer be evaluated, the transition
+keeps its last materialized results and still enters Table; explicit query edits
+and manual refreshes continue to report the evaluation error. For each collected
+definition that has never had a display-field node in this view, the transaction
+creates a visible display field after the existing configured columns.
 
 Existing display-field nodes are authoritative. Visible columns keep their
 order and settings; hidden columns remain hidden; a view whose user hid every
@@ -108,6 +112,8 @@ activating name search expands its inline input. The title query action remains
 the single query-semantic entry point and temporarily replaces the result-view
 controls with the query editor. Ordinary nodes retain their persisted toolbar
 visibility and full Outline toolbar, reusing the same mode control with labels.
+Because a Search result band is always available independently of
+`toolbarVisible`, Search omits the ordinary Show/Hide view toolbar action.
 Filter discovery remains broader than column discovery: nested fields visible
 inside an owner's own field values remain filterable, but they do not become
 record columns in Display or Add field.

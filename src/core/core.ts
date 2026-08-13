@@ -1499,14 +1499,14 @@ export class Core {
     });
   }
 
-  setViewMode(nodeId: string, mode: ViewMode): CommandOutcome {
+  setViewMode(nodeId: string, mode: ViewMode, textIndex?: TextSearchIndex): CommandOutcome {
     return this.mutate(() => {
       const state = this.snapshot();
       const owner = requiredNode(state, nodeId);
       const previousView = findViewDef(state.nodes, owner) as ViewDefNode | undefined;
       const enteringTable = entersTable(previousView?.viewMode, mode);
       if (enteringTable && owner.type === 'search') {
-        this.materializeSearchNodeResultsDirect(nodeId);
+        this.materializeSearchNodeResultsDirect(nodeId, textIndex, { skipEvaluationFailure: true });
       }
       this.patchViewDefDirect(nodeId, (viewDef) => {
         viewDef.viewMode = mode;
@@ -3496,13 +3496,20 @@ export class Core {
     this.materializeSearchNodeResultsDirect(nodeId, textIndex);
   }
 
-  private materializeSearchNodeResultsDirect(nodeId: string, textIndex?: TextSearchIndex) {
+  private materializeSearchNodeResultsDirect(
+    nodeId: string,
+    textIndex?: TextSearchIndex,
+    options: { skipEvaluationFailure?: boolean } = {},
+  ) {
     const state = this.snapshot();
     const searchNode = requiredNode(state, nodeId);
     if (searchNode.type !== 'search') throw CoreError.invalidOperation('expected a search node');
 
     const result = runSearchNode(state, nodeId, { textIndex });
-    if (!result.ok) throw CoreError.invalidOperation(result.issue.message);
+    if (!result.ok) {
+      if (options.skipEvaluationFailure) return false;
+      throw CoreError.invalidOperation(result.issue.message);
+    }
 
     const hits = uniqueNodeIds(result.hits.map((hit) => hit.nodeId))
       .filter((targetId) =>
@@ -3548,6 +3555,7 @@ export class Core {
     const generatedIds = new Set([...queryConditionIds, ...resultRefIds]);
     const otherChildIds = latestSearchNode.children.filter((childId) => !generatedIds.has(childId));
     reorderDirectChildren(this.loro, latestSearchNode, [...queryConditionIds, ...resultRefIds, ...otherChildIds]);
+    return true;
   }
 
   private createSearchQueryConditionDirect(parentId: string, query: SearchQueryExpr, index?: number | null) {

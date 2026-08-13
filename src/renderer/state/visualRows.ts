@@ -1,5 +1,10 @@
 import type { NodeId, NodeProjection } from '../api/types';
-import { buildOutlinerRows, readViewConfig, type OutlinerRowItem } from './outlinerRows';
+import {
+  buildOutlinerRows,
+  readViewConfig,
+  showsResultViewControls,
+  type OutlinerRowItem,
+} from './outlinerRows';
 import { outlinerChildParentId } from './document';
 import type { TrailingDraftPlacement } from './document';
 import { resolveTrailingDraftAfterId } from './trailingDraftPlacement';
@@ -89,7 +94,7 @@ export function buildVisualRows(
 
     const isRoot = referencePath.length === 1;
     const view = readViewConfig(parent, byId);
-    if ((view.toolbarVisible || parent.type === 'search') && (!isRoot || options.showRootToolbar !== false)) {
+    if (showsResultViewControls(parent, view) && (!isRoot || options.showRootToolbar !== false)) {
       out.push({
         kind: 'toolbar',
         key: `toolbar>${prefix}`,

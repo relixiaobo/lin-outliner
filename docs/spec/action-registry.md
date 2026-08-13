@@ -151,6 +151,8 @@ An action resolves to an ORDERED PLAN, because real actions cross executors:
 toolbar and the requested section. Renderer steps are emitted only after the
 preceding main step succeeded, and main waits for each ack — so a failed
 renderer step stops the plan and surfaces as a failure rather than silence.
+Search nodes do not resolve `setViewToolbarVisible`: their compact result-view
+band is always available and is not governed by the ordinary toolbar flag.
 
 `ACTION_BINDINGS` (`core/actions/bindings.ts`) is a `const` VALUE, not an
 interface: TypeScript erases interfaces, so a codec or executor could not read

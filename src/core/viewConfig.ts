@@ -17,6 +17,14 @@ type ViewNodeIndex<T extends ViewTreeNode> =
   | ReadonlyMap<NodeId, T>
   | Readonly<Record<NodeId, T | undefined>>;
 
+function indexResolver<T extends ViewTreeNode>(
+  byId: ViewNodeIndex<T>,
+): (id: NodeId) => T | undefined {
+  if (byId instanceof Map) return (id) => byId.get(id);
+  const nodes = byId as Readonly<Record<NodeId, T | undefined>>;
+  return (id) => nodes[id];
+}
+
 export const INTERNAL_VIEW_NODE_TYPES: ReadonlySet<NodeType> = new Set([
   'queryCondition',
   'viewDef',
@@ -37,9 +45,7 @@ export function findViewDef<T extends ViewTreeNode>(
   owner: T | undefined,
 ): T | undefined {
   if (!owner) return undefined;
-  const resolve = byId instanceof Map
-    ? (id: NodeId) => byId.get(id)
-    : (id: NodeId) => (byId as Readonly<Record<NodeId, T | undefined>>)[id];
+  const resolve = indexResolver(byId);
   return owner.children
     .map(resolve)
     .find((child): child is T => child?.type === 'viewDef');
@@ -57,9 +63,7 @@ export function resolveViewRecordNode<T extends TableViewTreeNode>(
   byId: ViewNodeIndex<T>,
   node: T,
 ): T | undefined {
-  const resolve = byId instanceof Map
-    ? (id: NodeId) => byId.get(id)
-    : (id: NodeId) => (byId as Readonly<Record<NodeId, T | undefined>>)[id];
+  const resolve = indexResolver(byId);
   let current: T | undefined = node;
   const visited = new Set<NodeId>();
   while (current?.type === 'reference') {
@@ -115,9 +119,7 @@ export function tableDisplayFieldInitialization<T extends TableViewTreeNode>(par
   isActiveField: (field: T) => boolean;
 }): TableDisplayFieldInitialization<T> | null {
   const { byId, owner, schema } = params;
-  const resolve = byId instanceof Map
-    ? (id: NodeId) => byId.get(id)
-    : (id: NodeId) => (byId as Readonly<Record<NodeId, T | undefined>>)[id];
+  const resolve = indexResolver(byId);
   const viewDef = findViewDef(byId, owner);
   if (!viewDef || !schema) return null;
 

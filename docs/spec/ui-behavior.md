@@ -272,6 +272,9 @@ so returning to Outline restores the same grouping. These controls all read and
 write `viewDef` child nodes
 (`displayField`, `sortRule`, `filterRule`, plus the view's `groupField`) rather
 than storing renderer-local state.
+The ordinary **Show/Hide view toolbar** action is not offered for Search nodes:
+their result-view band is part of the Search surface rather than a conditional
+projection of `viewDef.toolbarVisible`.
 
 Nested toolbars render as part of the expanded child outline, not as detached
 cards. They remain logically inside the expanded child subtree, while their
@@ -382,12 +385,16 @@ Table, the same `set_view_mode` transaction inspects the current direct records,
 resolves every reference chain to its final target, and adds visible columns for
 active custom fields used by those targets but never configured in this view. A
 Search owner refreshes its materialized result references first, within the same
-transaction, so first entry cannot observe an empty stale result set. Existing
-display-field nodes are authoritative: their order and settings stay intact,
-hidden columns remain hidden, and only missing fields are appended in Schema
-order. System fields and unused custom fields are never defaulted. Repeating
-Table mode does nothing; fields first used while Table remains active are
-considered on the next transition out of and back into Table.
+transaction, using the main process's live text index, so first entry cannot
+observe an empty stale result set or compatibility-scored results. If the saved
+query is no longer evaluable, this pre-refresh keeps the previous materialized
+results and the mode change still lands; explicit query writes and manual
+refreshes continue to report the evaluation error. Existing display-field nodes
+are authoritative: their order and settings stay intact, hidden columns remain
+hidden, and only missing fields are appended in Schema order. System fields and
+unused custom fields are never defaulted. Repeating Table mode does nothing;
+fields first used while Table remains active are considered on the next
+transition out of and back into Table.
 
 The first column is the synthetic, non-removable **Title** column. It contains
 the ordinary bullet/disclosure, checkbox, rich title editor, reference behavior,
@@ -533,6 +540,10 @@ field header; Add field owns visible columns. The compact band has no frame,
 fill, summary chips, result count, manual refresh, or decorative separator. At
 narrow pane widths its controls keep the shared fixed control size and wrap as
 complete units instead of shrinking or clipping.
+Each compact-control tooltip anchors to the control that currently owns hover or
+keyboard focus, including after the controls wrap. Moving directly between
+controls remeasures the new label's intrinsic width, so a short tooltip never
+inherits the width or location of the previous control.
 
 ## NodePanel References Footer
 

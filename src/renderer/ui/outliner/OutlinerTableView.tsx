@@ -79,6 +79,7 @@ import {
   fieldEntryForViewCell,
   hiddenFieldKey,
   readViewConfig,
+  showsResultViewControls,
   customViewFieldIdsOnRows,
   viewFieldValuesFor,
   visibleDisplayFields,
@@ -800,7 +801,7 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
     const showNested = expanded && Boolean(childParent) && (
       nestedRows.length > 0
       || nestedView?.viewMode === 'table'
-      || nestedView?.toolbarVisible
+      || showsResultViewControls(childParent, nestedView)
       || nestedDraftFocused
     );
     return (
@@ -945,7 +946,7 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
 
   if (!parent) return null;
   const tableViewActionsVisible = props.showViewToolbar !== false
-    && (view.toolbarVisible || parent.type === 'search');
+    && showsResultViewControls(parent, view);
   const gridStyle = {
     '--table-columns': tableGridTemplate(columns, previewsRef.current),
     '--table-min-width': `${tableGridMinWidth(columns, previewsRef.current)}px`,

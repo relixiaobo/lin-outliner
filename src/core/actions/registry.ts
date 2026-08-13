@@ -757,6 +757,7 @@ function resolveSetViewToolbarVisible(
   const fact = viewFactFor(context, subject);
   if (!fact) return [];
   const node = anchorContentNode(context, subject);
+  if (node?.type === 'search') return [];
   const view = readNodeViewSettings(node, context.projection.byId);
   const visibleInRow = view.toolbarVisible && fact.rowExpanded;
   return [present({

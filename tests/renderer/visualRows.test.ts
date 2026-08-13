@@ -251,6 +251,18 @@ describe('buildVisualRows depth and extras', () => {
     expect(rows.find((row) => row.kind === 'toolbar')).toMatchObject({ nodeId: 'search', depth: 0 });
   });
 
+  test('emits compact controls for an expanded empty nested search', () => {
+    const byId = byIdOf([
+      node('lib', { children: ['search'] }),
+      node('search', { parentId: 'lib', type: 'search' } as Partial<NodeProjection>),
+    ]);
+
+    const rows = buildVisualRows('lib', byId, { expanded: new Set(['search']) });
+
+    expect(rows.map((row) => row.kind)).toEqual(['content', 'toolbar']);
+    expect(rows[1]).toMatchObject({ nodeId: 'search', depth: 1 });
+  });
+
   test('emits one independently rendered table scope instead of flattening its descendants', () => {
     const byId = byIdOf([
       node('lib', { children: ['project'] }),
