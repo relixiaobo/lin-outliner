@@ -140,6 +140,22 @@ Entries reference the pull request that introduced them.
   each tool's own `prepareArguments`, and a Turn-local repeated-rejection
   quarantine with an eight-failure ceiling and one final tool-free response.
   Design only; the implementation ships as one PR.
+- **Tag schema projection plan (PR #537, cc-2, plan-only)** — boards the fix for
+  a PM-reported bug: template edits on a `#tag` never reach nodes that already
+  carry it, because the template is a one-shot stamp read only at `apply_tag` and
+  `splitNode`. The ratified design stops copying the rules instead of syncing the
+  copies: a node's field list becomes a read-time projection of its tag chain
+  (nodes store values only, materialized on write, dematerialized on commit-empty,
+  auto-init still frozen at tag acquisition), static defaults render as inherited
+  ghosts that answer reads and never write, and freeform template children stay
+  one-shot seeds with an explicit idempotent backfill command. Three independent
+  PRs; PM ratified D1–D4 plus, at the gate, the `is empty` consequence (on a
+  defaulted field it matches nothing — there is no per-node way to blank a
+  ghost). Two design-review rounds at the gate corrected the plan's premises
+  against the real code (splitNode call site, already-implemented search
+  operators, instance field-order quirk, `templateId`'s color consumer, the #534
+  semantic overlap) before ratification. Design only; PR 1 sequences after #533
+  and #534.
 
 ## [0.3.1] - 2026-08-10
 

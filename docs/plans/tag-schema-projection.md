@@ -273,9 +273,15 @@ can be a ghost, and a ghost costs nothing to make retroactive.
 - **D2 — Ghost defaults answer queries.** A node displaying `Inbox` is found by
   `Status = Inbox`, in search and in table sort/filter alike
   (`comparableFieldState`, `fieldReads`, `fieldDateRanges`, `fieldValuesForNode`
-  all read the ghost). Ghosts stay invisible to writes. Accepted cost: on a field
-  that has a default, `is empty` matches nothing until someone clears a value
-  explicitly — "empty" now means what the user sees, not what is stored.
+  all read the ghost). Ghosts stay invisible to writes. Accepted cost
+  (PM-ratified 2026-08-13, at the gate): on a field that has a static default,
+  `is empty` matches nothing — ever. Clearing a stored value dematerializes the
+  entry and the ghost returns, so there is no per-node way to blank a defaulted
+  field; the empty state is reached by storing a real value or removing the
+  default from the tag. "Empty" means what the user sees, not what is stored,
+  and the storage rule keeps zero exceptions (ratified over an explicit-empty
+  tombstone entry, which would reintroduce valueless entries for exactly one
+  case).
 - **D3 — Same-name collisions render as two rows.** Two definitions stay two
   slots; the materialize path drops the name assert. The rejected alternative —
   merging into the node's existing same-named field — would silently repoint a
@@ -316,8 +322,11 @@ chunk.
 - [ ] `templateId` dropped from field entries (kept for seed clones);
       `resolveFieldOwnerColor` and `value_is_default` read slot provenance
 - [ ] Agent projection renders slots compactly
-- [ ] Reader sweep is rg-driven (A11): `rg "=== 'fieldEntry'"` over `src/` returning
-      only the accessor is the done condition, not a hand-kept list
+- [ ] Reader sweep is rg-driven (A11): `rg "=== 'fieldEntry'"` over `src/` is the
+      work queue, not a hand-kept list; done when the remaining hits are only the
+      accessor and stored-entry type guards that never enumerate a node's field
+      list (backlink classification in `references`, codec/write paths, the
+      `systemFields` DONE check)
 - [ ] Core tests: field added to a tag appears on nodes tagged before it; auto-init
       freezes at tag acquisition while other slots write nothing; field removed
       from a tag vanishes where valueless and survives as an own field where a

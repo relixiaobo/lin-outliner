@@ -522,6 +522,18 @@ archived `done` (see Recently completed). Remaining active work:
   **inline alt-text editing** (`mediaAlt` is writable only at node creation today).
 ### Outliner & UI polish
 
+- **tag-schema-projection** (P1, `draft` 2026-08-13, **PM-ratified 2026-08-13**) —
+  fixes the PM-reported bug that template edits never reach already-tagged nodes,
+  by making fields a read-time projection of the tag chain (nodes store values
+  only), static defaults inherited ghosts, and seed content one-shot copies with
+  an explicit backfill action. Three independent PRs; decisions D1–D4 recorded in
+  the plan (untag keeps typed values; ghosts answer reads, never writes — `is
+  empty` on a defaulted field matches nothing; same-name collisions render as two
+  rows; tag fields sit above own fields). One open question (per-node drag for
+  tag fields) has a stated default and does not block. **PR 1 sequences after
+  #533 and #534** — #534 is a semantic overlap (`addMissingTableDisplayFieldsDirect`
+  must become slot-aware); re-verify the reader sweep after it merges.
+  Design: [`tag-schema-projection`](plans/tag-schema-projection.md).
 - **nodex-parity-decisions** (meta, *standing reference — not a work item*) — the
   catalog of nodex features lin deliberately **will not** port, with reasons;
   companion to the active plans. Current-code parity status lives in
