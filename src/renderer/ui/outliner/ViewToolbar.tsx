@@ -47,7 +47,7 @@ import { SelectControl } from '../primitives/SelectControl';
 import { useAnchoredOverlay, type OverlayAnchorRect } from '../primitives/useAnchoredOverlay';
 import { resolveMenuNavigation, useMenuKeyboard } from '../primitives/useMenuKeyboard';
 import type { CommandRunner } from '../shared';
-import { collectViewFieldChoices, customViewFieldIdsOnRows, type ViewConfig } from './row-model';
+import { collectViewFieldChoices, customFilterFieldIdsOnRows, type ViewConfig } from './row-model';
 import {
   CREATED_FIELD,
   DAY_FIELD,
@@ -323,7 +323,7 @@ function collectFilterFieldChoices(
 ): FieldChoice[] {
   const labelsById = new Map(choices.map((choice) => [choice.id, choice.label]));
   const systemChoices = choices.filter((choice) => choice.section === 'System fields' && choice.id !== NAME_FIELD);
-  const fields = customViewFieldIdsOnRows(parent, byId);
+  const fields = customFilterFieldIdsOnRows(parent, byId);
 
   for (const rule of filterRules) {
     if (isNameFilterRule(rule) || isSystemFieldId(rule.field)) continue;

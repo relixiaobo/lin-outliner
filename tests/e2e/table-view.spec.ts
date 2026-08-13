@@ -405,7 +405,7 @@ test.describe('table view', () => {
     expect(selectionVisual.cellBackgrounds.every((background) => background === 'rgba(0, 0, 0, 0)')).toBe(true);
   });
 
-  test('does not render any field rows under an expanded table record', async ({ page }) => {
+  test('keeps active fields as columns and restores orphaned field rows', async ({ page }) => {
     await configureRootTable(page);
     const configuredProjection = await e2eProjection(page);
     const dueDisplay = configuredProjection.nodes.find((node) => (
@@ -484,6 +484,15 @@ test.describe('table view', () => {
         && field.content.text === 'Internal notes'
       ))
     ))!;
+    const undisplayedFieldId = (undisplayedEntry as typeof undisplayedEntry & { fieldDefId?: string }).fieldDefId!;
+    await invokeCommands(page, [{
+      cmd: 'set_field_free_text_value',
+      args: {
+        fieldEntryId: undisplayedEntry.id,
+        text: 'Recoverable note',
+        id: 'table-orphaned-value',
+      },
+    }]);
 
     const grid = rootGrid(page);
     const titleCell = grid.locator(
@@ -505,6 +514,17 @@ test.describe('table view', () => {
     await expect(nested.locator(`[data-node-id="${hiddenDueEntry.id}"]`)).toHaveCount(0);
     await expect(nested.locator(`[data-node-id="${undisplayedEntry.id}"]`)).toHaveCount(0);
     await expect(statusCell).toContainText('Column value');
+
+    await grid.getByRole('button', { name: 'Add column' }).click();
+    const addColumnDialog = page.getByRole('dialog', { name: 'Add column' });
+    await expect(addColumnDialog.getByRole('button', { name: 'Internal notes', exact: true })).toBeVisible();
+    await page.keyboard.press('Escape');
+
+    await invokeCommands(page, [{ cmd: 'trash_node', args: { nodeId: undisplayedFieldId } }]);
+    const orphanedField = nested.locator(`[data-node-id="${undisplayedEntry.id}"]`);
+    await expect(orphanedField).toBeVisible();
+    await expect(orphanedField.getByRole('textbox', { name: 'Field name' })).toHaveValue('Internal notes');
+    await expect(orphanedField.locator('[data-node-id="table-orphaned-value"]')).toContainText('Recoverable note');
   });
 
   test('opens an authored field definition from its column kind icon', async ({ page }) => {

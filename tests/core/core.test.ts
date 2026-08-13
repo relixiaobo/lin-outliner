@@ -1269,6 +1269,92 @@ describe('Core', () => {
     expect(core.state().nodes[hiddenDisplayId]).toMatchObject({ displayVisible: false });
   });
 
+  test('defaults table columns from every non-table view mode', () => {
+    for (const previousMode of ['cards', 'calendar'] as const) {
+      const core = Core.new();
+      const owner = mustFocus(core.createNode(core.projection().todayId, null, `Project ${previousMode}`));
+      const record = mustFocus(core.createNode(owner, null, 'Record'));
+      const entry = mustFocus(core.createInlineField(record, null, 'Priority', 'plain'));
+      const fieldDefId = core.state().nodes[entry]!.fieldDefId!;
+
+      core.setViewMode(owner, previousMode);
+      core.setViewMode(owner, 'table');
+
+      const state = core.state();
+      const viewDef = state.nodes[owner]!.children
+        .map((childId) => state.nodes[childId])
+        .find((node) => node?.type === 'viewDef')!;
+      expect(viewDef.children
+        .map((childId) => state.nodes[childId])
+        .filter((node) => node?.type === 'displayField')
+        .map((node) => node.displayField)).toEqual([fieldDefId]);
+    }
+  });
+
+  test('refreshes saved-search rows before defaulting table columns', () => {
+    const core = Core.new();
+    const record = mustFocus(core.createNode(core.projection().todayId, null, 'Table search match'));
+    const entry = mustFocus(core.createInlineField(record, null, 'Priority', 'plain'));
+    const fieldDefId = core.state().nodes[entry]!.fieldDefId!;
+    const searchId = mustFocus(core.createSearchNode(core.projection().searchesId, null, {
+      title: 'Table search',
+      query: { kind: 'rule', op: 'STRING_MATCH', text: 'Table search match' },
+    }));
+
+    const before = core.state();
+    for (const childId of [...before.nodes[searchId]!.children]) {
+      if (before.nodes[childId]?.type === 'reference') core.deleteNode(childId);
+    }
+    expect(core.state().nodes[searchId]!.children.some((childId) => (
+      core.state().nodes[childId]?.type === 'reference'
+    ))).toBe(false);
+
+    core.setViewMode(searchId, 'table');
+
+    const state = core.state();
+    const search = state.nodes[searchId]!;
+    const viewDef = search.children
+      .map((childId) => state.nodes[childId])
+      .find((node) => node?.type === 'viewDef')!;
+    expect(search.children.some((childId) => state.nodes[childId]?.type === 'reference')).toBe(true);
+    expect(viewDef.children
+      .map((childId) => state.nodes[childId])
+      .filter((node) => node?.type === 'displayField')
+      .map((node) => node.displayField)).toEqual([fieldDefId]);
+  });
+
+  test('normalizes incomplete display order before appending default columns', () => {
+    const core = Core.new();
+    const owner = mustFocus(core.createNode(core.projection().todayId, null, 'Project'));
+    const record = mustFocus(core.createNode(owner, null, 'Record'));
+    const firstEntry = mustFocus(core.createInlineField(record, null, 'Status', 'plain'));
+    const secondEntry = mustFocus(core.createInlineField(record, null, 'Priority', 'plain'));
+    const thirdEntry = mustFocus(core.createInlineField(record, null, 'Owner', 'plain'));
+    const firstFieldId = core.state().nodes[firstEntry]!.fieldDefId!;
+    const secondFieldId = core.state().nodes[secondEntry]!.fieldDefId!;
+    const thirdFieldId = core.state().nodes[thirdEntry]!.fieldDefId!;
+    const firstDisplayId = mustFocus(core.addDisplayField(owner, firstFieldId));
+    const secondDisplayId = mustFocus(core.addDisplayField(owner, secondFieldId));
+    core.updateDisplayField(firstDisplayId, { order: 7 });
+    core.updateDisplayField(secondDisplayId, { order: null });
+
+    core.setViewMode(owner, 'table');
+
+    const latest = core.state();
+    const viewDef = latest.nodes[owner]!.children
+      .map((childId) => latest.nodes[childId])
+      .find((node) => node?.type === 'viewDef')!;
+    const displays = viewDef.children
+      .map((childId) => latest.nodes[childId])
+      .filter((node) => node?.type === 'displayField')
+      .sort((left, right) => left.displayOrder! - right.displayOrder!);
+    expect(displays.map((display) => [display.displayField, display.displayOrder])).toEqual([
+      [firstFieldId, 7],
+      [secondFieldId, 8],
+      [thirdFieldId, 9],
+    ]);
+  });
+
   test('empty draft fields do not reserve the display placeholder name', () => {
     const core = Core.new();
     const today = core.projection().todayId;

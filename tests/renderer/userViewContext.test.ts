@@ -194,7 +194,7 @@ describe('renderer Agent user-view hints', () => {
     expect(hints.panels[0]?.visibleOutlineTruncated).toBe(false);
   });
 
-  test('omits all field rows from expanded table record descendants', () => {
+  test('omits active field rows but retains orphaned fields in expanded table records', () => {
     const index = buildIndex(projection([
       node('root', 'Root', { children: ['view', 'record'] }),
       node('view', 'View', {
@@ -208,6 +208,9 @@ describe('renderer Agent user-view hints', () => {
         type: 'displayField',
         displayField: 'shown-field',
       }),
+      node('shown-field', 'Shown field', { parentId: 'schema', type: 'fieldDef' }),
+      node('hidden-field', 'Hidden field', { parentId: 'schema', type: 'fieldDef' }),
+      node('schema', 'Schema', { children: ['shown-field', 'hidden-field'] }),
       node('record', 'Record', {
         parentId: 'root',
         children: ['shown-entry', 'hidden-entry', 'other-entry', 'child'],
@@ -237,7 +240,11 @@ describe('renderer Agent user-view hints', () => {
     ]));
     const expanded = new Set(['record']);
 
-    expect(flattenVisibleRows('root', index.byId, expanded)).toEqual(['record', 'child']);
+    expect(flattenVisibleRows('root', index.byId, expanded)).toEqual([
+      'record',
+      'other-entry',
+      'child',
+    ]);
     const hints = buildRendererUserViewHints({
       activePanelId: 'panel-1',
       panels: [panel()],
@@ -248,6 +255,8 @@ describe('renderer Agent user-view hints', () => {
     expect(hints.panels[0]?.visibleNodes).toEqual([
       { nodeId: 'root', depth: 0, expanded: true },
       { nodeId: 'record', depth: 1, expanded: true },
+      { nodeId: 'other-entry', depth: 2, expanded: true },
+      { nodeId: 'other-value', depth: 3, expanded: false },
       { nodeId: 'child', depth: 2, expanded: false },
     ]);
     expect(hints.panels[0]?.visibleOutlineTruncated).toBe(false);

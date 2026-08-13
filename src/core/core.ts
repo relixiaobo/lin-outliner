@@ -61,6 +61,7 @@ import {
   type SetConfigValueInput,
 } from './configSchema';
 import { referencesForTarget } from './references';
+import { entersTable, findViewDef, missingDisplayOrderPlan, tableDisplayFieldInitialization } from './viewConfig';
 import { normalizeCodeLanguage } from './codeLanguages';
 import {
   AREAS_ID,
@@ -1502,11 +1503,11 @@ export class Core {
     return this.mutate(() => {
       const state = this.snapshot();
       const owner = requiredNode(state, nodeId);
-      const previousView = owner.children
-        .map((childId) => state.nodes[childId])
-        .find((child): child is ViewDefNode => child?.type === 'viewDef');
-      const enteringTable = mode === 'table'
-        && (previousView?.viewMode ?? 'list') === 'list';
+      const previousView = findViewDef(state.nodes, owner) as ViewDefNode | undefined;
+      const enteringTable = entersTable(previousView?.viewMode, mode);
+      if (enteringTable && owner.type === 'search') {
+        this.materializeSearchNodeResultsDirect(nodeId);
+      }
       this.patchViewDefDirect(nodeId, (viewDef) => {
         viewDef.viewMode = mode;
       });
@@ -3140,10 +3141,8 @@ export class Core {
 
   private ensureViewDefDirect(nodeId: string): NodeId {
     const state = this.snapshot();
-    requiredNode(state, nodeId);
-    const existing = state.nodes[nodeId]?.children
-      .map((childId) => state.nodes[childId])
-      .find((child): child is Node => child?.type === 'viewDef');
+    const owner = requiredNode(state, nodeId);
+    const existing = findViewDef(state.nodes, owner);
     if (existing) return existing.id;
     const viewDefId = freshId('view');
     this.loro.createNodeWithId<ViewDefNode>(viewDefId, nodeId, 0, 'viewDef', (node) => {
@@ -3164,9 +3163,7 @@ export class Core {
   }
 
   private viewDefChildren(state: DocumentState, nodeId: string, type: NodeType): Node[] {
-    const viewDef = state.nodes[nodeId]?.children
-      .map((childId) => state.nodes[childId])
-      .find((child): child is Node => child?.type === 'viewDef');
+    const viewDef = findViewDef(state.nodes, state.nodes[nodeId]);
     if (!viewDef) return [];
     return viewDef.children
       .map((childId) => state.nodes[childId])
@@ -3176,53 +3173,29 @@ export class Core {
   private addMissingTableDisplayFieldsDirect(nodeId: string): void {
     const state = this.snapshot();
     const owner = requiredNode(state, nodeId);
-    const viewDef = owner.children
-      .map((childId) => state.nodes[childId])
-      .find((child): child is ViewDefNode => child?.type === 'viewDef');
-    if (!viewDef) return;
-
-    const configuredFields = new Set<string>();
-    const displayFields: DisplayFieldNode[] = [];
-    for (const childId of viewDef.children) {
-      const child = state.nodes[childId];
-      if (child?.type !== 'displayField' || !child.displayField) continue;
-      configuredFields.add(child.displayField);
-      displayFields.push(child);
-    }
-
-    const usedFields = new Set<string>();
-    for (const childId of owner.children) {
-      const child = state.nodes[childId];
-      if (!child || !isTableRecordNode(child)) continue;
-      const record = resolveReferenceNodeForRead(state, child);
-      if (!record) continue;
-      for (const nestedId of record.children) {
-        const nested = state.nodes[nestedId];
-        if (nested?.type === 'fieldEntry' && nested.fieldDefId) usedFields.add(nested.fieldDefId);
-      }
-    }
-    if (usedFields.size === 0) return;
-
-    const schema = state.nodes[SCHEMA_ID];
-    if (!schema) return;
-    const missingFields = schema.children.filter((fieldId) => {
-      const field = state.nodes[fieldId];
-      return field?.type === 'fieldDef'
-        && usedFields.has(fieldId)
-        && !configuredFields.has(fieldId)
-        && !isInTrash(state, fieldId);
+    const initialization = tableDisplayFieldInitialization({
+      byId: state.nodes,
+      owner,
+      schema: state.nodes[SCHEMA_ID],
+      isActiveField: (field) => !isInTrash(state, field.id),
     });
+    if (!initialization) return;
+    const { displayFields, missingFieldIds: missingFields, viewDef } = initialization;
     if (missingFields.length === 0) return;
 
-    const allExistingOrdersAreFinite = displayFields.every((display) => Number.isFinite(display.displayOrder));
-    let nextOrder = allExistingOrdersAreFinite
-      ? displayFields.reduce((max, display) => Math.max(max, display.displayOrder!), -1) + 1
-      : undefined;
+    const orderPlan = missingDisplayOrderPlan(displayFields);
+    for (const assignment of orderPlan.assignments) {
+      const normalized = clone(assignment.field);
+      normalized.displayOrder = assignment.order;
+      normalized.updatedAt = nowMs();
+      this.loro.writeNode(normalized);
+    }
+    let nextOrder = orderPlan.nextOrder;
     for (const fieldId of missingFields) {
       this.loro.createNodeWithId<DisplayFieldNode>(freshId('display'), viewDef.id, undefined, 'displayField', (node) => {
         node.displayField = fieldId;
         node.displayVisible = true;
-        if (nextOrder !== undefined) node.displayOrder = nextOrder++;
+        node.displayOrder = nextOrder++;
       });
     }
   }
@@ -3653,9 +3626,7 @@ export class Core {
     const queryCondition = recents.children
       .map((childId) => state.nodes[childId])
       .find((node): node is QueryConditionNode => node?.type === 'queryCondition');
-    const viewDef = recents.children
-      .map((childId) => state.nodes[childId])
-      .find((node): node is ViewDefNode => node?.type === 'viewDef');
+    const viewDef = findViewDef(state.nodes, recents) as ViewDefNode | undefined;
     const sortRule = viewDef?.children
       .map((childId) => state.nodes[childId])
       .find((node): node is SortRuleNode => node?.type === 'sortRule');
@@ -6127,28 +6098,6 @@ function resolveReferenceTargetId(state: DocumentState, targetId: string) {
     if (!current.targetId) throw CoreError.invalidOperation('reference node has no target');
     currentId = current.targetId;
   }
-}
-
-function resolveReferenceNodeForRead(state: DocumentState, node: Node): Node | null {
-  let current: Node | undefined = node;
-  const visited = new Set<NodeId>();
-  while (current?.type === 'reference') {
-    if (visited.has(current.id) || !current.targetId) return null;
-    visited.add(current.id);
-    current = state.nodes[current.targetId];
-  }
-  return current ?? null;
-}
-
-function isTableRecordNode(node: Node): boolean {
-  return node.type !== 'fieldEntry'
-    && node.type !== 'queryCondition'
-    && node.type !== 'viewDef'
-    && node.type !== 'sortRule'
-    && node.type !== 'filterRule'
-    && node.type !== 'displayField'
-    && node.type !== 'defConfig'
-    && node.type !== 'systemOption';
 }
 
 function isOnlyInlineReference(content: RichText, targetId: string) {

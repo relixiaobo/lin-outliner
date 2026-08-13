@@ -90,6 +90,7 @@ import { OutlinerView } from './OutlinerView';
 import { animateOutlinerRowMovementAfterNextCommit } from './rowMoveAnimation';
 import {
   buildOutlinerRows,
+  isActiveTableFieldEntry,
   readViewConfig,
   viewDisplayValuesFor,
   type ViewFieldValue,
@@ -220,7 +221,8 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   const rowChildIds = referenceCycle ? [] : outlinerChildren(childParentNode, props.index.byId).filter((childId) => {
     const child = props.index.byId.get(childId);
     return child?.type !== 'fieldEntry'
-      || !props.suppressChildFieldEntries;
+      || !props.suppressChildFieldEntries
+      || !isActiveTableFieldEntry(child, props.index.byId);
   });
   const parentView = readViewConfig(parentNode, props.index.byId);
   const referenceSummary = referenceSummaryForIndex(props.index);

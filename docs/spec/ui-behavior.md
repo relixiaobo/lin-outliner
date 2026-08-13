@@ -333,8 +333,11 @@ Filter by name chip owns name filtering, so Name is excluded from the generic
 Filter popover. Generic Filter still offers the real system fields supported by
 the view adapter, then contextual custom fields from the current child/result
 rows plus fields already referenced by existing non-name filter rules so old
-rules remain editable. Fields that the data model does not yet expose as computed
-values are not shown as fake empty choices.
+rules remain editable. Its contextual discovery also includes nested fields
+visible inside the owner's own field values; Display, Group, Sort, and Table
+column discovery continue to treat those owner fields as metadata rather than
+record rows. Fields that the data model does not yet expose as computed values
+are not shown as fake empty choices.
 
 Rows that do not match the active view filter are not discarded from the
 interaction surface. The visible list shows matching rows first, then appends a
@@ -374,21 +377,26 @@ filtered-out disclosure remains recoverable inside the grid and reveals rows in
 the same columns. Search nodes can use the same renderer, but never receive a
 writable trailing draft because their result references are derived.
 
-On a real Outline (`list`) to Table transition, the same `set_view_mode`
-transaction inspects the current direct records, resolves every reference chain
-to its final target, and adds visible columns for active custom fields used by
-those targets but never configured in this view. Existing display-field nodes
-are authoritative: their order and settings stay intact, hidden columns remain
-hidden, and only missing fields are appended in Schema order. System fields and
-unused custom fields are never defaulted. Repeating Table mode does nothing;
-fields first used while Table remains active are considered on the next
-Outline-to-Table transition.
+On a real transition from any non-Table mode (`list`, `cards`, or `calendar`) to
+Table, the same `set_view_mode` transaction inspects the current direct records,
+resolves every reference chain to its final target, and adds visible columns for
+active custom fields used by those targets but never configured in this view. A
+Search owner refreshes its materialized result references first, within the same
+transaction, so first entry cannot observe an empty stale result set. Existing
+display-field nodes are authoritative: their order and settings stay intact,
+hidden columns remain hidden, and only missing fields are appended in Schema
+order. System fields and unused custom fields are never defaulted. Repeating
+Table mode does nothing; fields first used while Table remains active are
+considered on the next transition out of and back into Table.
 
 The first column is the synthetic, non-removable **Title** column. It contains
 the ordinary bullet/disclosure, checkbox, rich title editor, reference behavior,
 and row context menu. Each visible `displayField` contributes one additional
 column. Columns use finite `displayOrder` first, then stored child order and id as
-deterministic fallbacks. `displayLabel` overrides the live field label,
+deterministic fallbacks. When Table initialization encounters historical display
+fields without a finite order, it assigns only those fields sequential orders
+after the maximum existing finite order and appends new defaults after them;
+existing finite orders never change. `displayLabel` overrides the live field label,
 `displayWidth` is clamped to the supported range, and `displayVisible` controls
 visibility. Header menus rename a column for this view, move it left or right,
 or hide it. The persisted remove command remains protocol-compatible, but the
@@ -445,17 +453,21 @@ stored Title creates and focuses the next record.
 Reference-backed records use one final target for field text, sort, filter,
 grouping, choice discovery, system-field projection, and edit attachment. This
 includes saved-search results whose target is another reference. A missing or
-cyclic chain renders empty, does not accept a field write, and never blocks the
-rest of the Table.
+cyclic chain uses the reference node's own title for Name, renders target-backed
+authored and system fields empty, does not accept a field write, and never blocks
+the rest of the Table.
 
-Expanding a table record shows its ordinary child outline without any authored
-field-entry rows. In Table, fields are columns whether their columns are visible,
-hidden, or not yet configured. Visible-column values remain editable through
-their cells and their ordinary value nodes remain in cell selection order, but
-field-entry wrappers and values for hidden or undisplayed fields are absent from
-the expanded tree, disclosure child count, keyboard navigation, selectable-row
-model, and agent-visible outline. Hidden data stays discoverable and recoverable
-through Add field.
+Expanding a table record shows its ordinary child outline without active authored
+field-entry rows. In Table, active fields are columns whether their columns are
+visible, hidden, or not yet configured. Visible-column values remain editable
+through their cells and their ordinary value nodes remain in cell selection
+order, but active field-entry wrappers and values for hidden or undisplayed
+fields are absent from the expanded tree, disclosure child count, keyboard
+navigation, selectable-row model, and agent-visible outline. Hidden active data
+stays discoverable and recoverable through Add field. A field entry whose
+definition is missing or in Trash is the recovery exception: it renders as an
+ordinary expanded field row and participates in all of those structural models,
+so its stored values never become unreachable.
 
 Each table is an independently named ARIA `grid` with `row`, `columnheader`, and
 `gridcell` descendants and one roving tab stop. An expanded nested Outline inside

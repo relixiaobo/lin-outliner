@@ -7,11 +7,11 @@ coverage ship together because they define one Table field model.
 
 ## Goal
 
-Make Table treat authored fields consistently as columns. A user switching an
-outline or saved search to Table should immediately see columns for the authored
-fields used by its current records, see the corresponding target-backed values
-for reference results, and configure hidden columns from the header instead of
-finding duplicate field rows inside expanded records.
+Make Table treat authored fields consistently as columns. A user switching any
+non-Table view or saved search to Table should immediately see columns for the
+authored fields used by its current records, see the corresponding target-backed
+values for reference results, and configure hidden columns from the header
+instead of finding duplicate field rows inside expanded records.
 
 The resulting Search Table should also match Tana's scan-first composition: the
 grid fills the available content width, Title receives spare space, authored
@@ -35,17 +35,22 @@ visual language.
 ### Entering Table
 
 `set_view_mode` remains the single mutation for every entry path. On a real
-transition from Outline to Table, core inspects the current direct record rows,
-resolves reference chains to their final targets, and collects the active custom
-field definitions used by those targets. For each collected definition that has
-never had a display-field node in this view, the same transaction creates a
-visible display field after the existing configured columns.
+transition from any non-Table mode (`list`, `cards`, or `calendar`) to Table,
+core inspects the current direct record rows, resolves reference chains to their
+final targets, and collects the active custom field definitions used by those
+targets. A saved search refreshes its materialized result references in the same
+transaction before this inspection. For each collected definition that has
+never had a display-field node in this view, the transaction creates a visible
+display field after the existing configured columns.
 
 Existing display-field nodes are authoritative. Visible columns keep their
 order and settings; hidden columns remain hidden; a view whose user hid every
 column remains Title-only. New defaults follow Schema order for deterministic
-placement. System fields are never defaulted. Repeating Table mode without an
-Outline transition performs no initialization.
+placement. If an historical display field lacks a finite `displayOrder`, only
+that field receives the next order after the maximum existing finite order,
+following stored child order; existing finite orders are never rewritten. New
+defaults follow those normalized historical fields. System fields are never
+defaulted. Repeating Table mode performs no initialization.
 
 ### Reference-backed values
 
@@ -53,20 +58,24 @@ All view reads resolve a reference chain to one final display target with cycle
 and missing-target degradation. Table cell lookup, display text, sort, filter,
 group, field-choice discovery, and edit targeting therefore agree for ordinary
 records, direct references, and saved-search results that reference another
-reference. A broken or cyclic chain renders an empty value rather than blocking
-the table.
+reference. A broken or cyclic chain keeps the reference node's own title for the
+Name field, while target-backed authored and system fields render empty. Neither
+case blocks the table.
 
 ### Expanded records
 
 Within Table, authored field entries are represented only by columns. Expanding
 a record renders its ordinary child nodes and independently configured nested
-views, but no field-entry rows, including entries for hidden or not-yet-added
-columns. Hiding a column does not delete its data: the field remains discoverable
-and restorable through Display and Add column.
+views, but no active field-entry rows, including entries for hidden or
+not-yet-added columns. Hiding a column does not delete its data: the field
+remains discoverable and restorable through Display and Add column.
 
 The rendered tree, disclosure child count, keyboard navigation, and selectable
 row model use the same suppression rule so invisible field rows cannot remain
-focusable or affect disclosure state.
+focusable or affect disclosure state. A field entry whose definition is missing
+or in Trash is the recovery exception: it renders as an ordinary expanded field
+row and remains present in disclosure, keyboard selection, selectable-row, and
+agent-visible structure so its stored values cannot become unreachable.
 
 ### Column configuration
 
@@ -99,6 +108,9 @@ activating name search expands its inline input. The title query action remains
 the single query-semantic entry point and temporarily replaces the result-view
 controls with the query editor. Ordinary nodes retain their persisted toolbar
 visibility and full Outline toolbar, reusing the same mode control with labels.
+Filter discovery remains broader than column discovery: nested fields visible
+inside an owner's own field values remain filterable, but they do not become
+record columns in Display or Add field.
 
 ### Responsive geometry
 
@@ -126,17 +138,19 @@ derive from design-system spacing, type, color, separator, and focus tokens.
 
 Rewrite the current Table contracts in `docs/spec/ui-behavior.md` and
 `docs/spec/design-system/surfaces.md`: first-entry custom-column defaults,
-reference-chain value resolution, field-free expansion, Hide-only header
-removal, and custom-first Add ordering replace the previous Title-only default
-and hidden-field expansion behavior.
+reference-chain value resolution, active-field-free expansion with orphan
+recovery, Hide-only header removal, and custom-first Add ordering replace the
+previous Title-only default and hidden-field expansion behavior.
 
 ### Verification
 
 - Core tests prove the first transition creates only missing used custom
-  display fields, preserves hidden configuration, follows Schema order, and
-  leaves system fields absent.
-- Renderer tests prove reference-chain value/field discovery and field-free
-  expanded row/selectable models degrade safely on broken cycles.
+  display fields from every non-Table mode, refreshes Search results first,
+  preserves hidden configuration and finite historical order, follows Schema
+  order, and leaves system fields absent.
+- Renderer tests prove reference-chain value/field discovery and active-field
+  suppression degrade safely on broken cycles while orphaned field entries stay
+  available to expanded, selectable, and agent-visible row models.
 - Table E2E covers ordinary and saved-search records, automatic headers and
   values, hide persistence across Outline/Table switching, expanded records,
   Add and Display ordering, responsive full-width and overflow geometry,
@@ -152,7 +166,7 @@ and hidden-field expansion behavior.
   column materialization.
 - `src/renderer/state/outlinerRows.ts` and
   `src/renderer/state/selectableRows.ts` own reference-chain reads and the
-  shared field-free Table expansion model.
+  shared active-field suppression and orphan-recovery Table expansion model.
 - `src/renderer/ui/outliner/OutlinerTableView.tsx` owns cells, compact-control
   placement above the field header, responsive columns, and the grouped Add
   field surface. `src/renderer/ui/outliner/ViewToolbar.tsx` owns the shared
@@ -172,9 +186,11 @@ and hidden-field expansion behavior.
 - Defaulting must distinguish a missing display-field node from an existing
   hidden node; otherwise switching views would undo an explicit user choice.
 - Reference chains may be missing or cyclic at runtime. Reads must degrade to
-  empty values and must never block rendering or a user action.
-- Suppression must cover visual rows, disclosure, keyboard selection, and child
-  counts together so a field cannot become invisible but focusable.
+  the reference's own Name plus empty target-backed values and must never block
+  rendering or a user action.
+- Active-field suppression and orphan recovery must cover visual rows,
+  disclosure, keyboard selection, agent context, and child counts together so a
+  field cannot become invisible but focusable or lose its only recovery path.
 - Open Draft PRs #531 and #532 have no file overlap. Draft PR #533 is expected
   to touch `src/core/core.ts` for persistence internals, but not `setViewMode` or
   view configuration. This branch keeps its core change local to those symbols

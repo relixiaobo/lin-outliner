@@ -48,6 +48,7 @@ import {
 import {
   buildOutlinerRows,
   collectViewFieldChoices,
+  customFilterFieldIdsOnRows,
   customViewFieldIdsOnRows,
   fieldEntryForViewCell,
   hiddenFieldKey,
@@ -287,19 +288,73 @@ describe('row interaction resolvers', () => {
       ['entry', entry],
       ['value', makeNode('value', 'In progress', { parentId: 'entry' })],
       ['status', makeNode('status', 'Status', { type: 'fieldDef' })],
-      ['broken', makeNode('broken', '', { type: 'reference', parentId: 'parent', targetId: 'missing' })],
-      ['cycle-a', makeNode('cycle-a', '', { type: 'reference', parentId: 'parent', targetId: 'cycle-b' })],
-      ['cycle-b', makeNode('cycle-b', '', { type: 'reference', targetId: 'cycle-a' })],
+      ['broken', makeNode('broken', 'Broken reference', { type: 'reference', parentId: 'parent', targetId: 'missing' })],
+      ['cycle-a', makeNode('cycle-a', 'Cycle A', { type: 'reference', parentId: 'parent', targetId: 'cycle-b' })],
+      ['cycle-b', makeNode('cycle-b', 'Cycle B', { type: 'reference', targetId: 'cycle-a' })],
     ]);
 
     expect(fieldEntryForViewCell(result as any, 'status', byId)?.id).toBe('entry');
     expect(viewFieldValuesFor(result as any, 'status', byId)).toEqual(['In progress']);
     expect(customViewFieldIdsOnRows(parent as any, byId)).toEqual(new Set(['status']));
+    expect(customFilterFieldIdsOnRows(parent as any, byId)).toEqual(new Set([
+      'nested-owner-field',
+      'status',
+    ]));
     expect(fieldEntryForViewCell(result as any, 'missing', byId)).toBeUndefined();
     expect(fieldEntryForViewCell(byId.get('broken'), 'status', byId)).toBeUndefined();
     expect(viewFieldValuesFor(byId.get('broken'), 'status', byId)).toEqual([]);
+    expect(viewFieldValuesFor(byId.get('broken'), NAME_FIELD, byId)).toEqual(['Broken reference']);
     expect(fieldEntryForViewCell(byId.get('cycle-a'), 'status', byId)).toBeUndefined();
     expect(viewFieldValuesFor(byId.get('cycle-a'), CREATED_FIELD, byId)).toEqual([]);
+    expect(viewFieldValuesFor(byId.get('cycle-a'), NAME_FIELD, byId)).toEqual(['Cycle A']);
+  });
+
+  test('preserves orphaned field entries when table expansion suppresses active fields', () => {
+    const parent = makeNode('record', 'Record', {
+      children: ['active-entry', 'trashed-entry', 'missing-entry', 'child'],
+    });
+    const byId = new Map<string, any>([
+      ['record', parent],
+      ['active-entry', makeNode('active-entry', '', {
+        type: 'fieldEntry',
+        parentId: 'record',
+        fieldDefId: 'active-field',
+      })],
+      ['trashed-entry', makeNode('trashed-entry', '', {
+        type: 'fieldEntry',
+        parentId: 'record',
+        fieldDefId: 'trashed-field',
+        children: ['trashed-value'],
+      })],
+      ['missing-entry', makeNode('missing-entry', '', {
+        type: 'fieldEntry',
+        parentId: 'record',
+        fieldDefId: 'missing-field',
+      })],
+      ['child', makeNode('child', 'Child', { parentId: 'record' })],
+      ['active-field', makeNode('active-field', 'Active', { type: 'fieldDef', parentId: 'schema' })],
+      ['trashed-field', makeNode('trashed-field', 'Deleted', {
+        type: 'fieldDef',
+        parentId: 'trash',
+        children: ['trashed-hide-config'],
+      })],
+      ['trashed-hide-config', makeNode('trashed-hide-config', 'hidden', {
+        type: 'defConfig',
+        parentId: 'trashed-field',
+        configKey: 'hideField',
+        configValueKind: 'enum',
+        configEnumValue: 'hidden',
+      })],
+      ['trashed-value', makeNode('trashed-value', 'Recoverable', { parentId: 'trashed-entry' })],
+      ['schema', makeNode('schema', 'Schema', { children: ['active-field'] })],
+      ['trash', makeNode('trash', 'Trash', { children: ['trashed-field'] })],
+    ]);
+
+    expect(buildOutlinerRows(parent as any, byId, { suppressFieldEntries: true })).toEqual([
+      { id: 'trashed-entry', type: 'field' },
+      { id: 'missing-entry', type: 'field' },
+      { id: 'child', type: 'content' },
+    ]);
   });
 
   test('hides search query condition nodes from normal outliner rows', () => {

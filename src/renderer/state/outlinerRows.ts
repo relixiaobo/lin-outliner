@@ -17,20 +17,9 @@ import {
   type SystemFieldContext,
 } from '../../core/systemFields';
 import type { ReferenceSummary } from '../../core/references';
-import { resolveReferenceChainTargetId } from '../../core/actions/rowFacets';
-
-const INTERNAL_NODE_TYPES = new Set<NodeProjection['type']>([
-  'queryCondition',
-  'viewDef',
-  'sortRule',
-  'filterRule',
-  'displayField',
-  // config-as-nodes: definition config rows + system enum options are never
-  // ordinary outliner children. The config surface renders defConfig rows
-  // explicitly (opt-in); everything else excludes them here.
-  'defConfig',
-  'systemOption',
-]);
+import { isDescendantOf, resolveReferenceChainTargetId } from '../../core/actions/rowFacets';
+import { TRASH_ID } from '../../core/types';
+import { INTERNAL_VIEW_NODE_TYPES } from '../../core/viewConfig';
 
 export type OutlinerRowItem =
   | { id: NodeId; type: 'field' }
@@ -173,6 +162,10 @@ function displayNode(node: NodeProjection, byId: Map<NodeId, NodeProjection>): N
   return targetId ? byId.get(targetId) : undefined;
 }
 
+function displayNodeOrSelf(node: NodeProjection, byId: Map<NodeId, NodeProjection>): NodeProjection {
+  return displayNode(node, byId) ?? node;
+}
+
 function fieldLabel(entry: NodeProjection, byId: Map<NodeId, NodeProjection>): string {
   const fieldDefId = entry.type === 'fieldEntry' ? entry.fieldDefId : undefined;
   const field = fieldDefId ? byId.get(fieldDefId) : undefined;
@@ -181,8 +174,7 @@ function fieldLabel(entry: NodeProjection, byId: Map<NodeId, NodeProjection>): s
 
 function childText(node: NodeProjection | undefined, byId: Map<NodeId, NodeProjection>): string {
   if (!node) return '';
-  const displayed = displayNode(node, byId);
-  if (!displayed) return '';
+  const displayed = displayNodeOrSelf(node, byId);
   const own = displayed.content.text;
   if (own) return own;
   return displayed.children
@@ -197,10 +189,10 @@ function displayFieldValuesFor(
   byId: Map<NodeId, NodeProjection>,
   systemFieldContext?: SystemFieldContext,
 ): string[] {
+  if (fieldId === NAME_FIELD) return viewFieldValuesFor(rowNode, fieldId, byId, systemFieldContext);
   const displayed = displayNode(rowNode, byId);
   if (!displayed) return [];
   if (!isSystemFieldId(fieldId)) return viewFieldValuesFor(rowNode, fieldId, byId, systemFieldContext);
-  if (fieldId === NAME_FIELD) return viewFieldValuesFor(rowNode, fieldId, byId, systemFieldContext);
 
   const display = systemFieldDisplay(displayed, fieldId, byId, systemFieldContext);
   switch (display.kind) {
@@ -227,11 +219,11 @@ export function viewFieldValuesFor(
   byId: Map<NodeId, NodeProjection>,
   systemFieldContext?: SystemFieldContext,
 ): string[] {
+  if (fieldId === NAME_FIELD) return [childText(displayNodeOrSelf(rowNode, byId), byId)].filter(Boolean);
   const displayed = displayNode(rowNode, byId);
   if (!displayed) return [];
   // Name reads the node's own (possibly nested) text; every other system field is
   // a computed projection resolved by the shared `systemFields` module.
-  if (fieldId === NAME_FIELD) return [childText(displayed, byId)].filter(Boolean);
   if (isSystemFieldId(fieldId)) return systemFieldValues(displayed, fieldId, byId, systemFieldContext);
 
   const fieldEntry = displayed.children
@@ -558,15 +550,17 @@ function buildChildRows(
   for (const childId of parent.children) {
     const child = byId.get(childId);
     if (!child) continue;
-    if (child.type && INTERNAL_NODE_TYPES.has(child.type)) continue;
+    if (child.type && INTERNAL_VIEW_NODE_TYPES.has(child.type)) continue;
     if (
       child.type === 'fieldEntry'
       && options.suppressFieldEntries
+      && isActiveTableFieldEntry(child, byId)
     ) {
       continue;
     }
     if (
       child.type === 'fieldEntry'
+      && !options.suppressFieldEntries
       && isHiddenFieldEntry(child, byId)
       && !options.expandedHiddenFields?.has(hiddenFieldKey(parent.id, child.id))
     ) {
@@ -775,16 +769,28 @@ function fieldCandidateRows(parent: NodeProjection, byId: Map<NodeId, NodeProjec
   for (const childId of parent.children) {
     const child = byId.get(childId);
     if (!child) continue;
-    if (child.type && INTERNAL_NODE_TYPES.has(child.type)) continue;
+    if (child.type && INTERNAL_VIEW_NODE_TYPES.has(child.type)) continue;
     rows.push(child);
   }
   return rows;
 }
 
 export function customViewFieldIdsOnRows(parent: NodeProjection, byId: Map<NodeId, NodeProjection>): Set<string> {
+  return customFieldIdsOnRows(parent, byId, false);
+}
+
+export function customFilterFieldIdsOnRows(parent: NodeProjection, byId: Map<NodeId, NodeProjection>): Set<string> {
+  return customFieldIdsOnRows(parent, byId, true);
+}
+
+function customFieldIdsOnRows(
+  parent: NodeProjection,
+  byId: Map<NodeId, NodeProjection>,
+  includeOwnerFieldEntries: boolean,
+): Set<string> {
   const fields = new Set<string>();
   for (const child of fieldCandidateRows(parent, byId)) {
-    if (child.type === 'fieldEntry') continue;
+    if (!includeOwnerFieldEntries && child.type === 'fieldEntry') continue;
     const displayed = displayNode(child, byId);
     if (!displayed) continue;
     for (const nestedId of displayed.children) {
@@ -794,6 +800,17 @@ export function customViewFieldIdsOnRows(parent: NodeProjection, byId: Map<NodeI
     }
   }
   return fields;
+}
+
+export function isActiveTableFieldEntry(
+  entry: NodeProjection,
+  byId: Map<NodeId, NodeProjection>,
+): boolean {
+  if (entry.type !== 'fieldEntry') return false;
+  if (!entry.fieldDefId) return false;
+  if (isSystemFieldId(entry.fieldDefId)) return true;
+  const field = byId.get(entry.fieldDefId);
+  return field?.type === 'fieldDef' && !isDescendantOf(byId, field.id, TRASH_ID);
 }
 
 function referencedViewFields(view: ViewConfig): Set<string> {

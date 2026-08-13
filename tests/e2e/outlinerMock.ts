@@ -248,12 +248,13 @@ export function e2eNodeInlineRef(offset: number, nodeId: string, displayName?: s
 // imported from inside the fixture — but a second, hand-written action bridge
 // would be exactly the duplicate implementation this plan removes.
 let actionBridgeBundle: Promise<string> | null = null;
+let viewConfigBridgeBundle: Promise<string> | null = null;
 
-function bundledActionBridge(): Promise<string> {
-  actionBridgeBundle ??= (async () => {
+function bundledBridge(entry: string): Promise<string> {
+  return (async () => {
     const esbuild = await import('esbuild');
     const result = await esbuild.build({
-      entryPoints: [new URL('./actionBridgeEntry.ts', import.meta.url).pathname],
+      entryPoints: [new URL(entry, import.meta.url).pathname],
       bundle: true,
       format: 'iife',
       platform: 'browser',
@@ -262,11 +263,25 @@ function bundledActionBridge(): Promise<string> {
     });
     return result.outputFiles[0]!.text;
   })();
+}
+
+function bundledActionBridge(): Promise<string> {
+  actionBridgeBundle ??= bundledBridge('./actionBridgeEntry.ts');
   return actionBridgeBundle;
 }
 
+function bundledViewConfigBridge(): Promise<string> {
+  viewConfigBridgeBundle ??= bundledBridge('./viewConfigBridgeEntry.ts');
+  return viewConfigBridgeBundle;
+}
+
 export async function installElectronMock(page: Page, options: MockFixtureOptions = {}) {
-  await page.addInitScript({ content: await bundledActionBridge() });
+  const [actionBridge, viewConfigBridge] = await Promise.all([
+    bundledActionBridge(),
+    bundledViewConfigBridge(),
+  ]);
+  await page.addInitScript({ content: actionBridge });
+  await page.addInitScript({ content: viewConfigBridge });
   await page.addInitScript(({ ids, options }) => {
     type ReferenceTarget =
       | { kind: 'node'; nodeId: string }
@@ -1561,50 +1576,48 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
 	      const owner = nodes.get(nodeId);
 	      const schema = nodes.get(ids.schema);
 	      if (!owner || !schema) return;
-	      const displayFields = directChildrenOfType(view.id, 'displayField');
-	      const configuredFields = new Set(displayFields.flatMap((display) => (
-	        display.displayField ? [display.displayField] : []
-	      )));
-	      const usedFields = new Set<string>();
-	      for (const childId of owner.children) {
-	        const child = nodes.get(childId);
-	        if (!child || [
-	          'fieldEntry',
-	          'queryCondition',
-	          'viewDef',
-	          'sortRule',
-	          'filterRule',
-	          'displayField',
-	          'defConfig',
-	          'systemOption',
-	        ].includes(child.type ?? '')) continue;
-	        const recordId = child.type === 'reference'
-	          ? (child.targetId ? resolveReferenceTargetId(child.targetId) : null)
-	          : child.id;
-	        const record = recordId ? nodes.get(recordId) : undefined;
-	        for (const nestedId of record?.children ?? []) {
-	          const nested = nodes.get(nestedId);
-	          if (nested?.type === 'fieldEntry' && nested.fieldDefId) usedFields.add(nested.fieldDefId);
-	        }
-	      }
-	      const missingFields = schema.children.filter((fieldId) => {
-	        const field = nodes.get(fieldId);
-	        return field?.type === 'fieldDef'
-	          && usedFields.has(fieldId)
-	          && !configuredFields.has(fieldId);
+	      const helpers = (globalThis as typeof globalThis & {
+	        __linViewConfigHelpers?: {
+	          missingDisplayOrderPlan: <T extends { id: string; displayOrder?: number }>(fields: readonly T[]) => {
+	            assignments: Array<{ field: T; order: number }>;
+	            nextOrder: number;
+	          };
+	          tableDisplayFieldInitialization: (params: {
+	            byId: Map<string, MockNode>;
+	            owner: MockNode;
+	            schema: MockNode;
+	            isActiveField: (field: MockNode) => boolean;
+	          }) => { displayFields: MockNode[]; missingFieldIds: string[] } | null;
+	        };
+	      }).__linViewConfigHelpers;
+	      if (!helpers) throw new Error('Missing shared view configuration helpers');
+	      const initialization = helpers.tableDisplayFieldInitialization({
+	        byId: nodes,
+	        owner,
+	        schema,
+	        isActiveField: (field) => {
+	          let current: MockNode | undefined = field;
+	          const visited = new Set<string>();
+	          while (current && !visited.has(current.id)) {
+	            if (current.id === ids.trash) return false;
+	            visited.add(current.id);
+	            current = current.parentId ? nodes.get(current.parentId) : undefined;
+	          }
+	          return true;
+	        },
 	      });
-	      const allExistingOrdersAreFinite = displayFields.every((display) => Number.isFinite(display.displayOrder));
-	      let nextOrder = allExistingOrdersAreFinite
-	        ? displayFields.reduce((max, display) => Math.max(max, display.displayOrder!), -1) + 1
-	        : undefined;
-	      for (const fieldId of missingFields) {
+	      if (!initialization) return;
+	      const orderPlan = helpers.missingDisplayOrderPlan(initialization.displayFields);
+	      orderPlan.assignments.forEach(({ field, order }) => { field.displayOrder = order; });
+	      let nextOrder = orderPlan.nextOrder;
+	      for (const fieldId of initialization.missingFieldIds) {
 	        const displayId = `display-${++sequence}`;
 	        makeNode(displayId, '', {
 	          type: 'displayField',
 	          parentId: view.id,
 	          displayField: fieldId,
 	          displayVisible: true,
-	          ...(nextOrder === undefined ? {} : { displayOrder: nextOrder++ }),
+	          displayOrder: nextOrder++,
 	        });
 	        appendChild(view.id, displayId);
 	      }
@@ -3779,7 +3792,11 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
 	            const previousMode = view.viewMode ?? 'list';
 	            const nextMode = String(args.mode ?? 'list');
 	            view.viewMode = nextMode;
-	            if (previousMode === 'list' && nextMode === 'table') addMissingTableDisplayFields(nodeId, view);
+	            const entersTable = (globalThis as typeof globalThis & {
+	              __linViewConfigHelpers?: { entersTable: (previous: string | undefined, next: string) => boolean };
+	            }).__linViewConfigHelpers?.entersTable;
+	            if (!entersTable) throw new Error('Missing shared view configuration helpers');
+	            if (entersTable(previousMode, nextMode)) addMissingTableDisplayFields(nodeId, view);
 	          }
 	          return clone(outcome());
 	        }

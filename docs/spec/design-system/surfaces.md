@@ -180,12 +180,15 @@ Selecting a record through its Title node paints one continuous neutral surface
 across the complete table row; the nested Title row suppresses its local
 selection fill so the result never becomes a stack of cell-sized pills. Selection
 of an authored value node remains node-local and does not select its record.
-When a record expands, no authored field repeats as a field row beneath it:
-visible, hidden, and not-yet-configured fields all belong to the column model.
-Ordinary children keep their normal outline presentation, while the Title
-node's child/disclosure state, keyboard order, and agent-visible structure follow
-that same field-free child set. Hidden fields remain recoverable through the
-column controls rather than through duplicate body rows.
+When a record expands, no active authored field repeats as a field row beneath
+it: visible, hidden, and not-yet-configured active fields all belong to the
+column model. Ordinary children keep their normal outline presentation, while
+the Title node's child/disclosure state, keyboard order, and agent-visible
+structure follow that same active-field-free child set. Hidden active fields
+remain recoverable through the column controls rather than through duplicate
+body rows. An orphaned field entry whose definition is missing or in Trash is
+the recovery exception and uses the ordinary field-row surface so its stored
+values remain visible and reachable.
 An authored field's header glyph is an icon-only navigation control into that
 field definition's configuration page. Hover deepens only the glyph without a
 background box, owning-header outline, or geometry change. System-field glyphs
