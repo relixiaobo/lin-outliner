@@ -919,6 +919,20 @@ anything.
   So the shape to fix is not one red test but a suite whose failing set is
   run-dependent — treat the unstable specs as one problem, and expect boarding them
   individually to keep producing entries.
+  **#531 gate (2026-08-13) adds a controlled pair** — the cleanest evidence yet that the
+  set, not the test, is the defect. Two full runs of `agent-thread.spec.ts`, branch and
+  `origin/main`, each in its own worktree on its own `PLAYWRIGHT_PORT`: each failed
+  **exactly one** test, and a **different** one — branch `reads a Subagent without moving
+  the parent conversation at all`, `main` `never folds a settled Turn over a child that is
+  still running`. Both pass in isolation on both sides, so neither is a real defect and
+  neither is attributable to the branch. Same-file, same-run-length, one-variable-apart:
+  whatever this is, it is a property of running ~78 specs together, not of any spec.
+  **Method note for whoever takes Lane D:** `playwright.config.ts` sets
+  `reuseExistingServer: !process.env.CI`, and port 5174 is routinely held by another
+  clone's dev server — a bare `bun run test:e2e` then silently tests *that* checkout's
+  source. Every measurement above used an isolated worktree plus an explicit
+  `PLAYWRIGHT_PORT`; any frequency table gathered without both is measuring an unknown
+  tree.
 - **launcher-native-nspanel dmg eyeball** (carried verification, *no plan file*) — #171 merged; needs a
   one-time packaged `.dmg` manual check (⌘Tab lists Tenon · floats over another app's fullscreen · summon
   doesn't steal focus · dock icon · light+dark).
