@@ -7,6 +7,7 @@ import {
 import {
   filterSubagentToolContracts,
   filterSubagentToolKeys,
+  resolveSubagentToolRequest,
   subagentBashExecutionAllowed,
   subagentToolExecutionAllowed,
 } from '../../src/main/agent/capabilities/subagentToolPolicy';
@@ -33,7 +34,9 @@ describe('Subagent tool policy', () => {
       worktree: true,
     }).map(toolKey);
     expect(regular).toEqual(expect.arrayContaining(['node_create', 'node_edit', 'node_delete']));
-    expect(worktree).not.toEqual(expect.arrayContaining(['node_create', 'node_edit', 'node_delete']));
+    for (const forbidden of ['node_create', 'node_edit', 'node_delete']) {
+      expect(worktree).not.toContain(forbidden);
+    }
     expect(worktree).toEqual(expect.arrayContaining(['node_read', 'node_search']));
   });
 
@@ -43,7 +46,7 @@ describe('Subagent tool policy', () => {
         ...foreground,
         kind,
       }).map(toolKey);
-      expect(keys).not.toEqual(expect.arrayContaining([
+      const forbidden = [
         'agent',
         'node_create',
         'node_edit',
@@ -53,7 +56,8 @@ describe('Subagent tool policy', () => {
         'file_delete',
         'generate_image',
         'data_import',
-      ]));
+      ];
+      for (const key of forbidden) expect(keys).not.toContain(key);
       expect(keys).toEqual(expect.arrayContaining(['node_read', 'file_read', 'bash', 'web_fetch', 'skill']));
     }
   });
@@ -76,7 +80,7 @@ describe('Subagent tool policy', () => {
       expect(subagentToolExecutionAllowed(policy, [])).toBe(false);
       expect(subagentToolExecutionAllowed(policy, ['file.read.local_path'])).toBe(true);
       expect(subagentToolExecutionAllowed(policy, ['web.fetch'])).toBe(true);
-      expect(subagentToolExecutionAllowed(policy, ['agent.subagent.send'])).toBe(true);
+      expect(subagentToolExecutionAllowed(policy, ['outline.read'])).toBe(true);
       expect(subagentToolExecutionAllowed(policy, ['file.read.local_path', 'file.write.local_path'])).toBe(false);
       expect(subagentToolExecutionAllowed(policy, ['outline.edit'])).toBe(false);
       expect(subagentToolExecutionAllowed(policy, ['shell.local_code_execution'])).toBe(false);
@@ -85,6 +89,11 @@ describe('Subagent tool policy', () => {
       expect(subagentToolExecutionAllowed(policy, ['shell.destructive_cleanup'])).toBe(false);
       expect(subagentToolExecutionAllowed(policy, ['shell.unknown'])).toBe(false);
       expect(subagentToolExecutionAllowed(policy, ['git.publish_remote'])).toBe(false);
+      expect(subagentToolExecutionAllowed(policy, ['deploy.publish_remote'])).toBe(false);
+      expect(subagentToolExecutionAllowed(policy, ['external.message.send'])).toBe(false);
+      expect(subagentToolExecutionAllowed(policy, ['shell.network_write'])).toBe(false);
+      expect(subagentToolExecutionAllowed(policy, ['agent.subagent.send'])).toBe(false);
+      expect(subagentToolExecutionAllowed(policy, ['future.action' as never])).toBe(false);
     }
     expect(subagentToolExecutionAllowed(foreground, ['file.write.local_path'])).toBe(true);
   });
@@ -95,7 +104,9 @@ describe('Subagent tool policy', () => {
       ...foreground,
       runInBackground: true,
     }).map(toolKey);
-    expect(keys).not.toEqual(expect.arrayContaining(['update_plan', 'get_goal', 'generate_image', 'data_import']));
+    for (const forbidden of ['update_plan', 'get_goal', 'generate_image', 'data_import']) {
+      expect(keys).not.toContain(forbidden);
+    }
     expect(keys).toEqual(expect.arrayContaining(['node_read', 'file_write', 'bash', 'web_fetch', 'skill', 'docs.lookup']));
   });
 
@@ -110,6 +121,19 @@ describe('Subagent tool policy', () => {
       allowNesting: false,
     });
     expect(keys).toEqual(['node_read']);
+  });
+
+  test('treats a Role wildcard as the resolved parent tool ceiling', () => {
+    expect(resolveSubagentToolRequest(['*'], MODEL_TOOL_CATALOG)).toEqual({
+      requestedTools: null,
+      recognizedTools: [],
+      unrecognizedTools: [],
+    });
+    expect(resolveSubagentToolRequest(['file_read', '*'], MODEL_TOOL_CATALOG)).toEqual({
+      requestedTools: null,
+      recognizedTools: [],
+      unrecognizedTools: [],
+    });
   });
 
   test('classifies new core tools by capability instead of relying on known names', () => {

@@ -56,15 +56,18 @@ const L0_TEXT = [
 export function composeStablePrompt(input: {
   readonly thread: Thread;
   readonly configuration: EffectiveThreadConfiguration;
+  /** Provider-visible runtime tool names. Defaults to configuration for direct composition callers. */
+  readonly availableToolNames?: readonly string[];
   /** Absolute path to the episodic index, or null when this install keeps none. */
   readonly transcriptIndexPath?: string | null;
   readonly startupContext?: AgentStartupContextSnapshot | null;
 }): StablePrompt {
+  const availableToolNames = input.availableToolNames ?? input.configuration.tools;
   const blocks: Array<Omit<StablePromptBlock, 'fingerprint'>> = [
     { id: 'framework-firmware', layer: 'L0', text: L0_TEXT },
-    ...capabilityBlocks(input.thread, input.configuration),
+    ...capabilityBlocks(input.thread, availableToolNames),
     ...startupContextBlocks(input.startupContext ?? null),
-    ...recordsBlocks(input.thread, input.configuration, input.transcriptIndexPath ?? null),
+    ...recordsBlocks(input.thread, availableToolNames, input.transcriptIndexPath ?? null),
     identityBlock(input.thread, input.configuration),
   ];
   const withFingerprints = blocks.map((block) => ({ ...block, fingerprint: fingerprint(block.text) }));
@@ -110,10 +113,10 @@ function startupContextBlocks(
  */
 function recordsBlocks(
   thread: Thread,
-  configuration: EffectiveThreadConfiguration,
+  availableToolNames: readonly string[],
   transcriptIndexPath: string | null,
 ): Array<Omit<StablePromptBlock, 'fingerprint'>> {
-  const tools = new Set(configuration.tools);
+  const tools = new Set(availableToolNames);
   const canRead = ['file_read', 'file_grep', 'file_glob'].some((key) => tools.has(key));
   if (!transcriptIndexPath || !canRead || thread.parentThreadId !== null) return [];
   return [{
@@ -131,9 +134,9 @@ function recordsBlocks(
 
 function capabilityBlocks(
   thread: Thread,
-  configuration: EffectiveThreadConfiguration,
+  availableToolNames: readonly string[],
 ): Array<Omit<StablePromptBlock, 'fingerprint'>> {
-  const tools = new Set(configuration.tools);
+  const tools = new Set(availableToolNames);
   const has = (...canonicalKeys: string[]) => canonicalKeys.some((key) => tools.has(key));
   const blocks: Array<Omit<StablePromptBlock, 'fingerprint'>> = [];
   if (has('bash', 'file_read', 'file_write', 'file_edit', 'file_glob', 'file_grep')) {
@@ -191,18 +194,34 @@ function capabilityBlocks(
       ].join('\n'),
     });
   }
-  if (has('agent', 'agent_message', 'task_stop')) {
+  const hasAgent = has('agent');
+  const hasAgentMessage = has('agent_message');
+  const hasTaskStop = has('task_stop');
+  if (hasAgent || hasAgentMessage || hasTaskStop) {
     blocks.push({
       id: 'agent',
       layer: 'L1',
       text: [
         '# Agents',
-        '- A new agent call starts a fresh Agent with no parent conversation history. Give it a complete, bounded task.',
-        '- Agents share host files, processes, credentials, ports, and application state unless worktree isolation is selected. Avoid conflicting mutations.',
-        '- Background completion is delivered automatically. Do not poll for it or fabricate a pending Agent\'s result.',
-        '- Use agent_message with the Agent ID to steer or resume an existing Agent with its context intact.',
-        '- A completed Agent or isolated Skill result is work product to synthesize. Repeat covered work only for an explicit verification need or a reported gap.',
-      ].join('\n'),
+        hasAgent
+          ? '- A new agent call starts a fresh Agent with no parent conversation history. Give it a complete, bounded task.'
+          : null,
+        hasAgent
+          ? '- Agents share host files, processes, credentials, ports, and application state unless worktree isolation is selected. Avoid conflicting mutations.'
+          : null,
+        hasAgent
+          ? '- Background completion is delivered automatically. Do not poll for it or fabricate a pending Agent\'s result.'
+          : null,
+        hasAgentMessage
+          ? '- Use agent_message with the Agent ID to steer or resume an existing Agent with its context intact.'
+          : null,
+        hasTaskStop
+          ? '- Use task_stop with the task ID to stop a running task.'
+          : null,
+        hasAgent
+          ? '- A completed Agent result is work product to synthesize. Repeat covered work only for an explicit verification need or a reported gap.'
+          : null,
+      ].filter((line): line is string => line !== null).join('\n'),
     });
   }
   return blocks;

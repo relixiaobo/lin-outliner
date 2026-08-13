@@ -258,6 +258,37 @@ describe('Codex Memory contracts', () => {
     expect(authoritative.nodes.some((node) => node.id === MEMORY_NODE_ID)).toBe(true);
   });
 
+  test('filters a projection with metadata and one targeted Turn read', () => {
+    const store = memoryStore();
+    const projection = memoryProjection();
+    const timeline = new TimelineMemoryStore(readOnlyTimelineHost(projection));
+    const thread = rootThread([userTurn('read this', MEMORY_NODE_ID)]);
+    const includeTurnsRequests: Array<boolean | undefined> = [];
+    const turnReads: Array<{ threadId: ThreadId; turnId: TurnId }> = [];
+    const extension = new MemoryExtension(store, timeline);
+    extension.bindHost({
+      ...memoryThreadHost(thread),
+      readThread: (input) => {
+        includeTurnsRequests.push(input.includeTurns);
+        return { thread };
+      },
+      readTurnForHost: (threadId, turnId) => {
+        turnReads.push({ threadId, turnId });
+        return thread.turns?.find((turn) => turn.id === turnId) ?? null;
+      },
+    });
+
+    const filtered = extension.filterProjection(projection, {
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+      itemId: ITEM_ID,
+    });
+
+    expect(filtered.nodes.some((node) => node.id === MEMORY_NODE_ID)).toBe(true);
+    expect(includeTurnsRequests).toEqual([undefined]);
+    expect(turnReads).toEqual([{ threadId: THREAD_ID, turnId: TURN_ID }]);
+  });
+
   test('keeps Memory projection root-only even when a child explicitly references a Memory Node', () => {
     const store = memoryStore();
     const projection = memoryProjection();
@@ -2338,6 +2369,7 @@ function memoryThreadHost(thread: Thread): MemoryThreadHost {
     activeRootUserTurns: () => [],
     interruptRootTurns: async () => undefined,
     readThread: () => ({ thread }),
+    readTurnForHost: (_threadId, turnId) => thread.turns?.find((turn) => turn.id === turnId) ?? null,
     isThreadNavigable: (threadId) => threadId === thread.id,
     historyRollbackMarker: () => null,
     runInternalMemoryTurn: async () => '',

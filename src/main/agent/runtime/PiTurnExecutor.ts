@@ -169,6 +169,7 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
         : composeStablePrompt({
             thread: context.thread,
             configuration: context.configuration,
+            availableToolNames: tools.map((tool) => tool.name),
             transcriptIndexPath: this.options.transcriptIndexPath ?? null,
             startupContext: context.startupContext ?? null,
           });

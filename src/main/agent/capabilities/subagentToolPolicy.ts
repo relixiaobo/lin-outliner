@@ -1,6 +1,7 @@
 import {
   MODEL_TOOL_CATALOG,
   canonicalModelToolKey,
+  isReadOnlyModelToolActionKind,
   type ModelToolActionKind,
   type ModelToolContract,
 } from '../../../core/agent/tools';
@@ -39,15 +40,6 @@ const REPOSITORY_MUTATION_ACTION_KINDS = new Set<ModelToolActionKind>([
   'file.write.local_path',
   'file.write.sensitive_local_path',
   'file.delete.local_path',
-]);
-const SPECIALIZED_REPOSITORY_MUTATION_ACTION_KINDS = new Set<ModelToolActionKind>([
-  ...REPOSITORY_MUTATION_ACTION_KINDS,
-  'shell.project_script',
-  'shell.local_code_execution',
-  'shell.dependency_install',
-  'shell.destructive_cleanup',
-  'shell.unknown',
-  'git.publish_remote',
 ]);
 const SPECIALIZED_EXCLUDED_ACTION_KINDS = new Set<ModelToolActionKind>([
   'agent.image.generate',
@@ -101,7 +93,7 @@ export function resolveSubagentToolRequest(
   requestedTools: readonly string[] | null,
   registry: readonly ModelToolContract[],
 ): ResolvedSubagentToolRequest {
-  if (requestedTools === null) {
+  if (requestedTools === null || requestedTools.includes('*')) {
     return {
       requestedTools: null,
       recognizedTools: [],
@@ -156,8 +148,9 @@ export function subagentBashExecutionAllowed(
 }
 
 /**
- * Dynamic extension and MCP tools remain provider-visible for parity, but their
- * declared actions must not bypass the specialized repository-write boundary.
+ * Dynamic extension and MCP tools remain provider-visible for parity, but may
+ * execute in Explore and Plan only when every declared action is host-classified
+ * as read-only. Unknown and newly introduced action kinds therefore fail closed.
  */
 export function subagentToolExecutionAllowed(
   policy: SubagentToolPolicy,
@@ -165,7 +158,7 @@ export function subagentToolExecutionAllowed(
 ): boolean {
   if (policy.kind !== 'explore' && policy.kind !== 'plan') return true;
   return actionKinds.length > 0
-    && actionKinds.every((kind) => !SPECIALIZED_REPOSITORY_MUTATION_ACTION_KINDS.has(kind));
+    && actionKinds.every(isReadOnlyModelToolActionKind);
 }
 
 function hasActionKind(

@@ -24,10 +24,11 @@ import { SubagentRequestClosedError } from '../SubagentRequestClosedError';
 import type { SkillAdmissionResolution,SkillAdmissionResolutionInput } from '../ThreadService';
 import { uuidV7 } from '../uuid';
 import type { PendingSubagentActivity,StagedContextEvidence } from './SubagentCollaboration';
-import { ThreadCore } from './ThreadCore';
+import { RecordedNotificationProjectionError,ThreadCore } from './ThreadCore';
 import type { ThreadResourceOps } from './ThreadResourceOps';
 interface ActiveTurn {
   readonly threadId: ThreadId; readonly turnId: string;
+  readonly initialTurn: Turn;
   readonly controller: AbortController; readonly recorder: ItemRecorder;
   readonly configuration: EffectiveThreadConfiguration; readonly startedAt: number;
   fatalError: Error | null; finishing: boolean;
@@ -36,6 +37,8 @@ interface ActiveTurn {
   readonly completion: Promise<void>; readonly resolveCompletion: () => void;
   recordedExecution: Turn['execution'] | null; budgetUsageAccrued: boolean;
   modelCallTokens: number; inFlightPoolId: SubagentRequestPoolId | null;
+  admissionCommitted: boolean;
+  lifecyclePublished: boolean;
 }
 interface PendingUserInput { readonly request: RequestUserInputRequest; readonly resolve: (response: RequestUserInputResponse) => void;
   readonly reject: (error: Error) => void; readonly abort: () => void; timer: ReturnType<typeof setTimeout> | null; }
@@ -44,13 +47,17 @@ type InternalTurnStartRequest = PrivilegedTurnStartRequest & { readonly stagedCo
 interface TurnLifecycleCatalog {
   createThread: import('./ThreadCatalogOps').ThreadCatalogOps['createThread']; deleteThread: import('./ThreadCatalogOps').ThreadCatalogOps['deleteThread'];
   setInitialPreview: import('./ThreadCatalogOps').ThreadCatalogOps['setInitialPreview']; scheduleAutomaticThreadName: import('./ThreadCatalogOps').ThreadCatalogOps['scheduleAutomaticThreadName'];
+  hasPendingDelegatedThreadStart: import('./ThreadCatalogOps').ThreadCatalogOps['hasPendingDelegatedThreadStart'];
+  publishDelegatedThreadStart: import('./ThreadCatalogOps').ThreadCatalogOps['publishDelegatedThreadStart'];
 }
 interface TurnLifecycleCollaboration {
   pendingActivities(threadId: ThreadId): readonly PendingSubagentActivity[]; hasPendingActivities(threadId: ThreadId): boolean;
+  canSpawnAgent(threadId: ThreadId, configuration: EffectiveThreadConfiguration): boolean;
   materializePendingActivityItems(threadId: ThreadId, turnId: TurnId, activities: readonly PendingSubagentActivity[]): ThreadItem[]; consumePendingSubagentActivities(threadId: ThreadId, consumed: readonly PendingSubagentActivity[]): void;
   takePendingCollaborationActivity(threadId: ThreadId): boolean; signalCollaborationActivity(threadId: ThreadId): void;
   flushPendingSubagentActivities(threadId: ThreadId, turnId: TurnId): Promise<readonly PendingSubagentActivity[]>; prepareChildTerminalSettlement(thread: Thread, turn: Turn): void; queueChildTurnActivity(thread: Thread, turn: Turn): void; threadBecameIdle(threadId: ThreadId): void;
   startupContextForTurn(threadId: ThreadId, turnId: TurnId): import('../context/AgentStartupContext').AgentStartupContextSnapshot | null;
+  commitInitialAdmission(threadId: ThreadId, turnId: TurnId): Error | null;
 }
 /**
  * The account layer's hook. It is deliberately NOT part of the collaboration
@@ -430,7 +437,7 @@ export class TurnLifecycle {
           });
           const roleCatalog = await planRoleCatalogEvidence({
             turns: canonicalTurns,
-            snapshot: active.configuration.tools.includes('agent')
+            snapshot: this.collaboration.canSpawnAgent(thread.id, active.configuration)
               ? await this.resolveRoleCatalog(thread.cwd)
               : null,
             readContext: (ref) => this.core.payloads.readContext(thread.id, ref),
@@ -791,7 +798,11 @@ export class TurnLifecycle {
     }
   private async launchActiveTurn(accepted: AcceptedTurn): Promise<void> {
       if (!accepted.active) return;
-      if (!this.core.hiddenEphemeralThreads.has(accepted.thread.id)) {
+      if (
+        accepted.active.lifecyclePublished
+        && !accepted.active.fatalError
+        && !this.core.hiddenEphemeralThreads.has(accepted.thread.id)
+      ) {
         await this.extensions.turnStarted(accepted.thread, accepted.response.turn);
       }
       await this.executeActiveTurn(accepted.active);
@@ -925,7 +936,7 @@ export class TurnLifecycle {
       });
       const roleCatalog = await planRoleCatalogEvidence({
         turns: canonicalTurns,
-        snapshot: record.configuration.tools.includes('agent')
+        snapshot: this.collaboration.canSpawnAgent(record.thread.id, record.configuration)
           ? await this.resolveRoleCatalog(record.thread.cwd)
           : null,
         readContext: (ref) => this.core.payloads.readContext(record.thread.id, ref),
@@ -977,9 +988,11 @@ export class TurnLifecycle {
       const completion = new Promise<void>((resolve) => {
         resolveCompletion = resolve;
       });
+      const delegatedAdmission = this.catalog.hasPendingDelegatedThreadStart(request.threadId);
       const active: ActiveTurn = {
         threadId: request.threadId,
         turnId,
+        initialTurn: turn,
         controller: new AbortController(),
         recorder,
         configuration: record.configuration,
@@ -995,17 +1008,72 @@ export class TurnLifecycle {
         budgetUsageAccrued: false,
         modelCallTokens: 0,
         inFlightPoolId: null,
+        admissionCommitted: !delegatedAdmission,
+        lifecyclePublished: !delegatedAdmission,
       };
-      await this.core.recordNotification({ type: 'turn/started', threadId: request.threadId, turnId, turn });
-      this.collaboration.consumePendingSubagentActivities(request.threadId, pendingSubagentActivities);
-      if (!this.collaboration.hasPendingActivities(request.threadId)) {
-        this.collaboration.takePendingCollaborationActivity(request.threadId);
+      const startedNotification = { type: 'turn/started', threadId: request.threadId, turnId, turn } as const;
+      let durableProjectionError: RecordedNotificationProjectionError | null = null;
+      try {
+        await this.core.recordNotification(startedNotification, {
+          deferObservers: !active.lifecyclePublished,
+        });
+      } catch (error) {
+        if (active.lifecyclePublished || !(error instanceof RecordedNotificationProjectionError)) throw error;
+        durableProjectionError = error;
       }
+      // From the durable child Turn onward, exactly one in-process owner must
+      // terminalize it. No later marker, projection, or observer failure may
+      // escape through spawn and strand an accepted Turn without a launch tail.
       this.activeTurns.set(request.threadId, active);
+      // `turn/started` is the cross-store commit point for a fresh delegated
+      // child. Flip its prepared execution intent before provider launch can
+      // observe the child as an ordinary, policy-less Thread.
+      const initialAdmissionError = this.collaboration.commitInitialAdmission(request.threadId, turnId);
+      try {
+        this.collaboration.consumePendingSubagentActivities(request.threadId, pendingSubagentActivities);
+        if (!this.collaboration.hasPendingActivities(request.threadId)) {
+          this.collaboration.takePendingCollaborationActivity(request.threadId);
+        }
+      } catch (error) {
+        this.failCommittedActiveTurn(active, error);
+      }
+      if (initialAdmissionError) {
+        this.failCommittedActiveTurn(active, initialAdmissionError);
+      } else if (!active.lifecyclePublished) {
+        active.admissionCommitted = true;
+        let startPublication: Awaited<ReturnType<TurnLifecycleCatalog['publishDelegatedThreadStart']>>;
+        try {
+          startPublication = await this.catalog.publishDelegatedThreadStart(request.threadId);
+        } catch (error) {
+          startPublication = {
+            published: false,
+            error: error instanceof Error ? error : new Error(String(error)),
+          };
+        }
+        if (!startPublication.published) {
+          this.failCommittedActiveTurn(
+            active,
+            startPublication.error ?? new Error(`Delegated Thread start publication failed: ${request.threadId}`),
+          );
+        } else {
+          try {
+            await this.core.publishRecordedNotification(startedNotification);
+            active.lifecyclePublished = true;
+          } catch (error) {
+            this.failCommittedActiveTurn(active, error);
+          }
+          if (startPublication.error) this.failCommittedActiveTurn(active, startPublication.error);
+        }
+      }
+      if (durableProjectionError) this.failCommittedActiveTurn(active, durableProjectionError);
       // Only now: the Turn carrying the notice is recorded and running, so the
       // beliefs it reported can be advanced. Everything above can still throw,
       // and a retry must find the same drift still there to report.
-      drift.settle();
+      try {
+        drift.settle();
+      } catch (error) {
+        this.failCommittedActiveTurn(active, error);
+      }
       if (!record.thread.preview.trim() && preview) {
         try {
           this.catalog.setInitialPreview(request.threadId, preview, startedAt);
@@ -1014,7 +1082,11 @@ export class TurnLifecycle {
         }
       }
       try {
-        await this.setStatus(request.threadId, { type: 'active', activeFlags: [] });
+        await this.setStatus(
+          request.threadId,
+          { type: 'active', activeFlags: [] },
+          { deferObservers: !active.lifecyclePublished },
+        );
       } catch (error) {
         this.failCommittedActiveTurn(active, error);
       }
@@ -1034,13 +1106,14 @@ export class TurnLifecycle {
   private async executeActiveTurn(active: ActiveTurn): Promise<void> {
       let result: TurnExecutionResult = {};
       let thrown: Error | null = null;
-      const initialTurn = this.core.readTurn(active.threadId, active.turnId)!;
+      const initialTurn = this.core.readTurn(active.threadId, active.turnId) ?? active.initialTurn;
       const thread = this.core.requireThread(active.threadId).thread;
       const isDescendantThread = thread.parentThreadId !== null;
       const hidden = this.core.hiddenEphemeralThreads.has(active.threadId);
       const resourceObservation = this.resourceOps.createResourceObservation(active.threadId, true);
       const createdOutputResources: ThreadResourceReference[] = [];
       try {
+        if (active.fatalError) throw active.fatalError;
         result = await this.executor.execute({
           thread,
           turn: initialTurn,
@@ -1172,8 +1245,10 @@ export class TurnLifecycle {
         if (this.activeTurns.get(active.threadId) === active) active.finishing = true;
       });
       await active.steeringDelivery;
-      this.collaboration.takePendingCollaborationActivity(active.threadId);
-      await this.collaboration.flushPendingSubagentActivities(active.threadId, active.turnId);
+      if (active.lifecyclePublished) {
+        this.collaboration.takePendingCollaborationActivity(active.threadId);
+        await this.collaboration.flushPendingSubagentActivities(active.threadId, active.turnId);
+      }
       if (result.refreshDiagnostics && result.execution) {
         const diagnosticsRef = await result.refreshDiagnostics();
         result = {
@@ -1205,44 +1280,82 @@ export class TurnLifecycle {
         completedAt,
         durationMs: Math.max(0, completedAt - active.startedAt),
       });
-      const contributions = hidden ? [] : await this.extensions.turnItems(thread, turn);
+      const contributions = hidden || !active.lifecyclePublished ? [] : await this.extensions.turnItems(thread, turn);
       for (const contribution of contributions) {
         await active.recorder.completedImmediately(contribution.item, completedAt);
       }
       turn = decodeTurn({ ...turn, items: active.recorder.orderedItems() });
       await this.core.threadMutex.run(active.threadId, async () => {
         if (this.activeTurns.get(active.threadId) !== active) return;
-        await this.core.recordNotification({
+        const completedNotification = {
           type: 'turn/completed',
           threadId: active.threadId,
           turnId: active.turnId,
           turn,
-        });
-        await this.resourceOps.discardUnreferencedCreatedResources(active.threadId, createdOutputResources).catch(() => undefined);
-        await this.core.payloads.pruneUnreferencedContexts(
-          active.threadId,
-          this.resourceOps.threadContextPayloadReferences(active.threadId),
-        ).catch(() => undefined);
-        await this.core.payloads.pruneUnreferencedTurnDiagnostics(
-          active.threadId,
-          this.resourceOps.threadTurnDiagnosticsReferences(active.threadId),
-        ).catch(() => undefined);
-        this.accrueSubagentBudgetUsage(active, thread, turn.execution);
+        } as const;
+        let projectionReadable = true;
+        try {
+          await this.core.recordNotification(completedNotification, {
+            deferObservers: !active.lifecyclePublished,
+          });
+        } catch (error) {
+          if (!(error instanceof RecordedNotificationProjectionError)) throw error;
+          projectionReadable = false;
+          if (active.lifecyclePublished) {
+            await this.core.publishRecordedNotification(completedNotification);
+          }
+        }
+        // The rollout append above is the terminal commit. A broken derived
+        // projection must not append a second terminal event, but it also cannot
+        // safely drive reference-based garbage collection until startup rebuilds
+        // it from the rollout.
+        if (projectionReadable) {
+          await this.resourceOps.discardUnreferencedCreatedResources(
+            active.threadId,
+            createdOutputResources,
+          ).catch(() => undefined);
+          await this.core.payloads.pruneUnreferencedContexts(
+            active.threadId,
+            this.resourceOps.threadContextPayloadReferences(active.threadId),
+          ).catch(() => undefined);
+          await this.core.payloads.pruneUnreferencedTurnDiagnostics(
+            active.threadId,
+            this.resourceOps.threadTurnDiagnosticsReferences(active.threadId),
+          ).catch(() => undefined);
+        }
+        if (active.admissionCommitted) this.accrueSubagentBudgetUsage(active, thread, turn.execution);
         this.settleSubagentInFlightUsage(active);
         // Reserve the child terminal pipeline before releasing active-turn
         // ownership. Admission must keep the concurrency slot occupied across
         // the small idle-to-settlement window.
-        this.collaboration.prepareChildTerminalSettlement(thread, turn);
+        if (active.admissionCommitted) this.collaboration.prepareChildTerminalSettlement(thread, turn);
         this.activeTurns.delete(active.threadId);
-        this.reapSettledSubagentPools(active.threadId, active.turnId);
-        await this.setStatus(active.threadId, { type: 'idle' });
+        if (active.admissionCommitted) this.reapSettledSubagentPools(active.threadId, active.turnId);
+        try {
+          await this.setStatus(
+            active.threadId,
+            { type: 'idle' },
+            { deferObservers: !active.lifecyclePublished },
+          );
+        } catch (error) {
+          if (!(error instanceof RecordedNotificationProjectionError)) throw error;
+          if (active.lifecyclePublished) {
+            await this.core.publishRecordedNotification({
+              type: 'thread/status/changed',
+              threadId: active.threadId,
+              status: { type: 'idle' },
+            });
+          }
+        }
       });
-      this.catalog.scheduleAutomaticThreadName(
-        this.core.requireThread(active.threadId).thread,
-        turn,
-        active.configuration,
-      );
-      if (!hidden) {
+      if (active.lifecyclePublished) {
+        this.catalog.scheduleAutomaticThreadName(
+          this.core.requireThread(active.threadId).thread,
+          turn,
+          active.configuration,
+        );
+      }
+      if (!hidden && active.lifecyclePublished) {
         await this.goalUsage.addUsage(
           active.threadId,
           turn.execution.usage.totalTokens,
@@ -1254,10 +1367,14 @@ export class TurnLifecycle {
         else if (executionError) await this.extensions.turnError(thread, turn, executionError);
         else await this.extensions.turnStopped(thread, turn);
       }
-      this.transcripts.enqueueTurn(thread, turn);
-      this.collaboration.queueChildTurnActivity(thread, turn);
-      this.collaboration.threadBecameIdle(active.threadId);
-      if (!hidden) await this.extensions.threadIdle(this.core.requireThread(active.threadId).thread);
+      if (active.admissionCommitted) {
+        this.transcripts.enqueueTurn(thread, turn);
+        this.collaboration.queueChildTurnActivity(thread, turn);
+      }
+      if (active.lifecyclePublished) {
+        this.collaboration.threadBecameIdle(active.threadId);
+        if (!hidden) await this.extensions.threadIdle(this.core.requireThread(active.threadId).thread);
+      }
     }
   private accrueSubagentBudgetUsage(
       active: ActiveTurn,
@@ -1533,7 +1650,7 @@ export class TurnLifecycle {
       // is actually running. Whoever owns the Thread has already set its status.
       if (this.activeTurns.get(active.threadId) !== active) return;
       await active.recorder.finishOpenItems('failed').catch(() => undefined);
-      const initial = this.core.readTurn(active.threadId, active.turnId);
+      const initial = this.core.readTurn(active.threadId, active.turnId) ?? active.initialTurn;
       const thread = this.core.ephemeral.get(active.threadId)?.record.thread ?? this.core.metadata.read(active.threadId)?.thread;
       let failedTurn: Turn | null = null;
       if (initial) {
@@ -1553,13 +1670,13 @@ export class TurnLifecycle {
           threadId: active.threadId,
           turnId: active.turnId,
           turn: failed,
-        }).catch(() => undefined);
-        if (!this.core.hiddenEphemeralThreads.has(active.threadId)) {
+        }, { deferObservers: !active.lifecyclePublished }).catch(() => undefined);
+        if (active.lifecyclePublished && !this.core.hiddenEphemeralThreads.has(active.threadId)) {
           await this.extensions.turnError(this.core.requireThread(active.threadId).thread, failed, error).catch(() => undefined);
         }
       }
       await this.core.threadMutex.run(active.threadId, async () => {
-        if (thread && failedTurn) {
+        if (active.admissionCommitted && thread && failedTurn) {
           try {
             this.accrueSubagentBudgetUsage(active, thread, failedTurn.execution);
           } catch (budgetError) {
@@ -1567,7 +1684,7 @@ export class TurnLifecycle {
           }
         }
         this.settleSubagentInFlightUsage(active);
-        if (thread && failedTurn) {
+        if (active.admissionCommitted && thread && failedTurn) {
           // Register terminal settlement while this failed Turn still owns the
           // Thread, closing the same concurrency admission window as success.
           this.collaboration.prepareChildTerminalSettlement(thread, failedTurn);
@@ -1583,13 +1700,21 @@ export class TurnLifecycle {
           ),
         ]).catch(() => undefined);
         if (this.activeTurns.get(active.threadId) === active) this.activeTurns.delete(active.threadId);
-        this.reapSettledSubagentPools(active.threadId, active.turnId);
-        await this.setStatus(active.threadId, { type: 'idle' }).catch(() => undefined);
+        if (active.admissionCommitted) this.reapSettledSubagentPools(active.threadId, active.turnId);
+        await this.setStatus(
+          active.threadId,
+          { type: 'idle' },
+          { deferObservers: !active.lifecyclePublished },
+        ).catch(() => undefined);
       }).catch(() => undefined);
-      if (thread && failedTurn) this.catalog.scheduleAutomaticThreadName(thread, failedTurn, active.configuration);
-      if (thread && failedTurn) {
+      if (active.lifecyclePublished && thread && failedTurn) {
+        this.catalog.scheduleAutomaticThreadName(thread, failedTurn, active.configuration);
+      }
+      if (active.admissionCommitted && thread && failedTurn) {
         this.transcripts.enqueueTurn(thread, failedTurn);
         this.collaboration.queueChildTurnActivity(thread, failedTurn);
+      }
+      if (active.lifecyclePublished) {
         // A failed child follows the same idle transition as a completed or
         // interrupted Turn. Parent delivery may have been deferred while the
         // failure was being finalized, so give the collaboration layer an
@@ -1597,7 +1722,11 @@ export class TurnLifecycle {
         this.collaboration.threadBecameIdle(active.threadId);
       }
     }
-  async setStatus(threadId: ThreadId, status: ThreadStatus): Promise<void> {
+  async setStatus(
+      threadId: ThreadId,
+      status: ThreadStatus,
+      options: { readonly deferObservers?: boolean } = {},
+    ): Promise<void> {
       const now = this.now();
       const state = this.core.ephemeral.get(threadId);
       if (state) {
@@ -1608,7 +1737,10 @@ export class TurnLifecycle {
       } else {
         this.core.metadata.setStatus(threadId, status, now);
       }
-      await this.core.recordNotification({ type: 'thread/status/changed', threadId, status });
+      await this.core.recordNotification(
+        { type: 'thread/status/changed', threadId, status },
+        options,
+      );
     }
   private readClientBinding(threadId: ThreadId, clientId: string): { turnId: string; itemId: string } | null {
       const ephemeral = this.core.ephemeral.get(threadId);
@@ -1654,7 +1786,6 @@ export class TurnLifecycle {
       if (
         !active
         || active.turnId !== turnId
-        || active.controller.signal.aborted
       ) throw this.createThreadBusyError('Expected Turn is not active');
       return active;
     }

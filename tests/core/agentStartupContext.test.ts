@@ -40,6 +40,20 @@ describe('Agent startup context', () => {
     ]);
   });
 
+  test('marks repository instruction truncation without splitting UTF-8 characters', async () => {
+    const root = await repository();
+    const nested = path.join(root, 'packages', 'editor');
+    await mkdir(nested, { recursive: true });
+    await writeFile(path.join(root, 'AGENTS.md'), '界'.repeat(100_000));
+    await writeFile(path.join(nested, 'AGENTS.md'), 'This must not exceed the shared byte budget.');
+
+    const instructions = await collectRepositoryInstructions(nested);
+
+    expect(instructions).toHaveLength(1);
+    expect(instructions[0]).toContain('repository instructions truncated at the 256 KiB startup-context limit');
+    expect(instructions[0]).not.toContain('\uFFFD');
+  });
+
   test('captures the bounded Claude-compatible git snapshot once', async () => {
     const root = await repository();
     await writeFile(path.join(root, 'AGENTS.md'), 'Repository policy.');

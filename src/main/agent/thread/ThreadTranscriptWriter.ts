@@ -150,16 +150,29 @@ export class ThreadTranscriptWriter {
    * completely.
    */
   async delete(threadId: ThreadId): Promise<void> {
-    this.discarded.add(threadId);
     try {
-      const settled = await settledWithin(this.writes.get(threadId), TRANSCRIPT_READY_TIMEOUT_MS);
-      if (settled) this.writes.delete(threadId);
-      this.cursors.delete(threadId);
-      await removeThreadTranscript(threadTranscriptPath(this.options.transcriptRoot, threadId));
-      this.options.onArtifactsChanged?.();
+      await this.deleteArtifact(threadId);
     } catch (error) {
       console.warn(`[agent] Thread transcript artifact was not removed for ${threadId}`, error);
     }
+  }
+
+  /**
+   * Startup recovery keeps a durable ledger row until every owned artifact is
+   * gone. Unlike user-path deletion, this boundary must surface retention so a
+   * later launch can retry instead of forgetting the orphan permanently.
+   */
+  async deleteForRecovery(threadId: ThreadId): Promise<void> {
+    await this.deleteArtifact(threadId);
+  }
+
+  private async deleteArtifact(threadId: ThreadId): Promise<void> {
+    this.discarded.add(threadId);
+    const settled = await settledWithin(this.writes.get(threadId), TRANSCRIPT_READY_TIMEOUT_MS);
+    if (settled) this.writes.delete(threadId);
+    this.cursors.delete(threadId);
+    await removeThreadTranscript(threadTranscriptPath(this.options.transcriptRoot, threadId));
+    this.options.onArtifactsChanged?.();
   }
 
   /**
@@ -256,11 +269,13 @@ export class ThreadTranscriptWriter {
     await settledWithin(this.writes.get(threadId), TRANSCRIPT_READY_TIMEOUT_MS);
   }
 
-  /** Drain every append chain before the stores and transcript root go away. */
-  async flushAll(): Promise<void> {
+  /** Drain every append chain within the caller's shared shutdown deadline. */
+  async flushAll(deadline: number): Promise<boolean> {
     while (this.writes.size > 0) {
-      await Promise.allSettled([...new Set(this.writes.values())]);
+      const pending = Promise.allSettled([...new Set(this.writes.values())]);
+      if (!await settledBeforeDeadline(pending, deadline)) return false;
     }
+    return true;
   }
 
   /**
@@ -376,4 +391,8 @@ async function withDeadline<T>(work: Promise<T>, timeoutMs: number, fallback: T)
 async function settledWithin(work: Promise<unknown> | undefined, timeoutMs: number): Promise<boolean> {
   if (work === undefined) return true;
   return withDeadline(work.then(() => true, () => true), timeoutMs, false);
+}
+
+async function settledBeforeDeadline(work: Promise<unknown>, deadline: number): Promise<boolean> {
+  return settledWithin(work, Math.max(0, deadline - Date.now()));
 }

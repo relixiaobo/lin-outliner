@@ -52,12 +52,22 @@ tool description/result rather than being duplicated in the prompt.
 Fresh Agent startup is a separate composition mode, not a parent-history
 projection. `general-purpose` and configured Roles receive their own system
 identity, the exact delegated prompt, repository instructions, the session-start
-git-status snapshot, an available-Skill catalog, and complete Role-preloaded
-Skill content. `explore` and `plan` receive their specialized prompt and small
-environment envelope without repository/status or catalog blocks. No Agent
+git-status snapshot and, only when `skill` survives the effective runtime tool
+set, an available-Skill catalog and complete eligible Role-preloaded Skill
+content. `explore` and `plan` receive their specialized prompt and small
+environment envelope without repository/status or catalog blocks; when `skill`
+remains effective, eligible inline Role preloads may still contribute their
+complete content independently of the omitted catalog. Skill runtime construction,
+direct invocation routing, preload, and catalog evidence all require `skill` in
+the effective Thread configuration. The L1 Skill module independently requires
+`skill` to survive final runtime tool assembly. No Agent
 receives parent messages, reasoning, calls/results, read-file residue,
 parent-only Skill content, Memory prompt/data, or address roster. A resume then
-projects the Agent's own canonical history under its recorded configuration.
+projects the Agent's own canonical history under its recorded configuration and
+the startup snapshot persisted with its execution. That snapshot is supplied on
+the current Turn of every generation, including steering continuation,
+`agent_message` resume, user-authored resume, and restart recovery; it is not a
+generation-one-only overlay.
 The complete matrix is specified in
 [`agent-subagent-threads.md`](agent-subagent-threads.md).
 
@@ -125,7 +135,8 @@ canonical reference survives, and later provider projection emits
 `argumentPayloadUnavailable` evidence instead of failing the user operation.
 
 Direct slash and natural-language inline Skill routing run during the same admission
-boundary. Inline Skills are side-effect-free by contract; shell expansion and all
+boundary only when the canonical `skill` tool survives effective runtime
+assembly. Inline Skills are side-effect-free by contract; shell expansion and all
 execution overrides require isolated execution through the canonical `skill` tool.
 Validated inline guidance is persisted as `skillInvocation` evidence immediately before
 the unchanged canonical `userMessage`. Model-tool invocation persists the same payload
@@ -491,6 +502,23 @@ runtime schemas. Core/capability mismatches, duplicate identities, and enabled
 valid extension contracts with no implementation remain hard registry defects
 for root Threads; child Agents skip unavailable extension handlers and retain a
 bounded diagnostic under A12.
+
+Child tool assembly also applies the persisted execution policy, not just the
+current configuration. Role `tools: ['*']` is stored as a null requested ceiling
+and inherits the resolved parent pool; an explicit empty list remains a valid
+text-only provider request. Agent Role catalog evidence is emitted only when the
+effective runtime contains an executable `agent` tool. For a child, that requires
+persisted nesting permission, a non-leaf Agent kind, and a requested ceiling that
+admits `agent`.
+
+Specialized execution is fail-closed at the argument-dependent boundary.
+`explore` and `plan` may execute Bash only when capability classification proves
+every action is repository inspection. They may execute an extension or MCP tool
+only when every classified action kind is read-only; an empty, unknown,
+mixed-write, or new classification yields a structured unavailable result. A
+worktree policy likewise rejects live-outline import commits, and all descendant
+file and shell writes use the persisted worktree path as their containment root.
+
 The kernel freezes a schema-valid canonical call
 before `ToolRuntime` evaluates argument-dependent capability blocks. A valid blocked
 call therefore retains its call/result pair and structured `operation_unavailable`
@@ -554,6 +582,19 @@ events are idempotent across restart and cannot overtake already-admitted genuin
 user input. Nested delivery advances one parent edge at a time so only a parent's
 synthesized result reaches its own parent.
 
+Completion notifications and Agent-to-`main` message envelopes remain durable
+queued work while either endpoint has an undelivered row. Catalog projection uses
+that durable fact to protect terminal descendants from finished-item deletion.
+One missing or corrupt child Turn rolls back only that delivery claim and the
+pass continues with its siblings; it cannot permanently block unrelated results.
+
+Agent steering and stop resolve only reachable `collaboration` Threads and reject
+self-targets. Unified `task_stop` checks both the caller-owned shell registry and
+the reachable Agent registry; an identity collision is an error rather than a
+dispatch guess. Shell success and expected failure are returned as structured
+local-tool results so the canonical Item keeps error code, recovery guidance, and
+metrics rather than collapsing them into a generic thrown-error string.
+
 Interrupt aborts provider and tool work through the Turn signal, including
 provider and tool initialization before `prompt()`. Any execution
 Item still `inProgress` is completed as `interrupted`; unexpected executor
@@ -565,6 +606,13 @@ its admitted envelope and records an explicit aborted outcome while skipping the
 side effect. Cancellation is never relabeled as `invalidArguments`. Every raw call in
 the returned assistant batch still receives an admission decision, so the live
 no-projection kernel path cannot retain an unsanitized trailing tool call.
+
+Orderly service shutdown is a bounded cancellation boundary. Active Turn
+completion, collaboration settlement, and transcript append chains share one
+deadline. Work that settles inside it is flushed; expiry records degraded
+shutdown diagnostics and proceeds with canonical and orchestration rows intact
+for startup recovery, rather than waiting indefinitely for a re-registering Turn
+or wedged inspection-only transcript write.
 
 ## Context Planning And Compaction
 

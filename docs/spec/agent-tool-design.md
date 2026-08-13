@@ -81,6 +81,11 @@ specified in [`agent-memory.md`](agent-memory.md).
 Relative paths resolve from the Thread working directory. Full Access permits
 absolute host paths unless an explicit block removes the capability. File tools
 return bounded content and persist oversized output in app-owned scratch space.
+When an Agent inherits worktree isolation, file and shell mutations are bounded
+to the persisted worktree `path`, including in descendants whose current call
+did not request a new worktree. File writes require both lexical and canonical
+containment; an unreadable, cyclic, dangling-symlink, or otherwise unresolved
+canonical path fails closed instead of falling back to the lexical check.
 
 Ordinary text `file_read` bounds the observation rather than the source. It
 classifies encoding and binary content from an 8 KiB prefix, streams only until
@@ -130,9 +135,13 @@ views and do not hide these files.
 `bash` executes through the host shell, streams bounded output, records process
 identity, and may return a background task handle. `task_stop` dispatches that
 handle through the shared background-task registry; it also accepts a running
-Agent ID. The owner is resolved exactly, and an ambiguous identity is rejected
-rather than guessed. Native command exit and filesystem errors remain visible to
-the model.
+Agent ID. A shell task belongs to the Thread that launched it, while an Agent
+target must be reachable through the caller's collaboration lineage. The owner
+is resolved exactly, and an ambiguous Agent/shell identity is rejected rather
+than guessed. Shell stop success and failure both return the native structured
+local-tool envelope, so status, error code, recovery guidance, and metrics remain
+available to canonical history. Native command exit and filesystem errors remain
+visible to the model.
 
 Browser Pilot remains a managed Skill workflow over this same shell surface:
 
@@ -284,6 +293,20 @@ These are top-level tools. There is no model-managed roster, inbox, follow-up,
 wait, or polling tool. Child completion is pushed by the host as specified in
 [`agent-subagent-threads.md`](agent-subagent-threads.md).
 
+`agent` is exposed, and the Agent-type catalog is published, only when the
+current Thread can actually spawn. A root Thread requires `agent` in its
+effective tool set. A child additionally requires persisted nesting permission,
+a non-leaf policy, and a requested-tool ceiling that admits `agent`; a Role's
+configuration text cannot advertise an unreachable type. Role `tools: ['*']`
+normalizes to an inherited ceiling, while `tools: []` remains a deliberate
+text-only Agent rather than an admission error.
+
+`agent_message` and Agent-form `task_stop` never target the caller itself or an
+isolated-Skill Thread. `task_stop` may address only a shell task owned by the
+caller or an Agent reachable through the caller's collaboration lineage. These
+address checks occur after exact schema admission and cannot be widened by a
+display name, task path, or persisted execution row alone.
+
 Claude Code evidence and Tenon contracts are intentionally distinct. The
 committed Claude tool catalog is a sanitized projection. It supports only the
 projected names, descriptions,
@@ -386,7 +409,9 @@ Its optional `task_id` is described as
 `The ID of the background task to stop. Background agents are also accepted by agent ID.`;
 deprecated `shell_id` is `Deprecated: use task_id instead`. The schema omits a
 `required` key. Runtime preparation requires at least one ID and gives `task_id`
-precedence when both are supplied.
+precedence when both are supplied. It trims the selected ID, treats a blank
+`task_id` as absent so a non-blank deprecated `shell_id` may supply the value,
+and rejects an all-blank input as `Missing required parameter: task_id`.
 
 All three schemas use JSON Schema draft 2020-12, `type: "object"`, and
 `additionalProperties: false`. The required arrays are exactly
@@ -402,13 +427,34 @@ The request budget, foreground/background lifecycle, exact launch and terminal
 result envelopes, direct-parent notification, resume, stop provenance, depth,
 concurrency, and transcript account are owned by
 [`agent-subagent-threads.md`](agent-subagent-threads.md). They do not add fields
-to these three model schemas.
+to these three model schemas. In particular, a successful foreground Agent that
+produces no text returns `Agent finished without text output.` rather than an
+empty text result.
 
 ### Skills
 
 `skill` invokes one configuration-selected Skill by canonical identity. Skill
 instructions may call other tools only when those tools survive the current
 Thread catalog and explicit blocks.
+
+The effective presence of `skill` is the admission gate for the entire Skill
+surface. When absent, the host constructs no Skill runtime, emits no catalog or
+Skill stable-prompt module, does not preload Role Skills, and does not recognize
+direct slash or natural-language Skill invocation. A configured Skill name or
+Role preload cannot bypass that gate.
+
+An isolated Skill persists a foreground execution policy before its child Turn
+starts. Its `allowed-tools` list is normalized into the durable requested-tool
+ceiling, while Agent kind, worktree restriction, and nesting permission inherit
+from the parent. The child source is `agent.skill`; its result returns only
+through the owning `skill` call, and neither `agent_message` nor `task_stop` can
+use its Thread ID as a collaboration address.
+
+For `explore` and `plan`, keeping a provider-visible tool is not permission to
+execute it. `bash` may run only when every classified action is a proven
+repository inspection. An extension or MCP tool may run only when every action
+kind is classified read-only; an empty, unknown, mixed-write, or newly introduced
+classification fails closed at execution and returns structured unavailability.
 
 ## Canonical Call History
 

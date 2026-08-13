@@ -1030,6 +1030,31 @@ describe('PiTurnExecutor event normalization', () => {
     }
   });
 
+  test('builds capability instructions from provider-visible tools, not raw configuration', async () => {
+    const fixture = createContext();
+    const systemPrompts: string[] = [];
+    expect(fixture.context.configuration.tools).toContain('agent');
+    const executor = new PiTurnExecutor({
+      resolveRuntimeSettings: async () => runtimeSettings(),
+      resolveRuntime: async () => runtimeSelection(),
+      createTools: async () => [],
+      createAgent: (options) => {
+        systemPrompts.push(options.initialState?.systemPrompt ?? '');
+        return {
+          state: { errorMessage: undefined },
+          subscribe: () => () => undefined,
+          abort: () => undefined,
+          steer: () => undefined,
+          prompt: async () => undefined,
+        };
+      },
+    });
+
+    await expect(executor.execute(fixture.context)).resolves.toMatchObject({ status: 'completed' });
+    expect(systemPrompts).toHaveLength(1);
+    expect(systemPrompts[0]).not.toContain('# Agents');
+  });
+
   test('passes canonical tool order and reset-epoch affinity into Agent creation', async () => {
     const fixture = createContext();
     const captures: Array<{ sessionId: string | undefined; tools: string }> = [];

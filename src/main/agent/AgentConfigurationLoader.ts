@@ -181,10 +181,6 @@ const BUILT_IN_AGENT_TYPES = [
   },
 ] as const;
 
-const HIDDEN_BACKING_ROLE_NAMES: ReadonlySet<string> = new Set(
-  BUILT_IN_AGENT_TYPES.map((entry) => entry.backingRole),
-);
-
 export class AgentConfigurationLoader {
   constructor(private readonly userDataPath: string) {}
 
@@ -261,7 +257,6 @@ export class AgentConfigurationLoader {
       kind: entry.canonicalType,
     }));
     const dynamic = [...merged.roles.values()]
-      .filter((role) => !HIDDEN_BACKING_ROLE_NAMES.has(role.name))
       .filter((role) => !builtIns.some((candidate) => candidate.canonicalType === role.name))
       .sort((left, right) => compareStableText(left.name, right.name))
       .map((role): ResolvedAgentType => ({

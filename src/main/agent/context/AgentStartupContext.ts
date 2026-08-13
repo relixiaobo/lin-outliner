@@ -7,6 +7,7 @@ import type { SqliteDatabase } from '../persistence/sqlite';
 const execFileAsync = promisify(execFile);
 const MAX_GIT_STATUS_CHARS = 2_000;
 const MAX_REPOSITORY_INSTRUCTION_BYTES = 256 * 1_024;
+const REPOSITORY_INSTRUCTIONS_TRUNCATED = '\n... (repository instructions truncated at the 256 KiB startup-context limit.)';
 const INSTRUCTION_FILE_NAMES = ['AGENTS.md', 'AGENT.md', 'CLAUDE.md'] as const;
 
 export interface AgentStartupContextSnapshot {
@@ -154,9 +155,12 @@ export async function collectRepositoryInstructions(cwd: string): Promise<readon
     seenFiles.add(canonical);
     const bytes = await readFile(source).catch(() => null);
     if (!bytes || remainingBytes === 0) continue;
-    const retained = bytes.subarray(0, remainingBytes);
-    remainingBytes -= retained.byteLength;
-    const text = retained.toString('utf8').trim();
+    const truncated = bytes.byteLength > remainingBytes;
+    const markerBytes = truncated ? Buffer.byteLength(REPOSITORY_INSTRUCTIONS_TRUNCATED, 'utf8') : 0;
+    if (markerBytes > remainingBytes) break;
+    const retained = utf8Prefix(bytes, Math.max(0, remainingBytes - markerBytes));
+    remainingBytes -= retained.byteLength + markerBytes;
+    const text = `${retained.toString('utf8').trim()}${truncated ? REPOSITORY_INSTRUCTIONS_TRUNCATED : ''}`.trim();
     if (!text) continue;
     instructions.push([
       `# AGENTS.md instructions for ${directory}`,
@@ -167,6 +171,24 @@ export async function collectRepositoryInstructions(cwd: string): Promise<readon
     ].join('\n'));
   }
   return Object.freeze(instructions);
+}
+
+function utf8Prefix(bytes: Buffer, maxBytes: number): Buffer {
+  if (bytes.byteLength <= maxBytes) return bytes;
+  let end = maxBytes;
+  while (end > 0 && (bytes[end] & 0xc0) === 0x80) end -= 1;
+  if (end === 0) return Buffer.alloc(0);
+  const first = bytes[end]!;
+  const sequenceBytes = first < 0x80
+    ? 1
+    : first >= 0xc2 && first <= 0xdf
+      ? 2
+      : first >= 0xe0 && first <= 0xef
+        ? 3
+        : first >= 0xf0 && first <= 0xf4
+          ? 4
+          : 1;
+  return bytes.subarray(0, end + sequenceBytes <= maxBytes ? end + sequenceBytes : end);
 }
 
 export async function collectGitStatus(cwd: string): Promise<string | null> {

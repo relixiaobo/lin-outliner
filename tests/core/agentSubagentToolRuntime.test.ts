@@ -14,6 +14,84 @@ import type { AgentTool } from '../../src/main/agent/runtime/kernel/types';
 import type { TurnExecutionContext } from '../../src/main/agent/runtime/types';
 
 describe('Subagent ToolRuntime policy', () => {
+  test('does not consult the execution ledger for root Threads', async () => {
+    let executionReads = 0;
+    const runtime = new ToolRuntime({
+      ...runtimeService(CHILD_POLICY),
+      subagentExecution: () => {
+        executionReads += 1;
+        return null;
+      },
+    } as unknown as ThreadService, {
+      capabilityTools: runtimeSchemaTools,
+      assembleRegistry: true,
+    });
+
+    await runtime.createTools(runtimeContext(false));
+    await runtime.prepareProviderContext(runtimeContext(false, []));
+
+    expect(executionReads).toBe(0);
+  });
+
+  test('fails closed before provider preparation when a delegated child policy is not committed', async () => {
+    const cases = [
+      {
+        label: 'missing execution',
+        execution: null,
+        message: 'has no execution record',
+      },
+      {
+        label: 'pending initial admission',
+        execution: {
+          agentType: 'custom-reviewer',
+          initialAdmissionState: 'pending',
+          toolPolicy: CHILD_POLICY,
+        },
+        message: 'initial admission is not committed',
+      },
+      {
+        label: 'missing tool policy',
+        execution: {
+          agentType: 'custom-reviewer',
+          initialAdmissionState: 'committed',
+        },
+        message: 'has no persisted tool policy',
+      },
+    ] as const;
+
+    for (const admissionCase of cases) {
+      for (const entrypoint of ['createTools', 'prepareProviderContext'] as const) {
+        let preparationCalls = 0;
+        const service = runtimeServiceWithExecution(admissionCase.execution, () => {
+          preparationCalls += 1;
+        });
+        const runtime = new ToolRuntime(service, {
+          skillRuntime: () => {
+            preparationCalls += 1;
+            return undefined;
+          },
+          capabilityTools: () => {
+            preparationCalls += 1;
+            return runtimeSchemaTools();
+          },
+          dynamicTools: () => {
+            preparationCalls += 1;
+            return [];
+          },
+          assembleRegistry: true,
+        });
+        const context = runtimeContext(true, ['skill']);
+
+        const operation = entrypoint === 'createTools'
+          ? runtime.createTools(context)
+          : runtime.prepareProviderContext(context);
+
+        await expect(operation).rejects.toThrow(admissionCase.message);
+        expect(preparationCalls, `${admissionCase.label} through ${entrypoint}`).toBe(0);
+      }
+    }
+  });
+
   test('degrades unavailable child dynamic and extension tools without weakening the root invariant', async () => {
     const extension = extensionContract('docs', 'lookup');
     const dynamic = runtimeTool('unknown_dynamic');
@@ -83,6 +161,21 @@ describe('Subagent ToolRuntime policy', () => {
     });
 
     expect(await runtime.createTools(runtimeContext(true))).toEqual([]);
+  });
+
+  test('treats a Role wildcard as inheriting the resolved configuration ceiling', async () => {
+    const policy: PersistedSubagentToolPolicy = {
+      ...CHILD_POLICY,
+      requestedTools: ['*'],
+    };
+    const runtime = new ToolRuntime(runtimeService(policy), {
+      capabilityTools: runtimeSchemaTools,
+      assembleRegistry: true,
+    });
+
+    const tools = await runtime.createTools(runtimeContext(true, ['node_read', 'file_read']));
+
+    expect(tools.map((tool) => tool.name)).toEqual(expect.arrayContaining(['node_read', 'file_read']));
   });
 
   test('does not refresh Skill catalog evidence for Explore or Plan children', async () => {
@@ -296,17 +389,36 @@ function runtimeService(
   toolPolicy: PersistedSubagentToolPolicy,
   extensionTools: readonly ModelToolContract[] = [],
 ): ThreadService {
+  return runtimeServiceWithExecution({
+    agentType: 'custom-reviewer',
+    initialAdmissionState: 'committed',
+    toolPolicy,
+  }, undefined, extensionTools);
+}
+
+function runtimeServiceWithExecution(
+  execution: {
+    readonly agentType?: string;
+    readonly initialAdmissionState?: 'pending' | 'committed';
+    readonly toolPolicy?: PersistedSubagentToolPolicy;
+  } | null,
+  onPreparation?: () => void,
+  extensionTools: readonly ModelToolContract[] = [],
+): ThreadService {
   return {
-    collaborationToolContributions: () => [],
-    extensionToolContributions: async () => extensionTools.length === 0
-      ? []
-      : [{ extensionId: 'extension-probe', tools: extensionTools }],
+    collaborationToolContributions: () => {
+      onPreparation?.();
+      return [];
+    },
+    extensionToolContributions: async () => {
+      onPreparation?.();
+      return extensionTools.length === 0
+        ? []
+        : [{ extensionId: 'extension-probe', tools: extensionTools }];
+    },
     notifyToolStarted: async () => {},
     notifyToolCompleted: async () => {},
-    subagentExecution: () => ({
-      agentType: 'custom-reviewer',
-      toolPolicy,
-    }),
+    subagentExecution: () => execution,
   } as unknown as ThreadService;
 }
 

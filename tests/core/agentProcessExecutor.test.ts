@@ -93,7 +93,16 @@ describe('agent process executor', () => {
     await git(source, ['commit', '-m', 'Initial']);
     const canonicalSource = await realpath(source);
     const worktrees = new AgentWorktree(userData);
-    const prepared = await worktrees.prepare({ agentId: 'commit-agent', cwd: canonicalSource });
+    const intent = await worktrees.plan({
+      agentId: 'commit-agent',
+      cwd: canonicalSource,
+      previous: null,
+    });
+    const prepared = await worktrees.prepare({
+      agentId: 'commit-agent',
+      intent,
+      worktree: null,
+    });
     await writeFile(path.join(prepared.cwd, 'tracked.txt'), 'after\n');
 
     const executor = new AgentProcessExecutor();
@@ -130,7 +139,16 @@ describe('agent process executor', () => {
     await git(source, ['commit', '-m', 'Initial']);
     const canonicalSource = await realpath(source);
     const worktrees = new AgentWorktree(userData);
-    const prepared = await worktrees.prepare({ agentId: 'object-agent', cwd: canonicalSource });
+    const intent = await worktrees.plan({
+      agentId: 'object-agent',
+      cwd: canonicalSource,
+      previous: null,
+    });
+    const prepared = await worktrees.prepare({
+      agentId: 'object-agent',
+      intent,
+      worktree: null,
+    });
     const sandbox = worktrees.sandboxPaths(prepared.worktree);
     const objectStore = sandbox.protectedGitObjectStores[0]!;
     const head = await gitOutput(source, ['rev-parse', 'HEAD']);

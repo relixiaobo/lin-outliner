@@ -107,6 +107,40 @@ describe('AgentConfigurationLoader', () => {
     ]);
   });
 
+  test('keeps an explicitly configured explorer Role selectable beside the canonical explore type', async () => {
+    const { userData, cwd } = await fixturePaths();
+    await writeJson(projectConfigurationPath(cwd), {
+      roles: {
+        explorer: {
+          description: 'Project-specific explorer.',
+          developerInstructions: 'Use the project exploration workflow.',
+        },
+      },
+    });
+    const loader = new AgentConfigurationLoader(userData);
+
+    expect(loader.resolveAgentType('explore', cwd)).toMatchObject({
+      canonicalType: 'explore',
+      kind: 'explore',
+      role: { name: 'explorer', source: 'builtIn' },
+    });
+    expect(loader.resolveAgentType('explorer', cwd)).toMatchObject({
+      canonicalType: 'explorer',
+      kind: 'role',
+      role: {
+        name: 'explorer',
+        source: 'project',
+        description: 'Project-specific explorer.',
+      },
+    });
+    expect(loader.buildAgentTypeCatalogSnapshot(cwd).entries.map((entry) => entry.name)).toEqual([
+      'general-purpose',
+      'explore',
+      'plan',
+      'explorer',
+    ]);
+  });
+
   test('loads user Profiles and lets project Profiles and Roles take precedence', async () => {
     const { userData, cwd } = await fixturePaths();
     await writeJson(userConfigurationPath(userData), {

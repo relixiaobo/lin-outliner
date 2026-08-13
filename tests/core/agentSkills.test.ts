@@ -347,6 +347,24 @@ describe('skill provenance and undo', () => {
 });
 
 describe('agent skills', () => {
+  test('does not resolve Role-preloaded Skills when the skill tool is unavailable', async () => {
+    let runtimeReads = 0;
+    const runtime = {
+      getSkill: async () => {
+        runtimeReads += 1;
+        throw new Error('preload runtime must remain unreachable');
+      },
+    } as unknown as AgentSkillRuntime;
+
+    const resolved = await resolvePreloadedSkillInvocations(runtime, ['deploy'], 42, false);
+
+    expect(runtimeReads).toBe(0);
+    expect(resolved.invocations).toEqual([]);
+    expect(resolved.diagnostics).toEqual([
+      'Role-preloaded Skills were skipped because the skill tool is unavailable.',
+    ]);
+  });
+
   test('preloads explicit inline Skills in Role order and degrades unavailable entries', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'lin-skills-preload-'));
     await createSkillInRoot(root, 'alpha', {

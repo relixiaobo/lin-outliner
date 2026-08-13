@@ -7,11 +7,13 @@ import {
   buildAgentLocalToolProcessEnv,
   createAgentLocalWorkspaceContext,
   createLocalTools,
+  hasBackgroundShellTask,
   POPPLER_RECOVERY_INSTRUCTIONS,
   RIPGREP_RECOVERY_INSTRUCTIONS,
   restorePostCompactReadFiles,
   scratchRootForWorkdir,
   stopBackgroundShellTask,
+  stopBackgroundShellTaskResult,
   visibleBash,
   visibleBackgroundShellStop,
   visibleFileGlob,
@@ -470,6 +472,31 @@ describe('agent local tools', () => {
       } finally {
         await rm(outsideRoot, { recursive: true, force: true });
       }
+    });
+  });
+
+  test('isolated file writes fail closed when canonical containment cannot be resolved', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const loopPath = path.join(workspaceRoot, 'loop');
+      await symlink('loop', loopPath);
+      const workspace = createAgentLocalWorkspaceContext(
+        workspaceRoot,
+        undefined,
+        undefined,
+        undefined,
+        { root: workspaceRoot },
+      );
+      const fileWrite = createLocalTools({ workspace }).find((tool) => tool.name === 'file_write')!;
+
+      const result = await (fileWrite.execute as any)('write-through-loop', {
+        file_path: path.join(loopPath, 'escaped.txt'),
+        content: 'must not be written',
+      });
+      const details = result.details as ToolEnvelope<unknown>;
+
+      expect(details.ok).toBe(false);
+      expect(details.error?.code).toBe('write_outside_isolated_workspace');
+      expect(details.error?.message).toContain('Cannot verify');
     });
   });
 
@@ -2673,6 +2700,65 @@ describe('agent local tools', () => {
       expect(stopped).toMatchObject({ task_id: started.data!.backgroundTaskId, task_type: 'bash', status: 'stopped' });
       expect(stopped!.outputPath).toBe(started.data!.persistedOutputPath);
       expect(await readFile(stopped!.outputPath, 'utf8')).toContain('status: stopped');
+    });
+  });
+
+  test('background shell task ownership is scoped to the launching Thread', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const ownerThreadId = 'thread-owner';
+      const otherThreadId = 'thread-other';
+      const bash = createLocalTools({ localRoot: workspaceRoot, threadId: ownerThreadId })
+        .find((tool) => tool.name === 'bash')!;
+      const startedResult = await (bash.execute as any)('start-owned-task', {
+        command: 'sleep 30',
+        run_in_background: true,
+      });
+      const started = startedResult.details as ToolEnvelope<{ backgroundTaskId: string }>;
+      const taskId = started.data!.backgroundTaskId;
+
+      try {
+        expect(hasBackgroundShellTask(taskId, ownerThreadId)).toBe(true);
+        expect(hasBackgroundShellTask(taskId, otherThreadId)).toBe(false);
+        expect(await stopBackgroundShellTask(taskId, otherThreadId)).toBeNull();
+        expect(hasBackgroundShellTask(taskId, ownerThreadId)).toBe(true);
+      } finally {
+        await stopBackgroundShellTask(taskId, ownerThreadId).catch(() => null);
+      }
+    });
+  });
+
+  test('task_stop shell failures preserve the structured local-tool envelope', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const ownerThreadId = 'thread-envelope-owner';
+      const bash = createLocalTools({ localRoot: workspaceRoot, threadId: ownerThreadId })
+        .find((tool) => tool.name === 'bash')!;
+      const startedResult = await (bash.execute as any)('start-terminal-task', {
+        command: 'sleep 30',
+        run_in_background: true,
+      });
+      const started = startedResult.details as ToolEnvelope<{ backgroundTaskId: string }>;
+      const taskId = started.data!.backgroundTaskId;
+      await stopBackgroundShellTask(taskId, ownerThreadId);
+
+      const result = await stopBackgroundShellTaskResult(taskId, ownerThreadId);
+      expect(result).not.toBeNull();
+      const details = result!.details as ToolEnvelope<BackgroundShellStopData>;
+      expect(details).toMatchObject({
+        ok: false,
+        tool: 'task_stop',
+        status: 'error',
+        error: {
+          code: 'task_not_running',
+          message: `Task ${taskId} is not running (status: stopped)`,
+          recoverable: true,
+        },
+        instructions: 'No stop is needed for completed, failed, or already stopped tasks.',
+        metrics: { durationMs: expect.any(Number) },
+      });
+      expect(JSON.parse(result!.content[0]!.text)).toMatchObject({
+        ok: false,
+        error: { code: 'task_not_running' },
+      });
     });
   });
 

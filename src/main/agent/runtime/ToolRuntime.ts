@@ -19,8 +19,7 @@ import type { AgentImageGenerationRuntime } from '../capabilities/agentImageGene
 import { AgentImportService, visibleImportServiceResult } from '../capabilities/agentImportService';
 import {
   hasBackgroundShellTask,
-  stopBackgroundShellTask,
-  type BackgroundShellStopData,
+  stopBackgroundShellTaskResult,
   type AgentFileReadImageNormalizer,
   type AgentLocalWorkspaceContext,
 } from '../capabilities/agentLocalTools';
@@ -97,6 +96,7 @@ export class ToolRuntime {
   }
 
   async createTools(context: TurnExecutionContext): Promise<readonly AgentTool[]> {
+    const subagentPolicy = this.subagentPolicy(context);
     const skillRuntime = await this.skillRuntime(context);
     const workspace = typeof this.options.localWorkspace === 'function'
       ? this.options.localWorkspace(context)
@@ -155,7 +155,6 @@ export class ToolRuntime {
       contract,
     ]));
     const policyRegistry = registry ?? [...MODEL_TOOL_CATALOG, ...extensionContracts];
-    const subagentPolicy = this.subagentPolicy(context);
     const requestedTools = subagentPolicy
       ? resolveSubagentToolRequest(subagentPolicy.requestedTools, policyRegistry)
       : null;
@@ -284,8 +283,8 @@ export class ToolRuntime {
   }
 
   async prepareProviderContext(context: TurnExecutionContext): Promise<void> {
-    if (!context.configuration.tools.includes('skill')) return;
     const subagentPolicy = this.subagentPolicy(context);
+    if (!context.configuration.tools.includes('skill')) return;
     if (subagentPolicy && (subagentPolicy.kind === 'explore' || subagentPolicy.kind === 'plan')) {
       // Specialized children intentionally have no Skill catalog in either
       // their startup evidence or later provider-context refreshes.
@@ -307,10 +306,17 @@ export class ToolRuntime {
 
   private subagentPolicy(context: TurnExecutionContext): PersistedSubagentToolPolicy | null {
     if (context.thread.parentThreadId === null) return null;
-    const host = this.service as unknown as {
-      subagentExecution?: (threadId: string) => { readonly toolPolicy?: PersistedSubagentToolPolicy } | null;
-    };
-    return host.subagentExecution?.(context.thread.id)?.toolPolicy ?? null;
+    const execution = this.service.subagentExecution(context.thread.id);
+    if (!execution) {
+      throw new Error(`Delegated Agent ${context.thread.id} has no execution record`);
+    }
+    if (execution.initialAdmissionState !== 'committed') {
+      throw new Error(`Delegated Agent ${context.thread.id} initial admission is not committed`);
+    }
+    if (!execution.toolPolicy) {
+      throw new Error(`Delegated Agent ${context.thread.id} has no persisted tool policy`);
+    }
+    return execution.toolPolicy;
   }
 
   private subagentType(context: TurnExecutionContext): string {
@@ -357,18 +363,18 @@ export class ToolRuntime {
         }
         return this.service.updateGoalForTurn(threadId, turnId, status);
       }),
-      coreTool('task_stop', 'Task Stop', async (_itemId, params) => {
+      coreResultTool('task_stop', 'Task Stop', async (_itemId, params) => {
         const input = normalizeTaskStopToolInput(params);
-        const taskId = input.task_id ?? input.shell_id!;
-        const shellOwnsTask = hasBackgroundShellTask(taskId);
+        const taskId = input.task_id!;
+        const shellOwnsTask = hasBackgroundShellTask(taskId, threadId);
         const agentOwnsTask = this.service.hasAgentTask(threadId, taskId);
         if (agentOwnsTask && shellOwnsTask) {
           throw new Error(`Task ID is ambiguous between an Agent and shell task: ${taskId}`);
         }
         const agent = await this.service.stopAgentTask(threadId, turnId, taskId);
-        if (agent !== null) return agent;
-        const shell = await stopBackgroundShellTask(taskId);
-        if (shell !== null) return shellTaskStopResult(shell);
+        if (agent !== null) return toolResult(agent);
+        const shell = await stopBackgroundShellTaskResult(taskId, threadId);
+        if (shell !== null) return shell;
         throw new Error(`No task found with ID: ${taskId}`);
       }, normalizeTaskStopToolInput),
     ];
@@ -449,7 +455,16 @@ export class ToolRuntime {
             capabilityConfig: await this.capabilityConfig(),
           },
         });
-        const activeSubagentPolicy = this.subagentPolicy(context) ?? ROOT_SUBAGENT_POLICY;
+        let activeSubagentPolicy: PersistedSubagentToolPolicy;
+        if (context.thread.parentThreadId === null) {
+          activeSubagentPolicy = ROOT_SUBAGENT_POLICY;
+        } else {
+          const persistedPolicy = this.subagentPolicy(context);
+          if (!persistedPolicy) {
+            throw new Error(`Delegated Agent ${context.thread.id} has no persisted tool policy`);
+          }
+          activeSubagentPolicy = persistedPolicy;
+        }
         const specializedBashBlocked = canonicalIdentity === 'bash'
           && !subagentBashExecutionAllowed(
             activeSubagentPolicy,
@@ -655,12 +670,22 @@ function coreTool(
   };
 }
 
-function shellTaskStopResult(data: BackgroundShellStopData): JsonValue {
+function coreResultTool(
+  name: string,
+  label: string,
+  execute: (itemId: string, params: unknown, signal?: AbortSignal) => AgentToolResult<unknown> | Promise<AgentToolResult<unknown>>,
+  prepareArguments?: (value: unknown) => unknown,
+): AgentTool {
+  const contract = modelToolContract(name);
+  if (!contract?.inputSchema) throw new Error(`Missing Core model-tool contract: ${name}`);
   return {
-    message: data.message,
-    task_id: data.task_id,
-    task_type: data.task_type,
-    ...(data.command === undefined ? {} : { command: data.command }),
+    name,
+    label,
+    description: contract.description,
+    parameters: contract.inputSchema as TSchema,
+    ...(prepareArguments === undefined ? {} : { prepareArguments }),
+    executionMode: 'sequential',
+    execute: async (itemId, params, signal) => await execute(itemId, params, signal),
   };
 }
 

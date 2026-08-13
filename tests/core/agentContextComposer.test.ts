@@ -180,15 +180,74 @@ describe('stable agent prompt composition', () => {
       'neva-identity',
     ]);
 
-    const agentOnly = composeStablePrompt({
+    const agentMessageOnly = composeStablePrompt({
       thread: rootThread(1),
       configuration: { ...configuration, tools: ['agent_message'] },
     });
-    expect(agentOnly.blocks.map((block) => block.id)).toEqual([
+    expect(agentMessageOnly.blocks.map((block) => block.id)).toEqual([
       'framework-firmware',
       'agent',
       'neva-identity',
     ]);
+  });
+
+  test('describes only the Agent capabilities exposed by each runtime tool', () => {
+    const promptFor = (...tools: string[]) => composeStablePrompt({
+      thread: rootThread(1),
+      configuration: { ...configuration, tools },
+    }).text;
+    const spawn = 'A new agent call starts a fresh Agent';
+    const sharedState = 'Agents share host files, processes, credentials, ports, and application state';
+    const backgroundCompletion = 'Background completion is delivered automatically';
+    const workProduct = 'A completed Agent result is work product to synthesize';
+    const steer = 'Use agent_message with the Agent ID to steer or resume';
+    const stop = 'Use task_stop with the task ID to stop a running task';
+
+    const agentOnly = promptFor('agent');
+    expect(agentOnly).toContain(spawn);
+    expect(agentOnly).toContain(sharedState);
+    expect(agentOnly).toContain(backgroundCompletion);
+    expect(agentOnly).toContain(workProduct);
+    expect(agentOnly).not.toContain(steer);
+    expect(agentOnly).not.toContain(stop);
+
+    const agentMessageOnly = promptFor('agent_message');
+    expect(agentMessageOnly).toContain(steer);
+    expect(agentMessageOnly).not.toContain(spawn);
+    expect(agentMessageOnly).not.toContain(sharedState);
+    expect(agentMessageOnly).not.toContain(backgroundCompletion);
+    expect(agentMessageOnly).not.toContain(workProduct);
+    expect(agentMessageOnly).not.toContain(stop);
+
+    const taskStopOnly = promptFor('task_stop');
+    expect(taskStopOnly).toContain(stop);
+    expect(taskStopOnly).not.toContain(spawn);
+    expect(taskStopOnly).not.toContain(sharedState);
+    expect(taskStopOnly).not.toContain(backgroundCompletion);
+    expect(taskStopOnly).not.toContain(workProduct);
+    expect(taskStopOnly).not.toContain(steer);
+
+    const controlsOnly = promptFor('agent_message', 'task_stop');
+    expect(controlsOnly).toContain(steer);
+    expect(controlsOnly).toContain(stop);
+    expect(controlsOnly).not.toContain(spawn);
+
+    const allAgentTools = promptFor('agent', 'agent_message', 'task_stop');
+    for (const capability of [spawn, sharedState, backgroundCompletion, workProduct, steer, stop]) {
+      expect(allAgentTools).toContain(capability);
+    }
+  });
+
+  test('describes only provider-visible runtime tools when configuration is broader', () => {
+    const prompt = composeStablePrompt({
+      thread: rootThread(1),
+      configuration: { ...configuration, tools: ['agent', 'file_read'] },
+      availableToolNames: ['file_read'],
+    });
+
+    expect(prompt.blocks.map((block) => block.id)).toContain('files');
+    expect(prompt.blocks.map((block) => block.id)).not.toContain('agent');
+    expect(prompt.text).not.toContain('# Agents');
   });
 
   test('keeps stable fingerprints independent of Thread identity and volatile context', () => {

@@ -1,5 +1,5 @@
 import { decodeThread,decodeThreadItem,decodeTurn } from '../../../core/agent/codec';
-import { resolveChildConfiguration,type AgentRole,type EffectiveThreadConfiguration } from '../../../core/agent/configuration';
+import type { EffectiveThreadConfiguration } from '../../../core/agent/configuration';
 import { createThreadHistoryRollbackContext,type AgentCoreExtension,type ThreadHistoryRollbackContext } from '../../../core/agent/extensions';
 import { HOST_RESTART_ERROR_CODE,type AgentCoreRequestByMethod,type ContextCursor,type Thread,type ThreadConfigurationResponse,type ThreadConfigurationSetRequest,type ThreadConfigurationSummary,type ThreadDescendantsRequest,type ThreadDescendantsResponse,type ThreadForkRequest,type ThreadId,type ThreadItem,type ThreadItemEntry,type ThreadItemsListRequest,type ThreadItemsListResponse,type ThreadListRequest,type ThreadListResponse,type ThreadReadRequest,type ThreadReadResponse,type ThreadRollbackRequest,type ThreadStartRequest,type ThreadStartResponse,type ThreadTurnsListRequest,type ThreadTurnsListResponse,type Turn,type TurnDiagnosticsPayload } from '../../../core/agent/protocol';
 import {
@@ -28,6 +28,17 @@ interface PendingThreadNameGeneration {
   readonly completion: Promise<void>;
 }
 
+interface PendingDelegatedThreadStart {
+  readonly thread: Thread;
+  attempted: boolean;
+  error: Error | null;
+}
+
+export interface DelegatedThreadStartPublication {
+  readonly published: boolean;
+  readonly error: Error | null;
+}
+
 export interface ThreadCatalogCollaboration {
   recordEphemeralSpawnEdge(threadId: ThreadId, edge: {
     readonly sessionId: string;
@@ -54,6 +65,7 @@ export interface ThreadCatalogTranscripts {
 
 export class ThreadCatalogOps {
   private readonly pendingThreadNames = new Map<ThreadId, PendingThreadNameGeneration>();
+  private readonly pendingDelegatedThreadStarts = new Map<ThreadId, PendingDelegatedThreadStart>();
   constructor(
     private readonly core: ThreadCore,
     private readonly resourceOps: ThreadResourceOps,
@@ -62,12 +74,11 @@ export class ThreadCatalogOps {
     private readonly resolveConfiguration: (request: ThreadStartRequest) => EffectiveThreadConfiguration | Promise<EffectiveThreadConfiguration>,
     private readonly resolveRendererStartDefaults: () => RendererThreadStartDefaults | Promise<RendererThreadStartDefaults>,
     private readonly validateRendererConfiguration: (configuration: ThreadConfigurationSummary) => void | Promise<void>,
-    private readonly resolveRole: (name: string, cwd: string) => AgentRole,
     private readonly now: () => number,
     private readonly isClosing: () => boolean,
-    private readonly applyToolCeiling: (configuration: EffectiveThreadConfiguration, toolCeiling: readonly string[] | null) => EffectiveThreadConfiguration,
     private readonly turnLifecycle: TurnLifecycle,
     private readonly collaboration: ThreadCatalogCollaboration,
+    private readonly hasUndeliveredWork: (threadId: ThreadId) => boolean,
     private readonly transcripts: ThreadCatalogTranscripts,
     private readonly clearGoal: (threadId: ThreadId) => Promise<void>,
     private readonly clearSubagentBudget: (threadId: ThreadId) => void,
@@ -213,7 +224,12 @@ export class ThreadCatalogOps {
         .filter((threadId) => !this.core.hiddenEphemeralThreads.has(threadId))
         .map((threadId) => this.core.requireThread(threadId).thread)
         .sort((left, right) => right.updatedAt - left.updatedAt || right.id.localeCompare(left.id));
-      return { data, queuedWorkThreadIds: [] };
+      return {
+        data,
+        queuedWorkThreadIds: data
+          .filter((thread) => this.hasUndeliveredWork(thread.id))
+          .map((thread) => thread.id),
+      };
     }
   readThread(request: ThreadReadRequest): ThreadReadResponse {
       const record = this.core.requireThread(request.threadId);
@@ -567,6 +583,7 @@ export class ThreadCatalogOps {
         });
         for (const record of [...subtree.records].reverse()) {
           if (this.core.hiddenEphemeralThreads.has(record.thread.id)) continue;
+          if (this.pendingDelegatedThreadStarts.has(record.thread.id)) continue;
           await this.extensions.threadStopped(record.thread);
         }
       } finally {
@@ -588,13 +605,10 @@ export class ThreadCatalogOps {
         }
         for (const record of [...subtree.records].reverse()) {
           if (this.core.hiddenEphemeralThreads.has(record.thread.id)) continue;
+          if (this.pendingDelegatedThreadStarts.has(record.thread.id)) continue;
           await this.extensions.threadStopped(record.thread);
         }
         await this.core.threadTreeMutex.run(async () => {
-          // Keep metadata as the retry authority unless the durable execution
-          // cascade commits. Ledger tombstones become visible only after that
-          // transaction, so a failed deletion remains fully retryable.
-          this.clearSubagentExecutions(subtree.threadIds);
           if (subtree.records[0]?.thread.ephemeral) {
             for (const descendantId of [...subtree.threadIds].reverse()) {
               this.collaboration.deleteEphemeralSpawnEdge(descendantId);
@@ -604,7 +618,16 @@ export class ThreadCatalogOps {
           } else {
             this.core.metadata.delete(threadId);
           }
+          // Metadata is the deletion commit point. Retire Agent identities only
+          // after it succeeds; durable ledger cleanup may retry at startup and
+          // must not turn an already-committed Thread deletion into an error.
+          try {
+            this.clearSubagentExecutions(subtree.threadIds);
+          } catch (error) {
+            console.warn('[agent] Agent ledger cleanup deferred after Thread deletion', error);
+          }
           this.clearThreadCoordinationState(subtree.threadIds);
+          for (const descendantId of subtree.threadIds) this.pendingDelegatedThreadStarts.delete(descendantId);
           // A session snapshot belongs to its root. Deleting one child must not
           // invalidate startup inputs still used by the surviving parent and
           // sibling Agents in the same session.
@@ -773,9 +796,50 @@ export class ThreadCatalogOps {
       if (thread.parentThreadId === null && !lineage.hidden) {
         await this.freezeAgentStartupContext(thread);
       }
-      await this.core.recordNotification({ type: 'thread/started', threadId: thread.id, thread });
-      if (!this.core.hiddenEphemeralThreads.has(thread.id)) await this.extensions.threadStarted(thread);
+      const delegatedAdmission = thread.threadSource === 'subagent';
+      if (delegatedAdmission) {
+        this.pendingDelegatedThreadStarts.set(thread.id, { thread, attempted: false, error: null });
+      }
+      await this.core.recordNotification(
+        { type: 'thread/started', threadId: thread.id, thread },
+        { deferObservers: delegatedAdmission },
+      );
+      if (!delegatedAdmission && !this.core.hiddenEphemeralThreads.has(thread.id)) {
+        await this.extensions.threadStarted(thread);
+      }
       return thread;
+    }
+  hasPendingDelegatedThreadStart(threadId: ThreadId): boolean {
+      return this.pendingDelegatedThreadStarts.has(threadId);
+    }
+  async publishDelegatedThreadStart(threadId: ThreadId): Promise<DelegatedThreadStartPublication> {
+      const pending = this.pendingDelegatedThreadStarts.get(threadId);
+      if (!pending) return { published: true, error: null };
+      if (pending.attempted) {
+        return {
+          published: false,
+          error: pending.error ?? new Error(`Delegated Thread start publication is unavailable: ${threadId}`),
+        };
+      }
+      pending.attempted = true;
+      try {
+        await this.core.publishRecordedNotification({ type: 'thread/started', threadId, thread: pending.thread });
+      } catch (error) {
+        pending.error = error instanceof Error ? error : new Error(String(error));
+        return { published: false, error: pending.error };
+      }
+      let lifecycleError: Error | null = null;
+      try {
+        if (!this.core.hiddenEphemeralThreads.has(threadId)) await this.extensions.threadStarted(pending.thread);
+      } catch (error) {
+        lifecycleError = error instanceof Error ? error : new Error(String(error));
+      } finally {
+        // Start hooks are attempted once. A post-commit hook failure belongs to
+        // the admitted Turn; it must not turn later deletion into a staged
+        // rollback or replay an already-published notification.
+        this.pendingDelegatedThreadStarts.delete(threadId);
+      }
+      return { published: true, error: lifecycleError };
     }
   private requireRendererConfigurableThread(threadId: ThreadId): ThreadCatalogRecord {
       const record = this.core.requireThread(threadId);

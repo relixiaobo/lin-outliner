@@ -174,7 +174,11 @@ function runtimeService(
     extensionToolContributions: async () => extensionTools.length > 0
       ? [{ extensionId: 'extension-probe', tools: extensionTools }]
       : [],
-    subagentExecution: () => toolPolicy ? { agentType: 'test-agent', toolPolicy } : null,
+    subagentExecution: () => toolPolicy ? {
+      agentType: 'test-agent',
+      initialAdmissionState: 'committed',
+      toolPolicy,
+    } : null,
     notifyToolStarted: async () => {},
     notifyToolCompleted: async () => {},
   } as unknown as ThreadService;

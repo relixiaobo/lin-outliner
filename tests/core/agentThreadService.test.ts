@@ -22,6 +22,7 @@ import {
 import { threadFeatureSource } from '../../src/core/agent/protocol';
 import type {
   AgentCoreNotification,
+  AgentCoreRecordedNotification,
   Thread,
   ThreadFileSource,
   ThreadImageArtifactReference,
@@ -30,6 +31,7 @@ import type {
   Turn,
 } from '../../src/core/agent/protocol';
 import type { AssetMetadata, DocumentProjection, NodeProjection } from '../../src/core/types';
+import type { ErrorReport } from '../../src/core/errorObservability';
 import { ExtensionRegistry } from '../../src/main/agent/ExtensionRegistry';
 import {
   ThreadService,
@@ -88,7 +90,11 @@ import { indexProjection } from '../../src/main/agent/capabilities/agentNodeTool
 import { editableOutlineRevision } from '../../src/main/agent/capabilities/agentNodeToolRead';
 import { ThreadTranscriptIndex } from '../../src/main/agent/thread/ThreadTranscriptIndex';
 import { ThreadTranscriptWriter } from '../../src/main/agent/thread/ThreadTranscriptWriter';
-import { AgentWorktree, type AgentWorktreeMetadata } from '../../src/main/agent/worktree/AgentWorktree';
+import {
+  AgentWorktree,
+  type AgentWorktreeMetadata,
+  type AgentWorktreeRecoveryIntent,
+} from '../../src/main/agent/worktree/AgentWorktree';
 import { uuidV7 } from '../../src/main/agent/uuid';
 import { createImageArtifactReference } from '../../src/main/agent/imageArtifacts';
 import { replayableModelCall, toolAdmissionEvent } from '../fixtures/agentToolCallHistory';
@@ -692,6 +698,14 @@ class ControlledNameGenerator implements ThreadNameGenerator {
   }
 }
 
+class AbortIgnoringExecutor extends ControlledExecutor {
+  override async execute(context: TurnExecutionContext): Promise<TurnExecutionResult> {
+    this.contexts.push(context);
+    await new Promise<void>(() => undefined);
+    return completedExecutionResult();
+  }
+}
+
 describe('ThreadService', () => {
   test('resolves renderer-owned Thread defaults at the host boundary', async () => {
     const fixture = await createFixture(undefined, {
@@ -900,6 +914,34 @@ describe('ThreadService', () => {
 
     await fixture.service.close();
     expect(nameGenerator.contexts).toHaveLength(0);
+  });
+
+  test('bounds shutdown when an active Turn ignores abort', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-wedged-close-'));
+    roots.push(root);
+    let now = 1_720_000_000_000;
+    const executor = new AbortIgnoringExecutor();
+    const opened = await openFixture(root, executor, () => ++now);
+    await opened.service.initialize();
+    const thread = (await opened.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: root,
+    })).thread;
+    await opened.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Ignore shutdown' }],
+    });
+    await waitUntil(() => executor.contexts.length === 1);
+    const warning = spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await opened.service.close(10);
+
+    expect(warning.mock.calls).toContainEqual([
+      expect.stringContaining('1 active Turn(s)'),
+    ]);
+    warning.mockRestore();
   });
 
   test('never lets an in-flight automatic name replace a manual rename or clear', async () => {
@@ -4322,6 +4364,715 @@ describe('ThreadService', () => {
     await reopened.service.close();
   });
 
+  test('commits a pending initial Agent admission from rollout before history reconciliation', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const parentTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Create a crash-recovery Agent' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    const child = await fixture.service.spawnChild({
+      parentThreadId: root.id,
+      parentTurnId: parentTurn.turn.id,
+      parentItemId: 'startup-committed-child',
+      prompt: 'Remain recoverable after restart',
+      taskPath: '/root/startup_committed_child',
+      childKind: 'collaboration',
+      execution: testChildExecution(),
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    await fixture.service.close();
+
+    const goals = database(join(fixture.root, 'agent', 'goals.sqlite'));
+    goals.prepare(`
+      UPDATE subagent_execution_records
+      SET initial_admission_state = 'pending'
+      WHERE agent_id = ?
+    `).run(child.thread.id);
+    goals.prepare('DELETE FROM subagent_execution_notifications').run();
+    goals.prepare('DELETE FROM subagent_execution_parent_messages').run();
+    goals.close();
+    const history = database(join(fixture.root, 'agent', 'thread_history.sqlite'));
+    history.prepare('DELETE FROM thread_items WHERE thread_id = ?').run(child.thread.id);
+    history.prepare('DELETE FROM thread_turns WHERE thread_id = ?').run(child.thread.id);
+    history.prepare('DELETE FROM rollout_watermarks WHERE thread_id = ?').run(child.thread.id);
+    expect(history.prepare(
+      'SELECT COUNT(*) AS count FROM thread_turns WHERE thread_id = ?',
+    ).get(child.thread.id)).toEqual({ count: 0 });
+    history.close();
+
+    const executor = new ControlledExecutor();
+    const reopened = await openFixture(fixture.root, executor, fixture.clock);
+    await reopened.service.initialize();
+
+    expect(reopened.stores.subagentExecutions.read(child.thread.id)?.initialAdmissionState)
+      .toBe('committed');
+    expect(reopened.stores.metadata.read(child.thread.id)).not.toBeNull();
+    expect(executor.contexts.some((context) => context.thread.id === child.thread.id)).toBe(false);
+    await reopened.service.close();
+  });
+
+  test('removes an uncommitted Agent before history reconciliation without deleting its sibling request pool', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const parentTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Create sibling crash-recovery Agents' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    const target = await fixture.service.spawnChild({
+      parentThreadId: root.id,
+      parentTurnId: parentTurn.turn.id,
+      parentItemId: 'startup-uncommitted-child',
+      prompt: 'This admission did not commit',
+      taskPath: '/root/startup_uncommitted_child',
+      childKind: 'collaboration',
+      execution: testChildExecution(),
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    const sibling = await fixture.service.spawnChild({
+      parentThreadId: root.id,
+      parentTurnId: parentTurn.turn.id,
+      parentItemId: 'startup-sibling-child',
+      prompt: 'This sibling remains admitted',
+      taskPath: '/root/startup_sibling_child',
+      childKind: 'collaboration',
+      execution: testChildExecution(),
+    });
+    await fixture.executor.waitUntilWaiting(2);
+    await fixture.service.setThreadRecorded(root.id, false);
+    expect(fixture.service.isThreadRecorded(sibling.thread.id)).toBe(false);
+    await fixture.service.close();
+
+    const poolId = requestPoolIdForTurn(parentTurn.turn.id);
+    const goals = database(join(fixture.root, 'agent', 'goals.sqlite'));
+    goals.prepare(`
+      UPDATE subagent_execution_records
+      SET initial_admission_state = 'pending'
+      WHERE agent_id = ?
+    `).run(target.thread.id);
+    goals.prepare('DELETE FROM subagent_execution_notifications').run();
+    goals.prepare('DELETE FROM subagent_execution_parent_messages').run();
+    const budgets = new SubagentRequestLedger(goals);
+    budgets.deletePoolRecord(poolId);
+    budgets.createPool({
+      poolId,
+      scope: 'turn',
+      originThreadId: root.id,
+      originTurnId: parentTurn.turn.id,
+      tokenBudget: 100,
+    }, false);
+    expect(budgets.rebindMemberPool(target.thread.id, poolId)).not.toBeNull();
+    expect(budgets.rebindMemberPool(sibling.thread.id, poolId)).not.toBeNull();
+    goals.close();
+    await rm(fixture.stores.rollout.pathFor(target.thread.id), { force: true });
+
+    const executor = new ControlledExecutor();
+    const extensionStops: string[] = [];
+    const registry = new ExtensionRegistry();
+    registry.register({
+      id: 'startup-recovery-lifecycle-probe',
+      onThreadStopped: (thread) => { extensionStops.push(thread.id); },
+    });
+    const reopened = await openFixture(fixture.root, executor, fixture.clock, registry);
+    await reopened.service.initialize();
+
+    expect(reopened.stores.metadata.read(target.thread.id)).toBeNull();
+    expect(reopened.stores.subagentExecutions.read(target.thread.id)).toBeNull();
+    expect(reopened.stores.subagentBudgets.readMember(target.thread.id)).toBeNull();
+    expect(reopened.stores.metadata.read(sibling.thread.id)).not.toBeNull();
+    expect(reopened.stores.subagentExecutions.read(sibling.thread.id)).not.toBeNull();
+    expect(reopened.stores.subagentBudgets.readPool(poolId)).not.toBeNull();
+    expect(reopened.stores.subagentBudgets.membersForPool(poolId).map((member) => member.threadId))
+      .toEqual([sibling.thread.id]);
+    expect(executor.contexts.some((context) => context.thread.id === target.thread.id)).toBe(false);
+    expect(extensionStops).toEqual([]);
+    expect(reopened.service.isThreadRecorded(root.id)).toBe(false);
+    expect(reopened.service.isThreadRecorded(sibling.thread.id)).toBe(false);
+    await reopened.service.close();
+  });
+
+  test('recovers one pending Agent subtree without retrying descendants from a stale ledger snapshot', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Create a nested crash-recovery tree' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    const parent = await fixture.service.spawnChild({
+      parentThreadId: root.id,
+      parentTurnId: rootTurn.turn.id,
+      parentItemId: 'pending-subtree-parent',
+      prompt: 'Delegate one nested child',
+      taskPath: '/root/pending_subtree_parent',
+      childKind: 'collaboration',
+      execution: testChildExecution(),
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    const child = await fixture.service.spawnChild({
+      parentThreadId: parent.thread.id,
+      parentTurnId: parent.turn.id,
+      parentItemId: 'pending-subtree-child',
+      prompt: 'Become a descendant in the same incomplete subtree',
+      taskPath: '/root/pending_subtree_parent/pending_subtree_child',
+      childKind: 'collaboration',
+      execution: testChildExecution(),
+    });
+    await fixture.executor.waitUntilWaiting(2);
+    await fixture.service.close();
+
+    const goals = database(join(fixture.root, 'agent', 'goals.sqlite'));
+    goals.prepare(`
+      UPDATE subagent_execution_records
+      SET initial_admission_state = 'pending'
+      WHERE agent_id IN (?, ?)
+    `).run(parent.thread.id, child.thread.id);
+    goals.prepare('DELETE FROM subagent_execution_notifications').run();
+    goals.prepare('DELETE FROM subagent_execution_parent_messages').run();
+    goals.close();
+    await Promise.all([
+      rm(fixture.stores.rollout.pathFor(parent.thread.id), { force: true }),
+      rm(fixture.stores.rollout.pathFor(child.thread.id), { force: true }),
+    ]);
+
+    const reports: ErrorReport[] = [];
+    const reopened = await openFixture(fixture.root, new ControlledExecutor(), fixture.clock, undefined, {
+      reportError: (report) => { reports.push(report); },
+    });
+    await reopened.service.initialize();
+
+    expect(reopened.stores.metadata.read(parent.thread.id)).toBeNull();
+    expect(reopened.stores.metadata.read(child.thread.id)).toBeNull();
+    expect(reopened.stores.subagentExecutions.read(parent.thread.id)).toBeNull();
+    expect(reopened.stores.subagentExecutions.read(child.thread.id)).toBeNull();
+    expect(reopened.stores.subagentBudgets.readMember(parent.thread.id)).toBeNull();
+    expect(reopened.stores.subagentBudgets.readMember(child.thread.id)).toBeNull();
+    expect(reports).toEqual([]);
+    await reopened.service.close();
+  });
+
+  test('keeps metadata and execution authority when atomic startup budget cleanup fails', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const parentTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Create a budget recovery Agent' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    const child = await fixture.service.spawnChild({
+      parentThreadId: root.id,
+      parentTurnId: parentTurn.turn.id,
+      parentItemId: 'startup-budget-cleanup-child',
+      prompt: 'This admission will cross the budget cleanup crash window',
+      taskPath: '/root/startup_budget_cleanup_child',
+      childKind: 'collaboration',
+      execution: testChildExecution(),
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    await fixture.service.close();
+
+    const poolId = requestPoolIdForTurn(parentTurn.turn.id);
+    const goals = database(join(fixture.root, 'agent', 'goals.sqlite'));
+    goals.prepare(`
+      UPDATE subagent_execution_records
+      SET initial_admission_state = 'pending'
+      WHERE agent_id = ?
+    `).run(child.thread.id);
+    goals.prepare('DELETE FROM subagent_execution_notifications').run();
+    goals.prepare('DELETE FROM subagent_execution_parent_messages').run();
+    const budgets = new SubagentRequestLedger(goals);
+    budgets.deletePoolRecord(poolId);
+    budgets.createPool({
+      poolId,
+      scope: 'turn',
+      originThreadId: root.id,
+      originTurnId: parentTurn.turn.id,
+      tokenBudget: null,
+    }, false);
+    expect(budgets.rebindMemberPool(child.thread.id, poolId)).not.toBeNull();
+    goals.exec(`
+      CREATE TRIGGER fail_startup_budget_pool_cleanup
+      BEFORE DELETE ON subagent_request_pools
+      BEGIN
+        SELECT RAISE(ABORT, 'simulated startup budget pool cleanup failure');
+      END;
+    `);
+    goals.close();
+    await rm(fixture.stores.rollout.pathFor(child.thread.id), { force: true });
+
+    const reports: ErrorReport[] = [];
+    const first = await openFixture(fixture.root, new ControlledExecutor(), fixture.clock, undefined, {
+      reportError: (report) => { reports.push(report); },
+    });
+    const warning = spyOn(console, 'warn').mockImplementation(() => undefined);
+    await first.service.initialize();
+    warning.mockRestore();
+
+    expect(first.stores.metadata.read(child.thread.id)).not.toBeNull();
+    expect(first.stores.subagentExecutions.read(child.thread.id)?.initialAdmissionState).toBe('pending');
+    expect(first.stores.subagentBudgets.readMember(child.thread.id)).not.toBeNull();
+    expect(first.stores.subagentBudgets.readPool(poolId)).not.toBeNull();
+    expect(reports).toEqual([expect.objectContaining({
+      domain: 'persistence',
+      code: 'subagent-initial-admission-quarantined',
+      context: expect.objectContaining({
+        status: 'cleanup-failed',
+        threadId: child.thread.id,
+        turnId: child.turn.id,
+      }),
+    })]);
+    await first.service.close();
+
+    const repair = database(join(fixture.root, 'agent', 'goals.sqlite'));
+    repair.exec('DROP TRIGGER fail_startup_budget_pool_cleanup');
+    repair.close();
+    const second = await openFixture(fixture.root, new ControlledExecutor(), fixture.clock);
+    await second.service.initialize();
+
+    expect(second.stores.metadata.read(child.thread.id)).toBeNull();
+    expect(second.stores.subagentExecutions.read(child.thread.id)).toBeNull();
+    expect(second.stores.subagentBudgets.readMember(child.thread.id)).toBeNull();
+    expect(second.stores.subagentBudgets.readPool(poolId)).toBeNull();
+    await second.service.close();
+  });
+
+  test('retries a failed pending worktree recovery after reverse-orphan cleanup without losing authority', async () => {
+    const repository = await createAgentWorktreeRepository();
+    const worktrees = new AgentWorktree(repository.userData, () => 1_720_000_030_000);
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: repository.source,
+    })).thread;
+    const reverseOrphan = createReverseOrphanThread(
+      fixture,
+      root,
+      uuidV7(fixture.clock()),
+      repository.source,
+    );
+    const agentId = uuidV7(fixture.clock());
+    const turnId = uuidV7(fixture.clock());
+    const parentTurnId = uuidV7(fixture.clock());
+    const intent = await worktrees.plan({ agentId, cwd: repository.source, previous: null });
+    beginPendingOrphanExecution(fixture, {
+      agentId,
+      parentThreadId: reverseOrphan.id,
+      turnId,
+      initialWorktreeIntent: intent,
+    });
+    const prepared = await worktrees.prepare({ agentId, intent, worktree: null });
+    const artifacts = await seedPendingOrphanArtifacts(fixture, {
+      agentId,
+      parentThreadId: reverseOrphan.id,
+      parentTurnId,
+      turnId,
+      poolOriginThreadId: root.id,
+    });
+    await fixture.service.close();
+
+    const reports: ErrorReport[] = [];
+    const executor = new ControlledExecutor();
+    const registry = new ExtensionRegistry();
+    let extensionAdmissions = 0;
+    let skillAdmissions = 0;
+    registry.register({
+      id: 'pending-worktree-recovery-probe',
+      contributeTurnAdmission: () => {
+        extensionAdmissions += 1;
+        return { extensionId: 'pending-worktree-recovery-probe', snapshotId: 'unexpected' };
+      },
+    });
+    let settleCalls = 0;
+    const first = await openFixture(fixture.root, executor, fixture.clock, registry, {
+      recoverAgentWorktree: (input) => worktrees.recover(input),
+      cleanupResidualAgentWorktree: (input) => worktrees.cleanupResidual(input),
+      settleAgentWorktree: async (worktree) => {
+        settleCalls += 1;
+        throw new Error(`simulated cleanup failure at ${worktree.path} on ${worktree.branch}`);
+      },
+      resolveSkillAdmission: async () => {
+        skillAdmissions += 1;
+        return { catalogSnapshot: null, preloadedInvocations: [], invocation: null };
+      },
+      reportError: (report) => { reports.push(report); },
+    });
+    const warning = spyOn(console, 'warn').mockImplementation(() => undefined);
+    await first.service.initialize();
+    const warningText = serializedConsoleCalls(warning.mock.calls);
+    warning.mockRestore();
+
+    expect(settleCalls).toBe(1);
+    expect(first.stores.metadata.read(reverseOrphan.id)).toBeNull();
+    expect(first.stores.subagentExecutions.read(agentId)).toMatchObject({
+      initialAdmissionState: 'pending',
+      initialWorktreeIntent: intent,
+      worktree: prepared.worktree,
+    });
+    expect(first.stores.subagentBudgets.readMember(agentId)).not.toBeNull();
+    expect(first.stores.subagentBudgets.readPool(artifacts.poolId)).not.toBeNull();
+    expect(first.stores.goals.read(agentId)).not.toBeNull();
+    expect(first.stores.history.listTurns({ threadId: agentId }).data).toHaveLength(1);
+    expect(await readFile(first.stores.rollout.pathFor(agentId), 'utf8')).not.toBe('');
+    expect(await first.stores.payloads.readTextReference(agentId, artifacts.payloadRef))
+      .toBe('orphan payload');
+    expect(await readFile(artifacts.transcriptPath, 'utf8')).toContain('PRIVATE ORPHAN CONTENT');
+    expect(await realpath(intent.path)).toBe(intent.path);
+    expect(executor.contexts).toHaveLength(0);
+    expect(extensionAdmissions).toBe(0);
+    expect(skillAdmissions).toBe(0);
+    expect(reports).toEqual([{
+      domain: 'persistence',
+      severity: 'warn',
+      code: 'subagent-initial-admission-quarantined',
+      message: 'Agent admission recovery retained incomplete state for a later retry.',
+      context: {
+        operation: 'recover-initial-subagent-admission',
+        status: 'cleanup-failed',
+        threadId: agentId,
+        turnId,
+      },
+    }]);
+    const serializedReport = JSON.stringify(reports[0]);
+    for (const privateValue of [intent.path, intent.branch, 'PRIVATE ORPHAN CONTENT']) {
+      expect(serializedReport).not.toContain(privateValue);
+      expect(warningText).not.toContain(privateValue);
+    }
+    await first.service.close();
+
+    const second = await openFixture(fixture.root, new ControlledExecutor(), fixture.clock, undefined, {
+      recoverAgentWorktree: (input) => worktrees.recover(input),
+      cleanupResidualAgentWorktree: (input) => worktrees.cleanupResidual(input),
+      settleAgentWorktree: (worktree, options) => worktrees.settle(worktree, options),
+    });
+    await second.service.initialize();
+
+    expect(second.stores.subagentExecutions.read(agentId)).toBeNull();
+    expect(second.stores.subagentBudgets.readMember(agentId)).toBeNull();
+    expect(second.stores.subagentBudgets.readPool(artifacts.poolId)).toBeNull();
+    expect(second.stores.goals.read(agentId)).toBeNull();
+    expect(second.stores.history.listTurns({ threadId: agentId }).data).toEqual([]);
+    await expect(readFile(second.stores.rollout.pathFor(agentId), 'utf8')).rejects.toThrow();
+    expect(await second.stores.payloads.readTextReference(agentId, artifacts.payloadRef)).toBeNull();
+    await expect(readFile(artifacts.transcriptPath, 'utf8')).rejects.toThrow();
+    await expect(realpath(intent.path)).rejects.toThrow();
+    await expect(runGit(repository.source, [
+      'show-ref',
+      '--verify',
+      `refs/heads/${intent.branch}`,
+    ])).rejects.toThrow();
+    await second.service.close();
+  });
+
+  test('keeps budget and execution retry authority when startup transcript deletion fails', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const agentId = uuidV7(fixture.clock());
+    const turnId = uuidV7(fixture.clock());
+    const parentTurnId = uuidV7(fixture.clock());
+    beginPendingOrphanExecution(fixture, {
+      agentId,
+      parentThreadId: root.id,
+      turnId,
+      initialWorktreeIntent: null,
+    });
+    const artifacts = await seedPendingOrphanArtifacts(fixture, {
+      agentId,
+      parentThreadId: root.id,
+      parentTurnId,
+      turnId,
+      poolOriginThreadId: root.id,
+    });
+    await fixture.service.close();
+
+    const reports: ErrorReport[] = [];
+    const first = await openFixture(fixture.root, new ControlledExecutor(), fixture.clock, undefined, {
+      reportError: (report) => { reports.push(report); },
+    });
+    const transcriptWriter = (first.service as unknown as {
+      transcripts: ThreadTranscriptWriter;
+    }).transcripts;
+    const deleteForRecovery = transcriptWriter.deleteForRecovery.bind(transcriptWriter);
+    let deleteCalls = 0;
+    transcriptWriter.deleteForRecovery = async (threadId) => {
+      if (threadId !== agentId) return deleteForRecovery(threadId);
+      deleteCalls += 1;
+      throw new Error(`simulated transcript deletion failure: ${artifacts.transcriptPath}`);
+    };
+    const warning = spyOn(console, 'warn').mockImplementation(() => undefined);
+    await first.service.initialize();
+    const warningText = serializedConsoleCalls(warning.mock.calls);
+    warning.mockRestore();
+
+    expect(deleteCalls).toBe(1);
+    expect(first.stores.subagentExecutions.read(agentId)?.initialAdmissionState).toBe('pending');
+    expect(first.stores.subagentBudgets.readMember(agentId)).not.toBeNull();
+    expect(first.stores.subagentBudgets.readPool(artifacts.poolId)).not.toBeNull();
+    expect(await readFile(artifacts.transcriptPath, 'utf8')).toContain('PRIVATE ORPHAN CONTENT');
+    expect(reports).toEqual([expect.objectContaining({
+      domain: 'persistence',
+      code: 'subagent-initial-admission-quarantined',
+      context: expect.objectContaining({
+        status: 'cleanup-failed',
+        threadId: agentId,
+        turnId,
+      }),
+    })]);
+    expect(JSON.stringify(reports[0])).not.toContain(artifacts.transcriptPath);
+    expect(warningText).not.toContain(artifacts.transcriptPath);
+    await first.service.close();
+
+    const second = await openFixture(fixture.root, new ControlledExecutor(), fixture.clock);
+    await second.service.initialize();
+
+    expect(second.stores.subagentExecutions.read(agentId)).toBeNull();
+    expect(second.stores.subagentBudgets.readMember(agentId)).toBeNull();
+    expect(second.stores.subagentBudgets.readPool(artifacts.poolId)).toBeNull();
+    await expect(readFile(artifacts.transcriptPath, 'utf8')).rejects.toThrow();
+    await second.service.close();
+  });
+
+  test('quarantines a reverse-orphan Agent whose independent cwd has no recovery intent', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const child = createReverseOrphanThread(
+      fixture,
+      root,
+      uuidV7(fixture.clock()),
+      join(fixture.root, 'unrecorded-independent-cwd'),
+    );
+    await fixture.service.close();
+
+    const executor = new ControlledExecutor();
+    const registry = new ExtensionRegistry();
+    let extensionAdmissions = 0;
+    registry.register({
+      id: 'reverse-orphan-admission-probe',
+      contributeTurnAdmission: () => {
+        extensionAdmissions += 1;
+        return { extensionId: 'reverse-orphan-admission-probe', snapshotId: 'unexpected' };
+      },
+    });
+    const reports: ErrorReport[] = [];
+    const reopened = await openFixture(fixture.root, executor, fixture.clock, registry, {
+      reportError: (report) => { reports.push(report); },
+    });
+    const warning = spyOn(console, 'warn').mockImplementation(() => undefined);
+    await reopened.service.initialize();
+    warning.mockRestore();
+
+    expect(reopened.stores.metadata.read(child.id)?.thread.cwd).toBe(child.cwd);
+    await expect(reopened.service.startRendererTurn({
+      threadId: child.id,
+      input: [{ type: 'text', text: 'Do not run without recovery authority' }],
+    })).rejects.toThrow(`Thread is quarantined pending Agent admission recovery: ${child.id}`);
+    expect(executor.contexts).toHaveLength(0);
+    expect(extensionAdmissions).toBe(0);
+    expect(reports).toEqual([{
+      domain: 'persistence',
+      severity: 'warn',
+      code: 'subagent-initial-admission-quarantined',
+      message: 'Agent admission recovery retained incomplete state for a later retry.',
+      context: {
+        operation: 'recover-initial-subagent-admission',
+        status: 'worktree-retained',
+        threadId: child.id,
+      },
+    }]);
+    expect(JSON.stringify(reports[0])).not.toContain(child.cwd);
+    await reopened.service.close();
+  });
+
+  test('reports a reverse-orphan cleanup failure without running extension lifecycle', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const child = createReverseOrphanThread(
+      fixture,
+      root,
+      uuidV7(fixture.clock()),
+      root.cwd,
+    );
+    await fixture.service.close();
+
+    const reports: ErrorReport[] = [];
+    const extensionStops: string[] = [];
+    const registry = new ExtensionRegistry();
+    registry.register({
+      id: 'reverse-orphan-cleanup-probe',
+      onThreadStopped: (thread) => { extensionStops.push(thread.id); },
+    });
+    const reopened = await openFixture(fixture.root, new ControlledExecutor(), fixture.clock, registry, {
+      reportError: (report) => { reports.push(report); },
+    });
+    const transcriptWriter = (reopened.service as unknown as {
+      transcripts: ThreadTranscriptWriter;
+    }).transcripts;
+    const deleteForRecovery = transcriptWriter.deleteForRecovery.bind(transcriptWriter);
+    transcriptWriter.deleteForRecovery = async (threadId) => {
+      if (threadId !== child.id) return deleteForRecovery(threadId);
+      throw new Error(`simulated reverse-orphan cleanup failure: ${child.cwd}`);
+    };
+    const warning = spyOn(console, 'warn').mockImplementation(() => undefined);
+    await reopened.service.initialize();
+    const warningText = serializedConsoleCalls(warning.mock.calls);
+    warning.mockRestore();
+
+    expect(reopened.stores.metadata.read(child.id)).not.toBeNull();
+    expect(extensionStops).toEqual([]);
+    expect(reports).toEqual([expect.objectContaining({
+      domain: 'persistence',
+      code: 'subagent-initial-admission-quarantined',
+      context: {
+        operation: 'recover-initial-subagent-admission',
+        status: 'cleanup-failed',
+        threadId: child.id,
+      },
+    })]);
+    expect(JSON.stringify(reports[0])).not.toContain(child.cwd);
+    expect(warningText).not.toContain(child.cwd);
+    await reopened.service.close();
+  });
+
+  test('rejects every public runtime entry point for incomplete delegated executions', async () => {
+    const extensionEvents: string[] = [];
+    let skillAdmissions = 0;
+    const registry = new ExtensionRegistry();
+    registry.register({
+      id: 'delegated-entry-probe',
+      onThreadResumed: () => { extensionEvents.push('thread-resumed'); },
+      contributeTurnAdmission: () => {
+        extensionEvents.push('turn-admission');
+        return { extensionId: 'delegated-entry-probe', snapshotId: 'probe' };
+      },
+      contributeThreadContext: () => {
+        extensionEvents.push('thread-context');
+        return { extensionId: 'delegated-entry-probe', additionalContext: {} };
+      },
+      onTurnStarted: () => { extensionEvents.push('turn-started'); },
+    });
+    const fixture = await createFixture(registry, {
+      resolveSkillAdmission: async () => {
+        skillAdmissions += 1;
+        return { catalogSnapshot: null, preloadedInvocations: [], invocation: null };
+      },
+    });
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Create incomplete delegated executions' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+
+    const children: SpawnChildThreadResult[] = [];
+    for (const [index, label] of ['pending', 'missing'].entries()) {
+      const parentItemId = `${label}-delegated-entry-spawn`;
+      await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, parentItemId);
+      const child = await spawnBackgroundAgentFromInput(fixture, {
+        senderThreadId: root.id,
+        senderTurnId: rootTurn.turn.id,
+        parentItemId,
+        taskName: `${label}_delegated_entry`,
+        message: `Become the ${label} recovery fixture`,
+      });
+      children.push(child);
+      await fixture.executor.waitUntilWaiting(index + 1);
+      fixture.executor.finish(index + 1, completedExecutionResult(0));
+      await fixture.service.waitForIdle(child.thread.id);
+    }
+    const [pending, missing] = children as [SpawnChildThreadResult, SpawnChildThreadResult];
+    const goals = database(join(fixture.root, 'agent', 'goals.sqlite'));
+    goals.prepare(`
+      UPDATE subagent_execution_records
+      SET initial_admission_state = 'pending'
+      WHERE agent_id = ?
+    `).run(pending.thread.id);
+    goals.close();
+    fixture.stores.subagentExecutions.deleteAgentOnly(missing.thread.id);
+
+    const extensionBaseline = extensionEvents.length;
+    const skillBaseline = skillAdmissions;
+    const providerBaseline = fixture.executor.contexts.length;
+    for (const child of [pending, missing]) {
+      const expected = child === pending
+        ? 'Delegated Agent admission is incomplete'
+        : 'Delegated Agent execution is unavailable';
+      const calls = [
+        () => fixture.service.resumeThread(child.thread.id),
+        () => fixture.service.startRendererTurn({
+          threadId: child.thread.id,
+          input: [{ type: 'text', text: 'Renderer retry must be rejected' }],
+        }),
+        () => fixture.service.startPrivilegedTurn({
+          threadId: child.thread.id,
+          input: [{ type: 'text', text: 'Privileged retry must be rejected' }],
+          trigger: { kind: 'feature' as const, feature: 'automation' as const },
+        }),
+        () => fixture.service.tryStartTurnIfIdle({
+          threadId: child.thread.id,
+          input: [{ type: 'text', text: 'Idle retry must be rejected' }],
+          trigger: { kind: 'feature' as const, feature: 'automation' as const },
+        }),
+        () => fixture.service.steerTurn({
+          threadId: child.thread.id,
+          expectedTurnId: child.turn.id,
+          input: [{ type: 'text', text: 'Steering must be rejected' }],
+        }),
+        () => fixture.service.interruptUserWork(child.thread.id, child.turn.id),
+      ];
+      for (const call of calls) await expect(call()).rejects.toThrow(expected);
+    }
+    expect(extensionEvents).toHaveLength(extensionBaseline);
+    expect(skillAdmissions).toBe(skillBaseline);
+    expect(fixture.executor.contexts).toHaveLength(providerBaseline);
+
+    fixture.executor.finish(0, completedExecutionResult(0));
+    await fixture.service.waitForIdle(root.id);
+    await fixture.service.close();
+  });
+
   test('rejects rollback outside a persistent root user Thread or beyond current history', async () => {
     const fixture = await createFixture();
     const root = (await fixture.service.startThread({
@@ -4623,6 +5374,94 @@ describe('ThreadService', () => {
     await fixture.service.close();
   });
 
+  test('reports durable undelivered Agent work in the descendant catalog', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Delegate durable work' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'queued-work-spawn');
+    const child = await spawnBackgroundAgentFromInput(fixture, {
+      senderThreadId: root.id,
+      senderTurnId: rootTurn.turn.id,
+      parentItemId: 'queued-work-spawn',
+      taskName: 'queued_work_child',
+      message: 'Remain active while durable work is inspected',
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    const execution = fixture.stores.subagentExecutions.require(child.thread.id);
+    fixture.stores.subagentExecutions.enqueueParentMessage({
+      id: 'queued-work-message',
+      senderAgentId: child.thread.id,
+      parentThreadId: root.id,
+      generation: execution.generation,
+      content: 'Undelivered child update',
+      deliveryMode: 'background',
+      createdAt: fixture.clock(),
+    });
+
+    expect(fixture.service.listThreadDescendants({ threadId: root.id }).queuedWorkThreadIds)
+      .toEqual([child.thread.id]);
+
+    expect(fixture.stores.subagentExecutions.claimParentMessage('queued-work-message')).toBe(true);
+    fixture.stores.subagentExecutions.markParentMessageDelivered('queued-work-message', fixture.clock());
+    expect(fixture.service.listThreadDescendants({ threadId: root.id }).queuedWorkThreadIds).toEqual([]);
+
+    fixture.executor.finish(1, completedExecutionResult(0));
+    await fixture.service.waitForIdle(child.thread.id);
+    fixture.executor.finish(0, completedExecutionResult(0));
+    await fixture.service.waitForIdle(root.id);
+    await fixture.service.close();
+  });
+
+  test('does not keep a surviving parent queued after deleting its only child', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Delegate disposable queued work' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'delete-queued-child-spawn');
+    const child = await spawnBackgroundAgentFromInput(fixture, {
+      senderThreadId: root.id,
+      senderTurnId: rootTurn.turn.id,
+      parentItemId: 'delete-queued-child-spawn',
+      taskName: 'delete_queued_child',
+      message: 'Finish with an undelivered result',
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    fixture.executor.finish(1, completedExecutionResult(0));
+    await fixture.service.waitForIdle(child.thread.id);
+    await waitUntil(() => fixture.stores.subagentExecutions.hasUndeliveredWork(child.thread.id));
+
+    expect(fixture.service.listThreadDescendants({ threadId: root.id }).queuedWorkThreadIds)
+      .toEqual([child.thread.id]);
+    await fixture.service.deleteThread(child.thread.id);
+
+    expect(fixture.service.listThreadDescendants({ threadId: root.id })).toMatchObject({
+      data: [],
+      queuedWorkThreadIds: [],
+    });
+    expect(fixture.stores.subagentExecutions.hasUndeliveredWork(root.id)).toBe(false);
+
+    fixture.executor.finish(0, completedExecutionResult(0));
+    await fixture.service.waitForIdle(root.id);
+    await fixture.service.close();
+  });
+
   test('terminalizes a Turn when an extension start hook throws and releases the active lock', async () => {
     const registry = new ExtensionRegistry();
     let shouldThrow = true;
@@ -4869,13 +5708,803 @@ describe('ThreadService', () => {
     await fixture.service.close();
   });
 
+  test('preserves Agent delegation identity and run mode across user resume and rollback', () => {
+    const database = new Database(':memory:') as unknown as SqliteDatabase;
+    const ledger = new SubagentExecutionLedger(database);
+    createTestSubagentExecution(ledger, {
+      agentId: 'foreground-agent',
+      parentThreadId: 'parent-thread',
+      turnId: 'first-turn',
+      toolUseId: 'spawn-item',
+      runMode: 'foreground',
+    });
+    ledger.recordStop('foreground-agent', 'user', 2);
+    const previous = ledger.generationSnapshot('foreground-agent');
+
+    const resumed = ledger.beginUserGenerationIfCurrent({
+      agentId: 'foreground-agent',
+      expectedGeneration: previous.generation,
+      expectedTurnId: previous.currentTurnId,
+      turnId: 'user-resume-turn',
+      previous,
+      updatedAt: 3,
+    });
+
+    expect(resumed).toMatchObject({
+      generation: 2,
+      currentTurnId: 'user-resume-turn',
+      toolUseId: 'spawn-item',
+      runMode: 'foreground',
+      stopProvenance: 'none',
+    });
+    expect(ledger.rollbackGeneration('foreground-agent', 2, 'user-resume-turn')).toBe(true);
+    expect(ledger.generationSnapshot('foreground-agent')).toEqual(previous);
+    database.close();
+  });
+
+  test('reuses persisted Agent startup context for every current Turn and after restart', () => {
+    const database = new Database(':memory:') as unknown as SqliteDatabase;
+    const startupContext = {
+      repositoryInstructions: ['PERSISTED AGENTS INSTRUCTIONS'],
+      gitStatus: 'PERSISTED GIT STATUS',
+    };
+    const ledger = new SubagentExecutionLedger(database);
+    createTestSubagentExecution(ledger, {
+      agentId: 'context-agent',
+      parentThreadId: 'parent-thread',
+      turnId: 'initial-turn',
+      toolUseId: 'spawn-item',
+      runMode: 'background',
+      startupContext,
+    });
+    expect(ledger.startupContextForTurn('context-agent', 'initial-turn')).toEqual(startupContext);
+
+    expect(ledger.continueGeneration({
+      agentId: 'context-agent',
+      expectedGeneration: 1,
+      expectedTurnId: 'initial-turn',
+      turnId: 'continuation-turn',
+      updatedAt: 2,
+    })).toBe(true);
+    expect(ledger.startupContextForTurn('context-agent', 'initial-turn')).toBeNull();
+    expect(ledger.startupContextForTurn('context-agent', 'continuation-turn')).toEqual(startupContext);
+
+    const firstGeneration = ledger.generationSnapshot('context-agent');
+    const messageResume = ledger.beginNextGenerationIfCurrent({
+      agentId: 'context-agent',
+      expectedGeneration: firstGeneration.generation,
+      expectedTurnId: firstGeneration.currentTurnId,
+      turnId: 'message-resume-turn',
+      toolUseId: 'message-item',
+      runMode: 'background',
+      previous: firstGeneration,
+      updatedAt: 3,
+    });
+    expect(messageResume?.generation).toBe(2);
+    expect(ledger.startupContextForTurn('context-agent', 'message-resume-turn')).toEqual(startupContext);
+
+    const restarted = new SubagentExecutionLedger(database);
+    expect(restarted.startupContextForTurn('context-agent', 'message-resume-turn')).toEqual(startupContext);
+    expect(restarted.completeGenerationAdmissionIfCurrent(
+      'context-agent',
+      2,
+      'message-resume-turn',
+    )).toBe(true);
+    const secondGeneration = restarted.generationSnapshot('context-agent');
+    const userResume = restarted.beginUserGenerationIfCurrent({
+      agentId: 'context-agent',
+      expectedGeneration: secondGeneration.generation,
+      expectedTurnId: secondGeneration.currentTurnId,
+      turnId: 'user-resume-turn',
+      previous: secondGeneration,
+      updatedAt: 4,
+    });
+    expect(userResume?.generation).toBe(3);
+    expect(restarted.startupContextForTurn('context-agent', 'user-resume-turn')).toEqual(startupContext);
+    expect(new SubagentExecutionLedger(database)
+      .startupContextForTurn('context-agent', 'user-resume-turn')).toEqual(startupContext);
+    database.close();
+  });
+
+  test('reports undelivered Agent work for either endpoint of both envelope tables', () => {
+    const database = new Database(':memory:') as unknown as SqliteDatabase;
+    const ledger = new SubagentExecutionLedger(database);
+    createTestSubagentExecution(ledger, {
+      agentId: 'delivery-agent',
+      parentThreadId: 'delivery-parent',
+      turnId: 'delivery-turn',
+      toolUseId: 'delivery-spawn',
+      runMode: 'background',
+    });
+    expect(ledger.hasUndeliveredWork('delivery-agent')).toBe(false);
+    expect(ledger.hasUndeliveredWork('delivery-parent')).toBe(false);
+
+    expect(ledger.recordTerminal({
+      agentId: 'delivery-agent',
+      generation: 1,
+      parentThreadId: 'delivery-parent',
+      turnId: 'delivery-turn',
+      toolUseId: 'delivery-spawn',
+      status: 'completed',
+      createdAt: 2,
+    })).toBe(true);
+    expect(ledger.hasUndeliveredWork('delivery-agent')).toBe(true);
+    expect(ledger.hasUndeliveredWork('delivery-parent')).toBe(true);
+    expect(ledger.claim('delivery-agent', 1)).toBe(true);
+    expect(ledger.hasUndeliveredWork('delivery-agent')).toBe(true);
+    ledger.markDelivered('delivery-agent', 1, 3);
+    expect(ledger.hasUndeliveredWork('delivery-agent')).toBe(false);
+    expect(ledger.hasUndeliveredWork('delivery-parent')).toBe(false);
+
+    ledger.enqueueParentMessage({
+      id: 'parent-message',
+      senderAgentId: 'delivery-agent',
+      parentThreadId: 'delivery-parent',
+      generation: 1,
+      content: 'Progress update',
+      deliveryMode: 'background',
+      createdAt: 4,
+    });
+    expect(ledger.hasUndeliveredWork('delivery-agent')).toBe(true);
+    expect(ledger.hasUndeliveredWork('delivery-parent')).toBe(true);
+    expect(ledger.hasUndeliveredWork('unrelated-thread')).toBe(false);
+    expect(ledger.claimParentMessage('parent-message')).toBe(true);
+    expect(ledger.hasUndeliveredWork('delivery-parent')).toBe(true);
+    ledger.markParentMessageDelivered('parent-message', 5);
+    expect(ledger.hasUndeliveredWork('delivery-agent')).toBe(false);
+    expect(ledger.hasUndeliveredWork('delivery-parent')).toBe(false);
+    database.close();
+  });
+
+  test('does not let a tombstoned notification hide a live sibling from its parent', () => {
+    const database = new Database(':memory:') as unknown as SqliteDatabase;
+    const ledger = new SubagentExecutionLedger(database);
+    for (const [agentId, turnId, toolUseId] of [
+      ['retired-agent', 'retired-turn', 'retired-spawn'],
+      ['live-agent', 'live-turn', 'live-spawn'],
+    ] as const) {
+      createTestSubagentExecution(ledger, {
+        agentId,
+        parentThreadId: 'shared-parent',
+        turnId,
+        toolUseId,
+        runMode: 'background',
+      });
+      expect(ledger.recordTerminal({
+        agentId,
+        generation: 1,
+        parentThreadId: 'shared-parent',
+        turnId,
+        toolUseId,
+        status: 'completed',
+        createdAt: agentId === 'retired-agent' ? 2 : 3,
+      })).toBe(true);
+    }
+    const deleteAgents = ledger.deleteAgents.bind(ledger);
+    ledger.deleteAgents = () => { throw new Error('simulated durable cleanup failure'); };
+
+    expect(() => ledger.retireAgents(['retired-agent'])).toThrow('simulated durable cleanup failure');
+    expect(ledger.read('retired-agent')).toBeNull();
+    expect(ledger.hasUndeliveredForParent('shared-parent')).toBe(true);
+    expect(ledger.pendingForParent('shared-parent').map((notification) => notification.agentId))
+      .toEqual(['live-agent']);
+
+    ledger.deleteAgents = deleteAgents;
+    database.close();
+  });
+
+  test('preserves independently recoverable child executions when retiring only their parent', () => {
+    const database = new Database(':memory:') as unknown as SqliteDatabase;
+    const ledger = new SubagentExecutionLedger(database);
+    const recoveryIntent = {
+      sourceCwd: '/repo',
+      path: '/worktrees/recoverable-child',
+      branch: 'tenon-agent/recoverable-child',
+      baseCommit: '0123456789abcdef',
+      gitCommonDir: '/repo/.git',
+    } as const;
+    ledger.beginInitialAdmission({
+      agentId: 'recoverable-child',
+      parentThreadId: 'deleted-parent',
+      description: 'Recoverable child',
+      agentType: 'general-purpose',
+      runMode: 'background',
+      currentTurnId: 'recoverable-turn',
+      toolUseId: 'recoverable-spawn',
+      worktree: null,
+      toolPolicy: {
+        kind: 'general-purpose',
+        runInBackground: true,
+        worktree: true,
+        allowNesting: true,
+        requestedTools: null,
+      },
+      startupContext: null,
+      initialWorktreeIntent: recoveryIntent,
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    expect(ledger.recordTerminal({
+      agentId: 'recoverable-child',
+      generation: 1,
+      parentThreadId: 'deleted-parent',
+      turnId: 'recoverable-turn',
+      toolUseId: 'recoverable-spawn',
+      status: 'failed',
+      createdAt: 2,
+    })).toBe(true);
+    ledger.enqueueParentMessage({
+      id: 'recoverable-child-message',
+      senderAgentId: 'recoverable-child',
+      parentThreadId: 'deleted-parent',
+      generation: 1,
+      content: 'Secondary delivery state',
+      deliveryMode: 'background',
+      createdAt: 3,
+    });
+
+    ledger.retireAgents(['deleted-parent']);
+
+    expect(ledger.read('recoverable-child')).toMatchObject({
+      initialAdmissionState: 'pending',
+      initialWorktreeIntent: recoveryIntent,
+    });
+    expect(ledger.pendingForParent('deleted-parent')).toEqual([]);
+    expect(ledger.pendingParentMessages('deleted-parent')).toEqual([]);
+    expect(database.prepare(
+      'SELECT COUNT(*) AS count FROM subagent_execution_records WHERE agent_id = ?',
+    ).get('recoverable-child')).toEqual({ count: 1 });
+    ledger.deleteAgentOnly('recoverable-child');
+    expect(ledger.read('recoverable-child')).toBeNull();
+    database.close();
+  });
+
+  test('drops the retired subagent spawn-count table during ledger initialization', () => {
+    const database = new Database(':memory:') as unknown as SqliteDatabase;
+    database.exec(`
+      CREATE TABLE subagent_spawn_counts (
+        thread_id TEXT PRIMARY KEY,
+        spawn_count INTEGER NOT NULL
+      ) STRICT;
+      INSERT INTO subagent_spawn_counts(thread_id, spawn_count) VALUES ('legacy-thread', 3);
+    `);
+
+    new SubagentExecutionLedger(database);
+
+    expect(database.prepare(`
+      SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'subagent_spawn_counts'
+    `).get()).toBeFalsy();
+    database.close();
+  });
+
+  test('does not publish delegated lifecycle when initial Turn persistence fails', async () => {
+    for (const ephemeral of [false, true]) {
+      let childId = '';
+      const extensionEvents: string[] = [];
+      const registry = new ExtensionRegistry();
+      registry.register({
+        id: `delegated-turn-persistence-${ephemeral ? 'ephemeral' : 'persistent'}`,
+        onThreadStarted: (thread) => {
+          if (thread.id === childId) extensionEvents.push('thread-started');
+        },
+        onThreadStopped: (thread) => {
+          if (thread.id === childId) extensionEvents.push('thread-stopped');
+        },
+        onTurnStarted: (thread) => {
+          if (thread.id === childId) extensionEvents.push('turn-started');
+        },
+        onNotification: (notification) => {
+          if (notification.threadId === childId) extensionEvents.push(`notification:${notification.type}`);
+        },
+      });
+      const fixture = await createFixture(registry);
+      const root = (await fixture.service.startThread({
+        ephemeral,
+        source: 'app',
+        threadSource: 'user',
+        modelProvider: 'openai',
+        cwd: fixture.root,
+      })).thread;
+      const rootTurn = await fixture.service.startRendererTurn({
+        threadId: root.id,
+        input: [{ type: 'text', text: 'Reject a child before its initial Turn commits' }],
+      });
+      await fixture.executor.waitUntilWaiting(0);
+      childId = uuidV7(fixture.clock());
+      const childTurnId = uuidV7(fixture.clock());
+      const listenerEvents: string[] = [];
+      const unsubscribe = fixture.service.subscribe((notification) => {
+        if (notification.threadId === childId) listenerEvents.push(notification.type);
+      });
+
+      let restorePersistence: () => void;
+      if (ephemeral) {
+        const core = Reflect.get(fixture.service, 'core') as {
+          applyEphemeralNotification(notification: AgentCoreRecordedNotification): void;
+        };
+        const applyEphemeralNotification = core.applyEphemeralNotification.bind(core);
+        core.applyEphemeralNotification = (notification) => {
+          if (notification.threadId === childId && notification.type === 'turn/started') {
+            throw new Error('simulated ephemeral child Turn persistence failure');
+          }
+          applyEphemeralNotification(notification);
+        };
+        restorePersistence = () => { core.applyEphemeralNotification = applyEphemeralNotification; };
+      } else {
+        const append = fixture.stores.rollout.append.bind(fixture.stores.rollout);
+        fixture.stores.rollout.append = async (threadId, notification, recordedAt) => {
+          if (threadId === childId && notification.type === 'turn/started') {
+            throw new Error('simulated persistent child Turn persistence failure');
+          }
+          return append(threadId, notification, recordedAt);
+        };
+        restorePersistence = () => { fixture.stores.rollout.append = append; };
+      }
+
+      try {
+        await expect(fixture.service.spawnChild({
+          id: childId,
+          turnId: childTurnId,
+          parentThreadId: root.id,
+          parentTurnId: rootTurn.turn.id,
+          parentItemId: `turn-persistence-failure-${ephemeral}`,
+          prompt: 'This child must remain unpublished',
+          taskPath: `/root/turn_persistence_failure_${ephemeral}`,
+          childKind: 'collaboration',
+          execution: testChildExecution(),
+        })).rejects.toThrow(`simulated ${ephemeral ? 'ephemeral' : 'persistent'} child Turn persistence failure`);
+      } finally {
+        restorePersistence();
+      }
+
+      expect(listenerEvents).toEqual([]);
+      expect(extensionEvents).toEqual([]);
+      expect(fixture.executor.contexts.some((context) => context.thread.id === childId)).toBe(false);
+      unsubscribe();
+      fixture.executor.finish(0, completedExecutionResult(0));
+      await fixture.service.waitForIdle(root.id);
+      await fixture.service.close();
+    }
+  });
+
+  test('does not publish delegated lifecycle when the execution marker commit fails', async () => {
+    for (const ephemeral of [false, true]) {
+      let childId = '';
+      const extensionEvents: string[] = [];
+      const registry = new ExtensionRegistry();
+      registry.register({
+        id: `delegated-marker-failure-${ephemeral ? 'ephemeral' : 'persistent'}`,
+        onThreadStarted: (thread) => {
+          if (thread.id === childId) extensionEvents.push('thread-started');
+        },
+        onThreadIdle: (thread) => {
+          if (thread.id === childId) extensionEvents.push('thread-idle');
+        },
+        onThreadStopped: (thread) => {
+          if (thread.id === childId) extensionEvents.push('thread-stopped');
+        },
+        onTurnStarted: (thread) => {
+          if (thread.id === childId) extensionEvents.push('turn-started');
+        },
+        onTurnStopped: (thread) => {
+          if (thread.id === childId) extensionEvents.push('turn-stopped');
+        },
+        onTurnError: (thread) => {
+          if (thread.id === childId) extensionEvents.push('turn-error');
+        },
+        onNotification: (notification) => {
+          if (notification.threadId === childId) extensionEvents.push(`notification:${notification.type}`);
+        },
+      });
+      const fixture = await createFixture(registry);
+      const root = (await fixture.service.startThread({
+        ephemeral,
+        source: 'app',
+        threadSource: 'user',
+        modelProvider: 'openai',
+        cwd: fixture.root,
+      })).thread;
+      const rootTurn = await fixture.service.startRendererTurn({
+        threadId: root.id,
+        input: [{ type: 'text', text: 'Fail the child execution marker commit' }],
+      });
+      await fixture.executor.waitUntilWaiting(0);
+      childId = uuidV7(fixture.clock());
+      const childTurnId = uuidV7(fixture.clock());
+      const listenerEvents: string[] = [];
+      const unsubscribe = fixture.service.subscribe((notification) => {
+        if (notification.threadId === childId) listenerEvents.push(notification.type);
+      });
+      const completeInitialAdmissionIfCurrent = fixture.stores.subagentExecutions
+        .completeInitialAdmissionIfCurrent.bind(fixture.stores.subagentExecutions);
+      fixture.stores.subagentExecutions.completeInitialAdmissionIfCurrent = (agentId, turnId, updatedAt) => {
+        if (agentId === childId) throw new Error('simulated child execution marker failure');
+        return completeInitialAdmissionIfCurrent(agentId, turnId, updatedAt);
+      };
+
+      const child = await fixture.service.spawnChild({
+        id: childId,
+        turnId: childTurnId,
+        parentThreadId: root.id,
+        parentTurnId: rootTurn.turn.id,
+        parentItemId: `marker-failure-${ephemeral}`,
+        prompt: 'This committed Turn must remain unpublished',
+        taskPath: `/root/marker_failure_${ephemeral}`,
+        childKind: 'collaboration',
+        execution: testChildExecution(),
+      });
+      await fixture.service.waitForIdle(childId);
+      fixture.stores.subagentExecutions.completeInitialAdmissionIfCurrent = completeInitialAdmissionIfCurrent;
+
+      expect(child.thread.id).toBe(childId);
+      expect(fixture.stores.subagentExecutions.read(childId)?.initialAdmissionState).toBe('pending');
+      expect(fixture.service.readTurnForHost(childId, childTurnId)).toMatchObject({ status: 'failed' });
+      expect(listenerEvents).toEqual([]);
+      expect(extensionEvents).toEqual([]);
+      expect(fixture.executor.contexts.some((context) => context.thread.id === childId)).toBe(false);
+      unsubscribe();
+      fixture.executor.finish(0, completedExecutionResult(0));
+      await fixture.service.waitForIdle(root.id);
+      await fixture.service.close();
+    }
+  });
+
+  test('publishes delegated lifecycle once in marker-first order', async () => {
+    for (const ephemeral of [false, true]) {
+      let childId = '';
+      let fixture!: Fixture;
+      const events: string[] = [];
+      const markerStates: string[] = [];
+      const observe = (event: string) => {
+        events.push(event);
+        markerStates.push(fixture.stores.subagentExecutions.read(childId)?.initialAdmissionState ?? 'missing');
+      };
+      const registry = new ExtensionRegistry();
+      registry.register({
+        id: `delegated-marker-order-${ephemeral ? 'ephemeral' : 'persistent'}`,
+        onThreadStarted: (thread) => {
+          if (thread.id === childId) observe('onThreadStarted');
+        },
+        onTurnStarted: (thread) => {
+          if (thread.id === childId) observe('onTurnStarted');
+        },
+        onNotification: (notification) => {
+          if (
+            notification.threadId === childId
+            && (notification.type === 'thread/started' || notification.type === 'turn/started')
+          ) observe(`onNotification:${notification.type}`);
+        },
+      });
+      fixture = await createFixture(registry);
+      const root = (await fixture.service.startThread({
+        ephemeral,
+        source: 'app',
+        threadSource: 'user',
+        modelProvider: 'openai',
+        cwd: fixture.root,
+      })).thread;
+      const rootTurn = await fixture.service.startRendererTurn({
+        threadId: root.id,
+        input: [{ type: 'text', text: 'Publish one child after its marker commits' }],
+      });
+      await fixture.executor.waitUntilWaiting(0);
+      childId = uuidV7(fixture.clock());
+      const childTurnId = uuidV7(fixture.clock());
+      const unsubscribe = fixture.service.subscribe((notification) => {
+        if (
+          notification.threadId === childId
+          && (notification.type === 'thread/started' || notification.type === 'turn/started')
+        ) observe(`listener:${notification.type}`);
+      });
+      const execute = fixture.executor.execute.bind(fixture.executor);
+      fixture.executor.execute = async (context) => {
+        if (context.thread.id === childId) observe('provider');
+        return execute(context);
+      };
+
+      const child = await fixture.service.spawnChild({
+        id: childId,
+        turnId: childTurnId,
+        parentThreadId: root.id,
+        parentTurnId: rootTurn.turn.id,
+        parentItemId: `marker-order-${ephemeral}`,
+        prompt: 'Observe the committed lifecycle order',
+        taskPath: `/root/marker_order_${ephemeral}`,
+        childKind: 'collaboration',
+        execution: testChildExecution(),
+      });
+      await fixture.executor.waitUntilWaiting(1);
+
+      expect(child.thread.id).toBe(childId);
+      expect(events).toEqual([
+        'listener:thread/started',
+        'onNotification:thread/started',
+        'onThreadStarted',
+        'listener:turn/started',
+        'onNotification:turn/started',
+        'onTurnStarted',
+        'provider',
+      ]);
+      expect(markerStates).toEqual(Array(events.length).fill('committed'));
+      if (ephemeral) {
+        expect(fixture.service.readTurnForHost(childId, childTurnId)).toMatchObject({ status: 'inProgress' });
+      } else {
+        expect((await fixture.stores.rollout.read(childId)).some((entry) => (
+          entry.event.type === 'turn/started' && entry.event.turnId === childTurnId
+        ))).toBe(true);
+      }
+
+      fixture.executor.finish(1, completedExecutionResult(0));
+      await fixture.service.waitForIdle(childId);
+      unsubscribe();
+      fixture.executor.finish(0, completedExecutionResult(0));
+      await fixture.service.waitForIdle(root.id);
+      await fixture.service.close();
+    }
+  });
+
+  test('keeps a persistent delegated lifecycle accepted after durable projection failure', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Keep an accepted child across a projection failure' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    const childId = uuidV7(fixture.clock());
+    const childTurnId = uuidV7(fixture.clock());
+    const childNotifications: AgentCoreNotification[] = [];
+    const unsubscribe = fixture.service.subscribe((notification) => {
+      if (notification.threadId === childId) childNotifications.push(notification);
+    });
+    const apply = fixture.stores.history.apply.bind(fixture.stores.history);
+    const rebuildThread = fixture.stores.history.rebuildThread.bind(fixture.stores.history);
+    fixture.stores.history.apply = (entry) => {
+      if (
+        entry.event.threadId === childId
+        && entry.event.type === 'turn/started'
+        && entry.event.turnId === childTurnId
+      ) throw new Error('simulated initial Turn projection failure');
+      apply(entry);
+    };
+    fixture.stores.history.rebuildThread = (threadId, entries) => {
+      if (threadId === childId) throw new Error('simulated child projection rebuild failure');
+      rebuildThread(threadId, entries);
+    };
+
+    let child!: SpawnChildThreadResult;
+    try {
+      child = await fixture.service.spawnChild({
+        id: childId,
+        turnId: childTurnId,
+        parentThreadId: root.id,
+        parentTurnId: rootTurn.turn.id,
+        parentItemId: 'durable-projection-failure',
+        prompt: 'Remain durable without launching the provider',
+        taskPath: '/root/durable_projection_failure',
+        childKind: 'collaboration',
+        execution: testChildExecution(),
+      });
+      await fixture.service.waitForIdle(childId);
+    } finally {
+      fixture.stores.history.apply = apply;
+      fixture.stores.history.rebuildThread = rebuildThread;
+      unsubscribe();
+    }
+
+    expect(child.thread.id).toBe(childId);
+    expect(fixture.stores.subagentExecutions.read(childId)?.initialAdmissionState).toBe('committed');
+    expect(fixture.executor.contexts.some((context) => context.thread.id === childId)).toBe(false);
+    expect((Reflect.get(fixture.service, 'activeTurns') as Map<string, unknown>).has(childId)).toBe(false);
+    const durableEvents = (await fixture.stores.rollout.read(childId)).map((entry) => entry.event);
+    expect(durableEvents.some((event) => (
+      event.type === 'turn/started' && event.turnId === childTurnId
+    ))).toBe(true);
+    const terminalEvents = durableEvents.filter((event) => (
+      event.type === 'turn/completed'
+      && event.turnId === childTurnId
+    ));
+    expect(terminalEvents).toHaveLength(1);
+    expect(terminalEvents[0]).toMatchObject({
+      type: 'turn/completed',
+      turn: { status: 'failed' },
+    });
+    expect(childNotifications.filter((notification) => (
+      notification.type === 'turn/completed'
+      && notification.turnId === childTurnId
+    ))).toHaveLength(1);
+    expect(childNotifications.filter((notification) => (
+      notification.type === 'thread/status/changed'
+      && notification.status.type === 'idle'
+    ))).toHaveLength(1);
+
+    fixture.executor.finish(0, completedExecutionResult(0));
+    await fixture.service.waitForIdle(root.id);
+    await fixture.service.close();
+
+    const reopened = await openFixture(fixture.root, new ControlledExecutor(), fixture.clock);
+    await reopened.service.initialize();
+    expect(reopened.service.readTurnForHost(childId, childTurnId)).toMatchObject({
+      status: 'failed',
+      error: { message: 'Recorded notification projection failed after the durable rollout append' },
+    });
+    await reopened.service.close();
+  });
+
+  test('releases an accepted delegated lifecycle after Thread start publication failure', async () => {
+    let childId = '';
+    const extensionEvents: string[] = [];
+    const registry = new ExtensionRegistry();
+    registry.register({
+      id: 'delegated-thread-publication-failure',
+      onThreadStarted: (thread) => {
+        if (thread.id === childId) extensionEvents.push('thread-started');
+      },
+      onThreadStopped: (thread) => {
+        if (thread.id === childId) extensionEvents.push('thread-stopped');
+      },
+      onTurnStarted: (thread) => {
+        if (thread.id === childId) extensionEvents.push('turn-started');
+      },
+      onNotification: (notification) => {
+        if (notification.threadId === childId) extensionEvents.push(`notification:${notification.type}`);
+      },
+    });
+    const fixture = await createFixture(registry);
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Fail child Thread start publication after commit' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    childId = uuidV7(fixture.clock());
+    const childTurnId = uuidV7(fixture.clock());
+    const catalog = Reflect.get(fixture.service, 'catalogOps') as {
+      publishDelegatedThreadStart(threadId: string): Promise<{ published: boolean; error: Error | null }>;
+    };
+    const publishDelegatedThreadStart = catalog.publishDelegatedThreadStart.bind(catalog);
+    catalog.publishDelegatedThreadStart = async (threadId) => threadId === childId
+      ? { published: false, error: new Error('simulated delegated Thread start publication failure') }
+      : publishDelegatedThreadStart(threadId);
+
+    let child!: SpawnChildThreadResult;
+    try {
+      child = await fixture.service.spawnChild({
+        id: childId,
+        turnId: childTurnId,
+        parentThreadId: root.id,
+        parentTurnId: rootTurn.turn.id,
+        parentItemId: 'thread-start-publication-failure',
+        prompt: 'Fail locally without reaching the provider',
+        taskPath: '/root/thread_start_publication_failure',
+        childKind: 'collaboration',
+        execution: testChildExecution(),
+      });
+      await fixture.service.waitForIdle(childId);
+    } finally {
+      catalog.publishDelegatedThreadStart = publishDelegatedThreadStart;
+    }
+
+    expect(child.thread.id).toBe(childId);
+    expect(fixture.stores.subagentExecutions.read(childId)?.initialAdmissionState).toBe('committed');
+    expect(fixture.service.readTurnForHost(childId, childTurnId)).toMatchObject({
+      status: 'failed',
+      error: { message: 'simulated delegated Thread start publication failure' },
+    });
+    expect(fixture.executor.contexts.some((context) => context.thread.id === childId)).toBe(false);
+    expect((Reflect.get(fixture.service, 'activeTurns') as Map<string, unknown>).has(childId)).toBe(false);
+    expect(extensionEvents).toEqual([]);
+
+    fixture.executor.finish(0, completedExecutionResult(0));
+    await fixture.service.waitForIdle(root.id);
+    await fixture.service.close();
+  });
+
+  test('releases an accepted delegated lifecycle after Turn start publication failure', async () => {
+    let childId = '';
+    const extensionEvents: string[] = [];
+    const registry = new ExtensionRegistry();
+    registry.register({
+      id: 'delegated-turn-publication-failure',
+      onThreadStarted: (thread) => {
+        if (thread.id === childId) extensionEvents.push('thread-started');
+      },
+      onThreadStopped: (thread) => {
+        if (thread.id === childId) extensionEvents.push('thread-stopped');
+      },
+      onTurnStarted: (thread) => {
+        if (thread.id === childId) extensionEvents.push('turn-started');
+      },
+      onNotification: (notification) => {
+        if (
+          notification.threadId === childId
+          && (notification.type === 'thread/started' || notification.type === 'turn/started')
+        ) extensionEvents.push(`notification:${notification.type}`);
+      },
+    });
+    const fixture = await createFixture(registry);
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Fail child Turn start publication after commit' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    childId = uuidV7(fixture.clock());
+    const childTurnId = uuidV7(fixture.clock());
+    const core = Reflect.get(fixture.service, 'core') as {
+      publishRecordedNotification(notification: AgentCoreRecordedNotification): Promise<void>;
+    };
+    const publishRecordedNotification = core.publishRecordedNotification.bind(core);
+    core.publishRecordedNotification = async (notification) => {
+      if (notification.threadId === childId && notification.type === 'turn/started') {
+        throw new Error('simulated delegated Turn start publication failure');
+      }
+      await publishRecordedNotification(notification);
+    };
+
+    let child!: SpawnChildThreadResult;
+    try {
+      child = await fixture.service.spawnChild({
+        id: childId,
+        turnId: childTurnId,
+        parentThreadId: root.id,
+        parentTurnId: rootTurn.turn.id,
+        parentItemId: 'turn-start-publication-failure',
+        prompt: 'Fail locally without reaching the provider',
+        taskPath: '/root/turn_start_publication_failure',
+        childKind: 'collaboration',
+        execution: testChildExecution(),
+      });
+      await fixture.service.waitForIdle(childId);
+    } finally {
+      core.publishRecordedNotification = publishRecordedNotification;
+    }
+
+    expect(child.thread.id).toBe(childId);
+    expect(fixture.stores.subagentExecutions.read(childId)?.initialAdmissionState).toBe('committed');
+    expect(fixture.service.readTurnForHost(childId, childTurnId)).toMatchObject({
+      status: 'failed',
+      error: { message: 'simulated delegated Turn start publication failure' },
+    });
+    expect(fixture.executor.contexts.some((context) => context.thread.id === childId)).toBe(false);
+    expect((Reflect.get(fixture.service, 'activeTurns') as Map<string, unknown>).has(childId)).toBe(false);
+    expect(extensionEvents).toEqual([
+      'notification:thread/started',
+      'thread-started',
+    ]);
+
+    fixture.executor.finish(0, completedExecutionResult(0));
+    await fixture.service.waitForIdle(root.id);
+    await fixture.service.close();
+  });
+
   test('removes a staged Agent and its newly created pool when admission fails', async () => {
     const prompt = 'Fail after copying inherited context';
-    const fixture = await createFixture(undefined, {
+    let stagedChildId: string | null = null;
+    let fixture!: Fixture;
+    fixture = await createFixture(undefined, {
       resolveSubagentTokenBudget: () => 100,
       resolveUserContent: (content) => {
         const text = content.flatMap((part) => part.type === 'text' ? [part.text] : []).join('\n');
-        if (text === prompt) throw new Error('simulated child admission failure');
+        if (text === prompt) {
+          stagedChildId = fixture.stores.subagentExecutions.pendingInitialAdmissions().at(-1)?.agentId ?? null;
+          throw new Error('simulated child admission failure');
+        }
         return content;
       },
     });
@@ -4920,16 +6549,12 @@ describe('ThreadService', () => {
       message: prompt,
     })).rejects.toThrow('simulated child admission failure');
 
-    const stagedChild = notifications.find((notification) => (
-      notification.type === 'thread/started' && notification.threadId !== root.id
-    ));
-    if (!stagedChild || stagedChild.type !== 'thread/started') {
-      throw new Error('Expected staged child start notification.');
-    }
-    expect(fixture.stores.metadata.read(stagedChild.threadId)).toBeNull();
+    expect(stagedChildId).not.toBeNull();
+    expect(notifications.some((notification) => notification.threadId === stagedChildId)).toBe(false);
+    expect(fixture.stores.metadata.read(stagedChildId!)).toBeNull();
     expect(fixture.service.listThreads().data.map((thread) => thread.id)).toEqual([root.id]);
     expect(fixture.stores.subagentBudgets.readPool(root.id)).toBeNull();
-    await expect(readdir(join(fixture.root, 'agent', 'payloads', stagedChild.threadId))).rejects.toThrow();
+    await expect(readdir(join(fixture.root, 'agent', 'payloads', stagedChildId!))).rejects.toThrow();
 
     fixture.executor.finish();
     await fixture.service.waitForIdle(root.id);
@@ -4938,11 +6563,14 @@ describe('ThreadService', () => {
 
   test('preserves existing sibling budget rows when a later spawn admission fails', async () => {
     for (const ephemeral of [false, true]) {
-      const fixture = await createFixture(undefined, {
+      let failedThreadId: string | null = null;
+      let fixture!: Fixture;
+      fixture = await createFixture(undefined, {
         resolveSubagentTokenBudget: () => 100,
         resolveUserContent: (content) => {
           const text = content.flatMap((part) => part.type === 'text' ? [part.text] : []).join('\n');
           if (text === 'Fail after staging budget rows') {
+            failedThreadId = fixture.stores.subagentExecutions.pendingInitialAdmissions().at(-1)?.agentId ?? null;
             throw new Error('simulated child admission failure');
           }
           return content;
@@ -4970,16 +6598,8 @@ describe('ThreadService', () => {
       });
       await fixture.executor.waitUntilWaiting(1);
 
-      let failedThreadId: string | null = null;
-      const unsubscribe = fixture.service.subscribe((notification) => {
-        if (
-          notification.type === 'thread/started'
-          && notification.threadId !== root.id
-          && notification.threadId !== sibling.thread.id
-        ) {
-          failedThreadId = notification.threadId;
-        }
-      });
+      const notifications: AgentCoreNotification[] = [];
+      const unsubscribe = fixture.service.subscribe((notification) => notifications.push(notification));
       await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'rollback-failure-spawn');
       await expect(spawnHostChildFromInput(fixture, {
         senderThreadId: root.id,
@@ -4999,6 +6619,7 @@ describe('ThreadService', () => {
         tokensUsed: 0,
       });
       expect(fixture.stores.subagentBudgets.readMember(failedThreadId!)).toBeNull();
+      expect(notifications.some((notification) => notification.threadId === failedThreadId)).toBe(false);
       unsubscribe();
 
       fixture.executor.finish(1, completedExecutionResult(0));
@@ -5014,11 +6635,14 @@ describe('ThreadService', () => {
     let releaseFailedAdmission!: () => void;
     const failedAdmissionEntered = new Promise<void>((resolve) => { enterFailedAdmission = resolve; });
     const failedAdmissionRelease = new Promise<void>((resolve) => { releaseFailedAdmission = resolve; });
-    const fixture = await createFixture(undefined, {
+    let failedThreadId: string | null = null;
+    let fixture!: Fixture;
+    fixture = await createFixture(undefined, {
       resolveSubagentTokenBudget: () => 100,
       resolveUserContent: async (content) => {
         const text = content.flatMap((part) => part.type === 'text' ? [part.text] : []).join('\n');
         if (text === 'Hold the tree transaction before failing') {
+          failedThreadId = fixture.stores.subagentExecutions.pendingInitialAdmissions().at(-1)?.agentId ?? null;
           enterFailedAdmission();
           await failedAdmissionRelease;
           throw new Error('simulated blocked child admission failure');
@@ -5040,12 +6664,8 @@ describe('ThreadService', () => {
     await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'concurrent-rollback-failure');
     await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'concurrent-rollback-success');
 
-    let failedThreadId: string | null = null;
-    const unsubscribe = fixture.service.subscribe((notification) => {
-      if (notification.type === 'thread/started' && notification.threadId !== root.id) {
-        failedThreadId ??= notification.threadId;
-      }
-    });
+    const notifications: AgentCoreNotification[] = [];
+    const unsubscribe = fixture.service.subscribe((notification) => notifications.push(notification));
 
     const failedSpawn = spawnBackgroundAgentFromInput(fixture, {
       senderThreadId: root.id,
@@ -5081,6 +6701,7 @@ describe('ThreadService', () => {
       poolId: requestPoolIdForTurn(active.turn.id),
       tokensUsed: 0,
     });
+    expect(notifications.some((notification) => notification.threadId === failedThreadId)).toBe(false);
     unsubscribe();
 
     fixture.executor.finish(1, completedExecutionResult(0));
@@ -5109,6 +6730,8 @@ describe('ThreadService', () => {
       parentItemId: 'archive-spawn',
       prompt: 'Keep working until archived',
       taskPath: '/root/archive_child',
+      childKind: 'collaboration',
+      execution: testChildExecution(),
     });
     await fixture.executor.waitUntilWaiting(1);
 
@@ -5182,6 +6805,8 @@ describe('ThreadService', () => {
       parentItemId: 'delete-child',
       prompt: 'Spawn a grandchild',
       taskPath: '/root/delete_child',
+      childKind: 'collaboration',
+      execution: testChildExecution(),
     });
     await fixture.executor.waitUntilWaiting(1);
     const grandchild = await fixture.service.spawnChild({
@@ -5190,6 +6815,8 @@ describe('ThreadService', () => {
       parentItemId: 'delete-grandchild',
       prompt: 'Remain active',
       taskPath: '/root/delete_child/grandchild',
+      childKind: 'collaboration',
+      execution: testChildExecution(),
     });
     await fixture.executor.waitUntilWaiting(2);
 
@@ -5202,6 +6829,127 @@ describe('ThreadService', () => {
     }
     expect(fixture.service.listThreads().data).toEqual([]);
     await fixture.service.close();
+  });
+
+  test('keeps Agent execution identity retryable when metadata deletion fails', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Create a deletable Agent' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'retry-delete-spawn');
+    const child = await spawnBackgroundAgentFromInput(fixture, {
+      senderThreadId: root.id,
+      senderTurnId: rootTurn.turn.id,
+      parentItemId: 'retry-delete-spawn',
+      taskName: 'retry_delete_child',
+      message: 'Finish before deletion',
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    fixture.executor.finish(1, completedExecutionResult(0));
+    await fixture.service.waitForIdle(child.thread.id);
+    fixture.executor.finish(0, completedExecutionResult(0));
+    await fixture.service.waitForIdle(root.id);
+
+    const deleteMetadata = fixture.stores.metadata.delete.bind(fixture.stores.metadata);
+    let failMetadataDelete = true;
+    fixture.stores.metadata.delete = (threadId) => {
+      if (failMetadataDelete) {
+        failMetadataDelete = false;
+        throw new Error('simulated metadata deletion failure');
+      }
+      deleteMetadata(threadId);
+    };
+
+    await expect(fixture.service.deleteThread(root.id)).rejects.toThrow('simulated metadata deletion failure');
+    expect(fixture.stores.metadata.read(root.id)).not.toBeNull();
+    expect(fixture.service.subagentExecution(child.thread.id)).not.toBeNull();
+
+    await fixture.service.deleteThread(root.id);
+    expect(fixture.stores.metadata.read(root.id)).toBeNull();
+    expect(fixture.stores.subagentExecutions.read(child.thread.id)).toBeNull();
+    await fixture.service.close();
+  });
+
+  test('commits Thread deletion before degraded Agent ledger cleanup and retries it on startup', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Create Agent rows that outlive one cleanup attempt' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'deferred-ledger-delete-spawn');
+    const child = await spawnBackgroundAgentFromInput(fixture, {
+      senderThreadId: root.id,
+      senderTurnId: rootTurn.turn.id,
+      parentItemId: 'deferred-ledger-delete-spawn',
+      taskName: 'deferred_ledger_delete_child',
+      message: 'Finish before deletion',
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    fixture.executor.finish(1, completedExecutionResult(0));
+    await fixture.service.waitForIdle(child.thread.id);
+    fixture.stores.subagentExecutions.enqueueParentMessage({
+      id: 'deferred-ledger-delete-message',
+      senderAgentId: child.thread.id,
+      parentThreadId: root.id,
+      generation: 1,
+      content: 'This row must become inert at the metadata commit point.',
+      deliveryMode: 'background',
+      createdAt: fixture.clock(),
+    });
+    fixture.executor.finish(0, completedExecutionResult(0));
+    await fixture.service.waitForIdle(root.id);
+
+    const ledgerDatabase = database(join(fixture.root, 'agent', 'goals.sqlite'));
+    const deleteAgents = fixture.stores.subagentExecutions.deleteAgents
+      .bind(fixture.stores.subagentExecutions);
+    let failDurableCleanup = true;
+    fixture.stores.subagentExecutions.deleteAgents = (agentIds) => {
+      if (failDurableCleanup) {
+        failDurableCleanup = false;
+        throw new Error('simulated Agent ledger cleanup failure');
+      }
+      deleteAgents(agentIds);
+    };
+    const warning = spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await expect(fixture.service.deleteThread(root.id)).resolves.toBeUndefined();
+    expect(fixture.stores.metadata.read(root.id)).toBeNull();
+    expect(fixture.stores.metadata.read(child.thread.id)).toBeNull();
+    expect(fixture.stores.subagentExecutions.read(child.thread.id)).toBeNull();
+    expect(fixture.stores.subagentExecutions.pendingForParent(root.id)).toEqual([]);
+    expect(fixture.stores.subagentExecutions.pendingParentMessages(root.id)).toEqual([]);
+    expect(warning.mock.calls.some((call) => String(call[0]).includes('ledger cleanup deferred')))
+      .toBe(true);
+    expect(ledgerDatabase.prepare(
+      'SELECT COUNT(*) AS count FROM subagent_execution_records WHERE agent_id = ?',
+    ).get(child.thread.id)).toEqual({ count: 1 });
+    warning.mockRestore();
+    ledgerDatabase.close();
+    await fixture.service.close();
+
+    const reopened = await openFixture(fixture.root, new ControlledExecutor(), fixture.clock);
+    await reopened.service.initialize();
+    const verifiedDatabase = database(join(fixture.root, 'agent', 'goals.sqlite'));
+    for (const table of ['subagent_execution_records', 'subagent_execution_notifications', 'subagent_execution_parent_messages']) {
+      expect(verifiedDatabase.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get()).toEqual({ count: 0 });
+    }
+    verifiedDatabase.close();
+    await reopened.service.close();
   });
 
   test('deletes every ephemeral descendant without leaving orphan Threads', async () => {
@@ -5224,6 +6972,8 @@ describe('ThreadService', () => {
       parentItemId: 'ephemeral-child',
       prompt: 'Remain active',
       taskPath: '/root/ephemeral_child',
+      childKind: 'collaboration',
+      execution: testChildExecution(),
     });
     await fixture.executor.waitUntilWaiting(1);
 
@@ -5334,9 +7084,20 @@ describe('ThreadService', () => {
     });
     expect(fixture.service.readThread({ threadId: child.thread.id, includeTurns: true }).thread.turns?.at(-1)?.status)
       .toBe('completed');
-    // An isolated Skill has no collaboration execution record. While the
-    // parent Turn remains active, only its started activity is observable.
-    expect(fixture.service.subagentExecution(isolated.thread.id)).toBeNull();
+    // The child keeps a durable execution policy so its runtime cannot fall
+    // back to root permissions. It is still not addressable as collaboration
+    // work because its Thread source is `agent.skill`.
+    expect(fixture.service.subagentExecution(isolated.thread.id)).toMatchObject({
+      agentType: 'isolated-skill',
+      runMode: 'foreground',
+      toolPolicy: {
+        kind: 'general-purpose',
+        runInBackground: false,
+        worktree: false,
+        requestedTools: [],
+      },
+    });
+    expect(fixture.service.hasAgentTask(root.id, isolated.thread.id)).toBe(false);
     expect(fixture.executor.contexts[0]!.recorder.orderedItems().flatMap((item) => (
       item.type === 'subAgentActivity' && item.agentThreadId === isolated.thread.id ? [item.kind] : []
     ))).toEqual(['started']);
@@ -5383,9 +7144,12 @@ describe('ThreadService', () => {
 
     fixture.executor.finish(1, completedExecutionResult(0));
     await fixture.service.waitForIdle(isolated.thread.id);
-    // A Skill child is not collaboration work: it has no execution ledger row,
-    // even though the host descendant API can still expose its Thread.
-    expect(fixture.service.subagentExecution(isolated.thread.id)).toBeNull();
+    // A Skill child retains policy state but is not collaboration work.
+    expect(fixture.service.subagentExecution(isolated.thread.id)).toMatchObject({
+      agentType: 'isolated-skill',
+      toolPolicy: { requestedTools: [] },
+    });
+    expect(fixture.service.hasAgentTask(root.id, isolated.thread.id)).toBe(false);
     expect((await fixture.service.request('thread/descendants', { threadId: root.id })).data)
       .toEqual(expect.arrayContaining([expect.objectContaining({ id: isolated.thread.id })]));
 
@@ -5396,6 +7160,180 @@ describe('ThreadService', () => {
     expect(rootItems.flatMap((item) => (
       item.type === 'subAgentActivity' ? [item.kind] : []
     ))).toEqual(['started', 'completed']);
+    await fixture.service.close();
+  });
+
+  test('inherits worktree outline isolation in a nested Agent execution policy', async () => {
+    const fixture = await createFixture(undefined, {
+      planAgentWorktree: async ({ agentId, cwd }) => ({
+        sourceCwd: cwd,
+        path: join(cwd, `.nested-worktree-${agentId}`),
+        branch: `nested-worktree-${agentId}`,
+        baseCommit: 'a'.repeat(40),
+        gitCommonDir: join(cwd, '.git'),
+      }),
+      prepareAgentWorktree: async ({ agentId, intent }) => {
+        const worktree = Object.freeze({
+          ...intent,
+          gitWorktreeDir: join(intent.gitCommonDir, 'worktrees', agentId),
+          managed: true,
+          removedAt: null,
+        });
+        return { cwd: worktree.path, worktree };
+      },
+      settleAgentWorktree: async (worktree) => ({ worktree, retained: true }),
+    });
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Delegate through an isolated Agent' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'worktree-parent-spawn');
+    const rootTools = await fixture.service.collaborationToolContributions({
+      threadId: root.id,
+      turnId: rootTurn.turn.id,
+    });
+    const launched = await executeTool(rootTools, 'agent', 'worktree-parent-spawn', {
+      description: 'Isolated parent',
+      prompt: 'Delegate one nested task',
+      subagent_type: 'general-purpose',
+      run_in_background: true,
+      isolation: 'worktree',
+    });
+    const parentId = (launched.details as { agentId: string }).agentId;
+    const parentExecution = fixture.service.subagentExecution(parentId);
+    if (!parentExecution) throw new Error('Isolated parent execution was not recorded');
+    await fixture.executor.waitUntilWaiting(1);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[1]!, 'worktree-child-spawn');
+
+    const child = await spawnBackgroundAgent(
+      fixture,
+      parentId,
+      parentExecution.currentTurnId,
+      'worktree-child-spawn',
+      'Nested child',
+      'Work inside the inherited isolation boundary',
+    );
+    await fixture.executor.waitUntilWaiting(2);
+
+    expect(fixture.service.subagentExecution(parentId)?.toolPolicy.worktree).toBe(true);
+    expect(fixture.service.subagentExecution(child.thread.id)?.toolPolicy.worktree).toBe(true);
+    expect(child.thread.cwd).toBe(parentExecution.worktree?.path);
+
+    await fixture.service.interruptUserWork(root.id, rootTurn.turn.id);
+    await Promise.all([
+      fixture.service.waitForIdle(root.id),
+      fixture.service.waitForIdle(parentId),
+      fixture.service.waitForIdle(child.thread.id),
+    ]);
+    await fixture.service.close();
+  });
+
+  test('preserves a specialized parent policy for its isolated Skill child', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Delegate specialized research' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'explore-parent-spawn');
+    const parent = await spawnBackgroundAgent(
+      fixture,
+      root.id,
+      rootTurn.turn.id,
+      'explore-parent-spawn',
+      'Explore parent',
+      'Run a read-only Skill',
+      'explore',
+    );
+    await fixture.executor.waitUntilWaiting(1);
+
+    const isolated = await fixture.service.spawnIsolatedSkillThread({
+      parentThreadId: parent.thread.id,
+      parentTurnId: parent.turn.id,
+      parentItemId: 'explore-skill-item',
+      skillName: 'repository-research',
+      prompt: 'Inspect the repository',
+      allowedTools: ['file_read'],
+    });
+    await fixture.executor.waitUntilWaiting(2);
+
+    expect(fixture.service.subagentExecution(isolated.thread.id)).toMatchObject({
+      agentType: 'isolated-skill',
+      toolPolicy: {
+        kind: 'explore',
+        allowNesting: true,
+        requestedTools: ['file_read'],
+      },
+    });
+
+    await fixture.service.interruptUserWork(root.id, rootTurn.turn.id);
+    await Promise.all([
+      fixture.service.waitForIdle(root.id),
+      fixture.service.waitForIdle(parent.thread.id),
+      fixture.service.waitForIdle(isolated.thread.id),
+    ]);
+    await fixture.service.close();
+  });
+
+  test('records a Role wildcard as an inherited Agent tool ceiling', async () => {
+    const wildcardRole: AgentRole = {
+      name: 'wildcard-role',
+      source: 'user',
+      description: 'Inherits the parent tool ceiling.',
+      developerInstructions: 'Use the inherited tools.',
+      overrides: { tools: ['*'] },
+    };
+    const fixture = await createFixture(undefined, {
+      resolveAgentType: () => ({
+        canonicalType: wildcardRole.name,
+        role: wildcardRole,
+        kind: 'role',
+      }),
+    });
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Delegate to a wildcard Role' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'wildcard-role-spawn');
+
+    const child = await spawnBackgroundAgent(
+      fixture,
+      root.id,
+      rootTurn.turn.id,
+      'wildcard-role-spawn',
+      'Wildcard Role',
+      'Use the inherited tools',
+      wildcardRole.name,
+    );
+    await fixture.executor.waitUntilWaiting(1);
+
+    expect(fixture.service.subagentExecution(child.thread.id)?.toolPolicy.requestedTools).toBeNull();
+
+    await fixture.service.interruptUserWork(root.id, rootTurn.turn.id);
+    await Promise.all([
+      fixture.service.waitForIdle(root.id),
+      fixture.service.waitForIdle(child.thread.id),
+    ]);
     await fixture.service.close();
   });
 
@@ -5447,6 +7385,8 @@ describe('ThreadService', () => {
       taskPath: '/root/mutable',
       role: 'mutable',
       allowedTools: ['node_read'],
+      childKind: 'collaboration',
+      execution: testChildExecution({ requestedTools: ['node_read'] }),
     });
     await fixture.executor.waitUntilWaiting(1);
     expect(fixture.executor.contexts[1]?.configuration.model).toBe('initial-role-model');
@@ -5582,6 +7522,11 @@ describe('ThreadService', () => {
         prompt: `${roleName} fresh prompt`,
         taskPath: `/root/${roleName}_preload`,
         role,
+        childKind: 'collaboration',
+        execution: testChildExecution({
+          kind: roleName === 'explorer' ? 'explore' : 'plan',
+          requestedTools: ['node_read', 'skill'],
+        }),
       });
       children.push(child);
       const executionIndex = offset + 1;
@@ -5835,6 +7780,7 @@ describe('ThreadService', () => {
       fixture.executor.finish(offset + 1);
       const completed = await foreground;
       expect(completed.details).toMatchObject({ agentId: child.id });
+      expect(completed.content).not.toContainEqual({ type: 'text', text: '' });
     }
 
     fixture.executor.finish(0);
@@ -6134,6 +8080,8 @@ describe('ThreadService', () => {
       parentItemId: 'spawn-idle-child',
       prompt: 'Finish after the parent becomes idle',
       taskPath: '/root/idle-child',
+      childKind: 'collaboration',
+      execution: testChildExecution(),
     });
     await fixture.executor.waitUntilWaiting(1);
 
@@ -7898,7 +9846,7 @@ describe('ThreadService', () => {
     expect(fixture.service.subagentExecution(child.thread.id)).toMatchObject({
       generation: 2,
       currentTurnId: userResume.turn.id,
-      toolUseId: userResume.turn.id,
+      toolUseId: 'revive-spawn',
       runMode: 'background',
       stopProvenance: 'none',
     });
@@ -7931,15 +9879,26 @@ describe('ThreadService', () => {
         if (rejectResume) throw new Error('renderer Agent resume admission failed');
         return content;
       },
-      prepareAgentWorktree: async ({ agentId, cwd, worktree }) => {
+      planAgentWorktree: async ({ agentId, cwd, previous }) => previous
+        ? {
+            sourceCwd: previous.sourceCwd,
+            path: previous.path,
+            branch: previous.branch,
+            baseCommit: previous.baseCommit,
+            gitCommonDir: previous.gitCommonDir,
+          }
+        : {
+            sourceCwd: cwd,
+            path: join(cwd, `.retained-agent-${agentId}`),
+            branch: `retained-agent-${agentId}`,
+            baseCommit: 'a'.repeat(40),
+            gitCommonDir: join(cwd, '.git'),
+          },
+      prepareAgentWorktree: async ({ agentId, intent, worktree }) => {
         if (worktree) return { cwd: worktree.path, worktree };
         retainedWorktree = Object.freeze({
-          sourceCwd: cwd,
-          path: join(cwd, `.retained-agent-${agentId}`),
-          branch: `retained-agent-${agentId}`,
-          baseCommit: 'a'.repeat(40),
-          gitCommonDir: join(cwd, '.git'),
-          gitWorktreeDir: join(cwd, '.git', 'worktrees', agentId),
+          ...intent,
+          gitWorktreeDir: join(intent.gitCommonDir, 'worktrees', agentId),
           managed: true,
           removedAt: null,
         });
@@ -8013,6 +9972,7 @@ describe('ThreadService', () => {
         if (rejectResume) throw new Error('recreated worktree admission failed');
         return content;
       },
+      planAgentWorktree: (input) => worktrees.plan(input),
       prepareAgentWorktree: async (input) => {
         prepareCalls += 1;
         return worktrees.prepare(input);
@@ -8055,6 +10015,7 @@ describe('ThreadService', () => {
     const removed = before.worktree;
     expect(removed.removedAt).not.toBeNull();
     expect(fixture.service.readThread({ threadId: childId }).thread.cwd).toBe(repository.source);
+    expect(fixture.service.agentWorktree(childId)).toEqual(removed);
     await expect(realpath(removed.path)).rejects.toThrow();
     await expect(runGit(repository.source, ['show-ref', '--verify', `refs/heads/${removed.branch}`]))
       .rejects.toThrow();
@@ -8081,6 +10042,111 @@ describe('ThreadService', () => {
     fixture.executor.finish(0, completedExecutionResult(0));
     await fixture.service.waitForIdle(root.id);
     await fixture.service.close();
+  });
+
+  test('removes a recreated clean worktree while recovering a crashed resume admission', async () => {
+    const repository = await createAgentWorktreeRepository();
+    const worktrees = new AgentWorktree(repository.userData, () => 1_720_000_020_000);
+    const options = {
+      planAgentWorktree: (input: Parameters<AgentWorktree['plan']>[0]) => worktrees.plan(input),
+      prepareAgentWorktree: (input: Parameters<AgentWorktree['prepare']>[0]) => worktrees.prepare(input),
+      settleAgentWorktree: (
+        worktree: AgentWorktreeMetadata,
+        settleOptions?: Parameters<AgentWorktree['settle']>[1],
+      ) => worktrees.settle(worktree, settleOptions),
+    };
+    const fixture = await createFixture(undefined, options);
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: repository.source,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Create an isolated Agent for crash recovery' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'crash-resume-spawn');
+    const tools = await fixture.service.collaborationToolContributions({
+      threadId: root.id,
+      turnId: rootTurn.turn.id,
+    });
+    const launched = await executeTool(tools, 'agent', 'crash-resume-spawn', {
+      description: 'crash resume fixture',
+      prompt: 'Complete without changing the worktree',
+      subagent_type: 'general-purpose',
+      run_in_background: true,
+      isolation: 'worktree',
+    });
+    const childId = (launched.details as { agentId: string }).agentId;
+    await fixture.executor.waitUntilWaiting(1);
+    fixture.executor.finish(1, completedExecutionResult(0));
+    await fixture.service.waitForIdle(childId);
+    await waitUntil(() => fixture.service.subagentExecution(childId)?.worktree?.removedAt !== null);
+    fixture.executor.finish(0, completedExecutionResult(0));
+    await fixture.service.waitForIdle(root.id);
+
+    const previous = fixture.stores.subagentExecutions.generationSnapshot(childId);
+    if (!previous.worktree || previous.worktree.removedAt === null) {
+      throw new Error('Crash recovery fixture did not settle its first worktree');
+    }
+    const intent = await worktrees.plan({
+      agentId: childId,
+      cwd: previous.worktree.sourceCwd,
+      previous: previous.worktree,
+    });
+    const prepared = await worktrees.prepare({
+      agentId: childId,
+      intent,
+      worktree: previous.worktree,
+    });
+    expect(fixture.stores.subagentExecutions.setWorktreeIfCurrent({
+      agentId: childId,
+      generation: previous.generation,
+      turnId: previous.currentTurnId,
+      worktree: prepared.worktree,
+      updatedAt: fixture.clock(),
+    })).not.toBeNull();
+    fixture.stores.metadata.setCwd(childId, prepared.worktree.path, fixture.clock());
+    const pending = fixture.stores.subagentExecutions.beginUserGenerationIfCurrent({
+      agentId: childId,
+      expectedGeneration: previous.generation,
+      expectedTurnId: previous.currentTurnId,
+      turnId: 'crashed-resume-turn',
+      previous,
+      updatedAt: fixture.clock(),
+    });
+    expect(pending).toMatchObject({
+      generation: previous.generation + 1,
+      currentTurnId: 'crashed-resume-turn',
+      worktree: prepared.worktree,
+    });
+    expect(fixture.stores.metadata.read(childId)?.thread.cwd).toBe(prepared.worktree.path);
+    await fixture.service.close();
+
+    const reopened = await openFixture(
+      fixture.root,
+      new ControlledExecutor(),
+      fixture.clock,
+      undefined,
+      options,
+    );
+    await reopened.service.initialize();
+
+    expect(reopened.stores.subagentExecutions.read(childId)).toMatchObject({
+      generation: previous.generation,
+      currentTurnId: previous.currentTurnId,
+      worktree: previous.worktree,
+    });
+    expect(reopened.stores.metadata.read(childId)?.thread.cwd).toBe(previous.worktree.sourceCwd);
+    await expect(realpath(prepared.worktree.path)).rejects.toThrow();
+    await expect(runGit(repository.source, [
+      'show-ref',
+      '--verify',
+      `refs/heads/${prepared.worktree.branch}`,
+    ])).rejects.toThrow();
+    await reopened.service.close();
   });
 
   test('writes nothing when Stop loses the race with the Turn it addressed', async () => {
@@ -9638,8 +11704,12 @@ async function createFixture(
     | 'nameGenerator'
     | 'normalizeOutputImage'
     | 'beforeInitialTurnAdmission'
+    | 'planAgentWorktree'
     | 'prepareAgentWorktree'
     | 'settleAgentWorktree'
+    | 'recoverAgentWorktree'
+    | 'cleanupResidualAgentWorktree'
+    | 'reportError'
   > = {},
 ): Promise<Fixture> {
   const root = await mkdtemp(join(tmpdir(), 'tenon-thread-service-'));
@@ -9675,6 +11745,65 @@ async function runGit(cwd: string, args: readonly string[]): Promise<void> {
   await execFileAsync('git', ['-C', cwd, ...args]);
 }
 
+function createTestSubagentExecution(
+  ledger: SubagentExecutionLedger,
+  input: {
+    readonly agentId: string;
+    readonly parentThreadId: string;
+    readonly turnId: string;
+    readonly toolUseId: string;
+    readonly runMode: 'foreground' | 'background';
+    readonly startupContext?: {
+      readonly repositoryInstructions: readonly string[];
+      readonly gitStatus: string | null;
+    };
+  },
+): void {
+  ledger.create({
+    agentId: input.agentId,
+    parentThreadId: input.parentThreadId,
+    description: input.agentId,
+    agentType: 'general-purpose',
+    runMode: input.runMode,
+    currentTurnId: input.turnId,
+    toolUseId: input.toolUseId,
+    worktree: null,
+    toolPolicy: {
+      kind: 'general-purpose',
+      runInBackground: input.runMode === 'background',
+      worktree: false,
+      allowNesting: true,
+      requestedTools: null,
+    },
+    startupContext: input.startupContext ?? null,
+    createdAt: 1,
+    updatedAt: 1,
+  });
+}
+
+function testChildExecution(input: {
+  readonly kind?: 'general-purpose' | 'explore' | 'plan';
+  readonly requestedTools?: readonly string[] | null;
+  readonly runMode?: 'foreground' | 'background';
+} = {}) {
+  const runMode = input.runMode ?? 'background';
+  return {
+    description: 'Test child',
+    agentType: input.kind ?? 'general-purpose',
+    runMode,
+    worktree: null,
+    initialWorktreeCwd: null,
+    toolPolicy: {
+      kind: input.kind ?? 'general-purpose',
+      runInBackground: runMode === 'background',
+      worktree: false,
+      allowNesting: true,
+      requestedTools: input.requestedTools ?? null,
+    },
+    startupContext: null,
+  } as const;
+}
+
 async function openFixture(
   root: string,
   executor: TurnExecutor,
@@ -9698,8 +11827,12 @@ async function openFixture(
     | 'nameGenerator'
     | 'normalizeOutputImage'
     | 'beforeInitialTurnAdmission'
+    | 'planAgentWorktree'
     | 'prepareAgentWorktree'
     | 'settleAgentWorktree'
+    | 'recoverAgentWorktree'
+    | 'cleanupResidualAgentWorktree'
+    | 'reportError'
   > = {},
 ): Promise<{ service: ThreadService; stores: ThreadServiceStores }> {
   const stores = createStores(root);
@@ -9714,6 +11847,162 @@ async function openFixture(
       ...options,
     }),
     stores,
+  };
+}
+
+function createReverseOrphanThread(
+  fixture: Fixture,
+  parent: Thread,
+  threadId: string,
+  cwd: string,
+): Thread {
+  const createdAt = fixture.clock();
+  const thread: Thread = {
+    id: threadId,
+    sessionId: parent.sessionId,
+    parentThreadId: parent.id,
+    forkedFromId: null,
+    agentNickname: null,
+    agentRole: 'default',
+    name: 'Reverse orphan fixture',
+    preview: '',
+    ephemeral: false,
+    source: 'collaboration',
+    threadSource: 'subagent',
+    modelProvider: parent.modelProvider,
+    cwd,
+    createdAt,
+    updatedAt: createdAt,
+    status: { type: 'idle' },
+    historyMode: 'paginated',
+  };
+  fixture.stores.metadata.createChild({
+    thread,
+    nameOrigin: 'derived',
+    archived: false,
+    configuration: defaultEffectiveThreadConfiguration(),
+    toolCeiling: null,
+    modelOverride: null,
+    reasoningEffortOverride: null,
+  }, {
+    sessionId: parent.sessionId,
+    parentThreadId: parent.id,
+    childThreadId: thread.id,
+    taskPath: `/root/${thread.id}`,
+    createdAt,
+  });
+  return thread;
+}
+
+function beginPendingOrphanExecution(
+  fixture: Fixture,
+  input: {
+    readonly agentId: string;
+    readonly parentThreadId: string;
+    readonly turnId: string;
+    readonly initialWorktreeIntent: AgentWorktreeRecoveryIntent | null;
+  },
+): void {
+  fixture.stores.subagentExecutions.beginInitialAdmission({
+    agentId: input.agentId,
+    parentThreadId: input.parentThreadId,
+    description: 'Pending orphan recovery fixture',
+    agentType: 'general-purpose',
+    runMode: 'background',
+    currentTurnId: input.turnId,
+    toolUseId: 'pending-orphan-spawn',
+    worktree: null,
+    toolPolicy: {
+      kind: 'general-purpose',
+      runInBackground: true,
+      worktree: input.initialWorktreeIntent !== null,
+      allowNesting: true,
+      requestedTools: null,
+    },
+    startupContext: null,
+    initialWorktreeIntent: input.initialWorktreeIntent,
+    createdAt: fixture.clock(),
+    updatedAt: fixture.clock(),
+  });
+}
+
+async function seedPendingOrphanArtifacts(
+  fixture: Fixture,
+  input: {
+    readonly agentId: string;
+    readonly parentThreadId: string;
+    readonly parentTurnId: string;
+    readonly turnId: string;
+    readonly poolOriginThreadId: string;
+  },
+): Promise<{
+  readonly poolId: string;
+  readonly payloadRef: Awaited<ReturnType<ToolPayloadStore['writeText']>>;
+  readonly transcriptPath: string;
+}> {
+  const turn = completedOrphanTurn(input);
+  const entry = await fixture.stores.rollout.append(input.agentId, {
+    type: 'turn/completed',
+    threadId: input.agentId,
+    turnId: input.turnId,
+    turn,
+  }, fixture.clock());
+  fixture.stores.history.apply(entry);
+  fixture.stores.goals.create(input.agentId, 'Recover incomplete admission', null, fixture.clock());
+  const poolId = requestPoolIdForTurn(input.parentTurnId);
+  fixture.stores.subagentBudgets.createPool({
+    poolId,
+    scope: 'turn',
+    originThreadId: input.poolOriginThreadId,
+    originTurnId: input.parentTurnId,
+    tokenBudget: null,
+  }, false);
+  fixture.stores.subagentBudgets.createMember({
+    threadId: input.agentId,
+    poolId,
+    originTurnId: input.parentTurnId,
+    tokenCap: null,
+  }, false);
+  const payloadRef = await fixture.stores.payloads.writeText(
+    input.agentId,
+    'pending-orphan-output',
+    'orphan payload',
+    'text/plain',
+    'Orphan payload fixture',
+  );
+  const transcriptRoot = threadTranscriptRoot(join(fixture.root, 'app-data'));
+  const transcriptPath = threadTranscriptPath(transcriptRoot, input.agentId);
+  await mkdir(transcriptRoot, { recursive: true });
+  await writeFile(transcriptPath, '# PRIVATE ORPHAN CONTENT\n', 'utf8');
+  return { poolId, payloadRef, transcriptPath };
+}
+
+function completedOrphanTurn(input: {
+  readonly agentId: string;
+  readonly parentThreadId: string;
+  readonly turnId: string;
+}): Turn {
+  const execution = completedExecutionResult(0).execution;
+  if (!execution) throw new Error('Completed orphan fixture requires execution details');
+  return {
+    id: input.turnId,
+    items: [],
+    itemsView: 'full',
+    provenance: {
+      originThreadId: input.agentId,
+      originTurnId: input.turnId,
+      trigger: {
+        kind: 'subagent',
+        parentThreadId: input.parentThreadId,
+        parentItemId: 'pending-orphan-spawn',
+      },
+    },
+    status: 'completed',
+    error: null,
+    execution,
+    startedAt: 1,
+    completedAt: 2,
+    durationMs: 1,
   };
 }
 
@@ -9923,6 +12212,7 @@ async function spawnHostChildFromInput(
     taskPath: `/root/${agentId}`,
     displayName: input.taskName,
     childKind: 'collaboration',
+    execution: testChildExecution({ runMode: 'foreground' }),
     ...(input.maxTotalTokens === undefined ? {} : { maxTotalTokens: input.maxTotalTokens }),
   });
 }
@@ -10750,6 +13040,37 @@ describe('Thread transcript artifact', () => {
     expect(await readdir(root).catch(() => [])).toEqual([]);
   });
 
+  test('bounds the all-transcript drain and still drains work that settles before the deadline', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tenon-transcript-drain-'));
+    roots.push(root);
+    let release!: () => void;
+    const payloadGate = new Promise<void>((resolve) => { release = resolve; });
+    let markReached!: () => void;
+    const reached = new Promise<void>((resolve) => { markReached = resolve; });
+    const turn = transcriptTurnWithOutput('turn-1');
+    const writer = new ThreadTranscriptWriter({
+      transcriptRoot: join(root, 'transcripts'),
+      resolveSubject: () => ({ threadId: 'thread-1', source: 'user', cwd: '/tmp' }),
+      completedTurns: () => [turn],
+      payloads: () => ({
+        readContext: async () => null,
+        readOutput: async () => {
+          markReached();
+          await payloadGate;
+          return 'output';
+        },
+        readDiagnostics: async () => null,
+      }),
+    });
+    const thread = threadStub('thread-1');
+    writer.enqueueTurn(thread, turn);
+    await reached;
+
+    expect(await writer.flushAll(Date.now() + 10)).toBe(false);
+    release();
+    expect(await writer.flushAll(Date.now() + 500)).toBe(true);
+  });
+
   test('appends the child account under userData and reports its path in the outcome', async () => {
     const fixture = await createFixture();
     const spawned = await spawnTranscriptChild(fixture, 'transcript_child');
@@ -11189,6 +13510,44 @@ function threadStub(id: string): Thread {
   };
 }
 
+function transcriptTurnWithOutput(id: string): Turn {
+  const itemId = `${id}-tool`;
+  return {
+    id,
+    items: [{
+      type: 'dynamicToolCall',
+      id: itemId,
+      provenance: { originThreadId: 'thread-1', originTurnId: id, originItemId: itemId },
+      namespace: null,
+      tool: 'file_read',
+      arguments: { file_path: '/tmp/input.txt' },
+      contentItems: null,
+      success: true,
+      durationMs: 1,
+      status: 'completed',
+      outputRef: {
+        id: createHash('sha256').update(id).digest('hex'),
+        mimeType: 'text/plain',
+        byteLength: 6,
+        summary: 'output',
+      },
+      modelCall: replayableModelCall('file_read', { file_path: '/tmp/input.txt' }),
+    }],
+    itemsView: 'full',
+    provenance: {
+      originThreadId: 'thread-1',
+      originTurnId: id,
+      trigger: { kind: 'user' },
+    },
+    status: 'completed',
+    error: null,
+    execution: completedExecutionResult(0).execution!,
+    startedAt: 1,
+    completedAt: 2,
+    durationMs: 1,
+  };
+}
+
 /** A persistent user root Thread with one completed Turn, so it has a record on disk. */
 async function recordedUserThread(fixture: Fixture, executorIndex: number, text: string) {
   const thread = (await fixture.service.startThread({
@@ -11269,4 +13628,12 @@ async function finishTranscriptRoot(
   fixture.executor.finish(0);
   await fixture.service.waitForIdle(spawned.root.id);
   await fixture.service.close();
+}
+
+function serializedConsoleCalls(calls: readonly (readonly unknown[])[]): string {
+  return calls.map((call) => call.map((value) => {
+    if (value instanceof Error) return `${value.name}: ${value.message}`;
+    if (typeof value === 'string') return value;
+    return JSON.stringify(value);
+  }).join(' ')).join('\n');
 }

@@ -784,8 +784,13 @@ export function normalizeAgentMessageToolInput(value: unknown): AgentMessageTool
 export function normalizeTaskStopToolInput(value: unknown): TaskStopToolInput {
   if (!isRecord(value)) throw new Error('task_stop input must be an object');
   exactInputKeys(value, ['task_id', 'shell_id'], 'task_stop');
-  if (!(value.task_id ?? value.shell_id)) throw new Error('Missing required parameter: task_id');
-  return Object.freeze({ ...value }) as TaskStopToolInput;
+  const taskId = typeof value.task_id === 'string' && value.task_id.trim()
+    ? value.task_id.trim()
+    : typeof value.shell_id === 'string' && value.shell_id.trim()
+      ? value.shell_id.trim()
+      : null;
+  if (!taskId) throw new Error('Missing required parameter: task_id');
+  return Object.freeze({ ...value, task_id: taskId }) as TaskStopToolInput;
 }
 
 export function normalizeUpdatePlanToolInput(value: unknown): UpdatePlanToolInput {

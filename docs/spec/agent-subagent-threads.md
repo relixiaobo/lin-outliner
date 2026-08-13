@@ -44,6 +44,103 @@ effective configuration, optional worktree, stop provenance, and a monotonically
 increasing execution generation. A resume appends a new Turn to the same child
 Thread and increments the generation; it does not create another Agent identity.
 
+An isolated Skill also persists an execution row, but its Thread source is
+`agent.skill` rather than `collaboration`. The row carries the foreground tool
+policy needed to execute and recover safely; it does not turn the Skill into an
+Agent address or a resumable Agent. `agent_message` and `task_stop` resolve only
+collaboration Threads.
+
+Every delegated child, including an isolated Skill, is admitted through one
+durable prepare/commit protocol. Before creating a worktree, Thread, budget
+member, Goal state, payload, or Turn, the host fixes the child and first Turn
+IDs and resolves worktree isolation through a read-only planning step. An
+isolated admission produces the complete deterministic recovery intent
+`{ sourceCwd, baseCommit, path, branch, gitCommonDir }`; a non-isolated
+admission records no worktree intent. The host persists the `pending` execution
+row, including that full intent and the effective policy, before any Git
+mutation. Only then may worktree preparation create a directory, registration,
+or branch. Its complete worktree metadata is persisted on the pending row
+before any Thread state is written.
+
+The first durable `turn/started` event in the child's rollout is the cross-store
+commit authority; the derived history projection is not. Extension admission
+contributions may prepare the Turn before that event, but they must be
+idempotent and startup cleanup removes state for a Turn that never becomes
+durable. Admission first persists both `thread/started` and the initial
+`turn/started` with their ordinary observers deferred. It then advances the
+execution marker to `committed`. Only after that marker commits does it publish,
+in order:
+
+1. `thread/started` to ordinary listeners (including the renderer) and extension
+   `onNotification` observers;
+2. `onThreadStarted`;
+3. the initial `turn/started` to ordinary listeners and extension
+   `onNotification` observers;
+4. `onTurnStarted`; and
+5. provider execution.
+
+A failure before the durable `turn/started` commit rolls the child back without
+publishing any start, stop, or terminal notification or lifecycle observer. A
+failure after that event keeps the child and terminalizes or recovers its
+canonically accepted Turn; it never reports a failed spawn while deleting that
+Turn. `onThreadStarted` is one publication attempt, not a retryable side effect.
+If it fails, the already accepted Turn is fatalized, its initial `turn/started`
+notification is still published, and neither `onTurnStarted` nor provider
+execution runs. Its terminal failure may therefore call `onTurnError` without a
+paired `onTurnStarted`. The failed start hook is not replayed later.
+
+The rollout remains authoritative at terminal settlement. If a terminal event
+is durably appended but the derived history projection cannot apply or rebuild
+it, the host does not append a second terminal event. A lifecycle that already
+published its start publishes that committed terminal and idle status once,
+releases active ownership, and completes budget, transcript, and parent-delivery
+settlement from the canonical Turn in memory. Reference-based payload cleanup is
+deferred until startup rebuilds the projection from the rollout.
+
+Startup resolves this protocol before ordinary Thread reconciliation. It reads
+the child's rollout directly rather than trusting the derived history
+projection. A matching first `turn/started` completes a stale pending marker,
+then ordinary resumed lifecycle reconciliation takes ownership of the crashed
+in-progress Turn. This crash gap never replays the provider call,
+`thread/started`, `turn/started`, `onThreadStarted`, or `onTurnStarted`; recovery
+terminalizes the accepted Turn through the host-restart path. A pending intent
+without that event first recovers and settles its deterministic worktree, then
+removes the incomplete Thread subtree, budgets, Goals, payloads, rollout,
+transcript, and other artifacts. The execution ledger row is deleted last; any
+earlier cleanup failure preserves it as the durable retry authority for the next
+startup. A modified worktree, residual registration or branch, or any cleanup
+failure therefore quarantines the admission rather than guessing or discarding
+recovery state. Orphan executions follow the same worktree-first, ledger-last
+order. Recovery uses an internal artifact cascade: it does not run extension
+lifecycle hooks and does not forget a transcript exclusion owned by the
+surviving root session.
+
+Each retained quarantine is reported best-effort to the global Diagnostics
+subsystem defined by [`error-observability.md`](error-observability.md). The
+record uses domain `persistence`, code
+`subagent-initial-admission-quarantined`, status `worktree-retained` or
+`cleanup-failed`, and the stable `threadId`. An execution-backed admission also
+reports its authoritative `turnId`; a reverse orphan has no trustworthy Turn
+identity and omits that field. It never includes a worktree path, branch, Thread
+content, prompt, or tool output. Diagnostics is inspection-only; the execution
+ledger remains the recovery authority even when reporting fails.
+
+A delegated Thread without an execution record is a reverse orphan. Without a
+persisted recovery intent, only `child.cwd === parent.cwd` proves that it never
+entered an independent worktree. Any distinct cwd is quarantined rather than
+deriving recovery state from the checkout's current HEAD. Until recovery
+settles, every delegated runtime entry point fails closed before Skills, tools,
+extensions, or provider I/O can run.
+
+Terminal-notification and `main`-message delivery use that same availability
+gate for both the recipient Thread and the sending Agent. The check runs before
+an envelope is claimed, a generation is continued, or a Turn is started or
+steered. A quarantined recipient defers its parent-delivery queue; a quarantined
+sender skips only that sender's envelope, so healthy sibling envelopes for an
+available recipient continue in the same pass. In both cases the skipped
+durable envelope remains `pending` for a later startup. No quarantine path can
+re-enter extension or provider execution through internal delivery recovery.
+
 Agent IDs are the only model-visible addresses. Display names may derive from a
 Role or task description, but are not routable. Historical task paths may remain
 in inert persisted Items from older releases; no current tool resolves them.
@@ -59,8 +156,14 @@ project and user Roles:
 - `explore`, backed by the hidden built-in `explorer` Role
 - `plan`, backed by the hidden built-in `plan` Role
 
-The backing Role names are not selectable Agent types. There is no built-in
-`worker`; a project or user Role named `worker` is an ordinary configured type.
+The backing definitions do not become selectable Agent types merely because
+they are built in. A project or user Role may still explicitly use a backing
+name such as `default` or `explorer`; it then appears as an ordinary configured
+type. The canonical built-in names `general-purpose`, `explore`, and `plan`
+remain reserved and win exact catalog identity. There is no built-in `worker`;
+a project or user Role named `worker` is an ordinary configured type. In
+particular, `subagent_type: "explorer"` selects an explicitly configured
+`explorer` Role, while `subagent_type: "explore"` selects the built-in type.
 
 Omitting `subagent_type` selects `general-purpose`. Resolution first prefers an
 exact catalog spelling. Otherwise it trims for matching only, compares
@@ -75,8 +178,10 @@ narrow it, otherwise it follows the parent. A successful spawn records the
 selected definition, model, reasoning setting, effective tool policy,
 preloaded Skills, repository/status inputs, and isolation metadata. Resume uses
 that recorded configuration and history rather than re-reading a changed Role
-or rebuilding startup context. Current explicit capability blocks still apply
-to the resumed operation.
+or recollecting startup context. The persisted startup snapshot is projected for
+the current Turn of every execution generation, including `agent_message`
+resume, user-authored resume, and recovery after host restart. Current explicit
+capability blocks still apply to the resumed operation.
 
 ## Model Tool Surface
 
@@ -107,12 +212,17 @@ whole epoch of the parent's conversation. The first provider request contains:
 2. The exact `prompt` as the initial task message.
 3. For `general-purpose` and configured Roles, the repository instruction
    hierarchy and the parent's session-start git-status snapshot.
-4. For `general-purpose` and configured Roles, the available Skill catalog plus
-   the complete content of Skills explicitly preloaded by the selected Role.
+4. When the child's effective tools include `skill`, for `general-purpose` and
+   configured Roles, the available Skill catalog plus the complete content of
+   eligible inline Skills explicitly preloaded by the selected Role.
 
 `explore` and `plan` receive their specialized prompts and small environment
 envelope, but no repository instructions, git-status snapshot, or available
-Skill catalog. Role-preloaded Skill content is independent of catalog presence.
+Skill catalog. When `skill` remains effective, eligible inline Skills explicitly
+preloaded by their Role may still contribute complete content; preload is not a
+catalog entry. Skill admission is one effective-tool gate: when `skill` is absent,
+the host does not construct a Skill runtime, publish a catalog, preload Role
+Skills, or recognize direct slash or natural-language Skill invocation.
 
 No fresh Agent inherits parent user or assistant messages, reasoning, tool calls
 or results, files the parent read, parent-only invoked Skill content, output
@@ -139,8 +249,9 @@ creation or a user Turn.
 
 The child starts from tools available to the parent, then applies Core scope,
 Agent-type policy, foreground/background policy, Role narrowing, and explicit
-blocks. MCP tools pass through the same classification and survive unless a Role
-or block removes them.
+blocks. Static exposure and argument-dependent execution are separate checks;
+an extension or MCP tool that remains provider-visible still cannot execute
+outside the current Agent policy.
 
 The durable category rules are:
 
@@ -149,9 +260,10 @@ The durable category rules are:
 | Root input, Automation, and root-only host controls | Removed | Removed |
 | Outline and file reads | Available when inherited | Available when inherited |
 | Outline and direct repository mutations | Available when inherited | Removed by specialized policy |
-| `bash` | Available when inherited | May remain; system and capability policy enforce repository-mutation restrictions |
+| `bash` | Available when inherited | May remain; only commands classified entirely as repository inspection may execute |
+| Extension and MCP tools | Available when inherited | May remain visible; every classified action kind must be read-only to execute |
 | Web and `skill` | Available when inherited | Role-policy dependent |
-| `agent` | Available below the depth limit | Removed |
+| `agent` | Available only when the persisted policy permits nesting and the requested ceiling admits it | Removed |
 | `agent_message`, `task_stop` | Available | Available |
 | `outline_undo_stack` | Removed from every Agent | Removed from every Agent |
 
@@ -162,11 +274,26 @@ file and shell mutations. `request_user_input` is never exposed to an Agent.
 Role tool configuration distinguishes intent:
 
 - omitted tools use the Agent type's default pool;
+- `tools: ['*']`, alone or mixed with names, persists as `requestedTools: null`
+  and inherits the resolved parent ceiling;
 - `tools: []` is a valid text-only Agent and still reaches provider I/O;
 - a mixed valid/unknown list records bounded diagnostics, drops unknown entries,
   and continues with valid entries;
 - a non-empty list that resolves entirely to unknown tools is an admission
   defect and refuses before provider I/O.
+
+The Agent-type catalog is admitted only when spawning is actually possible. A
+root requires `agent` in its effective configuration. A child additionally
+requires its persisted policy to admit `agent`: nesting must remain allowed, the
+Agent type must not be the leaf `explore` or `plan` policy, and an explicit
+requested-tool ceiling must include `agent`. Configuration text alone cannot
+advertise a Role that the current Thread is unable to launch.
+
+An isolated Skill persists a foreground policy before provider execution. It
+inherits the parent's Agent kind, effective worktree restriction, and
+`allowNesting` decision; its normalized `allowed-tools` becomes the durable
+requested-tool ceiling. The same catalog and execution filters then apply, so a
+Skill cannot reset a specialized or isolated parent's restrictions.
 
 Tenon otherwise uses Full Access as specified in
 [`agent-tool-permissions.md`](agent-tool-permissions.md). Agent messages are
@@ -188,6 +315,8 @@ foreground and blocking.
   admission, and the host delivers completion later.
 - An API failure after useful text preserves that text as partial output. A
   failure before useful text is failed, never an empty successful result.
+- A successful foreground Agent with no text returns the single fallback block
+  `Agent finished without text output.`; it never emits an empty text block.
 
 An admitted background call returns one ephemeral text content block with this
 exact normalized template:
@@ -269,6 +398,13 @@ canonical input and continues that parent. Delivery is idempotent across a crash
 completed pending events recover on restart. A child that was still running at
 host restart follows the typed host-restart failure path and emits a failed
 notification rather than replaying side effects.
+
+Undelivered completion notifications and Agent-to-`main` message envelopes are
+durable queued work. While either kind is pending or delivering, every involved
+descendant endpoint is returned in the Thread catalog's `queuedWorkThreadIds`.
+The finished-Thread deletion surface therefore cannot remove a child result or
+message merely because its current Turn is terminal; the queued marker clears
+only after delivery settles.
 
 Notifications travel one edge at a time. A nested result resumes only its direct
 parent. A parent with live descendants remains working even if it has already
@@ -356,6 +492,11 @@ creating a Thread or message. The normalized missing-target result is exactly
 `{"success":false,"message":"No agent with ID '{to}' is reachable.\nUse the agent ID from a background agent's spawn result."}`; `{to}` preserves
 leading and trailing whitespace.
 
+An Agent cannot message or stop itself. A self-message returns
+`{"success":false,"message":"An Agent cannot send a message to itself."}`;
+a self-stop fails with `An Agent cannot stop itself.` Isolated-Skill Threads are
+never collaboration targets even though they have persisted execution policy.
+
 Stop provenance is explicit:
 
 - `task_stop` records model-stop provenance, cancels a running Agent generation,
@@ -369,12 +510,14 @@ Stop provenance is explicit:
 - A model-generated message, including a nested message or the `main` route,
   never counts as user-authored resume or approval.
 
-`task_stop` also stops a background shell task through the same typed registry.
-`task_id` is authoritative when both it and deprecated `shell_id` are present.
-Runtime validation uses the exact errors `Missing required parameter: task_id`,
-`No task found with ID: {id}`, and
-`Task {id} is not running (status: {status})`. An Agent/shell ID collision is
-rejected rather than guessed.
+`task_stop` also stops a background shell task owned by the calling Thread. It
+may otherwise stop only a reachable collaboration Agent. `task_id` is
+authoritative when both it and deprecated `shell_id` are present. Runtime
+validation uses the exact errors `Missing required parameter: task_id`,
+`No task found with ID: {id}`, and `Task {id} is not running (status: {status})`.
+An Agent/shell ID collision is rejected rather than guessed. Shell stop success
+and failure both retain the structured local-tool envelope, including error
+code, recovery guidance, and metrics, in the canonical tool result.
 
 ## Depth And Concurrency
 
@@ -411,11 +554,30 @@ live outline; `data_import` previews remain available but commit operations are
 rejected before they can change the live outline. Read operations remain
 available when otherwise permitted.
 
+Planning a managed worktree is read-only. It resolves and persists the source
+checkout, exact base commit, deterministic managed path and branch, and shared
+Git directory before preparation may mutate Git. Preparation and startup
+recovery must validate and use those five persisted values; neither may
+recompute the crash-era base from the current checkout. This ordering makes a
+crash after any Git mutation recoverable without treating a later HEAD as
+historical evidence.
+
+Isolation is inherited down the execution tree. A nested Agent or isolated Skill
+keeps the ancestor's outline-mutation restriction even when its own call omits
+`isolation`; file and shell write containment uses the authoritative worktree
+`path`, not merely the child's current `cwd`. An active worktree row whose path
+does not match its Thread cwd records a warning and lookup continues through the
+ancestor chain rather than killing the Turn.
+
 An unchanged worktree is removed at terminal settlement. Resume then creates a
-new managed worktree. A changed worktree is retained, reported with its path and
-branch, and reused by the next generation. A missing, externally altered, or
-wrongly registered retained worktree fails that generation. Tenon never falls
-back to the parent cwd, because doing so would break the isolation promise.
+new managed worktree from the persisted `sourceCwd` and `baseCommit`, even when
+the primary checkout has advanced to a different commit. The removed metadata is
+an authoritative tombstone: lookup does not fall through to an ancestor
+worktree or to an unrestricted boundary before resume recreates it. A changed
+worktree is retained, reported with its path and branch, and reused by the next
+generation. A missing, externally altered, or wrongly registered retained
+worktree fails that generation. Tenon never falls back to the parent cwd,
+because doing so would break the isolation promise.
 
 ## Request Budget
 
@@ -432,9 +594,11 @@ a new request rather than accumulating lifetime conversation spend.
 `SubagentRequestLedger` is the persistence authority. Persistent rows live in
 `subagent_request_pools` and `subagent_request_members`; ephemeral Threads mirror
 them in memory. There is no legacy reader for former budget table names. Pool
-creation and membership are fail-closed admission writes. Resolution, rebind,
-usage accrual, and cleanup failures audit and degrade under A12 rather than
-killing an otherwise usable runtime path.
+creation and membership are one fail-closed admission transaction, including
+the request pool and an explicit-cap pool when both are new. Startup subtree
+cleanup likewise removes members and newly empty pools in one transaction.
+Resolution, rebind, usage accrual, and ordinary runtime cleanup failures audit
+and degrade under A12 rather than killing an otherwise usable runtime path.
 
 The runtime normalizer feeds live generation usage to the request tally.
 Completion accrues usage before exposing an idle admission window. At the first
@@ -470,6 +634,13 @@ projection combines canonical lineage, Agent ID/generation, child Thread state,
 the activity's exact Turn state, and pending notification state. It never depends on a wait
 Item or a model-maintained roster. Isolated Skills may produce the same visible
 child row, but their terminal output remains owned only by `skill`.
+
+Orderly shutdown uses one bounded deadline for active Turn cancellation,
+collaboration settlement, and transcript flushing. Work that settles before the
+deadline is drained normally. A deadline expiry records a warning and allows
+shutdown to continue; persisted execution, notification, message, and canonical
+Turn state remains available for startup recovery instead of making application
+exit wait without bound.
 
 ## Delegation Products
 

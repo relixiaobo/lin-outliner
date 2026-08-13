@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { mkdir, realpath, stat } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import {
   assertContained,
   assertRegisteredWorktree,
@@ -25,6 +25,43 @@ export interface PreparedAgentWorktree {
   readonly cwd: string;
   readonly worktree: AgentWorktreeMetadata;
 }
+
+export interface AgentWorktreeIntentInput {
+  readonly agentId: string;
+  readonly cwd: string;
+  readonly previous: AgentWorktreeMetadata | null;
+}
+
+/** Complete read-only intent persisted before any managed Git state is created. */
+export interface AgentWorktreeRecoveryIntent {
+  readonly sourceCwd: string;
+  readonly path: string;
+  readonly branch: string;
+  readonly baseCommit: string;
+  readonly gitCommonDir: string;
+}
+
+export interface AgentWorktreeRecoveryInput {
+  readonly agentId: string;
+  readonly intent: AgentWorktreeRecoveryIntent;
+  readonly previous: AgentWorktreeMetadata | null;
+}
+
+export type AgentWorktreeRecoveryResult =
+  | {
+    readonly status: 'recovered';
+    readonly prepared: PreparedAgentWorktree;
+  }
+  | {
+    readonly status: 'absent';
+    readonly intent: AgentWorktreeRecoveryIntent;
+  }
+  | {
+    readonly status: 'residual';
+    readonly intent: AgentWorktreeRecoveryIntent;
+    readonly registrationPresent: boolean;
+    readonly branchHead: string | null;
+  };
 
 export interface SettledAgentWorktree {
   readonly worktree: AgentWorktreeMetadata;
@@ -54,32 +91,55 @@ export class AgentWorktree {
     this.managedRoot = join(userDataPath, 'agent', 'subagent-worktrees');
   }
 
+  /** Resolves repository identity and the exact base without mutating Git or disk. */
+  async plan(input: AgentWorktreeIntentInput): Promise<AgentWorktreeRecoveryIntent> {
+    const repository = await resolveRepository(input.cwd);
+    return this.resolveRecoveryIntent(input, repository);
+  }
+
   async prepare(input: {
     readonly agentId: string;
-    readonly cwd: string;
+    readonly intent: AgentWorktreeRecoveryIntent;
     readonly worktree?: AgentWorktreeMetadata | null;
   }): Promise<PreparedAgentWorktree> {
-    const repository = await resolveRepository(input.cwd);
+    const repository = await resolveRepository(input.intent.sourceCwd);
+    await this.assertRecoveryIntent(input.agentId, input.intent, repository);
     await mkdir(this.managedRoot, { recursive: true });
     const managedRoot = await realpath(this.managedRoot);
     const identity = worktreeIdentity(input.agentId);
     const expectedPath = resolve(managedRoot, identity);
     assertContained(managedRoot, expectedPath);
     const expectedBranch = `tenon-agent-${identity}`;
+    if (expectedPath !== input.intent.path || expectedBranch !== input.intent.branch) {
+      throw new Error(`Managed Agent worktree intent changed before prepare: ${input.intent.path}`);
+    }
 
     if (input.worktree?.removedAt === null) {
       return this.resumePrepared(input.worktree, repository, expectedPath, expectedBranch);
+    }
+    if (input.worktree) {
+      await this.assertRemovedResumeMetadata(
+        input.worktree,
+        repository,
+        expectedPath,
+        expectedBranch,
+      );
     }
     if (await pathExists(expectedPath)) {
       // Resume can recreate an auto-removed worktree and crash before the new
       // metadata reaches the ledger. The deterministic managed path/branch and
       // Git registration provide the same recovery proof as an initial prepare
       // that stopped before its execution row was inserted.
-      return this.recoverUnrecorded(repository, expectedPath, expectedBranch);
+      return this.recoverUnrecorded(
+        repository,
+        expectedPath,
+        expectedBranch,
+        input.intent.baseCommit,
+      );
     }
 
     await mkdir(dirname(expectedPath), { recursive: true });
-    const baseCommit = await gitOutput(['-C', repository.checkoutRoot, 'rev-parse', 'HEAD']);
+    const baseCommit = input.intent.baseCommit;
     await git([
       '-C', repository.sourceCwd,
       'worktree', 'add', '-b', expectedBranch, expectedPath, baseCommit,
@@ -97,6 +157,67 @@ export class AgentWorktree {
       await this.rollbackIncompletePrepare(repository.sourceCwd, expectedPath, expectedBranch);
       throw error;
     }
+  }
+
+  /**
+   * Recovers only an already-created deterministic Agent worktree. This method
+   * never creates the managed root, a worktree, or a branch.
+   */
+  async recover(input: AgentWorktreeRecoveryInput): Promise<AgentWorktreeRecoveryResult> {
+    const repository = await resolveRepository(input.intent.sourceCwd);
+    await this.assertRecoveryIntent(input.agentId, input.intent, repository);
+    if (input.previous) {
+      await this.assertPreviousRecoveryMetadata(input.previous, input.intent, repository);
+    }
+
+    if (input.previous?.removedAt === null && await pathExists(input.intent.path)) {
+      const prepared = await this.resumePrepared(
+        input.previous,
+        repository,
+        input.intent.path,
+        input.intent.branch,
+      );
+      await assertBranchCheckoutHead(repository.sourceCwd, prepared.cwd, input.intent.branch);
+      return Object.freeze({ status: 'recovered', prepared });
+    }
+    return this.inspectRecoveryIntent(repository, input.intent);
+  }
+
+  /**
+   * Removes only a pathless deterministic recovery residue. A changed branch
+   * is retained and reported as an error so startup can preserve the durable
+   * intent and retry after explicit resolution.
+   */
+  async cleanupResidual(
+    input: AgentWorktreeRecoveryInput,
+  ): Promise<AgentWorktreeRecoveryResult> {
+    const repository = await resolveRepository(input.intent.sourceCwd);
+    await this.assertRecoveryIntent(input.agentId, input.intent, repository);
+    if (input.previous) {
+      await this.assertPreviousRecoveryMetadata(input.previous, input.intent, repository);
+    }
+    let current = await this.inspectRecoveryIntent(repository, input.intent);
+    if (current.status !== 'residual') return current;
+    if (current.branchHead !== null && current.branchHead !== current.intent.baseCommit) {
+      throw new Error(`Residual Agent worktree branch contains changes: ${current.intent.branch}`);
+    }
+
+    if (current.registrationPresent) {
+      await git(['-C', current.intent.sourceCwd, 'worktree', 'prune', '--expire', 'now']);
+      current = await this.inspectRecoveryIntent(repository, current.intent);
+      if (current.status !== 'residual') return current;
+      if (current.registrationPresent) {
+        throw new Error(`Missing Agent worktree remains registered: ${current.intent.path}`);
+      }
+      if (current.branchHead !== null && current.branchHead !== current.intent.baseCommit) {
+        throw new Error(`Residual Agent worktree branch contains changes: ${current.intent.branch}`);
+      }
+    }
+
+    if (current.branchHead !== null) {
+      await git(['-C', current.intent.sourceCwd, 'branch', '-D', current.intent.branch]);
+    }
+    return this.inspectRecoveryIntent(repository, current.intent);
   }
 
   async settle(
@@ -211,6 +332,30 @@ export class AgentWorktree {
     return { cwd: worktreePath, worktree: metadata };
   }
 
+  private async assertRemovedResumeMetadata(
+    metadata: AgentWorktreeMetadata,
+    repository: ResolvedRepository,
+    expectedPath: string,
+    expectedBranch: string,
+  ): Promise<void> {
+    if (!metadata.managed) throw new Error('Agent may resume only a host-managed worktree');
+    if (metadata.removedAt === null) throw new Error(`Agent worktree is still active: ${metadata.path}`);
+    if (await directoryRealpath(metadata.sourceCwd) !== repository.sourceCwd) {
+      throw new Error(`Agent worktree source changed before resume: ${metadata.path}`);
+    }
+    if (resolve(metadata.path) !== expectedPath || metadata.branch !== expectedBranch) {
+      throw new Error(`Managed Agent worktree identity changed before resume: ${metadata.path}`);
+    }
+    const commonDir = await directoryRealpath(await gitOutput([
+      '-C', repository.sourceCwd, 'rev-parse', '--path-format=absolute', '--git-common-dir',
+    ]));
+    if (commonDir !== metadata.gitCommonDir) {
+      throw new Error(`Managed Agent worktree Git metadata changed before resume: ${metadata.path}`);
+    }
+    assertContained(join(commonDir, 'worktrees'), resolve(metadata.gitWorktreeDir));
+    await gitOutput(['-C', repository.sourceCwd, 'cat-file', '-e', `${metadata.baseCommit}^{commit}`]);
+  }
+
   private async assertCleanupIdentity(
     metadata: AgentWorktreeMetadata,
     repository: ResolvedRepository,
@@ -244,14 +389,14 @@ export class AgentWorktree {
     repository: ResolvedRepository,
     expectedPath: string,
     expectedBranch: string,
+    baseCommit: string,
   ): Promise<PreparedAgentWorktree> {
     const worktreePath = await directoryRealpath(expectedPath);
     await assertRegisteredWorktree(repository.sourceCwd, worktreePath, expectedBranch);
-    // The recovered worktree may have changed after the host stopped. Use the
-    // checkout that requested it as the conservative baseline; adopting the
-    // worktree's current HEAD would misclassify an unknown commit as clean and
-    // allow settlement to delete its only branch reference.
-    const baseCommit = await gitOutput(['-C', repository.checkoutRoot, 'rev-parse', 'HEAD']);
+    await assertBranchCheckoutHead(repository.sourceCwd, worktreePath, expectedBranch);
+    // Never adopt the recovered worktree's current HEAD: it may contain the only
+    // reference to changes made after the host stopped. The durable intent is
+    // the authority even if the source checkout has advanced since the crash.
     const metadata = await this.metadataFor(
       repository,
       worktreePath,
@@ -259,6 +404,103 @@ export class AgentWorktree {
       baseCommit,
     );
     return { cwd: worktreePath, worktree: metadata };
+  }
+
+  private async resolveRecoveryIntent(
+    input: AgentWorktreeIntentInput,
+    repository: ResolvedRepository,
+  ): Promise<AgentWorktreeRecoveryIntent> {
+    const managedRoot = await prospectiveDirectoryRealpath(this.managedRoot);
+    const identity = worktreeIdentity(input.agentId);
+    const path = resolve(managedRoot, identity);
+    assertContained(managedRoot, path);
+    const branch = `tenon-agent-${identity}`;
+    const baseCommit = input.previous?.baseCommit
+      ?? await gitOutput(['-C', repository.checkoutRoot, 'rev-parse', 'HEAD']);
+    const intent = Object.freeze({
+      sourceCwd: repository.sourceCwd,
+      path,
+      branch,
+      baseCommit,
+      gitCommonDir: repository.gitCommonDir,
+    });
+    if (input.previous) {
+      await this.assertPreviousRecoveryMetadata(input.previous, intent, repository);
+    }
+    await gitOutput(['-C', repository.sourceCwd, 'cat-file', '-e', `${baseCommit}^{commit}`]);
+    return intent;
+  }
+
+  private async assertPreviousRecoveryMetadata(
+    previous: AgentWorktreeMetadata,
+    intent: AgentWorktreeRecoveryIntent,
+    repository: ResolvedRepository,
+  ): Promise<void> {
+    if (!previous.managed) throw new Error('Agent may recover only a host-managed worktree');
+    if (await directoryRealpath(previous.sourceCwd) !== repository.sourceCwd) {
+      throw new Error(`Agent worktree source changed before recovery: ${previous.path}`);
+    }
+    if (
+      resolve(previous.path) !== intent.path
+      || previous.branch !== intent.branch
+      || previous.baseCommit !== intent.baseCommit
+    ) {
+      throw new Error(`Managed Agent worktree identity changed before recovery: ${previous.path}`);
+    }
+    if (previous.gitCommonDir !== repository.gitCommonDir) {
+      throw new Error(`Managed Agent worktree Git metadata changed before recovery: ${previous.path}`);
+    }
+    assertContained(join(repository.gitCommonDir, 'worktrees'), resolve(previous.gitWorktreeDir));
+  }
+
+  private async assertRecoveryIntent(
+    agentId: string,
+    intent: AgentWorktreeRecoveryIntent,
+    repository: ResolvedRepository,
+  ): Promise<void> {
+    const managedRoot = await prospectiveDirectoryRealpath(this.managedRoot);
+    const identity = worktreeIdentity(agentId);
+    const expectedPath = resolve(managedRoot, identity);
+    assertContained(managedRoot, expectedPath);
+    if (
+      repository.sourceCwd !== intent.sourceCwd
+      || repository.gitCommonDir !== intent.gitCommonDir
+      || intent.path !== expectedPath
+      || intent.branch !== `tenon-agent-${identity}`
+    ) {
+      throw new Error(`Managed Agent worktree intent is invalid: ${intent.path}`);
+    }
+    await gitOutput(['-C', repository.sourceCwd, 'cat-file', '-e', `${intent.baseCommit}^{commit}`]);
+  }
+
+  private async inspectRecoveryIntent(
+    repository: ResolvedRepository,
+    intent: AgentWorktreeRecoveryIntent,
+  ): Promise<AgentWorktreeRecoveryResult> {
+    if (await pathExists(intent.path)) {
+      const prepared = await this.recoverUnrecorded(
+        repository,
+        intent.path,
+        intent.branch,
+        intent.baseCommit,
+      );
+      return Object.freeze({ status: 'recovered', prepared });
+    }
+
+    const registrationPresent = (await registeredWorktreePaths(intent.sourceCwd)).has(intent.path);
+    if (registrationPresent) {
+      await assertRegisteredWorktree(intent.sourceCwd, intent.path, intent.branch);
+    }
+    const branchHead = await localBranchHead(intent.sourceCwd, intent.branch);
+    if (!registrationPresent && branchHead === null) {
+      return Object.freeze({ status: 'absent', intent });
+    }
+    return Object.freeze({
+      status: 'residual',
+      intent,
+      registrationPresent,
+      branchHead,
+    });
   }
 
   private async metadataFor(
@@ -291,6 +533,7 @@ export class AgentWorktree {
 interface ResolvedRepository {
   readonly checkoutRoot: string;
   readonly sourceCwd: string;
+  readonly gitCommonDir: string;
 }
 
 async function resolveRepository(cwd: string): Promise<ResolvedRepository> {
@@ -302,7 +545,7 @@ async function resolveRepository(cwd: string): Promise<ResolvedRepository> {
     '-C', checkoutRoot, 'rev-parse', '--path-format=absolute', '--git-common-dir',
   ]));
   const sourceCwd = await directoryRealpath(dirname(gitCommonDir));
-  return { checkoutRoot, sourceCwd };
+  return { checkoutRoot, sourceCwd, gitCommonDir };
 }
 
 function worktreeIdentity(agentId: string): string {
@@ -316,12 +559,38 @@ async function pathExists(path: string): Promise<boolean> {
   });
 }
 
+async function prospectiveDirectoryRealpath(path: string): Promise<string> {
+  let existing = resolve(path);
+  const missingSegments: string[] = [];
+  while (!await pathExists(existing)) {
+    const parent = dirname(existing);
+    if (parent === existing) throw new Error(`Cannot resolve Agent worktree root: ${path}`);
+    missingSegments.unshift(basename(existing));
+    existing = parent;
+  }
+  return resolve(await directoryRealpath(existing), ...missingSegments);
+}
+
 async function localBranchHead(sourceCwd: string, branch: string): Promise<string | null> {
   const ref = `refs/heads/${branch}`;
   const refs = await gitOutput([
     '-C', sourceCwd, 'for-each-ref', '--format=%(objectname)', ref,
   ]);
   return refs.length === 0 ? null : refs.split('\n')[0] ?? null;
+}
+
+async function assertBranchCheckoutHead(
+  sourceCwd: string,
+  worktreePath: string,
+  branch: string,
+): Promise<void> {
+  const [branchHead, checkoutHead] = await Promise.all([
+    localBranchHead(sourceCwd, branch),
+    gitOutput(['-C', worktreePath, 'rev-parse', 'HEAD']),
+  ]);
+  if (branchHead === null || branchHead !== checkoutHead) {
+    throw new Error(`Managed Agent worktree branch changed before recovery: ${branch}`);
+  }
 }
 
 async function registeredWorktreePaths(sourceCwd: string): Promise<ReadonlySet<string>> {

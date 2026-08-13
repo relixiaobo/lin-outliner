@@ -550,7 +550,16 @@ export async function resolvePreloadedSkillInvocations(
   runtime: AgentSkillRuntime,
   names: readonly string[],
   invokedAt: number,
+  skillToolAvailable = true,
 ): Promise<PreloadedSkillResolution> {
+  if (!skillToolAvailable) {
+    return {
+      invocations: [],
+      diagnostics: names.length === 0
+        ? []
+        : ['Role-preloaded Skills were skipped because the skill tool is unavailable.'],
+    };
+  }
   const invocations: SkillInvocationContextPayload[] = [];
   const diagnostics: string[] = [];
   for (const requestedName of names) {

@@ -68,13 +68,16 @@ describe('unified task_stop dispatcher', () => {
     const result = await executeTaskStop(tools, { task_id: shellId });
     expect(calls).toEqual([shellId]);
     expect(result.details).toMatchObject({
-      message: expect.stringContaining(`Successfully stopped task: ${shellId}`),
-      task_id: shellId,
-      task_type: 'bash',
-      command: 'sleep 30',
+      ok: true,
+      tool: 'task_stop',
+      data: {
+        message: expect.stringContaining(`Successfully stopped task: ${shellId}`),
+        task_id: shellId,
+        task_type: 'bash',
+        command: 'sleep 30',
+      },
     });
-    expect(result.details).not.toHaveProperty('status');
-    expect(result.details).not.toHaveProperty('outputPath');
+    expect(result.details).toHaveProperty('capabilityAudit');
   });
 
   test('uses shell_id only when task_id is absent', async () => {
@@ -87,7 +90,21 @@ describe('unified task_stop dispatcher', () => {
 
     const result = await executeTaskStop(tools, { shell_id: shellId });
     expect(calls).toEqual([shellId]);
-    expect(result.details).toMatchObject({ task_id: shellId, task_type: 'bash' });
+    expect(result.details).toMatchObject({
+      ok: true,
+      data: { task_id: shellId, task_type: 'bash' },
+    });
+  });
+
+  test('uses a non-empty trimmed ID and does not let an empty task_id mask shell_id', async () => {
+    const shellId = await startBackgroundShell();
+    const tools = await runtimeTools(async () => null);
+
+    const result = await executeTaskStop(tools, { task_id: '   ', shell_id: `  ${shellId}  ` });
+    expect(result.details).toMatchObject({
+      ok: true,
+      data: { task_id: shellId, task_type: 'bash' },
+    });
   });
 
   test('preserves exact validation, missing-task, and terminal-state errors', async () => {
@@ -97,9 +114,29 @@ describe('unified task_stop dispatcher', () => {
       .rejects.toThrow('No task found with ID: missing-task');
 
     const shellId = await startBackgroundShell();
-    await stopBackgroundShellTask(shellId);
+    await stopBackgroundShellTask(shellId, CONTEXT.thread.id);
+    const terminal = await executeTaskStop(tools, { task_id: shellId });
+    expect(terminal.details).toMatchObject({
+      ok: false,
+      error: {
+        code: 'task_not_running',
+        recoverable: true,
+      },
+    });
+    expect(terminal.content).toEqual([expect.objectContaining({
+      type: 'text',
+      text: expect.stringContaining('task_not_running'),
+    })]);
+  });
+
+  test('does not expose or stop a background shell owned by another Thread', async () => {
+    const shellId = await startBackgroundShell('00000000-0000-7000-8000-000000000099');
+    const tools = await runtimeTools(async () => null);
+
     await expect(executeTaskStop(tools, { task_id: shellId }))
-      .rejects.toThrow(`Task ${shellId} is not running (status: stopped)`);
+      .rejects.toThrow(`No task found with ID: ${shellId}`);
+    expect(await stopBackgroundShellTask(shellId, '00000000-0000-7000-8000-000000000099'))
+      .toMatchObject({ task_id: shellId, status: 'stopped' });
   });
 
   test('does not fall through to shell when an Agent finishes during stop', async () => {
@@ -165,8 +202,8 @@ async function executeTaskStop(tools: readonly AgentTool[], params: unknown) {
   return tool.execute('task-stop-call', params as never);
 }
 
-async function startBackgroundShell(): Promise<string> {
-  const bash = createLocalTools({ localRoot: process.cwd() })
+async function startBackgroundShell(threadId = CONTEXT.thread.id): Promise<string> {
+  const bash = createLocalTools({ localRoot: process.cwd(), threadId })
     .find((tool) => tool.name === 'bash');
   if (!bash) throw new Error('bash was not exposed');
   const result = await bash.execute('bash-call', {

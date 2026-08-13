@@ -2726,6 +2726,11 @@ test.describe('canonical agent Thread surface', () => {
 
     // Stop one child from its row; the other keeps running.
     await parentTurn.getByRole('button', { name: 'Stop research' }).click();
+    const interrupts = (await commandCalls(page)).filter((call) => call.cmd === 'turn/interrupt');
+    expect(interrupts.at(-1)?.args).toEqual({
+      threadId: fixture.children[0]!.id,
+      turnId: fixture.children[0]!.turnId,
+    });
     await expect(parentTurn.locator('.thread-delegation-row.thread-subagent-interrupted')).toHaveCount(1);
     await expect(parentTurn.getByRole('button', { name: 'Stop audit' })).toBeVisible();
     await expect(parentTurn.getByRole('button', { name: 'Stop research' })).toHaveCount(0);

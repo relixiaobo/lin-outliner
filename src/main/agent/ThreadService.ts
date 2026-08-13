@@ -71,6 +71,7 @@ type ModelToolIdentity,
 type UpdatePlanToolInput
 } from '../../core/agent/tools';
 import type { DocumentProjection } from '../../core/types';
+import type { ErrorReport } from '../../core/errorObservability';
 import {
 BUILT_IN_AGENT_ROLE_DEFINITIONS,
 defaultEffectiveThreadConfiguration,
@@ -99,7 +100,14 @@ import {
   type SubagentExecutionRecord,
   type SubagentRecordedToolPolicy,
 } from './persistence/SubagentExecutionLedger';
-import type { AgentWorktreeMetadata,SettleAgentWorktreeOptions } from './worktree/AgentWorktree';
+import type {
+AgentWorktreeMetadata,
+AgentWorktreeIntentInput,
+AgentWorktreeRecoveryInput,
+AgentWorktreeRecoveryIntent,
+AgentWorktreeRecoveryResult,
+SettleAgentWorktreeOptions
+} from './worktree/AgentWorktree';
 import { ThreadHistoryProjectionStore } from './persistence/ThreadHistoryProjectionStore';
 import {
 ThreadMetadataStore
@@ -125,6 +133,8 @@ import { ThreadTranscriptIndex } from './thread/ThreadTranscriptIndex';
 import { rootTranscriptSubject,ThreadTranscriptWriter } from './thread/ThreadTranscriptWriter';
 import type { TranscriptSubject } from './thread/TranscriptRenderer';
 import { TurnLifecycle } from './thread/TurnLifecycle';
+
+const THREAD_SERVICE_CLOSE_DRAIN_TIMEOUT_MS = 2_000;
 
 /** What the drift attribution needs of a journal entry, and nothing more. */
 export interface DocumentOperationRecord {
@@ -207,9 +217,12 @@ export interface ThreadServiceOptions {
   readonly resolveAgentStartupContext?: (
     parent: Pick<Thread, 'id' | 'sessionId' | 'cwd'>,
   ) => AgentStartupContextSnapshot | null | Promise<AgentStartupContextSnapshot | null>;
+  readonly planAgentWorktree?: (
+    input: AgentWorktreeIntentInput,
+  ) => Promise<AgentWorktreeRecoveryIntent>;
   readonly prepareAgentWorktree?: (input: {
     readonly agentId: ThreadId;
-    readonly cwd: string;
+    readonly intent: AgentWorktreeRecoveryIntent;
     readonly worktree: AgentWorktreeMetadata | null;
   }) => Promise<{ readonly cwd: string; readonly worktree: AgentWorktreeMetadata }>;
   readonly settleAgentWorktree?: (
@@ -219,6 +232,13 @@ export interface ThreadServiceOptions {
     readonly worktree: AgentWorktreeMetadata;
     readonly retained: boolean;
   }>;
+  readonly recoverAgentWorktree?: (
+    input: AgentWorktreeRecoveryInput,
+  ) => Promise<AgentWorktreeRecoveryResult>;
+  readonly cleanupResidualAgentWorktree?: (
+    input: AgentWorktreeRecoveryInput,
+  ) => Promise<AgentWorktreeRecoveryResult>;
+  readonly reportError?: (report: ErrorReport) => void | Promise<void>;
   readonly normalizeOutputImage?: OutputImageObservationNormalizer;
   readonly beforeInitialTurnAdmission?: () => void | Promise<void>;
   readonly now?: () => number;
@@ -317,13 +337,15 @@ export interface SpawnChildThreadInput {
   readonly additionalContext?: AdditionalContext;
   readonly maxTotalTokens?: number;
   /** Selects the parent-facing result channel while retaining one child-Thread mechanism. */
-  readonly childKind?: 'collaboration' | 'isolatedSkill';
-  /** Host-owned execution record inserted before the child Turn can settle. */
-  readonly execution?: {
+  readonly childKind: 'collaboration' | 'isolatedSkill';
+  /** Host-owned execution policy prepared before any child state is written. */
+  readonly execution: {
     readonly description: string;
     readonly agentType: string;
     readonly runMode: 'foreground' | 'background';
     readonly worktree: AgentWorktreeMetadata | null;
+    /** Requests a new managed worktree before the child Thread is admitted. */
+    readonly initialWorktreeCwd: string | null;
     readonly toolPolicy: SubagentRecordedToolPolicy;
     readonly startupContext: AgentStartupContextSnapshot | null;
   };
@@ -368,6 +390,12 @@ export class ThreadService implements ThreadServiceExtensionHost {
   private readonly goals: GoalExtension;
   private readonly goalStore: GoalStore;
   private readonly subagentBudgets: SubagentRequestLedger;
+  private readonly subagentExecutions: SubagentExecutionLedger;
+  private readonly recoverAgentWorktree: ThreadServiceOptions['recoverAgentWorktree'];
+  private readonly cleanupResidualAgentWorktree: ThreadServiceOptions['cleanupResidualAgentWorktree'];
+  private readonly settleAgentWorktree: ThreadServiceOptions['settleAgentWorktree'];
+  private readonly reportError: (report: ErrorReport) => Promise<void>;
+  private readonly startupQuarantinedThreadIds = new Set<ThreadId>();
   private readonly resourceOps: ThreadResourceOps;
   private readonly catalogOps: ThreadCatalogOps;
   private readonly collaboration: SubagentCollaboration;
@@ -446,6 +474,11 @@ export class ThreadService implements ThreadServiceExtensionHost {
     this.now = options.now ?? Date.now;
     this.goalStore = options.stores.goals;
     this.subagentBudgets = options.stores.subagentBudgets;
+    this.subagentExecutions = options.stores.subagentExecutions;
+    this.recoverAgentWorktree = options.recoverAgentWorktree;
+    this.cleanupResidualAgentWorktree = options.cleanupResidualAgentWorktree;
+    this.settleAgentWorktree = options.settleAgentWorktree;
+    this.reportError = async (report) => { await options.reportError?.(report); };
     this.resourceOps = new ThreadResourceOps(
       this.core,
       options.attachmentScratchRoot,
@@ -485,9 +518,12 @@ export class ThreadService implements ThreadServiceExtensionHost {
         deleteThread: (threadId) => this.catalogOps.deleteThread(threadId),
         setInitialPreview: (...args) => this.catalogOps.setInitialPreview(...args),
         scheduleAutomaticThreadName: (...args) => this.catalogOps.scheduleAutomaticThreadName(...args),
+        hasPendingDelegatedThreadStart: (threadId) => this.catalogOps.hasPendingDelegatedThreadStart(threadId),
+        publishDelegatedThreadStart: (threadId) => this.catalogOps.publishDelegatedThreadStart(threadId),
       },
       {
         pendingActivities: (threadId) => this.collaboration.pendingActivities(threadId),
+        canSpawnAgent: (threadId, configuration) => this.collaboration.canSpawnAgent(threadId, configuration),
         materializePendingActivityItems: (...args) => this.collaboration.materializePendingActivityItems(...args),
         consumePendingSubagentActivities: (...args) => this.collaboration.consumePendingSubagentActivities(...args),
         hasPendingActivities: (threadId) => this.collaboration.hasPendingActivities(threadId),
@@ -498,6 +534,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
         prepareChildTerminalSettlement: (...args) => this.collaboration.prepareChildTerminalSettlement(...args),
         threadBecameIdle: (threadId) => this.collaboration.threadBecameIdle(threadId),
         startupContextForTurn: (threadId, turnId) => options.stores.subagentExecutions.startupContextForTurn(threadId, turnId),
+        commitInitialAdmission: (threadId, turnId) => this.collaboration.commitInitialAdmission(threadId, turnId),
       },
       { enqueueTurn: (...args) => this.transcripts.enqueueTurn(...args) },
       { noticeFor: (threadId, projection) => this.documentDriftContext(threadId, projection) },
@@ -532,10 +569,12 @@ export class ThreadService implements ThreadServiceExtensionHost {
         maxConcurrent: 20,
       },
       this.resolveAgentStartupContext,
+      options.planAgentWorktree,
       options.prepareAgentWorktree,
       options.settleAgentWorktree,
       this.now,
       applyToolCeiling,
+      (threadId) => this.assertStartupThreadAvailable(threadId),
       (message) => new ThreadBusyError(message),
       this.transcripts,
     );
@@ -547,12 +586,11 @@ export class ThreadService implements ThreadServiceExtensionHost {
       options.resolveConfiguration ?? defaultConfiguration,
       options.resolveRendererStartDefaults ?? missingRendererStartDefaults,
       options.validateRendererConfiguration ?? (() => undefined),
-      resolveRole,
       this.now,
       () => this.closing,
-      applyToolCeiling,
       this.turnLifecycle,
       this.collaboration,
+      (threadId) => options.stores.subagentExecutions.hasUndeliveredWork(threadId),
       {
         delete: (threadId) => this.transcripts.delete(threadId),
         forgetExclusions: (sessionIds) => this.transcriptExclusions.forget(sessionIds),
@@ -562,7 +600,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       },
       (threadId) => this.goals.clear(threadId),
       (threadId) => { this.subagentBudgets.clearThread(threadId); },
-      (threadIds) => { options.stores.subagentExecutions.deleteAgents(threadIds); },
+      (threadIds) => { options.stores.subagentExecutions.retireAgents(threadIds); },
       (sessionIds) => { options.stores.agentStartupContexts.delete(sessionIds); },
       async (thread) => { await this.resolveAgentStartupContext(thread); },
       (message) => new ThreadBusyError(message),
@@ -613,6 +651,9 @@ export class ThreadService implements ThreadServiceExtensionHost {
     await this.core.payloads.initialize();
     // Before any Turn can complete: the subject resolver reads this synchronously.
     await this.transcriptExclusions.load();
+    await this.recoverInitialSubagentAdmissions();
+    await this.recoverOrphanSubagentExecutions();
+    await this.removeDelegatedThreadsWithoutExecutions();
     const knownThreadIds: ThreadId[] = [];
     const reconciledThreadIds: ThreadId[] = [];
     const resumableThreadIds: ThreadId[] = [];
@@ -622,6 +663,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
         const page = this.core.metadata.list({ archived, cursor, limit: 100 });
         for (const thread of page.data) {
           knownThreadIds.push(thread.id);
+          if (this.startupQuarantinedThreadIds.has(thread.id)) continue;
           try {
             await this.catalogOps.reconcileThread(thread.id);
             reconciledThreadIds.push(thread.id);
@@ -634,6 +676,13 @@ export class ThreadService implements ThreadServiceExtensionHost {
       } while (cursor);
     }
     const knownThreads = new Set(knownThreadIds);
+    try {
+      this.subagentExecutions.sweepOrphanEnvelopes(knownThreads);
+    } catch (error) {
+      // Collaboration rows are secondary to the Thread catalog. Tombstoned
+      // identities stay inert in this process and the next launch retries.
+      console.warn('[agent] Agent ledger orphan cleanup deferred during startup', error);
+    }
     await Promise.all([
       // Transcript reclamation is the same kind of work as payload pruning, so it
       // joins the same startup batch rather than adding a serial step.
@@ -647,7 +696,8 @@ export class ThreadService implements ThreadServiceExtensionHost {
           // failed or was interrupted mid-exclusion is still on disk, and
           // nothing else would ever come back for it — the Thread is excluded,
           // so it never rewrites the file that would notice.
-          knownThreads.has(threadId) && !this.isSessionExcluded(threadId)
+          (knownThreads.has(threadId) || this.subagentExecutions.read(threadId) !== null)
+          && !this.isSessionExcluded(threadId)
         )))
         // Rebuild the index once the artifact set has settled: it is a
         // projection of that set, so recomputing it earlier would only describe
@@ -674,21 +724,429 @@ export class ThreadService implements ThreadServiceExtensionHost {
       }
     }
   }
-  async close(): Promise<void> {
+
+  private async recoverInitialSubagentAdmissions(): Promise<void> {
+    for (const snapshot of this.subagentExecutions.pendingInitialAdmissions()) {
+      const execution = this.subagentExecutions.read(snapshot.agentId);
+      if (!execution || execution.initialAdmissionState !== 'pending') continue;
+      try {
+        const rollout = await this.core.rollout.read(execution.agentId);
+        const committed = rollout.some((entry) => (
+          entry.event.type === 'turn/started'
+          && entry.event.threadId === execution.agentId
+          && entry.event.turnId === execution.currentTurnId
+          && entry.event.turn.id === execution.currentTurnId
+        ));
+        if (committed) {
+          const completed = this.subagentExecutions.completeInitialAdmissionIfCurrent(
+            execution.agentId,
+            execution.currentTurnId,
+            this.now(),
+          );
+          if (!completed && this.subagentExecutions.read(execution.agentId)?.initialAdmissionState !== 'committed') {
+            throw new Error(`Agent initial admission recovery raced for ${execution.agentId}`);
+          }
+          continue;
+        }
+        if (!await this.removeStartupSubtree(execution.agentId)) {
+          this.quarantineStartupSubtree(execution.agentId);
+          await this.reportStartupQuarantine({
+            threadId: execution.agentId,
+            turnId: execution.currentTurnId,
+          }, 'worktree-retained');
+        }
+      } catch (error) {
+        this.quarantineStartupSubtree(execution.agentId);
+        console.warn(`[agent] Initial Agent admission recovery deferred for ${execution.agentId}`);
+        await this.reportStartupQuarantine({
+          threadId: execution.agentId,
+          turnId: execution.currentTurnId,
+        }, 'cleanup-failed');
+      }
+    }
+  }
+
+  private async recoverOrphanSubagentExecutions(): Promise<void> {
+    const knownThreads = new Set(this.persistentThreads().map((thread) => thread.id));
+    for (const snapshot of this.subagentExecutions.orphanExecutions(knownThreads)) {
+      const execution = this.subagentExecutions.read(snapshot.agentId);
+      if (!execution) continue;
+      // A failed pending-admission recovery already quarantined this identity
+      // for this launch. Do not immediately retry it through the orphan pass:
+      // the ledger is the next-startup retry authority, and a second attempt in
+      // the same initialization would make quarantine timing depend on which
+      // cleanup stage happened to fail first.
+      if (this.startupQuarantinedThreadIds.has(execution.agentId)) continue;
+      try {
+        const thread = this.core.metadata.read(execution.agentId)?.thread ?? null;
+        if (thread) {
+          if (!await this.removeStartupSubtree(thread.id)) {
+            this.quarantineStartupSubtree(thread.id);
+            await this.reportStartupQuarantine({
+              threadId: execution.agentId,
+              turnId: execution.currentTurnId,
+            }, 'worktree-retained');
+          }
+          continue;
+        }
+        if (!await this.settleRecordedStartupWorktree(execution)) {
+          this.quarantineStartupSubtree(execution.agentId);
+          await this.reportStartupQuarantine({
+            threadId: execution.agentId,
+            turnId: execution.currentTurnId,
+          }, 'worktree-retained');
+          continue;
+        }
+        await this.removeOrphanStartupArtifacts(execution.agentId);
+      } catch (error) {
+        this.quarantineStartupSubtree(execution.agentId);
+        console.warn(`[agent] Orphan Agent recovery deferred for ${execution.agentId}`);
+        await this.reportStartupQuarantine({
+          threadId: execution.agentId,
+          turnId: execution.currentTurnId,
+        }, 'cleanup-failed');
+      }
+    }
+  }
+
+  private async removeDelegatedThreadsWithoutExecutions(): Promise<void> {
+    for (const thread of this.persistentThreads()) {
+      if (
+        thread.parentThreadId === null
+        || this.startupQuarantinedThreadIds.has(thread.id)
+        || !this.core.metadata.read(thread.id)
+        || this.subagentExecutions.read(thread.id)
+      ) continue;
+      try {
+        if (!await this.removeStartupSubtree(thread.id)) {
+          this.quarantineStartupSubtree(thread.id);
+          await this.reportStartupQuarantine({ threadId: thread.id }, 'worktree-retained');
+        }
+      } catch (error) {
+        this.quarantineStartupSubtree(thread.id);
+        console.warn(`[agent] Delegated Thread without execution quarantined: ${thread.id}`);
+        await this.reportStartupQuarantine({ threadId: thread.id }, 'cleanup-failed');
+      }
+    }
+  }
+
+  private async removeStartupSubtree(threadId: ThreadId): Promise<boolean> {
+    const root = this.core.metadata.read(threadId)?.thread ?? null;
+    if (!root) {
+      const execution = this.subagentExecutions.read(threadId);
+      if (!execution || !await this.settleRecordedStartupWorktree(execution)) return false;
+      await this.removeOrphanStartupArtifacts(threadId);
+      return true;
+    }
+    const subtreeIds = [
+      threadId,
+      ...this.core.metadata.childEdges(threadId, true).map((edge) => edge.childThreadId),
+    ];
+    for (const descendantId of [...subtreeIds].reverse()) {
+      const execution = this.subagentExecutions.read(descendantId);
+      if (execution) {
+        if (!await this.settleRecordedStartupWorktree(execution)) return false;
+        continue;
+      }
+      const descendant = this.core.metadata.read(descendantId)?.thread;
+      if (!descendant?.parentThreadId) continue;
+      const parent = this.core.metadata.read(descendant.parentThreadId)?.thread;
+      if (parent && !this.unrecordedStartupWorktreeIsAbsent(descendant.cwd, parent.cwd)) return false;
+    }
+    try {
+      // Recovery is deliberately separate from the user deletion lifecycle:
+      // incomplete admissions must not run extension hooks or change the
+      // surviving conversation's transcript-exclusion decision.
+      for (const descendantId of [...subtreeIds].reverse()) {
+        await this.transcripts.deleteForRecovery(descendantId);
+        this.goalStore.clear(descendantId);
+        this.core.history.deleteThread(descendantId);
+        await this.core.rollout.delete(descendantId);
+        await this.core.payloads.deleteThread(descendantId);
+      }
+      this.subagentBudgets.clearThreadsForRecovery(subtreeIds);
+      this.core.metadata.delete(threadId);
+      this.collaboration.clearThreadCoordinationState(subtreeIds);
+      this.beliefs.forget(subtreeIds);
+      this.core.clearThreadAdmissionBarriers(subtreeIds);
+      // The execution rows are the cross-store retry authority and therefore
+      // the final durable state removed by startup recovery.
+      this.subagentExecutions.deleteAgents(subtreeIds);
+      return true;
+    } catch (error) {
+      for (const descendantId of subtreeIds) this.startupQuarantinedThreadIds.add(descendantId);
+      throw error;
+    }
+  }
+
+  private async settleRecordedStartupWorktree(executionInput: SubagentExecutionRecord): Promise<boolean> {
+    let execution = this.subagentExecutions.read(executionInput.agentId) ?? executionInput;
+    if (execution.worktree?.removedAt !== null && execution.worktree !== null) return true;
+    if (!execution.worktree && execution.initialWorktreeIntent !== null) {
+      if (!this.recoverAgentWorktree) return false;
+      const recoveryInput = {
+        agentId: execution.agentId,
+        intent: execution.initialWorktreeIntent,
+        previous: null,
+      } satisfies AgentWorktreeRecoveryInput;
+      let recovered = await this.recoverAgentWorktree(recoveryInput);
+      if (recovered.status === 'residual') {
+        if (!this.cleanupResidualAgentWorktree) return false;
+        recovered = await this.cleanupResidualAgentWorktree(recoveryInput);
+      }
+      if (recovered.status === 'residual') return false;
+      if (recovered.status === 'absent') {
+        this.subagentExecutions.clearInitialWorktreeIntentIfPending({
+          agentId: execution.agentId,
+          turnId: execution.currentTurnId,
+          updatedAt: this.now(),
+        });
+        return true;
+      }
+      const recorded = this.subagentExecutions.recordInitialWorktreeIfPending({
+        agentId: execution.agentId,
+        turnId: execution.currentTurnId,
+        worktree: recovered.prepared.worktree,
+        updatedAt: this.now(),
+      });
+      if (!recorded) throw new Error(`Recovered Agent worktree admission raced for ${execution.agentId}`);
+      execution = recorded;
+    }
+    if (!execution.worktree) return true;
+    if (this.recoverAgentWorktree) {
+      const recoveryInput = {
+        agentId: execution.agentId,
+        intent: worktreeRecoveryIntent(execution.worktree),
+        previous: execution.worktree,
+      } satisfies AgentWorktreeRecoveryInput;
+      let recovered = await this.recoverAgentWorktree(recoveryInput);
+      if (recovered.status === 'residual') {
+        if (!this.cleanupResidualAgentWorktree) return false;
+        await this.beginStartupWorktreeCleanup(execution, execution.worktree);
+        recovered = await this.cleanupResidualAgentWorktree(recoveryInput);
+      }
+      if (recovered.status === 'residual') return false;
+      if (recovered.status === 'absent') {
+        await this.beginStartupWorktreeCleanup(execution, execution.worktree);
+        this.completeStartupWorktreeCleanup(
+          execution,
+          execution.worktree,
+          Object.freeze({ ...execution.worktree, removedAt: this.now() }),
+        );
+        return true;
+      }
+      execution = this.subagentExecutions.setWorktreeIfCurrent({
+        agentId: execution.agentId,
+        generation: execution.generation,
+        turnId: execution.currentTurnId,
+        worktree: recovered.prepared.worktree,
+        updatedAt: this.now(),
+      }) ?? execution;
+    }
+    if (!this.settleAgentWorktree) return false;
+    const worktree = execution.worktree;
+    if (!worktree) return true;
+    const settled = await this.settleAgentWorktree(worktree, {
+      cleanupStarted: execution.worktreeCleanupStartedAt !== null,
+      beforeCleanRemoval: async () => {
+        const started = this.subagentExecutions.beginWorktreeCleanupIfCurrent({
+          agentId: execution.agentId,
+          generation: execution.generation,
+          turnId: execution.currentTurnId,
+          worktree,
+          startedAt: this.now(),
+        });
+        if (!started) throw new Error(`Agent worktree cleanup recovery raced for ${execution.agentId}`);
+      },
+    });
+    if (settled.retained) {
+      if (execution.worktreeCleanupStartedAt !== null) {
+        this.subagentExecutions.cancelWorktreeCleanupIfCurrent({
+          agentId: execution.agentId,
+          generation: execution.generation,
+          turnId: execution.currentTurnId,
+          worktree: settled.worktree,
+          updatedAt: this.now(),
+        });
+      }
+      return false;
+    }
+    const current = this.subagentExecutions.read(execution.agentId);
+    if (!current) return true;
+    const updated = current.worktreeCleanupStartedAt !== null
+      ? this.subagentExecutions.completeWorktreeCleanupIfCurrent({
+        agentId: current.agentId,
+        generation: current.generation,
+        turnId: current.currentTurnId,
+        expectedWorktree: worktree,
+        worktree: settled.worktree,
+        updatedAt: this.now(),
+      })
+      : this.subagentExecutions.setWorktreeIfCurrent({
+        agentId: current.agentId,
+        generation: current.generation,
+        turnId: current.currentTurnId,
+        worktree: settled.worktree,
+        updatedAt: this.now(),
+      });
+    if (!updated) throw new Error(`Agent worktree cleanup completion raced for ${execution.agentId}`);
+    return true;
+  }
+
+  private async beginStartupWorktreeCleanup(
+    execution: SubagentExecutionRecord,
+    worktree: AgentWorktreeMetadata,
+  ): Promise<void> {
+    const current = this.subagentExecutions.read(execution.agentId);
+    if (!current || current.worktreeCleanupStartedAt !== null) return;
+    if (!this.subagentExecutions.beginWorktreeCleanupIfCurrent({
+      agentId: current.agentId,
+      generation: current.generation,
+      turnId: current.currentTurnId,
+      worktree,
+      startedAt: this.now(),
+    })) throw new Error(`Agent worktree cleanup recovery raced for ${execution.agentId}`);
+  }
+
+  private completeStartupWorktreeCleanup(
+    execution: SubagentExecutionRecord,
+    expectedWorktree: AgentWorktreeMetadata,
+    worktree: AgentWorktreeMetadata,
+  ): void {
+    const current = this.subagentExecutions.read(execution.agentId);
+    if (!current) return;
+    const updated = current.worktreeCleanupStartedAt !== null
+      ? this.subagentExecutions.completeWorktreeCleanupIfCurrent({
+        agentId: current.agentId,
+        generation: current.generation,
+        turnId: current.currentTurnId,
+        expectedWorktree,
+        worktree,
+        updatedAt: this.now(),
+      })
+      : this.subagentExecutions.setWorktreeIfCurrent({
+        agentId: current.agentId,
+        generation: current.generation,
+        turnId: current.currentTurnId,
+        worktree,
+        updatedAt: this.now(),
+      });
+    if (!updated) throw new Error(`Agent worktree cleanup completion raced for ${execution.agentId}`);
+  }
+
+  private unrecordedStartupWorktreeIsAbsent(childCwd: string, parentCwd: string): boolean {
+    // Without a persisted recovery intent, deriving the base from the current
+    // checkout could misclassify a crash-era worktree after HEAD advances.
+    // Only equal parent/child cwd proves that this reverse orphan never entered
+    // a separate checkout. Any distinct cwd stays visible and quarantined.
+    return childCwd === parentCwd;
+  }
+
+  private async removeOrphanStartupArtifacts(threadId: ThreadId): Promise<void> {
+    this.goalStore.clear(threadId);
+    this.core.history.deleteThread(threadId);
+    await this.core.rollout.delete(threadId);
+    await this.core.payloads.deleteThread(threadId);
+    await this.transcripts.deleteForRecovery(threadId);
+    this.subagentBudgets.clearThreadsForRecovery([threadId]);
+    this.subagentExecutions.deleteAgentOnly(threadId);
+  }
+
+  private async reportStartupQuarantine(
+    subject: { readonly threadId: ThreadId; readonly turnId?: TurnId },
+    status: 'worktree-retained' | 'cleanup-failed',
+  ): Promise<void> {
+    try {
+      await this.reportError({
+        domain: 'persistence',
+        severity: 'warn',
+        code: 'subagent-initial-admission-quarantined',
+        message: 'Agent admission recovery retained incomplete state for a later retry.',
+        context: {
+          operation: 'recover-initial-subagent-admission',
+          status,
+          threadId: subject.threadId,
+          ...(subject.turnId === undefined ? {} : { turnId: subject.turnId }),
+        },
+      });
+    } catch {
+      console.warn(`[agent] Failed to report Agent admission quarantine for ${subject.threadId}`);
+    }
+  }
+
+  private persistentThreads(): readonly Thread[] {
+    const threads: Thread[] = [];
+    for (const archived of [false, true]) {
+      let cursor: string | null = null;
+      do {
+        const page = this.core.metadata.list({ archived, cursor, limit: 100 });
+        threads.push(...page.data);
+        cursor = page.nextCursor;
+      } while (cursor);
+    }
+    return threads;
+  }
+
+  private quarantineStartupSubtree(threadId: ThreadId): void {
+    this.startupQuarantinedThreadIds.add(threadId);
+    if (!this.core.metadata.read(threadId)) return;
+    for (const edge of this.core.metadata.childEdges(threadId, true)) {
+      this.startupQuarantinedThreadIds.add(edge.childThreadId);
+    }
+  }
+
+  private assertStartupThreadAvailable(threadId: ThreadId): void {
+    if (this.startupQuarantinedThreadIds.has(threadId)) {
+      throw new ThreadBusyError(`Thread is quarantined pending Agent admission recovery: ${threadId}`);
+    }
+    const thread = this.core.requireThread(threadId).thread;
+    if (thread.threadSource !== 'subagent') return;
+    const execution = this.subagentExecutions.read(threadId);
+    if (!execution) {
+      throw new ThreadBusyError(`Delegated Agent execution is unavailable: ${threadId}`);
+    }
+    if (execution.initialAdmissionState !== 'committed') {
+      throw new ThreadBusyError(`Delegated Agent admission is incomplete: ${threadId}`);
+    }
+  }
+  async close(drainTimeoutMs = THREAD_SERVICE_CLOSE_DRAIN_TIMEOUT_MS): Promise<void> {
     this.closing = true;
     this.collaboration.beginClose();
+    const drainDeadline = Date.now() + Math.max(0, drainTimeoutMs);
     const pendingNames = this.catalogOps.pendingNameShutdownHandles();
     for (const pending of pendingNames) pending.abort();
     for (const pending of this.pendingUserInputs.values()) pending.abort();
-    await Promise.allSettled(pendingNames.map((pending) => pending.completion));
-    for (;;) {
+    for (const turn of this.activeTurns.values()) turn.controller.abort();
+    if (!await settleBeforeDeadline(
+      Promise.allSettled(pendingNames.map((pending) => pending.completion)),
+      drainDeadline,
+    )) {
+      console.warn(`[agent] Thread shutdown timed out with ${pendingNames.length} name generation(s) pending`);
+    }
+    let collaborationDrained: boolean | null = null;
+    while (Date.now() < drainDeadline) {
       const active = [...this.activeTurns.values()];
       for (const turn of active) turn.controller.abort();
-      await Promise.allSettled(active.map((turn) => turn.completion));
-      await this.collaboration.drainForClose();
+      const turnsDrained = await settleBeforeDeadline(
+        Promise.allSettled(active.map((turn) => turn.completion)),
+        drainDeadline,
+      );
+      if (!turnsDrained) break;
+      collaborationDrained = await this.collaboration.drainForClose(drainDeadline);
+      if (!collaborationDrained) break;
       if (this.activeTurns.size === 0) break;
     }
-    await this.transcripts.flushAll();
+    collaborationDrained ??= await this.collaboration.drainForClose(drainDeadline);
+    if (this.activeTurns.size > 0) {
+      for (const turn of this.activeTurns.values()) turn.controller.abort();
+      console.warn(`[agent] Thread shutdown timed out with ${this.activeTurns.size} active Turn(s)`);
+    }
+    if (!collaborationDrained) {
+      console.warn('[agent] Thread shutdown timed out with collaboration work pending');
+    }
+    if (!await this.transcripts.flushAll(drainDeadline)) {
+      console.warn('[agent] Thread shutdown timed out with transcript writes pending');
+    }
     await this.transcriptIndex.flush();
     const failures: unknown[] = [];
     const operations = await Promise.allSettled([
@@ -918,7 +1376,10 @@ export class ThreadService implements ThreadServiceExtensionHost {
   async startThread(requestInput: AgentCoreRequestByMethod['thread/start']): Promise<ThreadStartResponse> {
     return this.catalogOps.startThread(requestInput);
   }
-  async resumeThread(threadId: ThreadId): Promise<{ thread: Thread }> { return this.catalogOps.resumeThread(threadId); }
+  async resumeThread(threadId: ThreadId): Promise<{ thread: Thread }> {
+    this.assertStartupThreadAvailable(threadId);
+    return this.catalogOps.resumeThread(threadId);
+  }
   async forkThread(request: ThreadForkRequest): Promise<{ thread: Thread }> {
     return this.catalogOps.forkThread(request);
   }
@@ -943,14 +1404,24 @@ export class ThreadService implements ThreadServiceExtensionHost {
   }
   async deleteThread(threadId: ThreadId): Promise<void> { return this.catalogOps.deleteThread(threadId); }
   async startRendererTurn(request: RendererTurnStartRequest): Promise<TurnStartResponse> {
+    this.assertStartupThreadAvailable(request.threadId);
     return this.collaboration.startRendererTurn(request);
   }
-  async startPrivilegedTurn(request: PrivilegedTurnStartRequest): Promise<TurnStartResponse> { return this.turnLifecycle.startPrivilegedTurn(request); }
-  async tryStartTurnIfIdle(request: PrivilegedTurnStartRequest): Promise<Turn | null> { return this.turnLifecycle.tryStartTurnIfIdle(request); }
+  async startPrivilegedTurn(request: PrivilegedTurnStartRequest): Promise<TurnStartResponse> {
+    this.assertStartupThreadAvailable(request.threadId);
+    return this.turnLifecycle.startPrivilegedTurn(request);
+  }
+  async tryStartTurnIfIdle(request: PrivilegedTurnStartRequest): Promise<Turn | null> {
+    this.assertStartupThreadAvailable(request.threadId);
+    return this.turnLifecycle.tryStartTurnIfIdle(request);
+  }
   async steerTurn(
     request: TurnSteerRequest,
     deliveryFailureMode: 'fatal' | 'advisory' = 'fatal',
-  ): Promise<TurnSteerResponse> { return this.turnLifecycle.steerTurn(request, deliveryFailureMode); }
+  ): Promise<TurnSteerResponse> {
+    this.assertStartupThreadAvailable(request.threadId);
+    return this.turnLifecycle.steerTurn(request, deliveryFailureMode);
+  }
   /**
    * The user pressed Stop. One entry point for both affordances — the composer
    * and a per-child Stop on a delegation row — because they differ only in
@@ -968,6 +1439,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
    * running and may legitimately delegate again.
    */
   async interruptUserWork(threadId: ThreadId, turnId: string): Promise<void> {
+    this.assertStartupThreadAvailable(threadId);
     this.assertUserOwnedLineage(threadId);
     let settling: readonly {
       readonly memberThreadId: ThreadId;
@@ -1390,4 +1862,29 @@ function nonEmptyAgentStartupContext(
 
 function emptyResponse(): EmptyAgentCoreResponse {
   return Object.freeze({});
+}
+
+function worktreeRecoveryIntent(
+  worktree: AgentWorktreeMetadata,
+): AgentWorktreeRecoveryIntent {
+  return Object.freeze({
+    sourceCwd: worktree.sourceCwd,
+    path: worktree.path,
+    branch: worktree.branch,
+    baseCommit: worktree.baseCommit,
+    gitCommonDir: worktree.gitCommonDir,
+  });
+}
+
+async function settleBeforeDeadline(work: Promise<unknown>, deadline: number): Promise<boolean> {
+  const remainingMs = Math.max(0, deadline - Date.now());
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work.then(() => true, () => true),
+      new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(false), remainingMs); }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }

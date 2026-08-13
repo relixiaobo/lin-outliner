@@ -1,7 +1,7 @@
 import type { AgentTool } from '../runtime/kernel/types';
 import { randomUUID } from 'node:crypto';
 import type { ChildProcess } from 'node:child_process';
-import { createReadStream, createWriteStream, existsSync, realpathSync, statSync } from 'node:fs';
+import { createReadStream, createWriteStream, lstatSync, realpathSync, statSync } from 'node:fs';
 import { appendFile, mkdir, open, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
@@ -68,6 +68,7 @@ export interface LocalToolOptions {
   localRoot?: string;
   scratchRoot?: string;
   workspace?: AgentLocalWorkspaceContext;
+  threadId?: string;
   skillRuntime?: AgentSkillRuntime;
   imageNormalizer?: AgentFileReadImageNormalizer;
   processEnvironment?: AgentShellProcessEnvironmentProvider;
@@ -93,6 +94,8 @@ export interface AgentLocalWorkspaceContext {
   skillRuntime?: AgentSkillRuntime;
   processEnvironment?: AgentShellProcessEnvironmentProvider;
   writeBoundary?: AgentWorkspaceWriteBoundary;
+  /** Thread that owns background shell processes started from this workspace. */
+  threadId?: string;
 }
 
 export interface AgentWorkspaceWriteBoundary {
@@ -381,6 +384,7 @@ interface TextFileRead {
 
 interface BackgroundTask {
   taskId: string;
+  ownerThreadId?: string;
   command: string;
   process: BashProcessHandle;
   outputPath: string;
@@ -654,6 +658,7 @@ export function createLocalTools(options: LocalToolOptions = {}): AgentTool<any>
     options.scratchRoot,
     options.skillRuntime,
     options.processEnvironment,
+    options.threadId,
   );
   return [
     createFileReadTool(workspace, options.imageNormalizer),
@@ -727,6 +732,7 @@ function createWorkspaceContext(
   scratchRoot?: string,
   skillRuntime?: AgentSkillRuntime,
   processEnvironment?: AgentShellProcessEnvironmentProvider,
+  threadId?: string,
 ): WorkspaceContext {
   const root = path.resolve(localRoot ?? process.cwd());
   const resolvedScratchRoot = scratchRootForWorkdir(localRoot, scratchRoot);
@@ -736,6 +742,7 @@ function createWorkspaceContext(
     readFileState: new Map<string, ReadFileState>(),
     skillRuntime,
     processEnvironment,
+    ...(threadId ? { threadId } : {}),
   };
 }
 
@@ -745,9 +752,10 @@ export function createAgentLocalWorkspaceContext(
   skillRuntime?: AgentSkillRuntime,
   processEnvironment?: AgentShellProcessEnvironmentProvider,
   writeBoundary?: AgentWorkspaceWriteBoundary,
+  threadId?: string,
 ): AgentLocalWorkspaceContext {
   return {
-    ...createWorkspaceContext(localRoot, scratchRoot, skillRuntime, processEnvironment),
+    ...createWorkspaceContext(localRoot, scratchRoot, skillRuntime, processEnvironment, threadId),
     ...(writeBoundary ? { writeBoundary } : {}),
   };
 }
@@ -1545,10 +1553,13 @@ function createBashTool(workspace: WorkspaceContext): AgentTool<any, ToolEnvelop
   };
 }
 
-export async function stopBackgroundShellTask(taskId: string): Promise<BackgroundShellStopData | null> {
+export async function stopBackgroundShellTask(
+  taskId: string,
+  ownerThreadId?: string,
+): Promise<BackgroundShellStopData | null> {
   pruneBackgroundTasks();
   const task = backgroundTasks.get(taskId);
-  if (!task) return null;
+  if (!task || !backgroundTaskOwnedBy(task, ownerThreadId)) return null;
   if (task.status !== 'running') {
     throw new LocalToolFailure(
       'task_not_running',
@@ -1574,9 +1585,35 @@ export async function stopBackgroundShellTask(taskId: string): Promise<Backgroun
 }
 
 /** Read-only ownership probe for the unified background-task dispatcher. */
-export function hasBackgroundShellTask(taskId: string): boolean {
+export function hasBackgroundShellTask(taskId: string, ownerThreadId?: string): boolean {
   pruneBackgroundTasks();
-  return backgroundTasks.has(taskId);
+  const task = backgroundTasks.get(taskId);
+  return task !== undefined && backgroundTaskOwnedBy(task, ownerThreadId);
+}
+
+/**
+ * Structured task_stop result for the unified dispatcher. The dispatcher must
+ * return this AgentToolResult directly so the durable error envelope is not
+ * collapsed into the kernel's generic thrown-error string.
+ */
+export async function stopBackgroundShellTaskResult(
+  taskId: string,
+  ownerThreadId?: string,
+) {
+  const started = Date.now();
+  try {
+    const data = await stopBackgroundShellTask(taskId, ownerThreadId);
+    if (data === null) return null;
+    return agentToolResult(successEnvelope('task_stop', data, {
+      metrics: metrics(started, data),
+    }), visibleBackgroundShellStop(data));
+  } catch (error) {
+    return localErrorResult<BackgroundShellStopData>('task_stop', error, started);
+  }
+}
+
+function backgroundTaskOwnedBy(task: BackgroundTask, ownerThreadId: string | undefined): boolean {
+  return ownerThreadId === undefined || task.ownerThreadId === ownerThreadId;
 }
 
 function normalizeFileReadParams(rawParams: unknown): FileReadParams {
@@ -2111,6 +2148,7 @@ async function registerBackgroundTask(
 
   const task: BackgroundTask = {
     taskId,
+    ownerThreadId: workspace.threadId,
     command: params.command,
     process: processHandle,
     outputPath,
@@ -3535,7 +3573,14 @@ function assertWorkspaceWritePath(workspace: WorkspaceContext, filePath: string)
   }
   const canonicalRoot = safeRealPath(root);
   const canonicalTarget = resolveCanonicalPath(target)?.realPath ?? null;
-  if (canonicalRoot && canonicalTarget && canonicalTarget !== canonicalRoot && !isPathInside(canonicalRoot, canonicalTarget)) {
+  if (!canonicalRoot || !canonicalTarget) {
+    throw new LocalToolFailure(
+      'write_outside_isolated_workspace',
+      `Cannot verify that the write remains inside the isolated Agent worktree: ${filePath}`,
+      'Use a path whose canonical target can be resolved inside the Agent worktree.',
+    );
+  }
+  if (canonicalTarget !== canonicalRoot && !isPathInside(canonicalRoot, canonicalTarget)) {
     throw new LocalToolFailure(
       'write_outside_isolated_workspace',
       `Cannot write through a path that leaves the isolated Agent worktree: ${filePath}`,
@@ -3590,13 +3635,28 @@ interface CanonicalPathResolution {
 }
 
 function resolveCanonicalPath(target: string): CanonicalPathResolution | null {
-  const requestedPath = path.resolve(target);
-  const existingPath = nearestExistingPath(requestedPath);
-  const existingRealPath = safeRealPath(existingPath);
-  if (!existingRealPath) return null;
-  const suffix = path.relative(existingPath, requestedPath);
-  const realPath = suffix ? path.resolve(existingRealPath, suffix) : existingRealPath;
-  return { realPath };
+  let candidate = path.resolve(target);
+  const missingSuffix: string[] = [];
+  while (true) {
+    try {
+      return { realPath: path.resolve(realpathSync.native(candidate), ...missingSuffix) };
+    } catch (error) {
+      if (!isNodeError(error) || error.code !== 'ENOENT') return null;
+      try {
+        // A dangling symlink reports ENOENT from realpath but still exists. It
+        // can redirect a later write, so treating it as an ordinary missing
+        // suffix would fail open.
+        lstatSync(candidate, { throwIfNoEntry: true });
+        return null;
+      } catch (entryError) {
+        if (!isNodeError(entryError) || entryError.code !== 'ENOENT') return null;
+      }
+      const parent = path.dirname(candidate);
+      if (parent === candidate) return null;
+      missingSuffix.unshift(path.basename(candidate));
+      candidate = parent;
+    }
+  }
 }
 
 function isDirectoryPath(target: string): boolean {
@@ -3605,16 +3665,6 @@ function isDirectoryPath(target: string): boolean {
   } catch {
     return false;
   }
-}
-
-function nearestExistingPath(inputPath: string): string {
-  let current = path.resolve(inputPath);
-  while (!existsSync(current)) {
-    const parent = path.dirname(current);
-    if (parent === current) return current;
-    current = parent;
-  }
-  return current;
 }
 
 function localFsError(error: unknown, filePath: string): LocalToolFailure {

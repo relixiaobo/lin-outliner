@@ -1,6 +1,9 @@
 import type { ThreadId, TurnId } from '../../../core/agent/protocol';
 import type { SubagentToolPolicy } from '../capabilities/subagentToolPolicy';
-import type { AgentWorktreeMetadata } from '../worktree/AgentWorktree';
+import type {
+  AgentWorktreeMetadata,
+  AgentWorktreeRecoveryIntent,
+} from '../worktree/AgentWorktree';
 import type { SqliteDatabase } from './sqlite';
 import type { AgentStartupContextSnapshot } from '../context/AgentStartupContext';
 
@@ -10,6 +13,7 @@ export type SubagentRunMode = 'foreground' | 'background';
 export type SubagentStopProvenance = 'none' | 'model' | 'user' | 'budget' | 'hostRestart';
 export type SubagentTerminalStatus = 'completed' | 'failed' | 'interrupted' | 'killed';
 export type SubagentNotificationState = 'pending' | 'delivering' | 'delivered';
+export type SubagentInitialAdmissionState = 'pending' | 'committed';
 
 export interface SubagentRecordedToolPolicy extends SubagentToolPolicy {
   readonly requestedTools: readonly string[] | null;
@@ -30,6 +34,13 @@ export interface SubagentExecutionRecord {
   readonly worktreeCleanupStartedAt: number | null;
   readonly toolPolicy: SubagentRecordedToolPolicy;
   readonly startupContext: AgentStartupContextSnapshot | null;
+  /**
+   * `pending` is the cross-store prepare record for a fresh child. The first
+   * durable `turn/started` commits it; startup rolls back anything earlier.
+   */
+  readonly initialAdmissionState: SubagentInitialAdmissionState;
+  /** Complete recovery authority persisted before the first managed Git mutation. */
+  readonly initialWorktreeIntent: AgentWorktreeRecoveryIntent | null;
   readonly createdAt: number;
   readonly updatedAt: number;
 }
@@ -84,6 +95,8 @@ interface ExecutionRow {
   tool_policy_json: string;
   startup_context_json: string | null;
   admission_previous_json: string | null;
+  initial_admission_state: string;
+  initial_worktree_intent_json: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -122,7 +135,13 @@ export class SubagentExecutionLedger {
 
   constructor(private readonly db: SqliteDatabase) {
     this.db.exec(`
-      CREATE TABLE IF NOT EXISTS subagent_executions (
+      -- Pre-release clean cut: the admission columns change the persistence
+      -- contract, so use fresh table names instead of shape-sniffing old rows.
+      DROP TABLE IF EXISTS subagent_executions;
+      DROP TABLE IF EXISTS subagent_notifications;
+      DROP TABLE IF EXISTS subagent_parent_messages;
+      DROP TABLE IF EXISTS subagent_spawn_counts;
+      CREATE TABLE IF NOT EXISTS subagent_execution_records (
         agent_id TEXT PRIMARY KEY,
         parent_thread_id TEXT NOT NULL,
         description TEXT NOT NULL,
@@ -139,12 +158,16 @@ export class SubagentExecutionLedger {
         tool_policy_json TEXT NOT NULL,
         startup_context_json TEXT,
         admission_previous_json TEXT,
+        initial_admission_state TEXT NOT NULL CHECK (
+          initial_admission_state IN ('pending', 'committed')
+        ),
+        initial_worktree_intent_json TEXT,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       ) STRICT;
-      CREATE INDEX IF NOT EXISTS subagent_executions_parent_idx
-        ON subagent_executions(parent_thread_id, created_at, agent_id);
-      CREATE TABLE IF NOT EXISTS subagent_notifications (
+      CREATE INDEX IF NOT EXISTS subagent_execution_records_parent_idx
+        ON subagent_execution_records(parent_thread_id, created_at, agent_id);
+      CREATE TABLE IF NOT EXISTS subagent_execution_notifications (
         agent_id TEXT NOT NULL,
         generation INTEGER NOT NULL CHECK (generation > 0),
         parent_thread_id TEXT NOT NULL,
@@ -156,9 +179,9 @@ export class SubagentExecutionLedger {
         delivered_at INTEGER,
         PRIMARY KEY(agent_id, generation)
       ) STRICT;
-      CREATE INDEX IF NOT EXISTS subagent_notifications_pending_idx
-        ON subagent_notifications(parent_thread_id, state, created_at, agent_id, generation);
-      CREATE TABLE IF NOT EXISTS subagent_parent_messages (
+      CREATE INDEX IF NOT EXISTS subagent_execution_notifications_pending_idx
+        ON subagent_execution_notifications(parent_thread_id, state, created_at, agent_id, generation);
+      CREATE TABLE IF NOT EXISTS subagent_execution_parent_messages (
         id TEXT PRIMARY KEY,
         sender_agent_id TEXT NOT NULL,
         parent_thread_id TEXT NOT NULL,
@@ -169,26 +192,59 @@ export class SubagentExecutionLedger {
         created_at INTEGER NOT NULL,
         delivered_at INTEGER
       ) STRICT;
-      CREATE INDEX IF NOT EXISTS subagent_parent_messages_pending_idx
-        ON subagent_parent_messages(parent_thread_id, state, delivery_mode, sender_agent_id, generation, created_at, id);
+      CREATE INDEX IF NOT EXISTS subagent_execution_parent_messages_pending_idx
+        ON subagent_execution_parent_messages(parent_thread_id, state, delivery_mode, sender_agent_id, generation, created_at, id);
     `);
     // A process may die after claiming but before admitting the parent Turn.
     // Client-input idempotency makes replay safe, so claims are recoverable.
-    this.db.prepare("UPDATE subagent_notifications SET state = 'pending' WHERE state = 'delivering'").run();
-    this.db.prepare("UPDATE subagent_parent_messages SET state = 'pending' WHERE state = 'delivering'").run();
+    this.db.prepare("UPDATE subagent_execution_notifications SET state = 'pending' WHERE state = 'delivering'").run();
+    this.db.prepare("UPDATE subagent_execution_parent_messages SET state = 'pending' WHERE state = 'delivering'").run();
   }
 
   create(input: Omit<
     SubagentExecutionRecord,
-    'generation' | 'stopProvenance' | 'worktreeCleanupStartedAt'
+    | 'generation'
+    | 'stopProvenance'
+    | 'worktreeCleanupStartedAt'
+    | 'initialAdmissionState'
+    | 'initialWorktreeIntent'
   >): SubagentExecutionRecord {
+    return this.insertExecution(input, 'committed', null);
+  }
+
+  beginInitialAdmission(input: Omit<
+    SubagentExecutionRecord,
+    | 'generation'
+    | 'stopProvenance'
+    | 'worktreeCleanupStartedAt'
+    | 'initialAdmissionState'
+    | 'initialWorktreeIntent'
+  > & {
+    readonly initialWorktreeIntent: AgentWorktreeRecoveryIntent | null;
+  }): SubagentExecutionRecord {
+    return this.insertExecution(input, 'pending', input.initialWorktreeIntent);
+  }
+
+  private insertExecution(
+    input: Omit<
+      SubagentExecutionRecord,
+      | 'generation'
+      | 'stopProvenance'
+      | 'worktreeCleanupStartedAt'
+      | 'initialAdmissionState'
+      | 'initialWorktreeIntent'
+    >,
+    initialAdmissionState: SubagentInitialAdmissionState,
+    initialWorktreeIntent: AgentWorktreeRecoveryIntent | null,
+  ): SubagentExecutionRecord {
     this.db.prepare(`
-      INSERT INTO subagent_executions(
+      INSERT INTO subagent_execution_records(
         agent_id, parent_thread_id, description, agent_type, run_mode, generation,
         current_turn_id, tool_use_id, stop_provenance, worktree_json,
         worktree_cleanup_started_at, tool_policy_json,
-        startup_context_json, admission_previous_json, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, 1, ?, ?, 'none', ?, NULL, ?, ?, NULL, ?, ?)
+        startup_context_json, admission_previous_json, initial_admission_state,
+        initial_worktree_intent_json, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, 1, ?, ?, 'none', ?, NULL, ?, ?, NULL, ?, ?, ?, ?)
     `).run(
       input.agentId,
       input.parentThreadId,
@@ -200,22 +256,84 @@ export class SubagentExecutionLedger {
       encodeWorktree(input.worktree),
       JSON.stringify(input.toolPolicy),
       input.startupContext === null ? null : JSON.stringify(input.startupContext),
+      initialAdmissionState,
+      initialWorktreeIntent === null ? null : JSON.stringify(initialWorktreeIntent),
       input.createdAt,
       input.updatedAt,
     );
     return this.require(input.agentId);
   }
 
+  pendingInitialAdmissions(): readonly SubagentExecutionRecord[] {
+    const rows = this.db.prepare(`
+      SELECT * FROM subagent_execution_records
+      WHERE initial_admission_state = 'pending' ORDER BY created_at, agent_id
+    `).all() as unknown as ExecutionRow[];
+    return rows
+      .filter((row) => !this.deletedAgentIds.has(row.agent_id))
+      .map(executionFromRow);
+  }
+
+  recordInitialWorktreeIfPending(input: {
+    readonly agentId: ThreadId;
+    readonly turnId: TurnId;
+    readonly worktree: AgentWorktreeMetadata;
+    readonly updatedAt: number;
+  }): SubagentExecutionRecord | null {
+    const result = this.db.prepare(`
+      UPDATE subagent_execution_records
+      SET worktree_json = ?, updated_at = ?
+      WHERE agent_id = ? AND current_turn_id = ?
+        AND initial_admission_state = 'pending' AND worktree_json IS NULL
+    `).run(
+      encodeWorktree(input.worktree),
+      input.updatedAt,
+      input.agentId,
+      input.turnId,
+    );
+    if (Number(result.changes) !== 1) return null;
+    return this.require(input.agentId);
+  }
+
+  clearInitialWorktreeIntentIfPending(input: {
+    readonly agentId: ThreadId;
+    readonly turnId: TurnId;
+    readonly updatedAt: number;
+  }): SubagentExecutionRecord | null {
+    const result = this.db.prepare(`
+      UPDATE subagent_execution_records
+      SET initial_worktree_intent_json = NULL, updated_at = ?
+      WHERE agent_id = ? AND current_turn_id = ?
+        AND initial_admission_state = 'pending'
+    `).run(input.updatedAt, input.agentId, input.turnId);
+    if (Number(result.changes) !== 1) return null;
+    return this.require(input.agentId);
+  }
+
+  completeInitialAdmissionIfCurrent(
+    agentId: ThreadId,
+    turnId: TurnId,
+    updatedAt: number,
+  ): boolean {
+    const result = this.db.prepare(`
+      UPDATE subagent_execution_records
+      SET initial_admission_state = 'committed', initial_worktree_intent_json = NULL,
+          updated_at = ?
+      WHERE agent_id = ? AND current_turn_id = ? AND initial_admission_state = 'pending'
+    `).run(updatedAt, agentId, turnId);
+    return Number(result.changes) === 1;
+  }
+
   read(agentId: ThreadId): SubagentExecutionRecord | null {
     if (this.deletedAgentIds.has(agentId)) return null;
-    const row = this.db.prepare('SELECT * FROM subagent_executions WHERE agent_id = ?')
+    const row = this.db.prepare('SELECT * FROM subagent_execution_records WHERE agent_id = ?')
       .get(agentId) as ExecutionRow | undefined;
     return row ? executionFromRow(row) : null;
   }
 
   startupContextForTurn(agentId: ThreadId, turnId: TurnId): AgentStartupContextSnapshot | null {
     const record = this.read(agentId);
-    if (!record || record.generation !== 1 || record.currentTurnId !== turnId) return null;
+    if (!record || record.currentTurnId !== turnId) return null;
     return record.startupContext;
   }
 
@@ -227,16 +345,20 @@ export class SubagentExecutionLedger {
 
   listByParent(parentThreadId: ThreadId): readonly SubagentExecutionRecord[] {
     const rows = this.db.prepare(`
-      SELECT * FROM subagent_executions
+      SELECT * FROM subagent_execution_records
       WHERE parent_thread_id = ? ORDER BY created_at, agent_id
     `).all(parentThreadId) as unknown as ExecutionRow[];
-    return rows.map(executionFromRow);
+    return rows
+      .filter((row) => !this.deletedAgentIds.has(row.agent_id))
+      .map(executionFromRow);
   }
 
   all(): readonly SubagentExecutionRecord[] {
-    const rows = this.db.prepare('SELECT * FROM subagent_executions ORDER BY created_at, agent_id')
+    const rows = this.db.prepare('SELECT * FROM subagent_execution_records ORDER BY created_at, agent_id')
       .all() as unknown as ExecutionRow[];
-    return rows.map(executionFromRow);
+    return rows
+      .filter((row) => !this.deletedAgentIds.has(row.agent_id))
+      .map(executionFromRow);
   }
 
   /**
@@ -258,7 +380,7 @@ export class SubagentExecutionLedger {
       || input.previous.currentTurnId !== input.expectedTurnId
     ) throw new Error('Subagent generation admission snapshot does not match its expected owner');
     const result = this.db.prepare(`
-      UPDATE subagent_executions
+      UPDATE subagent_execution_records
       SET generation = generation + 1, current_turn_id = ?, tool_use_id = ?,
           run_mode = ?, stop_provenance = 'none',
           worktree_cleanup_started_at = NULL, admission_previous_json = ?, updated_at = ?
@@ -294,14 +416,12 @@ export class SubagentExecutionLedger {
       || input.previous.currentTurnId !== input.expectedTurnId
     ) throw new Error('Subagent generation admission snapshot does not match its expected owner');
     const result = this.db.prepare(`
-      UPDATE subagent_executions
-      SET generation = generation + 1, current_turn_id = ?, tool_use_id = ?,
-          run_mode = 'background', stop_provenance = 'none',
+      UPDATE subagent_execution_records
+      SET generation = generation + 1, current_turn_id = ?, stop_provenance = 'none',
           worktree_cleanup_started_at = NULL, admission_previous_json = ?, updated_at = ?
       WHERE agent_id = ? AND generation = ? AND current_turn_id = ?
         AND worktree_cleanup_started_at IS NULL
     `).run(
-      input.turnId,
       input.turnId,
       JSON.stringify(input.previous),
       input.updatedAt,
@@ -334,7 +454,7 @@ export class SubagentExecutionLedger {
     const snapshot = this.pendingGenerationSnapshot(agentId, expectedGeneration, expectedTurnId);
     if (!snapshot) return false;
     const result = this.db.prepare(`
-      UPDATE subagent_executions
+      UPDATE subagent_execution_records
       SET generation = ?, current_turn_id = ?, tool_use_id = ?, run_mode = ?,
           stop_provenance = ?, worktree_cleanup_started_at = ?,
           admission_previous_json = NULL, updated_at = ?
@@ -360,7 +480,7 @@ export class SubagentExecutionLedger {
     readonly previous: SubagentGenerationSnapshot;
   }[] {
     const rows = this.db.prepare(`
-      SELECT * FROM subagent_executions
+      SELECT * FROM subagent_execution_records
       WHERE admission_previous_json IS NOT NULL ORDER BY created_at, agent_id
     `).all() as unknown as ExecutionRow[];
     return rows.map((row) => ({
@@ -375,7 +495,7 @@ export class SubagentExecutionLedger {
     turnId: TurnId,
   ): boolean {
     const result = this.db.prepare(`
-      UPDATE subagent_executions SET admission_previous_json = NULL
+      UPDATE subagent_execution_records SET admission_previous_json = NULL
       WHERE agent_id = ? AND generation = ? AND current_turn_id = ?
         AND admission_previous_json IS NOT NULL
     `).run(agentId, generation, turnId);
@@ -388,7 +508,7 @@ export class SubagentExecutionLedger {
     turnId: TurnId,
   ): SubagentGenerationSnapshot | null {
     const row = this.db.prepare(`
-      SELECT admission_previous_json FROM subagent_executions
+      SELECT admission_previous_json FROM subagent_execution_records
       WHERE agent_id = ? AND generation = ? AND current_turn_id = ?
     `).get(agentId, generation, turnId) as Pick<ExecutionRow, 'admission_previous_json'> | undefined;
     return row?.admission_previous_json ? decodeGenerationSnapshot(row.admission_previous_json) : null;
@@ -402,7 +522,7 @@ export class SubagentExecutionLedger {
     readonly updatedAt: number;
   }): boolean {
     const result = this.db.prepare(`
-      UPDATE subagent_executions SET current_turn_id = ?, updated_at = ?
+      UPDATE subagent_execution_records SET current_turn_id = ?, updated_at = ?
       WHERE agent_id = ? AND generation = ? AND current_turn_id = ?
     `).run(
       input.turnId,
@@ -421,7 +541,7 @@ export class SubagentExecutionLedger {
     readonly snapshot: SubagentGenerationSnapshot;
   }): boolean {
     const result = this.db.prepare(`
-      UPDATE subagent_executions SET current_turn_id = ?, updated_at = ?
+      UPDATE subagent_execution_records SET current_turn_id = ?, updated_at = ?
       WHERE agent_id = ? AND generation = ? AND current_turn_id = ?
     `).run(
       input.snapshot.currentTurnId,
@@ -441,7 +561,7 @@ export class SubagentExecutionLedger {
     const existing = this.require(agentId);
     const next = higherPriorityStop(existing.stopProvenance, provenance);
     this.db.prepare(`
-      UPDATE subagent_executions SET stop_provenance = ?, updated_at = ? WHERE agent_id = ?
+      UPDATE subagent_execution_records SET stop_provenance = ?, updated_at = ? WHERE agent_id = ?
     `).run(next, updatedAt, agentId);
     return this.require(agentId);
   }
@@ -466,7 +586,7 @@ export class SubagentExecutionLedger {
     ) return null;
     const next = higherPriorityStop(existing.stopProvenance, input.provenance);
     const result = this.db.prepare(`
-      UPDATE subagent_executions
+      UPDATE subagent_execution_records
       SET stop_provenance = ?, updated_at = ?
       WHERE agent_id = ? AND generation = ? AND current_turn_id = ?
     `).run(
@@ -482,7 +602,7 @@ export class SubagentExecutionLedger {
 
   clearUserStop(agentId: ThreadId, updatedAt: number): SubagentExecutionRecord {
     this.db.prepare(`
-      UPDATE subagent_executions SET stop_provenance = 'none', updated_at = ?
+      UPDATE subagent_execution_records SET stop_provenance = 'none', updated_at = ?
       WHERE agent_id = ? AND stop_provenance = 'user'
     `).run(updatedAt, agentId);
     return this.require(agentId);
@@ -497,7 +617,7 @@ export class SubagentExecutionLedger {
     readonly updatedAt: number;
   }): SubagentExecutionRecord | null {
     const result = this.db.prepare(`
-      UPDATE subagent_executions SET worktree_json = ?, updated_at = ?
+      UPDATE subagent_execution_records SET worktree_json = ?, updated_at = ?
       WHERE agent_id = ? AND generation = ? AND current_turn_id = ?
         AND worktree_cleanup_started_at IS NULL
     `).run(
@@ -519,7 +639,7 @@ export class SubagentExecutionLedger {
     readonly startedAt: number;
   }): SubagentExecutionRecord | null {
     const result = this.db.prepare(`
-      UPDATE subagent_executions
+      UPDATE subagent_execution_records
       SET worktree_cleanup_started_at = COALESCE(worktree_cleanup_started_at, ?),
           updated_at = ?
       WHERE agent_id = ? AND generation = ? AND current_turn_id = ?
@@ -545,7 +665,7 @@ export class SubagentExecutionLedger {
     readonly updatedAt: number;
   }): SubagentExecutionRecord | null {
     const result = this.db.prepare(`
-      UPDATE subagent_executions
+      UPDATE subagent_execution_records
       SET worktree_json = ?, worktree_cleanup_started_at = NULL, updated_at = ?
       WHERE agent_id = ? AND generation = ? AND current_turn_id = ?
         AND worktree_json = ? AND worktree_cleanup_started_at IS NOT NULL
@@ -569,7 +689,7 @@ export class SubagentExecutionLedger {
     readonly updatedAt: number;
   }): SubagentExecutionRecord | null {
     const result = this.db.prepare(`
-      UPDATE subagent_executions
+      UPDATE subagent_execution_records
       SET worktree_cleanup_started_at = NULL, updated_at = ?
       WHERE agent_id = ? AND generation = ? AND current_turn_id = ?
         AND worktree_json = ? AND worktree_cleanup_started_at IS NOT NULL
@@ -589,7 +709,7 @@ export class SubagentExecutionLedger {
     const run = this.require(input.agentId);
     if (run.generation !== input.generation || run.currentTurnId !== input.turnId) return false;
     this.db.prepare(`
-      INSERT INTO subagent_notifications(
+      INSERT INTO subagent_execution_notifications(
         agent_id, generation, parent_thread_id, turn_id, tool_use_id,
         status, state, created_at, delivered_at
       ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, NULL)
@@ -608,27 +728,42 @@ export class SubagentExecutionLedger {
 
   pendingForParent(parentThreadId: ThreadId): readonly SubagentPendingNotification[] {
     const rows = this.db.prepare(`
-      SELECT * FROM subagent_notifications
+      SELECT * FROM subagent_execution_notifications
       WHERE parent_thread_id = ? AND state = 'pending'
       ORDER BY created_at, agent_id, generation
     `).all(parentThreadId) as unknown as NotificationRow[];
-    return rows.map(notificationFromRow);
+    return rows
+      .filter((row) => !this.deletedAgentIds.has(row.agent_id))
+      .map(notificationFromRow);
   }
 
   hasUndeliveredForParent(parentThreadId: ThreadId): boolean {
-    const row = this.db.prepare(`
-      SELECT 1 AS present FROM subagent_notifications
-      WHERE parent_thread_id = ? AND state <> 'delivered' LIMIT 1
-    `).get(parentThreadId) as { present: number } | undefined;
-    return row !== undefined;
+    const rows = this.db.prepare(`
+      SELECT agent_id FROM subagent_execution_notifications
+      WHERE parent_thread_id = ? AND state <> 'delivered'
+    `).all(parentThreadId) as unknown as Array<{ agent_id: ThreadId }>;
+    return rows.some((row) => !this.deletedAgentIds.has(row.agent_id));
+  }
+
+  hasUndeliveredWork(threadId: ThreadId): boolean {
+    if (this.deletedAgentIds.has(threadId)) return false;
+    const rows = this.db.prepare(`
+      SELECT agent_id AS owner_agent_id FROM subagent_execution_notifications
+      WHERE (agent_id = ? OR parent_thread_id = ?) AND state <> 'delivered'
+      UNION ALL
+      SELECT sender_agent_id AS owner_agent_id FROM subagent_execution_parent_messages
+      WHERE (sender_agent_id = ? OR parent_thread_id = ?) AND state <> 'delivered'
+    `).all(threadId, threadId, threadId, threadId) as unknown as Array<{ owner_agent_id: ThreadId }>;
+    return rows.some((row) => !this.deletedAgentIds.has(row.owner_agent_id));
   }
 
   notificationState(
     agentId: ThreadId,
     generation: number,
   ): SubagentNotificationState | null {
+    if (this.deletedAgentIds.has(agentId)) return null;
     const row = this.db.prepare(`
-      SELECT state FROM subagent_notifications
+      SELECT state FROM subagent_execution_notifications
       WHERE agent_id = ? AND generation = ?
     `).get(agentId, generation) as { state: string } | undefined;
     return row ? row.state as SubagentNotificationState : null;
@@ -636,15 +771,18 @@ export class SubagentExecutionLedger {
 
   parentsWithPending(): readonly ThreadId[] {
     const rows = this.db.prepare(`
-      SELECT DISTINCT parent_thread_id FROM subagent_notifications
+      SELECT parent_thread_id, agent_id FROM subagent_execution_notifications
       WHERE state = 'pending' ORDER BY parent_thread_id
-    `).all() as unknown as Array<{ parent_thread_id: string }>;
-    return rows.map((row) => row.parent_thread_id);
+    `).all() as unknown as Array<{ parent_thread_id: ThreadId; agent_id: ThreadId }>;
+    return [...new Set(rows
+      .filter((row) => !this.deletedAgentIds.has(row.agent_id))
+      .map((row) => row.parent_thread_id))];
   }
 
   claim(agentId: ThreadId, generation: number): boolean {
+    if (this.deletedAgentIds.has(agentId)) return false;
     const result = this.db.prepare(`
-      UPDATE subagent_notifications SET state = 'delivering'
+      UPDATE subagent_execution_notifications SET state = 'delivering'
       WHERE agent_id = ? AND generation = ? AND state = 'pending'
     `).run(agentId, generation);
     return Number(result.changes) === 1;
@@ -652,14 +790,14 @@ export class SubagentExecutionLedger {
 
   release(agentId: ThreadId, generation: number): void {
     this.db.prepare(`
-      UPDATE subagent_notifications SET state = 'pending'
+      UPDATE subagent_execution_notifications SET state = 'pending'
       WHERE agent_id = ? AND generation = ? AND state = 'delivering'
     `).run(agentId, generation);
   }
 
   markDelivered(agentId: ThreadId, generation: number, deliveredAt: number): void {
     this.db.prepare(`
-      UPDATE subagent_notifications SET state = 'delivered', delivered_at = ?
+      UPDATE subagent_execution_notifications SET state = 'delivered', delivered_at = ?
       WHERE agent_id = ? AND generation = ? AND state = 'delivering'
     `).run(deliveredAt, agentId, generation);
   }
@@ -667,7 +805,7 @@ export class SubagentExecutionLedger {
   enqueueParentMessage(input: Omit<SubagentParentMessage, 'state' | 'deliveredAt'>): void {
     if (this.deletedAgentIds.has(input.senderAgentId)) return;
     this.db.prepare(`
-      INSERT INTO subagent_parent_messages(
+      INSERT INTO subagent_execution_parent_messages(
         id, sender_agent_id, parent_thread_id, generation, content, delivery_mode, state, created_at, delivered_at
       ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, NULL)
       ON CONFLICT(id) DO NOTHING
@@ -684,10 +822,12 @@ export class SubagentExecutionLedger {
 
   pendingParentMessages(parentThreadId: ThreadId): readonly SubagentParentMessage[] {
     const rows = this.db.prepare(`
-      SELECT * FROM subagent_parent_messages
+      SELECT * FROM subagent_execution_parent_messages
       WHERE parent_thread_id = ? AND state = 'pending' ORDER BY created_at, id
     `).all(parentThreadId) as unknown as ParentMessageRow[];
-    return rows.map(parentMessageFromRow);
+    return rows
+      .filter((row) => !this.deletedAgentIds.has(row.sender_agent_id))
+      .map(parentMessageFromRow);
   }
 
   pendingForegroundParentMessages(
@@ -696,25 +836,33 @@ export class SubagentExecutionLedger {
     generation: number,
   ): readonly SubagentParentMessage[] {
     const rows = this.db.prepare(`
-      SELECT * FROM subagent_parent_messages
+      SELECT * FROM subagent_execution_parent_messages
       WHERE parent_thread_id = ? AND state = 'pending' AND delivery_mode = 'foreground'
         AND sender_agent_id = ? AND generation = ?
       ORDER BY created_at, id
     `).all(parentThreadId, senderAgentId, generation) as unknown as ParentMessageRow[];
-    return rows.map(parentMessageFromRow);
+    return rows
+      .filter((row) => !this.deletedAgentIds.has(row.sender_agent_id))
+      .map(parentMessageFromRow);
   }
 
   parentsWithPendingMessages(): readonly ThreadId[] {
     const rows = this.db.prepare(`
-      SELECT DISTINCT parent_thread_id FROM subagent_parent_messages
+      SELECT parent_thread_id, sender_agent_id FROM subagent_execution_parent_messages
       WHERE state = 'pending' ORDER BY parent_thread_id
-    `).all() as unknown as Array<{ parent_thread_id: string }>;
-    return rows.map((row) => row.parent_thread_id);
+    `).all() as unknown as Array<{ parent_thread_id: ThreadId; sender_agent_id: ThreadId }>;
+    return [...new Set(rows
+      .filter((row) => !this.deletedAgentIds.has(row.sender_agent_id))
+      .map((row) => row.parent_thread_id))];
   }
 
   claimParentMessage(id: string): boolean {
+    const owner = this.db.prepare(`
+      SELECT sender_agent_id FROM subagent_execution_parent_messages WHERE id = ?
+    `).get(id) as { sender_agent_id: ThreadId } | undefined;
+    if (!owner || this.deletedAgentIds.has(owner.sender_agent_id)) return false;
     const result = this.db.prepare(`
-      UPDATE subagent_parent_messages SET state = 'delivering'
+      UPDATE subagent_execution_parent_messages SET state = 'delivering'
       WHERE id = ? AND state = 'pending'
     `).run(id);
     return Number(result.changes) === 1;
@@ -722,7 +870,7 @@ export class SubagentExecutionLedger {
 
   releaseParentMessage(id: string): void {
     this.db.prepare(`
-      UPDATE subagent_parent_messages SET state = 'pending'
+      UPDATE subagent_execution_parent_messages SET state = 'pending'
       WHERE id = ? AND state = 'delivering'
     `).run(id);
   }
@@ -734,20 +882,48 @@ export class SubagentExecutionLedger {
    */
   discardParentMessage(id: string): void {
     this.db.prepare(`
-      DELETE FROM subagent_parent_messages
+      DELETE FROM subagent_execution_parent_messages
       WHERE id = ? AND state = 'delivering'
     `).run(id);
   }
 
   markParentMessageDelivered(id: string, deliveredAt: number): void {
     this.db.prepare(`
-      UPDATE subagent_parent_messages SET state = 'delivered', delivered_at = ?
+      UPDATE subagent_execution_parent_messages SET state = 'delivered', delivered_at = ?
       WHERE id = ? AND state = 'delivering'
     `).run(deliveredAt, id);
   }
 
   deleteAgent(agentId: ThreadId): void {
     this.deleteAgents([agentId]);
+  }
+
+  /** Removes one orphan identity without cascading into independently recoverable children. */
+  deleteAgentOnly(agentId: ThreadId): void {
+    this.db.exec('BEGIN IMMEDIATE;');
+    try {
+      this.db.prepare(`
+        DELETE FROM subagent_execution_notifications
+        WHERE agent_id = ? OR parent_thread_id = ?
+      `).run(agentId, agentId);
+      this.db.prepare(`
+        DELETE FROM subagent_execution_parent_messages
+        WHERE sender_agent_id = ? OR parent_thread_id = ?
+      `).run(agentId, agentId);
+      this.db.prepare('DELETE FROM subagent_execution_records WHERE agent_id = ?').run(agentId);
+      this.db.exec('COMMIT;');
+      this.deletedAgentIds.add(agentId);
+    } catch (error) {
+      this.db.exec('ROLLBACK;');
+      throw error;
+    }
+  }
+
+  /** Retires identities after the Thread catalog has committed their deletion. */
+  retireAgents(agentIds: readonly ThreadId[]): void {
+    const ids = [...new Set(agentIds)];
+    for (const agentId of ids) this.deletedAgentIds.add(agentId);
+    this.deleteAgents(ids);
   }
 
   deleteAgents(agentIds: readonly ThreadId[]): void {
@@ -757,17 +933,17 @@ export class SubagentExecutionLedger {
     this.db.exec('BEGIN IMMEDIATE;');
     try {
       this.db.prepare(`
-        DELETE FROM subagent_notifications
+        DELETE FROM subagent_execution_notifications
         WHERE agent_id IN (${placeholders}) OR parent_thread_id IN (${placeholders})
       `).run(...ids, ...ids);
       this.db.prepare(`
-        DELETE FROM subagent_parent_messages
+        DELETE FROM subagent_execution_parent_messages
         WHERE sender_agent_id IN (${placeholders}) OR parent_thread_id IN (${placeholders})
       `).run(...ids, ...ids);
       this.db.prepare(`
-        DELETE FROM subagent_executions
-        WHERE agent_id IN (${placeholders}) OR parent_thread_id IN (${placeholders})
-      `).run(...ids, ...ids);
+        DELETE FROM subagent_execution_records
+        WHERE agent_id IN (${placeholders})
+      `).run(...ids);
       this.db.exec('COMMIT;');
       for (const agentId of ids) this.deletedAgentIds.add(agentId);
     } catch (error) {
@@ -775,9 +951,71 @@ export class SubagentExecutionLedger {
       throw error;
     }
   }
+
+  orphanExecutions(knownThreadIds: ReadonlySet<ThreadId>): readonly SubagentExecutionRecord[] {
+    const executions = this.db.prepare(`
+      SELECT * FROM subagent_execution_records ORDER BY created_at, agent_id
+    `).all() as unknown as ExecutionRow[];
+    return executions
+      .filter((row) => !this.deletedAgentIds.has(row.agent_id))
+      .filter((row) => !knownThreadIds.has(row.agent_id) || !knownThreadIds.has(row.parent_thread_id))
+      .map(executionFromRow);
+  }
+
+  /** Removes envelopes whose execution or Thread endpoint no longer exists. */
+  sweepOrphanEnvelopes(knownThreadIds: ReadonlySet<ThreadId>): number {
+    const executions = this.db.prepare(`
+      SELECT agent_id FROM subagent_execution_records
+    `).all() as unknown as Array<{ agent_id: ThreadId }>;
+    const executionAgentIds = new Set(executions.map((row) => row.agent_id));
+    const notifications = this.db.prepare(`
+      SELECT agent_id, generation, parent_thread_id FROM subagent_execution_notifications
+    `).all() as unknown as Array<{
+      agent_id: ThreadId;
+      generation: number;
+      parent_thread_id: ThreadId;
+    }>;
+    const orphanNotifications = notifications.filter((row) => (
+        !executionAgentIds.has(row.agent_id)
+        || !knownThreadIds.has(row.agent_id)
+        || !knownThreadIds.has(row.parent_thread_id)
+    ));
+    const messages = this.db.prepare(`
+      SELECT id, sender_agent_id, parent_thread_id FROM subagent_execution_parent_messages
+    `).all() as unknown as Array<{
+      id: string;
+      sender_agent_id: ThreadId;
+      parent_thread_id: ThreadId;
+    }>;
+    const orphanMessages = messages.filter((row) => (
+        !executionAgentIds.has(row.sender_agent_id)
+        || !knownThreadIds.has(row.sender_agent_id)
+        || !knownThreadIds.has(row.parent_thread_id)
+    ));
+    if (orphanNotifications.length === 0 && orphanMessages.length === 0) return 0;
+    const deleteNotification = this.db.prepare(`
+      DELETE FROM subagent_execution_notifications WHERE agent_id = ? AND generation = ?
+    `);
+    const deleteMessage = this.db.prepare(`
+      DELETE FROM subagent_execution_parent_messages WHERE id = ?
+    `);
+    this.db.exec('BEGIN IMMEDIATE;');
+    try {
+      for (const row of orphanNotifications) deleteNotification.run(row.agent_id, row.generation);
+      for (const row of orphanMessages) deleteMessage.run(row.id);
+      this.db.exec('COMMIT;');
+    } catch (error) {
+      this.db.exec('ROLLBACK;');
+      throw error;
+    }
+    return orphanNotifications.length + orphanMessages.length;
+  }
 }
 
 function executionFromRow(row: ExecutionRow): SubagentExecutionRecord {
+  if (row.initial_admission_state !== 'pending' && row.initial_admission_state !== 'committed') {
+    throw new Error('Invalid persisted Subagent initial admission state');
+  }
   return {
     agentId: row.agent_id,
     parentThreadId: row.parent_thread_id,
@@ -796,6 +1034,10 @@ function executionFromRow(row: ExecutionRow): SubagentExecutionRecord {
     startupContext: row.startup_context_json === null
       ? null
       : decodeStartupContext(JSON.parse(row.startup_context_json)),
+    initialAdmissionState: row.initial_admission_state,
+    initialWorktreeIntent: row.initial_worktree_intent_json === null
+      ? null
+      : decodeWorktreeRecoveryIntent(JSON.parse(row.initial_worktree_intent_json)),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -832,6 +1074,30 @@ function decodeWorktree(value: unknown): AgentWorktreeMetadata {
     managed: true,
     removedAt: record.removedAt as number | null,
   };
+}
+
+function decodeWorktreeRecoveryIntent(value: unknown): AgentWorktreeRecoveryIntent {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Invalid persisted Subagent initial worktree intent');
+  }
+  const record = value as Record<string, unknown>;
+  if (
+    typeof record.sourceCwd !== 'string'
+    || typeof record.path !== 'string'
+    || typeof record.branch !== 'string'
+    || typeof record.baseCommit !== 'string'
+    || typeof record.gitCommonDir !== 'string'
+    || Object.keys(record).some((key) => ![
+      'sourceCwd', 'path', 'branch', 'baseCommit', 'gitCommonDir',
+    ].includes(key))
+  ) throw new Error('Invalid persisted Subagent initial worktree intent');
+  return Object.freeze({
+    sourceCwd: record.sourceCwd,
+    path: record.path,
+    branch: record.branch,
+    baseCommit: record.baseCommit,
+    gitCommonDir: record.gitCommonDir,
+  });
 }
 
 function decodeGenerationSnapshot(value: string): SubagentGenerationSnapshot {

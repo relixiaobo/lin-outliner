@@ -144,7 +144,10 @@ describe('Codex Agent Core model-tool contract', () => {
     expect(() => normalizeAgentMessageToolInput({ to: 'agent-1', message: 'Body', extra: true }))
       .toThrow('unknown fields');
 
-    expect(normalizeTaskStopToolInput({ shell_id: 'shell-1' })).toEqual({ shell_id: 'shell-1' });
+    expect(normalizeTaskStopToolInput({ shell_id: 'shell-1' })).toEqual({
+      shell_id: 'shell-1',
+      task_id: 'shell-1',
+    });
     expect(normalizeTaskStopToolInput({ task_id: 'agent-1', shell_id: 'shell-1' }))
       .toEqual({ task_id: 'agent-1', shell_id: 'shell-1' });
     expect(() => normalizeTaskStopToolInput({})).toThrow('Missing required parameter: task_id');

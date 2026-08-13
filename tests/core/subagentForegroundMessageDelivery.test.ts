@@ -3,7 +3,10 @@ import { Database } from 'bun:sqlite';
 import { SubagentExecutionLedger } from '../../src/main/agent/persistence/SubagentExecutionLedger';
 import type { SqliteDatabase } from '../../src/main/agent/persistence/sqlite';
 import { SubagentCollaboration } from '../../src/main/agent/thread/SubagentCollaboration';
-import type { AgentWorktreeMetadata } from '../../src/main/agent/worktree/AgentWorktree';
+import type {
+  AgentWorktreeMetadata,
+  AgentWorktreeRecoveryIntent,
+} from '../../src/main/agent/worktree/AgentWorktree';
 
 const PARENT_ID = 'parent-thread';
 const FIRST_AGENT_ID = 'first-agent';
@@ -31,12 +34,15 @@ interface AdmissionSeam {
   terminalSettlementReservations: Map<string, {
     readonly pipeline: Promise<void> | null;
     readonly retryTimer: ReturnType<typeof setTimeout> | null;
+    readonly notifyParent?: boolean;
   }>;
 }
 
 interface TerminalSettlementSeam extends AdmissionSeam {
+  beginThreadDeletion(threadIds: readonly string[]): void;
+  finishThreadDeletion(threadIds: readonly string[]): void;
   beginClose(): void;
-  drainForClose(): Promise<void>;
+  drainForClose(deadline: number): Promise<boolean>;
   deliverParentWork(parentThreadId: string): Promise<void>;
   prepareChildTerminalSettlement(thread: unknown, turn: unknown): void;
   queueChildTurnActivity(thread: unknown, turn: unknown): void;
@@ -58,6 +64,7 @@ describe('foreground Agent main-message delivery', () => {
           await startupGate;
           return null;
         },
+        planAgentWorktree: async () => agentWorktreeIntent('/managed/preflight'),
         prepareAgentWorktree: async () => {
           prepareCalls += 1;
           throw new Error('worktree preparation must not start');
@@ -96,22 +103,35 @@ describe('foreground Agent main-message delivery', () => {
       let parentActive = true;
       let createThreadCalls = 0;
       const settled: AgentWorktreeMetadata[] = [];
+      let markPrepareEntered!: () => void;
+      let releasePrepare!: () => void;
+      const prepareEntered = new Promise<void>((resolve) => { markPrepareEntered = resolve; });
+      const prepareGate = new Promise<void>((resolve) => { releasePrepare = resolve; });
       const collaboration = spawnAdmissionCollaboration({
         requireActiveTurn: () => {
           if (!parentActive) throw new Error('Parent Turn is no longer active');
         },
         runTreeMutex: async (operation) => {
+          const result = operation();
+          await prepareEntered;
           parentActive = false;
-          return operation();
+          releasePrepare();
+          return result;
         },
-        prepareAgentWorktree: async () => ({ cwd: worktree.path, worktree }),
+        planAgentWorktree: async () => agentWorktreeIntent(worktree.path),
+        prepareAgentWorktree: async () => {
+          markPrepareEntered();
+          await prepareGate;
+          return { cwd: worktree.path, worktree };
+        },
         settleAgentWorktree: async (prepared) => {
           settled.push(prepared);
           return { worktree: prepared, retained: false };
         },
         createThread: async () => {
+          if (!parentActive) throw new Error('Parent Turn is no longer active');
           createThreadCalls += 1;
-          throw new Error('Thread creation must not start');
+          throw new Error('Thread creation unexpectedly started');
         },
       });
 
@@ -129,6 +149,355 @@ describe('foreground Agent main-message delivery', () => {
       expect(createThreadCalls).toBe(0);
       expect(settled).toEqual([worktree]);
     }
+  });
+
+  test('rejects an Agent spawn whose Item is outside the active parent Turn', async () => {
+    const collaboration = spawnAdmissionCollaboration({
+      createThread: async () => { throw new Error('Thread creation must not start'); },
+    });
+
+    await expect(collaboration.spawnAgent({
+      senderThreadId: PARENT_ID,
+      senderTurnId: 'parent-turn',
+      parentItemId: 'stale-agent-tool',
+      description: 'Stale replay',
+      prompt: 'Do not start',
+      agentType: 'general-purpose',
+      runInBackground: true,
+      isolation: null,
+    })).rejects.toThrow('Agent spawn Item is outside the active parent Turn');
+  });
+
+  test('rejects an Agent spawn whose parent Item is not an active Agent call', async () => {
+    for (const spawnItem of [
+      { type: 'dynamicToolCall', id: 'agent-tool', tool: 'agent', status: 'inProgress' },
+      { type: 'collabAgentToolCall', id: 'agent-tool', tool: 'agent', status: 'completed' },
+    ]) {
+      const collaboration = spawnAdmissionCollaboration({
+        spawnItem,
+        createThread: async () => { throw new Error('Thread creation must not start'); },
+      });
+
+      await expect(collaboration.spawnAgent({
+        senderThreadId: PARENT_ID,
+        senderTurnId: 'parent-turn',
+        parentItemId: 'agent-tool',
+        description: 'Invalid replay',
+        prompt: 'Do not start',
+        agentType: 'general-purpose',
+        runInBackground: true,
+        isolation: null,
+      })).rejects.toThrow('Agent spawn boundary must reference an in-progress agent Item');
+    }
+  });
+
+  test('returns a non-empty foreground result when the child has no text or usage', async () => {
+    const collaboration = spawnAdmissionCollaboration({
+      createThread: async () => { throw new Error('unused'); },
+    });
+    collaboration.spawnAgent = async () => ({
+      agentId: FIRST_AGENT_ID,
+      runMode: 'foreground',
+      report: '',
+      usage: null,
+      outputFile: null,
+    });
+    const [agent] = collaboration.collaborationToolContributions(
+      { threadId: PARENT_ID, turnId: 'parent-turn' },
+      [],
+    );
+    if (!agent) throw new Error('Agent tool was not contributed');
+
+    const result = await agent.execute('agent-tool', {
+      description: 'Return no text',
+      prompt: 'Return no text',
+      subagent_type: 'general-purpose',
+      run_in_background: false,
+    });
+
+    expect(result.content).toEqual([{ type: 'text', text: 'Agent finished without text output.' }]);
+  });
+
+  test('rejects Agent self-message and self-stop targets', async () => {
+    const database = new Database(':memory:') as unknown as SqliteDatabase;
+    const ledger = new SubagentExecutionLedger(database);
+    createBackgroundExecution(ledger, FIRST_AGENT_ID, 'first-turn', 'first-tool');
+    const collaboration = new SubagentCollaboration(
+      {} as never,
+      {} as never,
+      {} as never,
+      { requireActiveTurn: () => undefined } as never,
+      {} as never,
+      ledger,
+      (() => { throw new Error('unused'); }) as never,
+      (() => { throw new Error('unused'); }) as never,
+      async () => null,
+      async () => ({ maxDepth: 3, maxConcurrent: 20 }),
+      async () => null,
+      undefined,
+      undefined,
+      undefined,
+      () => 100,
+      ((configuration: unknown) => configuration) as never,
+      () => undefined,
+      (message) => new Error(message),
+      {} as never,
+    );
+
+    await expect(collaboration.sendAgentMessage(
+      FIRST_AGENT_ID,
+      'first-turn',
+      'message-item',
+      FIRST_AGENT_ID,
+      'Loop this message',
+      'Loop',
+    )).resolves.toEqual({ success: false, message: 'An Agent cannot send a message to itself.' });
+    await expect(collaboration.stopAgentTask(FIRST_AGENT_ID, 'first-turn', FIRST_AGENT_ID))
+      .rejects.toThrow('An Agent cannot stop itself.');
+    expect(collaboration.hasAgentTask(FIRST_AGENT_ID, FIRST_AGENT_ID)).toBe(false);
+    database.close();
+  });
+
+  test('keeps pending Agent admissions unreachable from collaboration tools', async () => {
+    const database = new Database(':memory:') as unknown as SqliteDatabase;
+    const ledger = new SubagentExecutionLedger(database);
+    createPendingExecution(ledger, FIRST_AGENT_ID, 'first-turn', 'first-tool');
+    createExecution(ledger, SECOND_AGENT_ID, 'second-turn', 'second-tool');
+    const threads = new Map([
+      [PARENT_ID, {
+        id: PARENT_ID,
+        sessionId: 'session',
+        parentThreadId: null,
+        source: 'app',
+      }],
+      [FIRST_AGENT_ID, {
+        id: FIRST_AGENT_ID,
+        sessionId: 'session',
+        parentThreadId: PARENT_ID,
+        source: 'collaboration',
+      }],
+      [SECOND_AGENT_ID, {
+        id: SECOND_AGENT_ID,
+        sessionId: 'session',
+        parentThreadId: PARENT_ID,
+        source: 'collaboration',
+      }],
+    ]);
+    let steerCalls = 0;
+    let interruptCalls = 0;
+    const collaboration = new SubagentCollaboration(
+      { requireThread: (threadId: string) => ({ thread: threads.get(threadId)! }) } as never,
+      {} as never,
+      {} as never,
+      {
+        requireActiveTurn: () => undefined,
+        activeTurnId: (threadId: string) => threadId === FIRST_AGENT_ID
+          ? 'first-turn'
+          : threadId === SECOND_AGENT_ID
+            ? 'second-turn'
+            : null,
+        steerTurn: async () => { steerCalls += 1; },
+        interruptTurn: async () => { interruptCalls += 1; },
+      } as never,
+      {} as never,
+      ledger,
+      (() => { throw new Error('unused'); }) as never,
+      (() => { throw new Error('unused'); }) as never,
+      async () => null,
+      async () => ({ maxDepth: 3, maxConcurrent: 20 }),
+      async () => null,
+      undefined,
+      undefined,
+      undefined,
+      () => 100,
+      ((configuration: unknown) => configuration) as never,
+      () => undefined,
+      (message) => new Error(message),
+      {} as never,
+    );
+
+    await expect(collaboration.sendAgentMessage(
+      PARENT_ID,
+      'parent-turn',
+      'root-message-item',
+      FIRST_AGENT_ID,
+      'Reach the pending Agent',
+      'Reach pending',
+    )).resolves.toEqual({
+      success: false,
+      message: `No agent with ID '${FIRST_AGENT_ID}' is reachable.\nUse the agent ID from a background agent's spawn result.`,
+    });
+    await expect(collaboration.stopAgentTask(PARENT_ID, 'parent-turn', FIRST_AGENT_ID))
+      .resolves.toBeNull();
+    expect(collaboration.hasAgentTask(PARENT_ID, FIRST_AGENT_ID)).toBe(false);
+
+    await expect(collaboration.sendAgentMessage(
+      FIRST_AGENT_ID,
+      'first-turn',
+      'sibling-message-item',
+      SECOND_AGENT_ID,
+      'Reach the committed sibling',
+      'Reach sibling',
+    )).resolves.toEqual({
+      success: false,
+      message: 'Agent admission is incomplete; messaging is unavailable.',
+    });
+    await expect(collaboration.sendAgentMessage(
+      FIRST_AGENT_ID,
+      'first-turn',
+      'main-message-item',
+      'main',
+      'Reach the main conversation',
+      'Reach main',
+    )).resolves.toEqual({
+      success: false,
+      message: 'Agent admission is incomplete; messaging is unavailable.',
+    });
+    await expect(collaboration.stopAgentTask(FIRST_AGENT_ID, 'first-turn', SECOND_AGENT_ID))
+      .resolves.toBeNull();
+    expect(collaboration.hasAgentTask(FIRST_AGENT_ID, SECOND_AGENT_ID)).toBe(false);
+
+    expect(steerCalls).toBe(0);
+    expect(interruptCalls).toBe(0);
+    expect(ledger.pendingParentMessages(PARENT_ID)).toEqual([]);
+    database.close();
+  });
+
+  test('keeps root collaboration access to committed Agents without a root execution', async () => {
+    const database = new Database(':memory:') as unknown as SqliteDatabase;
+    const ledger = new SubagentExecutionLedger(database);
+    createExecution(ledger, FIRST_AGENT_ID, 'first-turn', 'first-tool');
+    const threads = new Map([
+      [PARENT_ID, {
+        id: PARENT_ID,
+        sessionId: 'session',
+        parentThreadId: null,
+        source: 'app',
+      }],
+      [FIRST_AGENT_ID, {
+        id: FIRST_AGENT_ID,
+        sessionId: 'session',
+        parentThreadId: PARENT_ID,
+        source: 'collaboration',
+      }],
+    ]);
+    let steerCalls = 0;
+    let interruptCalls = 0;
+    const collaboration = new SubagentCollaboration(
+      { requireThread: (threadId: string) => ({ thread: threads.get(threadId)! }) } as never,
+      {} as never,
+      {} as never,
+      {
+        requireActiveTurn: () => undefined,
+        activeTurnId: () => 'first-turn',
+        steerTurn: async () => { steerCalls += 1; },
+        interruptTurn: async () => { interruptCalls += 1; },
+      } as never,
+      {} as never,
+      ledger,
+      (() => { throw new Error('unused'); }) as never,
+      (() => { throw new Error('unused'); }) as never,
+      async () => null,
+      async () => ({ maxDepth: 3, maxConcurrent: 20 }),
+      async () => null,
+      undefined,
+      undefined,
+      undefined,
+      () => 100,
+      ((configuration: unknown) => configuration) as never,
+      () => undefined,
+      (message) => new Error(message),
+      {} as never,
+    );
+
+    await expect(collaboration.sendAgentMessage(
+      PARENT_ID,
+      'parent-turn',
+      'message-item',
+      FIRST_AGENT_ID,
+      'Continue the task',
+      'Continue',
+    )).resolves.toMatchObject({ success: true });
+    expect(collaboration.hasAgentTask(PARENT_ID, FIRST_AGENT_ID)).toBe(true);
+    await expect(collaboration.stopAgentTask(PARENT_ID, 'parent-turn', FIRST_AGENT_ID))
+      .resolves.toMatchObject({ task_id: FIRST_AGENT_ID });
+    expect(steerCalls).toBe(1);
+    expect(interruptCalls).toBe(1);
+    database.close();
+  });
+
+  test('rechecks committed admission after acquiring an Agent resume lock', async () => {
+    const database = new Database(':memory:') as unknown as SqliteDatabase;
+    const ledger = new SubagentExecutionLedger(database);
+    createBackgroundExecution(ledger, FIRST_AGENT_ID, 'first-turn', 'first-tool');
+    const originalRead = ledger.read.bind(ledger);
+    let targetReads = 0;
+    ledger.read = (agentId) => {
+      const execution = originalRead(agentId);
+      if (agentId !== FIRST_AGENT_ID || !execution) return execution;
+      targetReads += 1;
+      return targetReads < 3
+        ? execution
+        : { ...execution, initialAdmissionState: 'pending' };
+    };
+    const threads = new Map([
+      [PARENT_ID, {
+        id: PARENT_ID,
+        sessionId: 'session',
+        parentThreadId: null,
+        source: 'app',
+      }],
+      [FIRST_AGENT_ID, {
+        id: FIRST_AGENT_ID,
+        sessionId: 'session',
+        parentThreadId: PARENT_ID,
+        source: 'collaboration',
+      }],
+    ]);
+    let privilegedStarts = 0;
+    const collaboration = new SubagentCollaboration(
+      {
+        requireThread: (threadId: string) => ({ thread: threads.get(threadId)! }),
+        readTurn: () => null,
+      } as never,
+      {} as never,
+      {} as never,
+      {
+        requireActiveTurn: () => undefined,
+        activeTurnId: () => null,
+        startPrivilegedTurn: async () => { privilegedStarts += 1; },
+      } as never,
+      {} as never,
+      ledger,
+      (() => { throw new Error('unused'); }) as never,
+      (() => { throw new Error('unused'); }) as never,
+      async () => null,
+      async () => ({ maxDepth: 3, maxConcurrent: 20 }),
+      async () => null,
+      undefined,
+      undefined,
+      undefined,
+      () => 100,
+      ((configuration: unknown) => configuration) as never,
+      () => undefined,
+      (message) => new Error(message),
+      {} as never,
+    );
+
+    await expect(collaboration.sendAgentMessage(
+      PARENT_ID,
+      'parent-turn',
+      'message-item',
+      FIRST_AGENT_ID,
+      'Resume this Agent',
+      'Resume',
+    )).resolves.toEqual({
+      success: false,
+      message: `No agent with ID '${FIRST_AGENT_ID}' is reachable.\nUse the agent ID from a background agent's spawn result.`,
+    });
+    expect(targetReads).toBe(3);
+    expect(privilegedStarts).toBe(0);
+    database.close();
   });
 
   test('keeps a slot occupied until terminal settlement finishes', async () => {
@@ -153,8 +522,10 @@ describe('foreground Agent main-message delivery', () => {
       async () => null,
       undefined,
       undefined,
+      undefined,
       () => 100,
       ((configuration: unknown) => configuration) as never,
+      () => undefined,
       (message) => new Error(message),
       {} as never,
     );
@@ -164,6 +535,162 @@ describe('foreground Agent main-message delivery', () => {
     await expect(seam.assertNewAgentAdmission(PARENT_ID)).rejects.toThrow(
       'Concurrent subagent limit reached. You can run 1 subagents at once.',
     );
+  });
+
+  test('does not count settled historical children against a lifetime spawn cap', async () => {
+    const root = { id: PARENT_ID, parentThreadId: null, source: 'app' };
+    const historicalChildren = Array.from({ length: 32 }, (_, index) => ({
+      id: `settled-agent-${index}`,
+      parentThreadId: PARENT_ID,
+      source: 'collaboration',
+    }));
+    const threads = new Map([root, ...historicalChildren].map((thread) => [thread.id, thread]));
+    const collaboration = new SubagentCollaboration(
+      {
+        requireThread: (threadId: string) => ({ thread: threads.get(threadId)! }),
+        metadata: {
+          childEdges: () => historicalChildren.map((thread) => ({ childThreadId: thread.id })),
+        },
+      } as never,
+      {} as never,
+      {} as never,
+      { activeTurnId: () => null } as never,
+      {} as never,
+      {} as never,
+      (() => { throw new Error('unused'); }) as never,
+      (() => { throw new Error('unused'); }) as never,
+      async () => null,
+      async () => ({ maxDepth: 3, maxConcurrent: 1 }),
+      async () => null,
+      undefined,
+      undefined,
+      undefined,
+      () => 100,
+      ((configuration: unknown) => configuration) as never,
+      () => undefined,
+      (message) => new Error(message),
+      {} as never,
+    );
+
+    await expect((collaboration as unknown as AdmissionSeam).assertNewAgentAdmission(PARENT_ID))
+      .resolves.toBeUndefined();
+  });
+
+  test('derives Agent spawn availability from the persisted child tool policy', () => {
+    const database = new Database(':memory:') as unknown as SqliteDatabase;
+    const ledger = new SubagentExecutionLedger(database);
+    const cases = [
+      { id: 'general-child', policy: {}, expected: true },
+      { id: 'depth-capped-child', policy: { allowNesting: false }, expected: false },
+      { id: 'explore-child', policy: { kind: 'explore' as const }, expected: false },
+      { id: 'plan-child', policy: { kind: 'plan' as const }, expected: false },
+      { id: 'restricted-child', policy: { requestedTools: ['file_read'] }, expected: false },
+      { id: 'agent-enabled-child', policy: { requestedTools: ['agent'] }, expected: true },
+    ];
+    for (const entry of cases) {
+      createExecution(
+        ledger,
+        entry.id,
+        `${entry.id}-turn`,
+        `${entry.id}-tool`,
+        PARENT_ID,
+        entry.policy,
+      );
+    }
+    const pendingChildId = 'pending-child';
+    createPendingExecution(ledger, pendingChildId, 'pending-child-turn', 'pending-child-tool');
+    const root = { id: PARENT_ID, parentThreadId: null, source: 'app' };
+    const threads = new Map([
+      [PARENT_ID, root],
+      ...cases.map((entry) => [entry.id, {
+        id: entry.id,
+        parentThreadId: PARENT_ID,
+        source: 'collaboration',
+      }] as const),
+      [pendingChildId, {
+        id: pendingChildId,
+        parentThreadId: PARENT_ID,
+        source: 'collaboration',
+      }],
+    ]);
+    const collaboration = new SubagentCollaboration(
+      { requireThread: (threadId: string) => ({ thread: threads.get(threadId)! }) } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      ledger,
+      (() => { throw new Error('unused'); }) as never,
+      (() => { throw new Error('unused'); }) as never,
+      async () => null,
+      async () => ({ maxDepth: 3, maxConcurrent: 20 }),
+      async () => null,
+      undefined,
+      undefined,
+      undefined,
+      () => 100,
+      ((configuration: unknown) => configuration) as never,
+      () => undefined,
+      (message) => new Error(message),
+      {} as never,
+    );
+    const withAgent = { tools: ['agent'] } as never;
+    const withoutAgent = { tools: ['file_read'] } as never;
+
+    expect(collaboration.canSpawnAgent(PARENT_ID, withAgent)).toBe(true);
+    expect(collaboration.canSpawnAgent(PARENT_ID, withoutAgent)).toBe(false);
+    for (const entry of cases) {
+      expect(collaboration.canSpawnAgent(entry.id, withAgent)).toBe(entry.expected);
+    }
+    expect(collaboration.canSpawnAgent(pendingChildId, withAgent)).toBe(false);
+    database.close();
+  });
+
+  test('keeps mismatched active worktree metadata as a closed write-boundary fallback', () => {
+    const database = new Database(':memory:') as unknown as SqliteDatabase;
+    const ledger = new SubagentExecutionLedger(database);
+    const worktree = agentWorktree('/managed/expected-worktree');
+    createBackgroundExecution(ledger, FIRST_AGENT_ID, 'first-turn', 'first-tool', PARENT_ID, worktree);
+    const threads = new Map([
+      [PARENT_ID, { id: PARENT_ID, parentThreadId: null, cwd: '/repo', source: 'app' }],
+      [FIRST_AGENT_ID, {
+        id: FIRST_AGENT_ID,
+        parentThreadId: PARENT_ID,
+        cwd: '/managed/moved-worktree',
+        source: 'collaboration',
+      }],
+    ]);
+    const collaboration = new SubagentCollaboration(
+      { requireThread: (threadId: string) => ({ thread: threads.get(threadId)! }) } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      ledger,
+      (() => { throw new Error('unused'); }) as never,
+      (() => { throw new Error('unused'); }) as never,
+      async () => null,
+      async () => ({ maxDepth: 3, maxConcurrent: 20 }),
+      async () => null,
+      undefined,
+      undefined,
+      undefined,
+      () => 100,
+      ((configuration: unknown) => configuration) as never,
+      () => undefined,
+      (message) => new Error(message),
+      {} as never,
+    );
+    const warning = spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    expect(collaboration.worktreeForThread(FIRST_AGENT_ID)).toEqual(worktree);
+    const warningText = serializedConsoleCalls(warning.mock.calls);
+    expect(warning.mock.calls.some((call) => String(call[0]).includes('worktree metadata does not match Thread cwd')))
+      .toBe(true);
+    expect(warningText).not.toContain(worktree.path);
+    expect(warningText).not.toContain('/managed/moved-worktree');
+    warning.mockRestore();
+    database.close();
   });
 
   test('reserves terminal settlement before idle and retries a failed ledger write later', async () => {
@@ -210,8 +737,10 @@ describe('foreground Agent main-message delivery', () => {
       async () => null,
       undefined,
       undefined,
+      undefined,
       () => 100,
       ((configuration: unknown) => configuration) as never,
+      () => undefined,
       (message) => new Error(message),
       { flushForTerminalSettlement: async () => undefined } as never,
     );
@@ -249,6 +778,58 @@ describe('foreground Agent main-message delivery', () => {
     database.close();
   });
 
+  test('restores parent notification intent when a Thread deletion aborts', async () => {
+    const database = new Database(':memory:') as unknown as SqliteDatabase;
+    const ledger = new SubagentExecutionLedger(database);
+    createBackgroundExecution(ledger, FIRST_AGENT_ID, 'first-turn', 'first-tool');
+    const child = { id: FIRST_AGENT_ID, parentThreadId: PARENT_ID, source: 'collaboration' };
+    const turn = { id: 'first-turn', status: 'completed', error: null };
+    const collaboration = new SubagentCollaboration(
+      {
+        metadata: { spawnEdgeForChild: () => ({ taskPath: `/root/${FIRST_AGENT_ID}` }) },
+        readTurn: () => turn,
+        requireThread: (threadId: string) => ({
+          thread: threadId === FIRST_AGENT_ID
+            ? child
+            : { id: PARENT_ID, parentThreadId: null, source: 'app' },
+        }),
+      } as never,
+      {} as never,
+      {} as never,
+      { hasActiveTurn: (threadId: string) => threadId === PARENT_ID } as never,
+      {} as never,
+      ledger,
+      (() => { throw new Error('unused'); }) as never,
+      (() => { throw new Error('unused'); }) as never,
+      async () => null,
+      async () => ({ maxDepth: 3, maxConcurrent: 20 }),
+      async () => null,
+      undefined,
+      undefined,
+      undefined,
+      () => 100,
+      ((configuration: unknown) => configuration) as never,
+      () => undefined,
+      (message) => new Error(message),
+      { flushForTerminalSettlement: async () => undefined } as never,
+    );
+    const seam = collaboration as unknown as TerminalSettlementSeam;
+    const key = `${FIRST_AGENT_ID}:1`;
+
+    seam.prepareChildTerminalSettlement(child, turn);
+    seam.beginThreadDeletion([FIRST_AGENT_ID]);
+    expect((seam.terminalSettlementReservations.get(key) as { notifyParent?: boolean })?.notifyParent)
+      .toBe(false);
+    seam.finishThreadDeletion([FIRST_AGENT_ID]);
+    await seam.terminalSettlementReservations.get(key)?.pipeline;
+
+    expect(ledger.pendingForParent(PARENT_ID)).toContainEqual(expect.objectContaining({
+      agentId: FIRST_AGENT_ID,
+      generation: 1,
+    }));
+    database.close();
+  });
+
   test('settles a terminal notification when the ordinary transcript flush is wedged', async () => {
     const database = new Database(':memory:') as unknown as SqliteDatabase;
     const ledger = new SubagentExecutionLedger(database);
@@ -281,8 +862,10 @@ describe('foreground Agent main-message delivery', () => {
       async () => null,
       undefined,
       undefined,
+      undefined,
       () => 100,
       ((configuration: unknown) => configuration) as never,
+      () => undefined,
       (message) => new Error(message),
       {
         flush: async () => {
@@ -348,6 +931,7 @@ describe('foreground Agent main-message delivery', () => {
       async () => ({ maxDepth: 3, maxConcurrent: 20 }),
       async () => null,
       undefined,
+      undefined,
       async (_worktree, options) => {
         cleanupAttempts += 1;
         await options?.beforeCleanRemoval?.();
@@ -355,6 +939,7 @@ describe('foreground Agent main-message delivery', () => {
       },
       () => 100,
       ((configuration: unknown) => configuration) as never,
+      () => undefined,
       (message) => new Error(message),
       { flushForTerminalSettlement: async () => undefined } as never,
     );
@@ -432,9 +1017,11 @@ describe('foreground Agent main-message delivery', () => {
       async () => ({ maxDepth: 3, maxConcurrent: 20 }),
       async () => null,
       undefined,
+      undefined,
       async () => ({ worktree, retained: true }),
       () => 100,
       ((configuration: unknown) => configuration) as never,
+      () => undefined,
       (message) => new Error(message),
       { flushForTerminalSettlement: async () => undefined } as never,
     );
@@ -493,8 +1080,10 @@ describe('foreground Agent main-message delivery', () => {
       async () => null,
       undefined,
       undefined,
+      undefined,
       () => 100,
       ((configuration: unknown) => configuration) as never,
+      () => undefined,
       (message) => new Error(message),
       { flushForTerminalSettlement: async () => undefined } as never,
     );
@@ -510,14 +1099,56 @@ describe('foreground Agent main-message delivery', () => {
     expect(seam.terminalSettlementReservations.get(key)?.retryTimer).not.toBeNull();
 
     seam.beginClose();
-    await seam.drainForClose();
-    await seam.drainForClose();
+    expect(await seam.drainForClose(Date.now() + 2_000)).toBe(true);
+    expect(await seam.drainForClose(Date.now() + 2_000)).toBe(true);
 
     expect(recordAttempts).toBe(2);
     expect(seam.terminalSettlementReservations.has(key)).toBe(true);
     expect(seam.terminalSettlementReservations.get(key)?.retryTimer).toBeNull();
     expect(ledger.pendingForParent(PARENT_ID)).toEqual([]);
     warning.mockRestore();
+    database.close();
+  });
+
+  test('bounds close-time collaboration drain when a terminal pipeline is wedged', async () => {
+    const database = new Database(':memory:') as unknown as SqliteDatabase;
+    const ledger = new SubagentExecutionLedger(database);
+    createBackgroundExecution(ledger, FIRST_AGENT_ID, 'first-turn', 'first-tool');
+    const child = { id: FIRST_AGENT_ID, parentThreadId: PARENT_ID, source: 'collaboration' };
+    const turn = { id: 'first-turn', status: 'completed', error: null };
+    const collaboration = new SubagentCollaboration(
+      {
+        metadata: { spawnEdgeForChild: () => ({ taskPath: `/root/${FIRST_AGENT_ID}` }) },
+        requireThread: (threadId: string) => ({
+          thread: threadId === PARENT_ID
+            ? { id: PARENT_ID, parentThreadId: null, source: 'app' }
+            : child,
+        }),
+      } as never,
+      {} as never,
+      {} as never,
+      { hasActiveTurn: (threadId: string) => threadId === PARENT_ID } as never,
+      {} as never,
+      ledger,
+      (() => { throw new Error('unused'); }) as never,
+      (() => { throw new Error('unused'); }) as never,
+      async () => null,
+      async () => ({ maxDepth: 3, maxConcurrent: 20 }),
+      async () => null,
+      undefined,
+      undefined,
+      undefined,
+      () => 100,
+      ((configuration: unknown) => configuration) as never,
+      () => undefined,
+      (message) => new Error(message),
+      { flushForTerminalSettlement: async () => await new Promise<void>(() => undefined) } as never,
+    );
+    const seam = collaboration as unknown as TerminalSettlementSeam;
+    seam.prepareChildTerminalSettlement(child, turn);
+
+    expect(await seam.drainForClose(Date.now() + 10)).toBe(false);
+    expect(seam.terminalSettlementReservations.has(`${FIRST_AGENT_ID}:1`)).toBe(true);
     database.close();
   });
 
@@ -557,8 +1188,10 @@ describe('foreground Agent main-message delivery', () => {
       async () => null,
       undefined,
       undefined,
+      undefined,
       () => 100,
       ((configuration: unknown) => configuration) as never,
+      () => undefined,
       (message) => new Error(message),
       { flushForTerminalSettlement: async () => undefined } as never,
     );
@@ -633,8 +1266,10 @@ describe('foreground Agent main-message delivery', () => {
       async () => null,
       undefined,
       undefined,
+      undefined,
       () => 100,
       ((configuration: unknown) => configuration) as never,
+      () => undefined,
       (message) => new Error(message),
       { flushForTerminalSettlement: async () => undefined } as never,
     );
@@ -708,8 +1343,10 @@ describe('foreground Agent main-message delivery', () => {
       async () => null,
       undefined,
       undefined,
+      undefined,
       () => 100,
       ((configuration: unknown) => configuration) as never,
+      () => undefined,
       (message) => new Error(message),
       {} as never,
     );
@@ -784,8 +1421,10 @@ describe('foreground Agent main-message delivery', () => {
       async () => null,
       undefined,
       undefined,
+      undefined,
       () => 100 + admissionAttempts,
       ((configuration: unknown) => configuration) as never,
+      () => undefined,
       (message) => new Error(message),
       { pathForReader: async () => null } as never,
     );
@@ -803,6 +1442,151 @@ describe('foreground Agent main-message delivery', () => {
     expect(ledger.require(PARENT_ID).currentTurnId).toBe(acceptedTurnIds[0]!);
     expect(ledger.notificationState(FIRST_AGENT_ID, 1)).toBe('delivered');
     warning.mockRestore();
+    database.close();
+  });
+
+  test('continues delivering sibling notifications after one child record is unreadable', async () => {
+    const database = new Database(':memory:') as unknown as SqliteDatabase;
+    const ledger = new SubagentExecutionLedger(database);
+    createBackgroundExecution(ledger, FIRST_AGENT_ID, 'missing-turn', 'first-tool');
+    createBackgroundExecution(ledger, SECOND_AGENT_ID, 'second-turn', 'second-tool');
+    for (const [agentId, turnId, toolUseId, createdAt] of [
+      [FIRST_AGENT_ID, 'missing-turn', 'first-tool', 1],
+      [SECOND_AGENT_ID, 'second-turn', 'second-tool', 2],
+    ] as const) {
+      ledger.recordTerminal({
+        agentId,
+        generation: 1,
+        parentThreadId: PARENT_ID,
+        turnId,
+        toolUseId,
+        status: 'completed',
+        createdAt,
+      });
+    }
+    const secondTurn = terminalTurn('second-turn');
+    const started: string[] = [];
+    const collaboration = new SubagentCollaboration(
+      {
+        readTurn: (threadId: string) => threadId === SECOND_AGENT_ID ? secondTurn : null,
+        requireThread: (threadId: string) => ({
+          thread: {
+            id: threadId,
+            parentThreadId: threadId === PARENT_ID ? null : PARENT_ID,
+            source: threadId === PARENT_ID ? 'app' : 'collaboration',
+          },
+        }),
+      } as never,
+      {} as never,
+      {} as never,
+      {
+        hasActiveTurn: () => false,
+        readTurnByClientUserMessageIdForHost: () => null,
+        tryStartTurnIfIdle: async (request: { readonly clientUserMessageId?: string }) => {
+          started.push(request.clientUserMessageId ?? '');
+          return secondTurn;
+        },
+      } as never,
+      {} as never,
+      ledger,
+      (() => { throw new Error('unused'); }) as never,
+      (() => { throw new Error('unused'); }) as never,
+      async () => null,
+      async () => ({ maxDepth: 3, maxConcurrent: 20 }),
+      async () => null,
+      undefined,
+      undefined,
+      undefined,
+      () => 100,
+      ((configuration: unknown) => configuration) as never,
+      () => undefined,
+      (message) => new Error(message),
+      { pathForReader: async () => null } as never,
+    );
+    const warning = spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await (collaboration as unknown as TerminalSettlementSeam).deliverParentWork(PARENT_ID);
+
+    expect(ledger.notificationState(FIRST_AGENT_ID, 1)).toBe('pending');
+    expect(ledger.notificationState(SECOND_AGENT_ID, 1)).toBe('delivered');
+    expect(started).toEqual([`task-notification:${SECOND_AGENT_ID}:1`]);
+    warning.mockRestore();
+    database.close();
+  });
+
+  test('continues delivering sibling notifications after one sender is quarantined', async () => {
+    const database = new Database(':memory:') as unknown as SqliteDatabase;
+    const ledger = new SubagentExecutionLedger(database);
+    createBackgroundExecution(ledger, FIRST_AGENT_ID, 'first-turn', 'first-tool');
+    createBackgroundExecution(ledger, SECOND_AGENT_ID, 'second-turn', 'second-tool');
+    for (const [agentId, turnId, toolUseId, createdAt] of [
+      [FIRST_AGENT_ID, 'first-turn', 'first-tool', 1],
+      [SECOND_AGENT_ID, 'second-turn', 'second-tool', 2],
+    ] as const) {
+      ledger.recordTerminal({
+        agentId,
+        generation: 1,
+        parentThreadId: PARENT_ID,
+        turnId,
+        toolUseId,
+        status: 'completed',
+        createdAt,
+      });
+    }
+    const turns = new Map([
+      [FIRST_AGENT_ID, terminalTurn('first-turn')],
+      [SECOND_AGENT_ID, terminalTurn('second-turn')],
+    ]);
+    const started: string[] = [];
+    const availabilityChecks: string[] = [];
+    const collaboration = new SubagentCollaboration(
+      {
+        readTurn: (threadId: string) => turns.get(threadId) ?? null,
+        requireThread: (threadId: string) => ({
+          thread: {
+            id: threadId,
+            parentThreadId: threadId === PARENT_ID ? null : PARENT_ID,
+            source: threadId === PARENT_ID ? 'app' : 'collaboration',
+          },
+        }),
+      } as never,
+      {} as never,
+      {} as never,
+      {
+        hasActiveTurn: () => false,
+        readTurnByClientUserMessageIdForHost: () => null,
+        tryStartTurnIfIdle: async (request: { readonly clientUserMessageId?: string }) => {
+          started.push(request.clientUserMessageId ?? '');
+          return turns.get(SECOND_AGENT_ID)!;
+        },
+      } as never,
+      {} as never,
+      ledger,
+      (() => { throw new Error('unused'); }) as never,
+      (() => { throw new Error('unused'); }) as never,
+      async () => null,
+      async () => ({ maxDepth: 3, maxConcurrent: 20 }),
+      async () => null,
+      undefined,
+      undefined,
+      undefined,
+      () => 100,
+      ((configuration: unknown) => configuration) as never,
+      (threadId) => {
+        availabilityChecks.push(threadId);
+        if (threadId === FIRST_AGENT_ID) throw new Error('Thread is quarantined');
+      },
+      (message) => new Error(message),
+      { pathForReader: async () => null } as never,
+    );
+
+    await (collaboration as unknown as TerminalSettlementSeam).deliverParentWork(PARENT_ID);
+
+    expect(availabilityChecks).toContain(FIRST_AGENT_ID);
+    expect(availabilityChecks).toContain(SECOND_AGENT_ID);
+    expect(ledger.notificationState(FIRST_AGENT_ID, 1)).toBe('pending');
+    expect(ledger.notificationState(SECOND_AGENT_ID, 1)).toBe('delivered');
+    expect(started).toEqual([`task-notification:${SECOND_AGENT_ID}:1`]);
     database.close();
   });
 
@@ -848,8 +1632,10 @@ describe('foreground Agent main-message delivery', () => {
       async () => null,
       undefined,
       undefined,
+      undefined,
       () => 100,
       ((configuration: unknown) => configuration) as never,
+      () => undefined,
       (message) => new Error(message),
       { pathForReader: async () => null } as never,
     );
@@ -919,8 +1705,10 @@ describe('foreground Agent main-message delivery', () => {
       async () => null,
       undefined,
       undefined,
+      undefined,
       () => 100,
       ((configuration: unknown) => configuration) as never,
+      () => undefined,
       (message) => new Error(message),
       {} as never,
     );
@@ -973,8 +1761,10 @@ describe('foreground Agent main-message delivery', () => {
       async () => null,
       undefined,
       undefined,
+      undefined,
       () => 100,
       ((configuration: unknown) => configuration) as never,
+      () => undefined,
       (message) => new Error(message),
       { flushForTerminalSettlement: async () => flushGate } as never,
     );
@@ -1048,6 +1838,59 @@ describe('foreground Agent main-message delivery', () => {
     database.close();
   });
 
+  test('sweeps only the orphaned envelope when one Agent also owns valid work', () => {
+    const database = new Database(':memory:') as unknown as SqliteDatabase;
+    const ledger = new SubagentExecutionLedger(database);
+    createBackgroundExecution(ledger, FIRST_AGENT_ID, 'first-turn', 'first-tool');
+    expect(ledger.recordTerminal({
+      agentId: FIRST_AGENT_ID,
+      generation: 1,
+      parentThreadId: 'missing-parent',
+      turnId: 'first-turn',
+      toolUseId: 'first-tool',
+      status: 'completed',
+      createdAt: 1,
+    })).toBe(true);
+    const previous = ledger.generationSnapshot(FIRST_AGENT_ID);
+    expect(ledger.beginNextGenerationIfCurrent({
+      agentId: FIRST_AGENT_ID,
+      expectedGeneration: previous.generation,
+      expectedTurnId: previous.currentTurnId,
+      turnId: 'second-turn',
+      toolUseId: 'second-tool',
+      runMode: 'background',
+      previous,
+      updatedAt: 2,
+    })).not.toBeNull();
+    expect(ledger.completeGenerationAdmissionIfCurrent(FIRST_AGENT_ID, 2, 'second-turn')).toBe(true);
+    expect(ledger.recordTerminal({
+      agentId: FIRST_AGENT_ID,
+      generation: 2,
+      parentThreadId: PARENT_ID,
+      turnId: 'second-turn',
+      toolUseId: 'second-tool',
+      status: 'completed',
+      createdAt: 2,
+    })).toBe(true);
+    ledger.enqueueParentMessage({
+      id: 'orphan-message',
+      senderAgentId: FIRST_AGENT_ID,
+      parentThreadId: 'missing-parent',
+      generation: 2,
+      content: 'orphan',
+      deliveryMode: 'background',
+      createdAt: 3,
+    });
+    enqueue(ledger, 'valid-message', FIRST_AGENT_ID, 2, 'background');
+
+    expect(ledger.sweepOrphanEnvelopes(new Set([PARENT_ID, FIRST_AGENT_ID]))).toBe(2);
+
+    expect(ledger.notificationState(FIRST_AGENT_ID, 1)).toBeNull();
+    expect(ledger.notificationState(FIRST_AGENT_ID, 2)).toBe('pending');
+    expect(ledger.pendingParentMessages(PARENT_ID).map((message) => message.id)).toEqual(['valid-message']);
+    database.close();
+  });
+
   test('rolls back an uncommitted Agent generation admission during startup recovery', async () => {
     const database = new Database(':memory:') as unknown as SqliteDatabase;
     const ledger = new SubagentExecutionLedger(database);
@@ -1104,6 +1947,64 @@ describe('foreground Agent main-message delivery', () => {
       toolUseId: 'resume-tool',
     });
     expect(ledger.pendingGenerationAdmissions()).toEqual([]);
+    database.close();
+  });
+
+  test('skips an orphaned execution row while recovering healthy siblings', async () => {
+    const database = new Database(':memory:') as unknown as SqliteDatabase;
+    const ledger = new SubagentExecutionLedger(database);
+    createBackgroundExecution(ledger, FIRST_AGENT_ID, 'missing-turn', 'first-tool');
+    createExecution(ledger, SECOND_AGENT_ID, 'second-turn', 'second-tool');
+    const orphanTurn = terminalTurn('missing-turn');
+    const healthyTurn = terminalTurn('second-turn');
+    const delivered: string[] = [];
+    const collaboration = new SubagentCollaboration(
+      {
+        readTurn: (threadId: string) => threadId === FIRST_AGENT_ID
+          ? orphanTurn
+          : threadId === SECOND_AGENT_ID
+            ? healthyTurn
+            : null,
+        requireThread: (threadId: string) => {
+          if (threadId === FIRST_AGENT_ID) throw new Error('Thread not found');
+          return {
+            thread: {
+              id: threadId,
+              parentThreadId: threadId === PARENT_ID ? null : PARENT_ID,
+              source: threadId === PARENT_ID ? 'app' : 'collaboration',
+            },
+          };
+        },
+      } as never,
+      {} as never,
+      {} as never,
+      { hasActiveTurn: () => false, activeTurnId: () => null } as never,
+      {} as never,
+      ledger,
+      (() => { throw new Error('unused'); }) as never,
+      (() => { throw new Error('unused'); }) as never,
+      async () => null,
+      async () => ({ maxDepth: 3, maxConcurrent: 20 }),
+      async () => null,
+      undefined,
+      undefined,
+      undefined,
+      () => 100,
+      ((configuration: unknown) => configuration) as never,
+      () => undefined,
+      (message) => new Error(message),
+      {
+        flushForTerminalSettlement: async (threadId: string) => { delivered.push(threadId); },
+        pathForReader: async () => null,
+      } as never,
+    );
+    const warning = spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await (collaboration as unknown as RecoverySeam).recoverPendingNotifications();
+
+    expect(delivered).toContain(SECOND_AGENT_ID);
+    expect(warning.mock.calls.some((call) => String(call[0]).includes(FIRST_AGENT_ID))).toBe(true);
+    warning.mockRestore();
     database.close();
   });
 
@@ -1167,8 +2068,10 @@ describe('foreground Agent main-message delivery', () => {
       async () => null,
       undefined,
       undefined,
+      undefined,
       () => 100,
       ((configuration: unknown) => configuration) as never,
+      () => undefined,
       (message) => new Error(message),
       {} as never,
     );
@@ -1253,6 +2156,56 @@ describe('foreground Agent main-message delivery', () => {
     database.close();
   });
 
+  test('continues delivering sibling parent messages after one sender is quarantined', async () => {
+    const database = new Database(':memory:') as unknown as SqliteDatabase;
+    const ledger = new SubagentExecutionLedger(database);
+    createBackgroundExecution(ledger, FIRST_AGENT_ID, 'first-turn', 'first-tool');
+    createBackgroundExecution(ledger, SECOND_AGENT_ID, 'second-turn', 'second-tool');
+    enqueue(ledger, 'a-quarantined-message', FIRST_AGENT_ID, 1, 'background');
+    enqueue(ledger, 'b-healthy-message', SECOND_AGENT_ID, 1, 'background');
+    const delivered: string[] = [];
+    const availabilityChecks: string[] = [];
+    const collaboration = new SubagentCollaboration(
+      {} as never,
+      {} as never,
+      {} as never,
+      {
+        hasActiveTurn: () => false,
+        activeTurnId: (threadId: string) => threadId === PARENT_ID ? 'parent-turn' : null,
+        steerTurn: async (request: { readonly clientUserMessageId?: string }) => {
+          delivered.push(request.clientUserMessageId ?? '');
+        },
+      } as never,
+      {} as never,
+      ledger,
+      (() => { throw new Error('unused'); }) as never,
+      (() => { throw new Error('unused'); }) as never,
+      async () => null,
+      async () => ({ maxDepth: 3, maxConcurrent: 20 }),
+      async () => null,
+      undefined,
+      undefined,
+      undefined,
+      () => 100,
+      ((configuration: unknown) => configuration) as never,
+      (threadId) => {
+        availabilityChecks.push(threadId);
+        if (threadId === FIRST_AGENT_ID) throw new Error('Thread is quarantined');
+      },
+      (message) => new Error(message),
+      {} as never,
+    );
+
+    await (collaboration as unknown as DeliverySeam).deliverParentMessages(PARENT_ID);
+
+    expect(availabilityChecks).toEqual([PARENT_ID, FIRST_AGENT_ID, SECOND_AGENT_ID]);
+    expect(delivered).toEqual(['b-healthy-message']);
+    expect(ledger.pendingParentMessages(PARENT_ID).map((message) => message.id)).toEqual([
+      'a-quarantined-message',
+    ]);
+    database.close();
+  });
+
   test('delivers a nested foreground main message after its sender settles while root is idle', async () => {
     const database = new Database(':memory:') as unknown as SqliteDatabase;
     const ledger = new SubagentExecutionLedger(database);
@@ -1293,8 +2246,10 @@ describe('foreground Agent main-message delivery', () => {
       async () => null,
       undefined,
       undefined,
+      undefined,
       () => 100,
       ((configuration: unknown) => configuration) as never,
+      () => undefined,
       (message) => new Error(message),
       {} as never,
     );
@@ -1351,8 +2306,10 @@ describe('foreground Agent main-message delivery', () => {
       async () => null,
       undefined,
       undefined,
+      undefined,
       () => 100,
       ((configuration: unknown) => configuration) as never,
+      () => undefined,
       (message) => new Error(message),
       {} as never,
     );
@@ -1376,7 +2333,8 @@ interface SpawnAdmissionCollaborationOptions {
   readonly requireActiveTurn?: () => void;
   readonly runTreeMutex?: <T>(operation: () => Promise<T>) => Promise<T>;
   readonly resolveAgentStartupContext?: () => Promise<unknown>;
-  readonly prepareAgentWorktree: () => Promise<{
+  readonly planAgentWorktree?: () => Promise<AgentWorktreeRecoveryIntent>;
+  readonly prepareAgentWorktree?: () => Promise<{
     readonly cwd: string;
     readonly worktree: AgentWorktreeMetadata;
   }>;
@@ -1385,6 +2343,7 @@ interface SpawnAdmissionCollaborationOptions {
     readonly retained: boolean;
   }>;
   readonly createThread: () => Promise<unknown>;
+  readonly spawnItem?: unknown;
 }
 
 function spawnAdmissionCollaboration(
@@ -1426,15 +2385,26 @@ function spawnAdmissionCollaboration(
     plugins: [],
     mcpServers: [],
   } as const;
+  const spawnItem = {
+    type: 'collabAgentToolCall',
+    id: 'agent-tool',
+    tool: 'agent',
+    status: 'inProgress',
+  } as const;
 
   return new SubagentCollaboration(
     {
       requireThread: () => ({ thread: parent, configuration }),
+      readTurn: (_threadId: string, turnId: string) => (
+        turnId === 'parent-turn' ? { id: turnId, items: [options.spawnItem ?? spawnItem] } : null
+      ),
       metadata: {
         childEdges: () => [],
         spawnEdgeForChild: () => null,
+        read: () => null,
       },
       ephemeral: new Map(),
+      rollout: { read: async () => [] },
       stoppingThreads: new Set(),
       threadTreeMutex: {
         run: options.runTreeMutex ?? (async (operation) => operation()),
@@ -1447,14 +2417,21 @@ function spawnAdmissionCollaboration(
     } as never,
     {
       requireActiveTurn: options.requireActiveTurn ?? (() => undefined),
+      assertSubagentSpawnBudgetAvailable: () => null,
     } as never,
     {} as never,
-    {} as never,
+    {
+      read: () => null,
+      beginInitialAdmission: () => undefined,
+      recordInitialWorktreeIfPending: () => true,
+      deleteAgentOnly: () => undefined,
+    } as never,
     () => role,
     () => ({ canonicalType: 'general-purpose', role, kind: 'general-purpose' }),
     async () => null,
     async () => ({ maxDepth: 3, maxConcurrent: 20 }),
     (options.resolveAgentStartupContext ?? (async () => null)) as never,
+    options.planAgentWorktree,
     options.prepareAgentWorktree,
     options.settleAgentWorktree,
     () => 100,
@@ -1474,6 +2451,16 @@ function agentWorktree(path: string): AgentWorktreeMetadata {
     gitWorktreeDir: `/repo/.git/worktrees/${path.split('/').at(-1)}`,
     managed: true,
     removedAt: null,
+  };
+}
+
+function agentWorktreeIntent(path: string): AgentWorktreeRecoveryIntent {
+  return {
+    sourceCwd: '/repo',
+    path,
+    branch: `tenon-agent-${path.split('/').at(-1)}`,
+    baseCommit: 'abc123',
+    gitCommonDir: '/repo/.git',
   };
 }
 
@@ -1501,6 +2488,13 @@ function createExecution(
   turnId: string,
   toolUseId: string,
   parentThreadId = PARENT_ID,
+  policy: Partial<{
+    readonly kind: 'general-purpose' | 'explore' | 'plan' | 'role';
+    readonly runInBackground: boolean;
+    readonly worktree: boolean;
+    readonly allowNesting: boolean;
+    readonly requestedTools: readonly string[] | null;
+  }> = {},
 ): void {
   ledger.create({
     agentId,
@@ -1517,8 +2511,39 @@ function createExecution(
       worktree: false,
       allowNesting: true,
       requestedTools: null,
+      ...policy,
     },
     startupContext: null,
+    createdAt: 1,
+    updatedAt: 1,
+  });
+}
+
+function createPendingExecution(
+  ledger: SubagentExecutionLedger,
+  agentId: string,
+  turnId: string,
+  toolUseId: string,
+  parentThreadId = PARENT_ID,
+): void {
+  ledger.beginInitialAdmission({
+    agentId,
+    parentThreadId,
+    description: agentId,
+    agentType: 'general-purpose',
+    runMode: 'foreground',
+    currentTurnId: turnId,
+    toolUseId,
+    worktree: null,
+    toolPolicy: {
+      kind: 'general-purpose',
+      runInBackground: false,
+      worktree: false,
+      allowNesting: true,
+      requestedTools: null,
+    },
+    startupContext: null,
+    initialWorktreeIntent: null,
     createdAt: 1,
     updatedAt: 1,
   });
@@ -1577,10 +2602,12 @@ function recoveryCollaboration(
     async () => null,
     async () => ({ maxDepth: 3, maxConcurrent: 20 }),
     async () => null,
+      undefined,
     undefined,
     undefined,
     () => 100,
     ((configuration: unknown) => configuration) as never,
+    () => undefined,
     (message) => new Error(message),
     {} as never,
   );
@@ -1609,4 +2636,12 @@ function terminalTurn(id: string) {
     completedAt: 2,
     durationMs: 1,
   } as const;
+}
+
+function serializedConsoleCalls(calls: readonly (readonly unknown[])[]): string {
+  return calls.map((call) => call.map((value) => {
+    if (value instanceof Error) return `${value.name}: ${value.message}`;
+    if (typeof value === 'string') return value;
+    return JSON.stringify(value);
+  }).join(' ')).join('\n');
 }

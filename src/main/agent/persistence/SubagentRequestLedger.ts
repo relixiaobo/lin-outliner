@@ -82,6 +82,11 @@ export interface CreateSubagentRequestMemberInput {
   readonly tokenCap: number | null;
 }
 
+export interface CreateSubagentRequestAdmissionInput {
+  readonly pools: readonly CreateSubagentRequestPoolInput[];
+  readonly member: CreateSubagentRequestMemberInput;
+}
+
 /** The request one delegating Turn owns. */
 export function requestPoolIdForTurn(turnId: TurnId): SubagentRequestPoolId {
   return `turn:${turnId}`;
@@ -217,6 +222,51 @@ export class SubagentRequestLedger {
       VALUES (?, ?, ?, ?, 0)
     `).run(input.threadId, input.poolId, input.originTurnId, input.tokenCap);
     return record;
+  }
+
+  /** Commits every new pool and the child membership as one admission write. */
+  createAdmission(
+    input: CreateSubagentRequestAdmissionInput,
+    ephemeral: boolean,
+  ): {
+    readonly pools: readonly SubagentRequestPool[];
+    readonly member: SubagentRequestMember;
+  } {
+    const pools = input.pools.map((pool) => this.poolRecord(pool));
+    const poolIds = new Set(pools.map((pool) => pool.poolId));
+    if (poolIds.size !== pools.length) throw new Error('Subagent request admission contains duplicate pools');
+    const member = this.memberRecord(input.member);
+    if (
+      member.poolId !== null
+      && !poolIds.has(member.poolId)
+      && !this.readPool(member.poolId)
+    ) {
+      throw new Error(`Subagent token pool not found: ${member.poolId}`);
+    }
+    if (ephemeral) {
+      for (const pool of pools) {
+        if (this.ephemeralPools.has(pool.poolId)) {
+          throw new Error(`Subagent token pool already exists: ${pool.poolId}`);
+        }
+      }
+      if (this.ephemeralMembers.has(member.threadId)) {
+        throw new Error(`Subagent budget member already exists: ${member.threadId}`);
+      }
+      for (const pool of pools) this.ephemeralPools.set(pool.poolId, pool);
+      this.ephemeralMembers.set(member.threadId, member);
+      return { pools, member };
+    }
+
+    this.db.exec('BEGIN IMMEDIATE;');
+    try {
+      for (const pool of pools) this.insertPersistedPool(pool);
+      this.insertPersistedMember(member);
+      this.db.exec('COMMIT;');
+      return { pools, member };
+    } catch (error) {
+      this.db.exec('ROLLBACK;');
+      throw error;
+    }
   }
 
   /**
@@ -360,6 +410,94 @@ export class SubagentRequestLedger {
     }
   }
 
+  /**
+   * Startup recovery removes a subtree's members and newly empty shared pools
+   * in one transaction, so an interrupted cleanup remains fully retryable.
+   */
+  clearThreadsForRecovery(threadIdsInput: readonly ThreadId[]): boolean {
+    const threadIds = [...new Set(threadIdsInput)];
+    if (threadIds.length === 0) return false;
+    const selected = new Set(threadIds);
+    const selectedEphemeralMembers = [...this.ephemeralMembers.values()]
+      .filter((member) => selected.has(member.threadId));
+    const affectedEphemeralPoolIds = new Set<SubagentRequestPoolId>([
+      ...selectedEphemeralMembers.flatMap((member) => member.poolId === null ? [] : [member.poolId]),
+      ...selectedEphemeralMembers.map((member) => requestPoolIdForTurn(member.originTurnId)),
+      ...[...this.ephemeralPools.values()]
+        .filter((pool) => selected.has(pool.originThreadId))
+        .map((pool) => pool.poolId),
+    ]);
+    this.db.exec('BEGIN IMMEDIATE;');
+    try {
+      const readMember = this.db.prepare(`
+        SELECT pool_id, origin_turn_id FROM subagent_request_members WHERE thread_id = ?
+      `);
+      const readOriginatedPools = this.db.prepare(`
+        SELECT pool_id FROM subagent_request_pools WHERE origin_thread_id = ?
+      `);
+      const deleteMember = this.db.prepare(
+        'DELETE FROM subagent_request_members WHERE thread_id = ?',
+      );
+      const selectedMemberRows: Array<{
+        pool_id: string | null;
+        origin_turn_id: string;
+      }> = [];
+      const originatedPoolRows: Array<{ pool_id: string }> = [];
+      let memberChanges = 0;
+      for (const threadId of threadIds) {
+        const member = readMember.get(threadId) as {
+          pool_id: string | null;
+          origin_turn_id: string;
+        } | undefined;
+        if (member) selectedMemberRows.push(member);
+        originatedPoolRows.push(...readOriginatedPools.all(threadId) as unknown as Array<{ pool_id: string }>);
+        memberChanges += Number(deleteMember.run(threadId).changes);
+      }
+      const affectedPoolIds = new Set<SubagentRequestPoolId>([
+        ...selectedMemberRows.flatMap((row) => row.pool_id === null ? [] : [row.pool_id]),
+        ...selectedMemberRows.map((row) => requestPoolIdForTurn(row.origin_turn_id)),
+        ...originatedPoolRows.map((row) => row.pool_id),
+      ]);
+      let poolChanges = 0;
+      for (const poolId of affectedPoolIds) {
+        poolChanges += Number(this.db.prepare(`
+          DELETE FROM subagent_request_pools
+          WHERE pool_id = ?
+            AND NOT EXISTS (
+              SELECT 1 FROM subagent_request_members member
+              WHERE CASE subagent_request_pools.scope
+                WHEN 'turn' THEN member.origin_turn_id = subagent_request_pools.origin_turn_id
+                  OR member.pool_id = subagent_request_pools.pool_id
+                ELSE member.pool_id = subagent_request_pools.pool_id
+              END
+            )
+        `).run(poolId).changes);
+      }
+      this.db.exec('COMMIT;');
+      let ephemeralChanged = false;
+      for (const threadId of threadIds) {
+        ephemeralChanged = this.ephemeralMembers.delete(threadId) || ephemeralChanged;
+      }
+      for (const poolId of affectedEphemeralPoolIds) {
+        const pool = this.ephemeralPools.get(poolId);
+        if (!pool) continue;
+        const hasMember = [...this.ephemeralMembers.values()].some((member) => (
+          pool.scope === 'turn'
+            ? member.originTurnId === pool.originTurnId || member.poolId === poolId
+            : member.poolId === poolId
+        ));
+        if (hasMember) continue;
+        ephemeralChanged = this.ephemeralPools.delete(poolId) || ephemeralChanged;
+      }
+      return ephemeralChanged
+        || memberChanges > 0
+        || poolChanges > 0;
+    } catch (error) {
+      this.db.exec('ROLLBACK;');
+      throw error;
+    }
+  }
+
   private addEphemeralUsage(
     member: SubagentRequestMember | null,
     pool: SubagentRequestPool | null,
@@ -393,6 +531,31 @@ export class SubagentRequestLedger {
     `).run(tokensUsed, poolId);
     if (result.changes !== 1) throw new Error(`Subagent token pool not found: ${poolId}`);
     return { ...pool, tokensUsed };
+  }
+
+  private poolRecord(input: CreateSubagentRequestPoolInput): SubagentRequestPool {
+    if (input.tokenBudget !== null) positiveSafeInteger(input.tokenBudget, 'Subagent token pool');
+    return { ...input, closedAt: null, tokensUsed: 0 };
+  }
+
+  private memberRecord(input: CreateSubagentRequestMemberInput): SubagentRequestMember {
+    if (input.tokenCap !== null) positiveSafeInteger(input.tokenCap, 'Subagent token cap');
+    return { ...input, tokensUsed: 0 };
+  }
+
+  private insertPersistedPool(pool: SubagentRequestPool): void {
+    this.db.prepare(`
+      INSERT INTO subagent_request_pools(
+        pool_id, scope, origin_thread_id, origin_turn_id, token_budget, closed_at, tokens_used
+      ) VALUES (?, ?, ?, ?, ?, NULL, 0)
+    `).run(pool.poolId, pool.scope, pool.originThreadId, pool.originTurnId, pool.tokenBudget);
+  }
+
+  private insertPersistedMember(member: SubagentRequestMember): void {
+    this.db.prepare(`
+      INSERT INTO subagent_request_members(thread_id, pool_id, origin_turn_id, token_cap, tokens_used)
+      VALUES (?, ?, ?, ?, 0)
+    `).run(member.threadId, member.poolId, member.originTurnId, member.tokenCap);
   }
 
   private readPersistedPool(poolId: SubagentRequestPoolId): SubagentRequestPool | null {
