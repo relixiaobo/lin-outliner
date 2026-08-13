@@ -162,13 +162,13 @@ test.describe('table view', () => {
     await page.setViewportSize(originalViewport);
 
     const tableScope = page.locator(`[data-table-owner-id="${ids.today}"]`);
-    const tableControls = tableScope.locator(':scope > .view-toolbar.is-table-controls');
+    const tableControls = tableScope.locator(':scope > .view-toolbar.is-compact-controls');
     await expect(grid.locator('.view-toolbar')).toHaveCount(0);
     await expect(tableControls.getByRole('button', { name: 'Filter by name', exact: true })).toBeVisible();
     await expect(tableControls.getByRole('button', { name: 'Group by', exact: true })).toHaveCount(0);
     await tableControls.getByRole('button', { name: 'Outline', exact: true }).click();
     await expect(rootGrid(page)).toHaveCount(0);
-    const outlineToolbar = page.locator('.view-toolbar:not(.is-table-controls)').first();
+    const outlineToolbar = page.locator('.view-toolbar:not(.is-compact-controls)').first();
     await expect(outlineToolbar.getByRole('button', { name: 'Group by', exact: true })).toBeVisible();
 
     const groupField = await page.evaluate((todayId) => {
@@ -881,7 +881,7 @@ test.describe('table view', () => {
 
     const grid = page.getByRole('grid', { name: 'Recents table' });
     const tableScope = page.locator(`[data-table-owner-id="${ids.recents}"]`);
-    const tableControls = tableScope.locator(':scope > .view-toolbar.is-table-controls');
+    const tableControls = tableScope.locator(':scope > .view-toolbar.is-compact-controls');
     const summary = page.locator('.search-query-summary-bar');
     await expect(grid.locator('.view-toolbar')).toHaveCount(0);
     await expect(tableControls.getByRole('button', { name: 'Filter by name', exact: true })).toBeVisible();
@@ -899,7 +899,7 @@ test.describe('table view', () => {
     const searchTableGeometry = await page.locator('.panel-inner').evaluate((panel) => {
       const header = panel.querySelector<HTMLElement>('.outliner-table-header')!;
       const title = panel.querySelector<HTMLElement>('.outliner-table-title-header')!;
-      const tableControls = panel.querySelector<HTMLElement>('.outliner-table-scope > .view-toolbar.is-table-controls')!;
+      const tableControls = panel.querySelector<HTMLElement>('.outliner-table-scope > .view-toolbar.is-compact-controls')!;
       const headerRect = header.getBoundingClientRect();
       const titleRect = title.getBoundingClientRect();
       const controlsRect = tableControls.getBoundingClientRect();
@@ -911,7 +911,7 @@ test.describe('table view', () => {
         controlsPseudoAfter: getComputedStyle(tableControls, '::after').display,
         controlsPseudoBefore: getComputedStyle(tableControls, '::before').display,
         controlsTop: controlsRect.top,
-        directToolbarCount: panel.querySelectorAll('.outliner-table-scope > .view-toolbar.is-table-controls').length,
+        directToolbarCount: panel.querySelectorAll('.outliner-table-scope > .view-toolbar.is-compact-controls').length,
         headerLeft: headerRect.left,
         headerRight: headerRect.right,
         headerTop: headerRect.top,

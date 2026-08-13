@@ -963,7 +963,7 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
             ? null
             : props.ui.toolbarDropdownRequest}
           onDropdownRequestConsumed={consumeToolbarRequest}
-          variant="tableControls"
+          variant="compact"
         />
       ) : null}
       {ownerRows.length > 0 ? (

@@ -136,7 +136,7 @@ interface ViewToolbarProps {
   run: CommandRunner;
   dropdownRequest: ToolbarDropdownRequest | null;
   onDropdownRequestConsumed: (request: ToolbarDropdownRequest) => void;
-  variant?: 'bar' | 'tableControls';
+  variant?: 'bar' | 'compact';
 }
 
 // Every dropdown section maps to a real view operation. The fake
@@ -369,7 +369,7 @@ export function ViewToolbar({
   const nameFilter = view.filterRules.find(isNameFilterRule);
   const firstSortRule = view.sortRules[0];
   const SortStateIcon = firstSortRule?.direction === 'desc' ? SortDescIcon : SortAscIcon;
-  const tableControls = variant === 'tableControls';
+  const compact = variant === 'compact';
   const buttonRefs: Record<ToolbarSection, RefObject<HTMLButtonElement | null>> = {
     display: displayRef,
     group: groupRef,
@@ -498,8 +498,8 @@ export function ViewToolbar({
 
   const includeSortSummary = open === 'sort';
   const summaryChips = useMemo(
-    () => tableControls ? [] : summarizeView(view, choices, tv, { includeSort: includeSortSummary }),
-    [view, choices, tv, includeSortSummary, tableControls],
+    () => compact ? [] : summarizeView(view, choices, tv, { includeSort: includeSortSummary }),
+    [view, choices, tv, includeSortSummary, compact],
   );
   const titles = sectionTitles(tv);
   const renderSummaryChip = (chip: ViewSummaryChip) => {
@@ -536,7 +536,7 @@ export function ViewToolbar({
 
   return (
     <div
-      className={`view-toolbar${tableControls ? ' is-table-controls' : ''}`}
+      className={`view-toolbar${compact ? ' is-compact-controls' : ''}`}
       aria-label={tv.toolbarAriaLabel}
       ref={toolbarRef}
       onBlur={hideTooltipFromEvent}
@@ -546,7 +546,7 @@ export function ViewToolbar({
       onPointerOver={showTooltipFromEvent}
     >
       <div className="view-toolbar-button-row">
-        {tableControls ? (
+        {compact ? (
           <>
             <NameFilterControl
               nameFilter={nameFilter}
@@ -557,12 +557,14 @@ export function ViewToolbar({
               placeholder={tv.nameFilterPlaceholder}
             />
             <ButtonControl
-              aria-label={tv.outline}
+              aria-label={view.viewMode === 'table' ? tv.outline : tv.table}
               className="view-toolbar-pill view-toolbar-tooltip-anchor"
-              data-tooltip={tv.outline}
-              onClick={() => void run(() => api.setViewMode(node.id, 'list'))}
+              data-tooltip={view.viewMode === 'table' ? tv.outline : tv.table}
+              onClick={() => void run(() => api.setViewMode(node.id, view.viewMode === 'table' ? 'list' : 'table'))}
             >
-              <NodeReadToolIcon size={ICON_SIZE.menu} />
+              {view.viewMode === 'table'
+                ? <NodeReadToolIcon size={ICON_SIZE.menu} />
+                : <TableIcon size={ICON_SIZE.menu} />}
             </ButtonControl>
           </>
         ) : (
@@ -593,25 +595,29 @@ export function ViewToolbar({
               clearLabel={tv.clearNameFilter}
               placeholder={tv.nameFilterPlaceholder}
             />
+          </>
+        )}
+        {view.viewMode !== 'table' ? (
+          <>
             <ToolbarButton
               ref={displayRef}
+              active={compact && view.displayFields.some((field) => field.visible && field.field !== NAME_FIELD)}
               label={tv.display}
               open={open === 'display'}
               onClick={() => toggle('display')}
             >
               <FieldIcon size={ICON_SIZE.menu} />
             </ToolbarButton>
+            <ToolbarButton
+              ref={groupRef}
+              active={compact && Boolean(view.groupField)}
+              label={tv.groupBy}
+              open={open === 'group'}
+              onClick={() => toggle('group')}
+            >
+              <GroupIcon size={ICON_SIZE.menu} />
+            </ToolbarButton>
           </>
-        )}
-        {!tableControls && view.viewMode !== 'table' ? (
-          <ToolbarButton
-            ref={groupRef}
-            label={tv.groupBy}
-            open={open === 'group'}
-            onClick={() => toggle('group')}
-          >
-            <GroupIcon size={ICON_SIZE.menu} />
-          </ToolbarButton>
         ) : null}
         <ToolbarButton
           ref={sortRef}
@@ -629,7 +635,7 @@ export function ViewToolbar({
         )}
         <ToolbarButton
           ref={filterRef}
-          active={tableControls && view.filterRules.length > 0}
+          active={compact && view.filterRules.some((rule) => !isNameFilterRule(rule))}
           label={tv.filterBy}
           open={open === 'filter'}
           onClick={() => toggle('filter')}

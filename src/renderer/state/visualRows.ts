@@ -89,7 +89,7 @@ export function buildVisualRows(
 
     const isRoot = referencePath.length === 1;
     const view = readViewConfig(parent, byId);
-    if (view.toolbarVisible && (!isRoot || options.showRootToolbar !== false)) {
+    if ((view.toolbarVisible || parent.type === 'search') && (!isRoot || options.showRootToolbar !== false)) {
       out.push({
         kind: 'toolbar',
         key: `toolbar>${prefix}`,

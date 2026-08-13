@@ -56,11 +56,12 @@ import {
   viewFieldValuesFor,
 } from '../../src/renderer/ui/outliner/row-model';
 import { CREATED_FIELD, DAY_FIELD, DONE_FIELD, NAME_FIELD, REF_COUNT_FIELD, TAGS_FIELD } from '../../src/core/systemFields';
-import { searchQueryOutlineText, searchQuerySummaryModel } from '../../src/renderer/ui/search/SearchQuerySummaryBar';
+import { searchQueryOutlineText, searchQueryResultCount } from '../../src/renderer/ui/search/SearchQueryBuilderPanel';
 import { concatRichText } from '../../src/renderer/ui/editor/richTextCodec';
 import { getMessages } from '../../src/core/i18n';
+import { SEARCH_QUERY_COMPLEXITY_LIMITS } from '../../src/core/searchQueryCompiler';
 
-// The search-query summary/outline helpers take localized labels; exercise English.
+// The search-query outline helper takes localized labels; exercise English.
 const enMessages = getMessages('en');
 
 describe('row interaction resolvers', () => {
@@ -350,14 +351,7 @@ describe('row interaction resolvers', () => {
       ['target', makeNode('target', 'Task', { parentId: 'workspace' })],
     ]);
 
-    expect(searchQuerySummaryModel({ byId, projection: {} } as any, 'search', enMessages)).toEqual({
-      chips: [
-        { kind: 'tag', label: '#card' },
-        { kind: 'field', label: 'Status = Backlog' },
-      ],
-      resultCount: 1,
-      truncated: false,
-    });
+    expect(searchQueryResultCount({ byId, projection: {} } as any, 'search')).toBe(1);
     expect(searchQueryOutlineText({ byId, projection: {} } as any, 'search', enMessages)).toBe([
       '- AND',
       '  - HAS_TAG',
@@ -368,8 +362,11 @@ describe('row interaction resolvers', () => {
     ].join('\n'));
   });
 
-  test('marks root AND search summaries truncated when child chips exceed the display limit', () => {
-    const ruleIds = Array.from({ length: 65 }, (_, index) => `rule-${index}`);
+  test('bounds query editor projection when a search exceeds the child limit', () => {
+    const ruleIds = Array.from(
+      { length: SEARCH_QUERY_COMPLEXITY_LIMITS.maxChildrenPerGroup + 1 },
+      (_, index) => `rule-${index}`,
+    );
     const search = makeNode('search', 'Large search', {
       type: 'search',
       children: ['group'],
@@ -390,10 +387,10 @@ describe('row interaction resolvers', () => {
       })] as [string, any]),
     ]);
 
-    const model = searchQuerySummaryModel({ byId, projection: {} } as any, 'search', enMessages);
-    expect(model?.truncated).toBe(true);
-    expect(model?.chips).toHaveLength(65);
-    expect(model?.chips.at(-1)).toEqual({ kind: 'logic', label: enMessages.search.summary.truncated });
+    const outline = searchQueryOutlineText({ byId, projection: {} } as any, 'search', enMessages);
+    expect(outline.split('\n')).toHaveLength(1 + 2 * SEARCH_QUERY_COMPLEXITY_LIMITS.maxChildrenPerGroup);
+    expect(outline).toContain(`- value:: Term ${SEARCH_QUERY_COMPLEXITY_LIMITS.maxChildrenPerGroup - 1}`);
+    expect(outline).not.toContain(`- value:: Term ${SEARCH_QUERY_COMPLEXITY_LIMITS.maxChildrenPerGroup}`);
   });
 
   test('applies sort, filter, and group view settings to row models', () => {

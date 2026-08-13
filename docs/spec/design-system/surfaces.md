@@ -152,12 +152,15 @@ the reserved gutter immediately before the column, while the compensated row
 width keeps the Title column boundary fixed across leaf, expanded, hover, and
 selection states.
 
-In a Search Table, the redundant query summary row is absent. Table view actions
-form a compact icon-first band between the owner heading and the field header;
-name search expands inline only while active. The band begins on the Title label
-axis and carries no fill, frame, summary chips, or decorative separators. The
-field header therefore remains pure column semantics, and header and row
-separators provide the only horizontal structure.
+Search Outline and Table share one compact icon-first result-view band and never
+stack a query-summary row with a full toolbar. Name search expands inline only
+while active. Outline aligns the band with its result content; Table places it
+between the owner heading and field header on the Title label axis. The band has
+no fill, frame, summary chips, result count, manual refresh, or decorative
+separators. Its icon controls retain the token control size and wrap as complete
+units when the available pane is narrower than one row. The Table field header
+therefore remains pure column semantics, and header and row separators provide
+its only horizontal structure.
 
 An active cell wrapper uses the neutral fill ladder plus the shared focus outline
 only while the wrapper itself owns focus; an idle table never paints a synthetic
@@ -195,9 +198,10 @@ reduced-transparency fallback. Column headers use Hide as their only removal
 action. Add column groups current-record custom fields first, other Schema custom
 fields second, and system fields last; the Outline Display editor likewise places
 custom Fields before System fields. Section labels remain compact metadata, not
-selectable rows. A Search Table keeps name search, Outline, Sort, and Filter in
-its compact pre-header band, while hidden columns remain directly recoverable
-through Add field. A nested table is an unframed indented scope with one
+selectable rows. Search Outline adds Table, Display, and Group to the shared
+compact controls; Search Table keeps name search, Outline, Sort, and Filter while
+hidden columns remain directly recoverable through Add field. A nested table is
+an unframed indented scope with one
 quiet separating edge, not a card inside the parent table. Each nested scope owns
 its own column template and local horizontal overflow.
 

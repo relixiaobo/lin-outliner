@@ -55,11 +55,11 @@ import { FieldTypeIcon } from './outliner/fieldTypePresentation';
 import { DoneCheckbox } from './outliner/DoneCheckbox';
 import { NodeContextMenu } from './outliner/NodeContextMenu';
 import { NodeDescription } from './outliner/NodeDescription';
-import { buildOutlinerRows, readViewConfig } from './outliner/row-model';
+import { buildOutlinerRows } from './outliner/row-model';
 import { TriggerPopover } from './outliner/TriggerPopover';
 import { ButtonControl } from './primitives/ButtonControl';
 import { IconButton } from './primitives/IconButton';
-import { SearchQueryBuilderPanel, SearchQuerySummaryBar } from './search/SearchQuerySummaryBar';
+import { SearchQueryBuilderPanel } from './search/SearchQueryBuilderPanel';
 import { inlineReferenceTextColor, resolveTagColor } from './tags/tagColors';
 import { TagBar } from './tags/TagBar';
 import { BacklinksSection } from './BacklinksSection';
@@ -187,8 +187,6 @@ export function NodePanel(props: NodePanelProps) {
     : null;
   const showOutliner = Boolean(rootNode && (!rootDefinitionKind || definitionTemplateLabel));
   const showTrailingInput = Boolean(rootNode && showOutliner && rootNode.type !== 'search');
-  const searchTableMode = rootNode?.type === 'search'
-    && readViewConfig(rootNode, props.index.byId).viewMode === 'table';
   const breadcrumb = buildPanelBreadcrumb(rootNode, props.index);
   const titleFocusTarget = focusTarget(resolvedRootId, null, props.panelId, 'panel-title');
   const descriptionFocusTarget = focusTarget(resolvedRootId, null, props.panelId, 'description');
@@ -775,13 +773,6 @@ export function NodePanel(props: NodePanelProps) {
               onClose={() => setSearchQueryOpen(false)}
             />
           )}
-          {rootNode?.type === 'search' && !searchQueryOpen && !searchTableMode && (
-            <SearchQuerySummaryBar
-              index={props.index}
-              nodeId={resolvedRootId}
-              run={props.run}
-            />
-          )}
           {panelIsoDate && (
             <PanelDateNavigation
               dayNoteCounts={props.index.dayNoteCounts}
@@ -867,6 +858,7 @@ export function NodePanel(props: NodePanelProps) {
             setDragId={props.setDragId}
             setTrigger={props.setTrigger}
             setUi={props.setUi}
+            showViewToolbar={!searchQueryOpen}
             trailingDraft={showTrailingInput ? 'always' : 'none'}
             trigger={props.trigger}
             ui={props.ui}

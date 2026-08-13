@@ -149,7 +149,7 @@ export function OutlinerView(props: OutlinerViewProps) {
 
   return (
     <>
-      {props.showViewToolbar !== false && parent && view.toolbarVisible && (
+      {props.showViewToolbar !== false && parent && (view.toolbarVisible || parent.type === 'search') && (
         <ViewToolbar
           node={parent}
           view={view}
@@ -163,6 +163,7 @@ export function OutlinerView(props: OutlinerViewProps) {
                 : prev
             ));
           }}
+          variant={parent.type === 'search' ? 'compact' : 'bar'}
         />
       )}
       <OutlinerEmptyState

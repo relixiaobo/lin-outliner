@@ -27,8 +27,8 @@ visual language.
 - Do not materialize missing field entries or values merely to populate headers.
 - Do not add live schema-following while a view remains in Table; defaults are
   reconsidered only on a later transition into Table.
-- Do not change Outline rendering or the semantics of sort, filter, and group
-  rules.
+- Do not change ordinary Outline rendering or the semantics of sort, filter,
+  and group rules.
 
 ## Design
 
@@ -87,14 +87,16 @@ restores its existing width, order, label, and placement. New field remains a
 separate final command.
 
 Display uses the same custom-before-system grouping as Add field so both field
-entry points present one predictable hierarchy. Table replaces the full view
-toolbar with a compact icon-first control band between the owner heading and the
-field header. It exposes name search, Outline, Sort, and Filter without summary
-chips, Display, Group, card fill, or decorative separators; activating name
-search expands its inline input. Add field owns visible-column configuration.
-Search Tables expose the compact band without a separate reveal step and omit
-the redundant query summary row. Ordinary Tables retain their persisted control
-visibility, and Outline searches retain the full toolbar and query summary.
+entry points present one predictable hierarchy. Search nodes share one compact
+icon-first result-view control across Outline and Table rather than stacking a
+query summary and a full toolbar. Outline exposes name search, Table, Display,
+Group, Sort, and Filter; Table exposes name search, Outline, Sort, and Filter,
+while Add field owns visible-column configuration. The compact variant has no
+summary chips, result count, manual refresh, card fill, or decorative separators;
+activating name search expands its inline input. The title query action remains
+the single query-semantic entry point and temporarily replaces the result-view
+controls with the query editor. Ordinary nodes retain their persisted toolbar
+visibility and full Outline toolbar.
 
 ### Responsive geometry
 
@@ -108,13 +110,14 @@ authoritative.
 Title's bullet remains aligned with its header label and disclosure stays in the
 reserved leading gutter. Add field occupies the trailing grid track, so it sits
 at the right edge on a wide panel instead of immediately after a compact data
-strip. The compact control band starts on the Title text axis and stays separate
-from the field header so `Title` remains a pure column label. The redundant query
-summary row is absent in Search Table. Only the field-header and data-row
-separators remain; the control band adds no frame or divider. Header labels and
-Add field use the existing small UI typography; record titles and values retain
-the content typography. All geometry and appearance continue to derive from
-design-system spacing, type, color, separator, and focus tokens.
+strip. In Search Table, the compact control band starts on the Title text axis
+and stays separate from the field header so `Title` remains a pure column label.
+In Search Outline, the same compact variant aligns with the result content axis.
+Neither mode renders a query-summary row. Only the field-header and data-row
+separators remain in Table; the control band adds no frame or divider. Header
+labels and Add field use the existing small UI typography; record titles and
+values retain the content typography. All geometry and appearance continue to
+derive from design-system spacing, type, color, separator, and focus tokens.
 
 ### Current specification
 
@@ -134,8 +137,9 @@ and hidden-field expansion behavior.
 - Table E2E covers ordinary and saved-search records, automatic headers and
   values, hide persistence across Outline/Table switching, expanded records,
   Add and Display ordering, responsive full-width and overflow geometry,
-  token-backed typography, compact Search Table controls, restoration, the
-  absence of the full Table toolbar, and the absence of Remove from view.
+  token-backed typography, compact Search controls in both modes, restoration,
+  the absence of stacked summary/full-toolbar rows, and the absence of Remove
+  from view.
 - Run typecheck, core and renderer suites, the focused Table E2E suite,
   `docs:check`, and light/dark visual verification of the saved-search Table.
 
@@ -146,13 +150,16 @@ and hidden-field expansion behavior.
 - `src/renderer/state/outlinerRows.ts` and
   `src/renderer/state/selectableRows.ts` own reference-chain reads and the
   shared field-free Table expansion model.
-- `src/renderer/ui/outliner/OutlinerTableView.tsx` owns cells, the compact
-  pre-header control band, responsive columns, and the grouped Add field surface.
-  `src/renderer/ui/outliner/ViewToolbar.tsx` owns the compact reusable Sort and
-  Filter editors plus Outline Display grouping.
+- `src/renderer/ui/outliner/OutlinerTableView.tsx` owns cells, compact-control
+  placement above the field header, responsive columns, and the grouped Add
+  field surface. `src/renderer/ui/outliner/ViewToolbar.tsx` owns the shared
+  compact/full variants and reusable Display, Group, Sort, and Filter editors.
+- `src/renderer/ui/search/SearchQueryBuilderPanel.tsx` owns query editing and its
+  bounded text projection; it does not own persistent result-view chrome.
 - `src/renderer/styles/outliner.css` owns full-width grid behavior and its
   existing token-backed Table typography and spacing.
-- `tests/renderer/rowInteractions.test.ts` and `tests/e2e/table-view.spec.ts`
+- `tests/renderer/rowInteractions.test.ts`, `tests/renderer/visualRows.test.ts`,
+  `tests/e2e/search-query-builder.spec.ts`, and `tests/e2e/table-view.spec.ts`
   pin projection and complete interaction behavior.
 - `docs/spec/ui-behavior.md` and `docs/spec/design-system/surfaces.md` replace
   the previous Table contracts in the same change.

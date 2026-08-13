@@ -256,20 +256,18 @@ longer derives candidates from nodes carrying that deleted tag.
 ## View Toolbar
 
 The node-level view toolbar is the presentation control for Outline child rows
-and saved-search results. It lives above the rendered rows when the node's
-`viewDef.toolbarVisible` flag is true. Table deliberately does not render that
-full band. It uses a compact icon-first control band between the owner heading
-and the field header: name search, Outline, Sort, and Filter are available
-without summary chips, Display, Group, a card fill, or decorative dividers.
-Activating name search expands its inline input. Add field owns visible-column
-configuration. A Search Table always exposes the compact band and omits the
-redundant query summary and View reveal step. The supported render modes are
-**Outline** (persisted as `list`) and **Table**, selected through Outline's compact
-segmented control, Table's Outline action, or the node context menu's **View as**
-subview. Filter by name, Display, and Group by belong to the full Outline toolbar;
-Sort and Filter apply in both modes. Table ignores a saved group rule without
-clearing it, so returning to Outline restores the same grouping. These controls
-all read and write `viewDef` child nodes
+and saved-search results. For ordinary nodes it lives above rendered rows when
+the node's `viewDef.toolbarVisible` flag is true. Search nodes instead always
+expose one compact icon-first result-view band: Outline provides name search,
+Table, Display, Group, Sort, and Filter; Table provides name search, Outline,
+Sort, and Filter, while Add field owns visible-column configuration. The compact
+variant has no summary chips, result count, card fill, or decorative dividers,
+and activating name search expands its inline input. The supported render modes
+are **Outline** (persisted as `list`) and **Table**, selected through the ordinary
+Outline segmented control, the Search compact mode action, or the node context
+menu's **View as** subview. Table ignores a saved group rule without clearing it,
+so returning to Outline restores the same grouping. These controls all read and
+write `viewDef` child nodes
 (`displayField`, `sortRule`, `filterRule`, plus the view's `groupField`) rather
 than storing renderer-local state.
 
@@ -503,22 +501,23 @@ continues to own visible Outline-mode searches.
 
 ## Search Nodes
 
-Outline search nodes render a compact query summary below the page title and
-above the materialized result rows while the inline query builder is closed. The
-summary shows read-only chips for the query semantics and the current materialized
-result count; it does not configure how the results are presented. Table search
-nodes omit this redundant row because the title/query action already identifies
-the search and the table itself presents its results.
+Search nodes do not repeat query semantics as read-only chips beneath a title
+that already identifies the query. The title query action is the single entry
+point for inspecting and editing those semantics. While its editor is open, the
+root result-view controls temporarily yield to it; closing the editor restores
+the same compact band without changing view configuration. The editor provides
+the materialized result count and an explicit refresh action as editing context;
+the closed result view needs neither because visible searches refresh
+automatically through their single mode-specific owner.
 
-In Outline, the summary exposes a **View** action that reveals the same node-level
-View Toolbar used by normal node pages. In Table, the entire summary row and the
-full toolbar row are absent. A compact icon-first band above the field header
-provides name search, Outline, Sort, and Filter, while Add field owns visible
-columns. Name search expands inline only while active. The band starts on the
-Title text axis and adds no separator; field header and row separators remain the
-only horizontal lines. Query chips describe *what the search returns* in Outline;
-the Table controls govern *how the result references are searched, sorted, and
-filtered*.
+Outline and Table therefore use one shared compact result-view mechanism rather
+than stacking a query summary and a full toolbar. Outline aligns name search,
+Table, Display, Group, Sort, and Filter with the result content axis. Table aligns
+name search, Outline, Sort, and Filter with the Title label axis above the pure
+field header; Add field owns visible columns. The compact band has no frame,
+fill, summary chips, result count, manual refresh, or decorative separator. At
+narrow pane widths its controls keep the shared fixed control size and wrap as
+complete units instead of shrinking or clipping.
 
 ## NodePanel References Footer
 

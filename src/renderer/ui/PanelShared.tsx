@@ -193,6 +193,7 @@ interface PanelChildrenOutlineProps {
   setDragId: (nodeId: NodeId | null) => void;
   setTrigger: (trigger: TriggerState) => void;
   setUi: FlatOutlinerProps['setUi'];
+  showViewToolbar?: boolean;
   trailingDraft?: FlatOutlinerProps['trailingDraft'];
   trigger: TriggerState;
   ui: UiState;
@@ -239,6 +240,7 @@ export function PanelChildrenOutline(props: PanelChildrenOutlineProps) {
           referencePath={[props.parentId]}
           trailingDraft={props.trailingDraft}
           draftPlaceholder={props.draftPlaceholder}
+          showViewToolbar={props.showViewToolbar}
           scrollParentRef={props.scrollParentRef}
         />
       ) : RECURSIVE_OUTLINER_FALLBACK_ENABLED ? (
@@ -260,6 +262,7 @@ export function PanelChildrenOutline(props: PanelChildrenOutlineProps) {
           dragId={props.dragId}
           setDragId={props.setDragId}
           rows={props.rows}
+          showViewToolbar={props.showViewToolbar}
           trailingDraft={props.trailingDraft}
           draftPlaceholder={props.draftPlaceholder}
         />
@@ -280,6 +283,7 @@ export function PanelChildrenOutline(props: PanelChildrenOutlineProps) {
           setTrigger={props.setTrigger}
           dragId={props.dragId}
           setDragId={props.setDragId}
+          showViewToolbar={props.showViewToolbar}
           trailingDraft={props.trailingDraft}
           draftPlaceholder={props.draftPlaceholder}
           scrollParentRef={props.scrollParentRef}
