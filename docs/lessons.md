@@ -835,3 +835,35 @@ already committed, it goes last, every phase is contained and reported, and its
 failure degrades to the slower correct path — here, emitting `transactionIndexed:
 false` so the ordinary projection delivery resyncs the index. Cf. A12: the
 observer is not the write boundary, so it never gets to fail the write.
+
+## Whatever still moves after everything else stops has become the claim
+
+`semantic-working-state` PR1 (#531) made a Turn's phrases static in every state
+where nothing is advancing: blocked on the user, recovering from a provider
+retry. Each surface was suppressed correctly and every assertion passed. But the
+response tail's rose generating shape had its own animation, keyed on a flag that
+was *false* precisely while blocked — so the glyph sat still while the agent
+worked and spun while it waited for a human. Nobody wrote that rule; it fell out
+of suppressing four surfaces and not the fifth. The spec even stated the
+principle ("motion would claim progress") and still missed it, because the
+principle was written about `WorkingText` and the shape was not a `WorkingText`.
+When a change makes a signal exclusive — one mover, one sound, one badge —
+enumerate every producer of that signal in the *quiet* states, not just the loud
+ones. The defect is never the surface you suppressed; it is the one you never
+listed. Note also that a screenshot cannot show this: the evidence was reading
+`animation-name` off computed style in each state, and a static image of the
+correct and the broken build is byte-identical.
+
+## `:has()` cannot express "the nearest one"; self-nesting components need an explicit gate
+
+The same PR arbitrated a Turn's single mover with `.thread-turn:has(.working-text)
+.thread-streaming-shape { animation: none }`. `SubagentRunDetail` mounts a whole
+nested `ThreadView` — with its own `.thread-turn` sections — inside the parent's,
+so a parent phrase froze the *child's* live indicator and a child's retry
+flattened the parent's phrases. Descendant selectors reach through every
+boundary; CSS has no way to stop at the nearest instance of the same component.
+Any component that can contain another copy of itself must pass its arbitration
+down as data — a prop or a context whose provider re-establishes at each
+boundary — and the guard that keeps it that way is a negative
+(`expect(css).not.toContain('.thread-turn:has(')`), because the CSS version reads
+as correct forever.

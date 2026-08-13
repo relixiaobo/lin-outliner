@@ -596,7 +596,7 @@ The 2026-06-04/05 design-system / UI-consistency review, landed as a plan suite 
 three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Layer 3, #273) shipped
 — see Recently completed. Remaining Layer-3 lanes:
 
-- **semantic-working-state** (P2, `draft` 2026-08-11) — Thread spinners conflate two
+- **semantic-working-state** (P2, `in-progress` 2026-08-11) — Thread spinners conflate two
   meanings: "work is advancing" and "data is not ready". Split them — Working keeps its
   identity glyph and moves the *text* with a cadenced shimmer (600 ms delay, 1 s sweep,
   4 s cadence; tokenized, CSS-only, no per-row React timer), while Loading, Waiting,
@@ -612,6 +612,11 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   merge closed the BR-8/AC-10 contradiction the weight cue introduced — BR-8 now scopes
   its no-reflow claim to the sweep layer and names the weight change as the one bounded
   metric exception; evidence must include a tool settling on a short and a truncated row.
+  **PR1 (Thread/Plan) shipped 2026-08-13 (#531, codex-4):** `WorkingText` primitive plus
+  a per-Turn `turnMotionOwner` (`none | summary | leaf`) that arbitrates the single mover
+  in TypeScript rather than through `.thread-turn:has(...)`; the in-progress glyph deepens
+  to `--text-soft` when reduced motion or increased contrast removes the sweep. **PR2
+  remains** (Settings: Provider + managed-Skill progressive copy).
 - **icon-semantics** (P3, Layer 3, small/isolated) — action↔icon collisions (Hash,
   unknown-tool, remove/X-vs-Trash, the gear catch-all that #118 sharpened). #461
   re-picked four glyphs (file delete, `web_fetch`, MCP vs unknown, skill) under a

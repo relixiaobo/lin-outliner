@@ -178,6 +178,26 @@ Entries reference the pull request that introduced them.
   capture path's implicit Loro commit carried no origin, pushing a phantom
   origin-less step into all three undo managers so ⌘Z had to be pressed twice;
   and a cancelled quit silently discarded every edit typed during the drain.
+- **A running Thread now moves its words, not a carousel of spinners (PR #531,
+  codex-4)** — spinners conflated "work is advancing" with "data is not ready",
+  and a live Turn could show three of them at once. Active tool, Subagent, group
+  and Plan rows keep their semantic glyph and instead shimmer the *advancing
+  phrase* through one new `WorkingText` primitive — a single text layer that is
+  both the accessible name and the paint-only animation surface, so nothing is
+  drawn twice. Exactly one surface in a Turn moves: expanding a running group
+  freezes its summary and hands the sweep to the live member, and reconnect
+  *replaces* the rose generating indicator in the same slot rather than stacking
+  a second row beneath it. Reduced motion and increased contrast drop the sweep
+  and deepen the running row's glyph instead, so the state survives without
+  motion. The high gate found 11 defects, 10 fixed. The ones that would have been
+  visible: the `request_user_input` row shimmered while the agent was blocked on
+  *you*; the arbitration ran through `.thread-turn:has(...)` descendant rules that
+  reached across an expanded Subagent's nested Thread and froze the child's live
+  indicator; the reconnect `role="status"` announcement moved inside the
+  virtualized Turn window, so scrolling away silenced it for screen readers; and
+  once every phrase went static while blocked, the one surface left animating was
+  the response glyph — motion claiming progress in precisely the state defined by
+  its absence.
 
 ### Internal
 
