@@ -3805,17 +3805,17 @@ test.describe('canonical agent Thread surface', () => {
       });
       return { threadId };
     });
+    const liveTurnId = '01910000-0000-7000-8000-00000000c003';
 
     const divider = page.locator('.thread-process-title').first();
     await expect(divider).toHaveText('Read notes.md');
     await expect(page.locator('.thread-process-block')).not.toContainText('Working');
 
     // Blocked on the user: the label says so, and no shimmer claims progress.
-    await page.evaluate(async ({ threadId }) => {
+    await page.evaluate(async ({ liveTurnId, threadId }) => {
       const target = window as Window & {
         __LIN_E2E__?: { emitAgentCoreNotification: (n: unknown) => void };
       };
-      const liveTurnId = '01910000-0000-7000-8000-00000000c003';
       const inputToolId = '01910000-0000-7000-8000-00000000c004';
       target.__LIN_E2E__?.emitAgentCoreNotification({
         type: 'turn/started',
@@ -3864,9 +3864,9 @@ test.describe('canonical agent Thread surface', () => {
         threadId,
         status: { type: 'active', activeFlags: ['waitingOnUserInput'] },
       });
-    }, ids);
+    }, { ...ids, liveTurnId });
 
-    const live = page.locator('.thread-process-block').last();
+    const live = page.locator(`[data-thread-turn-row="${liveTurnId}"] .thread-process-block`);
     await expect(live.locator('.thread-process-title')).toHaveText('Waiting for input');
     await expect(live.locator('.working-text')).toHaveCount(0);
     const requestedInput = live.locator('.thread-tool-inProgress');
@@ -3875,6 +3875,9 @@ test.describe('canonical agent Thread surface', () => {
     const blockedPlan = page.locator('.thread-plan-progress-summary');
     await expect(blockedPlan).toHaveText('1/1 · Answer the clarification');
     await expect(blockedPlan.locator('.working-text')).toHaveCount(0);
+    const liveTurn = page.locator(`[data-thread-turn-row="${liveTurnId}"]`);
+    await expect(liveTurn.locator('.thread-streaming-shape')).toHaveCSS('animation-name', 'none');
+    await expect(liveTurn.locator('.thread-streaming-shape path')).toHaveCSS('animation-name', 'none');
   });
 
   test('states an interrupted Turn once, and never leaves an unlabelled timeline', async ({ page }) => {

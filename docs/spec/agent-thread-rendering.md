@@ -469,10 +469,12 @@ slot that remains empty and non-interactive while the Turn is live. The indicato
 stays present but static while that Turn has a `WorkingText` owner, and reconnect
 recovery replaces it in the same footer slot; one Turn therefore never presents
 two concurrent motion owners. Increased contrast removes the text sweep and
-therefore restores this shape's animation as the live motion cue; reduced
-motion still stops both shape animations. The shape suppression query is the
-exact complement of `prefers-contrast: more`, so `less` and `custom` contrast
-modes retain the same single text-motion owner as the default mode. A failed or interrupted Turn
+therefore restores this shape's animation as the live motion cue for an eligible
+live Turn; a blocked or recovering Turn keeps the shape static in every contrast
+mode because it cannot claim progress. Reduced motion still stops both shape
+animations. The shape suppression query is the exact complement of
+`prefers-contrast: more`, so `less` and `custom` contrast modes retain the same
+single text-motion owner as the default mode. A failed or interrupted Turn
 with partial response prose keeps its process presentation neutral because the
 response tail already owns the terminal error or stopped state.
 

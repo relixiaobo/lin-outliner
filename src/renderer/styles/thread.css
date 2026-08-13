@@ -659,9 +659,18 @@
   animation: thread-shape var(--motion-shape-cycle) ease-in-out infinite;
 }
 
+/* A blocked or recovering Turn cannot use WorkingText. Suppress the fallback
+   shape in every contrast mode so it never claims that progress is advancing
+   while the user or provider is the next required actor. */
+.thread-streaming-shape.is-motion-suppressed,
+.thread-streaming-shape.is-motion-suppressed path {
+  animation: none;
+}
+
 /* The owning Turn marks its own response glyph directly. The contrast query is
    load-bearing: increased contrast removes WorkingText's sweep, so the response
-   shape resumes its animation unless reduced motion independently stops it. */
+   shape resumes its animation for eligible live work unless reduced motion
+   independently stops it. */
 @media not (prefers-contrast: more) {
   .thread-streaming-shape.is-working-text-owned,
   .thread-streaming-shape.is-working-text-owned path {

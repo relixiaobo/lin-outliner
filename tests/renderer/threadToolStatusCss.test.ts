@@ -91,6 +91,9 @@ describe('thread tool row status CSS guards', () => {
     expect(threadCss).toMatch(
       /@media not \(prefers-contrast: more\) \{\s*\.thread-streaming-shape\.is-working-text-owned,\s*\.thread-streaming-shape\.is-working-text-owned path \{\s*animation:\s*none;/,
     );
+    expect(threadCss).toMatch(
+      /\.thread-streaming-shape\.is-motion-suppressed,\s*\.thread-streaming-shape\.is-motion-suppressed path \{\s*animation:\s*none;/,
+    );
     expect(threadCss).not.toContain('.thread-turn:has(');
   });
 

@@ -186,7 +186,10 @@ streaming shape consume that result without mount-time registration. The shape
 receives a direct owning-Turn class rather than relying on a descendant `:has()`
 selector. Its suppression query is the exact complement of
 `prefers-contrast: more`, so any contrast mode that retains the text sweep still
-has one motion owner, while increased contrast restores the shape.
+has one motion owner, while increased contrast restores the shape for eligible
+live work. When the `workingTextEnabled` gate is false (blocked input or
+recovery), a second direct class suppresses both shape layers in every contrast
+mode so a waiting Turn never claims progress.
 
 The existing Turn/process projection remains authoritative. Working-state
 selection is renderer presentation derived from existing `Turn.status`,

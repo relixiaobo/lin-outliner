@@ -2015,6 +2015,10 @@ const ThreadTurnView = memo(function ThreadTurnView({
   const workingTextEnabled = !waitingOnUserInput && providerRetry === null;
   const motionOwner = turnMotionOwner(turn, processItems, subagents);
   const workingTextOwnsMotion = workingTextEnabled && motionOwner !== 'none';
+  // A blocked Turn cannot use a progressive cue. Keep the fallback response
+  // shape static as well, otherwise it becomes the only moving element while
+  // the agent waits for the user.
+  const shapeMotionSuppressed = !workingTextEnabled;
   // `groupTurnContent` omits the process block entirely for a Turn with no
   // process Items, so "no response Item" alone does not mean a divider exists
   // to own the terminal status.
@@ -2084,6 +2088,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
       onOpenDetails={() => onOpenTurnDetails(turn)}
       onRetry={retryContent ? () => onEditUserMessage(turn, retryContent) : null}
       providerRetry={providerRetry}
+      shapeMotionSuppressed={shapeMotionSuppressed}
       workingTextOwnsMotion={workingTextOwnsMotion}
       // The process divider states the terminal status when there is no
       // response Item — but only if a process block renders at all. Without
@@ -2184,6 +2189,7 @@ function ThreadResponseTail({
   onOpenDetails,
   onRetry,
   providerRetry,
+  shapeMotionSuppressed,
   statusOwnedElsewhere,
   turn,
   workingTextOwnsMotion,
@@ -2200,6 +2206,7 @@ function ThreadResponseTail({
   /** Present only where running the same request again could go differently. */
   readonly onRetry: (() => Promise<void>) | null;
   readonly providerRetry: ProviderRetryStatus | null;
+  readonly shapeMotionSuppressed: boolean;
   readonly statusOwnedElsewhere: boolean;
   readonly turn: Turn;
   readonly workingTextOwnsMotion: boolean;
@@ -2238,7 +2245,12 @@ function ThreadResponseTail({
         {streaming ? (
           providerRetry
             ? <ThreadProviderRetryStatus status={providerRetry} />
-            : <ThreadStreamingIndicator workingTextOwnsMotion={workingTextOwnsMotion} />
+            : (
+              <ThreadStreamingIndicator
+                shapeMotionSuppressed={shapeMotionSuppressed}
+                workingTextOwnsMotion={workingTextOwnsMotion}
+              />
+            )
         ) : (
           <div className="thread-message-actions thread-response-actions">
             {onRetry ? (
@@ -2710,8 +2722,10 @@ function isSubagentWorkingStatus(status: string | undefined): boolean {
 }
 
 function ThreadStreamingIndicator({
+  shapeMotionSuppressed,
   workingTextOwnsMotion,
 }: {
+  readonly shapeMotionSuppressed: boolean;
   readonly workingTextOwnsMotion: boolean;
 }) {
   const t = useT();
@@ -2720,7 +2734,7 @@ function ThreadStreamingIndicator({
     <div className="thread-streaming-indicator" aria-label={t.agent.message.assistantResponding}>
       <svg
         aria-hidden
-        className={`thread-streaming-shape${workingTextOwnsMotion ? ' is-working-text-owned' : ''}`}
+        className={`thread-streaming-shape${workingTextOwnsMotion ? ' is-working-text-owned' : ''}${shapeMotionSuppressed ? ' is-motion-suppressed' : ''}`}
         viewBox="0 0 48 48"
       >
         <defs>
