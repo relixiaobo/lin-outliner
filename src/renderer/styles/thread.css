@@ -632,6 +632,11 @@
   white-space: nowrap;
 }
 
+.thread-process-title-live {
+  width: 100%;
+  font-variant-numeric: tabular-nums;
+}
+
 .thread-process-toggle {
   width: fit-content;
   max-width: min(100%, 520px);
@@ -656,11 +661,6 @@
 .thread-process-toggle:hover .thread-process-chevron,
 .thread-process-toggle:focus-visible .thread-process-chevron {
   color: var(--text-soft);
-}
-
-.thread-process-spinner {
-  flex: 0 0 auto;
-  animation: thread-tool-spin var(--motion-working-cycle) linear infinite;
 }
 
 .thread-process-rule {
@@ -697,6 +697,25 @@
 .thread-streaming-shape path {
   d: path("M 23.9 7.81 L 24.1 7.81 Q 28.87 7.81 30.57 12.27 L 37.28 29.8 Q 39.42 35.41 33.42 35.41 L 14.58 35.41 Q 8.58 35.41 10.72 29.8 L 17.43 12.27 Q 19.13 7.81 23.9 7.81 Z");
   animation: thread-shape var(--motion-shape-cycle) ease-in-out infinite;
+}
+
+/* A blocked or recovering Turn cannot use WorkingText. Suppress the fallback
+   shape in every contrast mode so it never claims that progress is advancing
+   while the user or provider is the next required actor. */
+.thread-streaming-shape.is-motion-suppressed,
+.thread-streaming-shape.is-motion-suppressed path {
+  animation: none;
+}
+
+/* The owning Turn marks its own response glyph directly. The contrast query is
+   load-bearing: increased contrast removes WorkingText's sweep, so the response
+   shape resumes its animation for eligible live work unless reduced motion
+   independently stops it. */
+@media not (prefers-contrast: more) {
+  .thread-streaming-shape.is-working-text-owned,
+  .thread-streaming-shape.is-working-text-owned path {
+    animation: none;
+  }
 }
 
 .thread-shape-stop-0 {
@@ -1130,20 +1149,26 @@
 
 .thread-provider-retry {
   display: flex;
+  max-width: 100%;
   min-width: 0;
-  min-height: var(--control-size-sm);
-  flex: 0 0 var(--control-size-sm);
   align-items: center;
   gap: var(--space-3);
   color: var(--text-soft);
-  font-size: var(--font-ui-sm);
-  line-height: var(--line-ui-sm);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
   user-select: none;
 }
 
 .thread-provider-retry svg {
   flex: 0 0 auto;
   animation: thread-tool-spin var(--motion-spin-cycle) linear infinite;
+}
+
+.thread-provider-retry span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .thread-agent-message-body {
@@ -1406,6 +1431,7 @@
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  transition: color var(--motion-fast);
   white-space: nowrap;
 }
 
@@ -1476,28 +1502,6 @@
   transform: rotate(90deg);
 }
 
-/* A running row keeps its spinner through hover, focus, and expansion: the
-   chevron swap would leave the only "still working" cue invisible. The chevron
-   stands down for the duration — aria-expanded and the body still carry the
-   disclosure state, and the slot geometry never changes (B7). */
-.thread-tool-inProgress > .thread-tool-toggle:hover .thread-disclosure-status,
-.thread-tool-inProgress > .thread-tool-toggle:focus-visible .thread-disclosure-status,
-.thread-tool-inProgress > .thread-tool-activity-toggle:hover .thread-disclosure-status,
-.thread-tool-inProgress > .thread-tool-activity-toggle:focus-visible .thread-disclosure-status,
-.thread-tool-inProgress > .thread-tool-toggle .thread-disclosure-indicator.is-expanded .thread-disclosure-status,
-.thread-tool-inProgress > .thread-tool-activity-toggle .thread-disclosure-indicator.is-expanded .thread-disclosure-status {
-  opacity: 1;
-}
-
-.thread-tool-inProgress > .thread-tool-toggle:hover .thread-disclosure-chevron,
-.thread-tool-inProgress > .thread-tool-toggle:focus-visible .thread-disclosure-chevron,
-.thread-tool-inProgress > .thread-tool-activity-toggle:hover .thread-disclosure-chevron,
-.thread-tool-inProgress > .thread-tool-activity-toggle:focus-visible .thread-disclosure-chevron,
-.thread-tool-inProgress > .thread-tool-toggle .thread-disclosure-indicator.is-expanded .thread-disclosure-chevron,
-.thread-tool-inProgress > .thread-tool-activity-toggle .thread-disclosure-indicator.is-expanded .thread-disclosure-chevron {
-  opacity: 0;
-}
-
 /* Row status is colour on the glyph + label, never a second slot treatment:
    the tool keeps its own icon so a broken row still says WHICH tool broke, and
    the shared 14px indicator geometry is not overridden (one-slot rule,
@@ -1521,6 +1525,16 @@
 .thread-tool-interrupted > .thread-tool-toggle .thread-disclosure-status,
 .thread-tool-interrupted > .thread-tool-toggle .thread-tool-label {
   color: var(--text-faint);
+}
+
+/* WorkingText becomes ordinary static text for either accessibility preference.
+   Deepen only the semantic glyph so an in-progress tool still differs from a
+   completed sibling without changing text metrics or its neutral resting ink. */
+@media (prefers-reduced-motion: reduce), (prefers-contrast: more) {
+  .thread-tool-inProgress > .thread-tool-toggle .thread-disclosure-status,
+  .thread-tool-inProgress > .thread-tool-activity-toggle .thread-disclosure-status {
+    color: var(--text-soft);
+  }
 }
 
 /* A group summarizes mixed outcomes, so only the tally of what went wrong is
@@ -1642,11 +1656,13 @@
   line-height: var(--line-meta);
 }
 
-/* The row proper never wraps: its status, spinner, and Stop belong beside the
-   name, and a long name must shorten rather than push them onto a line of their
-   own. Only the failure reason below is allowed to run to several lines. */
+/* The row proper never wraps: its status and Stop belong beside the name, and
+   a long name must shorten rather than push them onto a line of their own. The
+   line reserves its full slot so an elapsed-time update cannot move Stop. Only
+   the failure reason below is allowed to run to several lines. */
 .thread-delegation-row-line {
   display: flex;
+  width: 100%;
   min-width: 0;
   align-items: center;
   gap: var(--space-2);
@@ -1656,7 +1672,7 @@
   display: flex;
   min-width: 0;
   max-width: min(100%, 520px);
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   align-items: center;
   gap: var(--space-3);
   padding: 0;
@@ -1692,11 +1708,7 @@
 .thread-delegation-row-status {
   flex: 0 0 auto;
   color: var(--text-tertiary);
-}
-
-.thread-delegation-row-spinner {
-  flex: 0 0 auto;
-  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
 }
 
 .thread-delegation-row .icon-button {
@@ -1804,13 +1816,6 @@
   gap: var(--space-3);
   margin-top: var(--space-3);
   padding-left: 20px;
-}
-
-/* Scoped to the row's own toggle: a running group must not spin the glyphs of
-   the finished children it contains. */
-.thread-tool-inProgress > .thread-tool-toggle .thread-disclosure-status svg,
-.thread-tool-inProgress > .thread-tool-activity-toggle .thread-disclosure-status svg {
-  animation: thread-tool-spin var(--motion-working-cycle) linear infinite;
 }
 
 @keyframes thread-tool-spin {
@@ -2298,11 +2303,6 @@
   white-space: nowrap;
 }
 
-.thread-plan-progress-spinner,
-.thread-plan-progress-popover li.is-in_progress .thread-plan-step-status svg {
-  animation: thread-tool-spin var(--motion-working-cycle) linear infinite;
-}
-
 .thread-plan-progress-popover {
   position: absolute;
   right: var(--agent-content-x);
@@ -2362,9 +2362,8 @@
   line-height: var(--line-meta);
 }
 
-/* The current step is marked by weight and text colour, never by the spinning
-   icon alone: that cue disappears entirely under reduced motion, and colour
-   alone is not a state. */
+/* The current step remains explicit without motion: text, weight, the semantic
+   aria-current marker, and a neutral filled dot all agree. */
 .thread-plan-progress-popover li.is-in_progress {
   color: var(--text-strong);
   font-weight: 600;
@@ -2384,6 +2383,14 @@
   height: 5px;
   border: 1px solid var(--text-faint);
   border-radius: var(--radius-pill);
+  content: '';
+}
+
+.thread-plan-progress-popover li.is-in_progress .thread-plan-step-status::before {
+  width: 5px;
+  height: 5px;
+  border-radius: var(--radius-pill);
+  background: var(--text-secondary);
   content: '';
 }
 
@@ -3077,12 +3084,7 @@
 
   .thread-streaming-shape,
   .thread-streaming-shape path,
-  .thread-plan-progress-spinner,
-  .thread-plan-progress-popover li.is-in_progress .thread-plan-step-status svg,
-  .thread-process-spinner,
-  .thread-provider-retry svg,
-  .thread-tool-inProgress > .thread-tool-toggle .thread-disclosure-status svg,
-  .thread-tool-inProgress > .thread-tool-activity-toggle .thread-disclosure-status svg {
+  .thread-provider-retry svg {
     animation: none;
   }
 }

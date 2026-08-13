@@ -1,0 +1,62 @@
+.working-text {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  min-width: 0;
+  contain: paint;
+  overflow: hidden;
+  color: inherit;
+  vertical-align: bottom;
+}
+
+.working-text-base {
+  display: block;
+  color: inherit;
+  background-color: currentColor;
+  background-image:
+    linear-gradient(
+      90deg,
+      currentColor 0%,
+      currentColor 30%,
+      var(--working-text-highlight) 50%,
+      currentColor 70%,
+      currentColor 100%
+    );
+  background-position: -100% 0;
+  background-repeat: no-repeat;
+  background-size: 50% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: working-text-sweep var(--motion-working-cycle) linear var(--motion-working-delay) infinite;
+}
+
+.working-text-truncate {
+  width: 100%;
+}
+
+.working-text-truncate > .working-text-base {
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes working-text-sweep {
+  0% {
+    background-position: -100% 0;
+  }
+
+  60%,
+  100% {
+    background-position: 250% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce), (prefers-contrast: more) {
+  .working-text-base {
+    animation: none;
+    background: none;
+    -webkit-text-fill-color: currentColor;
+  }
+}

@@ -66,6 +66,7 @@ const rawColorTokenNamePatterns = [
   /^--surface-inverse(?:-strong)?$/,
   /^--text-(?:on-accent|primary|quaternary|secondary|selection-bg|tertiary)$/,
   /^--underline-focus-shadow$/,
+  /^--working-text-highlight$/,
 ];
 
 const componentContracts = [
@@ -156,6 +157,11 @@ const componentContracts = [
     docNames: ['FeedbackState', 'EmptyState', 'ErrorState'],
     jsxTags: ['EmptyState', 'ErrorState'],
     implementationFiles: ['src/renderer/ui/primitives/FeedbackState.tsx'],
+  },
+  {
+    docNames: ['WorkingText'],
+    jsxTags: ['WorkingText'],
+    implementationFiles: ['src/renderer/ui/primitives/WorkingText.tsx'],
   },
   {
     docNames: ['TextInputControl', 'NumberInputControl'],

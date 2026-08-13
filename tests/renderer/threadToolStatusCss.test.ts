@@ -73,21 +73,53 @@ describe('thread tool row status CSS guards', () => {
     }
   });
 
-  test('spins only the running row own glyph, and stops under reduced motion', () => {
-    expect(threadCss).toMatch(
-      /\.thread-tool-inProgress > \.thread-tool-toggle \.thread-disclosure-status svg,\s*\.thread-tool-inProgress > \.thread-tool-activity-toggle \.thread-disclosure-status svg \{\s*animation:\s*thread-tool-spin/,
+  test('keeps the running action on the same neutral colour as settled rows', () => {
+    // The shimmer needs a consistent resting colour across the lifecycle. A
+    // running-only text-strong override leaves too little contrast for the
+    // current-colour highlight, especially in dark mode.
+    expect(threadCss).not.toMatch(
+      /\.thread-tool-inProgress > \.thread-tool-toggle \.thread-tool-summary-act\s*,?\s*\.thread-tool-inProgress > \.thread-tool-activity-toggle \.thread-tool-summary-act\s*\{/,
     );
-    const reducedMotion = threadCss.slice(threadCss.indexOf('@media (prefers-reduced-motion: reduce)'));
-    expect(reducedMotion).toContain('.thread-tool-inProgress > .thread-tool-toggle .thread-disclosure-status svg');
-    expect(reducedMotion).toContain('.thread-tool-inProgress > .thread-tool-activity-toggle .thread-disclosure-status svg');
+    expect(threadCss).not.toMatch(/\.thread-tool-inProgress[^}]*font-weight:/s);
+    expect(threadCss).not.toMatch(/\.thread-tool-inProgress[^{]*\.thread-disclosure-status svg\s*\{[^}]*animation:/);
   });
 
-  test('keeps a running row spinner visible through hover, focus, and expansion', () => {
+  test('reserves stable live elapsed geometry and scopes motion ownership to the owning Turn', () => {
     expect(threadCss).toMatch(
-      /\.thread-tool-inProgress > \.thread-tool-toggle:hover \.thread-disclosure-status,[\s\S]*?\.is-expanded \.thread-disclosure-status \{\s*opacity:\s*1;/,
+      /\.thread-process-title-live \{\s*width:\s*100%;\s*font-variant-numeric:\s*tabular-nums;/,
     );
     expect(threadCss).toMatch(
-      /\.thread-tool-inProgress > \.thread-tool-toggle:hover \.thread-disclosure-chevron,[\s\S]*?\.is-expanded \.thread-disclosure-chevron \{\s*opacity:\s*0;/,
+      /@media not \(prefers-contrast: more\) \{\s*\.thread-streaming-shape\.is-working-text-owned,\s*\.thread-streaming-shape\.is-working-text-owned path \{\s*animation:\s*none;/,
     );
+    expect(threadCss).toMatch(
+      /\.thread-streaming-shape\.is-motion-suppressed,\s*\.thread-streaming-shape\.is-motion-suppressed path \{\s*animation:\s*none;/,
+    );
+    expect(threadCss).not.toContain('.thread-turn:has(');
+  });
+
+  test('keeps a static neutral running glyph when working motion is unavailable', () => {
+    expect(threadCss).toMatch(
+      /@media \(prefers-reduced-motion: reduce\), \(prefers-contrast: more\) \{[\s\S]*?\.thread-tool-inProgress > \.thread-tool-toggle \.thread-disclosure-status,\s*\.thread-tool-inProgress > \.thread-tool-activity-toggle \.thread-disclosure-status \{\s*color:\s*var\(--text-soft\);/,
+    );
+  });
+
+  test('pins the Subagent Stop action while its elapsed status changes', () => {
+    expect(threadCss).toMatch(
+      /\.thread-delegation-row-line \{\s*display:\s*flex;\s*width:\s*100%;\s*min-width:\s*0;/,
+    );
+    expect(threadCss).toMatch(
+      /\.thread-delegation-row-open \{[^}]*flex:\s*1 1 auto;/s,
+    );
+    expect(threadCss).toMatch(
+      /\.thread-delegation-row-status \{[^}]*flex:\s*0 0 auto;[^}]*font-variant-numeric:\s*tabular-nums;/s,
+    );
+    expect(threadCss).toMatch(
+      /\.thread-delegation-row \.icon-button \{[^}]*width:\s*22px;[^}]*height:\s*22px;[^}]*flex:\s*0 0 auto;/s,
+    );
+  });
+
+  test('lets running rows use the ordinary disclosure glyph and chevron handoff', () => {
+    expect(threadCss).not.toContain('.thread-tool-inProgress > .thread-tool-toggle:hover .thread-disclosure-status');
+    expect(threadCss).not.toContain('.thread-tool-inProgress > .thread-tool-toggle:hover .thread-disclosure-chevron');
   });
 });

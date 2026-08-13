@@ -19,6 +19,7 @@ Per-component contracts only note deviations from this table.
 | Selected | `--selection-bg` (`--fill-3`); multi-select / range uses `--selection-soft` (`--fill-2`). |
 | Focus (keyboard) | `--outline-focus` + `--focus-ring-shadow`. Always visible, neutral — never brand or system accent. Text controls (`input` / `textarea` / `select`) carry that ring only after keyboard navigation (`:root[data-input-modality="keyboard"]`); pointer focus relies on the caret or local editing affordance so ordinary clicks do not turn into web-form boxes. Borderless inputs inside clipped inset cards move the keyboard ring to the **row** (`:focus-within`) because an outer ring would be cropped by the card's `overflow:hidden`. Editor-owned text canvases and non-tabstop structural controls may suppress the shared box only when another visible local focus mechanism owns the state, and every such suppression must be named in validation. |
 | Disabled | `--text-quaternary`; no hover; reduced-intensity fill. |
+| Working | Keep the semantic identity/status glyph stable and apply the cadenced `WorkingText` treatment only to the named action phrase. The readable base and a static cue remain when motion is disabled. |
 | Loading | Reserve one measured slot so the label and size do not jump; spinner uses `--text-secondary`. |
 | Error / destructive | `--status-danger` text/outline marks the resting destructive affordance. Ordinary destructive hover stays neutral (`--control-hover`), not a status tint — functional state is neutral (B3); the status colour rides on the label, not the hover fill. Solid destructive confirmations follow the Button contract and may use the status-danger fill because the command itself is destructive. |
 
@@ -44,7 +45,7 @@ Rules:
   allowed for inline diagnostic hints or native-title tooltips, and resize cursors
   use the shared `--resize-cursor` / `--resize-cursor-y` tokens.
 - **One disclosure/status slot.** Labels must not move across rest, hover, focus,
-  loading, and expansion (generalizes the agent disclosure rule).
+  working, loading, and expansion (generalizes the agent disclosure rule).
 
 ## Patterns
 
@@ -157,6 +158,25 @@ remain in the dock and never become authorization overlays.
   icon-supported without becoming an illustrated card. Editable empty outline
   pages do **not** get a centered empty-state block; the trailing editor line is
   the action point.
+- **Working:** a named action that Tenon is actively advancing keeps its semantic
+  glyph and puts motion on its action phrase through `WorkingText`. One normal,
+  accessible text layer supplies its own paint-contained, background-clipped
+  smooth sweep: it starts after `300ms`, crosses in approximately `1.4s`, and
+  repeats every `2.4s`. Rendering the glyph only once is required; overlaid text
+  copies change anti-aliasing density and look like a font-weight shift. The
+  effect never animates transforms or masks, so a translucent parent material
+  does not become the animation surface. Truncation, white-space, overflow, and
+  ellipsis belong to that same text layer. Within a disclosure hierarchy, only the
+  most specific mounted eligible representation moves: a collapsed summary hands
+  motion to an expanded live child, or stops when the expanded child has sufficient
+  static cues. `prefers-reduced-motion: reduce` and `prefers-contrast: more`
+  restore ordinary static text fill, so progressive wording, neutral colour, or
+  a status mark must identify the state without motion. A tool may deepen only
+  its fixed semantic glyph under those preferences; do not change the working
+  phrase's colour, weight, or metrics. Waiting on a person or
+  external authorization, retry backoff,
+  disconnected dependencies, terminal outcomes, and ordinary resource loading do
+  not use `WorkingText`.
 - **Loading:** the first frame is the working surface, not a splash. Persistent
   chrome, rails, and navigation render before async data resolves. For slow
   operations, use an in-place reserved slot; when a spinner is necessary, render

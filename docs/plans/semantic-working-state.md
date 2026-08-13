@@ -72,14 +72,15 @@ The load-bearing rules are:
 - **BR-2:** a working tool, Plan, Skill, or Subagent retains its semantic glyph;
   a loader never substitutes for identity.
 - **BR-3:** motion is never the only in-progress cue. Most readable bases use
-  progressive wording. Every in-progress tool action also gains `font-weight:
-  600` through the existing `thread-tool-inProgress` row class, so a
-  model-authored command description remains exact but stays visually distinct
-  when motion is disabled. A current Plan step keeps strong text plus a neutral
-  filled dot and `aria-current="step"`.
-- **BR-4:** motion is cadenced: the first sweep starts after `600ms`, crosses
-  the text in `1s` with 48 stepped positions, then rests; a new sweep begins
-  every `4s`.
+  progressive wording. An in-progress tool action keeps the same neutral
+  `--text-soft` resting colour as its terminal row so the sweep has a stable,
+  visible contrast delta throughout the lifecycle; a model-authored command
+  description remains exact without changing glyph metrics as it settles. A
+  current Plan step keeps strong text plus a neutral filled dot and
+  `aria-current="step"`.
+- **BR-4:** motion is cadenced: the first sweep starts after `300ms`, crosses
+  the text smoothly in approximately `1.4s`, then rests; a new sweep begins
+  every `2.4s`.
 - **BR-5:** only the most specific eligible expanded representation of one
   action shimmers. "Visible" means mounted because its disclosure is expanded,
   not merely inside the viewport. A collapsed summary may shimmer; expanding
@@ -89,17 +90,17 @@ The load-bearing rules are:
   introduced. Genuinely concurrent leaf actions may each shimmer.
 - **BR-6:** `prefers-reduced-motion: reduce` and
   `prefers-contrast: more` disable the visual sweep. The static cues in BR-3
-  and each surface's progressive wording remain visible.
-- **BR-7:** the visual duplicate is `aria-hidden`; the base text remains the
-  one accessible name and live-region payload.
-- **BR-8:** the overlay is absolute and pointer-inert, so the sweep layer itself
-  never changes measured width, row height, focus, or hit targets. A truncated
-  visual duplicate uses the same width, white-space, overflow, and ellipsis
-  rules as the base text, so the sweep cannot reveal different tail glyphs. The
-  BR-3 weight cue is the one deliberate metric change on the working transition:
-  it applies to the act segment, which is the flex-shrinking item of its row, so
-  row height, controls, and hit targets stay put while the tally position and
-  the truncation point may shift as a tool settles.
+  and each surface's progressive wording remain visible. An in-progress tool's
+  fixed semantic glyph deepens from `--text-faint` to `--text-soft` under either
+  preference; its action text keeps the same resting colour, weight, and
+  geometry as the default path.
+- **BR-7:** one in-flow text layer is both the accessible name/live-region
+  payload and the animated paint surface. No duplicate glyph tree is rendered.
+- **BR-8:** the sweep animates only the single text layer's clipped background
+  position, so it never changes measured width, row height, focus, or hit
+  targets. Truncation, white-space, overflow, and ellipsis all belong to that
+  same layer. Working/terminal state changes do not change action weight; row
+  width, controls, and hit targets therefore stay metric-stable.
 
 ### Codex behavior evidence
 
@@ -108,11 +109,11 @@ cadenced implementation:
 
 | Evidence | Observed fact | Tenon decision |
 | --- | --- | --- |
-| Continuous variant | a text-clipped gradient moves continuously for `2s` with `steps(48, end)`; reduced motion disables it | Reject it because several concurrent tools or Subagents would create continuous motion |
-| Cadenced timing | first activation after `600ms`, active for `1s`, repeated every `4s` | Adopt these tokenized values without a feature flag |
-| Cadenced structure | normal readable text remains in place while an `aria-hidden` duplicate supplies the sweep | Adopt the accessibility and geometry split through `WorkingText` |
-| Sweep shape | a `0% -> 20%-30% -> 50%` mask window crosses the label while paired layers translate in opposite directions; the observed endpoints are `-50% -> 125%` and `50% -> -125%` | Recreate the behavior with Tenon tokens and independently authored CSS |
-| Cadenced stepping | 48 stepped positions occur during the active interval | A `4s` CSS cycle places the sweep in its first 25%; CSS applies `steps(48, end)` to that keyframe interval and holds for the remaining `3s` |
+| Continuous variant | a text-clipped gradient moves continuously for `2s` with `steps(48, end)`; reduced motion disables it | Reject its continuous cadence because several concurrent tools or Subagents would create constant motion |
+| Cadenced timing | first activation after `600ms`, active for `1s`, repeated every `4s` | Preserve the narrow crossing shape, tune the initial delay to `300ms`, extend the active sweep to approximately `1.4s`, and keep the full cycle at `2.4s`; direct use showed that the shorter crossing felt too fast |
+| Cadenced structure | normal readable text remains in place while an `aria-hidden` duplicate supplies the sweep | Keep the text-clipped paint idea, but use one text layer because duplicate glyph rasterization made the passing highlight look like a font-weight change |
+| Sweep shape | a `0% -> 20%-30% -> 50%` mask window crosses the label while paired layers translate in opposite directions; the observed endpoints are `-50% -> 125%` and `50% -> -125%` | Preserve the narrow crossing band, but implement it as a paint-contained, background-clipped text gradient because Tenon's translucent Agent Deck is already a composited material surface |
+| Cadenced stepping | 48 stepped positions occur during the active interval | Do not copy the stepped easing: at Tenon's smaller meta text it reads as flicker. A `2.4s` CSS cycle moves smoothly during its first 60% (approximately `1.4s`) and holds for the remaining `1s` |
 | Consumer split | identity remains static while action metadata such as `Thinking`, running tool text, and an Agent's `is working` status carries motion | Adopt this identity/action split across the mapped Tenon consumers |
 
 CSS owns cadence rather than a timer per React instance. Mounting and unmounting
@@ -124,42 +125,41 @@ than an experiment branch.
 
 Add `src/renderer/ui/primitives/WorkingText.tsx` with a deliberately narrow
 contract: one text string, an optional `truncate` mode, an optional contextual
-class, and ordinary span attributes. It renders:
-
-- one normal base text layer, which alone participates in accessibility;
-- one absolute `aria-hidden` sweep layer containing a visual text copy;
-- no IDs, controls, or interactive descendants in the duplicate.
+class, and ordinary span attributes. It renders one normal in-flow text layer;
+that same layer is the accessible text and the paint-only animation surface.
+There is no duplicate text subtree.
 
 Add `src/renderer/styles/working-text.css` and import it once from
 `src/renderer/styles/index.css`. The root preserves the consumer's
-`currentColor`. The sweep copy uses a dedicated
-`--working-text-highlight` alpha-on-ink token declared in `tokens.css`
-instead of relying on current-color overdraw, whose strength changes with every
-consumer's base alpha. Start the token at `rgb(var(--ink) / 0.72)` and restrict
-its animated resting-color range to `--text-tertiary` through `--text-soft`.
-Overdraw composes those endpoints from `0.30` to approximately `0.804` and from
-`0.55` to approximately `0.874`; both remain visible, while the
-`--text-strong` Plan current step is deliberately static rather than asking one
-token to cover its much smaller delta. Light/dark evidence validates the two
-remaining animated endpoints before the Thread PR is ready.
+`currentColor`. The text layer uses a dedicated `--working-text-highlight`
+token declared in `tokens.css`; it mixes the consumer's current colour toward
+opaque `--ink`, so every supported resting colour gains a bounded highlight
+without a raw consumer colour. The gradient replaces the glyph fill rather
+than drawing another anti-aliased glyph over it. This distinction is
+load-bearing: overdraw made the highlight look like a changing font weight even
+though computed `font-weight` remained constant. Light/dark evidence validates
+the animated `--text-tertiary`, `--text-soft`, and in-progress tool endpoints
+before the Thread PR is ready.
 
-When `truncate` is true, both internal text layers share one truncation class:
-`width: 100%`, `overflow: hidden`, `text-overflow: ellipsis`, and
-`white-space: nowrap`. The absolute sweep remains clipped to the same root
-width. This prevents a narrow base label ending in an ellipsis while the moving
-copy exposes hard-clipped source characters.
+When `truncate` is true, the animated text layer owns `width: 100%`,
+`overflow: hidden`, `text-overflow: ellipsis`, and `white-space: nowrap`.
+Because there is only one glyph layer, the sweep cannot disagree with the
+visible truncation or reveal different tail characters.
 
-One four-second keyframe cycle performs the one-second sweep in its first
-quarter and holds the terminal transform for the remaining three seconds. A
-tokenized `600ms` initial delay matches the observed behavior. The masked
-overlay uses paired opposite transforms so the highlight crosses the complete
-text without changing layout.
+One `2.4s` keyframe cycle performs the approximately `1.4s` sweep in its first
+60% and holds the terminal background position for the remaining `1s`.
+A tokenized `300ms` initial delay avoids animating transient work while making
+sustained work feel responsive. The single text layer clips a narrow gradient
+to its glyphs and animates only `background-position` inside a `contain: paint`
+root. It uses no transform, mask, duplicate glyph, or persistent `will-change`,
+so the Agent Deck's composited translucent material cannot become the animation
+layer.
 
 Retire the Thread-only spinner uses of `--motion-working-cycle` and redefine
 the working motion tokens for cadence and initial delay. Timing literals outside
 `tokens.css` continue to satisfy the motion-token guard. Both reduced-motion
-and increased-contrast media queries hide the sweep layer rather than merely
-pausing it over the start of the label.
+and increased-contrast media queries remove the gradient and restore the same
+text layer's ordinary `currentColor` fill.
 
 ### Thread and Plan surfaces
 
@@ -167,13 +167,29 @@ This surface belongs to the first implementation PR.
 
 | Surface / symbol | Current | New behavior |
 | --- | --- | --- |
-| `ThreadProcessBlock` | A live, non-collapsible Turn shows its summary plus `thread-process-spinner`; the completed collapsible branch is already static; `blockedOnUser` already suppresses the spinner | Remove the live spinner. Shimmer the live summary only when no expanded live leaf either owns the working cue or statically suppresses it per BR-5. Keep completed collapsible summaries and user-blocked summaries static; do not add motion to either branch. |
+| `ThreadProcessBlock` | A live, non-collapsible Turn shows its summary plus `thread-process-spinner`; the completed collapsible branch is already static; `blockedOnUser` already suppresses the spinner | Remove the live spinner. Shimmer the live summary only when no expanded live leaf either owns the working cue or statically suppresses it per BR-5. Give live elapsed labels a full-width slot and tabular numerals so second updates do not change visible geometry. Keep completed collapsible summaries and user-blocked summaries static; do not add motion to either branch. |
 | `ReasoningDisclosure` | An empty live Item shows static `Thinking`; the Turn spinner supplies motion | Wrap only the empty live `Thinking` label in `WorkingText`. Populated reasoning stays readable and static while it streams. |
-| `executionStatusNode` / `ToolItemDisclosure` | `inProgress` replaces the tool glyph with `LoaderIcon` | Always return the tool glyph. Shimmer only the neutral action segment of an in-progress row and apply `font-weight: 600` to that segment through `thread-tool-inProgress`; failure/interruption tallies remain static. A command with `item.description` keeps that exact sentence in every status rather than routing it through command-oriented i18n. |
+| `ToolItemDisclosure` | `inProgress` replaces the tool glyph with `LoaderIcon` | Always pass the tool glyph directly to `DisclosureIndicator`. Shimmer only the neutral action segment of an in-progress row, keeping its `--text-soft` resting colour and 400 weight identical to a settled row; failure/interruption tallies remain static. A command with `item.description` keeps that exact sentence in every status rather than routing it through command-oriented i18n. |
 | `ThreadToolActivityGroup` | A running group spins its group glyph | A collapsed running group shimmers its neutral action segment. When expanded in the DOM, its summary is static and each in-progress member shimmers instead. Finished members never inherit motion. Collapsing or expanding mid-run transfers ownership without a frame where both levels animate. |
-| `SubagentActivityItem` | Running status appends a loader to the `.thread-delegation-row` | Keep the form/Agent glyph and name static; shimmer only the running status phrase. Stop remains a separate fixed-size action. |
+| `SubagentActivityItem` | Running status appends a loader to the `.thread-delegation-row` | Keep the form/Agent glyph and name static; shimmer only the running status phrase. Its lifecycle line reserves the available width, the disclosure consumes the flexible slot, elapsed numerals are tabular, and Stop remains a separate fixed-size action at the stable row edge. |
 | `SubagentStateItem` | An expanded collaboration tool detail shows static Agent identity and status text | Include this surface: keep `AgentIcon` and identity static and shimmer only a running status phrase. Because it is mounted only inside the expanded tool detail, the collapsed parent summary owns motion and the expanded child status owns it after transfer. |
 | `ThreadPlanProgress` | The summary and current checklist step spin; the step also already has strong text while pending steps use a hollow dot | Use the existing `PlanToolIcon` as the stable summary glyph. When closed, shimmer the current-step summary. When open, freeze the summary and keep the current checklist step fully static: replace its loader with a neutral filled dot in the existing fixed status slot, retain strong text and 600 weight, and add `aria-current="step"`. Completed steps keep `CheckIcon`; pending steps keep their static hollow dot. |
+
+`ThreadTurnView` derives one `workingTextEnabled` gate from the owning Thread's
+`waitingOnUserInput` and provider-retry state and passes it to every mapped leaf.
+Blocked input and retry therefore render the same phrases through static spans
+instead of pausing a gradient after the fact. Nested Subagent `ThreadView`
+instances derive their own gate, so motion ownership never crosses the parent /
+child boundary. One synchronous `turnMotionOwner` classification assigns the
+Turn's motion to its summary, a mapped leaf, or neither; both the summary and
+streaming shape consume that result without mount-time registration. The shape
+receives a direct owning-Turn class rather than relying on a descendant `:has()`
+selector. Its suppression query is the exact complement of
+`prefers-contrast: more`, so any contrast mode that retains the text sweep still
+has one motion owner, while increased contrast restores the shape for eligible
+live work. When the `workingTextEnabled` gate is false (blocked input or
+recovery), a second direct class suppresses both shape layers in every contrast
+mode so a waiting Turn never claims progress.
 
 The existing Turn/process projection remains authoritative. Working-state
 selection is renderer presentation derived from existing `Turn.status`,
@@ -215,6 +231,13 @@ current label statically so the same operation does not shimmer twice.
 The following stay outside `WorkingText` in both PRs:
 
 - `ThreadProviderRetryStatus`: reconnect/backoff is recovery, not normal work.
+  It stays spinner-led in the owning Turn's response footer, replacing that
+  Turn's rose generating indicator rather than appearing as a second row below
+  it. While recovery is visible, the owning Turn and closed Plan render their
+  working phrases statically so the retry spinner is the sole motion owner. The
+  visible footer is `aria-hidden`; a separate visually-hidden `role="status"`
+  outside the virtualized Turn list announces retry updates even when the live
+  Turn is unmounted by scrolling.
 - `ProviderOAuthForm`'s fallback `Waiting for authorization...`: it is
   blocked on a browser/person. The current `flow.progress` contract does not
   distinguish active token exchange from external waiting, so the entire row
@@ -288,15 +311,17 @@ outside both PRs.
 - **AC-1:** While a tool is in progress, its original tool glyph remains
   visible and only its neutral action phrase uses `WorkingText`.
 - **AC-2:** A command with a caller description renders that exact sentence in
-  every status. While it is running, its neutral action has 600 weight through
-  `thread-tool-inProgress`; reduced motion and increased contrast remove the
-  sweep without removing that static cue.
+  every status. While it is running, its neutral action keeps the same
+  `--text-soft` resting colour and weight as a settled row; reduced motion and
+  increased contrast remove the sweep without removing that static cue or
+  shifting text metrics.
 - **AC-3:** While empty reasoning is streaming, `Thinking` shimmers; when the
   first readable reasoning text arrives, that text renders normally without a
   geometry swap on the container.
 - **AC-4:** `SubagentActivityItem` and `SubagentStateItem` keep identity
   static and mark only a running status phrase as working. Stop remains
-  available on the lifecycle row.
+  available on the lifecycle row and does not move when elapsed copy crosses a
+  digit or unit boundary.
 - **AC-5:** A collapsed running group shimmers only its summary. Expanding it
   mid-run freezes the summary and starts only its running members; collapsing
   reverses ownership without simultaneous parent/child motion.
@@ -306,36 +331,45 @@ outside both PRs.
   only the summary shimmer, and completion removes it.
 - **AC-7:** If a Turn is waiting on user input, failed, interrupted, complete,
   or represented by its completed collapsible summary, it contains no
-  `WorkingText` and announces its existing static status.
-- **AC-8:** A `WorkingText` instance exposes its text once to accessibility
-  APIs; the visual duplicate is `aria-hidden` and pointer-inert.
-- **AC-9:** Under reduced motion or increased contrast, the overlay is absent
+  `WorkingText` and announces its existing static status. This includes the
+  still-in-progress `request_user_input` row and any closed Plan.
+- **AC-8:** A `WorkingText` instance exposes and renders its text exactly once;
+  the accessible node is also the paint-only animation surface.
+- **AC-9:** Under reduced motion or increased contrast, the gradient is absent
   and every mapped row remains distinguishable as working through progressive
-  copy, the in-progress tool-action weight, or the Plan's static current-step
+  copy, the in-progress tool glyph colour, or the Plan's static current-step
   cues.
-- **AC-10:** With a narrow long English or Chinese label, the base and visual
-  copy have the same rendered width, white-space, overflow, ellipsis, and final
-  visible glyph. Row height, controls, and hit targets do not move when the
-  sweep starts or stops. Per BR-8, the weight cue may move the tally position
-  and the truncation point as a tool settles; that shift is bounded to the act
-  segment and is verified by evidence rather than forbidden.
+- **AC-10:** With a narrow long English or Chinese label, the one animated text
+  layer preserves its rendered width, white-space, overflow, ellipsis, and
+  final visible glyph. Row height, controls, and hit targets do not move when
+  the sweep starts or stops. Tool action weight remains 400 across running and
+  terminal states, and a live elapsed title occupies a stable full-width slot
+  with tabular numerals, so neither transition moves adjacent geometry.
 - **AC-11:** In light and dark mode, the tokenized highlight is visible at both
   remaining animated resting-color endpoints, `--text-tertiary` and
   `--text-soft`, without a raw consumer color, brand accent, background fill,
-  or loss of the underlying text. The `--text-strong` Plan step has no overlay.
+  or loss of the underlying text. The `--text-strong` Plan step stays static.
 - **AC-12:** Initial data loads, reconnect, OAuth wait, icon-only operations,
   and every terminal surface retain their existing indicator and never receive
-  `WorkingText` accidentally.
+  `WorkingText` accidentally. Reconnect renders in its owning Turn's response
+  footer and replaces, rather than stacks below, the rose generating indicator;
+  all mapped phrases in that Turn and its closed Plan render statically until
+  recovery clears. Its live announcement remains mounted across Turn
+  virtualization, and nested Threads arbitrate their own motion independently.
 
 Focused automated coverage should update or add these test titles:
 
-- `WorkingText renders one accessible text layer and an aria-hidden sweep copy`
-- `WorkingText mirrors truncation geometry and ellipsis onto its visual copy`
+- `WorkingText renders one accessible animated text layer without a visual duplicate`
+- `WorkingText keeps truncation geometry and ellipsis on its animated text layer`
 - `WorkingText uses a cadenced tokenized sweep and becomes static for motion and contrast preferences`
+- `WorkingText confines animation to one paint-contained glyph layer without changing typography`
 - `keeps the tool own glyph in every status and shimmers only the running action`
-- `keeps described command copy exact and uses running weight as its static cue`
+- `keeps described command copy exact while the running action stays metric-stable`
+- `reserves stable live elapsed geometry and one Turn motion owner`
+- `projects live and settled Turn process before the final response`
 - `hands running group motion between its summary and expanded members`
 - `reads Subagent identity statically and marks only live status as working`
+- `pins the Subagent Stop action while its elapsed status changes`
 - `stops Plan motion when its static current step is expanded and resumes only the collapsed summary`
 - `shows Turn-local Plan progress only while the Turn is active`
 - `stops working motion while the Turn is blocked on user input`
@@ -407,21 +441,23 @@ both PRs use GitHub's comment CDN rather than a side-branch asset URL.
   parent and child both animate the same fact. BR-5 makes DOM expansion the
   deterministic handoff and permits multiple motion only for genuinely
   concurrent leaf actions.
-- **The duplicate can disagree with truncated text.** `truncate` gives the
-  accessible base and visual copy the same width and ellipsis contract. Focused
-  DOM and narrow-pane sweep evidence verify glyph parity as well as geometry.
-- **Accessible text can be announced twice.** The base string is the only normal
-  text layer; the entire sweep subtree is `aria-hidden`. Live regions continue
-  to announce state changes through the base string.
+- **Animated paint can disagree with truncated text.** `truncate` applies to the
+  same text node that owns the gradient, so there is no second glyph tree to
+  diverge. Focused DOM and narrow-pane evidence verify geometry.
+- **Animated text can be announced twice.** `WorkingText` renders one text node,
+  so live regions announce only that string and have no hidden duplicate to
+  traverse.
 - **Continuous animation would look busy and consume more paint.** The selected
-  cadence moves for one quarter of each cycle, uses transforms and masks only,
-  and creates no React interval per row.
+  cadence moves for 60% of each cycle, confines background paint to the text
+  bounds, and creates no React interval per row. Transform and mask
+  animation is deliberately excluded because it can invalidate the translucent
+  Agent Deck's compositor surface.
 - **Sweep strength can drift across base text alphas.** A dedicated
-  alpha-on-ink highlight token replaces current-color doubling, and the
-  `--text-strong` Plan step is excluded rather than forcing one token across the
-  full alpha ladder. The remaining `--text-tertiary` and `--text-soft`
-  endpoints are required visual evidence in both themes; increased contrast
-  removes the overlay.
+  current-colour-to-ink highlight token bounds the delta without glyph overdraw.
+  Running tool actions stay on the same `--text-soft` endpoint as settled rows,
+  so the highlight remains perceptible instead of disappearing into a
+  `--text-strong` base. The remaining animated endpoints are required visual
+  evidence in both themes; increased contrast removes the gradient.
 - **Settings copy can lie during destructive work.** PR2 adds explicit
   progressive English and Chinese labels before applying shimmer; imperative
   `Uninstall` / `Roll back` never animate as if they were status.
@@ -437,7 +473,7 @@ both PRs use GitHub's comment CDN rather than a side-branch asset URL.
 
 None. The implementation uses two complete PRs, DOM disclosure expansion as the
 parent-motion suppression boundary, a static expanded Plan step, and the
-observed `600ms / 1s / 4s` cadence without a feature flag.
+user-validated `300ms / approximately 1.4s / 2.4s` cadence without a feature flag.
 
 ## Checklist
 
@@ -447,8 +483,8 @@ observed `600ms / 1s / 4s` cadence without a feature flag.
       cadenced CSS, highlight token, and preference fallbacks.
 - [ ] Replace Thread, Thinking, tool/group, both Subagent surfaces, and Plan
       working spinners according to the most-specific-expanded rule.
-- [ ] Preserve command descriptions exactly; add in-progress tool-action weight
-      and static current Plan-step cues.
+- [ ] Preserve command descriptions exactly; add metric-stable in-progress
+      tool colour and static current Plan-step cues.
 - [ ] Leave every Loading, Waiting, Recovery, terminal, and icon-only Thread
       consumer in the explicit retained matrix unchanged.
 - [ ] Update the three Thread and design-system spec documents.

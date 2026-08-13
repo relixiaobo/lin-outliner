@@ -66,6 +66,7 @@
   --text-secondary: rgb(var(--ink) / 0.55);
   --text-tertiary: rgb(var(--ink) / 0.30);
   --text-quaternary: rgb(var(--ink) / 0.16);
+  --working-text-highlight: color-mix(in srgb, currentColor 75%, rgb(var(--ink)) 25%);
 
   /* neutral fills — control / hover / active / selection backgrounds */
   --fill-1: rgb(var(--ink) / 0.04);
@@ -379,8 +380,8 @@
   --motion-spin-fast-cycle: 800ms;
   --motion-spin-cycle: 900ms;
   --motion-caret-cycle: 1s;
-  --motion-working-cycle: 1.2s;
-  --motion-working-stagger: 150ms;
+  --motion-working-cycle: 2.4s;
+  --motion-working-delay: 300ms;
   --motion-pulse-cycle: 2.5s;
   --motion-shape-cycle: 3s;
   --chrome-zone-backing-delay: var(--motion-layout-duration);
