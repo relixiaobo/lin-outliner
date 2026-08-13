@@ -144,6 +144,40 @@ Entries reference the pull request that introduced them.
   through a real label element — the mock renders one records state, so measuring
   only what appeared on screen would have left `Show in Recall`, the failure label,
   and every zh-Hans string unguarded.
+- **Saving no longer rewrites your whole document while you type (PR #533,
+  codex-3)** — every typing group and structural edit used to await a full Loro
+  snapshot export plus an atomic file replacement *on the mutation queue*, so the
+  next keystroke waited on serialization and disk. Persistence is now an
+  append-only update log: a mutation publishes an accepted revision and returns,
+  and a `WorkspaceSaver` writes the incremental Loro update to
+  `workspace.loro.updates.jsonl` behind a 700 ms idle window with a 5 s max wait,
+  serialized writes, capped exponential retry, and immediate service for explicit
+  durability requests. On a 536-node document one incremental update is ~183
+  bytes captured in ~0.623 ms, against ~669 KB serialized in ~32.6 ms for the
+  snapshot it replaces. Trusted document-system transactions still await a real
+  durable revision, and a durability failure now rejects the caller without
+  hiding or rolling back state the document already committed and indexed.
+  Startup validates the log's snapshot digest, replica identity, revision
+  continuity, and the Loro version frontier of every record; a torn final record
+  is recovered, and any other anomaly is quarantined to an `*.unreadable-*` file
+  and repaired rather than making a readable snapshot unopenable. Quit became a
+  two-phase state machine: Phase 1 freezes admission — **queuing** later
+  mutations rather than rejecting them — and drains to a durable-revision
+  barrier, offering Retry / Quit Anyway / Cancel on failure; Cancel resumes every
+  queued edit, and irreversible teardown starts only once the barrier holds or
+  the user explicitly bypasses it. There is deliberately no total-attempt exit:
+  an automatic quit would discard accepted-but-not-durable changes without an
+  explicit choice. Text-search maintenance stopped cloning the whole node map per
+  patch — incremental patches mutate the published map in place while yielding
+  bulk refreshes build in a hidden overlay and publish one completed generation.
+  The max gate found 15 defects, 14 fixed with regression tests. The ones that
+  would have been visible: any update-log anomaly hard-exited the app at startup
+  with no window and no message despite an intact snapshot; a keystroke landing
+  mid-fsync pinned the max-wait clock at zero and collapsed the debounce into one
+  fsync *per keystroke*, the exact regression the change exists to remove; the
+  capture path's implicit Loro commit carried no origin, pushing a phantom
+  origin-less step into all three undo managers so ⌘Z had to be pressed twice;
+  and a cancelled quit silently discarded every edit typed during the drain.
 
 ### Internal
 

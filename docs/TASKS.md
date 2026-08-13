@@ -691,7 +691,13 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   [`typing-hot-path`](plans/typing-hot-path.md).
   **PR-A shipped 2026-08-11 (#530, codex-3):** incremental `MemoryMutationIndex`
   + transaction-aware observer; guard `0.436 ms` → `0.000295 ms` on a 5,009-node
-  document, zero projection reads after a 3.6 ms bootstrap. PR-B and PR-C remain.
+  document, zero projection reads after a 3.6 ms bootstrap.
+  **PR-B shipped 2026-08-13 (#533, codex-3):** persistence moved off the mutation
+  queue onto an append-only update log (`WorkspaceSaver` + `workspace.loro.updates.jsonl`,
+  700 ms idle / 5 s max wait) with a two-phase quit durability barrier; ~183 B in
+  ~0.623 ms per incremental update vs ~669 KB in ~32.6 ms per snapshot on a
+  536-node document. Text-search patches stopped cloning the node map.
+  **PR-C remains** (renderer keystroke commit cost).
 - **agent-tool-call-path** (P1, `draft` 2026-08-11) — host overhead dominates
   agent Turns. `MemoryExtension.filterProjection` decodes the entire thread
   history and builds the memory graph 2-3× on every `getProjection()` (1-3 per
@@ -762,6 +768,14 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   a persistent startup-failure surface. The audit falsified the perf program's
   verified-good startup claim (corrected there in the same change). One PR.
   Design: [`startup-window-first`](plans/startup-window-first.md).
+  **#533 gate sweep 2026-08-13:** the plan's startup cost model predates the
+  append-only update log. `initWorkspace` now also reads and replays
+  `workspace.loro.updates.jsonl` — validating the snapshot digest, replica
+  identity, revision continuity, and each record's Loro version frontier — so
+  startup got a new O(log) phase ahead of first paint, and the plan's
+  `saveCore()` references now name a method that delegates to `WorkspaceSaver`
+  rather than writing a snapshot. Re-measure against the current path before
+  building.
 
 ### Distribution & updates
 
@@ -798,6 +812,20 @@ between them:
 Small unclaimed items split off from shipped PRs — fast-track each when a clone is free; none block
 anything.
 
+- **Flaky `bash` host-environment test** (P3, *fast-track, no plan file*, filed 2026-08-13 at the
+  #533 gate) — `tests/core/agentLocalTools.test.ts` → `foreground and background bash receive the
+  same host process environment` fails roughly **1 run in 9** under a full `bun run test:core`, and
+  passed **12/12** when that file is run alone, so it is load-dependent timing, not a real defect.
+  Pre-existing and unrelated to #533: the test file and `src/main/agent/` were byte-identical to
+  `main` on the branch that surfaced it. The mechanism is in the file's own helpers —
+  `waitForFileContent` (1000 ms default deadline) and `waitForCondition` both **return the last
+  observed value instead of throwing on timeout**, so a backgrounded `sh` that needs more than a
+  second to spawn and flush its output file under suite load produces an ordinary content assertion
+  failure with no hint that a deadline expired. Fix by making the helpers throw a timeout error
+  naming the file and predicate, and by raising the deadline (or making it load-aware) for the
+  background-process waits. Worth doing because `.github/workflows` runs the suite with
+  `retries: 0` on purpose (B11's trade): a suite that fails one run in nine trains everyone to
+  re-run instead of read, which is exactly how a real regression gets waved through.
 - **#514 update-check review tail** (P3, *fast-track, no plan file*, filed 2026-08-10 at the #514
   gate) — three findings the gate raised and the PR consciously left. **(a)** `appUpdate.ts`
   `decodeRelease` picks the `.dmg` by `localeCompare` on the filename with no architecture
