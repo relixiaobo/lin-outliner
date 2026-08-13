@@ -15,9 +15,10 @@ Verified against the current core (four scenarios; three fail):
 | Give a template field a default value | ❌ instances unchanged |
 | `create_field_def(tagId, …)` | ✅ back-fills — but no renderer code calls it; `documentService` exposes it to agent tools only |
 
-`applyTagNoHistoryDirect` → `instantiateTagTemplateDirect` is the only path that
-reads a template (plus the copy-node path in `copyNodeSubtree`). Nothing re-reads
-it, so the template is a one-shot stamp, not a definition.
+The template is read at exactly two sites: `instantiateTagTemplateDirect` from
+`applyTagNoHistoryDirect`, and from `splitNode` (mid-row Enter re-instantiates
+the template on the right half for the tags it inherits). Nothing re-reads it, so
+the template is a one-shot stamp, not a definition.
 
 ### Root cause
 
@@ -43,8 +44,8 @@ stop copying the rules.
   read time. Adding, removing, renaming, retyping, or reordering a field on a tag
   is instantly true for every instance, past and future, with zero writes.
 - A node stores field *values* only.
-- Default values render as inherited placeholders and never write themselves into
-  a node.
+- Static default values render as inherited placeholders and never write
+  themselves into a node.
 - Freeform template children stay seeds, copied once at tag time, with an
   explicit idempotent action to hand them to older nodes.
 
@@ -67,10 +68,16 @@ stop copying the rules.
 **(b) A set of independent complete features**, three PRs, ordered by dependency.
 Each is shippable and verifiable alone:
 
-1. **Field projection.** Fixes the reported bug by itself.
-2. **Inherited defaults as ghost values.** Depends on 1.
+1. **Field projection.** Fixes rows 1 and 2 of the table above — a field added to
+   a tag reaches every node already carrying it. Row 3 (defaults) is PR 2's.
+2. **Static defaults as ghost values.** Depends on 1.
 3. **Seed backfill action.** Independent of 1 and 2; works on the current model
    too.
+
+PR 1 is the large one. Its real chunks are: the accessor and its cache, the
+storage-rule command, virtual-row identity in the renderer, the search
+operators, and the 23-file reader sweep. None of them can ship without the
+others, which is why this is one PR and not four (A7).
 
 ## Design
 
@@ -80,98 +87,135 @@ Each is shippable and verifiable alone:
 node:
 
 ```
-{ fieldDefId, source: 'tag' | 'own', entryId?: NodeId }
+{ fieldDefId, source: 'tag' | 'own', sourceTagId?, templateEntryId?, entryId? }
 ```
 
-Order: tag chain ancestor-first (the order `instantiateTagTemplateDirect`
-produces today), then the node's own ad-hoc entries. `entryId` is present only
-when a value is stored. Every current reader of `type === 'fieldEntry'` off
-`children` goes through this instead — 23 files today, the load-bearing ones
-being `outlinerRows`, `OutlinerItem` / `OutlinerFieldRow`, `OutlinerTableView`,
-`searchEngine`, `fieldResolution`, `references`, `agentNodeToolProjection`,
-`agentNodeTools`, `userView`, `selectionActions`, and the action-registry facets
-(`rowFacets`, `candidates`, `objects`).
+`entryId` is present only when a value is stored. `sourceTagId` and
+`templateEntryId` carry provenance that consumers need today and the shape would
+otherwise drop: `resolveFieldOwnerColor` (`OutlinerFieldRow`) resolves a field
+row's tag color through `entry.templateId` as its first-priority lookup, and both
+`value_is_default` (`outlinerRows`) and PR 2's ghosts have to read the template
+entry's values. `templateId` on the stored entry therefore goes away — the slot
+carries what it was for — while it stays on seed content clones, where dedup
+still needs it.
+
+**Order.** Slots come out in template order per tag, ancestor-first across the
+extends chain. This is *not* what happens today: `getExtendsChain` returns
+self-first and `ensureFieldEntryWithTemplateDirect` inserts each entry at index
+0, so groups land ancestor-first but the fields *within* one tag end up reversed
+relative to the template. No test pins multi-field order (every existing test is
+single-field), so the projection quietly fixes that quirk. It is a change, not a
+parity claim.
 
 **Storage rule.** A `fieldEntry` node exists only once it holds a value.
 `apply_tag` writes no field entries — with one exception, below.
 
 **The auto-init exception.** Slots whose field has `autoInitialize` configured
-must still be materialized at `apply_tag`, because every strategy in
-`autoInitStrategiesForFieldType` — `current_date`, `ancestor_day_node`,
-`ancestor_field_value`, `ancestor_supertag_ref` — resolves against the moment and
-the tree position at which the tag was applied. Those values have to be frozen
-right then: a `current_date` that stayed virtual would re-resolve to *today*
-every time it was read, so a node tagged in January would silently start
-claiming August, and an `ancestor_*` value would change the moment someone moved
-the node. So `apply_tag` keeps calling `applyAutoInitializeDirect` for
-auto-init slots and writes nothing for the rest. This is a genuinely
-write-once statement, and it is not retroactive — a field given auto-init
-afterwards leaves already-tagged nodes empty, which is the correct answer, not a
-limitation.
+must still be materialized where a node acquires a tag — `apply_tag`, `splitNode`
+inheriting tags, and `applyChildTagsDirect` — because every strategy in
+`autoInitStrategiesForFieldType` (`current_date`, `ancestor_day_node`,
+`ancestor_field_value`, `ancestor_supertag_ref`) resolves against the moment and
+the tree position at which the tag was acquired. Those values have to be frozen
+right then: a `current_date` left virtual would re-resolve to *today* on every
+read, so a node tagged in January would silently start claiming August, and an
+`ancestor_*` value would change the moment someone moved the node. So those paths
+keep calling `applyAutoInitializeDirect` for auto-init slots and write nothing
+for the rest. This is a genuinely write-once statement and it is not retroactive:
+a field given auto-init afterwards leaves already-tagged nodes empty, which is
+the correct answer rather than a limitation.
 
-**Materialize on write.** The first keystroke or option pick in a virtual slot
-creates the entry. This pattern is already shipped: `OutlinerTableView`'s
-absent-cell path calls `create_inline_field` with an existing `targetDefId` and
-buffers the typed character through a pending-materialization map so it is not
-lost across the async command. That local implementation moves into the shared
-row layer and the table stops being a special case.
+**Materialization is a core command, not a renderer behavior.** Find-or-create
+already exists in three places — the table's `beginFieldEdit`, the agent edit
+path (`create_inline_field` followed by `reuse_field_definition`, two mutations),
+and `applyPasteMetadataDirect`. Materialize/dematerialize is a storage-rule
+invariant, so it becomes one core command (find-or-create-then-set;
+remove-when-empty) that renderer, agent and paste all call. Otherwise an agent
+clearing a value through `clearFieldValue` leaves an empty tag-slot entry behind
+and the document drifts straight back into being a pile of copies.
 
-**Dematerialize on clear.** Clearing the last value of a `source: 'tag'` slot
-removes the entry, returning the slot to virtual — otherwise every
-touched-then-cleared field leaves an empty node behind and the document drifts
-back into being a pile of copies. `source: 'own'` entries are kept when emptied:
-the node is the only record that the field exists there.
+**Dematerialize on commit, not per keystroke.** Deleting the last character must
+not delete the row under the cursor; the entry is removed when the edit commits
+(blur / navigation away) and the slot goes back to virtual. This applies to
+`source: 'tag'` slots only — an emptied `source: 'own'` entry is kept, because the
+node is the only record that the field exists there at all.
 
-**Removing a field from a tag** makes the slot vanish everywhere. Nodes holding a
-value keep their entry, which is now `source: 'own'`. "Never delete user data"
-stops being a policy someone has to remember and becomes what the mechanism does.
+**Dedupe.** Concurrent first-edits of the same virtual slot on two devices can
+merge into two entries for one `fieldDefId`. `nodeFieldSlots` resolves this: first
+entry in child order wins, the rest are treated as own fields. (The same race
+exists today at concurrent `apply_tag`, so this is not a regression — it just now
+has a stated rule.)
 
-**`hideField` is unaffected** in meaning: `always` / `hidden` / `empty` /
-`not_empty` apply to slots exactly as they apply to entries today.
-`value_is_default` gets simpler — it compares against the schema default instead
-of chasing the `templateId` back-pointer.
+**Virtual-row identity in the renderer.** A slot with no `entryId` must still be
+a real row: focusable, selectable, keyboard-navigable and editable **without a
+node id**. `buildChildRows` keys rows by child id, and the synthetic rows that
+exist today (`hidden:`, `filtered:`) are non-editable, so this is new ground. It
+needs an explicit id scheme — `slot:<nodeId>:<fieldDefId>` — threaded through
+`selectableRows`, focus/UI state (`focusTarget` takes a node id today),
+pending-input targeting, context menus and batch operations, plus a stated list
+of what a virtual row *cannot* do (no drag, no indent/outdent, no delete, no
+tags, no children) so the parity matrix's row behaviors stay honest. This is the
+single biggest chunk of PR 1.
 
-**`templateId` on field entries disappears.** It exists only to remember which
-template a copy came from; with a schema there is nothing to remember. It stays
-on seed content clones (used for dedup — see 3).
+**Search must become slot-aware inside PR 1.** The engine already implements
+`FIELD_IS_SET`, `FIELD_IS_NOT_SET`, `FIELD_IS_DEFINED`, `FIELD_IS_NOT_DEFINED`
+and `IS_EMPTY`, all routed through `comparableFieldState`, whose `hasField` means
+"an entry exists". Today `apply_tag` guarantees tagged nodes have entries, so
+those operators work. The moment valueless slots stop having entries, all five go
+false unless `comparableFieldState`, `fieldReads` and `fieldDateRanges` read
+slots. This is a correctness dependency, not an improvement. The three states get
+pinned explicitly:
 
-**Search semantics improve.** Field predicates see slots, so a `#project` with no
-Status still *has* Status. `has field` = the slot exists; `field is empty` = no
-stored value. Today those two are indistinguishable, because "no entry" and
-"empty entry" are both just absence-of-text.
+- **defined** — the slot exists (from the tag chain or an own entry)
+- **set** — a value is stored
+- **empty** — the slot exists and no value is stored
 
-**Cost and caching.** Rows no longer read field entries straight off `children`;
-each row resolves its slots through the tag chain. That result is per (node,
-tag-chain revision) and belongs in the existing projection cache that
-`patchProjectionCache` maintains, not recomputed per render.
+**Name collisions become constructible.** `assertOwnerDoesNotHaveFieldName` fires
+today *because* `apply_tag` writes entries; once it doesn't, "node already has its
+own `Status`, then gets a tag defining a different `Status`" is reachable in
+ordinary use. Worse, clicking that slot materializes through `create_inline_field`,
+whose identical assert throws — a rendered row that can never be edited. PR 1 has
+to resolve this rather than inherit it; see Open question 3.
+
+**Cache.** Slots depend on other nodes (tag defs, template entries, the extends
+chain), so they cannot live in `patchProjectionCache`, which caches strictly
+per-node `projectNode(node)` results and invalidates by affected node id — a
+template edit would never invalidate its instances, and the write fan-out this
+design removes would come back as a cache-invalidation fan-out. Slots get their
+own derived layer: memoized per `(nodeId, schemaEpoch)`, where the epoch bumps on
+any mutation inside Schema or a tagDef subtree, recomputed lazily. Cheap, but it
+is a design, not an assumption.
+
+**Agent read parity.** `agentNodeToolProjection` renders a node's fields to the
+agent from entries; under projection it must render slots, or the agent will keep
+"creating missing fields" that already exist. Empty slots render in a compact
+form — ten empty rows per node would eat prompt budget for nothing.
 
 **What this deletes.** No fan-out writes on template edits, so: no O(instances)
 writes per keystroke inside a template, no single undo step that rewrites
 hundreds of nodes, and no two-devices-mint-two-clones-of-one-rule problem — the
-class of failure that any reconciler has to handle and this design cannot
-express.
+class of failure any reconciler must handle and this design cannot express.
 
-### 2. Inherited defaults as ghost values
+### 2. Static defaults as ghost values
 
-Two kinds of default exist and only one of them can be a ghost:
+Two kinds of default exist and only one can be a ghost:
 
 - **Static default** — a literal value typed into the tag's field slot
   (`Status: Inbox`). Context-free, so it reads the same on every instance at
   every moment. This one becomes a ghost.
 - **Auto-init** — `current_date` and the `ancestor_*` strategies. Resolved
-  against a moment and a tree position, so it must be written once at
-  `apply_tag` and left alone (see the auto-init exception above). Never a ghost.
+  against a moment and a tree position, so it is written once when the tag is
+  acquired and left alone. Never a ghost.
 
-For a static default: it stays where it is today, on the tag's field slot. An
+A static default stays where it is today, on the tag's field slot. An
 unmaterialized slot renders it as a placeholder, visually marked as inherited
 using the neutral `--text-*` ladder (B3/B4: no accent, no status color). It
-materializes into a real value when the user edits the slot or explicitly accepts
-it, and from that moment it is theirs and never tracks the template again.
+materializes when the user edits the slot or explicitly accepts it, and from that
+moment it is theirs and never tracks the template again.
 
 Retroactive by construction: a default added to a tag today is visible on every
 instance that has not set a value, with zero writes and no risk of overwriting
 anything anyone typed. The question "did the user mean to leave this empty?" —
-which any write-based back-fill has to guess at — never comes up.
+which any write-based back-fill has to guess — never comes up.
 
 ### 3. Seed backfill action
 
@@ -182,6 +226,15 @@ count first ("adds 2 children to 37 nodes"). Explicit user intent, no heuristics
 no background mirroring.
 
 ## Alternatives considered
+
+**Reuse the existing back-fill from the UI path.** `createFieldDef` already loops
+`findNodesWithTag` and calls `ensureFieldEntryWithTemplateDirect`; wiring the
+tag-side `create_inline_field` into the same loop is roughly fifty lines and
+ships today. Rejected as the destination, worth knowing as a stopgap: it fixes
+*add* only — rename, remove, retype and reorder each need their own fan-out — and
+every one of those fan-outs entrenches the copy model this plan is trying to
+leave. If the PM wants the bug closed this week and the architecture next month,
+this is the shape of the stopgap.
 
 **Continuous reconcile with "an unedited copy follows its template."** Rejected.
 It invents a third state — a copy that looks like the user's but is secretly
@@ -198,53 +251,72 @@ updated with a field with initialization switched on, and the supertag was
 already applied to nodes, these nodes will only see the field added without any
 content initialized in it."* — the field appears retroactively (it is schema),
 the initialization does not (it is a write). Their "initialization" is our
-`autoInitialize`, and this plan draws the same line in the same place: it stays a
-write, and it stays non-retroactive. Where the plan goes further is that it
-splits out the *static* default, which Tana leaves on the write side of that line
-along with everything else; a static default is context-free, so it can be a
-ghost, and a ghost costs nothing to make retroactive.
+`autoInitialize`, and this plan draws the same line in the same place. Where it
+goes further is splitting out the *static* default, which Tana leaves on the
+write side along with everything else; a static default is context-free, so it
+can be a ghost, and a ghost costs nothing to make retroactive.
 
 ## Open questions
 
 1. **Untag semantics.** `remove_tag` deletes the tag's field entries today
-   (`cleanupFieldsFromRemovedTagDirect`). Under projection, only entries holding
-   values exist — deleting them is deleting typed data. Proposed: untagging keeps
-   them as `source: 'own'` fields. This is a visible behavior change and wants a
-   PM call.
+   (`cleanupFieldsFromRemovedTagDirect`, pinned by the core test "tag template
+   instantiates fields and removal cleans them up"). Under projection only entries
+   holding values exist, so deleting them deletes typed data. Proposed: untagging
+   keeps them as `source: 'own'` fields. Visible behavior change; PM call.
 2. **Do ghost defaults answer queries?** Proposed yes for reads (`Status = Inbox`
-   should match a node that displays Inbox) and never for writes. The cost is
-   that `Status is empty` becomes subtle on a field that has a default.
-3. **Name collision between a tag slot and an own field.** Same `fieldDefId`
-   merges into the one slot. Same *name*, different definition: proposed that both
-   render, since silently hiding one is worse than showing a duplicate name — but
-   `assertOwnerDoesNotHaveFieldName` currently forbids the situation, so this only
-   decides what happens to documents that already contain it.
+   should match a node that displays Inbox) and never for writes. The cost is that
+   `is empty` becomes subtle on a field that has a default. Scope covers table
+   sort/filter as well as search — `fieldValuesForNode` reads entries the same way.
+3. **Name-collision rule** (upgraded from a legacy-data question by the collision
+   analysis above). Same `fieldDefId` merges into one slot. Same *name*, different
+   definition, now reachable in ordinary use: proposed that materializing the slot
+   merges into the same-named own entry rather than throwing. The alternative is a
+   designed, explained error. PM call, because the merge silently repoints a user's
+   field at the tag's definition.
+4. **Per-node field ordering.** The parity matrix pins field-entry move/drag, and
+   `OutlinerFieldRow` sets `draggable: !locked`. Proposed: tag-slot fields display
+   in schema order and are reordered on the tag (which now reorders them
+   everywhere at once), own fields keep per-node drag. That removes per-node
+   reordering of inherited fields — a visible regression that needs to be an
+   explicit decision rather than a side effect.
 
 ## Checklist
 
 **PR 1 — field projection**
 
-- [ ] `nodeFieldSlots` accessor + projection-cache integration
-- [ ] `apply_tag` stops writing field entries; materialize-on-write and
-      dematerialize-on-clear in the shared row layer
-- [ ] All 23 `type === 'fieldEntry'` readers routed through the accessor;
-      `OutlinerTableView`'s local absent-cell path folded into the shared one
-- [ ] `templateId` dropped from field entries (kept for seed clones)
-- [ ] Search: slot-aware `has field` vs `field is empty`
-- [ ] Core tests: auto-init slots still materialize and freeze at `apply_tag`
-      while every other slot writes nothing; field added to a tag appears on
-      nodes tagged before it; field
-      removed from a tag vanishes from valueless nodes and survives as an own
-      field where a value exists; clearing a tag slot's value dematerializes it
-      while an own field survives; extends-chain order preserved
-- [ ] Renderer tests: first keystroke in a virtual slot is not lost
+- [ ] `nodeFieldSlots` accessor with `sourceTagId` / `templateEntryId` provenance
+      and the first-entry-wins dedupe rule
+- [ ] Derived slot cache keyed `(nodeId, schemaEpoch)`; epoch bumped by Schema /
+      tagDef-subtree mutations
+- [ ] One core materialize/dematerialize command; renderer, agent and paste all
+      call it; dematerialize on commit, `source: 'own'` entries exempt
+- [ ] `apply_tag` / `splitNode` / `applyChildTagsDirect` write auto-init slots only
+- [ ] Virtual-row identity: `slot:<nodeId>:<fieldDefId>` through `buildChildRows`,
+      `selectableRows`, focus/UI state, pending input, context menu, batch ops;
+      documented list of what a virtual row cannot do
+- [ ] Search: `comparableFieldState`, `fieldReads`, `fieldDateRanges` slot-aware;
+      defined / set / empty pinned per operator
+- [ ] Name-collision resolution per Open question 3
+- [ ] `templateId` dropped from field entries (kept for seed clones);
+      `resolveFieldOwnerColor` and `value_is_default` read slot provenance
+- [ ] Agent projection renders slots compactly
+- [ ] Reader sweep is rg-driven (A11): `rg "=== 'fieldEntry'"` over `src/` returning
+      only the accessor is the done condition, not a hand-kept list
+- [ ] Core tests: field added to a tag appears on nodes tagged before it; auto-init
+      freezes at tag acquisition while other slots write nothing; field removed
+      from a tag vanishes where valueless and survives as an own field where a
+      value exists; clearing a tag slot dematerializes on commit while an own
+      field survives; extends-chain order; the five search operators against
+      virtual slots
+- [ ] Renderer tests: first keystroke in a virtual slot is not lost; a virtual row
+      is selectable and keyboard-reachable
 
 **PR 2 — ghost defaults**
 
 - [ ] Placeholder rendering for unmaterialized slots (light + dark, `--text-*`),
       static defaults only — a slot with auto-init never renders a ghost
 - [ ] Materialize on edit / explicit accept
-- [ ] Search participation per Open question 2
+- [ ] Search, table sort and table filter participation per Open question 2
 - [ ] Tests: default added after tagging shows everywhere; a typed value is never
       replaced; accepting a ghost writes exactly once
 
@@ -256,5 +328,19 @@ ghost, and a ghost costs nothing to make retroactive.
 **Docs**
 
 - [ ] `docs/spec/commands.md` knowledge-model section: fields are projected, values
-      are stored, defaults are inherited until materialized
-- [ ] `docs/spec/ui-behavior.md`: virtual slot and ghost-value rendering
+      are stored, defaults are inherited until materialized, auto-init is frozen
+      at tag acquisition
+- [ ] `docs/spec/ui-behavior.md`: virtual slot rows and ghost-value rendering
+- [ ] `docs/spec/search-query-grammar.md`: defined / set / empty against slots
+
+## Sequencing
+
+PR 1 lands after #533 (typing hot-path, `core.ts` + `loroDocument.ts`) and #534
+(table field column semantics). #534 is a **semantic** overlap, not just a
+textual one: it adds `addMissingTableDisplayFieldsDirect`, which scans
+`type === 'fieldEntry'` children to decide which columns to create, so "fields
+used by these records" changes meaning under projection and that scan has to
+become slot-aware. #534 also rewrites `OutlinerTableView`, `outlinerRows`,
+`userViewContext`, `document.ts` and `selectableRows` — the exact files PR 1 must
+route through the accessor. After #534 merges, re-verify the reader sweep and the
+table sections against the merged code before starting.
