@@ -2,8 +2,28 @@ import { expect, test } from '@playwright/test';
 import type { Locator, Page } from '@playwright/test';
 import { emulateVisualMedia, resolveTokenColor } from './emulatedMedia';
 import { clipboardText, commandCalls, ids, openMockedApp, rowBody } from './outlinerMock';
+import { en } from '../../src/core/i18n/messages/en';
+import { zhHans } from '../../src/core/i18n/messages/zh-Hans';
 
 const FORMER_SHARED_ATTACHMENT_LIMIT_BYTES = 10 * 1024 * 1024;
+
+const ACTION_MENU_LABEL_KEYS = [
+  'details', 'rename', 'delete', 'hideFromRecall', 'showInRecall', 'recordsUnavailable',
+] as const;
+
+function actionMenuLabels(
+  thread: Partial<Record<(typeof ACTION_MENU_LABEL_KEYS)[number], string>> | undefined,
+): string[] {
+  return ACTION_MENU_LABEL_KEYS
+    .map((key) => thread?.[key])
+    .filter((label): label is string => typeof label === 'string');
+}
+
+/** Every string the action menu can render, in every locale that overrides one. */
+const ACTION_MENU_LABELS = [
+  ...actionMenuLabels(en.agent.thread),
+  ...actionMenuLabels(zhHans.agent?.thread),
+];
 
 async function createNewThread(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'Show Threads' }).click();
@@ -1848,6 +1868,27 @@ test.describe('canonical agent Thread surface', () => {
       expect(item.text, 'every item routes its label through the ellipsizing span').not.toBe('');
       expect(item.overflow, `"${item.text}" is truncated`).toBeLessThanOrEqual(0);
       expect(item.height, `"${item.text}" wrapped to a second line`).toBeLessThanOrEqual(32);
+    }
+
+    // What the menu renders is one locale's answer to one records state: the
+    // mock always reports `recorded: true`, so "Show in Recall", the failure
+    // label, and every zh-Hans label are never on screen to be measured. Feed
+    // each through a real label element instead — same font, same box, same
+    // available width — so the guard covers the strings rather than the run.
+    const measured = await page.locator('.thread-action-menu-label').first()
+      .evaluate((label, labels) => {
+        const rendered = label.textContent;
+        const widths = labels.map((text) => {
+          label.textContent = text;
+          return { text, overflow: label.scrollWidth - label.clientWidth };
+        });
+        label.textContent = rendered;
+        return widths;
+      }, ACTION_MENU_LABELS);
+
+    expect(measured.length).toBeGreaterThanOrEqual(ACTION_MENU_LABELS.length);
+    for (const label of measured) {
+      expect(label.overflow, `"${label.text}" does not fit the menu`).toBeLessThanOrEqual(0);
     }
   });
 

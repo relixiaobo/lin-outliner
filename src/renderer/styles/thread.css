@@ -117,13 +117,17 @@
  * The width is NOT declared here. The anchoring hook right-aligns this menu at
  * `anchorRight - width`, so it needs one number and writes it inline; a second
  * copy in CSS is a number that can disagree with the one doing the positioning.
- * `overflow: hidden` is what makes a label too long for that width ellipsize
- * inside the rounded box instead of spilling past it.
+ * Clipping the inline axis is what makes a label too long for that width
+ * ellipsize inside the rounded box instead of spilling past it. The block axis
+ * scrolls instead of clipping: the hook always writes a `maxHeight`, and its
+ * 120px floor is below this menu's content height, so on a very short viewport
+ * `hidden` would swallow the last item with no way to reach it.
  */
 .thread-action-menu {
   z-index: var(--z-popover);
   display: grid;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding: var(--space-2);
   border-radius: var(--radius-overlay-sm);
   background: var(--material-popover);
