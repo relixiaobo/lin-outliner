@@ -173,6 +173,26 @@ Entries reference the pull request that introduced them.
   operators, instance field-order quirk, `templateId`'s color consumer, the #534
   semantic overlap) before ratification. Design only; PR 1 sequences after #533
   and #534.
+- **Tag merge and split fixes plan (PR #538, cc-2, plan-only)** — boards the
+  crash-class remainder of the field/supertag audit (the follow-up to #537's
+  review), all verified against current core: two tags each defining a
+  same-named field are mutually exclusive with a crash (`applyTag` throws out of
+  the template-stamp assert, leaving half-applied state since sync `mutate()`
+  has no rollback; the same site crashes the checkbox done-mapping); merging
+  those tags moves the collision inside the merged tag, after which every
+  `applyTag` of it throws forever; and a mid-text split re-stamps
+  creation-moment data (template defaults reset, seed children re-conjured).
+  Ratified design: collisions skip at the stamp boundary instead of throwing
+  while authoring paths stay fail-closed (the A12 line); tag merge unifies
+  same-named definitions behind a non-throwing compatibility predicate with a
+  keep-both fallback and target-defaults-win dedupe; split stamps field
+  structure + auto-init only. One gate-review round folded in: the third caller
+  of the stamp helper (done-state mapping) degrades on skip, and the
+  unification gate covers all three throw conditions of
+  `mergeFieldDefinitionsDirect` including values-compatibility (fields can be
+  retyped without revalidating stored values). Two independent PRs; both land
+  before tag-schema-projection PR 1, which inherits their behaviors as pinned
+  tests.
 
 ## [0.3.1] - 2026-08-10
 
