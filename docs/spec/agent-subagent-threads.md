@@ -572,6 +572,22 @@ shares one `sessionId`, so one entry covers the subtree and the check stays O(1)
 on the turn-completion path; a fork starts a new session, which is right, because
 it is a new conversation.
 
+The menu item is "Hide from Recall" / "Show in Recall", with a hover hint on
+both states carrying the mechanism: what other Threads read, that hiding keeps
+this one out, and that it is reversible. "Records" named a directory the user
+never sees and has no other entry point to, so beside Rename and Delete it read
+as a fourth way to destroy a conversation, which is the one thing it does not
+do. "Recall" names the behavior the user actually cares about instead, and is
+short enough to leave the menu at its original width.
+
+A hint can only rescue a label the reader knows they do not understand. That is
+the rule that rejected the shorter candidates: "Hide from Threads" reads as
+hiding the row from the Threads list this very menu opens from, and "Private"
+reads as withholding the conversation from the provider — a reader who believes
+either never hovers, so the hint never runs. An unfamiliar word does get
+hovered. Chinese has no coined term to carry and says who stops reading
+outright; it is short either way.
+
 The state lives beside the records — `excluded.txt` in the same directory, loaded
 once at startup and rewritten whole — not on the Thread record: it is a property
 of this subsystem, it must be answerable synchronously while a Turn completes,

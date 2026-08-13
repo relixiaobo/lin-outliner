@@ -113,10 +113,21 @@
   transform: rotate(180deg);
 }
 
+/*
+ * The width is NOT declared here. The anchoring hook right-aligns this menu at
+ * `anchorRight - width`, so it needs one number and writes it inline; a second
+ * copy in CSS is a number that can disagree with the one doing the positioning.
+ * Clipping the inline axis is what makes a label too long for that width
+ * ellipsize inside the rounded box instead of spilling past it. The block axis
+ * scrolls instead of clipping: the hook always writes a `maxHeight`, and its
+ * 120px floor is below this menu's content height, so on a very short viewport
+ * `hidden` would swallow the last item with no way to reach it.
+ */
 .thread-action-menu {
   z-index: var(--z-popover);
   display: grid;
-  width: 168px;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding: var(--space-2);
   border-radius: var(--radius-overlay-sm);
   background: var(--material-popover);
@@ -128,6 +139,13 @@
 .thread-action-menu button {
   display: flex;
   min-height: var(--control-size-xl);
+  /*
+   * The item is a grid item, and a grid item's automatic minimum size is its
+   * min-content width — a nowrap label's full text. Left at `auto` it grows the
+   * column past the menu's own width instead of being constrained by it, so the
+   * label never runs out of room and the truncation below never engages.
+   */
+  min-width: 0;
   align-items: center;
   gap: var(--space-4);
   border: 0;
@@ -139,6 +157,28 @@
   line-height: var(--line-ui-sm-tight);
   padding: var(--space-2) var(--space-3);
   text-align: left;
+}
+
+/*
+ * A menu item is one line. Wrapping put the icon at the vertical centre of a
+ * two-line item and indented the second line under the first line's text, which
+ * read as a broken row rather than a long label.
+ */
+.thread-action-menu button > svg {
+  flex: 0 0 auto;
+}
+
+/*
+ * `min-width: 0` is what makes the ellipsis real: a flex item defaults to
+ * `min-width: auto`, so without it the label refuses to shrink below its text,
+ * overflows the button, and is clipped by the menu with no ellipsis to show for
+ * it — silently cut off instead of visibly truncated.
+ */
+.thread-action-menu-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .thread-action-menu button:hover,

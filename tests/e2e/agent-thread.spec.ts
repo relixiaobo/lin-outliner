@@ -2,8 +2,33 @@ import { expect, test } from '@playwright/test';
 import type { Locator, Page } from '@playwright/test';
 import { emulateVisualMedia, resolveTokenColor } from './emulatedMedia';
 import { clipboardText, commandCalls, ids, openMockedApp, rowBody } from './outlinerMock';
+import { en } from '../../src/core/i18n/messages/en';
+import { zhHans } from '../../src/core/i18n/messages/zh-Hans';
 
 const FORMER_SHARED_ATTACHMENT_LIMIT_BYTES = 10 * 1024 * 1024;
+
+const ACTION_MENU_LABEL_KEYS = [
+  'details', 'rename', 'delete', 'hideFromRecall', 'showInRecall', 'recordsUnavailable',
+] as const;
+
+/**
+ * Every string the action menu can render, in every locale that overrides one.
+ *
+ * `en` is indexed strictly rather than through an all-optional type, which would
+ * accept the complete object and silently drop a renamed key. That is only half
+ * the protection it looks like: `tsconfig.json` includes `src` alone, so
+ * `bun run typecheck` never reads this file and a stale key here is not a
+ * compile error today. The test therefore checks the key set at runtime too —
+ * see the assertions in the guard. `zhHans` genuinely may omit an override, so
+ * an optional read is right for it, and a key it invents that `Messages` lacks
+ * does fail to compile, in `zh-Hans.ts` itself.
+ */
+const ACTION_MENU_LABELS = [
+  ...ACTION_MENU_LABEL_KEYS.map((key) => en.agent.thread[key]),
+  ...ACTION_MENU_LABEL_KEYS
+    .map((key) => zhHans.agent?.thread?.[key])
+    .filter((label): label is string => typeof label === 'string'),
+];
 
 async function createNewThread(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'Show Threads' }).click();
@@ -1824,6 +1849,64 @@ test.describe('canonical agent Thread surface', () => {
 
     await expect(menu).toHaveCount(0);
     await expect(trigger).toBeFocused();
+  });
+
+  // The menu's width is a constant the anchoring math needs, so a label that
+  // outgrows it cannot widen the menu — it wrapped under the icon before, and
+  // ellipsizes now. Both are the same defect at the point a label is written,
+  // which is where this fails.
+  test('fits every action label on one line', async ({ page }) => {
+    await openSelectedThreadActions(page);
+    await expect(page.getByRole('menu', { name: 'Thread actions' })).toBeVisible();
+
+    const items = await page.locator('.thread-action-menu button').evaluateAll((buttons) => buttons.map((button) => {
+      const label = button.querySelector('.thread-action-menu-label');
+      return {
+        text: label?.textContent ?? '',
+        height: button.getBoundingClientRect().height,
+        overflow: label ? label.scrollWidth - label.clientWidth : 0,
+      };
+    }));
+
+    expect(items).toHaveLength(4);
+    for (const item of items) {
+      expect(item.text, 'every item routes its label through the ellipsizing span').not.toBe('');
+      expect(item.overflow, `"${item.text}" is truncated`).toBeLessThanOrEqual(0);
+      expect(item.height, `"${item.text}" wrapped to a second line`).toBeLessThanOrEqual(32);
+      // The key list below is hand-written, and nothing typechecks this file, so
+      // a rename that updates the component and the messages leaves it stale and
+      // silently measuring one string fewer. What the menu actually rendered has
+      // to be in the set, or the set is not the set.
+      expect(ACTION_MENU_LABELS, `"${item.text}" is rendered but never measured`).toContain(item.text);
+    }
+
+    for (const key of ACTION_MENU_LABEL_KEYS) {
+      expect(en.agent.thread, `no en label for "${key}" — the key list is stale`).toHaveProperty(key);
+    }
+
+    // What the menu renders is one locale's answer to one records state: the
+    // mock always reports `recorded: true`, so "Show in Recall", the failure
+    // label, and every zh-Hans label are never on screen to be measured. Feed
+    // each through a real label element instead — same font, same box, same
+    // available width — so the guard covers the strings rather than the run.
+    const measured = await page.locator('.thread-action-menu-label').first()
+      .evaluate((label, labels) => {
+        const rendered = label.textContent;
+        const widths = labels.map((text) => {
+          label.textContent = text;
+          return { text, overflow: label.scrollWidth - label.clientWidth };
+        });
+        label.textContent = rendered;
+        return widths;
+      }, ACTION_MENU_LABELS);
+
+    // No count assertion here: `measured` is `ACTION_MENU_LABELS.map(...)`, so
+    // any comparison between the two is true by construction. What keeps the set
+    // complete is the strict `en` read where it is built, which fails to
+    // compile rather than at runtime.
+    for (const label of measured) {
+      expect(label.overflow, `"${label.text}" does not fit the menu`).toBeLessThanOrEqual(0);
+    }
   });
 
   test('renames and deletes a Thread through in-app dialogs', async ({ page }) => {
