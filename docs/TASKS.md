@@ -40,8 +40,8 @@ theme-section entry below; this list is the ordering, not a second record):
   don't count against the review-queue cap): `floating-toolbar-polish` (**unblocked
   2026-08-10** — its `core/types.ts` dependency landed with #510; rebase and go),
   `icon-semantics`, `dual-auth-clarity` (scope ratified, one-pager then build), the
-  two remaining prime-agent fast-tracks (`agent-delegation-context-hygiene` ·
-  `agent-hygiene-checks`), and the micro-tails (#460 truncation dialects ·
+  remaining prime-agent fast-track (`agent-hygiene-checks`, narrowed to
+  sub-items 3–4 by the subagent-parity ratification), and the micro-tails (#460 truncation dialects ·
   `scripts-typecheck-coverage` · `plan-reference-guard` · #208 follow-ups).
   `dark-mode-contrast-pass` still runs **last** per its own rule; `performance` P3
   remains an uncapped background lane (trail + remaining items under **Performance**).
@@ -159,25 +159,21 @@ before any directional/security-sensitive build.
 `agent-episodic-transcripts` is **complete** — both PRs shipped (#511, #519); see
 *Recently completed*.
 
-- **agent-delegation-context-hygiene** (P3, `draft` 2026-08-08, fast-track, *no plan
-  file*) — teach delegation as context hygiene in the `collaboration.spawn_agent`
-  tool description: a When→Why menu (delegate context-heavy reconnaissance —
-  many-file reads, broad web research — so raw results stay out of the parent
-  Thread; conclusions return, details remain greppable in the child's
-  `transcriptPath`) plus the reverse clause (a single known lookup, edit, or
-  command runs inline). Verify by re-running the rollout tool-sequence
-  measurement after it ships: long reconnaissance runs should move off root
-  Threads. Out of the prime-agent design study.
-- **agent-hygiene-checks** (P3, `draft` 2026-08-08, fast-track, *no plan file*) —
-  small verification tails from the prime-agent design study: (1) per-Thread
-  auxiliary maps (collaboration mailbox, pending subagent activities, barrier
-  generations) provably cleaned on Thread deletion/terminal states; (2) the
-  `wait_agent` empty-final-text edge — what a parent sees when a child ends
-  with no assistant text (add a bounded fallback if the answer is "nothing");
-  (3) an untrusted-data framing audit of existing injection surfaces; (4) the
-  queued behavior-repetition notice (same action + same result ≥ 2 → one
-  bounded nudge; evidence: 100 identical `web_fetch` failures with 17
-  consecutive retries in the measured rollouts).
+- **agent-delegation-context-hygiene** — `superseded` 2026-08-12, absorbed by
+  [`claude-code-subagent-parity`](plans/claude-code-subagent-parity.md): the
+  frozen canonical `agent` description carries the context-heavy-delegation
+  When→Why menu and the single-known-lookup reverse clause as byte fixtures, so
+  a separate description edit has no subject. The rollout tool-sequence
+  re-measurement folds into that plan's production-provider token evidence.
+- **agent-hygiene-checks** (P3, `draft` 2026-08-08, fast-track, *no plan file*;
+  **narrowed 2026-08-12** — sub-items 1–2 lost their subjects to the
+  subagent-parity ratification: mailbox/barrier auxiliary maps retire with the
+  old protocol, and the `wait_agent` empty-final-text edge is answered by that
+  plan's `empty-final-report` fixture under AC-7) — remaining verification
+  tails from the prime-agent design study: (1) an untrusted-data framing audit
+  of existing injection surfaces; (2) the queued behavior-repetition notice
+  (same action + same result ≥ 2 → one bounded nudge; evidence: 100 identical
+  `web_fetch` failures with 17 consecutive retries in the measured rollouts).
 - **agent-canonical-tool-call-history** (P1, `done` 2026-08-05; plan PR #482,
   implementation PR #483, codex-3) — the exact admitted call is now the sole authority
   for model-visible tool history. Immutable `modelCall` envelopes freeze exact replay,
@@ -686,6 +682,35 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   re-rendering every item of the active Turn per notification, and the 1 Hz
   subagent elapsed ticker re-rendering the nested child transcript. One PR.
   Design: [`agent-streaming-followups`](plans/agent-streaming-followups.md).
+- **claude-code-subagent-parity** (P1, `draft` 2026-08-12; plan PR #532,
+  codex-2; PM-ratified after seven review rounds R1–R7) — replace the
+  Codex-style collaboration protocol (six tools + `bash_stop`, fork-by-default)
+  with the Claude Code `2.1.227` default-profile Subagent contract under Tenon
+  names: `agent` / `agent_message` / unified `task_stop`, fresh-start children,
+  background-by-default with host-delivered notifications, same-ID
+  steer/resume, depth 3, live cap 20, worktree isolation that also strips
+  outline mutation, closed byte-fixture manifest (names, prompts, budget
+  extension, provider split: canonical layer everywhere, wire bytes on
+  `anthropic-messages` only). Retires built-in `worker` Role, `/research` +
+  `readOnlyIsolated`, and `explorer` as a visible type; Memory prompt block
+  becomes root-only. ONE PR; implementation claim serializes behind #531; the
+  `/research` removal goes in the merge release note. Design:
+  [`claude-code-subagent-parity`](plans/claude-code-subagent-parity.md).
+- **subagent-interaction** (P2, `draft` 2026-08-12) — process-shaped subagent
+  presentation for the fresh/background-default protocol inside the 344px agent
+  deck: worker-registry projection (keyed by agent ID + generation) replacing
+  turn-anchored `projectSubagentsForTurn`; lifecycle anchors in the
+  conversation (spawn/resume chips, clickable completion dividers, stopped
+  notes); header work strip (needs-input > running > just-finished, fade-out,
+  amber needs-input badge as the only interruption); full-deck stacked detail
+  view (generations, nested recursion ≤ depth 3, composer-as-user-authority,
+  retained-worktree footer); foreground children placed on the main agent's
+  working line and never in the strip; strict OS-notification policy
+  (needs-input + terminal, unfocused only). PM-ratified 2026-08-12 through an
+  interactive prototype. One PR. **Sequenced after** the
+  `claude-code-subagent-parity` implementation (plan PR #532) and
+  `semantic-working-state` (#531) — both are its foundations (A7).
+  Design: [`subagent-interaction`](plans/subagent-interaction.md).
 - **interaction-jank-cleanups** (P2, `draft` 2026-08-11) — scroll/menu-path
   forced layouts and identity-keyed caches that can never hit:
   `useAnchoredOverlay` (≈20 consumers) capture-scroll + unbatched rect reads +

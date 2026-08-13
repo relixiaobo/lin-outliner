@@ -1,0 +1,217 @@
+# Subagent Interaction
+
+**Shape:** (a) ONE complete feature in one PR. Worker-registry projection, all
+conversation anchors, the work strip, the stacked detail view, foreground
+placement, notification policy, tests, and the spec update ship together. The
+build order at the end is internal sequencing, not separate releases.
+
+## Goal
+
+Give the fresh/background-default Subagent protocol (design:
+`claude-code-subagent-parity`) a process-shaped interaction model inside the
+344px agent deck (`--agent-width`), replacing the turn-anchored, wait-era
+presentation that `projectSubagentsForTurn` builds today.
+
+The old protocol made delegation an episode inside one Turn: the parent
+visibly waited, children were one-shot, and rows were derived from the
+delegating Turn's items (`waitingForSubagents`). The new protocol makes a
+subagent a durable, resumable entity spanning many Turns — spawned in one,
+steered in another, resumed in a third, each generation ending in a host
+notification. A turn-anchored projection has no place to put that lifecycle;
+the same child would duplicate under multiple Turns or orphan visually.
+
+The governing principle is three surfaces, each with exactly one job:
+
+- **The conversation is the only narrative.** Everything the user must read
+  arrives as the main agent's prose. Other surfaces carry state and depth, never
+  required reading.
+- **The work strip is the only ambient status.** One pill in the deck header
+  that does not exist when nothing runs.
+- **The detail view is the only deep dive.** Full-deck stack navigation, pushed
+  only by an explicit click.
+
+Four rules bind the surfaces:
+
+1. **Absent when idle.** Zero background work renders zero subagent UI. The
+   idle deck and the everything-finished deck look identical.
+2. **Results are delivered only in the conversation.** The strip never becomes
+   an archive; finished rows linger briefly and fade. The conversation is the
+   archive, and every lifecycle event leaves a clickable anchor there.
+3. **Only "needs you" interrupts.** Running is quiet, completion is quiet (the
+   conversation speaks by itself); the sole badge and the sole OS notification
+   belong to needs-input and terminal states.
+4. **User stop outranks the model.** A user-stopped worker refuses model
+   resume until the user sends a message from its detail view — the composer
+   placeholder states this, so the authority rule is felt, not documented.
+
+## Non-goals
+
+- No cross-Thread global agent manager; the strip scopes to its own root
+  conversation. (Claude Code's session-level agent view maps to Tenon's Thread
+  list, not to this surface.)
+- No manual spawn UI; delegation stays a model behavior the user requests in
+  prose.
+- No live token meters anywhere in the UI — budget visibility was dropped from
+  the model surface (PM-ratified with the parity plan) and the renderer already
+  deliberately hides token counts on budget errors.
+- No mid-flight foreground→background conversion (Claude Code's Ctrl+B). A
+  foreground child shares the parent Turn's cancellation lifetime by contract.
+- No pane system. Claude Desktop answers this problem with dockable tasks and
+  subagent panes for an IDE audience; a 344px outliner rail wants ambient, not
+  arrangeable, surfaces.
+- Automation runs stay out of the strip. Their results land in destination
+  Threads with read state — "something arrived" surfaces, not "someone I sent
+  came back".
+- The task-chip suggestion pattern (agent proposes out-of-scope work as a
+  clickable chip) is noted as future material, not built here.
+
+## Design
+
+### Anchors in the conversation
+
+Every lifecycle event leaves an anchor at the point where it happened; all
+anchors open the same detail view.
+
+- **Spawn chip.** At the delegation point, on its own line (never inline with
+  message text): status mark (`◇` running / `✓` done / `⏹` stopped), truncating
+  name, muted type, `⎇` when worktree-isolated, and a compact live meta
+  (elapsed only; tool-call count in the tooltip). Hover deepens color, never
+  reflows.
+- **Resume chip.** A later steer/resume renders a new `↻` chip at the resume
+  point, referencing the same worker.
+- **Completion divider.** The host-notification continuation is introduced by a
+  thin attribution divider — `— 调研完成 · 详情 —` — whose center is a button
+  opening the detail view. This answers "why did the agent just speak" in one
+  muted line and gives completion its own anchor, so reviewing a finished
+  worker never requires scrolling back to the spawn point.
+- **Stopped note.** A worker stopped by the user renders a one-line system note
+  in place of its completion narration, naming the resume path.
+
+### Work strip
+
+A pill in the deck header, present only while this conversation has live or
+just-finished background workers: spinner + `N 项进行中`, plus an amber count
+badge if any worker needs input. Clicking opens a full-width dropdown under the
+header (level-1 glass with the reduced-transparency opaque fallback — the deck
+is too narrow for a side-hung popover).
+
+Rows are sorted needs-input > running > stopped > just-finished, mirroring
+Claude Code's agent-view priority order. Each row: status glyph, truncating
+name + muted type, meta (elapsed / `需要批准` / `已停止` / `刚刚完成`), and a
+hover-revealed stop control. A parent with live descendants may append a
+`· N 子任务` hint to its meta — the tree itself never flattens into the strip.
+Finished rows linger briefly, fade, and leave; when the last row leaves, the
+pill leaves with it. Rows and chips open the same detail view.
+
+### Detail view: stack navigation
+
+330px of drawer over a 344px deck is meaningless, so detail is a full-deck
+pushed view (iOS-style): clicking any anchor pushes it; `‹` pops. The back
+button shows the parent level's name (`‹ 返回` from the conversation, the
+parent worker's label when nested), so position in the stack is always legible.
+
+Contents: header (name, type, `⎇` worktree, status, elapsed, Stop);
+generation dividers (`— 第 2 轮 · 由主代理继续 —`) between runs on the same
+worker; the read-only live transcript; nested children as indented chips at
+their spawn points (the same chip component, recursing the same detail view —
+depth ≤ 3 bounds the stack at four levels); a worktree footer when a changed
+worktree is retained (`⎇ branch · N files` with reveal-in-Finder and view-diff
+actions); and a composer.
+
+The composer is the physical form of user authority: a message here is the
+top-priority instruction, and on a user-stopped worker its placeholder reads
+"直接指示这个代理…（将解除你的停止）". On foreground one-shots the composer is
+replaced by a static note (below).
+
+### Foreground placement
+
+Foreground and background use the same components; the entire distinction is
+placement:
+
+- A foreground child's chip renders inside the main agent's working indicator
+  (the semantic working-state line), with an explicit waiting note — visually
+  part of "the main agent is working", because stopping the main Turn stops the
+  child with it. It never enters the work strip: foreground is not background
+  work.
+- Completion continues in place — no attribution divider, because the main
+  agent never left.
+- Foreground `explore`/`plan` one-shots expose no model address, but the
+  Thread record persists, so the chip keeps opening a read-only detail after
+  completion. The detail's footer states the boundary: no address, no resume,
+  record retained. UI anchors outlive model addressability.
+
+### Permissions and OS notifications
+
+A child's approval request surfaces as a card in the root conversation, left-
+bordered in the status color and labeled with the requesting worker; the strip
+badge mirrors it. Options follow Tenon's permission system (allow once /
+allow and stop asking for this rule / deny); Esc denies that one call without
+stopping the worker, and the resolved card stays in place as the record.
+Approval identity remains user/UI-owned per the parity plan's authority
+contract; nothing in the strip or detail can approve anything.
+
+OS notifications follow the Claude Desktop precedent, made strict: fire only
+for needs-input and terminal states, only while the window is unfocused, with
+fixed content-free copy. Running state never notifies.
+
+### Projection and implementation surface
+
+Presentation re-derives from the canonical Agent execution record (stable agent
+ID, generation, status, stop provenance, worktree metadata) that the parity
+plan persists — never from Turn items. `projectSubagentsForTurn` and its
+`waitingForSubagents` logic are replaced by a worker-registry projection keyed
+by agent ID; chips become per-Turn reference views onto that registry, which is
+what makes cross-Turn resume render as one worker instead of duplicate or
+orphaned rows.
+
+| Layer | Surface |
+| --- | --- |
+| Projection | `subagentPresentation.ts` rework: worker registry keyed by agent ID + generation; per-Turn anchor references |
+| Components | work-strip pill + dropdown (new); `SubagentRunDetail` evolves into the stacked detail view; chip/divider/approval-card anchors in `ThreadItemView` |
+| Vocabulary | consumes `semantic-working-state`'s Working / needs-input / terminal presentation states |
+| i18n | typed strings for all new copy |
+| Tests | `subagentPresentation.test.ts` (registry projection, anchor references, strip sorting/fading), renderer item tests for chips/dividers/approval cards, `agent-thread.spec.ts` e2e for the stack navigation and strip lifecycle |
+| Docs | fold into `agent-thread-rendering.md` in the same PR |
+
+Design-system compliance: chips, rows, and dividers use the neutral `--fill-*` /
+`--text-*` ladders; the amber badge is the only status color and carries status
+meaning only; glass appears solely on the strip dropdown (overlay chrome) with
+the opaque fallback, while the pushed detail view is opaque content; hover
+deepens color without reflow; working liveness uses the semantic working-state
+shimmer, not color; radii and z-tiers come from the token ladders.
+
+### Dependencies and sequencing
+
+Builds strictly on the shipped `claude-code-subagent-parity` implementation
+(worker identity, generations, stop provenance, notification generation) and on
+`semantic-working-state`'s vocabulary — both must land first (A7). The parity
+PR's renderer scope is the minimal re-wiring that keeps current presentation
+correct; this plan is the interaction redesign on top. Living with the shipped
+mechanics for a few days before building this is intentional.
+
+## Verification
+
+- `bun run typecheck`, `bun run test:renderer`, `bun run test:e2e`.
+- Guard tests stay green without widening exceptions (B11).
+- Visual verification in light and dark themes at the gate, including
+  reduced-transparency and reduced-motion passes over the strip dropdown and
+  detail transition.
+- Manual pass of the ratified walkthrough: delegate → parallel work → approval
+  → completion fade-out → resume → nested push/pop → foreground wait →
+  user-stop and user-resume.
+
+## Open Questions
+
+None. Approval quick-actions inside strip rows (Claude Code agent-view's
+inline reply) were considered and explicitly deferred: the conversation stays
+the single place to act in v1.
+
+## Build Order
+
+- [ ] Worker-registry projection + anchor reference model replacing
+  `projectSubagentsForTurn`; unit tests.
+- [ ] Conversation anchors: chips (spawn/resume/foreground), completion
+  dividers, stopped notes, approval cards.
+- [ ] Work strip pill + dropdown with sorting, fading, badge, and stop.
+- [ ] Stacked detail view: generations, nested recursion, composer authority,
+  worktree footer; e2e + visual verification + spec fold.
