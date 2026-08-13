@@ -57,8 +57,7 @@ stop copying the rules.
   means "this instance deleted its projected child" needs a tombstone, which
   re-dirties exactly what this plan cleans. Content stays a seed.
 - **Deleting stored values.** A value the user typed is user data. It survives the
-  field leaving the tag, and (proposed, see Open questions) the tag leaving the
-  node.
+  field leaving the tag, and (D1) the tag leaving the node.
 - **Migration.** Pre-release: on format change we wipe `~/.lin-outliner-*` and
   delete the old reader.
 - **Continuous template→instance reconciliation** of any kind. See Alternatives.
@@ -99,13 +98,14 @@ entry's values. `templateId` on the stored entry therefore goes away — the slo
 carries what it was for — while it stays on seed content clones, where dedup
 still needs it.
 
-**Order.** Slots come out in template order per tag, ancestor-first across the
-extends chain. This is *not* what happens today: `getExtendsChain` returns
-self-first and `ensureFieldEntryWithTemplateDirect` inserts each entry at index
-0, so groups land ancestor-first but the fields *within* one tag end up reversed
-relative to the template. No test pins multi-field order (every existing test is
-single-field), so the projection quietly fixes that quirk. It is a change, not a
-parity claim.
+**Order.** Tag slots come first — above the node's own fields (D4), which matches
+where `insertFieldEntryNodeDirect(nodeId, 0, …)` puts them today — in template
+order per tag, ancestor-first across the extends chain. The template order part
+is *not* what happens today: `getExtendsChain` returns self-first and each entry
+is inserted at index 0, so groups land ancestor-first but the fields *within* one
+tag end up reversed relative to the template. No test pins multi-field order
+(every existing test is single-field), so the projection quietly fixes that
+quirk. It is a change, not a parity claim.
 
 **Storage rule.** A `fieldEntry` node exists only once it holds a value.
 `apply_tag` writes no field entries — with one exception, below.
@@ -169,12 +169,18 @@ pinned explicitly:
 - **set** — a value is stored
 - **empty** — the slot exists and no value is stored
 
-**Name collisions become constructible.** `assertOwnerDoesNotHaveFieldName` fires
-today *because* `apply_tag` writes entries; once it doesn't, "node already has its
-own `Status`, then gets a tag defining a different `Status`" is reachable in
-ordinary use. Worse, clicking that slot materializes through `create_inline_field`,
-whose identical assert throws — a rendered row that can never be edited. PR 1 has
-to resolve this rather than inherit it; see Open question 3.
+**Name collisions become constructible, and both rows show.**
+`assertOwnerDoesNotHaveFieldName` fires today *because* `apply_tag` writes
+entries; once it doesn't, "node already has its own `Status`, then gets a tag
+defining a different `Status`" is reachable in ordinary use, and clicking that
+slot would materialize through `create_inline_field`, whose identical assert
+throws — a rendered row that can never be edited. Resolution (D3): the two
+definitions stay two slots and render as two rows, and the materialize path does
+not run the name assert. Merging them silently would repoint a user's field at
+someone else's definition; a duplicate name on screen is the honest outcome and
+the user can rename either side. The assert still guards user-initiated field
+creation, where the name is being chosen right then and a duplicate is a mistake
+worth catching.
 
 **Cache.** Slots depend on other nodes (tag defs, template entries, the extends
 chain), so they cannot live in `patchProjectionCache`, which caches strictly
@@ -256,29 +262,37 @@ goes further is splitting out the *static* default, which Tana leaves on the
 write side along with everything else; a static default is context-free, so it
 can be a ghost, and a ghost costs nothing to make retroactive.
 
-## Open questions
+## Decisions (PM-ratified 2026-08-13)
 
-1. **Untag semantics.** `remove_tag` deletes the tag's field entries today
-   (`cleanupFieldsFromRemovedTagDirect`, pinned by the core test "tag template
-   instantiates fields and removal cleans them up"). Under projection only entries
-   holding values exist, so deleting them deletes typed data. Proposed: untagging
-   keeps them as `source: 'own'` fields. Visible behavior change; PM call.
-2. **Do ghost defaults answer queries?** Proposed yes for reads (`Status = Inbox`
-   should match a node that displays Inbox) and never for writes. The cost is that
-   `is empty` becomes subtle on a field that has a default. Scope covers table
-   sort/filter as well as search — `fieldValuesForNode` reads entries the same way.
-3. **Name-collision rule** (upgraded from a legacy-data question by the collision
-   analysis above). Same `fieldDefId` merges into one slot. Same *name*, different
-   definition, now reachable in ordinary use: proposed that materializing the slot
-   merges into the same-named own entry rather than throwing. The alternative is a
-   designed, explained error. PM call, because the merge silently repoints a user's
-   field at the tag's definition.
-4. **Per-node field ordering.** The parity matrix pins field-entry move/drag, and
-   `OutlinerFieldRow` sets `draggable: !locked`. Proposed: tag-slot fields display
-   in schema order and are reordered on the tag (which now reorders them
-   everywhere at once), own fields keep per-node drag. That removes per-node
-   reordering of inherited fields — a visible regression that needs to be an
-   explicit decision rather than a side effect.
+- **D1 — Untagging keeps typed values.** `remove_tag` stops deleting the tag's
+  field entries (`cleanupFieldsFromRemovedTagDirect` and the core test "tag
+  template instantiates fields and removal cleans them up" both change). Entries
+  holding values survive as `source: 'own'` fields; valueless slots simply stop
+  being projected, because they were never nodes. Taking a tag off a node can no
+  longer lose data.
+- **D2 — Ghost defaults answer queries.** A node displaying `Inbox` is found by
+  `Status = Inbox`, in search and in table sort/filter alike
+  (`comparableFieldState`, `fieldReads`, `fieldDateRanges`, `fieldValuesForNode`
+  all read the ghost). Ghosts stay invisible to writes. Accepted cost: on a field
+  that has a default, `is empty` matches nothing until someone clears a value
+  explicitly — "empty" now means what the user sees, not what is stored.
+- **D3 — Same-name collisions render as two rows.** Two definitions stay two
+  slots; the materialize path drops the name assert. The rejected alternative —
+  merging into the node's existing same-named field — would silently repoint a
+  user's field at the tag's definition.
+- **D4 — Tag fields sit above the node's own fields**, in schema order, and are
+  reordered on the tag (which reorders them on every instance at once). Own
+  fields keep per-node drag.
+
+## Open question
+
+**Does D4 remove per-node drag for tag fields, or only set their default
+position?** Building against the first reading: tag slots are not individually
+draggable on an instance. The second reading needs a per-node order-override
+stored on the node, which is another schema-shaped fact living in a copy — the
+kind of thing this plan exists to remove — so it wants to be a deliberate choice.
+Nothing else in PR 1 depends on the answer; it can land before the virtual-row
+chunk.
 
 ## Checklist
 
@@ -296,7 +310,9 @@ can be a ghost, and a ghost costs nothing to make retroactive.
       documented list of what a virtual row cannot do
 - [ ] Search: `comparableFieldState`, `fieldReads`, `fieldDateRanges` slot-aware;
       defined / set / empty pinned per operator
-- [ ] Name-collision resolution per Open question 3
+- [ ] D1: `cleanupFieldsFromRemovedTagDirect` keeps valued entries as own fields;
+      its core test is rewritten to pin the new behavior
+- [ ] D3: materialize path drops the name assert; user-initiated creation keeps it
 - [ ] `templateId` dropped from field entries (kept for seed clones);
       `resolveFieldOwnerColor` and `value_is_default` read slot provenance
 - [ ] Agent projection renders slots compactly
@@ -316,7 +332,7 @@ can be a ghost, and a ghost costs nothing to make retroactive.
 - [ ] Placeholder rendering for unmaterialized slots (light + dark, `--text-*`),
       static defaults only — a slot with auto-init never renders a ghost
 - [ ] Materialize on edit / explicit accept
-- [ ] Search, table sort and table filter participation per Open question 2
+- [ ] Search, table sort and table filter read ghosts per D2
 - [ ] Tests: default added after tagging shows everywhere; a typed value is never
       replaced; accepting a ghost writes exactly once
 
