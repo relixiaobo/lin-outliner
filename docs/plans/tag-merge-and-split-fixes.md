@@ -14,7 +14,13 @@ the second tag to a node that carries the first throws
 `CoreError: duplicate field "Status" on owner …` out of
 `instantiateTagTemplateDirect` → `ensureFieldEntryWithTemplateDirect` →
 `assertOwnerDoesNotHaveFieldName`. The whole `applyTag` command dies. Reachable
-from the plain UI with the most ordinary field name there is.
+from the plain UI with the most ordinary field name there is. Two aggravations:
+sync `mutate()` has no rollback and `applyTagNoHistoryDirect` pushes the tag into
+`node.tags` *before* instantiating, so the failure is not clean — it leaves the
+tag applied with partial fields. And the same assert is reachable from the
+checkbox: `applyForwardDoneMappingDirect` (done-state → option-field sync) calls
+the same helper, so toggling done on a node whose mapped field name collides
+crashes the toggle today — a fourth live repro of the same site.
 
 **P2 — merging two such tags poisons the merged tag permanently.**
 `mergeTagTemplateChildrenDirect` dedupes template entries by `fieldDefId` only,
@@ -52,14 +58,17 @@ deliberately left to their owners:
 - **`entry.templateId` dangles forever** once a template entry is deleted;
   `value_is_default` hiding and `resolveFieldOwnerColor` silently degrade.
   Dissolves in PR 1: `templateId` leaves field entries entirely.
-- **Renaming a definition onto an existing name is unguarded**, so two active
-  tags can share a name and `findTagByName` picks arbitrarily. Tolerated: a
-  definition's name is live-edited text (per-keystroke patches), so a rename
-  guard would fire mid-typing; duplicate names become visible-and-manageable
-  under projection decision D3. Residual wart: `findTagByName` /
+- **Tag renames and cross-owner field-name duplication are unguarded.**
+  Field-def renames already fail closed on the dangerous case — per-keystroke,
+  `applyNodeTextPatch` runs `assertFieldDefRenameDoesNotDuplicateOwner`, which
+  rejects a rename that would duplicate a name on any single owner. What remains
+  unguarded is *tag* renames (two active tags can share a name;
+  `findTagByName` then picks arbitrarily) and same-named field defs on disjoint
+  owners. Tolerated: the per-owner case is already guarded, duplicate names
+  become visible-and-manageable under projection decision D3, and a tag-rename
+  guard would fire mid-typing. Residual wart: `findTagByName` /
   `findFieldDefByName` should pick deterministically (oldest wins) rather than
-  by object-iteration order — folded into this plan as part of Fix 1's tests
-  only if it falls out naturally; otherwise left recorded.
+  by object-iteration order — left recorded.
 
 ## Goal
 
@@ -96,10 +105,27 @@ them.
 
 **Degrade at the stamp boundary.** `ensureFieldEntryWithTemplateDirect` gets a
 collision check instead of the bare assert: when the owner already has a
-same-named field entry backed by a *different* definition, it returns without
-creating anything — the tag applies, the colliding field is simply not stamped
-for this node. `assertOwnerDoesNotHaveFieldName` keeps throwing where a human is
-choosing a name right then (`createFieldDef`, `create_inline_field`,
+same-named field entry backed by a *different* definition, it returns `undefined`
+without creating anything — the tag applies, the colliding field is simply not
+stamped for this node. The check must be the assert's own matching converted
+into a query (`normalizeFieldNameKey` semantics, trash filtering) — one matcher,
+not a hand-rolled second one that can drift.
+
+The helper has exactly three callers, and skip must be handled at each:
+
+- `instantiateTagTemplateDirect` — ignores the return value; nothing to do.
+- `applyForwardDoneMappingDirect` — consumes the returned `entryId`
+  unconditionally today (`clearFieldEntryValuesDirect` +
+  `selectFieldOptionDirect`); on skip the mapping degrades too (that field's
+  done-sync is skipped, the toggle itself succeeds). This is the fourth repro
+  fixed, not a new behavior.
+- `createFieldDef` — the authoring path; its fail-closed behavior is carried by
+  the *outer* per-tagged-node assert the command already runs before the loop,
+  not by the helper. Stated so the helper's softening cannot be read as
+  softening authoring.
+
+`assertOwnerDoesNotHaveFieldName` keeps throwing where a human is choosing a
+name right then (`createFieldDef`, `create_inline_field`,
 `reuse_field_definition` paths) — there the error is the feature. This is the
 A12 line: fail-closed where data is being authored, degrade where a stored
 document is being *used*.
@@ -111,15 +137,41 @@ projection plan.
 
 **Merge unifies by name.** `mergeTagDefinitionsDirect`, before moving template
 children: for each source template field whose `definitionNameKey` matches a
-target template field backed by a different definition **and the field types
-match**, merge the definitions first — `mergeFieldDefinitionsDirect` already
-exists, is validated (type compatibility, options-source equality), and relinks
-every entry in the document, so instance entries follow automatically and the
-subsequent template-children pass dedupes on the now-shared `fieldDefId`. Where
-types differ (or options sources differ), the definitions stay separate, both
-template entries survive on the merged tag, and Fix 1's skip guard keeps
-`applyTag` alive — two same-named fields on one tag becomes a renderable wart
-instead of a poison pill, and projection D3 later renders it honestly.
+target template field backed by a different definition, attempt to merge the
+definitions — `mergeFieldDefinitionsDirect` already exists and relinks every
+entry in the document, so instance entries follow automatically and the
+subsequent template-children pass dedupes on the now-shared `fieldDefId`.
+
+**The unification gate covers all three of that helper's throw conditions**, not
+just the obvious one: type mismatch, options-from-supertag source mismatch, and
+`assertFieldDefinitionValuesCompatible` — document-wide value validation that
+can fail even on same-type pairs, because `setFieldConfig` retypes a field
+without revalidating stored values (two `date` defs can hold plain-era free
+text). A blind call would let one dirty value anywhere kill the whole tag merge —
+recreating the one-operation-permanent-damage class this plan exists to remove.
+Unification is therefore attempt-per-name-pair with fallback to keep-both,
+gated by a non-throwing compatibility predicate extracted from
+`mergeFieldDefinitionsDirect`'s checks (all of which run before any mutation,
+so the fallback is transaction-safe by construction).
+
+Where a pair is incompatible, the definitions stay separate, both template
+entries survive on the merged tag, and Fix 1's skip guard keeps `applyTag`
+alive — two same-named fields on one tag becomes a renderable wart instead of a
+poison pill, and projection D3 later renders it honestly.
+
+Unification compares **direct template children only**; collisions arriving
+through an extends chain are not unified (merging tags does not edit third
+tags), and the skip guard covers that residue at apply time — `getExtendsChain`
+is specific-first, so the specific tag's field wins the stamp.
+
+**Merged template defaults: the target's win.** The template-children dedupe
+path moves the source entry's value children into the target's template entry,
+so after unification `#issue` default `Inbox` + `#bug` default `New` would stamp
+*both* on every future instantiation. Instead, when the target's template entry
+for the now-shared definition already holds default values, the source template
+entry's defaults are dropped with the entry. (Instance-entry value merging in
+`mergeFieldDefinitionsDirect` is untouched — there the values are user data and
+appending is correct.)
 
 ### Fix 2 — split stops re-stamping
 
@@ -148,17 +200,27 @@ rebases on top of these; its PR 1 inherits their tests as pinned behavior.
 
 **PR A — collision skip + merge unification**
 
-- [ ] `ensureFieldEntryWithTemplateDirect`: same-name/different-def → skip, not
-      throw; authoring paths keep the assert
-- [ ] `mergeTagDefinitionsDirect`: same-name same-type template fields merge via
-      `mergeFieldDefinitionsDirect` before children move; incompatible types keep
-      both entries
+- [ ] `ensureFieldEntryWithTemplateDirect`: same-name/different-def → skip
+      (`undefined`), via a query converted from the assert's own matcher;
+      authoring paths keep the assert (via `createFieldDef`'s outer per-node
+      check)
+- [ ] `applyForwardDoneMappingDirect` handles skip: the mapping degrades, the
+      done toggle succeeds
+- [ ] Non-throwing compatibility predicate extracted from
+      `mergeFieldDefinitionsDirect` (type, options source, values-compatible);
+      `mergeTagDefinitionsDirect` unifies per name-pair, falls back to keep-both
+- [ ] Template-defaults rule on dedupe: target's defaults win; source template
+      entry's defaults are dropped, instance values still merge
 - [ ] Core tests (from the audit repros): two tags with same-named fields apply
-      cleanly to one node, second field skipped; merging them unifies the
-      definition and relinks instance entries; merging with incompatible types
-      keeps both and the merged tag still applies; re-apply stays idempotent
+      cleanly to one node, second field skipped; done toggle on a collided
+      mapped field degrades instead of crashing; merging unifies the definition
+      and relinks instance entries; merging with an incompatible pair (type
+      mismatch AND values-incompatible same-type pair) keeps both and the merged
+      tag still applies; merged template stamps only the target's defaults;
+      same-name collision across an extends chain applies with the
+      specific-first winner; re-apply stays idempotent
 - [ ] `docs/spec/commands.md`: apply_tag collision semantics; merge_definitions
-      name-unification rule
+      name-unification rule (first-time spec coverage for merge_definitions)
 
 **PR B — split re-stamp removal**
 
