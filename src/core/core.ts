@@ -227,10 +227,17 @@ export interface WorkspaceReplicaState {
 export interface WorkspacePersistenceEnvelopeV3 {
   kind: 'tenon-workspace';
   schemaVersion: 3;
-  persistenceRevision?: number;
-  persistenceMetadataSequence?: number;
+  persistenceRevision: number;
+  persistenceMetadataSequence: number;
   shared: WorkspaceSharedState;
   local: WorkspaceReplicaState;
+}
+
+export interface CorePersistenceSnapshot {
+  raw: string;
+  persistenceRevision: number;
+  metadataSequence: number;
+  version: Uint8Array;
 }
 
 export interface CorePersistenceOptions {
@@ -573,10 +580,23 @@ export class Core {
     return !this.activeTransaction && this.activeAsyncMutations === 0;
   }
 
-  markPersistenceBaseline(): void {
+  markPersistenceBaseline(
+    version = this.loro.versionVector(),
+    metadataSequence = this.persistenceMetadataSequenceValue,
+  ): void {
     this.assertReplicationIdle();
-    this.loadedPersistenceVersionValue = new Uint8Array(this.loro.versionVector());
-    this.persistenceMetadataChanges = [];
+    this.loadedPersistenceVersionValue = new Uint8Array(version);
+    this.acknowledgePersistenceMetadata(metadataSequence);
+  }
+
+  capturePersistenceSnapshot(): CorePersistenceSnapshot {
+    const raw = this.serializeState();
+    return {
+      raw,
+      persistenceRevision: this.persistenceRevisionValue,
+      metadataSequence: this.persistenceMetadataSequenceValue,
+      version: this.loro.versionVector(),
+    };
   }
 
   capturePersistenceUpdate(fromVersion: Uint8Array, afterMetadataSequence: number): CorePersistenceCapture {
@@ -602,6 +622,12 @@ export class Core {
       }
       if (change.loroPendingUpdates) loroPendingUpdates = [...change.loroPendingUpdates];
     }
+    // Loro export implicitly commits a pending transaction without an origin.
+    // Generic serializers can emit CRDT operations whose materialized state is
+    // unchanged, so close any such transaction under the system origin before
+    // exporting. Otherwise persistence capture creates an origin-less phantom
+    // step in every user/agent UndoManager.
+    this.loro.commit(SYSTEM_COMMIT_ORIGIN);
     const update = this.loro.exportUpdate(fromVersion);
     const version = this.loro.versionVector();
     return {
@@ -4680,14 +4706,12 @@ function parseWorkspacePersistenceEnvelope(value: unknown): WorkspacePersistence
   }
   assertWorkspaceSharedState(value.shared);
   assertWorkspaceReplicaState(value.local);
-  if (
-    value.persistenceRevision !== undefined
-    && (!Number.isSafeInteger(value.persistenceRevision) || (value.persistenceRevision as number) < 0)
-  ) throw CoreError.invalidOperation('invalid workspace persistence revision');
-  if (
-    value.persistenceMetadataSequence !== undefined
-    && (!Number.isSafeInteger(value.persistenceMetadataSequence) || (value.persistenceMetadataSequence as number) < 0)
-  ) throw CoreError.invalidOperation('invalid workspace persistence metadata sequence');
+  if (!Number.isSafeInteger(value.persistenceRevision) || (value.persistenceRevision as number) < 0) {
+    throw CoreError.invalidOperation('invalid workspace persistence revision');
+  }
+  if (!Number.isSafeInteger(value.persistenceMetadataSequence) || (value.persistenceMetadataSequence as number) < 0) {
+    throw CoreError.invalidOperation('invalid workspace persistence metadata sequence');
+  }
   return value as unknown as WorkspacePersistenceEnvelopeV3;
 }
 

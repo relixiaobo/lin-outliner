@@ -223,6 +223,10 @@ the explicit fork path. See [`agent-core.md`](agent-core.md).
   exception: they resolve only after their target revision is durable, preserving
   the ordering between the workspace and the control-plane stores. Core's
   internal `CommandOutcome` does not carry a full projection.
+- During reversible app-quit draining, new document mutations wait at the
+  admission boundary. Cancel readmits every queued request; entering irreversible
+  teardown rejects requests that never crossed that boundary. A repeated quit
+  request cannot silently bypass the durable revision barrier.
 - Origins are tagged on the underlying Loro transaction (`user:`, `agent:`,
   `system:`) so the scoped `UndoManager` can separate user undo from agent
   undo. The all/user/agent undo managers each retain the latest 100 steps. The

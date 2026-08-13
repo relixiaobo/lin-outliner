@@ -2,7 +2,13 @@ import { app } from 'electron';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import type { DocumentCommand } from '../core/commands';
-import { Core, type CoreTransactionMetadata, type OperationHistoryItem, type OperationHistoryQuery } from '../core/core';
+import {
+  Core,
+  type CorePersistenceSnapshot,
+  type CoreTransactionMetadata,
+  type OperationHistoryItem,
+  type OperationHistoryQuery,
+} from '../core/core';
 import type { OperationHistoryScope } from '../core/operationJournal';
 import {
   DocumentSystemContractError,
@@ -147,6 +153,11 @@ interface HistoryMutationTarget {
   affectsMemory?: boolean;
 }
 
+interface FrozenMutationAdmission {
+  resume(): void;
+  reject(error: unknown): void;
+}
+
 type HistoryMutationGuardContext =
   | { status: 'none'; targets: readonly [] }
   | { status: 'known'; targets: readonly HistoryMutationTarget[] }
@@ -190,6 +201,8 @@ export class DocumentService implements DocumentSystemHost {
   private mutationObserverTransactionActive = false;
   private mutationCoordinator?: DocumentMutationCoordinator;
   private mutationAdmissionFrozen = false;
+  private mutationAdmissionCommitted = false;
+  private frozenMutationAdmissions: FrozenMutationAdmission[] = [];
   private activeMutationAdmissions = 0;
   private mutationAdmissionIdleWaiters: Array<() => void> = [];
   private pendingTransactionProjectionChanges: DocumentTransactionProjectionChanges[] | null = null;
@@ -217,16 +230,37 @@ export class DocumentService implements DocumentSystemHost {
     // memory; persist immediately so its id is durable across launches. Without
     // this, a re-init mints a fresh today id while the renderer still holds the
     // old one, producing `parent not found: date:…` on the first row of today.
-    const resetUpdateLog = this.core.requiresInitialPersist() || !loaded.snapshot;
+    let resetUpdateLog = this.core.requiresInitialPersist() || !loaded.snapshot;
+    let initialPersistenceSnapshot: CorePersistenceSnapshot | undefined;
+    let recoveryRepairError: unknown;
     if (resetUpdateLog) {
-      await this.persistInitialWorkspace();
+      initialPersistenceSnapshot = await this.persistInitialWorkspace();
+    } else if (loaded.recovery) {
+      try {
+        initialPersistenceSnapshot = await this.persistInitialWorkspace();
+        resetUpdateLog = true;
+      } catch (error) {
+        recoveryRepairError = error;
+        this.persistenceErrorHandler?.(error, this.core.persistenceRevision());
+      }
     }
     this.workspaceSaver = new WorkspaceSaver(this.core, this.workspaceStore, {
       idleDelayMs: this.textEditFlushDelayMs,
       initialUpdateCount: resetUpdateLog ? 0 : loaded.replay.length,
       initialUpdateBytes: resetUpdateLog ? 0 : loaded.replayBytes,
+      ...(initialPersistenceSnapshot ? {
+        initialDurableRevision: initialPersistenceSnapshot.persistenceRevision,
+        initialPersistedVersion: initialPersistenceSnapshot.version,
+        initialPersistedMetadataSequence: initialPersistenceSnapshot.metadataSequence,
+      } : {}),
       onFailure: (error, revision) => this.persistenceErrorHandler?.(error, revision),
     });
+    if (loaded.recovery) {
+      this.persistenceErrorHandler?.(loaded.recovery.error, this.core.persistenceRevision());
+      if (loaded.recovery.recoveryError && loaded.recovery.recoveryError !== recoveryRepairError) {
+        this.persistenceErrorHandler?.(loaded.recovery.recoveryError, this.core.persistenceRevision());
+      }
+    }
     const projection = this.core.projection();
     this.rebuildTextSearchIndex(projection);
     this.initialized = true;
@@ -346,11 +380,25 @@ export class DocumentService implements DocumentSystemHost {
   }
 
   freezeMutationAdmission(): void {
+    if (this.mutationAdmissionCommitted) return;
     this.mutationAdmissionFrozen = true;
   }
 
   unfreezeMutationAdmission(): void {
+    if (this.mutationAdmissionCommitted) return;
     this.mutationAdmissionFrozen = false;
+    const queued = this.frozenMutationAdmissions;
+    this.frozenMutationAdmissions = [];
+    for (const admission of queued) admission.resume();
+  }
+
+  commitMutationAdmissionFreeze(): void {
+    this.mutationAdmissionCommitted = true;
+    this.mutationAdmissionFrozen = true;
+    const queued = this.frozenMutationAdmissions;
+    this.frozenMutationAdmissions = [];
+    const error = CoreError.invalidOperation('document mutation was not accepted because the application is quitting');
+    for (const admission of queued) admission.reject(error);
   }
 
   private waitForMutationAdmissions(): Promise<void> {
@@ -694,9 +742,25 @@ export class DocumentService implements DocumentSystemHost {
   }
 
   private coordinateMutation<T>(meta: DocumentMutationMeta, operation: () => Promise<T>): Promise<T> {
-    if (this.mutationAdmissionFrozen) {
-      return Promise.reject(CoreError.invalidOperation('document mutation admission is frozen'));
+    if (this.mutationAdmissionCommitted) {
+      return Promise.reject(CoreError.invalidOperation(
+        'document mutation was not accepted because the application is quitting',
+      ));
     }
+    if (this.mutationAdmissionFrozen) {
+      return new Promise<T>((resolve, reject) => {
+        this.frozenMutationAdmissions.push({
+          resume: () => {
+            void this.admitMutation(meta, operation).then(resolve, reject);
+          },
+          reject,
+        });
+      });
+    }
+    return this.admitMutation(meta, operation);
+  }
+
+  private admitMutation<T>(meta: DocumentMutationMeta, operation: () => Promise<T>): Promise<T> {
     this.activeMutationAdmissions += 1;
     let result: Promise<T>;
     try {
@@ -1488,10 +1552,12 @@ export class DocumentService implements DocumentSystemHost {
     await this.workspaceSaver?.flushPending();
   }
 
-  private async persistInitialWorkspace(): Promise<void> {
+  private async persistInitialWorkspace(): Promise<CorePersistenceSnapshot> {
     if (!this.workspaceStore) throw new Error('workspace persistence store is not initialized');
-    await this.workspaceStore.compact(this.core.serializeState());
-    this.core.markPersistenceBaseline();
+    const snapshot = this.core.capturePersistenceSnapshot();
+    await this.workspaceStore.compact(snapshot.raw);
+    this.core.markPersistenceBaseline(snapshot.version, snapshot.metadataSequence);
+    return snapshot;
   }
 
   private emitProjectionChanged(

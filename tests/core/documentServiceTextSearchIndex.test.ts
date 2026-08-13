@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { plainText, replaceAllRichTextPatch, type SearchHit } from '../../src/core/types';
+import { WorkspacePersistenceStore } from '../../src/main/workspacePersistenceStore';
 
 let electronUserDataRoot = '';
 
@@ -57,15 +58,17 @@ function searchResultTargetIds(service: DocumentServiceInstance, searchId: strin
   });
 }
 
-function countCoreSaves(service: DocumentServiceInstance): () => number {
-  const target = service as unknown as { saveCore: () => Promise<void> };
-  const original = target.saveCore.bind(service);
+function countWorkspaceAppends(): { count: () => number; restore: () => void } {
+  const original = WorkspacePersistenceStore.prototype.append;
   let count = 0;
-  target.saveCore = async () => {
+  WorkspacePersistenceStore.prototype.append = async function append(capture) {
     count += 1;
-    await original();
+    return original.call(this, capture);
   };
-  return () => count;
+  return {
+    count: () => count,
+    restore: () => { WorkspacePersistenceStore.prototype.append = original; },
+  };
 }
 
 describe('DocumentService text search index', () => {
@@ -239,20 +242,24 @@ describe('DocumentService text search index', () => {
   });
 
   test('coalesces bursty structural saves until flush', async () => {
-    const service = await createService();
-    const saveCount = countCoreSaves(service);
-    const rootId = service.getProjection().rootId;
+    const appendCounter = countWorkspaceAppends();
+    try {
+      const service = await createService();
+      const rootId = service.getProjection().rootId;
 
-    await service.handle('create_node', { parentId: rootId, index: null, text: 'First structural write' });
-    await service.handle('create_node', { parentId: rootId, index: null, text: 'Second structural write' });
+      await service.handle('create_node', { parentId: rootId, index: null, text: 'First structural write' });
+      await service.handle('create_node', { parentId: rootId, index: null, text: 'Second structural write' });
 
-    expect(saveCount()).toBe(0);
+      expect(appendCounter.count()).toBe(0);
 
-    await service.flushPendingChanges();
+      await service.flushPendingChanges();
 
-    expect(saveCount()).toBe(1);
-    expect(await searchNodeIds(service, 'first structural write')).toHaveLength(1);
-    expect(await searchNodeIds(service, 'second structural write')).toHaveLength(1);
+      expect(appendCounter.count()).toBe(1);
+      expect(await searchNodeIds(service, 'first structural write')).toHaveLength(1);
+      expect(await searchNodeIds(service, 'second structural write')).toHaveLength(1);
+    } finally {
+      appendCounter.restore();
+    }
   });
 
   test('drain waits for a mutation already admitted through the coordinator gate', async () => {
@@ -284,6 +291,105 @@ describe('DocumentService text search index', () => {
     await mutation;
     await drain;
     expect(service.durablePersistenceRevision()).toBe(service.latestAcceptedPersistenceRevision());
+  });
+
+  test('persists a mutation accepted while the initial snapshot write is in flight', async () => {
+    const originalCompact = WorkspacePersistenceStore.prototype.compact;
+    let releaseCompact!: () => void;
+    let signalCompact!: () => void;
+    const compactStarted = new Promise<void>((resolve) => { signalCompact = resolve; });
+    const compactGate = new Promise<void>((resolve) => { releaseCompact = resolve; });
+    WorkspacePersistenceStore.prototype.compact = async function compact(snapshot) {
+      signalCompact();
+      await compactGate;
+      return originalCompact.call(this, snapshot);
+    };
+
+    try {
+      documentServiceModule ??= import('../../src/main/documentService');
+      const { DocumentService } = await documentServiceModule;
+      const service = new DocumentService();
+      const initialized = service.initWorkspace();
+      await compactStarted;
+
+      const rootId = service.getProjection().rootId;
+      const mutation = service.handle('create_node', {
+        parentId: rootId,
+        index: null,
+        text: 'Accepted during initial compact',
+      });
+      await mutation;
+      releaseCompact();
+      await initialized;
+      activeServices.push(service);
+      await service.flushPendingChanges();
+
+      const restored = new DocumentService();
+      await restored.initWorkspace();
+      activeServices.push(restored);
+      expect(await searchNodeIds(restored, 'accepted during initial compact')).toHaveLength(1);
+    } finally {
+      WorkspacePersistenceStore.prototype.compact = originalCompact;
+      releaseCompact?.();
+    }
+  });
+
+  test('resnapshots the full document when the active update log is externally replaced', async () => {
+    const service = await createService();
+    const rootId = service.getProjection().rootId;
+    await service.handle('create_node', {
+      parentId: rootId,
+      index: null,
+      text: 'Durable before log replacement',
+    });
+    await service.flushPendingChanges();
+
+    await writeFile(path.join(electronUserDataRoot, 'workspace.loro.updates.jsonl'), '');
+    await service.handle('create_node', {
+      parentId: rootId,
+      index: null,
+      text: 'Durable through replacement snapshot',
+    });
+    await service.flushPendingChanges();
+
+    const restored = await createService();
+    expect(await searchNodeIds(restored, 'durable before log replacement')).toHaveLength(1);
+    expect(await searchNodeIds(restored, 'durable through replacement snapshot')).toHaveLength(1);
+  });
+
+  test('resumes queued mutations after a reversible admission freeze is cancelled', async () => {
+    const service = await createService();
+    const rootId = service.getProjection().rootId;
+    service.freezeMutationAdmission();
+    const mutation = service.handle('create_node', {
+      parentId: rootId,
+      index: null,
+      text: 'Queued during quit drain',
+    });
+
+    service.unfreezeMutationAdmission();
+    await mutation;
+    expect(await searchNodeIds(service, 'queued during quit drain')).toHaveLength(1);
+  });
+
+  test('rejects queued mutations only when the admission freeze becomes irreversible', async () => {
+    const service = await createService();
+    const rootId = service.getProjection().rootId;
+    service.freezeMutationAdmission();
+    const mutation = service.handle('create_node', {
+      parentId: rootId,
+      index: null,
+      text: 'Rejected during teardown',
+    });
+
+    service.commitMutationAdmissionFreeze();
+    await expect(mutation).rejects.toThrow('application is quitting');
+    await expect(service.handle('create_node', {
+      parentId: rootId,
+      index: null,
+      text: 'Rejected after teardown starts',
+    })).rejects.toThrow('application is quitting');
+    expect(await searchNodeIds(service, 'rejected during teardown')).toEqual([]);
   });
 
   test('uses indexed relevance when materializing saved searches inside agent transactions', async () => {

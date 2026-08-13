@@ -118,8 +118,8 @@ React interaction
   -> preload IPC command
   -> Electron main document service
   -> TypeScript core mutation
-  -> persisted workspace snapshot (coalesced for bursty edits)
   -> ProjectionUpdate (delta | full) folded into the renderer index
+  -> background incremental persistence handoff
 ```
 
 No renderer module may directly mutate document state. UI changes that affect
@@ -159,38 +159,64 @@ flush, or quit retry starts immediately.
 `workspace.loro.updates.jsonl`. Every log header carries the SHA-256 digest of
 the snapshot it extends. The snapshot records the persistence-revision and
 local-metadata-sequence baselines. Each append contains the update bytes,
-version vector, later persistence revision, and local operation-history delta; the record is written
-and fsynced before the saver acknowledges durability. Compaction atomically
-writes a complete snapshot, fsyncs it and its parent directory, then replaces
-the log header. It is considered after 64 log records or 2 MiB (including the
+version vector, later persistence revision, and local operation-history delta;
+the record is written and fsynced before the saver acknowledges durability.
+After validating a log once, the store keeps its append handle and a cursor over
+the verified header, file size, identity, ordering frontier, and final-record
+digest. Ordinary appends therefore validate against O(1) state instead of
+reopening and decoding the previous update. An ambiguous write failure
+invalidates the cursor and forces one full log validation before retry. If the
+active log path is deleted, replaced, or changes size outside the store, the
+saver does not append from a potentially unrelated version frontier: it captures
+the current document once, atomically compacts that full snapshot, and resumes
+incremental appends from the replacement snapshot.
+
+Compaction atomically writes a complete snapshot, fsyncs it and its parent
+directory, then replaces the log header. The snapshot raw bytes, revision,
+metadata sequence, and Loro version are captured as one frontier before I/O;
+mutations accepted while the write is in flight remain dirty against that
+frontier. Compaction is considered after 64 log records or 2 MiB (including the
 matching log loaded at startup), but the full snapshot capture waits for a real
 700 ms idle window rather than running at the sustained-typing max-wait
-checkpoint. On startup the store validates the header, replica identity, and
-monotonic metadata, then replays the matching log. A missing newline with an
-incomplete final JSON record is a recoverable torn tail; a complete but invalid
-record is corruption and fails closed. A log whose digest belongs to an older
-snapshot is ignored only when every intact record has the same replica identity
-and falls at or behind the snapshot's revision baselines; otherwise the digest
-mismatch fails closed. Replay also verifies that each imported update reaches
-the version vector recorded with that log entry.
+checkpoint.
 
-Quit is a two-phase operation. Phase 1 freezes new mutation admission, waits for
-all admissions that already passed the gate, closes any open text undo group, and
-drains to a linearizable durable-revision barrier. Retry and cancel leave all
-services live; only after the barrier holds does Phase 2 tear down auxiliary
-services and force the process exit. Concurrent quit requests share one drain
-promise and cannot run teardown twice.
+On startup the store validates the header, replica identity, monotonic metadata,
+and the Loro version reached by each update before exposing records to Core. A
+missing newline with an incomplete final JSON record is a recoverable torn tail.
+Other log anomalies never make a readable snapshot unopenable: the original log
+is durably copied to an `*.unreadable-*` quarantine file, the verified prefix is
+kept, and the active log is rewritten without the unreadable suffix. After Core
+replays that prefix, `DocumentService` immediately compacts it into a new
+snapshot; recovery and any repair-write failure are reported through the
+persistence error channel. A log whose digest belongs to an older snapshot is
+discarded without quarantine only when every intact record has the same replica
+identity, lies at or behind the snapshot's revision baselines, and its version
+is contained by the snapshot. Otherwise it follows the same quarantine recovery.
+
+Quit is a two-phase operation. Phase 1 freezes new mutation admission, queues
+later mutation requests, waits for all admissions that already passed the gate,
+closes any open text undo group, and drains to a linearizable durable-revision
+barrier. Retry keeps the queue frozen; Cancel resumes every queued request while
+leaving all services live. Only a successful barrier or explicit **Quit Anyway**
+choice rejects the still-unaccepted queue and enters Phase 2, which tears down
+auxiliary services and force-exits the process. The coordinator exists before
+workspace initialization so startup-time quits still run auxiliary teardown.
+Concurrent quit requests share one request and cannot bypass the drain or run
+teardown twice.
 
 ## Workspace Persistence And Replication Boundary
 
-`DocumentService` atomically persists `workspace.loro.json` as a versioned v3
-envelope. The envelope separates portable workspace facts from state owned by
-one local replica while keeping both sections in one atomic snapshot:
+`WorkspacePersistenceStore` atomically persists `workspace.loro.json` as a
+versioned v3 envelope. The envelope separates portable workspace facts from
+state owned by one local replica while keeping both sections in one atomic
+snapshot:
 
 ```ts
 interface WorkspacePersistenceEnvelopeV3 {
   kind: 'tenon-workspace';
   schemaVersion: 3;
+  persistenceRevision: number;
+  persistenceMetadataSequence: number;
   shared: {
     workspaceId: string;
     documentId: string;

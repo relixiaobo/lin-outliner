@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { Core, type CorePersistenceCapture } from '../../src/core/core';
+import { WorkspacePersistenceResnapshotRequiredError } from '../../src/main/workspacePersistenceStore';
 import { WorkspaceSaver } from '../../src/main/workspaceSaver';
 
 interface ScheduledTask {
@@ -45,6 +46,7 @@ class FakeStore {
   compactions: string[] = [];
   failAppend = false;
   failCompact = false;
+  requireResnapshot = false;
   reportedLogBytes = 1;
   appendGate: Promise<void> | undefined;
   releaseAppend: (() => void) | undefined;
@@ -53,6 +55,9 @@ class FakeStore {
 
   async append(capture: CorePersistenceCapture): Promise<number> {
     if (this.failAppend) return Promise.reject(new Error('append failed'));
+    if (this.requireResnapshot) {
+      return Promise.reject(new WorkspacePersistenceResnapshotRequiredError('log replaced'));
+    }
     this.appends.push(capture);
     await this.appendGate;
     return this.reportedLogBytes;
@@ -201,6 +206,56 @@ describe('WorkspaceSaver', () => {
     saver.dispose();
   });
 
+  test('starts a fresh dirty epoch after a max-wait append instead of saving every key', async () => {
+    const { core, store, clock, saver } = fixture();
+    store.blockAppend();
+    mutate(core, 'first dirty epoch');
+    saver.scheduleSave();
+
+    await clock.advance(5_000);
+    expect(store.appends).toHaveLength(1);
+
+    mutate(core, 'second dirty epoch');
+    saver.scheduleSave();
+    store.releaseAppend!();
+    await settle();
+    await clock.advance(0);
+    expect(store.appends).toHaveLength(1);
+
+    for (let index = 0; index < 3; index += 1) {
+      await clock.advance(200);
+      mutate(core, `continued-${index}`);
+      saver.scheduleSave();
+      await clock.advance(0);
+      expect(store.appends).toHaveLength(1);
+    }
+
+    await clock.advance(699);
+    expect(store.appends).toHaveLength(1);
+    await clock.advance(1);
+    expect(store.appends).toHaveLength(2);
+    saver.dispose();
+  });
+
+  test('continues immediately for a durable waiter after an in-flight append', async () => {
+    const { core, store, clock, saver } = fixture();
+    store.blockAppend();
+    mutate(core, 'background append');
+    saver.scheduleSave();
+    await clock.advance(700);
+    expect(store.appends).toHaveLength(1);
+
+    mutate(core, 'durable waiter');
+    saver.scheduleSave();
+    const durable = saver.waitForDurable(saver.acceptedRevision());
+    store.releaseAppend!();
+    await settle();
+
+    expect(store.appends).toHaveLength(2);
+    await durable;
+    saver.dispose();
+  });
+
   test('defers capture while a yielding transaction is still rollback-capable', async () => {
     const failures: unknown[] = [];
     const { core, store, clock, saver } = fixture({ onFailure: (error) => failures.push(error) });
@@ -225,6 +280,31 @@ describe('WorkspaceSaver', () => {
     await clock.advance(700);
     expect(store.appends).toHaveLength(1);
     expect(failures).toEqual([]);
+    saver.dispose();
+  });
+
+  test('preserves the first-dirty deadline while capture is unavailable', async () => {
+    const { core, store, clock, saver } = fixture();
+    mutate(core, 'dirty before transaction');
+    saver.scheduleSave();
+    let releaseTransaction!: () => void;
+    let signalYield!: () => void;
+    const yielded = new Promise<void>((resolve) => { signalYield = resolve; });
+    const transaction = core.transaction('user', async () => {
+      signalYield();
+      await new Promise<void>((resolve) => { releaseTransaction = resolve; });
+    });
+    await yielded;
+
+    await clock.advance(6_000);
+    expect(store.appends).toHaveLength(0);
+    releaseTransaction();
+    await transaction;
+
+    mutate(core, 'continued after transaction');
+    saver.scheduleSave();
+    await clock.advance(0);
+    expect(store.appends).toHaveLength(1);
     saver.dispose();
   });
 
@@ -303,6 +383,53 @@ describe('WorkspaceSaver', () => {
 
     store.failAppend = false;
     await clock.advance(1);
+    expect(saver.durableRevision()).toBe(saver.acceptedRevision());
+    saver.dispose();
+  });
+
+  test('resnapshots the current document when the update log frontier is replaced', async () => {
+    const failures: unknown[] = [];
+    const { core, store, saver } = fixture({ onFailure: (error) => failures.push(error) });
+    store.requireResnapshot = true;
+    mutate(core, 'included in replacement snapshot');
+    saver.scheduleSave();
+    const targetRevision = saver.acceptedRevision();
+
+    await saver.waitForDurable(targetRevision);
+
+    expect(store.appends).toHaveLength(0);
+    expect(store.compactions).toHaveLength(1);
+    const restored = Core.fromState(Core.deserializeState(store.compactions[0]!));
+    expect(restored.projection().nodes.some((node) => (
+      node.content.text === 'included in replacement snapshot'
+    ))).toBe(true);
+    expect(saver.durableRevision()).toBe(targetRevision);
+    expect(failures).toEqual([]);
+    saver.dispose();
+  });
+
+  test('retries a failed replacement resnapshot without falling back to an incomplete append', async () => {
+    const failures: unknown[] = [];
+    const { core, store, clock, saver } = fixture({ onFailure: (error) => failures.push(error) });
+    store.requireResnapshot = true;
+    store.failCompact = true;
+    mutate(core, 'retry replacement snapshot');
+    saver.scheduleSave();
+
+    await expect(saver.waitForDurable()).rejects.toThrow('compact failed');
+    expect(saver.status().dirty).toBe(true);
+    expect(store.appends).toHaveLength(0);
+    expect(store.compactions).toHaveLength(1);
+    expect(failures).toHaveLength(1);
+
+    store.failCompact = false;
+    const recovered = saver.waitForDurable();
+    await settle();
+    await clock.advance(50);
+    await recovered;
+
+    expect(store.appends).toHaveLength(0);
+    expect(store.compactions).toHaveLength(2);
     expect(saver.durableRevision()).toBe(saver.acceptedRevision());
     saver.dispose();
   });

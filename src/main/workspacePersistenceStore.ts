@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdir, open, readFile, rename, rm } from 'node:fs/promises';
+import { copyFile, mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
 import path from 'node:path';
 import type {
@@ -16,7 +16,6 @@ const SNAPSHOT_FILE = 'workspace.loro.json';
 const UPDATE_LOG_FILE = 'workspace.loro.updates.jsonl';
 const LOG_KIND = 'tenon-workspace-update-log';
 const LOG_SCHEMA_VERSION = 1;
-const MAX_HEADER_BYTES = 64 * 1024;
 
 export interface WorkspacePersistenceLoad {
   snapshot: WorkspacePersistenceEnvelopeV3 | null;
@@ -24,6 +23,13 @@ export interface WorkspacePersistenceLoad {
   snapshotDigest: string | null;
   replay: WorkspacePersistenceReplayEntry[];
   replayBytes: number;
+  recovery?: WorkspacePersistenceRecovery;
+}
+
+export interface WorkspacePersistenceRecovery {
+  error: unknown;
+  quarantinedLogPath?: string;
+  recoveryError?: unknown;
 }
 
 export interface WorkspacePersistenceStoreOptions {
@@ -32,6 +38,8 @@ export interface WorkspacePersistenceStoreOptions {
   fsync?: (handle: Awaited<ReturnType<typeof open>>) => Promise<void>;
   afterSnapshotRename?: () => void | Promise<void>;
 }
+
+export class WorkspacePersistenceResnapshotRequiredError extends Error {}
 
 interface UpdateLogHeader {
   kind: typeof LOG_KIND;
@@ -48,6 +56,35 @@ interface UpdateLogRecord {
   local: WorkspacePersistenceLocalDelta;
 }
 
+interface UpdateLogCursor {
+  snapshotDigest: string;
+  lastRecord: UpdateLogRecordSummary | null;
+  bytes: number;
+  device?: number;
+  inode?: number;
+}
+
+interface UpdateLogRecordSummary {
+  persistenceRevision: number;
+  metadataSequence: number;
+  installationId: string;
+  replicaId: string;
+  digest: string;
+}
+
+interface ReadLogResult {
+  entries: WorkspacePersistenceReplayEntry[];
+  records: UpdateLogRecord[];
+  bytes: number;
+  exists: boolean;
+  headerMatches: boolean;
+  tornTail: boolean;
+  lastRecord: UpdateLogRecordSummary | null;
+  device?: number;
+  inode?: number;
+  corruption?: unknown;
+}
+
 export class WorkspacePersistenceStore {
   readonly snapshotPath: string;
   readonly updateLogPath: string;
@@ -57,6 +94,8 @@ export class WorkspacePersistenceStore {
   private snapshotPersistenceRevisionValue: number | undefined;
   private snapshotMetadataSequenceValue: number | undefined;
   private snapshotIdentityValue: { installationId: string; replicaId: string } | undefined;
+  private logCursor: UpdateLogCursor | undefined;
+  private appendHandle: FileHandle | undefined;
   private writeChain: Promise<unknown> = Promise.resolve();
 
   constructor(
@@ -93,20 +132,55 @@ export class WorkspacePersistenceStore {
     }
     const snapshot = Core.deserializeState(snapshotRaw);
     const snapshotDigest = digest(snapshotRaw);
-    const replay = await this.readLog(snapshotDigest, snapshot);
+    let replay: ReadLogResult;
+    let recovery: WorkspacePersistenceRecovery | undefined;
+    try {
+      replay = await this.readLog(snapshotDigest, snapshot);
+    } catch (error) {
+      recovery = await this.recoverUnreadableLog(snapshotDigest, [], error);
+      replay = emptyReadLogResult(true);
+    }
     this.snapshotDigestValue = snapshotDigest;
-    this.snapshotPersistenceRevisionValue = snapshot.persistenceRevision ?? 0;
-    this.snapshotMetadataSequenceValue = snapshot.persistenceMetadataSequence ?? 0;
+    this.snapshotPersistenceRevisionValue = snapshot.persistenceRevision;
+    this.snapshotMetadataSequenceValue = snapshot.persistenceMetadataSequence;
     this.snapshotIdentityValue = {
       installationId: snapshot.local.installationId,
       replicaId: snapshot.local.replicaId,
     };
+    if (!recovery && replay.corruption) {
+      recovery = await this.recoverUnreadableLog(snapshotDigest, replay.records, replay.corruption);
+      replay = recoveredReadLogResult(snapshotDigest, replay);
+    } else if (!recovery && replay.exists && !replay.headerMatches) {
+      try {
+        await this.replaceLogHeader(snapshotDigest);
+        replay = emptyReadLogResult(true);
+      } catch (error) {
+        recovery = { error };
+      }
+    } else if (!recovery && replay.tornTail) {
+      try {
+        await this.replaceLogRecords(snapshotDigest, replay.records);
+        replay = recoveredReadLogResult(snapshotDigest, replay);
+      } catch (error) {
+        recovery = { error };
+      }
+    }
+    if (!recovery && replay.exists && replay.headerMatches && !replay.tornTail) {
+      this.logCursor ??= {
+        snapshotDigest,
+        lastRecord: replay.lastRecord,
+        bytes: replay.bytes,
+        device: replay.device,
+        inode: replay.inode,
+      };
+    }
     return {
       snapshot,
       snapshotRaw,
       snapshotDigest,
       replay: replay.entries,
       replayBytes: replay.bytes,
+      ...(recovery ? { recovery } : {}),
     };
   }
 
@@ -123,30 +197,7 @@ export class WorkspacePersistenceStore {
         local: cloneLocalDelta(capture.local),
       };
       await mkdir(this.root, { recursive: true });
-      let needsHeader = false;
-      try {
-        const firstLine = await readFirstLine(this.updateLogPath);
-        if (firstLine === null) needsHeader = true;
-        else {
-          const header = parseHeader(firstLine, this.updateLogPath);
-          if (header.snapshotDigest !== snapshotDigest) {
-            // A stale log can only be left by a crash between snapshot replacement
-            // and log reset. Prove that the new snapshot has absorbed every
-            // complete record before discarding the old log.
-            const snapshot = await this.readSnapshotForDigest(snapshotDigest);
-            await this.readLog(snapshotDigest, snapshot);
-            await this.replaceLogHeader(snapshotDigest);
-          }
-        }
-      } catch (error) {
-        if (isNotFound(error)) needsHeader = true;
-        else throw error;
-      }
-      if (needsHeader) await this.ensureLogHeader(snapshotDigest);
-      await repairTrailingLogLine(this.updateLogPath, this.fsyncHandle, (tail) => {
-        parseCompleteLogTail(tail, this.updateLogPath);
-      });
-      const lastRecord = await readLastUpdateRecord(this.updateLogPath);
+      const cursor = await this.prepareLogForAppend(snapshotDigest);
       const snapshotPersistenceRevision = await this.snapshotPersistenceRevision();
       const snapshotMetadataSequence = await this.snapshotMetadataSequence();
       const snapshotIdentity = await this.snapshotIdentity();
@@ -160,25 +211,41 @@ export class WorkspacePersistenceStore {
         || record.local.replicaId !== snapshotIdentity.replicaId) {
         throw new Error(`Workspace update log replica identity mismatch at ${this.updateLogPath}`);
       }
+      const lastRecord = cursor.lastRecord;
       if (lastRecord) {
         if (
-          lastRecord.local.installationId !== record.local.installationId
-          || lastRecord.local.replicaId !== record.local.replicaId
+          lastRecord.installationId !== record.local.installationId
+          || lastRecord.replicaId !== record.local.replicaId
         ) throw new Error(`Workspace update log replica identity mismatch at ${this.updateLogPath}`);
         if (lastRecord.persistenceRevision > record.persistenceRevision
           || lastRecord.metadataSequence > record.metadataSequence) {
           throw new Error(`Non-monotonic workspace update log append at ${this.updateLogPath}`);
         }
         if (lastRecord.persistenceRevision === record.persistenceRevision) {
-          if (!sameUpdateLogRecord(lastRecord, record)) {
+          if (lastRecord.digest !== updateLogRecordDigest(record)) {
             throw new Error(`Conflicting workspace update log retry at ${this.updateLogPath}`);
           }
           // The prior call may have failed after writing the complete record.
           // Re-sync it before acknowledging the idempotent retry as durable.
-          return syncDurableSize(this.updateLogPath, this.fsyncHandle);
+          try {
+            return await this.syncOpenLog(cursor);
+          } catch (error) {
+            await this.invalidateLogCursor();
+            throw error;
+          }
         }
       }
-      return appendDurable(this.updateLogPath, `${JSON.stringify(record)}\n`, this.fsyncHandle);
+      try {
+        const size = await this.appendOpenLog(`${JSON.stringify(record)}\n`, cursor);
+        cursor.lastRecord = summarizeUpdateLogRecord(record);
+        cursor.bytes = size;
+        return size;
+      } catch (error) {
+        // The bytes may have reached the file before fsync reported failure.
+        // Force the next retry through the one-time tail recovery/validation path.
+        await this.invalidateLogCursor();
+        throw error;
+      }
     });
   }
 
@@ -187,6 +254,7 @@ export class WorkspacePersistenceStore {
       const snapshotDigest = digest(snapshotRaw);
       const snapshot = Core.deserializeState(snapshotRaw);
       try {
+        await this.closeAppendHandle();
         await atomicWriteDurable(
           this.snapshotPath,
           snapshotRaw,
@@ -194,8 +262,8 @@ export class WorkspacePersistenceStore {
           this.afterSnapshotRename,
         );
         this.snapshotDigestValue = snapshotDigest;
-        this.snapshotPersistenceRevisionValue = snapshot.persistenceRevision ?? 0;
-        this.snapshotMetadataSequenceValue = snapshot.persistenceMetadataSequence ?? 0;
+        this.snapshotPersistenceRevisionValue = snapshot.persistenceRevision;
+        this.snapshotMetadataSequenceValue = snapshot.persistenceMetadataSequence;
         this.snapshotIdentityValue = {
           installationId: snapshot.local.installationId,
           replicaId: snapshot.local.replicaId,
@@ -207,6 +275,14 @@ export class WorkspacePersistenceStore {
           `${JSON.stringify(logHeader(snapshotDigest))}\n`,
           this.fsyncHandle,
         );
+        const logStat = await stat(this.updateLogPath);
+        this.logCursor = {
+          snapshotDigest,
+          lastRecord: null,
+          bytes: Buffer.byteLength(`${JSON.stringify(logHeader(snapshotDigest))}\n`),
+          device: logStat.dev,
+          inode: logStat.ino,
+        };
       } catch (error) {
         // A failed directory sync or log reset may still have completed a rename.
         // Re-read the authoritative snapshot before any later append instead of
@@ -215,6 +291,7 @@ export class WorkspacePersistenceStore {
         this.snapshotPersistenceRevisionValue = undefined;
         this.snapshotMetadataSequenceValue = undefined;
         this.snapshotIdentityValue = undefined;
+        this.logCursor = undefined;
         throw error;
       }
     });
@@ -241,15 +318,14 @@ export class WorkspacePersistenceStore {
       const raw = await readFile(this.snapshotPath, 'utf8');
       const snapshot = Core.deserializeState(raw);
       this.snapshotDigestValue ??= digest(raw);
-      this.snapshotPersistenceRevisionValue = snapshot.persistenceRevision ?? 0;
-      this.snapshotMetadataSequenceValue = snapshot.persistenceMetadataSequence ?? 0;
+      this.snapshotPersistenceRevisionValue = snapshot.persistenceRevision;
+      this.snapshotMetadataSequenceValue = snapshot.persistenceMetadataSequence;
       this.snapshotIdentityValue = {
         installationId: snapshot.local.installationId,
         replicaId: snapshot.local.replicaId,
       };
       return this.snapshotPersistenceRevisionValue;
     } catch (error) {
-      if (isNotFound(error)) return 0;
       throw error;
     }
   }
@@ -257,7 +333,10 @@ export class WorkspacePersistenceStore {
   private async snapshotMetadataSequence(): Promise<number> {
     if (this.snapshotMetadataSequenceValue !== undefined) return this.snapshotMetadataSequenceValue;
     await this.snapshotPersistenceRevision();
-    return this.snapshotMetadataSequenceValue ?? 0;
+    if (this.snapshotMetadataSequenceValue === undefined) {
+      throw new Error('Workspace snapshot metadata sequence is unavailable');
+    }
+    return this.snapshotMetadataSequenceValue;
   }
 
   private async snapshotIdentity(): Promise<{ installationId: string; replicaId: string }> {
@@ -284,13 +363,22 @@ export class WorkspacePersistenceStore {
   private async readLog(
     snapshotDigest: string,
     snapshot: WorkspacePersistenceEnvelopeV3,
-  ): Promise<{ entries: WorkspacePersistenceReplayEntry[]; bytes: number }> {
-    let raw: string;
-    try {
-      raw = await readFile(this.updateLogPath, 'utf8');
-    } catch (error) {
-      if (isNotFound(error)) return { entries: [], bytes: 0 };
+  ): Promise<ReadLogResult> {
+    const handle = await open(this.updateLogPath, 'r').catch((error: unknown) => {
+      if (isNotFound(error)) return undefined;
       throw error;
+    });
+    if (!handle) return emptyReadLogResult(false);
+    let raw: string;
+    let logStat: Awaited<ReturnType<FileHandle['stat']>>;
+    try {
+      raw = await handle.readFile('utf8');
+      logStat = await handle.stat();
+    } finally {
+      await handle.close();
+    }
+    if (logStat.size !== Buffer.byteLength(raw)) {
+      throw new Error(`Workspace update log changed while being read at ${this.updateLogPath}`);
     }
     if (raw.length === 0) throw new Error(`Invalid workspace update log at ${this.updateLogPath}`);
     if (!raw.trim()) throw new Error(`Invalid workspace update log at ${this.updateLogPath}`);
@@ -300,13 +388,21 @@ export class WorkspacePersistenceStore {
     const header = parseHeader(lines.shift() ?? '', this.updateLogPath);
     if (header.snapshotDigest !== snapshotDigest) {
       assertStaleLogAbsorbed(lines, hasTerminatingNewline, snapshot, this.updateLogPath);
-      return { entries: [], bytes: 0 };
+      return {
+        ...emptyReadLogResult(true),
+        bytes: Buffer.byteLength(raw),
+        headerMatches: false,
+      };
     }
     const replay: WorkspacePersistenceReplayEntry[] = [];
-    const snapshotRevision = snapshot.persistenceRevision ?? 0;
-    const snapshotMetadataSequence = snapshot.persistenceMetadataSequence ?? 0;
+    const records: UpdateLogRecord[] = [];
+    const replayDocument = new LoroOutlinerDocument({ shared: snapshot.shared.document });
+    const snapshotRevision = snapshot.persistenceRevision;
+    const snapshotMetadataSequence = snapshot.persistenceMetadataSequence;
     let previousRevision = snapshotRevision;
     let previousMetadataSequence = snapshotMetadataSequence;
+    let lastRecord: UpdateLogRecordSummary | null = null;
+    let tornTail = !hasTerminatingNewline;
     for (let index = 0; index < lines.length; index += 1) {
       const line = lines[index]!;
       if (!line.trim()) continue;
@@ -326,50 +422,235 @@ export class WorkspacePersistenceStore {
         ) {
           throw new Error(`Workspace update log replica identity mismatch at ${this.updateLogPath}`);
         }
+        const update = decode(record.update);
+        const version = decode(record.version);
+        replayDocument.importUpdates([update]);
+        if (!versionVectorsEqual(replayDocument.versionVector(), version)) {
+          throw new Error(`Workspace update log replay version mismatch at ${this.updateLogPath}`);
+        }
         previousRevision = record.persistenceRevision;
         previousMetadataSequence = record.metadataSequence;
+        lastRecord = summarizeUpdateLogRecord(record);
+        records.push(record);
         replay.push({
           persistenceRevision: record.persistenceRevision,
           metadataSequence: record.metadataSequence,
-          version: decode(record.version),
-          update: decode(record.update),
+          version,
+          update,
           local: cloneLocalDelta(record.local),
         });
       } catch (error) {
         const isLast = index === lines.length - 1;
-        if (isLast && !hasTerminatingNewline && error instanceof JsonSyntaxError) break;
-        throw error;
+        if (isLast && !hasTerminatingNewline && error instanceof JsonSyntaxError) {
+          tornTail = true;
+          break;
+        }
+        return {
+          entries: replay,
+          records,
+          bytes: Buffer.byteLength(raw),
+          exists: true,
+          headerMatches: true,
+          tornTail: false,
+          lastRecord,
+          device: logStat.dev,
+          inode: logStat.ino,
+          corruption: error,
+        };
       }
     }
-    return { entries: replay, bytes: Buffer.byteLength(raw) };
+    return {
+      entries: replay,
+      records,
+      bytes: Buffer.byteLength(raw),
+      exists: true,
+      headerMatches: true,
+      tornTail,
+      lastRecord,
+      device: logStat.dev,
+      inode: logStat.ino,
+    };
   }
 
-  private async ensureLogHeader(snapshotDigest: string): Promise<void> {
-    let handle: FileHandle | undefined;
-    try {
-      handle = await open(this.updateLogPath, 'r');
-      const stat = await handle.stat();
-      if (stat.size > 0) {
-        throw new Error(`Invalid workspace update log: missing header at ${this.updateLogPath}`);
+  private async prepareLogForAppend(snapshotDigest: string): Promise<UpdateLogCursor> {
+    if (this.logCursor?.snapshotDigest === snapshotDigest) {
+      let pathStat: Awaited<ReturnType<typeof stat>> | undefined;
+      try {
+        pathStat = await stat(this.updateLogPath);
+      } catch (error) {
+        if (!isNotFound(error)) throw error;
       }
-    } catch (error) {
-      if (!isNotFound(error)) throw error;
-    } finally {
-      await handle?.close();
+      if (pathStat
+        && pathStat.size === this.logCursor.bytes
+        && this.logCursor.device === pathStat.dev
+        && this.logCursor.inode === pathStat.ino) return this.logCursor;
+      await this.invalidateLogCursor();
+      throw new WorkspacePersistenceResnapshotRequiredError(
+        `Workspace update log changed outside the persistence store at ${this.updateLogPath}`,
+      );
     }
-    await replaceFileDurable(
-      this.updateLogPath,
-      `${JSON.stringify(logHeader(snapshotDigest))}\n`,
-      this.fsyncHandle,
+
+    const snapshot = await this.readSnapshotForDigest(snapshotDigest);
+    let read: ReadLogResult;
+    try {
+      read = await this.readLog(snapshotDigest, snapshot);
+    } catch (error) {
+      const recovery = await this.recoverUnreadableLog(snapshotDigest, [], error);
+      if (recovery.recoveryError) {
+        throw new AggregateError(
+          [error, recovery.recoveryError],
+          'Workspace update log recovery failed',
+        );
+      }
+      read = emptyReadLogResult(true);
+    }
+
+    if (read.corruption) {
+      const recovery = await this.recoverUnreadableLog(snapshotDigest, read.records, read.corruption);
+      if (recovery.recoveryError) {
+        throw new AggregateError(
+          [read.corruption, recovery.recoveryError],
+          'Workspace update log recovery failed',
+        );
+      }
+      read = recoveredReadLogResult(snapshotDigest, read);
+    } else if (!read.exists || !read.headerMatches) {
+      await this.replaceLogHeader(snapshotDigest);
+      read = emptyReadLogResult(true);
+    } else if (read.tornTail) {
+      await this.replaceLogRecords(snapshotDigest, read.records);
+      read = recoveredReadLogResult(snapshotDigest, read);
+    }
+
+    this.logCursor ??= {
+      snapshotDigest,
+      lastRecord: read.lastRecord,
+      bytes: read.bytes,
+      device: read.device,
+      inode: read.inode,
+    };
+    return this.logCursor;
+  }
+
+  private async recoverUnreadableLog(
+    snapshotDigest: string,
+    records: readonly UpdateLogRecord[],
+    error: unknown,
+  ): Promise<WorkspacePersistenceRecovery> {
+    await this.closeAppendHandle();
+    this.logCursor = undefined;
+    const quarantinedLogPath = `${this.updateLogPath}.unreadable-${Date.now()}-${crypto.randomUUID()}`;
+    try {
+      await copyFileDurable(this.updateLogPath, quarantinedLogPath, this.fsyncHandle);
+      await this.replaceLogRecords(snapshotDigest, records);
+      return { error, quarantinedLogPath };
+    } catch (recoveryError) {
+      if (isNotFound(recoveryError)) {
+        try {
+          await this.replaceLogRecords(snapshotDigest, records);
+          return { error };
+        } catch (replaceError) {
+          return { error, recoveryError: replaceError };
+        }
+      }
+      return { error, recoveryError };
+    }
+  }
+
+  private async appendOpenLog(data: string, cursor: UpdateLogCursor): Promise<number> {
+    const handle = await this.openAppendHandle();
+    await this.assertOpenLogMatchesCursor(handle, cursor);
+    await writeAll(handle, Buffer.from(data), null);
+    await this.fsyncHandle(handle);
+    const expectedSize = cursor.bytes + Buffer.byteLength(data);
+    const size = await this.assertOpenLogMatchesPath(handle, expectedSize);
+    return size;
+  }
+
+  private async syncOpenLog(cursor: UpdateLogCursor): Promise<number> {
+    const handle = await this.openAppendHandle();
+    await this.assertOpenLogMatchesCursor(handle, cursor);
+    await this.fsyncHandle(handle);
+    return this.assertOpenLogMatchesPath(handle, cursor.bytes);
+  }
+
+  private async openAppendHandle(): Promise<FileHandle> {
+    this.appendHandle ??= await open(this.updateLogPath, 'a', 0o600);
+    return this.appendHandle;
+  }
+
+  private async closeAppendHandle(): Promise<void> {
+    const handle = this.appendHandle;
+    this.appendHandle = undefined;
+    await handle?.close();
+  }
+
+  private async invalidateLogCursor(): Promise<void> {
+    this.logCursor = undefined;
+    await this.closeAppendHandle().catch(() => undefined);
+  }
+
+  private async assertOpenLogMatchesCursor(handle: FileHandle, cursor: UpdateLogCursor): Promise<void> {
+    const handleStat = await handle.stat();
+    if (
+      handleStat.size !== cursor.bytes
+      || handleStat.dev !== cursor.device
+      || handleStat.ino !== cursor.inode
+    ) throw this.resnapshotRequiredError();
+    await this.assertPathMatchesStat(handleStat);
+  }
+
+  private async assertOpenLogMatchesPath(handle: FileHandle, expectedSize: number): Promise<number> {
+    const handleStat = await handle.stat();
+    if (handleStat.size !== expectedSize) throw this.resnapshotRequiredError();
+    await this.assertPathMatchesStat(handleStat);
+    return handleStat.size;
+  }
+
+  private async assertPathMatchesStat(handleStat: Awaited<ReturnType<FileHandle['stat']>>): Promise<void> {
+    let pathStat: Awaited<ReturnType<typeof stat>>;
+    try {
+      pathStat = await stat(this.updateLogPath);
+    } catch (error) {
+      if (isNotFound(error)) throw this.resnapshotRequiredError();
+      throw error;
+    }
+    if (
+      pathStat.size !== handleStat.size
+      || pathStat.dev !== handleStat.dev
+      || pathStat.ino !== handleStat.ino
+    ) throw this.resnapshotRequiredError();
+  }
+
+  private resnapshotRequiredError(): WorkspacePersistenceResnapshotRequiredError {
+    return new WorkspacePersistenceResnapshotRequiredError(
+      `Workspace update log changed outside the persistence store at ${this.updateLogPath}`,
     );
   }
 
   private async replaceLogHeader(snapshotDigest: string): Promise<void> {
+    await this.replaceLogRecords(snapshotDigest, []);
+  }
+
+  private async replaceLogRecords(
+    snapshotDigest: string,
+    records: readonly UpdateLogRecord[],
+  ): Promise<void> {
+    await this.closeAppendHandle();
+    const data = serializeLog(snapshotDigest, records);
     await replaceFileDurable(
       this.updateLogPath,
-      `${JSON.stringify(logHeader(snapshotDigest))}\n`,
+      data,
       this.fsyncHandle,
     );
+    const logStat = await stat(this.updateLogPath);
+    this.logCursor = {
+      snapshotDigest,
+      lastRecord: records.length > 0 ? summarizeUpdateLogRecord(records[records.length - 1]!) : null,
+      bytes: Buffer.byteLength(data),
+      device: logStat.dev,
+      inode: logStat.ino,
+    };
   }
 }
 
@@ -379,8 +660,8 @@ function assertStaleLogAbsorbed(
   snapshot: WorkspacePersistenceEnvelopeV3,
   source: string,
 ): void {
-  const snapshotRevision = snapshot.persistenceRevision ?? 0;
-  const snapshotMetadataSequence = snapshot.persistenceMetadataSequence ?? 0;
+  const snapshotRevision = snapshot.persistenceRevision;
+  const snapshotMetadataSequence = snapshot.persistenceMetadataSequence;
   const snapshotDocument = new LoroOutlinerDocument({ shared: snapshot.shared.document });
   const snapshotVersion = snapshotDocument.versionVector();
   let previousRevision = -1;
@@ -417,6 +698,10 @@ function assertStaleLogAbsorbed(
 
 function logHeader(snapshotDigest: string): UpdateLogHeader {
   return { kind: LOG_KIND, schemaVersion: LOG_SCHEMA_VERSION, snapshotDigest };
+}
+
+function serializeLog(snapshotDigest: string, records: readonly UpdateLogRecord[]): string {
+  return [logHeader(snapshotDigest), ...records].map((entry) => JSON.stringify(entry)).join('\n') + '\n';
 }
 
 function parseHeader(raw: string, source: string): UpdateLogHeader {
@@ -457,20 +742,6 @@ function parseRecord(raw: string, source: string): UpdateLogRecord {
   return record as UpdateLogRecord;
 }
 
-function parseCompleteLogTail(raw: string, source: string): void {
-  let value: unknown;
-  try {
-    value = JSON.parse(raw);
-  } catch (error) {
-    throw new JsonSyntaxError(`Invalid workspace update log tail at ${source}: ${message(error)}`);
-  }
-  if (value && typeof value === 'object' && (value as { kind?: unknown }).kind === LOG_KIND) {
-    parseHeader(raw, source);
-    return;
-  }
-  parseRecord(raw, source);
-}
-
 function isLocalDelta(value: unknown): value is WorkspacePersistenceLocalDelta {
   if (!value || typeof value !== 'object') return false;
   const delta = value as WorkspacePersistenceLocalDelta;
@@ -495,8 +766,42 @@ function cloneLocalDelta(delta: WorkspacePersistenceLocalDelta): WorkspacePersis
   };
 }
 
-function sameUpdateLogRecord(left: UpdateLogRecord, right: UpdateLogRecord): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
+function summarizeUpdateLogRecord(record: UpdateLogRecord): UpdateLogRecordSummary {
+  return {
+    persistenceRevision: record.persistenceRevision,
+    metadataSequence: record.metadataSequence,
+    installationId: record.local.installationId,
+    replicaId: record.local.replicaId,
+    digest: updateLogRecordDigest(record),
+  };
+}
+
+function updateLogRecordDigest(record: UpdateLogRecord): string {
+  return digest(JSON.stringify(record));
+}
+
+function emptyReadLogResult(exists: boolean): ReadLogResult {
+  return {
+    entries: [],
+    records: [],
+    bytes: 0,
+    exists,
+    headerMatches: exists,
+    tornTail: false,
+    lastRecord: null,
+  };
+}
+
+function recoveredReadLogResult(snapshotDigest: string, read: ReadLogResult): ReadLogResult {
+  return {
+    entries: read.entries,
+    records: read.records,
+    bytes: Buffer.byteLength(serializeLog(snapshotDigest, read.records)),
+    exists: true,
+    headerMatches: true,
+    tornTail: false,
+    lastRecord: read.lastRecord,
+  };
 }
 
 function encode(bytes: Uint8Array): string {
@@ -511,36 +816,12 @@ function isCanonicalBase64(value: string): boolean {
   return encode(decode(value)) === value;
 }
 
+function versionVectorsEqual(left: Uint8Array, right: Uint8Array): boolean {
+  return versionVectorIncludes(left, right) && versionVectorIncludes(right, left);
+}
+
 function digest(value: string): string {
   return createHash('sha256').update(value).digest('hex');
-}
-
-async function appendDurable(
-  filePath: string,
-  data: string,
-  fsyncHandle: (handle: Awaited<ReturnType<typeof open>>) => Promise<void>,
-): Promise<number> {
-  const handle = await open(filePath, 'a', 0o600);
-  try {
-    await writeAll(handle, Buffer.from(data), null);
-    await fsyncHandle(handle);
-    return (await handle.stat()).size;
-  } finally {
-    await handle.close();
-  }
-}
-
-async function syncDurableSize(
-  filePath: string,
-  fsyncHandle: (handle: Awaited<ReturnType<typeof open>>) => Promise<void>,
-): Promise<number> {
-  const handle = await open(filePath, 'r+');
-  try {
-    await fsyncHandle(handle);
-    return (await handle.stat()).size;
-  } finally {
-    await handle.close();
-  }
 }
 
 async function atomicWriteDurable(
@@ -578,6 +859,21 @@ async function replaceFileDurable(
   await atomicWriteDurable(filePath, data, fsyncHandle);
 }
 
+async function copyFileDurable(
+  sourcePath: string,
+  destinationPath: string,
+  fsyncHandle: (handle: Awaited<ReturnType<typeof open>>) => Promise<void>,
+): Promise<void> {
+  await copyFile(sourcePath, destinationPath);
+  const handle = await open(destinationPath, 'r');
+  try {
+    await fsyncHandle(handle);
+  } finally {
+    await handle.close();
+  }
+  await syncDirectory(path.dirname(destinationPath), fsyncHandle);
+}
+
 async function syncDirectory(
   directory: string,
   fsyncHandle: (handle: Awaited<ReturnType<typeof open>>) => Promise<void>,
@@ -591,128 +887,8 @@ async function syncDirectory(
   }
 }
 
-async function repairTrailingLogLine(
-  filePath: string,
-  fsyncHandle: (handle: Awaited<ReturnType<typeof open>>) => Promise<void>,
-  validateCompleteTail: (tail: string) => void,
-): Promise<void> {
-  const handle = await open(filePath, 'r+').catch((error: unknown) => {
-    if (isNotFound(error)) return undefined;
-    throw error;
-  });
-  if (!handle) return;
-  let size: number;
-  try {
-    size = (await handle.stat()).size;
-    if (size === 0) return;
-    const lastByte = Buffer.alloc(1);
-    await readExactly(handle, lastByte, size - 1);
-    if (lastByte[0] === 0x0a) return;
-
-    const lastNewline = await findLastNewline(handle, size);
-    const tailStart = lastNewline + 1;
-    const tail = Buffer.alloc(size - tailStart);
-    await readExactly(handle, tail, tailStart);
-    const tailText = tail.toString('utf8');
-    try {
-      // A syntactically incomplete final record is the only recoverable case.
-      JSON.parse(tailText);
-    } catch (error) {
-      if (!(error instanceof SyntaxError)) throw error;
-      await handle.truncate(tailStart);
-      await fsyncHandle(handle);
-      return;
-    }
-
-    // The JSON is complete, so validate the record. Schema/identity/ordering
-    // failures are real corruption and must not be silently discarded.
-    validateCompleteTail(tailText);
-    await writeAll(handle, Buffer.from('\n'), size);
-    await fsyncHandle(handle);
-  } finally {
-    await handle.close();
-  }
-}
-
 function isNotFound(error: unknown): boolean {
   return typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT';
-}
-
-async function readFirstLine(filePath: string): Promise<string | null> {
-  const handle = await open(filePath, 'r').catch((error: unknown) => {
-    if (isNotFound(error)) return undefined;
-    throw error;
-  });
-  if (!handle) return null;
-  try {
-    const stat = await handle.stat();
-    if (stat.size === 0) return null;
-    const chunks: Buffer[] = [];
-    const limit = Math.min(stat.size, MAX_HEADER_BYTES);
-    let offset = 0;
-    let foundNewline = false;
-    while (offset < limit) {
-      const chunk = Buffer.alloc(Math.min(4096, limit - offset));
-      const { bytesRead } = await handle.read(chunk, 0, chunk.byteLength, offset);
-      if (bytesRead === 0) break;
-      offset += bytesRead;
-      const newline = chunk.subarray(0, bytesRead).indexOf(0x0a);
-      chunks.push(newline >= 0 ? chunk.subarray(0, newline) : chunk.subarray(0, bytesRead));
-      if (newline >= 0) {
-        foundNewline = true;
-        break;
-      }
-    }
-    const line = Buffer.concat(chunks).toString('utf8');
-    if (!foundNewline && stat.size > MAX_HEADER_BYTES) {
-      throw new Error(`Workspace update log header exceeds ${MAX_HEADER_BYTES} bytes at ${filePath}`);
-    }
-    const trimmed = line.trim();
-    return trimmed || null;
-  } finally {
-    await handle.close();
-  }
-}
-
-async function readLastUpdateRecord(filePath: string): Promise<UpdateLogRecord | null> {
-  const handle = await open(filePath, 'r');
-  try {
-    let end = (await handle.stat()).size;
-    const byte = Buffer.alloc(1);
-    while (end > 0) {
-      await readExactly(handle, byte, end - 1);
-      if (byte[0] !== 0x0a && byte[0] !== 0x0d) break;
-      end -= 1;
-    }
-    if (end === 0) return null;
-    const previousNewline = await findLastNewline(handle, end);
-    const line = Buffer.alloc(end - previousNewline - 1);
-    await readExactly(handle, line, previousNewline + 1);
-    const raw = line.toString('utf8').trim();
-    if (!raw) return null;
-    let value: unknown;
-    try {
-      value = JSON.parse(raw);
-    } catch (error) {
-      throw new Error(`Invalid workspace update log tail at ${filePath}: ${message(error)}`);
-    }
-    if ((value as Partial<UpdateLogHeader> | null)?.kind === LOG_KIND) {
-      parseHeader(raw, filePath);
-      return null;
-    }
-    return parseRecord(raw, filePath);
-  } finally {
-    await handle.close();
-  }
-}
-
-async function readExactly(handle: FileHandle, buffer: Buffer, position: number): Promise<void> {
-  let offset = 0;
-  while (offset < buffer.byteLength) {
-    const { bytesRead } = await handle.read(buffer, offset, buffer.byteLength - offset, position + offset);
-    if (bytesRead === 0) throw new Error('Unexpected end of workspace update log');
-    offset += bytesRead;
-  }
 }
 
 async function writeAll(handle: FileHandle, buffer: Buffer, position: number | null): Promise<void> {
@@ -728,21 +904,6 @@ async function writeAll(handle: FileHandle, buffer: Buffer, position: number | n
     if (bytesWritten === 0) throw new Error('Workspace persistence write made no progress');
     offset += bytesWritten;
   }
-}
-
-async function findLastNewline(handle: FileHandle, size: number): Promise<number> {
-  const chunkSize = 4096;
-  let cursor = size;
-  while (cursor > 0) {
-    const start = Math.max(0, cursor - chunkSize);
-    const chunk = Buffer.alloc(cursor - start);
-    const { bytesRead } = await handle.read(chunk, 0, chunk.byteLength, start);
-    for (let index = bytesRead - 1; index >= 0; index -= 1) {
-      if (chunk[index] === 0x0a) return start + index;
-    }
-    cursor = start;
-  }
-  return -1;
 }
 
 class JsonSyntaxError extends Error {}

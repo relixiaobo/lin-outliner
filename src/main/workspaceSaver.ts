@@ -1,5 +1,8 @@
 import type { Core, CorePersistenceCapture } from '../core/core';
-import { WorkspacePersistenceStore } from './workspacePersistenceStore';
+import {
+  WorkspacePersistenceResnapshotRequiredError,
+  WorkspacePersistenceStore,
+} from './workspacePersistenceStore';
 
 export type WorkspaceSaveFailureListener = (error: unknown, revision: number) => void;
 
@@ -12,6 +15,9 @@ export interface WorkspaceSaverOptions {
   compactAfterBytes?: number;
   initialUpdateCount?: number;
   initialUpdateBytes?: number;
+  initialDurableRevision?: number;
+  initialPersistedVersion?: Uint8Array;
+  initialPersistedMetadataSequence?: number;
   now?: () => number;
   schedule?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
   cancel?: (timer: ReturnType<typeof setTimeout>) => void;
@@ -55,6 +61,8 @@ export class WorkspaceSaver {
   private retryAttempt = 0;
   private idleWindowReached = false;
   private firstDirtyAt: number | undefined;
+  private forceRunAfterCurrent = false;
+  private resnapshotPending = false;
   private updateCount = 0;
   private updateBytes = 0;
   private lastErrorValue: unknown = undefined;
@@ -76,11 +84,20 @@ export class WorkspaceSaver {
     this.onFailure = options.onFailure;
     this.now = options.now ?? Date.now;
     this.acceptedRevisionValue = core.persistenceRevision();
-    this.durableRevisionValue = core.persistenceRevision();
-    this.persistedVersion = core.loadedPersistenceVersion();
-    this.persistedMetadataSequence = core.persistenceMetadataSequence();
+    this.durableRevisionValue = Math.min(
+      this.acceptedRevisionValue,
+      Math.max(0, Math.trunc(options.initialDurableRevision ?? this.acceptedRevisionValue)),
+    );
+    this.persistedVersion = options.initialPersistedVersion?.slice() ?? core.loadedPersistenceVersion();
+    this.persistedMetadataSequence = Math.max(
+      0,
+      Math.trunc(options.initialPersistedMetadataSequence ?? core.persistenceMetadataSequence()),
+    );
+    this.pending = this.durableRevisionValue < this.acceptedRevisionValue;
+    if (this.pending) this.firstDirtyAt = this.now();
     this.updateCount = Math.max(0, Math.trunc(options.initialUpdateCount ?? 0));
     this.updateBytes = Math.max(0, Math.trunc(options.initialUpdateBytes ?? 0));
+    if (this.pending) this.armTimers();
   }
 
   status(): WorkspaceSaverStatus {
@@ -107,7 +124,7 @@ export class WorkspaceSaver {
     this.pending = true;
     this.firstDirtyAt ??= this.now();
     this.idleWindowReached = false;
-    if (!this.retryTimer) this.armTimers();
+    if (!this.running && !this.retryTimer) this.armTimers();
     return revision;
   }
 
@@ -126,6 +143,7 @@ export class WorkspaceSaver {
       // An explicit durability request is a user-controlled retry (trusted
       // transaction, flush, or quit), so it does not wait behind the automatic
       // retry backoff.
+      this.forceRunAfterCurrent = true;
       this.startRun(true);
     });
   }
@@ -153,7 +171,7 @@ export class WorkspaceSaver {
       this.idleWindowReached = true;
       this.startRun();
     }, this.idleDelayMs);
-    if (!this.maxWaitTimer) {
+    if (this.pending && this.core.persistenceCaptureAvailable() && !this.maxWaitTimer) {
       const elapsed = this.now() - (this.firstDirtyAt ?? this.now());
       this.maxWaitTimer = this.schedule(() => {
         this.maxWaitTimer = undefined;
@@ -163,7 +181,10 @@ export class WorkspaceSaver {
   }
 
   private startRun(forceRetry = false): void {
-    if (this.running) return;
+    if (this.running) {
+      if (forceRetry) this.forceRunAfterCurrent = true;
+      return;
+    }
     if (this.retryTimer) {
       if (!forceRetry) return;
       this.cancel(this.retryTimer);
@@ -175,9 +196,15 @@ export class WorkspaceSaver {
     this.idleTimer = undefined;
     this.maxWaitTimer = undefined;
     this.running = true;
+    this.forceRunAfterCurrent = false;
     void this.run().finally(() => {
       this.running = false;
-      if ((this.pending || this.compactionPending || this.waiters.length > 0) && !this.retryTimer) this.armTimers();
+      if (!(this.pending || this.compactionPending || this.waiters.length > 0)) return;
+      if ((this.forceRunAfterCurrent || this.waiters.length > 0) && this.core.persistenceCaptureAvailable()) {
+        this.startRun(true);
+        return;
+      }
+      if (!this.retryTimer) this.armTimers();
     });
   }
 
@@ -186,12 +213,21 @@ export class WorkspaceSaver {
     // rollback frontier is still live. That is ordinary contention, not a save
     // failure: leave the revision dirty and retry once the transaction settles.
     if (!this.core.persistenceCaptureAvailable()) {
-      this.firstDirtyAt = this.now();
       return;
     }
     const targetRevision = this.acceptedRevisionValue;
+    const capturedDirtyAt = this.firstDirtyAt;
+    // Mutations accepted while append/compaction awaits I/O belong to a new
+    // dirty epoch. Clearing here lets markAccepted timestamp that epoch instead
+    // of inheriting an already-expired max-wait deadline forever.
+    this.firstDirtyAt = undefined;
     let appended = false;
     try {
+      if (this.resnapshotPending) {
+        const compactedRevision = await this.compact();
+        this.finishResnapshot(compactedRevision);
+        return;
+      }
       if (this.pending || this.durableRevisionValue < targetRevision) {
         const capture = this.core.capturePersistenceUpdate(this.persistedVersion, this.persistedMetadataSequence);
         if (capture.update.byteLength > 0 || capture.local.operationHistoryUpserts.length > 0
@@ -204,7 +240,7 @@ export class WorkspaceSaver {
         }
         this.durableRevisionValue = Math.max(this.durableRevisionValue, targetRevision);
         this.pending = this.core.persistenceRevision() > this.durableRevisionValue;
-        this.firstDirtyAt = this.pending ? this.firstDirtyAt : undefined;
+        if (this.pending) this.firstDirtyAt ??= this.now();
         this.lastErrorValue = undefined;
         this.resetRetryBackoff();
         this.resolveWaiters();
@@ -235,7 +271,18 @@ export class WorkspaceSaver {
         this.firstDirtyAt ??= this.now();
       }
       if (!this.compactionPending) this.resetRetryBackoff();
-    } catch (error) {
+    } catch (caught) {
+      let error = caught;
+      if (caught instanceof WorkspacePersistenceResnapshotRequiredError) {
+        this.resnapshotPending = true;
+        try {
+          const compactedRevision = await this.compact();
+          this.finishResnapshot(compactedRevision);
+          return;
+        } catch (compactError) {
+          error = compactError;
+        }
+      }
       this.lastErrorValue = error;
       this.notifyFailure(error, targetRevision);
       if (!appended) this.rejectWaiters(error, targetRevision);
@@ -243,7 +290,7 @@ export class WorkspaceSaver {
       // window before allowing a threshold compaction on the retry path.
       this.idleWindowReached = false;
       this.pending = true;
-      this.firstDirtyAt ??= this.now();
+      this.firstDirtyAt = earliestTimestamp(capturedDirtyAt, this.firstDirtyAt) ?? this.now();
       this.scheduleRetry();
     }
   }
@@ -275,19 +322,26 @@ export class WorkspaceSaver {
     }
   }
 
-  private async compact(): Promise<void> {
-    const snapshot = this.core.serializeState();
-    // Capture the exact frontier represented by the synchronous snapshot before
-    // yielding to disk I/O. Mutations may arrive while the atomic rename runs;
-    // they must remain dirty and be exported from this frontier next time.
-    const version = this.core.replicationVersionVector();
-    const metadataSequence = this.core.persistenceMetadataSequence();
-    await this.store.compact(snapshot);
-    this.persistedVersion = version;
-    this.persistedMetadataSequence = metadataSequence;
-    this.core.acknowledgePersistenceMetadata(metadataSequence);
+  private async compact(): Promise<number> {
+    const snapshot = this.core.capturePersistenceSnapshot();
+    await this.store.compact(snapshot.raw);
+    this.persistedVersion = snapshot.version;
+    this.persistedMetadataSequence = snapshot.metadataSequence;
+    this.core.acknowledgePersistenceMetadata(snapshot.metadataSequence);
     this.updateCount = 0;
     this.updateBytes = 0;
+    return snapshot.persistenceRevision;
+  }
+
+  private finishResnapshot(durableRevision: number): void {
+    this.resnapshotPending = false;
+    this.durableRevisionValue = Math.max(this.durableRevisionValue, durableRevision);
+    this.pending = this.core.persistenceRevision() > this.durableRevisionValue;
+    if (this.pending) this.firstDirtyAt ??= this.now();
+    this.compactionPending = false;
+    this.lastErrorValue = undefined;
+    this.resetRetryBackoff();
+    this.resolveWaiters();
   }
 
   private shouldCompact(): boolean {
@@ -306,4 +360,10 @@ export class WorkspaceSaver {
     for (const waiter of rejected) waiter.reject(error);
   }
 
+}
+
+function earliestTimestamp(left: number | undefined, right: number | undefined): number | undefined {
+  if (left === undefined) return right;
+  if (right === undefined) return left;
+  return Math.min(left, right);
 }

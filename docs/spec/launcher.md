@@ -40,10 +40,8 @@ navigation commands.
   unusable. `'floating'` still sits above ordinary app windows, and the
   all-Spaces / over-fullscreen behavior comes from `setVisibleOnAllWorkspaces`,
   not from this level. The behavior is toggled **only while visible** — set on
-  `show`, cleared on `hide`. (The separate "first ⌘Q needs two presses" bug is NOT
-  caused by the launcher — it is the app's `before-quit` flush handler in
-  `main.ts`, which now `process.exit(0)`s after the flush instead of re-issuing a
-  graceful `app.quit()` that lingered for seconds.)
+  `show`, cleared on `hide`. Quit behavior belongs to the coordinator described
+  below, not to launcher window visibility or level.
 - **Fixed golden rectangle** (760 × ~470), top-biased placement (0.18 of the
   work area) on the display under the cursor; never resizes to its result count
   (the body scrolls). Native 16px corner via the `window_corner` addon.
@@ -68,15 +66,18 @@ navigation commands.
 
 The app's `before-quit` handler uses the document service's two-phase quit
 coordinator. Phase 1 is reversible: it freezes new document mutation admission,
-waits for already-admitted work, closes the active text undo group, and drains
-the workspace saver to the latest accepted revision's durable acknowledgement.
+queues later mutation requests, waits for already-admitted work, closes the
+active text undo group, and drains the workspace saver to the latest accepted
+revision's durable acknowledgement.
 If the drain fails or times out, the native dialog offers Retry, Quit Anyway, or
-Cancel. Cancel restores mutation admission and leaves the launcher and all
-auxiliary services running; Quit Anyway proceeds with admission frozen. Only a
-successful barrier (or an explicit Quit Anyway choice) enters Phase 2, where the
-global hotkey and auxiliary services are torn down and the process exits. A
-second quit request while a drain is in flight shares that request and cannot
-duplicate teardown.
+Cancel. Cancel restores mutation admission, resumes queued requests, and leaves
+the launcher and all auxiliary services running; Quit Anyway rejects the queued
+requests and proceeds with admission frozen. Only a successful barrier (or an
+explicit Quit Anyway choice) enters Phase 2, where the global hotkey and
+auxiliary services are torn down and the process exits. Repeated quit requests
+while a drain is in flight share that request; they neither bypass persistence
+nor duplicate teardown. The coordinator is installed before workspace startup,
+so an early quit still performs auxiliary teardown.
 
 ## Security posture (A3 — must not regress)
 

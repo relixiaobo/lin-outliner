@@ -1,11 +1,16 @@
 import { describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { AppQuitCoordinator, type QuitCoordinatorHost, type QuitDecision, type QuitDrainOutcome } from '../../src/main/appQuitCoordinator';
+
+const MAIN_SOURCE = readFileSync(join(import.meta.dir, '../../src/main/main.ts'), 'utf8');
 
 class FakeQuitHost implements QuitCoordinatorHost {
   accepted = 1;
   durable = 0;
   frozen = false;
   teardownCount = 0;
+  commitFreezeCount = 0;
   exitCount = 0;
   drains = 0;
   decisions: QuitDecision[] = [];
@@ -13,6 +18,7 @@ class FakeQuitHost implements QuitCoordinatorHost {
 
   freezeAdmission(): void { this.frozen = true; }
   unfreezeAdmission(): void { this.frozen = false; }
+  commitAdmissionFreeze(): void { this.commitFreezeCount += 1; }
   latestAcceptedRevision(): number { return this.accepted; }
   durableRevision(): number { return this.durable; }
   async drainToRevision(revision: number): Promise<void> {
@@ -33,6 +39,15 @@ class FakeQuitHost implements QuitCoordinatorHost {
 }
 
 describe('AppQuitCoordinator', () => {
+  test('main installs quit coordination before asynchronous workspace startup', () => {
+    const coordinatorSetup = MAIN_SOURCE.indexOf('quitCoordinator = new AppQuitCoordinator({');
+    const asynchronousStartup = MAIN_SOURCE.indexOf('app.whenReady().then(async () => {');
+
+    expect(coordinatorSetup).toBeGreaterThan(-1);
+    expect(asynchronousStartup).toBeGreaterThan(coordinatorSetup);
+    expect(MAIN_SOURCE).not.toContain('if (!quitCoordinator) return;');
+  });
+
   test('cancels a failed drain without tearing down live services', async () => {
     const host = new FakeQuitHost();
     host.drainToRevision = async () => {
@@ -48,6 +63,7 @@ describe('AppQuitCoordinator', () => {
     expect(host.frozen).toBe(false);
     expect(host.teardownCount).toBe(0);
     expect(host.exitCount).toBe(0);
+    expect(host.commitFreezeCount).toBe(0);
   });
 
   test('retries and then enters teardown only after the durable barrier', async () => {
@@ -66,6 +82,7 @@ describe('AppQuitCoordinator', () => {
     expect(coordinator.phase()).toBe('done');
     expect(host.teardownCount).toBe(1);
     expect(host.exitCount).toBe(1);
+    expect(host.commitFreezeCount).toBe(1);
   });
 
   test('rechecks the barrier when a revision is accepted during drain', async () => {

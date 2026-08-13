@@ -5,6 +5,7 @@ export type QuitDecision = 'retry' | 'quit-anyway' | 'cancel';
 export interface QuitCoordinatorHost {
   freezeAdmission(): void;
   unfreezeAdmission(): void;
+  commitAdmissionFreeze(): void;
   latestAcceptedRevision(): number;
   durableRevision(): number;
   drainToRevision(revision: number): Promise<void>;
@@ -75,6 +76,7 @@ export class AppQuitCoordinator {
       break;
     }
 
+    this.host.commitAdmissionFreeze();
     this.phaseValue = 'tearing-down';
     try {
       await this.host.teardown();

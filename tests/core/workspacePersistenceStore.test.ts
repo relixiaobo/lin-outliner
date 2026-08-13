@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdtemp, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Core } from '../../src/core/core';
 import {
+  WorkspacePersistenceResnapshotRequiredError,
   WorkspacePersistenceStore,
   type WorkspacePersistenceStoreOptions,
 } from '../../src/main/workspacePersistenceStore';
@@ -57,6 +58,40 @@ describe('WorkspacePersistenceStore', () => {
     expect((await store.load()).replay).toHaveLength(2);
   });
 
+  test('requires a full resnapshot when the active log inode is replaced at the same size', async () => {
+    const root = await makeRoot();
+    const store = new WorkspacePersistenceStore(root);
+    const core = Core.new({ installationId: crypto.randomUUID() });
+    await store.compact(core.serializeState());
+    const replacementPath = `${store.updateLogPath}.replacement`;
+    await copyFile(store.updateLogPath, replacementPath);
+    await rename(replacementPath, store.updateLogPath);
+
+    core.createNode(core.projection().todayId, null, 'Replacement frontier');
+    await expect(store.append(core.capturePersistenceUpdate(core.loadedPersistenceVersion(), 0)))
+      .rejects.toBeInstanceOf(WorkspacePersistenceResnapshotRequiredError);
+  });
+
+  test('does not acknowledge an append when the log is replaced during fsync', async () => {
+    const root = await makeRoot();
+    const core = Core.new({ installationId: crypto.randomUUID() });
+    const initial = new WorkspacePersistenceStore(root);
+    await initial.compact(core.serializeState());
+    const racing = new WorkspacePersistenceStore(root, {
+      fsync: async (handle) => {
+        const replacementPath = `${racing.updateLogPath}.replacement`;
+        await copyFile(racing.updateLogPath, replacementPath);
+        await rename(replacementPath, racing.updateLogPath);
+        await handle.sync();
+      },
+    });
+    await racing.load();
+    core.createNode(core.projection().todayId, null, 'Fsync replacement frontier');
+
+    await expect(racing.append(core.capturePersistenceUpdate(core.loadedPersistenceVersion(), 0)))
+      .rejects.toBeInstanceOf(WorkspacePersistenceResnapshotRequiredError);
+  });
+
   test('retries a complete append idempotently after its fsync reports failure', async () => {
     const root = await makeRoot();
     const core = Core.new({ installationId: crypto.randomUUID() });
@@ -88,40 +123,54 @@ describe('WorkspacePersistenceStore', () => {
     await writeFile(store.updateLogPath, header.slice(0, -1));
 
     core.createNode(core.projection().todayId, null, 'Header tail recovery');
-    await expect(store.append(core.capturePersistenceUpdate(core.loadedPersistenceVersion(), 0))).resolves.toBeGreaterThan(0);
-    expect((await store.load()).replay).toHaveLength(1);
+    const restarted = new WorkspacePersistenceStore(root);
+    await expect(restarted.append(core.capturePersistenceUpdate(core.loadedPersistenceVersion(), 0)))
+      .resolves.toBeGreaterThan(0);
+    expect((await restarted.load()).replay).toHaveLength(1);
   });
 
-  test('fails closed on a non-empty update log without a header', async () => {
+  test('quarantines a headerless log before appending a new update', async () => {
     const root = await makeRoot();
     const core = Core.new({ installationId: crypto.randomUUID() });
     const store = new WorkspacePersistenceStore(root);
     await store.compact(core.serializeState());
     await writeFile(store.updateLogPath, '\n');
 
-    core.createNode(core.projection().todayId, null, 'Reject blank log');
-    await expect(store.append(core.capturePersistenceUpdate(core.loadedPersistenceVersion(), 0)))
-      .rejects.toThrow('missing header');
+    core.createNode(core.projection().todayId, null, 'Recover blank log');
+    const restarted = new WorkspacePersistenceStore(root);
+    await expect(restarted.append(core.capturePersistenceUpdate(core.loadedPersistenceVersion(), 0)))
+      .resolves.toBeGreaterThan(0);
+
+    expect(await unreadableLogs(root)).toHaveLength(1);
+    expect((await new WorkspacePersistenceStore(root).load()).replay).toHaveLength(1);
   });
 
-  test('fails closed on a whitespace-only update log during load', async () => {
+  test('opens the snapshot and quarantines a whitespace-only update log', async () => {
     const root = await makeRoot();
     const core = Core.new({ installationId: crypto.randomUUID() });
     const store = new WorkspacePersistenceStore(root);
     await store.compact(core.serializeState());
     await writeFile(store.updateLogPath, ' \n');
 
-    await expect(store.load()).rejects.toThrow('Invalid workspace update log');
+    const loaded = await store.load();
+    expect(loaded.snapshot).not.toBeNull();
+    expect(loaded.replay).toEqual([]);
+    expect(loaded.recovery?.quarantinedLogPath).toContain('.unreadable-');
+    expect(await unreadableLogs(root)).toHaveLength(1);
   });
 
-  test('fails closed on an empty update log during load', async () => {
+  test('opens the snapshot and quarantines an empty update log', async () => {
     const root = await makeRoot();
     const core = Core.new({ installationId: crypto.randomUUID() });
     const store = new WorkspacePersistenceStore(root);
     await store.compact(core.serializeState());
     await writeFile(store.updateLogPath, '');
 
-    await expect(store.load()).rejects.toThrow('Invalid workspace update log');
+    const loaded = await store.load();
+    expect(loaded.snapshot).not.toBeNull();
+    expect(loaded.replay).toEqual([]);
+    expect(loaded.recovery).toBeDefined();
+    expect(await unreadableLogs(root)).toHaveLength(1);
   });
 
   test('rejects a first append from a different replica identity', async () => {
@@ -163,7 +212,7 @@ describe('WorkspacePersistenceStore', () => {
     expect((await store.load()).replay).toHaveLength(1);
   });
 
-  test('rejects a complete but invalid final record without a trailing newline', async () => {
+  test('quarantines a complete but invalid final record without a trailing newline', async () => {
     const root = await makeRoot();
     const store = new WorkspacePersistenceStore(root);
     const core = Core.new({ installationId: crypto.randomUUID() });
@@ -171,10 +220,14 @@ describe('WorkspacePersistenceStore', () => {
     const raw = await readFile(store.updateLogPath, 'utf8');
     await writeFile(store.updateLogPath, `${raw}{"kind":"wrong"}`);
 
-    await expect(store.load()).rejects.toThrow('Invalid workspace update log record');
+    const loaded = await store.load();
+    expect(loaded.snapshot).not.toBeNull();
+    expect(loaded.replay).toEqual([]);
+    expect(loaded.recovery).toBeDefined();
+    expect(await unreadableLogs(root)).toHaveLength(1);
   });
 
-  test('rejects malformed base64 and operation-history metadata in intact records', async () => {
+  test('quarantines malformed base64 and operation-history metadata before replay', async () => {
     const root = await makeRoot();
     const store = new WorkspacePersistenceStore(root);
     const core = Core.new({ installationId: crypto.randomUUID() });
@@ -190,15 +243,20 @@ describe('WorkspacePersistenceStore', () => {
     };
     record.update = 'not-base64';
     await writeFile(store.updateLogPath, `${lines[0]}\n${JSON.stringify(record)}\n`);
-    await expect(store.load()).rejects.toThrow('Invalid workspace update log record');
+    const malformedBase64 = await store.load();
+    expect(malformedBase64.replay).toEqual([]);
+    expect(malformedBase64.recovery).toBeDefined();
 
     record.update = JSON.parse(lines[1]!).update;
     record.local.operationHistoryUpserts = [{}];
     await writeFile(store.updateLogPath, `${lines[0]}\n${JSON.stringify(record)}\n`);
-    await expect(store.load()).rejects.toThrow('Invalid workspace update log record');
+    const malformedHistory = await store.load();
+    expect(malformedHistory.replay).toEqual([]);
+    expect(malformedHistory.recovery).toBeDefined();
+    expect(await unreadableLogs(root)).toHaveLength(2);
   });
 
-  test('discards a torn final record but rejects corruption in the middle', async () => {
+  test('preserves a verified prefix while quarantining corruption after it', async () => {
     const root = await makeRoot();
     const store = new WorkspacePersistenceStore(root);
     const core = Core.new({ installationId: crypto.randomUUID() });
@@ -212,14 +270,23 @@ describe('WorkspacePersistenceStore', () => {
 
     const raw = await readFile(store.updateLogPath, 'utf8');
     const lines = raw.split('\n');
-    lines[1] = '{"kind":"update","broken"';
+    lines[2] = '{"kind":"update","broken"';
     await writeFile(store.updateLogPath, `${lines.join('\n')}`);
-    await expect(store.load()).rejects.toThrow('Invalid workspace update log record');
+    const corrupted = await store.load();
+    expect(corrupted.replay).toHaveLength(1);
+    expect(corrupted.recovery).toBeDefined();
+    const restored = Core.fromPersistenceState(corrupted.snapshot!, corrupted.replay, {
+      installationId: core.persistenceIdentity().installationId,
+    });
+    expect(restored.projection().nodes.some((node) => node.content.text === 'First row')).toBe(true);
+    expect(restored.projection().nodes.some((node) => node.content.text === 'Second row')).toBe(false);
+    expect(await unreadableLogs(root)).toHaveLength(1);
 
     const repaired = `${raw.slice(0, raw.lastIndexOf('\n', raw.length - 2) + 1)}{"kind":"update","broken"`;
     await writeFile(store.updateLogPath, repaired);
     const loaded = await store.load();
     expect(loaded.replay).toHaveLength(1);
+    expect(loaded.recovery).toBeUndefined();
   });
 
   test('treats a stale log header as already absorbed by a newer snapshot', async () => {
@@ -242,7 +309,7 @@ describe('WorkspacePersistenceStore', () => {
     expect((await store.load()).replay).toEqual([]);
   });
 
-  test('rejects a stale log whose records are newer than the snapshot', async () => {
+  test('quarantines a stale log whose records are newer than the snapshot', async () => {
     const root = await makeRoot();
     const store = new WorkspacePersistenceStore(root);
     const core = Core.new({ installationId: crypto.randomUUID() });
@@ -257,11 +324,13 @@ describe('WorkspacePersistenceStore', () => {
     header.snapshotDigest = '0'.repeat(64);
     await writeFile(store.updateLogPath, `${JSON.stringify(header)}\n${lines.slice(1).join('\n')}\n`);
 
-    await expect(new WorkspacePersistenceStore(root).load())
-      .rejects.toThrow('not absorbed by snapshot');
+    const loaded = await new WorkspacePersistenceStore(root).load();
+    expect(loaded.replay).toEqual([]);
+    expect(loaded.recovery).toBeDefined();
+    expect(await unreadableLogs(root)).toHaveLength(1);
   });
 
-  test('rejects a stale log whose version is not contained by the snapshot', async () => {
+  test('quarantines a stale log whose version is not contained by the snapshot', async () => {
     const root = await makeRoot();
     const store = new WorkspacePersistenceStore(root);
     const core = Core.new({ installationId: crypto.randomUUID() });
@@ -278,11 +347,13 @@ describe('WorkspacePersistenceStore', () => {
     record.metadataSequence = 0;
     await writeFile(store.updateLogPath, `${JSON.stringify(header)}\n${JSON.stringify(record)}\n`);
 
-    await expect(new WorkspacePersistenceStore(root).load())
-      .rejects.toThrow('version is not absorbed by snapshot');
+    const loaded = await new WorkspacePersistenceStore(root).load();
+    expect(loaded.replay).toEqual([]);
+    expect(loaded.recovery).toBeDefined();
+    expect(await unreadableLogs(root)).toHaveLength(1);
   });
 
-  test('rejects a replay entry whose recorded version is not reached by its update', async () => {
+  test('quarantines a replay entry whose recorded version is not reached by its update', async () => {
     const root = await makeRoot();
     const store = new WorkspacePersistenceStore(root);
     const core = Core.new({ installationId: crypto.randomUUID() });
@@ -297,12 +368,12 @@ describe('WorkspacePersistenceStore', () => {
     await writeFile(store.updateLogPath, `${lines[0]}\n${JSON.stringify(record)}\n`);
 
     const loaded = await store.load();
-    expect(() => Core.fromPersistenceState(loaded.snapshot!, loaded.replay, {
-      installationId: core.persistenceIdentity().installationId,
-    })).toThrow('workspace persistence replay version mismatch');
+    expect(loaded.replay).toEqual([]);
+    expect(loaded.recovery).toBeDefined();
+    expect(await unreadableLogs(root)).toHaveLength(1);
   });
 
-  test('rejects non-monotonic records and replica identity mismatches', async () => {
+  test('keeps the valid prefix before non-monotonic and identity-mismatched records', async () => {
     const root = await makeRoot();
     const store = new WorkspacePersistenceStore(root);
     const core = Core.new({ installationId: crypto.randomUUID() });
@@ -318,7 +389,9 @@ describe('WorkspacePersistenceStore', () => {
     const record = JSON.parse(lines[2]!) as Record<string, unknown>;
     record.persistenceRevision = 0;
     await writeFile(store.updateLogPath, `${lines[0]}\n${lines[1]}\n${JSON.stringify(record)}\n`);
-    await expect(store.load()).rejects.toThrow('Non-monotonic');
+    const nonMonotonic = await store.load();
+    expect(nonMonotonic.replay).toHaveLength(1);
+    expect(nonMonotonic.recovery).toBeDefined();
 
     record.local = {
       ...(record.local as object),
@@ -326,7 +399,10 @@ describe('WorkspacePersistenceStore', () => {
     };
     record.persistenceRevision = 3;
     await writeFile(store.updateLogPath, `${lines[0]}\n${lines[1]}\n${JSON.stringify(record)}\n`);
-    await expect(store.load()).rejects.toThrow('replica identity mismatch');
+    const identityMismatch = await store.load();
+    expect(identityMismatch.replay).toHaveLength(1);
+    expect(identityMismatch.recovery).toBeDefined();
+    expect(await unreadableLogs(root)).toHaveLength(2);
   });
 
   test('rejects persistence revisions and metadata sequences that move backward from the snapshot baseline', async () => {
@@ -407,6 +483,10 @@ async function makeRoot(): Promise<string> {
   const root = await mkdtemp(path.join(tmpdir(), 'tenon-workspace-persistence-'));
   roots.push(root);
   return root;
+}
+
+async function unreadableLogs(root: string): Promise<string[]> {
+  return (await readdir(root)).filter((entry) => entry.startsWith('workspace.loro.updates.jsonl.unreadable-'));
 }
 
 function failOnCall(target: number): NonNullable<WorkspacePersistenceStoreOptions['fsync']> {

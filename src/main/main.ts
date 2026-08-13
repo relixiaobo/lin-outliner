@@ -489,7 +489,7 @@ const appUpdateService = new AppUpdateService({
 });
 let urlPreviewSession: Electron.Session | null = null;
 const urlPreviewGuests = new Set<Electron.WebContents>();
-let quitCoordinator: AppQuitCoordinator | undefined;
+let quitCoordinator: AppQuitCoordinator;
 let lastAttachmentPickerDirectory: string | null = null;
 const DEFAULT_ATTACHMENT_PICKER_LIMIT = 6;
 const DEFAULT_LOCAL_FILE_SEARCH_LIMIT = 8;
@@ -4438,52 +4438,57 @@ if (!app.requestSingleInstanceLock()) {
     watchDevServer.unref();
   }
 
+  const teardownForQuit = async () => {
+    if (app.isReady()) {
+      unregisterLauncherHotkeys();
+      powerMonitor.removeListener('resume', wakeAutomationsOnResume);
+    }
+    pageTranslationService.dispose();
+    await Promise.race([
+      Promise.allSettled([
+        nodeAccessStore.flushNow(),
+        previewTranslationCache.flushNow(),
+        importApiServer.stop(),
+        closeAgentServices(memoryExtension, threadService, automationService),
+        diagnosticLog.flushNow({ reason: 'before-quit' }),
+        flushUrlPreviewSession(urlPreviewSession),
+      ]),
+      new Promise((resolve) => setTimeout(resolve, 2_500)),
+    ]);
+  };
+  quitCoordinator = new AppQuitCoordinator({
+    freezeAdmission: () => documentService.freezeMutationAdmission(),
+    unfreezeAdmission: () => documentService.unfreezeMutationAdmission(),
+    commitAdmissionFreeze: () => documentService.commitMutationAdmissionFreeze(),
+    latestAcceptedRevision: () => documentService.latestAcceptedPersistenceRevision(),
+    durableRevision: () => documentService.durablePersistenceRevision(),
+    drainToRevision: () => documentService.drainPersistenceForQuit(),
+    showDrainFailure: async (error, outcome): Promise<QuitDecision> => {
+      const strings = getMessages(effectiveLocale()).dialog;
+      const parent = liveWindow(mainWindow);
+      const options: Electron.MessageBoxOptions = {
+        type: 'error',
+        buttons: [strings.retrySave, strings.quitAnyway, strings.cancel],
+        defaultId: 0,
+        cancelId: 2,
+        message: strings.saveFailedTitle,
+        detail: strings.saveFailedDetail,
+      };
+      const response = parent
+        ? await dialog.showMessageBox(parent, options)
+        : await dialog.showMessageBox(options);
+      return response.response === 0 ? 'retry' : response.response === 1 ? 'quit-anyway' : 'cancel';
+    },
+    teardown: teardownForQuit,
+    exit: () => app.exit(0),
+  });
+
   app.whenReady().then(async () => {
     // Restore persisted dynamic model catalogs before Threads or Automations can
     // resolve a saved model. The same best-effort pass cleans legacy keyless rows;
     // neither local catalog corruption nor cleanup failure may block app startup.
     await reconcileProviderConfig().catch(() => { /* best-effort; catalog reads remain guarded */ });
     await documentService.initWorkspace();
-    quitCoordinator = new AppQuitCoordinator({
-      freezeAdmission: () => documentService.freezeMutationAdmission(),
-      unfreezeAdmission: () => documentService.unfreezeMutationAdmission(),
-      latestAcceptedRevision: () => documentService.latestAcceptedPersistenceRevision(),
-      durableRevision: () => documentService.durablePersistenceRevision(),
-      drainToRevision: () => documentService.drainPersistenceForQuit(),
-      showDrainFailure: async (error, outcome): Promise<QuitDecision> => {
-        const strings = getMessages(effectiveLocale()).dialog;
-        const parent = liveWindow(mainWindow);
-        const options: Electron.MessageBoxOptions = {
-          type: 'error',
-          buttons: [strings.retrySave, strings.quitAnyway, strings.cancel],
-          defaultId: 0,
-          cancelId: 2,
-          message: strings.saveFailedTitle,
-          detail: strings.saveFailedDetail,
-        };
-        const response = parent
-          ? await dialog.showMessageBox(parent, options)
-          : await dialog.showMessageBox(options);
-        return response.response === 0 ? 'retry' : response.response === 1 ? 'quit-anyway' : 'cancel';
-      },
-      teardown: async () => {
-        unregisterLauncherHotkeys();
-        powerMonitor.removeListener('resume', wakeAutomationsOnResume);
-        pageTranslationService.dispose();
-        await Promise.race([
-          Promise.allSettled([
-            nodeAccessStore.flushNow(),
-            previewTranslationCache.flushNow(),
-            importApiServer.stop(),
-            closeAgentServices(memoryExtension, threadService, automationService),
-            diagnosticLog.flushNow({ reason: 'before-quit' }),
-            flushUrlPreviewSession(urlPreviewSession),
-          ]),
-          new Promise((resolve) => setTimeout(resolve, 2_500)),
-        ]);
-      },
-      exit: () => app.exit(0),
-    });
     memoryExtension.initializeMutationIndex(documentService.liveProjection());
     await threadService.initialize();
     await memoryExtension.startWorker();
@@ -4572,6 +4577,7 @@ if (!app.requestSingleInstanceLock()) {
     });
   }).catch((error) => {
     console.error(error);
+    if (quitCoordinator.phase() !== 'idle') return;
     app.exit(1);
   });
 
@@ -4580,9 +4586,6 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.on('before-quit', (event) => {
-    // During startup the workspace and coordinator do not exist yet; allow
-    // Electron's normal quit path instead of preventing quit with no handler.
-    if (!quitCoordinator) return;
     event.preventDefault();
     void quitCoordinator.requestQuit().catch((error) => {
       reportError({
@@ -4595,7 +4598,7 @@ if (!app.requestSingleInstanceLock()) {
       });
       // Phase 2 is irreversible. A teardown rejection still calls app.exit and
       // must not reopen document admission after services have started closing.
-      if (quitCoordinator?.phase() === 'idle') documentService.unfreezeMutationAdmission();
+      if (quitCoordinator.phase() === 'idle') documentService.unfreezeMutationAdmission();
     });
   });
 }
