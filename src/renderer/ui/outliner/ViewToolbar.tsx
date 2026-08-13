@@ -139,9 +139,62 @@ interface ViewToolbarProps {
   variant?: 'bar' | 'compact';
 }
 
-// Every dropdown section maps to a real view operation. The fake
-// Table/Cards/Calendar "View as" switcher was removed: only the list view
-// renders, so offering modes that do nothing would be misleading.
+type ViewMode = 'list' | 'table';
+
+interface ViewModeControlProps {
+  viewMode: ViewMode;
+  labels: Pick<ViewToolbarMessages, 'viewMode' | 'outline' | 'table'>;
+  compact?: boolean;
+  onChange: (mode: ViewMode) => void;
+}
+
+const VIEW_MODE_OPTIONS: ReadonlyArray<{
+  mode: ViewMode;
+  icon: IconComponent;
+  label: keyof Pick<ViewToolbarMessages, 'outline' | 'table'>;
+}> = [
+  { mode: 'list', icon: NodeReadToolIcon, label: 'outline' },
+  { mode: 'table', icon: TableIcon, label: 'table' },
+];
+
+// Keep mode selection visibly two-state in the compact result toolbar. The
+// context menu remains a secondary text entry point for users who discover
+// configuration through the node actions surface.
+function ViewModeControl({ viewMode, labels, compact = false, onChange }: ViewModeControlProps) {
+  return (
+    <div
+      aria-label={labels.viewMode}
+      className={`view-toolbar-mode${compact ? ' is-compact' : ''}`}
+      role="group"
+    >
+      {VIEW_MODE_OPTIONS.map(({ mode, icon: Icon, label }) => {
+        const selected = viewMode === mode;
+        const text = labels[label];
+        const classes = [
+          'view-toolbar-mode-button',
+          selected ? 'is-active' : '',
+          compact ? 'view-toolbar-tooltip-anchor' : '',
+        ].filter(Boolean).join(' ');
+        return (
+          <ButtonControl
+            aria-pressed={selected}
+            aria-label={text}
+            className={classes}
+            data-tooltip={compact ? text : undefined}
+            key={mode}
+            onClick={() => onChange(mode)}
+          >
+            <Icon size={ICON_SIZE.menu} />
+            {!compact && <span>{text}</span>}
+          </ButtonControl>
+        );
+      })}
+    </div>
+  );
+}
+
+// Configuration dropdowns remain separate from the mode selector above; each
+// section maps to one persisted view operation.
 type ToolbarSection = ToolbarDropdownSection;
 type OpenSection = ToolbarSection | null;
 type FieldChoice = { id: string; label: string; section: 'System fields' | 'Fields' };
@@ -387,10 +440,10 @@ export function ViewToolbar({
   const tooltipStyle = useAnchoredOverlay(tooltipRef, {
     anchorRect: tooltip?.anchorRect ?? null,
     disabled: !tooltip,
-    gap: 8,
+    gap: 0,
     maxHeight: 80,
-    placement: 'top-center',
-    width: 180,
+    placement: 'bottom-start',
+    width: 'content',
   });
 
   useEffect(() => {
@@ -461,15 +514,20 @@ export function ViewToolbar({
       setTooltip(null);
       return;
     }
-    const rect = element.getBoundingClientRect();
+    const controlRow = toolbarRef.current?.querySelector<HTMLElement>('.view-toolbar-button-row');
+    const lastControl = controlRow?.lastElementChild instanceof HTMLElement
+      ? controlRow.lastElementChild
+      : element;
+    const rect = lastControl.getBoundingClientRect();
+    const left = rect.right + 8;
     setTooltip({
       label,
       anchorRect: {
-        bottom: rect.bottom,
-        left: rect.left,
-        right: rect.right,
+        bottom: rect.top,
+        left,
+        right: left,
         top: rect.top,
-        width: rect.width,
+        width: 0,
       },
     });
   };
@@ -556,37 +614,20 @@ export function ViewToolbar({
               clearLabel={tv.clearNameFilter}
               placeholder={tv.nameFilterPlaceholder}
             />
-            <ButtonControl
-              aria-label={view.viewMode === 'table' ? tv.outline : tv.table}
-              className="view-toolbar-pill view-toolbar-tooltip-anchor"
-              data-tooltip={view.viewMode === 'table' ? tv.outline : tv.table}
-              onClick={() => void run(() => api.setViewMode(node.id, view.viewMode === 'table' ? 'list' : 'table'))}
-            >
-              {view.viewMode === 'table'
-                ? <NodeReadToolIcon size={ICON_SIZE.menu} />
-                : <TableIcon size={ICON_SIZE.menu} />}
-            </ButtonControl>
+            <ViewModeControl
+              compact
+              labels={tv}
+              onChange={(mode) => void run(() => api.setViewMode(node.id, mode))}
+              viewMode={view.viewMode === 'table' ? 'table' : 'list'}
+            />
           </>
         ) : (
           <>
-            <div className="view-toolbar-mode" role="group" aria-label={tv.viewMode}>
-              <ButtonControl
-                aria-pressed={view.viewMode !== 'table'}
-                className={`view-toolbar-mode-button ${view.viewMode !== 'table' ? 'is-active' : ''}`}
-                onClick={() => void run(() => api.setViewMode(node.id, 'list'))}
-              >
-                <NodeReadToolIcon size={ICON_SIZE.menu} />
-                <span>{tv.outline}</span>
-              </ButtonControl>
-              <ButtonControl
-                aria-pressed={view.viewMode === 'table'}
-                className={`view-toolbar-mode-button ${view.viewMode === 'table' ? 'is-active' : ''}`}
-                onClick={() => void run(() => api.setViewMode(node.id, 'table'))}
-              >
-                <TableIcon size={ICON_SIZE.menu} />
-                <span>{tv.table}</span>
-              </ButtonControl>
-            </div>
+            <ViewModeControl
+              labels={tv}
+              onChange={(mode) => void run(() => api.setViewMode(node.id, mode))}
+              viewMode={view.viewMode === 'table' ? 'table' : 'list'}
+            />
             <NameFilterControl
               nameFilter={nameFilter}
               nodeId={node.id}

@@ -30,7 +30,7 @@ interface UseAnchoredOverlayOptions {
   margin?: number;
   maxHeight?: number;
   placement?: OverlayPlacement;
-  width?: number;
+  width?: number | 'content';
 }
 
 const HIDDEN_STYLE: CSSProperties = {
@@ -88,7 +88,10 @@ export function useAnchoredOverlay(
       const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 1024;
       const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 768;
       const maxWidth = Math.max(1, viewportWidth - margin * 2);
-      const width = Math.min(options.width ?? Math.max(anchor.width ?? 0, 220), maxWidth);
+      const requestedWidth = options.width === 'content'
+        ? Math.max(anchor.width ?? 0, overlayRef.current?.scrollWidth ?? 0)
+        : options.width ?? Math.max(anchor.width ?? 0, 220);
+      const width = Math.min(requestedWidth, maxWidth);
       const maxHeight = Math.min(
         options.maxHeight ?? 440,
         Math.max(120, viewportHeight - margin * 2),

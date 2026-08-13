@@ -89,14 +89,16 @@ separate final command.
 Display uses the same custom-before-system grouping as Add field so both field
 entry points present one predictable hierarchy. Search nodes share one compact
 icon-first result-view control across Outline and Table rather than stacking a
-query summary and a full toolbar. Outline exposes name search, Table, Display,
-Group, Sort, and Filter; Table exposes name search, Outline, Sort, and Filter,
+query summary and a full toolbar. Both modes keep Outline and Table visible as
+one two-option mode selector; the node context menu's `View as` submenu remains
+a secondary text entry point. Outline additionally exposes name search, Display,
+Group, Sort, and Filter; Table additionally exposes name search, Sort, and Filter,
 while Add field owns visible-column configuration. The compact variant has no
 summary chips, result count, manual refresh, card fill, or decorative separators;
 activating name search expands its inline input. The title query action remains
 the single query-semantic entry point and temporarily replaces the result-view
 controls with the query editor. Ordinary nodes retain their persisted toolbar
-visibility and full Outline toolbar.
+visibility and full Outline toolbar, reusing the same mode control with labels.
 
 ### Responsive geometry
 
@@ -112,7 +114,8 @@ reserved leading gutter. Add field occupies the trailing grid track, so it sits
 at the right edge on a wide panel instead of immediately after a compact data
 strip. In Search Table, the compact control band starts on the Title text axis
 and stays separate from the field header so `Title` remains a pure column label.
-In Search Outline, the same compact variant aligns with the result content axis.
+In Search Outline, the same compact variant aligns with the result content axis
+derived from the shared row geometry rather than the bullet or selection gutter.
 Neither mode renders a query-summary row. Only the field-header and data-row
 separators remain in Table; the control band adds no frame or divider. Header
 labels and Add field use the existing small UI typography; record titles and

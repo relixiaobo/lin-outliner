@@ -87,7 +87,7 @@ replace or reinterpret the panel-level block-selection model.
 
 | Event | lin-outliner rule | Test coverage |
 | --- | --- | --- |
-| View as > Table / Outline | Persist `table` / `list` on the owner's view definition; never copy or reparent children. On a real Outline-to-Table transition, append missing columns for current-record custom fields in Schema order while preserving hidden configuration and never defaulting system fields. A saved group rule is ignored in Table and restored in Outline. | `table-view.spec.ts`, `core.test.ts`, `rowInteractions.test.ts` |
+| Visible mode selector / View as > Table / Outline | Persist `table` / `list` on the owner's view definition; never copy or reparent children. Search and ordinary toolbars reuse one two-option mode component; the context submenu is a secondary text entry point. On a real Outline-to-Table transition, append missing columns for current-record custom fields in Schema order while preserving hidden configuration and never defaulting system fields. A saved group rule is ignored in Table and restored in Outline. | `search-query-builder.spec.ts`, `table-view.spec.ts`, `core.test.ts`, `rowInteractions.test.ts` |
 | Arrow keys on inactive cell | Move within the logical row/column matrix and clamp at edges. | `tableNavigation.test.ts`, `table-view.spec.ts` |
 | Home / End | Move to the first/last cell in the row; Cmd/Ctrl adds first/last row. | `tableNavigation.test.ts` |
 | Tab / Shift+Tab | Move through logical cells. Inside an editor, blur commits before movement and outline indent/outdent is suppressed. Native Tab leaves at the first/last boundary. | `tableNavigation.test.ts`, `table-view.spec.ts` |

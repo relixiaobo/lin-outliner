@@ -3,7 +3,7 @@ import { openMockedApp } from './outlinerMock';
 
 test.describe('search query builder', () => {
   test.beforeEach(async ({ page }) => {
-    await openMockedApp(page);
+    await openMockedApp(page, { searchReferenceChain: true });
   });
 
   test('opens from the search title action and keeps locked searches read-only', async ({ page }) => {
@@ -37,12 +37,16 @@ test.describe('search query builder', () => {
       .click();
 
     const controls = page.locator('.view-toolbar.is-compact-controls');
-    const emptyState = page.locator('.outliner-empty-state');
+    const firstResult = page.locator('.outliner-flat-flow-row .row').first();
+    const viewMode = controls.getByRole('group', { name: 'View mode', exact: true });
+    const outlineMode = viewMode.getByRole('button', { name: 'Outline', exact: true });
+    const tableMode = viewMode.getByRole('button', { name: 'Table', exact: true });
     await expect(controls).toHaveCount(1);
-    await expect(emptyState).toBeVisible();
+    await expect(firstResult).toBeVisible();
     await expect(page.locator('.search-query-summary-bar')).toHaveCount(0);
     await expect(controls.getByRole('button', { name: 'Filter by name', exact: true })).toBeVisible();
-    await expect(controls.getByRole('button', { name: 'Table', exact: true })).toBeVisible();
+    await expect(outlineMode).toHaveAttribute('aria-pressed', 'true');
+    await expect(tableMode).toHaveAttribute('aria-pressed', 'false');
     await expect(controls.getByRole('button', { name: 'Display', exact: true })).toBeVisible();
     await expect(controls.getByRole('button', { name: 'Group by', exact: true })).toBeVisible();
     await expect(controls.getByRole('button', { name: 'Sort by', exact: true })).toBeVisible();
@@ -52,54 +56,94 @@ test.describe('search query builder', () => {
       const rect = toolbar.getBoundingClientRect();
       const scope = toolbar.parentElement!;
       const scopeRect = scope.getBoundingClientRect();
+      const firstContent = document.querySelector<HTMLElement>('.outliner-flat-flow-row .row-content-line')!;
       const style = getComputedStyle(toolbar);
-      const rowSelectionStart = Number.parseFloat(getComputedStyle(document.documentElement)
-        .getPropertyValue('--row-selection-start'));
       return {
         background: style.backgroundColor,
+        firstContentLeft: firstContent.getBoundingClientRect().left,
         left: rect.left,
         pseudoAfter: getComputedStyle(toolbar, '::after').display,
         pseudoBefore: getComputedStyle(toolbar, '::before').display,
-        rowSelectionStart,
+        resolvedMarginLeft: Number.parseFloat(style.marginLeft),
         scopeLeft: scopeRect.left,
       };
     });
     expect(geometry.background).toBe('rgba(0, 0, 0, 0)');
     expect(geometry.pseudoBefore).toBe('none');
     expect(geometry.pseudoAfter).toBe('none');
-    expect(geometry.left).toBeCloseTo(geometry.scopeLeft + geometry.rowSelectionStart, 1);
-    expect(await controls.evaluate((toolbar, empty) => (
-      Boolean(toolbar.compareDocumentPosition(empty as Node) & Node.DOCUMENT_POSITION_FOLLOWING)
-    ), await emptyState.elementHandle())).toBe(true);
+    expect(geometry.left).toBeCloseTo(geometry.firstContentLeft, 1);
+    expect(geometry.left).toBeCloseTo(geometry.scopeLeft + geometry.resolvedMarginLeft, 1);
+    expect(await controls.evaluate((toolbar, result) => (
+      Boolean(toolbar.compareDocumentPosition(result as Node) & Node.DOCUMENT_POSITION_FOLLOWING)
+    ), await firstResult.elementHandle())).toBe(true);
+
+    const nameFilter = controls.getByRole('button', { name: 'Filter by name', exact: true });
+    await nameFilter.hover();
+    const tooltip = page.getByRole('tooltip');
+    await expect(tooltip).toHaveText('Filter by name');
+    const tooltipGeometry = await tooltip.evaluate((element) => {
+      const controlRow = document.querySelector<HTMLElement>('.view-toolbar-button-row')!;
+      const lastControl = controlRow.lastElementChild as HTMLElement;
+      const title = document.querySelector<HTMLElement>('.panel-title-editor')!;
+      const firstRow = document.querySelector<HTMLElement>('.outliner-flat-flow-row .row')!;
+      const tooltipRect = element.getBoundingClientRect();
+      return {
+        firstRowTop: firstRow.getBoundingClientRect().top,
+        lastControlRight: lastControl.getBoundingClientRect().right,
+        titleBottom: title.getBoundingClientRect().bottom,
+        tooltipBottom: tooltipRect.bottom,
+        tooltipLeft: tooltipRect.left,
+        tooltipTop: tooltipRect.top,
+        tooltipWidth: tooltipRect.width,
+      };
+    });
+    expect(tooltipGeometry.tooltipLeft).toBeGreaterThan(tooltipGeometry.lastControlRight);
+    expect(tooltipGeometry.tooltipTop).toBeGreaterThan(tooltipGeometry.titleBottom);
+    expect(tooltipGeometry.tooltipBottom).toBeLessThanOrEqual(tooltipGeometry.firstRowTop);
+    expect(tooltipGeometry.tooltipWidth).toBeLessThan(180);
 
     await page.setViewportSize({ width: 760, height: originalViewport.height });
     const narrowGeometry = await controls.evaluate((toolbar) => {
       const scope = toolbar.parentElement!;
-      scope.style.width = 'calc(3 * var(--control-size-xl) + var(--row-selection-start))';
-      const toolbarRect = toolbar.getBoundingClientRect();
       const controlSize = Number.parseFloat(getComputedStyle(document.documentElement)
         .getPropertyValue('--control-size-xl'));
-      const buttons = [...toolbar.querySelectorAll<HTMLElement>('.view-toolbar-button-row > .view-toolbar-pill')];
-      const rowTops = new Set(buttons.map((button) => Math.round(button.getBoundingClientRect().top)));
+      const contentStart = Number.parseFloat(getComputedStyle(toolbar).marginLeft);
+      scope.style.width = `calc(3 * var(--control-size-xl) + ${contentStart}px)`;
+      const toolbarRect = toolbar.getBoundingClientRect();
+      const controls = [...toolbar.querySelectorAll<HTMLElement>(
+        '.view-toolbar-button-row > .view-toolbar-pill, .view-toolbar-mode-button',
+      )];
+      const modeButtons = [...toolbar.querySelectorAll<HTMLElement>('.view-toolbar-mode-button')];
+      const modeGroup = toolbar.querySelector<HTMLElement>('.view-toolbar-mode')!;
       const geometry = {
-        controlsContained: buttons.every((button) => {
-          const rect = button.getBoundingClientRect();
+        controlsContained: controls.every((control) => {
+          const rect = control.getBoundingClientRect();
           return rect.left >= toolbarRect.left - 0.5
             && rect.right <= toolbarRect.right + 0.5
             && rect.width >= controlSize - 0.5;
         }),
+        modeGroupIntact: modeButtons.every((button) => (
+          Math.abs(button.getBoundingClientRect().top - modeGroup.getBoundingClientRect().top) < 0.5
+        )) && modeGroup.getBoundingClientRect().width >= (2 * controlSize) - 0.5,
         overflowFree: toolbar.scrollWidth <= toolbar.clientWidth + 1,
-        rowCount: rowTops.size,
+        wrapped: toolbarRect.height > controlSize + 0.5,
       };
       scope.style.removeProperty('width');
       return geometry;
     });
-    expect(narrowGeometry).toEqual({ controlsContained: true, overflowFree: true, rowCount: 2 });
+    expect(narrowGeometry).toEqual({
+      controlsContained: true,
+      modeGroupIntact: true,
+      overflowFree: true,
+      wrapped: true,
+    });
     await page.setViewportSize(originalViewport);
 
-    await controls.getByRole('button', { name: 'Table', exact: true }).click();
+    await tableMode.click();
     const tableControls = page.locator('.outliner-table-scope > .view-toolbar.is-compact-controls');
+    const tableViewMode = tableControls.getByRole('group', { name: 'View mode', exact: true });
     await expect(tableControls).toBeVisible();
-    await expect(tableControls.getByRole('button', { name: 'Outline', exact: true })).toBeVisible();
+    await expect(tableViewMode.getByRole('button', { name: 'Outline', exact: true })).toHaveAttribute('aria-pressed', 'false');
+    await expect(tableViewMode.getByRole('button', { name: 'Table', exact: true })).toHaveAttribute('aria-pressed', 'true');
   });
 });

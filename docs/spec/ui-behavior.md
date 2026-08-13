@@ -258,14 +258,16 @@ longer derives candidates from nodes carrying that deleted tag.
 The node-level view toolbar is the presentation control for Outline child rows
 and saved-search results. For ordinary nodes it lives above rendered rows when
 the node's `viewDef.toolbarVisible` flag is true. Search nodes instead always
-expose one compact icon-first result-view band: Outline provides name search,
-Table, Display, Group, Sort, and Filter; Table provides name search, Outline,
+expose one compact icon-first result-view band. It keeps **Outline** (persisted
+as `list`) and **Table** visible as one two-option mode selector in both modes;
+the active option has `aria-pressed="true"`. Outline additionally provides name
+search, Display, Group, Sort, and Filter; Table additionally provides name search,
 Sort, and Filter, while Add field owns visible-column configuration. The compact
 variant has no summary chips, result count, card fill, or decorative dividers,
-and activating name search expands its inline input. The supported render modes
-are **Outline** (persisted as `list`) and **Table**, selected through the ordinary
-Outline segmented control, the Search compact mode action, or the node context
-menu's **View as** subview. Table ignores a saved group rule without clearing it,
+and activating name search expands its inline input. Ordinary Outline reuses the
+same selector with icon-and-text options. The node context menu's **View as**
+subview remains a secondary text entry point rather than the only discoverable
+mode control. Table ignores a saved group rule without clearing it,
 so returning to Outline restores the same grouping. These controls all read and
 write `viewDef` child nodes
 (`displayField`, `sortRule`, `filterRule`, plus the view's `groupField`) rather
@@ -273,8 +275,9 @@ than storing renderer-local state.
 
 Nested toolbars render as part of the expanded child outline, not as detached
 cards. They remain logically inside the expanded child subtree, while their
-visual indent aligns with the owning node's title/content column instead of the
-first child row. The expanded parent guide line spans the toolbar and
+visual indent aligns with the owning node's title/content column, derived from
+the same row geometry tokens instead of the bullet or selection gutter. The
+expanded parent guide line spans the toolbar and
 descendants. The toolbar itself carries only subtle top/bottom separators; the
 hierarchy line is the main visual divider.
 

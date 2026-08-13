@@ -2,6 +2,11 @@
   display: flex;
   flex-direction: column;
   --outliner-leading-bleed: var(--row-bullet-start);
+  /* The row wrapper bleeds left to expose its marker gutter. Add back the
+     remaining leading grid width to recover the row's content-text axis. */
+  --outliner-row-content-start: calc(
+    var(--row-leading-width) + var(--row-edge) - var(--outliner-leading-bleed)
+  );
   --field-row-min-height: 32px;
   --field-row-padding-block: var(--space-1);
   --field-name-control-height: var(--content-control-height);
@@ -265,7 +270,7 @@
   position: relative;
   display: block;
   width: min(100%, 760px);
-  margin: 2px 0 6px var(--row-selection-start);
+  margin: 2px 0 6px var(--outliner-row-content-start);
   padding: var(--space-1) 0;
   color: var(--text-secondary);
 }
@@ -306,6 +311,17 @@
   padding: var(--space-hairline);
 }
 
+.view-toolbar-mode.is-compact {
+  width: calc(2 * var(--control-size-xl));
+  min-height: var(--control-size-xl);
+  flex: 0 0 calc(2 * var(--control-size-xl));
+  gap: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+}
+
 .view-toolbar-mode-button {
   display: inline-flex;
   min-height: calc(var(--control-size-xl) - 2 * var(--space-hairline));
@@ -315,6 +331,18 @@
   color: var(--text-secondary);
   font-size: var(--font-ui-sm);
   padding: 0 var(--space-3);
+}
+
+.view-toolbar-mode.is-compact .view-toolbar-mode-button {
+  width: var(--control-size-xl);
+  height: var(--control-size-xl);
+  min-height: var(--control-size-xl);
+  gap: 0;
+  padding: 0;
+}
+
+.view-toolbar-mode.is-compact .view-toolbar-mode-button.is-active {
+  background: var(--control-active);
 }
 
 .view-toolbar-mode-button:hover {
@@ -347,8 +375,8 @@
 }
 
 .view-toolbar.is-compact-controls {
-  width: fit-content;
-  max-width: calc(100% - var(--row-selection-start));
+  width: 100%;
+  max-width: calc(100% - var(--outliner-row-content-start));
   padding: 0;
 }
 
