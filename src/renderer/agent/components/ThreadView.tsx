@@ -2013,8 +2013,8 @@ const ThreadTurnView = memo(function ThreadTurnView({
   const contentBlocks = groupTurnContent({ ...turn, items: subagents.items });
   const processItems = contentBlocks.flatMap((block) => block.kind === 'process' ? block.items : []);
   const workingTextEnabled = !waitingOnUserInput && providerRetry === null;
-  const workingTextOwnsMotion = workingTextEnabled
-    && turnUsesWorkingText(turn, processItems, subagents);
+  const motionOwner = turnMotionOwner(turn, processItems, subagents);
+  const workingTextOwnsMotion = workingTextEnabled && motionOwner !== 'none';
   // `groupTurnContent` omits the process block entirely for a Turn with no
   // process Items, so "no response Item" alone does not mean a divider exists
   // to own the terminal status.
@@ -2130,6 +2130,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
               index={index}
               items={block.items}
               onOpenThread={onOpenThread}
+              motionOwner={motionOwner}
               waitingOnUserInput={waitingOnUserInput}
               workingTextEnabled={workingTextEnabled}
               key={`process:${block.items[0]?.id ?? turn.id}`}
@@ -2598,6 +2599,7 @@ function ThreadProcessBlock({
   hasFinalResponse,
   index,
   items,
+  motionOwner,
   subagents,
   turn,
   waitingOnUserInput,
@@ -2608,6 +2610,7 @@ function ThreadProcessBlock({
   readonly hasFinalResponse: boolean;
   readonly index: DocumentIndex;
   readonly items: readonly ThreadItem[];
+  readonly motionOwner: TurnMotionOwner;
   readonly onOpenThread: (threadId: string) => Promise<void>;
   readonly subagents: SubagentTurnProjection;
   readonly turn: Turn;
@@ -2635,10 +2638,9 @@ function ThreadProcessBlock({
     turn, items, hasFinalResponse, liveElapsedMs, t, index, subagents, blockedOnUser,
   );
   const timelineVisible = items.length > 0 && (!collapsible || expanded);
-  const summaryWorking = turn.status === 'inProgress'
+  const summaryWorking = motionOwner === 'summary'
     && !blockedOnUser
-    && workingTextEnabled
-    && !hasSpecificLiveProcessState(turn, items, subagents);
+    && workingTextEnabled;
   const processTitleClassName = `thread-process-title${turn.status === 'inProgress'
     ? ' thread-process-title-live'
     : ''}`;
@@ -2682,19 +2684,25 @@ function ThreadProcessBlock({
   );
 }
 
-function hasSpecificLiveProcessState(
+export type TurnMotionOwner = 'none' | 'summary' | 'leaf';
+
+export function turnMotionOwner(
   turn: Turn,
   items: readonly ThreadItem[],
   subagents: SubagentTurnProjection,
-): boolean {
-  if (items.some((item) => isThreadToolItem(item) && item.status === 'inProgress')) return true;
+): TurnMotionOwner {
+  if (turn.status !== 'inProgress') return 'none';
+  if (items.some((item) => isThreadToolItem(item) && item.status === 'inProgress')) return 'leaf';
   if (items.some((item) => (
     item.type === 'subAgentActivity'
     && isSubagentWorkingStatus(subagents.byThreadId.get(item.agentThreadId)?.status)
-  ))) return true;
+  ))) return 'leaf';
   const tail = turn.items.at(-1);
-  return tail?.type === 'reasoning'
-    || (tail?.type === 'agentMessage' && tail.phase === 'commentary' && Boolean(tail.text.trim()));
+  if (tail?.type === 'reasoning') {
+    return [...tail.summary, ...tail.content].every((part) => !part.trim()) ? 'leaf' : 'none';
+  }
+  if (tail?.type === 'agentMessage' && tail.phase === 'commentary' && tail.text.trim()) return 'none';
+  return 'summary';
 }
 
 function isSubagentWorkingStatus(status: string | undefined): boolean {
@@ -2726,23 +2734,6 @@ function ThreadStreamingIndicator({
       </svg>
     </div>
   );
-}
-
-function turnUsesWorkingText(
-  turn: Turn,
-  items: readonly ThreadItem[],
-  subagents: SubagentTurnProjection,
-): boolean {
-  if (turn.status !== 'inProgress') return false;
-  if (!hasSpecificLiveProcessState(turn, items, subagents)) return true;
-  if (items.some((item) => isThreadToolItem(item) && item.status === 'inProgress')) return true;
-  if (items.some((item) => (
-    item.type === 'subAgentActivity'
-    && isSubagentWorkingStatus(subagents.byThreadId.get(item.agentThreadId)?.status)
-  ))) return true;
-  const tail = turn.items.at(-1);
-  return tail?.type === 'reasoning'
-    && [...tail.summary, ...tail.content].every((part) => !part.trim());
 }
 
 /**

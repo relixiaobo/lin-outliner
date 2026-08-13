@@ -662,7 +662,7 @@
 /* The owning Turn marks its own response glyph directly. The contrast query is
    load-bearing: increased contrast removes WorkingText's sweep, so the response
    shape resumes its animation unless reduced motion independently stops it. */
-@media (prefers-contrast: no-preference) {
+@media not (prefers-contrast: more) {
   .thread-streaming-shape.is-working-text-owned,
   .thread-streaming-shape.is-working-text-owned path {
     animation: none;

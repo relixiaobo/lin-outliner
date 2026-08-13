@@ -408,7 +408,10 @@ interval between visible rows.
 The live status row uses `WorkingText` only while no more-specific mounted live
 tool, empty `Thinking` placeholder, Subagent status, or readable streaming Item
 owns or statically suppresses that cue. Once a specific process representation
-exists, the Turn summary stays static. Completed collapsible summaries and
+exists, the Turn summary stays static. One synchronous `turnMotionOwner`
+classification assigns the live cue to the summary, a mapped leaf, or neither;
+the summary and response shape consume the same result without mount-time
+registration or a post-commit handoff. Completed collapsible summaries and
 terminal summaries are always static. A live status title occupies its full
 divider width and uses tabular numerals, so its once-per-second elapsed update
 does not resize the visible title slot.
@@ -467,7 +470,9 @@ stays present but static while that Turn has a `WorkingText` owner, and reconnec
 recovery replaces it in the same footer slot; one Turn therefore never presents
 two concurrent motion owners. Increased contrast removes the text sweep and
 therefore restores this shape's animation as the live motion cue; reduced
-motion still stops both shape animations. A failed or interrupted Turn
+motion still stops both shape animations. The shape suppression query is the
+exact complement of `prefers-contrast: more`, so `less` and `custom` contrast
+modes retain the same single text-motion owner as the default mode. A failed or interrupted Turn
 with partial response prose keeps its process presentation neutral because the
 response tail already owns the terminal error or stopped state.
 

@@ -89,7 +89,7 @@ describe('thread tool row status CSS guards', () => {
       /\.thread-process-title-live \{\s*width:\s*100%;\s*font-variant-numeric:\s*tabular-nums;/,
     );
     expect(threadCss).toMatch(
-      /@media \(prefers-contrast: no-preference\) \{\s*\.thread-streaming-shape\.is-working-text-owned,\s*\.thread-streaming-shape\.is-working-text-owned path \{\s*animation:\s*none;/,
+      /@media not \(prefers-contrast: more\) \{\s*\.thread-streaming-shape\.is-working-text-owned,\s*\.thread-streaming-shape\.is-working-text-owned path \{\s*animation:\s*none;/,
     );
     expect(threadCss).not.toContain('.thread-turn:has(');
   });

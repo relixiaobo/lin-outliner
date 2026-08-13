@@ -180,9 +180,13 @@ This surface belongs to the first implementation PR.
 Blocked input and retry therefore render the same phrases through static spans
 instead of pausing a gradient after the fact. Nested Subagent `ThreadView`
 instances derive their own gate, so motion ownership never crosses the parent /
-child boundary. The streaming shape receives a direct owning-Turn class rather
-than relying on a descendant `:has()` selector; increased contrast can restore
-that shape when it removes the text sweep.
+child boundary. One synchronous `turnMotionOwner` classification assigns the
+Turn's motion to its summary, a mapped leaf, or neither; both the summary and
+streaming shape consume that result without mount-time registration. The shape
+receives a direct owning-Turn class rather than relying on a descendant `:has()`
+selector. Its suppression query is the exact complement of
+`prefers-contrast: more`, so any contrast mode that retains the text sweep still
+has one motion owner, while increased contrast restores the shape.
 
 The existing Turn/process projection remains authoritative. Working-state
 selection is renderer presentation derived from existing `Turn.status`,

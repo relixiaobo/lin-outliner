@@ -4,6 +4,7 @@ import { en } from '../../src/core/i18n';
 import {
   groupTurnContent,
   threadProcessSummary,
+  turnMotionOwner,
 } from '../../src/renderer/agent/components/ThreadView';
 import {
   collaborationThreadIds,
@@ -98,6 +99,38 @@ describe('Turn process projection', () => {
   });
 });
 
+describe('Turn motion ownership', () => {
+  test('assigns the generic live summary when no specific leaf is active', () => {
+    expect(turnMotionOwner(turn([]), [], subagents([]))).toBe('summary');
+  });
+
+  test('assigns a live tool or Subagent to the leaf', () => {
+    const tool = collaboration('tool', 'list_agents');
+    const activity = subagentActivity('activity', 'child-a');
+    expect(turnMotionOwner(turn([tool]), [tool], subagents([]))).toBe('leaf');
+    expect(turnMotionOwner(turn([activity]), [activity], subagents(['child-a']))).toBe('leaf');
+  });
+
+  test('assigns empty Thinking to the leaf and populated streaming content to none', () => {
+    const empty = reasoning('empty', ['', '   ']);
+    const populated = reasoning('populated', ['Planning the next step.']);
+    expect(turnMotionOwner(turn([empty]), [empty], subagents([]))).toBe('leaf');
+    expect(turnMotionOwner(turn([populated]), [populated], subagents([]))).toBe('none');
+  });
+
+  test('does not assign motion to settled Turns or readable commentary', () => {
+    const commentaryItem = commentary('commentary', 'Checking the workspace.');
+    const settled = {
+      ...turn([]),
+      status: 'completed' as const,
+      completedAt: 2,
+      durationMs: 1,
+    };
+    expect(turnMotionOwner(turn([commentaryItem]), [commentaryItem], subagents([]))).toBe('none');
+    expect(turnMotionOwner(settled, [], subagents([]))).toBe('none');
+  });
+});
+
 function turn(items: readonly ThreadItem[]): Turn {
   return {
     id: 'turn-parent',
@@ -151,6 +184,32 @@ function commentary(id: string, text: string): Extract<ThreadItem, { type: 'agen
     text,
     phase: 'commentary',
     memoryCitation: null,
+  };
+}
+
+function reasoning(id: string, parts: readonly string[]): Extract<ThreadItem, { type: 'reasoning' }> {
+  return {
+    id,
+    provenance: { originThreadId: 'thread-parent', originTurnId: 'turn-parent', originItemId: id },
+    type: 'reasoning',
+    summary: parts,
+    content: [],
+  };
+}
+
+function subagentActivity(
+  id: string,
+  agentThreadId: string,
+): Extract<ThreadItem, { type: 'subAgentActivity' }> {
+  return {
+    id,
+    provenance: { originThreadId: 'thread-parent', originTurnId: 'turn-parent', originItemId: id },
+    type: 'subAgentActivity',
+    kind: 'started',
+    agentThreadId,
+    agentPath: `/root/${agentThreadId}`,
+    error: null,
+    spawnItemId: null,
   };
 }
 
