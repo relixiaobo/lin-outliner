@@ -11,18 +11,23 @@ const ACTION_MENU_LABEL_KEYS = [
   'details', 'rename', 'delete', 'hideFromRecall', 'showInRecall', 'recordsUnavailable',
 ] as const;
 
-function actionMenuLabels(
-  thread: Partial<Record<(typeof ACTION_MENU_LABEL_KEYS)[number], string>> | undefined,
-): string[] {
-  return ACTION_MENU_LABEL_KEYS
-    .map((key) => thread?.[key])
-    .filter((label): label is string => typeof label === 'string');
-}
-
-/** Every string the action menu can render, in every locale that overrides one. */
+/**
+ * Every string the action menu can render, in every locale that overrides one.
+ *
+ * `en` is indexed strictly rather than through an all-optional type, which would
+ * accept the complete object and silently drop a renamed key. That is only half
+ * the protection it looks like: `tsconfig.json` includes `src` alone, so
+ * `bun run typecheck` never reads this file and a stale key here is not a
+ * compile error today. The test therefore checks the key set at runtime too —
+ * see the assertions in the guard. `zhHans` genuinely may omit an override, so
+ * an optional read is right for it, and a key it invents that `Messages` lacks
+ * does fail to compile, in `zh-Hans.ts` itself.
+ */
 const ACTION_MENU_LABELS = [
-  ...actionMenuLabels(en.agent.thread),
-  ...actionMenuLabels(zhHans.agent?.thread),
+  ...ACTION_MENU_LABEL_KEYS.map((key) => en.agent.thread[key]),
+  ...ACTION_MENU_LABEL_KEYS
+    .map((key) => zhHans.agent?.thread?.[key])
+    .filter((label): label is string => typeof label === 'string'),
 ];
 
 async function createNewThread(page: Page): Promise<void> {
@@ -1868,6 +1873,15 @@ test.describe('canonical agent Thread surface', () => {
       expect(item.text, 'every item routes its label through the ellipsizing span').not.toBe('');
       expect(item.overflow, `"${item.text}" is truncated`).toBeLessThanOrEqual(0);
       expect(item.height, `"${item.text}" wrapped to a second line`).toBeLessThanOrEqual(32);
+      // The key list below is hand-written, and nothing typechecks this file, so
+      // a rename that updates the component and the messages leaves it stale and
+      // silently measuring one string fewer. What the menu actually rendered has
+      // to be in the set, or the set is not the set.
+      expect(ACTION_MENU_LABELS, `"${item.text}" is rendered but never measured`).toContain(item.text);
+    }
+
+    for (const key of ACTION_MENU_LABEL_KEYS) {
+      expect(en.agent.thread, `no en label for "${key}" — the key list is stale`).toHaveProperty(key);
     }
 
     // What the menu renders is one locale's answer to one records state: the
@@ -1886,7 +1900,10 @@ test.describe('canonical agent Thread surface', () => {
         return widths;
       }, ACTION_MENU_LABELS);
 
-    expect(measured.length).toBeGreaterThanOrEqual(ACTION_MENU_LABELS.length);
+    // No count assertion here: `measured` is `ACTION_MENU_LABELS.map(...)`, so
+    // any comparison between the two is true by construction. What keeps the set
+    // complete is the strict `en` read where it is built, which fails to
+    // compile rather than at runtime.
     for (const label of measured) {
       expect(label.overflow, `"${label.text}" does not fit the menu`).toBeLessThanOrEqual(0);
     }
