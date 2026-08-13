@@ -90,7 +90,10 @@ The load-bearing rules are:
   introduced. Genuinely concurrent leaf actions may each shimmer.
 - **BR-6:** `prefers-reduced-motion: reduce` and
   `prefers-contrast: more` disable the visual sweep. The static cues in BR-3
-  and each surface's progressive wording remain visible.
+  and each surface's progressive wording remain visible. An in-progress tool's
+  fixed semantic glyph deepens from `--text-faint` to `--text-soft` under either
+  preference; its action text keeps the same resting colour, weight, and
+  geometry as the default path.
 - **BR-7:** one in-flow text layer is both the accessible name/live-region
   payload and the animated paint surface. No duplicate glyph tree is rendered.
 - **BR-8:** the sweep animates only the single text layer's clipped background
@@ -166,11 +169,20 @@ This surface belongs to the first implementation PR.
 | --- | --- | --- |
 | `ThreadProcessBlock` | A live, non-collapsible Turn shows its summary plus `thread-process-spinner`; the completed collapsible branch is already static; `blockedOnUser` already suppresses the spinner | Remove the live spinner. Shimmer the live summary only when no expanded live leaf either owns the working cue or statically suppresses it per BR-5. Give live elapsed labels a full-width slot and tabular numerals so second updates do not change visible geometry. Keep completed collapsible summaries and user-blocked summaries static; do not add motion to either branch. |
 | `ReasoningDisclosure` | An empty live Item shows static `Thinking`; the Turn spinner supplies motion | Wrap only the empty live `Thinking` label in `WorkingText`. Populated reasoning stays readable and static while it streams. |
-| `executionStatusNode` / `ToolItemDisclosure` | `inProgress` replaces the tool glyph with `LoaderIcon` | Always return the tool glyph. Shimmer only the neutral action segment of an in-progress row, keeping its `--text-soft` resting colour and 400 weight identical to a settled row; failure/interruption tallies remain static. A command with `item.description` keeps that exact sentence in every status rather than routing it through command-oriented i18n. |
+| `ToolItemDisclosure` | `inProgress` replaces the tool glyph with `LoaderIcon` | Always pass the tool glyph directly to `DisclosureIndicator`. Shimmer only the neutral action segment of an in-progress row, keeping its `--text-soft` resting colour and 400 weight identical to a settled row; failure/interruption tallies remain static. A command with `item.description` keeps that exact sentence in every status rather than routing it through command-oriented i18n. |
 | `ThreadToolActivityGroup` | A running group spins its group glyph | A collapsed running group shimmers its neutral action segment. When expanded in the DOM, its summary is static and each in-progress member shimmers instead. Finished members never inherit motion. Collapsing or expanding mid-run transfers ownership without a frame where both levels animate. |
 | `SubagentActivityItem` | Running status appends a loader to the `.thread-delegation-row` | Keep the form/Agent glyph and name static; shimmer only the running status phrase. Its lifecycle line reserves the available width, the disclosure consumes the flexible slot, elapsed numerals are tabular, and Stop remains a separate fixed-size action at the stable row edge. |
 | `SubagentStateItem` | An expanded collaboration tool detail shows static Agent identity and status text | Include this surface: keep `AgentIcon` and identity static and shimmer only a running status phrase. Because it is mounted only inside the expanded tool detail, the collapsed parent summary owns motion and the expanded child status owns it after transfer. |
 | `ThreadPlanProgress` | The summary and current checklist step spin; the step also already has strong text while pending steps use a hollow dot | Use the existing `PlanToolIcon` as the stable summary glyph. When closed, shimmer the current-step summary. When open, freeze the summary and keep the current checklist step fully static: replace its loader with a neutral filled dot in the existing fixed status slot, retain strong text and 600 weight, and add `aria-current="step"`. Completed steps keep `CheckIcon`; pending steps keep their static hollow dot. |
+
+`ThreadTurnView` derives one `workingTextEnabled` gate from the owning Thread's
+`waitingOnUserInput` and provider-retry state and passes it to every mapped leaf.
+Blocked input and retry therefore render the same phrases through static spans
+instead of pausing a gradient after the fact. Nested Subagent `ThreadView`
+instances derive their own gate, so motion ownership never crosses the parent /
+child boundary. The streaming shape receives a direct owning-Turn class rather
+than relying on a descendant `:has()` selector; increased contrast can restore
+that shape when it removes the text sweep.
 
 The existing Turn/process projection remains authoritative. Working-state
 selection is renderer presentation derived from existing `Turn.status`,
@@ -214,8 +226,11 @@ The following stay outside `WorkingText` in both PRs:
 - `ThreadProviderRetryStatus`: reconnect/backoff is recovery, not normal work.
   It stays spinner-led in the owning Turn's response footer, replacing that
   Turn's rose generating indicator rather than appearing as a second row below
-  it. While recovery is visible, it also suppresses that Turn's decorative text
-  sweeps so the retry spinner is the sole motion owner.
+  it. While recovery is visible, the owning Turn and closed Plan render their
+  working phrases statically so the retry spinner is the sole motion owner. The
+  visible footer is `aria-hidden`; a separate visually-hidden `role="status"`
+  outside the virtualized Turn list announces retry updates even when the live
+  Turn is unmounted by scrolling.
 - `ProviderOAuthForm`'s fallback `Waiting for authorization...`: it is
   blocked on a browser/person. The current `flow.progress` contract does not
   distinguish active token exchange from external waiting, so the entire row
@@ -309,12 +324,13 @@ outside both PRs.
   only the summary shimmer, and completion removes it.
 - **AC-7:** If a Turn is waiting on user input, failed, interrupted, complete,
   or represented by its completed collapsible summary, it contains no
-  `WorkingText` and announces its existing static status.
+  `WorkingText` and announces its existing static status. This includes the
+  still-in-progress `request_user_input` row and any closed Plan.
 - **AC-8:** A `WorkingText` instance exposes and renders its text exactly once;
   the accessible node is also the paint-only animation surface.
 - **AC-9:** Under reduced motion or increased contrast, the gradient is absent
   and every mapped row remains distinguishable as working through progressive
-  copy, the in-progress tool-action colour, or the Plan's static current-step
+  copy, the in-progress tool glyph colour, or the Plan's static current-step
   cues.
 - **AC-10:** With a narrow long English or Chinese label, the one animated text
   layer preserves its rendered width, white-space, overflow, ellipsis, and
@@ -330,7 +346,9 @@ outside both PRs.
   and every terminal surface retain their existing indicator and never receive
   `WorkingText` accidentally. Reconnect renders in its owning Turn's response
   footer and replaces, rather than stacks below, the rose generating indicator;
-  any existing decorative text sweep in that Turn pauses until recovery clears.
+  all mapped phrases in that Turn and its closed Plan render statically until
+  recovery clears. Its live announcement remains mounted across Turn
+  virtualization, and nested Threads arbitrate their own motion independently.
 
 Focused automated coverage should update or add these test titles:
 

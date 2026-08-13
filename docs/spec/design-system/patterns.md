@@ -171,7 +171,9 @@ remain in the dock and never become authorization overlays.
   motion to an expanded live child, or stops when the expanded child has sufficient
   static cues. `prefers-reduced-motion: reduce` and `prefers-contrast: more`
   restore ordinary static text fill, so progressive wording, neutral colour, or
-  a status mark must identify the state without motion. Waiting on a person or
+  a status mark must identify the state without motion. A tool may deepen only
+  its fixed semantic glyph under those preferences; do not change the working
+  phrase's colour, weight, or metrics. Waiting on a person or
   external authorization, retry backoff,
   disconnected dependencies, terminal outcomes, and ordinary resource loading do
   not use `WorkingText`.

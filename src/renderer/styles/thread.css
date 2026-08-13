@@ -659,19 +659,14 @@
   animation: thread-shape var(--motion-shape-cycle) ease-in-out infinite;
 }
 
-/* One Turn gets one motion owner. While a named process phrase is sweeping,
-   the response glyph keeps its identity but does not add a second cadence. */
-.thread-turn:has(.working-text) .thread-streaming-shape,
-.thread-turn:has(.working-text) .thread-streaming-shape path {
-  animation: none;
-}
-
-/* Recovery owns the Turn's motion while it is visible. Keep the underlying
-   working phrases readable, but do not sweep them beside the retry spinner. */
-.thread-turn:has(.thread-provider-retry) .working-text-base {
-  animation: none;
-  background: none;
-  -webkit-text-fill-color: currentColor;
+/* The owning Turn marks its own response glyph directly. The contrast query is
+   load-bearing: increased contrast removes WorkingText's sweep, so the response
+   shape resumes its animation unless reduced motion independently stops it. */
+@media (prefers-contrast: no-preference) {
+  .thread-streaming-shape.is-working-text-owned,
+  .thread-streaming-shape.is-working-text-owned path {
+    animation: none;
+  }
 }
 
 .thread-shape-stop-0 {
@@ -1481,6 +1476,16 @@
 .thread-tool-interrupted > .thread-tool-toggle .thread-disclosure-status,
 .thread-tool-interrupted > .thread-tool-toggle .thread-tool-label {
   color: var(--text-faint);
+}
+
+/* WorkingText becomes ordinary static text for either accessibility preference.
+   Deepen only the semantic glyph so an in-progress tool still differs from a
+   completed sibling without changing text metrics or its neutral resting ink. */
+@media (prefers-reduced-motion: reduce), (prefers-contrast: more) {
+  .thread-tool-inProgress > .thread-tool-toggle .thread-disclosure-status,
+  .thread-tool-inProgress > .thread-tool-activity-toggle .thread-disclosure-status {
+    color: var(--text-soft);
+  }
 }
 
 /* A group summarizes mixed outcomes, so only the tally of what went wrong is

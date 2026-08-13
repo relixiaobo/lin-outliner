@@ -84,15 +84,19 @@ describe('thread tool row status CSS guards', () => {
     expect(threadCss).not.toMatch(/\.thread-tool-inProgress[^{]*\.thread-disclosure-status svg\s*\{[^}]*animation:/);
   });
 
-  test('reserves stable live elapsed geometry and one Turn motion owner', () => {
+  test('reserves stable live elapsed geometry and scopes motion ownership to the owning Turn', () => {
     expect(threadCss).toMatch(
       /\.thread-process-title-live \{\s*width:\s*100%;\s*font-variant-numeric:\s*tabular-nums;/,
     );
     expect(threadCss).toMatch(
-      /\.thread-turn:has\(\.working-text\) \.thread-streaming-shape,\s*\.thread-turn:has\(\.working-text\) \.thread-streaming-shape path \{\s*animation:\s*none;/,
+      /@media \(prefers-contrast: no-preference\) \{\s*\.thread-streaming-shape\.is-working-text-owned,\s*\.thread-streaming-shape\.is-working-text-owned path \{\s*animation:\s*none;/,
     );
+    expect(threadCss).not.toContain('.thread-turn:has(');
+  });
+
+  test('keeps a static neutral running glyph when working motion is unavailable', () => {
     expect(threadCss).toMatch(
-      /\.thread-turn:has\(\.thread-provider-retry\) \.working-text-base \{[^}]*animation:\s*none;[^}]*background:\s*none;[^}]*-webkit-text-fill-color:\s*currentColor;/s,
+      /@media \(prefers-reduced-motion: reduce\), \(prefers-contrast: more\) \{[\s\S]*?\.thread-tool-inProgress > \.thread-tool-toggle \.thread-disclosure-status,\s*\.thread-tool-inProgress > \.thread-tool-activity-toggle \.thread-disclosure-status \{\s*color:\s*var\(--text-soft\);/,
     );
   });
 

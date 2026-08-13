@@ -138,8 +138,8 @@ interface ThreadViewProps {
   readonly latestTurnByThread: ReadonlyMap<ThreadId, Turn>;
   readonly turns: readonly Turn[];
   readonly inputRequest: RequestUserInputRequest | null;
-  /** The run is blocked on the user. The divider stops claiming work is
-   *  happening, and the elapsed timer stops counting the wait as work. */
+  /** The run is blocked on the user. Working phrases become static and the
+   *  divider names the wait; elapsed time remains the Turn's wall-clock span. */
   readonly waitingOnUserInput: boolean;
   readonly providerRetry: { readonly turnId: string; readonly status: ProviderRetryStatus } | null;
   readonly plan: ActiveTurnPlan | null;
@@ -538,6 +538,7 @@ export function ThreadView({
   const liveReasoningSeen = useRef(new Set<string>()).current;
   const activeTurn = useMemo(() => findActiveTurn(turns), [turns]);
   const activePlan = activeTurn && plan?.turnId === activeTurn.id ? plan : null;
+  const activeWorkingTextEnabled = !waitingOnUserInput && providerRetry === null;
   const editableTurnId = useMemo(() => latestUserMessageTurnId(turns), [turns]);
   const turnCountRef = useRef(turns.length);
   turnCountRef.current = turns.length;
@@ -1734,12 +1735,13 @@ export function ThreadView({
           </ButtonControl>
         ) : null}
       </div>
+      {providerRetry ? <ThreadProviderRetryAnnouncement status={providerRetry.status} /> : null}
       {/* A watched child or automation Thread has no composer, but `update_plan`
           is `anyThread`-scoped — so it has a Plan, and used to have nowhere to
           show it. Read-only there: no composer to hand focus back to. */}
       {!composerEnabled && activePlan ? (
         <div className="thread-composer-region thread-plan-progress-region">
-          <ThreadPlanProgress plan={activePlan} working={!waitingOnUserInput} />
+          <ThreadPlanProgress plan={activePlan} working={activeWorkingTextEnabled} />
         </div>
       ) : null}
       {composerEnabled ? <div className="thread-composer-region thread-composer" ref={composerRegionRef}>
@@ -1747,7 +1749,7 @@ export function ThreadView({
           <ThreadPlanProgress
             onClosed={() => composerRef.current?.focus()}
             plan={activePlan}
-            working={!waitingOnUserInput}
+            working={activeWorkingTextEnabled}
           />
         ) : null}
         <div
@@ -2009,6 +2011,10 @@ const ThreadTurnView = memo(function ThreadTurnView({
     [latestTurnByThread, threadsById, turn],
   );
   const contentBlocks = groupTurnContent({ ...turn, items: subagents.items });
+  const processItems = contentBlocks.flatMap((block) => block.kind === 'process' ? block.items : []);
+  const workingTextEnabled = !waitingOnUserInput && providerRetry === null;
+  const workingTextOwnsMotion = workingTextEnabled
+    && turnUsesWorkingText(turn, processItems, subagents);
   // `groupTurnContent` omits the process block entirely for a Turn with no
   // process Items, so "no response Item" alone does not mean a divider exists
   // to own the terminal status.
@@ -2078,6 +2084,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
       onOpenDetails={() => onOpenTurnDetails(turn)}
       onRetry={retryContent ? () => onEditUserMessage(turn, retryContent) : null}
       providerRetry={providerRetry}
+      workingTextOwnsMotion={workingTextOwnsMotion}
       // The process divider states the terminal status when there is no
       // response Item — but only if a process block renders at all. Without
       // one, suppressing it here would erase the status from the Turn.
@@ -2109,6 +2116,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
       subagents={subagents.byThreadId}
       threadId={threadId}
       threadCwd={threadCwd}
+      workingTextEnabled={workingTextEnabled}
     />
   );
   return (
@@ -2123,6 +2131,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
               items={block.items}
               onOpenThread={onOpenThread}
               waitingOnUserInput={waitingOnUserInput}
+              workingTextEnabled={workingTextEnabled}
               key={`process:${block.items[0]?.id ?? turn.id}`}
               subagents={subagents}
               turn={turn}
@@ -2139,6 +2148,7 @@ const ThreadTurnView = memo(function ThreadTurnView({
                   subagents={subagents.byThreadId}
                   threadId={threadId}
                   threadCwd={threadCwd}
+                  workingTextEnabled={workingTextEnabled}
                 />
               ) : renderItem(group.item, false))}
             </ThreadProcessBlock>
@@ -2175,6 +2185,7 @@ function ThreadResponseTail({
   providerRetry,
   statusOwnedElsewhere,
   turn,
+  workingTextOwnsMotion,
 }: {
   /**
    * Forking a Thread starts a conversation, which a read-only embedded view
@@ -2190,6 +2201,7 @@ function ThreadResponseTail({
   readonly providerRetry: ProviderRetryStatus | null;
   readonly statusOwnedElsewhere: boolean;
   readonly turn: Turn;
+  readonly workingTextOwnsMotion: boolean;
 }) {
   const t = useT();
   const [usageHoverOpen, setUsageHoverOpen] = useState(false);
@@ -2225,7 +2237,7 @@ function ThreadResponseTail({
         {streaming ? (
           providerRetry
             ? <ThreadProviderRetryStatus status={providerRetry} />
-            : <ThreadStreamingIndicator />
+            : <ThreadStreamingIndicator workingTextOwnsMotion={workingTextOwnsMotion} />
         ) : (
           <div className="thread-message-actions thread-response-actions">
             {onRetry ? (
@@ -2339,10 +2351,24 @@ function ThreadUsageHoverCard({
 function ThreadProviderRetryStatus({ status }: { readonly status: ProviderRetryStatus }) {
   const t = useT();
   return (
-    <div aria-atomic="true" aria-live="polite" className="thread-provider-retry" role="status">
+    <div aria-hidden className="thread-provider-retry">
       <LoaderIcon aria-hidden size={ICON_SIZE.tiny} />
       <span>{t.agent.thread.reconnecting({ attempt: status.attempt, maxRetries: status.maxRetries })}</span>
     </div>
+  );
+}
+
+function ThreadProviderRetryAnnouncement({ status }: { readonly status: ProviderRetryStatus }) {
+  const t = useT();
+  return (
+    <span
+      aria-atomic="true"
+      aria-live="polite"
+      className="thread-provider-retry-announcer thread-visually-hidden"
+      role="status"
+    >
+      {t.agent.thread.reconnecting({ attempt: status.attempt, maxRetries: status.maxRetries })}
+    </span>
   );
 }
 
@@ -2575,6 +2601,7 @@ function ThreadProcessBlock({
   subagents,
   turn,
   waitingOnUserInput,
+  workingTextEnabled,
 }: {
   readonly children: ReactNode;
   readonly expandState: ThreadDisclosureState;
@@ -2585,6 +2612,7 @@ function ThreadProcessBlock({
   readonly subagents: SubagentTurnProjection;
   readonly turn: Turn;
   readonly waitingOnUserInput: boolean;
+  readonly workingTextEnabled: boolean;
 }) {
   const t = useT();
   const disclosureId = `process:${turn.id}`;
@@ -2609,6 +2637,7 @@ function ThreadProcessBlock({
   const timelineVisible = items.length > 0 && (!collapsible || expanded);
   const summaryWorking = turn.status === 'inProgress'
     && !blockedOnUser
+    && workingTextEnabled
     && !hasSpecificLiveProcessState(turn, items, subagents);
   const processTitleClassName = `thread-process-title${turn.status === 'inProgress'
     ? ' thread-process-title-live'
@@ -2672,12 +2701,20 @@ function isSubagentWorkingStatus(status: string | undefined): boolean {
   return status === 'pendingInit' || status === 'running';
 }
 
-function ThreadStreamingIndicator() {
+function ThreadStreamingIndicator({
+  workingTextOwnsMotion,
+}: {
+  readonly workingTextOwnsMotion: boolean;
+}) {
   const t = useT();
   const gradientId = `thread-shape-${useId().replaceAll(':', '')}`;
   return (
     <div className="thread-streaming-indicator" aria-label={t.agent.message.assistantResponding}>
-      <svg aria-hidden className="thread-streaming-shape" viewBox="0 0 48 48">
+      <svg
+        aria-hidden
+        className={`thread-streaming-shape${workingTextOwnsMotion ? ' is-working-text-owned' : ''}`}
+        viewBox="0 0 48 48"
+      >
         <defs>
           <linearGradient className="thread-shape-gradient" id={gradientId} x1="0" x2="0" y1="0" y2="1">
             <stop className="thread-shape-stop-0" offset="0%" />
@@ -2689,6 +2726,23 @@ function ThreadStreamingIndicator() {
       </svg>
     </div>
   );
+}
+
+function turnUsesWorkingText(
+  turn: Turn,
+  items: readonly ThreadItem[],
+  subagents: SubagentTurnProjection,
+): boolean {
+  if (turn.status !== 'inProgress') return false;
+  if (!hasSpecificLiveProcessState(turn, items, subagents)) return true;
+  if (items.some((item) => isThreadToolItem(item) && item.status === 'inProgress')) return true;
+  if (items.some((item) => (
+    item.type === 'subAgentActivity'
+    && isSubagentWorkingStatus(subagents.byThreadId.get(item.agentThreadId)?.status)
+  ))) return true;
+  const tail = turn.items.at(-1);
+  return tail?.type === 'reasoning'
+    && [...tail.summary, ...tail.content].every((part) => !part.trim());
 }
 
 /**

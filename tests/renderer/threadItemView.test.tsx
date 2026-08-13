@@ -557,6 +557,20 @@ describe('ThreadItemView tool row status presentation', () => {
     expect(input?.textContent).not.toContain('"command"');
   });
 
+  test('keeps an in-progress tool static while its Turn is blocked or recovering', async () => {
+    const rendered = renderItem(dynamic({
+      tool: 'request_user_input',
+      args: { questions: [] },
+      status: 'inProgress',
+    }), { workingTextEnabled: false });
+    await flush();
+
+    const label = rendered.document.querySelector('.thread-tool-label');
+    expect(label?.textContent).toBe('Asking a question');
+    expect(label?.querySelector('.working-text')).toBeNull();
+    expect(rendered.document.querySelector('.thread-tool-inProgress')).not.toBeNull();
+  });
+
   test('hangs the exit code on the output it explains, under the arguments that requested it', async () => {
     const rendered = renderItem(
       command({ status: 'failed', exitCode: 2, aggregatedOutput: 'permission denied' }),
@@ -1103,11 +1117,22 @@ function base(id: string) {
   } as const;
 }
 
-function renderGroup(items: readonly ThreadToolItem[]): { readonly document: Document } {
-  return renderTree(<ThreadToolGroupProbe items={items} />);
+function renderGroup(
+  items: readonly ThreadToolItem[],
+  workingTextEnabled = true,
+): { readonly document: Document } {
+  return renderTree(
+    <ThreadToolGroupProbe items={items} workingTextEnabled={workingTextEnabled} />,
+  );
 }
 
-function ThreadToolGroupProbe({ items }: { readonly items: readonly ThreadToolItem[] }) {
+function ThreadToolGroupProbe({
+  items,
+  workingTextEnabled,
+}: {
+  readonly items: readonly ThreadToolItem[];
+  readonly workingTextEnabled: boolean;
+}) {
   const [expanded, setExpanded] = useState(false);
   return (
     <ThreadToolActivityGroup
@@ -1126,6 +1151,7 @@ function ThreadToolGroupProbe({ items }: { readonly items: readonly ThreadToolIt
       onReadToolOutput={async () => null}
       threadCwd="/workspace"
       threadId="thread-1"
+      workingTextEnabled={workingTextEnabled}
     />
   );
 }
@@ -1144,6 +1170,7 @@ interface RenderItemOptions {
   readonly onInterruptThread?: (threadId: string) => Promise<void>;
   readonly streaming?: boolean;
   readonly subagents?: ReadonlyMap<string, SubagentPresentation>;
+  readonly workingTextEnabled?: boolean;
 }
 
 function renderItem(item: ThreadItem, options: RenderItemOptions = {}): {
@@ -1166,6 +1193,7 @@ function renderItem(item: ThreadItem, options: RenderItemOptions = {}): {
         onReadToolOutput={onReadToolOutput}
         streaming={(next.streaming ?? options.streaming) === true}
         subagents={options.subagents}
+        workingTextEnabled={next.workingTextEnabled ?? options.workingTextEnabled ?? true}
       />
     </I18nProvider>,
   ));
@@ -1253,6 +1281,7 @@ function ThreadItemProbe({
   streaming,
   subagents,
   onInterruptThread,
+  workingTextEnabled,
 }: {
   readonly expandState?: ThreadDisclosureState;
   readonly holdAnchorUntilSettled: ThreadDisclosureState['holdAnchorUntilSettled'];
@@ -1263,6 +1292,7 @@ function ThreadItemProbe({
   readonly onInterruptThread?: (threadId: string) => Promise<void>;
   readonly streaming: boolean;
   readonly subagents?: ReadonlyMap<string, SubagentPresentation>;
+  readonly workingTextEnabled: boolean;
 }) {
   const [expanded, setExpanded] = useState(initiallyExpanded);
   return (
@@ -1290,6 +1320,7 @@ function ThreadItemProbe({
       subagents={subagents}
       threadCwd="/workspace"
       threadId="thread-1"
+      workingTextEnabled={workingTextEnabled}
     />
   );
 }

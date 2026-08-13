@@ -2133,7 +2133,10 @@ test.describe('canonical agent Thread surface', () => {
     const fixture = await page.evaluate(async () => {
       const target = window as Window & {
         lin?: { agentCoreRequest: <T>(m: string, i?: Record<string, unknown>) => Promise<T> };
-        __LIN_E2E__?: { emitAgentCoreNotification: (n: unknown) => void };
+        __LIN_E2E__?: {
+          emitAgentCoreNotification: (n: unknown) => void;
+          setMockThreadTurns: (threadId: string, turns: readonly unknown[]) => void;
+        };
       };
       const response = await target.lin?.agentCoreRequest<{ data: Array<Record<string, unknown>> }>('thread/list', {});
       const root = response?.data[0];
@@ -2403,7 +2406,7 @@ test.describe('canonical agent Thread surface', () => {
     await expect(detail).toBeVisible();
     await expect(detail.locator('.thread-subagent-detail-title')).toHaveText('live worker');
   });
-  test('shows a live row for an isolated Skill child while its skill call is in flight', async ({ page }) => {
+  test('shows a live isolated Skill child and keeps nested Thread motion independent', async ({ page }) => {
     await createNewThread(page);
     const fixture = await page.evaluate(async () => {
       const target = window as Window & {
@@ -2419,6 +2422,7 @@ test.describe('canonical agent Thread surface', () => {
       const activityId = '01910000-0000-7000-8000-00000000df03';
       const childId = '01910000-0000-7000-8000-00000000df10';
       const childTurnId = '01910000-0000-7000-8000-00000000df11';
+      const childReasoningId = '01910000-0000-7000-8000-00000000df12';
       const taskPath = '/root/skill_research_ab12cd34ef56';
       const startedAt = Date.now() - 5_000;
       target.__LIN_E2E__?.emitAgentCoreNotification({
@@ -2438,25 +2442,37 @@ test.describe('canonical agent Thread surface', () => {
           updatedAt: startedAt,
         },
       });
+      const childTurn = {
+        id: childTurnId,
+        items: [{
+          id: childReasoningId,
+          type: 'reasoning',
+          provenance: {
+            originThreadId: childId,
+            originTurnId: childTurnId,
+            originItemId: childReasoningId,
+          },
+          summary: ['Inspecting the delegated evidence'],
+          content: [],
+        }],
+        itemsView: 'full',
+        provenance: {
+          originThreadId: childId,
+          originTurnId: childTurnId,
+          trigger: { kind: 'subagent', parentThreadId, parentItemId: skillItemId },
+        },
+        status: 'inProgress',
+        error: null,
+        startedAt,
+        completedAt: null,
+        durationMs: null,
+      };
+      target.__LIN_E2E__?.setMockThreadTurns(childId, [childTurn]);
       target.__LIN_E2E__?.emitAgentCoreNotification({
         type: 'turn/started',
         threadId: childId,
         turnId: childTurnId,
-        turn: {
-          id: childTurnId,
-          items: [],
-          itemsView: 'full',
-          provenance: {
-            originThreadId: childId,
-            originTurnId: childTurnId,
-            trigger: { kind: 'subagent', parentThreadId, parentItemId: skillItemId },
-          },
-          status: 'inProgress',
-          error: null,
-          startedAt,
-          completedAt: null,
-          durationMs: null,
-        },
+        turn: childTurn,
       });
       const provenance = (itemId: string) => ({
         originThreadId: parentThreadId,
@@ -2510,7 +2526,7 @@ test.describe('canonical agent Thread surface', () => {
           durationMs: null,
         },
       });
-      return { childId, parentTurnId, taskPath };
+      return { childId, childTurnId, parentTurnId, taskPath };
     });
 
     const parentTurn = page.locator(`[data-thread-turn-row="${fixture.parentTurnId}"]`);
@@ -2529,6 +2545,24 @@ test.describe('canonical agent Thread surface', () => {
     const detail = page.locator('.thread-subagent-detail');
     await expect(detail).toBeVisible();
     await expect(detail.getByRole('textbox', { name: 'Message this Thread' })).toHaveCount(0);
+    await expect(detail.locator('.working-text')).toHaveCount(0);
+    await expect(detail.locator('.thread-streaming-shape')).toHaveCSS('animation-name', 'thread-shape-spin');
+    const parentSkillSweep = parentTurn.locator('.thread-tool-inProgress .working-text-base');
+    await expect(parentSkillSweep).toHaveCSS('animation-name', 'working-text-sweep');
+
+    await page.evaluate(({ childId, childTurnId }) => {
+      const target = window as Window & {
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/providerRetry/changed',
+        threadId: childId,
+        turnId: childTurnId,
+        status: { kind: 'stream', attempt: 1, maxRetries: 3 },
+      });
+    }, fixture);
+    await expect(detail.locator('.thread-provider-retry')).toHaveText('Reconnecting 1/3');
+    await expect(parentSkillSweep).toHaveCSS('animation-name', 'working-text-sweep');
   });
 
 
@@ -2748,7 +2782,7 @@ test.describe('canonical agent Thread surface', () => {
               id: answerId,
               type: 'agentMessage',
               provenance: provenance(answerId),
-              phase: 'final',
+              phase: 'final_answer',
               text: 'Delegated and answered.',
             },
       ];
@@ -3782,13 +3816,33 @@ test.describe('canonical agent Thread surface', () => {
         __LIN_E2E__?: { emitAgentCoreNotification: (n: unknown) => void };
       };
       const liveTurnId = '01910000-0000-7000-8000-00000000c003';
+      const inputToolId = '01910000-0000-7000-8000-00000000c004';
       target.__LIN_E2E__?.emitAgentCoreNotification({
         type: 'turn/started',
         threadId,
         turnId: liveTurnId,
         turn: {
           id: liveTurnId,
-          items: [],
+          items: [{
+            id: inputToolId,
+            type: 'dynamicToolCall',
+            provenance: { originThreadId: threadId, originTurnId: liveTurnId, originItemId: inputToolId },
+            namespace: null,
+            tool: 'request_user_input',
+            arguments: { questions: [] },
+            modelCall: {
+              disposition: 'replayable',
+              identity: { namespace: null, name: 'request_user_input' },
+              providerName: 'request_user_input',
+              arguments: { storage: 'inline', value: { questions: [] } },
+              schemaDigest: '0'.repeat(64),
+            },
+            status: 'inProgress',
+            outputRef: null,
+            contentItems: null,
+            success: null,
+            durationMs: null,
+          }],
           itemsView: 'full',
           provenance: { originThreadId: threadId, originTurnId: liveTurnId, trigger: { kind: 'user' } },
           status: 'inProgress',
@@ -3815,6 +3869,9 @@ test.describe('canonical agent Thread surface', () => {
     const live = page.locator('.thread-process-block').last();
     await expect(live.locator('.thread-process-title')).toHaveText('Waiting for input');
     await expect(live.locator('.working-text')).toHaveCount(0);
+    const requestedInput = live.locator('.thread-tool-inProgress');
+    await expect(requestedInput).toContainText('Asking a question');
+    await expect(requestedInput.locator('.working-text')).toHaveCount(0);
     const blockedPlan = page.locator('.thread-plan-progress-summary');
     await expect(blockedPlan).toHaveText('1/1 · Answer the clarification');
     await expect(blockedPlan.locator('.working-text')).toHaveCount(0);
@@ -4455,6 +4512,13 @@ test.describe('canonical agent Thread surface', () => {
           durationMs: null,
         },
       });
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/plan/updated',
+        threadId,
+        turnId: liveTurnId,
+        explanation: null,
+        plan: [{ step: 'Wait for the command output', status: 'in_progress' }],
+      });
       return { threadId, turnId: liveTurnId };
     });
 
@@ -4502,6 +4566,7 @@ test.describe('canonical agent Thread surface', () => {
     await expect(groupToggle.locator('.thread-disclosure-status svg')).toHaveCSS('animation-name', 'none');
     const groupSweep = groupToggle.locator('.working-text-base');
     await expect(groupSweep).toHaveCSS('animation-name', 'working-text-sweep');
+    await expect(page.locator('.thread-plan-progress .working-text')).toHaveCount(1);
     await page.evaluate(({ threadId, turnId }) => {
       const target = window as Window & {
         __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
@@ -4514,7 +4579,8 @@ test.describe('canonical agent Thread surface', () => {
       });
     }, ids);
     await expect(turn.locator('.thread-provider-retry')).toHaveText('Reconnecting 1/3');
-    await expect(groupSweep).toHaveCSS('animation-name', 'none');
+    await expect(groupToggle.locator('.working-text')).toHaveCount(0);
+    await expect(page.locator('.thread-plan-progress .working-text')).toHaveCount(0);
     await page.evaluate(({ threadId, turnId }) => {
       const target = window as Window & {
         __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
@@ -4526,7 +4592,10 @@ test.describe('canonical agent Thread surface', () => {
         status: null,
       });
     }, ids);
-    await expect(groupSweep).toHaveCSS('display', 'block');
+    const resumedGroupSweep = groupToggle.locator('.working-text-base');
+    await expect(resumedGroupSweep).toHaveCSS('display', 'block');
+    await expect(resumedGroupSweep).toHaveCSS('animation-name', 'working-text-sweep');
+    await expect(page.locator('.thread-plan-progress .working-text')).toHaveCount(1);
     await expect(group.locator('.thread-tool-activity-members')).toHaveCount(0);
 
     // The semantic group glyph uses the ordinary disclosure handoff on hover.
@@ -4550,6 +4619,81 @@ test.describe('canonical agent Thread surface', () => {
     await groupToggle.click();
     await expect(group.locator('.thread-tool-activity-members')).toHaveCount(0);
     await expect(groupToggle.locator('.working-text')).toHaveCount(1);
+  });
+
+  test('keeps working state legible for reduced motion and increased contrast', async ({ page }) => {
+    await createNewThread(page);
+    await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+      const threadId = response?.data[0]?.id;
+      if (!threadId) throw new Error('Mock Thread not found');
+      const turnId = '01910000-0000-7000-8000-00000000b111';
+      const toolId = '01910000-0000-7000-8000-00000000b112';
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/started',
+        threadId,
+        turnId,
+        turn: {
+          id: turnId,
+          items: [{
+            id: toolId,
+            type: 'commandExecution',
+            provenance: { originThreadId: threadId, originTurnId: turnId, originItemId: toolId },
+            command: 'sleep 30',
+            modelCall: {
+              disposition: 'replayable',
+              identity: { namespace: null, name: 'bash' },
+              providerName: 'bash',
+              arguments: { storage: 'inline', value: { command: 'sleep 30' } },
+              schemaDigest: '0'.repeat(64),
+            },
+            description: 'Wait for the background process',
+            cwd: '/mock/workspace',
+            processId: null,
+            status: 'inProgress',
+            commandActions: [],
+            aggregatedOutput: null,
+            exitCode: null,
+            durationMs: null,
+          }],
+          itemsView: 'full',
+          provenance: { originThreadId: threadId, originTurnId: turnId, trigger: { kind: 'user' } },
+          status: 'inProgress',
+          error: null,
+          startedAt: Date.now(),
+          completedAt: null,
+          durationMs: null,
+        },
+      });
+    });
+
+    const row = page.locator('.thread-tool-inProgress');
+    const glyph = row.locator('.thread-disclosure-status');
+    const label = row.locator('.working-text-base');
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await expect(label).toHaveCSS('animation-name', 'none');
+    await expect(glyph).toHaveCSS('color', await resolveTokenColor(page, '--text-soft'));
+    await expect(page.locator('.thread-streaming-shape')).toHaveCSS('animation-name', 'none');
+
+    const session = await page.context().newCDPSession(page);
+    await session.send('Emulation.setEmulatedMedia', {
+      media: 'screen',
+      features: [
+        { name: 'prefers-color-scheme', value: 'light' },
+        { name: 'prefers-reduced-motion', value: 'no-preference' },
+        { name: 'forced-colors', value: 'none' },
+        { name: 'prefers-contrast', value: 'more' },
+        { name: 'prefers-reduced-transparency', value: 'no-preference' },
+      ],
+    });
+    await expect.poll(() => page.evaluate(() => matchMedia('(prefers-contrast: more)').matches)).toBe(true);
+    await expect(label).toHaveCSS('animation-name', 'none');
+    await expect(glyph).toHaveCSS('color', await resolveTokenColor(page, '--text-soft'));
+    await expect(page.locator('.thread-streaming-shape')).toHaveCSS('animation-name', 'thread-shape-spin');
   });
 
   test('shows web tool arguments and results as direct JSON', async ({ page }) => {
@@ -5863,6 +6007,61 @@ test.describe('canonical agent Thread surface', () => {
     expect(clampedRestore.maximum).toBeLessThan(savedNearBottom);
     expect(Math.abs(clampedRestore.top - clampedRestore.maximum)).toBeLessThanOrEqual(2);
     await page.setViewportSize(originalViewport);
+  });
+
+  test('keeps reconnect status announced when virtualization unmounts the live Turn', async ({ page }) => {
+    await createNewThread(page);
+    const fixture = await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+      const threadId = response?.data[0]?.id;
+      if (!threadId) throw new Error('Mock Thread not found');
+      for (let index = 0; index < 41; index += 1) {
+        await target.lin?.agentCoreRequest('turn/start', {
+          threadId,
+          input: [{ type: 'text', text: `Reconnect history ${index + 1}` }],
+          clientUserMessageId: `reconnect-history-${index + 1}`,
+        });
+      }
+      const turnId = '01910000-0000-7000-8000-00000000ef91';
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/started',
+        threadId,
+        turnId,
+        turn: {
+          id: turnId,
+          items: [],
+          itemsView: 'full',
+          provenance: { originThreadId: threadId, originTurnId: turnId, trigger: { kind: 'user' } },
+          status: 'inProgress',
+          error: null,
+          startedAt: Date.now(),
+          completedAt: null,
+          durationMs: null,
+        },
+      });
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/providerRetry/changed',
+        threadId,
+        turnId,
+        status: { kind: 'stream', attempt: 2, maxRetries: 3 },
+      });
+      return { turnId };
+    });
+
+    const transcript = page.locator('.thread-transcript');
+    await expect(page.locator('.thread-transcript-turns')).toHaveAttribute('data-virtualized', 'true');
+    await expect(page.getByRole('status')).toHaveText('Reconnecting 2/3');
+    await transcript.evaluate((element) => {
+      element.scrollTop = 0;
+      element.dispatchEvent(new Event('scroll'));
+    });
+    await expect(page.locator(`[data-thread-turn-row="${fixture.turnId}"]`)).toHaveCount(0);
+    await expect(page.locator('.thread-provider-retry')).toHaveCount(0);
+    await expect(page.getByRole('status')).toHaveText('Reconnecting 2/3');
   });
 
   test('returns a flow-layout Thread to the Turn it was left on', async ({ page }) => {

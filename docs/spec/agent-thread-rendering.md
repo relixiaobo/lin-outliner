@@ -188,7 +188,10 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
   row still says which tool is involved. While running, only the neutral action
   segment uses `WorkingText`, and that segment keeps the same `--text-soft`
   resting colour and 400 weight as its terminal state so the sweep remains
-  visible and settling does not change glyph metrics;
+  visible and settling does not change glyph metrics. When reduced motion or
+  increased contrast removes the sweep, the running row deepens only its
+  neutral semantic glyph to `--text-soft` while a completed sibling keeps
+  `--text-faint`; the action text retains the same colour, weight, and geometry;
   a caller-authored command description remains exact rather than being rewritten
   into progressive copy. Failure still tints the glyph plus label with
   `--status-danger`, and an interrupted row is muted rather than alarmed. The
@@ -413,7 +416,10 @@ does not resize the visible title slot.
 The status line never claims more than the run is doing. A settled Turn is
 described in the past — it never falls through to the live `Working` label —
 and when a Turn is **blocked on the user** (`waitingOnUserInput`) the line says
-so and contains no `WorkingText`, because motion would claim progress. The
+so and contains no `WorkingText`, because motion would claim progress. This
+applies to every mapped leaf in that Turn, including the still-in-progress
+`request_user_input` tool row, Subagent status, and closed Plan summary; each
+keeps the same static phrase and geometry. The
 elapsed time is deliberately **not** adjusted: it is wall-clock since the Turn
 started, the same span the server records as `durationMs`, so the live label
 and the settled one measure the same thing and cannot contradict each other.
@@ -437,9 +443,16 @@ latch are Thread-session state, not persisted overrides. The empty placeholder
 carries the same classes as the populated one so the first token does not
 restyle the element. Reconnect recovery belongs to the matching Turn's response
 footer and replaces its rose generating indicator; it does not append a second
-row below that indicator. While reconnect is visible, the Turn's `WorkingText`
-gradient animations are paused so the retry spinner is its sole motion owner.
-The text remains in place and readable. Its spinner honors
+row below that indicator. While reconnect is visible, that Turn renders every
+mapped working phrase through its ordinary static text branch, including a
+closed Plan outside the transcript, so the retry spinner is its sole motion
+owner. This arbitration is passed explicitly within one `ThreadView`; it never
+uses descendant selectors that could cross into an expanded Subagent's nested
+`ThreadView`, and a child retry cannot suppress its parent's working phrases.
+The visible footer retry is hidden from accessibility APIs. A separate
+visually-hidden `role="status"` announcer stays mounted outside the virtualized
+Turn list, so retry changes remain announced even when scrolling unmounts the
+live Turn. Its spinner honors
 `prefers-reduced-motion` and the state is cleared when a new Turn starts or the
 Thread list reloads, so it cannot outlive the attempt it describes.
 
@@ -452,8 +465,9 @@ without moving the response. User-message actions likewise fill a persistent
 slot that remains empty and non-interactive while the Turn is live. The indicator
 stays present but static while that Turn has a `WorkingText` owner, and reconnect
 recovery replaces it in the same footer slot; one Turn therefore never presents
-two concurrent motion owners. It also stops animating under reduced-motion
-preferences. A failed or interrupted Turn
+two concurrent motion owners. Increased contrast removes the text sweep and
+therefore restores this shape's animation as the live motion cue; reduced
+motion still stops both shape animations. A failed or interrupted Turn
 with partial response prose keeps its process presentation neutral because the
 response tail already owns the terminal error or stopped state.
 

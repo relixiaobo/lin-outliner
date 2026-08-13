@@ -57,6 +57,7 @@ const reducedTransparencyRuleFiles = new Map([
 const contrastRuleFiles = new Map([
   ['src/renderer/styles/a11y.css', 'Central increased-contrast token layer.'],
   ['src/renderer/styles/launcher.css', 'System launcher transparent glass collapses to an opaque elevated surface.'],
+  ['src/renderer/styles/thread.css', 'Running tool glyph remains distinct when working motion is unavailable.'],
   ['src/renderer/styles/working-text.css', 'Working text removes its decorative sweep.'],
 ]);
 const hiddenScrollbarSelectors = new Set([

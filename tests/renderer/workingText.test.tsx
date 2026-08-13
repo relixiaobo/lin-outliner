@@ -5,6 +5,7 @@ import { WorkingText } from '../../src/renderer/ui/primitives/WorkingText';
 
 const workingTextCss = await Bun.file('src/renderer/styles/working-text.css').text();
 const tokensCss = await Bun.file('src/renderer/styles/tokens.css').text();
+const workingTextBaseRule = cssRuleBody(workingTextCss, '.working-text-base');
 
 describe('WorkingText', () => {
   test('WorkingText renders one accessible animated text layer without a visual duplicate', () => {
@@ -47,13 +48,24 @@ describe('WorkingText', () => {
   });
 
   test('WorkingText confines animation to one paint-contained glyph layer without changing typography', () => {
-    expect(workingTextCss).toMatch(
-      /\.working-text-base \{[^}]*background-color:\s*currentColor;[^}]*background-image:[^}]*background-position:\s*-100% 0;[^}]*background-size:\s*50% 100%;[^}]*-webkit-background-clip:\s*text;[^}]*background-clip:\s*text;[^}]*-webkit-text-fill-color:\s*transparent;/s,
-    );
+    expect(workingTextBaseRule).toMatch(/background-color:\s*currentColor;/);
+    expect(workingTextBaseRule).toMatch(/background-image:\s*linear-gradient\(/);
+    expect(workingTextBaseRule).toMatch(/background-position:\s*-100% 0;/);
+    expect(workingTextBaseRule).toMatch(/background-size:\s*50% 100%;/);
+    expect(workingTextBaseRule).toMatch(/-webkit-background-clip:\s*text;/);
+    expect(workingTextBaseRule).toMatch(/(?:^|\s)background-clip:\s*text;/);
+    expect(workingTextBaseRule).toMatch(/-webkit-text-fill-color:\s*transparent;/);
     expect(workingTextCss).not.toMatch(/(?:^|\n)\.working-text-(?:sweep|sweep-copy)\s*\{/);
-    expect(workingTextCss).not.toMatch(/(?:^|[;{]\s*)(?:-webkit-)?mask(?:-image)?\s*:/m);
-    expect(workingTextCss).not.toMatch(/(?:^|[;{]\s*)transform\s*:/m);
-    expect(workingTextCss).not.toMatch(/(?:^|[;{]\s*)font-(?:family|size|style|weight)\s*:/m);
-    expect(workingTextCss).not.toContain('will-change');
+    expect(workingTextBaseRule).not.toMatch(/(?:^|[;{]\s*)(?:-webkit-)?mask(?:-image)?\s*:/m);
+    expect(workingTextBaseRule).not.toMatch(/(?:^|[;{]\s*)transform\s*:/m);
+    expect(workingTextBaseRule).not.toMatch(/(?:^|[;{]\s*)font-(?:family|size|style|weight)\s*:/m);
+    expect(workingTextBaseRule).not.toContain('will-change');
   });
 });
+
+function cssRuleBody(css: string, selector: string): string {
+  const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+  const match = css.match(new RegExp(`${escapedSelector}\\s*\\{([^}]*)\\}`, 'u'));
+  if (!match?.[1]) throw new Error(`Missing CSS rule: ${selector}`);
+  return match[1];
+}

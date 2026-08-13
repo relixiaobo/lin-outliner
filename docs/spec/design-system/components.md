@@ -152,6 +152,9 @@ Active tool and Subagent rows retain their semantic glyph and apply
 `WorkingText` only to the advancing action/status phrase; an in-progress tool
 action keeps the same neutral resting colour at the same weight as its
 metric-stable terminal cue, so the sweep remains visible across the lifecycle.
+When reduced motion or increased contrast removes that sweep, only the active
+tool glyph deepens from `--text-faint` to `--text-soft`; its label does not
+change colour, weight, or geometry.
 A collapsed running group owns
 the sweep on its summary, while expansion freezes that summary and transfers the
 sweep to its running members. Finished members remain static.
