@@ -1008,6 +1008,10 @@ export const zhHans: PartialMessages = {
   dialog: {
     confirm: '确认',
     cancel: '取消',
+    saveFailedTitle: '无法保存工作区',
+    saveFailedDetail: '最新的文档更改尚未可靠写入磁盘。',
+    retrySave: '重试',
+    quitAnyway: '仍然退出',
   },
   timePicker: {
     title: '时间选择器',
@@ -1159,9 +1163,12 @@ export const zhHans: PartialMessages = {
       none: '无',
       noTurns: '尚未记录轮次。',
       rename: '重命名线程',
-      excludeFromRecords: '不记入历史记录',
-      includeInRecords: '记入历史记录',
-      recordsUnavailable: '无法读取记录状态',
+      // Chinese has no coined term to carry, so it says the thing the English
+      // label leaves to the hint: WHO stops reading. It is short either way.
+      hideFromRecall: '对其他线程隐藏',
+      showInRecall: '对其他线程显示',
+      recordsHint: '其他线程可以查阅过往对话。隐藏后这条不再出现，随时可以恢复。',
+      recordsUnavailable: '无法读取状态',
       delete: '删除线程',
       deleteConfirm: ({ name }) => `删除"${name}"及其子线程？`,
       composerPlaceholder: '问点什么...',

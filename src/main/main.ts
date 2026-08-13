@@ -8,6 +8,7 @@ import { basename, dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pathToFileURL } from 'node:url';
 import { DocumentService } from './documentService';
+import { AppQuitCoordinator, type QuitDecision } from './appQuitCoordinator';
 import { AssetService, mimeTypeForFilename, sniffMimeType } from './assetService';
 import { ThreadService } from './agent/ThreadService';
 import { closeAgentServices } from './agent/closeAgentServices';
@@ -496,7 +497,7 @@ const appUpdateService = new AppUpdateService({
 });
 let urlPreviewSession: Electron.Session | null = null;
 const urlPreviewGuests = new Set<Electron.WebContents>();
-let quitAfterFlush = false;
+let quitCoordinator: AppQuitCoordinator;
 let lastAttachmentPickerDirectory: string | null = null;
 const DEFAULT_ATTACHMENT_PICKER_LIMIT = 6;
 const DEFAULT_LOCAL_FILE_SEARCH_LIMIT = 8;
@@ -827,6 +828,14 @@ documentService.setMutationCoordinator((meta, operation) => (
     ? operation()
     : timelineMemoryStore.withWriteGate(operation)
 ));
+documentService.setPersistenceErrorHandler((error, revision) => reportError({
+  domain: 'document',
+  severity: 'error',
+  code: 'workspace-save-failed',
+  message: `Workspace save failed at revision ${revision}.`,
+  context: { operation: 'workspace-save', revision },
+  error,
+}));
 function skillRuntimeForTurn(context: Parameters<ToolRuntime['createTools']>[0]): AgentSkillRuntime {
   const existing = turnSkillRuntimes.get(context.turn.id);
   if (existing) return existing;
@@ -4477,6 +4486,51 @@ if (!app.requestSingleInstanceLock()) {
     watchDevServer.unref();
   }
 
+  const teardownForQuit = async () => {
+    if (app.isReady()) {
+      unregisterLauncherHotkeys();
+      powerMonitor.removeListener('resume', wakeAutomationsOnResume);
+    }
+    pageTranslationService.dispose();
+    await Promise.race([
+      Promise.allSettled([
+        nodeAccessStore.flushNow(),
+        previewTranslationCache.flushNow(),
+        importApiServer.stop(),
+        closeAgentServices(memoryExtension, threadService, automationService),
+        diagnosticLog.flushNow({ reason: 'before-quit' }),
+        flushUrlPreviewSession(urlPreviewSession),
+      ]),
+      new Promise((resolve) => setTimeout(resolve, 2_500)),
+    ]);
+  };
+  quitCoordinator = new AppQuitCoordinator({
+    freezeAdmission: () => documentService.freezeMutationAdmission(),
+    unfreezeAdmission: () => documentService.unfreezeMutationAdmission(),
+    commitAdmissionFreeze: () => documentService.commitMutationAdmissionFreeze(),
+    latestAcceptedRevision: () => documentService.latestAcceptedPersistenceRevision(),
+    durableRevision: () => documentService.durablePersistenceRevision(),
+    drainToRevision: () => documentService.drainPersistenceForQuit(),
+    showDrainFailure: async (error, outcome): Promise<QuitDecision> => {
+      const strings = getMessages(effectiveLocale()).dialog;
+      const parent = liveWindow(mainWindow);
+      const options: Electron.MessageBoxOptions = {
+        type: 'error',
+        buttons: [strings.retrySave, strings.quitAnyway, strings.cancel],
+        defaultId: 0,
+        cancelId: 2,
+        message: strings.saveFailedTitle,
+        detail: strings.saveFailedDetail,
+      };
+      const response = parent
+        ? await dialog.showMessageBox(parent, options)
+        : await dialog.showMessageBox(options);
+      return response.response === 0 ? 'retry' : response.response === 1 ? 'quit-anyway' : 'cancel';
+    },
+    teardown: teardownForQuit,
+    exit: () => app.exit(0),
+  });
+
   app.whenReady().then(async () => {
     // Restore persisted dynamic model catalogs before Threads or Automations can
     // resolve a saved model. The same best-effort pass cleans legacy keyless rows;
@@ -4571,6 +4625,7 @@ if (!app.requestSingleInstanceLock()) {
     });
   }).catch((error) => {
     console.error(error);
+    if (quitCoordinator.phase() !== 'idle') return;
     app.exit(1);
   });
 
@@ -4579,32 +4634,19 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.on('before-quit', (event) => {
-    if (quitAfterFlush) return;
     event.preventDefault();
-    quitAfterFlush = true;
-    // We force-exit below (app.exit bypasses will-quit), so do the on-quit cleanup
-    // here: release the global hotkey(s).
-    unregisterLauncherHotkeys();
-    powerMonitor.removeListener('resume', wakeAutomationsOnResume);
-    pageTranslationService.dispose();
-    // Settle in-flight writes, then exit. We force-exit instead of re-issuing
-    // app.quit(): after preventDefault() cancels the OS ⌘Q terminate, Electron's
-    // graceful re-quit lingers for seconds before the process actually exits, so ⌘Q
-    // reads as "didn't quit, press again". But a bare exit would truncate in-flight
-    // async writes, so we first drain them — the document mutation queue and the
-    // Thread rollout/state writes — bounded by a hard timeout so a slow write
-    // cannot block quit indefinitely.
-    void Promise.race([
-      Promise.allSettled([
-        documentService.flushPendingChanges(),
-        nodeAccessStore.flushNow(),
-        previewTranslationCache.flushNow(),
-        importApiServer.stop(),
-        closeAgentServices(memoryExtension, threadService, automationService),
-        diagnosticLog.flushNow({ reason: 'before-quit' }),
-        flushUrlPreviewSession(urlPreviewSession),
-      ]),
-      new Promise((resolve) => setTimeout(resolve, 2500)),
-    ]).finally(() => app.exit(0));
+    void quitCoordinator.requestQuit().catch((error) => {
+      reportError({
+        domain: 'lifecycle',
+        severity: 'error',
+        code: 'quit-drain-failed',
+        message: 'Quit coordination failed; the application remains open.',
+        context: { operation: 'before-quit' },
+        error,
+      });
+      // Phase 2 is irreversible. A teardown rejection still calls app.exit and
+      // must not reopen document admission after services have started closing.
+      if (quitCoordinator.phase() === 'idle') documentService.unfreezeMutationAdmission();
+    });
   });
 }

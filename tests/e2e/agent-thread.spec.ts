@@ -2,8 +2,33 @@ import { expect, test } from '@playwright/test';
 import type { Locator, Page } from '@playwright/test';
 import { emulateVisualMedia, resolveTokenColor } from './emulatedMedia';
 import { clipboardText, commandCalls, ids, openMockedApp, rowBody } from './outlinerMock';
+import { en } from '../../src/core/i18n/messages/en';
+import { zhHans } from '../../src/core/i18n/messages/zh-Hans';
 
 const FORMER_SHARED_ATTACHMENT_LIMIT_BYTES = 10 * 1024 * 1024;
+
+const ACTION_MENU_LABEL_KEYS = [
+  'details', 'rename', 'delete', 'hideFromRecall', 'showInRecall', 'recordsUnavailable',
+] as const;
+
+/**
+ * Every string the action menu can render, in every locale that overrides one.
+ *
+ * `en` is indexed strictly rather than through an all-optional type, which would
+ * accept the complete object and silently drop a renamed key. That is only half
+ * the protection it looks like: `tsconfig.json` includes `src` alone, so
+ * `bun run typecheck` never reads this file and a stale key here is not a
+ * compile error today. The test therefore checks the key set at runtime too —
+ * see the assertions in the guard. `zhHans` genuinely may omit an override, so
+ * an optional read is right for it, and a key it invents that `Messages` lacks
+ * does fail to compile, in `zh-Hans.ts` itself.
+ */
+const ACTION_MENU_LABELS = [
+  ...ACTION_MENU_LABEL_KEYS.map((key) => en.agent.thread[key]),
+  ...ACTION_MENU_LABEL_KEYS
+    .map((key) => zhHans.agent?.thread?.[key])
+    .filter((label): label is string => typeof label === 'string'),
+];
 
 async function createNewThread(page: Page): Promise<void> {
   await page.getByRole('button', { name: 'Show Threads' }).click();
@@ -721,6 +746,18 @@ test.describe('canonical agent Thread surface', () => {
     const liveTurn = page.locator(`[data-thread-turn-row="${ids.liveTurnId}"]`);
     await expect(liveTurn.locator('.thread-process-block')).toHaveCount(1);
     await expect(liveTurn.locator('.thread-process-title')).toHaveText('Working');
+    const liveTitleGeometry = await liveTurn.locator('.thread-process-title').evaluate((element) => {
+      const divider = element.closest('.thread-work-divider');
+      if (!(divider instanceof HTMLElement)) throw new Error('Expected live process divider');
+      return {
+        numericVariant: getComputedStyle(element).fontVariantNumeric,
+        widthDelta: Math.abs(
+          element.getBoundingClientRect().width - divider.getBoundingClientRect().width,
+        ),
+      };
+    });
+    expect(liveTitleGeometry.numericVariant).toContain('tabular-nums');
+    expect(liveTitleGeometry.widthDelta).toBeLessThan(1);
     await expect(liveTurn.getByText('Initiating web search.')).toBeVisible();
     const liveIndicator = liveTurn.getByLabel('Assistant is responding');
     await expect(liveIndicator).toBeVisible();
@@ -767,6 +804,44 @@ test.describe('canonical agent Thread surface', () => {
       };
     });
     expect(Math.abs(liveProcessGaps.above - liveProcessGaps.below)).toBeLessThan(1);
+
+    await page.evaluate(({ liveTurnId, threadId }) => {
+      const target = window as Window & {
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/providerRetry/changed',
+        threadId,
+        turnId: liveTurnId,
+        status: { kind: 'stream', attempt: 1, maxRetries: 3 },
+      });
+    }, ids);
+    const reconnect = liveTurn.locator('.thread-response-footer .thread-provider-retry');
+    await expect(reconnect).toHaveText('Reconnecting 1/3');
+    await expect(liveTurn.getByLabel('Assistant is responding')).toHaveCount(0);
+    await expect(page.locator('.thread-transcript-content > .thread-provider-retry')).toHaveCount(0);
+    const reconnectAlignment = await reconnect.evaluate((element) => {
+      const footer = element.closest('.thread-response-footer');
+      if (!(footer instanceof HTMLElement)) throw new Error('Expected response footer');
+      const footerRect = footer.getBoundingClientRect();
+      const retryRect = element.getBoundingClientRect();
+      return Math.abs(
+        (footerRect.top + footerRect.height / 2) - (retryRect.top + retryRect.height / 2),
+      );
+    });
+    expect(reconnectAlignment).toBeLessThan(1);
+    await page.evaluate(({ liveTurnId, threadId }) => {
+      const target = window as Window & {
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/providerRetry/changed',
+        threadId,
+        turnId: liveTurnId,
+        status: null,
+      });
+    }, ids);
+    await expect(liveTurn.getByLabel('Assistant is responding')).toBeVisible();
 
     await page.evaluate(({ liveTurnId, threadId }) => {
       const target = window as Window & {
@@ -1826,6 +1901,64 @@ test.describe('canonical agent Thread surface', () => {
     await expect(trigger).toBeFocused();
   });
 
+  // The menu's width is a constant the anchoring math needs, so a label that
+  // outgrows it cannot widen the menu — it wrapped under the icon before, and
+  // ellipsizes now. Both are the same defect at the point a label is written,
+  // which is where this fails.
+  test('fits every action label on one line', async ({ page }) => {
+    await openSelectedThreadActions(page);
+    await expect(page.getByRole('menu', { name: 'Thread actions' })).toBeVisible();
+
+    const items = await page.locator('.thread-action-menu button').evaluateAll((buttons) => buttons.map((button) => {
+      const label = button.querySelector('.thread-action-menu-label');
+      return {
+        text: label?.textContent ?? '',
+        height: button.getBoundingClientRect().height,
+        overflow: label ? label.scrollWidth - label.clientWidth : 0,
+      };
+    }));
+
+    expect(items).toHaveLength(4);
+    for (const item of items) {
+      expect(item.text, 'every item routes its label through the ellipsizing span').not.toBe('');
+      expect(item.overflow, `"${item.text}" is truncated`).toBeLessThanOrEqual(0);
+      expect(item.height, `"${item.text}" wrapped to a second line`).toBeLessThanOrEqual(32);
+      // The key list below is hand-written, and nothing typechecks this file, so
+      // a rename that updates the component and the messages leaves it stale and
+      // silently measuring one string fewer. What the menu actually rendered has
+      // to be in the set, or the set is not the set.
+      expect(ACTION_MENU_LABELS, `"${item.text}" is rendered but never measured`).toContain(item.text);
+    }
+
+    for (const key of ACTION_MENU_LABEL_KEYS) {
+      expect(en.agent.thread, `no en label for "${key}" — the key list is stale`).toHaveProperty(key);
+    }
+
+    // What the menu renders is one locale's answer to one records state: the
+    // mock always reports `recorded: true`, so "Show in Recall", the failure
+    // label, and every zh-Hans label are never on screen to be measured. Feed
+    // each through a real label element instead — same font, same box, same
+    // available width — so the guard covers the strings rather than the run.
+    const measured = await page.locator('.thread-action-menu-label').first()
+      .evaluate((label, labels) => {
+        const rendered = label.textContent;
+        const widths = labels.map((text) => {
+          label.textContent = text;
+          return { text, overflow: label.scrollWidth - label.clientWidth };
+        });
+        label.textContent = rendered;
+        return widths;
+      }, ACTION_MENU_LABELS);
+
+    // No count assertion here: `measured` is `ACTION_MENU_LABELS.map(...)`, so
+    // any comparison between the two is true by construction. What keeps the set
+    // complete is the strict `en` read where it is built, which fails to
+    // compile rather than at runtime.
+    for (const label of measured) {
+      expect(label.overflow, `"${label.text}" does not fit the menu`).toBeLessThanOrEqual(0);
+    }
+  });
+
   test('renames and deletes a Thread through in-app dialogs', async ({ page }) => {
     await openSelectedThreadActions(page);
     await page.getByRole('menu', { name: 'Thread actions' }).getByRole('menuitem', { name: 'Rename Thread' }).click();
@@ -2097,7 +2230,10 @@ test.describe('canonical agent Thread surface', () => {
     const fixture = await page.evaluate(async () => {
       const target = window as Window & {
         lin?: { agentCoreRequest: <T>(m: string, i?: Record<string, unknown>) => Promise<T> };
-        __LIN_E2E__?: { emitAgentCoreNotification: (n: unknown) => void };
+        __LIN_E2E__?: {
+          emitAgentCoreNotification: (n: unknown) => void;
+          setMockThreadTurns: (threadId: string, turns: readonly unknown[]) => void;
+        };
       };
       const response = await target.lin?.agentCoreRequest<{ data: Array<Record<string, unknown>> }>('thread/list', {});
       const root = response?.data[0];
@@ -2492,7 +2628,7 @@ test.describe('canonical agent Thread surface', () => {
     await expect(detail).toBeVisible();
     await expect(detail.locator('.thread-subagent-detail-title')).toHaveText('live worker');
   });
-  test('shows a live row for an isolated Skill child while its skill call is in flight', async ({ page }) => {
+  test('shows a live isolated Skill child and keeps nested Thread motion independent', async ({ page }) => {
     await createNewThread(page);
     const fixture = await page.evaluate(async () => {
       const target = window as Window & {
@@ -2508,6 +2644,7 @@ test.describe('canonical agent Thread surface', () => {
       const activityId = '01910000-0000-7000-8000-00000000df03';
       const childId = '01910000-0000-7000-8000-00000000df10';
       const childTurnId = '01910000-0000-7000-8000-00000000df11';
+      const childReasoningId = '01910000-0000-7000-8000-00000000df12';
       const taskPath = '/root/skill_research_ab12cd34ef56';
       const startedAt = Date.now() - 5_000;
       target.__LIN_E2E__?.emitAgentCoreNotification({
@@ -2527,25 +2664,37 @@ test.describe('canonical agent Thread surface', () => {
           updatedAt: startedAt,
         },
       });
+      const childTurn = {
+        id: childTurnId,
+        items: [{
+          id: childReasoningId,
+          type: 'reasoning',
+          provenance: {
+            originThreadId: childId,
+            originTurnId: childTurnId,
+            originItemId: childReasoningId,
+          },
+          summary: ['Inspecting the delegated evidence'],
+          content: [],
+        }],
+        itemsView: 'full',
+        provenance: {
+          originThreadId: childId,
+          originTurnId: childTurnId,
+          trigger: { kind: 'subagent', parentThreadId, parentItemId: skillItemId },
+        },
+        status: 'inProgress',
+        error: null,
+        startedAt,
+        completedAt: null,
+        durationMs: null,
+      };
+      target.__LIN_E2E__?.setMockThreadTurns(childId, [childTurn]);
       target.__LIN_E2E__?.emitAgentCoreNotification({
         type: 'turn/started',
         threadId: childId,
         turnId: childTurnId,
-        turn: {
-          id: childTurnId,
-          items: [],
-          itemsView: 'full',
-          provenance: {
-            originThreadId: childId,
-            originTurnId: childTurnId,
-            trigger: { kind: 'subagent', parentThreadId, parentItemId: skillItemId },
-          },
-          status: 'inProgress',
-          error: null,
-          startedAt,
-          completedAt: null,
-          durationMs: null,
-        },
+        turn: childTurn,
       });
       const provenance = (itemId: string) => ({
         originThreadId: parentThreadId,
@@ -2599,7 +2748,7 @@ test.describe('canonical agent Thread surface', () => {
           durationMs: null,
         },
       });
-      return { childId, parentTurnId, taskPath };
+      return { childId, childTurnId, parentTurnId, taskPath };
     });
 
     const parentTurn = page.locator(`[data-thread-turn-row="${fixture.parentTurnId}"]`);
@@ -2618,6 +2767,24 @@ test.describe('canonical agent Thread surface', () => {
     const detail = page.locator('.thread-subagent-detail');
     await expect(detail).toBeVisible();
     await expect(detail.getByRole('textbox', { name: 'Message this Thread' })).toHaveCount(0);
+    await expect(detail.locator('.working-text')).toHaveCount(0);
+    await expect(detail.locator('.thread-streaming-shape')).toHaveCSS('animation-name', 'thread-shape-spin');
+    const parentSkillSweep = parentTurn.locator('.thread-tool-inProgress .working-text-base');
+    await expect(parentSkillSweep).toHaveCSS('animation-name', 'working-text-sweep');
+
+    await page.evaluate(({ childId, childTurnId }) => {
+      const target = window as Window & {
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/providerRetry/changed',
+        threadId: childId,
+        turnId: childTurnId,
+        status: { kind: 'stream', attempt: 1, maxRetries: 3 },
+      });
+    }, fixture);
+    await expect(detail.locator('.thread-provider-retry')).toHaveText('Reconnecting 1/3');
+    await expect(parentSkillSweep).toHaveCSS('animation-name', 'working-text-sweep');
   });
 
 
@@ -3013,6 +3180,7 @@ test.describe('canonical agent Thread surface', () => {
     test(`projects live Agent status without inferring wait progress in ${colorScheme}`, async ({ page }) => {
       await page.emulateMedia({ colorScheme });
       await createNewThread(page);
+      await page.clock.install({ time: new Date('2026-08-12T09:00:00Z') });
       const fixture = await page.evaluate(async () => {
         const target = window as Window & {
           lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
@@ -3023,7 +3191,7 @@ test.describe('canonical agent Thread surface', () => {
         if (!root) throw new Error('Mock root Thread not found');
         const parentThreadId = String(root.id);
         const parentTurnId = '01910000-0000-7000-8000-00000000de01';
-        const startedAt = Date.now() - 6_000;
+        const startedAt = Date.now() - 9_000;
         const children = [
           {
             id: '01910000-0000-7000-8000-00000000de10',
@@ -3151,6 +3319,29 @@ test.describe('canonical agent Thread surface', () => {
       await expect(rows).toHaveCount(2);
       await expect(rows.locator('.thread-delegation-row-status').first())
         .toContainText(/Running · \d+[smhd]/u);
+      // The disclosure owns the flexible space and Stop owns the fixed edge.
+      // Crossing the first digit-count boundary must not move the action.
+      const researchRow = parentTurn.locator('.thread-delegation-row', { hasText: 'research' });
+      const researchElapsed = researchRow.locator('.thread-delegation-row-status .working-text-base');
+      const researchStop = parentTurn.getByRole('button', { name: 'Stop research' });
+      await expect(researchElapsed).toHaveText('Running · 9s');
+      await expect(researchRow.locator('.thread-delegation-row-status')).toHaveCSS(
+        'font-variant-numeric',
+        /tabular-nums/u,
+      );
+      const stopAtNineSeconds = await researchStop.boundingBox();
+      expect(stopAtNineSeconds).not.toBeNull();
+      await page.clock.runFor(1_000);
+      await expect(researchElapsed).toHaveText('Running · 10s');
+      const stopAtTenSeconds = await researchStop.boundingBox();
+      expect(stopAtTenSeconds).not.toBeNull();
+      expect(Math.abs(stopAtTenSeconds!.x - stopAtNineSeconds!.x)).toBeLessThan(0.01);
+      expect(Math.abs(stopAtTenSeconds!.width - stopAtNineSeconds!.width)).toBeLessThan(0.01);
+      await page.clock.resume();
+      // Identity stays still while only each live status phrase owns motion.
+      await expect(rows.locator('.thread-delegation-row-name .working-text')).toHaveCount(0);
+      await expect(rows.locator('.thread-delegation-row-status.working-text')).toHaveCount(2);
+      await expect(rows.locator('.thread-delegation-row-status .working-text-base')).toHaveCount(2);
       // Every colour comes from the ink tokens, so the row follows the scheme
       // instead of carrying a hardcoded value that only works in light. The row
       // also has to share the tool rows' type ramp: it is one more thing the
@@ -3215,7 +3406,9 @@ test.describe('canonical agent Thread surface', () => {
 
       await expect(parentTurn.locator('.thread-process-title'))
         .toContainText(/Working for \d+[smhd]/u);
-      await expect(parentTurn.locator('.thread-delegation-row.thread-subagent-completed')).toHaveCount(1);
+      const completedRow = parentTurn.locator('.thread-delegation-row.thread-subagent-completed');
+      await expect(completedRow).toHaveCount(1);
+      await expect(completedRow.locator('.thread-delegation-row-status.working-text')).toHaveCount(0);
 
       await page.evaluate(({ child, parentThreadId, startedAt }) => {
         const target = window as Window & {
@@ -3845,24 +4038,44 @@ test.describe('canonical agent Thread surface', () => {
       });
       return { threadId };
     });
+    const liveTurnId = '01910000-0000-7000-8000-00000000c003';
 
     const divider = page.locator('.thread-process-title').first();
     await expect(divider).toHaveText('Read notes.md');
     await expect(page.locator('.thread-process-block')).not.toContainText('Working');
 
-    // Blocked on the user: the label says so, and the spinner stops claiming work.
-    await page.evaluate(async ({ threadId }) => {
+    // Blocked on the user: the label says so, and no shimmer claims progress.
+    await page.evaluate(async ({ liveTurnId, threadId }) => {
       const target = window as Window & {
         __LIN_E2E__?: { emitAgentCoreNotification: (n: unknown) => void };
       };
-      const liveTurnId = '01910000-0000-7000-8000-00000000c003';
+      const inputToolId = '01910000-0000-7000-8000-00000000c004';
       target.__LIN_E2E__?.emitAgentCoreNotification({
         type: 'turn/started',
         threadId,
         turnId: liveTurnId,
         turn: {
           id: liveTurnId,
-          items: [],
+          items: [{
+            id: inputToolId,
+            type: 'dynamicToolCall',
+            provenance: { originThreadId: threadId, originTurnId: liveTurnId, originItemId: inputToolId },
+            namespace: null,
+            tool: 'request_user_input',
+            arguments: { questions: [] },
+            modelCall: {
+              disposition: 'replayable',
+              identity: { namespace: null, name: 'request_user_input' },
+              providerName: 'request_user_input',
+              arguments: { storage: 'inline', value: { questions: [] } },
+              schemaDigest: '0'.repeat(64),
+            },
+            status: 'inProgress',
+            outputRef: null,
+            contentItems: null,
+            success: null,
+            durationMs: null,
+          }],
           itemsView: 'full',
           provenance: { originThreadId: threadId, originTurnId: liveTurnId, trigger: { kind: 'user' } },
           status: 'inProgress',
@@ -3873,15 +4086,31 @@ test.describe('canonical agent Thread surface', () => {
         },
       });
       target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/plan/updated',
+        threadId,
+        turnId: liveTurnId,
+        explanation: null,
+        plan: [{ step: 'Answer the clarification', status: 'in_progress' }],
+      });
+      target.__LIN_E2E__?.emitAgentCoreNotification({
         type: 'thread/status/changed',
         threadId,
         status: { type: 'active', activeFlags: ['waitingOnUserInput'] },
       });
-    }, ids);
+    }, { ...ids, liveTurnId });
 
-    const live = page.locator('.thread-process-block').last();
+    const live = page.locator(`[data-thread-turn-row="${liveTurnId}"] .thread-process-block`);
     await expect(live.locator('.thread-process-title')).toHaveText('Waiting for input');
-    await expect(live.locator('.thread-process-spinner')).toHaveCount(0);
+    await expect(live.locator('.working-text')).toHaveCount(0);
+    const requestedInput = live.locator('.thread-tool-inProgress');
+    await expect(requestedInput).toContainText('Asking a question');
+    await expect(requestedInput.locator('.working-text')).toHaveCount(0);
+    const blockedPlan = page.locator('.thread-plan-progress-summary');
+    await expect(blockedPlan).toHaveText('1/1 · Answer the clarification');
+    await expect(blockedPlan.locator('.working-text')).toHaveCount(0);
+    const liveTurn = page.locator(`[data-thread-turn-row="${liveTurnId}"]`);
+    await expect(liveTurn.locator('.thread-streaming-shape')).toHaveCSS('animation-name', 'none');
+    await expect(liveTurn.locator('.thread-streaming-shape path')).toHaveCSS('animation-name', 'none');
   });
 
   test('states an interrupted Turn once, and never leaves an unlabelled timeline', async ({ page }) => {
@@ -4467,9 +4696,9 @@ test.describe('canonical agent Thread surface', () => {
     });
   }
 
-  test('keeps a running tool spinning on its own row through hover and expansion', async ({ page }) => {
+  test('hands running group motion between its summary and expanded members', async ({ page }) => {
     await createNewThread(page);
-    const turnId = await page.evaluate(async () => {
+    const ids = await page.evaluate(async () => {
       const target = window as Window & {
         lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
         __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
@@ -4519,33 +4748,188 @@ test.describe('canonical agent Thread surface', () => {
           durationMs: null,
         },
       });
-      return liveTurnId;
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/plan/updated',
+        threadId,
+        turnId: liveTurnId,
+        explanation: null,
+        plan: [{ step: 'Wait for the command output', status: 'in_progress' }],
+      });
+      return { threadId, turnId: liveTurnId };
     });
 
-    const turn = page.locator(`[data-thread-turn-row="${turnId}"]`);
+    const turn = page.locator(`[data-thread-turn-row="${ids.turnId}"]`);
     const group = turn.locator('.thread-tool-activity-group');
     await expect(group).toHaveClass(/thread-tool-inProgress/);
-    await group.locator('.thread-tool-activity-toggle').click();
+    const groupToggle = group.locator(':scope > .thread-tool-activity-toggle');
+    await expect(groupToggle.locator('.working-text')).toHaveCount(1);
+    const animationSurface = await groupToggle.locator('.working-text').evaluate((root) => {
+      const rootRect = root.getBoundingClientRect();
+      const metadata = new Set(['offset', 'computedOffset', 'easing', 'composite']);
+      return {
+        contain: getComputedStyle(root).contain,
+        animations: root.getAnimations({ subtree: true }).map((animation) => {
+          const effect = animation.effect;
+          if (!(effect instanceof KeyframeEffect) || !(effect.target instanceof HTMLElement)) {
+            throw new Error('WorkingText must use an element keyframe effect');
+          }
+          const targetRect = effect.target.getBoundingClientRect();
+          const properties = Array.from(new Set(
+            effect.getKeyframes().flatMap((keyframe) => Object.keys(keyframe)),
+          )).filter((property) => !metadata.has(property)).sort();
+          return {
+            targetClass: effect.target.className,
+            properties,
+            insideRoot:
+              targetRect.left >= rootRect.left - 0.5
+              && targetRect.top >= rootRect.top - 0.5
+              && targetRect.right <= rootRect.right + 0.5
+              && targetRect.bottom <= rootRect.bottom + 0.5,
+          };
+        }),
+      };
+    });
+    expect(animationSurface).toEqual({
+      contain: 'paint',
+      animations: [{
+        targetClass: 'working-text-base',
+        properties: ['backgroundPositionX', 'backgroundPositionY'],
+        insideRoot: true,
+      }],
+    });
+    await expect(turn.locator('.thread-streaming-shape')).toHaveCSS('animation-name', 'none');
+    await expect(turn.locator('.thread-streaming-shape path')).toHaveCSS('animation-name', 'none');
+    await expect(groupToggle.locator('.thread-disclosure-status svg')).toHaveCSS('animation-name', 'none');
+    const groupSweep = groupToggle.locator('.working-text-base');
+    await expect(groupSweep).toHaveCSS('animation-name', 'working-text-sweep');
+    await expect(page.locator('.thread-plan-progress .working-text')).toHaveCount(1);
+    await page.evaluate(({ threadId, turnId }) => {
+      const target = window as Window & {
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/providerRetry/changed',
+        threadId,
+        turnId,
+        status: { kind: 'stream', attempt: 1, maxRetries: 3 },
+      });
+    }, ids);
+    await expect(turn.locator('.thread-provider-retry')).toHaveText('Reconnecting 1/3');
+    await expect(groupToggle.locator('.working-text')).toHaveCount(0);
+    await expect(page.locator('.thread-plan-progress .working-text')).toHaveCount(0);
+    await page.evaluate(({ threadId, turnId }) => {
+      const target = window as Window & {
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/providerRetry/changed',
+        threadId,
+        turnId,
+        status: null,
+      });
+    }, ids);
+    const resumedGroupSweep = groupToggle.locator('.working-text-base');
+    await expect(resumedGroupSweep).toHaveCSS('display', 'block');
+    await expect(resumedGroupSweep).toHaveCSS('animation-name', 'working-text-sweep');
+    await expect(page.locator('.thread-plan-progress .working-text')).toHaveCount(1);
+    await expect(group.locator('.thread-tool-activity-members')).toHaveCount(0);
+
+    // The semantic group glyph uses the ordinary disclosure handoff on hover.
+    await groupToggle.hover();
+    await expect(groupToggle.locator('.thread-disclosure-status')).toHaveCSS('opacity', '0');
+    await expect(groupToggle.locator('.thread-disclosure-chevron')).toHaveCSS('opacity', '1');
+    await groupToggle.click();
     const running = turn.locator('.thread-tool-activity-members .thread-tool-inProgress');
     const done = turn.locator('.thread-tool-activity-members .thread-tool-completed');
     await expect(running).toHaveCount(1);
+    await expect(groupToggle.locator('.working-text')).toHaveCount(0);
+    await expect(running.locator('.working-text')).toHaveCount(1);
+    await expect(done.locator('.working-text')).toHaveCount(0);
+    await expect(running.locator('.thread-disclosure-status svg')).toHaveCSS('animation-name', 'none');
+    expect(await running.locator('.thread-tool-summary-act').evaluate((element) => (
+      getComputedStyle(element).color
+    ))).toBe(await done.locator('.thread-tool-summary-act').evaluate((element) => (
+      getComputedStyle(element).color
+    )));
 
-    // A finished child inside a running group must not borrow the spinner.
-    await expect(done.locator('.thread-disclosure-status svg')).toHaveCSS('animation-name', 'none');
-    await expect(running.locator('.thread-disclosure-status svg'))
-      .toHaveCSS('animation-name', 'thread-tool-spin');
+    await groupToggle.click();
+    await expect(group.locator('.thread-tool-activity-members')).toHaveCount(0);
+    await expect(groupToggle.locator('.working-text')).toHaveCount(1);
+  });
 
-    // Opacity is transitioned, so these assertions have to settle rather than
-    // read the frame the hover landed on.
-    await running.locator('.thread-tool-toggle').hover();
-    await expect(running.locator('.thread-disclosure-status')).toHaveCSS('opacity', '1');
-    await expect(running.locator('.thread-disclosure-chevron')).toHaveCSS('opacity', '0');
-    await running.locator('.thread-tool-toggle').click();
-    await expect(running.locator('.thread-disclosure-status')).toHaveCSS('opacity', '1');
-    // A settled sibling still swaps to the chevron on hover.
-    await done.locator('.thread-tool-toggle').hover();
-    await expect(done.locator('.thread-disclosure-status')).toHaveCSS('opacity', '0');
-    await expect(done.locator('.thread-disclosure-chevron')).toHaveCSS('opacity', '1');
+  test('keeps working state legible for reduced motion and increased contrast', async ({ page }) => {
+    await createNewThread(page);
+    await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+      const threadId = response?.data[0]?.id;
+      if (!threadId) throw new Error('Mock Thread not found');
+      const turnId = '01910000-0000-7000-8000-00000000b111';
+      const toolId = '01910000-0000-7000-8000-00000000b112';
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/started',
+        threadId,
+        turnId,
+        turn: {
+          id: turnId,
+          items: [{
+            id: toolId,
+            type: 'commandExecution',
+            provenance: { originThreadId: threadId, originTurnId: turnId, originItemId: toolId },
+            command: 'sleep 30',
+            modelCall: {
+              disposition: 'replayable',
+              identity: { namespace: null, name: 'bash' },
+              providerName: 'bash',
+              arguments: { storage: 'inline', value: { command: 'sleep 30' } },
+              schemaDigest: '0'.repeat(64),
+            },
+            description: 'Wait for the background process',
+            cwd: '/mock/workspace',
+            processId: null,
+            status: 'inProgress',
+            commandActions: [],
+            aggregatedOutput: null,
+            exitCode: null,
+            durationMs: null,
+          }],
+          itemsView: 'full',
+          provenance: { originThreadId: threadId, originTurnId: turnId, trigger: { kind: 'user' } },
+          status: 'inProgress',
+          error: null,
+          startedAt: Date.now(),
+          completedAt: null,
+          durationMs: null,
+        },
+      });
+    });
+
+    const row = page.locator('.thread-tool-inProgress');
+    const glyph = row.locator('.thread-disclosure-status');
+    const label = row.locator('.working-text-base');
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await expect(label).toHaveCSS('animation-name', 'none');
+    await expect(glyph).toHaveCSS('color', await resolveTokenColor(page, '--text-soft'));
+    await expect(page.locator('.thread-streaming-shape')).toHaveCSS('animation-name', 'none');
+
+    const session = await page.context().newCDPSession(page);
+    await session.send('Emulation.setEmulatedMedia', {
+      media: 'screen',
+      features: [
+        { name: 'prefers-color-scheme', value: 'light' },
+        { name: 'prefers-reduced-motion', value: 'no-preference' },
+        { name: 'forced-colors', value: 'none' },
+        { name: 'prefers-contrast', value: 'more' },
+        { name: 'prefers-reduced-transparency', value: 'no-preference' },
+      ],
+    });
+    await expect.poll(() => page.evaluate(() => matchMedia('(prefers-contrast: more)').matches)).toBe(true);
+    await expect(label).toHaveCSS('animation-name', 'none');
+    await expect(glyph).toHaveCSS('color', await resolveTokenColor(page, '--text-soft'));
+    await expect(page.locator('.thread-streaming-shape')).toHaveCSS('animation-name', 'thread-shape-spin');
   });
 
   test('shows web tool arguments and results as direct JSON', async ({ page }) => {
@@ -4762,7 +5146,7 @@ test.describe('canonical agent Thread surface', () => {
     const detail = page.locator('.thread-subagent-detail');
     await expect(detail.getByRole('textbox', { name: 'Message this Thread' })).toHaveCount(0);
     const pill = detail.locator('.thread-plan-progress-summary');
-    await expect(pill).toHaveText('2/2 · Cross-check the citations');
+    await expect(pill.locator('.working-text-base')).toHaveText('2/2 · Cross-check the citations');
 
     // With no composer to return to, Escape must still land focus somewhere
     // reachable rather than dropping it to the document body.
@@ -4891,7 +5275,11 @@ test.describe('canonical agent Thread surface', () => {
 
     const progress = page.locator('.thread-plan-progress-summary');
     // The persistent affordance is the current step's text, not a bare counter.
-    await expect(progress).toHaveText('2/24 · Implement the transient projection');
+    const workingLabel = progress.locator('.thread-plan-progress-label.working-text');
+    await expect(workingLabel.locator('.working-text-base'))
+      .toHaveText('2/24 · Implement the transient projection');
+    await expect(workingLabel.locator('.working-text-base')).toHaveCount(1);
+    await expect(progress).toHaveAccessibleName('2/24 · Implement the transient projection');
     await expect(progress).toHaveAttribute('aria-expanded', 'false');
     await progress.hover();
     const checklist = page.locator('.thread-plan-progress-popover');
@@ -4901,10 +5289,11 @@ test.describe('canonical agent Thread surface', () => {
     // Each row states its status for assistive tech; the icons are decorative.
     await expect(checklist.locator('li').first()).toHaveText('Completed: Inspect the current behavior');
     await expect(checklist.locator('li').last()).toHaveText('Pending: Verify interaction checkpoint 24');
-    // The current step is marked by weight and colour, so the cue survives
-    // reduced motion, where the spinner stops.
+    // The current step is marked by semantics, weight, colour, and a filled dot,
+    // so opening the Plan can stop all motion without losing working state.
     const currentStep = checklist.locator('li.is-in_progress');
     await expect(currentStep).toHaveCount(1);
+    await expect(currentStep).toHaveAttribute('aria-current', 'step');
     await expect(currentStep).toHaveCSS('font-weight', '600');
     expect(await checklist.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
 
@@ -4919,12 +5308,27 @@ test.describe('canonical agent Thread surface', () => {
     await expect(progress).toHaveAttribute('aria-expanded', 'true');
     await expect(checklist).toBeVisible();
     await expect(checklist).toBeFocused();
+    await expect(page.locator('.thread-plan-progress .working-text')).toHaveCount(0);
+    const currentCue = await currentStep.locator('.thread-plan-step-status').evaluate((element) => {
+      const style = getComputedStyle(element, '::before');
+      return {
+        backgroundColor: style.backgroundColor,
+        content: style.content,
+        height: style.height,
+        width: style.width,
+      };
+    });
+    expect(currentCue).toMatchObject({ content: '\"\"', height: '5px', width: '5px' });
+    expect(currentCue.backgroundColor).not.toBe('rgba(0, 0, 0, 0)');
     await checklist.evaluate((element) => { element.scrollTop = 0; });
     await checklist.press('PageDown');
     await expect.poll(() => checklist.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
     await checklist.press('Escape');
     await expect(progress).toHaveAttribute('aria-expanded', 'false');
     await expect(checklist).not.toBeVisible();
+    await expect(progress.locator('.thread-plan-progress-label.working-text')).toHaveCount(1);
+    await expect(progress.locator('.working-text-base'))
+      .toHaveText('2/24 · Implement the transient projection');
     // Closing hands focus back to the composer, not to the pill: the Plan is a
     // transient status affordance, not a destination to be stranded in.
     await expect(page.getByRole('textbox', { name: 'Message this Thread' })).toBeFocused();
@@ -5855,6 +6259,61 @@ test.describe('canonical agent Thread surface', () => {
     expect(clampedRestore.maximum).toBeLessThan(savedNearBottom);
     expect(Math.abs(clampedRestore.top - clampedRestore.maximum)).toBeLessThanOrEqual(2);
     await page.setViewportSize(originalViewport);
+  });
+
+  test('keeps reconnect status announced when virtualization unmounts the live Turn', async ({ page }) => {
+    await createNewThread(page);
+    const fixture = await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+      const threadId = response?.data[0]?.id;
+      if (!threadId) throw new Error('Mock Thread not found');
+      for (let index = 0; index < 41; index += 1) {
+        await target.lin?.agentCoreRequest('turn/start', {
+          threadId,
+          input: [{ type: 'text', text: `Reconnect history ${index + 1}` }],
+          clientUserMessageId: `reconnect-history-${index + 1}`,
+        });
+      }
+      const turnId = '01910000-0000-7000-8000-00000000ef91';
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/started',
+        threadId,
+        turnId,
+        turn: {
+          id: turnId,
+          items: [],
+          itemsView: 'full',
+          provenance: { originThreadId: threadId, originTurnId: turnId, trigger: { kind: 'user' } },
+          status: 'inProgress',
+          error: null,
+          startedAt: Date.now(),
+          completedAt: null,
+          durationMs: null,
+        },
+      });
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/providerRetry/changed',
+        threadId,
+        turnId,
+        status: { kind: 'stream', attempt: 2, maxRetries: 3 },
+      });
+      return { turnId };
+    });
+
+    const transcript = page.locator('.thread-transcript');
+    await expect(page.locator('.thread-transcript-turns')).toHaveAttribute('data-virtualized', 'true');
+    await expect(page.getByRole('status')).toHaveText('Reconnecting 2/3');
+    await transcript.evaluate((element) => {
+      element.scrollTop = 0;
+      element.dispatchEvent(new Event('scroll'));
+    });
+    await expect(page.locator(`[data-thread-turn-row="${fixture.turnId}"]`)).toHaveCount(0);
+    await expect(page.locator('.thread-provider-retry')).toHaveCount(0);
+    await expect(page.getByRole('status')).toHaveText('Reconnecting 2/3');
   });
 
   test('returns a flow-layout Thread to the Turn it was left on', async ({ page }) => {

@@ -522,6 +522,35 @@ archived `done` (see Recently completed). Remaining active work:
   **inline alt-text editing** (`mediaAlt` is writable only at node creation today).
 ### Outliner & UI polish
 
+- **tag-schema-projection** (P1, `draft` 2026-08-13, **PM-ratified 2026-08-13**) —
+  fixes the PM-reported bug that template edits never reach already-tagged nodes,
+  by making fields a read-time projection of the tag chain (nodes store values
+  only), static defaults inherited ghosts, and seed content one-shot copies with
+  an explicit backfill action. Three independent PRs; decisions D1–D4 recorded in
+  the plan (untag keeps typed values; ghosts answer reads, never writes — `is
+  empty` on a defaulted field matches nothing; same-name collisions render as two
+  rows; tag fields sit above own fields). One open question (per-node drag for
+  tag fields) has a stated default and does not block. **PR 1 sequences after
+  #533, #534, and tag-merge-and-split-fixes PRs A/B** — #534 is a semantic overlap
+  (`addMissingTableDisplayFieldsDirect` must become slot-aware); re-verify the
+  reader sweep after it merges; the merge/split fix PRs land first and PR 1
+  inherits their behaviors as pinned tests.
+  Design: [`tag-schema-projection`](plans/tag-schema-projection.md).
+- **tag-merge-and-split-fixes** (P1, `draft` 2026-08-13, **PM-ratified 2026-08-13**) —
+  kills the crash-class remainder of the field/supertag audit (#537's review
+  follow-up), all repro-verified: same-named fields from two tags make the tags
+  mutually exclusive with a crash (`applyTag` throws out of the template-stamp
+  assert; the same site crashes the checkbox done-mapping today); merging two
+  such tags moves the collision inside the merged tag, poisoning every future
+  `applyTag` of it; and a mid-text split re-stamps creation-moment data (defaults
+  reset, seed children re-conjured). Design: collisions skip at the stamp
+  boundary, authoring paths stay fail-closed (the A12 line); tag merge unifies
+  same-named definitions behind a non-throwing compatibility predicate with a
+  keep-both fallback, target's template defaults win; split stamps field
+  structure + auto-init only. Shape (b): **two independent PRs** (PR A collision
+  skip + merge unification; PR B split re-stamp removal), both before
+  tag-schema-projection PR 1.
+  Design: [`tag-merge-and-split-fixes`](plans/tag-merge-and-split-fixes.md).
 - **nodex-parity-decisions** (meta, *standing reference — not a work item*) — the
   catalog of nodex features lin deliberately **will not** port, with reasons;
   companion to the active plans. Current-code parity status lives in
@@ -567,7 +596,7 @@ The 2026-06-04/05 design-system / UI-consistency review, landed as a plan suite 
 three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Layer 3, #273) shipped
 — see Recently completed. Remaining Layer-3 lanes:
 
-- **semantic-working-state** (P2, `draft` 2026-08-11) — Thread spinners conflate two
+- **semantic-working-state** (P2, `in-progress` 2026-08-11) — Thread spinners conflate two
   meanings: "work is advancing" and "data is not ready". Split them — Working keeps its
   identity glyph and moves the *text* with a cadenced shimmer (600 ms delay, 1 s sweep,
   4 s cadence; tokenized, CSS-only, no per-row React timer), while Loading, Waiting,
@@ -583,6 +612,11 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   merge closed the BR-8/AC-10 contradiction the weight cue introduced — BR-8 now scopes
   its no-reflow claim to the sweep layer and names the weight change as the one bounded
   metric exception; evidence must include a tool settling on a short and a truncated row.
+  **PR1 (Thread/Plan) shipped 2026-08-13 (#531, codex-4):** `WorkingText` primitive plus
+  a per-Turn `turnMotionOwner` (`none | summary | leaf`) that arbitrates the single mover
+  in TypeScript rather than through `.thread-turn:has(...)`; the in-progress glyph deepens
+  to `--text-soft` when reduced motion or increased contrast removes the sweep. **PR2
+  remains** (Settings: Provider + managed-Skill progressive copy).
 - **icon-semantics** (P3, Layer 3, small/isolated) — action↔icon collisions (Hash,
   unknown-tool, remove/X-vs-Trash, the gear catch-all that #118 sharpened). #461
   re-picked four glyphs (file delete, `web_fetch`, MCP vs unknown, skill) under a
@@ -662,7 +696,13 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   [`typing-hot-path`](plans/typing-hot-path.md).
   **PR-A shipped 2026-08-11 (#530, codex-3):** incremental `MemoryMutationIndex`
   + transaction-aware observer; guard `0.436 ms` → `0.000295 ms` on a 5,009-node
-  document, zero projection reads after a 3.6 ms bootstrap. PR-B and PR-C remain.
+  document, zero projection reads after a 3.6 ms bootstrap.
+  **PR-B shipped 2026-08-13 (#533, codex-3):** persistence moved off the mutation
+  queue onto an append-only update log (`WorkspaceSaver` + `workspace.loro.updates.jsonl`,
+  700 ms idle / 5 s max wait) with a two-phase quit durability barrier; ~183 B in
+  ~0.623 ms per incremental update vs ~669 KB in ~32.6 ms per snapshot on a
+  536-node document. Text-search patches stopped cloning the node map.
+  **PR-C remains** (renderer keystroke commit cost).
 - **agent-tool-call-path** (P1, `draft` 2026-08-11) — host overhead dominates
   agent Turns. `MemoryExtension.filterProjection` decodes the entire thread
   history and builds the memory graph 2-3× on every `getProjection()` (1-3 per
@@ -733,6 +773,14 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   a persistent startup-failure surface. The audit falsified the perf program's
   verified-good startup claim (corrected there in the same change). One PR.
   Design: [`startup-window-first`](plans/startup-window-first.md).
+  **#533 gate sweep 2026-08-13:** the plan's startup cost model predates the
+  append-only update log. `initWorkspace` now also reads and replays
+  `workspace.loro.updates.jsonl` — validating the snapshot digest, replica
+  identity, revision continuity, and each record's Loro version frontier — so
+  startup got a new O(log) phase ahead of first paint, and the plan's
+  `saveCore()` references now name a method that delegates to `WorkspaceSaver`
+  rather than writing a snapshot. Re-measure against the current path before
+  building.
 
 ### Distribution & updates
 
@@ -769,6 +817,20 @@ between them:
 Small unclaimed items split off from shipped PRs — fast-track each when a clone is free; none block
 anything.
 
+- **Flaky `bash` host-environment test** (P3, *fast-track, no plan file*, filed 2026-08-13 at the
+  #533 gate) — `tests/core/agentLocalTools.test.ts` → `foreground and background bash receive the
+  same host process environment` fails roughly **1 run in 9** under a full `bun run test:core`, and
+  passed **12/12** when that file is run alone, so it is load-dependent timing, not a real defect.
+  Pre-existing and unrelated to #533: the test file and `src/main/agent/` were byte-identical to
+  `main` on the branch that surfaced it. The mechanism is in the file's own helpers —
+  `waitForFileContent` (1000 ms default deadline) and `waitForCondition` both **return the last
+  observed value instead of throwing on timeout**, so a backgrounded `sh` that needs more than a
+  second to spawn and flush its output file under suite load produces an ordinary content assertion
+  failure with no hint that a deadline expired. Fix by making the helpers throw a timeout error
+  naming the file and predicate, and by raising the deadline (or making it load-aware) for the
+  background-process waits. Worth doing because `.github/workflows` runs the suite with
+  `retries: 0` on purpose (B11's trade): a suite that fails one run in nine trains everyone to
+  re-run instead of read, which is exactly how a real regression gets waved through.
 - **#514 update-check review tail** (P3, *fast-track, no plan file*, filed 2026-08-10 at the #514
   gate) — three findings the gate raised and the PR consciously left. **(a)** `appUpdate.ts`
   `decodeRelease` picks the `.dmg` by `localeCompare` on the filename with no architecture
@@ -857,6 +919,20 @@ anything.
   So the shape to fix is not one red test but a suite whose failing set is
   run-dependent — treat the unstable specs as one problem, and expect boarding them
   individually to keep producing entries.
+  **#531 gate (2026-08-13) adds a controlled pair** — the cleanest evidence yet that the
+  set, not the test, is the defect. Two full runs of `agent-thread.spec.ts`, branch and
+  `origin/main`, each in its own worktree on its own `PLAYWRIGHT_PORT`: each failed
+  **exactly one** test, and a **different** one — branch `reads a Subagent without moving
+  the parent conversation at all`, `main` `never folds a settled Turn over a child that is
+  still running`. Both pass in isolation on both sides, so neither is a real defect and
+  neither is attributable to the branch. Same-file, same-run-length, one-variable-apart:
+  whatever this is, it is a property of running ~78 specs together, not of any spec.
+  **Method note for whoever takes Lane D:** `playwright.config.ts` sets
+  `reuseExistingServer: !process.env.CI`, and port 5174 is routinely held by another
+  clone's dev server — a bare `bun run test:e2e` then silently tests *that* checkout's
+  source. Every measurement above used an isolated worktree plus an explicit
+  `PLAYWRIGHT_PORT`; any frequency table gathered without both is measuring an unknown
+  tree.
 - **launcher-native-nspanel dmg eyeball** (carried verification, *no plan file*) — #171 merged; needs a
   one-time packaged `.dmg` manual check (⌘Tab lists Tenon · floats over another app's fullscreen · summon
   doesn't steal focus · dock icon · light+dark).
@@ -893,7 +969,18 @@ anything.
   **16 scripts**, incl. the load-bearing `e2e-classify.ts` / `e2e-compare.ts` and
   `docs-check.ts`). Fix = a
   `tsconfig.scripts.json` (or widened `include`) wired into `bun run typecheck`, plus whatever
-  the first real check surfaces.
+  the first real check surfaces. **`tests/` is the same hole** (found at the #536 gate): the
+  e2e specs import product modules — `agent-thread.spec.ts` reads `en.agent.thread` by key
+  precisely so a rename is a compile error — and none of it is typechecked, so that
+  protection does not exist today and the test had to re-assert the key set at runtime.
+  Whatever shape the fix takes, cover both.
+- **thread-fold-e2e-failure** (P2, *fast-track, no plan file*, filed 2026-08-13 at the #536
+  gate) — `agent-thread.spec.ts` › *"never folds a settled Turn over a child that is still
+  running"* fails on `main`: the parent Turn renders no `.thread-process-toggle` while the
+  child is still running, so the fold never appears. Not the #536 branch and not a stale dev
+  server — reproduced on `origin/main` at `ffd5abff` in a clean worktree on its own
+  Playwright port, deterministically, twice. The `main` e2e job is the only signal covering
+  this and it is red until someone bisects it.
 
 
 ## Recently completed
@@ -902,6 +989,17 @@ One line per merge, newest first; the retrospective lives in the CHANGELOG entry
 and the merged PR, distilled rules in [`lessons.md`](lessons.md). Everything
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
+
+- **thread-records-copy** (cc, PR #536, merged 2026-08-13 — fast-track, no plan file) —
+  the Thread action menu's records toggle is now `Hide from Recall` / `Show in Recall`
+  (`Recall unavailable` on a failed read), with the hint on both states instead of only
+  the failure path, and it no longer wraps under its icon: the 168px width lives once in
+  `ThreadList.tsx`, labels ellipsize through `.thread-action-menu-label`, and only the
+  inline axis clips. Gate ran `/code-review medium` (3 findings — a guard that measured
+  one string, block-axis clipping, a stale PR body — all closed in f55ca37e + b9af9ee4),
+  typecheck + `test:core` + `test:renderer` green, `agent-thread.spec.ts` at 76 passed
+  (the one failure is `thread-fold-e2e-failure`, filed below, and reproduces on
+  `origin/main` without this branch), and light + dark visual verification.
 
 - **truncation-no-quarantine** (main-agent, PR #528, merged 2026-08-11 — fast-track) —
   `truncatedArguments` still counts toward the eight-failure Turn ceiling but no longer

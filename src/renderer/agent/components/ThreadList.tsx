@@ -26,6 +26,20 @@ interface ThreadListProps {
   readonly onSelect: (threadId: ThreadId) => void;
 }
 
+/**
+ * The action menu's width, owned here because the anchoring hook right-aligns
+ * the menu at `anchorRight - width` and so cannot size it to its content.
+ *
+ * It is therefore sized to the LONGEST label rather than to a tidy round
+ * number: at `--font-ui-sm` this leaves 126px of text after the menu padding,
+ * the button padding, the icon, and the gap, and the longest label measures
+ * 108px. "Exclude from Records" needed 133px in that space and wrapped, which
+ * is what made the menu look broken — the label is shorter now, not the menu
+ * wider. Growing a label past this ellipsizes rather than wrapping; growing one
+ * deliberately means raising this.
+ */
+const ACTION_MENU_WIDTH = 168;
+
 export function ThreadList({
   anchorRef,
   backgroundWorkThreadIds,
@@ -93,7 +107,7 @@ export function ThreadList({
     disabled: actionsTarget === null,
     layoutKey: actionsTarget?.id ?? '',
     placement: 'bottom-end',
-    width: 168,
+    width: ACTION_MENU_WIDTH,
   });
   const { onKeyDown: onActionsKeyDown } = useMenuKeyboard({
     active: actionsTarget !== null,
@@ -206,14 +220,19 @@ export function ThreadList({
           style={actionsStyle}
         >
           <button onClick={() => runThreadAction(onDetails)} role="menuitem" type="button">
-            <InfoIcon size={ICON_SIZE.menu} />{t.agent.thread.details}
+            <InfoIcon size={ICON_SIZE.menu} />
+            <span className="thread-action-menu-label">{t.agent.thread.details}</span>
           </button>
           <button onClick={() => runThreadAction(onRename)} role="menuitem" type="button">
-            <PencilIcon size={ICON_SIZE.menu} />{t.agent.thread.rename}
+            <PencilIcon size={ICON_SIZE.menu} />
+            <span className="thread-action-menu-label">{t.agent.thread.rename}</span>
           </button>
           <button
             disabled={recorded === null}
-            title={recordedUnavailable ? t.agent.thread.recordsUnavailable : undefined}
+            // The label names only the consequence, so the hint is where the
+            // mechanism is stated: what "other Threads" read, and that hiding is
+            // reversible. Without it the item reads as a destructive delete.
+            title={recordedUnavailable ? t.agent.thread.recordsUnavailable : t.agent.thread.recordsHint}
             onClick={() => {
               const target = actionsTarget;
               if (recorded === null || !target) return;
@@ -224,12 +243,15 @@ export function ThreadList({
             type="button"
           >
             {recorded === false ? <ShowIcon size={ICON_SIZE.menu} /> : <HideIcon size={ICON_SIZE.menu} />}
-            {recordedUnavailable
-              ? t.agent.thread.recordsUnavailable
-              : recorded === false ? t.agent.thread.includeInRecords : t.agent.thread.excludeFromRecords}
+            <span className="thread-action-menu-label">
+              {recordedUnavailable
+                ? t.agent.thread.recordsUnavailable
+                : recorded === false ? t.agent.thread.showInRecall : t.agent.thread.hideFromRecall}
+            </span>
           </button>
           <button onClick={() => runThreadAction(onDelete)} role="menuitem" type="button">
-            <TrashIcon size={ICON_SIZE.menu} />{t.agent.thread.delete}
+            <TrashIcon size={ICON_SIZE.menu} />
+            <span className="thread-action-menu-label">{t.agent.thread.delete}</span>
           </button>
         </div>,
         document.body,

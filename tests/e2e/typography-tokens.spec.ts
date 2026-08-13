@@ -47,6 +47,7 @@ const reducedMotionRuleFiles = new Map([
   ['src/renderer/styles/outliner.css', 'Command run spinner becomes a static processing state.'],
   ['src/renderer/styles/file-preview.css', 'URL translation header spinner becomes a static loading state.'],
   ['src/renderer/styles/thread.css', 'Thread action affordances become immediately visible.'],
+  ['src/renderer/styles/working-text.css', 'Working text removes its decorative sweep.'],
 ]);
 const reducedTransparencyRuleFiles = new Map([
   ['src/renderer/styles/a11y.css', 'Central material fallback token layer.'],
@@ -56,6 +57,8 @@ const reducedTransparencyRuleFiles = new Map([
 const contrastRuleFiles = new Map([
   ['src/renderer/styles/a11y.css', 'Central increased-contrast token layer.'],
   ['src/renderer/styles/launcher.css', 'System launcher transparent glass collapses to an opaque elevated surface.'],
+  ['src/renderer/styles/thread.css', 'Running tool glyph remains distinct when working motion is unavailable.'],
+  ['src/renderer/styles/working-text.css', 'Working text removes its decorative sweep.'],
 ]);
 const hiddenScrollbarSelectors = new Set([
   '.document-outline-rail-track',

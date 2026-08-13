@@ -716,6 +716,14 @@ the files, and retains a timed-out chain handle so a slow append cannot resurrec
 the account after deletion. Archive and Stop keep the account, including the
 terminal interrupted Turn. Startup derives orphan cleanup work from disk.
 
+The Thread action menu names this reversible session-scoped exclusion **Hide
+from Recall** and **Show in Recall**. Both states provide a hover hint explaining
+that other Threads can read prior transcript accounts, that hiding excludes this
+session and its descendants, and that the choice is reversible. The label names
+the user-visible behavior rather than the internal records directory; alternatives
+such as "Hide from Threads" or "Private" incorrectly imply list visibility or
+provider privacy.
+
 An Agent result or notification reports the transcript path only after a
 deadline-bounded wait on that child's append chain. Failure or timeout leaves
 the path unavailable but never withholds the result. Isolated-Skill result

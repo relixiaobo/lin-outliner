@@ -127,6 +127,77 @@ Entries reference the pull request that introduced them.
   session, and three duplicated copies of the canonical-Memory classification
   rules — now one shared implementation, so the mutation guard and the Memory
   pipeline cannot drift apart about which Nodes are Memory.
+- **The Thread menu now says what it does to Recall (PR #536, cc)** — the records
+  toggle read `Exclude from Records`, sitting between Rename and Delete and naming
+  `thread-transcripts/`, a directory you have no other entry point to; read cold it
+  parses as a third way to destroy a conversation, which is the one thing it does
+  not do. It is now **Hide from Recall** / **Show in Recall** (`Recall unavailable`
+  when the state cannot be read), and the hover hint — *Other Threads can look up
+  past conversations. Hiding keeps this one out; show it again anytime.* — rides on
+  both states instead of only the failure path. The old label also wrapped under its
+  icon: it needed 133px and the menu allowed 126px. The menu's 168px width now lives
+  once, in `ThreadList.tsx`, where the anchoring math reads it; labels ellipsize
+  inside it through a `.thread-action-menu-label` span (`min-width: 0` on both the
+  button and the label, whose `auto` minimum is the nowrap label's full width); and
+  the menu clips only the inline axis, so a very short viewport scrolls to the last
+  item instead of swallowing it. The e2e guard measures every label of every locale
+  through a real label element — the mock renders one records state, so measuring
+  only what appeared on screen would have left `Show in Recall`, the failure label,
+  and every zh-Hans string unguarded.
+- **Saving no longer rewrites your whole document while you type (PR #533,
+  codex-3)** — every typing group and structural edit used to await a full Loro
+  snapshot export plus an atomic file replacement *on the mutation queue*, so the
+  next keystroke waited on serialization and disk. Persistence is now an
+  append-only update log: a mutation publishes an accepted revision and returns,
+  and a `WorkspaceSaver` writes the incremental Loro update to
+  `workspace.loro.updates.jsonl` behind a 700 ms idle window with a 5 s max wait,
+  serialized writes, capped exponential retry, and immediate service for explicit
+  durability requests. On a 536-node document one incremental update is ~183
+  bytes captured in ~0.623 ms, against ~669 KB serialized in ~32.6 ms for the
+  snapshot it replaces. Trusted document-system transactions still await a real
+  durable revision, and a durability failure now rejects the caller without
+  hiding or rolling back state the document already committed and indexed.
+  Startup validates the log's snapshot digest, replica identity, revision
+  continuity, and the Loro version frontier of every record; a torn final record
+  is recovered, and any other anomaly is quarantined to an `*.unreadable-*` file
+  and repaired rather than making a readable snapshot unopenable. Quit became a
+  two-phase state machine: Phase 1 freezes admission — **queuing** later
+  mutations rather than rejecting them — and drains to a durable-revision
+  barrier, offering Retry / Quit Anyway / Cancel on failure; Cancel resumes every
+  queued edit, and irreversible teardown starts only once the barrier holds or
+  the user explicitly bypasses it. There is deliberately no total-attempt exit:
+  an automatic quit would discard accepted-but-not-durable changes without an
+  explicit choice. Text-search maintenance stopped cloning the whole node map per
+  patch — incremental patches mutate the published map in place while yielding
+  bulk refreshes build in a hidden overlay and publish one completed generation.
+  The max gate found 15 defects, 14 fixed with regression tests. The ones that
+  would have been visible: any update-log anomaly hard-exited the app at startup
+  with no window and no message despite an intact snapshot; a keystroke landing
+  mid-fsync pinned the max-wait clock at zero and collapsed the debounce into one
+  fsync *per keystroke*, the exact regression the change exists to remove; the
+  capture path's implicit Loro commit carried no origin, pushing a phantom
+  origin-less step into all three undo managers so ⌘Z had to be pressed twice;
+  and a cancelled quit silently discarded every edit typed during the drain.
+- **A running Thread now moves its words, not a carousel of spinners (PR #531,
+  codex-4)** — spinners conflated "work is advancing" with "data is not ready",
+  and a live Turn could show three of them at once. Active tool, Subagent, group
+  and Plan rows keep their semantic glyph and instead shimmer the *advancing
+  phrase* through one new `WorkingText` primitive — a single text layer that is
+  both the accessible name and the paint-only animation surface, so nothing is
+  drawn twice. Exactly one surface in a Turn moves: expanding a running group
+  freezes its summary and hands the sweep to the live member, and reconnect
+  *replaces* the rose generating indicator in the same slot rather than stacking
+  a second row beneath it. Reduced motion and increased contrast drop the sweep
+  and deepen the running row's glyph instead, so the state survives without
+  motion. The high gate found 11 defects, 10 fixed. The ones that would have been
+  visible: the `request_user_input` row shimmered while the agent was blocked on
+  *you*; the arbitration ran through `.thread-turn:has(...)` descendant rules that
+  reached across an expanded Subagent's nested Thread and froze the child's live
+  indicator; the reconnect `role="status"` announcement moved inside the
+  virtualized Turn window, so scrolling away silenced it for screen readers; and
+  once every phrase went static while blocked, the one surface left animating was
+  the response glyph — motion claiming progress in precisely the state defined by
+  its absence.
 
 ### Internal
 
@@ -140,6 +211,42 @@ Entries reference the pull request that introduced them.
   each tool's own `prepareArguments`, and a Turn-local repeated-rejection
   quarantine with an eight-failure ceiling and one final tool-free response.
   Design only; the implementation ships as one PR.
+- **Tag schema projection plan (PR #537, cc-2, plan-only)** — boards the fix for
+  a PM-reported bug: template edits on a `#tag` never reach nodes that already
+  carry it, because the template is a one-shot stamp read only at `apply_tag` and
+  `splitNode`. The ratified design stops copying the rules instead of syncing the
+  copies: a node's field list becomes a read-time projection of its tag chain
+  (nodes store values only, materialized on write, dematerialized on commit-empty,
+  auto-init still frozen at tag acquisition), static defaults render as inherited
+  ghosts that answer reads and never write, and freeform template children stay
+  one-shot seeds with an explicit idempotent backfill command. Three independent
+  PRs; PM ratified D1–D4 plus, at the gate, the `is empty` consequence (on a
+  defaulted field it matches nothing — there is no per-node way to blank a
+  ghost). Two design-review rounds at the gate corrected the plan's premises
+  against the real code (splitNode call site, already-implemented search
+  operators, instance field-order quirk, `templateId`'s color consumer, the #534
+  semantic overlap) before ratification. Design only; PR 1 sequences after #533
+  and #534.
+- **Tag merge and split fixes plan (PR #538, cc-2, plan-only)** — boards the
+  crash-class remainder of the field/supertag audit (the follow-up to #537's
+  review), all verified against current core: two tags each defining a
+  same-named field are mutually exclusive with a crash (`applyTag` throws out of
+  the template-stamp assert, leaving half-applied state since sync `mutate()`
+  has no rollback; the same site crashes the checkbox done-mapping); merging
+  those tags moves the collision inside the merged tag, after which every
+  `applyTag` of it throws forever; and a mid-text split re-stamps
+  creation-moment data (template defaults reset, seed children re-conjured).
+  Ratified design: collisions skip at the stamp boundary instead of throwing
+  while authoring paths stay fail-closed (the A12 line); tag merge unifies
+  same-named definitions behind a non-throwing compatibility predicate with a
+  keep-both fallback and target-defaults-win dedupe; split stamps field
+  structure + auto-init only. One gate-review round folded in: the third caller
+  of the stamp helper (done-state mapping) degrades on skip, and the
+  unification gate covers all three throw conditions of
+  `mergeFieldDefinitionsDirect` including values-compatibility (fields can be
+  retyped without revalidating stored values). Two independent PRs; both land
+  before tag-schema-projection PR 1, which inherits their behaviors as pinned
+  tests.
 
 ## [0.3.1] - 2026-08-10
 

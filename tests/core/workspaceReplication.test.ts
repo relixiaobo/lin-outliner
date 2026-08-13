@@ -503,6 +503,16 @@ describe('workspace replication persistence', () => {
     expect(() => Core.deserializeState(JSON.stringify(malformedPendingUpdates)))
       .toThrow('invalid local workspace replica state');
 
+    const missingRevision = structuredClone(envelope) as Record<string, unknown>;
+    delete missingRevision.persistenceRevision;
+    expect(() => Core.deserializeState(JSON.stringify(missingRevision)))
+      .toThrow('invalid workspace persistence revision');
+
+    const missingMetadataSequence = structuredClone(envelope) as Record<string, unknown>;
+    delete missingMetadataSequence.persistenceMetadataSequence;
+    expect(() => Core.deserializeState(JSON.stringify(missingMetadataSequence)))
+      .toThrow('invalid workspace persistence metadata sequence');
+
     const malformedHistory = structuredClone(envelope) as WorkspacePersistenceEnvelopeV3;
     malformedHistory.local.operationHistory = [{
       operationId: 'op:test',
