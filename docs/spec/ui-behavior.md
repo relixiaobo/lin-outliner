@@ -258,9 +258,11 @@ longer derives candidates from nodes carrying that deleted tag.
 The node-level view toolbar is the presentation control for Outline child rows
 and saved-search results. It lives above the rendered rows when the node's
 `viewDef.toolbarVisible` flag is true. Table deliberately does not render that
-standalone band: Add field owns visible-column configuration, while compact
-Outline, Sort, and Filter actions sit inside the Title header when view controls
-are visible. A Search Table always exposes those header actions and omits the
+full band. It uses a compact icon-first control band between the owner heading
+and the field header: name search, Outline, Sort, and Filter are available
+without summary chips, Display, Group, a card fill, or decorative dividers.
+Activating name search expands its inline input. Add field owns visible-column
+configuration. A Search Table always exposes the compact band and omits the
 redundant query summary and View reveal step. The supported render modes are
 **Outline** (persisted as `list`) and **Table**, selected through Outline's compact
 segmented control, Table's Outline action, or the node context menu's **View as**
@@ -510,11 +512,13 @@ the search and the table itself presents its results.
 
 In Outline, the summary exposes a **View** action that reveals the same node-level
 View Toolbar used by normal node pages. In Table, the entire summary row and the
-standalone toolbar row are absent. Compact Outline, Sort, and Filter actions live
-inside the Title header, while Add field owns visible columns. Header and row
-separators remain the only horizontal lines. Query chips describe *what the search
-returns* in Outline; the Table header actions control *how the result references
-are sorted and filtered*.
+full toolbar row are absent. A compact icon-first band above the field header
+provides name search, Outline, Sort, and Filter, while Add field owns visible
+columns. Name search expands inline only while active. The band starts on the
+Title text axis and adds no separator; field header and row separators remain the
+only horizontal lines. Query chips describe *what the search returns* in Outline;
+the Table controls govern *how the result references are searched, sorted, and
+filtered*.
 
 ## NodePanel References Footer
 

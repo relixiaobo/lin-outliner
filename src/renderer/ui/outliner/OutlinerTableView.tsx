@@ -953,6 +953,19 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
 
   return (
     <div className="outliner-table-scope" data-table-owner-id={props.parentId} ref={gridRef} style={gridStyle}>
+      {tableViewActionsVisible ? (
+        <ViewToolbar
+          node={parent}
+          view={view}
+          index={props.index}
+          run={props.run}
+          dropdownRequest={props.ui.toolbarDropdownRequest?.section === 'display'
+            ? null
+            : props.ui.toolbarDropdownRequest}
+          onDropdownRequestConsumed={consumeToolbarRequest}
+          variant="tableControls"
+        />
+      ) : null}
       {ownerRows.length > 0 ? (
         <div className="outliner-table-owner-fields" role="tree" aria-label={t.outliner.treeAriaLabel}>
           <RowHost
@@ -1015,19 +1028,6 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
         <div className="outliner-table-header" role="row" aria-rowindex={1}>
           <div className="outliner-table-title-header" role="columnheader" aria-colindex={1}>
             <span className="outliner-table-title-label">{tt.title}</span>
-            {tableViewActionsVisible ? (
-              <ViewToolbar
-                node={parent}
-                view={view}
-                index={props.index}
-                run={props.run}
-                dropdownRequest={props.ui.toolbarDropdownRequest?.section === 'display'
-                  ? null
-                  : props.ui.toolbarDropdownRequest}
-                onDropdownRequestConsumed={consumeToolbarRequest}
-                variant="tableHeader"
-              />
-            ) : null}
           </div>
           {columns.map((column, index) => {
             const fieldNode = props.index.byId.get(column.field);

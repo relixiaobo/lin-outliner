@@ -162,12 +162,13 @@ test.describe('table view', () => {
     await page.setViewportSize(originalViewport);
 
     const tableScope = page.locator(`[data-table-owner-id="${ids.today}"]`);
-    const tableHeaderActions = grid.locator('.outliner-table-title-header .view-toolbar.is-table-header');
-    await expect(tableScope.locator(':scope > .view-toolbar')).toHaveCount(0);
-    await expect(tableHeaderActions.getByRole('button', { name: 'Group by', exact: true })).toHaveCount(0);
-    await tableHeaderActions.getByRole('button', { name: 'Outline', exact: true }).click();
+    const tableControls = tableScope.locator(':scope > .view-toolbar.is-table-controls');
+    await expect(grid.locator('.view-toolbar')).toHaveCount(0);
+    await expect(tableControls.getByRole('button', { name: 'Filter by name', exact: true })).toBeVisible();
+    await expect(tableControls.getByRole('button', { name: 'Group by', exact: true })).toHaveCount(0);
+    await tableControls.getByRole('button', { name: 'Outline', exact: true }).click();
     await expect(rootGrid(page)).toHaveCount(0);
-    const outlineToolbar = page.locator('.view-toolbar:not(.is-table-header)').first();
+    const outlineToolbar = page.locator('.view-toolbar:not(.is-table-controls)').first();
     await expect(outlineToolbar.getByRole('button', { name: 'Group by', exact: true })).toBeVisible();
 
     const groupField = await page.evaluate((todayId) => {
@@ -880,34 +881,53 @@ test.describe('table view', () => {
 
     const grid = page.getByRole('grid', { name: 'Recents table' });
     const tableScope = page.locator(`[data-table-owner-id="${ids.recents}"]`);
-    const headerActions = grid.locator('.outliner-table-title-header .view-toolbar.is-table-header');
+    const tableControls = tableScope.locator(':scope > .view-toolbar.is-table-controls');
     const summary = page.locator('.search-query-summary-bar');
-    await expect(tableScope.locator(':scope > .view-toolbar')).toHaveCount(0);
-    await expect(headerActions.getByRole('button', { name: 'Outline', exact: true })).toBeVisible();
-    await expect(headerActions.getByRole('button', { name: 'Sort by', exact: true })).toBeVisible();
-    await expect(headerActions.getByRole('button', { name: 'Filter by', exact: true })).toBeVisible();
+    await expect(grid.locator('.view-toolbar')).toHaveCount(0);
+    await expect(tableControls.getByRole('button', { name: 'Filter by name', exact: true })).toBeVisible();
+    await expect(tableControls.getByRole('button', { name: 'Outline', exact: true })).toBeVisible();
+    await expect(tableControls.getByRole('button', { name: 'Sort by', exact: true })).toBeVisible();
+    await expect(tableControls.getByRole('button', { name: 'Filter by', exact: true })).toBeVisible();
     await expect(summary).toHaveCount(0);
+
+    await tableControls.getByRole('button', { name: 'Filter by name', exact: true }).click();
+    const nameSearch = tableControls.getByRole('textbox', { name: 'Filter by name', exact: true });
+    await expect(nameSearch).toBeVisible();
+    await nameSearch.press('Escape');
+    await expect(tableControls.getByRole('button', { name: 'Filter by name', exact: true })).toBeVisible();
+
     const searchTableGeometry = await page.locator('.panel-inner').evaluate((panel) => {
       const header = panel.querySelector<HTMLElement>('.outliner-table-header')!;
       const title = panel.querySelector<HTMLElement>('.outliner-table-title-header')!;
-      const headerActions = title.querySelector<HTMLElement>('.view-toolbar.is-table-header')!;
+      const tableControls = panel.querySelector<HTMLElement>('.outliner-table-scope > .view-toolbar.is-table-controls')!;
       const headerRect = header.getBoundingClientRect();
       const titleRect = title.getBoundingClientRect();
-      const headerActionsRect = headerActions.getBoundingClientRect();
+      const controlsRect = tableControls.getBoundingClientRect();
+      const controlsStyle = getComputedStyle(tableControls);
       return {
-        actionsBottom: headerActionsRect.bottom,
-        actionsTop: headerActionsRect.top,
-        directToolbarCount: panel.querySelectorAll('.outliner-table-scope > .view-toolbar').length,
+        controlsBackground: controlsStyle.backgroundColor,
+        controlsBottom: controlsRect.bottom,
+        controlsLeft: controlsRect.left,
+        controlsPseudoAfter: getComputedStyle(tableControls, '::after').display,
+        controlsPseudoBefore: getComputedStyle(tableControls, '::before').display,
+        controlsTop: controlsRect.top,
+        directToolbarCount: panel.querySelectorAll('.outliner-table-scope > .view-toolbar.is-table-controls').length,
         headerLeft: headerRect.left,
         headerRight: headerRect.right,
+        headerTop: headerRect.top,
         titleBottom: titleRect.bottom,
         titleLabelLeft: titleRect.left + Number.parseFloat(getComputedStyle(title).paddingLeft),
         titleTop: titleRect.top,
       };
     });
-    expect(searchTableGeometry.directToolbarCount).toBe(0);
-    expect(searchTableGeometry.actionsTop).toBeGreaterThanOrEqual(searchTableGeometry.titleTop);
-    expect(searchTableGeometry.actionsBottom).toBeLessThanOrEqual(searchTableGeometry.titleBottom);
+    expect(searchTableGeometry.directToolbarCount).toBe(1);
+    expect(searchTableGeometry.controlsBottom).toBeLessThanOrEqual(searchTableGeometry.headerTop);
+    expect(searchTableGeometry.controlsLeft).toBeCloseTo(searchTableGeometry.titleLabelLeft, 1);
+    expect(searchTableGeometry.controlsBackground).toBe('rgba(0, 0, 0, 0)');
+    expect(searchTableGeometry.controlsPseudoBefore).toBe('none');
+    expect(searchTableGeometry.controlsPseudoAfter).toBe('none');
+    expect(searchTableGeometry.titleTop).toBe(searchTableGeometry.headerTop);
+    expect(searchTableGeometry.titleBottom).toBeGreaterThan(searchTableGeometry.titleTop);
     expect(searchTableGeometry.titleLabelLeft).toBeGreaterThan(searchTableGeometry.headerLeft);
     expect(searchTableGeometry.headerRight).toBeGreaterThan(searchTableGeometry.titleLabelLeft);
 
@@ -918,17 +938,17 @@ test.describe('table view', () => {
       call.cmd === 'refresh_search_node_results' && call.args.nodeId === ids.recents
     )).length).toBe(1);
 
-    await headerActions.getByRole('button', { name: 'Sort by', exact: true }).click();
+    await tableControls.getByRole('button', { name: 'Sort by', exact: true }).click();
     await expect(page.getByRole('dialog', { name: 'Sort by' })).toBeVisible();
     await page.keyboard.press('Escape');
-    await headerActions.getByRole('button', { name: 'Filter by', exact: true }).click();
+    await tableControls.getByRole('button', { name: 'Filter by', exact: true }).click();
     await expect(page.getByRole('dialog', { name: 'Filter by' })).toBeVisible();
     await page.keyboard.press('Escape');
 
     await page.locator('.panel-title-editor').first().click({ button: 'right' });
     await page.getByRole('menuitem', { name: 'Edit displayed fields', exact: true }).click();
     await expect(page.getByRole('dialog', { name: 'Add column' })).toBeVisible();
-    await expect(tableScope.locator(':scope > .view-toolbar')).toHaveCount(0);
+    await expect(tableControls).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(grid).toHaveAttribute('aria-rowcount', '1');
     await expect(grid.getByRole('row')).toHaveCount(1);

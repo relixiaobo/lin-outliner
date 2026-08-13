@@ -153,8 +153,11 @@ width keeps the Title column boundary fixed across leaf, expanded, hover, and
 selection states.
 
 In a Search Table, the redundant query summary row is absent. Table view actions
-sit inside the Title header instead of occupying a standalone toolbar band.
-Header and row separators therefore provide the only horizontal structure.
+form a compact icon-first band between the owner heading and the field header;
+name search expands inline only while active. The band begins on the Title label
+axis and carries no fill, frame, summary chips, or decorative separators. The
+field header therefore remains pure column semantics, and header and row
+separators provide the only horizontal structure.
 
 An active cell wrapper uses the neutral fill ladder plus the shared focus outline
 only while the wrapper itself owns focus; an idle table never paints a synthetic
@@ -192,9 +195,9 @@ reduced-transparency fallback. Column headers use Hide as their only removal
 action. Add column groups current-record custom fields first, other Schema custom
 fields second, and system fields last; the Outline Display editor likewise places
 custom Fields before System fields. Section labels remain compact metadata, not
-selectable rows. A Search Table keeps compact Outline, Sort, and Filter actions
-inside its Title header, while hidden columns remain directly recoverable through
-Add field. A nested table is an unframed indented scope with one
+selectable rows. A Search Table keeps name search, Outline, Sort, and Filter in
+its compact pre-header band, while hidden columns remain directly recoverable
+through Add field. A nested table is an unframed indented scope with one
 quiet separating edge, not a card inside the parent table. Each nested scope owns
 its own column template and local horizontal overflow.
 

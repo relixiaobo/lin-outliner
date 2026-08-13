@@ -98,7 +98,7 @@ replace or reinterpret the panel-level block-selection model.
 | Add / Display field order | Present current-record custom fields and other custom fields before supported system fields; restore hidden display fields without replacing their persisted configuration. In Table, Add field is the in-grid column entry point. | `table-view.spec.ts`, core tests |
 | Expanded record in Table mode | Keep visible-column values selectable in their cells, but omit every field entry from the expanded tree, disclosure count, keyboard model, and agent-visible outline. A nested Table remains one independent visual scope instead of flattening into the owning Outline. | `selectableRows.test.ts`, `userViewContext.test.ts`, `visualRows.test.ts`, `table-view.spec.ts` |
 | Long table | Mount a bounded measured row window plus focus/draft rows and preserve the viewport anchor while estimates settle. | `table-view.spec.ts` |
-| Search table | Render derived results without a writable trailing draft; resolve complete reference chains for column values and edit attachment; omit both the query summary and standalone toolbar rows; keep Outline, Sort, and Filter actions inside the Title header and column recovery in Add field. | `table-view.spec.ts`, `search-query-builder.spec.ts`, `rowInteractions.test.ts` |
+| Search table | Render derived results without a writable trailing draft; resolve complete reference chains for column values and edit attachment; omit the query summary and full toolbar; keep name search, Outline, Sort, and Filter in a compact separator-free band above the pure field header, with column recovery in Add field. | `table-view.spec.ts`, `search-query-builder.spec.ts`, `rowInteractions.test.ts` |
 
 ## Row Editing
 

@@ -346,19 +346,19 @@
   margin: var(--space-2) 0 var(--space-6);
 }
 
-.view-toolbar.is-table-header {
-  width: auto;
-  flex: 0 0 auto;
-  margin: 0 0 0 auto;
+.view-toolbar.is-table-controls {
+  width: fit-content;
+  max-width: calc(100% - var(--space-3));
+  margin: 0 0 var(--space-2) var(--space-3);
   padding: 0;
 }
 
-.view-toolbar.is-table-header::before,
-.view-toolbar.is-table-header::after {
+.view-toolbar.is-table-controls::before,
+.view-toolbar.is-table-controls::after {
   display: none;
 }
 
-.view-toolbar.is-table-header > .view-toolbar-button-row {
+.view-toolbar.is-table-controls > .view-toolbar-button-row {
   min-height: var(--control-size-xl);
   flex-wrap: nowrap;
   gap: 0;

@@ -87,13 +87,14 @@ restores its existing width, order, label, and placement. New field remains a
 separate final command.
 
 Display uses the same custom-before-system grouping as Add field so both field
-entry points present one predictable hierarchy. Table does not render the full
-view toolbar as a separate row: Add field owns visible-column configuration,
-while compact Outline, Sort, and Filter actions live inside the Title header when
-view controls are visible. Search Tables expose those header actions without a
-separate reveal step and omit the redundant query summary row. Ordinary Tables
-retain their persisted control visibility, and Outline searches retain the full
-toolbar and query summary.
+entry points present one predictable hierarchy. Table replaces the full view
+toolbar with a compact icon-first control band between the owner heading and the
+field header. It exposes name search, Outline, Sort, and Filter without summary
+chips, Display, Group, card fill, or decorative separators; activating name
+search expands its inline input. Add field owns visible-column configuration.
+Search Tables expose the compact band without a separate reveal step and omit
+the redundant query summary row. Ordinary Tables retain their persisted control
+visibility, and Outline searches retain the full toolbar and query summary.
 
 ### Responsive geometry
 
@@ -107,12 +108,13 @@ authoritative.
 Title's bullet remains aligned with its header label and disclosure stays in the
 reserved leading gutter. Add field occupies the trailing grid track, so it sits
 at the right edge on a wide panel instead of immediately after a compact data
-strip. Table view actions sit inside the Title header instead of creating another
-horizontal band. The redundant query summary row is absent in Search Table, so
-only the semantic header and row separators remain. Header labels and Add field use the existing small UI
-typography; record titles and values retain the content typography. All geometry
-and appearance continue to derive from design-system spacing, type, color,
-separator, and focus tokens.
+strip. The compact control band starts on the Title text axis and stays separate
+from the field header so `Title` remains a pure column label. The redundant query
+summary row is absent in Search Table. Only the field-header and data-row
+separators remain; the control band adds no frame or divider. Header labels and
+Add field use the existing small UI typography; record titles and values retain
+the content typography. All geometry and appearance continue to derive from
+design-system spacing, type, color, separator, and focus tokens.
 
 ### Current specification
 
@@ -132,8 +134,8 @@ and hidden-field expansion behavior.
 - Table E2E covers ordinary and saved-search records, automatic headers and
   values, hide persistence across Outline/Table switching, expanded records,
   Add and Display ordering, responsive full-width and overflow geometry,
-  token-backed typography, embedded Search Table actions, restoration, the
-  absence of a standalone Table toolbar row, and the absence of Remove from view.
+  token-backed typography, compact Search Table controls, restoration, the
+  absence of the full Table toolbar, and the absence of Remove from view.
 - Run typecheck, core and renderer suites, the focused Table E2E suite,
   `docs:check`, and light/dark visual verification of the saved-search Table.
 
@@ -144,8 +146,8 @@ and hidden-field expansion behavior.
 - `src/renderer/state/outlinerRows.ts` and
   `src/renderer/state/selectableRows.ts` own reference-chain reads and the
   shared field-free Table expansion model.
-- `src/renderer/ui/outliner/OutlinerTableView.tsx` owns cells, header actions,
-  responsive columns, embedded Search actions, and the grouped Add field surface.
+- `src/renderer/ui/outliner/OutlinerTableView.tsx` owns cells, the compact
+  pre-header control band, responsive columns, and the grouped Add field surface.
   `src/renderer/ui/outliner/ViewToolbar.tsx` owns the compact reusable Sort and
   Filter editors plus Outline Display grouping.
 - `src/renderer/styles/outliner.css` owns full-width grid behavior and its
