@@ -2843,4 +2843,20 @@ describe('Core', () => {
     expect(projected.description).toBe('Persisted description');
     expect(restored.state().nodes[SCHEMA_ID]).toBeDefined();
   });
+
+  test('persistence capture commits pending no-op writes outside every undo scope', () => {
+    const core = Core.new();
+    core.markPersistenceBaseline();
+    const loro = (core as unknown as { loro: LoroOutlinerDocument }).loro;
+    const todayId = core.projection().todayId;
+    loro.writeNode(structuredClone(core.state().nodes[todayId]!));
+
+    expect(loro.pendingLocalTransactionLength()).toBeGreaterThan(0);
+    core.capturePersistenceUpdate(core.loadedPersistenceVersion(), core.persistenceMetadataSequence());
+
+    expect(loro.pendingLocalTransactionLength()).toBe(0);
+    expect(loro.canUndo('all')).toBe(false);
+    expect(loro.canUndo('user')).toBe(false);
+    expect(loro.canUndo('agent')).toBe(false);
+  });
 });

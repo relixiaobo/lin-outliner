@@ -214,11 +214,19 @@ the explicit fork path. See [`agent-core.md`](agent-core.md).
 
 - A renderer module never mutates document state directly. UI changes that
   affect document content or tree structure must go through a command.
-- Every mutating command persists the workspace snapshot before returning, and
-  produces a renderer-facing `CommandResult.update` (`ProjectionUpdate`) plus an
-  optional `FocusHint` so the caller can update local projection state and restore
-  focus deterministically. Core's internal `CommandOutcome` does not carry a full
-  projection.
+- Every mutating command produces a renderer-facing `CommandResult.update`
+  (`ProjectionUpdate`) plus an optional `FocusHint` so the caller can update local
+  projection state and restore focus deterministically. Ordinary UI mutations
+  return after the document has been accepted at a monotonic persistence
+  revision; `WorkspaceSaver` later appends the incremental update and acknowledges
+  the durable tier. Trusted document-system transactions are the explicit
+  exception: they resolve only after their target revision is durable, preserving
+  the ordering between the workspace and the control-plane stores. Core's
+  internal `CommandOutcome` does not carry a full projection.
+- During reversible app-quit draining, new document mutations wait at the
+  admission boundary. Cancel readmits every queued request; entering irreversible
+  teardown rejects requests that never crossed that boundary. A repeated quit
+  request cannot silently bypass the durable revision barrier.
 - Origins are tagged on the underlying Loro transaction (`user:`, `agent:`,
   `system:`) so the scoped `UndoManager` can separate user undo from agent
   undo. The all/user/agent undo managers each retain the latest 100 steps. The

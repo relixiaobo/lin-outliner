@@ -1,10 +1,14 @@
 import { app } from 'electron';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import type { DocumentCommand } from '../core/commands';
-import { Core, type CoreTransactionMetadata, type OperationHistoryItem, type OperationHistoryQuery } from '../core/core';
+import {
+  Core,
+  type CorePersistenceSnapshot,
+  type CoreTransactionMetadata,
+  type OperationHistoryItem,
+  type OperationHistoryQuery,
+} from '../core/core';
 import type { OperationHistoryScope } from '../core/operationJournal';
 import {
   DocumentSystemContractError,
@@ -22,6 +26,7 @@ import {
   buildTextSearchIndex,
   buildTextSearchRecordSnapshot,
   textSearchRecordForNodeMap,
+  type NodeTextSearchRecord,
   type TransientSearchOptions,
 } from '../core/searchEngine';
 import { addToSetMap, removeFromSetMap } from '../core/setUtils';
@@ -60,11 +65,10 @@ import { parseLinOutline } from './agent/capabilities/agentOutlineParser';
 import { indexProjection } from './agent/capabilities/agentNodeToolProjection';
 import { resolveSearchSpecFromOutlineNode } from './agent/capabilities/agentNodeToolSearch';
 import { DocumentReadModel } from './documentReadModel';
-import { atomicWriteFile } from './jsonFileStore';
 import { loadOrCreateInstallationId } from './installationIdentity';
 import { NodeRetrievalService } from './nodeRetrievalService';
-
-const WORKSPACE_FILE = 'workspace.loro.json';
+import { WorkspacePersistenceStore } from './workspacePersistenceStore';
+import { WorkspaceSaver } from './workspaceSaver';
 
 export interface DocumentMutationMeta {
   origin?: 'user' | 'agent' | 'system';
@@ -149,6 +153,11 @@ interface HistoryMutationTarget {
   affectsMemory?: boolean;
 }
 
+interface FrozenMutationAdmission {
+  resume(): void;
+  reject(error: unknown): void;
+}
+
 type HistoryMutationGuardContext =
   | { status: 'none'; targets: readonly [] }
   | { status: 'known'; targets: readonly HistoryMutationTarget[] }
@@ -167,10 +176,12 @@ export class DocumentService implements DocumentSystemHost {
   private transactionContext = new AsyncLocalStorage<CoreTransactionMetadata>();
   private textEditGroup?: TextEditGroup;
   private readonly textEditFlushDelayMs = 700;
-  private coreSavePending = false;
-  private coreSaveTimer?: ReturnType<typeof setTimeout>;
+  private workspaceStore?: WorkspacePersistenceStore;
+  private workspaceSaver?: WorkspaceSaver;
+  private persistenceErrorHandler?: (error: unknown, revision: number) => void;
   private textSearchIndex?: MutableTextSearchIndex;
   private textSearchRevision = -1;
+  private textSearchRefreshInFlight = false;
   private textSearchNodes = new Map<string, NodeProjection>();
   private textSearchRootId = '';
   private textSearchLibraryId = '';
@@ -189,6 +200,11 @@ export class DocumentService implements DocumentSystemHost {
   private mutationObserverErrorHandler?: DocumentMutationObserverErrorHandler;
   private mutationObserverTransactionActive = false;
   private mutationCoordinator?: DocumentMutationCoordinator;
+  private mutationAdmissionFrozen = false;
+  private mutationAdmissionCommitted = false;
+  private frozenMutationAdmissions: FrozenMutationAdmission[] = [];
+  private activeMutationAdmissions = 0;
+  private mutationAdmissionIdleWaiters: Array<() => void> = [];
   private pendingTransactionProjectionChanges: DocumentTransactionProjectionChanges[] | null = null;
   private readonly nodeRetrieval = new NodeRetrievalService({
     getProjection: () => this.core.projection(),
@@ -199,13 +215,52 @@ export class DocumentService implements DocumentSystemHost {
 
   async initWorkspace(): Promise<ProjectionSnapshot> {
     if (this.initialized) return this.projectionSnapshot();
-    this.core = await this.loadCore();
+    this.workspaceStore = new WorkspacePersistenceStore(app.getPath('userData'));
+    const loaded = await this.workspaceStore.load();
+    const installationId = await loadOrCreateInstallationId(app.getPath('userData'));
+    if (loaded.snapshot) {
+      this.core = loaded.replay.length > 0
+        ? Core.fromPersistenceState(loaded.snapshot, loaded.replay, { installationId })
+        : Core.fromState(loaded.snapshot, { installationId });
+    } else {
+      this.core = Core.new({ installationId });
+    }
     this.documentReadModel = undefined;
     // The constructor lazily mints today's date node (and seeds system nodes) in
     // memory; persist immediately so its id is durable across launches. Without
     // this, a re-init mints a fresh today id while the renderer still holds the
     // old one, producing `parent not found: date:…` on the first row of today.
-    if (this.core.requiresInitialPersist()) await this.saveCore();
+    let resetUpdateLog = this.core.requiresInitialPersist() || !loaded.snapshot;
+    let initialPersistenceSnapshot: CorePersistenceSnapshot | undefined;
+    let recoveryRepairError: unknown;
+    if (resetUpdateLog) {
+      initialPersistenceSnapshot = await this.persistInitialWorkspace();
+    } else if (loaded.recovery) {
+      try {
+        initialPersistenceSnapshot = await this.persistInitialWorkspace();
+        resetUpdateLog = true;
+      } catch (error) {
+        recoveryRepairError = error;
+        this.persistenceErrorHandler?.(error, this.core.persistenceRevision());
+      }
+    }
+    this.workspaceSaver = new WorkspaceSaver(this.core, this.workspaceStore, {
+      idleDelayMs: this.textEditFlushDelayMs,
+      initialUpdateCount: resetUpdateLog ? 0 : loaded.replay.length,
+      initialUpdateBytes: resetUpdateLog ? 0 : loaded.replayBytes,
+      ...(initialPersistenceSnapshot ? {
+        initialDurableRevision: initialPersistenceSnapshot.persistenceRevision,
+        initialPersistedVersion: initialPersistenceSnapshot.version,
+        initialPersistedMetadataSequence: initialPersistenceSnapshot.metadataSequence,
+      } : {}),
+      onFailure: (error, revision) => this.persistenceErrorHandler?.(error, revision),
+    });
+    if (loaded.recovery) {
+      this.persistenceErrorHandler?.(loaded.recovery.error, this.core.persistenceRevision());
+      if (loaded.recovery.recoveryError && loaded.recovery.recoveryError !== recoveryRepairError) {
+        this.persistenceErrorHandler?.(loaded.recovery.recoveryError, this.core.persistenceRevision());
+      }
+    }
     const projection = this.core.projection();
     this.rebuildTextSearchIndex(projection);
     this.initialized = true;
@@ -320,6 +375,45 @@ export class DocumentService implements DocumentSystemHost {
     this.mutationCoordinator = coordinator;
   }
 
+  setPersistenceErrorHandler(handler: (error: unknown, revision: number) => void): void {
+    this.persistenceErrorHandler = handler;
+  }
+
+  freezeMutationAdmission(): void {
+    if (this.mutationAdmissionCommitted) return;
+    this.mutationAdmissionFrozen = true;
+  }
+
+  unfreezeMutationAdmission(): void {
+    if (this.mutationAdmissionCommitted) return;
+    this.mutationAdmissionFrozen = false;
+    const queued = this.frozenMutationAdmissions;
+    this.frozenMutationAdmissions = [];
+    for (const admission of queued) admission.resume();
+  }
+
+  commitMutationAdmissionFreeze(): void {
+    this.mutationAdmissionCommitted = true;
+    this.mutationAdmissionFrozen = true;
+    const queued = this.frozenMutationAdmissions;
+    this.frozenMutationAdmissions = [];
+    const error = CoreError.invalidOperation('document mutation was not accepted because the application is quitting');
+    for (const admission of queued) admission.reject(error);
+  }
+
+  private waitForMutationAdmissions(): Promise<void> {
+    if (this.activeMutationAdmissions === 0) return Promise.resolve();
+    return new Promise((resolve) => this.mutationAdmissionIdleWaiters.push(resolve));
+  }
+
+  latestAcceptedPersistenceRevision(): number {
+    return this.workspaceSaver?.acceptedRevision() ?? this.core.persistenceRevision();
+  }
+
+  durablePersistenceRevision(): number {
+    return this.workspaceSaver?.durableRevision() ?? this.core.persistenceRevision();
+  }
+
   /**
    * The journal as it stands right now, without waiting on the mutation queue.
    *
@@ -385,8 +479,8 @@ export class DocumentService implements DocumentSystemHost {
         }, effectiveMeta);
         const result = this.core.operationHistory(query);
         if (mutatesHistory && result.count > 0) {
-          this.refreshTextSearchIndexFromCoreDelta();
           this.scheduleCoreSave();
+          this.refreshTextSearchIndexFromCoreDelta();
           this.emitProjectionChanged(
             effectiveMeta.origin ?? historyChangeOrigin(query.origin),
             effectiveMeta.sourceWebContentsId,
@@ -426,12 +520,18 @@ export class DocumentService implements DocumentSystemHost {
   }
 
   async flushPendingChanges() {
-    const task = this.mutationQueue.then(async () => {
-      await this.flushTextEditGroupNow();
-      await this.flushCoreSaveNow();
-    });
+    const task = this.mutationQueue.then(() => this.flushTextEditGroupNow());
     this.mutationQueue = task.then(() => undefined, () => undefined);
-    return task;
+    await task;
+    await this.flushCoreSaveNow();
+  }
+
+  async drainPersistenceForQuit(): Promise<void> {
+    await this.waitForMutationAdmissions();
+    const task = this.mutationQueue.then(() => this.flushTextEditGroupNow());
+    this.mutationQueue = task.then(() => undefined, () => undefined);
+    await task;
+    await this.workspaceSaver?.waitForDurable(this.latestAcceptedPersistenceRevision());
   }
 
   async transaction<T>(
@@ -472,9 +572,16 @@ export class DocumentService implements DocumentSystemHost {
           throw error;
         }
         const transactionIndexed = this.commitObservedTransaction(meta, coreMetadata.affectsMemory);
+        let durabilityError: unknown;
         if (this.core.persistenceRevision() !== persistenceRevisionBefore) {
-          if (systemContext) await this.saveCore();
-          else this.scheduleCoreSave();
+          this.scheduleCoreSave();
+          if (systemContext) {
+            try {
+              await this.workspaceSaver?.waitForDurable(this.core.persistenceRevision());
+            } catch (error) {
+              durabilityError = error;
+            }
+          }
         }
         if (this.core.revision() !== revisionBefore) {
           this.refreshTextSearchIndexFromCoreDelta();
@@ -483,6 +590,10 @@ export class DocumentService implements DocumentSystemHost {
             transactionIndexed,
           });
         }
+        // Core has already committed at this point. A failed durable ack rejects
+        // the trusted transaction contract, but cannot turn the committed state
+        // back into an invisible projection/index generation.
+        if (durabilityError !== undefined) throw durabilityError;
         return result;
       });
       this.mutationQueue = task.then(() => undefined, () => undefined);
@@ -526,8 +637,8 @@ export class DocumentService implements DocumentSystemHost {
           if (undoGroupStarted) this.core.endUndoGroup();
         }
         if (this.core.revision() !== revisionBefore) {
-          await this.refreshTextSearchIndexFromCoreDeltaYielding({ yieldEveryNodes: options.yieldEveryNodes });
           this.scheduleCoreSave();
+          await this.refreshTextSearchIndexFromCoreDeltaYielding({ yieldEveryNodes: options.yieldEveryNodes });
           this.emitProjectionChanged(meta.origin ?? 'agent', meta.sourceWebContentsId, meta.operationId, {
             affectsMemory,
           });
@@ -572,9 +683,6 @@ export class DocumentService implements DocumentSystemHost {
     return this.coordinateMutation(mutationMeta, async () => {
       const task = this.mutationQueue.then(async () => {
         if (command !== 'apply_node_text_patch') await this.flushTextEditGroupNow();
-        if (command === 'apply_node_text_patch' || isMaterialize) {
-          await this.flushCoreSaveNow();
-        }
         const revisionBefore = this.core.revision();
         const effectiveMeta = command === 'apply_node_text_patch'
           ? await this.textEditMetadata(String(args.nodeId), mutationMeta)
@@ -597,15 +705,23 @@ export class DocumentService implements DocumentSystemHost {
         );
         const changed = this.core.revision() !== revisionBefore;
         if (command === 'apply_node_text_patch') {
-          if (changed) this.scheduleTextEditFlush();
+          if (changed) {
+            // Start the saver max-wait clock at the first patch; undo grouping
+            // still closes on its idle boundary below.
+            this.scheduleCoreSave();
+            this.scheduleTextEditFlush();
+          }
         } else if (isMaterialize) {
           // Keep the group open for the following text patches when the node was
           // created; close it immediately if the create was an idempotent retry.
-          if (changed) this.scheduleTextEditFlush();
+          if (changed) {
+            this.scheduleCoreSave();
+            this.scheduleTextEditFlush();
+          }
           else await this.flushTextEditGroupNow();
         } else if (changed) {
-          this.refreshTextSearchIndexFromCoreDelta();
           this.scheduleCoreSave();
+          this.refreshTextSearchIndexFromCoreDelta();
         }
         if (changed && (command === 'apply_node_text_patch' || isMaterialize)) this.refreshTextSearchIndexFromCoreDelta();
         if (changed) this.emitProjectionChanged(
@@ -626,7 +742,42 @@ export class DocumentService implements DocumentSystemHost {
   }
 
   private coordinateMutation<T>(meta: DocumentMutationMeta, operation: () => Promise<T>): Promise<T> {
-    return this.mutationCoordinator ? this.mutationCoordinator(meta, operation) : operation();
+    if (this.mutationAdmissionCommitted) {
+      return Promise.reject(CoreError.invalidOperation(
+        'document mutation was not accepted because the application is quitting',
+      ));
+    }
+    if (this.mutationAdmissionFrozen) {
+      return new Promise<T>((resolve, reject) => {
+        this.frozenMutationAdmissions.push({
+          resume: () => {
+            void this.admitMutation(meta, operation).then(resolve, reject);
+          },
+          reject,
+        });
+      });
+    }
+    return this.admitMutation(meta, operation);
+  }
+
+  private admitMutation<T>(meta: DocumentMutationMeta, operation: () => Promise<T>): Promise<T> {
+    this.activeMutationAdmissions += 1;
+    let result: Promise<T>;
+    try {
+      result = this.mutationCoordinator ? this.mutationCoordinator(meta, operation) : operation();
+    } catch (error) {
+      this.releaseMutationAdmission();
+      return Promise.reject(error);
+    }
+    return Promise.resolve(result).finally(() => this.releaseMutationAdmission());
+  }
+
+  private releaseMutationAdmission(): void {
+    this.activeMutationAdmissions = Math.max(0, this.activeMutationAdmissions - 1);
+    if (this.activeMutationAdmissions !== 0) return;
+    const waiters = this.mutationAdmissionIdleWaiters;
+    this.mutationAdmissionIdleWaiters = [];
+    for (const resolve of waiters) resolve();
   }
 
   private async textEditMetadata(nodeId: string, meta: DocumentMutationMeta): Promise<DocumentMutationMeta> {
@@ -689,31 +840,17 @@ export class DocumentService implements DocumentSystemHost {
     if (group.timer) clearTimeout(group.timer);
     this.textEditGroup = undefined;
     this.core.endUndoGroup();
-    await this.saveCore();
+    this.scheduleCoreSave();
     this.emitProjectionChanged(group.origin, undefined, group.operationId, {
       forceEmptyUpdate: true,
     });
   }
 
   private scheduleCoreSave() {
-    this.coreSavePending = true;
-    if (this.coreSaveTimer) clearTimeout(this.coreSaveTimer);
-    this.coreSaveTimer = setTimeout(() => {
-      void this.flushCoreSave();
-    }, this.textEditFlushDelayMs);
-  }
-
-  private async flushCoreSave() {
-    const task = this.mutationQueue.then(() => this.flushCoreSaveNow());
-    this.mutationQueue = task.then(() => undefined, () => undefined);
-    return task;
+    this.workspaceSaver?.scheduleSave();
   }
 
   private async flushCoreSaveNow() {
-    const shouldSave = this.coreSavePending;
-    if (this.coreSaveTimer) clearTimeout(this.coreSaveTimer);
-    this.coreSaveTimer = undefined;
-    if (!shouldSave) return;
     await this.saveCore();
   }
 
@@ -1154,7 +1291,7 @@ export class DocumentService implements DocumentSystemHost {
       this.rebuildTextSearchIndex(this.core.projection());
       return;
     }
-    if (this.textSearchRevision !== this.core.revision()) {
+    if (!this.textSearchRefreshInFlight && this.textSearchRevision !== this.core.revision()) {
       this.refreshTextSearchIndexFromCoreDelta();
     }
   }
@@ -1196,36 +1333,39 @@ export class DocumentService implements DocumentSystemHost {
       return;
     }
 
-    const previousNodes = this.textSearchNodes;
+    const beforeValues = new Map<string, NodeProjection | undefined>();
+    for (const nodeId of changedNodeIds) beforeValues.set(nodeId, this.textSearchNodes.get(nodeId));
+    const previousNodes = new BeforeStateNodeMap(this.textSearchNodes, beforeValues);
     const currentChangedNodes = this.core.projectionNodesFor([...changedNodeIds]);
-    const nextNodes = new Map(previousNodes);
     for (const nodeId of changedNodeIds) {
       const current = currentChangedNodes.get(nodeId);
-      if (current) nextNodes.set(nodeId, current);
-      else nextNodes.delete(nodeId);
+      if (current) this.textSearchNodes.set(nodeId, current);
+      else this.textSearchNodes.delete(nodeId);
     }
 
     const refreshIds = new Set<string>(changedNodeIds);
     for (const nodeId of changedNodeIds) {
       const before = previousNodes.get(nodeId);
-      const after = nextNodes.get(nodeId);
+      const after = this.textSearchNodes.get(nodeId);
       this.addDependentRefreshIds(refreshIds, nodeId, before, after);
 
       if (before && !after) {
         for (const descendantId of collectDescendantIds(previousNodes, nodeId)) {
+          if (!beforeValues.has(descendantId)) {
+            beforeValues.set(descendantId, this.textSearchNodes.get(descendantId));
+          }
           refreshIds.add(descendantId);
-          nextNodes.delete(descendantId);
+          this.textSearchNodes.delete(descendantId);
         }
         continue;
       }
 
-      if (before && after && isInProjectionTrash(previousNodes, nodeId) !== isInProjectionTrash(nextNodes, nodeId)) {
+      if (before && after && isInProjectionTrash(previousNodes, nodeId) !== isInProjectionTrash(this.textSearchNodes, nodeId)) {
         for (const descendantId of collectDescendantIds(previousNodes, nodeId)) refreshIds.add(descendantId);
-        for (const descendantId of collectDescendantIds(nextNodes, nodeId)) refreshIds.add(descendantId);
+        for (const descendantId of collectDescendantIds(this.textSearchNodes, nodeId)) refreshIds.add(descendantId);
       }
     }
 
-    this.textSearchNodes = nextNodes;
     for (const nodeId of refreshIds) this.refreshTextSearchRecord(nodeId);
     this.textSearchRevision = delta.revision;
   }
@@ -1261,44 +1401,64 @@ export class DocumentService implements DocumentSystemHost {
       return;
     }
 
-    const previousNodes = this.textSearchNodes;
-    const currentChangedNodes = this.core.projectionNodesFor([...changedNodeIds]);
-    const nextNodes = new Map(previousNodes);
-    for (const nodeId of changedNodeIds) {
-      const current = currentChangedNodes.get(nodeId);
-      if (current) nextNodes.set(nodeId, current);
-      else nextNodes.delete(nodeId);
-      await yieldIfNeeded();
-    }
+    this.textSearchRefreshInFlight = true;
+    try {
+      // Build a sparse, hidden working generation while yielding. Readers keep
+      // seeing the complete previous generation until the final synchronous
+      // publication; no document-sized Map clone is required.
+      const previousNodes = this.textSearchNodes;
+      const nodeChanges = new Map<string, NodeProjection | undefined>();
+      const workingNodes = new SparseOverlayNodeMap(previousNodes, nodeChanges);
+      const currentChangedNodes = this.core.projectionNodesFor([...changedNodeIds]);
+      for (const nodeId of changedNodeIds) {
+        nodeChanges.set(nodeId, currentChangedNodes.get(nodeId));
+        await yieldIfNeeded();
+      }
 
-    const refreshIds = new Set<string>(changedNodeIds);
-    for (const nodeId of changedNodeIds) {
-      const before = previousNodes.get(nodeId);
-      const after = nextNodes.get(nodeId);
-      this.addDependentRefreshIds(refreshIds, nodeId, before, after);
+      const refreshIds = new Set<string>(changedNodeIds);
+      for (const nodeId of changedNodeIds) {
+        const before = previousNodes.get(nodeId);
+        const after = workingNodes.get(nodeId);
+        this.addDependentRefreshIds(refreshIds, nodeId, before, after);
 
-      if (before && !after) {
-        for (const descendantId of collectDescendantIds(previousNodes, nodeId)) {
-          refreshIds.add(descendantId);
-          nextNodes.delete(descendantId);
+        if (before && !after) {
+          for (const descendantId of collectDescendantIds(previousNodes, nodeId)) {
+            refreshIds.add(descendantId);
+            nodeChanges.set(descendantId, undefined);
+          }
+          await yieldIfNeeded();
+          continue;
+        }
+
+        if (before && after && isInProjectionTrash(previousNodes, nodeId) !== isInProjectionTrash(workingNodes, nodeId)) {
+          for (const descendantId of collectDescendantIds(previousNodes, nodeId)) refreshIds.add(descendantId);
+          for (const descendantId of collectDescendantIds(workingNodes, nodeId)) refreshIds.add(descendantId);
         }
         await yieldIfNeeded();
-        continue;
       }
 
-      if (before && after && isInProjectionTrash(previousNodes, nodeId) !== isInProjectionTrash(nextNodes, nodeId)) {
-        for (const descendantId of collectDescendantIds(previousNodes, nodeId)) refreshIds.add(descendantId);
-        for (const descendantId of collectDescendantIds(nextNodes, nodeId)) refreshIds.add(descendantId);
+      const recordChanges = new Map<string, NodeTextSearchRecord | null>();
+      for (const nodeId of refreshIds) {
+        recordChanges.set(nodeId, textSearchRecordForNodeMap(
+          workingNodes,
+          this.textSearchRootId,
+          this.textSearchLibraryId,
+          nodeId,
+        ));
+        await yieldIfNeeded();
       }
-      await yieldIfNeeded();
-    }
 
-    this.textSearchNodes = nextNodes;
-    for (const nodeId of refreshIds) {
-      this.refreshTextSearchRecord(nodeId);
-      await yieldIfNeeded();
+      // No await below this line: map, dependency graph, and text index publish
+      // as one event-loop generation.
+      for (const [nodeId, node] of nodeChanges) {
+        if (node) this.textSearchNodes.set(nodeId, node);
+        else this.textSearchNodes.delete(nodeId);
+      }
+      for (const [nodeId, entry] of recordChanges) this.applyTextSearchRecord(nodeId, entry);
+      this.textSearchRevision = delta.revision;
+    } finally {
+      this.textSearchRefreshInFlight = false;
     }
-    this.textSearchRevision = delta.revision;
   }
 
   private addDependentRefreshIds(
@@ -1317,13 +1477,17 @@ export class DocumentService implements DocumentSystemHost {
   }
 
   private refreshTextSearchRecord(nodeId: string) {
-    this.clearTextSearchDependencies(nodeId);
     const entry = textSearchRecordForNodeMap(
       this.textSearchNodes,
       this.textSearchRootId,
       this.textSearchLibraryId,
       nodeId,
     );
+    this.applyTextSearchRecord(nodeId, entry);
+  }
+
+  private applyTextSearchRecord(nodeId: string, entry: NodeTextSearchRecord | null) {
+    this.clearTextSearchDependencies(nodeId);
     if (!entry) {
       this.textSearchIndex?.remove(nodeId);
       return;
@@ -1353,17 +1517,6 @@ export class DocumentService implements DocumentSystemHost {
       removeFromSetMap(this.textSearchReferenceDependents, referencedNodeId, nodeId);
     }
     this.textSearchNodeDependencies.delete(nodeId);
-  }
-
-  private async loadCore() {
-    const installationId = await loadOrCreateInstallationId(app.getPath('userData'));
-    try {
-      const raw = await readFile(workspacePath(), 'utf8');
-      return Core.fromState(Core.deserializeState(raw), { installationId });
-    } catch (error) {
-      if (isNotFound(error)) return Core.new({ installationId });
-      throw error;
-    }
   }
 
   private setSearchQueryOutline(nodeId: string, queryOutline: string) {
@@ -1396,10 +1549,15 @@ export class DocumentService implements DocumentSystemHost {
   }
 
   private async saveCore() {
-    await atomicWriteFile(workspacePath(), this.core.serializeState());
-    if (this.coreSaveTimer) clearTimeout(this.coreSaveTimer);
-    this.coreSaveTimer = undefined;
-    this.coreSavePending = false;
+    await this.workspaceSaver?.flushPending();
+  }
+
+  private async persistInitialWorkspace(): Promise<CorePersistenceSnapshot> {
+    if (!this.workspaceStore) throw new Error('workspace persistence store is not initialized');
+    const snapshot = this.core.capturePersistenceSnapshot();
+    await this.workspaceStore.compact(snapshot.raw);
+    this.core.markPersistenceBaseline(snapshot.version, snapshot.metadataSequence);
+    return snapshot;
   }
 
   private emitProjectionChanged(
@@ -1472,12 +1630,97 @@ function isInProjectionTrash(nodes: ReadonlyMap<string, NodeProjection>, nodeId:
   return nodeIsInSubtree(nodes, nodeId, TRASH_ID);
 }
 
-function workspacePath() {
-  return join(app.getPath('userData'), WORKSPACE_FILE);
+/**
+ * Reads the previous generation only for keys whose value changed. Unchanged
+ * keys delegate to the live map, so a delta does not allocate another
+ * document-sized Map while deletion and Trash-boundary calculations still see
+ * the before-state for every affected path.
+ */
+class BeforeStateNodeMap implements ReadonlyMap<string, NodeProjection> {
+  constructor(
+    private readonly current: ReadonlyMap<string, NodeProjection>,
+    private readonly before: ReadonlyMap<string, NodeProjection | undefined>,
+  ) {}
+
+  get size(): number {
+    return this.current.size;
+  }
+
+  get(key: string): NodeProjection | undefined {
+    return this.before.has(key) ? this.before.get(key) : this.current.get(key);
+  }
+
+  has(key: string): boolean {
+    return this.get(key) !== undefined;
+  }
+
+  entries(): MapIterator<[string, NodeProjection]> {
+    return this.current.entries();
+  }
+
+  keys(): MapIterator<string> {
+    return this.current.keys();
+  }
+
+  values(): MapIterator<NodeProjection> {
+    return this.current.values();
+  }
+
+  forEach(callbackfn: (value: NodeProjection, key: string, map: ReadonlyMap<string, NodeProjection>) => void, thisArg?: unknown): void {
+    this.current.forEach((value, key) => callbackfn.call(thisArg, value, key, this));
+  }
+
+  [Symbol.iterator](): MapIterator<[string, NodeProjection]> {
+    return this.entries();
+  }
 }
 
-function isNotFound(error: unknown) {
-  return typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT';
+class SparseOverlayNodeMap implements ReadonlyMap<string, NodeProjection> {
+  constructor(
+    private readonly base: ReadonlyMap<string, NodeProjection>,
+    private readonly changes: ReadonlyMap<string, NodeProjection | undefined>,
+  ) {}
+
+  get size(): number {
+    return this.materialize().size;
+  }
+
+  get(key: string): NodeProjection | undefined {
+    return this.changes.has(key) ? this.changes.get(key) : this.base.get(key);
+  }
+
+  has(key: string): boolean {
+    return this.get(key) !== undefined;
+  }
+
+  entries(): MapIterator<[string, NodeProjection]> {
+    return this.materialize().entries();
+  }
+
+  keys(): MapIterator<string> {
+    return this.materialize().keys();
+  }
+
+  values(): MapIterator<NodeProjection> {
+    return this.materialize().values();
+  }
+
+  forEach(callbackfn: (value: NodeProjection, key: string, map: ReadonlyMap<string, NodeProjection>) => void, thisArg?: unknown): void {
+    this.materialize().forEach((value, key) => callbackfn.call(thisArg, value, key, this));
+  }
+
+  [Symbol.iterator](): MapIterator<[string, NodeProjection]> {
+    return this.entries();
+  }
+
+  private materialize(): Map<string, NodeProjection> {
+    const merged = new Map(this.base);
+    for (const [key, value] of this.changes) {
+      if (value) merged.set(key, value);
+      else merged.delete(key);
+    }
+    return merged;
+  }
 }
 
 function isDocumentSystemTransactionContext(
