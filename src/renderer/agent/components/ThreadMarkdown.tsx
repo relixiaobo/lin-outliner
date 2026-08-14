@@ -7,7 +7,7 @@ import {
   type ComponentPropsWithoutRef,
   type ReactNode,
 } from 'react';
-import { Lexer } from 'marked';
+import { Lexer, type Token } from 'marked';
 import Markdown, { defaultUrlTransform } from 'react-markdown';
 import remend from 'remend';
 import remarkGfm from 'remark-gfm';
@@ -53,8 +53,13 @@ export function ThreadMarkdown({
   text,
 }: ThreadMarkdownProps) {
   const visibleText = useStreamingMarkdownText(text, streaming);
-  const repairedText = useMemo(() => streaming ? remend(visibleText) : visibleText, [streaming, visibleText]);
-  const blocks = useMemo(() => splitMarkdownBlocks(repairedText), [repairedText]);
+  const blockParserRef = useRef<StreamingMarkdownBlockParser | null>(null);
+  if (blockParserRef.current === null) blockParserRef.current = createStreamingMarkdownBlockParser();
+  const blocks = useMemo(() => {
+    if (streaming) return blockParserRef.current!.parse(visibleText);
+    blockParserRef.current!.reset();
+    return splitMarkdownBlocks(visibleText);
+  }, [streaming, visibleText]);
   return (
     <div className={`thread-markdown${streaming ? ' is-streaming' : ''}`}>
       {blocks.map((block, indexValue) => {
@@ -281,23 +286,187 @@ function reactNodeText(node: ReactNode): string {
   return '';
 }
 
-function splitMarkdownBlocks(text: string): string[] {
+export function splitMarkdownBlocks(text: string): string[] {
   if (!text) return [''];
   try {
-    const tokens = Lexer.lex(text);
-    const definitions = tokens
-      .filter((token) => token.type === 'def')
-      .map((token) => token.raw)
-      .join('');
-    const visibleBlocks = tokens
-      .filter((token) => token.type !== 'def')
-      .map((token) => definitions
-        ? `${token.raw}${token.raw.endsWith('\n') ? '\n' : '\n\n'}${definitions}`
-        : token.raw);
-    return visibleBlocks.length > 0 ? visibleBlocks : [''];
+    return blocksFromTokens(Lexer.lex(text));
   } catch {
     return [text];
   }
+}
+
+interface StreamingMarkdownBlockState {
+  readonly blocks: readonly string[];
+  readonly definitions: string;
+  readonly definitionsBeforeTail: string;
+  readonly prefixBlocks: readonly string[];
+  readonly tailStart: number;
+  readonly text: string;
+}
+
+export interface StreamingMarkdownBlockParser {
+  parse(text: string): readonly string[];
+  reset(): void;
+}
+
+export function createStreamingMarkdownBlockParser(): StreamingMarkdownBlockParser {
+  let previous: StreamingMarkdownBlockState | null = null;
+  return {
+    parse(text) {
+      if (previous?.text === text) return previous.blocks;
+      previous = previous && text.startsWith(previous.text)
+        ? appendStreamingMarkdown(previous, text)
+        : parseFullStreamingMarkdown(text);
+      return previous.blocks;
+    },
+    reset() {
+      previous = null;
+    },
+  };
+}
+
+function appendStreamingMarkdown(
+  previous: StreamingMarkdownBlockState,
+  text: string,
+): StreamingMarkdownBlockState {
+  const tailText = text.slice(previous.tailStart);
+  const repairedTail = remend(tailText);
+  let tokens: readonly Token[];
+  try {
+    tokens = Lexer.lex(repairedTail);
+  } catch {
+    return parseFullStreamingMarkdown(text);
+  }
+
+  const definitions = previous.definitionsBeforeTail + definitionsFromTokens(tokens);
+  if (definitions !== previous.definitions) return parseFullStreamingMarkdown(text);
+
+  const tailBlocks = blocksFromTokens(tokens, definitions);
+  const visibleTailBlocks = hasVisibleTokens(tokens) ? tailBlocks : [];
+  const blocks = [...previous.prefixBlocks, ...visibleTailBlocks];
+  const normalizedBlocks = blocks.length > 0 ? blocks : [''];
+  const boundary = nextTailBoundary(tokens, repairedTail, tailText);
+  if (!boundary) {
+    return {
+      blocks: normalizedBlocks,
+      definitions,
+      definitionsBeforeTail: '',
+      prefixBlocks: [],
+      tailStart: 0,
+      text,
+    };
+  }
+  return {
+    blocks: normalizedBlocks,
+    definitions,
+    definitionsBeforeTail: previous.definitionsBeforeTail + boundary.definitionsBeforeTail,
+    prefixBlocks: [...previous.prefixBlocks, ...boundary.prefixBlocks.map((block) => (
+      withDefinitions(block, definitions)
+    ))],
+    tailStart: previous.tailStart + boundary.tailStart,
+    text,
+  };
+}
+
+function parseFullStreamingMarkdown(text: string): StreamingMarkdownBlockState {
+  const repaired = remend(text);
+  let tokens: readonly Token[];
+  try {
+    tokens = Lexer.lex(repaired);
+  } catch {
+    return {
+      blocks: [repaired],
+      definitions: '',
+      definitionsBeforeTail: '',
+      prefixBlocks: [],
+      tailStart: 0,
+      text,
+    };
+  }
+  const definitions = definitionsFromTokens(tokens);
+  const boundary = nextTailBoundary(tokens, repaired, text);
+  return {
+    blocks: blocksFromTokens(tokens, definitions),
+    definitions,
+    definitionsBeforeTail: boundary?.definitionsBeforeTail ?? '',
+    prefixBlocks: boundary?.prefixBlocks.map((block) => withDefinitions(block, definitions)) ?? [],
+    tailStart: boundary?.tailStart ?? 0,
+    text,
+  };
+}
+
+function nextTailBoundary(
+  tokens: readonly Token[],
+  repaired: string,
+  source: string,
+): {
+  readonly definitionsBeforeTail: string;
+  readonly prefixBlocks: readonly string[];
+  readonly tailStart: number;
+} | null {
+  let coveredLength = 0;
+  for (const token of tokens) {
+    if (!repaired.startsWith(token.raw, coveredLength)) return null;
+    coveredLength += token.raw.length;
+  }
+  // Marked can omit ignored duplicate definitions from token.raw. Offsets are
+  // safe only when the token stream accounts for every repaired source byte.
+  if (coveredLength !== repaired.length) return null;
+
+  let lastVisibleIndex = -1;
+  for (let index = tokens.length - 1; index >= 0; index -= 1) {
+    if (tokens[index]?.type !== 'def') {
+      lastVisibleIndex = index;
+      break;
+    }
+  }
+  if (lastVisibleIndex < 0) return null;
+
+  let tailIndex = 0;
+  let tokenEnd = 0;
+  for (let index = 0; index < lastVisibleIndex; index += 1) {
+    tokenEnd += tokens[index]!.raw.length;
+    if (endsWithBlankLine(repaired, tokenEnd)) tailIndex = index + 1;
+  }
+  const beforeTail = tokens.slice(0, tailIndex);
+  const tailStart = beforeTail.reduce((length, token) => length + token.raw.length, 0);
+  if (tailStart > source.length || repaired.slice(0, tailStart) !== source.slice(0, tailStart)) return null;
+  return {
+    definitionsBeforeTail: definitionsFromTokens(beforeTail),
+    prefixBlocks: beforeTail.filter((token) => token.type !== 'def').map((token) => token.raw),
+    tailStart,
+  };
+}
+
+function endsWithBlankLine(text: string, end: number): boolean {
+  if (text[end - 1] !== '\n') return false;
+  let index = end - 2;
+  while (index >= 0 && (text[index] === ' ' || text[index] === '\t' || text[index] === '\r')) index -= 1;
+  return text[index] === '\n';
+}
+
+function blocksFromTokens(tokens: readonly Token[], definitions = definitionsFromTokens(tokens)): string[] {
+  const visibleBlocks = tokens
+    .filter((token) => token.type !== 'def')
+    .map((token) => withDefinitions(token.raw, definitions));
+  return visibleBlocks.length > 0 ? visibleBlocks : [''];
+}
+
+function definitionsFromTokens(tokens: readonly Token[]): string {
+  return tokens
+    .filter((token) => token.type === 'def')
+    .map((token) => token.raw)
+    .join('');
+}
+
+function hasVisibleTokens(tokens: readonly Token[]): boolean {
+  return tokens.some((token) => token.type !== 'def');
+}
+
+function withDefinitions(block: string, definitions: string): string {
+  return definitions
+    ? `${block}${block.endsWith('\n') ? '\n' : '\n\n'}${definitions}`
+    : block;
 }
 
 function useStreamingMarkdownText(text: string, streaming: boolean): string {

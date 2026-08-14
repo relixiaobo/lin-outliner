@@ -28,6 +28,7 @@ interface StreamingFixture {
   readonly rollout: RolloutStore;
   readonly history: ThreadHistoryProjectionStore;
   readonly metadata: ThreadMetadataStore;
+  readonly metadataSelects: { count: number };
 }
 
 interface ManualScheduler {
@@ -297,28 +298,34 @@ describe('Agent streaming delta pipeline', () => {
     unsubscribe();
   });
 
-  test('requires Thread metadata once for a recorded non-delta notification', async () => {
+  test('selects Thread metadata once across recorded notifications and again after a catalog write', async () => {
     const fixture = await createFixture();
-    const requireThread = fixture.metadata.require.bind(fixture.metadata);
-    let requireCount = 0;
-    fixture.metadata.require = (threadId) => {
-      requireCount += 1;
-      return requireThread(threadId);
-    };
-    try {
+    expect(fixture.metadataSelects.count).toBe(1);
+
+    for (let index = 0; index < 20; index += 1) {
       await fixture.core.recordNotification({
-        type: 'item/completed',
+        type: 'item/delta',
         threadId: fixture.threadId,
         turnId: fixture.turnId,
         itemId: fixture.agentOne.id,
-        item: { ...fixture.agentOne, text: 'complete' },
-        completedAt: fixtureSeed,
+        delta: { type: 'agentMessageText', delta: `[${index}]` },
       });
-    } finally {
-      fixture.metadata.require = requireThread;
     }
+    expect(fixture.metadataSelects.count).toBe(1);
 
-    expect(requireCount).toBe(1);
+    fixture.metadata.setPreview(fixture.threadId, 'updated preview', fixtureSeed);
+    await fixture.core.recordNotification({
+      type: 'item/completed',
+      threadId: fixture.threadId,
+      turnId: fixture.turnId,
+      itemId: fixture.agentOne.id,
+      item: { ...fixture.agentOne, text: 'complete' },
+      completedAt: fixtureSeed,
+    });
+
+    expect(fixture.metadataSelects.count).toBe(2);
+    expect(fixture.metadata.require(fixture.threadId).thread.preview).toBe('updated preview');
+    expect(fixture.metadataSelects.count).toBe(2);
   });
 });
 
@@ -332,7 +339,10 @@ async function createFixture(
   const turnId = uuidV7(seed + 1);
   const metadataPath = join(root, 'state.sqlite');
   const historyPath = join(root, 'history.sqlite');
-  const metadata = new ThreadMetadataStore(metadataPath, testDatabase(metadataPath));
+  const metadataSelects = { count: 0 };
+  const metadata = new ThreadMetadataStore(metadataPath, testDatabase(metadataPath, (sql) => {
+    if (sql.trim() === 'SELECT * FROM threads WHERE id = ?') metadataSelects.count += 1;
+  }));
   const history = new ThreadHistoryProjectionStore(historyPath, testDatabase(historyPath));
   const rolloutClock = manualScheduler();
   const rollout = new RolloutStore(join(root, 'rollouts'), {
@@ -446,6 +456,7 @@ async function createFixture(
     rollout,
     history,
     metadata,
+    metadataSelects,
   };
   fixtures.push(fixture);
   return fixture;
@@ -471,8 +482,17 @@ function manualScheduler(): ManualScheduler {
   };
 }
 
-function testDatabase(path: string): SqliteDatabase {
-  return new Database(path) as unknown as SqliteDatabase;
+function testDatabase(path: string, onPrepare?: (sql: string) => void): SqliteDatabase {
+  const database = new Database(path) as unknown as SqliteDatabase;
+  if (!onPrepare) return database;
+  return {
+    close: () => database.close(),
+    exec: (sql) => database.exec(sql),
+    prepare: (sql) => {
+      onPrepare(sql);
+      return database.prepare(sql);
+    },
+  };
 }
 
 function thread(id: string, now: number): Thread {

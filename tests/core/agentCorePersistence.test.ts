@@ -221,6 +221,120 @@ describe('Agent Core persistence', () => {
     store.close();
   });
 
+  test('invalidates decoded records through every Thread catalog record mutator', async () => {
+    const root = await tempRoot();
+    const statePath = join(root, 'state.sqlite');
+    const store = new ThreadMetadataStore(statePath, testDatabase(statePath));
+    const threadId = uuidV7(700);
+    store.create({
+      thread: thread(threadId, 700, { name: null }),
+      nameOrigin: 'none',
+      archived: false,
+      configuration,
+      toolCeiling: null,
+      modelOverride: null,
+      reasoningEffortOverride: null,
+    });
+
+    let cached = store.require(threadId);
+    const mutate = (name: string, operation: () => void) => {
+      operation();
+      const refreshed = store.require(threadId);
+      expect(refreshed, name).not.toBe(cached);
+      cached = refreshed;
+    };
+
+    mutate('setAutomaticNameIfEligible', () => {
+      expect(store.setAutomaticNameIfEligible(threadId, 'Automatic')).toBe(true);
+    });
+    expect(cached).toMatchObject({ nameOrigin: 'automatic', thread: { name: 'Automatic' } });
+    mutate('clearAutomaticName', () => {
+      expect(store.clearAutomaticName(threadId)).toBe(true);
+    });
+    expect(cached).toMatchObject({ nameOrigin: 'none', thread: { name: null } });
+    mutate('setManualName', () => store.setManualName(threadId, 'Manual'));
+    expect(cached).toMatchObject({ nameOrigin: 'manual', thread: { name: 'Manual' } });
+    mutate('setPreview', () => store.setPreview(threadId, 'Preview', 710));
+    expect(cached.thread).toMatchObject({ preview: 'Preview', updatedAt: 710 });
+    mutate('setStatus', () => store.setStatus(threadId, { type: 'active', activeFlags: [] }, 720));
+    expect(cached.thread).toMatchObject({ status: { type: 'active', activeFlags: [] }, updatedAt: 720 });
+    mutate('setCwd', () => store.setCwd(threadId, '/tmp/next', 730));
+    expect(cached.thread).toMatchObject({ cwd: '/tmp/next', updatedAt: 730 });
+    const nextConfiguration = { ...configuration, model: 'next-model' };
+    mutate('setConfiguration', () => store.setConfiguration(threadId, nextConfiguration));
+    expect(cached.configuration.model).toBe('next-model');
+    const rootConfiguration = { ...configuration, reasoningEffort: 'high' as const };
+    mutate('setRootConfiguration', () => {
+      store.setRootConfiguration(threadId, 'anthropic', rootConfiguration, 740);
+    });
+    expect(cached).toMatchObject({
+      configuration: { reasoningEffort: 'high' },
+      thread: { modelProvider: 'anthropic', updatedAt: 740 },
+    });
+    mutate('setArchived', () => store.setArchived(threadId, true, 750));
+    expect(cached.archived).toBe(true);
+
+    const childId = uuidV7(760);
+    store.createChild({
+      thread: thread(childId, 760, {
+        sessionId: cached.thread.sessionId,
+        parentThreadId: threadId,
+        threadSource: 'subagent',
+      }),
+      nameOrigin: 'none',
+      archived: false,
+      configuration,
+      toolCeiling: null,
+      modelOverride: null,
+      reasoningEffortOverride: null,
+    }, {
+      sessionId: cached.thread.sessionId,
+      parentThreadId: threadId,
+      childThreadId: childId,
+      taskPath: '/root/cache-child',
+      createdAt: 760,
+    });
+    store.require(childId);
+    store.delete(threadId);
+    expect(store.read(threadId)).toBeNull();
+    expect(store.read(childId)).toBeNull();
+    store.close();
+  });
+
+  test('reuses decoded records across catalog reads and bounds the LRU', () => {
+    const store = new ThreadMetadataStore(':memory:', testDatabase(':memory:'));
+    const threadId = uuidV7(800);
+    store.create({
+      thread: thread(threadId, 800),
+      nameOrigin: 'none',
+      archived: false,
+      configuration,
+      toolCeiling: null,
+      modelOverride: null,
+      reasoningEffortOverride: null,
+    });
+
+    const cached = store.require(threadId);
+    expect(store.readMany([threadId]).get(threadId)).toBe(cached);
+    expect(store.list({ limit: 1 }).data[0]).toBe(cached.thread);
+
+    for (let index = 0; index < 256; index += 1) {
+      const nextId = uuidV7(801 + index);
+      store.create({
+        thread: thread(nextId, 801 + index),
+        nameOrigin: 'none',
+        archived: false,
+        configuration,
+        toolCeiling: null,
+        modelOverride: null,
+        reasoningEffortOverride: null,
+      });
+      store.require(nextId);
+    }
+    expect(store.require(threadId)).not.toBe(cached);
+    store.close();
+  });
+
   test('repairs a torn rollout tail and preserves strict append ordinals', async () => {
     const root = await tempRoot();
     const store = trackedRolloutStore(join(root, 'rollouts'));

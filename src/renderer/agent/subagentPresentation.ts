@@ -59,6 +59,7 @@ export function projectSubagentsForTurn(
   turn: Turn,
   threadsById: ReadonlyMap<ThreadId, Thread>,
   latestTurnByThread: ReadonlyMap<ThreadId, Turn>,
+  previous: SubagentTurnProjection | null = null,
 ): SubagentTurnProjection {
   const activities = new Map<ThreadId, ActivityEvidence>();
   const snapshots = new Map<ThreadId, SubagentExecutionState>();
@@ -86,7 +87,7 @@ export function projectSubagentsForTurn(
     }
   }
 
-  const byThreadId = new Map<ThreadId, SubagentPresentation>();
+  const projectedByThreadId = new Map<ThreadId, SubagentPresentation>();
   for (const threadId of relatedThreadIds) {
     const activity = activities.get(threadId);
     const snapshot = snapshots.get(threadId);
@@ -97,7 +98,7 @@ export function projectSubagentsForTurn(
     const role = snapshot?.role ?? thread?.agentRole ?? null;
     const live = livePresentationState(turn, activity ?? null, thread ?? null, latestTurn ?? null);
     const form = delegationForm(thread ?? null, taskPath);
-    byThreadId.set(threadId, {
+    projectedByThreadId.set(threadId, {
       agentThreadId: threadId,
       displayName: subagentDisplayName(taskPath, nickname, role, threadId, form),
       durationMs: live.durationMs,
@@ -110,16 +111,83 @@ export function projectSubagentsForTurn(
       taskPath,
     });
   }
-  disambiguateDisplayNames(byThreadId);
+  disambiguateDisplayNames(projectedByThreadId);
 
-  return {
-    activeThreadIds: [...byThreadId.values()]
+  const byThreadId = reusePresentationMap(previous?.byThreadId ?? null, projectedByThreadId);
+  const activeThreadIds = reuseEqualArray(previous?.activeThreadIds ?? null, [...byThreadId.values()]
       .filter((entry) => entry.status === 'pendingInit' || entry.status === 'running')
-      .map((entry) => entry.agentThreadId),
+      .map((entry) => entry.agentThreadId));
+  const projectedItems = delegationCollapsedItems(turn, activities);
+  const collaborationIds = reuseEqualArray(
+    previous?.collaborationThreadIds ?? null,
+    collaborationThreadIds(byThreadId),
+  );
+  const items = reuseEqualArray(previous?.items ?? null, projectedItems);
+  if (
+    previous
+    && activeThreadIds === previous.activeThreadIds
+    && byThreadId === previous.byThreadId
+    && collaborationIds === previous.collaborationThreadIds
+    && items === previous.items
+  ) return previous;
+  return {
+    activeThreadIds,
     byThreadId,
-    collaborationThreadIds: collaborationThreadIds(byThreadId),
-    items: delegationCollapsedItems(turn, activities),
+    collaborationThreadIds: collaborationIds,
+    items,
   };
+}
+
+function reusePresentationMap(
+  previous: ReadonlyMap<ThreadId, SubagentPresentation> | null,
+  next: ReadonlyMap<ThreadId, SubagentPresentation>,
+): ReadonlyMap<ThreadId, SubagentPresentation> {
+  if (!previous) return next;
+  const previousEntries = [...previous.entries()];
+  let mapUnchanged = previousEntries.length === next.size;
+  const reused = new Map<ThreadId, SubagentPresentation>();
+  let index = 0;
+  for (const [threadId, entry] of next) {
+    const previousEntry = previous.get(threadId);
+    const stableEntry = previousEntry && presentationEqual(previousEntry, entry)
+      ? previousEntry
+      : entry;
+    reused.set(threadId, stableEntry);
+    if (previousEntries[index]?.[0] !== threadId || stableEntry !== previousEntry) mapUnchanged = false;
+    index += 1;
+  }
+  return mapUnchanged ? previous : reused;
+}
+
+function presentationEqual(left: SubagentPresentation, right: SubagentPresentation): boolean {
+  return left.agentThreadId === right.agentThreadId
+    && left.displayName === right.displayName
+    && left.durationMs === right.durationMs
+    && turnErrorEqual(left.error, right.error)
+    && left.form === right.form
+    && left.nickname === right.nickname
+    && left.role === right.role
+    && left.startedAt === right.startedAt
+    && left.status === right.status
+    && left.taskPath === right.taskPath;
+}
+
+function turnErrorEqual(left: TurnError | null, right: TurnError | null): boolean {
+  return left === right || (
+    left !== null
+    && right !== null
+    && left.message === right.message
+    && left.code === right.code
+    && left.detail === right.detail
+  );
+}
+
+function reuseEqualArray<T>(previous: readonly T[] | null, next: readonly T[]): readonly T[] {
+  return previous
+    && previous.length === next.length
+    && previous.every((entry, index) => entry === next[index])
+    ? previous
+    : next;
 }
 
 /**
