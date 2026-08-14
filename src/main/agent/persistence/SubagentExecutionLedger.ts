@@ -125,6 +125,9 @@ interface ParentMessageRow {
   delivered_at: number | null;
 }
 
+/** Announces that one Agent's execution state was written. */
+export type SubagentExecutionChangeObserver = (agentId: ThreadId) => void;
+
 /**
  * Persistent execution state that is not already represented by Thread/Turn.
  * Agent identity is the child Thread id; model, cwd, Role, and transcript stay
@@ -132,6 +135,8 @@ interface ParentMessageRow {
  */
 export class SubagentExecutionLedger {
   private readonly deletedAgentIds = new Set<ThreadId>();
+
+  private onExecutionChanged: SubagentExecutionChangeObserver = () => undefined;
 
   constructor(private readonly db: SqliteDatabase) {
     this.db.exec(`
@@ -261,7 +266,7 @@ export class SubagentExecutionLedger {
       input.createdAt,
       input.updatedAt,
     );
-    return this.require(input.agentId);
+    return this.touched(input.agentId);
   }
 
   pendingInitialAdmissions(): readonly SubagentExecutionRecord[] {
@@ -292,7 +297,7 @@ export class SubagentExecutionLedger {
       input.turnId,
     );
     if (Number(result.changes) !== 1) return null;
-    return this.require(input.agentId);
+    return this.touched(input.agentId);
   }
 
   clearInitialWorktreeIntentIfPending(input: {
@@ -307,7 +312,7 @@ export class SubagentExecutionLedger {
         AND initial_admission_state = 'pending'
     `).run(input.updatedAt, input.agentId, input.turnId);
     if (Number(result.changes) !== 1) return null;
-    return this.require(input.agentId);
+    return this.touched(input.agentId);
   }
 
   completeInitialAdmissionIfCurrent(
@@ -321,7 +326,41 @@ export class SubagentExecutionLedger {
           updated_at = ?
       WHERE agent_id = ? AND current_turn_id = ? AND initial_admission_state = 'pending'
     `).run(updatedAt, agentId, turnId);
-    return Number(result.changes) === 1;
+    if (Number(result.changes) !== 1) return false;
+    // The commit boundary the renderer is waiting for: only a committed
+    // admission is projected, so this is where a child first becomes visible.
+    this.announce(agentId);
+    return true;
+  }
+
+  /**
+   * The post-state of a write, announced as it is read back.
+   *
+   * Every mutating method funnels through here or through `announce`, so a
+   * surface that watches execution state cannot go stale because one call site
+   * forgot to say it had written. Observers are contained: a presentation
+   * listener must never be able to fail a durable write.
+   */
+  private touched(agentId: ThreadId): SubagentExecutionRecord {
+    const record = this.require(agentId);
+    this.announce(agentId);
+    return record;
+  }
+
+  /**
+   * The store outlives any one owner and is built before the service that
+   * projects it, so the watcher is attached rather than injected.
+   */
+  observeChanges(observer: SubagentExecutionChangeObserver): void {
+    this.onExecutionChanged = observer;
+  }
+
+  private announce(agentId: ThreadId): void {
+    try {
+      this.onExecutionChanged(agentId);
+    } catch (error) {
+      console.error('[agent] Subagent execution observer failed', error);
+    }
   }
 
   read(agentId: ThreadId): SubagentExecutionRecord | null {
@@ -396,7 +435,7 @@ export class SubagentExecutionLedger {
       input.expectedGeneration,
       input.expectedTurnId,
     );
-    return Number(result.changes) === 1 ? this.require(input.agentId) : null;
+    return Number(result.changes) === 1 ? this.touched(input.agentId) : null;
   }
 
   /**
@@ -429,7 +468,7 @@ export class SubagentExecutionLedger {
       input.expectedGeneration,
       input.expectedTurnId,
     );
-    return Number(result.changes) === 1 ? this.require(input.agentId) : null;
+    return Number(result.changes) === 1 ? this.touched(input.agentId) : null;
   }
 
   generationSnapshot(agentId: ThreadId): SubagentGenerationSnapshot {
@@ -472,7 +511,9 @@ export class SubagentExecutionLedger {
       expectedGeneration,
       expectedTurnId,
     );
-    return Number(result.changes) === 1;
+    if (Number(result.changes) !== 1) return false;
+    this.announce(agentId);
+    return true;
   }
 
   pendingGenerationAdmissions(): readonly {
@@ -531,7 +572,9 @@ export class SubagentExecutionLedger {
       input.expectedGeneration,
       input.expectedTurnId,
     );
-    return Number(result.changes) === 1;
+    if (Number(result.changes) !== 1) return false;
+    this.announce(input.agentId);
+    return true;
   }
 
   rollbackContinuation(input: {
@@ -550,7 +593,9 @@ export class SubagentExecutionLedger {
       input.expectedGeneration,
       input.expectedTurnId,
     );
-    return Number(result.changes) === 1;
+    if (Number(result.changes) !== 1) return false;
+    this.announce(input.agentId);
+    return true;
   }
 
   recordStop(
@@ -563,7 +608,7 @@ export class SubagentExecutionLedger {
     this.db.prepare(`
       UPDATE subagent_execution_records SET stop_provenance = ?, updated_at = ? WHERE agent_id = ?
     `).run(next, updatedAt, agentId);
-    return this.require(agentId);
+    return this.touched(agentId);
   }
 
   /**
@@ -597,7 +642,7 @@ export class SubagentExecutionLedger {
       input.turnId,
     );
     if (Number(result.changes) !== 1) return null;
-    return this.require(input.agentId);
+    return this.touched(input.agentId);
   }
 
   clearUserStop(agentId: ThreadId, updatedAt: number): SubagentExecutionRecord {
@@ -605,7 +650,7 @@ export class SubagentExecutionLedger {
       UPDATE subagent_execution_records SET stop_provenance = 'none', updated_at = ?
       WHERE agent_id = ? AND stop_provenance = 'user'
     `).run(updatedAt, agentId);
-    return this.require(agentId);
+    return this.touched(agentId);
   }
 
   /** Updates worktree metadata only for the generation that owns the worktree. */
@@ -628,7 +673,7 @@ export class SubagentExecutionLedger {
       input.turnId,
     );
     if (Number(result.changes) !== 1) return null;
-    return this.require(input.agentId);
+    return this.touched(input.agentId);
   }
 
   beginWorktreeCleanupIfCurrent(input: {
@@ -653,7 +698,7 @@ export class SubagentExecutionLedger {
       encodeWorktree(input.worktree),
     );
     if (Number(result.changes) !== 1) return null;
-    return this.require(input.agentId);
+    return this.touched(input.agentId);
   }
 
   completeWorktreeCleanupIfCurrent(input: {
@@ -678,7 +723,7 @@ export class SubagentExecutionLedger {
       encodeWorktree(input.expectedWorktree),
     );
     if (Number(result.changes) !== 1) return null;
-    return this.require(input.agentId);
+    return this.touched(input.agentId);
   }
 
   cancelWorktreeCleanupIfCurrent(input: {
@@ -701,7 +746,7 @@ export class SubagentExecutionLedger {
       encodeWorktree(input.worktree),
     );
     if (Number(result.changes) !== 1) return null;
-    return this.require(input.agentId);
+    return this.touched(input.agentId);
   }
 
   recordTerminal(input: Omit<SubagentPendingNotification, 'state' | 'deliveredAt'>): boolean {
@@ -723,6 +768,7 @@ export class SubagentExecutionLedger {
       input.status,
       input.createdAt,
     );
+    this.announce(input.agentId);
     return true;
   }
 
@@ -785,7 +831,9 @@ export class SubagentExecutionLedger {
       UPDATE subagent_execution_notifications SET state = 'delivering'
       WHERE agent_id = ? AND generation = ? AND state = 'pending'
     `).run(agentId, generation);
-    return Number(result.changes) === 1;
+    if (Number(result.changes) !== 1) return false;
+    this.announce(agentId);
+    return true;
   }
 
   release(agentId: ThreadId, generation: number): void {
@@ -793,6 +841,7 @@ export class SubagentExecutionLedger {
       UPDATE subagent_execution_notifications SET state = 'pending'
       WHERE agent_id = ? AND generation = ? AND state = 'delivering'
     `).run(agentId, generation);
+    this.announce(agentId);
   }
 
   markDelivered(agentId: ThreadId, generation: number, deliveredAt: number): void {
@@ -800,6 +849,7 @@ export class SubagentExecutionLedger {
       UPDATE subagent_execution_notifications SET state = 'delivered', delivered_at = ?
       WHERE agent_id = ? AND generation = ? AND state = 'delivering'
     `).run(deliveredAt, agentId, generation);
+    this.announce(agentId);
   }
 
   enqueueParentMessage(input: Omit<SubagentParentMessage, 'state' | 'deliveredAt'>): void {

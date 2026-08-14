@@ -689,6 +689,10 @@ export class ThreadCatalogOps {
         .map((id) => this.core.metadata.read(id)?.thread ?? null)
         .filter((thread): thread is Thread => thread !== null && !thread.ephemeral);
     }
+  /** The addressed Thread and every delegated descendant, as one conversation. */
+  subtreeThreadIds(threadId: ThreadId): readonly ThreadId[] {
+      return this.threadSubtreeIds(threadId);
+    }
   private threadSubtreeIds(threadId: ThreadId): ThreadId[] {
       const root = this.core.requireThread(threadId).thread;
       if (!root.ephemeral) {

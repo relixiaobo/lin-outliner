@@ -18,6 +18,8 @@ import type {
   ThreadItem,
   ThreadItemDelta,
   ThreadListResponse,
+  SubagentExecutionProjection,
+  ThreadSubagentsResponse,
   TurnPlanSnapshot,
   TurnId,
   ThreadUserContent,
@@ -51,6 +53,12 @@ export interface ThreadStoreSnapshot {
   readonly userInputByThread: ReadonlyMap<ThreadId, RequestUserInputRequest>;
   readonly providerRetryByThread: ReadonlyMap<ThreadId, { readonly turnId: string; readonly status: ProviderRetryStatus }>;
   readonly planByThread: ReadonlyMap<ThreadId, ActiveTurnPlan>;
+  /**
+   * Canonical Agent execution records for the loaded conversations, keyed by
+   * the stable Agent ID. This is the registry's input: a delegated child spans
+   * many Turns, so its lifecycle cannot be read off the Turn that spawned it.
+   */
+  readonly subagentExecutionsByAgentId: ReadonlyMap<ThreadId, SubagentExecutionProjection>;
   readonly loading: boolean;
   readonly error: string | null;
 }
@@ -65,6 +73,7 @@ const EMPTY_SNAPSHOT: ThreadStoreSnapshot = {
   userInputByThread: new Map(),
   providerRetryByThread: new Map(),
   planByThread: new Map(),
+  subagentExecutionsByAgentId: new Map(),
   loading: true,
   error: null,
 };
@@ -160,7 +169,26 @@ export class ThreadStore {
     // that merely finished. One subtree read per selection restores the catalog
     // this conversation needs, and prunes children the server no longer has.
     void this.listDescendants(threadId).catch(() => undefined);
+    void this.loadSubagentExecutions(threadId).catch(() => undefined);
     await this.loadTurns(threadId);
+  }
+
+  /**
+   * The conversation's Agent registry input, read once per selection.
+   *
+   * Live changes arrive as `subagent/execution/changed`, so this read is the
+   * cold-start half only: a conversation reopened days later still knows which
+   * Agents it delegated, which of them the user stopped, and which left a
+   * worktree behind.
+   */
+  async loadSubagentExecutions(threadId: ThreadId): Promise<void> {
+    const response: ThreadSubagentsResponse = await this.client.agentCoreRequest(
+      'thread/subagents/list',
+      { threadId },
+    );
+    const subagentExecutionsByAgentId = new Map(this.snapshot.subagentExecutionsByAgentId);
+    for (const execution of response.data) subagentExecutionsByAgentId.set(execution.agentId, execution);
+    this.patch({ subagentExecutionsByAgentId });
   }
 
   async openThreadById(threadId: ThreadId): Promise<void> {
@@ -252,6 +280,7 @@ export class ThreadStore {
     const userInputByThread = new Map(this.snapshot.userInputByThread);
     const providerRetryByThread = new Map(this.snapshot.providerRetryByThread);
     const planByThread = new Map(this.snapshot.planByThread);
+    const subagentExecutionsByAgentId = new Map(this.snapshot.subagentExecutionsByAgentId);
     for (const deletedId of deletedIds) {
       this.loadGenerations.set(deletedId, (this.loadGenerations.get(deletedId) ?? 0) + 1);
       turnsByThread.delete(deletedId);
@@ -261,6 +290,7 @@ export class ThreadStore {
       userInputByThread.delete(deletedId);
       providerRetryByThread.delete(deletedId);
       planByThread.delete(deletedId);
+      subagentExecutionsByAgentId.delete(deletedId);
     }
     const selectedThreadWasDeleted = Boolean(
       this.snapshot.selectedThreadId && deletedIds.has(this.snapshot.selectedThreadId),
@@ -280,6 +310,7 @@ export class ThreadStore {
       userInputByThread,
       providerRetryByThread,
       planByThread,
+      subagentExecutionsByAgentId,
       selectedThreadId: replacementThreadId,
     });
     if (selectedThreadWasDeleted && replacementThreadId) await this.loadTurns(replacementThreadId);
@@ -722,6 +753,16 @@ export class ThreadStore {
         this.patch({ goalsByThread });
         return;
       }
+      case 'subagent/execution/changed': {
+        const current = this.snapshot.subagentExecutionsByAgentId.get(notification.execution.agentId);
+        // Field-equal records keep their identity so the registry — and every
+        // memoized row projected from it — sees no change at all.
+        if (current && subagentExecutionEqual(current, notification.execution)) return;
+        const subagentExecutionsByAgentId = new Map(this.snapshot.subagentExecutionsByAgentId);
+        subagentExecutionsByAgentId.set(notification.execution.agentId, notification.execution);
+        this.patch({ subagentExecutionsByAgentId });
+        return;
+      }
     }
   }
 
@@ -984,6 +1025,24 @@ function appendReasoningDelta(
   if (values.length === 0) values.push(delta);
   else values[values.length - 1] = values.at(-1)! + delta;
   return { ...item, [key]: values };
+}
+
+function subagentExecutionEqual(
+  left: SubagentExecutionProjection,
+  right: SubagentExecutionProjection,
+): boolean {
+  return left.agentId === right.agentId
+    && left.parentThreadId === right.parentThreadId
+    && left.description === right.description
+    && left.agentType === right.agentType
+    && left.runMode === right.runMode
+    && left.generation === right.generation
+    && left.currentTurnId === right.currentTurnId
+    && left.stopProvenance === right.stopProvenance
+    && left.notificationState === right.notificationState
+    && left.worktree?.branch === right.worktree?.branch
+    && left.worktree?.path === right.worktree?.path
+    && left.createdAt === right.createdAt;
 }
 
 function errorMessage(error: unknown): string {

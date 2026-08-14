@@ -12,6 +12,7 @@ import {
   decodeAgentCoreResponse,
   decodeAgentCoreNotification,
   decodeAgentCoreRecordedNotification,
+  decodeAgentCoreTransientNotification,
   decodePrivilegedTurnStartRequest,
   decodeRendererTurnStartRequest,
   decodeThread,
@@ -37,6 +38,7 @@ import {
   THREAD_MESSAGE_CONTEXT_MENU_ACTIONS,
   THREAD_MESSAGE_CONTEXT_MENU_CAPABILITY_FIELDS,
   threadFeatureSource,
+  type SubagentExecutionProjection,
   type Thread,
   type ThreadContextPayload,
   type ThreadItem,
@@ -437,6 +439,21 @@ const thread: Thread = {
   status: { type: 'idle' },
   historyMode: 'paginated',
   turns: [completedTurn],
+};
+
+const subagentExecution: SubagentExecutionProjection = {
+  agentId: CHILD_THREAD_ID,
+  parentThreadId: THREAD_ID,
+  description: 'survey the runtime',
+  agentType: 'general-purpose',
+  runMode: 'background',
+  generation: 2,
+  currentTurnId: TURN_ID,
+  stopProvenance: 'user',
+  notificationState: 'delivered',
+  worktree: { branch: 'tenon/agent-survey', path: '/tmp/project-agent-survey' },
+  createdAt: 100,
+  updatedAt: 300,
 };
 
 describe('isolated Skill task addressing', () => {
@@ -1364,6 +1381,34 @@ describe('Codex Agent Core protocol codec', () => {
       .toThrow('cannot record transient notification turn/plan/updated');
   });
 
+  test('validates Subagent execution notifications as derived, parent-addressed state', () => {
+    const changed = {
+      type: 'subagent/execution/changed' as const,
+      threadId: THREAD_ID,
+      execution: subagentExecution,
+    };
+    expect(decodeAgentCoreNotification(changed)).toEqual(changed);
+    // The envelope names the conversation the change belongs to, so a record
+    // routed to a Thread that did not delegate it is a defect, not a variant.
+    expect(() => decodeAgentCoreNotification({
+      ...changed,
+      threadId: TURN_ID,
+    })).toThrow('must match the envelope');
+    expect(() => decodeAgentCoreNotification({
+      ...changed,
+      execution: { ...subagentExecution, generation: 0 },
+    })).toThrow('expected a positive safe integer');
+    expect(() => decodeAgentCoreNotification({
+      ...changed,
+      execution: { ...subagentExecution, toolPolicy: { allowNesting: true } },
+    })).toThrow('unknown fields: toolPolicy');
+    // Execution state is derived orchestration state; canonical history is the
+    // Agent's own Thread, so this can never enter a rollout.
+    expect(() => decodeAgentCoreRecordedNotification(changed))
+      .toThrow('cannot record transient notification subagent/execution/changed');
+    expect(decodeAgentCoreTransientNotification(changed)).toEqual(changed);
+  });
+
   test('validates canonical Thread name update notifications', () => {
     expect(decodeAgentCoreNotification({
       type: 'thread/name/updated',
@@ -1521,6 +1566,7 @@ describe('Codex Agent Core protocol codec', () => {
     const requests: Record<string, unknown> = {
       'thread/list': {},
       'thread/descendants': { threadId: THREAD_ID },
+      'thread/subagents/list': { threadId: THREAD_ID },
       'thread/read': { threadId: THREAD_ID, includeTurns: true },
       'thread/start': {},
       'thread/resume': { threadId: THREAD_ID },
@@ -1584,6 +1630,7 @@ describe('Codex Agent Core protocol codec', () => {
     const responses: Record<string, unknown> = {
       'thread/list': { data: [thread], nextCursor: null },
       'thread/descendants': { data: [thread], queuedWorkThreadIds: [] },
+      'thread/subagents/list': { data: [subagentExecution] },
       'thread/read': { thread },
       'thread/start': { thread },
       'thread/resume': { thread },
