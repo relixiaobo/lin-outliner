@@ -183,7 +183,6 @@ test.describe('code block editor', () => {
       const textareaRect = ta.getBoundingClientRect();
       return {
         editorHeight: Math.round(editor.getBoundingClientRect().height),
-        highlightSynced: Math.abs(highlight.scrollTop - ta.scrollTop) <= 1,
         viewportBottomAligned: Math.abs(highlightRect.bottom - textareaRect.bottom) <= 1,
         viewportHeightAligned: Math.abs(highlightRect.height - textareaRect.height) <= 1,
         maxHeight: Number.isFinite(parsedMaxHeight) ? Math.round(parsedMaxHeight) : 420,
@@ -194,11 +193,15 @@ test.describe('code block editor', () => {
     expect(metrics).not.toBeNull();
     expect(metrics!.editorHeight).toBeLessThanOrEqual(metrics!.maxHeight + 1);
     expect(metrics!.editorHeight).toBeGreaterThan(240);
-    expect(metrics!.highlightSynced).toBe(true);
     expect(metrics!.viewportBottomAligned).toBe(true);
     expect(metrics!.viewportHeightAligned).toBe(true);
     expect(metrics!.textareaScrolls).toBe(true);
     expect(metrics!.textareaOverflowY).toBe('auto');
+    await expect.poll(() => textarea.evaluate((element) => {
+      const ta = element as HTMLTextAreaElement;
+      const highlight = ta.closest('.code-block-editor')?.querySelector<HTMLElement>('.code-block-highlight');
+      return Boolean(highlight && Math.abs(highlight.scrollTop - ta.scrollTop) <= 1);
+    })).toBe(true);
   });
 
   test('Shift+Arrow exits a code block into a cross-row block selection', async ({ page }) => {

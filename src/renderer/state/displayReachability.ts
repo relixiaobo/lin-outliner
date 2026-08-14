@@ -40,9 +40,33 @@ async function buildDisplayReachability(
   let graphNodesVisited = 0;
 
   const nodes = byId.values();
+  let childParent: NodeProjection | null = null;
+  let childIndex = 0;
   let exhausted = false;
   while (!exhausted) {
     for (let count = 0; count < BUILD_CHUNK_SIZE; count += 1) {
+      if (childParent) {
+        const childId = childParent.children[childIndex++]!;
+        const child = byId.get(childId);
+        if (child) {
+          const resolution = child.type === 'reference' && child.targetId
+            ? resolveEffectiveNodeIdCached(child.targetId, byId, effectiveNodeIds)
+            : isDisplayContentNode(child)
+              ? { ok: true as const, nodeId: child.id }
+              : null;
+          if (resolution) {
+            if (!resolution.ok) {
+              if (resolution.reason === 'would_create_display_cycle') cyclicParents.add(childParent.id);
+            } else {
+              const parents = reverseDisplayEdges.get(resolution.nodeId) ?? new Set<NodeId>();
+              parents.add(childParent.id);
+              reverseDisplayEdges.set(resolution.nodeId, parents);
+            }
+          }
+        }
+        if (childIndex >= childParent.children.length) childParent = null;
+        continue;
+      }
       const next = nodes.next();
       if (next.done) {
         exhausted = true;
@@ -50,23 +74,9 @@ async function buildDisplayReachability(
       }
       const node = next.value;
       graphNodesVisited += 1;
-      if (!isDisplayContentNode(node)) continue;
-      for (const childId of node.children) {
-        const child = byId.get(childId);
-        if (!child) continue;
-        const resolution = child.type === 'reference' && child.targetId
-          ? resolveEffectiveNodeIdCached(child.targetId, byId, effectiveNodeIds)
-          : isDisplayContentNode(child)
-            ? { ok: true as const, nodeId: child.id }
-            : null;
-        if (!resolution) continue;
-        if (!resolution.ok) {
-          if (resolution.reason === 'would_create_display_cycle') cyclicParents.add(node.id);
-          continue;
-        }
-        const parents = reverseDisplayEdges.get(resolution.nodeId) ?? new Set<NodeId>();
-        parents.add(node.id);
-        reverseDisplayEdges.set(resolution.nodeId, parents);
+      if (isDisplayContentNode(node) && node.children.length > 0) {
+        childParent = node;
+        childIndex = 0;
       }
     }
     if (!exhausted) await yieldToRenderer();
@@ -75,13 +85,18 @@ async function buildDisplayReachability(
   const directAlreadyEffectiveNodeIds = new Set<NodeId>();
   let directChildCycle = false;
   const parent = byId.get(parentId);
-  for (const childId of parent?.children ?? []) {
+  const directChildren = parent?.children ?? [];
+  for (let index = 0; index < directChildren.length; index += 1) {
+    const childId = directChildren[index]!;
     const resolution = resolveEffectiveNodeIdCached(childId, byId, effectiveNodeIds);
     if (!resolution.ok) {
       if (resolution.reason === 'would_create_display_cycle') directChildCycle = true;
       break;
     }
     directAlreadyEffectiveNodeIds.add(resolution.nodeId);
+    if ((index + 1) % BUILD_CHUNK_SIZE === 0 && index + 1 < directChildren.length) {
+      await yieldToRenderer();
+    }
   }
 
   const reachesParentEffectiveNodeIds = await reverseReachableSet(
@@ -95,12 +110,6 @@ async function buildDisplayReachability(
     cyclicParents,
     () => { graphNodesVisited += 1; },
   );
-
-  for (const nodeId of byId.keys()) {
-    if (!effectiveNodeIds.has(nodeId)) {
-      resolveEffectiveNodeIdCached(nodeId, byId, effectiveNodeIds);
-    }
-  }
 
   return {
     cyclicEffectiveNodeIds,

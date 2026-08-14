@@ -6,7 +6,7 @@ import { textMatchRank } from './candidateRanking';
 import { isNodeInTrash } from './nodeLocation';
 import { getTreeReferenceBlockMessage, getTreeReferenceBlockReason } from './referenceRules';
 import type { TreeReferenceBlockReason } from './referenceRules';
-import { fileNodeTitle, isFileNode } from '../preview/fileNode';
+import { isFileNode } from '../preview/fileNode';
 import {
   buildReferenceCandidateIndex,
   queryReferenceCandidateIndex,
@@ -221,11 +221,6 @@ function isReferenceCandidateNode(
   includeFileNodes: boolean,
 ): node is NodeProjection {
   return isContentNode(node) || (includeFileNodes && isFileNode(node));
-}
-
-function referenceCandidateNodeLabel(node: NodeProjection, untitled: string): string {
-  if (isFileNode(node)) return fileNodeTitle(node) || untitled;
-  return textOf(node) || untitled;
 }
 
 export function buildReferenceCandidates(params: {

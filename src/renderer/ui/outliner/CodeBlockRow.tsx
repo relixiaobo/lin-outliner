@@ -72,24 +72,29 @@ function caretForPlacement(placement: CursorPlacement, length: number): PendingS
 
 export function CodeBlockRow(props: CodeBlockRowProps) {
   const tc = useT().outliner.field.code;
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const highlightRef = useRef<HTMLDivElement | null>(null);
-  const propsRef = useRef(props);
-  const composingRef = useRef(false);
-  const pendingSelectionRef = useRef<PendingSelection | null>(null);
-  const [value, setValue] = useState(props.text);
-  const [highlightedHtml, setHighlightedHtml] = useState(() => plainCodeHtml(props.text));
-  const [languageMenuOpen, setLanguageMenuOpen] = useState(false);
-  const languageTriggerRef = useRef<HTMLButtonElement>(null);
-  const { copied, copyCode } = useCodeBlockCopy(value);
-
-  propsRef.current = props;
   // Fall back to Plain text for fence info strings Shiki can't highlight (e.g.
   // `tool`, `tool-error` from a pasted agent transcript) so the picker never
   // shows a bogus language; real grammars not in the picker list still display
   // and highlight.
   const rawLanguage = normalizeCodeLanguage(props.language);
   const language = isKnownCodeLanguage(rawLanguage) ? rawLanguage : '';
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const highlightRef = useRef<HTMLDivElement | null>(null);
+  const propsRef = useRef(props);
+  const composingRef = useRef(false);
+  const pendingSelectionRef = useRef<PendingSelection | null>(null);
+  const [value, setValue] = useState(props.text);
+  const [highlight, setHighlight] = useState(() => ({
+    code: props.text,
+    language,
+    html: plainCodeHtml(props.text),
+  }));
+  const [languageMenuOpen, setLanguageMenuOpen] = useState(false);
+  const languageTriggerRef = useRef<HTMLButtonElement>(null);
+  const { copied, copyCode } = useCodeBlockCopy(value);
+
+  propsRef.current = props;
+  const highlightPending = highlight.code !== value || highlight.language !== language;
 
   // Keep the editable value in sync with external document updates (undo,
   // agent edits). Skip mid-composition; normal typing keeps them equal so this
@@ -103,7 +108,7 @@ export function CodeBlockRow(props: CodeBlockRowProps) {
     let cancelled = false;
     const timer = window.setTimeout(() => {
       void highlightCode(value, language).then((html) => {
-        if (!cancelled) setHighlightedHtml(html);
+        if (!cancelled) setHighlight({ code: value, language, html });
       });
     }, HIGHLIGHT_DEBOUNCE_MS);
     return () => {
@@ -111,6 +116,18 @@ export function CodeBlockRow(props: CodeBlockRowProps) {
       window.clearTimeout(timer);
     };
   }, [value, language]);
+
+  // Scroll events can arrive while the debounced layer still contains shorter
+  // stale markup. Reapply the textarea position after fresh markup establishes
+  // the final scroll range and before that layer becomes visible.
+  useLayoutEffect(() => {
+    if (highlightPending) return;
+    const textarea = textareaRef.current;
+    const highlightLayer = highlightRef.current;
+    if (!textarea || !highlightLayer) return;
+    highlightLayer.scrollLeft = textarea.scrollLeft;
+    highlightLayer.scrollTop = textarea.scrollTop;
+  }, [highlight, highlightPending]);
 
   // Apply a programmatic caret/selection after a value-driven re-render so the
   // controlled textarea does not reset it to the end.
@@ -296,7 +313,11 @@ export function CodeBlockRow(props: CodeBlockRowProps) {
   const CopyStateIcon = copied ? CheckIcon : CopyIcon;
 
   return (
-    <div className="code-block" data-language={language || 'text'}>
+    <div
+      className="code-block"
+      data-highlight-pending={highlightPending ? '' : undefined}
+      data-language={language || 'text'}
+    >
       <div className="code-block-chrome" contentEditable={false}>
         <ButtonControl
           ref={languageTriggerRef}
@@ -337,7 +358,7 @@ export function CodeBlockRow(props: CodeBlockRowProps) {
           ref={highlightRef}
           className="code-block-highlight"
           aria-hidden="true"
-          dangerouslySetInnerHTML={{ __html: highlightedHtml }}
+          dangerouslySetInnerHTML={{ __html: highlight.html }}
         />
         <textarea
           ref={textareaRef}
