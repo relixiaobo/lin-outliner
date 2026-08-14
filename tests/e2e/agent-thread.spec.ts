@@ -6646,9 +6646,9 @@ test.describe('terminal Thread history actions', () => {
     const calls = await commandCalls(page);
     const submissions = calls.filter((call) => call.cmd === 'turn/submit');
     const starts = calls.filter((call) => call.cmd === 'turn/start');
-    expect(submissions).toHaveLength(1);
-    expect(starts).toHaveLength(1);
-    expect(starts[0]?.args.input).toEqual([
+    expect(submissions).toHaveLength(2);
+    expect(starts).toHaveLength(0);
+    expect(submissions.at(-1)?.args.input).toEqual([
       { type: 'text', text: 'Try the attachment again' },
       expect.objectContaining({ type: 'attachment', name: 'diagram.png', mimeType: 'image/png' }),
     ]);

@@ -52,6 +52,13 @@ import {
   taskNotificationText,
 } from './subagentOutput';
 
+const MAX_TERMINAL_SETTLEMENT_RETRIES = 4;
+const TERMINAL_SETTLEMENT_RETRY_EXHAUSTED_MESSAGE =
+  `Agent terminal settlement failed after ${MAX_TERMINAL_SETTLEMENT_RETRIES + 1} attempts. `
+  + 'Restart Tenon to retry durable recovery.';
+
+type TerminalSettlementOutcome = 'settled' | 'deferredForDescendants';
+
 export interface StagedContextEvidence {
   readonly payload: Extract<ThreadContextPayload, { readonly kind: ContextEvidenceKind }>;
   readonly payloadRef: ThreadContextPayloadReference;
@@ -86,6 +93,7 @@ interface TerminalSettlementReservation {
   worktreeSettled: boolean;
   pipeline: Promise<void> | null;
   retryAttempt: number;
+  retryExhausted: boolean;
   retryTimer: ReturnType<typeof setTimeout> | null;
 }
 interface SubagentCatalog {
@@ -607,15 +615,32 @@ export class SubagentCollaboration {
     for (;;) {
       const existing = this.terminalPipelines.get(key);
       if (existing) {
-        await existing;
+        try {
+          await existing;
+        } catch (error) {
+          if (this.terminalSettlementReservations.get(key)?.retryExhausted) {
+            throw new Error(TERMINAL_SETTLEMENT_RETRY_EXHAUSTED_MESSAGE);
+          }
+          throw error;
+        }
         if (!this.terminalSettlementReservations.has(key)) return;
         continue;
       }
       const reservation = this.terminalSettlementReservations.get(key);
       if (reservation) {
+        if (reservation.retryExhausted) {
+          throw new Error(TERMINAL_SETTLEMENT_RETRY_EXHAUSTED_MESSAGE);
+        }
         this.startReservedTerminalSettlement(reservation);
         if (reservation.pipeline) {
-          await reservation.pipeline;
+          try {
+            await reservation.pipeline;
+          } catch (error) {
+            if (reservation.retryExhausted) {
+              throw new Error(TERMINAL_SETTLEMENT_RETRY_EXHAUSTED_MESSAGE);
+            }
+            throw error;
+          }
           if (!this.terminalSettlementReservations.has(key)) return;
           continue;
         }
@@ -1470,6 +1495,8 @@ export class SubagentCollaboration {
         && !this.deletingThreadIds.has(execution.agentId);
       existing.revision += 1;
       existing.worktreeSettled = false;
+      existing.retryAttempt = 0;
+      existing.retryExhausted = false;
       if (existing.retryTimer) {
         clearTimeout(existing.retryTimer);
         existing.retryTimer = null;
@@ -1487,11 +1514,12 @@ export class SubagentCollaboration {
       worktreeSettled: false,
       pipeline: null,
       retryAttempt: 0,
+      retryExhausted: false,
       retryTimer: null,
     });
   }
   private startReservedTerminalSettlement(reservation: TerminalSettlementReservation): void {
-    if (reservation.pipeline) return;
+    if (reservation.pipeline || reservation.retryExhausted) return;
     // A provider Turn that delegated background work is intermediate. Keep its
     // reservation durable, but do not create a pipeline that can only fail
     // until every direct child result has been consumed.
@@ -1509,7 +1537,10 @@ export class SubagentCollaboration {
       turn,
       reservation,
     );
-    const pipeline = rawPipeline.then(() => {
+    let outcome: TerminalSettlementOutcome | null = null;
+    const pipeline = rawPipeline.then((result) => {
+      outcome = result;
+      if (result === 'deferredForDescendants') return;
       if (
         this.terminalSettlementReservations.get(reservation.key) === reservation
         && reservation.revision === revision
@@ -1524,17 +1555,23 @@ export class SubagentCollaboration {
     void pipeline.then(() => {
       if (this.terminalPipelines.get(reservation.key) === pipeline) this.terminalPipelines.delete(reservation.key);
       reservation.pipeline = null;
-      reservation.retryAttempt = 0;
       if (
         this.terminalSettlementReservations.get(reservation.key) === reservation
         && reservation.revision !== revision
       ) {
         this.startReservedTerminalSettlement(reservation);
+      } else if (outcome === 'deferredForDescendants') {
+        // A descendant can be admitted while the terminal transcript flush is
+        // in flight. This is normal orchestration, not a settlement failure.
+        // The descendant's completion/idle edge will restart this reservation.
+        return;
       } else if (
         reservation.notifyParent
         && !this.closing
         && !this.turnLifecycle.hasActiveTurn(reservation.execution.parentThreadId)
       ) {
+        reservation.retryAttempt = 0;
+        reservation.retryExhausted = false;
         // Delivery may have observed this pipeline while its durable
         // notification was already ready. Retry after the pipeline identity is
         // gone so a sibling cannot leave the parent parked indefinitely.
@@ -1546,7 +1583,14 @@ export class SubagentCollaboration {
       if (this.terminalPipelines.get(reservation.key) === pipeline) this.terminalPipelines.delete(reservation.key);
       reservation.pipeline = null;
       console.warn(`[agent] Subagent terminal pipeline deferred for ${reservation.execution.agentId}`, error);
-      this.scheduleTerminalSettlementRetry(reservation);
+      if (
+        this.terminalSettlementReservations.get(reservation.key) === reservation
+        && reservation.revision !== revision
+      ) {
+        this.startReservedTerminalSettlement(reservation);
+      } else {
+        this.scheduleTerminalSettlementRetry(reservation);
+      }
     });
   }
 
@@ -1557,6 +1601,13 @@ export class SubagentCollaboration {
       reservation.retryTimer
       || this.terminalSettlementReservations.get(reservation.key) !== reservation
     ) return;
+    if (reservation.retryAttempt >= MAX_TERMINAL_SETTLEMENT_RETRIES) {
+      reservation.retryExhausted = true;
+      console.warn(
+        `[agent] Subagent terminal settlement retry budget exhausted for ${reservation.execution.agentId}; startup recovery required`,
+      );
+      return;
+    }
     const delayMs = Math.min(1_000 * 2 ** reservation.retryAttempt, 30_000);
     reservation.retryAttempt += 1;
     reservation.retryTimer = setTimeout(() => {
@@ -1587,7 +1638,7 @@ export class SubagentCollaboration {
       execution: SubagentExecutionRecord,
       turn: Turn,
       reservation?: TerminalSettlementReservation,
-    ): Promise<void> {
+    ): Promise<TerminalSettlementOutcome> {
       // Account and workspace cleanup are best-effort runtime work. Neither
       // may suppress the terminal notification: the parent still needs the
       // child's result even when an artifact or worktree operation fails.
@@ -1619,11 +1670,11 @@ export class SubagentCollaboration {
         });
       }
 
-      if (refreshed === null) return;
+      if (refreshed === null) return 'settled';
       const terminalRecord = refreshed;
 
       if (this.hasOutstandingChildren(execution.agentId)) {
-        throw new Error(`Agent terminal settlement is waiting for descendants: ${execution.agentId}`);
+        return 'deferredForDescendants';
       }
 
       if (execution.worktree && this.settleAgentWorktree && reservation && !reservation.worktreeSettled) {
@@ -1633,7 +1684,7 @@ export class SubagentCollaboration {
             !current
             || current.generation !== execution.generation
             || current.currentTurnId !== execution.currentTurnId
-          ) return;
+          ) return 'settled';
           if (current.worktree && current.worktree.removedAt !== null && current.worktreeCleanupStartedAt === null) {
             await this.persistThreadCwd(execution.agentId, current.worktree);
             reservation.worktreeSettled = true;
@@ -1676,7 +1727,7 @@ export class SubagentCollaboration {
                 worktree: settled.worktree,
                 updatedAt: this.now(),
               });
-            if (refreshed === null) return;
+            if (refreshed === null) return 'settled';
             await this.persistThreadCwd(execution.agentId, settled.worktree);
             reservation.worktreeSettled = true;
           }
@@ -1705,7 +1756,7 @@ export class SubagentCollaboration {
                 : 'interrupted',
           createdAt: this.now(),
         });
-        if (!recorded) return;
+        if (!recorded) return 'settled';
       }
 
       if (reservation?.notifyParent === true) {
@@ -1713,6 +1764,7 @@ export class SubagentCollaboration {
           console.warn(`[agent] Subagent parent delivery deferred for ${execution.agentId}`, error);
         });
       }
+      return 'settled';
     }
 
   private async withResumeLock<T>(agentId: ThreadId, work: () => Promise<T>): Promise<T> {

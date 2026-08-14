@@ -400,6 +400,17 @@ completed pending events recover on restart. A child that was still running at
 host restart follows the typed host-restart failure path and emits a failed
 notification rather than replaying side effects.
 
+Terminal settlement can discover a live descendant after its initial guard,
+including while the transcript flush is in flight. That condition is an internal
+deferral: the pipeline resolves normally, retains its reservation, schedules no
+timer, and consumes no failure-retry budget. A real settlement failure receives
+at most four in-process retries after the initial attempt, with bounded
+exponential delays. After the fifth failure the in-process reservation remains
+blocked and starts no more work; the execution ledger and canonical terminal
+Turn remain durable. An explicit resume receives a stable failure, and the next
+host startup reconstructs a fresh bounded recovery attempt from that durable
+state.
+
 Undelivered completion notifications and Agent-to-`main` message envelopes are
 durable queued work. While either kind is pending or delivering, every involved
 descendant endpoint is returned in the Thread catalog's `queuedWorkThreadIds`.

@@ -1056,6 +1056,14 @@ note.
   shell IDs and still produces an Agent killed notification. Missing
   transcript, missing worktree, restart, and send/finish races follow explicit
   Tenon results rather than fallback execution in the parent.
+- **FLOW-5 Terminal recovery:** settlement that discovers a live descendant
+  after its initial guard, including during transcript flush, resolves as an
+  internal deferral. It retains the in-process reservation without scheduling a
+  timer or consuming failure-retry budget. A real settlement failure receives
+  at most four in-process retries after the initial attempt. After the fifth
+  failure, automatic starts stop and explicit resume returns a stable failure;
+  the execution ledger and canonical terminal Turn remain durable so startup
+  reconstructs a fresh bounded recovery attempt.
 
 ## Acceptance Criteria
 

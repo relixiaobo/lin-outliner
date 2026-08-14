@@ -389,9 +389,11 @@ describe('renderer Thread store', () => {
     });
   });
 
-  test('edits the final user input with rollback and a replacement Turn in the same Thread', async () => {
+  test('edits the final user input with rollback and a host-routed replacement submission', async () => {
     const owner = thread('thread-1', 1);
     const original = turn('turn-original', 'completed', 'old response');
+    const replacement = turn('turn-replacement', 'inProgress', '');
+    const userView = rendererUserView();
     const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
     const client = {
       onAgentCoreNotification: () => () => undefined,
@@ -402,8 +404,13 @@ describe('renderer Thread store', () => {
         if (method === 'goal/get') return { goal: null };
         if (method === 'thread/configuration/get') return configurationResponse(owner);
         if (method === 'thread/rollback') return { thread: { ...owner, updatedAt: 2 } };
-        if (method === 'turn/start') {
-          return { turn: original, acceptedItemId: 'replacement-item', deduplicated: false };
+        if (method === 'turn/submit') {
+          return {
+            turn: replacement,
+            turnId: replacement.id,
+            acceptedItemId: 'replacement-item',
+            deduplicated: false,
+          };
         }
         throw new Error(`Unexpected method: ${method}`);
       },
@@ -411,16 +418,21 @@ describe('renderer Thread store', () => {
     const store = new ThreadStore(client);
     await store.initialize();
 
-    await store.rollbackAndSend(owner.id, [{ type: 'text', text: '  revised input  ' }]);
+    await store.rollbackAndSend(owner.id, [{ type: 'text', text: '  revised input  ' }], userView);
 
     expect(calls.filter((call) => call.method === 'thread/rollback')).toEqual([{
       method: 'thread/rollback',
       input: { threadId: owner.id, numTurns: 1 },
     }]);
-    expect(calls.filter((call) => call.method === 'turn/start')[0]?.input).toMatchObject({
+    const submit = calls.filter((call) => call.method === 'turn/submit');
+    expect(submit).toHaveLength(1);
+    expect(submit[0]?.input).toMatchObject({
       threadId: owner.id,
       input: [{ type: 'text', text: 'revised input' }],
+      userView,
     });
+    expect(typeof submit[0]?.input.clientUserMessageId).toBe('string');
+    expect(calls.some((call) => call.method === 'turn/start' || call.method === 'turn/steer')).toBe(false);
     expect(store.getSnapshot().selectedThreadId).toBe(owner.id);
     expect(store.getSnapshot().turnsByThread.get(owner.id)).toEqual([]);
   });

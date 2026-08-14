@@ -418,7 +418,7 @@ export class ThreadStore {
       turnsByThread,
       latestTurnByThread,
     });
-    await this.client.agentCoreRequest('turn/start', {
+    await this.client.agentCoreRequest('turn/submit', {
       threadId,
       input: content,
       clientUserMessageId: crypto.randomUUID(),

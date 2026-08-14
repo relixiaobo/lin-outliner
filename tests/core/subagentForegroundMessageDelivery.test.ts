@@ -33,6 +33,8 @@ interface AdmissionSeam {
   terminalPipelines: Map<string, Promise<void>>;
   terminalSettlementReservations: Map<string, {
     readonly pipeline: Promise<void> | null;
+    readonly retryAttempt: number;
+    readonly retryExhausted: boolean;
     readonly retryTimer: ReturnType<typeof setTimeout> | null;
     readonly notifyParent?: boolean;
   }>;
@@ -44,6 +46,7 @@ interface TerminalSettlementSeam extends AdmissionSeam {
   beginClose(): void;
   drainForClose(deadline: number): Promise<boolean>;
   deliverParentWork(parentThreadId: string): Promise<void>;
+  ensureTerminalPipeline(agentId: string, generation: number): Promise<void>;
   prepareChildTerminalSettlement(thread: unknown, turn: unknown): void;
   queueChildTurnActivity(thread: unknown, turn: unknown): void;
   threadBecameIdle(threadId: string): void;
@@ -1222,6 +1225,200 @@ describe('foreground Agent main-message delivery', () => {
       generation: 1,
       turnId: 'first-turn',
     }]);
+    warning.mockRestore();
+    database.close();
+  });
+
+  test('defers terminal settlement without spending retry budget when a descendant appears during transcript flush', async () => {
+    const database = new Database(':memory:') as unknown as SqliteDatabase;
+    const ledger = new SubagentExecutionLedger(database);
+    createBackgroundExecution(ledger, FIRST_AGENT_ID, 'parent-turn', 'parent-tool');
+    const root = { id: PARENT_ID, parentThreadId: null, source: 'app' };
+    const parent = { id: FIRST_AGENT_ID, parentThreadId: PARENT_ID, source: 'collaboration' };
+    const descendant = { id: SECOND_AGENT_ID, parentThreadId: FIRST_AGENT_ID, source: 'collaboration' };
+    const threads = new Map([
+      [PARENT_ID, root],
+      [FIRST_AGENT_ID, parent],
+      [SECOND_AGENT_ID, descendant],
+    ]);
+    let descendantActive = false;
+    let flushCalls = 0;
+    let markFlushEntered!: () => void;
+    let releaseFlush!: () => void;
+    const flushEntered = new Promise<void>((resolve) => { markFlushEntered = resolve; });
+    const flushGate = new Promise<void>((resolve) => { releaseFlush = resolve; });
+    const collaboration = new SubagentCollaboration(
+      {
+        metadata: { spawnEdgeForChild: (threadId: string) => ({ taskPath: `/root/${threadId}` }) },
+        requireThread: (threadId: string) => ({ thread: threads.get(threadId)! }),
+      } as never,
+      {} as never,
+      {} as never,
+      {
+        activeTurnId: () => null,
+        hasActiveTurn: (threadId: string) => (
+          threadId === PARENT_ID || (threadId === SECOND_AGENT_ID && descendantActive)
+        ),
+      } as never,
+      {} as never,
+      ledger,
+      (() => { throw new Error('unused'); }) as never,
+      (() => { throw new Error('unused'); }) as never,
+      async () => null,
+      async () => ({ maxDepth: 3, maxConcurrent: 20 }),
+      async () => null,
+      undefined,
+      undefined,
+      undefined,
+      () => 100,
+      ((configuration: unknown) => configuration) as never,
+      () => undefined,
+      (message) => new Error(message),
+      {
+        flushForTerminalSettlement: async () => {
+          flushCalls += 1;
+          if (flushCalls !== 1) return;
+          markFlushEntered();
+          await flushGate;
+        },
+      } as never,
+    );
+    const seam = collaboration as unknown as TerminalSettlementSeam;
+    const parentKey = `${FIRST_AGENT_ID}:1`;
+    const turn = { id: 'parent-turn', status: 'completed', error: null };
+    const warning = spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    seam.prepareChildTerminalSettlement(parent, turn);
+    seam.queueChildTurnActivity(parent, turn);
+    const first = seam.terminalPipelines.get(parentKey);
+    expect(first).toBeDefined();
+    await flushEntered;
+
+    createBackgroundExecution(
+      ledger,
+      SECOND_AGENT_ID,
+      'descendant-turn',
+      'descendant-tool',
+      FIRST_AGENT_ID,
+    );
+    descendantActive = true;
+    releaseFlush();
+    await first;
+
+    expect(seam.terminalPipelines.has(parentKey)).toBe(false);
+    expect(seam.terminalSettlementReservations.get(parentKey)).toMatchObject({
+      retryAttempt: 0,
+      retryExhausted: false,
+      retryTimer: null,
+    });
+    expect(ledger.pendingForParent(PARENT_ID)).toEqual([]);
+    expect(warning.mock.calls.some((call) => (
+      String(call[0]).includes('Subagent terminal pipeline deferred')
+    ))).toBe(false);
+
+    descendantActive = false;
+    seam.threadBecameIdle(SECOND_AGENT_ID);
+    const resumed = seam.terminalPipelines.get(parentKey);
+    expect(resumed).toBeDefined();
+    await resumed;
+
+    expect(flushCalls).toBe(2);
+    expect(seam.terminalSettlementReservations.has(parentKey)).toBe(false);
+    expect(ledger.pendingForParent(PARENT_ID)).toMatchObject([{
+      agentId: FIRST_AGENT_ID,
+      generation: 1,
+      turnId: 'parent-turn',
+    }]);
+    seam.beginClose();
+    expect(await seam.drainForClose(Date.now() + 2_000)).toBe(true);
+    warning.mockRestore();
+    database.close();
+  });
+
+  test('bounds permanent terminal settlement failure and leaves durable startup recovery authority', async () => {
+    const database = new Database(':memory:') as unknown as SqliteDatabase;
+    const ledger = new SubagentExecutionLedger(database);
+    createBackgroundExecution(ledger, FIRST_AGENT_ID, 'first-turn', 'first-tool');
+    let recordAttempts = 0;
+    ledger.recordTerminal = () => {
+      recordAttempts += 1;
+      throw new Error('sqlite remains unavailable');
+    };
+    const child = { id: FIRST_AGENT_ID, parentThreadId: PARENT_ID, source: 'collaboration' };
+    const collaboration = new SubagentCollaboration(
+      {
+        metadata: { spawnEdgeForChild: () => ({ taskPath: `/root/${FIRST_AGENT_ID}` }) },
+        requireThread: (threadId: string) => ({
+          thread: threadId === PARENT_ID
+            ? { id: PARENT_ID, parentThreadId: null, source: 'app' }
+            : child,
+        }),
+      } as never,
+      {} as never,
+      {} as never,
+      {
+        activeTurnId: () => null,
+        hasActiveTurn: (threadId: string) => threadId === PARENT_ID,
+      } as never,
+      {} as never,
+      ledger,
+      (() => { throw new Error('unused'); }) as never,
+      (() => { throw new Error('unused'); }) as never,
+      async () => null,
+      async () => ({ maxDepth: 3, maxConcurrent: 20 }),
+      async () => null,
+      undefined,
+      undefined,
+      undefined,
+      () => 100,
+      ((configuration: unknown) => configuration) as never,
+      () => undefined,
+      (message) => new Error(message),
+      { flushForTerminalSettlement: async () => undefined } as never,
+    );
+    const seam = collaboration as unknown as TerminalSettlementSeam;
+    const key = `${FIRST_AGENT_ID}:1`;
+    const turn = { id: 'first-turn', status: 'completed', error: null };
+    const warning = spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    seam.prepareChildTerminalSettlement(child, turn);
+    seam.queueChildTurnActivity(child, turn);
+    for (let attempt = 1; attempt <= 5; attempt += 1) {
+      const pipeline = seam.terminalPipelines.get(key);
+      expect(pipeline).toBeDefined();
+      await expect(pipeline!).rejects.toThrow('sqlite remains unavailable');
+      expect(recordAttempts).toBe(attempt);
+      if (attempt < 5) {
+        expect(seam.terminalSettlementReservations.get(key)?.retryTimer).not.toBeNull();
+        seam.threadBecameIdle(FIRST_AGENT_ID);
+      }
+    }
+
+    expect(seam.terminalPipelines.has(key)).toBe(false);
+    expect(seam.terminalSettlementReservations.get(key)).toMatchObject({
+      retryAttempt: 4,
+      retryExhausted: true,
+      retryTimer: null,
+    });
+    expect(ledger.require(FIRST_AGENT_ID)).toMatchObject({
+      generation: 1,
+      currentTurnId: 'first-turn',
+    });
+    expect(ledger.pendingForParent(PARENT_ID)).toEqual([]);
+
+    seam.threadBecameIdle(FIRST_AGENT_ID);
+    expect(seam.terminalPipelines.has(key)).toBe(false);
+    expect(recordAttempts).toBe(5);
+    await expect(seam.ensureTerminalPipeline(FIRST_AGENT_ID, 1)).rejects.toThrow(
+      'Agent terminal settlement failed after 5 attempts. Restart Tenon to retry durable recovery.',
+    );
+    expect(recordAttempts).toBe(5);
+    expect(warning.mock.calls.some((call) => (
+      String(call[0]).includes('terminal settlement retry budget exhausted')
+    ))).toBe(true);
+
+    seam.beginClose();
+    expect(await seam.drainForClose(Date.now() + 2_000)).toBe(true);
     warning.mockRestore();
     database.close();
   });

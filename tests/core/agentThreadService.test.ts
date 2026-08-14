@@ -101,6 +101,8 @@ import { createImageArtifactReference } from '../../src/main/agent/imageArtifact
 import { replayableModelCall, toolAdmissionEvent } from '../fixtures/agentToolCallHistory';
 
 const roots: string[] = [];
+const threadServices = new Set<ThreadService>();
+const TEST_SERVICE_CLOSE_DRAIN_TIMEOUT_MS = 1_000;
 const execFileAsync = promisify(execFile);
 const ONE_PIXEL_PNG_BYTES = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lP1j0wAAAABJRU5ErkJggg==',
@@ -121,8 +123,38 @@ const FORK_MODEL_ARGUMENTS = {
 } as const;
 
 afterEach(async () => {
-  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  const closeFailures: unknown[] = [];
+  for (const service of [...threadServices].reverse()) {
+    try {
+      await service.close(TEST_SERVICE_CLOSE_DRAIN_TIMEOUT_MS);
+    } catch (error) {
+      closeFailures.push(error);
+    }
+  }
+  const removeResults = await Promise.allSettled(
+    roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
+  );
+  const failures = [...closeFailures, ...removeResults.flatMap((result) => (
+    result.status === 'rejected' ? [result.reason] : []
+  ))];
+  if (failures.length > 0) throw new AggregateError(failures, 'ThreadService fixture teardown failed');
 });
+
+function createTrackedThreadService(
+  options: ConstructorParameters<typeof ThreadService>[0],
+): ThreadService {
+  const service = new ThreadService(options);
+  const close = service.close.bind(service);
+  let closing: Promise<void> | null = null;
+  service.close = (drainTimeoutMs) => {
+    if (closing) return closing;
+    const closeRequest = drainTimeoutMs === undefined ? close() : close(drainTimeoutMs);
+    closing = closeRequest.finally(() => { threadServices.delete(service); });
+    return closing;
+  };
+  threadServices.add(service);
+  return service;
+}
 
 class ControlledExecutor implements TurnExecutor {
   readonly contexts: TurnExecutionContext[] = [];
@@ -3102,7 +3134,7 @@ describe('ThreadService', () => {
     const clock = () => ++now;
     const stores = createStores(root);
     const executor = new ContextPayloadExecutor(stores.payloads);
-    const service = new ThreadService({
+    const service = createTrackedThreadService({
       stores,
       executor,
       attachmentScratchRoot: join(root, 'agent-scratch'),
@@ -3881,7 +3913,7 @@ describe('ThreadService', () => {
     roots.push(root);
     const stores = createStores(root);
     const executor = new FailingContextPayloadExecutor(stores.payloads);
-    const service = new ThreadService({
+    const service = createTrackedThreadService({
       stores,
       executor,
       attachmentScratchRoot: join(root, 'agent-scratch'),
@@ -4118,7 +4150,7 @@ describe('ThreadService', () => {
     const stores = createStores(root);
     const executor = new ControlledExecutor();
     let attachmentRef: ThreadResourceReference | null = null;
-    const service = new ThreadService({
+    const service = createTrackedThreadService({
       stores,
       executor,
       attachmentScratchRoot: join(root, 'agent-scratch'),
@@ -4201,7 +4233,7 @@ describe('ThreadService', () => {
     });
     let payload = Buffer.from('new prompt');
     let lastRef: Awaited<ReturnType<ToolPayloadStore['writeResource']>> | null = null;
-    const service = new ThreadService({
+    const service = createTrackedThreadService({
       stores,
       executor,
       attachmentScratchRoot: join(root, 'agent-scratch'),
@@ -12177,7 +12209,7 @@ async function openFixture(
 ): Promise<{ service: ThreadService; stores: ThreadServiceStores }> {
   const stores = createStores(root);
   return {
-    service: new ThreadService({
+    service: createTrackedThreadService({
       stores,
       executor,
       attachmentScratchRoot: join(root, 'agent-scratch'),
