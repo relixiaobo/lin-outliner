@@ -489,6 +489,11 @@ the history source of truth. Complete textual tool outputs, managed attachment i
 image-artifact renditions, semantic context payloads, and immutable Turn diagnostics live in
 the Thread-owned payload directory; canonical Items and terminal Turn execution retain
 typed content-addressed references.
+Decoded Thread catalog records use a 256-entry in-process LRU shared by single,
+batch, and list reads, so repeated notification admission does not decode or
+select unchanged metadata. Every `threads` row write invalidates through one
+store helper after the write succeeds. Deleting a Thread clears the complete
+cache because SQLite cascades can remove cached descendants.
 Agent SQLite databases use WAL. The shared open policy is `synchronous=NORMAL`;
 authoritative metadata, Goal, Memory, and Automation stores explicitly strengthen it to
 `FULL`, while the rebuildable history projection remains `NORMAL`.

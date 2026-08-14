@@ -71,8 +71,11 @@ interface ThreadRow {
   reasoning_effort_override: string | null;
 }
 
+const THREAD_RECORD_CACHE_LIMIT = 256;
+
 export class ThreadMetadataStore {
   private readonly db: SqliteDatabase;
+  private readonly recordCache = new Map<ThreadId, ThreadCatalogRecord>();
 
   constructor(path: string, database?: SqliteDatabase) {
     if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
@@ -126,6 +129,7 @@ export class ThreadMetadataStore {
   }
 
   close(): void {
+    this.recordCache.clear();
     this.db.close();
   }
 
@@ -135,37 +139,37 @@ export class ThreadMetadataStore {
     if (thread.parentThreadId) {
       throw new Error('Child Threads must be inserted with createChild() so their spawn edge is atomic');
     }
-    this.db.prepare(`
-      INSERT INTO threads (
-        id, session_id, parent_thread_id, forked_from_id, agent_nickname, agent_role,
-        name, name_origin, preview, ephemeral, source, thread_source, model_provider, cwd,
-        created_at, updated_at, status_json, archived, configuration_json, tool_ceiling_json,
-        model_override, reasoning_effort_override
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      thread.id,
-      thread.sessionId,
-      thread.parentThreadId,
-      thread.forkedFromId,
-      thread.agentNickname,
-      thread.agentRole,
-      thread.name,
-      record.nameOrigin,
-      thread.preview,
-      thread.ephemeral ? 1 : 0,
-      thread.source,
-      thread.threadSource,
-      thread.modelProvider,
-      thread.cwd,
-      thread.createdAt,
-      thread.updatedAt,
-      JSON.stringify(thread.status),
-      record.archived ? 1 : 0,
-      JSON.stringify(record.configuration),
-      record.toolCeiling === null ? null : JSON.stringify(record.toolCeiling),
-      record.modelOverride,
-      record.reasoningEffortOverride,
-    );
+    this.writeThread(thread.id, () => this.db.prepare(`
+        INSERT INTO threads (
+          id, session_id, parent_thread_id, forked_from_id, agent_nickname, agent_role,
+          name, name_origin, preview, ephemeral, source, thread_source, model_provider, cwd,
+          created_at, updated_at, status_json, archived, configuration_json, tool_ceiling_json,
+          model_override, reasoning_effort_override
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        thread.id,
+        thread.sessionId,
+        thread.parentThreadId,
+        thread.forkedFromId,
+        thread.agentNickname,
+        thread.agentRole,
+        thread.name,
+        record.nameOrigin,
+        thread.preview,
+        thread.ephemeral ? 1 : 0,
+        thread.source,
+        thread.threadSource,
+        thread.modelProvider,
+        thread.cwd,
+        thread.createdAt,
+        thread.updatedAt,
+        JSON.stringify(thread.status),
+        record.archived ? 1 : 0,
+        JSON.stringify(record.configuration),
+        record.toolCeiling === null ? null : JSON.stringify(record.toolCeiling),
+        record.modelOverride,
+        record.reasoningEffortOverride,
+      ));
   }
 
   createChild(record: ThreadCatalogRecord, edge: SpawnEdge): void {
@@ -185,27 +189,29 @@ export class ThreadMetadataStore {
   private insertThread(record: ThreadCatalogRecord): void {
     const thread = decodeThread(record.thread);
     if (thread.ephemeral) throw new Error('Ephemeral Threads do not belong in the persistent catalog');
-    this.db.prepare(`
-      INSERT INTO threads (
-        id, session_id, parent_thread_id, forked_from_id, agent_nickname, agent_role,
-        name, name_origin, preview, ephemeral, source, thread_source, model_provider, cwd,
-        created_at, updated_at, status_json, archived, configuration_json, tool_ceiling_json,
-        model_override, reasoning_effort_override
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      thread.id, thread.sessionId, thread.parentThreadId, thread.forkedFromId,
-      thread.agentNickname, thread.agentRole, thread.name, record.nameOrigin,
-      thread.preview, thread.ephemeral ? 1 : 0, thread.source, thread.threadSource, thread.modelProvider,
-      thread.cwd, thread.createdAt, thread.updatedAt, JSON.stringify(thread.status),
-      record.archived ? 1 : 0, JSON.stringify(record.configuration),
-      record.toolCeiling === null ? null : JSON.stringify(record.toolCeiling),
-      record.modelOverride, record.reasoningEffortOverride,
-    );
+    this.writeThread(thread.id, () => this.db.prepare(`
+        INSERT INTO threads (
+          id, session_id, parent_thread_id, forked_from_id, agent_nickname, agent_role,
+          name, name_origin, preview, ephemeral, source, thread_source, model_provider, cwd,
+          created_at, updated_at, status_json, archived, configuration_json, tool_ceiling_json,
+          model_override, reasoning_effort_override
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        thread.id, thread.sessionId, thread.parentThreadId, thread.forkedFromId,
+        thread.agentNickname, thread.agentRole, thread.name, record.nameOrigin,
+        thread.preview, thread.ephemeral ? 1 : 0, thread.source, thread.threadSource, thread.modelProvider,
+        thread.cwd, thread.createdAt, thread.updatedAt, JSON.stringify(thread.status),
+        record.archived ? 1 : 0, JSON.stringify(record.configuration),
+        record.toolCeiling === null ? null : JSON.stringify(record.toolCeiling),
+        record.modelOverride, record.reasoningEffortOverride,
+      ));
   }
 
   read(threadId: ThreadId): ThreadCatalogRecord | null {
+    const cached = this.cachedRecord(threadId);
+    if (cached) return cached;
     const row = this.db.prepare('SELECT * FROM threads WHERE id = ?').get(threadId) as ThreadRow | undefined;
-    return row ? recordFromRow(row) : null;
+    return row ? this.cacheRecord(recordFromRow(row)) : null;
   }
 
   /**
@@ -219,13 +225,19 @@ export class ThreadMetadataStore {
    */
   readMany(threadIds: readonly ThreadId[]): ReadonlyMap<ThreadId, ThreadCatalogRecord> {
     const records = new Map<ThreadId, ThreadCatalogRecord>();
-    for (let start = 0; start < threadIds.length; start += 500) {
-      const chunk = threadIds.slice(start, start + 500);
+    const missing: ThreadId[] = [];
+    for (const threadId of new Set(threadIds)) {
+      const cached = this.cachedRecord(threadId);
+      if (cached) records.set(threadId, cached);
+      else missing.push(threadId);
+    }
+    for (let start = 0; start < missing.length; start += 500) {
+      const chunk = missing.slice(start, start + 500);
       if (chunk.length === 0) continue;
       const rows = this.db
         .prepare(`SELECT * FROM threads WHERE id IN (${chunk.map(() => '?').join(', ')})`)
         .all(...chunk) as ThreadRow[];
-      for (const row of rows) records.set(row.id, recordFromRow(row));
+      for (const row of rows) records.set(row.id, this.cacheRecord(recordFromRow(row)));
     }
     return records;
   }
@@ -271,7 +283,9 @@ export class ThreadMetadataStore {
     const page = rows.slice(0, limit);
     const last = page.at(-1);
     return {
-      data: page.map((row) => recordFromRow(row).thread),
+      data: page.map((row) => (
+        this.cachedRecord(row.id) ?? this.cacheRecord(recordFromRow(row))
+      ).thread),
       nextCursor: hasNext && last
         ? encodeThreadListCursor({ updatedAt: last.updated_at, id: last.id }, direction)
         : null,
@@ -287,22 +301,22 @@ export class ThreadMetadataStore {
   }
 
   setAutomaticNameIfEligible(threadId: ThreadId, name: string): boolean {
-    const result = this.db.prepare(`
-      UPDATE threads
-      SET name = ?, name_origin = 'automatic'
-      WHERE id = ? AND name IS NULL AND name_origin = 'none'
-    `).run(name, threadId);
+    const result = this.writeThread(threadId, () => this.db.prepare(`
+        UPDATE threads
+        SET name = ?, name_origin = 'automatic'
+        WHERE id = ? AND name IS NULL AND name_origin = 'none'
+      `).run(name, threadId));
     if (result.changes === 1) return true;
     if (!this.read(threadId)) throw new Error(`Thread not found: ${threadId}`);
     return false;
   }
 
   clearAutomaticName(threadId: ThreadId): boolean {
-    const result = this.db.prepare(`
-      UPDATE threads
-      SET name = NULL, name_origin = 'none'
-      WHERE id = ? AND name_origin = 'automatic'
-    `).run(threadId);
+    const result = this.writeThread(threadId, () => this.db.prepare(`
+        UPDATE threads
+        SET name = NULL, name_origin = 'none'
+        WHERE id = ? AND name_origin = 'automatic'
+      `).run(threadId));
     if (result.changes === 1) return true;
     if (!this.read(threadId)) throw new Error(`Thread not found: ${threadId}`);
     return false;
@@ -358,7 +372,11 @@ export class ThreadMetadataStore {
   }
 
   delete(threadId: ThreadId): void {
-    const result = this.db.prepare('DELETE FROM threads WHERE id = ?').run(threadId);
+    const result = this.writeThread(
+      threadId,
+      () => this.db.prepare('DELETE FROM threads WHERE id = ?').run(threadId),
+      true,
+    );
     if (Number(result.changes) < 1) throw new Error(`Thread not found: ${threadId}`);
   }
 
@@ -467,8 +485,33 @@ export class ThreadMetadataStore {
   }
 
   private updateOne(sql: string, params: readonly SqliteValue[], threadId: ThreadId): void {
-    const result = this.db.prepare(sql).run(...params);
+    const result = this.writeThread(threadId, () => this.db.prepare(sql).run(...params));
     if (result.changes !== 1) throw new Error(`Thread not found: ${threadId}`);
+  }
+
+  private writeThread<T>(threadId: ThreadId, write: () => T, clearAll = false): T {
+    const result = write();
+    if (clearAll) this.recordCache.clear();
+    else this.recordCache.delete(threadId);
+    return result;
+  }
+
+  private cachedRecord(threadId: ThreadId): ThreadCatalogRecord | null {
+    const record = this.recordCache.get(threadId);
+    if (!record) return null;
+    this.recordCache.delete(threadId);
+    this.recordCache.set(threadId, record);
+    return record;
+  }
+
+  private cacheRecord(record: ThreadCatalogRecord): ThreadCatalogRecord {
+    this.recordCache.delete(record.thread.id);
+    this.recordCache.set(record.thread.id, record);
+    if (this.recordCache.size > THREAD_RECORD_CACHE_LIMIT) {
+      const oldest = this.recordCache.keys().next().value;
+      if (oldest !== undefined) this.recordCache.delete(oldest);
+    }
+    return record;
   }
 
   private transaction(operation: () => void): void {

@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import type { AgentTaskToolName, ThreadItem, Turn } from '../../src/core/agent/protocol';
 import { en } from '../../src/core/i18n';
 import {
+  createTurnContentGrouper,
   groupTurnContent,
   threadProcessSummary,
   turnMotionOwner,
@@ -96,6 +97,61 @@ describe('Turn process projection', () => {
       { kind: 'process', itemIds: [] },
       { kind: 'item', itemId: 'response' },
     ]);
+  });
+
+  test('rebuilds only the content block that contains an identity-changed Item', () => {
+    const grouper = createTurnContentGrouper();
+    const user = userMessage('user');
+    const process = reasoning('reasoning', ['Inspecting.']);
+    const response = agentResponse('response');
+    const first = grouper.group(turn([user, process, response]));
+    const changedResponse = { ...response, text: 'Streaming more text.' };
+    const second = grouper.group(turn([user, process, changedResponse]));
+
+    expect(second).not.toBe(first);
+    expect(second[0]).toBe(first[0]);
+    expect(second[1]).toBe(first[1]);
+    expect(second[2]).not.toBe(first[2]);
+    expect(second[2]).toEqual({ kind: 'item', item: changedResponse });
+
+    const changedProcess = { ...process, summary: ['Inspecting more.'] };
+    const third = grouper.group(turn([user, changedProcess, changedResponse]));
+    expect(third[0]).toBe(second[0]);
+    expect(third[1]).not.toBe(second[1]);
+    expect(third[2]).toBe(second[2]);
+    expect(third[1]).toEqual({ kind: 'process', items: [changedProcess] });
+  });
+
+  test('rebuilds structure while reusing identity-stable blocks', () => {
+    const grouper = createTurnContentGrouper();
+    const user = userMessage('user');
+    const empty = commentary('commentary', '');
+    const response = agentResponse('response');
+    const first = grouper.group(turn([user, empty, response]));
+    const visible = { ...empty, text: 'Checking.' };
+    const second = grouper.group(turn([user, visible, response]));
+
+    expect(second[0]).toBe(first[0]);
+    expect(second[1]).not.toBe(first[1]);
+    expect(second[1]).toEqual({ kind: 'process', items: [visible] });
+    expect(second[2]).toBe(first[2]);
+
+    const reordered = grouper.group(turn([response, visible, user]));
+    expect(reordered.map((block) => block.kind === 'process' ? 'process' : block.item.id))
+      .toEqual(['process', 'response', 'user']);
+    expect(reordered[1]).toBe(second[2]);
+    expect(reordered[2]).toBe(second[0]);
+
+    const settled = grouper.group({
+      ...turn([response, empty, user]),
+      status: 'completed',
+      completedAt: 3,
+      durationMs: null,
+    });
+    expect(settled.map((block) => block.kind === 'process' ? 'process' : block.item.id))
+      .toEqual(['response', 'user']);
+    expect(settled[0]).toBe(reordered[1]);
+    expect(settled[1]).toBe(reordered[2]);
   });
 });
 

@@ -1,4 +1,5 @@
 import {
+  memo,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -154,7 +155,7 @@ export function isThreadToolItem(item: ThreadItem): item is ThreadToolItem {
     || item.type === 'webSearch';
 }
 
-export function ThreadItemView(props: ThreadItemViewProps) {
+export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemViewProps) {
   const t = useT();
   switch (props.item.type) {
     case 'userMessage':
@@ -250,9 +251,9 @@ export function ThreadItemView(props: ThreadItemViewProps) {
     default:
       return assertNever(props.item);
   }
-}
+});
 
-export function ThreadToolActivityGroup({
+export const ThreadToolActivityGroup = memo(function ThreadToolActivityGroup({
   expandState,
   index,
   items,
@@ -328,7 +329,7 @@ export function ThreadToolActivityGroup({
       ) : null}
     </div>
   );
-}
+});
 
 function UserMessageItem({
   canEditUserMessage,

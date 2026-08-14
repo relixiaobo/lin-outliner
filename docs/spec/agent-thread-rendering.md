@@ -103,6 +103,15 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
 
 `ThreadItemView` switches exhaustively on the canonical Item discriminant:
 
+An active Turn preserves canonical Item identity across streamed deltas. Its
+content grouper compares Item references pairwise, rebuilds structure when an
+Item changes rendering role or order, and otherwise replaces only the affected
+item or process block. Turn actions keep stable callbacks keyed by Turn ID and
+read the current Turn through a ref. Field-equal Subagent projection entries,
+their map, and unchanged projected arrays retain identity. `ThreadItemView` and
+consecutive tool groups are memoized against those stable inputs, so a response
+delta does not render unrelated transcript Items again.
+
 - user and agent messages render readable text at the same content register as
   the outliner
 - reasoning places a compact summary of its first visible Markdown block
@@ -494,10 +503,17 @@ comes from the Item itself; the renderer never infers completion from missing
 events.
 
 Agent Markdown reuses the shared read-only code surface and dual-theme Shiki
-highlighter. Stable completed blocks are memoized; only the final streaming
-block is repaired and rendered live, with text commits throttled so token deltas
-do not rerender the complete response. Every block keeps the same memoized React
-component identity as the final streaming block seals. Node and local-file
+highlighter. Streaming text commits are throttled to 80 ms. For a pure append,
+the complete source is repaired so inline-marker context can cross block
+boundaries, then lexing restarts at a safe blank-line boundary. The reparsed
+tail retains the last two substantive tokens and trailing whitespace; a repaired
+prefix that differs from source or contains an unmatched reference-label opener
+is not frozen. A non-append edit, lexer failure, definition-set change, or token
+stream that cannot account for every source byte falls back to a full repaired
+lex; the definition fallback is required because definitions are attached to
+every visible block. Stable completed blocks are memoized, and every block keeps
+the same memoized React component identity as the final streaming block seals.
+Node and local-file
 reference markers render through the same inline reference and preview surfaces
 as the outliner; Cmd/Ctrl-click preserves new-pane navigation, and HTTP links use
 the app preview route. User messages retain Copy and, for the latest terminal
