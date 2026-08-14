@@ -210,6 +210,24 @@ describe('object-set filtering', () => {
     const plan = planFor(context, 'editViewSection', anchor, { section: 'filter' });
     expect(plan?.steps.map((step) => step.kind)).toEqual(['command', 'reveal', 'reveal']);
   });
+
+  test('saved searches omit the toolbar visibility setter for their always-on result controls', () => {
+    const { core, today } = newDocument();
+    const searchId = core.createSearchNode(today, null, {
+      title: 'Search',
+      query: { kind: 'rule', op: 'STRING_MATCH', text: 'Search' },
+    }).focus!.nodeId;
+    const projection = projectionOf(core);
+    const anchor = nodeObjectForRow(searchId, projection.byId, mint);
+    const context = contextFor(core, [anchor], {
+      view: [{ objectRef: anchor.objectRef, panelId: 'p', visualRowId: searchId, rowExpanded: true }],
+    });
+
+    expect(resolveFamily(context, 'setViewToolbarVisible', anchor)).toEqual([]);
+    expect(resolveFamily(context, 'editViewSection', anchor)).not.toEqual([]);
+    const plan = planFor(context, 'editViewSection', anchor, { section: 'display' });
+    expect(plan?.steps.map((step) => step.kind)).toEqual(['reveal', 'reveal']);
+  });
 });
 
 describe('explicit-state convergence', () => {

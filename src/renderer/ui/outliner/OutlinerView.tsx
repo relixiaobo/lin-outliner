@@ -6,7 +6,13 @@ import type { CommandRunner, NavigateRootOptions, TriggerState } from '../shared
 import { OutlinerFieldRow } from './OutlinerFieldRow';
 import { OutlinerItem } from './OutlinerItem';
 import { RowHost } from './RowHost';
-import { buildOutlinerRows, hiddenFieldKey, readViewConfig, type OutlinerRowItem } from './row-model';
+import {
+  buildOutlinerRows,
+  hiddenFieldKey,
+  readViewConfig,
+  showsResultViewControls,
+  type OutlinerRowItem,
+} from './row-model';
 import { useTrailingDraftId } from './draftRow';
 import { insertTrailingDraftRow, resolveTrailingDraftAfterId } from '../../state/trailingDraftPlacement';
 import { ViewToolbar } from './ViewToolbar';
@@ -34,7 +40,7 @@ interface OutlinerViewProps {
   setDragId: (nodeId: NodeId | null) => void;
   onTogglePin: (nodeId: NodeId) => void;
   rows?: OutlinerRowItem[];
-  suppressedFieldDefIds?: ReadonlySet<string>;
+  suppressFieldEntries?: boolean;
   referencePath?: readonly NodeId[];
   showViewToolbar?: boolean;
   // When this view renders a field's values (not body content), the field-value
@@ -69,7 +75,7 @@ export function OutlinerView(props: OutlinerViewProps) {
   const tableMode = view.viewMode === 'table' && !props.fieldValue;
   const builtRows = props.rows ?? buildOutlinerRows(parent, props.index.byId, {
     expandedHiddenFields: props.ui.expandedHiddenFields,
-    suppressedFieldDefIds: props.suppressedFieldDefIds,
+    suppressFieldEntries: props.suppressFieldEntries,
   });
 
   // The draft id is minted here (renderer-only) so it survives until the row
@@ -139,7 +145,7 @@ export function OutlinerView(props: OutlinerViewProps) {
         dragId={props.dragId}
         setDragId={props.setDragId}
         referencePath={props.referencePath}
-        suppressedOwnerFieldDefIds={props.suppressedFieldDefIds}
+        suppressOwnerFieldEntries={props.suppressFieldEntries}
         showViewToolbar={props.showViewToolbar}
         trailingDraft={props.trailingDraft}
         draftPlaceholder={props.draftPlaceholder}
@@ -149,7 +155,7 @@ export function OutlinerView(props: OutlinerViewProps) {
 
   return (
     <>
-      {props.showViewToolbar !== false && parent && view.toolbarVisible && (
+      {props.showViewToolbar !== false && parent && showsResultViewControls(parent, view) && (
         <ViewToolbar
           node={parent}
           view={view}
@@ -163,6 +169,7 @@ export function OutlinerView(props: OutlinerViewProps) {
                 : prev
             ));
           }}
+          variant={parent.type === 'search' ? 'compact' : 'bar'}
         />
       )}
       <OutlinerEmptyState

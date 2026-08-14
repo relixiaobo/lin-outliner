@@ -34,7 +34,7 @@ function rowIds(rows: ReturnType<typeof buildSelectableRows>): NodeId[] {
 }
 
 describe('buildSelectableRows', () => {
-  test('omits visible table-column fields from expanded record children', () => {
+  test('keeps visible cell values selectable while retaining only orphaned expanded fields', () => {
     const byId = byIdOf([
       node('root', { children: ['view', 'record'] }),
       node('view', {
@@ -54,9 +54,12 @@ describe('buildSelectableRows', () => {
         displayField: 'hidden-field',
         displayVisible: false,
       }),
+      node('shown-field', { parentId: 'schema', type: 'fieldDef' }),
+      node('hidden-field', { parentId: 'schema', type: 'fieldDef' }),
+      node('schema', { children: ['shown-field', 'hidden-field'] }),
       node('record', {
         parentId: 'root',
-        children: ['shown-entry', 'hidden-entry', 'child'],
+        children: ['shown-entry', 'hidden-entry', 'other-entry', 'child'],
       }),
       node('shown-entry', {
         parentId: 'record',
@@ -72,6 +75,13 @@ describe('buildSelectableRows', () => {
         children: ['hidden-value'],
       }),
       node('hidden-value', { parentId: 'hidden-entry' }),
+      node('other-entry', {
+        parentId: 'record',
+        type: 'fieldEntry',
+        fieldDefId: 'other-field',
+        children: ['other-value'],
+      }),
+      node('other-value', { parentId: 'other-entry' }),
       node('child', { parentId: 'record' }),
     ]);
     const expanded = new Set<NodeId>(['record']);
@@ -83,13 +93,13 @@ describe('buildSelectableRows', () => {
     expect(rowIds(buildSelectableRows('root', byId, { expanded }))).toEqual([
       'record',
       'shown-value',
-      'hidden-entry',
-      'hidden-value',
+      'other-entry',
+      'other-value',
       'child',
     ]);
     expect(flattenVisibleRows('root', byId, expanded)).toEqual([
       'record',
-      'hidden-entry',
+      'other-entry',
       'child',
     ]);
   });

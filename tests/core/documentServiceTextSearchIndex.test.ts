@@ -430,6 +430,38 @@ describe('DocumentService text search index', () => {
     expect(searchResultTargetIds(service, searchId)).toEqual([exact, loose]);
   });
 
+  test('uses the live text index when table mode refreshes a saved search', async () => {
+    const service = await createService();
+    const rootId = service.getProjection().rootId;
+    const exact = focusNodeId(await service.handle('create_node', {
+      parentId: rootId,
+      index: null,
+      text: 'Launch design',
+    }));
+    const loose = focusNodeId(await service.handle('create_node', {
+      parentId: rootId,
+      index: null,
+      text: 'Design review',
+    }));
+    await service.handle('update_node_description', {
+      nodeId: loose,
+      description: 'Launch notes',
+    });
+    const searchId = focusNodeId(await service.handle('create_search_node', {
+      parentId: rootId,
+      index: null,
+      config: {
+        title: 'Launch design',
+        query: { kind: 'rule', op: 'STRING_MATCH', text: 'launch design' },
+      },
+    }));
+    expect(searchResultTargetIds(service, searchId)).toEqual([exact, loose]);
+
+    await service.handle('set_view_mode', { nodeId: searchId, mode: 'table' });
+
+    expect(searchResultTargetIds(service, searchId)).toEqual([exact, loose]);
+  });
+
   test('keeps search fresh after yielding bulk tree creates', async () => {
     const service = await createService();
     const todayId = service.getProjection().todayId;

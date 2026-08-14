@@ -27,7 +27,6 @@ import {
   buildOutlinerRows,
   hiddenFieldKey,
   readViewConfig,
-  visibleAuthoredTableFieldIds,
   type OutlinerRowItem,
 } from './outlinerRows';
 import {
@@ -532,17 +531,14 @@ export function flattenVisibleRows(
   const visit = (
     parentId: NodeId,
     referencePath: NodeId[],
-    suppressedFieldDefIds?: ReadonlySet<string>,
+    suppressFieldEntries = false,
   ) => {
     const parent = byId.get(parentId);
     if (!parent) return;
-    const view = readViewConfig(parent, byId);
-    const tableFieldDefIds = view.viewMode === 'table'
-      ? visibleAuthoredTableFieldIds(view)
-      : undefined;
+    const tableMode = readViewConfig(parent, byId).viewMode === 'table';
     const rows = buildOutlinerRows(parent, byId, {
       expandedHiddenFields,
-      suppressedFieldDefIds,
+      suppressFieldEntries,
     });
     const visitRows = (currentRows: OutlinerRowItem[]) => {
       for (const row of currentRows) {
@@ -558,7 +554,7 @@ export function flattenVisibleRows(
         visit(
           childParentId,
           [...referencePath, childParentId],
-          row.type === 'content' ? tableFieldDefIds : undefined,
+          row.type === 'content' && tableMode,
         );
       }
     }

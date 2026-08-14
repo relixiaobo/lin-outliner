@@ -255,22 +255,32 @@ longer derives candidates from nodes carrying that deleted tag.
 
 ## View Toolbar
 
-The node-level view toolbar is the presentation control for a node's child rows
-and for saved-search result views. It lives above the rendered child/result rows
-when the node's `viewDef.toolbarVisible` flag is true. The supported render modes
-are **Outline** (persisted as `list`) and **Table**, selected through the toolbar's
-compact segmented control or the node context menu's **View as** subview. Filter
-by name, Display, Sort by, and Filter by apply in both modes. Group by applies
-only in Outline: Table hides the control and ignores a saved group rule without
-clearing it, so returning to Outline restores the same grouping. These controls
-all read and write `viewDef` child nodes
+The node-level view toolbar is the presentation control for Outline child rows
+and saved-search results. For ordinary nodes it lives above rendered rows when
+the node's `viewDef.toolbarVisible` flag is true. Search nodes instead always
+expose one compact icon-first result-view band. It keeps **Outline** (persisted
+as `list`) and **Table** visible as one two-option mode selector in both modes;
+the active option has `aria-pressed="true"`. Outline additionally provides name
+search, Display, Group, Sort, and Filter; Table additionally provides name search,
+Sort, and Filter, while Add field owns visible-column configuration. The compact
+variant has no summary chips, result count, card fill, or decorative dividers,
+and activating name search expands its inline input. Ordinary Outline reuses the
+same selector with icon-and-text options. The node context menu's **View as**
+subview remains a secondary text entry point rather than the only discoverable
+mode control. Table ignores a saved group rule without clearing it,
+so returning to Outline restores the same grouping. These controls all read and
+write `viewDef` child nodes
 (`displayField`, `sortRule`, `filterRule`, plus the view's `groupField`) rather
 than storing renderer-local state.
+The ordinary **Show/Hide view toolbar** action is not offered for Search nodes:
+their result-view band is part of the Search surface rather than a conditional
+projection of `viewDef.toolbarVisible`.
 
 Nested toolbars render as part of the expanded child outline, not as detached
 cards. They remain logically inside the expanded child subtree, while their
-visual indent aligns with the owning node's title/content column instead of the
-first child row. The expanded parent guide line spans the toolbar and
+visual indent aligns with the owning node's title/content column, derived from
+the same row geometry tokens instead of the bullet or selection gutter. The
+expanded parent guide line spans the toolbar and
 descendants. The toolbar itself carries only subtle top/bottom separators; the
 hierarchy line is the main visual divider.
 
@@ -326,8 +336,11 @@ Filter by name chip owns name filtering, so Name is excluded from the generic
 Filter popover. Generic Filter still offers the real system fields supported by
 the view adapter, then contextual custom fields from the current child/result
 rows plus fields already referenced by existing non-name filter rules so old
-rules remain editable. Fields that the data model does not yet expose as computed
-values are not shown as fake empty choices.
+rules remain editable. Its contextual discovery also includes nested fields
+visible inside the owner's own field values; Display, Group, Sort, and Table
+column discovery continue to treat those owner fields as metadata rather than
+record rows. Fields that the data model does not yet expose as computed values
+are not shown as fake empty choices.
 
 Rows that do not match the active view filter are not discarded from the
 interaction surface. The visible list shows matching rows first, then appends a
@@ -367,20 +380,45 @@ filtered-out disclosure remains recoverable inside the grid and reveals rows in
 the same columns. Search nodes can use the same renderer, but never receive a
 writable trailing draft because their result references are derived.
 
+On a real transition from any non-Table mode (`list`, `cards`, or `calendar`) to
+Table, the same `set_view_mode` transaction inspects the current direct records,
+resolves every reference chain to its final target, and adds visible columns for
+active custom fields used by those targets but never configured in this view. A
+Search owner refreshes its materialized result references first, within the same
+transaction, using the main process's live text index, so first entry cannot
+observe an empty stale result set or compatibility-scored results. If the saved
+query is no longer evaluable, this pre-refresh keeps the previous materialized
+results and the mode change still lands; explicit query writes and manual
+refreshes continue to report the evaluation error. Existing display-field nodes
+are authoritative: their order and settings stay intact, hidden columns remain
+hidden, and only missing fields are appended in Schema order. System fields and
+unused custom fields are never defaulted. Repeating Table mode does nothing;
+fields first used while Table remains active are considered on the next
+transition out of and back into Table.
+
 The first column is the synthetic, non-removable **Title** column. It contains
 the ordinary bullet/disclosure, checkbox, rich title editor, reference behavior,
 and row context menu. Each visible `displayField` contributes one additional
 column. Columns use finite `displayOrder` first, then stored child order and id as
-deterministic fallbacks. `displayLabel` overrides the live field label,
+deterministic fallbacks. When Table initialization encounters historical display
+fields without a finite order, it assigns only those fields sequential orders
+after the maximum existing finite order and appends new defaults after them;
+existing finite orders never change. `displayLabel` overrides the live field label,
 `displayWidth` is clamped to the supported range, and `displayVisible` controls
 visibility. Header menus rename a column for this view, move it left or right,
-hide it, or remove it. The resize separator supports pointer drag, keyboard
-increments, and double-click reset. A resize preview exists only while dragging
+or hide it. The persisted remove command remains protocol-compatible, but the
+Table header exposes Hide as its only removal action. The resize separator
+supports pointer drag, keyboard increments, and double-click reset. A resize
+preview exists only while dragging
 or awaiting that commit; once the command settles it yields to the latest
 projected width, so undo, collaboration, and external updates cannot be masked by
-stale renderer state. The default geometry follows the compact Tana composition:
-a 152px Title column, 86px authored fields, and an 82px trailing `+ Add` slot.
-The data strip does not expand merely because its panel is wider.
+stale renderer state. The default geometry follows Tana's scan-first composition:
+Title is `minmax(260px, 1fr)`, authored and system fields default to 180px and
+clamp no narrower than 112px, and the trailing 104px Add field track remains
+stable. Header and rows fill the available content width whenever those minimums
+fit; Title absorbs the remainder. Narrower panes retain the minimum tracks and
+use the Table-local horizontal scroller instead of wrapping columns into an
+unreadable strip.
 
 An authored column's field-kind icon opens that field definition in the current
 pane, providing direct access to its configuration surface. Hover visibly
@@ -389,14 +427,18 @@ system field has no definition node, so its kind icon remains non-interactive an
 does not expose that hover state. Column labels and menus keep their existing
 view-local behavior.
 
-**Add column** lists active reusable definitions not currently visible and the
-supported system fields. A hidden display field therefore remains available;
-selecting it restores that same column with its width, order, view-local label,
-and row values intact. The Display popover provides the equivalent checkbox
-toggle. Selecting a definition with no display field creates only a display-field
-node. The new-field path accepts a localized field type and atomically creates
-the field definition plus its display-field node. None of these paths bulk-create
-empty values on records.
+**Add field** lists fields that are not currently visible in three searchable
+groups: custom fields used by a current record, other active custom fields, then
+supported system fields. Both custom groups follow Schema order; system fields
+keep their established order. A hidden display field therefore remains
+available; selecting it restores that same column with its width, order,
+view-local label, and row values intact. Table's Edit displayed fields action
+opens this same Add field surface rather than restoring a second toolbar row. The
+Outline Display popover provides the equivalent checkbox toggle and presents
+custom Fields before System fields. Selecting a definition with no display field
+creates only a display-field node. The new-field path accepts a localized field
+type and atomically creates the field definition plus its display-field node.
+None of these paths bulk-create empty values on records.
 
 An existing authored value renders through the ordinary node surface, including
 the standard bullet, single-click editing, disclosure, children, context menu,
@@ -415,13 +457,24 @@ system fields remain derived; Done keeps its direct toggle behavior. The trailin
 Title draft creates an ordinary direct child, and Enter at the end of the final
 stored Title creates and focuses the next record.
 
-Expanding a table record shows its ordinary child outline without duplicating
-authored field entries already represented by visible columns. Those entries and
-their values remain editable through their cells, but are omitted from the
-expanded render and child count. The entry wrapper is absent from row navigation;
-its visible value nodes remain ordinary selectable nodes in cell order. Field
-entries for hidden or undisplayed columns remain ordinary expanded child rows so
-hiding a column never makes its data unreachable.
+Reference-backed records use one final target for field text, sort, filter,
+grouping, choice discovery, system-field projection, and edit attachment. This
+includes saved-search results whose target is another reference. A missing or
+cyclic chain uses the reference node's own title for Name, renders target-backed
+authored and system fields empty, does not accept a field write, and never blocks
+the rest of the Table.
+
+Expanding a table record shows its ordinary child outline without active authored
+field-entry rows. In Table, active fields are columns whether their columns are
+visible, hidden, or not yet configured. Visible-column values remain editable
+through their cells and their ordinary value nodes remain in cell selection
+order, but active field-entry wrappers and values for hidden or undisplayed
+fields are absent from the expanded tree, disclosure child count, keyboard
+navigation, selectable-row model, and agent-visible outline. Hidden active data
+stays discoverable and recoverable through Add field. A field entry whose
+definition is missing or in Trash is the recovery exception: it renders as an
+ordinary expanded field row and participates in all of those structural models,
+so its stored values never become unreachable.
 
 Each table is an independently named ARIA `grid` with `row`, `columnheader`, and
 `gridcell` descendants and one roving tab stop. An expanded nested Outline inside
@@ -455,28 +508,49 @@ row.
 
 The grid uses the panel as its vertical scroll owner and a local native
 horizontal scroll area for overflowing columns. Header and mounted rows share
-one content-sized column template. Only data columns receive quiet horizontal
-separators; `+ Add` remains outside those lines, while a vertical hierarchy guide
-aligns with the owning row bullet. More than 60 logical rows use a bounded measured window
+one responsive full-width column template. Header labels and Add field use
+`--font-ui-sm`; row titles and values keep `--font-content` and
+`--line-content`, all over the shared `--font-family-sans`. Only data columns
+receive quiet horizontal separators; Add field remains outside those lines,
+while a vertical hierarchy guide aligns with the owning row bullet. More than 60 logical rows use a bounded measured window
 with overscan; focused rows and the trailing draft stay mountable, and height
 corrections above the viewport compensate `scrollTop` before paint. Expanded
 children may own independent nested Outline or Table scopes with their own
-columns, filters, sorting, toolbar, accessible name, and horizontal scroll.
+columns, filters, sorting, view actions, accessible name, and horizontal scroll.
 Visible saved searches have one refresh owner: Table owns Table-mode search
 scopes, while the surrounding flat Outline renderer excludes those scopes and
 continues to own visible Outline-mode searches.
 
 ## Search Nodes
 
-Search nodes render a compact query summary below the page title and above the
-materialized result rows while the inline query builder is closed. The summary
-shows read-only chips for the query semantics and the current materialized result
-count; it does not configure how the results are presented.
+Search nodes do not repeat query semantics as read-only chips beneath a title
+that already identifies the query. The title query action is the single entry
+point for inspecting and editing those semantics. While its editor is open, the
+root result-view controls temporarily yield to it; closing the editor restores
+the same compact band without changing view configuration. The editor provides
+the materialized result count and an explicit refresh action as editing context;
+the closed result view needs neither because visible searches refresh
+automatically through their single mode-specific owner.
 
-The summary exposes a **View** action that reveals the same node-level View
-Toolbar used by normal node pages. Query chips describe *what the search returns*;
-the View Toolbar controls *how the result references are displayed, grouped,
-sorted, and filtered*.
+The editor projects stored condition nodes into outline text through the shared
+query complexity limits. When that bounded projection omits any stored rule or
+operand, the editor shows an explicit truncation warning, keeps the textarea
+read-only, and disables Reset and Save. Users may still inspect the visible
+projection, refresh materialized results, or close the editor, but a partial
+projection is never writable over the complete query.
+
+Outline and Table therefore use one shared compact result-view mechanism rather
+than stacking a query summary and a full toolbar. Outline aligns name search,
+Table, Display, Group, Sort, and Filter with the result content axis. Table aligns
+name search, Outline, Sort, and Filter with the Title label axis above the pure
+field header; Add field owns visible columns. The compact band has no frame,
+fill, summary chips, result count, manual refresh, or decorative separator. At
+narrow pane widths its controls keep the shared fixed control size and wrap as
+complete units instead of shrinking or clipping.
+Each compact-control tooltip anchors to the control that currently owns hover or
+keyboard focus, including after the controls wrap. Moving directly between
+controls remeasures the new label's intrinsic width, so a short tooltip never
+inherits the width or location of the previous control.
 
 ## NodePanel References Footer
 

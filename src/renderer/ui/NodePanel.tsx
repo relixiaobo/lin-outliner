@@ -59,7 +59,7 @@ import { buildOutlinerRows } from './outliner/row-model';
 import { TriggerPopover } from './outliner/TriggerPopover';
 import { ButtonControl } from './primitives/ButtonControl';
 import { IconButton } from './primitives/IconButton';
-import { SearchQueryBuilderPanel, SearchQuerySummaryBar } from './search/SearchQuerySummaryBar';
+import { SearchQueryBuilderPanel } from './search/SearchQueryBuilderPanel';
 import { inlineReferenceTextColor, resolveTagColor } from './tags/tagColors';
 import { TagBar } from './tags/TagBar';
 import { BacklinksSection } from './BacklinksSection';
@@ -773,13 +773,6 @@ export function NodePanel(props: NodePanelProps) {
               onClose={() => setSearchQueryOpen(false)}
             />
           )}
-          {rootNode?.type === 'search' && !searchQueryOpen && (
-            <SearchQuerySummaryBar
-              index={props.index}
-              nodeId={resolvedRootId}
-              run={props.run}
-            />
-          )}
           {panelIsoDate && (
             <PanelDateNavigation
               dayNoteCounts={props.index.dayNoteCounts}
@@ -865,6 +858,7 @@ export function NodePanel(props: NodePanelProps) {
             setDragId={props.setDragId}
             setTrigger={props.setTrigger}
             setUi={props.setUi}
+            showViewToolbar={!searchQueryOpen}
             trailingDraft={showTrailingInput ? 'always' : 'none'}
             trigger={props.trigger}
             ui={props.ui}

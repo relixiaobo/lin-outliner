@@ -52,6 +52,9 @@ test.describe('table view', () => {
   });
 
   test('switches the same children through View as and preserves the saved group rule', async ({ page }) => {
+    const originalViewport = page.viewportSize();
+    if (!originalViewport) throw new Error('Missing viewport');
+    await page.setViewportSize({ width: 1700, height: originalViewport.height });
     await configureRootTable(page);
     await switchRootFromContextMenu(page, 'Table');
 
@@ -60,7 +63,7 @@ test.describe('table view', () => {
     await expect(grid).toHaveAttribute('aria-colcount', '3');
     await expect(grid.getByRole('columnheader')).toHaveText(['Title', 'Status', 'Due']);
     await expect(grid.locator('.outliner-table-column-kind')).toHaveCount(2);
-    await expect(grid.getByRole('button', { name: 'Add column' })).toHaveText('Add');
+    await expect(grid.getByRole('button', { name: 'Add column' })).toHaveText('Add field');
     await expect(grid.getByRole('row')).toHaveCount(5);
     await expect(grid.locator(`[data-table-row-id="${ids.alpha}"][data-table-column-id="__title__"]`)).toContainText('Alpha');
 
@@ -71,32 +74,102 @@ test.describe('table view', () => {
       const fields = [...scroll.querySelectorAll<HTMLElement>('.outliner-table-column-header')];
       const add = scroll.querySelector<HTMLElement>('.outliner-table-add-column')!;
       const firstCell = scroll.querySelector<HTMLElement>('.outliner-table-title-cell')!;
+      const firstTitleWrap = firstCell.querySelector<HTMLElement>(':scope > .row-wrap')!;
+      const firstChevron = firstCell.querySelector<HTMLElement>('.row-chevron-button')!;
+      const firstBullet = firstCell.querySelector<HTMLElement>('.row-bullet-button')!;
+      const scrollRect = scroll.getBoundingClientRect();
+      const titleRect = title.getBoundingClientRect();
+      const firstCellRect = firstCell.getBoundingClientRect();
+      const firstTitleWrapRect = firstTitleWrap.getBoundingClientRect();
+      const firstChevronRect = firstChevron.getBoundingClientRect();
+      const firstBulletRect = firstBullet.getBoundingClientRect();
+      const rootStyle = getComputedStyle(document.documentElement);
+      const scrollStyle = getComputedStyle(scroll);
+      const resolveFontSize = (token: string) => {
+        const probe = document.createElement('span');
+        probe.style.fontSize = `var(${token})`;
+        document.body.append(probe);
+        const fontSize = getComputedStyle(probe).fontSize;
+        probe.remove();
+        return fontSize;
+      };
+      const addRect = add.getBoundingClientRect();
       return {
         addBorderBottom: getComputedStyle(add).borderBottomWidth,
-        addWidth: add.getBoundingClientRect().width,
+        addRight: addRect.right,
+        addWidth: addRect.width,
+        contentFontFamily: getComputedStyle(firstCell).fontFamily,
+        contentFontSize: getComputedStyle(firstCell).fontSize,
+        contentFontToken: resolveFontSize('--font-content'),
         fieldWidths: fields.map((field) => field.getBoundingClientRect().width),
+        firstBulletLeft: firstBulletRect.left,
         firstCellBackground: getComputedStyle(firstCell).backgroundColor,
         firstCellBorderRight: getComputedStyle(firstCell).borderRightWidth,
+        firstCellRight: firstCellRect.right,
+        firstChevronLeft: firstChevronRect.left,
+        firstChevronRight: firstChevronRect.right,
+        firstTitleWrapRight: firstTitleWrapRect.right,
         headerBorderTop: getComputedStyle(header).borderTopWidth,
+        headerFontFamily: getComputedStyle(header).fontFamily,
+        headerFontSize: getComputedStyle(header).fontSize,
+        headerFontToken: resolveFontSize('--font-ui-sm'),
         headerWidth: header.getBoundingClientRect().width,
-        scrollWidth: scroll.getBoundingClientRect().width,
-        titleWidth: title.getBoundingClientRect().width,
+        rootFontFamily: rootStyle.fontFamily,
+        scrollContentWidth: scroll.clientWidth - Number.parseFloat(scrollStyle.paddingLeft),
+        scrollLeft: scrollRect.left,
+        scrollRight: scrollRect.right,
+        scrollWidth: scrollRect.width,
+        titleLabelLeft: titleRect.left + Number.parseFloat(getComputedStyle(title).paddingLeft),
+        titleWidth: titleRect.width,
       };
     });
-    expect(geometry.titleWidth).toBeCloseTo(152, 0);
-    expect(geometry.fieldWidths).toEqual([86, 86]);
-    expect(geometry.addWidth).toBeCloseTo(82, 0);
-    expect(geometry.headerWidth).toBeLessThan(geometry.scrollWidth - 100);
+    expect(geometry.titleWidth).toBeGreaterThanOrEqual(260);
+    expect(geometry.fieldWidths).toEqual([180, 180]);
+    expect(geometry.addWidth).toBeCloseTo(104, 0);
+    expect(geometry.headerWidth).toBeCloseTo(geometry.scrollContentWidth, 0);
+    expect(geometry.addRight).toBeCloseTo(geometry.scrollRight, -1);
     expect(geometry.headerBorderTop).toBe('0px');
     expect(geometry.firstCellBorderRight).toBe('0px');
     expect(geometry.addBorderBottom).toBe('0px');
     expect(geometry.firstCellBackground).toBe('rgba(0, 0, 0, 0)');
+    expect(geometry.firstBulletLeft).toBeCloseTo(geometry.titleLabelLeft, 1);
+    expect(geometry.firstChevronLeft).toBeGreaterThanOrEqual(geometry.scrollLeft);
+    expect(geometry.firstChevronRight).toBeLessThan(geometry.firstBulletLeft);
+    expect(geometry.firstTitleWrapRight).toBeCloseTo(geometry.firstCellRight, 1);
+    expect(geometry.headerFontFamily).toBe(geometry.rootFontFamily);
+    expect(geometry.contentFontFamily).toBe(geometry.rootFontFamily);
+    expect(geometry.headerFontSize).toBe(geometry.headerFontToken);
+    expect(geometry.contentFontSize).toBe(geometry.contentFontToken);
 
-    const toolbar = page.locator('.view-toolbar').first();
-    await expect(toolbar.getByRole('button', { name: 'Group by', exact: true })).toHaveCount(0);
-    await toolbar.getByRole('button', { name: 'Outline', exact: true }).click();
+    await page.setViewportSize({ width: 760, height: originalViewport.height });
+    const narrowGeometry = await grid.evaluate((element) => {
+      const scroll = element as HTMLElement;
+      const title = scroll.querySelector<HTMLElement>('.outliner-table-title-header')!;
+      const fields = [...scroll.querySelectorAll<HTMLElement>('.outliner-table-column-header')];
+      const add = scroll.querySelector<HTMLElement>('.outliner-table-add-column')!;
+      return {
+        addWidth: add.getBoundingClientRect().width,
+        clientWidth: scroll.clientWidth,
+        fieldWidths: fields.map((field) => field.getBoundingClientRect().width),
+        scrollWidth: scroll.scrollWidth,
+        titleWidth: title.getBoundingClientRect().width,
+      };
+    });
+    expect(narrowGeometry.scrollWidth).toBeGreaterThan(narrowGeometry.clientWidth);
+    expect(narrowGeometry.titleWidth).toBeCloseTo(260, 0);
+    expect(narrowGeometry.fieldWidths).toEqual([180, 180]);
+    expect(narrowGeometry.addWidth).toBeCloseTo(104, 0);
+    await page.setViewportSize(originalViewport);
+
+    const tableScope = page.locator(`[data-table-owner-id="${ids.today}"]`);
+    const tableControls = tableScope.locator(':scope > .view-toolbar.is-compact-controls');
+    await expect(grid.locator('.view-toolbar')).toHaveCount(0);
+    await expect(tableControls.getByRole('button', { name: 'Filter by name', exact: true })).toBeVisible();
+    await expect(tableControls.getByRole('button', { name: 'Group by', exact: true })).toHaveCount(0);
+    await tableControls.getByRole('button', { name: 'Outline', exact: true }).click();
     await expect(rootGrid(page)).toHaveCount(0);
-    await expect(toolbar.getByRole('button', { name: 'Group by', exact: true })).toBeVisible();
+    const outlineToolbar = page.locator('.view-toolbar:not(.is-compact-controls)').first();
+    await expect(outlineToolbar.getByRole('button', { name: 'Group by', exact: true })).toBeVisible();
 
     const groupField = await page.evaluate((todayId) => {
       const win = window as typeof window & {
@@ -113,8 +186,84 @@ test.describe('table view', () => {
     }, ids.today);
     expect(groupField).toBe('sys:done');
 
-    await toolbar.getByRole('button', { name: 'Table', exact: true }).click();
+    await outlineToolbar.getByRole('button', { name: 'Table', exact: true }).click();
     await expect(rootGrid(page)).toBeVisible();
+  });
+
+  test('defaults used custom fields as columns and preserves hidden choices across view switches', async ({ page }) => {
+    await invokeCommands(page, [
+      {
+        cmd: 'create_inline_field',
+        args: {
+          parentId: ids.alpha,
+          index: null,
+          name: '',
+          fieldType: 'plain',
+          targetDefId: ids.statusField,
+        },
+      },
+      {
+        cmd: 'create_inline_field',
+        args: {
+          parentId: ids.beta,
+          index: null,
+          name: '',
+          fieldType: 'plain',
+          targetDefId: ids.dueField,
+        },
+      },
+    ]);
+    const beforeTable = await e2eProjection(page);
+    const alpha = beforeTable.nodes.find((node) => node.id === ids.alpha)!;
+    const beta = beforeTable.nodes.find((node) => node.id === ids.beta)!;
+    const statusEntry = beforeTable.nodes.find((node) => (
+      alpha.children.includes(node.id)
+      && node.type === 'fieldEntry'
+      && (node as typeof node & { fieldDefId?: string }).fieldDefId === ids.statusField
+    ))!;
+    const dueEntry = beforeTable.nodes.find((node) => (
+      beta.children.includes(node.id)
+      && node.type === 'fieldEntry'
+      && (node as typeof node & { fieldDefId?: string }).fieldDefId === ids.dueField
+    ))!;
+    await invokeCommands(page, [
+      {
+        cmd: 'set_field_free_text_value',
+        args: { fieldEntryId: statusEntry.id, text: 'Active', id: 'automatic-status-value' },
+      },
+      {
+        cmd: 'set_field_free_text_value',
+        args: { fieldEntryId: dueEntry.id, text: '2026-05-20', id: 'automatic-due-value' },
+      },
+      { cmd: 'set_view_mode', args: { nodeId: ids.today, mode: 'table' } },
+    ]);
+
+    const grid = rootGrid(page);
+    await expect(grid.getByRole('columnheader')).toHaveText(['Title', 'Status', 'Due']);
+    await expect(grid.locator(`.outliner-table-cell[data-table-row-id="${ids.alpha}"]`).first()).toContainText('Active');
+    await expect(grid.locator(`.outliner-table-cell[data-table-row-id="${ids.beta}"]`).nth(1)).toContainText('2026-05-20');
+    await expect(grid.getByRole('columnheader').filter({ hasText: 'Done' })).toHaveCount(0);
+
+    const tableProjection = await e2eProjection(page);
+    const statusDisplay = tableProjection.nodes.find((node) => (
+      node.type === 'displayField' && node.displayField === ids.statusField
+    ))!;
+    await invokeCommands(page, [
+      {
+        cmd: 'update_display_field',
+        args: { displayFieldId: statusDisplay.id, visible: false },
+      },
+      { cmd: 'set_view_mode', args: { nodeId: ids.today, mode: 'list' } },
+      { cmd: 'set_view_mode', args: { nodeId: ids.today, mode: 'table' } },
+    ]);
+
+    await expect(grid.getByRole('columnheader')).toHaveText(['Title', 'Due']);
+    const switchedProjection = await e2eProjection(page);
+    const switchedStatusDisplays = switchedProjection.nodes.filter((node) => (
+      node.type === 'displayField' && node.displayField === ids.statusField
+    ));
+    expect(switchedStatusDisplays).toHaveLength(1);
+    expect(switchedStatusDisplays[0]?.displayVisible).toBe(false);
   });
 
   test('keeps an empty field cell inert until editing starts', async ({ page }) => {
@@ -256,37 +405,94 @@ test.describe('table view', () => {
     expect(selectionVisual.cellBackgrounds.every((background) => background === 'rgba(0, 0, 0, 0)')).toBe(true);
   });
 
-  test('does not repeat visible column fields under an expanded record', async ({ page }) => {
+  test('keeps active fields as columns and restores orphaned field rows', async ({ page }) => {
     await configureRootTable(page);
-    await invokeCommands(page, [{
-      cmd: 'create_inline_field',
-      args: {
-        parentId: ids.alpha,
-        index: null,
-        name: '',
-        fieldType: 'plain',
-        targetDefId: ids.statusField,
+    const configuredProjection = await e2eProjection(page);
+    const dueDisplay = configuredProjection.nodes.find((node) => (
+      node.type === 'displayField' && node.displayField === ids.dueField
+    ))!;
+    await invokeCommands(page, [
+      {
+        cmd: 'update_display_field',
+        args: { displayFieldId: dueDisplay.id, visible: false },
       },
-    }]);
+      {
+        cmd: 'create_inline_field',
+        args: {
+          parentId: ids.alpha,
+          index: null,
+          name: '',
+          fieldType: 'plain',
+          targetDefId: ids.statusField,
+        },
+      },
+      {
+        cmd: 'create_inline_field',
+        args: {
+          parentId: ids.alpha,
+          index: null,
+          name: '',
+          fieldType: 'plain',
+          targetDefId: ids.dueField,
+        },
+      },
+    ]);
     const projection = await e2eProjection(page);
     const alpha = projection.nodes.find((node) => node.id === ids.alpha)!;
-    const entry = projection.nodes.find((node) => (
+    const statusEntry = projection.nodes.find((node) => (
       alpha.children.includes(node.id)
       && node.type === 'fieldEntry'
       && (node as typeof node & { fieldDefId?: string }).fieldDefId === ids.statusField
-    ));
-    expect(entry).toBeTruthy();
+    ))!;
+    const hiddenDueEntry = projection.nodes.find((node) => (
+      alpha.children.includes(node.id)
+      && node.type === 'fieldEntry'
+      && (node as typeof node & { fieldDefId?: string }).fieldDefId === ids.dueField
+    ))!;
     await invokeCommands(page, [
       {
         cmd: 'set_field_free_text_value',
-        args: { fieldEntryId: entry!.id, text: 'Column value', id: 'table-column-value' },
+        args: { fieldEntryId: statusEntry.id, text: 'Column value', id: 'table-column-value' },
+      },
+      {
+        cmd: 'set_field_free_text_value',
+        args: { fieldEntryId: hiddenDueEntry.id, text: 'Hidden value', id: 'table-hidden-value' },
       },
       {
         cmd: 'create_node',
         args: { parentId: ids.alpha, index: null, text: 'Nested child', id: 'table-record-child' },
       },
       { cmd: 'set_view_mode', args: { nodeId: ids.today, mode: 'table' } },
+      {
+        cmd: 'create_inline_field',
+        args: {
+          parentId: ids.alpha,
+          index: null,
+          name: 'Internal notes',
+          fieldType: 'plain',
+        },
+      },
     ]);
+    const tableProjection = await e2eProjection(page);
+    const currentAlpha = tableProjection.nodes.find((node) => node.id === ids.alpha)!;
+    const undisplayedEntry = tableProjection.nodes.find((node) => (
+      currentAlpha.children.includes(node.id)
+      && node.type === 'fieldEntry'
+      && tableProjection.nodes.some((field) => (
+        field.id === (node as typeof node & { fieldDefId?: string }).fieldDefId
+        && field.type === 'fieldDef'
+        && field.content.text === 'Internal notes'
+      ))
+    ))!;
+    const undisplayedFieldId = (undisplayedEntry as typeof undisplayedEntry & { fieldDefId?: string }).fieldDefId!;
+    await invokeCommands(page, [{
+      cmd: 'set_field_free_text_value',
+      args: {
+        fieldEntryId: undisplayedEntry.id,
+        text: 'Recoverable note',
+        id: 'table-orphaned-value',
+      },
+    }]);
 
     const grid = rootGrid(page);
     const titleCell = grid.locator(
@@ -304,8 +510,21 @@ test.describe('table view', () => {
     await expect(nested).toHaveAccessibleName('Alpha');
     await expect(nested).toHaveAttribute('aria-multiselectable', 'true');
     await expect(nested.locator('[data-node-id="table-record-child"]')).toContainText('Nested child');
-    await expect(nested.locator(`[data-node-id="${entry!.id}"]`)).toHaveCount(0);
+    await expect(nested.locator(`[data-node-id="${statusEntry.id}"]`)).toHaveCount(0);
+    await expect(nested.locator(`[data-node-id="${hiddenDueEntry.id}"]`)).toHaveCount(0);
+    await expect(nested.locator(`[data-node-id="${undisplayedEntry.id}"]`)).toHaveCount(0);
     await expect(statusCell).toContainText('Column value');
+
+    await grid.getByRole('button', { name: 'Add column' }).click();
+    const addColumnDialog = page.getByRole('dialog', { name: 'Add column' });
+    await expect(addColumnDialog.getByRole('button', { name: 'Internal notes', exact: true })).toBeVisible();
+    await page.keyboard.press('Escape');
+
+    await invokeCommands(page, [{ cmd: 'trash_node', args: { nodeId: undisplayedFieldId } }]);
+    const orphanedField = nested.locator(`[data-node-id="${undisplayedEntry.id}"]`);
+    await expect(orphanedField).toBeVisible();
+    await expect(orphanedField.getByRole('textbox', { name: 'Field name' })).toHaveValue('Internal notes');
+    await expect(orphanedField.locator('[data-node-id="table-orphaned-value"]')).toContainText('Recoverable note');
   });
 
   test('opens an authored field definition from its column kind icon', async ({ page }) => {
@@ -482,9 +701,21 @@ test.describe('table view', () => {
     await expect(rootGrid(page).getByRole('row')).toHaveCount(6);
   });
 
-  test('adds, creates, reorders, relabels, resizes, hides, and removes columns', async ({ page }) => {
+  test('adds, creates, reorders, relabels, resizes, and hides columns', async ({ page }) => {
     await configureRootTable(page);
-    await invokeCommands(page, [{ cmd: 'set_view_mode', args: { nodeId: ids.today, mode: 'table' } }]);
+    await invokeCommands(page, [
+      {
+        cmd: 'create_inline_field',
+        args: {
+          parentId: ids.alpha,
+          index: null,
+          name: '',
+          fieldType: 'plain',
+          targetDefId: ids.statusField,
+        },
+      },
+      { cmd: 'set_view_mode', args: { nodeId: ids.today, mode: 'table' } },
+    ]);
 
     const grid = rootGrid(page);
     const configuredProjection = await e2eProjection(page);
@@ -531,7 +762,7 @@ test.describe('table view', () => {
       const projection = await e2eProjection(page);
       const display = projection.nodes.find((node) => node.id === dueDisplay!.id);
       return display?.type === 'displayField' ? display.displayWidth : null;
-    }).toBe(102);
+    }).toBe(196);
 
     await invokeCommands(page, [{
       cmd: 'update_display_field',
@@ -574,14 +805,30 @@ test.describe('table view', () => {
     await page.getByRole('menuitem', { name: 'Move left' }).click();
     await expect(grid.getByRole('columnheader')).toHaveText(['Title', 'Done', 'Deadline']);
 
-    const toolbar = page.locator('.view-toolbar').first();
-    await toolbar.getByRole('button', { name: 'Display', exact: true }).click();
-    await page.getByRole('dialog', { name: 'Display' }).getByText('Status', { exact: true }).click();
+    await grid.getByRole('button', { name: 'Add column' }).click();
+    await page.getByRole('dialog', { name: 'Add column' })
+      .getByRole('button', { name: 'Status', exact: true })
+      .click();
     await expect(grid.getByRole('columnheader')).toHaveText(['Title', 'Done', 'Status', 'Deadline']);
 
     await grid.getByRole('button', { name: 'Done column menu' }).click();
-    await page.getByRole('menuitem', { name: 'Remove from view' }).click();
-    await expect(grid.getByRole('columnheader').filter({ hasText: 'Done' })).toHaveCount(0);
+    await expect(page.getByRole('menuitem', { name: 'Remove from view' })).toHaveCount(0);
+    await page.keyboard.press('Escape');
+
+    await grid.getByRole('button', { name: 'Status column menu' }).click();
+    await page.getByRole('menuitem', { name: 'Hide column' }).click();
+    await grid.getByRole('button', { name: 'Add column' }).click();
+    const groupedDialog = page.getByRole('dialog', { name: 'Add column' });
+    await expect(groupedDialog.locator('.outliner-table-field-group > .popover-section-header')).toHaveText([
+      'Fields in use',
+      'Other custom fields',
+      'System fields',
+    ]);
+    await groupedDialog.getByLabel('Search fields').fill('Status');
+    await expect(groupedDialog.locator('.outliner-table-field-group > .popover-section-header')).toHaveText([
+      'Fields in use',
+    ]);
+    await expect(groupedDialog.getByRole('button', { name: 'Status', exact: true })).toBeVisible();
   });
 
   test('toggles a column menu from its trigger and commits rename on outside dismissal', async ({ page }) => {
@@ -653,15 +900,80 @@ test.describe('table view', () => {
     await page.locator('.sidebar-primary-nav .sidebar-nav-item').filter({ hasText: 'Recents' }).click();
 
     const grid = page.getByRole('grid', { name: 'Recents table' });
+    const tableScope = page.locator(`[data-table-owner-id="${ids.recents}"]`);
+    const tableControls = tableScope.locator(':scope > .view-toolbar.is-compact-controls');
+    const summary = page.locator('.search-query-summary-bar');
+    await expect(grid.locator('.view-toolbar')).toHaveCount(0);
+    await expect(tableControls.getByRole('button', { name: 'Filter by name', exact: true })).toBeVisible();
+    await expect(tableControls.getByRole('button', { name: 'Outline', exact: true })).toBeVisible();
+    await expect(tableControls.getByRole('button', { name: 'Sort by', exact: true })).toBeVisible();
+    await expect(tableControls.getByRole('button', { name: 'Filter by', exact: true })).toBeVisible();
+    await expect(summary).toHaveCount(0);
+
+    await tableControls.getByRole('button', { name: 'Filter by name', exact: true }).click();
+    const nameSearch = tableControls.getByRole('textbox', { name: 'Filter by name', exact: true });
+    await expect(nameSearch).toBeVisible();
+    await nameSearch.press('Escape');
+    await expect(tableControls.getByRole('button', { name: 'Filter by name', exact: true })).toBeVisible();
+
+    const searchTableGeometry = await page.locator('.panel-inner').evaluate((panel) => {
+      const header = panel.querySelector<HTMLElement>('.outliner-table-header')!;
+      const title = panel.querySelector<HTMLElement>('.outliner-table-title-header')!;
+      const tableControls = panel.querySelector<HTMLElement>('.outliner-table-scope > .view-toolbar.is-compact-controls')!;
+      const headerRect = header.getBoundingClientRect();
+      const titleRect = title.getBoundingClientRect();
+      const controlsRect = tableControls.getBoundingClientRect();
+      const controlsStyle = getComputedStyle(tableControls);
+      return {
+        controlsBackground: controlsStyle.backgroundColor,
+        controlsBottom: controlsRect.bottom,
+        controlsLeft: controlsRect.left,
+        controlsPseudoAfter: getComputedStyle(tableControls, '::after').display,
+        controlsPseudoBefore: getComputedStyle(tableControls, '::before').display,
+        controlsTop: controlsRect.top,
+        directToolbarCount: panel.querySelectorAll('.outliner-table-scope > .view-toolbar.is-compact-controls').length,
+        headerLeft: headerRect.left,
+        headerRight: headerRect.right,
+        headerTop: headerRect.top,
+        titleBottom: titleRect.bottom,
+        titleLabelLeft: titleRect.left + Number.parseFloat(getComputedStyle(title).paddingLeft),
+        titleTop: titleRect.top,
+      };
+    });
+    expect(searchTableGeometry.directToolbarCount).toBe(1);
+    expect(searchTableGeometry.controlsBottom).toBeLessThanOrEqual(searchTableGeometry.headerTop);
+    expect(searchTableGeometry.controlsLeft).toBeCloseTo(searchTableGeometry.titleLabelLeft, 1);
+    expect(searchTableGeometry.controlsBackground).toBe('rgba(0, 0, 0, 0)');
+    expect(searchTableGeometry.controlsPseudoBefore).toBe('none');
+    expect(searchTableGeometry.controlsPseudoAfter).toBe('none');
+    expect(searchTableGeometry.titleTop).toBe(searchTableGeometry.headerTop);
+    expect(searchTableGeometry.titleBottom).toBeGreaterThan(searchTableGeometry.titleTop);
+    expect(searchTableGeometry.titleLabelLeft).toBeGreaterThan(searchTableGeometry.headerLeft);
+    expect(searchTableGeometry.headerRight).toBeGreaterThan(searchTableGeometry.titleLabelLeft);
+
+    // The in-flight gate coalesces React StrictMode's extra setup cycle. A second
+    // call before another view mutation would mean the search has more than one
+    // refresh owner.
+    await expect.poll(async () => (await commandCalls(page)).filter((call) => (
+      call.cmd === 'refresh_search_node_results' && call.args.nodeId === ids.recents
+    )).length).toBe(1);
+
+    await tableControls.getByRole('button', { name: 'Sort by', exact: true }).click();
+    await expect(page.getByRole('dialog', { name: 'Sort by' })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await tableControls.getByRole('button', { name: 'Filter by', exact: true }).click();
+    await expect(page.getByRole('dialog', { name: 'Filter by' })).toBeVisible();
+    await page.keyboard.press('Escape');
+
+    await page.locator('.panel-title-editor').first().click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Edit displayed fields', exact: true }).click();
+    await expect(page.getByRole('dialog', { name: 'Add column' })).toBeVisible();
+    await expect(tableControls).toBeVisible();
+    await page.keyboard.press('Escape');
     await expect(grid).toHaveAttribute('aria-rowcount', '1');
     await expect(grid.getByRole('row')).toHaveCount(1);
     await expect(grid.getByRole('gridcell')).toHaveCount(0);
     await expect(page.locator(`[data-trailing-parent-id="${ids.recents}"]`)).toHaveCount(0);
-    // The in-flight gate coalesces React StrictMode's extra setup cycle. A second
-    // call would mean the search has more than one refresh owner.
-    await expect.poll(async () => (await commandCalls(page)).filter((call) => (
-      call.cmd === 'refresh_search_node_results' && call.args.nodeId === ids.recents
-    )).length).toBe(1);
   });
 
   test('gives a nested search table a single refresh owner', async ({ page }) => {
@@ -683,6 +995,44 @@ test.describe('table view', () => {
       call.cmd === 'refresh_search_node_results' && call.args.nodeId === ids.recents
     )).length - refreshesBefore).toBe(1);
   });
+});
+
+test('reads and edits saved-search table fields through the complete reference chain', async ({ page }) => {
+  await openMockedApp(page, { dateField: true, searchReferenceChain: true });
+  await invokeCommands(page, [
+    { cmd: 'set_view_mode', args: { nodeId: ids.recents, mode: 'table' } },
+    { cmd: 'add_display_field', args: { nodeId: ids.recents, field: ids.dueField } },
+  ]);
+  await page.locator('.sidebar-primary-nav .sidebar-nav-item').filter({ hasText: 'Recents' }).click();
+
+  const grid = page.getByRole('grid', { name: 'Recents table' });
+  await expect(grid.getByRole('columnheader')).toHaveText(['Title', 'Status', 'Due']);
+  const statusCell = grid.locator(
+    `.outliner-table-cell[data-table-row-id="${ids.searchResult}"]`,
+  ).first();
+  const dueCell = grid.locator(
+    `.outliner-table-cell[data-table-row-id="${ids.searchResult}"]`,
+  ).nth(1);
+  await expect(statusCell).toContainText('Chain value');
+  await expect(statusCell.locator(`[data-node-id="${ids.searchStatusValue}"]`)).toBeVisible();
+
+  const createsBefore = (await commandCalls(page)).filter((call) => call.cmd === 'create_inline_field').length;
+  await dueCell.focus();
+  await dueCell.press('Enter');
+  await expect.poll(async () => (await commandCalls(page)).filter((call) => (
+    call.cmd === 'create_inline_field'
+    && call.args.parentId === ids.alpha
+    && call.args.targetDefId === ids.dueField
+  )).length).toBe(1);
+  expect((await commandCalls(page)).filter((call) => call.cmd === 'create_inline_field')).toHaveLength(createsBefore + 1);
+
+  const projection = await e2eProjection(page);
+  const alpha = projection.nodes.find((node) => node.id === ids.alpha)!;
+  expect(projection.nodes.some((node) => (
+    alpha.children.includes(node.id)
+    && node.type === 'fieldEntry'
+    && (node as typeof node & { fieldDefId?: string }).fieldDefId === ids.dueField
+  ))).toBe(true);
 });
 
 test('table keeps a bounded DOM window for long outlines', async ({ page }) => {

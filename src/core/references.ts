@@ -6,6 +6,7 @@ import {
   type RefRole,
   type RichText,
 } from './types';
+import { INTERNAL_VIEW_NODE_TYPES } from './viewConfig';
 
 export type ReferenceSourceKind = 'tree' | 'inline' | 'field' | 'unlinked';
 export type ReferenceMentionField = 'content' | 'description';
@@ -61,15 +62,9 @@ export interface ReferenceSummaryOptions {
 
 const MIN_MENTION_LENGTH = 3;
 const NON_MENTION_NODE_TYPES = new Set<NodeType>([
+  ...INTERNAL_VIEW_NODE_TYPES,
   'fieldEntry',
   'reference',
-  'defConfig',
-  'systemOption',
-  'viewDef',
-  'sortRule',
-  'filterRule',
-  'displayField',
-  'queryCondition',
 ]);
 
 interface MentionTarget {

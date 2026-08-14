@@ -849,9 +849,12 @@ export const en = {
       ariaLabel: ({ title }: { title: string }) => `${title} table`,
       title: 'Title',
       addColumn: 'Add column',
-      add: 'Add',
+      add: 'Add field',
       searchFields: 'Search fields',
       noMatchingFields: 'No matching fields',
+      usedFields: 'Fields in use',
+      otherCustomFields: 'Other custom fields',
+      systemFieldGroup: 'System fields',
       newField: 'New field',
       fieldName: 'Field name',
       fieldType: 'Field type',
@@ -865,7 +868,6 @@ export const en = {
       moveColumnLeft: 'Move left',
       moveColumnRight: 'Move right',
       hideColumn: 'Hide column',
-      removeColumn: 'Remove from view',
       systemFields: {
         name: 'Name',
         created: 'Created time',
@@ -1764,8 +1766,7 @@ export const en = {
     everythingTagged: ({ label }: { label: string }) => `Everything tagged #${label}`,
     configureTag: 'Configure tag',
   },
-  // The search-node query UI: the summary bar (read-only chips) and the inline
-  // query builder, plus the chip vocabulary for each query operator.
+  // The search-node inline query builder and materialized-result counter.
   search: {
     builder: {
       title: 'Query',
@@ -1775,74 +1776,18 @@ export const en = {
       closeLabel: 'Close query',
       queryAriaLabel: 'Search query',
       statusLocked: 'Locked',
+      statusTruncated: 'Read-only',
       statusUnsaved: 'Unsaved changes',
       statusSaved: 'Saved',
+      truncatedWarning: 'Some rules are omitted because this query exceeds the editor limit. Editing and saving are disabled to protect the complete query.',
       reset: 'Reset',
       saving: 'Saving',
       save: 'Save',
       saveError: 'Could not save query.',
     },
-    summary: {
-      rulesAriaLabel: 'Search rules',
-      noRules: 'No rules',
-      truncated: 'More rules omitted',
-      viewTitle: 'Show view toolbar',
-      viewLabel: 'Show view toolbar',
-      refreshTitle: 'Refresh',
-      refreshLabel: 'Refresh search results',
-    },
-    // The materialized-result counter, shared by the bar and the builder.
+    // The materialized-result counter shown in the builder.
     // TODO plural via Intl
     resultCount: ({ count }: { count: number }) => `${count} ${count === 1 ? 'result' : 'results'}`,
-    // The chip label for each query rule. Operator-symbol rules (=, !=, <, >) keep
-    // their symbols inline and are not listed here; only word-bearing rules are.
-    rules: {
-      hasTag: 'Has tag',
-      fieldFallback: 'Field',
-      targetFallback: 'target',
-      // Field-value / field-state rules.
-      contains: ({ field, value }: { field: string; value: string }) => `${field} contains ${value}`,
-      containsBare: ({ field }: { field: string }) => `${field} contains`,
-      overlaps: ({ field, value }: { field: string; value: string }) => `${field} overlaps ${value}`,
-      overlapsBare: ({ field }: { field: string }) => `${field} overlaps date`,
-      isEmpty: ({ field }: { field: string }) => `${field} is empty`,
-      isNotEmpty: ({ field }: { field: string }) => `${field} is not empty`,
-      hasField: ({ field }: { field: string }) => `Has ${field}`,
-      hasFieldBare: 'Has field',
-      overdue: ({ field }: { field: string }) => `${field} overdue`,
-      overdueBare: 'Overdue',
-      isSet: ({ field }: { field: string }) => `${field} is set`,
-      isNotSet: ({ field }: { field: string }) => `${field} is not set`,
-      isDefined: ({ field }: { field: string }) => `${field} is defined`,
-      isNotDefined: ({ field }: { field: string }) => `${field} is not defined`,
-      // Target/reference rules.
-      linksTo: ({ target }: { target: string }) => `Links to ${target}`,
-      childOf: ({ target }: { target: string }) => `Child of ${target}`,
-      ownedBy: ({ target }: { target: string }) => `Owned by ${target}`,
-      descendantOf: ({ target }: { target: string }) => `Descendant of ${target}`,
-      descendantOfWithRefs: ({ target }: { target: string }) => `Descendant of ${target} with refs`,
-      // Text / type / date rules.
-      text: 'Text',
-      regexp: 'Regexp',
-      typeEq: ({ value }: { value: string }) => `Type = ${value}`,
-      typeBare: 'Type',
-      dateEq: ({ value }: { value: string }) => `Date = ${value}`,
-      dateBare: 'Date',
-      relativeDateBare: 'Relative date',
-      siblingNamed: ({ value }: { value: string }) => `Sibling named ${value}`,
-      siblingNamedBare: 'Sibling named',
-      createdInDays: ({ value }: { value: string }) => `Created in ${value} days`,
-      createdRecently: 'Created recently',
-      editedInDays: ({ value }: { value: string }) => `Edited in ${value} days`,
-      editedRecently: 'Edited recently',
-      doneInDays: ({ value }: { value: string }) => `Done in ${value} days`,
-      doneRecently: 'Done recently',
-      // Logic-group wrapping (AND/OR/NOT keep their DSL keyword; connectors join children).
-      logicEmpty: ({ logic }: { logic: string }) => `${logic} empty`,
-      logicGroup: ({ logic, body }: { logic: string; body: string }) => `${logic} ${body}`,
-      connectorAnd: ' and ',
-      connectorOr: ' or ',
-    },
   },
 };
 

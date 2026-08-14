@@ -61,6 +61,7 @@ import {
   type SetConfigValueInput,
 } from './configSchema';
 import { referencesForTarget } from './references';
+import { entersTable, findViewDef, missingDisplayOrderPlan, tableDisplayFieldInitialization } from './viewConfig';
 import { normalizeCodeLanguage } from './codeLanguages';
 import {
   AREAS_ID,
@@ -1498,11 +1499,23 @@ export class Core {
     });
   }
 
-  setViewMode(nodeId: string, mode: ViewMode): CommandOutcome {
+  setViewMode(
+    nodeId: string,
+    mode: ViewMode,
+    textIndexProvider?: () => TextSearchIndex | undefined,
+  ): CommandOutcome {
     return this.mutate(() => {
+      const state = this.snapshot();
+      const owner = requiredNode(state, nodeId);
+      const previousView = findViewDef(state.nodes, owner) as ViewDefNode | undefined;
+      const enteringTable = entersTable(previousView?.viewMode, mode);
+      if (enteringTable && owner.type === 'search') {
+        this.materializeSearchNodeResultsDirect(nodeId, textIndexProvider?.(), { skipEvaluationFailure: true });
+      }
       this.patchViewDefDirect(nodeId, (viewDef) => {
         viewDef.viewMode = mode;
       });
+      if (enteringTable) this.addMissingTableDisplayFieldsDirect(nodeId);
       return focus(nodeId);
     });
   }
@@ -3132,10 +3145,8 @@ export class Core {
 
   private ensureViewDefDirect(nodeId: string): NodeId {
     const state = this.snapshot();
-    requiredNode(state, nodeId);
-    const existing = state.nodes[nodeId]?.children
-      .map((childId) => state.nodes[childId])
-      .find((child): child is Node => child?.type === 'viewDef');
+    const owner = requiredNode(state, nodeId);
+    const existing = findViewDef(state.nodes, owner);
     if (existing) return existing.id;
     const viewDefId = freshId('view');
     this.loro.createNodeWithId<ViewDefNode>(viewDefId, nodeId, 0, 'viewDef', (node) => {
@@ -3156,13 +3167,40 @@ export class Core {
   }
 
   private viewDefChildren(state: DocumentState, nodeId: string, type: NodeType): Node[] {
-    const viewDef = state.nodes[nodeId]?.children
-      .map((childId) => state.nodes[childId])
-      .find((child): child is Node => child?.type === 'viewDef');
+    const viewDef = findViewDef(state.nodes, state.nodes[nodeId]);
     if (!viewDef) return [];
     return viewDef.children
       .map((childId) => state.nodes[childId])
       .filter((child): child is Node => child?.type === type);
+  }
+
+  private addMissingTableDisplayFieldsDirect(nodeId: string): void {
+    const state = this.snapshot();
+    const owner = requiredNode(state, nodeId);
+    const initialization = tableDisplayFieldInitialization({
+      byId: state.nodes,
+      owner,
+      schema: state.nodes[SCHEMA_ID],
+    });
+    if (!initialization) return;
+    const { displayFields, missingFieldIds: missingFields, viewDef } = initialization;
+    if (missingFields.length === 0) return;
+
+    const orderPlan = missingDisplayOrderPlan(displayFields);
+    for (const assignment of orderPlan.assignments) {
+      const normalized = clone(assignment.field);
+      normalized.displayOrder = assignment.order;
+      normalized.updatedAt = nowMs();
+      this.loro.writeNode(normalized);
+    }
+    let nextOrder = orderPlan.nextOrder;
+    for (const fieldId of missingFields) {
+      this.loro.createNodeWithId<DisplayFieldNode>(freshId('display'), viewDef.id, undefined, 'displayField', (node) => {
+        node.displayField = fieldId;
+        node.displayVisible = true;
+        node.displayOrder = nextOrder++;
+      });
+    }
   }
 
   private mutate(mutator: Mutator): CommandOutcome {
@@ -3461,13 +3499,20 @@ export class Core {
     this.materializeSearchNodeResultsDirect(nodeId, textIndex);
   }
 
-  private materializeSearchNodeResultsDirect(nodeId: string, textIndex?: TextSearchIndex) {
+  private materializeSearchNodeResultsDirect(
+    nodeId: string,
+    textIndex?: TextSearchIndex,
+    options: { skipEvaluationFailure?: boolean } = {},
+  ) {
     const state = this.snapshot();
     const searchNode = requiredNode(state, nodeId);
     if (searchNode.type !== 'search') throw CoreError.invalidOperation('expected a search node');
 
     const result = runSearchNode(state, nodeId, { textIndex });
-    if (!result.ok) throw CoreError.invalidOperation(result.issue.message);
+    if (!result.ok) {
+      if (options.skipEvaluationFailure) return false;
+      throw CoreError.invalidOperation(result.issue.message);
+    }
 
     const hits = uniqueNodeIds(result.hits.map((hit) => hit.nodeId))
       .filter((targetId) =>
@@ -3513,6 +3558,7 @@ export class Core {
     const generatedIds = new Set([...queryConditionIds, ...resultRefIds]);
     const otherChildIds = latestSearchNode.children.filter((childId) => !generatedIds.has(childId));
     reorderDirectChildren(this.loro, latestSearchNode, [...queryConditionIds, ...resultRefIds, ...otherChildIds]);
+    return true;
   }
 
   private createSearchQueryConditionDirect(parentId: string, query: SearchQueryExpr, index?: number | null) {
@@ -3591,9 +3637,7 @@ export class Core {
     const queryCondition = recents.children
       .map((childId) => state.nodes[childId])
       .find((node): node is QueryConditionNode => node?.type === 'queryCondition');
-    const viewDef = recents.children
-      .map((childId) => state.nodes[childId])
-      .find((node): node is ViewDefNode => node?.type === 'viewDef');
+    const viewDef = findViewDef(state.nodes, recents) as ViewDefNode | undefined;
     const sortRule = viewDef?.children
       .map((childId) => state.nodes[childId])
       .find((node): node is SortRuleNode => node?.type === 'sortRule');

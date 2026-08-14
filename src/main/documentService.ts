@@ -942,7 +942,11 @@ export class DocumentService implements DocumentSystemHost {
         case 'set_view_toolbar_visible':
           return this.core.setViewToolbarVisible(String(args.nodeId), Boolean(args.visible));
         case 'set_view_mode':
-          return this.core.setViewMode(String(args.nodeId), viewMode(args.mode));
+          return this.core.setViewMode(
+            String(args.nodeId),
+            viewMode(args.mode),
+            () => this.textSearchIndexForCoreMutation(),
+          );
         case 'add_sort_rule':
           return this.core.addSortRule(String(args.nodeId), String(args.field), sortDirection(args.direction) ?? 'asc');
         case 'update_sort_rule':

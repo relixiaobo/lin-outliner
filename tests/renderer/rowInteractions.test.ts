@@ -48,17 +48,25 @@ import {
 import {
   buildOutlinerRows,
   collectViewFieldChoices,
+  customFilterFieldIdsOnRows,
+  customViewFieldIdsOnRows,
   fieldEntryForViewCell,
   hiddenFieldKey,
   readViewConfig,
   viewDisplayValuesFor,
+  viewFieldValuesFor,
 } from '../../src/renderer/ui/outliner/row-model';
 import { CREATED_FIELD, DAY_FIELD, DONE_FIELD, NAME_FIELD, REF_COUNT_FIELD, TAGS_FIELD } from '../../src/core/systemFields';
-import { searchQueryOutlineText, searchQuerySummaryModel } from '../../src/renderer/ui/search/SearchQuerySummaryBar';
+import {
+  searchQueryOutlineProjection,
+  searchQueryOutlineText,
+  searchQueryResultCount,
+} from '../../src/renderer/ui/search/SearchQueryBuilderPanel';
 import { concatRichText } from '../../src/renderer/ui/editor/richTextCodec';
 import { getMessages } from '../../src/core/i18n';
+import { SEARCH_QUERY_COMPLEXITY_LIMITS } from '../../src/core/searchQueryCompiler';
 
-// The search-query summary/outline helpers take localized labels; exercise English.
+// The search-query outline helper takes localized labels; exercise English.
 const enMessages = getMessages('en');
 
 describe('row interaction resolvers', () => {
@@ -254,18 +262,105 @@ describe('row interaction resolvers', () => {
     ]);
   });
 
-  test('resolves existing table field entries through references', () => {
+  test('resolves table fields through reference chains and degrades broken chains', () => {
+    const parent = makeNode('parent', 'Parent', { children: ['owner-entry', 'result', 'broken', 'cycle-a'] });
     const target = makeNode('target', 'Target', { children: ['entry'] });
-    const reference = makeNode('reference', '', { type: 'reference', targetId: 'target' });
-    const entry = makeNode('entry', '', { type: 'fieldEntry', parentId: 'target', fieldDefId: 'status' });
+    const intermediate = makeNode('intermediate', '', { type: 'reference', targetId: 'target' });
+    const result = makeNode('result', '', { type: 'reference', parentId: 'parent', targetId: 'intermediate' });
+    const entry = makeNode('entry', '', {
+      type: 'fieldEntry',
+      parentId: 'target',
+      fieldDefId: 'status',
+      children: ['value'],
+    });
     const byId = new Map<string, any>([
+      ['parent', parent],
+      ['owner-entry', makeNode('owner-entry', '', {
+        type: 'fieldEntry',
+        parentId: 'parent',
+        fieldDefId: 'owner-field',
+        children: ['nested-owner-entry'],
+      })],
+      ['nested-owner-entry', makeNode('nested-owner-entry', '', {
+        type: 'fieldEntry',
+        parentId: 'owner-entry',
+        fieldDefId: 'nested-owner-field',
+      })],
       ['target', target],
-      ['reference', reference],
+      ['intermediate', intermediate],
+      ['result', result],
       ['entry', entry],
+      ['value', makeNode('value', 'In progress', { parentId: 'entry' })],
+      ['status', makeNode('status', 'Status', { type: 'fieldDef' })],
+      ['broken', makeNode('broken', 'Broken reference', { type: 'reference', parentId: 'parent', targetId: 'missing' })],
+      ['cycle-a', makeNode('cycle-a', 'Cycle A', { type: 'reference', parentId: 'parent', targetId: 'cycle-b' })],
+      ['cycle-b', makeNode('cycle-b', 'Cycle B', { type: 'reference', targetId: 'cycle-a' })],
     ]);
 
-    expect(fieldEntryForViewCell(reference as any, 'status', byId)?.id).toBe('entry');
-    expect(fieldEntryForViewCell(reference as any, 'missing', byId)).toBeUndefined();
+    expect(fieldEntryForViewCell(result as any, 'status', byId)?.id).toBe('entry');
+    expect(viewFieldValuesFor(result as any, 'status', byId)).toEqual(['In progress']);
+    expect(customViewFieldIdsOnRows(parent as any, byId)).toEqual(new Set(['status']));
+    expect(customFilterFieldIdsOnRows(parent as any, byId)).toEqual(new Set([
+      'nested-owner-field',
+      'status',
+    ]));
+    expect(fieldChoices(parent as any, byId).map((choice) => choice.id)).toContain('status');
+    expect(fieldChoices(parent as any, byId).map((choice) => choice.id)).not.toContain('nested-owner-field');
+    expect(fieldEntryForViewCell(result as any, 'missing', byId)).toBeUndefined();
+    expect(fieldEntryForViewCell(byId.get('broken'), 'status', byId)).toBeUndefined();
+    expect(viewFieldValuesFor(byId.get('broken'), 'status', byId)).toEqual([]);
+    expect(viewFieldValuesFor(byId.get('broken'), NAME_FIELD, byId)).toEqual(['Broken reference']);
+    expect(fieldEntryForViewCell(byId.get('cycle-a'), 'status', byId)).toBeUndefined();
+    expect(viewFieldValuesFor(byId.get('cycle-a'), CREATED_FIELD, byId)).toEqual([]);
+    expect(viewFieldValuesFor(byId.get('cycle-a'), NAME_FIELD, byId)).toEqual(['Cycle A']);
+  });
+
+  test('preserves orphaned field entries when table expansion suppresses active fields', () => {
+    const parent = makeNode('record', 'Record', {
+      children: ['active-entry', 'trashed-entry', 'missing-entry', 'child'],
+    });
+    const byId = new Map<string, any>([
+      ['record', parent],
+      ['active-entry', makeNode('active-entry', '', {
+        type: 'fieldEntry',
+        parentId: 'record',
+        fieldDefId: 'active-field',
+      })],
+      ['trashed-entry', makeNode('trashed-entry', '', {
+        type: 'fieldEntry',
+        parentId: 'record',
+        fieldDefId: 'trashed-field',
+        children: ['trashed-value'],
+      })],
+      ['missing-entry', makeNode('missing-entry', '', {
+        type: 'fieldEntry',
+        parentId: 'record',
+        fieldDefId: 'missing-field',
+      })],
+      ['child', makeNode('child', 'Child', { parentId: 'record' })],
+      ['active-field', makeNode('active-field', 'Active', { type: 'fieldDef', parentId: 'schema' })],
+      ['trashed-field', makeNode('trashed-field', 'Deleted', {
+        type: 'fieldDef',
+        parentId: 'trash',
+        children: ['trashed-hide-config'],
+      })],
+      ['trashed-hide-config', makeNode('trashed-hide-config', 'hidden', {
+        type: 'defConfig',
+        parentId: 'trashed-field',
+        configKey: 'hideField',
+        configValueKind: 'enum',
+        configEnumValue: 'hidden',
+      })],
+      ['trashed-value', makeNode('trashed-value', 'Recoverable', { parentId: 'trashed-entry' })],
+      ['schema', makeNode('schema', 'Schema', { children: ['active-field'] })],
+      ['trash', makeNode('trash', 'Trash', { children: ['trashed-field'] })],
+    ]);
+
+    expect(buildOutlinerRows(parent as any, byId, { suppressFieldEntries: true })).toEqual([
+      { id: 'trashed-entry', type: 'field' },
+      { id: 'missing-entry', type: 'field' },
+      { id: 'child', type: 'content' },
+    ]);
   });
 
   test('hides search query condition nodes from normal outliner rows', () => {
@@ -317,14 +412,8 @@ describe('row interaction resolvers', () => {
       ['target', makeNode('target', 'Task', { parentId: 'workspace' })],
     ]);
 
-    expect(searchQuerySummaryModel({ byId, projection: {} } as any, 'search', enMessages)).toEqual({
-      chips: [
-        { kind: 'tag', label: '#card' },
-        { kind: 'field', label: 'Status = Backlog' },
-      ],
-      resultCount: 1,
-      truncated: false,
-    });
+    expect(searchQueryResultCount({ byId, projection: {} } as any, 'search')).toBe(1);
+    expect(searchQueryOutlineProjection({ byId, projection: {} } as any, 'search', enMessages).truncated).toBe(false);
     expect(searchQueryOutlineText({ byId, projection: {} } as any, 'search', enMessages)).toBe([
       '- AND',
       '  - HAS_TAG',
@@ -335,8 +424,11 @@ describe('row interaction resolvers', () => {
     ].join('\n'));
   });
 
-  test('marks root AND search summaries truncated when child chips exceed the display limit', () => {
-    const ruleIds = Array.from({ length: 65 }, (_, index) => `rule-${index}`);
+  test('bounds query editor projection when a search exceeds the child limit', () => {
+    const ruleIds = Array.from(
+      { length: SEARCH_QUERY_COMPLEXITY_LIMITS.maxChildrenPerGroup + 1 },
+      (_, index) => `rule-${index}`,
+    );
     const search = makeNode('search', 'Large search', {
       type: 'search',
       children: ['group'],
@@ -357,10 +449,122 @@ describe('row interaction resolvers', () => {
       })] as [string, any]),
     ]);
 
-    const model = searchQuerySummaryModel({ byId, projection: {} } as any, 'search', enMessages);
-    expect(model?.truncated).toBe(true);
-    expect(model?.chips).toHaveLength(65);
-    expect(model?.chips.at(-1)).toEqual({ kind: 'logic', label: enMessages.search.summary.truncated });
+    const projection = searchQueryOutlineProjection({ byId, projection: {} } as any, 'search', enMessages);
+    const outline = projection.text;
+    expect(projection.truncated).toBe(true);
+    expect(outline.split('\n')).toHaveLength(1 + 2 * SEARCH_QUERY_COMPLEXITY_LIMITS.maxChildrenPerGroup);
+    expect(outline).toContain(`- value:: Term ${SEARCH_QUERY_COMPLEXITY_LIMITS.maxChildrenPerGroup - 1}`);
+    expect(outline).not.toContain(`- value:: Term ${SEARCH_QUERY_COMPLEXITY_LIMITS.maxChildrenPerGroup}`);
+  });
+
+  test('marks query editor projection truncated when a rule exceeds the operand limit', () => {
+    const operandIds = Array.from(
+      { length: SEARCH_QUERY_COMPLEXITY_LIMITS.maxOperandsPerRule + 1 },
+      (_, index) => `operand-${index}`,
+    );
+    const search = makeNode('search', 'Large operands', { type: 'search', children: ['rule'] });
+    const rule = makeNode('rule', '', {
+      type: 'queryCondition',
+      parentId: 'search',
+      queryOp: 'STRING_MATCH',
+      children: operandIds,
+    });
+    const byId = new Map<string, any>([
+      ['search', search],
+      ['rule', rule],
+      ...operandIds.map((id, index) => [id, makeNode(id, `Term ${index}`, { parentId: 'rule' })] as [string, any]),
+    ]);
+
+    const projection = searchQueryOutlineProjection({ byId, projection: {} } as any, 'search', enMessages);
+    expect(projection.truncated).toBe(true);
+    expect(projection.text).toContain(`- value:: Term ${SEARCH_QUERY_COMPLEXITY_LIMITS.maxOperandsPerRule - 1}`);
+    expect(projection.text).not.toContain(`- value:: Term ${SEARCH_QUERY_COMPLEXITY_LIMITS.maxOperandsPerRule}`);
+  });
+
+  test('marks query editor projection truncated beyond the maximum depth', () => {
+    const conditionIds = Array.from(
+      { length: SEARCH_QUERY_COMPLEXITY_LIMITS.maxDepth + 2 },
+      (_, index) => `condition-${index}`,
+    );
+    const search = makeNode('search', 'Deep query', { type: 'search', children: [conditionIds[0]!] });
+    const conditions = conditionIds.map((id, index) => makeNode(id, '', {
+      type: 'queryCondition',
+      parentId: index === 0 ? 'search' : conditionIds[index - 1],
+      ...(index === conditionIds.length - 1
+        ? { queryOp: 'TODO' }
+        : { queryLogic: 'AND', children: [conditionIds[index + 1]!] }),
+    }));
+    const byId = new Map<string, any>([
+      ['search', search],
+      ...conditions.map((condition) => [condition.id, condition] as [string, any]),
+    ]);
+
+    const projection = searchQueryOutlineProjection({ byId, projection: {} } as any, 'search', enMessages);
+    expect(projection.truncated).toBe(true);
+    expect(projection.text).not.toContain('- TODO');
+  });
+
+  test('marks query editor projection truncated beyond the maximum node count', () => {
+    const rulesPerGroup = 1_000;
+    const groupCount = Math.ceil(SEARCH_QUERY_COMPLEXITY_LIMITS.maxNodes / rulesPerGroup);
+    const groupIds = Array.from({ length: groupCount }, (_, index) => `group-${index}`);
+    const search = makeNode('search', 'Large query', { type: 'search', children: ['root-group'] });
+    const root = makeNode('root-group', '', {
+      type: 'queryCondition',
+      parentId: 'search',
+      queryLogic: 'AND',
+      children: groupIds,
+    });
+    const entries: Array<[string, any]> = [
+      ['search', search],
+      ['root-group', root],
+    ];
+    for (const [groupIndex, groupId] of groupIds.entries()) {
+      const ruleIds = Array.from({ length: rulesPerGroup }, (_, ruleIndex) => `rule-${groupIndex}-${ruleIndex}`);
+      entries.push([groupId, makeNode(groupId, '', {
+        type: 'queryCondition',
+        parentId: 'root-group',
+        queryLogic: 'AND',
+        children: ruleIds,
+      })]);
+      entries.push(...ruleIds.map((id) => [id, makeNode(id, '', {
+        type: 'queryCondition',
+        parentId: groupId,
+        queryOp: 'TODO',
+      })] as [string, any]));
+    }
+
+    const projection = searchQueryOutlineProjection(
+      { byId: new Map(entries), projection: {} } as any,
+      'search',
+      enMessages,
+    );
+    expect(projection.truncated).toBe(true);
+    expect(projection.text.split('\n')).toHaveLength(SEARCH_QUERY_COMPLEXITY_LIMITS.maxNodes);
+  });
+
+  test('marks repeated query conditions as truncated instead of silently omitting them', () => {
+    const search = makeNode('search', 'Repeated query', { type: 'search', children: ['group'] });
+    const group = makeNode('group', '', {
+      type: 'queryCondition',
+      parentId: 'search',
+      queryLogic: 'AND',
+      children: ['rule', 'rule'],
+    });
+    const rule = makeNode('rule', 'Term', {
+      type: 'queryCondition',
+      parentId: 'group',
+      queryOp: 'STRING_MATCH',
+    });
+    const byId = new Map<string, any>([
+      ['search', search],
+      ['group', group],
+      ['rule', rule],
+    ]);
+
+    const projection = searchQueryOutlineProjection({ byId, projection: {} } as any, 'search', enMessages);
+    expect(projection.truncated).toBe(true);
+    expect(projection.text.match(/- STRING_MATCH/g)).toHaveLength(1);
   });
 
   test('applies sort, filter, and group view settings to row models', () => {
@@ -560,6 +764,55 @@ describe('row interaction resolvers', () => {
       { id: 'referenced', type: 'content' },
       { id: 'empty', type: 'content' },
     ]);
+  });
+
+  test('resolves each reference row once across sort comparisons', () => {
+    class CountingMap<K, V> extends Map<K, V> {
+      private readonly reads = new Map<K, number>();
+
+      override get(key: K): V | undefined {
+        this.reads.set(key, (this.reads.get(key) ?? 0) + 1);
+        return super.get(key);
+      }
+
+      readCount(key: K): number {
+        return this.reads.get(key) ?? 0;
+      }
+    }
+
+    const labels = ['Hotel', 'Golf', 'Foxtrot', 'Echo', 'Delta', 'Charlie', 'Bravo', 'Alpha'];
+    const referenceIds = labels.map((_, index) => `reference-${index}`);
+    const targetIds = labels.map((_, index) => `target-${index}`);
+    const parent = makeNode('parent', 'Parent', { children: ['view', ...referenceIds] });
+    const byId = new CountingMap<string, any>([
+      ['parent', parent],
+      ['view', makeNode('view', '', {
+        type: 'viewDef',
+        parentId: 'parent',
+        children: ['sort'],
+      })],
+      ['sort', makeNode('sort', '', {
+        type: 'sortRule',
+        parentId: 'view',
+        sortField: NAME_FIELD,
+        sortDirection: 'asc',
+      })],
+      ...referenceIds.map((id, index) => [id, makeNode(id, '', {
+        type: 'reference',
+        parentId: 'parent',
+        targetId: targetIds[index],
+      })] as [string, any]),
+      ...targetIds.map((id, index) => [id, makeNode(id, labels[index]!, { parentId: 'library' })] as [string, any]),
+    ]);
+
+    expect(buildOutlinerRows(parent as any, byId)).toEqual(
+      [...referenceIds].reverse().map((id) => ({ id, type: 'content' })),
+    );
+    for (const targetId of targetIds) {
+      // One reference-chain walk reads the terminal target once and then fetches
+      // it once for display; sort comparisons must not repeat either read.
+      expect(byId.readCount(targetId)).toBe(2);
+    }
   });
 
   test('sorts custom number fields numerically', () => {

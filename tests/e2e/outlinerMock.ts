@@ -4,6 +4,7 @@ import type { UrlPageTranslationPreferences } from '../../src/core/urlPageTransl
 import type { ManagedSkillCatalogEntryView, ManagedSkillView } from '../../src/core/types';
 import type { AppInfo } from '../../src/core/errorObservability';
 import type { AppUpdateView } from '../../src/core/appUpdate';
+import { SEARCH_QUERY_COMPLEXITY_LIMITS } from '../../src/core/searchQueryCompiler';
 
 export const ids = {
   workspace: 'workspace',
@@ -29,6 +30,10 @@ export const ids = {
   dueEntry: 'field-entry-due',
   referencesField: 'field-references',
   referencesEntry: 'field-entry-references',
+  searchIntermediate: 'search-intermediate-reference',
+  searchResult: 'search-result-reference',
+  searchStatusEntry: 'search-status-entry',
+  searchStatusValue: 'search-status-value',
   alpha: 'node-alpha',
   beta: 'node-beta',
   gamma: 'node-gamma',
@@ -38,6 +43,10 @@ interface MockFixtureOptions {
   dateField?: boolean;
   optionsField?: boolean;
   relatedField?: boolean;
+  /** Seeds Recents with a search-result reference whose target is another reference. */
+  searchReferenceChain?: boolean;
+  /** Seeds an editable Recents query whose projected children exceed the editor limit. */
+  truncatedSearchQuery?: boolean;
   /** Appends deterministic content rows under Today for table-windowing specs. */
   tableRowCount?: number;
   /** Adds an OAuth sign-in provider (GitHub Copilot) to the catalog for the OAuth specs. */
@@ -242,12 +251,13 @@ export function e2eNodeInlineRef(offset: number, nodeId: string, displayName?: s
 // imported from inside the fixture — but a second, hand-written action bridge
 // would be exactly the duplicate implementation this plan removes.
 let actionBridgeBundle: Promise<string> | null = null;
+let viewConfigBridgeBundle: Promise<string> | null = null;
 
-function bundledActionBridge(): Promise<string> {
-  actionBridgeBundle ??= (async () => {
+function bundledBridge(entry: string): Promise<string> {
+  return (async () => {
     const esbuild = await import('esbuild');
     const result = await esbuild.build({
-      entryPoints: [new URL('./actionBridgeEntry.ts', import.meta.url).pathname],
+      entryPoints: [new URL(entry, import.meta.url).pathname],
       bundle: true,
       format: 'iife',
       platform: 'browser',
@@ -256,12 +266,26 @@ function bundledActionBridge(): Promise<string> {
     });
     return result.outputFiles[0]!.text;
   })();
+}
+
+function bundledActionBridge(): Promise<string> {
+  actionBridgeBundle ??= bundledBridge('./actionBridgeEntry.ts');
   return actionBridgeBundle;
 }
 
+function bundledViewConfigBridge(): Promise<string> {
+  viewConfigBridgeBundle ??= bundledBridge('./viewConfigBridgeEntry.ts');
+  return viewConfigBridgeBundle;
+}
+
 export async function installElectronMock(page: Page, options: MockFixtureOptions = {}) {
-  await page.addInitScript({ content: await bundledActionBridge() });
-  await page.addInitScript(({ ids, options }) => {
+  const [actionBridge, viewConfigBridge] = await Promise.all([
+    bundledActionBridge(),
+    bundledViewConfigBridge(),
+  ]);
+  await page.addInitScript({ content: actionBridge });
+  await page.addInitScript({ content: viewConfigBridge });
+  await page.addInitScript(({ ids, options, queryChildLimit }) => {
     type ReferenceTarget =
       | { kind: 'node'; nodeId: string }
       | { kind: 'local-file'; path: string; entryKind: 'file' | 'directory' };
@@ -1551,6 +1575,45 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
 	      appendChild(nodeId, viewId, 0);
 	      return view;
 	    };
+	    const addMissingTableDisplayFields = (nodeId: string, view: MockNode) => {
+	      const owner = nodes.get(nodeId);
+	      const schema = nodes.get(ids.schema);
+	      if (!owner || !schema) return;
+	      const helpers = (globalThis as typeof globalThis & {
+	        __linViewConfigHelpers?: {
+	          missingDisplayOrderPlan: <T extends { id: string; displayOrder?: number }>(fields: readonly T[]) => {
+	            assignments: Array<{ field: T; order: number }>;
+	            nextOrder: number;
+	          };
+	          tableDisplayFieldInitialization: (params: {
+	            byId: Map<string, MockNode>;
+	            owner: MockNode;
+	            schema: MockNode;
+	          }) => { displayFields: MockNode[]; missingFieldIds: string[] } | null;
+	        };
+	      }).__linViewConfigHelpers;
+	      if (!helpers) throw new Error('Missing shared view configuration helpers');
+	      const initialization = helpers.tableDisplayFieldInitialization({
+	        byId: nodes,
+	        owner,
+	        schema,
+	      });
+	      if (!initialization) return;
+	      const orderPlan = helpers.missingDisplayOrderPlan(initialization.displayFields);
+	      orderPlan.assignments.forEach(({ field, order }) => { field.displayOrder = order; });
+	      let nextOrder = orderPlan.nextOrder;
+	      for (const fieldId of initialization.missingFieldIds) {
+	        const displayId = `display-${++sequence}`;
+	        makeNode(displayId, '', {
+	          type: 'displayField',
+	          parentId: view.id,
+	          displayField: fieldId,
+	          displayVisible: true,
+	          displayOrder: nextOrder++,
+	        });
+	        appendChild(view.id, displayId);
+	      }
+	    };
 
 	    makeNode(ids.workspace, 'Workspace', { locked: true });
     makeNode(ids.root, 'Root', { parentId: ids.workspace, locked: true });
@@ -1558,10 +1621,13 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     makeNode(ids.library, 'Library', { parentId: ids.root, locked: true });
     makeNode(ids.schema, 'Schema', { parentId: ids.root, locked: true });
     makeNode(ids.searches, 'Saved searches', { parentId: ids.root, locked: true });
+	    const truncatedQueryRuleIds = options.truncatedSearchQuery
+	      ? Array.from({ length: queryChildLimit + 1 }, (_, index) => `recents-query-rule-${index}`)
+	      : [];
 	    makeNode(ids.recents, 'Recents', {
 	      type: 'search',
 	      parentId: ids.searches,
-	      locked: true,
+	      locked: !options.truncatedSearchQuery,
 	    });
 	    makeNode('recents-view', '', { type: 'viewDef', parentId: ids.recents, viewMode: 'list', children: ['recents-sort'] });
 	    makeNode('recents-sort', '', {
@@ -1570,13 +1636,24 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
 	      sortField: 'sys:updatedAt',
 	      sortDirection: 'desc',
 	    });
-	    makeNode('recents-query', '30', {
+	    makeNode('recents-query', options.truncatedSearchQuery ? '' : '30', {
 	      type: 'queryCondition',
 	      parentId: ids.recents,
-	      queryOp: 'EDITED_LAST_DAYS',
-	      children: ['recents-query-value'],
+	      ...(options.truncatedSearchQuery
+	        ? { queryLogic: 'AND', children: truncatedQueryRuleIds }
+	        : { queryOp: 'EDITED_LAST_DAYS', children: ['recents-query-value'] }),
 	    });
-    makeNode('recents-query-value', '30', { parentId: 'recents-query' });
+    if (options.truncatedSearchQuery) {
+      for (const [index, ruleId] of truncatedQueryRuleIds.entries()) {
+        makeNode(ruleId, `Term ${index}`, {
+          type: 'queryCondition',
+          parentId: 'recents-query',
+          queryOp: 'STRING_MATCH',
+        });
+      }
+    } else {
+      makeNode('recents-query-value', '30', { parentId: 'recents-query' });
+    }
     makeNode(ids.trash, 'Trash', { parentId: ids.root, locked: true });
     makeNode(ids.dayTag, 'day', { type: 'tagDef', parentId: ids.schema, color: 'gray' });
     makeNode(ids.projectTag, 'project', { type: 'tagDef', parentId: ids.schema, color: 'green' });
@@ -1641,6 +1718,26 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     makeNode(ids.alpha, 'Alpha', { parentId: ids.today, completedAt: 0 });
     makeNode(ids.beta, 'Beta', { parentId: ids.today, completedAt: 0 });
     makeNode(ids.gamma, 'Gamma', { parentId: ids.today, completedAt: 0 });
+    if (options.searchReferenceChain) {
+      makeNode(ids.searchStatusEntry, '', {
+        type: 'fieldEntry',
+        parentId: ids.alpha,
+        fieldDefId: ids.statusField,
+        fieldType: 'plain',
+      });
+      makeNode(ids.searchStatusValue, 'Chain value', { parentId: ids.searchStatusEntry });
+      makeNode(ids.searchIntermediate, '', {
+        type: 'reference',
+        parentId: ids.library,
+        targetId: ids.alpha,
+      });
+      makeNode(ids.searchResult, '', {
+        type: 'reference',
+        parentId: ids.recents,
+        targetId: ids.searchIntermediate,
+        refRole: 'searchResult',
+      });
+    }
     const tableRowIds = Array.from({ length: options.tableRowCount ?? 0 }, (_, index) => {
       const rowId = `table-row-${String(index).padStart(3, '0')}`;
       makeNode(rowId, `Table row ${String(index + 1).padStart(3, '0')}`, { parentId: ids.today });
@@ -1652,7 +1749,12 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
 	    appendChild(ids.recents, 'recents-query');
 	    appendChild(ids.recents, 'recents-view');
 	    appendChild('recents-view', 'recents-sort');
-	    appendChild('recents-query', 'recents-query-value');
+	    if (options.truncatedSearchQuery) {
+	      for (const ruleId of truncatedQueryRuleIds) appendChild('recents-query', ruleId);
+	    } else {
+	      appendChild('recents-query', 'recents-query-value');
+	    }
+    if (options.searchReferenceChain) appendChild(ids.recents, ids.searchResult);
     appendChild(ids.schema, ids.dayTag);
     appendChild(ids.schema, ids.projectTag);
     appendChild(ids.schema, ids.statusField);
@@ -1664,6 +1766,11 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     if (options.dateField) appendChild(ids.schema, ids.dueField);
     if (options.relatedField) appendChild(ids.schema, ids.referencesField);
     appendChild(ids.daily, ids.today);
+    if (options.searchReferenceChain) {
+      appendChild(ids.library, ids.searchIntermediate);
+      appendChild(ids.alpha, ids.searchStatusEntry);
+      appendChild(ids.searchStatusEntry, ids.searchStatusValue);
+    }
     if (options.optionsField) appendChild(ids.today, ids.priorityEntry);
     if (options.dateField) appendChild(ids.today, ids.dueEntry);
     if (options.relatedField) appendChild(ids.today, ids.referencesEntry);
@@ -3689,7 +3796,18 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
 	          return clone(outcome());
 	        }
 	        if (cmd === 'set_view_mode') {
-	          if (nodes.has(String(args.nodeId))) ensureViewDef(String(args.nodeId)).viewMode = String(args.mode ?? 'list');
+	          const nodeId = String(args.nodeId);
+	          if (nodes.has(nodeId)) {
+	            const view = ensureViewDef(nodeId);
+	            const previousMode = view.viewMode ?? 'list';
+	            const nextMode = String(args.mode ?? 'list');
+	            view.viewMode = nextMode;
+	            const entersTable = (globalThis as typeof globalThis & {
+	              __linViewConfigHelpers?: { entersTable: (previous: string | undefined, next: string) => boolean };
+	            }).__linViewConfigHelpers?.entersTable;
+	            if (!entersTable) throw new Error('Missing shared view configuration helpers');
+	            if (entersTable(previousMode, nextMode)) addMissingTableDisplayFields(nodeId, view);
+	          }
 	          return clone(outcome());
 	        }
 	        if (cmd === 'add_sort_rule') {
@@ -3996,7 +4114,11 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         },
       };
     }
-  }, { ids, options });
+  }, {
+    ids,
+    options,
+    queryChildLimit: SEARCH_QUERY_COMPLEXITY_LIMITS.maxChildrenPerGroup,
+  });
 }
 
 export function row(page: Page, id: string) {

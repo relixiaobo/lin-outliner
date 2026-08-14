@@ -130,20 +130,43 @@ the same row geometry and renders that toggle in place of editable text.
 ### Table View
 
 Table is a dense, unframed content surface, never a card or a stack of row cards.
-Its scroll scope may use the full panel width, but the data strip remains
-content-sized instead of stretching empty columns across the pane. Optional
-columns overflow through a table-local native horizontal scroller without
-widening the panel or adjacent panes; the panel remains the only vertical
-scroller.
+Its header and rows fill the available content width whenever their minimum
+tracks fit. Title absorbs spare space so long record names remain scannable and
+Add field stays at the trailing edge. Optional columns overflow through a
+table-local native horizontal scroller without widening the panel or adjacent
+panes; the panel remains the only vertical scroller.
 
-Header and body use one shared grid template. Title has a compact fixed default;
-field columns use narrower clamped persisted widths; the trailing `+ Add` command
-sits outside the data separators. The opaque content base, quiet horizontal row
-separators, a hierarchy guide aligned with the owner bullet,
-`--field-row-min-height` rhythm, content type scale, and neutral text hierarchy
-keep the surface scannable in light and dark mode. Vertical cell borders and a
-top frame are absent at rest. The header may stick inside the panel but does not
-become translucent chrome.
+Header and body use one shared responsive grid template. Title is
+`minmax(260px, 1fr)`; field columns default to 180px, clamp no narrower than
+112px, and honor persisted widths; the stable trailing Add field command sits
+outside the data separators. Header labels and Add field use `--font-ui-sm`,
+while titles and values use `--font-content` / `--line-content`; all inherit the
+shared sans family. The opaque content base, quiet horizontal row separators, a
+hierarchy guide aligned with the owner bullet, `--field-row-min-height` rhythm,
+and neutral text hierarchy keep the surface scannable in light and dark mode.
+Vertical cell borders and a top frame are absent at rest. The header may stick
+inside the panel but does not become translucent chrome.
+
+The Title marker slot aligns with the Title header label. Its disclosure occupies
+the reserved gutter immediately before the column, while the compensated row
+width keeps the Title column boundary fixed across leaf, expanded, hover, and
+selection states.
+
+Search Outline and Table share one compact icon-first result-view band and never
+stack a query-summary row with a full toolbar. Name search expands inline only
+while active. A single two-option Outline/Table mode selector remains visible in
+both modes and reuses the ordinary Outline toolbar's mode component; the context
+menu is its secondary text entry point. Outline aligns the band with its result
+text axis derived from the shared row geometry; Table places it between the
+owner heading and field header on the Title label axis. The band has no fill,
+frame, summary chips, result count, manual refresh, or decorative separators.
+Its icon controls retain the token control size and wrap as complete units when
+the available pane is narrower than one row; the two mode options never split
+across lines. Tooltips follow the hovered or keyboard-focused control across
+wrapped rows and remeasure each label's intrinsic width when focus moves, so
+their anchor and box never carry over from a sibling control. The Table field header
+therefore remains pure column semantics, and header and row separators provide
+its only horizontal structure.
 
 An active cell wrapper uses the neutral fill ladder plus the shared focus outline
 only while the wrapper itself owns focus; an idle table never paints a synthetic
@@ -159,10 +182,15 @@ Selecting a record through its Title node paints one continuous neutral surface
 across the complete table row; the nested Title row suppresses its local
 selection fill so the result never becomes a stack of cell-sized pills. Selection
 of an authored value node remains node-local and does not select its record.
-When a record expands, authored fields already represented by visible columns do
-not repeat as field rows beneath it. Ordinary children and fields not represented
-by visible columns keep their normal outline presentation; the Title node's
-child/disclosure state follows that same visible child set.
+When a record expands, no active authored field repeats as a field row beneath
+it: visible, hidden, and not-yet-configured active fields all belong to the
+column model. Ordinary children keep their normal outline presentation, while
+the Title node's child/disclosure state, keyboard order, and agent-visible
+structure follow that same active-field-free child set. Hidden active fields
+remain recoverable through the column controls rather than through duplicate
+body rows. An orphaned field entry whose definition is missing or in Trash is
+the recovery exception and uses the ordinary field-row surface so its stored
+values remain visible and reachable.
 An authored field's header glyph is an icon-only navigation control into that
 field definition's configuration page. Hover deepens only the glyph without a
 background box, owning-header outline, or geometry change. System-field glyphs
@@ -175,9 +203,17 @@ Hover, focus, selection, resizing, and editor entry never change row or control
 dimensions.
 
 Column and add-field overlays are level-1 material popovers with the shared
-reduced-transparency fallback. A nested table is an unframed indented scope with
-one quiet separating edge, not a card inside the parent table. Each nested scope
-owns its own column template and local horizontal overflow.
+reduced-transparency fallback. Column headers use Hide as their only removal
+action. Add column groups current-record custom fields first, other Schema custom
+fields second, and system fields last; the Outline Display editor likewise places
+custom Fields before System fields. Section labels remain compact metadata, not
+selectable rows. Search Outline adds Display and Group to the shared mode, name,
+Sort, and Filter controls; Search Table keeps the same mode selector, name search,
+Sort, and Filter while hidden columns remain directly recoverable through Add
+field. A nested table is
+an unframed indented scope with one
+quiet separating edge, not a card inside the parent table. Each nested scope owns
+its own column template and local horizontal overflow.
 
 ### References
 

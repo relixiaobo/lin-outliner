@@ -653,6 +653,7 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
                     : prev
                 ));
               }}
+              variant={node.type === 'search' ? 'compact' : 'bar'}
             />
           </div>
         );
@@ -776,14 +777,6 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
   if (!virtualize || renderIndices === null) {
     return (
       <>
-        <OutlinerEmptyState
-          childCount={rootChildCount}
-          parent={parent}
-          parentId={props.parentId}
-          projection={index.projection}
-          rootLevel={props.parentId === props.rootId}
-          searchLoading={rootSearchRefreshing}
-        />
         <div className="outliner-flat-flow" role="presentation" ref={listRef}>
           {renderFlatGuides()}
           {rows.map((row, i) => (
@@ -792,6 +785,14 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
             </FlowRowShell>
           ))}
         </div>
+        <OutlinerEmptyState
+          childCount={rootChildCount}
+          parent={parent}
+          parentId={props.parentId}
+          projection={index.projection}
+          rootLevel={props.parentId === props.rootId}
+          searchLoading={rootSearchRefreshing}
+        />
       </>
     );
   }
@@ -799,14 +800,6 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
   const containerStyle: CSSProperties = { height: layout.totalHeight };
   return (
     <>
-      <OutlinerEmptyState
-        childCount={rootChildCount}
-        parent={parent}
-        parentId={props.parentId}
-        projection={index.projection}
-        rootLevel={props.parentId === props.rootId}
-        searchLoading={rootSearchRefreshing}
-      />
       <div className="outliner-flat" role="presentation" ref={listRef} style={containerStyle}>
         {renderFlatGuides()}
         {renderIndices.map((i) => {
@@ -819,6 +812,14 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
           );
         })}
       </div>
+      <OutlinerEmptyState
+        childCount={rootChildCount}
+        parent={parent}
+        parentId={props.parentId}
+        projection={index.projection}
+        rootLevel={props.parentId === props.rootId}
+        searchLoading={rootSearchRefreshing}
+      />
     </>
   );
 }

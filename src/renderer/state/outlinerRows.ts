@@ -17,19 +17,9 @@ import {
   type SystemFieldContext,
 } from '../../core/systemFields';
 import type { ReferenceSummary } from '../../core/references';
-
-const INTERNAL_NODE_TYPES = new Set<NodeProjection['type']>([
-  'queryCondition',
-  'viewDef',
-  'sortRule',
-  'filterRule',
-  'displayField',
-  // config-as-nodes: definition config rows + system enum options are never
-  // ordinary outliner children. The config surface renders defConfig rows
-  // explicitly (opt-in); everything else excludes them here.
-  'defConfig',
-  'systemOption',
-]);
+import { isDescendantOf, resolveReferenceChainTargetId } from '../../core/actions/rowFacets';
+import { TRASH_ID } from '../../core/types';
+import { INTERNAL_VIEW_NODE_TYPES, orderedByFiniteOrder } from '../../core/viewConfig';
 
 export type OutlinerRowItem =
   | { id: NodeId; type: 'field' }
@@ -44,7 +34,7 @@ export type OutlinerRowItem =
 
 export interface RowBuildOptions {
   expandedHiddenFields?: Set<string>;
-  suppressedFieldDefIds?: ReadonlySet<string>;
+  suppressFieldEntries?: boolean;
   systemFieldContext?: SystemFieldContext;
 }
 
@@ -130,10 +120,10 @@ export function readViewConfig(parent: NodeProjection | undefined, byId: Map<Nod
         valueLogic: child.filterValueLogic ?? 'any',
         values: child.filterValues ?? [],
       })),
-    displayFields: viewChildren
-      .filter((child): child is Extract<NodeProjection, { type: 'displayField' }> => child.type === 'displayField' && Boolean(child.displayField))
-      .map((child, sourceIndex) => ({
-        field: {
+    displayFields: orderedByFiniteOrder(
+      viewChildren
+        .filter((child): child is Extract<NodeProjection, { type: 'displayField' }> => child.type === 'displayField' && Boolean(child.displayField))
+        .map((child) => ({
           id: child.id,
           field: child.displayField!,
           visible: child.displayVisible !== false,
@@ -141,18 +131,17 @@ export function readViewConfig(parent: NodeProjection | undefined, byId: Map<Nod
           order: child.displayOrder,
           label: child.displayLabel,
           placement: child.displayPlacement,
-        },
-        sourceIndex,
-      }))
-      .sort((left, right) => {
-        const leftOrder = Number.isFinite(left.field.order) ? left.field.order! : Number.POSITIVE_INFINITY;
-        const rightOrder = Number.isFinite(right.field.order) ? right.field.order! : Number.POSITIVE_INFINITY;
-        if (leftOrder !== rightOrder) return leftOrder - rightOrder;
-        if (left.sourceIndex !== right.sourceIndex) return left.sourceIndex - right.sourceIndex;
-        return left.field.id.localeCompare(right.field.id);
-      })
-      .map(({ field }) => field),
+        })),
+      (field) => field.order,
+    ),
   };
+}
+
+export function showsResultViewControls(
+  node: NodeProjection | undefined,
+  view: Pick<ViewConfig, 'toolbarVisible'> | null | undefined,
+): boolean {
+  return Boolean(node && (node.type === 'search' || view?.toolbarVisible));
 }
 
 function directChildren(parent: NodeProjection | undefined, byId: Map<NodeId, NodeProjection>): NodeProjection[] {
@@ -165,11 +154,15 @@ function nodeTitle(node: NodeProjection | undefined): string {
   return node?.content.text || 'Untitled';
 }
 
-function displayNode(node: NodeProjection, byId: Map<NodeId, NodeProjection>): NodeProjection {
-  if (node.type === 'reference' && node.targetId) {
-    return byId.get(node.targetId) ?? node;
-  }
-  return node;
+function displayNode(node: NodeProjection, byId: Map<NodeId, NodeProjection>): NodeProjection | undefined {
+  if (node.type !== 'reference') return node;
+  if (!node.targetId) return undefined;
+  const targetId = resolveReferenceChainTargetId(node.targetId, byId);
+  return targetId ? byId.get(targetId) : undefined;
+}
+
+function displayNodeOrSelf(node: NodeProjection, byId: Map<NodeId, NodeProjection>): NodeProjection {
+  return displayNode(node, byId) ?? node;
 }
 
 function fieldLabel(entry: NodeProjection, byId: Map<NodeId, NodeProjection>): string {
@@ -180,7 +173,7 @@ function fieldLabel(entry: NodeProjection, byId: Map<NodeId, NodeProjection>): s
 
 function childText(node: NodeProjection | undefined, byId: Map<NodeId, NodeProjection>): string {
   if (!node) return '';
-  const displayed = displayNode(node, byId);
+  const displayed = displayNodeOrSelf(node, byId);
   const own = displayed.content.text;
   if (own) return own;
   return displayed.children
@@ -195,9 +188,10 @@ function displayFieldValuesFor(
   byId: Map<NodeId, NodeProjection>,
   systemFieldContext?: SystemFieldContext,
 ): string[] {
-  const displayed = displayNode(rowNode, byId);
-  if (!isSystemFieldId(fieldId)) return viewFieldValuesFor(rowNode, fieldId, byId, systemFieldContext);
   if (fieldId === NAME_FIELD) return viewFieldValuesFor(rowNode, fieldId, byId, systemFieldContext);
+  const displayed = displayNode(rowNode, byId);
+  if (!displayed) return [];
+  if (!isSystemFieldId(fieldId)) return viewFieldValuesFor(rowNode, fieldId, byId, systemFieldContext);
 
   const display = systemFieldDisplay(displayed, fieldId, byId, systemFieldContext);
   switch (display.kind) {
@@ -224,10 +218,21 @@ export function viewFieldValuesFor(
   byId: Map<NodeId, NodeProjection>,
   systemFieldContext?: SystemFieldContext,
 ): string[] {
-  const displayed = displayNode(rowNode, byId);
+  return resolvedViewFieldValuesFor(rowNode, fieldId, byId, systemFieldContext);
+}
+
+function resolvedViewFieldValuesFor(
+  rowNode: NodeProjection,
+  fieldId: string,
+  byId: Map<NodeId, NodeProjection>,
+  systemFieldContext?: SystemFieldContext,
+  resolveDisplayNode?: (node: NodeProjection) => NodeProjection | undefined,
+): string[] {
+  const displayed = resolveDisplayNode ? resolveDisplayNode(rowNode) : displayNode(rowNode, byId);
+  if (fieldId === NAME_FIELD) return [childText(displayed ?? rowNode, byId)].filter(Boolean);
+  if (!displayed) return [];
   // Name reads the node's own (possibly nested) text; every other system field is
   // a computed projection resolved by the shared `systemFields` module.
-  if (fieldId === NAME_FIELD) return [childText(displayed, byId)].filter(Boolean);
   if (isSystemFieldId(fieldId)) return systemFieldValues(displayed, fieldId, byId, systemFieldContext);
 
   const fieldEntry = displayed.children
@@ -246,8 +251,9 @@ function fieldTextFor(
   fieldId: string,
   byId: Map<NodeId, NodeProjection>,
   systemFieldContext?: SystemFieldContext,
+  resolveDisplayNode?: (node: NodeProjection) => NodeProjection | undefined,
 ): string {
-  return viewFieldValuesFor(rowNode, fieldId, byId, systemFieldContext).join(' ');
+  return resolvedViewFieldValuesFor(rowNode, fieldId, byId, systemFieldContext, resolveDisplayNode).join(' ');
 }
 
 function fieldNumberFor(
@@ -255,8 +261,9 @@ function fieldNumberFor(
   fieldId: string,
   byId: Map<NodeId, NodeProjection>,
   systemFieldContext?: SystemFieldContext,
+  resolveDisplayNode?: (node: NodeProjection) => NodeProjection | undefined,
 ): number | null {
-  const value = viewFieldValuesFor(rowNode, fieldId, byId, systemFieldContext)[0];
+  const value = resolvedViewFieldValuesFor(rowNode, fieldId, byId, systemFieldContext, resolveDisplayNode)[0];
   if (value === undefined) return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
@@ -316,9 +323,10 @@ function fieldDateFor(
   fieldId: string,
   byId: Map<NodeId, NodeProjection>,
   systemFieldContext?: SystemFieldContext,
+  resolveDisplayNode?: (node: NodeProjection) => NodeProjection | undefined,
 ): number | null {
   if (!isViewDateField(fieldId, byId)) return null;
-  const value = viewFieldValuesFor(rowNode, fieldId, byId, systemFieldContext)[0];
+  const value = resolvedViewFieldValuesFor(rowNode, fieldId, byId, systemFieldContext, resolveDisplayNode)[0];
   if (value === undefined) return null;
   return dateSpanForFieldValue(fieldId, value)?.startMs ?? null;
 }
@@ -334,6 +342,7 @@ function compareRowsByField(
   byId: Map<NodeId, NodeProjection>,
   fieldId: string,
   systemFieldContext?: SystemFieldContext,
+  resolveDisplayNode?: (node: NodeProjection) => NodeProjection | undefined,
 ): number {
   if (left.type !== 'content' && left.type !== 'field') return 1;
   if (right.type !== 'content' && right.type !== 'field') return -1;
@@ -342,23 +351,23 @@ function compareRowsByField(
   if (!leftNode || !rightNode) return 0;
 
   if (isViewDateField(fieldId, byId)) {
-    const leftDate = fieldDateFor(leftNode, fieldId, byId, systemFieldContext) ?? Number.POSITIVE_INFINITY;
-    const rightDate = fieldDateFor(rightNode, fieldId, byId, systemFieldContext) ?? Number.POSITIVE_INFINITY;
+    const leftDate = fieldDateFor(leftNode, fieldId, byId, systemFieldContext, resolveDisplayNode) ?? Number.POSITIVE_INFINITY;
+    const rightDate = fieldDateFor(rightNode, fieldId, byId, systemFieldContext, resolveDisplayNode) ?? Number.POSITIVE_INFINITY;
     return leftDate - rightDate;
   }
   if (isViewNumberField(fieldId, byId)) {
-    const leftNumber = fieldNumberFor(leftNode, fieldId, byId, systemFieldContext) ?? Number.POSITIVE_INFINITY;
-    const rightNumber = fieldNumberFor(rightNode, fieldId, byId, systemFieldContext) ?? Number.POSITIVE_INFINITY;
+    const leftNumber = fieldNumberFor(leftNode, fieldId, byId, systemFieldContext, resolveDisplayNode) ?? Number.POSITIVE_INFINITY;
+    const rightNumber = fieldNumberFor(rightNode, fieldId, byId, systemFieldContext, resolveDisplayNode) ?? Number.POSITIVE_INFINITY;
     return leftNumber - rightNumber;
   }
   if (fieldId === DONE_FIELD) {
-    const leftDone = displayNode(leftNode, byId).completedAt ? 1 : 0;
-    const rightDone = displayNode(rightNode, byId).completedAt ? 1 : 0;
+    const leftDone = (resolveDisplayNode ? resolveDisplayNode(leftNode) : displayNode(leftNode, byId))?.completedAt ? 1 : 0;
+    const rightDone = (resolveDisplayNode ? resolveDisplayNode(rightNode) : displayNode(rightNode, byId))?.completedAt ? 1 : 0;
     return leftDone - rightDone;
   }
 
-  const leftText = fieldTextFor(leftNode, fieldId, byId, systemFieldContext).toLocaleLowerCase();
-  const rightText = fieldTextFor(rightNode, fieldId, byId, systemFieldContext).toLocaleLowerCase();
+  const leftText = fieldTextFor(leftNode, fieldId, byId, systemFieldContext, resolveDisplayNode).toLocaleLowerCase();
+  const rightText = fieldTextFor(rightNode, fieldId, byId, systemFieldContext, resolveDisplayNode).toLocaleLowerCase();
   return leftText.localeCompare(rightText, undefined, { numeric: true, sensitivity: 'base' });
 }
 
@@ -444,10 +453,26 @@ function sortRows(
   systemFieldContext?: SystemFieldContext,
 ): OutlinerRowItem[] {
   if (view.sortRules.length === 0) return rows;
+  const displayedRows = new Map<NodeId, NodeProjection | undefined>();
+  for (const row of rows) {
+    if (row.type !== 'content' && row.type !== 'field') continue;
+    const node = byId.get(row.id);
+    if (node) displayedRows.set(node.id, displayNode(node, byId));
+  }
+  const resolveDisplayNode = (node: NodeProjection) => (
+    displayedRows.has(node.id) ? displayedRows.get(node.id) : displayNode(node, byId)
+  );
   const sortedRows = [...rows];
   sortedRows.sort((left, right) => {
     for (const rule of view.sortRules) {
-      const result = compareRowsByField(left, right, byId, rule.field, systemFieldContext);
+      const result = compareRowsByField(
+        left,
+        right,
+        byId,
+        rule.field,
+        systemFieldContext,
+        resolveDisplayNode,
+      );
       if (result !== 0) return rule.direction === 'desc' ? -result : result;
     }
     return 0;
@@ -554,16 +579,17 @@ function buildChildRows(
   for (const childId of parent.children) {
     const child = byId.get(childId);
     if (!child) continue;
-    if (child.type && INTERNAL_NODE_TYPES.has(child.type)) continue;
+    if (child.type && INTERNAL_VIEW_NODE_TYPES.has(child.type)) continue;
     if (
       child.type === 'fieldEntry'
-      && child.fieldDefId
-      && options.suppressedFieldDefIds?.has(child.fieldDefId)
+      && options.suppressFieldEntries
+      && isActiveTableFieldEntry(child, byId)
     ) {
       continue;
     }
     if (
       child.type === 'fieldEntry'
+      && !options.suppressFieldEntries
       && isHiddenFieldEntry(child, byId)
       && !options.expandedHiddenFields?.has(hiddenFieldKey(parent.id, child.id))
     ) {
@@ -684,6 +710,7 @@ export function fieldEntryForViewCell(
 ): NodeProjection | undefined {
   if (isSystemFieldId(fieldId)) return undefined;
   const displayed = displayNode(rowNode, byId);
+  if (!displayed) return undefined;
   return displayed.children
     .map((childId) => byId.get(childId))
     .find((child) => child?.type === 'fieldEntry' && child.fieldDefId === fieldId);
@@ -715,7 +742,7 @@ export function collectViewFieldChoices(
   referenceSummary: ReferenceSummary,
 ): Array<{ id: string; label: string; section: 'System fields' | 'Fields' }> {
   const choices = new Map<string, { label: string; section: 'System fields' | 'Fields' }>();
-  const candidateRows = fieldCandidateRows(parent, byId);
+  const candidateRows = fieldCandidateRows(parent, byId, false);
 
   for (const system of SYSTEM_VIEW_FIELD_CHOICES) {
     if (systemFieldPresentInRows(system.id, candidateRows, byId, referenceSummary)) {
@@ -725,6 +752,7 @@ export function collectViewFieldChoices(
 
   for (const child of candidateRows) {
     const displayed = displayNode(child, byId);
+    if (!displayed) continue;
     for (const nestedId of displayed.children) {
       const nested = byId.get(nestedId);
       if (nested?.type !== 'fieldEntry' || !nested.fieldDefId || isSystemFieldId(nested.fieldDefId)) continue;
@@ -765,21 +793,39 @@ const SYSTEM_VIEW_FIELD_CHOICES = [
 
 const SYSTEM_VIEW_FIELD_ORDER = new Map(SYSTEM_VIEW_FIELD_CHOICES.map((choice, index) => [choice.id, index]));
 
-function fieldCandidateRows(parent: NodeProjection, byId: Map<NodeId, NodeProjection>): NodeProjection[] {
+function fieldCandidateRows(
+  parent: NodeProjection,
+  byId: Map<NodeId, NodeProjection>,
+  includeOwnerFieldEntries: boolean,
+): NodeProjection[] {
   const rows: NodeProjection[] = [];
   for (const childId of parent.children) {
     const child = byId.get(childId);
     if (!child) continue;
-    if (child.type && INTERNAL_NODE_TYPES.has(child.type)) continue;
+    if (child.type && INTERNAL_VIEW_NODE_TYPES.has(child.type)) continue;
+    if (!includeOwnerFieldEntries && child.type === 'fieldEntry') continue;
     rows.push(child);
   }
   return rows;
 }
 
 export function customViewFieldIdsOnRows(parent: NodeProjection, byId: Map<NodeId, NodeProjection>): Set<string> {
+  return customFieldIdsOnRows(parent, byId, false);
+}
+
+export function customFilterFieldIdsOnRows(parent: NodeProjection, byId: Map<NodeId, NodeProjection>): Set<string> {
+  return customFieldIdsOnRows(parent, byId, true);
+}
+
+function customFieldIdsOnRows(
+  parent: NodeProjection,
+  byId: Map<NodeId, NodeProjection>,
+  includeOwnerFieldEntries: boolean,
+): Set<string> {
   const fields = new Set<string>();
-  for (const child of fieldCandidateRows(parent, byId)) {
+  for (const child of fieldCandidateRows(parent, byId, includeOwnerFieldEntries)) {
     const displayed = displayNode(child, byId);
+    if (!displayed) continue;
     for (const nestedId of displayed.children) {
       const nested = byId.get(nestedId);
       if (nested?.type !== 'fieldEntry' || !nested.fieldDefId || isSystemFieldId(nested.fieldDefId)) continue;
@@ -787,6 +833,17 @@ export function customViewFieldIdsOnRows(parent: NodeProjection, byId: Map<NodeI
     }
   }
   return fields;
+}
+
+export function isActiveTableFieldEntry(
+  entry: NodeProjection,
+  byId: Map<NodeId, NodeProjection>,
+): boolean {
+  if (entry.type !== 'fieldEntry') return false;
+  if (!entry.fieldDefId) return false;
+  if (isSystemFieldId(entry.fieldDefId)) return true;
+  const field = byId.get(entry.fieldDefId);
+  return field?.type === 'fieldDef' && !isDescendantOf(byId, field.id, TRASH_ID);
 }
 
 function referencedViewFields(view: ViewConfig): Set<string> {
@@ -813,11 +870,14 @@ function systemFieldPresentInRows(
   referenceSummary: ReferenceSummary,
 ): boolean {
   if (fieldId === NAME_FIELD || fieldId === CREATED_FIELD || fieldId === UPDATED_FIELD) return rows.length > 0;
-  if (fieldId === OWNER_FIELD) return rows.some((row) => Boolean(displayNode(row, byId).parentId));
-  if (fieldId === DONE_FIELD) return rows.some((row) => nodeShowsCheckbox(byId, displayNode(row, byId)));
-  if (fieldId === TAGS_FIELD) return rows.some((row) => displayNode(row, byId).tags.length > 0);
+  if (fieldId === OWNER_FIELD) return rows.some((row) => Boolean(displayNode(row, byId)?.parentId));
+  if (fieldId === DONE_FIELD) return rows.some((row) => {
+    const displayed = displayNode(row, byId);
+    return displayed ? nodeShowsCheckbox(byId, displayed) : false;
+  });
+  if (fieldId === TAGS_FIELD) return rows.some((row) => (displayNode(row, byId)?.tags.length ?? 0) > 0);
   if (fieldId === DONE_AT_FIELD) return rows.some((row) => {
-    const completedAt = displayNode(row, byId).completedAt;
+    const completedAt = displayNode(row, byId)?.completedAt;
     return completedAt !== undefined && completedAt > 0;
   });
   if (fieldId === DAY_FIELD) {
@@ -826,7 +886,9 @@ function systemFieldPresentInRows(
   if (fieldId === REF_COUNT_FIELD) {
     return rows.some((row) => {
       const displayed = displayNode(row, byId);
-      return (referenceSummary.countsByTarget.get(displayed.id)?.linked ?? 0) > 0;
+      return displayed
+        ? (referenceSummary.countsByTarget.get(displayed.id)?.linked ?? 0) > 0
+        : false;
     });
   }
   return false;

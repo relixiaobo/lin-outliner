@@ -239,6 +239,30 @@ describe('buildVisualRows depth and extras', () => {
     expect(without.some((r) => r.kind === 'toolbar')).toBe(false);
   });
 
+  test('emits one compact-control host for a search even before toolbarVisible is persisted', () => {
+    const byId = byIdOf([
+      node('search', { type: 'search', children: ['result'] } as Partial<NodeProjection>),
+      node('result', { parentId: 'search', type: 'reference', targetId: 'target' }),
+      node('target'),
+    ]);
+
+    const rows = buildVisualRows('search', byId, { expanded: new Set() });
+    expect(rows.filter((row) => row.kind === 'toolbar')).toHaveLength(1);
+    expect(rows.find((row) => row.kind === 'toolbar')).toMatchObject({ nodeId: 'search', depth: 0 });
+  });
+
+  test('emits compact controls for an expanded empty nested search', () => {
+    const byId = byIdOf([
+      node('lib', { children: ['search'] }),
+      node('search', { parentId: 'lib', type: 'search' } as Partial<NodeProjection>),
+    ]);
+
+    const rows = buildVisualRows('lib', byId, { expanded: new Set(['search']) });
+
+    expect(rows.map((row) => row.kind)).toEqual(['content', 'toolbar']);
+    expect(rows[1]).toMatchObject({ nodeId: 'search', depth: 1 });
+  });
+
   test('emits one independently rendered table scope instead of flattening its descendants', () => {
     const byId = byIdOf([
       node('lib', { children: ['project'] }),
