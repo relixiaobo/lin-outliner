@@ -944,6 +944,8 @@ describe('agent node tools', () => {
     });
     expect(duplicateOwner.ok).toBe(false);
     expect(duplicateOwner.error?.message).toContain('Multiple field entries');
+    expect(duplicateOwner.error?.message).toContain('entry id');
+    expect(duplicateOwner.error?.message).toContain('rename');
 
     const duplicateDefsCore = coreWithDirtyDuplicateFieldDefs();
     const duplicateDefs = await executeTool(duplicateDefsCore, 'node_create', {
@@ -952,6 +954,34 @@ describe('agent node tools', () => {
     });
     expect(duplicateDefs.ok).toBe(false);
     expect(duplicateDefs.error?.message).toContain('Multiple field definitions');
+  });
+
+  test('node_create resolves same-name definitions through the owner tag inheritance chain', async () => {
+    const core = Core.new();
+    const baseTagId = mustFocus(core.createTag('record'));
+    const baseTemplateId = mustFocus(core.createFieldDef(baseTagId, 'Status', 'plain'));
+    const baseFieldDefId = core.state().nodes[baseTemplateId].fieldDefId!;
+    const issueTagId = mustFocus(core.createTag('issue'));
+    const issueTemplateId = mustFocus(core.createFieldDef(issueTagId, 'Status', 'plain'));
+    const issueFieldDefId = core.state().nodes[issueTemplateId].fieldDefId!;
+    core.setTagConfig(issueTagId, { extends: baseTagId });
+    const ownerId = mustFocus(core.createNode(core.projection().todayId, null, 'Launch'));
+    core.applyTag(ownerId, issueTagId);
+    for (const entryId of [...core.state().nodes[ownerId].children]) core.deleteNode(entryId);
+
+    const result = await executeTool(core, 'node_create', {
+      parent_id: ownerId,
+      outline: '- Status:: Open',
+    });
+
+    expect(result.ok).toBe(true);
+    const entries = core.state().nodes[ownerId].children
+      .map((childId) => core.state().nodes[childId])
+      .filter((node) => node?.type === 'fieldEntry');
+    expect(entries).toHaveLength(1);
+    expect(entries[0]!.fieldDefId).toBe(issueFieldDefId);
+    expect(entries[0]!.fieldDefId).not.toBe(baseFieldDefId);
+    expect(entries[0]!.children.map((childId) => core.state().nodes[childId].content.text)).toEqual(['Open']);
   });
 
   test('node_create writes Done through the system field and rejects read-only system fields', async () => {

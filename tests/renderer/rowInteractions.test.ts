@@ -125,6 +125,80 @@ describe('row interaction resolvers', () => {
     })).toEqual([{ id: 'field', type: 'field' }]);
   });
 
+  test('keeps same-name field entries as separate outliner rows', () => {
+    const parent = makeNode('parent', 'Parent', { children: ['project-status', 'issue-status'] });
+    const byId = new Map<string, any>([
+      ['parent', parent],
+      ['project-status-def', makeNode('project-status-def', 'Status', { type: 'fieldDef' })],
+      ['issue-status-def', makeNode('issue-status-def', 'Status', { type: 'fieldDef' })],
+      ['project-status', makeNode('project-status', '', {
+        type: 'fieldEntry',
+        parentId: 'parent',
+        fieldDefId: 'project-status-def',
+      })],
+      ['issue-status', makeNode('issue-status', '', {
+        type: 'fieldEntry',
+        parentId: 'parent',
+        fieldDefId: 'issue-status-def',
+      })],
+    ]);
+
+    expect(buildOutlinerRows(parent as any, byId)).toEqual([
+      { id: 'project-status', type: 'field' },
+      { id: 'issue-status', type: 'field' },
+    ]);
+  });
+
+  test('resolves value-is-default hiding through each field entry template', () => {
+    const parent = makeNode('parent', 'Parent', { children: ['project-status', 'issue-status'] });
+    const byId = new Map<string, any>([
+      ['parent', parent],
+      ['project-status-def', makeNode('project-status-def', 'Status', {
+        type: 'fieldDef',
+        children: ['project-status-def::cfg:hideField'],
+      })],
+      ...enumConfigEntries('project-status-def', 'hideField', 'value_is_default'),
+      ['issue-status-def', makeNode('issue-status-def', 'Status', {
+        type: 'fieldDef',
+        children: ['issue-status-def::cfg:hideField'],
+      })],
+      ...enumConfigEntries('issue-status-def', 'hideField', 'value_is_default'),
+      ['project-template', makeNode('project-template', '', {
+        type: 'fieldEntry',
+        fieldDefId: 'project-status-def',
+        children: ['project-default'],
+      })],
+      ['project-default', makeNode('project-default', 'Inbox', { parentId: 'project-template' })],
+      ['issue-template', makeNode('issue-template', '', {
+        type: 'fieldEntry',
+        fieldDefId: 'issue-status-def',
+        children: ['issue-default'],
+      })],
+      ['issue-default', makeNode('issue-default', 'Open', { parentId: 'issue-template' })],
+      ['project-status', makeNode('project-status', '', {
+        type: 'fieldEntry',
+        parentId: 'parent',
+        fieldDefId: 'project-status-def',
+        templateId: 'project-template',
+        children: ['project-value'],
+      })],
+      ['project-value', makeNode('project-value', 'Inbox', { parentId: 'project-status' })],
+      ['issue-status', makeNode('issue-status', '', {
+        type: 'fieldEntry',
+        parentId: 'parent',
+        fieldDefId: 'issue-status-def',
+        templateId: 'issue-template',
+        children: ['issue-value'],
+      })],
+      ['issue-value', makeNode('issue-value', 'Inbox', { parentId: 'issue-status' })],
+    ]);
+
+    expect(buildOutlinerRows(parent as any, byId)).toEqual([
+      { id: 'hidden:parent:project-status', type: 'hiddenField', fieldId: 'project-status', label: 'Status' },
+      { id: 'issue-status', type: 'field' },
+    ]);
+  });
+
   test('keeps panel fields in the normal body row model', () => {
 	    const parent = makeNode('parent', 'Parent', {
 	      children: ['view', 'status', 'beta', 'alpha', 'hidden'],
@@ -973,6 +1047,31 @@ describe('row interaction resolvers', () => {
     expect(labels).toContain('Status');
     expect(labels).toContain('Orphan');
     expect(labels).not.toContain('Global only');
+  });
+
+  test('view field choices keep same-name definitions as separate choices', () => {
+    const parent = makeNode('parent', 'Parent', { children: ['task'] });
+    const byId = new Map<string, any>([
+      ['parent', parent],
+      ['task', makeNode('task', 'Task', { parentId: 'parent', children: ['project-status', 'issue-status'] })],
+      ['project-status', makeNode('project-status', '', {
+        type: 'fieldEntry',
+        parentId: 'task',
+        fieldDefId: 'project-status-def',
+      })],
+      ['issue-status', makeNode('issue-status', '', {
+        type: 'fieldEntry',
+        parentId: 'task',
+        fieldDefId: 'issue-status-def',
+      })],
+      ['project-status-def', makeNode('project-status-def', 'Status', { type: 'fieldDef' })],
+      ['issue-status-def', makeNode('issue-status-def', 'Status', { type: 'fieldDef' })],
+    ]);
+
+    expect(fieldChoices(parent as any, byId).filter((choice) => choice.label === 'Status')).toEqual([
+      { id: 'project-status-def', label: 'Status', section: 'Fields' },
+      { id: 'issue-status-def', label: 'Status', section: 'Fields' },
+    ]);
   });
 
   test('view field choices hide system fields that have no values in the current rows', () => {

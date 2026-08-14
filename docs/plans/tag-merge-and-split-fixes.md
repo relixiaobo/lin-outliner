@@ -1,234 +1,215 @@
-# Tag merge and split fixes — collisions must not kill, splits must not re-seed
-
-## Problem
-
-A deep audit of the field/supertag subsystems (2026-08-13, follow-up to the
-tag-schema-projection review) confirmed two live defects that do **not** dissolve
-when the projection plan ships, plus several that do. All were verified with
-runnable repros against current core.
-
-**P1 — same-name field collisions kill tag application.** Two tags that each
-define a field named `Status` (two definitions, one name — the normal outcome of
-building two tags independently) are mutually exclusive with a crash: applying
-the second tag to a node that carries the first throws
-`CoreError: duplicate field "Status" on owner …` out of
-`instantiateTagTemplateDirect` → `ensureFieldEntryWithTemplateDirect` →
-`assertOwnerDoesNotHaveFieldName`. The whole `applyTag` command dies. Reachable
-from the plain UI with the most ordinary field name there is. Two aggravations:
-sync `mutate()` has no rollback and `applyTagNoHistoryDirect` pushes the tag into
-`node.tags` *before* instantiating, so the failure is not clean — it leaves the
-tag applied with partial fields. And the same assert is reachable from the
-checkbox: `applyForwardDoneMappingDirect` (done-state → option-field sync) calls
-the same helper, so toggling done on a node whose mapped field name collides
-crashes the toggle today — a fourth live repro of the same site.
-
-**P2 — merging two such tags poisons the merged tag permanently.**
-`mergeTagTemplateChildrenDirect` dedupes template entries by `fieldDefId` only,
-never by name, so merging `#bug` into `#issue` moves bug's `Status` template
-entry wholesale into issue's template. The merged tag now *itself* defines two
-same-named fields, and every subsequent `applyTag` of it — on any node — throws
-per P1. One merge, and the tag is unusable for all future instances.
-(`merge_definitions` is agent-tool-reachable via `documentService`; the renderer
-does not expose it today.)
-
-**P3 — splitting a tagged node re-stamps creation-moment data.** `splitNode`
-runs full `instantiateTagTemplateDirect` on the right half. A `#meeting` whose
-template holds a seed child `Agenda` and a `Status` default `Inbox`, with the
-instance's Status set to `Doing`: mid-text Enter produces a right half with
-`Status: Inbox` (not `Doing`, not empty) plus a freshly conjured `Agenda` child.
-A text edit mints creation-moment statements.
-
-These are the same root the projection plan names — copies of definition state
-stamped at the wrong moments — but they are crash- and correctness-class *now*,
-and the projection plan deliberately does not cover them: P1's throw site and
-P2's merge behavior are wrong regardless of storage model, and P3 is about
-*seeds*, which stay copy-based under projection by design.
-
-## Recorded findings not fixed here
-
-The same audit confirmed three more; recorded so they are not re-discovered,
-deliberately left to their owners:
-
-- **Untag misses copies the past template stamped.**
-  `cleanupFieldsFromRemovedTagDirect` derives "what this tag brought" from the
-  *current* template, so a field deleted from the template earlier leaves
-  orphaned entries behind on untag. Dissolves structurally in
-  tag-schema-projection PR 1: valueless entries stop existing and untag stops
-  deleting anything (decision D1 there).
-- **`entry.templateId` dangles forever** once a template entry is deleted;
-  `value_is_default` hiding and `resolveFieldOwnerColor` silently degrade.
-  Dissolves in PR 1: `templateId` leaves field entries entirely.
-- **Tag renames and cross-owner field-name duplication are unguarded.**
-  Field-def renames already fail closed on the dangerous case — per-keystroke,
-  `applyNodeTextPatch` runs `assertFieldDefRenameDoesNotDuplicateOwner`, which
-  rejects a rename that would duplicate a name on any single owner. What remains
-  unguarded is *tag* renames (two active tags can share a name;
-  `findTagByName` then picks arbitrarily) and same-named field defs on disjoint
-  owners. Tolerated: the per-owner case is already guarded, duplicate names
-  become visible-and-manageable under projection decision D3, and a tag-rename
-  guard would fire mid-typing. Residual wart: `findTagByName` /
-  `findFieldDefByName` should pick deterministically (oldest wins) rather than
-  by object-iteration order — left recorded.
+# Tag merge and split fixes - definition identity and split acquisition
 
 ## Goal
 
-- Applying a tag never throws because of a field-name collision; the colliding
-  field is skipped and everything else lands (A12: degrade on the user path).
-- Merging two tags unifies their same-named, same-typed fields into one
-  definition, instances relinked; a merged tag is never poisoned.
-- Splitting a node keeps its tags but mints no creation-moment data: no seed
-  clones, no default values. Auto-init still runs (a split's right half acquires
-  its tags at that moment; the ratified tag-schema-projection plan already names
-  `splitNode` in its auto-init exception).
+- Make tag application and tag merge follow Tana's field identity model:
+  `fieldDefId`, not the display name, decides whether two fields are the same.
+  Same-name fields backed by different definitions coexist.
+- Make name-based field writes deterministic when Schema contains duplicate
+  labels: direct owner entries take precedence, then the owner's applied tag
+  inheritance chains provide a specific-first definition choice.
+- Make same-parent node splits retain tag-driven field structure without
+  re-stamping defaults or seed content. Acquisition-time auto-initialization
+  still runs.
 
 ## Non-goals
 
-- The storage-model change (fields as projection) — that is
-  `tag-schema-projection`, already ratified. These fixes land first and are
-  deliberately behavior-level: PR 1 there later deletes P1's throw site (apply
-  stops writing entries) and shrinks split's writes to auto-init only, while the
-  behaviors pinned here — collision skips, merge unifies, split doesn't re-seed —
-  survive as its tests.
-- Migration for documents that already contain a poisoned tag (pre-release: wipe
-  dev userData).
-- Exposing `merge_definitions` in the renderer.
-- Validating definition renames.
+- Automatically merging field definitions because their display names match.
+- Silently choosing between multiple same-name field entries already visible on
+  one owner.
+- Adding an originating-tag suffix or other visual disambiguator to duplicate
+  field labels. Tana presents identical labels, and v1 follows that behavior.
+- Changing the field storage model; that belongs to `tag-schema-projection`.
+- Migrating pre-release data or exposing `merge_definitions` in the renderer.
+
+## Problem
+
+Tag template stamping currently treats a field label as an owner-level unique
+key. Applying two independently authored tags that each define `Status`
+therefore throws from `ensureFieldEntryWithTemplateDirect`. The tag is written
+before template instantiation, so the failed command can also leave a partial
+result. Forward done-state mapping reaches the same throw site.
+
+The first attempted repair skipped the second field at runtime and unified
+compatible same-name definitions during tag merge. That is not Tana's model and
+creates a document-wide side effect: merging two tags can delete a shared field
+definition and rewrite a third tag that the user never selected.
+
+Tana's documented contract resolves both defects:
+
+- A field's primary instance carries one definition object. Selecting an
+  existing field reuses that definition and its settings.
+- Generic node merge combines children, and combines values only when both
+  nodes contain the same field.
+
+Therefore, "same field" means the same definition identity. A label is only
+presentation. Two independently created `Status` fields remain two fields
+after their supertags merge.
+
+Sources:
+
+- [Fields](https://outliner.tana.inc/learn/features/fields)
+- [Supertags](https://outliner.tana.inc/learn/features/supertags)
+- [Merging duplicate nodes](https://outliner.tana.inc/learn/features/nodes-and-references#merging-duplicate-nodes)
+
+A separate split defect remains: `splitNode` runs full template
+instantiation on the right half. A text edit can therefore recreate static
+defaults and seed children that describe a newly created instance.
 
 ## Shape
 
-**(b) Two independent complete features, one PR each**, no ordering between
-them.
+**(b) Two independent complete features, one PR each.** Definition-identity
+semantics and split acquisition touch nearby Core surfaces but have no behavior
+or merge-order dependency.
 
 ## Design
 
-### Fix 1 — collisions skip, merges unify
+### Feature A - field definition identity
 
-**Degrade at the stamp boundary.** `ensureFieldEntryWithTemplateDirect` gets a
-collision check instead of the bare assert: when the owner already has a
-same-named field entry backed by a *different* definition, it returns `undefined`
-without creating anything — the tag applies, the colliding field is simply not
-stamped for this node. The check must be the assert's own matching converted
-into a query (`normalizeFieldNameKey` semantics, trash filtering) — one matcher,
-not a hand-rolled second one that can drift.
+#### Tag application and done mapping
 
-The helper has exactly three callers, and skip must be handled at each:
+`ensureFieldEntryWithTemplateDirect` is keyed only by `fieldDefId`. It reuses
+an existing entry for that exact definition and otherwise creates a new entry,
+even when another entry on the owner has the same normalized display name.
+`instantiateTagTemplateDirect` continues to walk the specific-first extends
+chain, so it materializes every unique definition in that chain. Reapplying a
+tag remains idempotent because the identity check still deduplicates the same
+definition.
 
-- `instantiateTagTemplateDirect` — ignores the return value; nothing to do.
-- `applyForwardDoneMappingDirect` — consumes the returned `entryId`
-  unconditionally today (`clearFieldEntryValuesDirect` +
-  `selectFieldOptionDirect`); on skip the mapping degrades too (that field's
-  done-sync is skipped, the toggle itself succeeds). This is the fourth repro
-  fixed, not a new behavior.
-- `createFieldDef` — the authoring path; its fail-closed behavior is carried by
-  the *outer* per-tagged-node assert the command already runs before the loop,
-  not by the helper. Stated so the helper's softening cannot be read as
-  softening authoring.
+`applyForwardDoneMappingDirect` already carries the mapped `fieldDefId`.
+It creates or updates that exact entry and never needs a name-collision skip or
+runtime diagnostic.
 
-`assertOwnerDoesNotHaveFieldName` keeps throwing where a human is choosing a
-name right then (`createFieldDef`, `create_inline_field`,
-`reuse_field_definition` paths) — there the error is the feature. This is the
-A12 line: fail-closed where data is being authored, degrade where a stored
-document is being *used*.
+Explicit authoring remains fail-closed. `createFieldDef`,
+`createInlineFieldAfterNode`, `reuseFieldDefinition`, and field rename still
+reject a second same-name field on the owner. Runtime composition of two tags is
+a legitimate state; explicitly authoring a duplicate on one owner is still
+treated as a likely mistake.
 
-Pre-projection, the skipped field is invisible on that node (nothing renders a
-def-less field); post-projection it becomes a visible second slot per decision
-D3. Both are acceptable; the second is better, which is the point of the
-projection plan.
+#### Tag merge
 
-**Merge unifies by name.** `mergeTagDefinitionsDirect`, before moving template
-children: for each source template field whose `definitionNameKey` matches a
-target template field backed by a different definition, attempt to merge the
-definitions — `mergeFieldDefinitionsDirect` already exists and relinks every
-entry in the document, so instance entries follow automatically and the
-subsequent template-children pass dedupes on the now-shared `fieldDefId`.
+`mergeTagDefinitionsDirect` follows generic node-merge identity semantics:
 
-**The unification gate covers all three of that helper's throw conditions**, not
-just the obvious one: type mismatch, options-from-supertag source mismatch, and
-`assertFieldDefinitionValuesCompatible` — document-wide value validation that
-can fail even on same-type pairs, because `setFieldConfig` retypes a field
-without revalidating stored values (two `date` defs can hold plain-era free
-text). A blind call would let one dirty value anywhere kill the whole tag merge —
-recreating the one-operation-permanent-damage class this plan exists to remove.
-Unification is therefore attempt-per-name-pair with fallback to keep-both,
-gated by a non-throwing compatibility predicate extracted from
-`mergeFieldDefinitionsDirect`'s checks (all of which run before any mutation,
-so the fallback is transaction-safe by construction).
+- A source template entry whose `fieldDefId` is absent from the target moves
+  to the target unchanged, regardless of its label or field type.
+- When source and target template entries share the same `fieldDefId`, all
+  source value children append to the surviving target entry. Existing
+  instances whose `templateId` names the removed source entry are rewritten to
+  the target entry before the source is deleted.
+- Source tag references are rewritten to the target tag, then the source tag is
+  removed.
 
-Where a pair is incompatible, the definitions stay separate, both template
-entries survive on the merged tag, and Fix 1's skip guard keeps `applyTag`
-alive — two same-named fields on one tag becomes a renderable wart instead of a
-poison pill, and projection D3 later renders it honestly.
+Tag merge never merges field definitions by name and never relinks uses on an
+unselected third tag. Explicitly merging two field-definition ids remains
+document-wide because the user named those identities directly. Its
+compatibility validation may index active entries once per command to avoid
+repeated full-document scans without changing the contract.
 
-Unification compares **direct template children only**; collisions arriving
-through an extends chain are not unified (merging tags does not edit third
-tags), and the skip guard covers that residue at apply time — `getExtendsChain`
-is specific-first, so the specific tag's field wins the stamp.
+#### Name-based field resolution
 
-**Merged template defaults: the target's win.** The template-children dedupe
-path moves the source entry's value children into the target's template entry,
-so after unification `#issue` default `Inbox` + `#bug` default `New` would stamp
-*both* on every future instantiation. Instead, when the target's template entry
-for the now-shared definition already holds default values, the source template
-entry's defaults are dropped with the entry. (Instance-entry value merging in
-`mergeFieldDefinitionsDirect` is untouched — there the values are user data and
-appending is correct.)
+The resolver keeps owner entries as the first authority:
 
-### Fix 2 — split stops re-stamping
+- One direct owner entry with the requested normalized label wins.
+- More than one direct owner entry is ambiguous. The write refuses and returns
+  the entry ids, instructing the caller to address the intended entry by id or
+  rename one field.
 
-`splitNode`'s same-parent branch replaces its `instantiateTagTemplateDirect`
-call with a field-structure-only variant: each template field goes through
-`ensureFieldEntryWithTemplateDirect` with `cloneDefaults: false` — which
-preserves auto-init via the existing empty-entry path
-(`applyAutoInitializeDirect`) — and the `getTemplateContentNodes` clone loop
-does not run at all. Rationale: a split is a text edit; the right half is a
-continuation of an existing thing, not a new instance. Seeds and static
-defaults are creation-moment statements ("a new X starts with…") and a split
-creates no new X. Auto-init is the one deliberate exception, consistent with
-the projection plan's freeze-at-acquisition rule.
+When the owner has no matching entry and Schema has multiple active definitions
+with that label, resolution uses the owner's applied tags. For every applied
+tag, walk its extends chain specific-first. Compare all chains by inheritance
+depth: the first depth containing matching template definitions wins if it has
+exactly one unique `fieldDefId`. Reuse of the same definition by several tags
+still counts as one candidate. No reachable candidate, or multiple candidates
+at the winning depth, preserves the existing
+`duplicate_field_definitions` error.
 
-`applyChildTagsDirect` (the other non-apply acquisition site) is unchanged: a
-newly created child *is* a new instance; full instantiation there is correct.
+`FieldResolutionNode` therefore includes `tags`. Core projections already
+carry them. Agent create preflight gives each prospective owner the ids of its
+resolved tags so permission analysis selects the same definition as execution.
+Unknown tags contribute no existing definition.
 
-## Sequencing and collisions
+#### Rendering and view identity
 
-Both fixes touch `src/core/core.ts` only (plus tests). Open PRs #533 and #534
-touch the same file in unrelated regions (save pipeline; table field columns) —
-textual rebase risk only. The tag-schema-projection implementation branch
-rebases on top of these; its PR 1 inherits their tests as pinned behavior.
+Duplicate labels stay visually identical. Identity-sensitive renderer and view
+paths remain keyed by `fieldDefId` or entry id:
 
-## Checklist
+- `buildOutlinerRows` emits one row per field entry.
+- `value_is_default` resolves through each entry's own `templateId`.
+- Table default columns and View Toolbar field choices retain separate
+  definitions even when their labels match.
 
-**PR A — collision skip + merge unification**
+No source-tag badge or label suffix is added.
 
-- [ ] `ensureFieldEntryWithTemplateDirect`: same-name/different-def → skip
-      (`undefined`), via a query converted from the assert's own matcher;
-      authoring paths keep the assert (via `createFieldDef`'s outer per-node
-      check)
-- [ ] `applyForwardDoneMappingDirect` handles skip: the mapping degrades, the
-      done toggle succeeds
-- [ ] Non-throwing compatibility predicate extracted from
-      `mergeFieldDefinitionsDirect` (type, options source, values-compatible);
-      `mergeTagDefinitionsDirect` unifies per name-pair, falls back to keep-both
-- [ ] Template-defaults rule on dedupe: target's defaults win; source template
-      entry's defaults are dropped, instance values still merge
-- [ ] Core tests (from the audit repros): two tags with same-named fields apply
-      cleanly to one node, second field skipped; done toggle on a collided
-      mapped field degrades instead of crashing; merging unifies the definition
-      and relinks instance entries; merging with an incompatible pair (type
-      mismatch AND values-incompatible same-type pair) keeps both and the merged
-      tag still applies; merged template stamps only the target's defaults;
-      same-name collision across an extends chain applies with the
-      specific-first winner; re-apply stays idempotent
-- [ ] `docs/spec/commands.md`: apply_tag collision semantics; merge_definitions
-      name-unification rule (first-time spec coverage for merge_definitions)
+### Feature B - split without re-stamping
 
-**PR B — split re-stamp removal**
+The same-parent branch of `splitNode` replaces full tag-template
+instantiation with field-structure acquisition. Each inherited template field
+goes through `ensureFieldEntryWithTemplateDirect` with
+`cloneDefaults: false`; the template-content clone loop does not run.
 
-- [ ] `splitNode`: field structure + auto-init only; no default cloning; no seed
-      content cloning
-- [ ] Core tests: split right half has empty template fields (no default
-      values), no seed clones; auto-init date field still fills on the right
-      half; cross-parent split (`applyChildTagsDirect` path) still fully
-      instantiates
-- [ ] `docs/spec/commands.md`: split_node acquisition semantics (tags carry
-      over; nothing creation-moment is re-stamped; auto-init freezes)
+The empty-entry path still invokes `applyAutoInitializeDirect`. This is
+intentional: a split's right half acquires its tags at that moment, while static
+defaults and seed content are statements about creating a new instance.
+
+Cross-parent split remains unchanged. Moving into a parent with
+`childSupertag` is real tag acquisition and still applies defaults and seed
+content. `applyChildTagsDirect` keeps full instantiation for the same reason.
+
+## Implementation Surface
+
+Feature A:
+
+- `src/core/core.ts`
+- `src/core/fieldResolution.ts`
+- `src/main/agent/capabilities/agentNodeTools.ts`
+- focused Core, field-resolution, agent-tool, and renderer tests
+- `docs/spec/commands.md`, `docs/spec/ui-behavior.md`, and removal of the
+  obsolete collision diagnostic from `docs/spec/error-observability.md`
+
+Feature B:
+
+- `src/core/core.ts`
+- focused Core tests
+- `docs/spec/commands.md`
+
+`FieldResolutionNode.tags` is a shared internal surface, so all consumers and
+tests change in Feature A rather than as an unrelated follow-up. The two
+features edit disjoint symbols and test groups within their shared files.
+
+## Risks
+
+- Multiple applied tags can expose genuinely ambiguous same-name entries.
+  Name-based writes must refuse rather than pick by traversal order.
+- Extends chains can contain cycles or inactive tags. Resolution uses a visited
+  set and stops at the first invalid link.
+- Collapsing same-definition template entries must rewrite every live
+  `templateId` before deletion or `value_is_default` silently degrades.
+- View and row collections must never deduplicate by display label.
+- Split acquisition must preserve auto-init while excluding both static field
+  defaults and non-field seed nodes.
+
+## Verification
+
+### Feature A
+
+- [ ] Applying two tags with independently defined same-name fields creates both
+      entries and remains idempotent.
+- [ ] Done mapping updates its exact definition when a same-name field coexists.
+- [ ] Tag merge preserves same-name/different-definition template entries and
+      does not rewrite a third tag sharing one source definition.
+- [ ] Tag merge combines all values and rewrites template origins only for the
+      same definition.
+- [ ] Explicit field-definition merge remains compatible and document-wide.
+- [ ] Field resolution covers a specific tag over its ancestor, same-depth
+      ambiguity, no reachable candidate, one definition reused by multiple tags,
+      and owner-entry ambiguity.
+- [ ] Outliner rows, `value_is_default`, Table defaults, and view choices keep
+      duplicate labels as separate identities.
+
+### Feature B
+
+- [ ] Same-parent split retains tags and empty field structure without static
+      defaults or seed content.
+- [ ] Acquisition-time auto-init still materializes on the right half.
+- [ ] Cross-parent child-supertag acquisition still applies full defaults and
+      seed content.

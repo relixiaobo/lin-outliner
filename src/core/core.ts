@@ -247,17 +247,6 @@ export interface CorePersistenceOptions {
   installationId?: string;
 }
 
-export interface CoreRuntimeDiagnostic {
-  code: 'done-state-field-sync-collision';
-  message: string;
-  context: {
-    operation: 'done-state-forward-mapping';
-    nodeId: NodeId;
-  };
-}
-
-export type CoreRuntimeDiagnosticHandler = (diagnostic: CoreRuntimeDiagnostic) => void;
-
 export interface WorkspacePersistenceLocalDelta {
   installationId: string;
   replicaId: string;
@@ -409,7 +398,6 @@ export class Core {
   private persistenceMetadataSequenceValue = 0;
   private persistenceMetadataChanges: PersistenceMetadataChange[] = [];
   private loadedPersistenceVersionValue = new Uint8Array();
-  private runtimeDiagnosticHandler?: CoreRuntimeDiagnosticHandler;
   private lastRevisionDelta: CoreRevisionDelta = {
     revision: 0,
     changedNodeIds: [],
@@ -491,18 +479,6 @@ export class Core {
    *  so the today node id stays stable across launches. */
   requiresInitialPersist(): boolean {
     return this.initialPersistRequired;
-  }
-
-  setRuntimeDiagnosticHandler(handler: CoreRuntimeDiagnosticHandler | undefined): void {
-    this.runtimeDiagnosticHandler = handler;
-  }
-
-  private reportRuntimeDiagnostic(diagnostic: CoreRuntimeDiagnostic): void {
-    try {
-      this.runtimeDiagnosticHandler?.(diagnostic);
-    } catch {
-      // Observability must not turn a degraded runtime path into a failed mutation.
-    }
   }
 
   static new(options: CorePersistenceOptions = {}) {
@@ -2024,14 +2000,6 @@ export class Core {
       const optionId = isDone ? mapping.checkedOptionIds[0] : mapping.uncheckedOptionIds[0];
       if (!optionId) continue;
       const entryId = this.ensureFieldEntryWithTemplateDirect(nodeId, mapping.fieldDefId, undefined, false);
-      if (!entryId) {
-        this.reportRuntimeDiagnostic({
-          code: 'done-state-field-sync-collision',
-          message: 'Skipped done-state field synchronization because the owner has a conflicting field name.',
-          context: { operation: 'done-state-forward-mapping', nodeId },
-        });
-        continue;
-      }
       // Done-state mapping is a controlled binary state-sync (part of the checkbox
       // mechanism): replace the prior state option rather than appending. Free
       // field-value editing always appends — this is the checkbox exception.
@@ -2468,13 +2436,9 @@ export class Core {
     });
   }
 
-  private mergeFieldDefinitionsDirect(
-    targetId: string,
-    sourceIds: string[],
-    indexedEntryIds?: FieldEntryIdsByDefinition,
-  ) {
+  private mergeFieldDefinitionsDirect(targetId: string, sourceIds: string[]) {
     const initial = this.snapshot();
-    const entryIdsByDefinition = indexedEntryIds ?? indexActiveFieldEntryIdsByDefinition(initial);
+    const entryIdsByDefinition = indexActiveFieldEntryIdsByDefinition(initial);
     const targetType = fieldTypeOf(initial, targetId);
     for (const sourceId of sourceIds) {
       const compatibilityError = this.fieldDefinitionMergeCompatibilityError(
@@ -2574,48 +2538,11 @@ export class Core {
 
   private mergeTagDefinitionsDirect(targetId: string, sourceIds: string[]) {
     for (const sourceId of sourceIds) {
-      this.unifyCompatibleTagTemplateFieldsDirect(sourceId, targetId);
       this.mergeTagTemplateChildrenDirect(sourceId, targetId);
       this.rewriteTagDefinitionRefsDirect(sourceId, targetId);
       this.removeSubtreeDirect(sourceId);
     }
     this.touchNodeDirect(targetId);
-  }
-
-  private unifyCompatibleTagTemplateFieldsDirect(sourceTagId: string, targetTagId: string) {
-    const initial = this.snapshot();
-    const sourceEntryIds = [...initial.nodes[sourceTagId]?.children ?? []];
-    const entryIdsByDefinition = indexActiveFieldEntryIdsByDefinition(initial);
-    for (const sourceEntryId of sourceEntryIds) {
-      const state = this.snapshot();
-      const sourceEntry = state.nodes[sourceEntryId];
-      const sourceFieldDefId = sourceEntry?.type === 'fieldEntry' ? sourceEntry.fieldDefId : undefined;
-      if (!sourceFieldDefId || !isActiveFieldDefinition(state, sourceFieldDefId)) continue;
-
-      const nameKey = normalizeFieldNameKey(fieldNameForDefId(state, sourceFieldDefId));
-      if (!nameKey) continue;
-      const targetEntries = (state.nodes[targetTagId]?.children ?? [])
-        .map((entryId) => state.nodes[entryId])
-        .filter((entry): entry is FieldEntryNode => entry?.type === 'fieldEntry' && !isInTrash(state, entry.id));
-      if (targetEntries.some((entry) => entry.fieldDefId === sourceFieldDefId)) continue;
-
-      for (const targetEntry of targetEntries) {
-        const targetFieldDefId = targetEntry.fieldDefId;
-        if (
-          !targetFieldDefId
-          || !isActiveFieldDefinition(state, targetFieldDefId)
-          || normalizeFieldNameKey(fieldNameForDefId(state, targetFieldDefId)) !== nameKey
-        ) continue;
-        if (this.fieldDefinitionMergeCompatibilityError(
-          state,
-          sourceFieldDefId,
-          targetFieldDefId,
-          entryIdsByDefinition,
-        )) continue;
-        this.mergeFieldDefinitionsDirect(targetFieldDefId, [sourceFieldDefId], entryIdsByDefinition);
-        break;
-      }
-    }
   }
 
   private mergeTagTemplateChildrenDirect(sourceTagId: string, targetTagId: string) {
@@ -2629,9 +2556,7 @@ export class Core {
           return candidate?.type === 'fieldEntry' && candidate.fieldDefId === child.fieldDefId && !isInTrash(state, candidate.id);
         });
         if (targetEntryId) {
-          if (state.nodes[targetEntryId]?.children.length === 0) {
-            for (const valueId of [...child.children]) this.loro.moveNode(valueId, targetEntryId, undefined);
-          }
+          for (const valueId of [...child.children]) this.loro.moveNode(valueId, targetEntryId, undefined);
           this.rewriteTemplateOriginRefsDirect(childId, targetEntryId);
           this.removeSubtreeDirect(childId);
           this.touchNodeDirect(targetEntryId);
@@ -4574,9 +4499,6 @@ export class Core {
       return child?.type === 'fieldEntry' && child.fieldDefId === fieldDefId;
     });
     if (existing) return existing;
-    if (findOwnerFieldEntriesByName(state, nodeId, fieldNameForDefId(state, fieldDefId)).length > 0) {
-      return undefined;
-    }
     const id = this.insertFieldEntryNodeDirect(nodeId, 0, fieldDefId);
     if (templateOriginId) {
       this.patchNodeData(id, (node) => {
@@ -5902,33 +5824,24 @@ function richTextPatchResultText(content: RichText, patch: RichTextPatch): strin
   return text;
 }
 
-function findOwnerFieldEntriesByName(
-  state: DocumentState,
-  ownerId: NodeId | null | undefined,
-  fieldName: string,
-  excludeEntryId?: NodeId,
-): NodeId[] {
-  const key = normalizeFieldNameKey(fieldName);
-  if (!ownerId || !key) return [];
-  const byId = fieldResolutionMap(state);
-  const owner = state.nodes[ownerId];
-  if (!owner) return [];
-  return owner.children.filter((childId) => {
-    if (childId === excludeEntryId) return false;
-    const child = state.nodes[childId];
-    return child?.type === 'fieldEntry'
-      && !isInTrash(state, childId)
-      && normalizeFieldNameKey(fieldEntryDisplayName(byId, child as FieldResolutionNode)) === key;
-  });
-}
-
 function assertOwnerDoesNotHaveFieldName(
   state: DocumentState,
   ownerId: NodeId | null | undefined,
   fieldName: string,
   excludeEntryId?: NodeId,
 ) {
-  const matches = findOwnerFieldEntriesByName(state, ownerId, fieldName, excludeEntryId);
+  const key = normalizeFieldNameKey(fieldName);
+  if (!ownerId || !key) return;
+  const byId = fieldResolutionMap(state);
+  const owner = state.nodes[ownerId];
+  if (!owner) return;
+  const matches = owner.children.filter((childId) => {
+    if (childId === excludeEntryId) return false;
+    const child = state.nodes[childId];
+    return child?.type === 'fieldEntry'
+      && !isInTrash(state, childId)
+      && normalizeFieldNameKey(fieldEntryDisplayName(byId, child as FieldResolutionNode)) === key;
+  });
   if (matches.length > 0) {
     throw CoreError.invalidOperation(`duplicate field "${fieldName}" on owner ${ownerId}: ${matches.join(', ')}`);
   }

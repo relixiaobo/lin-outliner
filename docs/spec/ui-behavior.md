@@ -354,6 +354,21 @@ When a field-first popover drills into an editor pane, focus moves to the pane's
 back control. That keeps Escape scoped to the popover and preserves keyboard
 dismissal after the clicked field row unmounts.
 
+Field display names are labels, not identities. A name-based write first uses a
+single matching direct entry on the owner. Multiple matching entries are an
+honest ambiguity: the write refuses with their entry ids and directs the caller
+to address the intended entry by id or rename one field. When no direct entry
+matches and Schema contains several active definitions with that label, the
+owner's applied tag chains provide precedence. Resolution checks the direct tags
+first, then each inheritance depth in specific-first order; the first layer with
+exactly one unique matching `fieldDefId` wins. No reachable candidate or more
+than one candidate at that layer preserves the duplicate-definition error.
+
+Outliner field rows, `value_is_default` comparison, View Toolbar choices, and
+Table columns remain keyed by field-entry or definition id. Two independently
+defined fields may therefore render as separate rows or columns with identical
+labels, matching Tana; no originating-tag suffix is added.
+
 When a row context-menu action reveals a nested View Toolbar from a collapsed
 row, the row expands in the same interaction so the toolbar becomes visible
 immediately. The menu label follows visibility in the current row: a configured

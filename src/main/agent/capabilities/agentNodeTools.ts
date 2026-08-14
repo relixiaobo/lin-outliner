@@ -4171,14 +4171,18 @@ function validateOutlineMutationScope(
     if (parentWriteIssue) return parentWriteIssue;
   }
 
-  const nestedFields: OutlineField[] = [];
+  const nestedFields: Array<{ field: OutlineField; tagIds: string[] }> = [];
   let createsTagDefinition = false;
   const visitNode = (node: OutlineNode) => {
     if (node.tags.some((tagName) => !findTagByName(index, tagName))) {
       createsTagDefinition = true;
     }
     if (node.search) return;
-    nestedFields.push(...node.fields);
+    const tagIds = node.tags.flatMap((tagName) => {
+      const tag = findTagByName(index, tagName);
+      return tag ? [tag.id] : [];
+    });
+    nestedFields.push(...node.fields.map((field) => ({ field, tagIds })));
     node.children.forEach(visitNode);
   };
   document.roots.forEach(visitNode);
@@ -4198,7 +4202,7 @@ function validateOutlineMutationScope(
     ))
     .map((resolution) => resolution.ok ? resolution.target : null);
   const nestedTargets = nestedFields
-    .map((field, fieldIndex) => resolveProspectiveFieldWriteTarget(index, field, fieldIndex));
+    .map(({ field, tagIds }, fieldIndex) => resolveProspectiveFieldWriteTarget(index, field, fieldIndex, tagIds));
 
   for (const target of [...topLevelTargets, ...nestedTargets].filter(
     (candidate): candidate is FieldWriteTarget => candidate !== null,
@@ -4211,7 +4215,7 @@ function validateOutlineMutationScope(
 
   const fieldsAndTargets = [
     ...document.fields.map((field, fieldIndex) => ({ field, target: topLevelTargets[fieldIndex] })),
-    ...nestedFields.map((field, fieldIndex) => ({ field, target: nestedTargets[fieldIndex] })),
+    ...nestedFields.map(({ field }, fieldIndex) => ({ field, target: nestedTargets[fieldIndex] })),
   ];
   for (const { field, target } of fieldsAndTargets) {
     const fieldDefId = target?.kind === 'existingFieldDef'
@@ -4242,6 +4246,7 @@ function resolveProspectiveFieldWriteTarget(
   index: ProjectionIndex,
   field: OutlineField,
   fieldIndex: number,
+  tagIds: string[],
 ): FieldWriteTarget | null {
   const ownerId = `virtual:node-create:${fieldIndex}`;
   const nodes = new Map<string, FieldResolutionNode>();
@@ -4249,6 +4254,7 @@ function resolveProspectiveFieldWriteTarget(
   nodes.set(ownerId, {
     id: ownerId,
     children: [],
+    tags: tagIds,
     content: plainText(''),
   });
   const resolution = resolveFieldWriteTarget(

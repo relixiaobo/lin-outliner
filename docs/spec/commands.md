@@ -110,29 +110,27 @@ all reject trashed definitions. Name-based creation ignores trashed same-name
 definitions and creates a fresh active definition under Schema.
 
 `apply_tag` stamps active fields from the tag's specific-first inheritance chain.
-An existing entry backed by the same field definition is reused. If the owner
-instead has an entry with the same normalized display name backed by another
-definition, that template field is skipped while the tag and all non-colliding
-template content continue to apply. Forward done-state mapping uses the same
-runtime boundary: a collided mapped field is skipped without aborting the done
-toggle, and records a local diagnostic for the skipped synchronization. Explicit
-field creation, reuse, and rename remain fail-closed on owner name collisions.
+Field identity is the `fieldDefId`, not the normalized display name. An existing
+entry backed by the same definition is reused; same-name entries backed by
+different definitions are instantiated alongside one another. Reapplying a tag
+therefore stays idempotent without suppressing an independently defined field.
+Forward done-state mapping also addresses its exact `fieldDefId`. Explicit field
+creation, reuse, and rename remain fail-closed on owner name collisions.
 
 `merge_definitions(targetId, sourceIds)` merges field definitions only when their
 types match, `options_from_supertag` sources match, and every stored source value
-is valid for the target type. A tag-definition merge rewrites source-tag uses and
-moves its direct template children into the target. Direct template fields with
-the same non-empty normalized definition name are unified first when that field
-compatibility check succeeds. This uses the runtime collision key, including
-collapsed internal whitespace; cleared names remain distinct. Field-definition
-unification is document-wide: every active use of the source definition is
-relinked to the target, including template entries on tags outside the requested
-tag pair, and option pools are merged. Incompatible pairs remain as separate
-template entries, relying on the runtime collision rule above when the merged tag
-is applied. When unification deduplicates two template entries, existing target
-defaults win; source defaults fill the target only when it has no defaults.
-Instance values remain merged as user data, and their template origin is repointed
-to the surviving target template entry.
+is valid for the target type. A field-definition merge is document-wide: every
+active use of each named source definition is relinked to the target and option
+pools are combined.
+
+A tag-definition merge instead follows template-child identity. It rewrites
+source-tag uses and moves direct template children into the target. A source
+field whose `fieldDefId` is absent from the target moves intact even when
+another target field has the same label. When both tags reuse the same
+`fieldDefId`, their template entries collapse: all source value children append
+to the target, instance `templateId` references are repointed to the surviving
+entry, and the source entry is removed. Tag merge never unifies field definitions
+by name and does not rewrite a third tag outside the requested tag merge.
 
 `reuse_field_definition(entryId, targetDefId)` repoints a field entry at an
 existing definition instead of the throwaway draft `>` minted, dropping the now

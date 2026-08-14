@@ -428,13 +428,6 @@ const APP_ICON_PNG_PATH = app.isPackaged
   ? join(process.resourcesPath, 'icon.png')
   : join(__dirname, '../../build/icon.png');
 const documentService = new DocumentService();
-documentService.setRuntimeDiagnosticHandler((diagnostic) => reportError({
-  domain: 'document',
-  severity: 'warn',
-  code: diagnostic.code,
-  message: diagnostic.message,
-  context: diagnostic.context,
-}));
 const extensionRegistry = new ExtensionRegistry();
 const memoryControlStore = new MemoryControlStore(join(app.getPath('userData'), 'agent', 'memories.sqlite'));
 const timelineMemoryStore = new TimelineMemoryStore(documentService);
