@@ -158,7 +158,10 @@ export class ThreadStore {
       loading: false,
       error: null,
     });
-    if (selected) await this.loadTurns(selected);
+    if (selected) {
+      void this.loadSubagentExecutions(selected).catch(() => undefined);
+      await this.loadTurns(selected);
+    }
   }
 
   async selectThread(threadId: ThreadId): Promise<void> {
