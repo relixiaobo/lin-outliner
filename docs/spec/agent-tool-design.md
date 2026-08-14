@@ -300,8 +300,9 @@ a non-leaf policy, and a requested-tool ceiling that admits `agent`; a Role's
 configuration text cannot advertise an unreachable type. Role `tools: ['*']`
 normalizes to an inherited ceiling, while Role `tools: []` is an explicit
 zero-tool admission error that refuses before provider I/O. This does not change
-the separate isolated-Skill contract, where omitted `allowed-tools` deliberately
-creates a tool-free child.
+the separate isolated-Skill authoring contract: its parser normalizes omitted
+`allowed-tools` to an explicit empty array, which deliberately creates a
+tool-free child.
 
 `agent_message` and Agent-form `task_stop` never target the caller itself or an
 isolated-Skill Thread. `task_stop` may address only a shell task owned by the

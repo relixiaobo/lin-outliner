@@ -1252,7 +1252,7 @@ export function ThreadView({
       spacer: sendAnchorSpacerRef.current,
       top: scroll.scrollTop,
     } : null;
-    const pendingSend: PendingSendAnchor | null = activeTurn ? null : {
+    const pendingSend: PendingSendAnchor = {
       releaseFollowOnAnchor: Boolean(
         scroll
         && scroll.scrollHeight - scroll.clientHeight > TRANSCRIPT_BOTTOM_FOLLOW_THRESHOLD_PX,
@@ -1283,7 +1283,7 @@ export function ThreadView({
     try {
       const acceptedTurn = await onSend(submittedContent);
       if (pendingSendScrollRef.current === pendingSend) {
-        if (pendingSend && acceptedTurn && pendingSend.threadId === threadId) {
+        if (acceptedTurn && pendingSend.threadId === threadId) {
           pendingSend.targetTurnId = acceptedTurn.id;
           setPendingSendVersion((version) => version + 1);
         } else {

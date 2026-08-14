@@ -25,6 +25,7 @@ EmptyAgentCoreResponse,
 JsonValue,
 PrivilegedTurnStartRequest,
 RendererTurnStartRequest,
+RendererTurnSubmitRequest,
 RequestUserInputResponse,
 RoleCatalogContextPayload,
 SkillCatalogContextPayload,
@@ -62,6 +63,7 @@ ThreadUserContent,
 Turn,
 TurnId,
 TurnStartResponse,
+TurnSubmitResponse,
 TurnSteerRequest,
 TurnSteerResponse
 } from '../../core/agent/protocol';
@@ -85,6 +87,7 @@ import {
 import { ExtensionRegistry } from './ExtensionRegistry';
 import { GoalExtension } from './extensions/goal/GoalExtension';
 import { GoalStore } from './extensions/goal/GoalStore';
+import { KeyedMutex } from './Mutex';
 import {
 RolloutStore,
 type ThreadHistoryRollbackMarker
@@ -404,6 +407,8 @@ export class ThreadService implements ThreadServiceExtensionHost {
   private readonly transcriptExclusions: ThreadTranscriptExclusions;
   private readonly beliefs: ThreadDocumentBeliefs;
   private readonly turnLifecycle: TurnLifecycle;
+  private readonly rendererSubmissionMutex = new KeyedMutex();
+  private readonly pendingRendererSubmissions = new Set<Promise<TurnSubmitResponse>>();
   private initialized = false;
   private closing = false;
 
@@ -548,7 +553,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       { addUsage: (...args) => this.goals.addUsage(...args) },
       options.normalizeOutputImage,
       this.now,
-      (message) => new ThreadBusyError(message),
+      (message, rendererSubmissionRetryable) => new ThreadBusyError(message, rendererSubmissionRetryable),
       (error) => error instanceof ThreadBusyError,
     );
     this.collaboration = new SubagentCollaboration(
@@ -575,7 +580,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       this.now,
       applyToolCeiling,
       (threadId) => this.assertStartupThreadAvailable(threadId),
-      (message) => new ThreadBusyError(message),
+      (message, rendererSubmissionRetryable) => new ThreadBusyError(message, rendererSubmissionRetryable),
       this.transcripts,
     );
     this.catalogOps = new ThreadCatalogOps(
@@ -1117,6 +1122,10 @@ export class ThreadService implements ThreadServiceExtensionHost {
     for (const pending of pendingNames) pending.abort();
     for (const pending of this.pendingUserInputs.values()) pending.abort();
     for (const turn of this.activeTurns.values()) turn.controller.abort();
+    const rendererSubmissions = [...this.pendingRendererSubmissions];
+    if (!await settleBeforeDeadline(Promise.allSettled(rendererSubmissions), drainDeadline)) {
+      console.warn(`[agent] Thread shutdown timed out with ${rendererSubmissions.length} renderer submission(s) pending`);
+    }
     if (!await settleBeforeDeadline(
       Promise.allSettled(pendingNames.map((pending) => pending.completion)),
       drainDeadline,
@@ -1274,6 +1283,10 @@ export class ThreadService implements ThreadServiceExtensionHost {
         return await this.readTurnDetails(
           decoded as AgentCoreRequestByMethod['thread/turn/details/read'],
         ) as AgentCoreResponseByMethod[Method];
+      case 'turn/submit':
+        return await this.submitRendererInput(
+          decoded as AgentCoreRequestByMethod['turn/submit'],
+        ) as AgentCoreResponseByMethod[Method];
       case 'turn/start':
         return await this.startRendererTurn(decoded as AgentCoreRequestByMethod['turn/start']) as AgentCoreResponseByMethod[Method];
       case 'turn/steer':
@@ -1406,6 +1419,76 @@ export class ThreadService implements ThreadServiceExtensionHost {
   async startRendererTurn(request: RendererTurnStartRequest): Promise<TurnStartResponse> {
     this.assertStartupThreadAvailable(request.threadId);
     return this.collaboration.startRendererTurn(request);
+  }
+  async submitRendererInput(request: RendererTurnSubmitRequest): Promise<TurnSubmitResponse> {
+    this.assertStartupThreadAvailable(request.threadId);
+    const submission = this.rendererSubmissionMutex.run(request.threadId, async () => {
+      this.assertRendererSubmissionOpen();
+      if (this.turnLifecycle.isRendererContextCommand(request.input)) {
+        const response = await this.collaboration.startRendererTurn(
+          request,
+          () => this.assertRendererSubmissionOpen(),
+        );
+        return {
+          turn: response.deduplicated ? null : response.turn,
+          turnId: response.turn.id,
+          acceptedItemId: response.acceptedItemId,
+          deduplicated: response.deduplicated,
+        };
+      }
+      for (;;) {
+        this.assertRendererSubmissionOpen();
+        const activeTurnId = this.turnLifecycle.activeTurnId(request.threadId);
+        if (activeTurnId !== null) {
+          try {
+            const response = await this.turnLifecycle.steerTurn({
+              ...request,
+              expectedTurnId: activeTurnId,
+            }, 'fatal', () => this.assertRendererSubmissionOpen());
+            return { turn: null, ...response };
+          } catch (error) {
+            if (!(error instanceof ThreadBusyError) || !error.rendererSubmissionRetryable) throw error;
+            this.assertRendererSubmissionRetryable(request.threadId, error);
+            await this.turnLifecycle.waitForTurnCompletion(request.threadId, activeTurnId);
+            continue;
+          }
+        }
+
+        try {
+          const response = await this.collaboration.startRendererTurn(
+            request,
+            () => this.assertRendererSubmissionOpen(),
+          );
+          return {
+            turn: response.deduplicated ? null : response.turn,
+            turnId: response.turn.id,
+            acceptedItemId: response.acceptedItemId,
+            deduplicated: response.deduplicated,
+          };
+        } catch (error) {
+          if (!(error instanceof ThreadBusyError) || !error.rendererSubmissionRetryable) throw error;
+          this.assertRendererSubmissionRetryable(request.threadId, error);
+        }
+      }
+    });
+    this.pendingRendererSubmissions.add(submission);
+    try {
+      return await submission;
+    } finally {
+      this.pendingRendererSubmissions.delete(submission);
+    }
+  }
+  private assertRendererSubmissionRetryable(threadId: ThreadId, error: ThreadBusyError): void {
+    if (this.closing) throw error;
+    this.assertStartupThreadAvailable(threadId);
+    const record = this.core.requireThread(threadId);
+    if (record.archived || this.core.stoppingThreads.has(threadId)) throw error;
+    if (this.turnLifecycle.activeTurnId(threadId) === null && record.thread.status.type !== 'idle') {
+      throw error;
+    }
+  }
+  private assertRendererSubmissionOpen(): void {
+    if (this.closing) throw new ThreadBusyError('Agent service is shutting down');
   }
   async startPrivilegedTurn(request: PrivilegedTurnStartRequest): Promise<TurnStartResponse> {
     this.assertStartupThreadAvailable(request.threadId);
@@ -1790,7 +1873,10 @@ type ContextCommand =
   | { readonly kind: 'compact'; readonly instructions: string };
 
 export class ThreadBusyError extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    readonly rendererSubmissionRetryable = false,
+  ) {
     super(message);
     this.name = 'ThreadBusyError';
   }

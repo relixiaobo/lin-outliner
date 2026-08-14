@@ -40,6 +40,7 @@ import {
   type RequestUserInputRequest,
   type RequestUserInputQuestion,
   type RendererTurnStartRequest,
+  type RendererTurnSubmitRequest,
   type Thread,
   type ThreadAttachmentContent,
   type ThreadContextPayload,
@@ -513,6 +514,20 @@ export function decodeRendererTurnStartRequest(value: unknown): RendererTurnStar
     ...(record.clientUserMessageId === undefined
       ? {}
       : { clientUserMessageId: nullableString(record.clientUserMessageId, 'turnStart.clientUserMessageId') }),
+    ...(record.additionalContext === undefined
+      ? {}
+      : { additionalContext: decodeAdditionalContext(record.additionalContext, false) }),
+    ...(record.userView === undefined ? {} : { userView: decodeRendererUserViewHints(record.userView) }),
+  });
+}
+
+function decodeRendererTurnSubmitRequest(value: unknown): RendererTurnSubmitRequest {
+  const record = recordValue(value, 'turn/submit');
+  exactKeys(record, ['threadId', 'input', 'clientUserMessageId', 'additionalContext', 'userView'], 'turn/submit');
+  return deepFreeze({
+    threadId: uuidV7(record.threadId, 'turn/submit.threadId'),
+    input: arrayValue(record.input, 'turn/submit.input').map(decodeUserContent),
+    clientUserMessageId: stringValue(record.clientUserMessageId, 'turn/submit.clientUserMessageId'),
     ...(record.additionalContext === undefined
       ? {}
       : { additionalContext: decodeAdditionalContext(record.additionalContext, false) }),
@@ -1023,6 +1038,9 @@ export function decodeAgentCoreRequest<M extends AgentCoreMethod>(
     case 'thread/turn/details/read':
       decoded = decodeThreadTurnDetailsReadRequest(value);
       break;
+    case 'turn/submit':
+      decoded = decodeRendererTurnSubmitRequest(value);
+      break;
     case 'turn/start':
       decoded = decodeRendererTurnStartRequest(value);
       break;
@@ -1105,6 +1123,9 @@ export function decodeAgentCoreResponse<M extends AgentCoreMethod>(
       break;
     case 'thread/turn/details/read':
       decoded = decodeThreadTurnDetailsReadResponse(value);
+      break;
+    case 'turn/submit':
+      decoded = decodeTurnSubmitResponse(value);
       break;
     case 'turn/start':
       decoded = decodeTurnStartResponse(value);
@@ -1617,6 +1638,17 @@ function decodeTurnStartResponse(value: unknown): AgentCoreResponseByMethod['tur
     turn: decodeTurn(record.turn),
     acceptedItemId: stringValue(record.acceptedItemId, 'turn/start response.acceptedItemId'),
     deduplicated: booleanValue(record.deduplicated, 'turn/start response.deduplicated'),
+  });
+}
+
+function decodeTurnSubmitResponse(value: unknown): AgentCoreResponseByMethod['turn/submit'] {
+  const record = recordValue(value, 'turn/submit response');
+  exactKeys(record, ['turn', 'turnId', 'acceptedItemId', 'deduplicated'], 'turn/submit response');
+  return deepFreeze({
+    turn: record.turn === null ? null : decodeTurn(record.turn),
+    turnId: uuidV7(record.turnId, 'turn/submit response.turnId'),
+    acceptedItemId: stringValue(record.acceptedItemId, 'turn/submit response.acceptedItemId'),
+    deduplicated: booleanValue(record.deduplicated, 'turn/submit response.deduplicated'),
   });
 }
 

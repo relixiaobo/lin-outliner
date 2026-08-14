@@ -198,10 +198,11 @@ describe('renderer Thread store', () => {
         if (method === 'thread/turns/list') return { data: [], nextCursor: null, backwardsCursor: null };
         if (method === 'goal/get') return { goal: null };
         if (method === 'thread/configuration/get') return configurationResponse(owner);
-        if (method === 'turn/start') return {
+        if (method === 'turn/submit') return {
           acceptedItemId: 'item-accepted',
           deduplicated: false,
           turn: startedTurn,
+          turnId: startedTurn.id,
         };
         throw new Error(`Unexpected method: ${method}`);
       },
@@ -225,7 +226,7 @@ describe('renderer Thread store', () => {
       { type: 'text', text: ' before deciding.  ' },
     ]);
 
-    expect(calls.find((call) => call.method === 'turn/start')?.input.input).toEqual([
+    expect(calls.find((call) => call.method === 'turn/submit')?.input.input).toEqual([
       { type: 'text', text: 'Compare ' },
       { type: 'nodeReference', nodeId: 'node-1', note: 'Plan' },
       { type: 'text', text: ' with ' },
@@ -235,7 +236,7 @@ describe('renderer Thread store', () => {
     expect(acceptedTurn).toEqual(startedTurn);
   });
 
-  test('steers an active child with the user view without selecting it', async () => {
+  test('submits user input for an active child without renderer-side Turn routing', async () => {
     const owner = thread('thread-root', 2);
     const child = {
       ...thread('thread-child', 1),
@@ -260,7 +261,9 @@ describe('renderer Thread store', () => {
         }
         if (method === 'goal/get') return { goal: null };
         if (method === 'thread/configuration/get') return configurationResponse(owner);
-        if (method === 'turn/steer') return { acceptedItemId: 'steer-item', deduplicated: false };
+        if (method === 'turn/submit') {
+          return { turn: null, turnId: active.id, acceptedItemId: 'steer-item', deduplicated: false };
+        }
         throw new Error(`Unexpected method: ${method}`);
       },
     } as unknown as ThreadStoreClient;
@@ -272,16 +275,16 @@ describe('renderer Thread store', () => {
     expect(await store.sendToThread(child.id, [{ type: 'text', text: '  Check logs next.  ' }], userView))
       .toBeNull();
 
-    const steer = calls.find((call) => call.method === 'turn/steer');
-    expect(steer?.input).toMatchObject({
+    const submit = calls.find((call) => call.method === 'turn/submit');
+    expect(submit?.input).toMatchObject({
       threadId: child.id,
-      expectedTurnId: active.id,
       input: [{ type: 'text', text: 'Check logs next.' }],
       userView,
     });
-    expect(typeof steer?.input.clientUserMessageId).toBe('string');
+    expect(submit?.input).not.toHaveProperty('expectedTurnId');
+    expect(typeof submit?.input.clientUserMessageId).toBe('string');
     expect(store.getSnapshot().selectedThreadId).toBe(owner.id);
-    expect(calls.some((call) => call.method === 'turn/start')).toBe(false);
+    expect(calls.some((call) => call.method === 'turn/start' || call.method === 'turn/steer')).toBe(false);
   });
 
   test('starts a new user Turn for a terminal child without selecting it', async () => {
@@ -310,8 +313,8 @@ describe('renderer Thread store', () => {
         }
         if (method === 'goal/get') return { goal: null };
         if (method === 'thread/configuration/get') return configurationResponse(owner);
-        if (method === 'turn/start') {
-          return { acceptedItemId: 'start-item', deduplicated: false, turn: started };
+        if (method === 'turn/submit') {
+          return { acceptedItemId: 'start-item', deduplicated: false, turn: started, turnId: started.id };
         }
         throw new Error(`Unexpected method: ${method}`);
       },
@@ -324,15 +327,15 @@ describe('renderer Thread store', () => {
     expect(await store.sendToThread(child.id, [{ type: 'text', text: 'Continue.' }], userView))
       .toEqual(started);
 
-    const start = calls.find((call) => call.method === 'turn/start');
-    expect(start?.input).toMatchObject({
+    const submit = calls.find((call) => call.method === 'turn/submit');
+    expect(submit?.input).toMatchObject({
       threadId: child.id,
       input: [{ type: 'text', text: 'Continue.' }],
       userView,
     });
-    expect(typeof start?.input.clientUserMessageId).toBe('string');
+    expect(typeof submit?.input.clientUserMessageId).toBe('string');
     expect(store.getSnapshot().selectedThreadId).toBe(owner.id);
-    expect(calls.some((call) => call.method === 'turn/steer')).toBe(false);
+    expect(calls.some((call) => call.method === 'turn/start' || call.method === 'turn/steer')).toBe(false);
   });
 
   test('loads Turns and Goal for the replacement selected after deleting the current Thread', async () => {

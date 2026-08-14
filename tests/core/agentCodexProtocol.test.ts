@@ -1554,6 +1554,11 @@ describe('Codex Agent Core protocol codec', () => {
         contextId: contextRef.id,
       },
       'thread/turn/details/read': { threadId: THREAD_ID, turnId: TURN_ID },
+      'turn/submit': {
+        threadId: THREAD_ID,
+        input: [{ type: 'text', text: 'Submit' }],
+        clientUserMessageId: 'client-submit',
+      },
       'turn/start': {
         threadId: THREAD_ID,
         input: [{ type: 'text', text: 'Start' }],
@@ -1614,6 +1619,12 @@ describe('Codex Agent Core protocol codec', () => {
         context: { ref: rpcContextRef, payload: rpcContextPayload },
       },
       'thread/turn/details/read': { thread, turn: completedTurn, diagnostics: null },
+      'turn/submit': {
+        turn: completedTurn,
+        turnId: TURN_ID,
+        acceptedItemId: 'item-1',
+        deduplicated: false,
+      },
       'turn/start': { turn: completedTurn, acceptedItemId: 'item-1', deduplicated: false },
       'turn/steer': { turnId: TURN_ID, acceptedItemId: 'item-1', deduplicated: true },
       'turn/interrupt': { turnId: TURN_ID },

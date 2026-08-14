@@ -1236,6 +1236,37 @@ describe('agent skills', () => {
     });
   });
 
+  test('normalizes omitted isolated Skill allowed-tools to an empty executor ceiling', async () => {
+    const root = await createSkillFixture('isolated-default', {
+      frontmatter: [
+        'description: Tool-free isolated skill',
+        'execution: isolated',
+      ],
+      body: 'Run without tools.',
+    });
+    let executorAllowedTools: readonly string[] | null = null;
+    const runtime = new AgentSkillRuntime({
+      localRoot: root,
+      includeUserSkills: false,
+      executeIsolatedSkill: async ({ skill }) => {
+        executorAllowedTools = [...skill.allowedTools];
+        return {
+          threadId: 'tool-free-isolated-thread',
+          agentRole: 'default',
+          status: 'completed',
+          result: 'Completed without tools',
+        };
+      },
+    });
+
+    expect((await runtime.getSkill('isolated-default'))?.allowedTools).toEqual([]);
+    const invocation = await runtime.invokeSkill({ skill: 'isolated-default', trigger: 'agent' });
+    expect(invocation.ok).toBe(true);
+    if (!invocation.ok) return;
+    expect(executorAllowedTools).toEqual([]);
+    expect(invocation.evidence.constraints.allowedTools).toEqual([]);
+  });
+
   test('reports an interrupted isolated child as partial evidence, not as a failed call', async () => {
     // The user can Stop an isolated Skill child from its delegation row. Its
     // Turn settles as `interrupted`, which is terminal — so the parent's call

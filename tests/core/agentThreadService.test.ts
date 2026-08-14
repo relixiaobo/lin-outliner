@@ -34,6 +34,7 @@ import type { AssetMetadata, DocumentProjection, NodeProjection } from '../../sr
 import type { ErrorReport } from '../../src/core/errorObservability';
 import { ExtensionRegistry } from '../../src/main/agent/ExtensionRegistry';
 import {
+  ThreadBusyError,
   ThreadService,
   type SpawnChildThreadResult,
   type ThreadServiceStores,
@@ -966,6 +967,42 @@ describe('ThreadService', () => {
     warning.mockRestore();
   });
 
+  test('drains renderer submission admission and fences its commit during shutdown', async () => {
+    let releaseAdmission!: () => void;
+    let admissionStarted!: () => void;
+    const admissionRelease = new Promise<void>((resolve) => { releaseAdmission = resolve; });
+    const admissionStart = new Promise<void>((resolve) => { admissionStarted = resolve; });
+    const fixture = await createFixture(undefined, {
+      resolveSkillAdmission: async () => {
+        admissionStarted();
+        await admissionRelease;
+        return { catalogSnapshot: null, preloadedInvocations: [], invocation: null };
+      },
+    });
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const submitted = fixture.service.submitRendererInput({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Do not commit after shutdown starts' }],
+      clientUserMessageId: 'shutdown-fenced-submission',
+    });
+    await admissionStart;
+
+    let closeSettled = false;
+    const closing = fixture.service.close().finally(() => { closeSettled = true; });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(closeSettled).toBe(false);
+    releaseAdmission();
+
+    await expect(submitted).rejects.toThrow('Agent service is shutting down');
+    await closing;
+    expect(fixture.executor.contexts).toHaveLength(0);
+  });
+
   test('never lets an in-flight automatic name replace a manual rename or clear', async () => {
     const nameGenerator = new ControlledNameGenerator(true);
     const fixture = await createFixture(undefined, { nameGenerator });
@@ -1625,6 +1662,17 @@ describe('ThreadService', () => {
       threadId: thread.id,
       input: [{ type: 'text', text: '/clear' }],
     })).rejects.toThrow('active Turn');
+    await expect(fixture.service.submitRendererInput({
+      threadId: thread.id,
+      input: [{ type: 'text', text: '/compact' }],
+      clientUserMessageId: 'active-submit-compact',
+    })).rejects.toThrow('active Turn');
+    await expect(fixture.service.submitRendererInput({
+      threadId: thread.id,
+      input: [{ type: 'text', text: '/clear' }],
+      clientUserMessageId: 'active-submit-clear',
+    })).rejects.toThrow('active Turn');
+    expect(fixture.executor.steered).toEqual([]);
 
     fixture.executor.finish();
     await fixture.service.waitForIdle(thread.id);
@@ -2085,6 +2133,60 @@ describe('ThreadService', () => {
       item.type === 'userMessage'
       && item.content.some((part) => part.type === 'text' && part.text === 'Do not admit this after execution ends')
     ))).toBe(false);
+    await fixture.service.close();
+  });
+
+  test('waits through a finishing Turn before admitting the same renderer submission', async () => {
+    const fixture = await createFixture();
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const first = await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Finish before the next message' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+
+    let releaseDiagnostics!: () => void;
+    let diagnosticsStarted!: () => void;
+    const diagnosticsRelease = new Promise<void>((resolve) => { releaseDiagnostics = resolve; });
+    const diagnosticsStart = new Promise<void>((resolve) => { diagnosticsStarted = resolve; });
+    fixture.executor.finish(0, {
+      ...completedExecutionResult(),
+      refreshDiagnostics: async () => {
+        diagnosticsStarted();
+        await diagnosticsRelease;
+        return null;
+      },
+    });
+    await diagnosticsStart;
+
+    let submissionSettled = false;
+    const submitted = fixture.service.submitRendererInput({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Start only after terminalization' }],
+      clientUserMessageId: 'submit-after-finishing-turn',
+    }).finally(() => { submissionSettled = true; });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(submissionSettled).toBe(false);
+
+    releaseDiagnostics();
+    const accepted = await submitted;
+    expect(accepted.deduplicated).toBe(false);
+    expect(accepted.turn).not.toBeNull();
+    expect(accepted.turnId).toBe(accepted.turn?.id);
+    expect(accepted.turn?.id).not.toBe(first.turn.id);
+    await fixture.executor.waitUntilWaiting(1);
+    expect(turnUserText(fixture.executor.contexts[1]!.turn)).toContain('Start only after terminalization');
+    expect(fixture.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns?.flatMap((turn) => (
+      turn.items.filter((item) => item.type === 'userMessage' && item.clientId === 'submit-after-finishing-turn')
+    ))).toHaveLength(1);
+
+    fixture.executor.finish(1, completedExecutionResult());
+    await fixture.service.waitForIdle(thread.id);
     await fixture.service.close();
   });
 
@@ -8197,6 +8299,160 @@ describe('ThreadService', () => {
     await fixture.service.close();
   });
 
+  test('admits a user submission first when an idle notification is deferred at the root boundary', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Delegate before the next user message' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'deferred-notification-spawn');
+    const child = await spawnBackgroundAgent(
+      fixture,
+      root.id,
+      rootTurn.turn.id,
+      'deferred-notification-spawn',
+      'deferred notification child',
+      'Finish after the root becomes idle',
+    );
+    await fixture.executor.waitUntilWaiting(1);
+    fixture.executor.finish(0, completedExecutionResult(0));
+    await fixture.service.waitForIdle(root.id);
+
+    let releaseRootBarrier!: () => void;
+    let rootBarrierEntered!: () => void;
+    const rootBarrierRelease = new Promise<void>((resolve) => { releaseRootBarrier = resolve; });
+    const rootBarrierEntry = new Promise<void>((resolve) => { rootBarrierEntered = resolve; });
+    const rootBarrier = fixture.service.withHostRootTurnAdmissionBarrier(async () => {
+      rootBarrierEntered();
+      await rootBarrierRelease;
+    });
+    await rootBarrierEntry;
+
+    const claim = fixture.stores.subagentExecutions.claim.bind(fixture.stores.subagentExecutions);
+    let notificationClaimed!: () => void;
+    const notificationClaim = new Promise<void>((resolve) => { notificationClaimed = resolve; });
+    fixture.stores.subagentExecutions.claim = (agentId, generation) => {
+      const claimed = claim(agentId, generation);
+      if (claimed && agentId === child.thread.id && generation === 1) notificationClaimed();
+      return claimed;
+    };
+    fixture.executor.finish(1, completedExecutionResult(1));
+    await fixture.service.waitForIdle(child.thread.id);
+    await notificationClaim;
+    await waitUntil(() => fixture.stores.subagentExecutions.notificationState(child.thread.id, 1) === 'pending');
+
+    const submitted = fixture.service.submitRendererInput({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Use my message before the child notification' }],
+      clientUserMessageId: 'user-wins-notification-race',
+    });
+    releaseRootBarrier();
+    await rootBarrier;
+    const accepted = await submitted;
+    expect(accepted.turn).not.toBeNull();
+    expect(accepted.turn?.provenance.trigger).toEqual({ kind: 'user' });
+    await fixture.executor.waitUntilWaiting(2);
+    expect(turnUserText(fixture.executor.contexts[2]!.turn))
+      .toContain('Use my message before the child notification');
+    expect(turnUserText(fixture.executor.contexts[2]!.turn)).not.toContain('<task-notification>');
+    expect(fixture.stores.subagentExecutions.notificationState(child.thread.id, 1)).toBe('pending');
+
+    fixture.executor.finish(2, completedExecutionResult(0));
+    await fixture.executor.waitUntilWaiting(3);
+    expect(turnUserText(fixture.executor.contexts[3]!.turn)).toContain(`<task-id>${child.thread.id}</task-id>`);
+    fixture.executor.finish(3, completedExecutionResult(0));
+    await fixture.service.waitForIdle(root.id);
+    await fixture.service.close();
+  });
+
+  test('steers user input when an idle notification wins the root admission race', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Delegate before notification admission' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'winning-notification-spawn');
+    const child = await spawnBackgroundAgent(
+      fixture,
+      root.id,
+      rootTurn.turn.id,
+      'winning-notification-spawn',
+      'winning notification child',
+      'Finish after the root becomes idle',
+    );
+    await fixture.executor.waitUntilWaiting(1);
+    fixture.executor.finish(0, completedExecutionResult(0));
+    await fixture.service.waitForIdle(root.id);
+    fixture.executor.finish(1, completedExecutionResult(1));
+    await fixture.service.waitForIdle(child.thread.id);
+    await fixture.executor.waitUntilWaiting(2);
+    const notification = fixture.executor.contexts[2]!;
+    expect(notification.turn.provenance.trigger.kind).toBe('subagent');
+
+    const accepted = await fixture.service.submitRendererInput({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Admit this while the notification Turn is active' }],
+      clientUserMessageId: 'notification-wins-user-race',
+    });
+    expect(accepted).toMatchObject({
+      turn: null,
+      turnId: notification.turn.id,
+      deduplicated: false,
+    });
+    expect(fixture.executor.steered).toContain('Admit this while the notification Turn is active');
+    expect(turnUserText({ ...notification.turn, items: notification.recorder.orderedItems() }))
+      .toContain('Admit this while the notification Turn is active');
+
+    fixture.executor.finish(2, completedExecutionResult(0));
+    await fixture.service.waitForIdle(root.id);
+    await fixture.service.close();
+  });
+
+  test('does not retry a non-lifecycle busy failure on an idle Thread', async () => {
+    const fixture = await createFixture();
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const collaboration = Reflect.get(fixture.service, 'collaboration') as {
+      startRendererTurn: ThreadService['startRendererTurn'];
+    };
+    const startRendererTurn = collaboration.startRendererTurn;
+    let calls = 0;
+    collaboration.startRendererTurn = async () => {
+      calls += 1;
+      throw new ThreadBusyError(`Agent ${thread.id} changed while resuming`);
+    };
+
+    try {
+      await expect(fixture.service.submitRendererInput({
+        threadId: thread.id,
+        input: [{ type: 'text', text: 'Do not spin on a persistent busy state' }],
+        clientUserMessageId: 'non-retryable-busy-submission',
+      })).rejects.toThrow('changed while resuming');
+    } finally {
+      collaboration.startRendererTurn = startRendererTurn;
+    }
+    expect(calls).toBe(1);
+    await fixture.service.close();
+  });
+
   test('waits for the Turn Skill registry before assembling runtime tools', async () => {
     const fixture = await createFixture();
     const thread = (await fixture.service.startThread({
@@ -9893,9 +10149,10 @@ describe('ThreadService', () => {
 
     expect(fixture.service.subagentExecution(child.thread.id)?.stopProvenance).toBe('user');
 
-    const nextTurn = await fixture.service.startRendererTurn({
+    const nextTurn = await fixture.service.submitRendererInput({
       threadId: root.id,
       input: [{ type: 'text', text: 'Ask that agent again' }],
+      clientUserMessageId: 'stopped-agent-followup',
     });
     await fixture.executor.waitUntilWaiting(2);
     await recordAgentMessageBoundary(
@@ -9907,7 +10164,7 @@ describe('ThreadService', () => {
     const refused = await executeAgentMessage(
       fixture,
       root.id,
-      nextTurn.turn.id,
+      nextTurn.turnId,
       'revive-followup',
       child.thread.id,
       'Continue in a new request',

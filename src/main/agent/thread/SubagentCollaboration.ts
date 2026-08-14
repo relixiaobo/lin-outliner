@@ -154,7 +154,7 @@ export class SubagentCollaboration {
     private readonly now: () => number,
     private readonly applyToolCeiling: (configuration: EffectiveThreadConfiguration, toolCeiling: readonly string[] | null) => EffectiveThreadConfiguration,
     private readonly assertThreadAvailable: (threadId: ThreadId) => void,
-    private readonly createThreadBusyError: (message: string) => Error,
+    private readonly createThreadBusyError: (message: string, rendererSubmissionRetryable?: boolean) => Error,
     private readonly transcripts: ThreadTranscriptWriter,
   ) {}
   execution(threadId: ThreadId): SubagentExecutionRecord | null {
@@ -173,7 +173,10 @@ export class SubagentCollaboration {
       || policy.requestedTools.includes('*')
       || policy.requestedTools.includes('agent');
   }
-  async startRendererTurn(request: RendererTurnStartRequest): Promise<TurnStartResponse> {
+  async startRendererTurn(
+    request: RendererTurnStartRequest,
+    admissionGuard?: () => void,
+  ): Promise<TurnStartResponse> {
     const thread = this.core.requireThread(request.threadId).thread;
     const initial = this.executions.read(request.threadId);
     if (thread.threadSource === 'subagent') {
@@ -184,10 +187,10 @@ export class SubagentCollaboration {
         throw this.createThreadBusyError(`Delegated Agent admission is incomplete: ${request.threadId}`);
       }
     }
-    if (!initial) return this.turnLifecycle.startRendererTurn(request);
+    if (!initial) return this.turnLifecycle.startRendererTurn(request, undefined, admissionGuard);
 
     if (this.turnLifecycle.isRendererContextCommand(request.input)) {
-      const response = await this.turnLifecycle.startRendererTurn(request);
+      const response = await this.turnLifecycle.startRendererTurn(request, undefined, admissionGuard);
       if (!response.deduplicated) this.clearUserStop(request.threadId);
       return response;
     }
@@ -200,13 +203,13 @@ export class SubagentCollaboration {
           request.threadId,
           request.clientUserMessageId,
         )
-      ) return this.turnLifecycle.startRendererTurn(request);
+      ) return this.turnLifecycle.startRendererTurn(request, undefined, admissionGuard);
 
       await this.ensureTerminalPipeline(initial.agentId, initial.generation);
       if (this.closing) throw this.createThreadBusyError('Agent service is shutting down');
       const current = this.executions.require(request.threadId);
       if (this.turnLifecycle.hasActiveTurn(current.agentId)) {
-        throw this.createThreadBusyError('Thread already has an active Turn');
+        throw this.createThreadBusyError('Thread already has an active Turn', true);
       }
       const snapshot = this.executions.generationSnapshot(current.agentId);
       const worktree = await this.prepareWorktreeForResume(current);
@@ -225,7 +228,7 @@ export class SubagentCollaboration {
       }
       let admitted = false;
       try {
-        const response = await this.turnLifecycle.startRendererTurn(request, nextTurnId);
+        const response = await this.turnLifecycle.startRendererTurn(request, nextTurnId, admissionGuard);
         if (response.deduplicated || response.turn.id !== nextTurnId) {
           throw new Error(`Renderer Agent resume did not admit its reserved Turn: ${current.agentId}`);
         }
@@ -876,6 +879,9 @@ export class SubagentCollaboration {
             // capability policy against the complete registry; filtering here
             // would silently discard MCP/extension contributions.
             const policyTools = resolvedConfiguration.tools;
+            // Generic Agent spawns may omit this field to inherit the policy
+            // pool. The isolated-Skill wrapper requires an array, so omitted
+            // `allowed-tools` authoring reaches this seam as an explicit `[]`.
             const requestedCeiling = input.allowedTools === undefined
               ? policyTools
               : policyTools.filter((tool) => new Set(input.allowedTools).has(tool));

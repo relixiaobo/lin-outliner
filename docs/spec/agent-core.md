@@ -246,6 +246,20 @@ equivalent audit edge in Thread history.
 only lifecycle coordinator. It serializes acceptance per Thread, enforces one
 active Turn, and deduplicates renderer submissions by stable client message ID.
 
+The renderer sends non-command user input through `turn/submit`; it never chooses
+`turn/start` versus `turn/steer` from a cached Turn snapshot. Main serializes
+submissions per Thread and re-evaluates canonical ownership until the input is
+admitted exactly once: an idle Thread starts a user Turn, an active Turn that is
+still accepting input is steered, and a finishing Turn is awaited before the
+same `clientUserMessageId` is retried. Internal notification admission may win
+the same race, but it cannot surface `ThreadBusyError` to the user: the input is
+then steered into that Turn or starts immediately after it settles. Archived,
+stopping, quarantined, unavailable, and shutting-down Threads remain real
+rejection states. Shutdown drains already-entered renderer submissions before
+closing their persistence stores; queued retries cannot admit after shutdown begins.
+The strict `turn/start` and `turn/steer` methods remain available for callers
+that already own an exact lifecycle precondition.
+
 Starting a Turn follows this order:
 
 1. Resolve the Thread and reject an incompatible active state.
@@ -283,7 +297,9 @@ Skill routing. They require an idle Thread and create completed feature-triggere
 containing only a canonical `contextCompaction` or `contextReset`; they do not launch a
 model Turn. A command with no new eligible boundary returns the existing boundary as an
 idempotent no-op. Both commands retain the visible and auditable history they stop
-projecting implicitly.
+projecting implicitly. `turn/submit` preserves that idle-only boundary: it never steers a
+reserved command into an active model Turn, and an admission race therefore remains a
+real busy rejection for these commands.
 
 Steering uses the same evidence admission path. Its evidence and user Item become
 durable before the live executor is notified, so queued and immediate steering have

@@ -488,7 +488,7 @@ test.describe('canonical agent Thread surface', () => {
       'thread/start',
       'thread/turn/details/read',
       'thread/turns/list',
-      'turn/start',
+      'turn/submit',
       'goal/get',
     ]));
   });
@@ -1136,8 +1136,8 @@ test.describe('canonical agent Thread surface', () => {
     await expect(page.locator('.thread-composer-inline-ref')).toContainText('Alpha');
     await page.getByRole('button', { name: 'Send' }).click();
 
-    const start = (await commandCalls(page)).filter((call) => call.cmd === 'turn/start').at(-1);
-    expect(start?.args.input).toEqual([{
+    const submit = (await commandCalls(page)).filter((call) => call.cmd === 'turn/submit').at(-1);
+    expect(submit?.args.input).toEqual([{
       type: 'nodeReference',
       nodeId: ids.alpha,
       note: 'Alpha',
@@ -1153,8 +1153,8 @@ test.describe('canonical agent Thread surface', () => {
     await composer.pressSequentially('after');
     await page.getByRole('button', { name: 'Send' }).click();
 
-    const start = (await commandCalls(page)).filter((call) => call.cmd === 'turn/start').at(-1);
-    expect(start?.args.input).toEqual([
+    const submit = (await commandCalls(page)).filter((call) => call.cmd === 'turn/submit').at(-1);
+    expect(submit?.args.input).toEqual([
       { type: 'text', text: 'Before ' },
       { type: 'nodeReference', nodeId: ids.alpha, note: 'Alpha' },
       { type: 'text', text: ' after' },
@@ -1187,8 +1187,8 @@ test.describe('canonical agent Thread surface', () => {
     await expect(page.locator('.thread-composer-inline-ref')).toHaveCount(3);
     await page.getByRole('button', { name: 'Send' }).click();
 
-    const start = (await commandCalls(page)).filter((call) => call.cmd === 'turn/start').at(-1);
-    const input = start?.args.input as Array<{
+    const submit = (await commandCalls(page)).filter((call) => call.cmd === 'turn/submit').at(-1);
+    const input = submit?.args.input as Array<{
       name?: string;
       sizeBytes?: number;
       source?: { kind?: string; ref?: { id?: string } };
@@ -1266,8 +1266,8 @@ test.describe('canonical agent Thread surface', () => {
     await expect(directoryRef).toContainText('workspace');
     await page.getByRole('button', { name: 'Send' }).click();
 
-    const start = (await commandCalls(page)).filter((call) => call.cmd === 'turn/start').at(-1);
-    expect(start?.args.input).toEqual([expect.objectContaining({
+    const submit = (await commandCalls(page)).filter((call) => call.cmd === 'turn/submit').at(-1);
+    expect(submit?.args.input).toEqual([expect.objectContaining({
       type: 'attachment',
       name: 'workspace',
       mimeType: 'inode/directory',
@@ -1503,8 +1503,8 @@ test.describe('canonical agent Thread surface', () => {
     await expect(imageRef).toHaveAttribute('data-inline-ref-thumbnail-data-url', /^data:image\/png;base64,/);
     await page.getByRole('button', { name: 'Send' }).click();
 
-    const start = (await commandCalls(page)).filter((call) => call.cmd === 'turn/start').at(-1);
-    expect(start?.args.input).toEqual([expect.objectContaining({
+    const submit = (await commandCalls(page)).filter((call) => call.cmd === 'turn/submit').at(-1);
+    expect(submit?.args.input).toEqual([expect.objectContaining({
       type: 'attachment',
       name: 'reference.png',
       mimeType: 'image/png',
@@ -1538,8 +1538,8 @@ test.describe('canonical agent Thread surface', () => {
     await expect(imageRef).toHaveAttribute('data-inline-ref-thumbnail-data-url', /^blob:/);
     await page.getByRole('button', { name: 'Send' }).click();
 
-    const start = (await commandCalls(page)).filter((call) => call.cmd === 'turn/start').at(-1);
-    const attachment = (start?.args.input as Array<{
+    const submit = (await commandCalls(page)).filter((call) => call.cmd === 'turn/submit').at(-1);
+    const attachment = (submit?.args.input as Array<{
       mimeType?: string;
       sizeBytes?: number;
       source?: { kind?: string; ref?: { byteLength?: number; mimeType?: string } };
@@ -2195,12 +2195,12 @@ test.describe('canonical agent Thread surface', () => {
     await expect(detail.getByRole('listbox', { name: 'Thread slash commands' })).toHaveCount(0);
     await childComposer.fill('Continue with deployment logs.');
     await detail.getByRole('button', { name: 'Send' }).click();
-    const childStart = (await commandCalls(page)).filter((call) => call.cmd === 'turn/start').at(-1);
-    expect(childStart?.args).toMatchObject({
+    const childSubmit = (await commandCalls(page)).filter((call) => call.cmd === 'turn/submit').at(-1);
+    expect(childSubmit?.args).toMatchObject({
       threadId: childId,
       input: [{ type: 'text', text: 'Continue with deployment logs.' }],
     });
-    expect(childStart?.args.userView).toBeDefined();
+    expect(childSubmit?.args.userView).toBeDefined();
     await expect(page.locator('.thread-dock-title')).toHaveText(parentTitle);
     // The mock settles the resumed Turn synchronously, so no Stop remains.
     await expect(detail.getByRole('button', { name: 'Interrupt Turn' })).toHaveCount(0);
@@ -5609,8 +5609,9 @@ test.describe('canonical agent Thread surface', () => {
     await expect(page.getByRole('button', { name: 'Interrupt Turn' })).toHaveCount(0);
     await page.getByRole('button', { name: 'Steer' }).click();
 
-    const steer = (await commandCalls(page)).filter((call) => call.cmd === 'turn/steer').at(-1);
-    expect(steer?.args.input).toEqual([{ type: 'text', text: 'Use the shorter path.' }]);
+    const submit = (await commandCalls(page)).filter((call) => call.cmd === 'turn/submit').at(-1);
+    expect(submit?.args.input).toEqual([{ type: 'text', text: 'Use the shorter path.' }]);
+    expect(submit?.args).not.toHaveProperty('expectedTurnId');
   });
 
   test('uses the established step flow for canonical user input without losing the composer draft', async ({ page }) => {
@@ -6429,8 +6430,8 @@ test.describe('canonical agent Thread surface', () => {
   });
 });
 
-test('restores the reader position when turn/start rejects', async ({ page }) => {
-  await openMockedApp(page, { agentTurnStartReject: 'Mock turn/start rejection' });
+test('restores the reader position when turn/submit rejects', async ({ page }) => {
+  await openMockedApp(page, { agentTurnSubmitReject: 'Mock turn/submit rejection' });
   await page.evaluate(async () => {
     const target = window as Window & {
       lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
@@ -6478,13 +6479,89 @@ test('restores the reader position when turn/start rejects', async ({ page }) =>
   await composer.fill('Keep my reading position when this fails.');
   await page.getByRole('button', { name: 'Send' }).click();
 
-  await expect(page.locator('.thread-inline-error')).toContainText('Mock turn/start rejection');
+  await expect(page.locator('.thread-inline-error')).toContainText('Mock turn/submit rejection');
   await expect(composer).toHaveText('Keep my reading position when this fails.');
   await expect.poll(() => transcript.evaluate((element) => element.scrollTop))
     .toBeGreaterThan(savedTop - 2);
   await expect.poll(() => transcript.evaluate((element) => element.scrollTop))
     .toBeLessThan(savedTop + 2);
   await expect(page.getByRole('button', { name: 'Jump to latest' })).toBeVisible();
+});
+
+test('anchors a new Turn when the request-time active Turn finishes during submission', async ({ page }) => {
+  await openMockedApp(page, { agentTurnSubmitFinishingDelayMs: 40 });
+  await seedOverflowingTranscript(page);
+  const activeTurnId = await page.evaluate(async () => {
+    const target = window as Window & {
+      lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+      __LIN_E2E__?: {
+        emitAgentCoreNotification: (notification: unknown) => void;
+        setMockThreadActive: (threadId: string, active: boolean) => void;
+      };
+    };
+    const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+    const threadId = response?.data[0]?.id;
+    if (!threadId) throw new Error('Mock Thread not found');
+    const turnId = '01910000-0000-7000-8000-00000000fd01';
+    const userItemId = '01910000-0000-7000-8000-00000000fd02';
+    const responseItemId = '01910000-0000-7000-8000-00000000fd03';
+    target.__LIN_E2E__?.emitAgentCoreNotification({
+      type: 'turn/started',
+      threadId,
+      turnId,
+      turn: {
+        id: turnId,
+        items: [
+          {
+            id: userItemId,
+            type: 'userMessage',
+            provenance: { originThreadId: threadId, originTurnId: turnId, originItemId: userItemId },
+            content: [{ type: 'text', text: 'Finish this request before admitting the next one.' }],
+          },
+          {
+            id: responseItemId,
+            type: 'agentMessage',
+            provenance: { originThreadId: threadId, originTurnId: turnId, originItemId: responseItemId },
+            text: 'Finishing response.',
+            phase: 'final_answer',
+            memoryCitation: null,
+          },
+        ],
+        itemsView: 'full',
+        provenance: { originThreadId: threadId, originTurnId: turnId, trigger: { kind: 'user' } },
+        status: 'inProgress',
+        error: null,
+        startedAt: 3,
+        completedAt: null,
+        durationMs: null,
+      },
+    });
+    target.__LIN_E2E__?.setMockThreadActive(threadId, true);
+    return turnId;
+  });
+
+  const transcript = page.locator('.thread-transcript');
+  await expect.poll(() => transcript.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+  await setTranscriptFollowingBottom(page);
+  const composer = page.getByRole('textbox', { name: 'Message this Thread' });
+  await composer.fill('Anchor the newly admitted Turn.');
+  await expect(page.getByRole('button', { name: 'Steer' })).toBeVisible();
+  await page.getByRole('button', { name: 'Steer' }).click();
+
+  const sent = page.locator('.thread-user-message').filter({ hasText: 'Anchor the newly admitted Turn.' });
+  await expect(sent).toBeVisible();
+  const sentRow = page.locator('[data-thread-turn-row]').filter({ has: sent });
+  await expect(sentRow).not.toHaveAttribute('data-thread-turn-row', activeTurnId);
+  await expect.poll(() => sent.evaluate((element) => {
+    const scroller = element.closest('.thread-transcript');
+    if (!(scroller instanceof HTMLElement)) throw new Error('Missing transcript');
+    const topInset = Number.parseFloat(getComputedStyle(scroller).paddingTop) || 0;
+    return Math.abs(element.getBoundingClientRect().top - scroller.getBoundingClientRect().top - topInset);
+  })).toBeLessThanOrEqual(2);
+  const calls = await commandCalls(page);
+  expect(calls.filter((call) => call.cmd === 'turn/submit')).toHaveLength(1);
+  expect(calls.filter((call) => call.cmd === 'turn/start')).toHaveLength(0);
+  expect(calls.filter((call) => call.cmd === 'turn/steer')).toHaveLength(0);
 });
 
 test('aborts an in-flight pathless upload when its Thread is left', async ({ page }) => {
@@ -6567,9 +6644,11 @@ test.describe('terminal Thread history actions', () => {
     await editor.press('Control+Enter');
 
     const calls = await commandCalls(page);
+    const submissions = calls.filter((call) => call.cmd === 'turn/submit');
     const starts = calls.filter((call) => call.cmd === 'turn/start');
-    expect(starts).toHaveLength(2);
-    expect(starts[1]?.args.input).toEqual([
+    expect(submissions).toHaveLength(1);
+    expect(starts).toHaveLength(1);
+    expect(starts[0]?.args.input).toEqual([
       { type: 'text', text: 'Try the attachment again' },
       expect.objectContaining({ type: 'attachment', name: 'diagram.png', mimeType: 'image/png' }),
     ]);

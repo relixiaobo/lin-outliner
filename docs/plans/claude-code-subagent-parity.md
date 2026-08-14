@@ -592,7 +592,8 @@ the same:
 
 Explicit empty and all-invalid lists are admission failures under A12, while
 partial invalid runtime contributions degrade. The separate isolated-Skill
-contract still permits omitted `allowed-tools` to create a tool-free child.
+authoring contract still normalizes omitted `allowed-tools` to an explicit empty
+runtime ceiling and creates a tool-free child.
 
 Fresh context composition gets one dedicated builder. Initial spawn records its
 resolved system/tool configuration. Every model-addressable child persists its
@@ -767,6 +768,13 @@ batch object. On restart, completed pending notifications are recovered, while
 an in-flight child Turn follows the existing typed host-restart failure path and
 produces a failed notification rather than silently disappearing or replaying
 side effects.
+
+Non-command renderer user input uses one host-owned submission operation rather
+than choosing start versus steering from cached state. If notification admission
+wins first, the same stable user submission steers that active Turn or waits
+through its finishing boundary and starts next; this race never escapes as
+`ThreadBusyError`. Reserved context commands retain their idle-only admission and
+are never converted into steering.
 
 ### 7. `agent_message`, resume, and stop provenance
 

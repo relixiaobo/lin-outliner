@@ -417,6 +417,12 @@ Genuine user input already admitted at the root runs first; pending Agent events
 retain arrival order. The renderer and API preserve typed notification origin
 instead of inferring it from the rendered text.
 
+Non-command user submission and idle notification delivery share host-owned admission. If
+the user wins, the notification remains pending. If the notification starts a
+Turn first, the user's stable submission is steered into it while it accepts
+input or starts a user Turn after its finishing boundary. Renderer cache timing
+never turns this ordering choice into `ThreadBusyError` or dropped user input.
+
 ## Messaging, Resume, And Stop
 
 `agent_message.message` is the complete plain-text direction. `summary` is a UI

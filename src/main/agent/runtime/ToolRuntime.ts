@@ -258,8 +258,9 @@ export class ToolRuntime {
       subagentPolicy
       && requestedTools
       && requestedTools.requestedTools !== null
-      // An isolated Skill with omitted allowed-tools intentionally runs
-      // tool-free. Every model-addressable Agent Role must admit a real tool.
+      // An isolated Skill with an empty requested ceiling intentionally runs
+      // tool-free. Authoring omission is normalized to this empty array before
+      // spawn; every model-addressable Agent Role must instead admit a real tool.
       && (requestedTools.requestedTools.length > 0 || this.subagentType(context) !== 'isolated-skill')
     ) {
       const admittedRequested = requestedTools.recognizedTools.filter((key) => enabledCanonical.has(key));

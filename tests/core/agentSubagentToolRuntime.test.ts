@@ -167,7 +167,7 @@ describe('Subagent ToolRuntime policy', () => {
       );
   });
 
-  test('keeps an isolated Skill with omitted allowed-tools intentionally tool-free', async () => {
+  test('keeps an isolated Skill with an empty requested-tool ceiling tool-free', async () => {
     const policy: PersistedSubagentToolPolicy = {
       ...CHILD_POLICY,
       requestedTools: [],

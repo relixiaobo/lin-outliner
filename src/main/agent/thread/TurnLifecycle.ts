@@ -102,7 +102,8 @@ export class TurnLifecycle {
     private readonly resolveSkillAdmission: (input: SkillAdmissionResolutionInput) => Promise<SkillAdmissionResolution>,
     private readonly resolveRoleCatalog: (cwd: string) => Promise<RoleCatalogContextPayload | null>, private readonly goalUsage: TurnLifecycleGoalUsage,
     private readonly normalizeOutputImage: OutputImageObservationNormalizer | undefined,
-    private readonly now: () => number, private readonly createThreadBusyError: (message: string) => Error,
+    private readonly now: () => number,
+    private readonly createThreadBusyError: (message: string, rendererSubmissionRetryable?: boolean) => Error,
     private readonly isThreadBusyError: (error: unknown) => boolean,
   ) {}
   activeTurnsForInspection(): Map<ThreadId, ActiveTurn> { return this.activeTurns; } pendingUserInputsForInspection(): Map<ThreadId, PendingUserInput> { return this.pendingUserInputs; }
@@ -141,6 +142,10 @@ export class TurnLifecycle {
         if (!active) return;
         await active.completion;
       }
+    }
+  async waitForTurnCompletion(threadId: ThreadId, turnId: TurnId): Promise<void> {
+      const active = this.activeTurns.get(threadId);
+      if (active?.turnId === turnId) await active.completion;
     }
   readTurnByClientUserMessageIdForHost(threadId: ThreadId, clientId: string): Turn | null {
       return this.readCanonicalClientBinding(threadId, clientId)?.turn ?? null;
@@ -230,15 +235,16 @@ export class TurnLifecycle {
   async startRendererTurn(
       request: RendererTurnStartRequest,
       reservedTurnId?: TurnId,
+      admissionGuard?: () => void,
     ): Promise<TurnStartResponse> {
       const contextCommand = parseContextCommand(request.input);
-      if (contextCommand) return this.startContextCommand(request, contextCommand);
+      if (contextCommand) return this.startContextCommand(request, contextCommand, admissionGuard);
       const privileged: PrivilegedTurnStartRequest = {
         ...request,
         ...(reservedTurnId === undefined ? {} : { turnId: reservedTurnId }),
         trigger: { kind: 'user' },
       };
-      return (await this.acceptAndLaunch(privileged)).response;
+      return (await this.acceptAndLaunch(privileged, false, admissionGuard)).response;
     }
   isRendererContextCommand(input: readonly ThreadUserContent[]): boolean {
       return parseContextCommand(input) !== null;
@@ -246,7 +252,9 @@ export class TurnLifecycle {
   private async startContextCommand(
       request: RendererTurnStartRequest,
       command: ContextCommand,
+      admissionGuard?: () => void,
     ): Promise<TurnStartResponse> { return this.core.threadMutex.run(request.threadId, async () => {
+        admissionGuard?.();
         const record = this.core.requireThread(request.threadId);
         const existing = request.clientUserMessageId
           ? this.readCanonicalClientBinding(request.threadId, request.clientUserMessageId)
@@ -358,6 +366,7 @@ export class TurnLifecycle {
             completedAt: null,
             durationMs: null,
           });
+          admissionGuard?.();
           await this.core.recordNotification({ type: 'turn/started', threadId: request.threadId, turnId, turn: inProgress });
           const completedAt = this.now();
           const completed = decodeTurn({
@@ -396,7 +405,9 @@ export class TurnLifecycle {
   async steerTurn(
       request: TurnSteerRequest,
       deliveryFailureMode: 'fatal' | 'advisory' = 'fatal',
+      admissionGuard?: () => void,
     ): Promise<TurnSteerResponse> { return this.core.threadMutex.run(request.threadId, async () => {
+        admissionGuard?.();
         const existing = request.clientUserMessageId
           ? this.readCanonicalClientBinding(request.threadId, request.clientUserMessageId)
           : null;
@@ -404,8 +415,12 @@ export class TurnLifecycle {
           return { turnId: existing.turn.id, acceptedItemId: existing.itemId, deduplicated: true };
         }
         const active = this.activeTurns.get(request.threadId);
-        if (!active || active.turnId !== request.expectedTurnId) throw this.createThreadBusyError('Expected Turn is not active');
-        if (active.finishing || active.fatalError) throw this.createThreadBusyError('Expected Turn is no longer accepting steering');
+        if (!active || active.turnId !== request.expectedTurnId) {
+          throw this.createThreadBusyError('Expected Turn is not active', true);
+        }
+        if (active.finishing || active.fatalError) {
+          throw this.createThreadBusyError('Expected Turn is no longer accepting steering', true);
+        }
         const thread = this.core.requireThread(request.threadId).thread;
         const admission = await this.resourceOps.resolveAdmissionContent(request.input, thread);
         const createdEvidenceResources: ThreadResourceReference[] = [];
@@ -481,6 +496,7 @@ export class TurnLifecycle {
             acceptedAt,
           );
           admittedItems = [...evidence.items, item];
+          admissionGuard?.();
           await active.recorder.completedImmediatelyBatch(admittedItems, acceptedAt);
         } catch (error) {
           await this.resourceOps.discardUnreferencedCreatedResources(
@@ -777,12 +793,16 @@ export class TurnLifecycle {
   async acceptAndLaunch(
       request: InternalTurnStartRequest,
       onlyIfIdle = false,
+      admissionGuard?: () => void,
     ): Promise<AcceptedTurn> {
       const record = this.core.requireThread(request.threadId);
       if (onlyIfIdle && record.thread.parentThreadId === null && this.core.isHostRootAdmissionBarrierActive()) {
         throw this.createThreadBusyError('Root Turn admission is temporarily paused');
       }
-      const accept = () => this.core.threadMutex.run(request.threadId, () => this.acceptTurn(request, onlyIfIdle));
+      const accept = () => this.core.threadMutex.run(
+        request.threadId,
+        () => this.acceptTurn(request, onlyIfIdle, admissionGuard),
+      );
       const accepted = record.thread.parentThreadId === null
         ? await this.core.hostRootMutex.run(accept)
         : await accept();
@@ -810,7 +830,9 @@ export class TurnLifecycle {
   private async acceptTurn(
       request: InternalTurnStartRequest,
       onlyIfIdle: boolean,
+      admissionGuard?: () => void,
     ): Promise<AcceptedTurn> {
+      admissionGuard?.();
       const record = this.core.requireThread(request.threadId);
       const existing = request.clientUserMessageId
         ? this.readCanonicalClientBinding(request.threadId, request.clientUserMessageId)
@@ -825,7 +847,9 @@ export class TurnLifecycle {
       if (request.trigger.kind !== 'user') this.assertSubagentBudgetAvailable(request.threadId);
       if (this.core.stoppingThreads.has(request.threadId)) throw this.createThreadBusyError('Thread is stopping');
       if (record.archived) throw this.createThreadBusyError('Thread is archived');
-      if (this.activeTurns.has(request.threadId)) throw this.createThreadBusyError('Thread already has an active Turn');
+      if (this.activeTurns.has(request.threadId)) {
+        throw this.createThreadBusyError('Thread already has an active Turn', true);
+      }
       if (onlyIfIdle && record.thread.status.type !== 'idle') throw this.createThreadBusyError('Thread is not idle');
       const startedAt = this.now();
       const turnId = request.turnId ?? uuidV7(startedAt);
@@ -839,6 +863,7 @@ export class TurnLifecycle {
           startedAt,
           admission.content,
           (ref) => createdEvidenceResources.push(ref),
+          admissionGuard,
         );
       } catch (error) {
         await this.resourceOps.discardUnreferencedCreatedResources(
@@ -859,6 +884,7 @@ export class TurnLifecycle {
       startedAt: number,
       input: readonly ThreadUserContent[],
       recordCreatedEvidenceResource: (ref: ThreadResourceReference) => void,
+      admissionGuard?: () => void,
     ): Promise<AcceptedTurn> {
       const preview = threadPreviewFromContent(input);
       const item = userMessage(request.threadId, turnId, input, request.clientUserMessageId ?? null, startedAt);
@@ -1014,6 +1040,7 @@ export class TurnLifecycle {
       const startedNotification = { type: 'turn/started', threadId: request.threadId, turnId, turn } as const;
       let durableProjectionError: RecordedNotificationProjectionError | null = null;
       try {
+        admissionGuard?.();
         await this.core.recordNotification(startedNotification, {
           deferObservers: !active.lifecyclePublished,
         });

@@ -934,10 +934,12 @@ the accepted user message mounts and measures, that message is anchored at the
 transcript top inset and follow is re-derived from the resulting position. A long
 conversation therefore streams below the anchored message without moving it;
 short conversations that are still within the bottom threshold continue
-following. The existing `turn/start` response identifies the exact accepted Turn,
-so a concurrently loaded history page cannot be mistaken for the new send.
-Steering an existing active Turn keeps the bottom-follow path. The renderer does
-not insert an optimistic user message or alter notification order.
+following. The `turn/submit` response returns the exact newly accepted Turn when
+main started one and `null` when main steered or deduplicated the submission, so
+a concurrently loaded history page cannot be mistaken for the new send. Main,
+not the renderer's cached snapshot, owns that start-or-steer decision. Steering
+an existing active Turn keeps the bottom-follow path. The renderer does not
+insert an optimistic user message or alter notification order.
 A temporary renderer-only tail spacer gives the new message enough scroll runway
 to reach the top before response content exists. It carries no document state,
 shrinks as real response content replaces that runway, and is removed when no

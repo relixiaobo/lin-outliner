@@ -193,7 +193,7 @@ preload and subscribes to `onAgentCoreNotification`. The canonical methods are:
 - `thread/list`, `thread/read`, `thread/start`, `thread/resume`, `thread/fork`,
   `thread/name/set`, `thread/archive`, `thread/unarchive`, and `thread/delete`
 - `thread/turns/list` and `thread/items/list`
-- `turn/start`, `turn/steer`, and `turn/interrupt`
+- `turn/submit`, `turn/start`, `turn/steer`, and `turn/interrupt`
 - `goal/get`, `goal/create`, and `goal/update`
 - `userInput/respond`
 

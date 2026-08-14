@@ -58,8 +58,10 @@ interface MockFixtureOptions {
   translationDelayMs?: number;
   /** Completes mock Agent Turns as failed without an assistant message. */
   agentTurnFailure?: boolean | string;
-  /** Rejects turn/start before accepting a Turn. */
-  agentTurnStartReject?: boolean | string;
+  /** Rejects turn/submit before accepting a Turn. */
+  agentTurnSubmitReject?: boolean | string;
+  /** Completes a request-time active Turn, then delays before admitting a new Turn. */
+  agentTurnSubmitFinishingDelayMs?: number;
   /** Leaves accepted mock Turns active so background-work flows can be tested. */
   agentTurnStaysActive?: boolean;
   /** Holds each pathless attachment chunk long enough to exercise upload cancellation. */
@@ -2377,11 +2379,43 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             backwardsCursor: null,
           }) as T;
         }
-        if (method === 'turn/start') {
-          if (options.agentTurnStartReject) {
-            throw new Error(typeof options.agentTurnStartReject === 'string'
-              ? options.agentTurnStartReject
-              : 'Mock turn/start rejection');
+        let submittedActiveTurn = method === 'turn/submit'
+          ? (mockTurns.get(String(input.threadId)) ?? []).findLast((turn) => turn.status === 'inProgress')
+          : undefined;
+        if (
+          method === 'turn/submit'
+          && submittedActiveTurn
+          && options.agentTurnSubmitFinishingDelayMs !== undefined
+        ) {
+          const thread = threadById(String(input.threadId));
+          const completedAt = ++now;
+          const completedTurn: MockTurn = {
+            ...submittedActiveTurn,
+            status: 'completed',
+            completedAt,
+            durationMs: Math.max(0, completedAt - submittedActiveTurn.startedAt),
+          };
+          thread.status = { type: 'idle' };
+          thread.updatedAt = completedAt;
+          emitAgentCoreNotification({
+            type: 'turn/completed',
+            threadId: thread.id,
+            turnId: completedTurn.id,
+            turn: completedTurn,
+          });
+          emitAgentCoreNotification({
+            type: 'thread/status/changed',
+            threadId: thread.id,
+            status: thread.status,
+          });
+          await delay(Math.max(0, options.agentTurnSubmitFinishingDelayMs));
+          submittedActiveTurn = undefined;
+        }
+        if (method === 'turn/start' || (method === 'turn/submit' && !submittedActiveTurn)) {
+          if (method === 'turn/submit' && options.agentTurnSubmitReject) {
+            throw new Error(typeof options.agentTurnSubmitReject === 'string'
+              ? options.agentTurnSubmitReject
+              : 'Mock turn/submit rejection');
           }
           const thread = threadById(String(input.threadId));
           const turnId = nextCanonicalId();
@@ -2465,7 +2499,12 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             });
           }
           if (options.agentTurnStaysActive) {
-            return clone({ turn: activeTurn, acceptedItemId: userItemId, deduplicated: false }) as T;
+            return clone({
+              turn: activeTurn,
+              ...(method === 'turn/submit' ? { turnId } : {}),
+              acceptedItemId: userItemId,
+              deduplicated: false,
+            }) as T;
           }
           if (!options.agentTurnFailure) {
             emitAgentCoreNotification({
@@ -2480,11 +2519,16 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           thread.status = { type: 'idle' };
           emitAgentCoreNotification({ type: 'turn/completed', threadId: thread.id, turnId, turn: completedTurn });
           emitAgentCoreNotification({ type: 'thread/status/changed', threadId: thread.id, status: thread.status });
-          return clone({ turn: activeTurn, acceptedItemId: userItemId, deduplicated: false }) as T;
+          return clone({
+            turn: activeTurn,
+            ...(method === 'turn/submit' ? { turnId } : {}),
+            acceptedItemId: userItemId,
+            deduplicated: false,
+          }) as T;
         }
-        if (method === 'turn/steer') {
+        if (method === 'turn/steer' || (method === 'turn/submit' && submittedActiveTurn)) {
           const threadId = String(input.threadId);
-          const turnId = String(input.expectedTurnId);
+          const turnId = submittedActiveTurn?.id ?? String(input.expectedTurnId);
           const acceptedAt = ++now;
           const acceptedItemId = nextCanonicalId();
           const item: MockThreadItem = {
@@ -2503,6 +2547,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             completedAt: acceptedAt,
           });
           return clone({
+            ...(method === 'turn/submit' ? { turn: null } : {}),
             turnId,
             acceptedItemId,
             deduplicated: false,
