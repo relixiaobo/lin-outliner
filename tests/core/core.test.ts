@@ -2767,14 +2767,19 @@ describe('Core', () => {
       .map((childId) => core.state().nodes[childId].content.text)).toEqual(['Doing']);
   });
 
-  test('same-parent split still freezes auto-initialized field values', () => {
+  test('same-parent split auto-initializes instead of cloning a static field default', () => {
     const core = Core.new();
     const tagId = mustFocus(core.createTag('event'));
     const templateEntryId = mustFocus(core.createFieldDef(tagId, 'When', 'date'));
     const fieldDefId = core.state().nodes[templateEntryId].fieldDefId!;
+    core.setFieldFreeTextValue(templateEntryId, '2000-01-01');
     core.setFieldConfig(fieldDefId, { fieldType: 'date', autoInitialize: 'current_date' });
     const nodeId = mustFocus(core.createNode(core.projection().todayId, null, 'Launch review'));
     core.applyTag(nodeId, tagId);
+    const sourceEntryId = core.state().nodes[nodeId].children.find((childId) => {
+      const child = core.state().nodes[childId];
+      return child?.type === 'fieldEntry' && child.fieldDefId === fieldDefId;
+    })!;
 
     const newId = mustFocus(core.splitNode(
       nodeId,
@@ -2786,9 +2791,12 @@ describe('Core', () => {
       return child?.type === 'fieldEntry' && child.fieldDefId === fieldDefId;
     })!;
 
+    expect(core.state().nodes[sourceEntryId].children
+      .map((childId) => core.state().nodes[childId].content.text)).toEqual(['2000-01-01']);
     expect(core.state().nodes[newEntryId].children).toHaveLength(1);
     const newValue = core.state().nodes[core.state().nodes[newEntryId].children[0]!]!.content.text;
     expect(newValue).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(newValue).not.toBe('2000-01-01');
   });
 
   test('cross-parent split fully instantiates the destination child supertag', () => {
