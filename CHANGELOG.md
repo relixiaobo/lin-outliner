@@ -264,6 +264,22 @@ Entries reference the pull request that introduced them.
   each tool's own `prepareArguments`, and a Turn-local repeated-rejection
   quarantine with an eight-failure ceiling and one final tool-free response.
   Design only; the implementation ships as one PR.
+- **Semantic working-state plan (PR #529, codex-4, plan-only)** — boards the
+  split of the Thread spinner's two conflated meanings — "work is advancing"
+  vs "data is not ready": Working rows keep their identity glyph and shimmer
+  the advancing *text* on a fixed cadence (tokenized, CSS-only), Loading /
+  Waiting / Recovery and terminal states keep their existing indicators under
+  an explicit retained matrix, only the most specific expanded representation
+  animates, and static cues carry every row under reduced motion / increased
+  contrast. Design only; ships as two independent PRs (Thread/Plan, then
+  Settings).
+- **Claude Code subagent parity plan (PR #532, codex-2, plan-only)** — boards
+  the replacement of the Codex-style collaboration protocol (mailbox, built-in
+  `worker`, `/research` + `readOnlyIsolated`, visible `explorer`) with Claude
+  Code's model: `agent` / `agent_message` / `task_stop`, fresh
+  background-default children, and host-delivered notifications. Naming
+  follows Tenon snake_case, behavior follows Claude Code (PM-ratified).
+  Design only; the implementation ships as one PR.
 - **Tag schema projection plan (PR #537, cc-2, plan-only)** — boards the fix for
   a PM-reported bug: template edits on a `#tag` never reach nodes that already
   carry it, because the template is a one-shot stamp read only at `apply_tag` and

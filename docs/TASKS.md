@@ -33,7 +33,7 @@ unassigned — future dev is not pre-committed to any clone.
 
 **Top of queue (2026-08-09 re-prioritization, post-#505 close + staleness audit).**
 The flagship (`unified-command-surface`) shipped and the 2026-08-09 audit re-anchored
-every stale entry, so the frontier is four parallel lanes (detail lives in each item's
+every stale entry, so the frontier is a set of parallel lanes (detail lives in each item's
 theme-section entry below; this list is the ordering, not a second record):
 
 - **Lane A — build-ready quick wins** (fast-track, parallelize freely; small items
@@ -59,18 +59,24 @@ theme-section entry below; this list is the ordering, not a second record):
   (**P0**, the only P0 on the board: every keystroke pays multiple O(document)
   passes in main and renderer) leads and outranks Lane A while it stands;
   [`agent-tool-call-path`](plans/agent-tool-call-path.md) (P1) and
-  [`agent-streaming-followups`](plans/agent-streaming-followups.md) (P1, after
-  #525 merges) follow; [`interaction-jank-cleanups`](plans/interaction-jank-cleanups.md)
+  [`agent-streaming-followups`](plans/agent-streaming-followups.md) (P1,
+  unblocked — #525 shipped 2026-08-11) follow; [`interaction-jank-cleanups`](plans/interaction-jank-cleanups.md)
   and [`startup-window-first`](plans/startup-window-first.md) (P2) trail.
+- **Outliner correctness lane (added 2026-08-13, build-ready 2026-08-14)**: the two
+  PM-ratified tag plans — [`tag-merge-and-split-fixes`](plans/tag-merge-and-split-fixes.md)
+  PRs A/B first, then [`tag-schema-projection`](plans/tag-schema-projection.md) PR 1.
+  Their sequencing predecessors #533 and #534 have both merged, so PR A can start
+  now; PR 1 must re-verify its reader sweep against #534's slot-aware readers
+  before building (noted in its entry).
 - **Lane D — test-signal infrastructure**: **still unclaimed and now the oldest
   untouched lane** — e2e stability, starting with the visual-media baseline fixture
   (`test.extend` default), then the run-dependent flaky set as one problem. Wave 1
   routed its intended owner elsewhere; give this lane the next free clone.
 
 **Design-gate queue** (PM bandwidth): _empty_ — `skill-path-ownership` shipped #513.
-**Release:** v0.2.0 shipped 2026-08-09; **v0.3.0 freeze initiated 2026-08-10** — the
-cadence rule fires (16 user-visible entries aboard): note drafted by main, PM
-ratifies, then tag + dial to 0.4.0.
+**Release:** v0.3.0 + v0.3.1 shipped 2026-08-10; `main` is the **0.4.0 train** and the
+cadence rule fires again (9 user-visible entries aboard as of 2026-08-14, #525–#535):
+note drafted by main, PM ratifies, then tag + dial to 0.5.0.
 
 `pi-ai-0.80-upgrade` shipped #348 (clean `Models` migration, not the interim `/compat` shim) — see *Recently completed*.
 `dream-channel-and-memory-retire` shipped in full (PR1 #324 + PR2 #328 + PR3 #329) — see *Recently completed*.
@@ -747,9 +753,12 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   `claude-code-subagent-parity` implementation (plan PR #532) and
   `semantic-working-state` (#531) — both are its foundations (A7).
   Design: [`subagent-interaction`](plans/subagent-interaction.md).
-  **Half-unblocked 2026-08-14** — `claude-code-subagent-parity` shipped (#535),
-  so the fresh/background-default protocol it projects now exists; still
-  sequenced behind `semantic-working-state` (#531).
+  **Unblocked 2026-08-14** — both foundations have shipped:
+  `claude-code-subagent-parity` (#535) and the `semantic-working-state`
+  vocabulary it consumes (Thread/Plan PR, #531; the remaining
+  `semantic-working-state` PR2 is Settings copy only and is not a dependency).
+  The plan's own pacing note stands: living with the shipped mechanics for a
+  few days before building is intentional.
 - **interaction-jank-cleanups** (P2, `draft` 2026-08-11) — scroll/menu-path
   forced layouts and identity-keyed caches that can never hit:
   `useAnchoredOverlay` (≈20 consumers) capture-scroll + unbatched rect reads +
