@@ -51,7 +51,11 @@ export function SubagentChip({
     : entry?.form === 'isolatedSkill'
       ? SkillIcon
       : AgentIcon;
-  const openLabel = t.agent.thread.agent.openAgent({ name });
+  // The glyph is the only thing that tells a resume chip from a spawn chip, so
+  // the accessible name has to say it in words.
+  const openLabel = kind === 'resume'
+    ? `${t.agent.thread.agent.openAgent({ name })} · ${t.agent.thread.agent.resumed}`
+    : t.agent.thread.agent.openAgent({ name });
   return (
     <div
       className={`thread-item thread-agent-chip-block thread-subagent-${entry?.status ?? 'notFound'}`}
@@ -71,11 +75,14 @@ export function SubagentChip({
           <span className="thread-agent-chip-type">{entry.agentType}</span>
         ) : null}
         {entry?.worktree ? (
-          <GitForkIcon
-            aria-hidden
+          <span
+            aria-label={t.agent.thread.agent.worktree}
             className="thread-agent-chip-worktree"
-            size={ICON_SIZE.tiny}
-          />
+            role="img"
+            title={t.agent.thread.agent.worktree}
+          >
+            <GitForkIcon aria-hidden size={ICON_SIZE.tiny} />
+          </span>
         ) : null}
         {running
           ? <WorkingText className="thread-agent-chip-meta" text={status} />

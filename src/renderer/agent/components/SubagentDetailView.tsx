@@ -106,11 +106,14 @@ export function SubagentDetailView({
             <span className="thread-agent-detail-type">{entry.agentType}</span>
           ) : null}
           {entry?.worktree ? (
-            <GitForkIcon
-              aria-hidden
+            <span
+              aria-label={t.agent.thread.agent.worktree}
               className="thread-agent-detail-worktree"
-              size={ICON_SIZE.tiny}
-            />
+              role="img"
+              title={t.agent.thread.agent.worktree}
+            >
+              <GitForkIcon aria-hidden size={ICON_SIZE.tiny} />
+            </span>
           ) : null}
           {/* Static, always. The Agent's own transcript is right below this
               header and carries the live cue on the most specific row that is

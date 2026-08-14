@@ -1714,7 +1714,9 @@
 }
 
 .thread-agent-chip-worktree {
+  display: inline-flex;
   flex: 0 0 auto;
+  align-items: center;
   color: var(--text-tertiary);
 }
 
@@ -3251,7 +3253,9 @@
 }
 
 .thread-agent-detail-worktree {
+  display: inline-flex;
   flex: 0 0 auto;
+  align-items: center;
   color: var(--text-tertiary);
 }
 

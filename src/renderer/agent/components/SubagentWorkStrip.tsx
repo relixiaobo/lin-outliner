@@ -95,7 +95,11 @@ function SubagentStripRow({ entry }: { readonly entry: SubagentRegistryEntry }) 
         <AgentIcon aria-hidden size={ICON_SIZE.rowGlyph} />
         <span className="thread-work-strip-name">{entry.displayName}</span>
         {entry.agentType ? <span className="thread-work-strip-type">{entry.agentType}</span> : null}
-        {entry.worktree ? <GitForkIcon aria-hidden size={ICON_SIZE.tiny} /> : null}
+        {entry.worktree ? (
+          <span aria-label={t.agent.thread.agent.worktree} role="img">
+            <GitForkIcon aria-hidden size={ICON_SIZE.tiny} />
+          </span>
+        ) : null}
         {running
           ? <WorkingText className="thread-work-strip-meta" text={status} />
           : <span className="thread-work-strip-meta">{status}</span>}
