@@ -159,17 +159,27 @@ before any directional/security-sensitive build.
 `agent-episodic-transcripts` is **complete** — both PRs shipped (#511, #519); see
 *Recently completed*.
 
+- **claude-code-subagent-parity** — `done` 2026-08-14 (#535, codex-2; five gate
+  rounds). The Codex-style collaboration protocol, its mailbox, built-in
+  `worker`, `/research` + `readOnlyIsolated`, and `explorer` as a visible type
+  are gone; `agent` / `agent_message` / `task_stop` and host-delivered
+  notifications are the contract. Archived at
+  `docs/plans/archive/claude-code-subagent-parity.md`. **Also landed:** a
+  host-owned `turn/submit` — the new notification delivery can start a Turn on a
+  Thread the user is also submitting into, so renderer submissions are now
+  serialized in main rather than chosen from a renderer snapshot.
 - **agent-delegation-context-hygiene** — `superseded` 2026-08-12, absorbed by
-  [`claude-code-subagent-parity`](plans/claude-code-subagent-parity.md): the
+  [`claude-code-subagent-parity`](plans/archive/claude-code-subagent-parity.md): the
   frozen canonical `agent` description carries the context-heavy-delegation
   When→Why menu and the single-known-lookup reverse clause as byte fixtures, so
   a separate description edit has no subject. The rollout tool-sequence
   re-measurement folds into that plan's production-provider token evidence.
 - **agent-hygiene-checks** (P3, `draft` 2026-08-08, fast-track, *no plan file*;
   **narrowed 2026-08-12** — sub-items 1–2 lost their subjects to the
-  subagent-parity ratification: mailbox/barrier auxiliary maps retire with the
-  old protocol, and the `wait_agent` empty-final-text edge is answered by that
-  plan's `empty-final-report` fixture under AC-7) — remaining verification
+  subagent-parity ratification, and confirmed gone when it shipped 2026-08-14
+  (#535): the mailbox/barrier auxiliary maps went with the old protocol, and the
+  `wait_agent` empty-final-text edge is answered by that plan's
+  `empty-final-report` fixture under AC-7) — remaining verification
   tails from the prime-agent design study: (1) an untrusted-data framing audit
   of existing injection surfaces; (2) the queued behavior-repetition notice
   (same action + same result ≥ 2 → one bounded nudge; evidence: 100 identical
@@ -722,20 +732,6 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   re-rendering every item of the active Turn per notification, and the 1 Hz
   subagent elapsed ticker re-rendering the nested child transcript. One PR.
   Design: [`agent-streaming-followups`](plans/agent-streaming-followups.md).
-- **claude-code-subagent-parity** (P1, `draft` 2026-08-12; plan PR #532,
-  codex-2; PM-ratified after seven review rounds R1–R7) — replace the
-  Codex-style collaboration protocol (six tools + `bash_stop`, fork-by-default)
-  with the Claude Code `2.1.227` default-profile Subagent contract under Tenon
-  names: `agent` / `agent_message` / unified `task_stop`, fresh-start children,
-  background-by-default with host-delivered notifications, same-ID
-  steer/resume, depth 3, live cap 20, worktree isolation that also strips
-  outline mutation, closed byte-fixture manifest (names, prompts, budget
-  extension, provider split: canonical layer everywhere, wire bytes on
-  `anthropic-messages` only). Retires built-in `worker` Role, `/research` +
-  `readOnlyIsolated`, and `explorer` as a visible type; Memory prompt block
-  becomes root-only. ONE PR; implementation claim serializes behind #531; the
-  `/research` removal goes in the merge release note. Design:
-  [`claude-code-subagent-parity`](plans/claude-code-subagent-parity.md).
 - **subagent-interaction** (P2, `draft` 2026-08-12) — process-shaped subagent
   presentation for the fresh/background-default protocol inside the 344px agent
   deck: worker-registry projection (keyed by agent ID + generation) replacing
@@ -751,6 +747,9 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   `claude-code-subagent-parity` implementation (plan PR #532) and
   `semantic-working-state` (#531) — both are its foundations (A7).
   Design: [`subagent-interaction`](plans/subagent-interaction.md).
+  **Half-unblocked 2026-08-14** — `claude-code-subagent-parity` shipped (#535),
+  so the fresh/background-default protocol it projects now exists; still
+  sequenced behind `semantic-working-state` (#531).
 - **interaction-jank-cleanups** (P2, `draft` 2026-08-11) — scroll/menu-path
   forced layouts and identity-keyed caches that can never hit:
   `useAnchoredOverlay` (≈20 consumers) capture-scroll + unbatched rect reads +

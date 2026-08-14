@@ -895,3 +895,20 @@ nodes. Each fix was small, targeted, and correct about the bug it named. A fix
 ships code written under the narrowest possible framing of the problem and
 reviewed by no one — re-review after fixes is not a formality, and "the findings
 are addressed" is not the same claim as "the diff is sound".
+
+## A hung test run is invisible in pass/fail counts
+
+Sampling #535's suite for flakiness, the loop sat at "8 runs, 0 failures" for 40
+minutes — because run 9 had *wedged*, not passed. Runs 1-8 took 20-30s each; run
+9 was alive at 41:42 with no output and had to be killed. Its tail was the whole
+diagnosis: a Turn from an already-torn-down fixture still executing and accruing
+subagent budget against a database whose file had been unlinked, because
+teardown deleted the temp roots without ever closing the `ThreadService` and the
+launch chain is detached (`void launchActiveTurn(...)`, reachable only through
+`active.completion`). That discovery inverted the verdict — under `retries: 0`
+with no per-test timeout, a suite that can hang is a stuck CI job, not a red one,
+which blocks where mere flakiness might have been a follow-up. Count-based
+stability metrics omit the worst outcome by construction: a hung run emits no
+failure line and never reaches a summary, so the batch just looks slow. Compare
+per-run wall time and check `ps -Ao pid,etime` while sampling, and capture the
+tail of a wedged run before killing it.

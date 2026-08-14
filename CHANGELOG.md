@@ -228,6 +228,29 @@ Entries reference the pull request that introduced them.
   truncation back over your omitted rules. Editing and saving are now disabled
   outright for a truncated query rather than merely warned about. Both patterns
   are distilled in `docs/lessons.md`.
+- **Agents are now Claude Code Subagents, and a delegated run reports back on its
+  own (PR #535, codex-2)** — the Codex-style collaboration protocol is retired.
+  Six tools plus `bash_stop` collapse to `agent` / `agent_message` /
+  `task_stop`; a child starts fresh instead of forking your conversation, runs in
+  the background by default, and its result is delivered to the parent by the
+  host rather than waited on. Same-ID steer and resume, depth 3, 20 live
+  children, and worktree isolation that also denies outline mutation so an
+  isolated child cannot edit the document you are reading. Built-in `worker`,
+  `/research`, `readOnlyIsolated`, and `explorer` as a visible Agent type are
+  gone, and the Memory prompt block is root-only. **If you scripted a Role with
+  `tools: []` it will now refuse to spawn instead of running mute**, and
+  `tools: ['*']` inherits the parent pool rather than failing. Five gate rounds,
+  23 findings. The heaviest were escapes rather than crashes: an isolated Skill
+  inherited the root tool policy instead of its parent's, so an `explore` child
+  could write and run shell through a Skill; a nested child of a worktree-
+  isolated Agent got the filesystem boundary but not the outline denial; the
+  write-boundary check skipped its symlink-defeating half whenever `realpath`
+  failed; and the extension/MCP gate was a deny-list missing three
+  outward-facing action kinds while its bash sibling was correctly an
+  allow-list. Two rounds later the fixes had grown their own defect — giving the
+  host the ability to start a Turn on a Thread the user also submits into
+  created a race that surfaced `ThreadBusyError`, now closed by a host-owned
+  `turn/submit` that serializes renderer submissions in main.
 
 ### Internal
 
