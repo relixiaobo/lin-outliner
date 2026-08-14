@@ -58,9 +58,9 @@ theme-section entry below; this list is the ordering, not a second record):
   five items under **Performance** — [`typing-hot-path`](plans/typing-hot-path.md)
   (**P0**, the only P0 on the board: every keystroke pays multiple O(document)
   passes in main and renderer) leads and outranks Lane A while it stands;
-  [`agent-tool-call-path`](plans/agent-tool-call-path.md) (P1) and
-  [`agent-streaming-followups`](plans/agent-streaming-followups.md) (P1,
-  unblocked — #525 shipped 2026-08-11) follow; [`interaction-jank-cleanups`](plans/interaction-jank-cleanups.md)
+  [`agent-tool-call-path`](plans/agent-tool-call-path.md) (P1) follows
+  (`agent-streaming-followups` shipped #539 2026-08-14, leaving the P2
+  `streaming-markdown-repair-cost` tail); [`interaction-jank-cleanups`](plans/interaction-jank-cleanups.md)
   and [`startup-window-first`](plans/startup-window-first.md) (P2) trail.
 - **Outliner correctness lane (added 2026-08-13, build-ready 2026-08-14)**: the two
   PM-ratified tag plans — [`tag-merge-and-split-fixes`](plans/tag-merge-and-split-fixes.md)
@@ -731,20 +731,18 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   unbudgeted. Three independent PRs: filter cost + read-model re-enablement /
   per-model-call costs / small tails. Design:
   [`agent-tool-call-path`](plans/agent-tool-call-path.md).
-- **agent-streaming-followups** (P1, `draft` 2026-08-11; **slimmed 2026-08-14,
-  PM-ratified** — the subagent-projection two-layer cache and the 1 Hz ticker
-  isolation moved into `subagent-interaction`, whose redesign replaces their
-  subjects (`projectSubagentsForTurn` internals, the `SubagentActivityItem` /
-  `SubagentRunDetail` structure); optimizing them here would be A7 waste. Every
-  remaining premise re-verified against the post-#531/#533/#535 tree) — the
-  three per-delta costs the delta-pipeline plan left: uncached `requireThread`
-  SELECT + full decode per recorded notification, O(full-text) markdown re-lex
-  per 80 ms streaming commit, and the active Turn re-rendering all its items
-  per notification (callback re-keying, incremental `groupTurnContent`,
-  projection output-identity reuse as a bridge the redesign's registry
-  inherits, then `memo(ThreadItemView)`). One PR; unblocked (#525 shipped) and
-  **sequenced before** `subagent-interaction`.
-  Design: [`agent-streaming-followups`](plans/agent-streaming-followups.md).
+- **streaming-markdown-repair-cost** (P2, `draft` 2026-08-14, no plan file yet) —
+  the tail left by #539. With lexing now bounded to a tail, `remend` over the
+  full text is what a streaming commit pays (gate measurement: ~95% of the
+  commit at 20 KB), and `remend` is superlinear, so a long answer still janks:
+  ~20 ms per commit at 20 KB, ~80 ms at 40 KB. #539 is still a ~3× win over the
+  previous full-repair-plus-full-lex, so this is a ceiling it did not lift, not
+  a regression. Options, cheapest first: bound `remend` input to the reparsed
+  tail plus the open-marker state carried forward from the frozen prefix (needs
+  a marker-state summary the boundary can freeze alongside `definitions`);
+  or make repair incremental the way lexing now is. Write the plan against a
+  measurement, not a guess — the harness shape that caught this is in the #539
+  gate comment.
 - **subagent-interaction** (P2, `draft` 2026-08-12) — process-shaped subagent
   presentation for the fresh/background-default protocol inside the 344px agent
   deck: Agent-registry projection (keyed by Agent ID + generation) replacing
@@ -843,6 +841,15 @@ between them:
 Small unclaimed items split off from shipped PRs — fast-track each when a clone is free; none block
 anything.
 
+- **Render-body ref writes in `ThreadTurnView`** (P3, *fast-track, no plan file*, filed 2026-08-14
+  at the #539 gate) — `ThreadTurnView` (`src/renderer/agent/components/ThreadView.tsx`) assigns
+  `turnRef.current` / `responseTailTurnRef.current` in the render body, plus two more ref writes
+  inside `useMemo`. A render React starts and discards still advances them, so a committed handler
+  (`editUserMessage`, `copyTurn`, `continueInNewChat`, `openTurnDetails`, `retryTurn`) can act on a
+  `Turn` snapshot the committed tree never rendered. Left open at the gate because the blast radius
+  is small — the component is keyed by `turn.id`, so it is always the same Turn at a different
+  revision — but latching in a `useLayoutEffect` removes the hazard outright and is the kind of
+  thing that stops being harmless the moment the keying changes.
 - **Renderer's fourth in-trash spelling** (P3, *fast-track, no plan file*, filed 2026-08-14 at the
   #534 gate) — `isActiveTableFieldEntry` (`src/renderer/state/outlinerRows.ts`) answers "is this
   field definition still active?" with `!isDescendantOf(byId, field.id, TRASH_ID)`, hardcoding the
@@ -1026,6 +1033,25 @@ One line per merge, newest first; the retrospective lives in the CHANGELOG entry
 and the merged PR, distilled rules in [`lessons.md`](lessons.md). Everything
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
+
+- **agent-streaming-followups** (codex, PR #539, merged 2026-08-14 — plan-track,
+  plan archived) — the three per-delta streaming costs the delta-pipeline plan left:
+  `ThreadMetadataStore` now serves `requireThread` from an LRU cache invalidated by
+  every mutator, streaming Markdown re-lexes only a bounded tail instead of the whole
+  message, and the active Turn reuses `groupTurnContent`, response-tail, and Subagent
+  projection output across deltas. Gate ran `/code-review high` (3 findings): two
+  merge blockers in the incremental lexer — a tail-only `remend` that repaired inline
+  markers differently from the full path, and a frozen tail boundary that later
+  whitespace could invalidate — both fixed in d8005f4d and verified at the gate by an
+  independent differential fuzz (240k appends, disjoint fragment alphabet, zero
+  divergence; the same harness diverges within 932 appends on the pre-fix commit, so
+  the negative result has power). The correctness fix costs the flat per-commit
+  profile: full-text `remend` is now ~95% of a commit and is superlinear, still ~3×
+  better than the full recompute it replaces but not flat — filed as P2
+  `streaming-markdown-repair-cost` and corrected in the spec, whose "full lexing is
+  the dominant cost" line had become false for the shipped path. The third finding
+  (render-body ref writes in `ThreadTurnView`) was left open by decision, filed below.
+  typecheck + `test:renderer` (1210) green; e2e flake sampling 5/5 pass.
 
 - **table-field-column-semantics** (codex, PR #534, merged 2026-08-14 — plan-track,
   plan archived) — entering Table now materializes columns for the custom fields its

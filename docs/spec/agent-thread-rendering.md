@@ -511,7 +511,13 @@ prefix that differs from source or contains an unmatched reference-label opener
 is not frozen. A non-append edit, lexer failure, definition-set change, or token
 stream that cannot account for every source byte falls back to a full repaired
 lex; the definition fallback is required because definitions are attached to
-every visible block. Stable completed blocks are memoized, and every block keeps
+every visible block. Repairing the complete source is a correctness requirement,
+not an optimization: it is what lets the bounded tail lex match a full repaired
+lex byte for byte. It is also what now bounds the cost — with lexing incremental,
+`remend` over the full text is the dominant term in a streaming commit (~95% at
+20 KB) and is itself superlinear, so per-commit cost still grows with answer
+length (~20 ms at 20 KB, ~80 ms at 40 KB, against ~67 ms and ~260 ms for a full
+repaired lex). Stable completed blocks are memoized, and every block keeps
 the same memoized React component identity as the final streaming block seals.
 Node and local-file
 reference markers render through the same inline reference and preview surfaces

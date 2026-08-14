@@ -77,8 +77,14 @@ every premise re-verified against the post-#531/#533/#535 tree on 2026-08-14):
   earlier blocks are reused verbatim. A definition change, lexer failure,
   unaccounted token bytes, non-append edit, or unsafe boundary falls back to a
   full lex. Complete repair is intentionally retained because it is the source
-  of truth for streaming inline syntax; measurement confirms full lexing is
-  the dominant cost.
+  of truth for streaming inline syntax — correctness requires it, and paying it
+  is what makes the bounded tail lex safe. Note the cost this leaves behind:
+  once lexing is bounded, `remend` over the full text becomes the dominant
+  term (gate measurement 2026-08-14: ~95% of a streaming commit at 20 KB), and
+  `remend` is itself superlinear, so per-commit cost still grows with answer
+  length. The win here is against the previous full repair **plus** full lex
+  (~3× at 20 KB), not a flat per-commit cost. Making the repair incremental is
+  the follow-up.
 - **Memoize the streaming Turn's items — props first, memo second.** The
   identity groundwork is better than this plan's first draft assumed, and is
   now verified: the store preserves item object identity across a delta
