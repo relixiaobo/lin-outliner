@@ -318,6 +318,69 @@ describe('Subagent parent-Turn presentation projection', () => {
       status: 'notFound',
     });
   });
+
+  test('reuses the projection Map and entries when only a non-Subagent Item changes', () => {
+    const started = activity('activity-started', 'started', null);
+    const initialReasoning = reasoning('reasoning');
+    const threads = new Map([[CHILD_ID, childThread({ type: 'active', activeFlags: [] })]]);
+    const first = projectSubagentsForTurn(
+      parentTurn([started, initialReasoning]),
+      threads,
+      new Map(),
+    );
+    const changedReasoning = { ...initialReasoning, summary: ['streamed delta'] };
+    const second = projectSubagentsForTurn(
+      parentTurn([started, changedReasoning]),
+      threads,
+      new Map(),
+      first,
+    );
+
+    expect(second.byThreadId).toBe(first.byThreadId);
+    expect(second.byThreadId.get(CHILD_ID)).toBe(first.byThreadId.get(CHILD_ID));
+    expect(second.items).not.toBe(first.items);
+    expect(second.items[0]).toBe(first.items[0]);
+    expect(second.items[1]).toBe(changedReasoning);
+  });
+
+  test('replaces exactly the child entry whose live state changed', () => {
+    const secondChildId = 'thread-child-second';
+    const firstItem = collaborationItem('first-child', 'agent', 'completed', CHILD_ID);
+    const secondItem = collaborationItem('second-child', 'agent', 'completed', secondChildId, {
+      status: 'running',
+      taskPath: '/root/second',
+      nickname: 'Second',
+      role: 'worker',
+    });
+    const turn = parentTurn([firstItem, secondItem]);
+    const secondChild = {
+      ...childThread({ type: 'active', activeFlags: [] }),
+      id: secondChildId,
+      agentNickname: 'Second',
+    };
+    const first = projectSubagentsForTurn(
+      turn,
+      new Map([
+        [CHILD_ID, childThread({ type: 'active', activeFlags: [] })],
+        [secondChildId, secondChild],
+      ]),
+      new Map(),
+    );
+    const second = projectSubagentsForTurn(
+      turn,
+      new Map([
+        [CHILD_ID, childThread({ type: 'idle' })],
+        [secondChildId, secondChild],
+      ]),
+      new Map(),
+      first,
+    );
+
+    expect(second.byThreadId).not.toBe(first.byThreadId);
+    expect(second.byThreadId.get(CHILD_ID)).not.toBe(first.byThreadId.get(CHILD_ID));
+    expect(second.byThreadId.get(CHILD_ID)?.status).toBe('idle');
+    expect(second.byThreadId.get(secondChildId)).toBe(first.byThreadId.get(secondChildId));
+  });
 });
 
 function parentTurn(

@@ -912,3 +912,40 @@ stability metrics omit the worst outcome by construction: a hung run emits no
 failure line and never reaches a summary, so the batch just looks slow. Compare
 per-run wall time and check `ps -Ao pid,etime` while sampling, and capture the
 tail of a wedged run before killing it.
+
+## A passing fuzz proves nothing until it has failed on the broken version
+
+#539's incremental Markdown lexer arrived with its own differential fuzz — 250
+seeds, 25,000 appends, all green. Both merge blockers were nonetheless real, and
+the branch's *other* guard test ("matches a full repaired lex after every
+append") passed on the buggy code too, because none of its ten sequences left an
+inline marker open across a blank line. A randomized harness only covers what its
+alphabet can generate, and the author picks the alphabet after writing the code —
+so it inherits the blind spot that produced the bug. At the gate the fix was
+verified with a second harness built from a deliberately disjoint alphabet, then
+— the step that made the result mean something — replayed against the pre-fix
+commit, where it diverged within 932 appends. Only that control turns "240,000
+appends, zero divergence" from an absence of evidence into evidence. Whenever a
+randomized or differential harness is the argument that a fix works, run it
+against the broken code first and record how fast it fails; a harness that has
+never been seen to fail is not a test, it is a hope. (Same shape as *a guard
+written from the fixed code inherits the bug's blind spots*, one level up: there
+the guard, here the generator.)
+
+## When correctness forces work back into a hot path, re-measure before you keep the claim
+
+#539's streaming lexer was fast — 0.06 ms per commit, flat regardless of answer
+length — because it repaired only the tail. That was precisely the defect: the
+repair has to see the whole text to close markers opened before the frozen
+boundary. Fixing it moved `remend` back onto the full text and the flat curve
+became superlinear, ~43 ms per commit on a 50 KB answer, a ~700× regression
+against the buggy version. The change was still a ~3× win over the baseline it
+replaced, so it merged — but the plan had by then recorded "measurement confirms
+full lexing is the dominant cost", which was true of the old path and false of
+the shipped one, and would have sent the next optimizer after the 5% instead of
+the 95%. A correctness fix in a hot path is a performance change: the benchmark
+that justified the work has to be re-run afterwards, against the *pre-PR
+baseline* rather than against the intermediate version, and any measurement claim
+written into a plan or spec re-derived from the new numbers. Otherwise the
+optimization's own documentation becomes the reason the remaining cost never gets
+found (A9, A8).
