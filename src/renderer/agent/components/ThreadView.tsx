@@ -2015,6 +2015,11 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   const t = useT();
   const documentNodeIds = useMemo(() => threadDocumentNodeIds(turn), [turn]);
   const index = useDocumentIndexSnapshot(indexStore, documentNodeIds, active);
+  const turnRef = useRef(turn);
+  turnRef.current = turn;
+  const responseTailTurnRef = useRef(turn);
+  if (!sameResponseTailTurn(responseTailTurnRef.current, turn)) responseTailTurnRef.current = turn;
+  const responseTailTurn = responseTailTurnRef.current;
   const responseItem = lastAgentResponse(turn);
   // A resultless reasoning Item first observed after settlement opens for the
   // session. An Item observed live stays folded when completion arrives, so the
@@ -2033,12 +2038,24 @@ export const ThreadTurnView = memo(function ThreadTurnView({
     && isStandaloneContextBoundaryTurn(turn);
   const hostAuthoredEvent = turn.provenance.trigger.kind === 'subagent'
     && turn.provenance.originThreadId === threadId;
-  const subagents = useMemo(
-    () => projectSubagentsForTurn(turn, threadsById, latestTurnByThread),
-    [latestTurnByThread, threadsById, turn],
-  );
-  const contentBlocks = groupTurnContent({ ...turn, items: subagents.items });
-  const processItems = contentBlocks.flatMap((block) => block.kind === 'process' ? block.items : []);
+  const subagentProjectionRef = useRef<{
+    readonly projection: SubagentTurnProjection;
+    readonly turnId: string;
+  } | null>(null);
+  const subagents = useMemo(() => {
+    const previous = subagentProjectionRef.current?.turnId === turn.id
+      ? subagentProjectionRef.current.projection
+      : null;
+    const projection = projectSubagentsForTurn(turn, threadsById, latestTurnByThread, previous);
+    subagentProjectionRef.current = { projection, turnId: turn.id };
+    return projection;
+  }, [latestTurnByThread, threadsById, turn]);
+  const contentGrouperRef = useRef<TurnContentGrouper | null>(null);
+  if (contentGrouperRef.current === null) contentGrouperRef.current = createTurnContentGrouper();
+  const contentBlocks = contentGrouperRef.current.group({ ...turn, items: subagents.items });
+  const processBlock = contentBlocks.find((block) => block.kind === 'process');
+  const processItems = processBlock?.kind === 'process' ? processBlock.items : EMPTY_THREAD_ITEMS;
+  const processItemGroups = useMemo(() => groupTurnItems(processItems), [processItems]);
   const workingTextEnabled = !waitingOnUserInput && providerRetry === null;
   const motionOwner = turnMotionOwner(turn, processItems, subagents);
   const workingTextOwnsMotion = workingTextEnabled && motionOwner !== 'none';
@@ -2050,13 +2067,14 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   // process Items, so "no response Item" alone does not mean a divider exists
   // to own the terminal status.
   const hasProcessBlock = contentBlocks.some((block) => block.kind === 'process');
+  const statusOwnedElsewhere = responseItem === null && hasProcessBlock;
   const editUserMessage = useCallback(
-    (content: readonly ThreadUserContent[]) => onEditUserMessage(turn, content),
-    [onEditUserMessage, turn],
+    (content: readonly ThreadUserContent[]) => onEditUserMessage(turnRef.current, content),
+    [onEditUserMessage, turn.id],
   );
   const continueInNewChat = useCallback(
-    () => onContinueInNewChat(turn),
-    [onContinueInNewChat, turn],
+    () => onContinueInNewChat(turnRef.current),
+    [onContinueInNewChat, turn.id],
   );
   const readToolOutput = useCallback(
     (item: ThreadToolItem) => onReadToolOutput(turn.id, item),
@@ -2068,25 +2086,30 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   );
   const copyTurn = useCallback(async () => {
     const text = await buildTurnCopyText(
-      turn,
+      turnRef.current,
       readToolArguments,
       readToolOutput,
       t.agent.thread.resourceLimitReached,
     );
     if (text) await navigator.clipboard.writeText(text);
-  }, [readToolArguments, readToolOutput, t.agent.thread.resourceLimitReached, turn]);
+  }, [readToolArguments, readToolOutput, t.agent.thread.resourceLimitReached, turn.id]);
+  const openTurnDetails = useCallback(
+    () => onOpenTurnDetails(turnRef.current),
+    [onOpenTurnDetails, turn.id],
+  );
   const handleResponseContextMenu = useCallback(async (event: MouseEvent<HTMLElement>) => {
     event.preventDefault();
     const canContinueInNewChat = onSubagentDrill === undefined;
+    const currentTurn = turnRef.current;
     const action = await window.lin?.showThreadMessageContextMenu?.({
-      canCopy: hasTurnCopyContent(turn),
+      canCopy: hasTurnCopyContent(currentTurn),
       canContinueInNewChat,
       canShowDetails: true,
     });
     if (action === 'copy') await copyTurn();
     else if (action === 'continueInNewChat') await continueInNewChat();
-    else if (action === 'details') onOpenTurnDetails(turn);
-  }, [continueInNewChat, copyTurn, onOpenTurnDetails, onSubagentDrill, turn]);
+    else if (action === 'details') openTurnDetails();
+  }, [continueInNewChat, copyTurn, onSubagentDrill, openTurnDetails, turn.id]);
   /**
    * Running the same request again, for a Turn where that could go differently.
    *
@@ -2112,22 +2135,44 @@ export const ThreadTurnView = memo(function ThreadTurnView({
     const request = turn.items.find((item) => item.type === 'userMessage');
     return request?.content ?? null;
   }, [composerEnabled, hostAuthoredEvent, isLastTurn, onSubagentDrill, turn]);
-  const responseTail = standaloneContextBoundary ? null : (
-    <ThreadResponseTail
-      canContinueInNewChat={onSubagentDrill === undefined}
-      onCopy={copyTurn}
-      onContinueInNewChat={continueInNewChat}
-      onOpenDetails={() => onOpenTurnDetails(turn)}
-      onRetry={retryContent ? () => onEditUserMessage(turn, retryContent) : null}
-      providerRetry={providerRetry}
-      shapeMotionSuppressed={shapeMotionSuppressed}
-      workingTextOwnsMotion={workingTextOwnsMotion}
-      // The process divider states the terminal status when there is no
-      // response Item — but only if a process block renders at all. Without
-      // one, suppressing it here would erase the status from the Turn.
-      statusOwnedElsewhere={responseItem === null && hasProcessBlock}
-      turn={turn}
-    />
+  const retryContentRef = useRef(retryContent);
+  retryContentRef.current = retryContent;
+  const retryTurn = useCallback(async () => {
+    const content = retryContentRef.current;
+    if (content) await onEditUserMessage(turnRef.current, content);
+  }, [onEditUserMessage, turn.id]);
+  const responseTail = useMemo(
+    () => standaloneContextBoundary ? null : (
+      <ThreadResponseTail
+        canContinueInNewChat={onSubagentDrill === undefined}
+        onCopy={copyTurn}
+        onContinueInNewChat={continueInNewChat}
+        onOpenDetails={openTurnDetails}
+        onRetry={retryContent !== null ? retryTurn : null}
+        providerRetry={providerRetry}
+        shapeMotionSuppressed={shapeMotionSuppressed}
+        workingTextOwnsMotion={workingTextOwnsMotion}
+        // The process divider states the terminal status when there is no
+        // response Item — but only if a process block renders at all. Without
+        // one, suppressing it here would erase the status from the Turn.
+        statusOwnedElsewhere={statusOwnedElsewhere}
+        turn={responseTailTurn}
+      />
+    ),
+    [
+      continueInNewChat,
+      copyTurn,
+      onSubagentDrill,
+      openTurnDetails,
+      providerRetry,
+      responseTailTurn,
+      retryContent,
+      retryTurn,
+      shapeMotionSuppressed,
+      standaloneContextBoundary,
+      statusOwnedElsewhere,
+      workingTextOwnsMotion,
+    ],
   );
   const renderItem = (item: ThreadItem, showMessageActions: boolean) => (
     <ThreadItemView
@@ -2147,7 +2192,7 @@ export const ThreadTurnView = memo(function ThreadTurnView({
       onOpenNodeReference={onOpenNodeReference}
       onOpenSubagentTurnDetails={onOpenSubagentTurnDetails}
       onSubagentDrill={onSubagentDrill}
-      onOpenTurnDetails={standaloneContextBoundary ? () => onOpenTurnDetails(turn) : undefined}
+      onOpenTurnDetails={standaloneContextBoundary ? openTurnDetails : undefined}
       onOpenThread={onOpenThread}
       onReadToolArguments={readToolArguments}
       onReadToolOutput={readToolOutput}
@@ -2178,7 +2223,7 @@ export const ThreadTurnView = memo(function ThreadTurnView({
               subagents={subagents}
               turn={turn}
             >
-              {groupTurnItems(block.items).map((group) => group.kind === 'tools' ? (
+              {processItemGroups.map((group) => group.kind === 'tools' ? (
                 <ThreadToolActivityGroup
                   expandState={expandState}
                   index={index}
@@ -2214,34 +2259,48 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   );
 });
 
+const threadItemDocumentNodeIdsCache = new WeakMap<ThreadItem, readonly NodeId[]>();
+
 export function threadDocumentNodeIds(turn: Turn): readonly NodeId[] {
+  const nodeIds = new Set<NodeId>();
+  for (const item of turn.items) {
+    for (const nodeId of threadItemDocumentNodeIds(item)) nodeIds.add(nodeId);
+  }
+  return [...nodeIds];
+}
+
+function threadItemDocumentNodeIds(item: ThreadItem): readonly NodeId[] {
+  const cached = threadItemDocumentNodeIdsCache.get(item);
+  if (cached) return cached;
   const nodeIds = new Set<NodeId>();
   const addMarkdownReferences = (text: string) => {
     for (const reference of parseNodeReferenceMarkers(text)) nodeIds.add(reference.nodeId);
   };
-
-  for (const item of turn.items) {
-    if (item.type === 'userMessage') {
-      for (const content of item.content) {
-        if (content.type === 'nodeReference') nodeIds.add(content.nodeId);
-      }
-      continue;
+  if (item.type === 'userMessage') {
+    for (const content of item.content) {
+      if (content.type === 'nodeReference') nodeIds.add(content.nodeId);
     }
-    if (item.type === 'agentMessage') {
-      addMarkdownReferences(item.text);
-      continue;
-    }
-    if (item.type === 'reasoning') {
-      for (const part of item.summary) addMarkdownReferences(part);
-      for (const part of item.content) addMarkdownReferences(part);
-      continue;
-    }
-    if (isThreadToolItem(item)) {
-      for (const nodeId of threadToolReferencedNodeIds(item)) nodeIds.add(nodeId);
-    }
+  } else if (item.type === 'agentMessage') {
+    addMarkdownReferences(item.text);
+  } else if (item.type === 'reasoning') {
+    for (const part of item.summary) addMarkdownReferences(part);
+    for (const part of item.content) addMarkdownReferences(part);
+  } else if (isThreadToolItem(item)) {
+    for (const nodeId of threadToolReferencedNodeIds(item)) nodeIds.add(nodeId);
   }
+  const result = [...nodeIds];
+  threadItemDocumentNodeIdsCache.set(item, result);
+  return result;
+}
 
-  return [...nodeIds];
+function sameResponseTailTurn(left: Turn, right: Turn): boolean {
+  return left.id === right.id
+    && left.status === right.status
+    && left.error === right.error
+    && left.execution === right.execution
+    && left.startedAt === right.startedAt
+    && left.completedAt === right.completedAt
+    && left.durationMs === right.durationMs;
 }
 
 function isStandaloneContextBoundaryTurn(turn: Turn): boolean {
@@ -2932,6 +2991,29 @@ export type ThreadContentBlock =
   | { readonly kind: 'item'; readonly item: ThreadItem }
   | { readonly kind: 'process'; readonly items: readonly ThreadItem[] };
 
+const EMPTY_THREAD_ITEMS: readonly ThreadItem[] = [];
+
+export interface TurnContentGrouper {
+  group(turn: Turn): readonly ThreadContentBlock[];
+  reset(): void;
+}
+
+export function createTurnContentGrouper(): TurnContentGrouper {
+  let previous: { readonly blocks: readonly ThreadContentBlock[]; readonly turn: Turn } | null = null;
+  return {
+    group(turn) {
+      const blocks = previous
+        ? updateGroupedTurnContent(previous.turn, previous.blocks, turn)
+        : groupTurnContent(turn);
+      previous = { blocks, turn };
+      return blocks;
+    },
+    reset() {
+      previous = null;
+    },
+  };
+}
+
 export function groupTurnContent(turn: Turn): ThreadContentBlock[] {
   const processItems = turn.items.filter(isThreadProcessItem);
   const itemBlocks = turn.items
@@ -2951,6 +3033,83 @@ export function groupTurnContent(turn: Turn): ThreadContentBlock[] {
     { kind: 'process', items: processItems },
   );
   return blocks;
+}
+
+type ThreadContentRole = 'final' | 'hidden' | 'item' | 'process';
+
+function updateGroupedTurnContent(
+  previousTurn: Turn,
+  previousBlocks: readonly ThreadContentBlock[],
+  turn: Turn,
+): readonly ThreadContentBlock[] {
+  if (previousTurn.id !== turn.id || previousTurn.items.length !== turn.items.length) {
+    return reuseGroupedBlocks(previousBlocks, groupTurnContent(turn));
+  }
+
+  const previousRoles = previousTurn.items.map(threadContentRole);
+  const nextRoles = turn.items.map(threadContentRole);
+  const structureChanged = previousRoles.some((role, index) => role !== nextRoles[index])
+    || needsProcessBlock(previousTurn, previousRoles) !== needsProcessBlock(turn, nextRoles);
+  if (structureChanged) return reuseGroupedBlocks(previousBlocks, groupTurnContent(turn));
+
+  const replacements = new Map<ThreadItem, ThreadItem>();
+  let processChanged = false;
+  for (let index = 0; index < turn.items.length; index += 1) {
+    const previousItem = previousTurn.items[index]!;
+    const nextItem = turn.items[index]!;
+    if (previousItem === nextItem) continue;
+    replacements.set(previousItem, nextItem);
+    if (nextRoles[index] === 'process') processChanged = true;
+  }
+  if (replacements.size === 0) return previousBlocks;
+
+  let blockChanged = false;
+  const nextProcessItems = processChanged ? turn.items.filter(isThreadProcessItem) : null;
+  const blocks = previousBlocks.map((block): ThreadContentBlock => {
+    if (block.kind === 'process') {
+      if (!nextProcessItems) return block;
+      blockChanged = true;
+      return { kind: 'process', items: nextProcessItems };
+    }
+    const replacement = replacements.get(block.item);
+    if (!replacement) return block;
+    blockChanged = true;
+    return { kind: 'item', item: replacement };
+  });
+  return blockChanged ? blocks : previousBlocks;
+}
+
+function reuseGroupedBlocks(
+  previous: readonly ThreadContentBlock[],
+  next: readonly ThreadContentBlock[],
+): readonly ThreadContentBlock[] {
+  const previousProcess = previous.find((block) => block.kind === 'process');
+  const reused = next.map((block): ThreadContentBlock => {
+    if (block.kind === 'item') {
+      return previous.find((candidate) => candidate.kind === 'item' && candidate.item === block.item) ?? block;
+    }
+    return previousProcess?.kind === 'process'
+      && equalItemSequence(previousProcess.items, block.items)
+      ? previousProcess
+      : block;
+  });
+  return equalItemSequence(previous, reused) ? previous : reused;
+}
+
+function equalItemSequence<T>(left: readonly T[], right: readonly T[]): boolean {
+  return left.length === right.length && left.every((entry, index) => entry === right[index]);
+}
+
+function threadContentRole(item: ThreadItem): ThreadContentRole {
+  if (isThreadProcessItem(item)) return 'process';
+  if (isEmptyCommentaryItem(item)) return 'hidden';
+  return isFinalResponseItem(item) ? 'final' : 'item';
+}
+
+function needsProcessBlock(turn: Turn, roles: readonly ThreadContentRole[]): boolean {
+  return roles.includes('process')
+    || turn.status === 'inProgress'
+    || (turn.status === 'completed' && roles.includes('final') && turn.durationMs !== null);
 }
 
 export function isThreadProcessItem(item: ThreadItem): boolean {

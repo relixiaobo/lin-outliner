@@ -252,6 +252,36 @@ Entries reference the pull request that introduced them.
   created a race that surfaced `ThreadBusyError`, now closed by a host-owned
   `turn/submit` that serializes renderer submissions in main.
 
+- **A long streaming answer costs less to keep on screen (PR #539, codex)** —
+  three costs the delta-pipeline work left behind, all paid once per streamed
+  chunk. Thread metadata was re-SELECTed and fully decoded on every recorded
+  notification; it now comes from an LRU cache that every mutator invalidates.
+  Markdown was re-repaired and re-lexed over the *entire* accumulated message on
+  every 80 ms commit; it now re-lexes only a bounded tail, reusing the earlier
+  blocks verbatim, and falls back to a full lex when a reference definition
+  changes, an edit is not an append, or the boundary is not provably safe. And
+  the active Turn re-rendered all of its items per chunk; grouping, the response
+  tail, and Subagent projection now reuse their previous output when nothing
+  they depend on changed. **What this is not:** the per-commit cost is lower but
+  still grows with answer length — `remend` repairs the full text for
+  correctness and is itself superlinear, so it now accounts for ~95% of a
+  commit (~20 ms at 20 KB, ~80 ms at 40 KB, against ~67 ms and ~260 ms before).
+  Roughly 3× better, not flat; the remaining tail is filed as its own item. The
+  high gate found three defects. Two blocked the merge, both in the incremental
+  lexer, and both were the same class of mistake — an optimization that was fast
+  precisely because it skipped work correctness needed: repairing only the tail
+  meant an inline marker opened before the frozen boundary was closed
+  differently than the full path would close it (visible as text flickering into
+  inline code mid-stream and snapping back at the end), and a boundary frozen at
+  a blank line could be invalidated by whitespace that arrived later, splitting
+  off a phantom empty block. The fix repairs the whole source and re-lexes the
+  tail from it, keeps two substantive tokens in the reparsed tail, refuses a
+  boundary inside trailing whitespace, and refuses one whose prefix holds an
+  unmatched `[` that a later `]:` could turn into a definition. Verified at the
+  gate with a differential fuzz built independently of the branch's own — 240,000
+  appends over a disjoint fragment alphabet with zero divergence, against a
+  control run that breaks the pre-fix code within 932 appends.
+
 ### Internal
 
 - **Opened the 0.4.0 train (main-agent)** — `package.json` dials to `0.4.0`
