@@ -199,6 +199,36 @@ Entries reference the pull request that introduced them.
   the response glyph — motion claiming progress in precisely the state defined by
   its absence.
 
+- **Table view now arrives with columns, and Search stops stacking two toolbars
+  (PR #534, codex)** — switching an outline or saved search to Table used to hand
+  you a Title-only grid and leave you to add every column by hand. It now
+  materializes columns for the custom fields its records actually use, in Schema
+  order, without disturbing columns you had already hidden. Expanded records stop
+  repeating their fields as body rows underneath — visible, hidden, and
+  not-yet-configured fields all belong to the column model now, reachable through
+  Add field's "Fields in use" group. The one exception is deliberate: a field
+  entry whose definition you deleted keeps its ordinary row, because the column
+  controls can no longer offer it and that row is the only place its stored value
+  survives. Rows backed by a reference read and edit their final target's values,
+  and a broken or cyclic chain degrades to empty read-only cells instead of
+  blocking the row. Search Outline and Search Table now share one compact
+  `ViewToolbar` variant in place of the old query-summary bar stacked above a full
+  toolbar. Three gate rounds — `/code-review high` twice, then `/code-review
+  xhigh` — turned up 29 findings, 27 fixed. The instructive part is where they
+  came from: the three heaviest were each introduced by the *previous* round's
+  fix. Materializing a saved search before the Table switch (round 1's fix) threw
+  on any search whose query no longer evaluates, so the Table button silently did
+  nothing; it also ran the query without the text index every other caller
+  threads, persisting a substring-scored result set that flipped back on the next
+  refresh. Round 2's fix for that then rebuilt the whole text index on every view-
+  mode change, including for ordinary nodes. And the xhigh pass caught real data
+  loss that two earlier rounds missed: deleting the query-summary bar deleted the
+  only surface that reported a query had been truncated past the editor's
+  complexity limit, so an over-limit query rendered as if whole and Save wrote the
+  truncation back over your omitted rules. Editing and saving are now disabled
+  outright for a truncated query rather than merely warned about. Both patterns
+  are distilled in `docs/lessons.md`.
+
 ### Internal
 
 - **Opened the 0.4.0 train (main-agent)** — `package.json` dials to `0.4.0`

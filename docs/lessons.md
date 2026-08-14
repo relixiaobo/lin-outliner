@@ -867,3 +867,31 @@ down as data — a prop or a context whose provider re-establishes at each
 boundary — and the guard that keeps it that way is a negative
 (`expect(css).not.toContain('.thread-turn:has(')`), because the CSS version reads
 as correct forever.
+
+## When you delete a surface, sweep what it was the only reporter of
+
+`table-field-column-semantics` (#534) replaced `SearchQuerySummaryBar` with a
+query builder panel. The bar carried one output nothing else did: a
+`search.summary.truncated` chip announcing that a query exceeded the editor's
+complexity limit. The builder kept computing `truncated` and dropped it on the
+floor — so an over-limit query rendered as if complete, and Save wrote the
+truncated text back, permanently deleting the omitted rules with no warning. The
+replacement had been reviewed against what the *new* surface should show; nobody
+asked what the *old* one was the sole reporter of. Two review rounds missed it.
+When a surface is deleted, enumerate its outputs and give each one a new home or
+an explicit obituary — a deleted warning is indistinguishable from a state that
+never occurs, and the code that computes it keeps compiling.
+
+## A fix is new code; re-gate the fix, not just the bug
+
+Across #534's three review rounds the heaviest findings were produced by the
+*previous round's fixes*, not by the original feature. Round 1's "materialize the
+saved search before switching to Table" fix introduced both a fail-closed `throw`
+on the user path (A12 — the Table toggle silently did nothing for an unrunnable
+search) and a wrong persisted result set, because that call path was the only one
+not threading the `TextSearchIndex`. Round 2's fix for the latter then rebuilt the
+whole text index on every `set_view_mode`, including for ordinary non-search
+nodes. Each fix was small, targeted, and correct about the bug it named. A fix
+ships code written under the narrowest possible framing of the problem and
+reviewed by no one — re-review after fixes is not a formality, and "the findings
+are addressed" is not the same claim as "the diff is sound".

@@ -817,6 +817,17 @@ between them:
 Small unclaimed items split off from shipped PRs — fast-track each when a clone is free; none block
 anything.
 
+- **Renderer's fourth in-trash spelling** (P3, *fast-track, no plan file*, filed 2026-08-14 at the
+  #534 gate) — `isActiveTableFieldEntry` (`src/renderer/state/outlinerRows.ts`) answers "is this
+  field definition still active?" with `!isDescendantOf(byId, field.id, TRASH_ID)`, hardcoding the
+  constant, while `nodeLocation.ts` already exports `isNodeInTrash(index, nodeId)` reading
+  `index.projection.trashId` — the spelling `fieldOptions.ts` and `fieldReuseCandidates.ts` use for
+  the same question. Left as-is at the gate for a real reason: the predicate takes a bare
+  `Map<NodeId, NodeProjection>`, not a `DocumentIndex`, so adopting the helper means changing the
+  signature and every call site. Worth doing anyway because the consequence is not cosmetic — if
+  the trash root ever stops being that constant, this one site silently stops excluding trashed
+  definitions and expanded Table records go back to hiding their orphaned field rows, which is
+  precisely the bug #534's second round fixed.
 - **Flaky `bash` host-environment test** (P3, *fast-track, no plan file*, filed 2026-08-13 at the
   #533 gate) — `tests/core/agentLocalTools.test.ts` → `foreground and background bash receive the
   same host process environment` fails roughly **1 run in 9** under a full `bun run test:core`, and
@@ -989,6 +1000,25 @@ One line per merge, newest first; the retrospective lives in the CHANGELOG entry
 and the merged PR, distilled rules in [`lessons.md`](lessons.md). Everything
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
+
+- **table-field-column-semantics** (codex, PR #534, merged 2026-08-14 — plan-track,
+  plan archived) — entering Table now materializes columns for the custom fields its
+  records actually use, expanded records suppress *active* field rows in favour of the
+  column model (orphaned entries whose definition is trashed stay as ordinary rows —
+  the recovery exception), reference-backed rows read and edit their final target's
+  values, and Search Outline/Table share one compact `ViewToolbar` variant in place of
+  the deleted `SearchQuerySummaryBar`. Three gate rounds — `/code-review high` ×2 then
+  `/code-review xhigh` — found 29 findings, 27 fixed; the heaviest three were each
+  introduced by the *previous* round's fix, and the xhigh pass caught silent data loss
+  (Save writing back a truncated query) that the deleted summary bar had been the only
+  surface to report. Both patterns distilled in [`lessons.md`](lessons.md). Two left
+  open by decision: not-yet-configured active fields stay out of expanded rows (now
+  spec'd, recoverable via Add field's "Fields in use"), and `isActiveTableFieldEntry`
+  still hardcodes `TRASH_ID` instead of `isNodeInTrash` — a fourth in-trash spelling in
+  the renderer, filed below. typecheck + `docs:check` + `test:core` (2205) +
+  `test:renderer` (1194) green; e2e's 3 failures reproduce as the run-dependent set
+  (`origin/main` fails 5, only `agent-thread:5739` shared, branch-only failures pass in
+  isolation). Merged without visual verification at the PM's call.
 
 - **thread-records-copy** (cc, PR #536, merged 2026-08-13 — fast-track, no plan file) —
   the Thread action menu's records toggle is now `Hide from Recall` / `Show in Recall`
