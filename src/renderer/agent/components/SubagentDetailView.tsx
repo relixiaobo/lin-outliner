@@ -1,0 +1,267 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { RendererUserViewHints, ThreadId, Turn } from '../../../core/agent/protocol';
+import type { DocumentIndex } from '../../state/document';
+import { useT } from '../../i18n/I18nProvider';
+import { AgentIcon, GitForkIcon, ICON_SIZE, SkillIcon, StopIcon } from '../../ui/icons';
+import { IconButton } from '../../ui/primitives/IconButton';
+import { WorkingText } from '../../ui/primitives/WorkingText';
+import { api } from '../../api/client';
+import type { ThreadNodeReferenceOpenHandler } from '../threadReferences';
+import { threadStore, useThreadStore } from '../store/threadStore';
+import type { SubagentConversationProjection } from '../subagentPresentation';
+import { subagentChipStatus } from './SubagentChip';
+import { useSubagentEntry } from './SubagentRegistryContext';
+import { formatSubagentDuration, useSubagentElapsedMs } from './subagentElapsed';
+import { ThreadView } from './ThreadView';
+
+/**
+ * Everything one Agent did, as a pushed view over the deck.
+ *
+ * 330px of drawer over a 344px deck is not a drawer, it is a redraw with a
+ * seam. Detail is therefore a full-deck push: an anchor pushes it, Back pops
+ * it, and the back button names the level below so position in the stack is
+ * always legible rather than inferred. Nesting recurses through the same
+ * component, and delegation is capped at depth three, so the stack is bounded
+ * at four levels by the protocol rather than by a rule of its own.
+ *
+ * The composer is the physical form of user authority. A message sent here is
+ * the top-priority instruction for this Agent, and it is the only action in the
+ * app that clears a user stop — which is why a stopped Agent's placeholder says
+ * so instead of leaving the rule to documentation.
+ */
+export function SubagentDetailView({
+  agentId,
+  index,
+  onOpenNodeReference,
+  onOpenThread,
+  onOpenTurnDetails,
+  onPop,
+  onPush,
+  parentName,
+  subagentProjection,
+  userView,
+}: {
+  readonly agentId: ThreadId;
+  readonly index: DocumentIndex;
+  readonly onOpenNodeReference: ThreadNodeReferenceOpenHandler;
+  readonly onOpenThread: (threadId: ThreadId) => Promise<void>;
+  readonly onOpenTurnDetails?: (threadId: string, turnId: string) => void;
+  readonly onPop: () => void;
+  readonly onPush: (agentId: ThreadId) => void;
+  /** What Back returns to: the conversation, or the Agent one level down. */
+  readonly parentName: string;
+  readonly subagentProjection: SubagentConversationProjection;
+  readonly userView: RendererUserViewHints;
+}) {
+  const t = useT();
+  const snapshot = useThreadStore();
+  const entry = useSubagentEntry(agentId);
+  const elapsedMs = useSubagentElapsedMs(entry ?? { status: 'notFound', startedAt: null });
+  const loadedRef = useRef<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const thread = snapshot.threads.find((candidate) => candidate.id === agentId) ?? null;
+  const turns = snapshot.turnsByThread.get(agentId);
+
+  useEffect(() => {
+    if (loadedRef.current === agentId) return;
+    loadedRef.current = agentId;
+    setLoadError(null);
+    // Reported, not swallowed: this load is what fills the view, so a rejection
+    // that only cleared a flag would leave "Loading…" on screen for good.
+    void threadStore.ensureThreadHistory(agentId).catch((error: unknown) => {
+      if (loadedRef.current !== agentId) return;
+      loadedRef.current = null;
+      setLoadError(errorMessage(error));
+    });
+  }, [agentId]);
+
+  const openRelated = useCallback(async (target: ThreadId) => {
+    if (subagentProjection.byAgentId.has(target)) {
+      onPush(target);
+      return;
+    }
+    await onOpenThread(target);
+  }, [onOpenThread, onPush, subagentProjection]);
+
+  const name = entry?.displayName ?? thread?.name ?? thread?.agentNickname ?? t.agent.thread.untitled;
+  const running = entry?.status === 'running' || entry?.status === 'pendingInit';
+  const status = subagentChipStatus(entry ?? null, elapsedMs, false, t);
+  const FormIcon = entry?.form === 'isolatedSkill' ? SkillIcon : AgentIcon;
+  // Only an Agent takes direction. An isolated Skill's result belongs to the
+  // `skill` call that invoked it, so there is nothing here for a message to do.
+  const composerEnabled = entry?.form !== 'isolatedSkill' && thread?.source === 'collaboration';
+  return (
+    <div className="thread-agent-detail">
+      <header className="thread-agent-detail-header">
+        <button className="thread-agent-detail-back" onClick={onPop} type="button">
+          <span aria-hidden className="thread-agent-detail-back-chevron">‹</span>
+          <span>{parentName}</span>
+        </button>
+        <div className="thread-agent-detail-identity">
+          <FormIcon aria-hidden size={ICON_SIZE.rowGlyph} />
+          <span className="thread-agent-detail-title">{name}</span>
+          {entry?.agentType ? (
+            <span className="thread-agent-detail-type">{entry.agentType}</span>
+          ) : null}
+          {entry?.worktree ? (
+            <GitForkIcon
+              aria-hidden
+              className="thread-agent-detail-worktree"
+              size={ICON_SIZE.tiny}
+            />
+          ) : null}
+          {running
+            ? <WorkingText className="thread-agent-detail-status" text={status} />
+            : <span className="thread-agent-detail-status">{status}</span>}
+          {running ? (
+            <IconButton
+              icon={StopIcon}
+              iconSize={ICON_SIZE.tiny}
+              label={t.agent.thread.stopSubagent({ name })}
+              onClick={() => void threadStore.interruptThread(agentId).catch(() => undefined)}
+              variant="message"
+            />
+          ) : null}
+        </div>
+      </header>
+      {loadError !== null ? (
+        <p className="thread-agent-detail-empty" role="alert">{loadError}</p>
+      ) : thread === null || turns === undefined ? (
+        <p className="thread-agent-detail-empty">{t.agent.thread.loading}</p>
+      ) : (
+        <div className="thread-agent-detail-body" key={agentId}>
+          <ThreadView
+            composerEnabled={composerEnabled}
+            composerFocusToken={0}
+            composerPlaceholder={entry?.stoppedByUser
+              ? t.agent.thread.agent.composerResumePlaceholder
+              : t.agent.thread.agent.composerPlaceholder}
+            configuration={null}
+            goal={snapshot.goalsByThread.get(agentId) ?? null}
+            index={index}
+            inputRequest={null}
+            key={agentId}
+            latestTurnByThread={snapshot.latestTurnByThread}
+            onConfigurationChange={noop}
+            onContinueInNewChat={noop}
+            onCreateThread={noFallback}
+            onEditUserMessage={noop}
+            onInterrupt={() => threadStore.interruptThread(agentId)}
+            onInterruptThread={(target) => threadStore.interruptThread(target)}
+            onOpenNodeReference={onOpenNodeReference}
+            onOpenThread={openRelated}
+            onSubagentDrill={(target) => { void openRelated(target); }}
+            onOpenTurnDetails={(turn: Turn) => onOpenTurnDetails?.(agentId, turn.id)}
+            onReadToolArguments={(turnId, item) => threadStore.readToolArguments(agentId, turnId, item)}
+            onReadToolOutput={(turnId, item) => threadStore.readItemOutput(agentId, turnId, item)}
+            onSend={(content) => threadStore.sendToThread(agentId, content, userView)}
+            onSubmitUserInput={noop}
+            plan={snapshot.planByThread.get(agentId) ?? null}
+            providerRetry={snapshot.providerRetryByThread.get(agentId) ?? null}
+            providerSettings={null}
+            providerSettingsLoaded={false}
+            slashCommands={[]}
+            subagentProjection={subagentProjection}
+            threadCreationBlocked
+            threadCreationPending={false}
+            threadCwd={thread.cwd}
+            threadId={agentId}
+            threadModelProvider={thread.modelProvider}
+            threadsById={new Map(snapshot.threads.map((candidate) => [candidate.id, candidate]))}
+            turns={turns}
+            userView={userView}
+            waitingOnUserInput={false}
+          />
+        </div>
+      )}
+      {composerEnabled ? null : (
+        <p className="thread-agent-detail-note">{t.agent.thread.agent.readOnlySkill}</p>
+      )}
+      {entry?.worktree ? <SubagentWorktreeFooter agentId={agentId} branch={entry.worktree.branch} /> : null}
+    </div>
+  );
+}
+
+/**
+ * The workspace an Agent left behind.
+ *
+ * A retained worktree is the one artifact of a delegated run that outlives the
+ * conversation and lives outside it, so the footer names the branch, counts
+ * what changed, and hands the user the two things they can actually do with a
+ * directory: look at what is in it, and open it. Tenon has no diff viewer, so
+ * "view changes" lists the changed paths rather than pretending to be one.
+ */
+function SubagentWorktreeFooter({
+  agentId,
+  branch,
+}: {
+  readonly agentId: ThreadId;
+  readonly branch: string;
+}) {
+  const t = useT();
+  const [changes, setChanges] = useState<readonly string[] | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [unavailable, setUnavailable] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setChanges(null);
+    setUnavailable(false);
+    void api.readAgentWorktreeChanges(agentId).then((result) => {
+      if (cancelled) return;
+      if (!result.available) setUnavailable(true);
+      else setChanges(result.paths);
+    }).catch(() => {
+      if (!cancelled) setUnavailable(true);
+    });
+    return () => { cancelled = true; };
+  }, [agentId]);
+
+  return (
+    <footer className="thread-agent-worktree">
+      <div className="thread-agent-worktree-line">
+        <GitForkIcon aria-hidden size={ICON_SIZE.tiny} />
+        <span className="thread-agent-worktree-branch">
+          {changes === null
+            ? t.agent.thread.agent.worktreeFooterUnknown({ branch })
+            : t.agent.thread.agent.worktreeFooter({ branch, count: changes.length })}
+        </span>
+        {changes !== null && changes.length > 0 ? (
+          <button
+            className="thread-agent-worktree-action"
+            onClick={() => setExpanded((current) => !current)}
+            type="button"
+          >
+            {expanded ? t.agent.thread.agent.hideChanges : t.agent.thread.agent.viewChanges}
+          </button>
+        ) : null}
+        <button
+          className="thread-agent-worktree-action"
+          onClick={() => void api.revealAgentWorktree(agentId).then((result) => {
+            if (!result.revealed) setUnavailable(true);
+          })}
+          type="button"
+        >
+          {t.agent.thread.agent.revealWorktree}
+        </button>
+      </div>
+      {unavailable ? (
+        <p className="thread-agent-worktree-note" role="alert">
+          {t.agent.thread.agent.worktreeUnavailable}
+        </p>
+      ) : null}
+      {expanded && changes !== null ? (
+        <ul className="thread-agent-worktree-changes">
+          {changes.map((path) => <li key={path}><code>{path}</code></li>)}
+        </ul>
+      ) : null}
+    </footer>
+  );
+}
+
+async function noop(): Promise<void> { return undefined; }
+async function noFallback(): Promise<boolean> { return false; }
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}

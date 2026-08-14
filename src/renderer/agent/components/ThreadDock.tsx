@@ -6,8 +6,14 @@ import type { DocumentIndex } from '../../state/document';
 import { api } from '../../api/client';
 import { useT } from '../../i18n/I18nProvider';
 import { threadStore, useThreadStore } from '../store/threadStore';
-import { setThreadDisclosureOverride } from '../store/threadDisclosureStore';
-import { requestSubagentDrill } from '../store/subagentDrillIntent';
+import {
+  EMPTY_SUBAGENT_PROJECTION,
+  projectSubagentConversation,
+  type SubagentConversationProjection,
+} from '../subagentPresentation';
+import { SubagentDetailView } from './SubagentDetailView';
+import { SubagentRegistryProvider, type SubagentActions } from './SubagentRegistryContext';
+import { SubagentWorkStrip } from './SubagentWorkStrip';
 import {
   BackIcon,
   ChevronDownIcon,
@@ -62,6 +68,11 @@ export function ThreadDock({
   const snapshot = useThreadStore();
   const [listOpen, setListOpen] = useState(false);
   const [surface, setSurface] = useState<'thread' | 'automations'>('thread');
+  /**
+   * The pushed Agent detail stack, root-most first. Empty is the conversation
+   * itself; each entry is one level deeper, and Back pops exactly one.
+   */
+  const [agentStack, setAgentStack] = useState<readonly string[]>([]);
   const [creating, setCreating] = useState(false);
   const [renameTarget, setRenameTarget] = useState<Thread | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
@@ -126,6 +137,31 @@ export function ThreadDock({
     return roots;
   }, [snapshot.selectedThreadId, snapshot.threads]);
   const turns = thread ? snapshot.turnsByThread.get(thread.id) ?? [] : [];
+  /**
+   * The conversation's Agent registry and anchors, projected once for the whole
+   * subtree. The deck owns this rather than each Turn: an Agent outlives the
+   * Turn that spawned it, and a resume six Turns later has to reach the chip
+   * that already exists.
+   */
+  const subagentProjectionRef = useRef<SubagentConversationProjection | null>(null);
+  const subagentProjection = useMemo(() => {
+    if (!thread) return EMPTY_SUBAGENT_PROJECTION;
+    const projection = projectSubagentConversation({
+      rootThreadId: thread.id,
+      turnsByThread: snapshot.turnsByThread,
+      executions: snapshot.subagentExecutionsByAgentId,
+      threadsById,
+      latestTurnByThread: snapshot.latestTurnByThread,
+    }, subagentProjectionRef.current);
+    subagentProjectionRef.current = projection;
+    return projection;
+  }, [
+    snapshot.latestTurnByThread,
+    snapshot.subagentExecutionsByAgentId,
+    snapshot.turnsByThread,
+    thread,
+    threadsById,
+  ]);
   const goal = thread ? snapshot.goalsByThread.get(thread.id) ?? null : null;
   const configuration = thread ? snapshot.configurationsByThread.get(thread.id) ?? null : null;
   const userInput = thread ? snapshot.userInputByThread.get(thread.id) ?? null : null;
@@ -215,44 +251,45 @@ export function ThreadDock({
   }, [t]);
 
   /**
-   * A delegated child is read where it was delegated: this expands its row in
-   * the parent transcript and brings it into view, rather than opening a
-   * surface of its own. Thread Details is a browse surface for children, so its
-   * rows land in the same place the transcript rows do.
+   * Open one Agent, from wherever it was named.
+   *
+   * Every anchor — a chip in the transcript, a strip row, a Thread Details row,
+   * a nested chip inside another Agent — pushes the SAME view, so there is one
+   * place an Agent is read and one gesture that gets there. A grandchild pushes
+   * its whole lineage, so Back unwinds through the Agent that delegated it
+   * rather than jumping straight back to the conversation.
    */
-  const openSubagent = useCallback((childThreadId: string) => {
+  const openSubagent = useCallback((agentId: string) => {
     setListOpen(false);
     const parentThreadId = snapshot.selectedThreadId;
     if (!parentThreadId) return;
-    // Only the conversation's OWN children have a row here; a grandchild's row
-    // lives inside its parent's run detail. Walk up to the row that exists and
-    // carry the rest of the path, so Details opens the child it named rather
-    // than the ancestor that happens to be reachable.
-    const path = lineagePathFromRoot(childThreadId, parentThreadId, threadsById);
+    const path = lineagePathFromRoot(agentId, parentThreadId, threadsById);
     if (!path) {
       reportActionError(t.agent.thread.threadUnavailable);
       return;
     }
-    const [rowThreadId] = path;
-    // The row lives inside its Turn's process fold, and a settled Turn folds
-    // shut by default — expanding only the leaf writes a key nothing reads and
-    // nothing appears on screen. Open the fold that contains it too.
-    const hostTurn = (snapshot.turnsByThread.get(parentThreadId) ?? []).find((turn) => (
-      turn.items.some((item) => item.type === 'subAgentActivity' && item.agentThreadId === rowThreadId)
-    ));
-    if (!hostTurn) {
-      reportActionError(t.agent.thread.threadUnavailable);
-      return;
+    setAgentStack(path);
+  }, [snapshot.selectedThreadId, t, threadsById]);
+
+  const subagentActions = useMemo<SubagentActions>(() => ({
+    openAgent: openSubagent,
+    stopAgent: interruptThread,
+  }), [interruptThread, openSubagent]);
+
+  // A conversation switch leaves the stack behind with it: the Agents it held
+  // belong to a conversation the user is no longer in.
+  useEffect(() => { setAgentStack([]); }, [snapshot.selectedThreadId]);
+  // An Agent whose record left the conversation cannot be shown, and the level
+  // above it is the honest place to land.
+  const openAgentStack = useMemo(() => {
+    const known: string[] = [];
+    for (const agentId of agentStack) {
+      if (!subagentProjection.byAgentId.has(agentId)) break;
+      known.push(agentId);
     }
-    setThreadDisclosureOverride(parentThreadId, `process:${hostTurn.id}`, true);
-    setThreadDisclosureOverride(parentThreadId, `subagent:${rowThreadId}`, true);
-    if (path.length > 1) requestSubagentDrill(rowThreadId!, path);
-    requestAnimationFrame(() => {
-      document
-        .querySelector(`[data-thread-disclosure-id="subagent:${CSS.escape(rowThreadId!)}"]`)
-        ?.scrollIntoView({ block: 'center' });
-    });
-  }, [snapshot.selectedThreadId, snapshot.turnsByThread, t, threadsById]);
+    return known;
+  }, [agentStack, subagentProjection]);
+  const openAgentId = openAgentStack.at(-1) ?? null;
 
   /** Selecting a root conversation from the list or an Automation. */
   const openThread = useCallback(async (threadId: string) => {
@@ -333,6 +370,7 @@ export function ThreadDock({
   }
 
   return (
+    <SubagentRegistryProvider actions={subagentActions} byAgentId={subagentProjection.byAgentId}>
     <aside
       aria-label={t.shell.agentDock.ariaLabel}
       className={`agent-dock agent-dock-${railState}`}
@@ -372,6 +410,9 @@ export function ThreadDock({
               <span className="thread-dock-title">{t.agent.automations.title}</span>
             </button>
           )}
+          {surface === 'thread' && openAgentId === null ? (
+            <SubagentWorkStrip byAgentId={subagentProjection.byAgentId} />
+          ) : null}
           {surface === 'thread' ? (
             <IconButton
               className="thread-dock-surface-action"
@@ -412,7 +453,25 @@ export function ThreadDock({
             </button>
           </div>
         ) : null}
-        {surface === 'thread' && thread ? (
+        {surface === 'thread' && thread && openAgentId !== null ? (
+          <SubagentDetailView
+            agentId={openAgentId}
+            index={index}
+            key={openAgentId}
+            onOpenNodeReference={onOpenNodeReference}
+            onOpenThread={openThread}
+            onOpenTurnDetails={onOpenTurnDetails}
+            onPop={() => setAgentStack((current) => current.slice(0, -1))}
+            onPush={(agentId) => setAgentStack((current) => [...current, agentId])}
+            parentName={openAgentStack.length > 1
+              ? subagentProjection.byAgentId.get(openAgentStack.at(-2)!)?.displayName
+                ?? t.agent.thread.agent.back
+              : t.agent.thread.agent.back}
+            subagentProjection={subagentProjection}
+            userView={userView}
+          />
+        ) : null}
+        {surface === 'thread' && thread && openAgentId === null ? (
           <>
             <ThreadView
               composerEnabled={thread.parentThreadId === null && thread.threadSource === 'user'}
@@ -455,6 +514,7 @@ export function ThreadDock({
               threadsById={threadsById}
               latestTurnByThread={snapshot.latestTurnByThread}
               turns={turns}
+              subagentProjection={subagentProjection}
               userView={userView}
             />
           </>
@@ -562,6 +622,7 @@ export function ThreadDock({
         title={t.shell.agentDock.resizeTitle}
       />
     </aside>
+    </SubagentRegistryProvider>
   );
 }
 

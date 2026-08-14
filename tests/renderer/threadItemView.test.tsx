@@ -16,7 +16,8 @@ import {
   type ThreadToolItem,
 } from '../../src/renderer/agent/components/items/ThreadItemView';
 import { I18nProvider } from '../../src/renderer/i18n/I18nProvider';
-import type { SubagentPresentation } from '../../src/renderer/agent/subagentPresentation';
+import type { SubagentAnchor, SubagentRegistryEntry } from '../../src/renderer/agent/subagentPresentation';
+import { SubagentRegistryProvider } from '../../src/renderer/agent/components/SubagentRegistryContext';
 import { buildIndex } from '../../src/renderer/state/document';
 import { formatNodeReferenceMarker } from '../../src/core/referenceMarkup';
 import { replayableModelCall } from '../fixtures/agentToolCallHistory';
@@ -875,168 +876,130 @@ describe('ThreadItemView tool row status presentation', () => {
   });
 });
 
-describe('ThreadItemView Subagent status presentation', () => {
-  test('reads Subagent identity statically and marks only live status as working', async () => {
-    const item: ThreadItem = {
-      ...base('subagent-running'),
-      type: 'subAgentActivity',
-      kind: 'started',
-      agentThreadId: 'thread-child',
-      agentPath: '/root/research',
-      error: null,
-      spawnItemId: null,
-    };
-    const rendered = renderItem(item, {
+describe('ThreadItemView Agent chips', () => {
+  test('names the Agent from the registry and marks only its live status as working', async () => {
+    const rendered = renderItem(spawnActivity('chip-running'), {
       onInterruptThread: async () => undefined,
-      subagents: new Map([['thread-child', {
-        agentThreadId: 'thread-child',
-        displayName: 'research',
-        durationMs: null,
-        error: null,
-        form: 'collaboration' as const,
-        nickname: null,
-        role: null,
-        startedAt: Date.now() - 5_000,
-        status: 'running' as const,
-        taskPath: '/root/research',
-      }]]),
+      anchor: { kind: 'spawn', agentId: 'thread-child', itemId: 'chip-running' },
+      registry: registryOf({ startedAt: Date.now() - 5_000, status: 'running' }),
     });
     await flush();
 
-    const row = rendered.document.querySelector('.thread-delegation-row');
-    expect(row?.querySelector('.thread-delegation-row-name')?.textContent).toBe('research');
-    expect(row?.querySelector('.thread-delegation-row-name .working-text')).toBeNull();
-    expect(row?.querySelector('.thread-delegation-row-status .working-text-base')?.textContent)
+    const chip = rendered.document.querySelector('.thread-agent-chip');
+    expect(chip?.querySelector('.thread-agent-chip-name')?.textContent).toBe('survey the runtime');
+    expect(chip?.querySelector('.thread-agent-chip-name .working-text')).toBeNull();
+    expect(chip?.querySelector('.thread-agent-chip-type')?.textContent).toBe('general-purpose');
+    expect(chip?.querySelector('.thread-agent-chip-meta .working-text-base')?.textContent)
       .toMatch(/^Running · [4-6]s$/u);
-    expect(row?.querySelectorAll('.thread-delegation-row-status .working-text-base')).toHaveLength(1);
-    expect(row?.querySelector('[aria-label="Stop research"]')).not.toBeNull();
+    expect(rendered.document.querySelector('[aria-label="Stop survey the runtime"]')).not.toBeNull();
   });
 
-  test('states the settled span from the child Turn, not from a clock it no longer has', async () => {
-    const item: ThreadItem = {
-      ...base('subagent-settled'),
-      type: 'subAgentActivity',
-      kind: 'completed',
-      agentThreadId: 'thread-child',
-      agentPath: '/root/research',
-      error: null,
-      spawnItemId: null,
-    };
-    const rendered = renderItem(item, {
-      subagents: new Map([['thread-child', {
-        agentThreadId: 'thread-child',
-        displayName: 'research',
-        durationMs: 192_000,
-        error: null,
-        form: 'collaboration' as const,
-        nickname: null,
-        role: null,
-        startedAt: null,
-        status: 'completed' as const,
-        taskPath: '/root/research',
-      }]]),
-    });
-    await flush();
-
-    expect(rendered.document.querySelector('.thread-delegation-row-status')?.textContent)
-      .toBe('Completed · 3m 12s');
-  });
-
-  test('opens the run detail in place, without covering or moving the transcript', async () => {
-    const item: ThreadItem = {
-      ...base('subagent-expand'),
-      type: 'subAgentActivity',
-      kind: 'completed',
-      agentThreadId: 'thread-child',
-      agentPath: '/root/research',
-      error: null,
-      spawnItemId: null,
-    };
-    const rendered = renderItem(item, {
-      subagents: new Map([['thread-child', {
-        agentThreadId: 'thread-child',
-        displayName: 'research',
-        durationMs: null,
-        error: null,
-        form: 'collaboration' as const,
-        nickname: null,
-        role: null,
-        startedAt: null,
-        status: 'completed' as const,
-        taskPath: '/root/research',
-      }]]),
-    });
-    await flush();
-
-    // Collapsed by default and announced as a disclosure, the way every other
-    // process row in this timeline opens.
-    const toggle = rendered.document.querySelector<HTMLElement>('.thread-delegation-row-open');
-    expect(toggle?.getAttribute('aria-expanded')).toBe('false');
-    expect(rendered.document.querySelector('.thread-subagent-detail')).toBeNull();
-
-    act(() => toggle?.click());
-    await flush();
-
-    expect(toggle?.getAttribute('aria-expanded')).toBe('true');
-    expect(rendered.document.querySelector('.thread-subagent-detail')).not.toBeNull();
-  });
-
-  test('drops Stop once the child settles, keeping the row in place', async () => {
-    const item: ThreadItem = {
-      ...base('subagent-done'),
-      type: 'subAgentActivity',
-      kind: 'completed',
-      agentThreadId: 'thread-child',
-      agentPath: '/root/research',
-      error: null,
-      spawnItemId: null,
-    };
-    const rendered = renderItem(item, {
+  test('states the settled span from the generation, and keeps the chip in its slot', async () => {
+    const rendered = renderItem(spawnActivity('chip-settled'), {
       onInterruptThread: async () => undefined,
-      subagents: new Map([['thread-child', {
-        agentThreadId: 'thread-child',
-        displayName: 'research',
-        durationMs: null,
-        error: null,
-        form: 'collaboration' as const,
-        nickname: null,
-        role: null,
-        startedAt: null,
-        status: 'completed' as const,
-        taskPath: '/root/research',
-      }]]),
+      anchor: { kind: 'spawn', agentId: 'thread-child', itemId: 'chip-settled' },
+      registry: registryOf({ durationMs: 192_000, status: 'completed' }),
     });
     await flush();
 
-    const row = rendered.document.querySelector('.thread-delegation-row');
-    expect(row?.querySelector('.thread-delegation-row-status')?.textContent).toBe('Completed');
-    expect(row?.querySelector('[aria-label="Stop research"]')).toBeNull();
+    const chip = rendered.document.querySelector('.thread-agent-chip');
+    expect(chip?.querySelector('.thread-agent-chip-meta')?.textContent).toBe('Completed · 3m 12s');
+    expect(chip?.querySelector('.working-text')).toBeNull();
+    // A settled Agent has nothing left to stop; the chip keeps its slot anyway,
+    // so the delegation is still read where it was decided.
+    expect(rendered.document.querySelector('[aria-label="Stop survey the runtime"]')).toBeNull();
   });
 
-  test('renders a budget failure with product copy and no token quantities in visible or accessible text', async () => {
-    const item: ThreadItem = {
-      ...base('subagent-failed'),
-      type: 'subAgentActivity',
-      kind: 'errored',
-      agentThreadId: 'thread-child',
-      agentPath: '/root/research',
-      error: {
-        message: 'Token budget exhausted (1234 of 1000 tokens)',
-        code: 'subagent_budget_exhausted',
-      },
-      spawnItemId: null,
-    };
-    const rendered = renderItem(item);
+  test('opens the Agent rather than expanding anything in place', async () => {
+    const opened: string[] = [];
+    const rendered = renderItem(spawnActivity('chip-open'), {
+      anchor: { kind: 'spawn', agentId: 'thread-child', itemId: 'chip-open' },
+      onOpenAgent: (agentId) => opened.push(agentId),
+      registry: registryOf({ status: 'completed' }),
+    });
     await flush();
 
-    const row = rendered.document.querySelector<HTMLElement>('.thread-delegation-row');
-    const open = row?.querySelector<HTMLButtonElement>('.thread-delegation-row-open');
-    expect(row?.className).toContain('thread-subagent-errored');
-    expect(row?.textContent).toContain('research');
-    expect(row?.querySelector('.thread-delegation-row-status')?.textContent).toBe('Failed');
-    expect(row?.querySelector('.thread-delegation-row-error')?.textContent)
-      .toBe('Task reached the system resource limit. Results have been preserved.');
-    expect(`${row?.textContent} ${open?.ariaLabel} ${open?.title}`).not.toMatch(/token|\d/u);
+    const chip = rendered.document.querySelector<HTMLButtonElement>('.thread-agent-chip');
+    // The chip is a way in, not a disclosure: nothing about it claims an
+    // expandable region, because opening pushes the detail view instead.
+    expect(chip?.getAttribute('aria-expanded')).toBeNull();
+    act(() => chip?.click());
+    expect(opened).toEqual(['thread-child']);
+  });
+
+  test('says a user stop outranks the model, without inventing a status for it', async () => {
+    const rendered = renderItem(spawnActivity('chip-stopped'), {
+      anchor: { kind: 'spawn', agentId: 'thread-child', itemId: 'chip-stopped' },
+      registry: registryOf({ status: 'interrupted', stoppedByUser: true }),
+    });
+    await flush();
+
+    expect(rendered.document.querySelector('.thread-agent-chip-meta')?.textContent).toBe('Stopped');
+  });
+
+  test('marks a worktree-isolated Agent and counts its live descendants', async () => {
+    const rendered = renderItem(spawnActivity('chip-worktree'), {
+      anchor: { kind: 'spawn', agentId: 'thread-child', itemId: 'chip-worktree' },
+      registry: registryOf({
+        liveDescendantCount: 2,
+        status: 'running',
+        worktree: { branch: 'tenon/agent-survey', path: '/tmp/agent-survey' },
+      }),
+    });
+    await flush();
+
+    const chip = rendered.document.querySelector('.thread-agent-chip');
+    expect(chip?.querySelector('.thread-agent-chip-worktree')).not.toBeNull();
+    expect(chip?.querySelector('.thread-agent-chip-meta')?.textContent).toContain('2 child tasks');
+  });
+
+  test('reports a budget failure in product copy, with no token quantity anywhere it can be read', async () => {
+    const rendered = renderItem(spawnActivity('chip-failed'), {
+      anchor: { kind: 'spawn', agentId: 'thread-child', itemId: 'chip-failed' },
+      registry: registryOf({
+        error: {
+          message: 'Token budget exhausted (1234 of 1000 tokens)',
+          code: 'subagent_budget_exhausted',
+        },
+        status: 'errored',
+      }),
+    });
+    await flush();
+
+    const line = rendered.document.querySelector<HTMLElement>('.thread-agent-chip-line');
+    const chip = line?.querySelector<HTMLButtonElement>('.thread-agent-chip');
+    expect(line?.className).toContain('thread-subagent-errored');
+    expect(chip?.querySelector('.thread-agent-chip-meta')?.textContent).toBe('Failed');
+    expect(`${line?.textContent} ${chip?.ariaLabel} ${chip?.title}`)
+      .toContain('Task reached the system resource limit');
+    expect(`${line?.textContent} ${chip?.ariaLabel} ${chip?.title}`).not.toMatch(/token|\d/u);
+  });
+
+  test('renders nothing for a terminal activity: the chip already speaks for that Agent', async () => {
+    const rendered = renderItem({
+      ...base('terminal-activity'),
+      type: 'subAgentActivity',
+      kind: 'completed',
+      agentThreadId: 'thread-child',
+      agentTurnId: null,
+      agentPath: '/root/research',
+      error: null,
+      spawnItemId: null,
+    }, { registry: registryOf({ status: 'completed' }) });
+    await flush();
+
+    expect(rendered.document.querySelector('.thread-agent-chip')).toBeNull();
+    expect(rendered.document.querySelector('.thread-item')).toBeNull();
+  });
+
+  test('falls back to the canonical Item when the Agent record is gone', async () => {
+    const rendered = renderItem(spawnActivity('chip-orphan'), {
+      anchor: { kind: 'spawn', agentId: 'thread-child', itemId: 'chip-orphan' },
+    });
+    await flush();
+
+    expect(rendered.document.querySelector('.thread-agent-chip-name')?.textContent).toBe('research');
+    expect(rendered.document.querySelector('.thread-agent-chip-meta')?.textContent).toBe('Not found');
   });
 
   test('keeps collaboration snapshots in sanitized result JSON without loading raw model output', async () => {
@@ -1044,7 +1007,7 @@ describe('ThreadItemView Subagent status presentation', () => {
     const item: ThreadItem = {
       ...base('collaboration-state'),
       type: 'collabAgentToolCall',
-      tool: 'agent',
+      tool: 'task_stop',
       status: 'completed',
       outputRef: {
         id: 'c'.repeat(64),
@@ -1054,7 +1017,8 @@ describe('ThreadItemView Subagent status presentation', () => {
       },
       senderThreadId: 'thread-1',
       receiverThreadIds: ['thread-child'],
-      prompt: 'Research the issue',
+      prompt: null,
+      summary: null,
       model: null,
       reasoningEffort: null,
       agentsStates: {
@@ -1065,11 +1029,7 @@ describe('ThreadItemView Subagent status presentation', () => {
           role: 'worker',
         },
       },
-      modelCall: replayableModelCall('agent', {
-        description: 'Research deployment',
-        prompt: 'Research the issue',
-        subagent_type: 'general-purpose',
-      }),
+      modelCall: replayableModelCall('task_stop', { task_id: 'thread-child' }),
     };
     const rendered = renderItem(item, {
       expanded: true,
@@ -1081,17 +1041,49 @@ describe('ThreadItemView Subagent status presentation', () => {
     await flush();
 
     expect(reads).toBe(0);
-    const state = rendered.document.querySelector('.thread-agent-state');
-    expect(state?.querySelector('code')?.textContent).toBe('/root/research');
-    expect(state?.querySelector('code .working-text')).toBeNull();
-    expect(state?.querySelector('.working-text-base')?.textContent).toBe('Running');
-    expect(state?.querySelector('.working-text')?.textContent).toBe('Running');
     expect(rendered.document.querySelector('.thread-tool-body')?.textContent)
       .not.toContain('tokensUsed');
     expect(rendered.document.querySelector('.thread-tool-body')?.textContent)
       .toContain('taskPath');
   });
 });
+
+function spawnActivity(id: string): ThreadItem {
+  return {
+    ...base(id),
+    type: 'subAgentActivity',
+    kind: 'started',
+    agentThreadId: 'thread-child',
+    agentTurnId: null,
+    agentPath: '/root/research',
+    error: null,
+    spawnItemId: null,
+  };
+}
+
+function registryOf(
+  overrides: Partial<SubagentRegistryEntry>,
+): ReadonlyMap<string, SubagentRegistryEntry> {
+  return new Map([['thread-child', {
+    agentId: 'thread-child',
+    parentThreadId: 'thread-1',
+    displayName: 'survey the runtime',
+    agentType: 'general-purpose',
+    form: 'agent' as const,
+    runMode: 'background' as const,
+    generation: 1,
+    status: 'running' as const,
+    stoppedByUser: false,
+    startedAt: null,
+    durationMs: null,
+    settledAt: null,
+    error: null,
+    worktree: null,
+    liveDescendantCount: 0,
+    ...overrides,
+  }]]);
+}
+
 
 describe('ThreadToolActivityGroup glyph', () => {
   test('wears the shared tool glyph when every member agrees, the wrench when mixed', async () => {
@@ -1254,7 +1246,9 @@ interface RenderItemOptions {
   readonly onInterruptThread?: (threadId: string) => Promise<void>;
   readonly streaming?: boolean;
   readonly showMessageActions?: boolean;
-  readonly subagents?: ReadonlyMap<string, SubagentPresentation>;
+  readonly anchor?: SubagentAnchor;
+  readonly registry?: ReadonlyMap<string, SubagentRegistryEntry>;
+  readonly onOpenAgent?: (agentId: string) => void;
   readonly workingTextEnabled?: boolean;
 }
 
@@ -1280,7 +1274,9 @@ function renderItem(item: ThreadItem, options: RenderItemOptions = {}): {
         onReadToolOutput={onReadToolOutput}
         streaming={(next.streaming ?? options.streaming) === true}
         showMessageActions={next.showMessageActions ?? options.showMessageActions ?? false}
-        subagents={options.subagents}
+        anchor={next.anchor ?? options.anchor}
+        registry={next.registry ?? options.registry}
+        onOpenAgent={next.onOpenAgent ?? options.onOpenAgent}
         workingTextEnabled={next.workingTextEnabled ?? options.workingTextEnabled ?? true}
       />
     </I18nProvider>,
@@ -1370,7 +1366,9 @@ function ThreadItemProbe({
   onReadToolArguments,
   streaming,
   showMessageActions,
-  subagents,
+  anchor,
+  registry,
+  onOpenAgent,
   onInterruptThread,
   workingTextEnabled,
 }: {
@@ -1385,11 +1383,20 @@ function ThreadItemProbe({
   readonly onInterruptThread?: (threadId: string) => Promise<void>;
   readonly streaming: boolean;
   readonly showMessageActions: boolean;
-  readonly subagents?: ReadonlyMap<string, SubagentPresentation>;
+  readonly anchor?: SubagentAnchor;
+  readonly registry?: ReadonlyMap<string, SubagentRegistryEntry>;
+  readonly onOpenAgent?: (agentId: string) => void;
   readonly workingTextEnabled: boolean;
 }) {
   const [expanded, setExpanded] = useState(initiallyExpanded);
   return (
+    <SubagentRegistryProvider
+      actions={{
+        openAgent: onOpenAgent ?? (() => undefined),
+        stopAgent: onInterruptThread ?? null,
+      }}
+      byAgentId={registry ?? new Map()}
+    >
     <ThreadItemView
       agentResponseTail={null}
       canEditUserMessage={canEditUserMessage}
@@ -1412,7 +1419,7 @@ function ThreadItemProbe({
       onReadToolOutput={onReadToolOutput}
       showMessageActions={showMessageActions}
       streaming={streaming}
-      subagents={subagents}
+      {...(anchor ? { anchor } : {})}
       threadCwd="/workspace"
       threadId="thread-1"
       userView={{
@@ -1426,6 +1433,7 @@ function ThreadItemProbe({
       }}
       workingTextEnabled={workingTextEnabled}
     />
+    </SubagentRegistryProvider>
   );
 }
 

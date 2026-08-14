@@ -1535,7 +1535,8 @@ function decodeSubagentExecution(value: unknown, path: string): SubagentExecutio
   const record = recordValue(value, path);
   exactKeys(record, [
     'agentId', 'parentThreadId', 'description', 'agentType', 'runMode', 'generation',
-    'currentTurnId', 'stopProvenance', 'notificationState', 'worktree', 'createdAt', 'updatedAt',
+    'currentTurnId', 'stopProvenance', 'terminalStatus', 'notificationState', 'worktree',
+    'createdAt', 'updatedAt',
   ], path);
   return {
     agentId: uuidV7(record.agentId, `${path}.agentId`),
@@ -1549,6 +1550,11 @@ function decodeSubagentExecution(value: unknown, path: string): SubagentExecutio
       record.stopProvenance,
       ['none', 'model', 'user', 'budget', 'hostRestart'],
       `${path}.stopProvenance`,
+    ),
+    terminalStatus: record.terminalStatus === null ? null : enumValue(
+      record.terminalStatus,
+      ['completed', 'failed', 'interrupted', 'killed'],
+      `${path}.terminalStatus`,
     ),
     notificationState: enumValue(
       record.notificationState,

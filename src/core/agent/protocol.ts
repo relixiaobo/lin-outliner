@@ -1061,6 +1061,9 @@ export type SubagentStopProvenance = 'none' | 'model' | 'user' | 'budget' | 'hos
  */
 export type SubagentNotificationState = 'none' | 'pending' | 'delivering' | 'delivered';
 
+/** How one background generation ended, as the host recorded it. */
+export type SubagentTerminalStatus = 'completed' | 'failed' | 'interrupted' | 'killed';
+
 /** The retained managed worktree a settled generation left behind. */
 export interface SubagentWorktreeSummary {
   readonly branch: string;
@@ -1087,6 +1090,13 @@ export interface SubagentExecutionProjection {
   readonly generation: number;
   readonly currentTurnId: TurnId;
   readonly stopProvenance: SubagentStopProvenance;
+  /**
+   * How this generation ended, recorded when its result was queued for the
+   * parent. Durable, so a conversation reopened later states the outcome
+   * without reloading every child's Turns; `null` while the generation runs,
+   * and for foreground work, whose result travels back through its own call.
+   */
+  readonly terminalStatus: SubagentTerminalStatus | null;
   readonly notificationState: SubagentNotificationState;
   /** Present only while a managed worktree is retained for this Agent. */
   readonly worktree: SubagentWorktreeSummary | null;

@@ -450,6 +450,7 @@ const subagentExecution: SubagentExecutionProjection = {
   generation: 2,
   currentTurnId: TURN_ID,
   stopProvenance: 'user',
+  terminalStatus: 'interrupted',
   notificationState: 'delivered',
   worktree: { branch: 'tenon/agent-survey', path: '/tmp/project-agent-survey' },
   createdAt: 100,

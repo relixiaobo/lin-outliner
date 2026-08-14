@@ -7979,6 +7979,7 @@ describe('ThreadService', () => {
       runMode: 'background',
       generation: 1,
       stopProvenance: 'none',
+      terminalStatus: null,
       notificationState: 'none',
       worktree: null,
     })]);
@@ -7987,7 +7988,8 @@ describe('ThreadService', () => {
     // rendered by accident.
     expect(Object.keys(running[0]!).sort()).toEqual([
       'agentId', 'agentType', 'createdAt', 'currentTurnId', 'description', 'generation',
-      'notificationState', 'parentThreadId', 'runMode', 'stopProvenance', 'updatedAt', 'worktree',
+      'notificationState', 'parentThreadId', 'runMode', 'stopProvenance', 'terminalStatus',
+      'updatedAt', 'worktree',
     ]);
     expect(notifications.filter((notification) => notification.type === 'subagent/execution/changed'))
       .toContainEqual(expect.objectContaining({
@@ -8003,6 +8005,8 @@ describe('ThreadService', () => {
     await waitUntil(() => (
       fixture.service.listThreadSubagents({ threadId: root.id }).data[0]?.notificationState === 'pending'
     ));
+    expect(fixture.service.listThreadSubagents({ threadId: root.id }).data[0]?.terminalStatus)
+      .toBe('completed');
 
     await fixture.service.interruptUserWork(root.id, rootTurn.turn.id);
     await fixture.service.waitForIdle(root.id);

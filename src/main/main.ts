@@ -11,6 +11,7 @@ import { DocumentService } from './documentService';
 import { AppQuitCoordinator, type QuitDecision } from './appQuitCoordinator';
 import { AssetService, mimeTypeForFilename, sniffMimeType } from './assetService';
 import { ThreadService } from './agent/ThreadService';
+import { gitOutput } from './agent/context/AgentStartupContext';
 import { closeAgentServices } from './agent/closeAgentServices';
 import { ExtensionRegistry } from './agent/ExtensionRegistry';
 import { MemoryControlStore } from './agent/extensions/memory/MemoryControlStore';
@@ -657,6 +658,20 @@ let toolRuntime!: ToolRuntime;
 const agentConfigurationLoader = new AgentConfigurationLoader(resolvedUserDataDir);
 const agentWorktree = new AgentWorktree(resolvedUserDataDir);
 let threadService!: ThreadService;
+
+/** How many changed paths a worktree footer will list before eliding. */
+const MAX_REPORTED_WORKTREE_CHANGES = 200;
+
+/**
+ * The managed worktree an Agent still holds, resolved from its execution record.
+ * A removed worktree is a tombstone: its `removedAt` says the directory is gone,
+ * so it never resolves to a path a reveal could open.
+ */
+function retainedAgentWorktree(agentId: string): { readonly path: string } | null {
+  if (!agentId) return null;
+  const worktree = threadService.subagentExecution(agentId)?.worktree ?? null;
+  return worktree && worktree.removedAt === null ? { path: worktree.path } : null;
+}
 const agentImageObservationMutex = new Mutex();
 const attachmentResolver = new AttachmentResolver({
   useResourcePath: (threadId, ref, use) => threadService.useThreadResourcePath(threadId, ref, use),
@@ -4252,6 +4267,40 @@ async function handleAgentCommand(_event: IpcMainInvokeEvent, command: AgentComm
         // parent would actually surface it.
         nameValid: isValidSkillName(basename(resolvedPick)),
       };
+    }
+    case 'agent_worktree_changes': {
+      // The renderer names an Agent; the path comes from the execution record.
+      // A renderer-supplied path here would turn a footer into an arbitrary
+      // filesystem read, so it is never accepted.
+      const worktree = retainedAgentWorktree(String(args.agentId ?? ''));
+      if (!worktree) return { available: false, paths: [] };
+      try {
+        const status = await gitOutput(worktree.path, ['--no-optional-locks', 'status', '--porcelain']);
+        const paths = status.split('\n')
+          .map((line) => line.slice(3).trim())
+          .filter(Boolean)
+          // A rename reports `old -> new`; the destination is the file that is
+          // now in the worktree, which is what the reader is being shown.
+          .map((entry) => entry.includes(' -> ') ? entry.slice(entry.indexOf(' -> ') + 4) : entry)
+          .slice(0, MAX_REPORTED_WORKTREE_CHANGES);
+        return { available: true, paths };
+      } catch {
+        return { available: false, paths: [] };
+      }
+    }
+    case 'agent_reveal_worktree': {
+      const worktree = retainedAgentWorktree(String(args.agentId ?? ''));
+      if (!worktree) return { revealed: false };
+      // showItemInFolder reports nothing, and the failing case — a worktree the
+      // host removed or a volume that went away — is exactly what the user
+      // clicks Reveal to investigate.
+      try {
+        await stat(worktree.path);
+      } catch {
+        return { revealed: false };
+      }
+      shell.showItemInFolder(worktree.path);
+      return { revealed: true };
     }
     case 'agent_reveal_skill_directory': {
       const target = String(args.path ?? '');

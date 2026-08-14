@@ -118,9 +118,12 @@ import {
 } from '../threadScrollFollow';
 import {
   collaborationResultSnapshot,
-  projectSubagentsForTurn,
-  type SubagentTurnProjection,
+  emptyTurnAnchors,
+  type SubagentConversationProjection,
+  type SubagentTurnAnchors,
 } from '../subagentPresentation';
+import { SubagentCompletionDivider } from './SubagentCompletionDivider';
+import { useWorkingAgentIds } from './SubagentRegistryContext';
 import { classifyNewThreadCommand } from '../threadComposerCommands';
 
 interface ThreadViewProps {
@@ -138,6 +141,17 @@ interface ThreadViewProps {
   readonly threadsById: ReadonlyMap<ThreadId, Thread>;
   readonly latestTurnByThread: ReadonlyMap<ThreadId, Turn>;
   readonly turns: readonly Turn[];
+  /**
+   * The conversation's Agent anchors and continuations, projected once by the
+   * deck. A transcript rendered inside an Agent's detail view shares the same
+   * projection: one registry spans the whole conversation, at every depth.
+   */
+  readonly subagentProjection: SubagentConversationProjection;
+  /** Overrides the composer's resting prompt — an Agent's own says what a
+   *  message to it will do, including that it clears the user's stop. */
+  readonly composerPlaceholder?: string;
+  /** This transcript belongs to one Agent, so its Turns are generations. */
+  readonly agentTranscript?: boolean;
   readonly inputRequest: RequestUserInputRequest | null;
   /** The run is blocked on the user. Working phrases become static and the
    *  divider names the wait; elapsed time remains the Turn's wall-clock span. */
@@ -444,6 +458,9 @@ export function ThreadView({
   threadsById,
   latestTurnByThread,
   turns,
+  subagentProjection,
+  composerPlaceholder,
+  agentTranscript = false,
   inputRequest,
   waitingOnUserInput,
   providerRetry,
@@ -1701,6 +1718,13 @@ export function ThreadView({
                         threadsById={threadsById}
                         latestTurnByThread={latestTurnByThread}
                         turn={turn}
+                        anchors={subagentProjection.anchorsByTurnId.get(turn.id) ?? emptyTurnAnchors(turn)}
+                        continuationAgentId={subagentProjection.continuationAgentByTurnId.get(turn.id) ?? null}
+                        generationLabel={agentTranscript && turnIndex > 0
+                          ? turn.provenance.trigger.kind === 'subagent'
+                            ? t.agent.thread.agent.generationContinued({ count: turnIndex + 1 })
+                            : t.agent.thread.agent.generation({ count: turnIndex + 1 })
+                          : null}
                         userView={userView}
                         waitingOnUserInput={waitingOnUserInput}
                       />
@@ -1814,7 +1838,9 @@ export function ThreadView({
                 onNodeReferenceClick={onOpenNodeReference}
                 onStop={() => void onInterrupt()}
                 onSubmit={() => void submit()}
-                placeholder={activeTurn ? t.agent.composer.steerPlaceholder : t.agent.thread.composerPlaceholder}
+                placeholder={activeTurn
+                  ? t.agent.composer.steerPlaceholder
+                  : composerPlaceholder ?? t.agent.thread.composerPlaceholder}
                 recentLocalFiles={recentLocalFiles}
                 ref={composerRef}
                 slashCommands={slashCommands}
@@ -1965,6 +1991,9 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   threadsById,
   latestTurnByThread,
   turn,
+  anchors,
+  continuationAgentId,
+  generationLabel,
   userView,
   waitingOnUserInput,
 }: {
@@ -1998,6 +2027,16 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   readonly threadsById: ReadonlyMap<ThreadId, Thread>;
   readonly latestTurnByThread: ReadonlyMap<ThreadId, Turn>;
   readonly turn: Turn;
+  /** This Turn's delegation anchors, projected once for the conversation. */
+  readonly anchors: SubagentTurnAnchors;
+  /** Set when the host started this Turn to deliver an Agent's result. */
+  readonly continuationAgentId: ThreadId | null;
+  /**
+   * Names the generation this Turn is, inside an Agent's own transcript. One
+   * generation is one Turn: steering joins the Turn already running, and only a
+   * resume — by the parent's message or by the user's — starts another.
+   */
+  readonly generationLabel: string | null;
   readonly userView: RendererUserViewHints;
   readonly waitingOnUserInput: boolean;
 }) {
@@ -2025,26 +2064,15 @@ export const ThreadTurnView = memo(function ThreadTurnView({
     && isStandaloneContextBoundaryTurn(turn);
   const hostAuthoredEvent = turn.provenance.trigger.kind === 'subagent'
     && turn.provenance.originThreadId === threadId;
-  const subagentProjectionRef = useRef<{
-    readonly projection: SubagentTurnProjection;
-    readonly turnId: string;
-  } | null>(null);
-  const subagents = useMemo(() => {
-    const previous = subagentProjectionRef.current?.turnId === turn.id
-      ? subagentProjectionRef.current.projection
-      : null;
-    const projection = projectSubagentsForTurn(turn, threadsById, latestTurnByThread, previous);
-    subagentProjectionRef.current = { projection, turnId: turn.id };
-    return projection;
-  }, [latestTurnByThread, threadsById, turn]);
+  const workingAgentIds = useWorkingAgentIds();
   const contentGrouperRef = useRef<TurnContentGrouper | null>(null);
   if (contentGrouperRef.current === null) contentGrouperRef.current = createTurnContentGrouper();
-  const contentBlocks = contentGrouperRef.current.group({ ...turn, items: subagents.items });
+  const contentBlocks = contentGrouperRef.current.group({ ...turn, items: anchors.items });
   const processBlock = contentBlocks.find((block) => block.kind === 'process');
   const processItems = processBlock?.kind === 'process' ? processBlock.items : EMPTY_THREAD_ITEMS;
   const processItemGroups = useMemo(() => groupTurnItems(processItems), [processItems]);
   const workingTextEnabled = !waitingOnUserInput && providerRetry === null;
-  const motionOwner = turnMotionOwner(turn, processItems, subagents);
+  const motionOwner = turnMotionOwner(turn, processItems, anchors, workingAgentIds);
   const workingTextOwnsMotion = workingTextEnabled && motionOwner !== 'none';
   // A blocked Turn cannot use a progressive cue. Keep the fallback response
   // shape static as well, otherwise it becomes the only moving element while
@@ -2162,6 +2190,14 @@ export const ThreadTurnView = memo(function ThreadTurnView({
     ],
   );
   const renderItem = (item: ThreadItem, showMessageActions: boolean) => (
+    // The host's own notification text is not a message to the reader. Where
+    // this Turn exists because an Agent's result arrived, the attribution
+    // divider replaces it: one muted line that says which Agent spoke and opens
+    // it, instead of the wall of task-notification framing addressed to the
+    // model.
+    continuationAgentId !== null && item.type === 'userMessage' ? (
+      <SubagentCompletionDivider agentId={continuationAgentId} key={item.id} />
+    ) : (
     <ThreadItemView
       agentResponseTail={item.id === responseItem?.id ? responseTail : null}
       canEditUserMessage={canEditUserMessage && showMessageActions}
@@ -2183,15 +2219,25 @@ export const ThreadTurnView = memo(function ThreadTurnView({
       onReadToolOutput={readToolOutput}
       showMessageActions={showMessageActions}
       streaming={turn.status === 'inProgress' && turn.items.at(-1)?.id === item.id}
-      subagents={subagents.byThreadId}
+      {...(anchors.anchorByItemId.has(item.id)
+        ? { anchor: anchors.anchorByItemId.get(item.id)! }
+        : {})}
       threadId={threadId}
       threadCwd={threadCwd}
       userView={userView}
       workingTextEnabled={workingTextEnabled}
     />
+    )
   );
   return (
     <section className={`thread-turn thread-turn-${turn.status}`}>
+      {generationLabel ? (
+        <div className="thread-agent-generation">
+          <span aria-hidden className="thread-agent-generation-rule" />
+          <span className="thread-agent-generation-label">{generationLabel}</span>
+          <span aria-hidden className="thread-agent-generation-rule" />
+        </div>
+      ) : null}
       {contentBlocks.map((block) => {
         if (block.kind === 'process') {
           return (
@@ -2205,7 +2251,7 @@ export const ThreadTurnView = memo(function ThreadTurnView({
               waitingOnUserInput={waitingOnUserInput}
               workingTextEnabled={workingTextEnabled}
               key={`process:${block.items[0]?.id ?? turn.id}`}
-              subagents={subagents}
+              anchors={anchors}
               turn={turn}
             >
               {processItemGroups.map((group) => group.kind === 'tools' ? (
@@ -2217,7 +2263,6 @@ export const ThreadTurnView = memo(function ThreadTurnView({
                   onOpenThread={onOpenThread}
                   onReadToolArguments={readToolArguments}
                   onReadToolOutput={readToolOutput}
-                  subagents={subagents.byThreadId}
                   threadId={threadId}
                   threadCwd={threadCwd}
                   workingTextEnabled={workingTextEnabled}
@@ -2692,7 +2737,7 @@ function ThreadProcessBlock({
   index,
   items,
   motionOwner,
-  subagents,
+  anchors,
   turn,
   waitingOnUserInput,
   workingTextEnabled,
@@ -2704,7 +2749,7 @@ function ThreadProcessBlock({
   readonly items: readonly ThreadItem[];
   readonly motionOwner: TurnMotionOwner;
   readonly onOpenThread: (threadId: string) => Promise<void>;
-  readonly subagents: SubagentTurnProjection;
+  readonly anchors: SubagentTurnAnchors;
   readonly turn: Turn;
   readonly waitingOnUserInput: boolean;
   readonly workingTextEnabled: boolean;
@@ -2714,6 +2759,7 @@ function ThreadProcessBlock({
   const expanded = expandState.isExpanded(disclosureId, false);
   const blockedOnUser = turn.status === 'inProgress' && waitingOnUserInput;
   const liveElapsedMs = useTurnElapsedMs(turn);
+  const workingAgentIds = useWorkingAgentIds();
   // A Turn can settle while a child it spawned keeps running — the
   // fire-and-forget shape the protocol supports, where terminal activity lands
   // in a LATER Turn. The fold defaults to closed, so folding here would hide a
@@ -2723,11 +2769,11 @@ function ThreadProcessBlock({
     && hasFinalResponse
     && turn.durationMs !== null
     && items.length > 0
-    && subagents.activeThreadIds.length === 0;
+    && !anchors.agentIds.some((agentId) => workingAgentIds.has(agentId));
   const terminalResponseOwnsStatus = hasFinalResponse
     && (turn.status === 'failed' || turn.status === 'interrupted');
   const summary = threadProcessSummary(
-    turn, items, hasFinalResponse, liveElapsedMs, t, index, subagents, blockedOnUser,
+    turn, items, hasFinalResponse, liveElapsedMs, t, index, blockedOnUser,
   );
   const timelineVisible = items.length > 0 && (!collapsible || expanded);
   const summaryWorking = motionOwner === 'summary'
@@ -2767,7 +2813,7 @@ function ThreadProcessBlock({
           <span className="thread-process-title">
             {turn.durationMs !== null
               ? t.agent.thread.workedFor({ duration: formatProcessDuration(turn.durationMs) })
-              : threadProcessNeutralHeader(turn, items, t, index, subagents)}
+              : threadProcessNeutralHeader(turn, items, t, index)}
           </span>
         </div>
       ) : null}
@@ -2781,14 +2827,14 @@ export type TurnMotionOwner = 'none' | 'summary' | 'leaf';
 export function turnMotionOwner(
   turn: Turn,
   items: readonly ThreadItem[],
-  subagents: SubagentTurnProjection,
+  anchors: SubagentTurnAnchors,
+  workingAgentIds: ReadonlySet<ThreadId>,
 ): TurnMotionOwner {
   if (turn.status !== 'inProgress') return 'none';
   if (items.some((item) => isThreadToolItem(item) && item.status === 'inProgress')) return 'leaf';
-  if (items.some((item) => (
-    item.type === 'subAgentActivity'
-    && isSubagentWorkingStatus(subagents.byThreadId.get(item.agentThreadId)?.status)
-  ))) return 'leaf';
+  // A live chip in this Turn is the more specific representation, so the Turn
+  // summary stays static while the chip carries the cue.
+  if (anchors.agentIds.some((agentId) => workingAgentIds.has(agentId))) return 'leaf';
   const tail = turn.items.at(-1);
   if (tail?.type === 'reasoning') {
     return [...tail.summary, ...tail.content].every((part) => !part.trim()) ? 'leaf' : 'none';
@@ -2856,7 +2902,6 @@ export function threadProcessSummary(
   liveElapsedMs: number | null,
   t: Messages,
   index: DocumentIndex,
-  subagents: SubagentTurnProjection,
   blockedOnUser = false,
 ): string {
   // Blocked on the user is not work in progress, and it outranks the elapsed
@@ -2872,7 +2917,7 @@ export function threadProcessSummary(
   if (turn.status === 'completed' && hasFinalResponse && turn.durationMs !== null) {
     return t.agent.thread.workedFor({ duration: formatProcessDuration(turn.durationMs) });
   }
-  return threadProcessNeutralHeader(turn, items, t, index, subagents);
+  return threadProcessNeutralHeader(turn, items, t, index);
 }
 
 /**
@@ -2885,16 +2930,13 @@ function threadProcessNeutralHeader(
   items: readonly ThreadItem[],
   t: Messages,
   index: DocumentIndex,
-  subagents: SubagentTurnProjection,
 ): string {
   const tools = items.filter(isThreadToolItem);
   const reasoning = items.find((item): item is Extract<ThreadItem, { type: 'reasoning' }> => item.type === 'reasoning');
   const activity = tools.length === 1
     ? summarizeThreadToolItem(tools[0]!, t.agent.thread.activity, index)
     : tools.length > 1
-      ? summarizeThreadToolActivity(tools, t.agent.thread.activity, index, {
-          collaborationThreadIds: subagents.collaborationThreadIds,
-        })
+      ? summarizeThreadToolActivity(tools, t.agent.thread.activity, index)
       : '';
   if (reasoning) {
     if (activity) return `${t.agent.thinking.thought} · ${sentenceFragment(activity)}`;

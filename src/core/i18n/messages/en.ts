@@ -1305,6 +1305,36 @@ export const en = {
         errored: 'Failed',
         notFound: 'Not found',
       },
+      agent: {
+        openAgent: ({ name }: { name: string }) => `Open ${name}`,
+        stopped: 'Stopped',
+        justFinished: 'Just finished',
+        resumed: 'Resumed',
+        worktree: 'Isolated worktree',
+        childTasks: ({ count }: { count: number }) => `${count} child ${count === 1 ? 'task' : 'tasks'}`,
+        waitingForAgent: 'waiting for it',
+        running: ({ count }: { count: number }) => `${count} running`,
+        backgroundWork: 'Background Agents',
+        completion: ({ name }: { name: string }) => `${name} complete`,
+        details: 'Details',
+        stoppedNote: ({ name }: { name: string }) => (
+          `You stopped ${name}. Send it a message to resume it.`
+        ),
+        composerPlaceholder: 'Message this Agent…',
+        composerResumePlaceholder: 'Message this Agent… (resumes after your stop)',
+        generation: ({ count }: { count: number }) => `Generation ${count}`,
+        generationContinued: ({ count }: { count: number }) => `Generation ${count} · Continued by main`,
+        worktreeFooter: ({ branch, count }: { branch: string; count: number }) => (
+          `${branch} · ${count} ${count === 1 ? 'file' : 'files'}`
+        ),
+        worktreeFooterUnknown: ({ branch }: { branch: string }) => branch,
+        revealWorktree: 'Reveal in Finder',
+        viewChanges: 'View changes',
+        hideChanges: 'Hide changes',
+        worktreeUnavailable: 'That worktree is no longer on disk.',
+        back: 'Back',
+        readOnlySkill: 'Owned by the Skill call that invoked it.',
+      },
       goal: 'Goal',
       goalStatuses: {
         active: 'Active',

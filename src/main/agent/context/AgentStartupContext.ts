@@ -317,7 +317,7 @@ async function resolveMainBranch(cwd: string): Promise<string> {
   return 'main';
 }
 
-async function gitOutput(cwd: string, args: readonly string[]): Promise<string> {
+export async function gitOutput(cwd: string, args: readonly string[]): Promise<string> {
   const { stdout } = await execFileAsync('git', ['-C', cwd, ...args], {
     encoding: 'utf8',
     maxBuffer: 1_024 * 1_024,

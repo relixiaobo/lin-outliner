@@ -1414,7 +1414,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
   private projectExecution(record: SubagentExecutionRecord): SubagentExecutionProjection {
     return projectSubagentExecution(
       record,
-      this.subagentExecutions.notificationState(record.agentId, record.generation),
+      this.subagentExecutions.terminalNotification(record.agentId, record.generation),
     );
   }
   /**

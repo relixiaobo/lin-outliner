@@ -807,12 +807,27 @@ export class SubagentExecutionLedger {
     agentId: ThreadId,
     generation: number,
   ): SubagentNotificationState | null {
+    return this.terminalNotification(agentId, generation)?.state ?? null;
+  }
+
+  /**
+   * How one generation ended, and where its result stands with the parent.
+   *
+   * Recorded for background generations only — a foreground result travels
+   * back through the `agent` call itself and never becomes a queued envelope.
+   */
+  terminalNotification(agentId: ThreadId, generation: number): {
+    readonly status: SubagentTerminalStatus;
+    readonly state: SubagentNotificationState;
+  } | null {
     if (this.deletedAgentIds.has(agentId)) return null;
     const row = this.db.prepare(`
-      SELECT state FROM subagent_execution_notifications
+      SELECT status, state FROM subagent_execution_notifications
       WHERE agent_id = ? AND generation = ?
-    `).get(agentId, generation) as { state: string } | undefined;
-    return row ? row.state as SubagentNotificationState : null;
+    `).get(agentId, generation) as { status: string; state: string } | undefined;
+    return row
+      ? { status: row.status as SubagentTerminalStatus, state: row.state as SubagentNotificationState }
+      : null;
   }
 
   parentsWithPending(): readonly ThreadId[] {

@@ -1,6 +1,7 @@
 import type {
   SubagentExecutionProjection,
   SubagentNotificationState,
+  SubagentTerminalStatus,
 } from '../../../core/agent/protocol';
 import type { SubagentExecutionRecord } from '../persistence/SubagentExecutionLedger';
 
@@ -15,7 +16,10 @@ import type { SubagentExecutionRecord } from '../persistence/SubagentExecutionLe
  */
 export function projectSubagentExecution(
   record: SubagentExecutionRecord,
-  notificationState: SubagentNotificationState | null,
+  terminal: {
+    readonly status: SubagentTerminalStatus;
+    readonly state: SubagentNotificationState;
+  } | null,
 ): SubagentExecutionProjection {
   return {
     agentId: record.agentId,
@@ -26,7 +30,8 @@ export function projectSubagentExecution(
     generation: record.generation,
     currentTurnId: record.currentTurnId,
     stopProvenance: record.stopProvenance,
-    notificationState: notificationState ?? 'none',
+    terminalStatus: terminal?.status ?? null,
+    notificationState: terminal?.state ?? 'none',
     // A removed worktree is a tombstone, not a retained one: the branch it
     // names no longer exists, so a footer offering to reveal it would point
     // the user at a directory the host has already deleted.
