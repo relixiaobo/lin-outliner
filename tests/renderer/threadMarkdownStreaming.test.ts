@@ -70,6 +70,85 @@ describe('streaming Thread Markdown blocks', () => {
     }
   });
 
+  test('inherits full repair context across a frozen block boundary', () => {
+    const sequences = [
+      ['Use `foo to do it.', '\n\nSecond paragraph text', '.'],
+      ['A *stray marker here.', '\n\nSecond paragraph', '.'],
+      ['**Bold start', '\n\nnext paragraph continues', '.'],
+      ['\n</div>', '\n\nelloSetext```js1. one', '\n\n`inline', '*em'],
+    ];
+
+    for (const chunks of sequences) {
+      const parser = createStreamingMarkdownBlockParser();
+      let text = '';
+      for (const chunk of chunks) {
+        text += chunk;
+        expect(parser.parse(text)).toEqual(splitMarkdownBlocks(remend(text)));
+      }
+    }
+  });
+
+  test('matches a full repaired lex across deterministic adversarial appends', () => {
+    const fragments = [
+      'text', ' word', '.', ':', '1', ' alpha',
+      '\n', '\n\n', '\n\n\n', '  ', '\t',
+      '# ', '## heading', '---', '==',
+      '- item', '* item', '1. item', '> quote',
+      '`', '``', '```', '```ts', '\n```',
+      '*', '**', '***', '_', '__', '~~', '$$',
+      '[', ']', '](', ')', '[ref]', '[ref]: https://example.test',
+      '<div>', '</div>', '<span', '&amp;',
+      '| a | b |', '| --- | --- |', '\\*', '\\`', '\\(', '\\)',
+    ] as const;
+    let comparedAppends = 0;
+
+    for (let seed = 1; seed <= 250; seed += 1) {
+      const next = deterministicRandom(seed);
+      const parser = createStreamingMarkdownBlockParser();
+      const chunks: string[] = [];
+      let text = '';
+      for (let append = 0; append < 100; append += 1) {
+        const chunk = fragments[Math.floor(next() * fragments.length)]!;
+        chunks.push(chunk);
+        text += chunk;
+        const incremental = parser.parse(text);
+        const full = splitMarkdownBlocks(remend(text));
+        if (JSON.stringify(incremental) !== JSON.stringify(full)) {
+          throw new Error(
+            `Streaming Markdown divergence: ${JSON.stringify({ append, chunks, seed })}`,
+          );
+        }
+        comparedAppends += 1;
+      }
+    }
+
+    expect(comparedAppends).toBe(25_000);
+  }, 15_000);
+
+  test('keeps blank-ish HTML continuations in the reparsed tail', () => {
+    const parser = createStreamingMarkdownBlockParser();
+    const chunks = [
+      'Setext',
+      '| a | b |',
+      '\n> q2',
+      '\n\n',
+      '&amp;',
+      '\n\n',
+      '<div>',
+      '\n| 1 | 2 |',
+      '\n\n',
+      '\n\n',
+      '  ',
+      '\ncode',
+    ];
+    let text = '';
+
+    for (const chunk of chunks) {
+      text += chunk;
+      expect(parser.parse(text)).toEqual(splitMarkdownBlocks(remend(text)));
+    }
+  });
+
   test('falls back correctly for edits, resets, and later appends', () => {
     const parser = createStreamingMarkdownBlockParser();
     parser.parse('# Original\n\nFirst paragraph.');
@@ -84,3 +163,14 @@ describe('streaming Thread Markdown blocks', () => {
     expect(parser.parse(appended)).toEqual(splitMarkdownBlocks(remend(appended)));
   });
 });
+
+function deterministicRandom(seed: number): () => number {
+  let value = seed >>> 0;
+  return () => {
+    value += 0x6d2b79f5;
+    let mixed = value;
+    mixed = Math.imul(mixed ^ (mixed >>> 15), mixed | 1);
+    mixed ^= mixed + Math.imul(mixed ^ (mixed >>> 7), mixed | 61);
+    return ((mixed ^ (mixed >>> 14)) >>> 0) / 4_294_967_296;
+  };
+}

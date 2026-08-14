@@ -329,17 +329,24 @@ function appendStreamingMarkdown(
   previous: StreamingMarkdownBlockState,
   text: string,
 ): StreamingMarkdownBlockState {
+  const repaired = remend(text);
+  if (
+    previous.tailStart > repaired.length
+    || repaired.slice(0, previous.tailStart) !== text.slice(0, previous.tailStart)
+  ) {
+    return parseFullStreamingMarkdown(text, repaired);
+  }
   const tailText = text.slice(previous.tailStart);
-  const repairedTail = remend(tailText);
+  const repairedTail = repaired.slice(previous.tailStart);
   let tokens: readonly Token[];
   try {
     tokens = Lexer.lex(repairedTail);
   } catch {
-    return parseFullStreamingMarkdown(text);
+    return parseFullStreamingMarkdown(text, repaired);
   }
 
   const definitions = previous.definitionsBeforeTail + definitionsFromTokens(tokens);
-  if (definitions !== previous.definitions) return parseFullStreamingMarkdown(text);
+  if (definitions !== previous.definitions) return parseFullStreamingMarkdown(text, repaired);
 
   const tailBlocks = blocksFromTokens(tokens, definitions);
   const visibleTailBlocks = hasVisibleTokens(tokens) ? tailBlocks : [];
@@ -368,8 +375,10 @@ function appendStreamingMarkdown(
   };
 }
 
-function parseFullStreamingMarkdown(text: string): StreamingMarkdownBlockState {
-  const repaired = remend(text);
+function parseFullStreamingMarkdown(
+  text: string,
+  repaired = remend(text),
+): StreamingMarkdownBlockState {
   let tokens: readonly Token[];
   try {
     tokens = Lexer.lex(repaired);
@@ -413,29 +422,60 @@ function nextTailBoundary(
   // safe only when the token stream accounts for every repaired source byte.
   if (coveredLength !== repaired.length) return null;
 
-  let lastVisibleIndex = -1;
+  // A repair suffix can look like a separate final block. Keeping two substantive
+  // content tokens prevents that temporary block from hiding an extendable
+  // list, HTML block, or indented code block immediately before it.
+  let tailContentIndex = -1;
+  let contentCount = 0;
   for (let index = tokens.length - 1; index >= 0; index -= 1) {
-    if (tokens[index]?.type !== 'def') {
-      lastVisibleIndex = index;
-      break;
+    if (tokens[index]?.type !== 'def' && tokens[index]?.type !== 'space') {
+      contentCount += 1;
+      if (contentCount === 2) {
+        tailContentIndex = index;
+        break;
+      }
     }
   }
-  if (lastVisibleIndex < 0) return null;
+  if (tailContentIndex < 0) return null;
 
   let tailIndex = 0;
   let tokenEnd = 0;
-  for (let index = 0; index < lastVisibleIndex; index += 1) {
+  // Trailing source whitespace can still be absorbed by the preceding token.
+  const sourceContentEnd = source.trimEnd().length;
+  for (let index = 0; index < tailContentIndex; index += 1) {
     tokenEnd += tokens[index]!.raw.length;
-    if (endsWithBlankLine(repaired, tokenEnd)) tailIndex = index + 1;
+    if (tokenEnd <= sourceContentEnd && endsWithBlankLine(repaired, tokenEnd)) {
+      tailIndex = index + 1;
+    }
   }
   const beforeTail = tokens.slice(0, tailIndex);
   const tailStart = beforeTail.reduce((length, token) => length + token.raw.length, 0);
-  if (tailStart > source.length || repaired.slice(0, tailStart) !== source.slice(0, tailStart)) return null;
+  if (
+    tailStart > source.length
+    || repaired.slice(0, tailStart) !== source.slice(0, tailStart)
+    || hasOpenSquareBracket(source, tailStart)
+  ) return null;
   return {
     definitionsBeforeTail: definitionsFromTokens(beforeTail),
     prefixBlocks: beforeTail.filter((token) => token.type !== 'def').map((token) => token.raw),
     tailStart,
   };
+}
+
+function hasOpenSquareBracket(text: string, end: number): boolean {
+  // Marked can reinterpret a label opened in the prefix as a definition when
+  // a matching `]:` arrives later, changing every block's attached definitions.
+  let depth = 0;
+  for (let index = 0; index < end; index += 1) {
+    if (text[index] === '\\') {
+      index += 1;
+    } else if (text[index] === '[') {
+      depth += 1;
+    } else if (text[index] === ']' && depth > 0) {
+      depth -= 1;
+    }
+  }
+  return depth > 0;
 }
 
 function endsWithBlankLine(text: string, end: number): boolean {

@@ -31,9 +31,9 @@ every premise re-verified against the post-#531/#533/#535 tree on 2026-08-14):
   `configuration_json`, and `tool_ceiling_json`).
 - **Streaming markdown re-lexes the full text.** `useStreamingMarkdownText`
   commits at most every 80 ms (`STREAMING_MARKDOWN_THROTTLE_MS`), but each
-  commit runs `remend` and then `Lexer.lex` (`splitMarkdownBlocks`) over the
-  **entire** accumulated message — O(full text) per commit, quadratic over a
-  long answer's life.
+  commit runs `remend` and then the dominant `Lexer.lex`
+  (`splitMarkdownBlocks`) over the **entire** accumulated message — O(full
+  text) lexing per commit, quadratic over a long answer's life.
 - **The active Turn re-renders all its items per notification.**
   `ThreadTurnView` is memoized, but `ThreadItemView` is not, and inside a
   streaming Turn every merged delta recomputes `projectSubagentsForTurn` (a
@@ -64,19 +64,21 @@ every premise re-verified against the post-#531/#533/#535 tree on 2026-08-14):
   as its last step; a test enumerates the store's public mutators and asserts
   each one invalidates. `requireThread` on the notification path becomes a Map
   hit.
-- **Incremental tail lexing — with the definition caveat.** A pure append does
-  NOT only change the last block: `splitMarkdownBlocks` folds the full
-  reference-definition set (`def` tokens) into **every** visible block
-  (re-verified: the definitions string is appended to each visible token's
-  raw), so an appended `[ref]: url` definition changes all of them. The
-  incremental path caches the previous commit's `(text, blocks, definitions)`:
-  when the new text extends the old, re-lex from the start of the previous
-  last block; if the tail lex leaves the definition set unchanged, reuse the
-  earlier blocks verbatim — if the definition set changed, fall back to a full
-  lex (rare and worth paying). Also fall back when the text did not extend the
-  cache (edit, reset). `remend` runs on the tail slice only. (Restructuring
-  definitions into a layer passed to blocks separately would remove the caveat
-  entirely; the dev may choose it if the fallback proves frequent in practice.)
+- **Incremental tail lexing — with repair and definition caveats.** A pure
+  append does NOT only change the last block: `remend` carries inline-marker
+  context across blank lines, while `splitMarkdownBlocks` folds the full
+  reference-definition set (`def` tokens) into **every** visible block. The
+  incremental path therefore repairs the complete text, but only re-lexes a
+  bounded tail. A safe boundary retains the last two substantive tokens plus
+  trailing whitespace, advances only across a source-identical repaired
+  prefix, and rejects a prefix with an unmatched `[` that a later `]:` could
+  reinterpret as a definition. The cache keeps the previous commit's `(text,
+  blocks, definitions)`; if the tail lex leaves the definition set unchanged,
+  earlier blocks are reused verbatim. A definition change, lexer failure,
+  unaccounted token bytes, non-append edit, or unsafe boundary falls back to a
+  full lex. Complete repair is intentionally retained because it is the source
+  of truth for streaming inline syntax; measurement confirms full lexing is
+  the dominant cost.
 - **Memoize the streaming Turn's items — props first, memo second.** The
   identity groundwork is better than this plan's first draft assumed, and is
   now verified: the store preserves item object identity across a delta

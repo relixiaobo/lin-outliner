@@ -504,14 +504,16 @@ events.
 
 Agent Markdown reuses the shared read-only code surface and dual-theme Shiki
 highlighter. Streaming text commits are throttled to 80 ms. For a pure append,
-repair and lexing restart at the last safe blank-line boundary before the
-previous final block; adjacent ambiguous blocks remain in that tail while earlier
-blocks retain identity. A non-append edit, lexer failure, definition-set change,
-or token stream that cannot account for every source byte falls back to a full
-repaired lex; the definition fallback is required because definitions are
-attached to every visible block. Stable completed blocks are memoized, and every
-block keeps the same memoized React component identity as the final streaming
-block seals. Node and local-file
+the complete source is repaired so inline-marker context can cross block
+boundaries, then lexing restarts at a safe blank-line boundary. The reparsed
+tail retains the last two substantive tokens and trailing whitespace; a repaired
+prefix that differs from source or contains an unmatched reference-label opener
+is not frozen. A non-append edit, lexer failure, definition-set change, or token
+stream that cannot account for every source byte falls back to a full repaired
+lex; the definition fallback is required because definitions are attached to
+every visible block. Stable completed blocks are memoized, and every block keeps
+the same memoized React component identity as the final streaming block seals.
+Node and local-file
 reference markers render through the same inline reference and preview surfaces
 as the outliner; Cmd/Ctrl-click preserves new-pane navigation, and HTTP links use
 the app preview route. User messages retain Copy and, for the latest terminal
