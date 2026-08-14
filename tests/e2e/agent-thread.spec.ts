@@ -2760,7 +2760,7 @@ test.describe('canonical agent Thread surface', () => {
     const skillLine = parentTurn.locator('.thread-agent-chip-line');
     await expect(skillLine).toHaveCount(1);
     await expect(skillLine.locator('.thread-agent-chip-name')).toHaveText('research');
-    await expect(skillLine.locator('.thread-agent-chip-meta')).toContainText(/Running · \d+[smhd]/u);
+    await expect(skillLine.locator('.thread-agent-chip-meta')).toContainText(/^\d+[smhd]/u);
     // A Skill is not an Agent type, so the chip advertises none.
     await expect(skillLine.locator('.thread-agent-chip-type')).toHaveCount(0);
     const skillRow = skillLine.getByRole('button', { name: /Open research/u });
@@ -2905,7 +2905,7 @@ test.describe('canonical agent Thread surface', () => {
     const parentTurn = page.locator(`[data-thread-turn-row="${fixture.parentTurnId}"]`);
     const rows = parentTurn.locator('.thread-agent-chip-line');
     await expect(rows).toHaveCount(2);
-    await expect(rows.locator('.thread-agent-chip-meta').first()).toContainText(/Running · \d+[smhd]/u);
+    await expect(rows.locator('.thread-agent-chip-meta').first()).toContainText(/^\d+[smhd]/u);
 
     // Stop one child from its row; the other keeps running.
     await parentTurn.getByRole('button', { name: 'Stop research' }).click();
@@ -2948,6 +2948,91 @@ test.describe('canonical agent Thread surface', () => {
     await expect(rows).toHaveCount(2);
     await expect(parentTurn.locator('.thread-agent-chip-block.thread-subagent-completed')).toHaveCount(1);
     await expect(parentTurn.getByRole('button', { name: /^Stop / })).toHaveCount(0);
+  });
+
+  test('shows background work in the strip only while there is any, and stops one from it', async ({ page }) => {
+    await createNewThread(page);
+    const fixture = await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(m: string, i?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: {
+          emitAgentCoreNotification: (n: unknown) => void;
+          setMockSubagentExecution: (agentId: string, patch: Record<string, unknown>) => void;
+        };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<Record<string, unknown>> }>('thread/list', {});
+      const root = response?.data[0];
+      if (!root) throw new Error('Mock root Thread not found');
+      const parentThreadId = String(root.id);
+      const childId = '01910000-0000-7000-8000-00000000fb10';
+      const childTurnId = '01910000-0000-7000-8000-00000000fb11';
+      const startedAt = Date.now() - 3_000;
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'thread/started',
+        threadId: childId,
+        thread: {
+          ...root,
+          id: childId,
+          parentThreadId,
+          agentNickname: null,
+          agentRole: 'worker',
+          name: null,
+          source: 'collaboration',
+          threadSource: 'subagent',
+          status: { type: 'active', activeFlags: [] },
+          updatedAt: startedAt,
+        },
+      });
+      target.__LIN_E2E__?.setMockSubagentExecution(childId, { description: 'survey the runtime' });
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/started',
+        threadId: childId,
+        turnId: childTurnId,
+        turn: {
+          id: childTurnId,
+          items: [],
+          itemsView: 'full',
+          provenance: {
+            originThreadId: childId,
+            originTurnId: childTurnId,
+            trigger: { kind: 'subagent', parentThreadId, parentItemId: 'spawn' },
+          },
+          status: 'inProgress',
+          error: null,
+          startedAt,
+          completedAt: null,
+          durationMs: null,
+        },
+      });
+      return { childId, childTurnId, parentThreadId };
+    });
+
+    // Ambient, not archival: one pill, only while this conversation has live
+    // background work.
+    const pill = page.locator('.thread-work-strip-pill');
+    await expect(pill).toHaveText('1 running');
+    await pill.click();
+    const row = page.locator('.thread-work-strip-row');
+    await expect(row).toHaveCount(1);
+    await expect(row.locator('.thread-work-strip-name')).toHaveText('survey the runtime');
+
+    // The strip's Stop reaches that Agent alone, addressed at its own Turn.
+    await row.getByRole('button', { name: 'Stop survey the runtime' }).click();
+    const interrupts = (await commandCalls(page)).filter((call) => call.cmd === 'turn/interrupt');
+    expect(interrupts.at(-1)?.args).toEqual({
+      threadId: fixture.childId,
+      turnId: fixture.childTurnId,
+    });
+    await expect(pill).toHaveText('Just finished');
+
+    // Foreground work never enters the strip: it belongs to the Turn it blocks.
+    await page.evaluate((childId) => {
+      const target = window as Window & {
+        __LIN_E2E__?: { setMockSubagentExecution: (agentId: string, patch: Record<string, unknown>) => void };
+      };
+      target.__LIN_E2E__?.setMockSubagentExecution(childId, { runMode: 'foreground' });
+    }, fixture.childId);
+    await expect(page.locator('.thread-work-strip')).toHaveCount(0);
   });
 
   test('never folds a settled Turn over a child that is still running', async ({ page }) => {
@@ -3064,7 +3149,7 @@ test.describe('canonical agent Thread surface', () => {
     const parentTurn = page.locator(`[data-thread-turn-row="${fixture.parentTurnId}"]`);
     const row = parentTurn.locator('.thread-agent-chip-line');
     await expect(row).toBeVisible();
-    await expect(row.locator('.thread-agent-chip-meta')).toContainText(/Running/u);
+    await expect(row.locator('.thread-agent-chip-meta')).toContainText(/^\d+[smhd]/u);
     await expect(parentTurn.getByRole('button', { name: 'Stop research' })).toBeVisible();
     await expect(parentTurn.locator('.thread-process-toggle')).toHaveCount(0);
 
@@ -3334,13 +3419,13 @@ test.describe('canonical agent Thread surface', () => {
       const rows = parentTurn.locator('.thread-agent-chip-block');
       await expect(rows).toHaveCount(2);
       await expect(rows.locator('.thread-agent-chip-meta').first())
-        .toContainText(/Running · \d+[smhd]/u);
+        .toContainText(/^\d+[smhd]/u);
       // The disclosure owns the flexible space and Stop owns the fixed edge.
       // Crossing the first digit-count boundary must not move the action.
       const researchRow = parentTurn.locator('.thread-agent-chip-block', { hasText: 'research' });
       const researchElapsed = researchRow.locator('.thread-agent-chip-meta .working-text-base');
       const researchStop = parentTurn.getByRole('button', { name: 'Stop research' });
-      await expect(researchElapsed).toHaveText('Running · 9s');
+      await expect(researchElapsed).toHaveText('9s');
       await expect(researchRow.locator('.thread-agent-chip-meta')).toHaveCSS(
         'font-variant-numeric',
         /tabular-nums/u,
@@ -3348,7 +3433,7 @@ test.describe('canonical agent Thread surface', () => {
       const stopAtNineSeconds = await researchStop.boundingBox();
       expect(stopAtNineSeconds).not.toBeNull();
       await page.clock.runFor(1_000);
-      await expect(researchElapsed).toHaveText('Running · 10s');
+      await expect(researchElapsed).toHaveText('10s');
       const stopAtTenSeconds = await researchStop.boundingBox();
       expect(stopAtTenSeconds).not.toBeNull();
       expect(Math.abs(stopAtTenSeconds!.x - stopAtNineSeconds!.x)).toBeLessThan(0.01);

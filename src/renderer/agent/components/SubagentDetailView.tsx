@@ -155,7 +155,6 @@ export function SubagentDetailView({
             onInterruptThread={(target) => threadStore.interruptThread(target)}
             onOpenNodeReference={onOpenNodeReference}
             onOpenThread={openRelated}
-            onSubagentDrill={(target) => { void openRelated(target); }}
             onOpenTurnDetails={(turn: Turn) => onOpenTurnDetails?.(agentId, turn.id)}
             onReadToolArguments={(turnId, item) => threadStore.readToolArguments(agentId, turnId, item)}
             onReadToolOutput={(turnId, item) => threadStore.readItemOutput(agentId, turnId, item)}
@@ -213,13 +212,12 @@ function SubagentWorktreeFooter({
     let cancelled = false;
     setChanges(null);
     setUnavailable(false);
+    // A failed count is not evidence the worktree is gone: the branch is still
+    // recorded and revealing it may still work, so the footer keeps its
+    // branch-only form rather than claiming a loss it has not observed.
     void api.readAgentWorktreeChanges(agentId).then((result) => {
-      if (cancelled) return;
-      if (!result.available) setUnavailable(true);
-      else setChanges(result.paths);
-    }).catch(() => {
-      if (!cancelled) setUnavailable(true);
-    });
+      if (!cancelled && result.available) setChanges(result.paths);
+    }).catch(() => undefined);
     return () => { cancelled = true; };
   }, [agentId]);
 

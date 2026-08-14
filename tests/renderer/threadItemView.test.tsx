@@ -889,8 +889,10 @@ describe('ThreadItemView Agent chips', () => {
     expect(chip?.querySelector('.thread-agent-chip-name')?.textContent).toBe('survey the runtime');
     expect(chip?.querySelector('.thread-agent-chip-name .working-text')).toBeNull();
     expect(chip?.querySelector('.thread-agent-chip-type')?.textContent).toBe('general-purpose');
+    // A running Agent's clock IS its status: the word `Running` would spend
+    // half the chip's one line saying what the moving text already says.
     expect(chip?.querySelector('.thread-agent-chip-meta .working-text-base')?.textContent)
-      .toMatch(/^Running · [4-6]s$/u);
+      .toMatch(/^[4-6]s$/u);
     expect(rendered.document.querySelector('[aria-label="Stop survey the runtime"]')).not.toBeNull();
   });
 

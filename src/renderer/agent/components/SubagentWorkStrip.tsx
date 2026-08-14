@@ -79,7 +79,7 @@ function SubagentStripRow({ entry }: { readonly entry: SubagentRegistryEntry }) 
   const elapsedMs = useSubagentElapsedMs(entry);
   const running = entry.status === 'running' || entry.status === 'pendingInit';
   const status = running
-    ? subagentChipStatus(entry, elapsedMs, false, t)
+    ? subagentChipStatus(entry, elapsedMs, false, t, true)
     : entry.stoppedByUser
       ? t.agent.thread.agent.stopped
       : t.agent.thread.agent.justFinished;

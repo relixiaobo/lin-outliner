@@ -172,15 +172,6 @@ interface ThreadViewProps {
   readonly onOpenTurnDetails: (turn: Turn) => void;
   /** Turn Details for a delegated child, read inside its own run detail. */
   readonly onOpenSubagentTurnDetails?: (threadId: string, turnId: string) => void;
-  /**
-   * Present only INSIDE a Subagent run detail. A delegation row there swaps
-   * that container's contents instead of opening a second one inside it —
-   * nesting would put a scroll region inside a scroll region. Its presence is
-   * also what makes this view EMBEDDED: a control that cannot act on a child
-   * Thread is hidden, which is a narrower thing than "has no composer" — an
-   * Automation transcript has no composer and can still be forked.
-   */
-  readonly onSubagentDrill?: (threadId: string) => void;
   readonly onReadToolOutput: (turnId: string, item: ThreadToolItem) => Promise<string | null>;
   readonly onReadToolArguments: (turnId: string, item: ThreadToolItem) => Promise<JsonValue | null>;
   readonly onSend: (content: readonly ThreadUserContent[]) => Promise<Turn | null>;
@@ -475,7 +466,6 @@ export function ThreadView({
   onOpenNodeReference,
   onOpenThread,
   onOpenSubagentTurnDetails,
-  onSubagentDrill,
   onOpenTurnDetails,
   onReadToolArguments,
   onReadToolOutput,
@@ -1693,7 +1683,7 @@ export function ThreadView({
                     >
                       <ThreadTurnView
                         onInterruptThread={onInterruptThread}
-                        canEditUserMessage={onSubagentDrill === undefined
+                        canEditUserMessage={!agentTranscript
                           && composerEnabled
                           && turn.id === editableTurnId
                           && turn.status !== 'inProgress'}
@@ -1704,7 +1694,7 @@ export function ThreadView({
                         onEditUserMessage={onEditUserMessage}
                         onContinueInNewChat={onContinueInNewChat}
                         onOpenSubagentTurnDetails={onOpenSubagentTurnDetails}
-                        onSubagentDrill={onSubagentDrill}
+                        agentTranscript={agentTranscript}
                         onOpenNodeReference={onOpenNodeReference}
                         onOpenThread={onOpenThread}
                         onOpenTurnDetails={onOpenTurnDetails}
@@ -1981,7 +1971,7 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   onOpenNodeReference,
   onOpenThread,
   onOpenSubagentTurnDetails,
-  onSubagentDrill,
+  agentTranscript,
   onOpenTurnDetails,
   onReadToolArguments,
   onReadToolOutput,
@@ -2013,11 +2003,12 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   readonly onOpenThread: (threadId: string) => Promise<void>;
   readonly onOpenSubagentTurnDetails?: (threadId: string, turnId: string) => void;
   /**
-   * Present only INSIDE a Subagent run detail. A delegation row there swaps
-   * that container's contents instead of opening a second one inside it —
-   * nesting would put a scroll region inside a scroll region.
+   * This transcript belongs to one Agent, read inside its pushed view. It is
+   * what makes the view EMBEDDED: a control that cannot act on a child Thread
+   * is hidden, which is narrower than "has no composer" — an Automation
+   * transcript has no composer and can still be forked.
    */
-  readonly onSubagentDrill?: (threadId: string) => void;
+  readonly agentTranscript: boolean;
   readonly onOpenTurnDetails: (turn: Turn) => void;
   readonly onReadToolArguments: (turnId: string, item: ThreadToolItem) => Promise<JsonValue | null>;
   readonly onReadToolOutput: (turnId: string, item: ThreadToolItem) => Promise<string | null>;
@@ -2114,7 +2105,7 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   );
   const handleResponseContextMenu = useCallback(async (event: MouseEvent<HTMLElement>) => {
     event.preventDefault();
-    const canContinueInNewChat = onSubagentDrill === undefined;
+    const canContinueInNewChat = !agentTranscript;
     const currentTurn = turnRef.current;
     const action = await window.lin?.showThreadMessageContextMenu?.({
       canCopy: hasTurnCopyContent(currentTurn),
@@ -2124,7 +2115,7 @@ export const ThreadTurnView = memo(function ThreadTurnView({
     if (action === 'copy') await copyTurn();
     else if (action === 'continueInNewChat') await continueInNewChat();
     else if (action === 'details') openTurnDetails();
-  }, [continueInNewChat, copyTurn, onSubagentDrill, openTurnDetails, turn.id]);
+  }, [agentTranscript, continueInNewChat, copyTurn, openTurnDetails, turn.id]);
   /**
    * Running the same request again, for a Turn where that could go differently.
    *
@@ -2143,13 +2134,13 @@ export const ThreadTurnView = memo(function ThreadTurnView({
     // persistent root user Thread, so anywhere the user cannot type they must
     // not be offered a button that can only fail.
     if (hostAuthoredEvent
-      || onSubagentDrill !== undefined
+      || agentTranscript
       || !composerEnabled
       || !isLastTurn
       || !isRetryableTurn(turn)) return null;
     const request = turn.items.find((item) => item.type === 'userMessage');
     return request?.content ?? null;
-  }, [composerEnabled, hostAuthoredEvent, isLastTurn, onSubagentDrill, turn]);
+  }, [agentTranscript, composerEnabled, hostAuthoredEvent, isLastTurn, turn]);
   const retryContentRef = useRef(retryContent);
   retryContentRef.current = retryContent;
   const retryTurn = useCallback(async () => {
@@ -2159,7 +2150,7 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   const responseTail = useMemo(
     () => standaloneContextBoundary ? null : (
       <ThreadResponseTail
-        canContinueInNewChat={onSubagentDrill === undefined}
+        canContinueInNewChat={!agentTranscript}
         onCopy={copyTurn}
         onContinueInNewChat={continueInNewChat}
         onOpenDetails={openTurnDetails}
@@ -2177,7 +2168,6 @@ export const ThreadTurnView = memo(function ThreadTurnView({
     [
       continueInNewChat,
       copyTurn,
-      onSubagentDrill,
       openTurnDetails,
       providerRetry,
       responseTailTurn,
@@ -2211,8 +2201,6 @@ export const ThreadTurnView = memo(function ThreadTurnView({
       onEditUserMessage={editUserMessage}
       onInterruptThread={onInterruptThread}
       onOpenNodeReference={onOpenNodeReference}
-      onOpenSubagentTurnDetails={onOpenSubagentTurnDetails}
-      onSubagentDrill={onSubagentDrill}
       onOpenTurnDetails={standaloneContextBoundary ? openTurnDetails : undefined}
       onOpenThread={onOpenThread}
       onReadToolArguments={readToolArguments}

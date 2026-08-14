@@ -41,7 +41,7 @@ export function SubagentChip({
   // foreground chip is not a background task the reader may ignore — it is what
   // the conversation is currently blocked on, and it says so.
   const waiting = entry?.runMode === 'foreground' && entry.status === 'running';
-  const status = subagentChipStatus(entry, elapsedMs, waiting, t);
+  const status = subagentChipStatus(entry, elapsedMs, waiting, t, true);
   const error = entry?.status === 'errored' && entry.error
     ? userFacingAgentError(entry.error, t.agent.thread.resourceLimitReached)
     : null;
@@ -99,23 +99,33 @@ export function SubagentChip({
 }
 
 /**
- * Time and state, in that order of usefulness. A running Agent shows its own
- * clock; a settled one shows the span its generation recorded, and states the
- * outcome when there is no span left to read.
+ * Time and state, in that order of usefulness.
+ *
+ * A running Agent's clock IS its status, so the compact form drops the word:
+ * a chip in a 344px deck has one line for a name, a type, and a state, and
+ * `Running · 1m 36s` spends half of it saying what the moving text already
+ * says. A settled Agent has no clock left, so it states the outcome and the
+ * span its generation recorded.
  */
 export function subagentChipStatus(
   entry: SubagentRegistryEntry | null,
   elapsedMs: number | null,
   waiting: boolean,
   t: Messages,
+  compact = false,
 ): string {
   if (!entry) return t.agent.thread.subagentStatuses.notFound;
   if (entry.stoppedByUser && entry.status !== 'running') return t.agent.thread.agent.stopped;
   const label = t.agent.thread.subagentStatuses[entry.status];
   const durationMs = elapsedMs ?? entry.durationMs;
-  const timed = durationMs !== null && durationMs >= 1_000
-    ? `${label} · ${formatSubagentDuration(durationMs)}`
-    : label;
+  const elapsed = durationMs !== null && durationMs >= 1_000
+    ? formatSubagentDuration(durationMs)
+    : null;
+  const timed = elapsed === null
+    ? label
+    : compact && elapsedMs !== null
+      ? elapsed
+      : `${label} · ${elapsed}`;
   const descendants = entry.liveDescendantCount > 0
     ? `${timed} · ${t.agent.thread.agent.childTasks({ count: entry.liveDescendantCount })}`
     : timed;

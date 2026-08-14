@@ -3365,8 +3365,10 @@
    shared opaque fallback under reduced transparency (B5).
    ════════════════════════════════════════════════════════════════════════════ */
 
+/* The pill sits inline in the header; its list is positioned against the
+   HEADER, which is the surface the dropdown spans. */
 .thread-work-strip {
-  position: relative;
+  position: static;
   flex: 0 0 auto;
 }
 
@@ -3402,11 +3404,10 @@
   position: absolute;
   z-index: var(--z-popover);
   top: calc(100% + var(--space-2));
-  right: 0;
-  left: 0;
+  right: var(--rail-pad);
+  left: var(--rail-pad);
   display: grid;
   gap: var(--space-1);
-  min-width: 220px;
   border: 1px solid var(--separator);
   border-radius: var(--radius-md);
   background: var(--material-popover);

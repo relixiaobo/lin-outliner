@@ -126,10 +126,6 @@ interface ThreadItemViewProps {
   readonly onOpenThread: (threadId: string) => Promise<void>;
   /** Absent where no Stop belongs — a read-only or historical rendering. */
   readonly onInterruptThread?: (threadId: string) => Promise<void>;
-  /** Turn Details for a Thread other than this one — a delegated child's. */
-  readonly onOpenSubagentTurnDetails?: (threadId: string, turnId: string) => void;
-  /** Present only inside a run detail: swap that container, do not nest one. */
-  readonly onSubagentDrill?: (threadId: string) => void;
   readonly onReadToolArguments: (item: ThreadToolItem) => Promise<JsonValue | null>;
   readonly onReadToolOutput: (item: ThreadToolItem) => Promise<string | null>;
   readonly userView: RendererUserViewHints;
