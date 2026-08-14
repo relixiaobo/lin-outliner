@@ -25,6 +25,10 @@ history. The same boundary also reports a diagnostic record. Unclassified
 foreground failures use the `runtime` domain; callers pass a narrower domain
 such as `command`, `provider`, `memory`, or `persistence` when known. Background
 extension reconciliation and storage failures report through the same path.
+Document mutations also report a `warn` diagnostic when forward done-state
+mapping skips a field synchronization because another field on the owner has the
+same normalized name. The done toggle still completes; the record contains only
+the operation and owner Node id, never field names or values.
 
 ## Safety Nets
 

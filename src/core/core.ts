@@ -177,6 +177,8 @@ interface TemplateFieldRef {
   templateOriginId: NodeId;
 }
 
+type FieldEntryIdsByDefinition = ReadonlyMap<NodeId, readonly NodeId[]>;
+
 interface TreeMaterializeContext {
   tagDefByName: Map<string, NodeId>;
   fieldDefByName: Map<string, NodeId>;
@@ -244,6 +246,17 @@ export interface CorePersistenceSnapshot {
 export interface CorePersistenceOptions {
   installationId?: string;
 }
+
+export interface CoreRuntimeDiagnostic {
+  code: 'done-state-field-sync-collision';
+  message: string;
+  context: {
+    operation: 'done-state-forward-mapping';
+    nodeId: NodeId;
+  };
+}
+
+export type CoreRuntimeDiagnosticHandler = (diagnostic: CoreRuntimeDiagnostic) => void;
 
 export interface WorkspacePersistenceLocalDelta {
   installationId: string;
@@ -396,6 +409,7 @@ export class Core {
   private persistenceMetadataSequenceValue = 0;
   private persistenceMetadataChanges: PersistenceMetadataChange[] = [];
   private loadedPersistenceVersionValue = new Uint8Array();
+  private runtimeDiagnosticHandler?: CoreRuntimeDiagnosticHandler;
   private lastRevisionDelta: CoreRevisionDelta = {
     revision: 0,
     changedNodeIds: [],
@@ -477,6 +491,18 @@ export class Core {
    *  so the today node id stays stable across launches. */
   requiresInitialPersist(): boolean {
     return this.initialPersistRequired;
+  }
+
+  setRuntimeDiagnosticHandler(handler: CoreRuntimeDiagnosticHandler | undefined): void {
+    this.runtimeDiagnosticHandler = handler;
+  }
+
+  private reportRuntimeDiagnostic(diagnostic: CoreRuntimeDiagnostic): void {
+    try {
+      this.runtimeDiagnosticHandler?.(diagnostic);
+    } catch {
+      // Observability must not turn a degraded runtime path into a failed mutation.
+    }
   }
 
   static new(options: CorePersistenceOptions = {}) {
@@ -1998,7 +2024,14 @@ export class Core {
       const optionId = isDone ? mapping.checkedOptionIds[0] : mapping.uncheckedOptionIds[0];
       if (!optionId) continue;
       const entryId = this.ensureFieldEntryWithTemplateDirect(nodeId, mapping.fieldDefId, undefined, false);
-      if (!entryId) continue;
+      if (!entryId) {
+        this.reportRuntimeDiagnostic({
+          code: 'done-state-field-sync-collision',
+          message: 'Skipped done-state field synchronization because the owner has a conflicting field name.',
+          context: { operation: 'done-state-forward-mapping', nodeId },
+        });
+        continue;
+      }
       // Done-state mapping is a controlled binary state-sync (part of the checkbox
       // mechanism): replace the prior state option rather than appending. Free
       // field-value editing always appends — this is the checkbox exception.
@@ -2435,11 +2468,21 @@ export class Core {
     });
   }
 
-  private mergeFieldDefinitionsDirect(targetId: string, sourceIds: string[]) {
+  private mergeFieldDefinitionsDirect(
+    targetId: string,
+    sourceIds: string[],
+    indexedEntryIds?: FieldEntryIdsByDefinition,
+  ) {
     const initial = this.snapshot();
+    const entryIdsByDefinition = indexedEntryIds ?? indexActiveFieldEntryIdsByDefinition(initial);
     const targetType = fieldTypeOf(initial, targetId);
     for (const sourceId of sourceIds) {
-      const compatibilityError = this.fieldDefinitionMergeCompatibilityError(initial, sourceId, targetId);
+      const compatibilityError = this.fieldDefinitionMergeCompatibilityError(
+        initial,
+        sourceId,
+        targetId,
+        entryIdsByDefinition,
+      );
       if (compatibilityError) throw CoreError.invalidOperation(compatibilityError);
     }
 
@@ -2456,6 +2499,7 @@ export class Core {
     state: DocumentState,
     sourceFieldId: string,
     targetFieldId: string,
+    entryIdsByDefinition: FieldEntryIdsByDefinition,
   ): string | undefined {
     const targetType = fieldTypeOf(state, targetFieldId);
     if (fieldTypeOf(state, sourceFieldId) !== targetType) {
@@ -2467,8 +2511,9 @@ export class Core {
     ) {
       return 'options-from-supertag field merge requires the same source supertag';
     }
-    for (const entry of Object.values(state.nodes)) {
-      if (entry.type !== 'fieldEntry' || entry.fieldDefId !== sourceFieldId || isInTrash(state, entry.id)) continue;
+    for (const entryId of entryIdsByDefinition.get(sourceFieldId) ?? []) {
+      const entry = state.nodes[entryId];
+      if (entry?.type !== 'fieldEntry' || entry.fieldDefId !== sourceFieldId || isInTrash(state, entry.id)) continue;
       const values = entry.children
         .map((valueId) => state.nodes[valueId])
         .filter((value): value is Node => Boolean(value) && !isInTrash(state, value!.id))
@@ -2538,14 +2583,17 @@ export class Core {
   }
 
   private unifyCompatibleTagTemplateFieldsDirect(sourceTagId: string, targetTagId: string) {
-    const sourceEntryIds = [...this.snapshot().nodes[sourceTagId]?.children ?? []];
+    const initial = this.snapshot();
+    const sourceEntryIds = [...initial.nodes[sourceTagId]?.children ?? []];
+    const entryIdsByDefinition = indexActiveFieldEntryIdsByDefinition(initial);
     for (const sourceEntryId of sourceEntryIds) {
       const state = this.snapshot();
       const sourceEntry = state.nodes[sourceEntryId];
       const sourceFieldDefId = sourceEntry?.type === 'fieldEntry' ? sourceEntry.fieldDefId : undefined;
       if (!sourceFieldDefId || !isActiveFieldDefinition(state, sourceFieldDefId)) continue;
 
-      const nameKey = definitionNameKey(fieldNameForDefId(state, sourceFieldDefId));
+      const nameKey = normalizeFieldNameKey(fieldNameForDefId(state, sourceFieldDefId));
+      if (!nameKey) continue;
       const targetEntries = (state.nodes[targetTagId]?.children ?? [])
         .map((entryId) => state.nodes[entryId])
         .filter((entry): entry is FieldEntryNode => entry?.type === 'fieldEntry' && !isInTrash(state, entry.id));
@@ -2556,10 +2604,15 @@ export class Core {
         if (
           !targetFieldDefId
           || !isActiveFieldDefinition(state, targetFieldDefId)
-          || definitionNameKey(fieldNameForDefId(state, targetFieldDefId)) !== nameKey
+          || normalizeFieldNameKey(fieldNameForDefId(state, targetFieldDefId)) !== nameKey
         ) continue;
-        if (this.fieldDefinitionMergeCompatibilityError(state, sourceFieldDefId, targetFieldDefId)) continue;
-        this.mergeFieldDefinitionsDirect(targetFieldDefId, [sourceFieldDefId]);
+        if (this.fieldDefinitionMergeCompatibilityError(
+          state,
+          sourceFieldDefId,
+          targetFieldDefId,
+          entryIdsByDefinition,
+        )) continue;
+        this.mergeFieldDefinitionsDirect(targetFieldDefId, [sourceFieldDefId], entryIdsByDefinition);
         break;
       }
     }
@@ -2579,6 +2632,7 @@ export class Core {
           if (state.nodes[targetEntryId]?.children.length === 0) {
             for (const valueId of [...child.children]) this.loro.moveNode(valueId, targetEntryId, undefined);
           }
+          this.rewriteTemplateOriginRefsDirect(childId, targetEntryId);
           this.removeSubtreeDirect(childId);
           this.touchNodeDirect(targetEntryId);
           continue;
@@ -2625,6 +2679,16 @@ export class Core {
       }
     }
     this.rewriteReferenceTargetsDirect(sourceId, targetId, { removeTargetSelfConfigRefs: false });
+  }
+
+  private rewriteTemplateOriginRefsDirect(sourceId: string, targetId: string) {
+    for (const node of Object.values(this.snapshot().nodes)) {
+      if (node.templateId !== sourceId) continue;
+      const next = clone(node);
+      next.templateId = targetId;
+      next.updatedAt = nowMs();
+      this.loro.writeNode(next);
+    }
   }
 
   private rewriteTagDefinitionRefsDirect(sourceId: string, targetId: string) {
@@ -5775,6 +5839,17 @@ function getTemplateFieldDefs(state: DocumentState, tagId: string): TemplateFiel
       seen.add(child.fieldDefId);
       result.push({ fieldDefId: child.fieldDefId, templateOriginId: childId });
     }
+  }
+  return result;
+}
+
+function indexActiveFieldEntryIdsByDefinition(state: DocumentState): FieldEntryIdsByDefinition {
+  const result = new Map<NodeId, NodeId[]>();
+  for (const node of Object.values(state.nodes)) {
+    if (node.type !== 'fieldEntry' || !node.fieldDefId || isInTrash(state, node.id)) continue;
+    const entryIds = result.get(node.fieldDefId) ?? [];
+    entryIds.push(node.id);
+    result.set(node.fieldDefId, entryIds);
   }
   return result;
 }

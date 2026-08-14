@@ -5,6 +5,7 @@ import type { DocumentCommand } from '../core/commands';
 import {
   Core,
   type CorePersistenceSnapshot,
+  type CoreRuntimeDiagnosticHandler,
   type CoreTransactionMetadata,
   type OperationHistoryItem,
   type OperationHistoryQuery,
@@ -164,6 +165,7 @@ type HistoryMutationGuardContext =
   | { status: 'unknown'; targets: readonly [] };
 
 export class DocumentService implements DocumentSystemHost {
+  private runtimeDiagnosticHandler?: CoreRuntimeDiagnosticHandler;
   private core = Core.new();
   private mutationQueue = Promise.resolve();
   private projectionChangedListeners = new Set<ProjectionChangedListener>();
@@ -225,6 +227,7 @@ export class DocumentService implements DocumentSystemHost {
     } else {
       this.core = Core.new({ installationId });
     }
+    this.core.setRuntimeDiagnosticHandler(this.runtimeDiagnosticHandler);
     this.documentReadModel = undefined;
     // The constructor lazily mints today's date node (and seeds system nodes) in
     // memory; persist immediately so its id is durable across launches. Without
@@ -377,6 +380,11 @@ export class DocumentService implements DocumentSystemHost {
 
   setPersistenceErrorHandler(handler: (error: unknown, revision: number) => void): void {
     this.persistenceErrorHandler = handler;
+  }
+
+  setRuntimeDiagnosticHandler(handler: CoreRuntimeDiagnosticHandler): void {
+    this.runtimeDiagnosticHandler = handler;
+    this.core.setRuntimeDiagnosticHandler(handler);
   }
 
   freezeMutationAdmission(): void {

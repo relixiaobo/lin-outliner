@@ -115,19 +115,24 @@ instead has an entry with the same normalized display name backed by another
 definition, that template field is skipped while the tag and all non-colliding
 template content continue to apply. Forward done-state mapping uses the same
 runtime boundary: a collided mapped field is skipped without aborting the done
-toggle. Explicit field creation, reuse, and rename remain fail-closed on owner
-name collisions.
+toggle, and records a local diagnostic for the skipped synchronization. Explicit
+field creation, reuse, and rename remain fail-closed on owner name collisions.
 
 `merge_definitions(targetId, sourceIds)` merges field definitions only when their
 types match, `options_from_supertag` sources match, and every stored source value
 is valid for the target type. A tag-definition merge rewrites source-tag uses and
 moves its direct template children into the target. Direct template fields with
-the same definition name are unified first when that field compatibility check
-succeeds; incompatible pairs remain as separate template entries, relying on the
-runtime collision rule above when the merged tag is applied. When unification
-deduplicates two template entries, existing target defaults win; source defaults
-fill the target only when it has no defaults. Instance values are user data and
-remain merged by the field-definition merge.
+the same non-empty normalized definition name are unified first when that field
+compatibility check succeeds. This uses the runtime collision key, including
+collapsed internal whitespace; cleared names remain distinct. Field-definition
+unification is document-wide: every active use of the source definition is
+relinked to the target, including template entries on tags outside the requested
+tag pair, and option pools are merged. Incompatible pairs remain as separate
+template entries, relying on the runtime collision rule above when the merged tag
+is applied. When unification deduplicates two template entries, existing target
+defaults win; source defaults fill the target only when it has no defaults.
+Instance values remain merged as user data, and their template origin is repointed
+to the surviving target template entry.
 
 `reuse_field_definition(entryId, targetDefId)` repoints a field entry at an
 existing definition instead of the throwaway draft `>` minted, dropping the now

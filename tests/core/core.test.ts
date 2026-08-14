@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { Core } from '../../src/core/core';
+import { Core, type CoreRuntimeDiagnostic } from '../../src/core/core';
 import { LoroOutlinerDocument } from '../../src/core/loroDocument';
 import { buildConfigIndex, nodeShowsCheckbox } from '../../src/core/configProjection';
 import { DONE_FIELD } from '../../src/core/systemFields';
@@ -1127,7 +1127,9 @@ describe('Core', () => {
   });
 
   test('done-state mapping skips a collided field without aborting the toggle', () => {
+    const diagnostics: CoreRuntimeDiagnostic[] = [];
     const core = Core.new();
+    core.setRuntimeDiagnosticHandler((diagnostic) => diagnostics.push(diagnostic));
     const collisionTagId = mustFocus(core.createTag('project'));
     const collisionEntryId = mustFocus(core.createFieldDef(collisionTagId, 'Status', 'plain'));
     const collisionDefId = core.state().nodes[collisionEntryId].fieldDefId!;
@@ -1144,10 +1146,16 @@ describe('Core', () => {
 
     core.applyTag(nodeId, collisionTagId);
     core.applyTag(nodeId, taskTagId);
+    diagnostics.length = 0;
     expect(() => core.toggleDone(nodeId)).not.toThrow();
 
     expect(core.state().nodes[nodeId].completedAt).toBeGreaterThan(0);
     expect(fieldEntries(core, nodeId).map((entry) => entry.fieldDefId)).toEqual([collisionDefId]);
+    expect(diagnostics).toEqual([{
+      code: 'done-state-field-sync-collision',
+      message: 'Skipped done-state field synchronization because the owner has a conflicting field name.',
+      context: { operation: 'done-state-forward-mapping', nodeId },
+    }]);
   });
 
   test('tag merge unifies compatible fields, relinks instances, and keeps target defaults', () => {
@@ -1176,6 +1184,7 @@ describe('Core', () => {
     expect(fieldValueTexts(core, mergedTemplateEntries[0]!.id)).toEqual(['Inbox']);
     expect(core.state().nodes[sourceNodeId].tags).toEqual([targetTagId]);
     expect(fieldEntries(core, sourceNodeId)[0]!.fieldDefId).toBe(targetFieldDefId);
+    expect(core.state().nodes[sourceInstanceEntryId].templateId).toBe(targetTemplateId);
     expect(fieldValueTexts(core, fieldEntries(core, sourceNodeId)[0]!.id)).toEqual(['Doing']);
 
     const futureNodeId = mustFocus(core.createNode(core.projection().todayId, null, 'Future issue'));
@@ -1183,6 +1192,62 @@ describe('Core', () => {
     const futureEntry = fieldEntries(core, futureNodeId)[0]!;
     expect(futureEntry.fieldDefId).toBe(targetFieldDefId);
     expect(fieldValueTexts(core, futureEntry.id)).toEqual(['Inbox']);
+  });
+
+  test('tag merge applies compatible field unification to every shared definition use', () => {
+    const core = Core.new();
+    const targetTagId = mustFocus(core.createTag('issue'));
+    const targetTemplateId = mustFocus(core.createFieldDef(targetTagId, 'Status', 'options'));
+    const targetFieldDefId = core.state().nodes[targetTemplateId].fieldDefId!;
+    mustFocus(core.registerCollectedOption(targetFieldDefId, 'Triage'));
+    const sourceTagId = mustFocus(core.createTag('bug'));
+    const sourceTemplateId = mustFocus(core.createFieldDef(sourceTagId, 'Status', 'options'));
+    const sourceFieldDefId = core.state().nodes[sourceTemplateId].fieldDefId!;
+    mustFocus(core.registerCollectedOption(sourceFieldDefId, 'Open'));
+    const thirdTagId = mustFocus(core.createTag('chore'));
+    const thirdTemplateId = mustFocus(core.createFieldDef(thirdTagId, 'Legacy status', 'options'));
+    core.reuseFieldDefinition(thirdTemplateId, sourceFieldDefId);
+
+    core.mergeDefinitions(targetTagId, [sourceTagId]);
+
+    expect(core.state().nodes[sourceFieldDefId]).toBeUndefined();
+    expect(fieldEntries(core, thirdTagId).map((entry) => entry.fieldDefId)).toEqual([targetFieldDefId]);
+    expect(new Set(optionChildIds(core, targetFieldDefId).map((optionId) => core.state().nodes[optionId].content.text)))
+      .toEqual(new Set(['Triage', 'Open']));
+  });
+
+  test('tag merge uses the runtime-normalized field name key', () => {
+    const core = Core.new();
+    const targetTagId = mustFocus(core.createTag('issue'));
+    const targetTemplateId = mustFocus(core.createFieldDef(targetTagId, 'Due Date', 'plain'));
+    const targetFieldDefId = core.state().nodes[targetTemplateId].fieldDefId!;
+    const sourceTagId = mustFocus(core.createTag('bug'));
+    const sourceTemplateId = mustFocus(core.createFieldDef(sourceTagId, 'Due  Date', 'plain'));
+    const sourceFieldDefId = core.state().nodes[sourceTemplateId].fieldDefId!;
+
+    core.mergeDefinitions(targetTagId, [sourceTagId]);
+
+    expect(core.state().nodes[sourceFieldDefId]).toBeUndefined();
+    expect(fieldEntries(core, targetTagId).map((entry) => entry.fieldDefId)).toEqual([targetFieldDefId]);
+  });
+
+  test('tag merge leaves cleared field names as separate definitions', () => {
+    const core = Core.new();
+    const targetTagId = mustFocus(core.createTag('issue'));
+    const targetTemplateId = mustFocus(core.createFieldDef(targetTagId, 'Target draft', 'plain'));
+    const targetFieldDefId = core.state().nodes[targetTemplateId].fieldDefId!;
+    const sourceTagId = mustFocus(core.createTag('bug'));
+    const sourceTemplateId = mustFocus(core.createFieldDef(sourceTagId, 'Source draft', 'plain'));
+    const sourceFieldDefId = core.state().nodes[sourceTemplateId].fieldDefId!;
+    core.applyNodeTextPatch(targetFieldDefId, replaceAllRichTextPatch(plainText('')));
+    core.applyNodeTextPatch(sourceFieldDefId, replaceAllRichTextPatch(plainText('')));
+
+    core.mergeDefinitions(targetTagId, [sourceTagId]);
+
+    expect(core.state().nodes[targetFieldDefId]).toBeDefined();
+    expect(core.state().nodes[sourceFieldDefId]).toBeDefined();
+    expect(new Set(fieldEntries(core, targetTagId).map((entry) => entry.fieldDefId)))
+      .toEqual(new Set([targetFieldDefId, sourceFieldDefId]));
   });
 
   test('tag merge keeps different-type same-name fields without poisoning the tag', () => {
