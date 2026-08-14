@@ -453,26 +453,14 @@ export function ThreadDock({
             </button>
           </div>
         ) : null}
-        {surface === 'thread' && thread && openAgentId !== null ? (
-          <SubagentDetailView
-            agentId={openAgentId}
-            index={index}
-            key={openAgentId}
-            onOpenNodeReference={onOpenNodeReference}
-            onOpenThread={openThread}
-            onOpenTurnDetails={onOpenTurnDetails}
-            onPop={() => setAgentStack((current) => current.slice(0, -1))}
-            onPush={(agentId) => setAgentStack((current) => [...current, agentId])}
-            parentName={openAgentStack.length > 1
-              ? subagentProjection.byAgentId.get(openAgentStack.at(-2)!)?.displayName
-                ?? t.agent.thread.agent.back
-              : t.agent.thread.agent.back}
-            subagentProjection={subagentProjection}
-            userView={userView}
-          />
-        ) : null}
-        {surface === 'thread' && thread && openAgentId === null ? (
-          <>
+        {surface === 'thread' && thread ? (
+          // The pushed view COVERS the conversation rather than replacing it in
+          // the tree. Unmounting the transcript would throw away the reader's
+          // place in it — and its measured layout — every time an Agent is
+          // opened; covering keeps both, and `inert` keeps focus out of what is
+          // no longer on screen.
+          <div className="thread-dock-body">
+            <div className="thread-dock-conversation" inert={openAgentId !== null ? true : undefined}>
             <ThreadView
               composerEnabled={thread.parentThreadId === null && thread.threadSource === 'user'}
               composerFocusToken={composerFocusToken}
@@ -517,7 +505,25 @@ export function ThreadDock({
               subagentProjection={subagentProjection}
               userView={userView}
             />
-          </>
+            </div>
+            {openAgentId !== null ? (
+              <SubagentDetailView
+                agentId={openAgentId}
+                index={index}
+                key={openAgentId}
+                onOpenNodeReference={onOpenNodeReference}
+                onOpenThread={openThread}
+                onOpenTurnDetails={onOpenTurnDetails}
+                onPop={() => setAgentStack((current) => current.slice(0, -1))}
+                parentName={openAgentStack.length > 1
+                  ? subagentProjection.byAgentId.get(openAgentStack.at(-2)!)?.displayName
+                    ?? t.agent.thread.agent.back
+                  : t.agent.thread.agent.back}
+                subagentProjection={subagentProjection}
+                userView={userView}
+              />
+            ) : null}
+          </div>
         ) : null}
         {surface === 'automations' ? (
           <Suspense fallback={<p className="thread-empty-copy">{t.agent.automations.loading}</p>}>

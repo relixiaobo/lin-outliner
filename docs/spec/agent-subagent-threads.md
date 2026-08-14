@@ -652,9 +652,34 @@ row's elapsed time. Legacy activity without a Turn anchor renders no duration.
 The child Thread and Agent execution record are live truth. Parent activity
 Items are durable presentation evidence, not another scheduler. Renderer
 projection combines canonical lineage, Agent ID/generation, child Thread state,
-the activity's exact Turn state, and pending notification state. It never depends on a wait
-Item or a model-maintained roster. Isolated Skills may produce the same visible
-child row, but their terminal output remains owned only by `skill`.
+the current generation's Turn state, and pending notification state. It never
+depends on a wait Item or a model-maintained roster. Isolated Skills may produce
+the same visible child anchor, but their terminal output remains owned only by
+`skill`.
+
+The execution record crosses the process seam as a narrow projection: Agent ID,
+direct parent, description, Agent type, run mode, generation, current Turn,
+stop provenance, terminal status, notification state, and retained worktree
+branch and path. The tool policy, startup snapshot, and worktree recovery intent
+never cross — they describe how the host executes an Agent, not what the user is
+looking at, and a field that never crosses cannot be rendered by accident.
+`thread/subagents/list` reads one conversation subtree's COMMITTED records; an
+uncommitted admission is absent, because the host publishes no start for one and
+may still roll it back. `subagent/execution/changed` announces each write to the
+Thread that delegated the work, ordered with that conversation's own
+notifications. It is transient by construction: execution state is derived
+orchestration state, and an Agent's canonical history is its own Thread, so it
+never enters a rollout. The ledger announces from its own write path rather than
+from its callers, so a mutation cannot go unannounced because one call site
+forgot.
+
+The host issues at most one OS notification per terminal BACKGROUND generation,
+only while the window is unfocused, with fixed content-free copy. Running,
+steering, and foreground settlement never notify, and the body never carries an
+Agent's own words: Agent output is untrusted content, and the notification
+centre is not a place a user can judge it. A retained worktree is readable from
+the renderer by Agent ID only — main resolves the directory from the execution
+record, and a removed worktree resolves to nothing.
 
 Orderly shutdown uses one bounded deadline for active Turn cancellation,
 collaboration settlement, and transcript flushing. Work that settles before the

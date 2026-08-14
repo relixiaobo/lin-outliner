@@ -966,12 +966,12 @@ describe('ThreadItemView Agent chips', () => {
     });
     await flush();
 
-    const line = rendered.document.querySelector<HTMLElement>('.thread-agent-chip-line');
+    const line = rendered.document.querySelector<HTMLElement>('.thread-agent-chip-block');
     const chip = line?.querySelector<HTMLButtonElement>('.thread-agent-chip');
     expect(line?.className).toContain('thread-subagent-errored');
     expect(chip?.querySelector('.thread-agent-chip-meta')?.textContent).toBe('Failed');
-    expect(`${line?.textContent} ${chip?.ariaLabel} ${chip?.title}`)
-      .toContain('Task reached the system resource limit');
+    expect(rendered.document.querySelector('.thread-agent-chip-error')?.textContent)
+      .toBe('Task reached the system resource limit. Results have been preserved.');
     expect(`${line?.textContent} ${chip?.ariaLabel} ${chip?.title}`).not.toMatch(/token|\d/u);
   });
 

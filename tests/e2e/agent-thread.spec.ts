@@ -2145,6 +2145,7 @@ test.describe('canonical agent Thread surface', () => {
       target.__LIN_E2E__?.emitAgentCoreNotification({ type: 'thread/started', threadId: child.id, thread: child });
       const turnId = '01910000-0000-7000-8000-00000000dd02';
       const itemId = '01910000-0000-7000-8000-00000000dd03';
+      const callId = '01910000-0000-7000-8000-00000000dd04';
       target.__LIN_E2E__?.emitAgentCoreNotification({
         type: 'turn/completed',
         threadId: root.id,
@@ -2152,14 +2153,30 @@ test.describe('canonical agent Thread surface', () => {
         turn: {
           id: turnId,
           items: [{
+            id: callId,
+            type: 'collabAgentToolCall',
+            provenance: { originThreadId: root.id, originTurnId: turnId, originItemId: callId },
+            tool: 'agent',
+            status: 'completed',
+            outputRef: null,
+            senderThreadId: root.id,
+            receiverThreadIds: [child.id],
+            prompt: 'Research the deployment',
+            summary: null,
+            model: null,
+            reasoningEffort: null,
+            agentsStates: {},
+            modelCall: null,
+          }, {
             id: itemId,
             type: 'subAgentActivity',
             provenance: { originThreadId: root.id, originTurnId: turnId, originItemId: itemId },
-            kind: 'completed',
+            kind: 'started',
             agentThreadId: child.id,
+            agentTurnId: null,
             agentPath: '/root/research',
             error: null,
-            spawnItemId: null,
+            spawnItemId: callId,
           }],
           itemsView: 'full',
           provenance: { originThreadId: root.id, originTurnId: turnId, trigger: { kind: 'user' } },
@@ -2174,19 +2191,18 @@ test.describe('canonical agent Thread surface', () => {
     });
 
     const parentTitle = await page.locator('.thread-dock-title').innerText();
-    const trigger = page.getByRole('button', { name: /^Open Subagent Thread research/u });
+    const chip = page.getByRole('button', { name: /^Open research/u });
 
-    // Collapsed until asked, and announced as a disclosure — the same gesture
-    // every other row in this timeline answers to.
-    await expect(trigger).toHaveAttribute('aria-expanded', 'false');
-    const detail = page.locator('.thread-subagent-detail');
+    // The chip is a way in, not a disclosure: opening pushes a view rather than
+    // expanding a region, so nothing about it claims an expandable slot.
+    await expect(chip).not.toHaveAttribute('aria-expanded', /.*/u);
+    const detail = page.locator('.thread-agent-detail');
     await expect(detail).toHaveCount(0);
 
-    await trigger.click();
+    await chip.click();
     await expect(detail).toBeVisible();
-    await expect(trigger).toHaveAttribute('aria-expanded', 'true');
-    // Nothing was navigated to and nothing was covered: the dock still names
-    // the conversation the user chose, and its composer still belongs to it.
+    // The deck still names the conversation the user chose: the Agent is read
+    // as a level pushed over it, not as a conversation navigated to.
     await expect(page.locator('.thread-dock-title')).toHaveText(parentTitle);
     const childComposer = detail.getByRole('textbox', { name: 'Message this Thread' });
     await expect(childComposer).toBeVisible();
@@ -2205,16 +2221,9 @@ test.describe('canonical agent Thread surface', () => {
     // The mock settles the resumed Turn synchronously, so no Stop remains.
     await expect(detail.getByRole('button', { name: 'Interrupt Turn' })).toHaveCount(0);
 
-    // The container is BOUNDED and scrolls itself, so opening it cannot push
-    // the transcript around however long the child ran.
-    expect(await detail.evaluate((element) => {
-      const style = getComputedStyle(element);
-      return { bounded: element.getBoundingClientRect().height <= 421, contained: style.overscrollBehavior };
-    })).toMatchObject({ bounded: true });
-
-    await trigger.click();
+    await detail.locator('.thread-agent-detail-back').click();
     await expect(detail).toHaveCount(0);
-    await expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    await expect(chip).toBeVisible();
 
     // A child is an execution artifact, not a conversation: never a list row.
     await page.getByRole('button', { name: 'Show Threads' }).click();
@@ -2288,8 +2297,9 @@ test.describe('canonical agent Thread surface', () => {
                   id: itemId,
                   type: 'subAgentActivity',
                   provenance: provenance(parentThreadId, turnId, itemId),
-                  kind: 'completed',
+                  kind: 'started',
                   agentThreadId: child.id,
+                  agentTurnId: null,
                   agentPath: '/root/research',
                   error: null,
                   spawnItemId: null,
@@ -2301,8 +2311,9 @@ test.describe('canonical agent Thread surface', () => {
                     turnId,
                     '01910000-0000-7000-8000-00000000ecff',
                   ),
-                  kind: 'completed',
+                  kind: 'started',
                   agentThreadId: sibling.id,
+                  agentTurnId: null,
                   agentPath: '/root/review',
                   error: null,
                   spawnItemId: null,
@@ -2342,8 +2353,9 @@ test.describe('canonical agent Thread surface', () => {
               id: '01910000-0000-7000-8000-00000000ed03',
               type: 'subAgentActivity',
               provenance: provenance(child.id, childTurnId, '01910000-0000-7000-8000-00000000ed03'),
-              kind: 'completed',
+              kind: 'started',
               agentThreadId: grandchild.id,
+              agentTurnId: null,
               agentPath: '/root/research/audit',
               error: null,
               spawnItemId: null,
@@ -2417,8 +2429,9 @@ test.describe('canonical agent Thread surface', () => {
                 grandchildTurnId,
                 '01910000-0000-7000-8000-00000000ee03',
               ),
-              kind: 'completed',
+              kind: 'started',
               agentThreadId: greatGrandchild.id,
+              agentTurnId: null,
               agentPath: '/root/research/audit/verify',
               error: null,
               spawnItemId: null,
@@ -2453,9 +2466,12 @@ test.describe('canonical agent Thread surface', () => {
     // only exists when the transcript has stopped following.
     await expect(page.getByRole('button', { name: 'Jump to latest' })).toBeVisible();
 
-    await page.getByRole('button', { name: /^Open Subagent Thread research/u }).click();
-    const detail = page.locator('.thread-subagent-detail');
+    await page.getByRole('button', { name: /^Open research/u }).click();
+    const detail = page.locator('.thread-agent-detail');
     await expect(detail).toBeVisible();
+    // Back names the level below, so position in the stack is legible rather
+    // than inferred; at depth one that level is the conversation.
+    await expect(detail.locator('.thread-agent-detail-back')).toHaveText('‹Back');
 
     // Host-authored child input is an Agent event rather than a user bubble.
     // The child can receive new direction, but its existing history cannot be
@@ -2465,47 +2481,32 @@ test.describe('canonical agent Thread surface', () => {
     await expect(detail.getByRole('button', { name: 'Edit message' })).toHaveCount(0);
     await expect(detail.getByRole('button', { name: 'Continue in new chat' })).toHaveCount(0);
 
-    const outerHeight = await detail.evaluate((element) => element.getBoundingClientRect().height);
-
-    // D2 REPLACES these contents and names the immediate way back. A second box
-    // inside this one would put a scroll region inside a scroll region, which
-    // fights the trackpad at the boundary and draws depth as indentation.
-    await detail.getByRole('button', { name: /^Open Subagent Thread audit/u }).click();
+    // D2 pushes ANOTHER level of the same view — one viewport, one scroll
+    // region, depth said in the header rather than drawn as indentation.
+    await detail.getByRole('button', { name: /^Open audit/u }).click();
     await expect(detail).toHaveCount(1);
-    await expect(detail.locator('.thread-subagent-detail-title')).toHaveText('audit');
-    // Same box, same height: swapping cannot move the transcript around it.
-    expect(await detail.evaluate((element) => element.getBoundingClientRect().height)).toBe(outerHeight);
+    await expect(detail.locator('.thread-agent-detail-title')).toHaveText('audit');
+    await expect(detail.locator('.thread-agent-detail-back')).toHaveText('‹research');
 
-    // D3 uses that same container and keeps only its immediate parent crumb.
-    await expect(detail.locator('.thread-subagent-detail-crumb')).toHaveText('research');
-    await detail.getByRole('button', { name: /^Open Subagent Thread verify/u }).click();
+    await detail.getByRole('button', { name: /^Open verify/u }).click();
     await expect(detail).toHaveCount(1);
-    await expect(detail.locator('.thread-subagent-detail-title')).toHaveText('verify');
-    await expect(detail.locator('.thread-subagent-detail-crumb')).toHaveText('audit');
-    expect(await detail.evaluate((element) => element.getBoundingClientRect().height)).toBe(outerHeight);
+    await expect(detail.locator('.thread-agent-detail-title')).toHaveText('verify');
+    await expect(detail.locator('.thread-agent-detail-back')).toHaveText('‹audit');
 
-    // Back unwinds the detail stack one depth at a time: d3 -> d2 -> d1.
-    await detail.locator('.thread-subagent-detail-crumb').click();
-    await expect(detail.locator('.thread-subagent-detail-title')).toHaveText('audit');
-    await expect(detail.locator('.thread-subagent-detail-crumb')).toHaveText('research');
-    await detail.locator('.thread-subagent-detail-crumb').click();
-    await expect(detail.locator('.thread-subagent-detail-title')).toHaveText('research');
-    await expect(detail.locator('.thread-subagent-detail-crumb')).toHaveCount(0);
+    // Back unwinds the stack one level at a time: d3 -> d2 -> d1 -> conversation.
+    await detail.locator('.thread-agent-detail-back').click();
+    await expect(detail.locator('.thread-agent-detail-title')).toHaveText('audit');
+    await detail.locator('.thread-agent-detail-back').click();
+    await expect(detail.locator('.thread-agent-detail-title')).toHaveText('research');
 
     // agent_message may address a sibling, but reachability is not lineage.
-    // Clicking that result opens the sibling's own root row; it must never draw
-    // a false research -> review crumb inside this detail stack.
-    await detail.locator('.thread-tool-toggle').click();
-    await detail.locator('.thread-agent-state button').click();
-    const siblingDetail = page.locator('.thread-subagent-detail').filter({
-      has: page.locator('.thread-subagent-detail-title', { hasText: /^review$/u }),
-    });
-    await expect(siblingDetail).toHaveCount(1);
-    await expect(siblingDetail.locator('.thread-subagent-detail-crumb')).toHaveCount(0);
-    const researchDetail = page.locator('.thread-subagent-detail').filter({
-      has: page.locator('.thread-subagent-detail-title', { hasText: /^research$/u }),
-    });
-    await expect(researchDetail).toHaveCount(1);
+    // The sibling opens at ITS own level; the stack must never draw a
+    // research -> review edge that the delegation graph does not have.
+    await detail.getByRole('button', { name: /^Open review/u }).click();
+    await expect(detail.locator('.thread-agent-detail-title')).toHaveText('review');
+    await expect(detail.locator('.thread-agent-detail-back')).toHaveText('‹Back');
+    await detail.locator('.thread-agent-detail-back').click();
+    await expect(detail).toHaveCount(0);
   });
 
   test('browses and cleans up Subagents from parent Thread Details', async ({ page }) => {
@@ -2624,9 +2625,9 @@ test.describe('canonical agent Thread surface', () => {
     // settled Turn keeps shut. Expanding only the leaf would write a key
     // nothing reads, and nothing would appear on screen.
     await details.getByRole('button', { name: 'Open live worker' }).click();
-    const detail = page.locator('.thread-subagent-detail');
+    const detail = page.locator('.thread-agent-detail');
     await expect(detail).toBeVisible();
-    await expect(detail.locator('.thread-subagent-detail-title')).toHaveText('live worker');
+    await expect(detail.locator('.thread-agent-detail-title')).toHaveText('live worker');
   });
   test('shows a live isolated Skill child and keeps nested Thread motion independent', async ({ page }) => {
     await createNewThread(page);
@@ -2664,6 +2665,9 @@ test.describe('canonical agent Thread surface', () => {
           updatedAt: startedAt,
         },
       });
+      // The host records the Skill's own name on its execution row, which is
+      // what every surface reads; the task path is an address, not a name.
+      target.__LIN_E2E__?.setMockSubagentExecution(childId, { description: 'research' });
       const childTurn = {
         id: childTurnId,
         items: [{
@@ -2752,25 +2756,32 @@ test.describe('canonical agent Thread surface', () => {
     });
 
     const parentTurn = page.locator(`[data-thread-turn-row="${fixture.parentTurnId}"]`);
-    // One row per delegated child, live, in the delegating call's slot.
-    const skillLine = parentTurn.locator('.thread-delegation-row');
+    // One chip per delegated child, live, in the delegating call's slot.
+    const skillLine = parentTurn.locator('.thread-agent-chip-line');
     await expect(skillLine).toHaveCount(1);
-    // The child record carries no name here, so this also covers the fallback:
-    // the address alone still yields the Skill's name, never its suffix.
-    await expect(skillLine.locator('.thread-delegation-row-name')).toHaveText('research');
-    await expect(skillLine.locator('.thread-delegation-row-status')).toContainText(/Running · \d+[smhd]/u);
-    const skillRow = skillLine.getByRole('button', { name: /Open Subagent Thread research/u });
+    await expect(skillLine.locator('.thread-agent-chip-name')).toHaveText('research');
+    await expect(skillLine.locator('.thread-agent-chip-meta')).toContainText(/Running · \d+[smhd]/u);
+    // A Skill is not an Agent type, so the chip advertises none.
+    await expect(skillLine.locator('.thread-agent-chip-type')).toHaveCount(0);
+    const skillRow = skillLine.getByRole('button', { name: /Open research/u });
     // No wait is in flight, so the divider must not claim to be waiting on it.
     await expect(parentTurn.locator('.thread-process-title')).toContainText(/Working for \d+[smhd]/u);
 
-    await skillRow.click();
-    const detail = page.locator('.thread-subagent-detail');
-    await expect(detail).toBeVisible();
-    await expect(detail.getByRole('textbox', { name: 'Message this Thread' })).toHaveCount(0);
-    await expect(detail.locator('.working-text')).toHaveCount(0);
-    await expect(detail.locator('.thread-streaming-shape')).toHaveCSS('animation-name', 'thread-shape-spin');
+    // The parent's own live cue belongs to the more specific representation:
+    // the Skill tool row that is running, not the Turn summary above it.
     const parentSkillSweep = parentTurn.locator('.thread-tool-inProgress .working-text-base');
     await expect(parentSkillSweep).toHaveCSS('animation-name', 'working-text-sweep');
+
+    await skillRow.click();
+    const detail = page.locator('.thread-agent-detail');
+    await expect(detail).toBeVisible();
+    // A Skill takes no direction: its result is owned by the call that invoked it.
+    await expect(detail.getByRole('textbox', { name: 'Message this Thread' })).toHaveCount(0);
+    // One mover, on the most specific row that is working. The header states
+    // the same status and stays still, so the pushed view never says the work
+    // is advancing twice.
+    await expect(detail.locator('.thread-agent-detail-status .working-text')).toHaveCount(0);
+    await expect(detail.locator('.thread-streaming-shape')).toHaveCSS('animation-name', 'thread-shape-spin');
 
     await page.evaluate(({ childId, childTurnId }) => {
       const target = window as Window & {
@@ -2784,7 +2795,6 @@ test.describe('canonical agent Thread surface', () => {
       });
     }, fixture);
     await expect(detail.locator('.thread-provider-retry')).toHaveText('Reconnecting 1/3');
-    await expect(parentSkillSweep).toHaveCSS('animation-name', 'working-text-sweep');
   });
 
 
@@ -2807,12 +2817,14 @@ test.describe('canonical agent Thread surface', () => {
           turnId: '01910000-0000-7000-8000-00000000fa11',
           activityId: '01910000-0000-7000-8000-00000000fa12',
           taskPath: '/root/research',
+          description: 'research',
         },
         {
           id: '01910000-0000-7000-8000-00000000fa20',
           turnId: '01910000-0000-7000-8000-00000000fa21',
           activityId: '01910000-0000-7000-8000-00000000fa22',
           taskPath: '/root/audit',
+          description: 'audit',
         },
       ];
       for (const child of children) {
@@ -2831,6 +2843,10 @@ test.describe('canonical agent Thread surface', () => {
             status: { type: 'active', activeFlags: [] },
             updatedAt: startedAt,
           },
+        });
+        target.__LIN_E2E__?.setMockSubagentExecution(child.id, {
+          description: child.description,
+          currentTurnId: child.turnId,
         });
         target.__LIN_E2E__?.emitAgentCoreNotification({
           type: 'turn/started',
@@ -2885,11 +2901,11 @@ test.describe('canonical agent Thread surface', () => {
       return { children, parentThreadId, parentTurnId };
     });
 
-    // Live: one row per child, in the timeline, with no second presentation.
+    // Live: one chip per child, in the timeline, with no second presentation.
     const parentTurn = page.locator(`[data-thread-turn-row="${fixture.parentTurnId}"]`);
-    const rows = parentTurn.locator('.thread-delegation-row');
+    const rows = parentTurn.locator('.thread-agent-chip-line');
     await expect(rows).toHaveCount(2);
-    await expect(rows.locator('.thread-delegation-row-status').first()).toContainText(/Running · \d+[smhd]/u);
+    await expect(rows.locator('.thread-agent-chip-meta').first()).toContainText(/Running · \d+[smhd]/u);
 
     // Stop one child from its row; the other keeps running.
     await parentTurn.getByRole('button', { name: 'Stop research' }).click();
@@ -2898,7 +2914,7 @@ test.describe('canonical agent Thread surface', () => {
       threadId: fixture.children[0]!.id,
       turnId: fixture.children[0]!.turnId,
     });
-    await expect(parentTurn.locator('.thread-delegation-row.thread-subagent-interrupted')).toHaveCount(1);
+    await expect(parentTurn.locator('.thread-agent-chip-block.thread-subagent-interrupted')).toHaveCount(1);
     await expect(parentTurn.getByRole('button', { name: 'Stop audit' })).toBeVisible();
     await expect(parentTurn.getByRole('button', { name: 'Stop research' })).toHaveCount(0);
 
@@ -2930,7 +2946,7 @@ test.describe('canonical agent Thread surface', () => {
     }, { ...fixture.children[1]!, parentThreadId: fixture.parentThreadId });
 
     await expect(rows).toHaveCount(2);
-    await expect(parentTurn.locator('.thread-delegation-row.thread-subagent-completed')).toHaveCount(1);
+    await expect(parentTurn.locator('.thread-agent-chip-block.thread-subagent-completed')).toHaveCount(1);
     await expect(parentTurn.getByRole('button', { name: /^Stop / })).toHaveCount(0);
   });
 
@@ -3046,9 +3062,9 @@ test.describe('canonical agent Thread surface', () => {
     // The fold defaults to closed, so folding here would hide the only signal
     // that a subagent is still burning time and the only Stop that reaches it.
     const parentTurn = page.locator(`[data-thread-turn-row="${fixture.parentTurnId}"]`);
-    const row = parentTurn.locator('.thread-delegation-row');
+    const row = parentTurn.locator('.thread-agent-chip-line');
     await expect(row).toBeVisible();
-    await expect(row.locator('.thread-delegation-row-status')).toContainText(/Running/u);
+    await expect(row.locator('.thread-agent-chip-meta')).toContainText(/Running/u);
     await expect(parentTurn.getByRole('button', { name: 'Stop research' })).toBeVisible();
     await expect(parentTurn.locator('.thread-process-toggle')).toHaveCount(0);
 
@@ -3084,7 +3100,7 @@ test.describe('canonical agent Thread surface', () => {
     await expect(parentTurn.locator('.thread-process-toggle')).toHaveCount(1);
     await expect(row).toHaveCount(0);
     await parentTurn.locator('.thread-process-toggle').click();
-    await expect(row.locator('.thread-delegation-row-status')).toHaveText('Completed · 3m 12s');
+    await expect(row.locator('.thread-agent-chip-meta')).toHaveText('Completed · 3m 12s');
   });
 
   test('sends the composer Stop against the delegating Turn that owns the request', async ({ page }) => {
@@ -3166,7 +3182,7 @@ test.describe('canonical agent Thread surface', () => {
       return { parentThreadId, parentTurnId };
     });
 
-    await expect(page.locator('.thread-delegation-row')).toBeVisible();
+    await expect(page.locator('.thread-agent-chip-line')).toBeVisible();
     await page.getByRole('button', { name: 'Interrupt Turn' }).click();
 
     // The host closes the request from this pair; the renderer's job is to
@@ -3315,17 +3331,17 @@ test.describe('canonical agent Thread surface', () => {
       const parentTurn = page.locator(`[data-thread-turn-row="${fixture.parentTurnId}"]`);
       await expect(parentTurn.locator('.thread-process-title'))
         .toContainText(/Working for \d+[smhd]/u);
-      const rows = parentTurn.locator('.thread-delegation-row');
+      const rows = parentTurn.locator('.thread-agent-chip-block');
       await expect(rows).toHaveCount(2);
-      await expect(rows.locator('.thread-delegation-row-status').first())
+      await expect(rows.locator('.thread-agent-chip-meta').first())
         .toContainText(/Running · \d+[smhd]/u);
       // The disclosure owns the flexible space and Stop owns the fixed edge.
       // Crossing the first digit-count boundary must not move the action.
-      const researchRow = parentTurn.locator('.thread-delegation-row', { hasText: 'research' });
-      const researchElapsed = researchRow.locator('.thread-delegation-row-status .working-text-base');
+      const researchRow = parentTurn.locator('.thread-agent-chip-block', { hasText: 'research' });
+      const researchElapsed = researchRow.locator('.thread-agent-chip-meta .working-text-base');
       const researchStop = parentTurn.getByRole('button', { name: 'Stop research' });
       await expect(researchElapsed).toHaveText('Running · 9s');
-      await expect(researchRow.locator('.thread-delegation-row-status')).toHaveCSS(
+      await expect(researchRow.locator('.thread-agent-chip-meta')).toHaveCSS(
         'font-variant-numeric',
         /tabular-nums/u,
       );
@@ -3339,9 +3355,9 @@ test.describe('canonical agent Thread surface', () => {
       expect(Math.abs(stopAtTenSeconds!.width - stopAtNineSeconds!.width)).toBeLessThan(0.01);
       await page.clock.resume();
       // Identity stays still while only each live status phrase owns motion.
-      await expect(rows.locator('.thread-delegation-row-name .working-text')).toHaveCount(0);
-      await expect(rows.locator('.thread-delegation-row-status.working-text')).toHaveCount(2);
-      await expect(rows.locator('.thread-delegation-row-status .working-text-base')).toHaveCount(2);
+      await expect(rows.locator('.thread-agent-chip-name .working-text')).toHaveCount(0);
+      await expect(rows.locator('.thread-agent-chip-meta.working-text')).toHaveCount(2);
+      await expect(rows.locator('.thread-agent-chip-meta .working-text-base')).toHaveCount(2);
       // Every colour comes from the ink tokens, so the row follows the scheme
       // instead of carrying a hardcoded value that only works in light. The row
       // also has to share the tool rows' type ramp: it is one more thing the
@@ -3355,7 +3371,7 @@ test.describe('canonical agent Thread surface', () => {
           probe.style.color = `var(${token})`;
           return getComputedStyle(probe).color;
         };
-        const status = element.querySelector('.thread-delegation-row-status');
+        const status = element.querySelector('.thread-agent-chip-meta');
         probe.style.fontSize = 'var(--font-meta)';
         const paint = {
           fontSize: getComputedStyle(element).fontSize,
@@ -3376,7 +3392,7 @@ test.describe('canonical agent Thread surface', () => {
       expect(rowPaint.status).toBe(rowPaint.textTertiary);
       expect(rowPaint.fontSize).toBe(rowPaint.metaFontSize);
       expect(rowPaint.ink).toBe(colorScheme === 'dark' ? '255 255 255' : '0 0 0');
-      const auditRow = parentTurn.locator('.thread-delegation-row', { hasText: 'audit' });
+      const auditRow = parentTurn.locator('.thread-agent-chip-block', { hasText: 'audit' });
 
       await page.evaluate(({ child, parentThreadId, startedAt }) => {
         const target = window as Window & {
@@ -3406,9 +3422,9 @@ test.describe('canonical agent Thread surface', () => {
 
       await expect(parentTurn.locator('.thread-process-title'))
         .toContainText(/Working for \d+[smhd]/u);
-      const completedRow = parentTurn.locator('.thread-delegation-row.thread-subagent-completed');
+      const completedRow = parentTurn.locator('.thread-agent-chip-block.thread-subagent-completed');
       await expect(completedRow).toHaveCount(1);
-      await expect(completedRow.locator('.thread-delegation-row-status.working-text')).toHaveCount(0);
+      await expect(completedRow.locator('.thread-agent-chip-meta.working-text')).toHaveCount(0);
 
       await page.evaluate(({ child, parentThreadId, startedAt }) => {
         const target = window as Window & {
@@ -3440,21 +3456,21 @@ test.describe('canonical agent Thread surface', () => {
       }, { child: fixture.children[1]!, parentThreadId: fixture.parentThreadId, startedAt: fixture.startedAt });
 
       // A settled row states its own Turn's span, failures included.
-      await expect(auditRow.locator('.thread-delegation-row-status'))
+      await expect(auditRow.locator('.thread-agent-chip-meta'))
         .toHaveText(/^Failed · \d+[smhd]/u);
       await expect(auditRow).toContainText('Task reached the system resource limit. Results have been preserved.');
       await expect(auditRow).not.toContainText('9876');
       await expect(auditRow).not.toContainText('9000');
-      await expect(auditRow.locator('.thread-delegation-row-error')).toHaveCSS('white-space', 'normal');
-      expect(await auditRow.locator('.thread-delegation-row-error').evaluate((element) => (
+      await expect(auditRow.locator('.thread-agent-chip-error')).toHaveCSS('white-space', 'normal');
+      expect(await auditRow.locator('.thread-agent-chip-error').evaluate((element) => (
         element.scrollWidth <= element.clientWidth
       ))).toBe(true);
       // The status colour survives hover: pointing at a failed delegation must
       // not repaint it neutral, which is what a hover rule that did not exempt
       // the status states would do. Polled because the row shares the tool
       // rows' colour transition, so a single read can land mid-interpolation.
-      await auditRow.locator('.thread-delegation-row-open').hover();
-      await expect.poll(async () => auditRow.locator('.thread-delegation-row-name').evaluate((element) => {
+      await auditRow.locator('.thread-agent-chip').hover();
+      await expect.poll(async () => auditRow.locator('.thread-agent-chip-name').evaluate((element) => {
         const probe = document.createElement('span');
         probe.style.color = 'var(--status-danger)';
         document.body.append(probe);
@@ -5107,7 +5123,7 @@ test.describe('canonical agent Thread surface', () => {
 
     // Select before seeding: notifications for a Thread whose Turns are not yet
     // loaded are dropped, and selecting reloads them.
-    await page.getByRole('button', { name: 'Open Subagent Thread plan_child' }).click();
+    await page.getByRole('button', { name: 'Open Child agent' }).click();
     await page.evaluate((threadId) => {
       const target = window as Window & {
         __LIN_E2E__?: { emitAgentCoreNotification: (n: unknown) => void };
@@ -5143,7 +5159,7 @@ test.describe('canonical agent Thread surface', () => {
 
     // The child's run detail is the composer-less surface; the parent's
     // composer stays on screen, still the parent's.
-    const detail = page.locator('.thread-subagent-detail');
+    const detail = page.locator('.thread-agent-detail');
     await expect(detail.getByRole('textbox', { name: 'Message this Thread' })).toHaveCount(0);
     const pill = detail.locator('.thread-plan-progress-summary');
     await expect(pill.locator('.working-text-base')).toHaveText('2/2 · Cross-check the citations');
@@ -6380,8 +6396,8 @@ test.describe('canonical agent Thread surface', () => {
       const parentThreadId = response?.data[0]?.id;
       if (!parentThreadId) throw new Error('Mock Thread not found');
       const child = target.__LIN_E2E__?.createMockSubagentThread({ parentThreadId, name: 'research worker' });
-      // The delegation row is where a child is read, so the Turn that delegated
-      // it has to carry one — which is what production records for every form.
+      // A chip is where a child is read, so the Turn that delegated it has to
+      // carry the spawn — which is what production records for every form.
       const turnId = '01910000-0000-7000-8000-00000000ef01';
       const itemId = '01910000-0000-7000-8000-00000000ef02';
       target.__LIN_E2E__?.emitAgentCoreNotification({
@@ -6394,8 +6410,9 @@ test.describe('canonical agent Thread surface', () => {
             id: itemId,
             type: 'subAgentActivity',
             provenance: { originThreadId: parentThreadId, originTurnId: turnId, originItemId: itemId },
-            kind: 'completed',
+            kind: 'started',
             agentThreadId: child!.id,
+            agentTurnId: null,
             agentPath: '/root/research_worker',
             error: null,
             spawnItemId: null,
@@ -6410,23 +6427,49 @@ test.describe('canonical agent Thread surface', () => {
         },
       });
     });
-    // Reading a child is a disclosure in the transcript, so the conversation is
-    // never left: the dock still names it and the composer still belongs to it.
-    const row = page.locator('[data-thread-disclosure-id^="subagent:"]').first();
-    const detail = page.locator('.thread-subagent-detail');
-    const rowTop = () => row.evaluate((element) => Math.round(element.getBoundingClientRect().top));
+    // Reading an Agent pushes a level over the deck; the deck still names the
+    // conversation, and Back returns the reader exactly where they were.
+    const chip = page.locator('.thread-agent-chip').first();
+    const detail = page.locator('.thread-agent-detail');
+    const chipTop = () => chip.evaluate((element) => Math.round(element.getBoundingClientRect().top));
+    const conversationScroll = page.locator('.thread-dock-conversation .thread-transcript');
+    const scrollTop = () => conversationScroll.evaluate((element) => Math.round(element.scrollTop));
+    const scrollHeight = () => conversationScroll.evaluate((element) => Math.round(element.scrollHeight));
 
-    await row.click();
+    // Let the transcript settle on its tail first, then leave it deliberately:
+    // a transcript that is still following has no reading position to lose, so
+    // the invariant is only testable off the tail.
+    // The virtualizer measures Turns as they mount, so the scrollable extent
+    // keeps growing for a moment; a position captured before it settles is a
+    // position the transcript is still moving away from.
+    await expect.poll(async () => {
+      const first = await scrollHeight();
+      await page.waitForTimeout(150);
+      return await scrollHeight() === first && first > 0;
+    }, { timeout: 15_000 }).toBe(true);
+    await chip.click();
     await expect(detail).toBeVisible();
     await expect(page.locator('.thread-dock-title')).toHaveText('Parent history');
-    const openedAt = await rowTop();
 
-    await row.click();
+    // Covered, not unmounted. The transcript under the pushed view keeps its
+    // scroll position and its measured layout, and the reader's place is read
+    // from there rather than restored from a snapshot on the way back.
+    await expect.poll(async () => {
+      const first = await scrollTop();
+      await page.waitForTimeout(150);
+      return await scrollTop() === first;
+    }).toBe(true);
+    const coveredAt = await scrollTop();
+    const coveredHeight = await scrollHeight();
+    const openedAt = await chipTop();
+
+    await detail.locator('.thread-agent-detail-back').click();
     await expect(detail).toHaveCount(0);
-    // The invariant this shape exists for: the row you opened does not move
-    // under you, opening or closing. A bounded container grows BELOW its row,
-    // so there is no reading position to lose and none to restore.
-    expect(await rowTop()).toBe(openedAt);
+    // The invariant the push has to keep: returning is a reveal, not a reload —
+    // same position, same measured transcript, same chip under the pointer.
+    expect(await scrollTop()).toBe(coveredAt);
+    expect(await scrollHeight()).toBe(coveredHeight);
+    expect(await chipTop()).toBe(openedAt);
   });
 });
 

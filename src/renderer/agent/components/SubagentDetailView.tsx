@@ -4,13 +4,12 @@ import type { DocumentIndex } from '../../state/document';
 import { useT } from '../../i18n/I18nProvider';
 import { AgentIcon, GitForkIcon, ICON_SIZE, SkillIcon, StopIcon } from '../../ui/icons';
 import { IconButton } from '../../ui/primitives/IconButton';
-import { WorkingText } from '../../ui/primitives/WorkingText';
 import { api } from '../../api/client';
 import type { ThreadNodeReferenceOpenHandler } from '../threadReferences';
 import { threadStore, useThreadStore } from '../store/threadStore';
 import type { SubagentConversationProjection } from '../subagentPresentation';
 import { subagentChipStatus } from './SubagentChip';
-import { useSubagentEntry } from './SubagentRegistryContext';
+import { useSubagentActions, useSubagentEntry } from './SubagentRegistryContext';
 import { formatSubagentDuration, useSubagentElapsedMs } from './subagentElapsed';
 import { ThreadView } from './ThreadView';
 
@@ -36,7 +35,6 @@ export function SubagentDetailView({
   onOpenThread,
   onOpenTurnDetails,
   onPop,
-  onPush,
   parentName,
   subagentProjection,
   userView,
@@ -47,7 +45,6 @@ export function SubagentDetailView({
   readonly onOpenThread: (threadId: ThreadId) => Promise<void>;
   readonly onOpenTurnDetails?: (threadId: string, turnId: string) => void;
   readonly onPop: () => void;
-  readonly onPush: (agentId: ThreadId) => void;
   /** What Back returns to: the conversation, or the Agent one level down. */
   readonly parentName: string;
   readonly subagentProjection: SubagentConversationProjection;
@@ -56,6 +53,7 @@ export function SubagentDetailView({
   const t = useT();
   const snapshot = useThreadStore();
   const entry = useSubagentEntry(agentId);
+  const actions = useSubagentActions();
   const elapsedMs = useSubagentElapsedMs(entry ?? { status: 'notFound', startedAt: null });
   const loadedRef = useRef<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -75,13 +73,17 @@ export function SubagentDetailView({
     });
   }, [agentId]);
 
+  // Every anchor opens through the ONE handler that resolves lineage from the
+  // conversation: a descendant deepens the stack, while a sibling reached by
+  // `agent_message` opens at its own level. Reachability is not lineage, and a
+  // stack that grew on reachability alone would draw an edge that never existed.
   const openRelated = useCallback(async (target: ThreadId) => {
     if (subagentProjection.byAgentId.has(target)) {
-      onPush(target);
+      actions.openAgent(target);
       return;
     }
     await onOpenThread(target);
-  }, [onOpenThread, onPush, subagentProjection]);
+  }, [actions, onOpenThread, subagentProjection]);
 
   const name = entry?.displayName ?? thread?.name ?? thread?.agentNickname ?? t.agent.thread.untitled;
   const running = entry?.status === 'running' || entry?.status === 'pendingInit';
@@ -110,9 +112,12 @@ export function SubagentDetailView({
               size={ICON_SIZE.tiny}
             />
           ) : null}
-          {running
-            ? <WorkingText className="thread-agent-detail-status" text={status} />
-            : <span className="thread-agent-detail-status">{status}</span>}
+          {/* Static, always. The Agent's own transcript is right below this
+              header and carries the live cue on the most specific row that is
+              working; a moving header would be the same work said twice, and
+              two movers for one run is exactly what the working-state
+              vocabulary exists to prevent. */}
+          <span className="thread-agent-detail-status">{status}</span>
           {running ? (
             <IconButton
               icon={StopIcon}
@@ -161,6 +166,7 @@ export function SubagentDetailView({
             providerSettings={null}
             providerSettingsLoaded={false}
             slashCommands={[]}
+            agentTranscript
             subagentProjection={subagentProjection}
             threadCreationBlocked
             threadCreationPending={false}

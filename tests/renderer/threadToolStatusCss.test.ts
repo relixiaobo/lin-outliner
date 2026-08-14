@@ -108,6 +108,9 @@ describe('thread tool row status CSS guards', () => {
       /\.thread-agent-chip-line \{\s*display:\s*flex;\s*width:\s*100%;\s*min-width:\s*0;/,
     );
     expect(threadCss).toMatch(
+      /\.thread-agent-chip-error \{[^}]*white-space:\s*normal;/s,
+    );
+    expect(threadCss).toMatch(
       /\.thread-agent-chip \{[^}]*flex:\s*1 1 auto;/s,
     );
     expect(threadCss).toMatch(

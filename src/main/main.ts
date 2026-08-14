@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, powerMonitor, protocol, session, shell } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, protocol, session, shell } from 'electron';
 import type { IpcMainInvokeEvent, NativeImage } from 'electron';
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
@@ -71,6 +71,7 @@ import {
 import type {
   AgentCoreMethod,
   AgentCoreRequestByMethod,
+  SubagentExecutionProjection,
   ThreadAttachmentContent,
   ThreadUserContent,
   ThreadMessageContextMenuAction,
@@ -1060,8 +1061,42 @@ threadService.subscribe((notification) => {
   if (notification.type === 'turn/completed' || notification.type === 'thread/status/changed') {
     automationService.wake();
   }
+  if (notification.type === 'subagent/execution/changed') {
+    notifyTerminalBackgroundAgent(notification.execution);
+  }
   liveWindow(mainWindow)?.webContents.send(AGENT_CORE_NOTIFICATION_CHANNEL, notification);
 });
+
+/** Generations already announced, so one terminal event notifies exactly once. */
+const announcedAgentGenerations = new Set<string>();
+
+/**
+ * The one OS notification this feature issues.
+ *
+ * Strictly bounded: a terminal BACKGROUND generation, only while the window is
+ * unfocused, once per generation, with fixed content-free copy. Running and
+ * steering never notify, foreground settlement never notifies, and the body
+ * never carries an Agent's own words — an Agent's output is untrusted content,
+ * and the OS notification centre is not a place a user can judge it. The
+ * conversation says what happened; this only says to come back.
+ */
+function notifyTerminalBackgroundAgent(execution: SubagentExecutionProjection): void {
+  if (execution.runMode !== 'background' || execution.terminalStatus === null) return;
+  const key = `${execution.agentId}:${execution.generation}`;
+  if (announcedAgentGenerations.has(key)) return;
+  announcedAgentGenerations.add(key);
+  const window = liveWindow(mainWindow);
+  if (!window || window.isFocused()) return;
+  if (!Notification.isSupported()) return;
+  try {
+    new Notification({
+      title: APP_NAME,
+      body: getMessages(effectiveLocale()).agent.thread.agent.backgroundFinished,
+    }).show();
+  } catch (error) {
+    console.warn('[agent] Background Agent notification unavailable', error);
+  }
+}
 automationService.subscribe((notification) => {
   liveWindow(mainWindow)?.webContents.send(AUTOMATION_NOTIFICATION_CHANNEL, notification);
 });

@@ -282,7 +282,10 @@ function continuationAgents(
 }
 
 function projectRegistryEntries(input: SubagentProjectionInput): Map<ThreadId, SubagentRegistryEntry> {
-  const members = conversationExecutions(input.rootThreadId, input.executions);
+  const members = [
+    ...conversationExecutions(input.rootThreadId, input.executions),
+    ...recordlessChildren(input),
+  ];
   const entries = new Map<ThreadId, SubagentRegistryEntry>();
   for (const execution of members) {
     const thread = input.threadsById.get(execution.agentId) ?? null;
@@ -313,6 +316,52 @@ function projectRegistryEntries(input: SubagentProjectionInput): Map<ThreadId, S
   applyLiveDescendantCounts(entries);
   applyDisplayNameOrdinals(entries);
   return entries;
+}
+
+/**
+ * Delegated children this conversation holds that have no execution record.
+ *
+ * The record is the authority, and the host publishes it before it publishes a
+ * child's start — but a child whose record was retired, or one recovered from
+ * an older release, is still a Thread the reader can open. Synthesizing the
+ * identity fields from the Thread keeps it readable instead of rendering an
+ * anchor that says `Not found` about work the conversation plainly did.
+ */
+function recordlessChildren(input: SubagentProjectionInput): readonly SubagentExecutionProjection[] {
+  const childrenByParent = new Map<ThreadId, Thread[]>();
+  for (const thread of input.threadsById.values()) {
+    if (thread.parentThreadId === null || input.executions.has(thread.id)) continue;
+    const siblings = childrenByParent.get(thread.parentThreadId) ?? [];
+    siblings.push(thread);
+    childrenByParent.set(thread.parentThreadId, siblings);
+  }
+  if (childrenByParent.size === 0) return [];
+  const known = new Set<ThreadId>([input.rootThreadId, ...input.executions.keys()]);
+  const synthesized: SubagentExecutionProjection[] = [];
+  const frontier = [...known];
+  for (let index = 0; index < frontier.length; index += 1) {
+    for (const thread of childrenByParent.get(frontier[index]!) ?? []) {
+      if (known.has(thread.id)) continue;
+      known.add(thread.id);
+      frontier.push(thread.id);
+      synthesized.push({
+        agentId: thread.id,
+        parentThreadId: thread.parentThreadId!,
+        description: thread.agentNickname?.trim() || thread.name?.trim() || '',
+        agentType: '',
+        runMode: 'background',
+        generation: 1,
+        currentTurnId: input.latestTurnByThread.get(thread.id)?.id ?? thread.id,
+        stopProvenance: 'none',
+        terminalStatus: null,
+        notificationState: 'none',
+        worktree: null,
+        createdAt: thread.createdAt,
+        updatedAt: thread.updatedAt,
+      });
+    }
+  }
+  return synthesized;
 }
 
 /**

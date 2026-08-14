@@ -1334,6 +1334,7 @@ export const en = {
         worktreeUnavailable: 'That worktree is no longer on disk.',
         back: 'Back',
         readOnlySkill: 'Owned by the Skill call that invoked it.',
+        backgroundFinished: 'A background Agent finished.',
       },
       goal: 'Goal',
       goalStatuses: {

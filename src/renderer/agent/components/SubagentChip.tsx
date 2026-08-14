@@ -54,9 +54,10 @@ export function SubagentChip({
   const openLabel = t.agent.thread.agent.openAgent({ name });
   return (
     <div
-      className={`thread-item thread-agent-chip-line thread-subagent-${entry?.status ?? 'notFound'}`}
+      className={`thread-item thread-agent-chip-block thread-subagent-${entry?.status ?? 'notFound'}`}
       data-agent-waiting={waiting ? 'true' : undefined}
     >
+      <div className="thread-agent-chip-line">
       <button
         aria-label={`${openLabel}. ${status}${error ? `. ${error}` : ''}`}
         className="thread-agent-chip"
@@ -89,6 +90,10 @@ export function SubagentChip({
           variant="message"
         />
       ) : null}
+      </div>
+      {/* Its own line, wrapping in full: a failure the chip had to truncate is
+          a failure the reader cannot act on. */}
+      {error ? <small className="thread-agent-chip-error">{error}</small> : null}
     </div>
   );
 }
