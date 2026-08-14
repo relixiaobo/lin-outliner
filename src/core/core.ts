@@ -1499,14 +1499,18 @@ export class Core {
     });
   }
 
-  setViewMode(nodeId: string, mode: ViewMode, textIndex?: TextSearchIndex): CommandOutcome {
+  setViewMode(
+    nodeId: string,
+    mode: ViewMode,
+    textIndexProvider?: () => TextSearchIndex | undefined,
+  ): CommandOutcome {
     return this.mutate(() => {
       const state = this.snapshot();
       const owner = requiredNode(state, nodeId);
       const previousView = findViewDef(state.nodes, owner) as ViewDefNode | undefined;
       const enteringTable = entersTable(previousView?.viewMode, mode);
       if (enteringTable && owner.type === 'search') {
-        this.materializeSearchNodeResultsDirect(nodeId, textIndex, { skipEvaluationFailure: true });
+        this.materializeSearchNodeResultsDirect(nodeId, textIndexProvider?.(), { skipEvaluationFailure: true });
       }
       this.patchViewDefDirect(nodeId, (viewDef) => {
         viewDef.viewMode = mode;
@@ -3177,7 +3181,6 @@ export class Core {
       byId: state.nodes,
       owner,
       schema: state.nodes[SCHEMA_ID],
-      isActiveField: (field) => !isInTrash(state, field.id),
     });
     if (!initialization) return;
     const { displayFields, missingFieldIds: missingFields, viewDef } = initialization;

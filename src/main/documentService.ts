@@ -945,7 +945,7 @@ export class DocumentService implements DocumentSystemHost {
           return this.core.setViewMode(
             String(args.nodeId),
             viewMode(args.mode),
-            this.textSearchIndexForCoreMutation(),
+            () => this.textSearchIndexForCoreMutation(),
           );
         case 'add_sort_rule':
           return this.core.addSortRule(String(args.nodeId), String(args.field), sortDirection(args.direction) ?? 'asc');

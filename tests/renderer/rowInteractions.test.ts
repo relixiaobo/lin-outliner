@@ -57,7 +57,11 @@ import {
   viewFieldValuesFor,
 } from '../../src/renderer/ui/outliner/row-model';
 import { CREATED_FIELD, DAY_FIELD, DONE_FIELD, NAME_FIELD, REF_COUNT_FIELD, TAGS_FIELD } from '../../src/core/systemFields';
-import { searchQueryOutlineText, searchQueryResultCount } from '../../src/renderer/ui/search/SearchQueryBuilderPanel';
+import {
+  searchQueryOutlineProjection,
+  searchQueryOutlineText,
+  searchQueryResultCount,
+} from '../../src/renderer/ui/search/SearchQueryBuilderPanel';
 import { concatRichText } from '../../src/renderer/ui/editor/richTextCodec';
 import { getMessages } from '../../src/core/i18n';
 import { SEARCH_QUERY_COMPLEXITY_LIMITS } from '../../src/core/searchQueryCompiler';
@@ -409,6 +413,7 @@ describe('row interaction resolvers', () => {
     ]);
 
     expect(searchQueryResultCount({ byId, projection: {} } as any, 'search')).toBe(1);
+    expect(searchQueryOutlineProjection({ byId, projection: {} } as any, 'search', enMessages).truncated).toBe(false);
     expect(searchQueryOutlineText({ byId, projection: {} } as any, 'search', enMessages)).toBe([
       '- AND',
       '  - HAS_TAG',
@@ -444,10 +449,122 @@ describe('row interaction resolvers', () => {
       })] as [string, any]),
     ]);
 
-    const outline = searchQueryOutlineText({ byId, projection: {} } as any, 'search', enMessages);
+    const projection = searchQueryOutlineProjection({ byId, projection: {} } as any, 'search', enMessages);
+    const outline = projection.text;
+    expect(projection.truncated).toBe(true);
     expect(outline.split('\n')).toHaveLength(1 + 2 * SEARCH_QUERY_COMPLEXITY_LIMITS.maxChildrenPerGroup);
     expect(outline).toContain(`- value:: Term ${SEARCH_QUERY_COMPLEXITY_LIMITS.maxChildrenPerGroup - 1}`);
     expect(outline).not.toContain(`- value:: Term ${SEARCH_QUERY_COMPLEXITY_LIMITS.maxChildrenPerGroup}`);
+  });
+
+  test('marks query editor projection truncated when a rule exceeds the operand limit', () => {
+    const operandIds = Array.from(
+      { length: SEARCH_QUERY_COMPLEXITY_LIMITS.maxOperandsPerRule + 1 },
+      (_, index) => `operand-${index}`,
+    );
+    const search = makeNode('search', 'Large operands', { type: 'search', children: ['rule'] });
+    const rule = makeNode('rule', '', {
+      type: 'queryCondition',
+      parentId: 'search',
+      queryOp: 'STRING_MATCH',
+      children: operandIds,
+    });
+    const byId = new Map<string, any>([
+      ['search', search],
+      ['rule', rule],
+      ...operandIds.map((id, index) => [id, makeNode(id, `Term ${index}`, { parentId: 'rule' })] as [string, any]),
+    ]);
+
+    const projection = searchQueryOutlineProjection({ byId, projection: {} } as any, 'search', enMessages);
+    expect(projection.truncated).toBe(true);
+    expect(projection.text).toContain(`- value:: Term ${SEARCH_QUERY_COMPLEXITY_LIMITS.maxOperandsPerRule - 1}`);
+    expect(projection.text).not.toContain(`- value:: Term ${SEARCH_QUERY_COMPLEXITY_LIMITS.maxOperandsPerRule}`);
+  });
+
+  test('marks query editor projection truncated beyond the maximum depth', () => {
+    const conditionIds = Array.from(
+      { length: SEARCH_QUERY_COMPLEXITY_LIMITS.maxDepth + 2 },
+      (_, index) => `condition-${index}`,
+    );
+    const search = makeNode('search', 'Deep query', { type: 'search', children: [conditionIds[0]!] });
+    const conditions = conditionIds.map((id, index) => makeNode(id, '', {
+      type: 'queryCondition',
+      parentId: index === 0 ? 'search' : conditionIds[index - 1],
+      ...(index === conditionIds.length - 1
+        ? { queryOp: 'TODO' }
+        : { queryLogic: 'AND', children: [conditionIds[index + 1]!] }),
+    }));
+    const byId = new Map<string, any>([
+      ['search', search],
+      ...conditions.map((condition) => [condition.id, condition] as [string, any]),
+    ]);
+
+    const projection = searchQueryOutlineProjection({ byId, projection: {} } as any, 'search', enMessages);
+    expect(projection.truncated).toBe(true);
+    expect(projection.text).not.toContain('- TODO');
+  });
+
+  test('marks query editor projection truncated beyond the maximum node count', () => {
+    const rulesPerGroup = 1_000;
+    const groupCount = Math.ceil(SEARCH_QUERY_COMPLEXITY_LIMITS.maxNodes / rulesPerGroup);
+    const groupIds = Array.from({ length: groupCount }, (_, index) => `group-${index}`);
+    const search = makeNode('search', 'Large query', { type: 'search', children: ['root-group'] });
+    const root = makeNode('root-group', '', {
+      type: 'queryCondition',
+      parentId: 'search',
+      queryLogic: 'AND',
+      children: groupIds,
+    });
+    const entries: Array<[string, any]> = [
+      ['search', search],
+      ['root-group', root],
+    ];
+    for (const [groupIndex, groupId] of groupIds.entries()) {
+      const ruleIds = Array.from({ length: rulesPerGroup }, (_, ruleIndex) => `rule-${groupIndex}-${ruleIndex}`);
+      entries.push([groupId, makeNode(groupId, '', {
+        type: 'queryCondition',
+        parentId: 'root-group',
+        queryLogic: 'AND',
+        children: ruleIds,
+      })]);
+      entries.push(...ruleIds.map((id) => [id, makeNode(id, '', {
+        type: 'queryCondition',
+        parentId: groupId,
+        queryOp: 'TODO',
+      })] as [string, any]));
+    }
+
+    const projection = searchQueryOutlineProjection(
+      { byId: new Map(entries), projection: {} } as any,
+      'search',
+      enMessages,
+    );
+    expect(projection.truncated).toBe(true);
+    expect(projection.text.split('\n')).toHaveLength(SEARCH_QUERY_COMPLEXITY_LIMITS.maxNodes);
+  });
+
+  test('marks repeated query conditions as truncated instead of silently omitting them', () => {
+    const search = makeNode('search', 'Repeated query', { type: 'search', children: ['group'] });
+    const group = makeNode('group', '', {
+      type: 'queryCondition',
+      parentId: 'search',
+      queryLogic: 'AND',
+      children: ['rule', 'rule'],
+    });
+    const rule = makeNode('rule', 'Term', {
+      type: 'queryCondition',
+      parentId: 'group',
+      queryOp: 'STRING_MATCH',
+    });
+    const byId = new Map<string, any>([
+      ['search', search],
+      ['group', group],
+      ['rule', rule],
+    ]);
+
+    const projection = searchQueryOutlineProjection({ byId, projection: {} } as any, 'search', enMessages);
+    expect(projection.truncated).toBe(true);
+    expect(projection.text.match(/- STRING_MATCH/g)).toHaveLength(1);
   });
 
   test('applies sort, filter, and group view settings to row models', () => {
@@ -647,6 +764,55 @@ describe('row interaction resolvers', () => {
       { id: 'referenced', type: 'content' },
       { id: 'empty', type: 'content' },
     ]);
+  });
+
+  test('resolves each reference row once across sort comparisons', () => {
+    class CountingMap<K, V> extends Map<K, V> {
+      private readonly reads = new Map<K, number>();
+
+      override get(key: K): V | undefined {
+        this.reads.set(key, (this.reads.get(key) ?? 0) + 1);
+        return super.get(key);
+      }
+
+      readCount(key: K): number {
+        return this.reads.get(key) ?? 0;
+      }
+    }
+
+    const labels = ['Hotel', 'Golf', 'Foxtrot', 'Echo', 'Delta', 'Charlie', 'Bravo', 'Alpha'];
+    const referenceIds = labels.map((_, index) => `reference-${index}`);
+    const targetIds = labels.map((_, index) => `target-${index}`);
+    const parent = makeNode('parent', 'Parent', { children: ['view', ...referenceIds] });
+    const byId = new CountingMap<string, any>([
+      ['parent', parent],
+      ['view', makeNode('view', '', {
+        type: 'viewDef',
+        parentId: 'parent',
+        children: ['sort'],
+      })],
+      ['sort', makeNode('sort', '', {
+        type: 'sortRule',
+        parentId: 'view',
+        sortField: NAME_FIELD,
+        sortDirection: 'asc',
+      })],
+      ...referenceIds.map((id, index) => [id, makeNode(id, '', {
+        type: 'reference',
+        parentId: 'parent',
+        targetId: targetIds[index],
+      })] as [string, any]),
+      ...targetIds.map((id, index) => [id, makeNode(id, labels[index]!, { parentId: 'library' })] as [string, any]),
+    ]);
+
+    expect(buildOutlinerRows(parent as any, byId)).toEqual(
+      [...referenceIds].reverse().map((id) => ({ id, type: 'content' })),
+    );
+    for (const targetId of targetIds) {
+      // One reference-chain walk reads the terminal target once and then fetches
+      // it once for display; sort comparisons must not repeat either read.
+      expect(byId.readCount(targetId)).toBe(2);
+    }
   });
 
   test('sorts custom number fields numerically', () => {

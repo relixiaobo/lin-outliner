@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
+import { useEffect, useId, useMemo, useState, type KeyboardEvent } from 'react';
 import { formatNodeReferenceMarker } from '../../../core/referenceMarkup';
 import type { Messages } from '../../../core/i18n';
 import { SEARCH_QUERY_COMPLEXITY_LIMITS } from '../../../core/searchQueryCompiler';
@@ -38,12 +38,19 @@ const TEXT_OPS = new Set<QueryOp>([
 export function SearchQueryBuilderPanel({ index, nodeId, run, onClose }: SearchQueryBuilderPanelProps) {
   const t = useT();
   const builder = t.search.builder;
+  const truncationWarningId = useId();
   const [saving, setSaving] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const searchNode = index.byId.get(nodeId);
-  const readOnly = Boolean(searchNode?.locked);
-  const initialText = useMemo(() => searchQueryOutlineText(index, nodeId, t), [index, nodeId, t]);
+  const locked = Boolean(searchNode?.locked);
+  const initialProjection = useMemo(
+    () => searchQueryOutlineProjection(index, nodeId, t),
+    [index, nodeId, t],
+  );
+  const initialText = initialProjection.text;
+  const projectionTruncated = initialProjection.truncated;
+  const readOnly = locked || projectionTruncated;
   const resultCount = useMemo(() => searchQueryResultCount(index, nodeId), [index, nodeId]);
   const [draft, setDraft] = useState(initialText);
 
@@ -121,7 +128,13 @@ export function SearchQueryBuilderPanel({ index, nodeId, run, onClose }: SearchQ
           />
         </div>
       </div>
+      {projectionTruncated && (
+        <p className="search-query-builder-warning" id={truncationWarningId} role="alert">
+          {builder.truncatedWarning}
+        </p>
+      )}
       <Textarea
+        aria-describedby={projectionTruncated ? truncationWarningId : undefined}
         className="search-query-builder-textarea"
         label={builder.queryAriaLabel}
         value={draft}
@@ -134,7 +147,15 @@ export function SearchQueryBuilderPanel({ index, nodeId, run, onClose }: SearchQ
       />
       <div className="search-query-builder-footer">
         <span className="search-query-builder-status">
-          {localError ?? (readOnly ? builder.statusLocked : dirty ? builder.statusUnsaved : builder.statusSaved)}
+          {localError ?? (
+            projectionTruncated
+              ? builder.statusTruncated
+              : locked
+                ? builder.statusLocked
+                : dirty
+                  ? builder.statusUnsaved
+                  : builder.statusSaved
+          )}
         </span>
         <div className="search-query-builder-buttons">
           <Button
@@ -174,22 +195,44 @@ export function searchQueryResultCount(index: DocumentIndex, nodeId: NodeId): nu
   }).length;
 }
 
-export function searchQueryOutlineText(index: DocumentIndex, nodeId: NodeId, t: Messages): string {
+export interface SearchQueryOutlineProjection {
+  text: string;
+  truncated: boolean;
+}
+
+export function searchQueryOutlineProjection(
+  index: DocumentIndex,
+  nodeId: NodeId,
+  t: Messages,
+): SearchQueryOutlineProjection {
   const searchNode = index.byId.get(nodeId);
-  if (!searchNode || searchNode.type !== 'search') return '';
+  if (!searchNode || searchNode.type !== 'search') return { text: '', truncated: false };
 
   const queryRoots = directConditionChildren(index, searchNode);
   const roots = queryRoots.children.length > 0
     ? queryRoots.children
     : searchNode.queryLogic || searchNode.queryOp ? [searchNode] : [];
-  return conditionOutlineLines(index, roots, t).join('\n');
+  const projection = conditionOutlineProjection(index, roots, t);
+  return {
+    text: projection.lines.join('\n'),
+    truncated: queryRoots.truncated || projection.truncated,
+  };
 }
 
-function conditionOutlineLines(index: DocumentIndex, roots: QueryBearingProjection[], t: Messages): string[] {
+export function searchQueryOutlineText(index: DocumentIndex, nodeId: NodeId, t: Messages): string {
+  return searchQueryOutlineProjection(index, nodeId, t).text;
+}
+
+function conditionOutlineProjection(
+  index: DocumentIndex,
+  roots: QueryBearingProjection[],
+  t: Messages,
+): { lines: string[]; truncated: boolean } {
   const lines: string[] = [];
   const visited = new Set<NodeId>();
   const stack: Array<{ condition: QueryBearingProjection; level: number }> = [];
   let nodeCount = 0;
+  let truncated = false;
 
   for (let rootIndex = roots.length - 1; rootIndex >= 0; rootIndex -= 1) {
     stack.push({ condition: roots[rootIndex]!, level: 0 });
@@ -197,48 +240,87 @@ function conditionOutlineLines(index: DocumentIndex, roots: QueryBearingProjecti
 
   while (stack.length > 0) {
     const { condition, level } = stack.pop()!;
-    if (visited.has(condition.id)) continue;
-    if (level > SEARCH_QUERY_COMPLEXITY_LIMITS.maxDepth) break;
-    if (nodeCount >= SEARCH_QUERY_COMPLEXITY_LIMITS.maxNodes) break;
+    if (visited.has(condition.id)) {
+      truncated = true;
+      continue;
+    }
+    if (level > SEARCH_QUERY_COMPLEXITY_LIMITS.maxDepth) {
+      truncated = true;
+      continue;
+    }
+    if (nodeCount >= SEARCH_QUERY_COMPLEXITY_LIMITS.maxNodes) {
+      truncated = true;
+      break;
+    }
     nodeCount += 1;
     visited.add(condition.id);
 
     const indent = '  '.repeat(level);
     if (condition.queryLogic) {
       lines.push(`${indent}- ${condition.queryLogic}`);
-      const children = directConditionChildren(index, condition).children;
+      const childProjection = directConditionChildren(index, condition);
+      truncated ||= childProjection.truncated;
+      const children = childProjection.children;
       for (let childIndex = children.length - 1; childIndex >= 0; childIndex -= 1) {
         stack.push({ condition: children[childIndex]!, level: level + 1 });
       }
       continue;
     }
 
-    if (!condition.queryOp) continue;
+    if (!condition.queryOp) {
+      truncated = true;
+      continue;
+    }
     lines.push(`${indent}- ${condition.queryOp}`);
     if (condition.queryFieldDefId) lines.push(`${indent}  - field:: ${nodeReference(index, condition.queryFieldDefId, t)}`);
     if (condition.queryTagDefId) lines.push(`${indent}  - tag:: ${nodeReference(index, condition.queryTagDefId, t, tagName(index, condition.queryTagDefId, t))}`);
     if (condition.queryTargetId) lines.push(`${indent}  - target:: ${nodeReference(index, condition.queryTargetId, t)}`);
-    for (const operand of operandOutlineTexts(index, condition, t)) {
+    const operandProjection = operandOutlineTexts(index, condition, t);
+    truncated ||= operandProjection.truncated;
+    for (const operand of operandProjection.texts) {
       lines.push(`${indent}  - value:: ${operand}`);
     }
   }
-  return lines;
+  return { lines, truncated };
 }
 
-function operandOutlineTexts(index: DocumentIndex, condition: QueryBearingProjection, t: Messages): string[] {
+function operandOutlineTexts(
+  index: DocumentIndex,
+  condition: QueryBearingProjection,
+  t: Messages,
+): { texts: string[]; truncated: boolean } {
   const operands: string[] = [];
+  const visited = new Set<NodeId>();
+  let truncated = false;
   for (const childId of condition.children) {
-    if (operands.length >= SEARCH_QUERY_COMPLEXITY_LIMITS.maxOperandsPerRule) break;
+    if (visited.has(childId)) {
+      truncated = true;
+      continue;
+    }
+    visited.add(childId);
     const child = index.byId.get(childId);
-    if (!child || child.type === 'queryCondition') continue;
+    if (!child || child.type === 'queryCondition') {
+      truncated = true;
+      continue;
+    }
     const text = operandOutlineText(index, child, t);
-    if (text) operands.push(text);
+    if (!text) continue;
+    if (operands.length >= SEARCH_QUERY_COMPLEXITY_LIMITS.maxOperandsPerRule) {
+      truncated = true;
+      continue;
+    }
+    operands.push(text);
   }
-  if (operands.length > 0) return uniqueLabels(operands);
+  if (operands.length > 0) {
+    const texts = uniqueLabels(operands);
+    return { texts, truncated: truncated || texts.length !== operands.length };
+  }
 
   const text = condition.content.text.trim();
-  if (condition.queryOp && TEXT_OPS.has(condition.queryOp) && text && text !== condition.queryOp) return [text];
-  return [];
+  if (condition.queryOp && TEXT_OPS.has(condition.queryOp) && text && text !== condition.queryOp) {
+    return { texts: [text], truncated };
+  }
+  return { texts: [], truncated };
 }
 
 function operandOutlineText(index: DocumentIndex, node: NodeProjection, t: Messages): string {
@@ -257,7 +339,10 @@ function directConditionChildren(index: DocumentIndex, node: NodeProjection): {
   let truncated = false;
   for (const childId of node.children) {
     const child = index.byId.get(childId);
-    if (child?.type !== 'queryCondition') continue;
+    if (child?.type !== 'queryCondition') {
+      if (node.type === 'queryCondition') truncated = true;
+      continue;
+    }
     if (children.length >= SEARCH_QUERY_COMPLEXITY_LIMITS.maxChildrenPerGroup) {
       truncated = true;
       break;

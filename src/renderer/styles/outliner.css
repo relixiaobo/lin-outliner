@@ -341,10 +341,6 @@
   padding: 0;
 }
 
-.view-toolbar-mode.is-compact .view-toolbar-mode-button.is-active {
-  background: var(--control-active);
-}
-
 .view-toolbar-mode-button:hover {
   color: var(--text-primary);
 }
@@ -1286,6 +1282,13 @@ button.outliner-table-column-kind:focus-visible {
   color: var(--text-tertiary);
   font-size: var(--font-meta);
   font-weight: 400;
+}
+
+.search-query-builder-warning {
+  margin: 0;
+  color: var(--status-warning);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
 }
 
 .search-query-builder-textarea {

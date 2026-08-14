@@ -225,6 +225,8 @@ describe('object-set filtering', () => {
 
     expect(resolveFamily(context, 'setViewToolbarVisible', anchor)).toEqual([]);
     expect(resolveFamily(context, 'editViewSection', anchor)).not.toEqual([]);
+    const plan = planFor(context, 'editViewSection', anchor, { section: 'display' });
+    expect(plan?.steps.map((step) => step.kind)).toEqual(['reveal', 'reveal']);
   });
 });
 

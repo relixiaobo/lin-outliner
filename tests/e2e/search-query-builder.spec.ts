@@ -151,3 +151,28 @@ test.describe('search query builder', () => {
     await expect(tableViewMode.getByRole('button', { name: 'Table', exact: true })).toHaveAttribute('aria-pressed', 'true');
   });
 });
+
+test.describe('truncated search query builder', () => {
+  test('keeps an over-limit projection visible but unwritable', async ({ page }) => {
+    await openMockedApp(page, { truncatedSearchQuery: true });
+    await page.locator('.sidebar-primary-nav')
+      .getByRole('button', { name: 'Recents', exact: true })
+      .click();
+    await page.getByRole('button', { name: 'Show query' }).click();
+
+    const builder = page.locator('[data-search-query-builder]');
+    const warning = builder.getByRole('alert');
+    await expect(warning).toContainText('Some rules are omitted');
+    await expect(builder.locator('textarea')).toHaveAttribute('readonly', '');
+    await expect(builder.getByRole('button', { name: 'Reset', exact: true })).toBeDisabled();
+    const save = builder.getByRole('button', { name: 'Save', exact: true });
+    await expect(save).toBeDisabled();
+
+    await save.click({ force: true });
+    const queryWrites = await page.evaluate(() => (
+      (window as Window & { __LIN_E2E__?: { calls: Array<{ cmd: string }> } })
+        .__LIN_E2E__?.calls.filter((call) => call.cmd === 'set_search_query_outline').length ?? 0
+    ));
+    expect(queryWrites).toBe(0);
+  });
+});

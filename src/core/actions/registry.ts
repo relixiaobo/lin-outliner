@@ -1440,13 +1440,16 @@ const PLANNERS: { [K in ActionId]?: Planner<K> } = {
     const fact = viewFactFor(context, subject);
     if (!fact) return null;
     const nodeId = nodeIdForFacet(subject.content, context.projection);
-    return restoreInvoker([
-      {
+    const steps: EffectStep[] = [];
+    if (anchorContentNode(context, subject)?.type !== 'search') {
+      steps.push({
         on: 'main',
         kind: 'command',
         command: 'set_view_toolbar_visible',
         args: { nodeId, visible: true },
-      },
+      });
+    }
+    steps.push(
       {
         on: 'mainRenderer',
         kind: 'reveal',
@@ -1457,7 +1460,8 @@ const PLANNERS: { [K in ActionId]?: Planner<K> } = {
         kind: 'reveal',
         target: { surface: 'viewSection', nodeId, section: args.section },
       },
-    ]);
+    );
+    return restoreInvoker(steps);
   },
 
   editDescription: (context, subject) => {

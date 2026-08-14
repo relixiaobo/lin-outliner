@@ -178,7 +178,9 @@ previous Title-only default and hidden-field expansion behavior.
   field surface. `src/renderer/ui/outliner/ViewToolbar.tsx` owns the shared
   compact/full variants and reusable Display, Group, Sort, and Filter editors.
 - `src/renderer/ui/search/SearchQueryBuilderPanel.tsx` owns query editing and its
-  bounded text projection; it does not own persistent result-view chrome.
+  bounded text projection. A truncated projection is explicitly warned and
+  remains unwritable so omitted rules cannot be destroyed; the editor does not
+  own persistent result-view chrome.
 - `src/renderer/styles/outliner.css` owns full-width grid behavior and its
   existing token-backed Table typography and spacing.
 - `tests/renderer/rowInteractions.test.ts`, `tests/renderer/visualRows.test.ts`,

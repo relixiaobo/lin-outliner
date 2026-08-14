@@ -532,6 +532,13 @@ the materialized result count and an explicit refresh action as editing context;
 the closed result view needs neither because visible searches refresh
 automatically through their single mode-specific owner.
 
+The editor projects stored condition nodes into outline text through the shared
+query complexity limits. When that bounded projection omits any stored rule or
+operand, the editor shows an explicit truncation warning, keeps the textarea
+read-only, and disables Reset and Save. Users may still inspect the visible
+projection, refresh materialized results, or close the editor, but a partial
+projection is never writable over the complete query.
+
 Outline and Table therefore use one shared compact result-view mechanism rather
 than stacking a query summary and a full toolbar. Outline aligns name search,
 Table, Display, Group, Sort, and Filter with the result content axis. Table aligns

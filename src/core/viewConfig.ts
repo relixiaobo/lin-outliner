@@ -74,23 +74,30 @@ export function resolveViewRecordNode<T extends TableViewTreeNode>(
   return current;
 }
 
-export function orderedDisplayFields<T extends { id: NodeId; displayOrder?: number }>(
-  displayFields: readonly T[],
+export function orderedByFiniteOrder<T extends { id: NodeId }>(
+  items: readonly T[],
+  orderOf: (item: T) => number | undefined,
 ): T[] {
-  return displayFields
-    .map((field, sourceIndex) => ({ field, sourceIndex }))
+  return items
+    .map((item, sourceIndex) => ({ item, sourceIndex, order: orderOf(item) }))
     .sort((left, right) => {
-      const leftOrder = Number.isFinite(left.field.displayOrder)
-        ? left.field.displayOrder!
+      const leftOrder = Number.isFinite(left.order)
+        ? left.order!
         : Number.POSITIVE_INFINITY;
-      const rightOrder = Number.isFinite(right.field.displayOrder)
-        ? right.field.displayOrder!
+      const rightOrder = Number.isFinite(right.order)
+        ? right.order!
         : Number.POSITIVE_INFINITY;
       if (leftOrder !== rightOrder) return leftOrder - rightOrder;
       if (left.sourceIndex !== right.sourceIndex) return left.sourceIndex - right.sourceIndex;
-      return left.field.id.localeCompare(right.field.id);
+      return left.item.id.localeCompare(right.item.id);
     })
-    .map(({ field }) => field);
+    .map(({ item }) => item);
+}
+
+export function orderedDisplayFields<T extends { id: NodeId; displayOrder?: number }>(
+  displayFields: readonly T[],
+): T[] {
+  return orderedByFiniteOrder(displayFields, (field) => field.displayOrder);
 }
 
 export function missingDisplayOrderPlan<T extends { id: NodeId; displayOrder?: number }>(
@@ -116,7 +123,6 @@ export function tableDisplayFieldInitialization<T extends TableViewTreeNode>(par
   byId: ViewNodeIndex<T>;
   owner: T;
   schema: T | undefined;
-  isActiveField: (field: T) => boolean;
 }): TableDisplayFieldInitialization<T> | null {
   const { byId, owner, schema } = params;
   const resolve = indexResolver(byId);
@@ -145,8 +151,7 @@ export function tableDisplayFieldInitialization<T extends TableViewTreeNode>(par
     const field = resolve(fieldId);
     return field?.type === 'fieldDef'
       && usedFields.has(fieldId)
-      && !configuredFields.has(fieldId)
-      && params.isActiveField(field);
+      && !configuredFields.has(fieldId);
   });
   return { viewDef, displayFields, missingFieldIds };
 }

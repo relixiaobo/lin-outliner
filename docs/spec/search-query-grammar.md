@@ -103,10 +103,11 @@ treated as no executable query so saved-search titles are never interpreted as a
 implicit text condition. Temporary agent search outlines use the same limits
 while parsing, validating, and serializing query trees.
 
-Renderer search query summaries and outline text are also built with bounded
-iterative traversals. If the visible summary must omit over-budget branches, it
-sets truncation metadata and renders a neutral "More rules omitted" chip instead
-of walking the full tree.
+The renderer's query-outline projection also uses a bounded iterative traversal
+and carries explicit truncation metadata whenever a child, operand, node, depth,
+or repeated-node limit omits stored structure. The query editor renders that
+state as a warning and keeps the projected text read-only: a partial projection
+must never be written back over the complete saved query.
 
 ## Execution And Relevance
 

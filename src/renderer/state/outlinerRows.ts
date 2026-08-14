@@ -19,7 +19,7 @@ import {
 import type { ReferenceSummary } from '../../core/references';
 import { isDescendantOf, resolveReferenceChainTargetId } from '../../core/actions/rowFacets';
 import { TRASH_ID } from '../../core/types';
-import { INTERNAL_VIEW_NODE_TYPES } from '../../core/viewConfig';
+import { INTERNAL_VIEW_NODE_TYPES, orderedByFiniteOrder } from '../../core/viewConfig';
 
 export type OutlinerRowItem =
   | { id: NodeId; type: 'field' }
@@ -120,10 +120,10 @@ export function readViewConfig(parent: NodeProjection | undefined, byId: Map<Nod
         valueLogic: child.filterValueLogic ?? 'any',
         values: child.filterValues ?? [],
       })),
-    displayFields: viewChildren
-      .filter((child): child is Extract<NodeProjection, { type: 'displayField' }> => child.type === 'displayField' && Boolean(child.displayField))
-      .map((child, sourceIndex) => ({
-        field: {
+    displayFields: orderedByFiniteOrder(
+      viewChildren
+        .filter((child): child is Extract<NodeProjection, { type: 'displayField' }> => child.type === 'displayField' && Boolean(child.displayField))
+        .map((child) => ({
           id: child.id,
           field: child.displayField!,
           visible: child.displayVisible !== false,
@@ -131,17 +131,9 @@ export function readViewConfig(parent: NodeProjection | undefined, byId: Map<Nod
           order: child.displayOrder,
           label: child.displayLabel,
           placement: child.displayPlacement,
-        },
-        sourceIndex,
-      }))
-      .sort((left, right) => {
-        const leftOrder = Number.isFinite(left.field.order) ? left.field.order! : Number.POSITIVE_INFINITY;
-        const rightOrder = Number.isFinite(right.field.order) ? right.field.order! : Number.POSITIVE_INFINITY;
-        if (leftOrder !== rightOrder) return leftOrder - rightOrder;
-        if (left.sourceIndex !== right.sourceIndex) return left.sourceIndex - right.sourceIndex;
-        return left.field.id.localeCompare(right.field.id);
-      })
-      .map(({ field }) => field),
+        })),
+      (field) => field.order,
+    ),
   };
 }
 
@@ -226,8 +218,18 @@ export function viewFieldValuesFor(
   byId: Map<NodeId, NodeProjection>,
   systemFieldContext?: SystemFieldContext,
 ): string[] {
-  if (fieldId === NAME_FIELD) return [childText(displayNodeOrSelf(rowNode, byId), byId)].filter(Boolean);
-  const displayed = displayNode(rowNode, byId);
+  return resolvedViewFieldValuesFor(rowNode, fieldId, byId, systemFieldContext);
+}
+
+function resolvedViewFieldValuesFor(
+  rowNode: NodeProjection,
+  fieldId: string,
+  byId: Map<NodeId, NodeProjection>,
+  systemFieldContext?: SystemFieldContext,
+  resolveDisplayNode?: (node: NodeProjection) => NodeProjection | undefined,
+): string[] {
+  const displayed = resolveDisplayNode ? resolveDisplayNode(rowNode) : displayNode(rowNode, byId);
+  if (fieldId === NAME_FIELD) return [childText(displayed ?? rowNode, byId)].filter(Boolean);
   if (!displayed) return [];
   // Name reads the node's own (possibly nested) text; every other system field is
   // a computed projection resolved by the shared `systemFields` module.
@@ -249,8 +251,9 @@ function fieldTextFor(
   fieldId: string,
   byId: Map<NodeId, NodeProjection>,
   systemFieldContext?: SystemFieldContext,
+  resolveDisplayNode?: (node: NodeProjection) => NodeProjection | undefined,
 ): string {
-  return viewFieldValuesFor(rowNode, fieldId, byId, systemFieldContext).join(' ');
+  return resolvedViewFieldValuesFor(rowNode, fieldId, byId, systemFieldContext, resolveDisplayNode).join(' ');
 }
 
 function fieldNumberFor(
@@ -258,8 +261,9 @@ function fieldNumberFor(
   fieldId: string,
   byId: Map<NodeId, NodeProjection>,
   systemFieldContext?: SystemFieldContext,
+  resolveDisplayNode?: (node: NodeProjection) => NodeProjection | undefined,
 ): number | null {
-  const value = viewFieldValuesFor(rowNode, fieldId, byId, systemFieldContext)[0];
+  const value = resolvedViewFieldValuesFor(rowNode, fieldId, byId, systemFieldContext, resolveDisplayNode)[0];
   if (value === undefined) return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
@@ -319,9 +323,10 @@ function fieldDateFor(
   fieldId: string,
   byId: Map<NodeId, NodeProjection>,
   systemFieldContext?: SystemFieldContext,
+  resolveDisplayNode?: (node: NodeProjection) => NodeProjection | undefined,
 ): number | null {
   if (!isViewDateField(fieldId, byId)) return null;
-  const value = viewFieldValuesFor(rowNode, fieldId, byId, systemFieldContext)[0];
+  const value = resolvedViewFieldValuesFor(rowNode, fieldId, byId, systemFieldContext, resolveDisplayNode)[0];
   if (value === undefined) return null;
   return dateSpanForFieldValue(fieldId, value)?.startMs ?? null;
 }
@@ -337,6 +342,7 @@ function compareRowsByField(
   byId: Map<NodeId, NodeProjection>,
   fieldId: string,
   systemFieldContext?: SystemFieldContext,
+  resolveDisplayNode?: (node: NodeProjection) => NodeProjection | undefined,
 ): number {
   if (left.type !== 'content' && left.type !== 'field') return 1;
   if (right.type !== 'content' && right.type !== 'field') return -1;
@@ -345,23 +351,23 @@ function compareRowsByField(
   if (!leftNode || !rightNode) return 0;
 
   if (isViewDateField(fieldId, byId)) {
-    const leftDate = fieldDateFor(leftNode, fieldId, byId, systemFieldContext) ?? Number.POSITIVE_INFINITY;
-    const rightDate = fieldDateFor(rightNode, fieldId, byId, systemFieldContext) ?? Number.POSITIVE_INFINITY;
+    const leftDate = fieldDateFor(leftNode, fieldId, byId, systemFieldContext, resolveDisplayNode) ?? Number.POSITIVE_INFINITY;
+    const rightDate = fieldDateFor(rightNode, fieldId, byId, systemFieldContext, resolveDisplayNode) ?? Number.POSITIVE_INFINITY;
     return leftDate - rightDate;
   }
   if (isViewNumberField(fieldId, byId)) {
-    const leftNumber = fieldNumberFor(leftNode, fieldId, byId, systemFieldContext) ?? Number.POSITIVE_INFINITY;
-    const rightNumber = fieldNumberFor(rightNode, fieldId, byId, systemFieldContext) ?? Number.POSITIVE_INFINITY;
+    const leftNumber = fieldNumberFor(leftNode, fieldId, byId, systemFieldContext, resolveDisplayNode) ?? Number.POSITIVE_INFINITY;
+    const rightNumber = fieldNumberFor(rightNode, fieldId, byId, systemFieldContext, resolveDisplayNode) ?? Number.POSITIVE_INFINITY;
     return leftNumber - rightNumber;
   }
   if (fieldId === DONE_FIELD) {
-    const leftDone = displayNode(leftNode, byId)?.completedAt ? 1 : 0;
-    const rightDone = displayNode(rightNode, byId)?.completedAt ? 1 : 0;
+    const leftDone = (resolveDisplayNode ? resolveDisplayNode(leftNode) : displayNode(leftNode, byId))?.completedAt ? 1 : 0;
+    const rightDone = (resolveDisplayNode ? resolveDisplayNode(rightNode) : displayNode(rightNode, byId))?.completedAt ? 1 : 0;
     return leftDone - rightDone;
   }
 
-  const leftText = fieldTextFor(leftNode, fieldId, byId, systemFieldContext).toLocaleLowerCase();
-  const rightText = fieldTextFor(rightNode, fieldId, byId, systemFieldContext).toLocaleLowerCase();
+  const leftText = fieldTextFor(leftNode, fieldId, byId, systemFieldContext, resolveDisplayNode).toLocaleLowerCase();
+  const rightText = fieldTextFor(rightNode, fieldId, byId, systemFieldContext, resolveDisplayNode).toLocaleLowerCase();
   return leftText.localeCompare(rightText, undefined, { numeric: true, sensitivity: 'base' });
 }
 
@@ -447,10 +453,26 @@ function sortRows(
   systemFieldContext?: SystemFieldContext,
 ): OutlinerRowItem[] {
   if (view.sortRules.length === 0) return rows;
+  const displayedRows = new Map<NodeId, NodeProjection | undefined>();
+  for (const row of rows) {
+    if (row.type !== 'content' && row.type !== 'field') continue;
+    const node = byId.get(row.id);
+    if (node) displayedRows.set(node.id, displayNode(node, byId));
+  }
+  const resolveDisplayNode = (node: NodeProjection) => (
+    displayedRows.has(node.id) ? displayedRows.get(node.id) : displayNode(node, byId)
+  );
   const sortedRows = [...rows];
   sortedRows.sort((left, right) => {
     for (const rule of view.sortRules) {
-      const result = compareRowsByField(left, right, byId, rule.field, systemFieldContext);
+      const result = compareRowsByField(
+        left,
+        right,
+        byId,
+        rule.field,
+        systemFieldContext,
+        resolveDisplayNode,
+      );
       if (result !== 0) return rule.direction === 'desc' ? -result : result;
     }
     return 0;

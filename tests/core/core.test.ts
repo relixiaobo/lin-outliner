@@ -1323,6 +1323,33 @@ describe('Core', () => {
       .map((node) => node.displayField)).toEqual([fieldDefId]);
   });
 
+  test('requests a text index only when a saved search enters table mode', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const ordinaryId = mustFocus(core.createNode(today, null, 'Ordinary view'));
+    const searchId = mustFocus(core.createSearchNode(core.projection().searchesId, null, {
+      title: 'Indexed table search',
+      query: { kind: 'rule', op: 'STRING_MATCH', text: 'Ordinary view' },
+    }));
+    let providerCalls = 0;
+    const provider = () => {
+      providerCalls += 1;
+      return undefined;
+    };
+
+    core.setViewMode(ordinaryId, 'table', provider);
+    expect(providerCalls).toBe(0);
+
+    core.setViewMode(searchId, 'table', provider);
+    expect(providerCalls).toBe(1);
+    core.setViewMode(searchId, 'table', provider);
+    expect(providerCalls).toBe(1);
+
+    core.setViewMode(searchId, 'list', provider);
+    core.setViewMode(searchId, 'table', provider);
+    expect(providerCalls).toBe(2);
+  });
+
   test('enters table when a saved search can no longer be evaluated', () => {
     const core = Core.new();
     const today = core.projection().todayId;
