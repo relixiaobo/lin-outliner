@@ -1,6 +1,8 @@
 import {
   useCallback,
+  useEffect,
   useMemo,
+  useRef,
   useState,
   type MouseEvent,
 } from 'react';
@@ -12,6 +14,7 @@ import {
   type NodeProjection,
 } from '../api/types';
 import {
+  buildReferenceCountsByTarget,
   type ReferenceSource,
   type ReferenceSummary,
 } from '../../core/references';
@@ -22,7 +25,7 @@ import { OutlinerPreviewRow } from './outliner/OutlinerPreviewRow';
 import { ButtonControl } from './primitives/ButtonControl';
 import { useT } from '../i18n/I18nProvider';
 import { outlinerChildParentId, resolveReferenceTargetId, type DocumentIndex } from '../state/document';
-import { referenceSummaryForExpandedTarget } from '../state/referenceSummary';
+import { scanUnlinkedReferenceSources } from '../state/cooperativeReferenceSummary';
 import type { CommandRunner, NavigateRootOptions } from './shared';
 import { wantsNewPaneFromClick } from './shared';
 
@@ -60,6 +63,8 @@ interface ReferenceOutlineRowProps {
   onToggleRowExpansion: (rowKey: string) => void;
 }
 
+const UNLINKED_REFRESH_DEBOUNCE_MS = 150;
+
 export function BacklinksSection(props: BacklinksSectionProps) {
   return <BacklinksSectionContent key={props.targetId} {...props} />;
 }
@@ -70,14 +75,47 @@ function BacklinksSectionContent(props: BacklinksSectionProps) {
   const { index, onRoot, run, targetId } = props;
   const [expanded, setExpanded] = useState(false);
   const [expandedRowKeys, setExpandedRowKeys] = useState<ReadonlySet<string>>(() => new Set());
-  const expandedSummary = useMemo(
-    () => expanded ? referenceSummaryForExpandedTarget(index, targetId) : props.summary,
-    [expanded, index, props.summary, targetId],
+  const [unlinkedSources, setUnlinkedSources] = useState<readonly ReferenceSource[]>([]);
+  const scanGenerationRef = useRef(0);
+  const latestIndexRef = useRef(index);
+  latestIndexRef.current = index;
+  const linkedSources = props.summary.byTarget.get(targetId) ?? [];
+  const sources = useMemo(
+    () => expanded && unlinkedSources.length > 0
+      ? [...linkedSources, ...unlinkedSources]
+      : linkedSources,
+    [expanded, linkedSources, unlinkedSources],
   );
-  const activeSummary = expanded ? expandedSummary : props.summary;
-  const sources = activeSummary.byTarget.get(targetId) ?? [];
-  const counts = activeSummary.countsByTarget.get(targetId);
+  const counts = useMemo(() => {
+    if (!expanded) return props.summary.countsByTarget.get(targetId);
+    return buildReferenceCountsByTarget(new Map([[targetId, sources]])).get(targetId);
+  }, [expanded, props.summary.countsByTarget, sources, targetId]);
   const linkedCount = props.summary.countsByTarget.get(targetId)?.linked ?? 0;
+
+  useEffect(() => {
+    const generation = ++scanGenerationRef.current;
+    if (!expanded) {
+      setUnlinkedSources((current) => current.length === 0 ? current : []);
+      return;
+    }
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      const snapshot = latestIndexRef.current;
+      void scanUnlinkedReferenceSources(snapshot, targetId, { signal: controller.signal })
+        .then((nextSources) => {
+          if (
+            !nextSources
+            || controller.signal.aborted
+            || scanGenerationRef.current !== generation
+          ) return;
+          setUnlinkedSources(nextSources);
+        });
+    }, UNLINKED_REFRESH_DEBOUNCE_MS);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [expanded, index.revision, targetId]);
 
   const groups = useMemo(
     () => groupReferenceRows(sources, index, t.outliner.viewToolbar.fieldFallback),

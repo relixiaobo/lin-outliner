@@ -34,6 +34,7 @@ import { useCodeBlockCopy } from '../editor/CodeBlockSurface';
 import { useT } from '../../i18n/I18nProvider';
 
 const INDENT = '  ';
+const HIGHLIGHT_DEBOUNCE_MS = 150;
 
 type PendingSelection = number | [number, number];
 
@@ -100,11 +101,14 @@ export function CodeBlockRow(props: CodeBlockRowProps) {
 
   useEffect(() => {
     let cancelled = false;
-    void highlightCode(value, language).then((html) => {
-      if (!cancelled) setHighlightedHtml(html);
-    });
+    const timer = window.setTimeout(() => {
+      void highlightCode(value, language).then((html) => {
+        if (!cancelled) setHighlightedHtml(html);
+      });
+    }, HIGHLIGHT_DEBOUNCE_MS);
     return () => {
       cancelled = true;
+      window.clearTimeout(timer);
     };
   }, [value, language]);
 

@@ -547,6 +547,13 @@ does not include the presentation-only gallery or claim to reproduce the provide
 request. Execution-lifetime managed-resource paths are never invented in renderer
 copy; the Model Call export remains the authority for the recorded provider payload.
 
+Transcript document reads are scoped to the Node ids a Turn actually presents:
+structured user references, Node markers in assistant/reasoning Markdown, and
+Node subjects in tool activity. A relevant rename or derived tag-color change
+refreshes the reference chip, tool subject, and process header; unrelated
+document deltas do not render the Turn. Copy resolves Node names from the current
+document index at click time rather than from the last rendered snapshot.
+
 A terminal response owns one action row directly below its visible content.
 Every terminal response exposes Copy, Continue in new chat, and Details as
 applicable. Continue in new chat is the only user-visible history fork action
@@ -785,6 +792,13 @@ on a model it never chose to pin.
 Reopening the Agent rail restores focus to the composer of an editable Thread.
 An active `request_user_input` keeps focus in its current step instead; opening
 the rail never steals focus from that blocking form.
+
+Collapsing the Agent rail keeps the same `ThreadView` mounted, preserving its
+composer draft, staged attachments, disclosure state, and scroll DOM. While
+collapsed, the dock and any expanded Subagent detail unsubscribe from Thread and
+document stores and retain a frozen snapshot. Reopening subscribes again and
+reads the newest snapshots before rendering; closing is never implemented as an
+unmount or as a cleanup that discards unsent attachment resources.
 
 Within an editable Thread the composer is also the pointer's default focus
 target ("terminal model"): a mouse click anywhere in the thread view that is

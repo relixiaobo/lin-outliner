@@ -34,10 +34,32 @@ import {
   patchDayNoteCountIndex,
   type DayNoteCountIndex,
 } from './dayNoteCounts';
+import type { ReferenceSummary } from '../../core/references';
+import {
+  buildLinkedReferenceSummary,
+  patchLinkedReferenceSummary,
+} from './incrementalReferenceSummary';
+import {
+  buildReferenceCandidateIndex,
+  patchReferenceCandidateIndex,
+  type ReferenceCandidateIndex,
+} from './referenceCandidateIndex';
+import {
+  buildTrashNodeIds,
+  patchTrashNodeIds,
+  projectionReferenceGraphChanged,
+  projectionStructureChanged,
+  projectionTagDefinitionsChanged,
+  type ProjectionDeltaFacts,
+  type ProjectionSemanticRevisions,
+  type SparseNodeIdSet,
+} from './projectionDerived';
+import { DocumentIndexStore } from './documentIndexStore';
 
 export interface DocumentIndex {
   projection: DocumentProjection;
   byId: Map<NodeId, NodeProjection>;
+  revision: number;
   // Per-node data revision, used by OutlinerItem's React.memo to skip rows whose
   // data did not change. Optional because `buildIndex` (tests, non-outliner
   // callers) does not track it; the live app always supplies it through the
@@ -45,6 +67,13 @@ export interface DocumentIndex {
   // memo from the `ui` prop, not carried here.
   renderRev?: ReadonlyMap<NodeId, number>;
   dayNoteCounts: DayNoteCountIndex;
+  semanticRevisions: ProjectionSemanticRevisions;
+  delta: ProjectionDeltaFacts;
+  trashNodeIds: SparseNodeIdSet;
+  referenceSummary: ReferenceSummary;
+  referenceCandidates: ReferenceCandidateIndex;
+  tagCandidateCacheKey: object;
+  displayGraphCacheKey: object;
 }
 
 export type FocusSurface = CoreFocusSurface;
@@ -54,10 +83,26 @@ export type SelectionSource = 'global' | 'ref-click';
 
 export function buildIndex(projection: DocumentProjection): DocumentIndex {
   const byId = new Map(projection.nodes.map((node) => [node.id, node]));
+  const changedIds = new Set<NodeId>(byId.keys());
+  const trashNodeIds = buildTrashNodeIds(byId, projection.trashId);
   return {
     projection,
     byId,
+    revision: 0,
     dayNoteCounts: buildDayNoteCountIndex(byId),
+    semanticRevisions: initialSemanticRevisions(),
+    delta: {
+      changedIds,
+      dirtyIds: changedIds,
+      removedIds: [],
+      structureChanged: true,
+      trashMembershipChangedIds: trashNodeIds,
+    },
+    trashNodeIds,
+    referenceSummary: buildLinkedReferenceSummary(byId, trashNodeIds),
+    referenceCandidates: buildReferenceCandidateIndex(byId, trashNodeIds),
+    tagCandidateCacheKey: {},
+    displayGraphCacheKey: {},
   };
 }
 
@@ -95,8 +140,29 @@ export function reduceProjection(
     const byId = SparseProjectionMap.fromEntries(update.projection.nodes.map((node) => [node.id, node] as const));
     const affected = new Set<NodeId>(byId.keys());
     const renderRev = nextRevisions(prev?.index.renderRev ?? null, affected, byId.keys());
+    const trashNodeIds = buildTrashNodeIds(byId, update.projection.trashId);
+    const semanticRevisions = nextFullSemanticRevisions(prev?.index.semanticRevisions);
     return {
-      index: { projection: update.projection, byId, renderRev, dayNoteCounts: buildDayNoteCountIndex(byId) },
+      index: {
+        projection: update.projection,
+        byId,
+        revision: update.revision,
+        renderRev,
+        dayNoteCounts: buildDayNoteCountIndex(byId),
+        semanticRevisions,
+        delta: {
+          changedIds: affected,
+          dirtyIds: affected,
+          removedIds: [],
+          structureChanged: true,
+          trashMembershipChangedIds: trashNodeIds,
+        },
+        trashNodeIds,
+        referenceSummary: buildLinkedReferenceSummary(byId, trashNodeIds),
+        referenceCandidates: buildReferenceCandidateIndex(byId, trashNodeIds),
+        tagCandidateCacheKey: {},
+        displayGraphCacheKey: {},
+      },
       revision: update.revision,
       reverseEdges: buildReverseEdges(byId),
     };
@@ -139,6 +205,48 @@ export function reduceProjection(
   const reverseEdges = patchReverseEdges(prev.reverseEdges, prev.index.byId, update.changedNodes, update.removedIds);
   const affected = propagateDirty(changed, byId, reverseEdges);
   const renderRev = patchRevisions(prev.index.renderRev, affected, byId, update.removedIds);
+  const structureChanged = projectionStructureChanged(prev.index.byId, update.changedNodes, update.removedIds);
+  const referenceGraphChanged = projectionReferenceGraphChanged(
+    prev.index.byId,
+    update.changedNodes,
+    update.removedIds,
+  );
+  const trashPatch = patchTrashNodeIds({
+    previous: prev.index.trashNodeIds,
+    previousById: prev.index.byId,
+    nextById: byId,
+    changedNodes: update.changedNodes,
+    removedIds: update.removedIds,
+    trashId: projection.trashId,
+  });
+  const tagDefinitionsChanged = projectionTagDefinitionsChanged({
+    previousById: prev.index.byId,
+    nextById: byId,
+    changedNodes: update.changedNodes,
+    removedIds: update.removedIds,
+    trashMembershipChangedIds: trashPatch.changedIds,
+  });
+  const semanticRevisions: ProjectionSemanticRevisions = {
+    structure: prev.index.semanticRevisions.structure + Number(structureChanged),
+    referenceGraph: prev.index.semanticRevisions.referenceGraph + Number(referenceGraphChanged),
+    tagDefinitions: prev.index.semanticRevisions.tagDefinitions + Number(tagDefinitionsChanged),
+    trashMembership: prev.index.semanticRevisions.trashMembership + Number(trashPatch.changedIds.size > 0),
+  };
+  const referenceSummary = patchLinkedReferenceSummary({
+    previous: prev.index.referenceSummary,
+    previousById: prev.index.byId,
+    nextById: byId,
+    changedNodes: update.changedNodes,
+    trashNodeIds: trashPatch.nodeIds,
+    rebuild: referenceGraphChanged || trashPatch.changedIds.size > 0,
+  });
+  const referenceCandidates = patchReferenceCandidateIndex({
+    previous: prev.index.referenceCandidates,
+    nextById: byId,
+    changedIds: changed,
+    trashMembershipChangedIds: trashPatch.changedIds,
+    trashNodeIds: trashPatch.nodeIds,
+  });
   const dayNoteCounts = patchDayNoteCountIndex({
     previous: prev.index.dayNoteCounts,
     previousById: prev.index.byId,
@@ -146,7 +254,46 @@ export function reduceProjection(
     changedNodes: update.changedNodes,
     removedIds: update.removedIds,
   });
-  return { index: { projection, byId, renderRev, dayNoteCounts }, revision: update.revision, reverseEdges };
+  return {
+    index: {
+      projection,
+      byId,
+      revision: update.revision,
+      renderRev,
+      dayNoteCounts,
+      semanticRevisions,
+      delta: {
+        changedIds: changed,
+        dirtyIds: affected,
+        removedIds: update.removedIds,
+        structureChanged,
+        trashMembershipChangedIds: trashPatch.changedIds,
+      },
+      trashNodeIds: trashPatch.nodeIds,
+      referenceSummary,
+      referenceCandidates,
+      tagCandidateCacheKey: tagDefinitionsChanged ? {} : prev.index.tagCandidateCacheKey,
+      displayGraphCacheKey: structureChanged || referenceGraphChanged ? {} : prev.index.displayGraphCacheKey,
+    },
+    revision: update.revision,
+    reverseEdges,
+  };
+}
+
+function initialSemanticRevisions(): ProjectionSemanticRevisions {
+  return { structure: 1, referenceGraph: 1, tagDefinitions: 1, trashMembership: 1 };
+}
+
+function nextFullSemanticRevisions(
+  previous: ProjectionSemanticRevisions | undefined,
+): ProjectionSemanticRevisions {
+  if (!previous) return initialSemanticRevisions();
+  return {
+    structure: previous.structure + 1,
+    referenceGraph: previous.referenceGraph + 1,
+    tagDefinitions: previous.tagDefinitions + 1,
+    trashMembership: previous.trashMembership + 1,
+  };
 }
 
 // Find a node by id within a ProjectionUpdate: the changed set for a `delta`, the
@@ -165,6 +312,7 @@ export function nodeFromProjectionUpdate(
 
 export interface ProjectionStore {
   index: DocumentIndex | null;
+  indexStore: DocumentIndexStore | null;
   applyProjectionUpdate: (update: ProjectionUpdate) => void;
 }
 
@@ -186,11 +334,14 @@ export function useProjectionStore(
 ): ProjectionStore {
   const [state, setState] = useState<ProjectionState | null>(null);
   const stateRef = useRef<ProjectionState | null>(null);
+  const indexStoreRef = useRef<DocumentIndexStore | null>(null);
   const resyncInFlight = useRef(false);
 
   const commit = useCallback((next: ProjectionState | null) => {
     if (next !== null && next !== stateRef.current) {
       stateRef.current = next;
+      if (indexStoreRef.current) indexStoreRef.current.commit(next.index);
+      else indexStoreRef.current = new DocumentIndexStore(next.index);
       setState(next);
     }
   }, []);
@@ -235,7 +386,11 @@ export function useProjectionStore(
       .finally(() => { resyncInFlight.current = false; });
   }, [commitAcceptedUpdate, resync]);
 
-  return { index: state?.index ?? null, applyProjectionUpdate };
+  return {
+    index: state?.index ?? null,
+    indexStore: state === null ? null : indexStoreRef.current,
+    applyProjectionUpdate,
+  };
 }
 
 export interface UiState {

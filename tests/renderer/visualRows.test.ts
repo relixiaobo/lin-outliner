@@ -1,8 +1,13 @@
 import { describe, expect, test } from 'bun:test';
-import type { NodeId, NodeProjection } from '../../src/core/types';
-import { flattenVisibleRows } from '../../src/renderer/state/document';
+import type { DocumentProjection, NodeId, NodeProjection, ProjectionUpdate } from '../../src/core/types';
+import { flattenVisibleRows, reduceProjection } from '../../src/renderer/state/document';
 import { buildSelectableRows } from '../../src/renderer/state/selectableRows';
-import { buildVisualRows, visualRowNodeIds } from '../../src/renderer/state/visualRows';
+import {
+  buildVisualRows,
+  buildVisualRowsIncrementally,
+  visualRowNodeIds,
+  type VisualRowsSnapshot,
+} from '../../src/renderer/state/visualRows';
 
 function node(id: string, patch: Partial<NodeProjection> = {}): NodeProjection {
   return {
@@ -22,6 +27,25 @@ function node(id: string, patch: Partial<NodeProjection> = {}): NodeProjection {
 
 function byIdOf(nodes: NodeProjection[]): Map<NodeId, NodeProjection> {
   return new Map(nodes.map((n) => [n.id, n]));
+}
+
+function projection(nodes: NodeProjection[], rootId = 'lib'): DocumentProjection {
+  return {
+    workspaceId: 'ws',
+    rootId,
+    libraryId: rootId,
+    dailyNotesId: 'daily',
+    schemaId: 'schema',
+    searchesId: 'searches',
+    recentsId: 'recents',
+    trashId: 'trash',
+    todayId: rootId,
+    nodes,
+  };
+}
+
+function delta(revision: number, changedNodes: NodeProjection[]): ProjectionUpdate {
+  return { kind: 'delta', revision, todayId: 'lib', changedNodes, removedIds: [] };
 }
 
 // lib > a (>a1,a2), b (> refA -> a). With a, b, refA expanded the reference
@@ -287,5 +311,254 @@ describe('buildVisualRows depth and extras', () => {
       referencePath: ['lib', 'project'],
     });
     expect(visualRowNodeIds(rows)).toEqual(['project']);
+  });
+});
+
+describe('buildVisualRowsIncrementally', () => {
+  const expanded = new Set<NodeId>();
+  const options = { expanded };
+
+  function seed(nodes: NodeProjection[]) {
+    return reduceProjection(null, {
+      kind: 'full',
+      revision: 1,
+      projection: projection(nodes),
+    })!;
+  }
+
+  function rebuild(
+    previous: VisualRowsSnapshot | null,
+    state: NonNullable<ReturnType<typeof reduceProjection>>,
+  ) {
+    return buildVisualRowsIncrementally(previous, 'lib', state.index, {
+      ...options,
+      systemFieldContext: { referenceSummary: state.index.referenceSummary },
+    });
+  }
+
+  test('reuses the row model for a text edit in a plain list', () => {
+    const lib = node('lib', { children: ['a', 'b'] });
+    const a = node('a', { parentId: 'lib', content: { text: 'A', marks: [], inlineRefs: [] } });
+    const b = node('b', { parentId: 'lib', content: { text: 'B', marks: [], inlineRefs: [] } });
+    const trash = node('trash');
+    const firstState = seed([lib, a, b, trash]);
+    const first = rebuild(null, firstState);
+    const editedA = {
+      ...a,
+      updatedAt: 2,
+      content: { ...a.content, text: 'A edited' },
+    };
+    const secondState = reduceProjection(firstState, delta(2, [editedA]))!;
+    const second = rebuild(first, secondState);
+
+    expect(second.rows).toBe(first.rows);
+    expect(second.rows).toEqual(buildVisualRows('lib', secondState.index.byId, options));
+  });
+
+  test('rebuilds with full parity when Name or Updated changes ordering', () => {
+    const lib = node('lib', { children: ['view', 'a', 'b'] });
+    const view = node('view', {
+      parentId: 'lib',
+      type: 'viewDef',
+      children: ['sort-name', 'sort-updated'],
+    });
+    const sortName = node('sort-name', {
+      parentId: 'view',
+      type: 'sortRule',
+      sortField: 'sys:name',
+      sortDirection: 'asc',
+    });
+    const sortUpdated = node('sort-updated', {
+      parentId: 'view',
+      type: 'sortRule',
+      sortField: 'sys:updatedAt',
+      sortDirection: 'desc',
+    });
+    const a = node('a', {
+      parentId: 'lib',
+      content: { text: 'Zulu', marks: [], inlineRefs: [] },
+      updatedAt: 1,
+    });
+    const b = node('b', {
+      parentId: 'lib',
+      content: { text: 'Alpha', marks: [], inlineRefs: [] },
+      updatedAt: 2,
+    });
+    const trash = node('trash');
+    const firstState = seed([lib, view, sortName, sortUpdated, a, b, trash]);
+    const first = rebuild(null, firstState);
+    const editedA = {
+      ...a,
+      updatedAt: 3,
+      content: { ...a.content, text: 'Aardvark' },
+    };
+    const secondState = reduceProjection(firstState, delta(2, [editedA]))!;
+    const second = rebuild(first, secondState);
+
+    expect(second.rows).not.toBe(first.rows);
+    expect(visualRowNodeIds(second.rows)).toEqual(['a', 'b']);
+    expect(second.rows).toEqual(buildVisualRows('lib', secondState.index.byId, options));
+  });
+
+  test('keeps a custom-field view stable for unrelated text and rebuilds for a value edit', () => {
+    const lib = node('lib', { children: ['view', 'a', 'b'] });
+    const view = node('view', { parentId: 'lib', type: 'viewDef', children: ['sort'] });
+    const sort = node('sort', {
+      parentId: 'view',
+      type: 'sortRule',
+      sortField: 'priority',
+      sortDirection: 'asc',
+    });
+    const fieldDef = node('priority', { type: 'fieldDef' });
+    const a = node('a', {
+      parentId: 'lib',
+      children: ['a-entry'],
+      content: { text: 'A', marks: [], inlineRefs: [] },
+    });
+    const aEntry = node('a-entry', {
+      parentId: 'a',
+      type: 'fieldEntry',
+      fieldDefId: 'priority',
+      children: ['a-value'],
+    });
+    const aValue = node('a-value', {
+      parentId: 'a-entry',
+      content: { text: '2', marks: [], inlineRefs: [] },
+    });
+    const b = node('b', { parentId: 'lib', children: ['b-entry'] });
+    const bEntry = node('b-entry', {
+      parentId: 'b',
+      type: 'fieldEntry',
+      fieldDefId: 'priority',
+      children: ['b-value'],
+    });
+    const bValue = node('b-value', {
+      parentId: 'b-entry',
+      content: { text: '1', marks: [], inlineRefs: [] },
+    });
+    const trash = node('trash');
+    const firstState = seed([
+      lib, view, sort, fieldDef, a, aEntry, aValue, b, bEntry, bValue, trash,
+    ]);
+    const first = rebuild(null, firstState);
+    expect(visualRowNodeIds(first.rows)).toEqual(['b', 'a']);
+
+    const renamedA = {
+      ...a,
+      updatedAt: 2,
+      content: { ...a.content, text: 'A renamed' },
+    };
+    const renamedState = reduceProjection(firstState, delta(2, [renamedA]))!;
+    const renamed = rebuild(first, renamedState);
+    expect(renamed.rows).toBe(first.rows);
+
+    const changedValue = {
+      ...aValue,
+      updatedAt: 3,
+      content: { ...aValue.content, text: '0' },
+    };
+    const valueState = reduceProjection(renamedState, delta(3, [changedValue]))!;
+    const valueSnapshot = rebuild(renamed, valueState);
+    expect(valueSnapshot.rows).not.toBe(renamed.rows);
+    expect(visualRowNodeIds(valueSnapshot.rows)).toEqual(['a', 'b']);
+    expect(valueSnapshot.rows).toEqual(buildVisualRows('lib', valueState.index.byId, options));
+  });
+
+  test('matches a full rebuild when typing changes custom-field sort, filter, and group results', () => {
+    const lib = node('lib', { children: ['view', 'a', 'b'] });
+    const view = node('view', {
+      parentId: 'lib',
+      type: 'viewDef',
+      children: ['sort', 'filter'],
+      groupField: 'status',
+    });
+    const sort = node('sort', {
+      parentId: 'view',
+      type: 'sortRule',
+      sortField: 'status',
+      sortDirection: 'asc',
+    });
+    const filter = node('filter', {
+      parentId: 'view',
+      type: 'filterRule',
+      filterField: 'status',
+      filterOperator: 'contains',
+      filterValueLogic: 'any',
+      filterValues: ['keep'],
+    });
+    const fieldDef = node('status', { type: 'fieldDef' });
+    const a = node('a', { parentId: 'lib', children: ['a-entry'] });
+    const aEntry = node('a-entry', {
+      parentId: 'a',
+      type: 'fieldEntry',
+      fieldDefId: 'status',
+      children: ['a-value'],
+    });
+    const aValue = node('a-value', {
+      parentId: 'a-entry',
+      content: { text: 'keep-b', marks: [], inlineRefs: [] },
+    });
+    const b = node('b', { parentId: 'lib', children: ['b-entry'] });
+    const bEntry = node('b-entry', {
+      parentId: 'b',
+      type: 'fieldEntry',
+      fieldDefId: 'status',
+      children: ['b-value'],
+    });
+    const bValue = node('b-value', {
+      parentId: 'b-entry',
+      content: { text: 'drop', marks: [], inlineRefs: [] },
+    });
+    const trash = node('trash');
+    const firstState = seed([
+      lib, view, sort, filter, fieldDef, a, aEntry, aValue, b, bEntry, bValue, trash,
+    ]);
+    const first = rebuild(null, firstState);
+    expect(visualRowNodeIds(first.rows)).toEqual(['a']);
+    expect(first.rows.filter((row) => row.kind === 'group').map((row) => row.label))
+      .toEqual(['keep-b']);
+
+    const changedValue = {
+      ...bValue,
+      updatedAt: 2,
+      content: { ...bValue.content, text: 'keep-a' },
+    };
+    const secondState = reduceProjection(firstState, delta(2, [changedValue]))!;
+    const second = rebuild(first, secondState);
+
+    expect(second.rows).not.toBe(first.rows);
+    expect(visualRowNodeIds(second.rows)).toEqual(['b', 'a']);
+    expect(second.rows.filter((row) => row.kind === 'group').map((row) => row.label))
+      .toEqual(['keep-a', 'keep-b']);
+    expect(second.rows).toEqual(buildVisualRows('lib', secondState.index.byId, options));
+  });
+
+  test('reorders a Name view when a reference target is renamed', () => {
+    const lib = node('lib', { children: ['view', 'ref-a', 'ref-b'] });
+    const view = node('view', { parentId: 'lib', type: 'viewDef', children: ['sort'] });
+    const sort = node('sort', {
+      parentId: 'view',
+      type: 'sortRule',
+      sortField: 'sys:name',
+      sortDirection: 'asc',
+    });
+    const refA = node('ref-a', { parentId: 'lib', type: 'reference', targetId: 'target-a' });
+    const refB = node('ref-b', { parentId: 'lib', type: 'reference', targetId: 'target-b' });
+    const targetA = node('target-a', { content: { text: 'Zulu', marks: [], inlineRefs: [] } });
+    const targetB = node('target-b', { content: { text: 'Beta', marks: [], inlineRefs: [] } });
+    const trash = node('trash');
+    const firstState = seed([lib, view, sort, refA, refB, targetA, targetB, trash]);
+    const first = rebuild(null, firstState);
+    expect(visualRowNodeIds(first.rows)).toEqual(['ref-b', 'ref-a']);
+
+    const renamedTarget = {
+      ...targetA,
+      updatedAt: 2,
+      content: { ...targetA.content, text: 'Alpha' },
+    };
+    const secondState = reduceProjection(firstState, delta(2, [renamedTarget]))!;
+    const second = rebuild(first, secondState);
+    expect(visualRowNodeIds(second.rows)).toEqual(['ref-a', 'ref-b']);
+    expect(second.rows).toEqual(buildVisualRows('lib', secondState.index.byId, options));
   });
 });

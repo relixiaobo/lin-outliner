@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
+import type { RendererUserViewHints } from '../../core/agent/protocol';
 import type { PreviewTarget } from '../../core/preview';
 import { api } from '../api/client';
 import { parseIsoLocalDate, todayIsoLocalDate, type AssetMetadata, type FocusHint, type NodeId } from '../api/types';
@@ -52,11 +53,20 @@ import {
 } from '../state/outlineViewState';
 
 const NODE_ACCESS_RECORD_DELAY_MS = 1200;
+const EMPTY_AGENT_USER_VIEW: RendererUserViewHints = {
+  activePanelId: null,
+  focusedPanelId: null,
+  focusSurface: null,
+  focusedNodeId: null,
+  selectedNodeIds: [],
+  panels: [],
+  truncated: false,
+};
 
 export function App() {
   const t = useT();
   const [ui, setUi] = useUiState();
-  const { index, applyProjectionUpdate } = useProjectionStore(api.getProjection, setUi);
+  const { index, indexStore, applyProjectionUpdate } = useProjectionStore(api.getProjection, setUi);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   // Agent rail is a 3-state model: collapsed seed (bare icon) -> hover glass chip
   // (CSS-only, no React state) -> open full panel. We persist only the binary
@@ -232,23 +242,18 @@ export function App() {
       ...(state.selectionRootId ? { selectionRootId: state.selectionRootId } : {}),
     };
   }) ?? (() => undefined), [activePanelId, isNodePinned]);
-  const agentUserView = useMemo(() => index ? buildRendererUserViewHints({
-    activePanelId,
-    panels,
-    index,
-    ui,
-  }) : null, [
-    activePanelId,
-    index,
-    panels,
-    ui.expanded,
-    ui.expandedHiddenFields,
-    ui.focusSurface,
-    ui.focusedId,
-    ui.focusedPanelId,
-    ui.selectedIds,
-    ui.selectionRootId,
-  ]);
+  const agentUserViewSourceRef = useRef({ activePanelId, index, indexStore, panels, ui });
+  agentUserViewSourceRef.current = { activePanelId, index, indexStore, panels, ui };
+  const getAgentUserView = useCallback((): RendererUserViewHints => {
+    const source = agentUserViewSourceRef.current;
+    const currentIndex = source.indexStore?.getCurrent() ?? source.index;
+    return currentIndex ? buildRendererUserViewHints({
+      activePanelId: source.activePanelId,
+      panels: source.panels,
+      index: currentIndex,
+      ui: source.ui,
+    }) : EMPTY_AGENT_USER_VIEW;
+  }, []);
 
   const openAgentRail = useCallback(() => {
     if (agentOpenRef.current) return;
@@ -635,7 +640,7 @@ export function App() {
     '--agent-width': `${agentWidth}px`,
   } as CSSProperties;
 
-  if (!index) {
+  if (!index || !indexStore) {
     return (
       <div
         className={[
@@ -736,9 +741,9 @@ export function App() {
         />
 
         <ThreadDock
-          index={index}
+          getUserView={getAgentUserView}
+          indexStore={indexStore}
           railState={agentRailState}
-          userView={agentUserView!}
           onOpenNodeReference={openNodeReferenceFromAgent}
           onOpenTurnDetails={openThreadTurnDetailsPanel}
           onResizeKeyDown={resizeAgentWithKeyboard}
