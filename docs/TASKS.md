@@ -731,25 +731,43 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   unbudgeted. Three independent PRs: filter cost + read-model re-enablement /
   per-model-call costs / small tails. Design:
   [`agent-tool-call-path`](plans/agent-tool-call-path.md).
-- **agent-streaming-followups** (P1, `draft` 2026-08-11; builds on #525) — the
-  four per-delta/per-tick costs the delta-pipeline plan left: uncached
-  `requireThread` SELECT + full decode per recorded notification, O(full-text)
-  markdown re-lex per 80 ms streaming commit, unmemoized `ThreadItemView`
-  re-rendering every item of the active Turn per notification, and the 1 Hz
-  subagent elapsed ticker re-rendering the nested child transcript. One PR.
+- **agent-streaming-followups** (P1, `draft` 2026-08-11; **slimmed 2026-08-14,
+  PM-ratified** — the subagent-projection two-layer cache and the 1 Hz ticker
+  isolation moved into `subagent-interaction`, whose redesign replaces their
+  subjects (`projectSubagentsForTurn` internals, the `SubagentActivityItem` /
+  `SubagentRunDetail` structure); optimizing them here would be A7 waste. Every
+  remaining premise re-verified against the post-#531/#533/#535 tree) — the
+  three per-delta costs the delta-pipeline plan left: uncached `requireThread`
+  SELECT + full decode per recorded notification, O(full-text) markdown re-lex
+  per 80 ms streaming commit, and the active Turn re-rendering all its items
+  per notification (callback re-keying, incremental `groupTurnContent`,
+  projection output-identity reuse as a bridge the redesign's registry
+  inherits, then `memo(ThreadItemView)`). One PR; unblocked (#525 shipped) and
+  **sequenced before** `subagent-interaction`.
   Design: [`agent-streaming-followups`](plans/agent-streaming-followups.md).
 - **subagent-interaction** (P2, `draft` 2026-08-12) — process-shaped subagent
   presentation for the fresh/background-default protocol inside the 344px agent
-  deck: worker-registry projection (keyed by agent ID + generation) replacing
+  deck: Agent-registry projection (keyed by Agent ID + generation) replacing
   turn-anchored `projectSubagentsForTurn`; lifecycle anchors in the
   conversation (spawn/resume chips, clickable completion dividers, stopped
-  notes); header work strip (needs-input > running > just-finished, fade-out,
-  amber needs-input badge as the only interruption); full-deck stacked detail
-  view (generations, nested recursion ≤ depth 3, composer-as-user-authority,
-  retained-worktree footer); foreground children placed on the main agent's
-  working line and never in the strip; strict OS-notification policy
-  (needs-input + terminal, unfocused only). PM-ratified 2026-08-12 through an
-  interactive prototype. One PR. **Sequenced after** the
+  notes); header work strip (running > stopped > just-finished, fade-out —
+  **there is no needs-input state**: this entry previously said "amber
+  needs-input badge", tracking a prototype iteration the ratified plan
+  explicitly dropped; corrected 2026-08-14 against the plan text); full-deck
+  stacked detail view (generations, nested recursion ≤ depth 3,
+  composer-as-user-authority, retained-worktree footer); foreground children
+  placed on the main agent's working line and never in the strip; strict
+  OS-notification policy (terminal background generations only, unfocused
+  only). PM-ratified 2026-08-12 through an interactive prototype. One PR.
+  **Absorbed 2026-08-14 (PM-ratified restructure):** two requirements from
+  `agent-streaming-followups`, whose subjects this plan replaces — the
+  registry's output is identity-stable by contract (a delta that does not
+  touch a child re-projects nothing), and elapsed ticking lives in leaf header
+  components so the 1 Hz tick never re-renders a transcript. The plan also now
+  records that registry inputs (`SubagentExecutionRecord` in
+  `persistence/SubagentExecutionLedger.ts`) are main-side only today, so the
+  build starts with a main→renderer execution projection — a protocol-surface
+  addition (A4). **Sequenced after** the
   `claude-code-subagent-parity` implementation (plan PR #532) and
   `semantic-working-state` (#531) — both are its foundations (A7).
   Design: [`subagent-interaction`](plans/subagent-interaction.md).

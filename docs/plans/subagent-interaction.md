@@ -162,10 +162,50 @@ Presentation re-derives lifecycle from the canonical Agent execution record
 (stable Agent ID, generation, status, stop provenance, notification state, and
 worktree metadata), never from an in-progress wait Item or a model-maintained
 roster. Canonical Turn Items still locate spawn, steer/resume, foreground, stop,
-and notification anchors in the narrative. `projectSubagentsForTurn` and its
-`waitingForSubagents` inference are replaced by an Agent registry keyed by Agent
-ID plus generation; chips are per-Turn references onto that registry. This makes
-cross-Turn resume render as one Agent rather than duplicate or orphaned rows.
+and notification anchors in the narrative. `projectSubagentsForTurn` and the
+collaboration-era vocabulary it projects (`SubagentDelegationForm`'s
+`'collaboration' | 'isolatedSkill'`, the `collabAgentToolCall` `agentsStates`
+merge; the `waitingForSubagents` inference an earlier draft named was already
+removed with the parity implementation) are replaced by an Agent registry keyed
+by Agent ID plus generation; chips are per-Turn references onto that registry.
+This makes cross-Turn resume render as one Agent rather than duplicate or
+orphaned rows.
+
+**Registry inputs must first cross the seam.** The canonical record this
+projection consumes — `SubagentExecutionRecord`: stable Agent ID, `generation`,
+run mode, terminal status, `SubagentStopProvenance`,
+`SubagentNotificationState`, worktree metadata — shipped with the parity
+implementation in `persistence/SubagentExecutionLedger.ts` and is main-side
+only today: nothing in `src/core` or the renderer names it, and the renderer
+sees execution state only through Turn items. The registry therefore needs a
+main→renderer execution projection (records on Thread load plus per-change
+updates). That is a protocol-surface addition (`src/core/types.ts` — an A4
+coordinated change); land it as the PR's first commit so the rest of the build
+consumes a settled shape.
+
+**Identity-stable output is part of the registry's contract** (absorbed
+2026-08-14 from the `agent-streaming-followups` restructure — that plan
+memoizes `ThreadItemView` and bridges output-identity reuse onto the projection
+this one replaces; the registry inherits the contract and retires the bridge).
+A registry recomputation reuses the previous entry object for every agent whose
+projected fields did not change, so a streaming delta that does not touch a
+child re-projects nothing and memoized rows keep their props by identity. The
+inputs that legitimately invalidate beyond a single agent are
+collection-scoped and are modeled as such, never per-row: eligible-membership
+changes (a newly admitted child can arrive through catalog/Turn notifications
+before any parent Item changes), the parent Turn's own presentation fields
+(settlement changes rows with no child change), and the display-name collision
+set (a child's join, rename, or removal renumbers same-named siblings — apply
+ordinals compare-and-reuse so unaffected siblings keep their objects).
+
+**Elapsed ticking is leaf state** (absorbed 2026-08-14, same restructure).
+Today `SubagentActivityItem` and `SubagentStateItem` own `useSubagentElapsedMs`
+above the subtree that renders `SubagentRunDetail`, so an expanded child
+transcript re-renders every second even when nothing streamed. In the
+redesigned components the 1 Hz tick lives in the leaf header/chip component
+that displays the elapsed value — including the row's `aria-label` and `title`,
+so assistive text stays fresh — and no ticking state sits above a transcript
+subtree.
 
 | Layer | Surface |
 | --- | --- |
@@ -192,6 +232,12 @@ PR's renderer scope is the minimal re-wiring that keeps current presentation
 correct; this plan is the interaction redesign on top. Living with the shipped
 mechanics for a few days before building this is intentional.
 
+The slimmed `agent-streaming-followups` PR (metadata-record cache, incremental
+streaming lex, `memo(ThreadItemView)` with projection output-identity reuse)
+lands before this one: it supplies the item memoization this plan's
+identity-stable registry contract feeds, and its projection-output bridge is
+what the registry retires.
+
 ## Verification
 
 - `bun run typecheck`, `bun run test:renderer`, `bun run test:e2e`.
@@ -202,6 +248,13 @@ mechanics for a few days before building this is intentional.
 - Manual pass of the ratified walkthrough: delegate → parallel work → completion
   fade-out → resume → nested push/pop → foreground wait →
   user-stop and user-resume.
+- Renderer counter tests for the absorbed performance contract: a streaming
+  delta that does not touch a child leaves every registry entry
+  identity-stable (and memoized rows unrendered); the elapsed tick re-renders
+  a row header, never the transcript fixture.
+- **A9 manual:** expanded child transcript during a long parent stream —
+  renderer CPU before/after, recorded in the PR body (the half of the
+  `agent-streaming-followups` measurement that moved here with the ticker).
 
 ## Open Questions
 

@@ -264,6 +264,22 @@ Entries reference the pull request that introduced them.
   each tool's own `prepareArguments`, and a Turn-local repeated-rejection
   quarantine with an eight-failure ceiling and one final tool-free response.
   Design only; the implementation ships as one PR.
+- **Restructured the streaming/subagent plan boundary (main-agent, PM-ratified
+  2026-08-14)** — `agent-streaming-followups` slims to the three costs that
+  survive the ratified `subagent-interaction` redesign (metadata-record cache,
+  incremental streaming lex, streaming-Turn memoization with projection
+  output-identity reuse as a bridge); its subagent-projection two-layer cache
+  and 1 Hz ticker isolation moved into `subagent-interaction` as contract
+  requirements on the new Agent registry and detail components — their
+  subjects are replaced there, so optimizing them first would be A7 waste. The
+  slimmed perf PR sequences before the interaction redesign. Both plans were
+  re-verified against the post-#531/#533/#535 tree: the board's "needs-input
+  badge" line was a prototype-iteration leftover the ratified plan drops
+  (corrected), the plan's `waitingForSubagents` reference names a symbol #535
+  removed (re-anchored to the shipped `SubagentExecutionLedger` vocabulary),
+  and the registry's inputs turn out to be main-side only, so the redesign now
+  explicitly opens with a main→renderer execution projection as a
+  protocol-surface addition.
 - **Semantic working-state plan (PR #529, codex-4, plan-only)** — boards the
   split of the Thread spinner's two conflated meanings — "work is advancing"
   vs "data is not ready": Working rows keep their identity glyph and shimmer
