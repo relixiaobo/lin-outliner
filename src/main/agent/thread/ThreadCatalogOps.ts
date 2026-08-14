@@ -1,5 +1,5 @@
 import { decodeThread,decodeThreadItem,decodeTurn } from '../../../core/agent/codec';
-import { resolveChildConfiguration,type AgentRole,type EffectiveThreadConfiguration } from '../../../core/agent/configuration';
+import type { EffectiveThreadConfiguration } from '../../../core/agent/configuration';
 import { createThreadHistoryRollbackContext,type AgentCoreExtension,type ThreadHistoryRollbackContext } from '../../../core/agent/extensions';
 import { HOST_RESTART_ERROR_CODE,type AgentCoreRequestByMethod,type ContextCursor,type Thread,type ThreadConfigurationResponse,type ThreadConfigurationSetRequest,type ThreadConfigurationSummary,type ThreadDescendantsRequest,type ThreadDescendantsResponse,type ThreadForkRequest,type ThreadId,type ThreadItem,type ThreadItemEntry,type ThreadItemsListRequest,type ThreadItemsListResponse,type ThreadListRequest,type ThreadListResponse,type ThreadReadRequest,type ThreadReadResponse,type ThreadRollbackRequest,type ThreadStartRequest,type ThreadStartResponse,type ThreadTurnsListRequest,type ThreadTurnsListResponse,type Turn,type TurnDiagnosticsPayload } from '../../../core/agent/protocol';
 import {
@@ -28,8 +28,18 @@ interface PendingThreadNameGeneration {
   readonly completion: Promise<void>;
 }
 
+interface PendingDelegatedThreadStart {
+  readonly thread: Thread;
+  attempted: boolean;
+  error: Error | null;
+}
+
+export interface DelegatedThreadStartPublication {
+  readonly published: boolean;
+  readonly error: Error | null;
+}
+
 export interface ThreadCatalogCollaboration {
-  hasQueuedWork(threadId: ThreadId): boolean;
   recordEphemeralSpawnEdge(threadId: ThreadId, edge: {
     readonly sessionId: string;
     readonly parentThreadId: ThreadId;
@@ -39,6 +49,9 @@ export interface ThreadCatalogCollaboration {
   deleteEphemeralSpawnEdge(threadId: ThreadId): void;
   ephemeralChildThreadIds(parentThreadId: ThreadId): readonly ThreadId[];
   clearThreadCoordinationState(threadIds: readonly ThreadId[]): void;
+  beginThreadDeletion(threadIds: readonly ThreadId[]): void;
+  drainTerminalSettlements(threadIds: readonly ThreadId[]): Promise<void>;
+  finishThreadDeletion(threadIds: readonly ThreadId[]): void;
 }
 
 /** What the catalog's descendant cascade owes the account layer. */
@@ -52,6 +65,7 @@ export interface ThreadCatalogTranscripts {
 
 export class ThreadCatalogOps {
   private readonly pendingThreadNames = new Map<ThreadId, PendingThreadNameGeneration>();
+  private readonly pendingDelegatedThreadStarts = new Map<ThreadId, PendingDelegatedThreadStart>();
   constructor(
     private readonly core: ThreadCore,
     private readonly resourceOps: ThreadResourceOps,
@@ -60,15 +74,19 @@ export class ThreadCatalogOps {
     private readonly resolveConfiguration: (request: ThreadStartRequest) => EffectiveThreadConfiguration | Promise<EffectiveThreadConfiguration>,
     private readonly resolveRendererStartDefaults: () => RendererThreadStartDefaults | Promise<RendererThreadStartDefaults>,
     private readonly validateRendererConfiguration: (configuration: ThreadConfigurationSummary) => void | Promise<void>,
-    private readonly resolveRole: (name: string, cwd: string) => AgentRole,
     private readonly now: () => number,
     private readonly isClosing: () => boolean,
-    private readonly applyToolCeiling: (configuration: EffectiveThreadConfiguration, toolCeiling: readonly string[] | null) => EffectiveThreadConfiguration,
     private readonly turnLifecycle: TurnLifecycle,
     private readonly collaboration: ThreadCatalogCollaboration,
+    private readonly hasUndeliveredWork: (threadId: ThreadId) => boolean,
     private readonly transcripts: ThreadCatalogTranscripts,
     private readonly clearGoal: (threadId: ThreadId) => Promise<void>,
     private readonly clearSubagentBudget: (threadId: ThreadId) => void,
+    private readonly clearSubagentExecutions: (threadIds: readonly ThreadId[]) => void,
+    private readonly clearAgentStartupContexts: (sessionIds: readonly string[]) => void,
+    private readonly freezeAgentStartupContext: (
+      thread: Pick<Thread, 'id' | 'sessionId' | 'cwd'>,
+    ) => Promise<void>,
     private readonly createThreadBusyError: (message: string) => Error,
   ) {}
   pendingNameShutdownHandles(): readonly { abort: () => void; completion: Promise<void> }[] {
@@ -209,7 +227,7 @@ export class ThreadCatalogOps {
       return {
         data,
         queuedWorkThreadIds: data
-          .filter((thread) => this.collaboration.hasQueuedWork(thread.id))
+          .filter((thread) => this.hasUndeliveredWork(thread.id))
           .map((thread) => thread.id),
       };
     }
@@ -286,25 +304,6 @@ export class ThreadCatalogOps {
     }
   async resumeThread(threadId: ThreadId): Promise<{ thread: Thread }> {
       return this.core.threadMutex.run(threadId, async () => {
-        const record = this.core.requireThread(threadId);
-        if (record.thread.parentThreadId && record.thread.agentRole) {
-          const parent = this.core.requireThread(record.thread.parentThreadId);
-          const role = this.resolveRole(record.thread.agentRole, record.thread.cwd);
-          const resolved = resolveChildConfiguration(parent.configuration, {
-            role,
-            ...(record.modelOverride === null ? {} : { model: record.modelOverride }),
-            ...(record.reasoningEffortOverride === null
-              ? {}
-              : { reasoningEffort: record.reasoningEffortOverride }),
-          });
-          const configuration = this.applyToolCeiling(resolved, record.toolCeiling);
-          if (record.thread.ephemeral) {
-            const state = this.core.ephemeral.get(threadId)!;
-            state.record = { ...record, configuration };
-          } else {
-            this.core.metadata.setConfiguration(threadId, configuration);
-          }
-        }
         const thread = this.core.requireThread(threadId).thread;
         await this.extensions.threadResumed(thread);
         return { thread };
@@ -584,6 +583,7 @@ export class ThreadCatalogOps {
         });
         for (const record of [...subtree.records].reverse()) {
           if (this.core.hiddenEphemeralThreads.has(record.thread.id)) continue;
+          if (this.pendingDelegatedThreadStarts.has(record.thread.id)) continue;
           await this.extensions.threadStopped(record.thread);
         }
       } finally {
@@ -591,9 +591,10 @@ export class ThreadCatalogOps {
       }
     }
   async deleteThread(threadId: ThreadId): Promise<void> {
-      const subtree = await this.beginThreadSubtreeStop(threadId);
+      const subtree = await this.beginThreadSubtreeStop(threadId, true);
       try {
         await this.stopThreadSubtree(subtree.threadIds);
+        await this.collaboration.drainTerminalSettlements(subtree.threadIds);
         for (const descendantId of [...subtree.threadIds].reverse()) {
           await this.flushThreadNotificationsBestEffort(descendantId);
           await this.clearGoal(descendantId);
@@ -604,6 +605,7 @@ export class ThreadCatalogOps {
         }
         for (const record of [...subtree.records].reverse()) {
           if (this.core.hiddenEphemeralThreads.has(record.thread.id)) continue;
+          if (this.pendingDelegatedThreadStarts.has(record.thread.id)) continue;
           await this.extensions.threadStopped(record.thread);
         }
         await this.core.threadTreeMutex.run(async () => {
@@ -616,7 +618,22 @@ export class ThreadCatalogOps {
           } else {
             this.core.metadata.delete(threadId);
           }
+          // Metadata is the deletion commit point. Retire Agent identities only
+          // after it succeeds; durable ledger cleanup may retry at startup and
+          // must not turn an already-committed Thread deletion into an error.
+          try {
+            this.clearSubagentExecutions(subtree.threadIds);
+          } catch (error) {
+            console.warn('[agent] Agent ledger cleanup deferred after Thread deletion', error);
+          }
           this.clearThreadCoordinationState(subtree.threadIds);
+          for (const descendantId of subtree.threadIds) this.pendingDelegatedThreadStarts.delete(descendantId);
+          // A session snapshot belongs to its root. Deleting one child must not
+          // invalidate startup inputs still used by the surviving parent and
+          // sibling Agents in the same session.
+          this.clearAgentStartupContexts(subtree.records
+            .filter((record) => record.thread.parentThreadId === null)
+            .map((record) => record.thread.sessionId));
         });
         // After coordination-state teardown, so no append the cascade raced can
         // land behind the removal and resurrect a transcript the user deleted.
@@ -625,11 +642,12 @@ export class ThreadCatalogOps {
         }
         await this.transcripts.forgetExclusions(subtree.records.map((record) => record.thread.sessionId));
       } finally {
+        this.collaboration.finishThreadDeletion(subtree.threadIds);
         this.finishThreadSubtreeStop(subtree.threadIds);
       }
     }
 
-  private async beginThreadSubtreeStop(threadId: ThreadId): Promise<{
+  private async beginThreadSubtreeStop(threadId: ThreadId, deleting = false): Promise<{
       readonly threadIds: readonly ThreadId[];
       readonly records: readonly ThreadCatalogRecord[];
     }> {
@@ -640,6 +658,7 @@ export class ThreadCatalogOps {
         }
         const records = threadIds.map((id) => this.core.requireThread(id));
         for (const id of threadIds) this.core.stoppingThreads.add(id);
+        if (deleting) this.collaboration.beginThreadDeletion(threadIds);
         return { threadIds, records };
       });
     }
@@ -774,9 +793,53 @@ export class ThreadCatalogOps {
       } else {
         this.core.metadata.create(record);
       }
-      await this.core.recordNotification({ type: 'thread/started', threadId: thread.id, thread });
-      if (!this.core.hiddenEphemeralThreads.has(thread.id)) await this.extensions.threadStarted(thread);
+      if (thread.parentThreadId === null && !lineage.hidden) {
+        await this.freezeAgentStartupContext(thread);
+      }
+      const delegatedAdmission = thread.threadSource === 'subagent';
+      if (delegatedAdmission) {
+        this.pendingDelegatedThreadStarts.set(thread.id, { thread, attempted: false, error: null });
+      }
+      await this.core.recordNotification(
+        { type: 'thread/started', threadId: thread.id, thread },
+        { deferObservers: delegatedAdmission },
+      );
+      if (!delegatedAdmission && !this.core.hiddenEphemeralThreads.has(thread.id)) {
+        await this.extensions.threadStarted(thread);
+      }
       return thread;
+    }
+  hasPendingDelegatedThreadStart(threadId: ThreadId): boolean {
+      return this.pendingDelegatedThreadStarts.has(threadId);
+    }
+  async publishDelegatedThreadStart(threadId: ThreadId): Promise<DelegatedThreadStartPublication> {
+      const pending = this.pendingDelegatedThreadStarts.get(threadId);
+      if (!pending) return { published: true, error: null };
+      if (pending.attempted) {
+        return {
+          published: false,
+          error: pending.error ?? new Error(`Delegated Thread start publication is unavailable: ${threadId}`),
+        };
+      }
+      pending.attempted = true;
+      try {
+        await this.core.publishRecordedNotification({ type: 'thread/started', threadId, thread: pending.thread });
+      } catch (error) {
+        pending.error = error instanceof Error ? error : new Error(String(error));
+        return { published: false, error: pending.error };
+      }
+      let lifecycleError: Error | null = null;
+      try {
+        if (!this.core.hiddenEphemeralThreads.has(threadId)) await this.extensions.threadStarted(pending.thread);
+      } catch (error) {
+        lifecycleError = error instanceof Error ? error : new Error(String(error));
+      } finally {
+        // Start hooks are attempted once. A post-commit hook failure belongs to
+        // the admitted Turn; it must not turn later deletion into a staged
+        // rollback or replay an already-published notification.
+        this.pendingDelegatedThreadStarts.delete(threadId);
+      }
+      return { published: true, error: lifecycleError };
     }
   private requireRendererConfigurableThread(threadId: ThreadId): ThreadCatalogRecord {
       const record = this.core.requireThread(threadId);

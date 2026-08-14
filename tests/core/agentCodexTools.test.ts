@@ -1,11 +1,16 @@
 import { describe, expect, test } from 'bun:test';
 import {
-  COLLABORATION_NAMESPACE,
-  COLLABORATION_TOOL_NAMES,
+  AGENT_MESSAGE_INPUT_SCHEMA,
+  AGENT_MESSAGE_TOOL_DESCRIPTION,
+  AGENT_TASK_TOOL_NAMES,
+  AGENT_TOOL_DESCRIPTION,
   MODEL_TOOL_ACTION_KINDS,
   MODEL_TOOL_CATALOG,
   REQUEST_USER_INPUT_MAX_AUTO_RESOLUTION_MS,
   REQUEST_USER_INPUT_MIN_AUTO_RESOLUTION_MS,
+  TASK_STOP_INPUT_SCHEMA,
+  TASK_STOP_TOOL_DESCRIPTION,
+  agentInputSchema,
   assembleModelToolRegistry,
   canonicalModelToolKey,
   decodeProviderToolName,
@@ -14,18 +19,29 @@ import {
   modelToolActionKindFromRule,
   modelToolContract,
   modelToolCommandsMatch,
+  normalizeAgentMessageToolInput,
+  normalizeAgentToolInput,
   normalizeModelToolCommandForBlockMatch,
   normalizeRequestUserInputToolInput,
+  normalizeTaskStopToolInput,
   normalizeUpdatePlanToolInput,
 } from '../../src/core/agent/tools';
 
 describe('Codex Agent Core model-tool contract', () => {
-  test('uses one collision-free canonical registry with fixed collaboration namespace', () => {
+  test('uses one collision-free canonical registry with exactly three Agent task tools', () => {
     const keys = MODEL_TOOL_CATALOG.map((tool) => canonicalModelToolKey(tool.identity));
     expect(new Set(keys).size).toBe(keys.length);
-    expect(keys.filter((key) => key.startsWith(`${COLLABORATION_NAMESPACE}.`))).toEqual(
-      COLLABORATION_TOOL_NAMES.map((name) => `${COLLABORATION_NAMESPACE}.${name}`),
-    );
+    expect(keys.filter((key) => AGENT_TASK_TOOL_NAMES.includes(key as typeof AGENT_TASK_TOOL_NAMES[number])))
+      .toEqual(AGENT_TASK_TOOL_NAMES);
+    expect(keys).not.toContain('bash_stop');
+    for (const retired of [
+      'collaboration.spawn_agent',
+      'collaboration.send_message',
+      'collaboration.followup_task',
+      'collaboration.wait_agent',
+      'collaboration.list_agents',
+      'collaboration.interrupt_agent',
+    ]) expect(keys).not.toContain(retired);
     expect(keys).toContain('request_user_input');
     expect(keys).toContain('update_plan');
     expect(keys).toContain('get_goal');
@@ -38,64 +54,106 @@ describe('Codex Agent Core model-tool contract', () => {
     expect(modelToolContract('codex_app.automation_update')?.description).toContain(
       'Never use shell sleep or polling',
     );
-    const collaborationSpawn = modelToolContract('collaboration.spawn_agent');
-    expect(collaborationSpawn?.description).toContain('max_total_tokens');
-    expect(collaborationSpawn?.inputSchema).toMatchObject({
-      properties: {
-        max_total_tokens: {
-          type: 'number',
-          // The floor is part of the contract the model reads: a smaller cap is
-          // ignored, so a model that names one is told rather than surprised.
-          description: 'Optional per-child token cap, honoured only at 1000000 or above; a smaller value is ignored and the child shares the request pool. It creates its own pool when honoured and no ancestor pool exists.',
-        },
-      },
-      required: ['task_name', 'message'],
-    });
-    const collaborationWait = modelToolContract('collaboration.wait_agent');
-    expect(collaborationWait?.description).toContain('Block without polling');
-    expect(collaborationWait?.description).toContain('tokensUsed and tokenBudget');
-    expect(collaborationWait?.description).toContain('Synthesize completed results');
-    expect(collaborationWait?.inputSchema).toEqual({
-      type: 'object',
-      properties: {},
-      required: [],
-      additionalProperties: false,
-    });
-    expect(collaborationWait?.outputSchema).toMatchObject({
-      properties: {
-        agents: {
-          items: {
-            properties: {
-              tokensUsed: { type: 'number' },
-              tokenBudget: { type: ['number', 'null'] },
-            },
-            required: [
-              'taskPath',
-              'threadId',
-              'parentThreadId',
-              'nickname',
-              'role',
-              'status',
-              'tokensUsed',
-              'tokenBudget',
-            ],
-          },
-        },
-        updates: {},
-      },
-    });
+    expect(modelToolContract('agent')?.description).toBe(AGENT_TOOL_DESCRIPTION);
+    expect(modelToolContract('agent_message')?.description).toBe(AGENT_MESSAGE_TOOL_DESCRIPTION);
+    expect(modelToolContract('task_stop')?.description).toBe(TASK_STOP_TOOL_DESCRIPTION);
   });
 
   test('round-trips canonical and flat provider encodings without aliases', () => {
-    const identity = { namespace: COLLABORATION_NAMESPACE, name: 'spawn_agent' } as const;
-    expect(encodeProviderToolName(identity, 'canonical')).toBe('collaboration.spawn_agent');
-    expect(encodeProviderToolName(identity, 'flat')).toBe('collaboration__spawn_agent');
-    expect(decodeProviderToolName('collaboration__spawn_agent', 'flat')).toEqual(identity);
-    expect(decodeProviderToolName('spawn_agent', 'flat')).toBeNull();
-    expect(decodeProviderToolName('multi_agent_v1__spawn_agent', 'flat')).toBeNull();
+    for (const name of AGENT_TASK_TOOL_NAMES) {
+      const identity = { namespace: null, name } as const;
+      expect(encodeProviderToolName(identity, 'canonical')).toBe(name);
+      expect(encodeProviderToolName(identity, 'flat')).toBe(name);
+      expect(decodeProviderToolName(name, 'flat')).toEqual(identity);
+    }
+    for (const retired of [
+      'spawn_agent',
+      'send_message',
+      'followup_task',
+      'wait_agent',
+      'list_agents',
+      'interrupt_agent',
+      'collaboration__spawn_agent',
+      'collaboration__send_message',
+      'collaboration__followup_task',
+      'collaboration__wait_agent',
+      'collaboration__list_agents',
+      'collaboration__interrupt_agent',
+      'bash_stop',
+    ]) expect(decodeProviderToolName(retired, 'flat')).toBeNull();
   });
 
-  test('requires retained schemas and accepts non-reserved extension tools', () => {
+  test('freezes the exact Agent task schemas and property ordering', () => {
+    const agent = agentInputSchema(['model-b', 'model-a', 'model-b']);
+    expect(Object.keys(agent)).toEqual(['$schema', 'type', 'properties', 'required', 'additionalProperties']);
+    expect(Object.keys(agent.properties as object)).toEqual([
+      'description',
+      'prompt',
+      'subagent_type',
+      'model',
+      'run_in_background',
+      'isolation',
+    ]);
+    expect(agent).toMatchObject({
+      $schema: 'https://json-schema.org/draft/2020-12/schema',
+      required: ['description', 'prompt'],
+      additionalProperties: false,
+      properties: { model: { enum: ['model-b', 'model-a'] } },
+    });
+    expect(agentInputSchema([]).properties).not.toHaveProperty('model');
+    expect(() => agentInputSchema([''])).toThrow('only non-empty');
+    expect(Object.keys(AGENT_MESSAGE_INPUT_SCHEMA.properties as object)).toEqual(['to', 'summary', 'message']);
+    expect(AGENT_MESSAGE_INPUT_SCHEMA).toMatchObject({
+      $schema: 'https://json-schema.org/draft/2020-12/schema',
+      required: ['to', 'message'],
+      properties: {
+        to: { pattern: '^[^\\n\\r]{0,200}$' },
+        summary: { maxLength: 200 },
+      },
+    });
+    expect(Object.keys(TASK_STOP_INPUT_SCHEMA.properties as object)).toEqual(['task_id', 'shell_id']);
+    expect(TASK_STOP_INPUT_SCHEMA).not.toHaveProperty('required');
+  });
+
+  test('normalizes Agent task defaults and message previews before exact admission', () => {
+    expect(normalizeAgentToolInput({ description: 'Inspect code', prompt: 'Review the implementation.' }))
+      .toEqual({
+        description: 'Inspect code',
+        prompt: 'Review the implementation.',
+        subagent_type: 'general-purpose',
+        run_in_background: true,
+      });
+    expect(normalizeAgentToolInput({
+      description: 'Inspect code',
+      prompt: 'Review it.',
+      subagent_type: 'explore',
+      run_in_background: false,
+    })).toMatchObject({ subagent_type: 'explore', run_in_background: false });
+
+    expect(normalizeAgentMessageToolInput({ to: ' agent-1 ', message: '  First line\nSecond line  ' }))
+      .toEqual({ to: ' agent-1 ', message: '  First line\nSecond line  ', summary: 'First line' });
+    expect(normalizeAgentMessageToolInput({ to: 'agent-1', summary: '  ', message: 'One line' }).summary)
+      .toBe('One line');
+    expect(normalizeAgentMessageToolInput({
+      to: 'agent-1',
+      summary: 'x'.repeat(201),
+      message: 'Body',
+    }).summary).toBe(`${'x'.repeat(199)}…`);
+    expect(() => normalizeAgentMessageToolInput({ to: '   ', message: 'Body' }))
+      .toThrow('<tool_use_error>to must not be empty</tool_use_error>');
+    expect(() => normalizeAgentMessageToolInput({ to: 'agent-1', message: 'Body', extra: true }))
+      .toThrow('unknown fields');
+
+    expect(normalizeTaskStopToolInput({ shell_id: 'shell-1' })).toEqual({
+      shell_id: 'shell-1',
+      task_id: 'shell-1',
+    });
+    expect(normalizeTaskStopToolInput({ task_id: 'agent-1', shell_id: 'shell-1' }))
+      .toEqual({ task_id: 'agent-1', shell_id: 'shell-1' });
+    expect(() => normalizeTaskStopToolInput({})).toThrow('Missing required parameter: task_id');
+  });
+
+  test('requires retained schemas and accepts namespaced extension tools', () => {
     expect(() => assembleModelToolRegistry([])).toThrow('Missing model-tool schemas');
     const contributions = MODEL_TOOL_CATALOG
       .filter((contract) => contract.inputSchema === null)
@@ -116,10 +174,6 @@ describe('Codex Agent Core model-tool contract', () => {
     expect(registry.every((contract) => contract.inputSchema !== null)).toBe(true);
     expect(encodeProviderToolName(extensionTool.identity, 'flat', registry)).toBe('project_ext__knowledge_lookup');
     expect(decodeProviderToolName('project_ext__knowledge_lookup', 'flat', registry)).toEqual(extensionTool.identity);
-    expect(() => assembleModelToolRegistry(contributions, [{
-      ...extensionTool,
-      identity: { namespace: 'collaboration', name: 'automation_update' },
-    }])).toThrow('namespace is reserved');
     expect(() => assembleModelToolRegistry(contributions, [{
       ...extensionTool,
       schemaOwner: 'core',
@@ -272,8 +326,10 @@ describe('Codex Agent Core model-tool contract', () => {
     expect(MODEL_TOOL_ACTION_KINDS.some((kind) => kind.includes('.session.'))).toBe(false);
     expect(modelToolActionKinds('outline_undo_stack', { action: 'list' })).toEqual(['outline.read']);
     expect(modelToolActionKinds('outline_undo_stack', { action: 'undo' })).toEqual(['outline.edit']);
-    expect(modelToolActionKinds('collaboration.list_agents')).toEqual(['agent.subagent.read']);
-    expect(modelToolActionKindFromRule('Action(agent.subagent.read)')).toBe('agent.subagent.read');
+    expect(modelToolActionKinds('agent')).toEqual(['agent.subagent.spawn']);
+    expect(modelToolActionKinds('agent_message')).toEqual(['agent.subagent.send']);
+    expect(modelToolActionKinds('task_stop')).toEqual(['agent.subagent.interrupt', 'shell.stop']);
+    expect(modelToolActionKindFromRule('Action(agent.subagent.read)')).toBeNull();
     expect(modelToolActionKindFromRule('Action(agent.session.read)')).toBeNull();
     expect(modelToolActionKindFromRule('agent.subagent.read')).toBeNull();
   });

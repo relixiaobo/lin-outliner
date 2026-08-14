@@ -54,6 +54,16 @@ interface PendingItemDelta {
 
 const ITEM_DELTA_COALESCE_DELAY_MS = 40;
 
+export class RecordedNotificationProjectionError extends Error {
+  readonly projectionErrors: readonly unknown[];
+
+  constructor(projectionErrors: readonly unknown[]) {
+    super('Recorded notification projection failed after the durable rollout append');
+    this.name = 'RecordedNotificationProjectionError';
+    this.projectionErrors = projectionErrors;
+  }
+}
+
 export class ThreadCore {
   readonly ephemeral = new Map<ThreadId, EphemeralThreadState>();
   readonly hiddenEphemeralThreads = new Set<ThreadId>();
@@ -117,7 +127,10 @@ export class ThreadCore {
         }
       });
     }
-  async recordNotification(notification: AgentCoreRecordedNotification): Promise<void> {
+  async recordNotification(
+    notification: AgentCoreRecordedNotification,
+    options: { readonly deferObservers?: boolean } = {},
+  ): Promise<void> {
       const decoded = decodeAgentCoreRecordedNotification(notification);
       const ephemeral = this.requireThread(decoded.threadId).thread.ephemeral;
       if (isStringItemDelta(decoded)) {
@@ -130,7 +143,17 @@ export class ThreadCore {
       }
       await this.enqueueNotification(decoded.threadId, async () => {
         await this.flushPendingItemDeltaBestEffort(decoded.threadId);
-        await this.persistAndBroadcast(decoded, ephemeral);
+        await this.persistRecordedNotification(decoded, ephemeral);
+        if (!options.deferObservers) await this.publishDecodedNotification(decoded);
+      });
+    }
+
+  async publishRecordedNotification(notification: AgentCoreRecordedNotification): Promise<void> {
+      const decoded = decodeAgentCoreRecordedNotification(notification);
+      this.requireThread(decoded.threadId);
+      await this.enqueueNotification(decoded.threadId, async () => {
+        await this.flushPendingItemDeltaBestEffort(decoded.threadId);
+        await this.publishDecodedNotification(decoded);
       });
     }
 
@@ -151,7 +174,10 @@ export class ThreadCore {
       if (failures.length > 0) throw new AggregateError(failures, 'ThreadCore failed to flush notifications');
     }
 
-  private async persistAndBroadcast(decoded: AgentCoreRecordedNotification, ephemeral: boolean): Promise<void> {
+  private async persistRecordedNotification(
+    decoded: AgentCoreRecordedNotification,
+    ephemeral: boolean,
+  ): Promise<void> {
       if (ephemeral) {
         this.applyEphemeralNotification(decoded);
       } else {
@@ -161,23 +187,25 @@ export class ThreadCore {
         } catch (error) {
           try {
             this.history.rebuildThread(decoded.threadId, await this.rollout.read(decoded.threadId));
-          } catch {
-            throw error;
+          } catch (rebuildError) {
+            throw new RecordedNotificationProjectionError([error, rebuildError]);
           }
         }
       }
-      if (!this.hiddenEphemeralThreads.has(decoded.threadId)) {
-        for (const listener of this.listeners) {
-          try {
-            listener(decoded);
-          } catch (error) {
-            console.error('[agent] recorded notification listener failed', error);
-          }
+    }
+
+  private async publishDecodedNotification(decoded: AgentCoreRecordedNotification): Promise<void> {
+      if (this.hiddenEphemeralThreads.has(decoded.threadId)) return;
+      for (const listener of this.listeners) {
+        try {
+          listener(decoded);
+        } catch (error) {
+          console.error('[agent] recorded notification listener failed', error);
         }
-        await this.extensions.notification(decoded).catch((error) => {
-          console.error('[agent] recorded notification observer failed', error);
-        });
       }
+      await this.extensions.notification(decoded).catch((error) => {
+        console.error('[agent] recorded notification observer failed', error);
+      });
     }
 
   private async acceptStringItemDelta(
@@ -224,13 +252,15 @@ export class ThreadCore {
         this.cancelScheduled(pending.scheduledFlush);
         pending.scheduledFlush = null;
       }
-      await this.persistAndBroadcast(decodeAgentCoreRecordedNotification({
+      const decoded = decodeAgentCoreRecordedNotification({
         type: 'item/delta',
         threadId: pending.threadId,
         turnId: pending.turnId,
         itemId: pending.itemId,
         delta: { type: pending.deltaType, delta: pending.delta },
-      }), pending.ephemeral);
+      });
+      await this.persistRecordedNotification(decoded, pending.ephemeral);
+      await this.publishDecodedNotification(decoded);
     }
 
   private async flushPendingItemDeltaBestEffort(threadId: ThreadId): Promise<void> {

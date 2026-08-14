@@ -45,8 +45,9 @@ const configuration: EffectiveThreadConfiguration = {
   developerInstructions: ['Keep project terminology exact.'],
   model: 'test-model',
   reasoningEffort: 'medium',
-  tools: ['file_read', 'node_read', 'node_search', 'skill', 'collaboration.spawn_agent'],
+  tools: ['file_read', 'node_read', 'node_search', 'skill', 'agent'],
   skills: [],
+  preloadedSkills: [],
   plugins: [],
   mcpServers: [],
 };
@@ -92,12 +93,12 @@ describe('stable agent prompt composition', () => {
       'outliner',
       'memory',
       'skills',
-      'collaboration',
+      'agent',
       'neva-identity',
     ]);
-    expect(prompt.text).toContain('# Collaboration');
-    expect(prompt.text).toContain('not a plan to re-execute');
-    expect(prompt.text).toContain('Do not poll with list_agents');
+    expect(prompt.text).toContain('# Agents');
+    expect(prompt.text).toContain('work product to synthesize');
+    expect(prompt.text).toContain('Background completion is delivered automatically');
     expect(prompt.text).toContain('# Skills');
     expect(prompt.text).toContain('the latest invocation is authoritative');
     expect(prompt.text).toContain('[[file:Display name^/absolute/path]]');
@@ -139,6 +140,27 @@ describe('stable agent prompt composition', () => {
       .map((block) => block.id)).not.toContain('episodic-records');
   });
 
+  test('frames the frozen repository status on the production prompt path', () => {
+    const prompt = composeStablePrompt({
+      thread: rootThread(1),
+      configuration,
+      startupContext: {
+        repositoryInstructions: ['ROOT INSTRUCTIONS', 'NESTED INSTRUCTIONS'],
+        gitStatus: 'STATUS SNAPSHOT',
+      },
+    });
+    const block = prompt.blocks.find((candidate) => candidate.id === 'repository-startup');
+
+    expect(block?.text).toBe([
+      'ROOT INSTRUCTIONS',
+      'NESTED INSTRUCTIONS',
+      '# Session-start repository state\n\n<git-status>\nSTATUS SNAPSHOT\n</git-status>',
+    ].join('\n\n'));
+    expect(prompt.text.indexOf('ROOT INSTRUCTIONS')).toBeLessThan(
+      prompt.text.indexOf('<git-status>'),
+    );
+  });
+
   test('does not infer built-in capabilities from extension or provider-name suffixes', () => {
     const extensionOnly = composeStablePrompt({
       thread: rootThread(1),
@@ -158,15 +180,74 @@ describe('stable agent prompt composition', () => {
       'neva-identity',
     ]);
 
-    const collaborationOnly = composeStablePrompt({
+    const agentMessageOnly = composeStablePrompt({
       thread: rootThread(1),
-      configuration: { ...configuration, tools: ['collaboration.list_agents'] },
+      configuration: { ...configuration, tools: ['agent_message'] },
     });
-    expect(collaborationOnly.blocks.map((block) => block.id)).toEqual([
+    expect(agentMessageOnly.blocks.map((block) => block.id)).toEqual([
       'framework-firmware',
-      'collaboration',
+      'agent',
       'neva-identity',
     ]);
+  });
+
+  test('describes only the Agent capabilities exposed by each runtime tool', () => {
+    const promptFor = (...tools: string[]) => composeStablePrompt({
+      thread: rootThread(1),
+      configuration: { ...configuration, tools },
+    }).text;
+    const spawn = 'A new agent call starts a fresh Agent';
+    const sharedState = 'Agents share host files, processes, credentials, ports, and application state';
+    const backgroundCompletion = 'Background completion is delivered automatically';
+    const workProduct = 'A completed Agent result is work product to synthesize';
+    const steer = 'Use agent_message with the Agent ID to steer or resume';
+    const stop = 'Use task_stop with the task ID to stop a running task';
+
+    const agentOnly = promptFor('agent');
+    expect(agentOnly).toContain(spawn);
+    expect(agentOnly).toContain(sharedState);
+    expect(agentOnly).toContain(backgroundCompletion);
+    expect(agentOnly).toContain(workProduct);
+    expect(agentOnly).not.toContain(steer);
+    expect(agentOnly).not.toContain(stop);
+
+    const agentMessageOnly = promptFor('agent_message');
+    expect(agentMessageOnly).toContain(steer);
+    expect(agentMessageOnly).not.toContain(spawn);
+    expect(agentMessageOnly).not.toContain(sharedState);
+    expect(agentMessageOnly).not.toContain(backgroundCompletion);
+    expect(agentMessageOnly).not.toContain(workProduct);
+    expect(agentMessageOnly).not.toContain(stop);
+
+    const taskStopOnly = promptFor('task_stop');
+    expect(taskStopOnly).toContain(stop);
+    expect(taskStopOnly).not.toContain(spawn);
+    expect(taskStopOnly).not.toContain(sharedState);
+    expect(taskStopOnly).not.toContain(backgroundCompletion);
+    expect(taskStopOnly).not.toContain(workProduct);
+    expect(taskStopOnly).not.toContain(steer);
+
+    const controlsOnly = promptFor('agent_message', 'task_stop');
+    expect(controlsOnly).toContain(steer);
+    expect(controlsOnly).toContain(stop);
+    expect(controlsOnly).not.toContain(spawn);
+
+    const allAgentTools = promptFor('agent', 'agent_message', 'task_stop');
+    for (const capability of [spawn, sharedState, backgroundCompletion, workProduct, steer, stop]) {
+      expect(allAgentTools).toContain(capability);
+    }
+  });
+
+  test('describes only provider-visible runtime tools when configuration is broader', () => {
+    const prompt = composeStablePrompt({
+      thread: rootThread(1),
+      configuration: { ...configuration, tools: ['agent', 'file_read'] },
+      availableToolNames: ['file_read'],
+    });
+
+    expect(prompt.blocks.map((block) => block.id)).toContain('files');
+    expect(prompt.blocks.map((block) => block.id)).not.toContain('agent');
+    expect(prompt.text).not.toContain('# Agents');
   });
 
   test('keeps stable fingerprints independent of Thread identity and volatile context', () => {
@@ -183,12 +264,13 @@ describe('stable agent prompt composition', () => {
       },
     });
     expect(child.fingerprints.l0).toBe(first.fingerprints.l0);
-    expect(child.fingerprints.l1).toBe(first.fingerprints.l1);
+    expect(child.fingerprints.l1).not.toBe(first.fingerprints.l1);
     expect(child.fingerprints.l2).not.toBe(first.fingerprints.l2);
     expect(child.text).not.toContain(NEVA_AGENT_PERSONA);
     expect(child.text).toContain('You are a headless Tenon Subagent Thread');
     expect(child.text).toContain('concurrent Threads share files, processes, ports, credentials');
     expect(child.text).toContain('Execute the assigned implementation and verify it.');
+    expect(child.text).not.toContain('# Memory');
   });
 });
 
@@ -825,7 +907,7 @@ describe('canonical context projection', () => {
       'file_write',
       'node_read',
       'update_plan',
-      'collaboration__spawn_agent',
+      'agent',
       'web_search',
       'skill',
       'docs__search',
@@ -841,7 +923,12 @@ describe('canonical context projection', () => {
       ['file_write', { file_path: '/workspace/write.txt', content: 'exact content', overwrite: true }],
       ['node_read', { node_ids: ['node-1'], include_content: true }],
       ['update_plan', { plan: [{ step: 'Ship', status: 'in_progress' }] }],
-      ['collaboration__spawn_agent', { task_name: 'review', message: 'Inspect it', fork_turns: 'all' }],
+      ['agent', {
+        description: 'review',
+        prompt: 'Inspect it',
+        subagent_type: 'general-purpose',
+        run_in_background: true,
+      }],
       ['web_search', { query: 'canonical history' }],
       ['skill', { skill: 'code-review' }],
       ['docs__search', { query: 'Thread protocol', limit: 5 }],
@@ -898,12 +985,13 @@ describe('canonical context projection', () => {
         type: 'collabAgentToolCall',
         id: 'family-collaboration',
         provenance: provenance('family-collaboration'),
-        tool: 'spawn_agent',
+        tool: 'agent',
         status: 'completed',
         outputRef: null,
         senderThreadId: rootThread(1).id,
         receiverThreadIds: [],
         prompt: 'presentation only',
+        summary: null,
         model: null,
         reasoningEffort: null,
         agentsStates: {},

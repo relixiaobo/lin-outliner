@@ -24,13 +24,16 @@ export interface ToolCallAdmissionRequest {
   readonly providerName: string;
   readonly outcome:
     | {
-        readonly type: 'admitted';
-        readonly identity: ModelToolIdentity;
-        readonly arguments: JsonValue;
-        readonly redactedArguments: JsonValue;
-        readonly redactedPaths: readonly string[];
-        readonly schemaDigest: string;
-        readonly redactedArgumentsReplayable: boolean;
+      readonly type: 'admitted';
+      readonly identity: ModelToolIdentity;
+      /** Exact provider-authored arguments retained for model history. */
+      readonly arguments: JsonValue;
+      readonly redactedArguments: JsonValue;
+      readonly redactedPaths: readonly string[];
+      /** Tool-prepared, secret-redacted arguments used by Item presentation. */
+      readonly displayArguments: JsonValue;
+      readonly schemaDigest: string;
+      readonly redactedArgumentsReplayable: boolean;
       }
     | {
         readonly type: 'rejected';
@@ -110,7 +113,7 @@ export async function persistToolCallAdmission(
         redactedPaths: request.outcome.redactedPaths,
         schemaDigest: request.outcome.schemaDigest,
       },
-      displayArguments: durableValue,
+      displayArguments: request.outcome.displayArguments,
       execute: true,
     };
   }
@@ -122,7 +125,7 @@ export async function persistToolCallAdmission(
       arguments: source,
       schemaDigest: request.outcome.schemaDigest,
     },
-    displayArguments: durableValue,
+    displayArguments: request.outcome.displayArguments,
     execute: true,
   };
 }
@@ -153,7 +156,7 @@ export function transientToolCallAdmission(request: ToolCallAdmissionRequest): T
       };
   return {
     modelCall,
-    displayArguments: durableValue,
+    displayArguments: request.outcome.displayArguments,
     execute: true,
   };
 }
@@ -286,7 +289,7 @@ function persistenceRejectedAdmission(
       reason: 'argumentPersistenceUnavailable',
       correction: evidenceCorrection('argumentPersistenceUnavailable'),
     },
-    displayArguments: summary,
+    displayArguments: boundedRedactedJsonSummary(request.outcome.displayArguments),
     execute: false,
   };
 }
@@ -305,7 +308,7 @@ function incompatibleRedactedAdmission(
       reason: 'schemaIncompatible',
       correction: 'The executed values were redacted and cannot be replayed. Preserve the outcome as evidence only.',
     },
-    displayArguments: redactedArguments,
+    displayArguments: request.outcome.displayArguments,
     execute: true,
   };
 }

@@ -805,6 +805,32 @@
   gap: var(--space-3);
 }
 
+.thread-host-event {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-2);
+  color: var(--text-secondary);
+}
+
+.thread-host-event-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-faint);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+}
+
+.thread-host-event .thread-user-content-sequence,
+.thread-host-event .thread-user-content-shell {
+  align-items: flex-start;
+}
+
+.thread-host-event .thread-user-content-shell {
+  background: var(--fill-1);
+}
+
 .thread-user-content-sequence {
   display: flex;
   width: 100%;

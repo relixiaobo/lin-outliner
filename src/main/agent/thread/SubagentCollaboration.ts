@@ -1,33 +1,42 @@
 import type { TSchema } from 'typebox';
-import { resolveChildConfiguration,type AgentRole,type EffectiveThreadConfiguration,type ReasoningEffort } from '../../../core/agent/configuration';
-import type { ContextCursor,ContextEvidenceKind,InheritedContextPayload,JsonValue,Thread,ThreadContextPayload,ThreadContextPayloadReference,ThreadId,ThreadItem,ThreadItemOutputReference,ThreadResourceReference,ThreadUserContent,Turn,TurnId } from '../../../core/agent/protocol';
-import { modelToolContract } from '../../../core/agent/tools';
-import { turnTerminalAnswer } from '../../../core/agent/turnAnswer';
+import { resolveChildConfiguration,type AgentRole,type EffectiveThreadConfiguration } from '../../../core/agent/configuration';
+import type { ContextEvidenceKind,JsonValue,RendererTurnStartRequest,Thread,ThreadContextPayload,ThreadContextPayloadReference,ThreadId,ThreadItem,ThreadItemOutputReference,ThreadResourceReference,ThreadUserContent,Turn,TurnId,TurnStartResponse } from '../../../core/agent/protocol';
+import {
+  AGENT_MESSAGE_INPUT_SCHEMA,
+  agentInputSchema,
+  modelToolContract,
+  normalizeAgentMessageToolInput,
+  normalizeAgentToolInput,
+} from '../../../core/agent/tools';
 import { isolatedSkillIdentity, isolatedSkillTaskName } from '../../../core/agent/subagentTaskPath';
 import {
-  contextPayloadReferenceKey,
-  itemOutputReferences,
-  itemRequiredContextPayloadReferences,
-  itemResourceReferences,
-  itemToolArgumentPayloadReferences,
-  outputReferenceKey,
-  resourceReferenceKey,
-} from '../context/contextDependencies';
-import { cursorFor } from '../context/ContextEpoch';
-import { reduceRoleContext } from '../context/RoleContextReducer';
-import { reduceSkillContext } from '../context/SkillContextReducer';
-import {
   cappedChildPoolId,
+  DEFAULT_MAX_CONCURRENT_SUBAGENTS,
   MAX_SUBAGENT_DEPTH,
-  MIN_SUBAGENT_TOKEN_CAP,
-  MAX_SUBAGENT_SPAWNS_PER_THREAD,
   requestPoolIdForTurn,
+  type CreateSubagentRequestPoolInput,
   type SubagentRequestLedger,
   type SubagentRequestPoolId,
 } from '../persistence/SubagentRequestLedger';
+import {
+  type SubagentExecutionRecord,
+  SubagentExecutionLedger,
+  type AgentStartupContextSnapshot,
+  type SubagentRecordedToolPolicy,
+  type SubagentPendingNotification,
+} from '../persistence/SubagentExecutionLedger';
+import type { ResolvedAgentType } from '../AgentConfigurationLoader';
+import { throwIfAborted } from '../capabilities/agentAwaitWithAbort';
+import { filterSubagentToolKeys,subagentToolAllowed } from '../capabilities/subagentToolPolicy';
+import type {
+  AgentWorktreeIntentInput,
+  AgentWorktreeMetadata,
+  AgentWorktreeRecoveryIntent,
+  SettleAgentWorktreeOptions,
+} from '../worktree/AgentWorktree';
 import type { AgentTool,AgentToolResult } from '../runtime/kernel/types';
-import { SubagentDepthLimitError,SubagentSpawnLimitError } from '../SubagentStructuralLimitError';
-import type { CollaborationAgentView,CollaborationTerminalOutcome,CollaborationWaitResult,SpawnChildThreadInput,SpawnChildThreadResult,SpawnIsolatedSkillThreadInput } from '../ThreadService';
+import { SubagentDepthLimitError } from '../SubagentStructuralLimitError';
+import type { SpawnChildThreadInput,SpawnChildThreadResult,SpawnIsolatedSkillThreadInput } from '../ThreadService';
 import { uuidV7 } from '../uuid';
 import type { ThreadCatalogOps } from './ThreadCatalogOps';
 import { ThreadCore } from './ThreadCore';
@@ -35,6 +44,20 @@ import type { ThreadResourceOps } from './ThreadResourceOps';
 import type { ThreadTranscriptWriter } from './ThreadTranscriptWriter';
 import type { TranscriptSubject } from './TranscriptRenderer';
 import type { TurnLifecycle } from './TurnLifecycle';
+import {
+  agentMessageToMainText,
+  backgroundLaunchText,
+  foregroundUsageText,
+  subagentTurnResult,
+  taskNotificationText,
+} from './subagentOutput';
+
+const MAX_TERMINAL_SETTLEMENT_RETRIES = 4;
+const TERMINAL_SETTLEMENT_RETRY_EXHAUSTED_MESSAGE =
+  `Agent terminal settlement failed after ${MAX_TERMINAL_SETTLEMENT_RETRIES + 1} attempts. `
+  + 'Restart Tenon to retry durable recovery.';
+
+type TerminalSettlementOutcome = 'settled' | 'deferredForDescendants';
 
 export interface StagedContextEvidence {
   readonly payload: Extract<ThreadContextPayload, { readonly kind: ContextEvidenceKind }>;
@@ -52,9 +75,8 @@ export interface PendingSubagentActivity {
   readonly error: Turn['error'];
   /**
    * Which delegated form produced this. Every form is recorded as parent-visible
-   * activity, but only `collaboration` is deliverable through the collaboration
-   * result channel — an isolated Skill's outcome belongs to its `skill` tool row
-   * alone, and must never surface again as `wait_agent` work.
+   * activity, but only `collaboration` enters Agent notification delivery — an
+   * isolated Skill's outcome belongs to its `skill` tool row alone.
    */
   readonly form: 'collaboration' | 'isolatedSkill';
 }
@@ -62,29 +84,201 @@ interface CollaborationActivityState {
   pending: boolean;
   readonly waiters: Set<() => void>;
 }
+interface TerminalSettlementReservation {
+  readonly key: string;
+  execution: SubagentExecutionRecord;
+  turn: Turn;
+  notifyParent: boolean;
+  revision: number;
+  worktreeSettled: boolean;
+  pipeline: Promise<void> | null;
+  retryAttempt: number;
+  retryExhausted: boolean;
+  retryTimer: ReturnType<typeof setTimeout> | null;
+}
 interface SubagentCatalog {
   createThread: ThreadCatalogOps['createThread'];
   deleteThread: ThreadCatalogOps['deleteThread'];
 }
 
+interface AgentSpawnResult {
+  readonly agentId: ThreadId;
+  readonly runMode: 'foreground' | 'background';
+  readonly report: string | null;
+  readonly usage: string | null;
+  readonly outputFile: string | null;
+}
+interface PreparedResumeWorktree {
+  readonly previous: AgentWorktreeMetadata | null;
+  readonly prepared: AgentWorktreeMetadata | null;
+}
+
 export class SubagentCollaboration {
-  private readonly mailbox = new Map<ThreadId, Array<{ readonly content: readonly ThreadUserContent[] }>>();
   private readonly ephemeralSpawnEdges = new Map<ThreadId, { sessionId: string; parentThreadId: ThreadId; taskPath: string; createdAt: number }>();
   private readonly pendingSubagentActivities = new Map<ThreadId, PendingSubagentActivity[]>();
   private readonly collaborationActivity = new Map<ThreadId, CollaborationActivityState>();
+  private readonly terminalPipelines = new Map<string, Promise<void>>();
+  /** Keeps a delegated child live from Turn completion until its ledger row is durable. */
+  private readonly terminalSettlementReservations = new Map<string, TerminalSettlementReservation>();
+  private readonly parentDeliveryPipelines = new Map<ThreadId, Promise<void>>();
+  private readonly resumePipelines = new Map<ThreadId, Promise<unknown>>();
+  private readonly deletingThreadIds = new Set<ThreadId>();
+  /** Pipeline handles survive per-Thread coordination teardown so close can drain them. */
+  private readonly inFlightForClose = new Set<Promise<unknown>>();
+  private readonly closeAttemptedTerminalRevisions = new Map<string, number>();
+  private closing = false;
   constructor(
     private readonly core: ThreadCore,
     private readonly resourceOps: ThreadResourceOps,
     private readonly catalog: SubagentCatalog,
     private readonly turnLifecycle: TurnLifecycle,
     private readonly subagentBudgets: SubagentRequestLedger,
+    private readonly executions: SubagentExecutionLedger,
     private readonly resolveRole: (name: string, cwd: string) => AgentRole,
+    private readonly resolveAgentType: (name: string | undefined, cwd: string) => ResolvedAgentType,
     private readonly resolveSubagentTokenBudget: () => Promise<number | null>,
+    private readonly resolveSubagentLimits: () => Promise<{
+      readonly maxDepth: number;
+      readonly maxConcurrent: number;
+    }>,
+    private readonly resolveAgentStartupContext: (
+      parent: Pick<Thread, 'id' | 'sessionId' | 'cwd'>,
+    ) => Promise<AgentStartupContextSnapshot | null>,
+    private readonly planAgentWorktree: ((
+      input: AgentWorktreeIntentInput,
+    ) => Promise<AgentWorktreeRecoveryIntent>) | undefined,
+    private readonly prepareAgentWorktree: ((input: {
+      readonly agentId: ThreadId;
+      readonly intent: AgentWorktreeRecoveryIntent;
+      readonly worktree: AgentWorktreeMetadata | null;
+    }) => Promise<{ readonly cwd: string; readonly worktree: AgentWorktreeMetadata }>) | undefined,
+    private readonly settleAgentWorktree: ((
+      worktree: AgentWorktreeMetadata,
+      options?: SettleAgentWorktreeOptions,
+    ) => Promise<{
+      readonly worktree: AgentWorktreeMetadata;
+      readonly retained: boolean;
+    }>) | undefined,
     private readonly now: () => number,
     private readonly applyToolCeiling: (configuration: EffectiveThreadConfiguration, toolCeiling: readonly string[] | null) => EffectiveThreadConfiguration,
-    private readonly createThreadBusyError: (message: string) => Error,
+    private readonly assertThreadAvailable: (threadId: ThreadId) => void,
+    private readonly createThreadBusyError: (message: string, rendererSubmissionRetryable?: boolean) => Error,
     private readonly transcripts: ThreadTranscriptWriter,
   ) {}
+  execution(threadId: ThreadId): SubagentExecutionRecord | null {
+    return this.executions.read(threadId);
+  }
+  canSpawnAgent(threadId: ThreadId, configuration: EffectiveThreadConfiguration): boolean {
+    if (!configuration.tools.includes('agent')) return false;
+    const thread = this.core.requireThread(threadId).thread;
+    if (thread.parentThreadId === null) return true;
+    const execution = this.executions.read(threadId);
+    if (execution?.initialAdmissionState !== 'committed') return false;
+    const policy = execution.toolPolicy;
+    const contract = modelToolContract('agent');
+    if (!policy || !contract || !subagentToolAllowed(contract, policy)) return false;
+    return policy.requestedTools === null
+      || policy.requestedTools.includes('*')
+      || policy.requestedTools.includes('agent');
+  }
+  async startRendererTurn(
+    request: RendererTurnStartRequest,
+    admissionGuard?: () => void,
+  ): Promise<TurnStartResponse> {
+    const thread = this.core.requireThread(request.threadId).thread;
+    const initial = this.executions.read(request.threadId);
+    if (thread.threadSource === 'subagent') {
+      if (!initial) {
+        throw this.createThreadBusyError(`Delegated Agent execution is unavailable: ${request.threadId}`);
+      }
+      if (initial.initialAdmissionState !== 'committed') {
+        throw this.createThreadBusyError(`Delegated Agent admission is incomplete: ${request.threadId}`);
+      }
+    }
+    if (!initial) return this.turnLifecycle.startRendererTurn(request, undefined, admissionGuard);
+
+    if (this.turnLifecycle.isRendererContextCommand(request.input)) {
+      const response = await this.turnLifecycle.startRendererTurn(request, undefined, admissionGuard);
+      if (!response.deduplicated) this.clearUserStop(request.threadId);
+      return response;
+    }
+
+    return this.withResumeLock(request.threadId, async () => {
+      if (this.closing) throw this.createThreadBusyError('Agent service is shutting down');
+      if (
+        request.clientUserMessageId
+        && this.turnLifecycle.readTurnByClientUserMessageIdForHost(
+          request.threadId,
+          request.clientUserMessageId,
+        )
+      ) return this.turnLifecycle.startRendererTurn(request, undefined, admissionGuard);
+
+      await this.ensureTerminalPipeline(initial.agentId, initial.generation);
+      if (this.closing) throw this.createThreadBusyError('Agent service is shutting down');
+      const current = this.executions.require(request.threadId);
+      if (this.turnLifecycle.hasActiveTurn(current.agentId)) {
+        throw this.createThreadBusyError('Thread already has an active Turn', true);
+      }
+      const snapshot = this.executions.generationSnapshot(current.agentId);
+      const worktree = await this.prepareWorktreeForResume(current);
+      const nextTurnId = uuidV7(this.now());
+      const next = this.executions.beginUserGenerationIfCurrent({
+        agentId: current.agentId,
+        expectedGeneration: snapshot.generation,
+        expectedTurnId: snapshot.currentTurnId,
+        turnId: nextTurnId,
+        previous: snapshot,
+        updatedAt: this.now(),
+      });
+      if (!next) {
+        await this.rollbackPreparedResumeWorktree(current.agentId, worktree, snapshot);
+        throw this.createThreadBusyError(`Agent ${current.agentId} changed while resuming`);
+      }
+      let admitted = false;
+      try {
+        const response = await this.turnLifecycle.startRendererTurn(request, nextTurnId, admissionGuard);
+        if (response.deduplicated || response.turn.id !== nextTurnId) {
+          throw new Error(`Renderer Agent resume did not admit its reserved Turn: ${current.agentId}`);
+        }
+        admitted = true;
+        this.executions.completeGenerationAdmissionIfCurrent(
+          next.agentId,
+          next.generation,
+          next.currentTurnId,
+        );
+        return response;
+      } catch (error) {
+        const rolledBack = !admitted && this.executions.rollbackGeneration(
+          next.agentId,
+          next.generation,
+          next.currentTurnId,
+        );
+        if (rolledBack) {
+          await this.rollbackPreparedResumeWorktree(current.agentId, worktree, snapshot);
+        }
+        throw error;
+      }
+    });
+  }
+  worktreeForThread(threadId: ThreadId): AgentWorktreeMetadata | null {
+    let current = this.core.requireThread(threadId).thread;
+    const visited = new Set<ThreadId>();
+    let mismatched: AgentWorktreeMetadata | null = null;
+    while (!visited.has(current.id)) {
+      visited.add(current.id);
+      const worktree = this.executions.read(current.id)?.worktree ?? null;
+      if (worktree) {
+        if (worktree.removedAt !== null) return worktree;
+        if (current.cwd === worktree.path) return worktree;
+        mismatched ??= worktree;
+        console.warn(`[agent] Agent worktree metadata does not match Thread cwd for ${current.id}`);
+      }
+      if (!current.parentThreadId) return mismatched;
+      current = this.core.requireThread(current.parentThreadId).thread;
+    }
+    console.warn(`[agent] Ignoring cyclic Thread parent lineage while resolving Agent worktree: ${threadId}`);
+    return mismatched;
+  }
   recordEphemeralSpawnEdge(threadId: ThreadId, edge: { readonly sessionId: string; readonly parentThreadId: ThreadId; readonly taskPath: string; readonly createdAt: number }): void {
     this.ephemeralSpawnEdges.set(threadId, edge);
   }
@@ -94,30 +288,135 @@ export class SubagentCollaboration {
   }
   clearThreadCoordinationState(threadIds: readonly ThreadId[]): void {
     for (const threadId of threadIds) {
-      this.mailbox.delete(threadId);
       this.pendingSubagentActivities.delete(threadId);
       this.collaborationActivity.delete(threadId);
       this.transcripts.forgetCursor(threadId);
+      for (const key of [...this.terminalPipelines.keys()]) {
+        if (key.startsWith(`${threadId}:`)) this.terminalPipelines.delete(key);
+      }
+      for (const key of [...this.terminalSettlementReservations.keys()]) {
+        if (!key.startsWith(`${threadId}:`)) continue;
+        const reservation = this.terminalSettlementReservations.get(key);
+        if (reservation?.retryTimer) clearTimeout(reservation.retryTimer);
+        this.terminalSettlementReservations.delete(key);
+      }
+      this.parentDeliveryPipelines.delete(threadId);
+      this.resumePipelines.delete(threadId);
+      this.deletingThreadIds.delete(threadId);
     }
   }
-  /**
-   * Work already accepted for a child that has not started a Turn yet. An idle
-   * child holding a queued message is not finished, and deleting it would throw
-   * that message away along with the parent's next `followup_task` target.
-   */
-  hasQueuedWork(threadId: ThreadId): boolean {
-    return (this.mailbox.get(threadId)?.length ?? 0) > 0;
+
+  beginThreadDeletion(threadIds: readonly ThreadId[]): void {
+    for (const threadId of threadIds) this.deletingThreadIds.add(threadId);
+    for (const reservation of this.terminalSettlementReservations.values()) {
+      if (this.deletingThreadIds.has(reservation.execution.agentId)) reservation.notifyParent = false;
+    }
   }
+
+  finishThreadDeletion(threadIds: readonly ThreadId[]): void {
+    for (const threadId of threadIds) this.deletingThreadIds.delete(threadId);
+    const parents = new Set<ThreadId>();
+    for (const threadId of threadIds) {
+      const execution = this.executions.read(threadId);
+      if (!execution || execution.runMode !== 'background') continue;
+      parents.add(execution.parentThreadId);
+      const reservation = this.terminalSettlementReservations.get(
+        executionKey(execution.agentId, execution.generation),
+      );
+      if (reservation) {
+        reservation.notifyParent = true;
+        this.startReservedTerminalSettlement(reservation);
+        continue;
+      }
+      try {
+        const turn = this.core.readTurn(execution.agentId, execution.currentTurnId);
+        if (turn && turn.status !== 'inProgress') {
+          this.persistAgentTerminal(this.core.requireThread(execution.agentId).thread, turn);
+        }
+      } catch (error) {
+        console.warn(`[agent] Failed to restore Agent terminal delivery after deletion abort: ${threadId}`, error);
+      }
+    }
+    for (const parentThreadId of parents) {
+      void this.deliverParentWork(parentThreadId).catch((error) => {
+        console.warn(`[agent] Agent parent delivery deferred after deletion abort: ${parentThreadId}`, error);
+      });
+    }
+  }
+
+  async drainTerminalSettlements(threadIds: readonly ThreadId[]): Promise<void> {
+    for (const threadId of [...threadIds].reverse()) {
+      const execution = this.executions.read(threadId);
+      if (!execution) continue;
+      const reservation = this.terminalSettlementReservations.get(
+        executionKey(execution.agentId, execution.generation),
+      );
+      if (reservation) reservation.notifyParent = false;
+      await this.ensureTerminalPipeline(execution.agentId, execution.generation);
+    }
+  }
+
+  beginClose(): void {
+    if (this.closing) return;
+    this.closing = true;
+    for (const reservation of this.terminalSettlementReservations.values()) {
+      if (reservation.retryTimer) {
+        clearTimeout(reservation.retryTimer);
+        reservation.retryTimer = null;
+      }
+      if (reservation.pipeline) {
+        this.closeAttemptedTerminalRevisions.set(reservation.key, reservation.revision);
+      }
+    }
+    for (const state of this.collaborationActivity.values()) {
+      for (const resolve of [...state.waiters]) resolve();
+    }
+  }
+
   /**
-   * Closing hygiene for a stopped request, not an admission gate — the closed
-   * request already refuses new Turns. Without this, work the user stopped
-   * survives in the mailbox and is prepended to some LATER request's
-   * `followup_task`, which is the same trust violation displaced in time.
-   * Nothing recorded is lost: the `send_message` call remains a canonical Item
-   * in the sender's transcript, so the model can send it again.
+   * Wait for shutdown-owned tails to become quiescent. A failed terminal
+   * reservation gets at most one close-time attempt and remains durable for
+   * startup recovery instead of turning shutdown into an unbounded retry loop.
    */
-  dropQueuedWork(threadIds: readonly ThreadId[]): void {
-    for (const threadId of threadIds) this.mailbox.delete(threadId);
+  async drainForClose(deadline: number): Promise<boolean> {
+    this.beginClose();
+    for (;;) {
+      for (const reservation of this.terminalSettlementReservations.values()) {
+        if (reservation.retryTimer) {
+          clearTimeout(reservation.retryTimer);
+          reservation.retryTimer = null;
+        }
+        if (reservation.pipeline) {
+          this.closeAttemptedTerminalRevisions.set(reservation.key, reservation.revision);
+          continue;
+        }
+        if (this.closeAttemptedTerminalRevisions.get(reservation.key) === reservation.revision) continue;
+        this.closeAttemptedTerminalRevisions.set(reservation.key, reservation.revision);
+        this.startReservedTerminalSettlement(reservation);
+      }
+      const pending = [...this.inFlightForClose];
+      if (pending.length === 0) return true;
+      if (!await settleBeforeDeadline(Promise.allSettled(pending), deadline)) return false;
+    }
+  }
+
+  /**
+   * Called after any Thread reaches idle. A child can finish while its parent
+   * is still in a provider Turn; the completion path will intentionally defer
+   * delivery in that case, so the parent's next idle edge must retry it.
+   */
+  threadBecameIdle(threadId: ThreadId): void {
+    if (this.closing) return;
+    this.retryTerminalSettlements();
+    void this.deliverParentWork(threadId).catch((error) => {
+      console.warn(`[agent] Parent Agent work delivery deferred for ${threadId}`, error);
+    });
+  }
+  prepareChildTerminalSettlement(thread: Thread, turn: Turn): void {
+    if (thread.parentThreadId === null || thread.source !== 'collaboration') return;
+    const execution = this.executions.read(thread.id);
+    if (!execution || execution.currentTurnId !== turn.id) return;
+    this.reserveTerminalSettlement(execution, turn);
   }
   pendingActivities(threadId: ThreadId): readonly PendingSubagentActivity[] {
     return [...(this.pendingSubagentActivities.get(threadId) ?? [])];
@@ -128,116 +427,545 @@ export class SubagentCollaboration {
   collaborationToolContributions(turn: {
     threadId: ThreadId;
     turnId: string;
-  }): readonly AgentTool[] {
+  }, modelIds: readonly string[]): readonly AgentTool[] {
     const threadId = turn.threadId;
     const turnId = turn.turnId;
     return [
-      collaborationTool('spawn_agent', 'Spawn Subagent', async (itemId, params) => {
-        const input = record(params, 'collaboration.spawn_agent');
-        const result = await this.spawnCollaborationAgent({
+      agentTool('agent', 'Agent', async (itemId, params, signal) => {
+        const input = normalizeAgentToolInput(params);
+        const result = await this.spawnAgent({
           senderThreadId: threadId,
           senderTurnId: turnId,
           parentItemId: itemId,
-          taskName: requiredString(input.task_name, 'task_name'),
-          message: requiredString(input.message, 'message'),
-          ...(optionalString(input.agent_type) === undefined ? {} : { role: optionalString(input.agent_type) }),
-          ...(optionalString(input.model) === undefined ? {} : { model: optionalString(input.model) }),
-          ...(optionalReasoningEffort(input.reasoning_effort) === undefined
-            ? {}
-            : { reasoningEffort: optionalReasoningEffort(input.reasoning_effort) }),
-          ...(optionalString(input.fork_turns) === undefined ? {} : { forkTurns: optionalString(input.fork_turns) }),
-          ...(SubagentCollaboration.modelTokenCap(input.max_total_tokens) === undefined
-            ? {}
-            : { maxTotalTokens: SubagentCollaboration.modelTokenCap(input.max_total_tokens) }),
+          description: input.description,
+          prompt: input.prompt,
+          agentType: input.subagent_type,
+          ...(input.model === undefined ? {} : { model: input.model }),
+          runInBackground: input.run_in_background !== false,
+          isolation: input.isolation === 'worktree' ? 'worktree' : null,
+          signal,
         });
-        return {
-          task_name: result.taskPath,
-          thread_id: result.thread.id,
-          nickname: result.thread.agentNickname,
-        };
-      }),
-      collaborationTool('send_message', 'Send Subagent Message', async (_itemId, params) => {
-        const input = record(params, 'collaboration.send_message');
-        return this.sendCollaborationMessage(
-          threadId,
-          turnId,
-          requiredString(input.target, 'target'),
-          requiredString(input.message, 'message'),
-        );
-      }),
-      collaborationTool('followup_task', 'Follow Up Subagent', async (itemId, params) => {
-        const input = record(params, 'collaboration.followup_task');
-        return this.followupCollaborationTask(
+        if (result.runMode === 'background') {
+          return rawTextToolResult(backgroundLaunchText({
+            agentId: result.agentId,
+            outputFile: result.outputFile,
+          }), { agentId: result.agentId, outputFile: result.outputFile });
+        }
+        const content = [result.report, result.usage]
+          .filter((text): text is string => typeof text === 'string' && text.length > 0);
+        if (content.length === 0) content.push('Agent finished without text output.');
+        return rawTextBlocksToolResult(content, { agentId: result.agentId });
+      }, agentInputSchema(modelIds), normalizeAgentToolInput),
+      agentTool('agent_message', 'Agent Message', async (itemId, params) => {
+        const input = normalizeAgentMessageToolInput(params);
+        return rawJsonToolResult(await this.sendAgentMessage(
           threadId,
           turnId,
           itemId,
-          requiredString(input.target, 'target'),
-          requiredString(input.message, 'message'),
-        );
-      }),
-      collaborationTool('wait_agent', 'Wait for Subagents', async (_itemId, _params, signal) => {
-        return this.waitForCollaborationActivity(
-          threadId,
-          turnId,
-          signal,
-        );
-      }),
-      collaborationTool('list_agents', 'List Subagents', async (_itemId, params) => {
-        const input = record(params, 'collaboration.list_agents');
-        return this.listCollaborationAgents(threadId, optionalString(input.path_prefix));
-      }),
-      collaborationTool('interrupt_agent', 'Interrupt Subagent', async (_itemId, params) => {
-        const input = record(params, 'collaboration.interrupt_agent');
-        return this.interruptCollaborationAgent(
-          threadId,
-          turnId,
-          requiredString(input.target, 'target'),
-        );
-      }),
+          input.to,
+          input.message,
+          input.summary,
+        ));
+      }, AGENT_MESSAGE_INPUT_SCHEMA, normalizeAgentMessageToolInput),
     ];
   }
   materializePendingActivityItems(threadId: ThreadId, turnId: TurnId, activities: readonly PendingSubagentActivity[]): ThreadItem[] {
     return activities.map((activity) => subagentActivityItem(threadId, turnId, activity));
   }
-  async spawnChild(input: SpawnChildThreadInput): Promise<SpawnChildThreadResult> {
-      this.turnLifecycle.requireActiveTurn(input.parentThreadId, input.parentTurnId);
+
+  private assertSpawnParentActive(
+    parentThreadId: ThreadId,
+    parentTurnId: TurnId,
+    signal?: AbortSignal,
+  ): void {
+      throwIfAborted(signal);
+      this.turnLifecycle.requireActiveTurn(parentThreadId, parentTurnId);
+  }
+
+  async spawnAgent(input: {
+    readonly senderThreadId: ThreadId;
+    readonly senderTurnId: TurnId;
+    readonly parentItemId: string;
+    readonly description: string;
+    readonly prompt: string;
+    readonly agentType: string;
+    readonly model?: string;
+    readonly runInBackground: boolean;
+    readonly isolation: 'worktree' | null;
+    readonly signal?: AbortSignal;
+  }): Promise<AgentSpawnResult> {
+    if (this.closing) throw this.createThreadBusyError('Agent service is shutting down');
+    this.assertSpawnParentActive(input.senderThreadId, input.senderTurnId, input.signal);
+    this.assertAgentSpawnItemBoundary(
+      input.senderThreadId,
+      input.senderTurnId,
+      input.parentItemId,
+    );
+    if (input.isolation === 'worktree' && (!this.planAgentWorktree || !this.prepareAgentWorktree)) {
+      throw new Error('Agent worktree isolation is unavailable');
+    }
+    const parent = this.core.requireThread(input.senderThreadId).thread;
+    const inheritedWorktreeIsolation = parent.parentThreadId !== null && (
+      this.executions.read(parent.id)?.toolPolicy.worktree === true
+      || this.worktreeForThread(parent.id) !== null
+    );
+    const selected = this.resolveAgentType(input.agentType, parent.cwd);
+    const limits = await this.resolveSubagentLimits();
+    assertSubagentLimits(limits);
+    const startupContext = selected.kind === 'explore' || selected.kind === 'plan'
+      ? null
+      : await this.resolveAgentStartupContext(parent);
+    this.assertSpawnParentActive(input.senderThreadId, input.senderTurnId, input.signal);
+    const parentPath = this.taskPathForThread(input.senderThreadId) ?? '/root';
+    const agentId = uuidV7(this.now());
+    const turnId = uuidV7(this.now());
+    const taskPath = `${parentPath}/${agentId}`;
+    const result = await this.spawnChild({
+        id: agentId,
+        parentThreadId: input.senderThreadId,
+        parentTurnId: input.senderTurnId,
+        parentItemId: input.parentItemId,
+        prompt: input.prompt,
+        taskPath,
+        displayName: input.description,
+        role: selected.role,
+        childKind: 'collaboration',
+        cwd: parent.cwd,
+        turnId,
+        execution: {
+          description: input.description,
+          agentType: selected.canonicalType,
+          runMode: input.runInBackground ? 'background' : 'foreground',
+          worktree: null,
+          initialWorktreeCwd: input.isolation === 'worktree' ? parent.cwd : null,
+          toolPolicy: {
+            kind: selected.kind,
+            runInBackground: input.runInBackground,
+            worktree: inheritedWorktreeIsolation || input.isolation === 'worktree',
+            allowNesting: this.agentDepth(input.senderThreadId) + 1 < limits.maxDepth,
+            requestedTools: normalizedRequestedTools(selected.role.overrides?.tools),
+          },
+          startupContext,
+        },
+        ...(input.model === undefined ? {} : { model: input.model }),
+        ...(input.signal === undefined ? {} : { parentSignal: input.signal }),
+      });
+    const execution = this.executions.require(result.thread.id);
+    if (input.runInBackground) {
+      return {
+        agentId: execution.agentId,
+        runMode: 'background',
+        report: null,
+        usage: null,
+        outputFile: this.transcripts.pathForPendingReader(execution.agentId),
+      };
+    }
+    const abort = () => {
+      const turnId = this.turnLifecycle.activeTurnId(execution.agentId);
+      if (turnId) void this.turnLifecycle.interruptTurn(execution.agentId, turnId).catch(() => undefined);
+    };
+    input.signal?.addEventListener('abort', abort, { once: true });
+    try {
+      await this.waitForAgentSettlement(execution.agentId);
+    } finally {
+      input.signal?.removeEventListener('abort', abort);
+    }
+    await this.ensureTerminalPipeline(execution.agentId, execution.generation);
+    // A foreground child may send `agent_message("main")` while its provider
+    // turn is running. Deliver that envelope only after the ordinary Agent
+    // result is ready, so the parent consumes it immediately before its next
+    // provider request rather than as an unsolicited root Turn.
+    await this.deliverParentMessages(this.rootThreadIdFor(execution.parentThreadId), {
+      senderAgentId: execution.agentId,
+      generation: execution.generation,
+    });
+    const settled = this.executions.require(execution.agentId);
+    const terminal = this.core.readTurn(execution.agentId, settled.currentTurnId);
+    if (!terminal) throw new Error(`Foreground Agent Turn was not recorded: ${settled.currentTurnId}`);
+    return {
+      agentId: execution.agentId,
+      runMode: 'foreground',
+      report: subagentTurnResult(terminal),
+      usage: selected.kind === 'explore' || selected.kind === 'plan'
+        ? null
+        : foregroundUsageText({ agentId: execution.agentId, turn: terminal, worktree: settled.worktree }),
+      outputFile: await this.transcripts.pathForReader(execution.agentId),
+    };
+  }
+
+  private async waitForAgentSettlement(agentId: ThreadId): Promise<void> {
+    for (;;) {
+      await this.turnLifecycle.waitForIdle(agentId);
+      if (this.closing) return;
+      if (!this.hasOutstandingChildren(agentId)) return;
+      await new Promise<void>((resolve) => {
+        const state = this.collaborationActivityState(agentId);
+        const done = () => {
+          state.waiters.delete(done);
+          resolve();
+        };
+        state.waiters.add(done);
+        if (this.closing || this.turnLifecycle.hasActiveTurn(agentId) || !this.hasOutstandingChildren(agentId)) done();
+      });
+    }
+  }
+
+  private async ensureTerminalPipeline(agentId: ThreadId, generation: number): Promise<void> {
+    const key = executionKey(agentId, generation);
+    for (;;) {
+      const existing = this.terminalPipelines.get(key);
+      if (existing) {
+        try {
+          await existing;
+        } catch (error) {
+          if (this.terminalSettlementReservations.get(key)?.retryExhausted) {
+            throw new Error(TERMINAL_SETTLEMENT_RETRY_EXHAUSTED_MESSAGE);
+          }
+          throw error;
+        }
+        if (!this.terminalSettlementReservations.has(key)) return;
+        continue;
+      }
+      const reservation = this.terminalSettlementReservations.get(key);
+      if (reservation) {
+        if (reservation.retryExhausted) {
+          throw new Error(TERMINAL_SETTLEMENT_RETRY_EXHAUSTED_MESSAGE);
+        }
+        this.startReservedTerminalSettlement(reservation);
+        if (reservation.pipeline) {
+          try {
+            await reservation.pipeline;
+          } catch (error) {
+            if (reservation.retryExhausted) {
+              throw new Error(TERMINAL_SETTLEMENT_RETRY_EXHAUSTED_MESSAGE);
+            }
+            throw error;
+          }
+          if (!this.terminalSettlementReservations.has(key)) return;
+          continue;
+        }
+        return;
+      }
+      const execution = this.executions.read(agentId);
+      if (!execution || execution.generation !== generation) return;
+      const turn = this.core.readTurn(agentId, execution.currentTurnId);
+      if (!turn || turn.status === 'inProgress') return;
+      this.persistAgentTerminal(this.core.requireThread(agentId).thread, turn);
+      const started = this.terminalPipelines.get(key);
+      if (started) await started;
+      return;
+    }
+  }
+
+  async sendAgentMessage(
+    senderThreadId: ThreadId,
+    senderTurnId: TurnId,
+    itemId: string,
+    targetInput: string,
+    message: string,
+    _summary: string,
+  ): Promise<JsonValue> {
+    this.turnLifecycle.requireActiveTurn(senderThreadId, senderTurnId);
+    if (this.closing) return agentServiceClosingResult();
+    if (targetInput === senderThreadId) {
+      return { success: false, message: 'An Agent cannot send a message to itself.' };
+    }
+    if (!this.hasCommittedCollaborationAdmission(senderThreadId)) {
+      return { success: false, message: 'Agent admission is incomplete; messaging is unavailable.' };
+    }
+    if (targetInput === 'main') {
+      return this.sendAgentMessageToMain(senderThreadId, message);
+    }
+    const execution = this.reachableExecution(senderThreadId, targetInput);
+    if (!execution) {
+      return {
+        success: false,
+        message: `No agent with ID '${targetInput}' is reachable.\nUse the agent ID from a background agent's spawn result.`,
+      };
+    }
+    const content = [{ type: 'text' as const, text: message }];
+    const activeTurnId = this.turnLifecycle.activeTurnId(execution.agentId);
+    if (activeTurnId) {
+      await this.turnLifecycle.steerTurn({
+        threadId: execution.agentId,
+        expectedTurnId: activeTurnId,
+        input: content,
+      }, 'advisory');
+      return agentMessageQueuedResult(execution.agentId);
+    }
+    return this.withResumeLock(execution.agentId, async () => {
+      if (this.closing) return agentServiceClosingResult();
+      // Terminal accounting may still be flushing when the child Turn becomes
+      // idle. Wait for that generation before admitting a new one; otherwise
+      // the old pipeline could settle the new generation's worktree or stop
+      // provenance after the resume update.
+      await this.ensureTerminalPipeline(execution.agentId, execution.generation);
+      if (this.closing) return agentServiceClosingResult();
+      const current = this.executions.read(execution.agentId);
+      if (current?.initialAdmissionState !== 'committed') {
+        return {
+          success: false,
+          message: `No agent with ID '${targetInput}' is reachable.\nUse the agent ID from a background agent's spawn result.`,
+        };
+      }
+      const resumedTurnId = this.turnLifecycle.activeTurnId(current.agentId);
+      if (resumedTurnId) {
+        await this.turnLifecycle.steerTurn({
+          threadId: current.agentId,
+          expectedTurnId: resumedTurnId,
+          input: content,
+        }, 'advisory');
+        return agentMessageQueuedResult(current.agentId);
+      }
+      if (current.stopProvenance === 'user') {
+        return { success: false, message: 'A user-stopped Agent cannot be resumed by another Agent.' };
+      }
+      this.turnLifecycle.assertSubagentBudgetAvailable(current.agentId);
+      const snapshot = this.executions.generationSnapshot(current.agentId);
+      const worktree = await this.prepareWorktreeForResume(current);
+      if (this.closing) {
+        await this.rollbackPreparedResumeWorktree(current.agentId, worktree, snapshot);
+        return agentServiceClosingResult();
+      }
+      const nextTurnId = uuidV7(this.now());
+      const next = this.executions.beginNextGenerationIfCurrent({
+        agentId: current.agentId,
+        expectedGeneration: snapshot.generation,
+        expectedTurnId: snapshot.currentTurnId,
+        turnId: nextTurnId,
+        toolUseId: itemId,
+        runMode: 'background',
+        previous: snapshot,
+        updatedAt: this.now(),
+      });
+      if (!next) {
+        await this.rollbackPreparedResumeWorktree(current.agentId, worktree, snapshot);
+        return { success: false, message: `Agent ${current.agentId} changed while resuming; retry the message.` };
+      }
+      if (this.closing) {
+        if (this.executions.rollbackGeneration(
+          next.agentId,
+          next.generation,
+          next.currentTurnId,
+        )) {
+          await this.rollbackPreparedResumeWorktree(current.agentId, worktree, snapshot);
+        }
+        return agentServiceClosingResult();
+      }
+      let admitted = false;
+      try {
+        await this.turnLifecycle.startPrivilegedTurn({
+          threadId: current.agentId,
+          turnId: nextTurnId,
+          input: content,
+          trigger: { kind: 'subagent', parentThreadId: senderThreadId, parentItemId: itemId },
+        });
+        admitted = true;
+        this.executions.completeGenerationAdmissionIfCurrent(
+          next.agentId,
+          next.generation,
+          next.currentTurnId,
+        );
+      } catch (error) {
+        if (!admitted && this.executions.rollbackGeneration(
+          next.agentId,
+          next.generation,
+          next.currentTurnId,
+        )) {
+          await this.rollbackPreparedResumeWorktree(current.agentId, worktree, snapshot);
+        }
+        throw error;
+      }
+      const outputFile = await this.transcripts.pathForReader(current.agentId);
+      return {
+        success: true,
+        message: `Agent "${current.agentId}" was stopped (${terminalStatus(this.core.allTurns(current.agentId).at(-2))}); resumed it in the background with your message. You'll be notified when it finishes. Output: ${outputFile ?? '(unavailable)'}`,
+        resumedAgentId: current.agentId,
+        pin: agentPin(current.agentId),
+      };
+    });
+  }
+
+  async stopAgentTask(
+    senderThreadId: ThreadId,
+    senderTurnId: TurnId,
+    agentId: string,
+  ): Promise<JsonValue | null> {
+    this.turnLifecycle.requireActiveTurn(senderThreadId, senderTurnId);
+    if (agentId === senderThreadId) throw new Error('An Agent cannot stop itself.');
+    const execution = this.reachableExecution(senderThreadId, agentId);
+    if (!execution) return null;
+    const activeTurnId = this.turnLifecycle.activeTurnId(execution.agentId);
+    if (!activeTurnId) {
+      const status = terminalStatus(this.core.allTurns(execution.agentId).at(-1));
+      throw new Error(`Task ${agentId} is not running (status: ${status})`);
+    }
+    if (activeTurnId !== execution.currentTurnId) {
+      throw this.createThreadBusyError(`Task ${agentId} changed while stopping`);
+    }
+    await this.turnLifecycle.interruptTurn(execution.agentId, execution.currentTurnId);
+    this.executions.recordStopIfCurrent({
+      agentId: execution.agentId,
+      generation: execution.generation,
+      turnId: execution.currentTurnId,
+      provenance: 'model',
+      updatedAt: this.now(),
+    });
+    return {
+      message: `Successfully stopped task: ${execution.agentId} (${execution.description})`,
+      task_id: execution.agentId,
+      task_type: 'local_agent',
+      command: execution.description,
+    };
+  }
+
+  hasAgentTask(senderThreadId: ThreadId, agentId: string): boolean {
+    return this.reachableExecution(senderThreadId, agentId) !== null;
+  }
+
+  recordUserStopIfCurrent(
+    execution: Pick<SubagentExecutionRecord, 'agentId' | 'generation' | 'currentTurnId'>,
+  ): void {
+    this.executions.recordStopIfCurrent({
+      agentId: execution.agentId,
+      generation: execution.generation,
+      turnId: execution.currentTurnId,
+      provenance: 'user',
+      updatedAt: this.now(),
+    });
+  }
+
+  clearUserStop(agentId: ThreadId): void {
+    if (this.executions.read(agentId)?.stopProvenance === 'user') {
+      this.executions.clearUserStop(agentId, this.now());
+    }
+  }
+
+  commitInitialAdmission(agentId: ThreadId, turnId: TurnId): Error | null {
+    try {
+      const execution = this.executions.read(agentId);
+      if (!execution) {
+        return this.core.requireThread(agentId).thread.threadSource === 'subagent'
+          ? new Error(`Delegated Agent execution is unavailable: ${agentId}`)
+          : null;
+      }
+      if (execution.initialAdmissionState === 'committed') return null;
+      if (this.executions.completeInitialAdmissionIfCurrent(agentId, turnId, this.now())) return null;
+      if (this.executions.read(agentId)?.initialAdmissionState === 'committed') return null;
+      return new Error(`Agent initial admission commit raced for ${agentId}`);
+    } catch (error) {
+      return error instanceof Error ? error : new Error(String(error));
+    }
+  }
+
+  async spawnChild(
+    input: SpawnChildThreadInput & { readonly parentSignal?: AbortSignal },
+  ): Promise<SpawnChildThreadResult> {
+      if (this.closing) throw this.createThreadBusyError('Agent service is shutting down');
+      this.assertSpawnParentActive(input.parentThreadId, input.parentTurnId, input.parentSignal);
       const tokenCap = this.childTokenCap(input.maxTotalTokens);
       // Read unconditionally: the request's grant is the runtime default even
       // when THIS spawn carries a cap. Skipping the read for a capped spawn
       // opened the request unbounded, and every later uncapped child in the same
       // Turn inherited that — the breaker silently never fired.
       const configuredPoolBudget = await this.configuredPoolBudget();
-      let stagedThreadId: ThreadId | null = null;
+      this.assertSpawnParentActive(input.parentThreadId, input.parentTurnId, input.parentSignal);
+      const agentId = input.id ?? uuidV7(this.now());
+      const turnId = input.turnId ?? uuidV7(this.now());
+      let stagedWorktree: AgentWorktreeMetadata | null = null;
+      let initialWorktreeIntent: AgentWorktreeRecoveryIntent | null = null;
+      let admissionStarted = false;
+      let createdPoolId: SubagentRequestPoolId | null = null;
+      let createdCappedPoolId: SubagentRequestPoolId | null = null;
+      let createdMemberThreadId: ThreadId | null = null;
       let result: SpawnChildThreadResult;
       try {
         result = await this.core.threadTreeMutex.run(async () => {
-          let createdPoolId: SubagentRequestPoolId | null = null;
-          let createdCappedPoolId: SubagentRequestPoolId | null = null;
-          let createdMemberThreadId: ThreadId | null = null;
-          try {
-            if (this.core.stoppingThreads.has(input.parentThreadId)) throw this.createThreadBusyError('Parent Thread is stopping');
-            const parent = this.core.requireThread(input.parentThreadId);
+          this.assertSpawnParentActive(input.parentThreadId, input.parentTurnId, input.parentSignal);
+          if (this.core.stoppingThreads.has(input.parentThreadId)) throw this.createThreadBusyError('Parent Thread is stopping');
+          const parent = this.core.requireThread(input.parentThreadId);
             const collaborationChild = input.childKind !== 'isolatedSkill';
-            const nextSpawnCount = collaborationChild ? this.assertSpawnStructure(input.parentThreadId) : null;
+            if (collaborationChild) await this.assertNewAgentAdmission(input.parentThreadId);
+            this.assertSpawnParentActive(input.parentThreadId, input.parentTurnId, input.parentSignal);
             const inheritedBudget = this.turnLifecycle.assertSubagentSpawnBudgetAvailable(
               input.parentThreadId,
               input.parentTurnId,
             );
-            const role = this.resolveRole(input.role ?? 'default', parent.thread.cwd);
+            const role = typeof input.role === 'string'
+              ? this.resolveRole(input.role, parent.thread.cwd)
+              : input.role ?? this.resolveRole('default', parent.thread.cwd);
             const resolvedConfiguration = resolveChildConfiguration(parent.configuration, {
               role,
               ...(input.model === undefined ? {} : { model: input.model }),
               ...(input.reasoningEffort === undefined ? {} : { reasoningEffort: input.reasoningEffort }),
             });
-            const toolCeiling = input.allowedTools === undefined ? null : Object.freeze([...new Set(input.allowedTools)]);
+            // The model/extension registry is assembled after Thread admission.
+            // Persist the selected Role's raw names and let ToolRuntime apply the
+            // capability policy against the complete registry; filtering here
+            // would silently discard MCP/extension contributions.
+            const policyTools = resolvedConfiguration.tools;
+            // Generic Agent spawns may omit this field to inherit the policy
+            // pool. The isolated-Skill wrapper requires an array, so omitted
+            // `allowed-tools` authoring reaches this seam as an explicit `[]`.
+            const requestedCeiling = input.allowedTools === undefined
+              ? policyTools
+              : policyTools.filter((tool) => new Set(input.allowedTools).has(tool));
+            const toolCeiling = Object.freeze([...new Set(requestedCeiling)]);
             const configuration = this.applyToolCeiling(resolvedConfiguration, toolCeiling);
+            const createdAt = this.now();
+            if (input.execution.initialWorktreeCwd !== null) {
+              if (!this.planAgentWorktree || !this.prepareAgentWorktree) {
+                throw new Error('Agent worktree isolation is unavailable');
+              }
+              initialWorktreeIntent = await this.planAgentWorktree({
+                agentId,
+                cwd: input.execution.initialWorktreeCwd,
+                previous: input.execution.worktree,
+              });
+            }
+            this.executions.beginInitialAdmission({
+              agentId,
+              parentThreadId: parent.thread.id,
+              description: input.execution.description,
+              agentType: input.execution.agentType,
+              runMode: input.execution.runMode,
+              currentTurnId: turnId,
+              toolUseId: input.parentItemId,
+              worktree: input.execution.worktree,
+              toolPolicy: input.execution.toolPolicy,
+              startupContext: input.execution.startupContext,
+              initialWorktreeIntent,
+              createdAt,
+              updatedAt: createdAt,
+            });
+            admissionStarted = true;
+            let childCwd = input.cwd ?? parent.thread.cwd;
+            if (initialWorktreeIntent !== null) {
+              if (!this.prepareAgentWorktree) throw new Error('Agent worktree isolation is unavailable');
+              const prepared = await this.prepareAgentWorktree({
+                agentId,
+                intent: initialWorktreeIntent,
+                worktree: input.execution.worktree,
+              });
+              stagedWorktree = prepared.worktree;
+              childCwd = prepared.cwd;
+              if (!this.executions.recordInitialWorktreeIfPending({
+                agentId,
+                turnId,
+                worktree: prepared.worktree,
+                updatedAt: this.now(),
+              })) {
+                throw new Error(`Agent initial worktree admission raced for ${agentId}`);
+              }
+            }
             const thread = await this.catalog.createThread({
+              id: agentId,
               name: input.displayName ?? input.taskPath.split('/').at(-1) ?? 'Subagent',
               ephemeral: parent.thread.ephemeral,
               source: input.childKind === 'isolatedSkill' ? 'agent.skill' : 'collaboration',
               threadSource: 'subagent',
               modelProvider: parent.thread.modelProvider,
-              cwd: parent.thread.cwd,
+              cwd: childCwd,
             }, {
               sessionId: parent.thread.sessionId,
               parentThreadId: parent.thread.id,
@@ -250,59 +978,62 @@ export class SubagentCollaboration {
               reasoningEffortOverride: input.reasoningEffort ?? null,
               taskPath: input.taskPath,
             });
-            stagedThreadId = thread.id;
-            const stagedContextEvidence = input.inheritedContext
-              ? [await this.copyInheritedContextToChild(input.parentThreadId, thread.id, input.inheritedContext)]
-              : [];
-            let pool = inheritedBudget?.pool ?? null;
+            let memberPoolId = inheritedBudget?.pool?.poolId ?? null;
+            const createdPools: CreateSubagentRequestPoolInput[] = [];
             if (!inheritedBudget?.resolutionFailed) {
               // The request exists whether or not anyone put a number on it:
               // ownership is a property of delegation, and a budget is one
               // optional attribute of the owner. Without this row an unbudgeted
               // delegation would have no identity for Stop to close.
               const requestPoolId = requestPoolIdForTurn(input.parentTurnId);
-              if (!pool && !this.subagentBudgets.readPool(requestPoolId)) {
-                const request = this.subagentBudgets.createPool({
+              const request = this.subagentBudgets.readPool(requestPoolId);
+              if (memberPoolId === null && !request) {
+                createdPools.push({
                   poolId: requestPoolId,
                   scope: 'turn',
                   originThreadId: parent.thread.id,
                   originTurnId: input.parentTurnId,
                   tokenBudget: configuredPoolBudget,
-                }, parent.thread.ephemeral);
-                createdPoolId = request.poolId;
-                if (tokenCap === null) pool = request;
-                this.turnLifecycle.refreshActiveSubagentBudgetCoverage();
-              } else if (!pool && tokenCap === null) {
-                pool = this.subagentBudgets.readPool(requestPoolId);
+                });
+                createdPoolId = requestPoolId;
+                if (tokenCap === null) memberPoolId = requestPoolId;
+              } else if (memberPoolId === null && tokenCap === null) {
+                memberPoolId = request?.poolId ?? null;
               }
               // An explicit cap with no inherited pool still anchors its own
               // pool at the child, so the cap keeps bounding that child's own
               // descendants. Its spend binds there; its ownership stays the
               // request, recorded on the member below.
-              if (!pool && tokenCap !== null) {
-                pool = this.subagentBudgets.createPool({
-                  poolId: cappedChildPoolId(thread.id),
+              if (memberPoolId === null && tokenCap !== null) {
+                const cappedPoolId = cappedChildPoolId(thread.id);
+                createdPools.push({
+                  poolId: cappedPoolId,
                   scope: 'thread',
                   originThreadId: thread.id,
                   originTurnId: input.parentTurnId,
                   tokenBudget: tokenCap,
-                }, parent.thread.ephemeral);
-                createdCappedPoolId = pool.poolId;
-                this.turnLifecycle.refreshActiveSubagentBudgetCoverage();
+                });
+                createdCappedPoolId = cappedPoolId;
+                memberPoolId = cappedPoolId;
               }
             }
             // Recorded even with no pool and no cap: the member carries the
             // delegating Turn, so a child spawned before its request had a pool
             // can still join THAT request's pool later, and never a later one's.
-            this.subagentBudgets.createMember({
-              threadId: thread.id,
-              poolId: pool?.poolId ?? null,
-              originTurnId: input.parentTurnId,
-              tokenCap,
+            this.subagentBudgets.createAdmission({
+              pools: createdPools,
+              member: {
+                threadId: thread.id,
+                poolId: memberPoolId,
+                originTurnId: input.parentTurnId,
+                tokenCap,
+              },
             }, thread.ephemeral);
             createdMemberThreadId = thread.id;
+            if (createdPools.length > 0) this.turnLifecycle.refreshActiveSubagentBudgetCoverage();
             const accepted = await this.turnLifecycle.acceptAndLaunch({
               threadId: thread.id,
+              turnId,
               input: [{ type: 'text', text: input.prompt }],
               trigger: {
                 kind: 'subagent',
@@ -310,104 +1041,87 @@ export class SubagentCollaboration {
                 parentItemId: input.parentItemId,
               },
               ...(input.additionalContext === undefined ? {} : { additionalContext: input.additionalContext }),
-              ...(stagedContextEvidence.length === 0 ? {} : { stagedContextEvidence }),
             });
-            if (nextSpawnCount !== null) {
-              this.subagentBudgets.recordSpawnCount(parent.thread.id, nextSpawnCount, parent.thread.ephemeral);
-            }
-            return { thread, turn: accepted.response.turn, taskPath: input.taskPath };
-          } catch (error) {
-            try {
-              if (createdMemberThreadId) this.subagentBudgets.deleteMember(createdMemberThreadId);
-              if (createdCappedPoolId) this.subagentBudgets.deletePoolRecord(createdCappedPoolId);
-              if (createdPoolId) this.subagentBudgets.deletePoolRecord(createdPoolId);
-              if (createdPoolId || createdCappedPoolId) this.turnLifecycle.refreshActiveSubagentBudgetCoverage();
-            } catch (rollbackError) {
-              console.warn('[agent][subagent-budget-audit] failed to roll back staged budget rows', {
-                memberThreadId: createdMemberThreadId,
-                poolId: createdPoolId,
-                cappedPoolId: createdCappedPoolId,
-                error: rollbackError,
-              });
-            }
-            throw error;
-          }
+          return { thread, turn: accepted.response.turn, taskPath: input.taskPath };
         });
       } catch (error) {
-        if (stagedThreadId) await this.catalog.deleteThread(stagedThreadId).catch(() => undefined);
+        const committed = admissionStarted && await this.initialTurnCommitted(agentId, turnId);
+        if (!committed) {
+          const worktreeSettled = await this.rollbackInitialWorktree(
+            agentId,
+            stagedWorktree,
+            input.execution.initialWorktreeCwd !== null,
+          );
+          if (worktreeSettled) {
+            const threadExists = this.core.ephemeral.has(agentId) || this.core.metadata.read(agentId) !== null;
+            let threadSettled = !threadExists;
+            if (threadExists) {
+              threadSettled = await this.catalog.deleteThread(agentId).then(
+                () => true,
+                (rollbackError) => {
+                  console.warn(`[agent] failed to roll back staged Agent Thread ${agentId}`, rollbackError);
+                  return false;
+                },
+              );
+            }
+            if (threadSettled) {
+              await this.core.threadTreeMutex.run(async () => {
+                if (createdMemberThreadId) this.subagentBudgets.deleteMember(createdMemberThreadId);
+                if (!threadExists && admissionStarted) this.executions.deleteAgentOnly(agentId);
+                if (
+                  createdCappedPoolId
+                  && this.subagentBudgets.membersForPool(createdCappedPoolId).length === 0
+                ) this.subagentBudgets.deletePoolRecord(createdCappedPoolId);
+                if (
+                  createdPoolId
+                  && this.subagentBudgets.membersForPool(createdPoolId).length === 0
+                ) this.subagentBudgets.deletePoolRecord(createdPoolId);
+                if (createdPoolId || createdCappedPoolId) {
+                  this.turnLifecycle.refreshActiveSubagentBudgetCoverage();
+                }
+              }).catch((rollbackError) => {
+                console.warn('[agent][subagent-budget-audit] failed to roll back staged budget rows', {
+                  memberThreadId: createdMemberThreadId,
+                  poolId: createdPoolId,
+                  cappedPoolId: createdCappedPoolId,
+                  error: rollbackError,
+                });
+              });
+            }
+          }
+        }
         throw error;
       }
       // Every delegated form gets a per-child row, not only collaboration: an
       // isolated Skill otherwise runs behind one in-progress `skill` row with no
       // sign that a delegated agent is working and no way in.
-      await this.recordSubagentActivity(
-        input.parentThreadId,
-        input.parentTurnId,
-        result.thread.id,
-        result.taskPath,
-        'started',
-        null,
-        // The call that delegated: this row stands in for it, so the reader
-        // sees one delegation at the position where it was decided.
-        input.parentItemId,
-      );
+      try {
+        await this.recordSubagentActivity(
+          input.parentThreadId,
+          input.parentTurnId,
+          result.thread.id,
+          result.turn.id,
+          result.taskPath,
+          'started',
+          null,
+          // The call that delegated: this row stands in for it, so the reader
+          // sees one delegation at the position where it was decided.
+          input.parentItemId,
+        );
+      } catch (error) {
+        // Child admission is already committed. A parent Stop can win after
+        // that commit but before this presentation-only activity row; do not
+        // misreport the spawn as failed or reclaim its workspace.
+        console.warn(`[agent] Subagent start activity unavailable for ${result.thread.id}`, error);
+      }
       return result;
     }
 
-  private async copyInheritedContextToChild(
-      sourceThreadId: ThreadId,
-      targetThreadId: ThreadId,
-      payload: InheritedContextPayload,
-    ): Promise<StagedContextEvidence> {
-      const requiredContextRefs = uniqueContextReferences(payload.turns.flatMap((turn) => (
-        turn.items.flatMap(itemRequiredContextPayloadReferences)
-      )));
-      const requiredContextKeys = new Set(requiredContextRefs.map(contextPayloadReferenceKey));
-      const toolArgumentRefs = uniqueContextReferences(payload.turns.flatMap((turn) => (
-        turn.items.flatMap(itemToolArgumentPayloadReferences)
-      )));
-      const contextRefs = uniqueContextReferences([...requiredContextRefs, ...toolArgumentRefs]);
-      const resourceRefs = uniqueResourceReferences(payload.turns.flatMap((turn) => (
-        turn.items.flatMap(itemResourceReferences)
-      )));
-      const outputRefs = uniqueOutputReferences(payload.turns.flatMap((turn) => (
-        turn.items.flatMap(itemOutputReferences)
-      )));
-      for (const ref of requiredContextRefs) {
-        if (!await this.core.payloads.copyContextToThread(sourceThreadId, targetThreadId, ref)) {
-          console.warn(`[agent] Child retained unavailable inherited context payload: ${ref.id}`);
-        }
-      }
-      for (const ref of toolArgumentRefs) {
-        if (requiredContextKeys.has(contextPayloadReferenceKey(ref))) continue;
-        if (!await this.core.payloads.copyContextToThread(sourceThreadId, targetThreadId, ref)) {
-          console.warn(`[agent] Child inherited unavailable tool-call arguments: ${ref.id}`);
-        }
-      }
-      for (const ref of resourceRefs) {
-        if (!await this.core.payloads.copyResourceToThread(sourceThreadId, targetThreadId, ref)) {
-          console.warn(`[agent] Child retained unavailable inherited managed resource: ${ref.id}`);
-        }
-      }
-      for (const ref of outputRefs) {
-        if (!await this.core.payloads.copyTextToThread(sourceThreadId, targetThreadId, ref)) {
-          console.warn(`[agent] Child inherited unavailable tool output: ${ref.id}`);
-        }
-      }
-      const payloadRef = await this.core.payloads.writeContext(targetThreadId, payload);
-      return {
-        payload,
-        payloadRef,
-        contextRefs,
-        resourceRefs,
-        outputRefs,
-        summary: `Inherited parent context (${payload.turns.length} Turns)`,
-      };
-    }
   async spawnIsolatedSkillThread(input: SpawnIsolatedSkillThreadInput): Promise<SpawnChildThreadResult> {
       this.turnLifecycle.requireActiveTurn(input.parentThreadId, input.parentTurnId);
       const parentPath = this.taskPathForThread(input.parentThreadId) ?? '/root';
       const taskName = isolatedSkillTaskName(input.skillName, isolatedSkillIdentity(uuidV7(this.now())));
+      const parentExecution = this.executions.read(input.parentThreadId);
       return this.spawnChild({
         parentThreadId: input.parentThreadId,
         parentTurnId: input.parentTurnId,
@@ -421,56 +1135,76 @@ export class SubagentCollaboration {
         // case and spaces away.
         displayName: input.skillName,
         nickname: input.skillName,
-        role: input.readOnly ? 'explorer' : 'worker',
+        role: 'default',
         allowedTools: input.allowedTools,
         childKind: 'isolatedSkill',
+        turnId: uuidV7(this.now()),
+        execution: {
+          description: input.skillName,
+          agentType: 'isolated-skill',
+          runMode: 'foreground',
+          worktree: null,
+          initialWorktreeCwd: null,
+          toolPolicy: {
+            kind: parentExecution?.toolPolicy.kind ?? 'general-purpose',
+            runInBackground: false,
+            worktree: parentExecution?.toolPolicy.worktree === true
+              || this.worktreeForThread(input.parentThreadId) !== null,
+            allowNesting: parentExecution?.toolPolicy.allowNesting ?? true,
+            requestedTools: normalizedRequestedTools(input.allowedTools),
+          },
+          startupContext: null,
+        },
         ...(input.model === undefined ? {} : { model: input.model }),
         ...(input.reasoningEffort === undefined ? {} : { reasoningEffort: input.reasoningEffort }),
       });
-    }
-  async spawnCollaborationAgent(input: {
-      senderThreadId: ThreadId;
-      senderTurnId: string;
-      parentItemId: string;
-      taskName: string;
-      message: string;
-      role?: string;
-      model?: string;
-      reasoningEffort?: EffectiveThreadConfiguration['reasoningEffort'];
-      forkTurns?: string;
-      maxTotalTokens?: number;
-    }): Promise<SpawnChildThreadResult> {
-      this.turnLifecycle.requireActiveTurn(input.senderThreadId, input.senderTurnId);
-      if (!/^[a-z][a-z0-9_]*$/.test(input.taskName)) {
-        throw new Error('Subagent task_name must use lowercase letters, digits, and underscores');
-      }
-      const parentPath = this.taskPathForThread(input.senderThreadId) ?? '/root';
-      const taskPath = `${parentPath}/${input.taskName}`;
-      const sessionId = this.core.requireThread(input.senderThreadId).thread.sessionId;
-      if (this.findSpawnEdgeByPath(sessionId, taskPath)) throw new Error(`Subagent task path already exists: ${taskPath}`);
-      const inheritedContext = await collaborationInheritedContext({
-        turns: this.core.allTurns(input.senderThreadId),
-        sourceThreadId: input.senderThreadId,
-        activeTurnId: input.senderTurnId,
-        spawnItemId: input.parentItemId,
-        forkTurns: input.forkTurns,
-        readContext: (ref) => this.core.payloads.readContext(input.senderThreadId, ref),
-      });
-      const result = await this.spawnChild({
-        parentThreadId: input.senderThreadId,
-        parentTurnId: input.senderTurnId,
-        parentItemId: input.parentItemId,
-        prompt: input.message,
-        taskPath,
-        ...(input.role === undefined ? {} : { role: input.role }),
-        ...(input.model === undefined ? {} : { model: input.model }),
-        ...(input.reasoningEffort === undefined ? {} : { reasoningEffort: input.reasoningEffort }),
-        ...(input.maxTotalTokens === undefined ? {} : { maxTotalTokens: input.maxTotalTokens }),
-        ...(inheritedContext === null ? {} : { inheritedContext }),
-      });
-      return result;
     }
 
+  private async rollbackInitialWorktree(
+    agentId: ThreadId,
+    worktree: AgentWorktreeMetadata | null,
+    requested: boolean,
+  ): Promise<boolean> {
+    if (!worktree) return !requested;
+    if (!this.settleAgentWorktree) return false;
+    try {
+      const settled = await this.settleAgentWorktree(worktree);
+      if (settled.retained) {
+        console.warn(`[agent] retained modified worktree for incomplete Agent admission ${agentId}`);
+        return false;
+      }
+      return true;
+    } catch (error) {
+      console.warn(`[agent] deferred worktree rollback for incomplete Agent admission ${agentId}`, error);
+      return false;
+    }
+  }
+
+  private async initialTurnCommitted(agentId: ThreadId, turnId: TurnId): Promise<boolean> {
+    const ephemeral = this.core.ephemeral.get(agentId);
+    if (ephemeral) return ephemeral.turns.some((turn) => turn.id === turnId);
+    try {
+      return (await this.core.rollout.read(agentId)).some((entry) => (
+        entry.event.type === 'turn/started' && entry.event.turnId === turnId
+      ));
+    } catch (error) {
+      console.warn(`[agent] could not verify initial Agent Turn ${turnId}`, error);
+      return true;
+    }
+  }
+
+  private assertAgentSpawnItemBoundary(
+    parentThreadId: ThreadId,
+    parentTurnId: TurnId,
+    parentItemId: string,
+  ): void {
+    const turn = this.core.readTurn(parentThreadId, parentTurnId);
+    const item = turn?.items.find((candidate) => candidate.id === parentItemId);
+    if (!item) throw new Error('Agent spawn Item is outside the active parent Turn');
+    if (item.type !== 'collabAgentToolCall' || item.tool !== 'agent' || item.status !== 'inProgress') {
+      throw new Error('Agent spawn boundary must reference an in-progress agent Item');
+    }
+  }
   /**
    * A model-named `max_total_tokens`, or nothing when it names no real budget.
    *
@@ -487,13 +1221,6 @@ export class SubagentCollaboration {
    * sent: a floor applied before the check would swallow `0`, `1.5` and `"5000"`
    * and answer every one of them with a million.
    */
-  private static modelTokenCap(value: unknown): number | undefined {
-      if (value === undefined) return undefined;
-      if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1) {
-        throw new Error('max_total_tokens must be a positive integer');
-      }
-      return value < MIN_SUBAGENT_TOKEN_CAP ? undefined : value;
-    }
   private childTokenCap(maxTotalTokens: number | undefined): number | null {
       if (maxTotalTokens !== undefined) {
         if (!Number.isSafeInteger(maxTotalTokens) || maxTotalTokens < 1) {
@@ -510,165 +1237,70 @@ export class SubagentCollaboration {
       }
       return tokenBudget;
     }
-  private assertSpawnStructure(parentThreadId: ThreadId): number {
-      const parentTaskPath = this.taskPathForThread(parentThreadId) ?? '/root';
-      const parentDepth = parentTaskPath.split('/').filter(Boolean).length - 1;
-      if (parentDepth >= MAX_SUBAGENT_DEPTH) throw new SubagentDepthLimitError(MAX_SUBAGENT_DEPTH);
-      const persistentCount = this.core.metadata.childEdges(parentThreadId)
-        .filter((edge) => this.core.requireThread(edge.childThreadId).thread.source === 'collaboration')
-        .length;
-      const ephemeralCount = this.ephemeralChildThreadIds(parentThreadId)
-        .filter((threadId) => this.core.requireThread(threadId).thread.source === 'collaboration')
-        .length;
-      const spawnCount = Math.max(
-        this.subagentBudgets.readSpawnCount(parentThreadId),
-        persistentCount + ephemeralCount,
+  private assertSpawnStructure(parentThreadId: ThreadId, maxDepth: number): void {
+      const parentDepth = this.agentDepth(parentThreadId);
+      if (parentDepth >= maxDepth) throw new SubagentDepthLimitError(maxDepth);
+    }
+  private agentDepth(threadId: ThreadId): number {
+      let depth = 0;
+      let current = this.core.requireThread(threadId).thread;
+      const visited = new Set<ThreadId>();
+      while (current.parentThreadId !== null && !visited.has(current.id)) {
+        visited.add(current.id);
+        if (current.source === 'collaboration') depth += 1;
+        current = this.core.requireThread(current.parentThreadId).thread;
+      }
+      return depth;
+    }
+  private hasOutstandingChildren(parentThreadId: ThreadId): boolean {
+      const pending = new Set(
+        this.executions.pendingForParent(parentThreadId).map((notification) => notification.agentId),
       );
-      if (spawnCount >= MAX_SUBAGENT_SPAWNS_PER_THREAD) {
-        throw new SubagentSpawnLimitError(MAX_SUBAGENT_SPAWNS_PER_THREAD);
-      }
-      return spawnCount + 1;
-    }
-  async sendCollaborationMessage(
-      senderThreadId: ThreadId,
-      senderTurnId: string,
-      target: string,
-      message: string,
-    ): Promise<CollaborationAgentView> {
-      this.turnLifecycle.requireActiveTurn(senderThreadId, senderTurnId);
-      const targetThread = this.resolveCollaborationTarget(senderThreadId, target);
-      const content = [{ type: 'text' as const, text: nonEmpty(message, 'message') }];
-      const activeTurnId = this.turnLifecycle.activeTurnId(targetThread.id);
-      if (activeTurnId) {
-        await this.turnLifecycle.steerTurn({ threadId: targetThread.id, expectedTurnId: activeTurnId, input: content });
-      } else {
-        await this.adoptIdleChildIntoDelegatingPool(targetThread.id, senderThreadId, senderTurnId);
-        this.turnLifecycle.assertSubagentBudgetAvailable(targetThread.id);
-        const queued = this.mailbox.get(targetThread.id) ?? [];
-        queued.push({ content });
-        this.mailbox.set(targetThread.id, queued);
-      }
-      return this.collaborationView(targetThread.id);
-    }
-  async followupCollaborationTask(
-      senderThreadId: ThreadId,
-      senderTurnId: string,
-      parentItemId: string,
-      target: string,
-      message: string,
-    ): Promise<CollaborationAgentView> {
-      this.turnLifecycle.requireActiveTurn(senderThreadId, senderTurnId);
-      const targetThread = this.resolveCollaborationTarget(senderThreadId, target);
-      const content = [{ type: 'text' as const, text: nonEmpty(message, 'message') }];
-      const activeTurnId = this.turnLifecycle.activeTurnId(targetThread.id);
-      if (activeTurnId) {
-        await this.turnLifecycle.steerTurn({ threadId: targetThread.id, expectedTurnId: activeTurnId, input: content });
-      } else {
-        await this.adoptIdleChildIntoDelegatingPool(targetThread.id, senderThreadId, senderTurnId);
-        this.turnLifecycle.assertSubagentBudgetAvailable(targetThread.id);
-        const queued = this.mailbox.get(targetThread.id) ?? [];
-        this.mailbox.delete(targetThread.id);
-        try {
-          await this.turnLifecycle.startPrivilegedTurn({
-            threadId: targetThread.id,
-            input: [...queued.flatMap((entry) => entry.content), ...content],
-            trigger: {
-              kind: 'subagent',
-              parentThreadId: senderThreadId,
-              parentItemId,
-            },
-          });
-        } catch (error) {
-          if (queued.length > 0) {
-            this.mailbox.set(targetThread.id, [...queued, ...(this.mailbox.get(targetThread.id) ?? [])]);
-          }
-          throw error;
-        }
-      }
-      return this.collaborationView(targetThread.id);
-    }
-  listCollaborationAgents(senderThreadId: ThreadId, pathPrefix?: string): readonly CollaborationAgentView[] {
+      return this.executions.listByParent(parentThreadId).some((child) => (
+        child.runMode === 'background'
+        && !(this.deletingThreadIds.has(parentThreadId) && this.deletingThreadIds.has(child.agentId))
+        && (
+          this.turnLifecycle.hasActiveTurn(child.agentId)
+          || pending.has(child.agentId)
+          || this.terminalPipelines.has(executionKey(child.agentId, child.generation))
+          || this.terminalSettlementReservations.has(executionKey(child.agentId, child.generation))
+        )
+      ));
+  }
+  private async assertNewAgentAdmission(senderThreadId: ThreadId): Promise<void> {
+      const limits = await this.resolveSubagentLimits();
+      assertSubagentLimits(limits);
+      this.assertSpawnStructure(senderThreadId, limits.maxDepth);
       const sender = this.core.requireThread(senderThreadId).thread;
-      const senderPath = this.taskPathForThread(senderThreadId) ?? '/root';
-      const descendantPrefix = `${senderPath}/`;
-      const persisted = this.core.metadata.childEdges(rootThreadId(sender, (id) => this.core.requireThread(id).thread), true);
-      const ephemeral = [...this.ephemeralSpawnEdges.entries()].map(([childThreadId, edge]) => ({ childThreadId, ...edge }));
-      return [...persisted, ...ephemeral]
-        .filter((edge) => this.core.requireThread(edge.childThreadId).thread.sessionId === sender.sessionId)
-        .filter((edge) => edge.taskPath.startsWith(descendantPrefix))
-        .filter((edge) => this.isCollaborationDescendant(senderThreadId, edge.childThreadId))
-        .filter((edge) => !pathPrefix || edge.taskPath.startsWith(pathPrefix))
-        .map((edge) => this.collaborationView(edge.childThreadId));
-    }
-  async interruptCollaborationAgent(
-      senderThreadId: ThreadId,
-      senderTurnId: string,
-      target: string,
-    ): Promise<CollaborationAgentView> {
-      this.turnLifecycle.requireActiveTurn(senderThreadId, senderTurnId);
-      const thread = this.resolveCollaborationTarget(senderThreadId, target);
-      const activeTurnId = this.turnLifecycle.activeTurnId(thread.id);
-      if (activeTurnId !== null) await this.turnLifecycle.interruptTurn(thread.id, activeTurnId);
-      return this.collaborationView(thread.id);
-    }
-  async waitForCollaborationActivity(
-      senderThreadId: ThreadId,
-      senderTurnId: string,
-      signal?: AbortSignal,
-    ): Promise<CollaborationWaitResult> {
-      this.turnLifecycle.requireActiveTurn(senderThreadId, senderTurnId);
-      if (signal?.aborted) throw new Error('Collaboration wait was interrupted');
-
-      // Only collaboration activity can end a wait. Skill activity still flushes
-      // into the transcript as rows, but it is not a deliverable outcome here.
-      if (this.pendingCollaborationActivityCount(senderThreadId) > 0) {
-        this.takePendingCollaborationActivity(senderThreadId);
-        const activities = await this.flushPendingSubagentActivities(senderThreadId, senderTurnId);
-        return this.collaborationWaitResult(senderThreadId, 'terminal', activities);
-      }
-      if (this.takePendingCollaborationActivity(senderThreadId)) {
-        return this.collaborationWaitResult(senderThreadId, 'steering', []);
-      }
-      const agents = this.listCollaborationAgents(senderThreadId);
-      if (!agents.some((agent) => (
-        agent.parentThreadId === senderThreadId
-        && (agent.status === 'pendingInit' || agent.status === 'running')
-      ))) {
-        const updates: CollaborationTerminalOutcome[] = [];
-        for (const agent of agents) {
-          if (agent.status !== 'completed' && agent.status !== 'interrupted' && agent.status !== 'errored') continue;
-          updates.push(await this.collaborationTerminalOutcome(agent.threadId, agent.taskPath, agent.status));
+      const root = rootThreadId(sender, (id) => this.core.requireThread(id).thread);
+      // A child remains a live member until its terminal account/worktree
+      // pipeline settles. Build one identity set first: persisted and
+      // ephemeral edges can describe the same child during admission/recovery,
+      // and counting both would consume two slots.
+      const childIds = new Set<ThreadId>();
+      for (const edge of this.core.metadata.childEdges(root, true)) {
+        if (this.core.requireThread(edge.childThreadId).thread.source === 'collaboration') {
+          childIds.add(edge.childThreadId);
         }
-        return { reason: 'idle', updates, agents };
       }
-
-      const state = this.collaborationActivityState(senderThreadId);
-      await new Promise<void>((resolve, reject) => {
-        const done = () => {
-          state.waiters.delete(done);
-          signal?.removeEventListener('abort', aborted);
-          resolve();
-        };
-        const aborted = () => {
-          state.waiters.delete(done);
-          reject(new Error('Collaboration wait was interrupted'));
-        };
-        state.waiters.add(done);
-        signal?.addEventListener('abort', aborted, { once: true });
-      });
-      this.takePendingCollaborationActivity(senderThreadId);
-      const activities = await this.flushPendingSubagentActivities(senderThreadId, senderTurnId);
-      const collaboration = activities.filter((activity) => activity.form === 'collaboration');
-      return this.collaborationWaitResult(
-        senderThreadId,
-        collaboration.length > 0 ? 'terminal' : 'steering',
-        activities,
-      );
-    }
-  private pendingCollaborationActivityCount(threadId: ThreadId): number {
-      return (this.pendingSubagentActivities.get(threadId) ?? [])
-        .filter((activity) => activity.form === 'collaboration')
-        .length;
+      for (const [threadId, edge] of this.ephemeralSpawnEdges) {
+        if (rootThreadId(
+          this.core.requireThread(edge.parentThreadId).thread,
+          (id) => this.core.requireThread(id).thread,
+        ) !== root) continue;
+        if (this.core.requireThread(threadId).thread.source === 'collaboration') childIds.add(threadId);
+      }
+      const live = [...childIds].filter((threadId) => (
+        this.turnLifecycle.activeTurnId(threadId) !== null
+        || [...this.terminalPipelines.keys()].some((key) => key.startsWith(`${threadId}:`))
+        || [...this.terminalSettlementReservations.keys()].some((key) => key.startsWith(`${threadId}:`))
+      )).length;
+      if (live >= limits.maxConcurrent) {
+        throw new Error(
+          `Concurrent subagent limit reached. You can run ${limits.maxConcurrent} subagents at once. `
+          + 'Do not retry. If the user wants more concurrent subagents, ask them to increase the Tenon maximum concurrent Agents setting.',
+        );
+      }
     }
   /**
    * Re-delegating to an idle child is a NEW request, so it joins the pool of the
@@ -678,49 +1310,6 @@ export class SubagentCollaboration {
    * Without it a re-driven child would run uncovered, which is the one hole the
    * request-scoped pool could otherwise open.
    */
-  private async adoptIdleChildIntoDelegatingPool(
-      childThreadId: ThreadId,
-      senderThreadId: ThreadId,
-      senderTurnId: TurnId,
-    ): Promise<void> {
-      // A CLOSED request is not live coverage: the user stopped it, and a new
-      // delegation is exactly how that child is legitimately re-driven. Without
-      // this the stopped request would refuse the child forever.
-      if (this.liveRequestFor(childThreadId)) return;
-      const configuredPoolBudget = await this.configuredPoolBudget();
-      await this.core.threadTreeMutex.run(async () => {
-        if (this.liveRequestFor(childThreadId)) return;
-        const sender = this.core.requireThread(senderThreadId).thread;
-        const inherited = this.turnLifecycle.resolveSubagentSpawnBudget(senderThreadId, senderTurnId);
-        if (inherited?.resolutionFailed) return;
-        let pool = inherited?.pool ?? null;
-        if (!pool) {
-          // Opened whether or not a budget is configured, exactly as a spawn
-          // does. Bailing out when the default is disabled left the child bound
-          // to the CLOSED request it was stopped in, and every later attempt
-          // refused — a temporary state made permanent by an unreachable reset.
-          pool = this.subagentBudgets.createPool({
-            poolId: requestPoolIdForTurn(senderTurnId),
-            scope: 'turn',
-            originThreadId: senderThreadId,
-            originTurnId: senderTurnId,
-            tokenBudget: configuredPoolBudget,
-          }, sender.ephemeral);
-          this.turnLifecycle.refreshActiveSubagentBudgetCoverage();
-        }
-        const child = this.core.requireThread(childThreadId).thread;
-        if (this.subagentBudgets.readMember(childThreadId)) {
-          this.subagentBudgets.rebindMemberPool(childThreadId, pool.poolId, senderTurnId);
-        } else {
-          this.subagentBudgets.createMember({
-            threadId: childThreadId,
-            poolId: pool.poolId,
-            originTurnId: senderTurnId,
-            tokenCap: null,
-          }, child.ephemeral);
-        }
-      });
-    }
   private liveRequestFor(threadId: ThreadId): boolean {
       const pool = this.turnLifecycle.resolveSubagentBudget(threadId)?.pool;
       return Boolean(pool && pool.closedAt === null);
@@ -728,115 +1317,6 @@ export class SubagentCollaboration {
   private taskPathForThread(threadId: ThreadId): string | null { return this.ephemeralSpawnEdges.get(threadId)?.taskPath
         ?? this.core.metadata.spawnEdgeForChild(threadId)?.taskPath
         ?? null; }
-  private findSpawnEdgeByPath(
-      sessionId: string,
-      taskPath: string,
-    ): { childThreadId: ThreadId; taskPath: string } | null {
-      const persisted = this.core.metadata.spawnEdgeForPath(sessionId, taskPath);
-      if (persisted) return persisted;
-      for (const [childThreadId, edge] of this.ephemeralSpawnEdges) {
-        if (edge.sessionId === sessionId && edge.taskPath === taskPath) return { childThreadId, taskPath };
-      }
-      return null;
-    }
-  private resolveCollaborationTarget(senderThreadId: ThreadId, targetInput: string): Thread {
-      const target = nonEmpty(targetInput, 'target');
-      const sender = this.core.requireThread(senderThreadId).thread;
-      const senderPath = this.taskPathForThread(senderThreadId) ?? '/root';
-      const path = target.startsWith('/') ? target : `${senderPath}/${target}`;
-      const edge = this.findSpawnEdgeByPath(sender.sessionId, path);
-      if (!edge) throw new Error(`Subagent task path not found: ${target}`);
-      const thread = this.core.requireThread(edge.childThreadId).thread;
-      if (thread.sessionId !== sender.sessionId) throw new Error('Subagent target is outside the current Thread tree');
-      if (!this.isCollaborationDescendant(senderThreadId, thread.id)) {
-        throw new Error('Subagent target is outside the sender collaboration subtree');
-      }
-      return thread;
-    }
-  private isCollaborationDescendant(senderThreadId: ThreadId, childThreadId: ThreadId): boolean {
-      const visited = new Set<ThreadId>();
-      let current = this.core.requireThread(childThreadId).thread;
-      while (current.parentThreadId !== null && !visited.has(current.id)) {
-        visited.add(current.id);
-        if (current.source !== 'collaboration') return false;
-        if (current.parentThreadId === senderThreadId) return true;
-        current = this.core.requireThread(current.parentThreadId).thread;
-      }
-      return false;
-    }
-  private collaborationView(threadId: ThreadId): CollaborationAgentView {
-      const thread = this.core.requireThread(threadId).thread;
-      const edge = this.ephemeralSpawnEdges.get(threadId) ?? this.core.metadata.spawnEdgeForChild(threadId);
-      if (!edge || !thread.parentThreadId) throw new Error(`Thread is not a Subagent: ${threadId}`);
-      const budget = this.turnLifecycle.subagentBudgetView(threadId);
-      const latest = this.core.allTurns(threadId).at(-1);
-      const status: CollaborationAgentView['status'] = this.turnLifecycle.activeTurnId(threadId) !== null
-        ? 'running'
-        : !latest
-          ? 'pendingInit'
-          : latest.status === 'failed'
-            ? 'errored'
-            : latest.status === 'interrupted'
-              ? 'interrupted'
-              : 'completed';
-      return {
-        taskPath: edge.taskPath,
-        threadId,
-        parentThreadId: thread.parentThreadId,
-        nickname: thread.agentNickname,
-        role: thread.agentRole,
-        status,
-        tokensUsed: budget?.tokensUsed ?? 0,
-        tokenBudget: budget?.tokenBudget ?? null,
-      };
-    }
-  private async collaborationWaitResult(
-      senderThreadId: ThreadId,
-      reason: CollaborationWaitResult['reason'],
-      activities: readonly PendingSubagentActivity[],
-    ): Promise<CollaborationWaitResult> {
-      const updates: CollaborationTerminalOutcome[] = [];
-      for (const activity of activities) {
-        // An isolated Skill child is absent from this channel by contract: its
-        // `skill` tool call is the single parent-facing owner of its outcome,
-        // and replaying it here would offer the same work twice.
-        if (activity.form !== 'collaboration') continue;
-        if (activity.kind === 'started') continue;
-        updates.push(await this.collaborationTerminalOutcome(
-          activity.agentThreadId,
-          activity.agentPath,
-          activity.kind === 'errored' ? 'errored' : activity.kind,
-          activity.agentTurnId,
-        ));
-      }
-      return {
-        reason,
-        updates,
-        agents: this.listCollaborationAgents(senderThreadId),
-      };
-    }
-  private async collaborationTerminalOutcome(
-      threadId: ThreadId,
-      taskPath: string,
-      status: CollaborationTerminalOutcome['status'],
-      turnId?: TurnId,
-    ): Promise<CollaborationTerminalOutcome> {
-      // A queued activity names its Turn, so read that one Turn rather than
-      // paging the child's whole history on the parent's wait path.
-      const terminalTurn = turnId === undefined
-        ? this.core.allTurns(threadId).at(-1)
-        : this.core.readTurn(threadId, turnId);
-      const result = terminalTurn ? turnTerminalAnswer(terminalTurn.items) : '';
-      return {
-        taskPath,
-        threadId,
-        status,
-        result: result || null,
-        error: terminalTurn?.error?.message ?? null,
-        transcriptPath: await this.transcripts.pathForReader(threadId),
-      };
-    }
-
   /**
    * The delegated Thread's identity, and by returning it at all, the answer to
    * whether that Thread keeps an account. Spawn metadata is the authority here,
@@ -862,6 +1342,7 @@ export class SubagentCollaboration {
       ownerThreadId: ThreadId,
       ownerTurnId: string,
       agentThreadId: ThreadId,
+      agentTurnId: TurnId,
       agentPath: string,
       kind: PendingSubagentActivity['kind'],
       error: Turn['error'],
@@ -871,6 +1352,7 @@ export class SubagentCollaboration {
         ownerThreadId,
         ownerTurnId,
         agentThreadId,
+        agentTurnId,
         agentPath,
         kind,
         error,
@@ -894,13 +1376,764 @@ export class SubagentCollaboration {
       const form: PendingSubagentActivity['form'] = thread.source === 'collaboration'
         ? 'collaboration'
         : 'isolatedSkill';
+      // This provider Turn is only an intermediate result. Its descendants must
+      // first return through a continuation so the ancestor sees one synthesized
+      // terminal transition for this Agent generation.
+      if (form === 'collaboration' && this.hasOutstandingChildren(thread.id)) return;
       const queued = this.pendingSubagentActivities.get(thread.parentThreadId) ?? [];
       queued.push({ agentThreadId: thread.id, agentTurnId: turn.id, agentPath, kind, error: turn.error, form });
       this.pendingSubagentActivities.set(thread.parentThreadId, queued);
-      // An isolated Skill is absent from `wait_agent` by contract, so its
-      // terminal transition must not wake a parent blocked on collaboration
-      // children — the `skill` call that is already awaiting it owns its outcome.
-      if (form === 'collaboration') this.signalCollaborationActivity(thread.parentThreadId);
+      // An isolated Skill has no Agent notification lifecycle, so its terminal
+      // transition must not wake a parent blocked on Agent children; the
+      // `skill` call that is already awaiting it owns its outcome.
+      if (form === 'collaboration') {
+        this.signalCollaborationActivity(thread.parentThreadId);
+        const execution = this.executions.read(thread.id);
+        if (execution && execution.currentTurnId === turn.id) {
+          const reservation = this.terminalSettlementReservations.get(
+            executionKey(execution.agentId, execution.generation),
+          );
+          if (reservation) this.startReservedTerminalSettlement(reservation);
+          else this.persistAgentTerminal(thread, turn);
+        }
+      }
+    }
+
+  async recoverPendingNotifications(): Promise<void> {
+      await this.recoverPendingGenerationAdmissions();
+      const parents = new Set<ThreadId>();
+      for (const execution of this.executions.all()) {
+        try {
+          this.assertThreadAvailable(execution.agentId);
+          const turn = this.core.readTurn(execution.agentId, execution.currentTurnId);
+          if (turn && turn.status !== 'inProgress') {
+            this.persistAgentTerminal(this.core.requireThread(execution.agentId).thread, turn);
+          }
+          if (execution.runMode === 'background') parents.add(execution.parentThreadId);
+        } catch (error) {
+          console.warn(`[agent] Skipping orphaned Agent execution during recovery: ${execution.agentId}`, error);
+        }
+      }
+      for (const parentThreadId of [
+        ...parents,
+        ...this.executions.parentsWithPending(),
+        ...this.executions.parentsWithPendingMessages(),
+      ]) {
+        await this.deliverParentWork(parentThreadId).catch((error) => {
+          console.warn(`[agent] Skipping unavailable Agent parent during recovery: ${parentThreadId}`, error);
+        });
+      }
+      // Foreground main-route envelopes are tied to the parent Turn that
+      // invoked the child. They cannot be resumed after a host restart: doing
+      // so would inject stale model-authored input into a later user Turn.
+      // Sweep them explicitly because the normal recovery path intentionally
+      // delivers background messages only.
+      await this.discardStaleForegroundParentMessages();
+    }
+
+    private async recoverPendingGenerationAdmissions(): Promise<void> {
+      for (const { execution, previous } of this.executions.pendingGenerationAdmissions()) {
+        try {
+          if (this.core.readTurn(execution.agentId, execution.currentTurnId)) {
+            this.executions.completeGenerationAdmissionIfCurrent(
+              execution.agentId,
+              execution.generation,
+              execution.currentTurnId,
+            );
+            continue;
+          }
+          if (!this.executions.rollbackGeneration(
+            execution.agentId,
+            execution.generation,
+            execution.currentTurnId,
+          )) continue;
+          await this.rollbackPreparedResumeWorktree(execution.agentId, {
+            previous: previous.worktree,
+            prepared: execution.worktree,
+          }, previous);
+        } catch (error) {
+          console.warn(`[agent] Skipping orphaned Agent generation admission during recovery: ${execution.agentId}`, error);
+        }
+      }
+    }
+
+    private async discardStaleForegroundParentMessages(): Promise<void> {
+      for (const parentThreadId of this.executions.parentsWithPendingMessages()) {
+        for (const message of this.executions.pendingParentMessages(parentThreadId)) {
+          if (message.deliveryMode !== 'foreground') continue;
+          try {
+            this.assertThreadAvailable(parentThreadId);
+            this.assertThreadAvailable(message.senderAgentId);
+          } catch {
+            continue;
+          }
+          if (!this.executions.claimParentMessage(message.id)) continue;
+          this.executions.discardParentMessage(message.id);
+          console.warn(`[agent] Discarded stale foreground Agent main-route message during recovery: ${message.senderAgentId}`);
+        }
+      }
+    }
+
+  private persistAgentTerminal(thread: Thread, turn: Turn): void {
+      const execution = this.executions.read(thread.id);
+      if (!execution || execution.currentTurnId !== turn.id) return;
+      const key = executionKey(execution.agentId, execution.generation);
+      if (this.terminalPipelines.has(key)) return;
+      this.reserveTerminalSettlement(execution, turn);
+      const reservation = this.terminalSettlementReservations.get(key);
+      if (reservation) this.startReservedTerminalSettlement(reservation);
+    }
+
+  private reserveTerminalSettlement(execution: SubagentExecutionRecord, turn: Turn): void {
+    const key = executionKey(execution.agentId, execution.generation);
+    const existing = this.terminalSettlementReservations.get(key);
+    if (existing) {
+      if (existing.turn.id === turn.id) return;
+      existing.execution = execution;
+      existing.turn = turn;
+      existing.notifyParent = execution.runMode === 'background'
+        && !this.deletingThreadIds.has(execution.agentId);
+      existing.revision += 1;
+      existing.worktreeSettled = false;
+      existing.retryAttempt = 0;
+      existing.retryExhausted = false;
+      if (existing.retryTimer) {
+        clearTimeout(existing.retryTimer);
+        existing.retryTimer = null;
+      }
+      return;
+    }
+    if (this.terminalPipelines.has(key)) return;
+    this.terminalSettlementReservations.set(key, {
+      key,
+      execution,
+      turn,
+      notifyParent: execution.runMode === 'background'
+        && !this.deletingThreadIds.has(execution.agentId),
+      revision: 0,
+      worktreeSettled: false,
+      pipeline: null,
+      retryAttempt: 0,
+      retryExhausted: false,
+      retryTimer: null,
+    });
+  }
+  private startReservedTerminalSettlement(reservation: TerminalSettlementReservation): void {
+    if (reservation.pipeline || reservation.retryExhausted) return;
+    // A provider Turn that delegated background work is intermediate. Keep its
+    // reservation durable, but do not create a pipeline that can only fail
+    // until every direct child result has been consumed.
+    if (this.hasOutstandingChildren(reservation.execution.agentId)) return;
+    if (reservation.retryTimer) {
+      clearTimeout(reservation.retryTimer);
+      reservation.retryTimer = null;
+    }
+    const revision = reservation.revision;
+    if (this.closing) this.closeAttemptedTerminalRevisions.set(reservation.key, revision);
+    const execution = reservation.execution;
+    const turn = reservation.turn;
+    const rawPipeline = this.runTerminalPipeline(
+      execution,
+      turn,
+      reservation,
+    );
+    let outcome: TerminalSettlementOutcome | null = null;
+    const pipeline = rawPipeline.then((result) => {
+      outcome = result;
+      if (result === 'deferredForDescendants') return;
+      if (
+        this.terminalSettlementReservations.get(reservation.key) === reservation
+        && reservation.revision === revision
+      ) {
+        if (reservation.retryTimer) clearTimeout(reservation.retryTimer);
+        this.terminalSettlementReservations.delete(reservation.key);
+      }
+    });
+    reservation.pipeline = pipeline;
+    this.terminalPipelines.set(reservation.key, pipeline);
+    this.trackForClose(pipeline);
+    void pipeline.then(() => {
+      if (this.terminalPipelines.get(reservation.key) === pipeline) this.terminalPipelines.delete(reservation.key);
+      reservation.pipeline = null;
+      if (
+        this.terminalSettlementReservations.get(reservation.key) === reservation
+        && reservation.revision !== revision
+      ) {
+        this.startReservedTerminalSettlement(reservation);
+      } else if (outcome === 'deferredForDescendants') {
+        // A descendant can be admitted while the terminal transcript flush is
+        // in flight. This is normal orchestration, not a settlement failure.
+        // The descendant's completion/idle edge will restart this reservation.
+        return;
+      } else if (
+        reservation.notifyParent
+        && !this.closing
+        && !this.turnLifecycle.hasActiveTurn(reservation.execution.parentThreadId)
+      ) {
+        reservation.retryAttempt = 0;
+        reservation.retryExhausted = false;
+        // Delivery may have observed this pipeline while its durable
+        // notification was already ready. Retry after the pipeline identity is
+        // gone so a sibling cannot leave the parent parked indefinitely.
+        void this.deliverParentWork(reservation.execution.parentThreadId).catch((error) => {
+          console.warn(`[agent] Subagent parent delivery deferred for ${reservation.execution.agentId}`, error);
+        });
+      }
+    }, (error) => {
+      if (this.terminalPipelines.get(reservation.key) === pipeline) this.terminalPipelines.delete(reservation.key);
+      reservation.pipeline = null;
+      console.warn(`[agent] Subagent terminal pipeline deferred for ${reservation.execution.agentId}`, error);
+      if (
+        this.terminalSettlementReservations.get(reservation.key) === reservation
+        && reservation.revision !== revision
+      ) {
+        this.startReservedTerminalSettlement(reservation);
+      } else {
+        this.scheduleTerminalSettlementRetry(reservation);
+      }
+    });
+  }
+
+  private scheduleTerminalSettlementRetry(reservation: TerminalSettlementReservation): void {
+    if (
+      this.closing
+      ||
+      reservation.retryTimer
+      || this.terminalSettlementReservations.get(reservation.key) !== reservation
+    ) return;
+    if (reservation.retryAttempt >= MAX_TERMINAL_SETTLEMENT_RETRIES) {
+      reservation.retryExhausted = true;
+      console.warn(
+        `[agent] Subagent terminal settlement retry budget exhausted for ${reservation.execution.agentId}; startup recovery required`,
+      );
+      return;
+    }
+    const delayMs = Math.min(1_000 * 2 ** reservation.retryAttempt, 30_000);
+    reservation.retryAttempt += 1;
+    reservation.retryTimer = setTimeout(() => {
+      reservation.retryTimer = null;
+      this.startReservedTerminalSettlement(reservation);
+    }, delayMs);
+    reservation.retryTimer.unref?.();
+  }
+
+  private retryTerminalSettlements(): void {
+    if (this.closing) return;
+    for (const reservation of [...this.terminalSettlementReservations.values()]) {
+      const current = this.executions.read(reservation.execution.agentId);
+      if (
+        !current
+        || current.generation !== reservation.execution.generation
+        || current.currentTurnId !== reservation.execution.currentTurnId
+      ) {
+        if (reservation.retryTimer) clearTimeout(reservation.retryTimer);
+        this.terminalSettlementReservations.delete(reservation.key);
+        continue;
+      }
+      this.startReservedTerminalSettlement(reservation);
+    }
+  }
+
+  private async runTerminalPipeline(
+      execution: SubagentExecutionRecord,
+      turn: Turn,
+      reservation?: TerminalSettlementReservation,
+    ): Promise<TerminalSettlementOutcome> {
+      // Account and workspace cleanup are best-effort runtime work. Neither
+      // may suppress the terminal notification: the parent still needs the
+      // child's result even when an artifact or worktree operation fails.
+      try {
+        await this.transcripts.flushForTerminalSettlement(execution.agentId);
+      } catch (error) {
+        console.warn(`[agent] Subagent transcript flush deferred for ${execution.agentId}`, error);
+      }
+
+      // Keep this record immutable for the whole pipeline. A resume can advance
+      // the ledger while account I/O is in flight; every write below is guarded
+      // by this generation/Turn pair and must never follow the newer record.
+      let refreshed: SubagentExecutionRecord | null = execution;
+      if (turn.error?.code === 'subagent_budget_exhausted') {
+        refreshed = this.executions.recordStopIfCurrent({
+          agentId: execution.agentId,
+          generation: execution.generation,
+          turnId: execution.currentTurnId,
+          provenance: 'budget',
+          updatedAt: this.now(),
+        });
+      } else if (turn.error?.code === 'host_restart') {
+        refreshed = this.executions.recordStopIfCurrent({
+          agentId: execution.agentId,
+          generation: execution.generation,
+          turnId: execution.currentTurnId,
+          provenance: 'hostRestart',
+          updatedAt: this.now(),
+        });
+      }
+
+      if (refreshed === null) return 'settled';
+      const terminalRecord = refreshed;
+
+      if (this.hasOutstandingChildren(execution.agentId)) {
+        return 'deferredForDescendants';
+      }
+
+      if (execution.worktree && this.settleAgentWorktree && reservation && !reservation.worktreeSettled) {
+        try {
+          const current = this.executions.read(execution.agentId);
+          if (
+            !current
+            || current.generation !== execution.generation
+            || current.currentTurnId !== execution.currentTurnId
+          ) return 'settled';
+          if (current.worktree && current.worktree.removedAt !== null && current.worktreeCleanupStartedAt === null) {
+            await this.persistThreadCwd(execution.agentId, current.worktree);
+            reservation.worktreeSettled = true;
+          } else {
+            const worktree = current.worktree ?? execution.worktree;
+            const settled = await this.settleAgentWorktree(worktree, {
+              cleanupStarted: current.worktreeCleanupStartedAt !== null,
+              beforeCleanRemoval: async () => {
+                const started = this.executions.beginWorktreeCleanupIfCurrent({
+                  agentId: execution.agentId,
+                  generation: execution.generation,
+                  turnId: execution.currentTurnId,
+                  worktree,
+                  startedAt: this.now(),
+                });
+                if (!started) throw new Error(`Agent worktree cleanup admission raced for ${execution.agentId}`);
+              },
+            });
+            refreshed = settled.retained
+              ? current.worktreeCleanupStartedAt === null
+                ? this.executions.setWorktreeIfCurrent({
+                  agentId: execution.agentId,
+                  generation: execution.generation,
+                  turnId: execution.currentTurnId,
+                  worktree: settled.worktree,
+                  updatedAt: this.now(),
+                })
+                : this.executions.cancelWorktreeCleanupIfCurrent({
+                  agentId: execution.agentId,
+                  generation: execution.generation,
+                  turnId: execution.currentTurnId,
+                  worktree: settled.worktree,
+                  updatedAt: this.now(),
+                })
+              : this.executions.completeWorktreeCleanupIfCurrent({
+                agentId: execution.agentId,
+                generation: execution.generation,
+                turnId: execution.currentTurnId,
+                expectedWorktree: worktree,
+                worktree: settled.worktree,
+                updatedAt: this.now(),
+              });
+            if (refreshed === null) return 'settled';
+            await this.persistThreadCwd(execution.agentId, settled.worktree);
+            reservation.worktreeSettled = true;
+          }
+        } catch (error) {
+          // Cleanup state is durable independently from result delivery. Leave
+          // the last truthful metadata (including an in-progress cleanup
+          // marker) for resume/startup reconciliation, but never strand the
+          // parent behind an inspection-only workspace failure.
+          console.warn(`[agent] Subagent worktree cleanup deferred for ${execution.agentId}`, error);
+        }
+      }
+
+      if (reservation?.notifyParent === true) {
+        const recorded = this.executions.recordTerminal({
+          agentId: execution.agentId,
+          generation: execution.generation,
+          parentThreadId: execution.parentThreadId,
+          turnId: turn.id,
+          toolUseId: execution.toolUseId,
+          status: terminalRecord.stopProvenance === 'model'
+            ? 'killed'
+            : turn.status === 'completed'
+              ? 'completed'
+              : turn.status === 'failed'
+                ? 'failed'
+                : 'interrupted',
+          createdAt: this.now(),
+        });
+        if (!recorded) return 'settled';
+      }
+
+      if (reservation?.notifyParent === true) {
+        await this.deliverParentWork(execution.parentThreadId).catch((error) => {
+          console.warn(`[agent] Subagent parent delivery deferred for ${execution.agentId}`, error);
+        });
+      }
+      return 'settled';
+    }
+
+  private async withResumeLock<T>(agentId: ThreadId, work: () => Promise<T>): Promise<T> {
+    const previous = this.resumePipelines.get(agentId) ?? Promise.resolve();
+    const current = previous.catch(() => undefined).then(work);
+    this.resumePipelines.set(agentId, current);
+    this.trackForClose(current);
+    try {
+      return await current;
+    } finally {
+      if (this.resumePipelines.get(agentId) === current) this.resumePipelines.delete(agentId);
+    }
+  }
+
+  private async persistThreadCwd(threadId: ThreadId, worktree: AgentWorktreeMetadata): Promise<void> {
+      const record = this.core.requireThread(threadId);
+      const cwd = worktree.removedAt === null ? worktree.path : worktree.sourceCwd;
+      if (record.thread.ephemeral) {
+        const state = this.core.ephemeral.get(threadId);
+        if (state) state.record = { ...state.record, thread: { ...state.record.thread, cwd } };
+      } else {
+        this.core.metadata.setCwd(threadId, cwd, this.now());
+      }
+    }
+
+  private async deliverParentWork(parentThreadId: ThreadId): Promise<void> {
+      if (this.closing) return;
+      const previous = this.parentDeliveryPipelines.get(parentThreadId) ?? Promise.resolve();
+      const current = previous
+        .catch(() => undefined)
+        .then(async () => {
+          if (this.closing) return;
+          this.assertThreadAvailable(parentThreadId);
+          await this.deliverPendingNotifications(parentThreadId);
+          await this.deliverParentMessages(parentThreadId);
+        });
+      this.parentDeliveryPipelines.set(parentThreadId, current);
+      this.trackForClose(current);
+      try {
+        await current;
+      } finally {
+        if (this.parentDeliveryPipelines.get(parentThreadId) === current) {
+          this.parentDeliveryPipelines.delete(parentThreadId);
+        }
+      }
+    }
+
+  private rootThreadIdFor(threadId: ThreadId): ThreadId {
+    return rootThreadId(
+      this.core.requireThread(threadId).thread,
+      (id) => this.core.requireThread(id).thread,
+    );
+  }
+
+  private async deliverPendingNotifications(parentThreadId: ThreadId): Promise<void> {
+      if (this.closing) return;
+      this.assertThreadAvailable(parentThreadId);
+      if (this.turnLifecycle.hasActiveTurn(parentThreadId)) return;
+      const pending = this.executions.pendingForParent(parentThreadId);
+      for (const notification of pending) {
+        if (this.closing) return;
+        if (this.deletingThreadIds.has(notification.agentId)) continue;
+        if (this.shouldDeferNotification(parentThreadId, notification)) return;
+        try {
+          this.assertThreadAvailable(notification.agentId);
+        } catch {
+          continue;
+        }
+        if (!this.executions.claim(notification.agentId, notification.generation)) continue;
+        let continuationReservation: {
+          readonly snapshot: ReturnType<SubagentExecutionLedger['generationSnapshot']>;
+          readonly turnId: TurnId;
+        } | null = null;
+        try {
+          if (this.deletingThreadIds.has(notification.agentId)) {
+            this.executions.release(notification.agentId, notification.generation);
+            continue;
+          }
+          const execution = this.executions.require(notification.agentId);
+          const turn = this.core.readTurn(notification.agentId, notification.turnId);
+          if (!turn) throw new Error(`Agent notification Turn not found: ${notification.turnId}`);
+          let outputFile: string | null = null;
+          try {
+            outputFile = await this.transcripts.pathForReader(notification.agentId);
+          } catch (error) {
+            // The transcript is an inspection/account artifact. A missing path
+            // must degrade to the explicit null form while the terminal result
+            // still reaches the parent.
+            console.warn(`[agent] Subagent transcript path unavailable for ${notification.agentId}`, error);
+          }
+          if (this.closing) {
+            this.executions.release(notification.agentId, notification.generation);
+            return;
+          }
+          if (this.deletingThreadIds.has(notification.agentId)) {
+            this.executions.release(notification.agentId, notification.generation);
+            continue;
+          }
+          const clientUserMessageId = notificationClientId(notification);
+          const committed = this.turnLifecycle.readTurnByClientUserMessageIdForHost(
+            parentThreadId,
+            clientUserMessageId,
+          );
+          if (committed) {
+            // The process can stop after the notification Turn commits but
+            // before the notification row is marked delivered. Its stable
+            // client ID is the recovery authority; reserving another
+            // continuation here would point the Agent ledger at a Turn that
+            // idempotent admission never creates.
+            this.executions.markDelivered(notification.agentId, notification.generation, this.now());
+            continue;
+          }
+          const parentExecution = this.executions.read(parentThreadId);
+          const continuation = parentExecution ? this.executions.generationSnapshot(parentThreadId) : null;
+          const continuationTurnId = parentExecution ? uuidV7(this.now()) : undefined;
+          if (parentExecution && continuation && continuationTurnId !== undefined && !this.executions.continueGeneration({
+            agentId: parentThreadId,
+            expectedGeneration: continuation.generation,
+            expectedTurnId: continuation.currentTurnId,
+            turnId: continuationTurnId,
+            updatedAt: this.now(),
+          })) throw new Error(`Parent Agent continuation admission raced for ${parentThreadId}`);
+          if (continuation && continuationTurnId !== undefined) {
+            continuationReservation = { snapshot: continuation, turnId: continuationTurnId };
+          }
+          const accepted = await this.turnLifecycle.tryStartTurnIfIdle({
+            threadId: parentThreadId,
+            ...(continuationTurnId === undefined ? {} : { turnId: continuationTurnId }),
+            input: [{
+              type: 'text',
+              text: taskNotificationText({ execution, notification, turn, outputFile }),
+            }],
+            clientUserMessageId,
+            trigger: {
+              kind: 'subagent',
+              parentThreadId: execution.parentThreadId,
+              parentItemId: notification.toolUseId,
+            },
+          });
+          if (!accepted) {
+            this.rollbackContinuation(parentThreadId, continuationReservation);
+            this.executions.release(notification.agentId, notification.generation);
+            return;
+          }
+          continuationReservation = null;
+          this.executions.markDelivered(notification.agentId, notification.generation, this.now());
+        } catch (error) {
+          this.rollbackContinuation(parentThreadId, continuationReservation);
+          this.executions.release(notification.agentId, notification.generation);
+          console.warn(`[agent] Subagent notification delivery deferred for ${notification.agentId}`, error);
+          continue;
+        }
+      }
+    }
+
+  private rollbackContinuation(
+    parentThreadId: ThreadId,
+    reservation: {
+      readonly snapshot: ReturnType<SubagentExecutionLedger['generationSnapshot']>;
+      readonly turnId: TurnId;
+    } | null,
+  ): void {
+    if (!reservation) return;
+    this.executions.rollbackContinuation({
+      agentId: parentThreadId,
+      expectedGeneration: reservation.snapshot.generation,
+      expectedTurnId: reservation.turnId,
+      snapshot: reservation.snapshot,
+    });
+  }
+
+  private shouldDeferNotification(
+    parentThreadId: ThreadId,
+    notification: Pick<SubagentPendingNotification, 'agentId' | 'generation'>,
+  ): boolean {
+      if (this.hasOutstandingChildren(notification.agentId)) return true;
+      // A root consumes each completed child independently. An Agent parent,
+      // however, aggregates its direct children before the continuation that
+      // lets it synthesize a single result for its own parent.
+      if (!this.executions.read(parentThreadId)) return false;
+      return this.hasBlockingBackgroundChildren(
+        parentThreadId,
+        executionKey(notification.agentId, notification.generation),
+      );
+    }
+
+  private hasBlockingBackgroundChildren(parentThreadId: ThreadId, excludedExecutionKey?: string): boolean {
+      const ready = new Set(
+        this.executions.pendingForParent(parentThreadId).map((notification) => (
+          executionKey(notification.agentId, notification.generation)
+        )),
+      );
+      return this.executions.listByParent(parentThreadId).some((child) => {
+        const childExecutionKey = executionKey(child.agentId, child.generation);
+        return child.runMode === 'background'
+        && childExecutionKey !== excludedExecutionKey
+        // A durable pending notification is terminal output waiting to be
+        // consumed, not live work. Counting it together with its still-closing
+        // pipeline makes two completed siblings block each other forever.
+        && !ready.has(childExecutionKey)
+        && (
+          this.turnLifecycle.hasActiveTurn(child.agentId)
+          || this.terminalPipelines.has(childExecutionKey)
+          || this.terminalSettlementReservations.has(childExecutionKey)
+        );
+      });
+    }
+
+  private async deliverParentMessages(
+    parentThreadId: ThreadId,
+    foreground?: { readonly senderAgentId: ThreadId; readonly generation: number },
+  ): Promise<void> {
+      if (this.closing) return;
+      this.assertThreadAvailable(parentThreadId);
+      const directRootForeground = foreground
+        ? this.isDirectRootForeground(foreground.senderAgentId, parentThreadId)
+        : false;
+      const pending = !foreground
+        ? this.executions.pendingParentMessages(parentThreadId)
+          .filter((message) => message.deliveryMode === 'background')
+        : directRootForeground
+          ? this.executions.pendingForegroundParentMessages(
+            parentThreadId,
+            foreground.senderAgentId,
+            foreground.generation,
+          )
+          : this.executions.pendingParentMessages(parentThreadId).filter((message) => (
+            message.deliveryMode === 'background'
+            && message.senderAgentId === foreground.senderAgentId
+            && message.generation === foreground.generation
+          ));
+      for (const message of pending) {
+        if (this.closing) return;
+        if (this.isForegroundMessageSenderActive(message)) continue;
+        try {
+          this.assertThreadAvailable(message.senderAgentId);
+        } catch {
+          continue;
+        }
+        if (!this.executions.claimParentMessage(message.id)) continue;
+        try {
+          const content = [{ type: 'text' as const, text: message.content }];
+          const activeTurnId = this.turnLifecycle.activeTurnId(parentThreadId);
+          if (activeTurnId) {
+            await this.turnLifecycle.steerTurn({
+              threadId: parentThreadId,
+              expectedTurnId: activeTurnId,
+              input: content,
+              clientUserMessageId: message.id,
+            }, 'advisory');
+          } else if (directRootForeground) {
+            // A foreground envelope belongs to the invoking parent Turn. If
+            // that Turn was cancelled or already settled, discard the stale
+            // envelope rather than starting an unsolicited root Turn or
+            // leaving a queue item that can never be admitted.
+            this.executions.discardParentMessage(message.id);
+            console.warn(`[agent] Foreground Agent main-route message discarded after parent Turn settled: ${message.senderAgentId}`);
+            continue;
+          } else {
+            const accepted = await this.turnLifecycle.tryStartTurnIfIdle({
+              threadId: parentThreadId,
+              input: content,
+              clientUserMessageId: message.id,
+              trigger: {
+                kind: 'subagent',
+                parentThreadId: message.senderAgentId,
+                parentItemId: this.executions.require(message.senderAgentId).toolUseId,
+              },
+            });
+            if (!accepted) {
+              this.executions.releaseParentMessage(message.id);
+              return;
+            }
+          }
+          this.executions.markParentMessageDelivered(message.id, this.now());
+        } catch (error) {
+          if (message.deliveryMode === 'foreground') {
+            // A foreground envelope has no independent retry lifecycle. The
+            // invoking Turn is already finishing; retaining the claimed row
+            // would leak stale model-authored input forever.
+            this.executions.discardParentMessage(message.id);
+          } else {
+            this.executions.releaseParentMessage(message.id);
+          }
+          console.warn(`[agent] Agent main-route message delivery deferred for ${message.senderAgentId}`, error);
+          return;
+        }
+      }
+    }
+
+  private isForegroundMessageSenderActive(message: {
+    readonly senderAgentId: ThreadId;
+    readonly generation: number;
+  }): boolean {
+      const execution = this.executions.read(message.senderAgentId);
+      return execution?.runMode === 'foreground'
+        && execution.generation === message.generation
+        && this.turnLifecycle.hasActiveTurn(message.senderAgentId);
+    }
+
+  private isDirectRootForeground(senderAgentId: ThreadId, rootThreadId: ThreadId): boolean {
+      const execution = this.executions.read(senderAgentId);
+      return execution?.runMode === 'foreground' && execution.parentThreadId === rootThreadId;
+    }
+
+  private async sendAgentMessageToMain(senderThreadId: ThreadId, message: string): Promise<JsonValue> {
+      if (this.closing) return agentServiceClosingResult();
+      const execution = this.executions.read(senderThreadId);
+      if (!execution) {
+        return { success: false, message: 'Only an Agent can send to the main conversation.' };
+      }
+      if (execution.initialAdmissionState !== 'committed') {
+        return { success: false, message: 'Agent admission is incomplete; messaging is unavailable.' };
+      }
+      const rootThreadId = this.rootThreadIdFor(senderThreadId);
+      // Only a direct foreground child has an adjacent Agent result in the
+      // root Turn. A nested foreground child still addresses root, but its
+      // envelope follows the durable background-delivery path after it settles.
+      const directRootForeground = execution.runMode === 'foreground'
+        && execution.parentThreadId === rootThreadId;
+      const deliveryMode = directRootForeground ? 'foreground' : 'background';
+      const id = `agent-message:${execution.agentId}:${uuidV7(this.now())}`;
+      this.executions.enqueueParentMessage({
+        id,
+        senderAgentId: senderThreadId,
+        parentThreadId: rootThreadId,
+        generation: execution.generation,
+        content: agentMessageToMainText(
+          execution.agentType,
+          message,
+          directRootForeground,
+        ),
+        deliveryMode,
+        createdAt: this.now(),
+      });
+      if (execution.runMode === 'background') {
+        await this.trackForClose(this.deliverParentMessages(rootThreadId));
+      }
+      return { success: true, message: "Message queued for the main conversation's next turn." };
+    }
+
+  private reachableExecution(senderThreadId: ThreadId, targetInput: string): SubagentExecutionRecord | null {
+      if (targetInput === senderThreadId) return null;
+      const execution = this.executions.read(targetInput);
+      if (execution?.initialAdmissionState !== 'committed') return null;
+      const sender = this.core.requireThread(senderThreadId).thread;
+      if (
+        sender.parentThreadId !== null
+        && this.executions.read(senderThreadId)?.initialAdmissionState !== 'committed'
+      ) return null;
+      if (
+        execution.runMode === 'foreground'
+        && (execution.toolPolicy.kind === 'explore' || execution.toolPolicy.kind === 'plan')
+      ) return null;
+      const target = this.core.requireThread(execution.agentId).thread;
+      if (target.source !== 'collaboration') return null;
+      if (sender.sessionId !== target.sessionId) return null;
+      if (execution.parentThreadId === senderThreadId || this.isReachableDescendant(senderThreadId, target.id)) {
+        return execution;
+      }
+      // A child may steer/resume its siblings only through their shared parent.
+      if (sender.parentThreadId && sender.parentThreadId === execution.parentThreadId) return execution;
+      return null;
+    }
+
+  private hasCommittedCollaborationAdmission(threadId: ThreadId): boolean {
+      const thread = this.core.requireThread(threadId).thread;
+      return thread.parentThreadId === null
+        || this.executions.read(threadId)?.initialAdmissionState === 'committed';
     }
   async flushPendingSubagentActivities(
       threadId: ThreadId,
@@ -917,6 +2150,7 @@ export class SubagentCollaboration {
             threadId,
             turnId,
             activity.agentThreadId,
+            activity.agentTurnId,
             activity.agentPath,
             activity.kind,
             activity.error,
@@ -969,6 +2203,122 @@ export class SubagentCollaboration {
       state.pending = false;
       return true;
     }
+
+  private async prepareWorktreeForResume(execution: SubagentExecutionRecord): Promise<PreparedResumeWorktree> {
+    if (!execution.worktree || !this.planAgentWorktree || !this.prepareAgentWorktree) {
+      return { previous: execution.worktree, prepared: execution.worktree };
+    }
+    const intent = await this.planAgentWorktree({
+      agentId: execution.agentId,
+      cwd: execution.worktree.sourceCwd,
+      previous: execution.worktree,
+    });
+    const prepared = await this.prepareAgentWorktree({
+      agentId: execution.agentId,
+      intent,
+      worktree: execution.worktree,
+    });
+    const next = this.executions.setWorktreeIfCurrent({
+      agentId: execution.agentId,
+      generation: execution.generation,
+      turnId: execution.currentTurnId,
+      worktree: prepared.worktree,
+      updatedAt: this.now(),
+    });
+    if (!next) {
+      await this.discardUnrecordedResumeWorktree(execution.agentId, {
+        previous: execution.worktree,
+        prepared: prepared.worktree,
+      });
+      throw this.createThreadBusyError(`Agent ${execution.agentId} changed while preparing its worktree`);
+    }
+    await this.persistThreadCwd(execution.agentId, prepared.worktree);
+    return { previous: execution.worktree, prepared: next.worktree };
+  }
+
+  private isReachableDescendant(senderThreadId: ThreadId, childThreadId: ThreadId): boolean {
+    const visited = new Set<ThreadId>();
+    let current = this.core.requireThread(childThreadId).thread;
+    while (current.parentThreadId !== null && !visited.has(current.id)) {
+      visited.add(current.id);
+      if (current.parentThreadId === senderThreadId) return true;
+      current = this.core.requireThread(current.parentThreadId).thread;
+    }
+    return false;
+  }
+
+  private async rollbackPreparedResumeWorktree(
+    agentId: ThreadId,
+    worktree: PreparedResumeWorktree,
+    owner: Pick<SubagentExecutionRecord, 'generation' | 'currentTurnId'>,
+  ): Promise<void> {
+    if (!worktree.prepared || worktree.prepared === worktree.previous) return;
+    const newlyCreated = worktree.previous !== null
+      && worktree.previous.removedAt !== null
+      && worktree.prepared.removedAt === null;
+    if (!newlyCreated || !this.settleAgentWorktree || !worktree.previous) return;
+
+    const started = this.executions.beginWorktreeCleanupIfCurrent({
+      agentId,
+      generation: owner.generation,
+      turnId: owner.currentTurnId,
+      worktree: worktree.prepared,
+      startedAt: this.now(),
+    });
+    if (!started) return;
+
+    try {
+      const settled = await this.settleAgentWorktree(worktree.prepared, { cleanupStarted: true });
+      if (settled.retained) {
+        this.executions.cancelWorktreeCleanupIfCurrent({
+          agentId,
+          generation: owner.generation,
+          turnId: owner.currentTurnId,
+          worktree: worktree.prepared,
+          updatedAt: this.now(),
+        });
+        return;
+      }
+      const restored = this.executions.completeWorktreeCleanupIfCurrent({
+        agentId,
+        generation: owner.generation,
+        turnId: owner.currentTurnId,
+        expectedWorktree: worktree.prepared,
+        worktree: worktree.previous,
+        updatedAt: this.now(),
+      });
+      if (restored) await this.persistThreadCwd(agentId, worktree.previous);
+    } catch (error) {
+      console.warn(`[agent] Failed to remove prepared Agent worktree during resume rollback ${agentId}`, error);
+    }
+  }
+
+  private async discardUnrecordedResumeWorktree(
+    agentId: ThreadId,
+    worktree: PreparedResumeWorktree,
+  ): Promise<void> {
+    const newlyCreated = worktree.previous !== null
+      && worktree.previous.removedAt !== null
+      && worktree.prepared?.removedAt === null;
+    if (!newlyCreated || !worktree.prepared || !this.settleAgentWorktree) return;
+    try {
+      const settled = await this.settleAgentWorktree(worktree.prepared);
+      if (settled.retained) {
+        console.warn(`[agent] Unrecorded Agent worktree changed before cleanup ${agentId}`);
+      }
+    } catch (error) {
+      console.warn(`[agent] Failed to remove unrecorded Agent worktree ${agentId}`, error);
+    }
+  }
+
+  private trackForClose<T>(work: Promise<T>): Promise<T> {
+    this.inFlightForClose.add(work);
+    void work.then(
+      () => { this.inFlightForClose.delete(work); },
+      () => { this.inFlightForClose.delete(work); },
+    );
+    return work;
+  }
 }
 
 function rootThreadId(thread: Thread, read: (threadId: ThreadId) => Thread): ThreadId {
@@ -982,230 +2332,91 @@ function rootThreadId(thread: Thread, read: (threadId: ThreadId) => Thread): Thr
   return current.id;
 }
 
-async function collaborationInheritedContext(input: {
-  readonly turns: readonly Turn[];
-  readonly sourceThreadId: ThreadId;
-  readonly activeTurnId: TurnId;
-  readonly spawnItemId: string;
-  readonly forkTurns?: string;
-  readonly readContext: (
-    ref: ThreadContextPayloadReference,
-  ) => Promise<ThreadContextPayload | null>;
-}): Promise<InheritedContextPayload | null> {
-  const requestedTurns = parseForkTurns(input.forkTurns);
-  const epoch = turnsAfterLatestReset(input.turns);
-  const activeIndex = epoch.findIndex((turn) => turn.id === input.activeTurnId);
-  if (activeIndex < 0) throw new Error('Active parent Turn is outside the current context epoch');
-  const active = epoch[activeIndex]!;
-  const spawnIndex = active.items.findIndex((item) => item.id === input.spawnItemId);
-  if (spawnIndex < 0) throw new Error('Subagent spawn Item is outside the active parent Turn');
-  const spawnItem = active.items[spawnIndex]!;
-  if (spawnItem.type !== 'collabAgentToolCall' || spawnItem.tool !== 'spawn_agent') {
-    throw new Error('Subagent spawn boundary does not reference a spawn_agent Item');
-  }
-  if (requestedTurns === 'none') return null;
-  const prefix = [
-    ...epoch.slice(0, activeIndex),
-    { ...active, items: active.items.slice(0, spawnIndex) },
-  ].flatMap((turn) => {
-    const items = turn.items.filter((item) => !('status' in item) || item.status !== 'inProgress');
-    if (items.length === 0) return [];
-    return [{
-      ...turn,
-      items,
-      status: turn.status === 'inProgress' ? 'completed' as const : turn.status,
-      completedAt: turn.completedAt ?? turn.startedAt,
-      durationMs: turn.durationMs ?? 0,
-    }];
-  });
-  if (prefix.length === 0) return null;
-  let start = requestedTurns === 'all' ? 0 : Math.max(0, prefix.length - requestedTurns);
-  start = await expandForContextDependencies(prefix, start, input.readContext);
-  const selected = prefix.slice(start);
-  const lastTurn = selected.at(-1)!;
-  const lastItem = lastTurn.items.at(-1)!;
-  return {
-    schemaVersion: 1,
-    kind: 'inheritedContext',
-    sourceThreadId: input.sourceThreadId,
-    coveredThrough: cursorFor(lastTurn, lastItem),
-    requestedTurns,
-    turns: selected,
-  };
+function agentServiceClosingResult(): JsonValue {
+  return { success: false, message: 'Agent service is shutting down.' };
 }
 
-async function expandForContextDependencies(
-  turns: readonly Turn[],
-  initialStart: number,
-  readContext: (
-    ref: ThreadContextPayloadReference,
-  ) => Promise<ThreadContextPayload | null>,
-): Promise<number> {
-  let start = expandForCompactionCursors(turns, initialStart);
-  for (;;) {
-    const selected = turns.slice(start);
-    const [skills, roles] = await Promise.all([
-      reduceSkillContext(selected, readContext),
-      reduceRoleContext(selected, readContext),
-    ]);
-    const kind = skills.degradations.some((entry) => (
-      entry.code === 'journalDiscontinuity' && entry.source === 'skillCatalog'
-    ))
-      ? 'skillCatalog' as const
-      : roles.degradations.some((entry) => (
-          entry.code === 'journalDiscontinuity' && entry.source === 'roleCatalog'
-        ))
-        ? 'roleCatalog' as const
-        : null;
-    if (start === 0 || kind === null) return start;
-    const preceding = previousCatalogStateTurn(turns, start, kind);
-    if (preceding < 0) return start;
-    start = expandForCompactionCursors(turns, preceding);
-  }
-}
-
-function previousCatalogStateTurn(
-  turns: readonly Turn[],
-  start: number,
-  kind: Extract<ContextEvidenceKind, 'skillCatalog' | 'roleCatalog'>,
-): number {
-  for (let index = start - 1; index >= 0; index -= 1) {
-    if (turns[index]!.items.some((item) => (
-      item.type === 'contextCompaction'
-      || (item.type === 'contextEvidence' && (
-        item.kind === kind || item.kind === 'inheritedContext'
-      ))
-    ))) return index;
-  }
-  return -1;
-}
-
-function parseForkTurns(value = 'all'): 'none' | 'all' | number {
-  const normalized = value.trim() || 'all';
-  if (normalized === 'none' || normalized === 'all') return normalized;
-  if (!/^[1-9]\d*$/.test(normalized)) {
-    throw new Error('fork_turns must be none, all, or a positive integer string');
-  }
-  const count = Number(normalized);
-  if (!Number.isSafeInteger(count)) throw new Error('fork_turns is outside the safe integer range');
-  return count;
-}
-
-function turnsAfterLatestReset(turns: readonly Turn[]): Turn[] {
-  let resetTurnIndex = -1;
-  let resetItemIndex = -1;
-  for (let turnIndex = 0; turnIndex < turns.length; turnIndex += 1) {
-    for (let itemIndex = 0; itemIndex < turns[turnIndex]!.items.length; itemIndex += 1) {
-      if (turns[turnIndex]!.items[itemIndex]!.type !== 'contextReset') continue;
-      resetTurnIndex = turnIndex;
-      resetItemIndex = itemIndex;
-    }
-  }
-  if (resetTurnIndex < 0) return [...turns];
-  const first = turns[resetTurnIndex]!;
-  const remaining = first.items.slice(resetItemIndex + 1);
-  return [
-    ...(remaining.length > 0 ? [{ ...first, items: remaining }] : []),
-    ...turns.slice(resetTurnIndex + 1),
-  ];
-}
-
-function expandForCompactionCursors(turns: readonly Turn[], initialStart: number): number {
-  let start = initialStart;
-  const turnIndexById = new Map(turns.map((turn, index) => [turn.id, index]));
-  for (;;) {
-    let expanded = start;
-    for (const turn of turns.slice(start)) {
-      for (const item of turn.items) {
-        if (item.type !== 'contextCompaction') continue;
-        for (const cursor of [item.coveredFrom, item.coveredThrough, item.preservedFrom].filter(
-          (candidate): candidate is ContextCursor => candidate !== null,
-        )) {
-          const cursorTurnIndex = turnIndexById.get(cursor.turnId);
-          if (cursorTurnIndex === undefined) throw new Error('Inherited compaction cursor is unreachable');
-          expanded = Math.min(expanded, cursorTurnIndex);
-        }
-      }
-    }
-    if (expanded === start) return start;
-    start = expanded;
-  }
-}
-
-function uniqueContextReferences(
-  refs: readonly ThreadContextPayloadReference[],
-): ThreadContextPayloadReference[] {
-  return [...new Map(refs.map((ref) => [contextPayloadReferenceKey(ref), ref])).values()];
-}
-
-function uniqueResourceReferences(refs: readonly ThreadResourceReference[]): ThreadResourceReference[] {
-  return [...new Map(refs.map((ref) => [resourceReferenceKey(ref), ref])).values()];
-}
-
-function uniqueOutputReferences(refs: readonly ThreadItemOutputReference[]): ThreadItemOutputReference[] {
-  return [...new Map(refs.map((ref) => [outputReferenceKey(ref), ref])).values()];
-}
-
-function nonEmpty(value: string, field: string): string {
-  const normalized = value.trim();
-  if (!normalized) throw new Error(`${field} must be non-empty`);
-  return normalized;
-}
-
-function collaborationTool(
-  name: string,
+function agentTool(
+  name: 'agent' | 'agent_message',
   label: string,
-  execute: (itemId: string, params: unknown, signal?: AbortSignal) => unknown | Promise<unknown>,
+  execute: (itemId: string, params: unknown, signal?: AbortSignal) => Promise<AgentToolResult<JsonValue>>,
+  parameters: Readonly<Record<string, unknown>>,
+  prepareArguments: (value: unknown) => unknown,
 ): AgentTool {
-  const canonical = `collaboration.${name}`;
-  const contract = modelToolContract(canonical);
-  if (!contract?.inputSchema) throw new Error(`Missing Core model-tool contract: ${canonical}`);
+  const contract = modelToolContract(name);
+  if (!contract) throw new Error(`Missing Core model-tool contract: ${name}`);
   return {
-    name: `collaboration__${name}`,
+    name,
     label,
     description: contract.description,
-    parameters: contract.inputSchema as TSchema,
+    parameters: parameters as TSchema,
+    prepareArguments,
     executionMode: 'sequential',
-    execute: async (itemId, params, signal) => toolResult(await execute(itemId, params, signal)),
+    execute,
   };
 }
 
-function toolResult(value: unknown): AgentToolResult<JsonValue> {
-  const details = jsonValue(value);
+function rawTextToolResult(text: string, details: JsonValue): AgentToolResult<JsonValue> {
+  return { content: [{ type: 'text', text }], details };
+}
+
+function rawTextBlocksToolResult(texts: readonly string[], details: JsonValue): AgentToolResult<JsonValue> {
+  return { content: texts.map((text) => ({ type: 'text' as const, text })), details };
+}
+
+function rawJsonToolResult(value: JsonValue): AgentToolResult<JsonValue> {
+  return rawTextToolResult(JSON.stringify(value), value);
+}
+
+function agentMessageQueuedResult(agentId: ThreadId): JsonValue {
   return {
-    content: [{ type: 'text', text: JSON.stringify(details, null, 2) }],
-    details,
+    success: true,
+    message: `Message queued for delivery to ${agentId} at its next tool round.`,
+    pin: agentPin(agentId),
   };
 }
 
-function record(value: unknown, path: string): Record<string, unknown> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${path} must be an object`);
-  return value as Record<string, unknown>;
+function agentPin(agentId: ThreadId): JsonValue {
+  return { id: agentId, name: agentId, ref: agentId.slice(0, 8) };
 }
 
-function requiredString(value: unknown, path: string): string {
-  if (typeof value !== 'string' || !value.trim()) throw new Error(`${path} must be a non-empty string`);
-  return value.trim();
+function terminalStatus(turn: Turn | undefined): string {
+  if (!turn) return 'notFound';
+  return turn.status === 'failed' ? 'errored' : turn.status;
 }
 
-function optionalString(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
-}
-
-function optionalReasoningEffort(value: unknown): ReasoningEffort | undefined {
-  const normalized = optionalString(value);
-  if (!normalized) return undefined;
-  if (!['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(normalized)) {
-    throw new Error(`Unknown reasoning_effort: ${normalized}`);
+function assertSubagentLimits(limits: { readonly maxDepth: number; readonly maxConcurrent: number }): void {
+  if (!Number.isSafeInteger(limits.maxDepth) || limits.maxDepth < 1) {
+    throw new Error('Subagent maximum depth must be a positive integer');
   }
-  return normalized as ReasoningEffort;
+  if (!Number.isSafeInteger(limits.maxConcurrent) || limits.maxConcurrent < 1) {
+    throw new Error('Subagent maximum concurrency must be a positive integer');
+  }
 }
 
-function jsonValue(value: unknown): JsonValue {
+function normalizedRequestedTools(tools: readonly string[] | undefined): readonly string[] | null {
+  if (tools === undefined || tools.includes('*')) return null;
+  return Object.freeze([...new Set(tools)]);
+}
+
+function notificationClientId(notification: SubagentPendingNotification): string {
+  return `task-notification:${notification.agentId}:${notification.generation}`;
+}
+
+function executionKey(agentId: ThreadId, generation: number): string {
+  return `${agentId}:${generation}`;
+}
+
+async function settleBeforeDeadline(work: Promise<unknown>, deadline: number): Promise<boolean> {
+  const remainingMs = Math.max(0, deadline - Date.now());
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    return JSON.parse(JSON.stringify(value ?? null)) as JsonValue;
-  } catch {
-    return String(value);
+    return await Promise.race([
+      work.then(() => true, () => true),
+      new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(false), remainingMs); }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
   }
 }
 
@@ -1221,6 +2432,7 @@ function subagentActivityItem(
     provenance: { originThreadId: threadId, originTurnId: turnId, originItemId: id },
     kind: activity.kind,
     agentThreadId: activity.agentThreadId,
+    agentTurnId: activity.agentTurnId,
     agentPath: activity.agentPath,
     error: activity.error,
     // Materialized from the queue, so this is always a terminal activity: see

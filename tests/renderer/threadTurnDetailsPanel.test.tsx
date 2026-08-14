@@ -90,10 +90,11 @@ describe('ThreadTurnDetailsPanel', () => {
             },
             status: 'completed',
             outputRef: collaborationOutput,
-            tool: 'spawn_agent',
+            tool: 'agent',
             senderThreadId: base.thread.id,
             receiverThreadIds: ['thread-child'],
             prompt: 'Research the issue',
+            summary: null,
             model: null,
             reasoningEffort: null,
             agentsStates: {

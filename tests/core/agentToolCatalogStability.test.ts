@@ -98,6 +98,38 @@ describe('canonical provider tool catalog', () => {
     expect(first.find((tool) => tool.name === 'data_import')?.parameters)
       .toBe(second.find((tool) => tool.name === 'data_import')?.parameters);
   });
+
+  test('keeps worktree import previews but blocks live-outline commits before execution', async () => {
+    const runtime = new ToolRuntime(runtimeService([], {
+      kind: 'general-purpose',
+      runInBackground: false,
+      worktree: true,
+      allowNesting: true,
+      requestedTools: null,
+    }), {
+      outliner: OUTLINER,
+      capabilityTools: () => runtimeSchemaTools().filter((tool) => tool.name !== 'data_import'),
+      capabilityConfig: { blocks: [] },
+      assembleRegistry: true,
+    });
+    const tool = (await runtime.createTools({
+      ...RUNTIME_CONTEXT,
+      thread: { ...RUNTIME_CONTEXT.thread, parentThreadId: '00000000-0000-7000-8000-000000000009' },
+    })).find((candidate) => candidate.name === 'data_import');
+    if (!tool) throw new Error('Expected data_import tool.');
+
+    const result = await tool.execute('commit-import', {
+      operation: 'commit_content',
+      pack_content: '{}',
+    });
+
+    expect(result.details).toMatchObject({
+      error: {
+        code: 'operation_unavailable',
+        details: { reason: 'subagent_repository_mutation_restricted' },
+      },
+    });
+  });
 });
 
 const CONFIGURATION: EffectiveThreadConfiguration = {
@@ -107,6 +139,7 @@ const CONFIGURATION: EffectiveThreadConfiguration = {
   reasoningEffort: 'medium',
   tools: MODEL_TOOL_CATALOG.map((contract) => canonicalModelToolKey(contract.identity)),
   skills: [],
+  preloadedSkills: [],
   plugins: ['extension-probe'],
   mcpServers: [],
 };
@@ -126,12 +159,28 @@ const OUTLINER: OutlinerToolHost = {
   handle: async () => { throw new Error('Schema guard does not mutate the Outliner.'); },
 };
 
-function runtimeService(extensionTools: readonly ModelToolContract[] = []): ThreadService {
+function runtimeService(
+  extensionTools: readonly ModelToolContract[] = [],
+  toolPolicy?: {
+    kind: 'general-purpose';
+    runInBackground: boolean;
+    worktree: boolean;
+    allowNesting: boolean;
+    requestedTools: readonly string[] | null;
+  },
+): ThreadService {
   return {
     collaborationToolContributions: () => [],
     extensionToolContributions: async () => extensionTools.length > 0
       ? [{ extensionId: 'extension-probe', tools: extensionTools }]
       : [],
+    subagentExecution: () => toolPolicy ? {
+      agentType: 'test-agent',
+      initialAdmissionState: 'committed',
+      toolPolicy,
+    } : null,
+    notifyToolStarted: async () => {},
+    notifyToolCompleted: async () => {},
   } as unknown as ThreadService;
 }
 

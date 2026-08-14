@@ -639,8 +639,8 @@ detached subagent runs with an `agent_id` addressable via `AgentStatus / AgentSe
 AgentStop` (`agentSubagents.ts:86-117,206`); a terminal-state callback
 `notifyTerminalRun` (`:473,718`); a completion queue `pendingSubagentNotifications`
 drained **only when the session is idle** (`agentRuntime.ts:1356,1364-1382`); a
-background-shell `BackgroundTask` registry with `running/completed/failed/stopped` +
-`bash_stop` (`agentLocalTools.ts:274-289,335`); `AbortController` cancellation
+background-task registry with `running/completed/failed/stopped` plus unified
+`task_stop` dispatch for shell handles and Agent IDs; `AbortController` cancellation
 (`agentStreamAbort.ts`).
 
 **What the redesign adds:**
@@ -850,10 +850,11 @@ a fork runs AS the parent agent and stays unattributed. Further surfacing polish
 (framing a run as "consulted @B" vs a generic task; a user-facing "consult @X"
 entry) is **deferred** — the Task Panel already makes consultations observable.
 
-**Relationship to `/research`.** Generic research is the agent using its **own**
-capability (a read-only `context: fork`), not a consultation — no second
-principal. Consultation is for when a real **specialist's** judgment is the point.
-(See the `research-skill` plan / #232.)
+**Relationship to research.** The former `/research` Skill and its read-only
+`context: fork` were retired. Generic research now uses the current Agent's normal
+tools, or the canonical `agent` tool when fresh delegated context is useful.
+Consultation remains distinct: use it when a real **specialist's** judgment is the
+point. The `research-skill` plan / #232 is historical only.
 
 This consolidates and supersedes the closed `agent-private-consultation`
 exploration (#233).

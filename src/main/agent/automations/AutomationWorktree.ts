@@ -182,23 +182,23 @@ async function assertNoEmbeddedRepositories(worktreePath: string): Promise<void>
   }
 }
 
-async function directoryRealpath(path: string): Promise<string> {
+export async function directoryRealpath(path: string): Promise<string> {
   const resolved = await realpath(path);
   const value = await stat(resolved);
   if (!value.isDirectory()) throw new Error(`Automation project is not a directory: ${path}`);
   return resolved;
 }
 
-async function git(args: readonly string[]): Promise<void> {
+export async function git(args: readonly string[]): Promise<void> {
   await execFileAsync('git', [...args], { maxBuffer: 8 * 1024 * 1024 });
 }
 
-async function gitOutput(args: readonly string[]): Promise<string> {
+export async function gitOutput(args: readonly string[]): Promise<string> {
   const { stdout } = await execFileAsync('git', [...args], { maxBuffer: 32 * 1024 * 1024 });
   return stdout.trim();
 }
 
-async function gitRawOutput(args: readonly string[]): Promise<string> {
+export async function gitRawOutput(args: readonly string[]): Promise<string> {
   const { stdout } = await execFileAsync('git', [...args], { maxBuffer: 32 * 1024 * 1024 });
   return stdout;
 }
@@ -227,7 +227,11 @@ async function assertSnapshotExists(root: string, path: string): Promise<void> {
   if (!value.isFile()) throw new Error(`Automation worktree snapshot is not a file: ${path}`);
 }
 
-async function assertRegisteredDetachedWorktree(sourceCwd: string, worktreePath: string): Promise<void> {
+export async function assertRegisteredWorktree(
+  sourceCwd: string,
+  worktreePath: string,
+  expectedBranch?: string,
+): Promise<void> {
   const list = await gitRawOutput([
     '-C', sourceCwd, '-c', 'core.quotePath=false', 'worktree', 'list', '--porcelain', '-z',
   ]);
@@ -235,19 +239,31 @@ async function assertRegisteredDetachedWorktree(sourceCwd: string, worktreePath:
     candidate.split('\0').some((field) => field === `worktree ${worktreePath}`)
   ));
   if (!entry) throw new Error(`Automation worktree is not registered to its source repository: ${worktreePath}`);
-  const detached = entry.split('\0').some((field) => field === 'detached');
+  const fields = entry.split('\0');
+  const detached = fields.some((field) => field === 'detached');
+  if (expectedBranch !== undefined) {
+    const branch = fields.find((field) => field.startsWith('branch '))?.slice('branch '.length);
+    if (branch !== `refs/heads/${expectedBranch}`) {
+      throw new Error(`Managed worktree has unexpected branch: ${worktreePath}`);
+    }
+    return;
+  }
   if (!detached) {
     throw new Error(`Automation worktree must remain detached from user branches: ${worktreePath}`);
   }
 }
 
-function assertContained(root: string, target: string): void {
+async function assertRegisteredDetachedWorktree(sourceCwd: string, worktreePath: string): Promise<void> {
+  await assertRegisteredWorktree(sourceCwd, worktreePath);
+}
+
+export function assertContained(root: string, target: string): void {
   const rel = relative(resolve(root), resolve(target));
   if (!rel || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
     throw new Error(`Automation managed path escapes its root: ${target}`);
   }
 }
 
-function isMissing(error: unknown): boolean {
+export function isMissing(error: unknown): boolean {
   return typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT';
 }

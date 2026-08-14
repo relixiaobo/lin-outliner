@@ -1,0 +1,102 @@
+{
+  "foreground": [
+    {
+      "sourceId": "foreground-general-full",
+      "agentType": "general-purpose",
+      "tool": "agent",
+      "runInBackground": false,
+      "parentContinuedAfterChildResult": true,
+      "resultBlocks": [
+        "report",
+        "resumable-id-and-usage"
+      ]
+    },
+    {
+      "sourceId": "foreground-explore-full",
+      "agentType": "explore",
+      "tool": "agent",
+      "runInBackground": false,
+      "parentContinuedAfterChildResult": true,
+      "resultBlocks": [
+        "report"
+      ]
+    },
+    {
+      "sourceId": "foreground-plan-send-main",
+      "agentType": "plan",
+      "tool": "agent",
+      "runInBackground": false,
+      "parentContinuedAfterChildResult": true,
+      "resultBlocks": [
+        "report"
+      ]
+    }
+  ],
+  "background": {
+    "sourceId": "background-general",
+    "agentType": "general-purpose",
+    "tool": "agent",
+    "runInBackgroundArgument": "omitted",
+    "launchResultBeforeCompletion": true,
+    "launchExposesStableAgentId": true,
+    "completionNotificationObserved": true
+  },
+  "sendMain": [
+    {
+      "sourceId": "background-send-main-full",
+      "agentType": "general-purpose",
+      "runMode": "background",
+      "tool": "agent_message",
+      "route": "main",
+      "queued": true,
+      "delivery": "next-parent-turn"
+    },
+    {
+      "sourceId": "foreground-general-send-main",
+      "agentType": "general-purpose",
+      "runMode": "foreground",
+      "tool": "agent_message",
+      "route": "main",
+      "queued": true,
+      "delivery": "after-agent-result-before-parent-continuation"
+    },
+    {
+      "sourceId": "foreground-explore-send-main",
+      "agentType": "explore",
+      "runMode": "foreground",
+      "tool": "agent_message",
+      "route": "main",
+      "queued": true,
+      "delivery": "after-agent-result-before-parent-continuation"
+    },
+    {
+      "sourceId": "foreground-plan-send-main",
+      "agentType": "plan",
+      "runMode": "foreground",
+      "tool": "agent_message",
+      "route": "main",
+      "queued": true,
+      "delivery": "after-agent-result-before-parent-continuation"
+    }
+  ],
+  "continuation": [
+    {
+      "sourceId": "steer-running",
+      "operation": "steer-running",
+      "tool": "agent_message",
+      "stableAgentId": true,
+      "startsNewGeneration": false,
+      "runMode": "background",
+      "result": "queued-for-next-tool-round"
+    },
+    {
+      "sourceId": "resume-explore",
+      "operation": "resume-terminal",
+      "tool": "agent_message",
+      "stableAgentId": true,
+      "startsNewGeneration": true,
+      "runMode": "background",
+      "result": "resumed"
+    }
+  ]
+}

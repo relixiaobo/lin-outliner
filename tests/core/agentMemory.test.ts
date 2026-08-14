@@ -258,6 +258,58 @@ describe('Codex Memory contracts', () => {
     expect(authoritative.nodes.some((node) => node.id === MEMORY_NODE_ID)).toBe(true);
   });
 
+  test('filters a projection with metadata and one targeted Turn read', () => {
+    const store = memoryStore();
+    const projection = memoryProjection();
+    const timeline = new TimelineMemoryStore(readOnlyTimelineHost(projection));
+    const thread = rootThread([userTurn('read this', MEMORY_NODE_ID)]);
+    const includeTurnsRequests: Array<boolean | undefined> = [];
+    const turnReads: Array<{ threadId: ThreadId; turnId: TurnId }> = [];
+    const extension = new MemoryExtension(store, timeline);
+    extension.bindHost({
+      ...memoryThreadHost(thread),
+      readThread: (input) => {
+        includeTurnsRequests.push(input.includeTurns);
+        return { thread };
+      },
+      readTurnForHost: (threadId, turnId) => {
+        turnReads.push({ threadId, turnId });
+        return thread.turns?.find((turn) => turn.id === turnId) ?? null;
+      },
+    });
+
+    const filtered = extension.filterProjection(projection, {
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+      itemId: ITEM_ID,
+    });
+
+    expect(filtered.nodes.some((node) => node.id === MEMORY_NODE_ID)).toBe(true);
+    expect(includeTurnsRequests).toEqual([undefined]);
+    expect(turnReads).toEqual([{ threadId: THREAD_ID, turnId: TURN_ID }]);
+  });
+
+  test('keeps Memory projection root-only even when a child explicitly references a Memory Node', () => {
+    const store = memoryStore();
+    const projection = memoryProjection();
+    const timeline = new TimelineMemoryStore(readOnlyTimelineHost(projection));
+    const child = {
+      ...rootThread([userTurn('read this', MEMORY_NODE_ID)]),
+      parentThreadId: 'thread:parent',
+      threadSource: 'subagent' as const,
+    };
+    const extension = new MemoryExtension(store, timeline);
+    extension.bindHost(memoryThreadHost(child));
+
+    const filtered = extension.filterProjection(projection, {
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+      itemId: ITEM_ID,
+    });
+    expect(filtered.nodes.some((node) => node.id === MEMORY_NODE_ID)).toBe(false);
+    expect(filtered.nodes.some((node) => node.id === EPISODE_NODE_ID)).toBe(false);
+  });
+
   test('routes Memory lookup without injecting prose and counts only an inline citation of an exact read', () => {
     const { extension, store, targetThread, activeTurn } = memoryUsageHarness();
     const context = extension.contributeThreadContext(targetThread);
@@ -2317,6 +2369,7 @@ function memoryThreadHost(thread: Thread): MemoryThreadHost {
     activeRootUserTurns: () => [],
     interruptRootTurns: async () => undefined,
     readThread: () => ({ thread }),
+    readTurnForHost: (_threadId, turnId) => thread.turns?.find((turn) => turn.id === turnId) ?? null,
     isThreadNavigable: (threadId) => threadId === thread.id,
     historyRollbackMarker: () => null,
     runInternalMemoryTurn: async () => '',

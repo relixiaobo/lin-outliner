@@ -15,10 +15,9 @@ Each `ModelToolContract` declares:
 - concrete input and optional output schema
 - action kinds used for capability evaluation and audit
 
-Core owns control and collaboration schemas. Retained capabilities contribute
+Core owns control and Agent-task schemas. Retained capabilities contribute
 their established schemas. Configuration contributes the `skill` schema.
-Extensions must provide complete schemas and cannot use the reserved
-`collaboration` namespace.
+Extensions must provide complete schemas and cannot shadow a Core identity.
 
 Registry assembly fails when a required schema is missing, a canonical identity
 duplicates another, an extension uses an unsupported action kind, or provider
@@ -31,12 +30,16 @@ canonical contribution and emits one bounded diagnostic; valid siblings remain
 available. A valid dynamic or extension implementation whose schema disagrees with
 its canonical contract is omitted by the same boundary. Core/capability contract
 mismatches, duplicate contracts, and enabled valid extension contracts with no
-implementation remain structural failures rather than degraded runtime input.
+implementation remain structural failures for root Threads. For child Agents,
+an extension contract with no runtime handler is inspection-only runtime input:
+it is skipped and recorded as a bounded diagnostic so one unavailable extension
+cannot kill the child Turn.
 
 Domain-owned tool handlers are contributed by their owning modules; `runtime/`
 only distributes those contributions through the same assembly seam used by
-extensions. `SubagentCollaboration` owns the collaboration handlers, and future
-command families such as browser control land in their domain module and
+extensions. The Agent orchestration owner contributes `agent`, `agent_message`,
+and `task_stop`; the shell owner joins the unified `task_stop` dispatcher.
+Future command families such as browser control land in their domain module and
 contribute tools through this seam rather than adding domain logic to runtime.
 
 ## Canonical Catalog
@@ -72,11 +75,17 @@ specified in [`agent-memory.md`](agent-memory.md).
 
 - `file_read`, `file_glob`, and `file_grep`
 - `file_edit`, `file_write`, and `file_delete`
-- `bash` and `bash_stop`
+- `bash`
+- `task_stop`, shared with Agent orchestration
 
 Relative paths resolve from the Thread working directory. Full Access permits
 absolute host paths unless an explicit block removes the capability. File tools
 return bounded content and persist oversized output in app-owned scratch space.
+When an Agent inherits worktree isolation, file and shell mutations are bounded
+to the persisted worktree `path`, including in descendants whose current call
+did not request a new worktree. File writes require both lexical and canonical
+containment; an unreadable, cyclic, dangling-symlink, or otherwise unresolved
+canonical path fails closed instead of falling back to the lexical check.
 
 Ordinary text `file_read` bounds the observation rather than the source. It
 classifies encoding and binary content from an 8 KiB prefix, streams only until
@@ -124,9 +133,15 @@ suggestions omit them. Raw `file_glob` and `bash` remain complete filesystem
 views and do not hide these files.
 
 `bash` executes through the host shell, streams bounded output, records process
-identity, and may return a background handle. `bash_stop` addresses only a known
-live process handle. Native command exit and filesystem errors remain visible to
-the model.
+identity, and may return a background task handle. `task_stop` dispatches that
+handle through the shared background-task registry; it also accepts a running
+Agent ID. A shell task belongs to the Thread that launched it, while an Agent
+target must be reachable through the caller's collaboration lineage. The owner
+is resolved exactly, and an ambiguous Agent/shell identity is rejected rather
+than guessed. Shell stop success and failure both return the native structured
+local-tool envelope, so status, error code, recovery guidance, and metrics remain
+available to canonical history. Native command exit and filesystem errors remain
+visible to the model.
 
 Browser Pilot remains a managed Skill workflow over this same shell surface:
 
@@ -175,6 +190,10 @@ a later Turn.
 - `web_fetch`: HTTP retrieval with redirect, size, and content extraction limits
 - `generate_image`: configured image-provider generation
 - `data_import`: preview and commit a validated import pack
+
+Worktree-isolated Agents may use `data_import` preview operations, but its
+`commit_file` and `commit_content` operations are unavailable because the
+Outliner is live shared state rather than part of the Git worktree.
 
 `web_fetch` uses a credential-free Electron `Session.fetch` partition with
 automatic redirect following, then applies its byte, timeout, and extraction
@@ -263,83 +282,157 @@ from model code or introduces a permission profile. Scheduled execution and
 standing authorization are specified in
 [`agent-automations.md`](agent-automations.md).
 
-### Collaboration
+### Agent Tasks
 
-- `collaboration.spawn_agent`
-- `collaboration.send_message`
-- `collaboration.followup_task`
-- `collaboration.wait_agent`
-- `collaboration.list_agents`
-- `collaboration.interrupt_agent`
+- `agent`: start one fresh Agent execution
+- `agent_message`: steer or resume an Agent by ID, or send non-user traffic to
+  the reserved `main` route
+- `task_stop`: stop a background Agent or shell task by ID
 
-These tools operate on child Threads as specified in
+These are top-level tools. There is no model-managed roster, inbox, follow-up,
+wait, or polling tool. Child completion is pushed by the host as specified in
 [`agent-subagent-threads.md`](agent-subagent-threads.md).
 
-The runtime-wide `subagentTokenBudget` default creates one pool on the root-most Thread
-that starts a delegated tree. All descendants, including isolated Skill children, debit
-that pool; the top-level spawner's own Turns do not. The grant is fixed when the pool is
-created, so setting changes apply only to new trees. `collaboration.spawn_agent` accepts optional
-`max_total_tokens` as a positive safe-integer cap on that child's own contribution inside
-the pool, honoured only at or above a 1,000,000 floor — a smaller value is dropped rather
-than raised, because an honoured cap detaches the child into its own pool and raising a
-small one would step over the user's configured `subagentTokenBudget`. With no ancestor pool, that explicit cap creates a pool of the same size on the
-child; descendants join it. It creates no nested reservation or refund. Neither pool nor
-cap occupies or modifies a Goal slot.
+`agent` is exposed, and the Agent-type catalog is published, only when the
+current Thread can actually spawn. A root Thread requires `agent` in its
+effective tool set. A child additionally requires persisted nesting permission,
+a non-leaf policy, and a requested-tool ceiling that admits `agent`; a Role's
+configuration text cannot advertise an unreachable type. Role `tools: ['*']`
+normalizes to an inherited ceiling, while Role `tools: []` is an explicit
+zero-tool admission error that refuses before provider I/O. This does not change
+the separate isolated-Skill authoring contract: its parser normalizes omitted
+`allowed-tools` to an explicit empty array, which deliberately creates a
+tool-free child.
 
-Collaboration views returned by `list_agents` and `wait_agent` include the live
-pool-or-cap `tokensUsed` and nullable `tokenBudget` that controls the next refusal. Once
-the pool or local cap is exhausted, new non-user Turn admission is rejected while
-explicit user Turn admission and steering of an active Turn remain available. A pool
-holder cannot spawn after pool exhaustion. `followup_task` atomically removes its mailbox
-snapshot before awaiting admission, preserves concurrently queued messages, and prepends
-the snapshot again if admission is refused. Goal continuation records the complete typed
-refusal as a deferral; automation dispatch records it as a failed run. Completion and
-failure finalization debit member and pool before exposing an idle admission window.
-Budget rows are created only after earlier fallible spawn work under the Thread-tree
-mutex; rollback deletes only rows created by that spawn before the mutex releases.
+`agent_message` and Agent-form `task_stop` never target the caller itself or an
+isolated-Skill Thread. `task_stop` may address only a shell task owned by the
+caller or an Agent reachable through the caller's collaboration lineage. These
+address checks occur after exact schema admission and cannot be widened by a
+display name, task path, or persisted execution row alone.
 
-Every descendant Turn feeds the complete active-tree in-flight tally from the runtime
-normalizer's own usage accumulation; diagnostics are inspection-only. Non-user descendant
-Turns re-read shared persisted usage through a native-kernel port carrying authoritative
-`remaining` and the binding constraint's `used`/`total`; a tighter child cap uses the same
-port. The kernel never computes snapshot differentials, so pool/cap denomination changes
-are harmless. Explicit user Turns have no gate port or warning but still contribute usage
-and accrue. The first model call is unconditional. Before later calls, and before steering
-drain or a new kernel Turn boundary, 80% consumption admits one canonical steering notice
-with actual figures. Reaching zero remaining interrupts only outstanding model work; a
-terminal answer remains completed and racing steering remains undelivered. Warning
-delivery failures log and degrade without changing Turn status. Completion and failure
-accrual clear the corresponding live tally without an intervening await.
+Claude Code evidence and Tenon contracts are intentionally distinct. The
+committed Claude tool catalog is a sanitized projection. It supports only the
+projected names, descriptions,
+schemas, constraints, and raw key order. The canonical lowercase tools and
+capability substitutions below are the closed Tenon normalization of that
+projection; its `2.1.227` label is authoritative only when the fixture provenance
+manifest binds its source digest to the exact capture run. The
+`anthropic-pi-ai-serializer`
+fixture is Tenon's adapter output and is not a
+raw Claude request-byte fixture. Other provider families are compared at the
+canonical contract before adapter conversion. Validation, summary fallback,
+unified stop dispatch, and any behavior without a provenance-bound projection
+remain Tenon-local compatibility contracts.
 
-Collaboration spawn rejects a child deeper than `/root/a/b` and rejects a seventeenth
-direct collaboration child from one Thread. Isolated Skill children are exempt from both
-gates and the lifetime count. Both are fixed host constants with distinct typed errors.
-Model-facing budget text remains token-denominated. Renderer transcript, Details, copy,
-and Automation error surfaces classify stable error codes and translate budget failures
-into localized resource-limit copy without token counts. The shared `Turn.error.code` set
-is closed; unknown strings normalize to `runtime_failure`.
+`agent` requires `description` and `prompt`. It optionally accepts
+`subagent_type`, `model`, `run_in_background`, and `isolation`. Omission selects
+`subagent_type: "general-purpose"` and `run_in_background: true`; these are
+tool-owned argument normalizations before exact admission, not JSON Schema
+defaults. `isolation`, when present, is exactly `"worktree"`. The model enum is
+the active provider catalog, and its precedence is per-call, Role, then parent.
 
-`collaboration.wait_agent` is event-driven rather than a model polling primitive.
-It takes no timeout argument, remains locally blocked while children are running,
-and returns for terminal child activity or steering. Its structured result batches
-queued terminal outcomes, including final result text and errors, alongside the
-current child tree. A queued outcome reads the exact child Turn that produced its
-terminal event rather than whichever Turn is newest at delivery time. When the tree
-is already idle, it returns immediately with terminal outcomes so a later parent Turn
-can still recover completed work.
+The complete `agent` description is a stored constant rather than prose assembled
+at runtime:
 
-Every terminal outcome also carries a nullable `transcriptPath` — an absolute
-app-owned path, never a workspace one — and the tool description directs the
-model to read or grep that file with the existing file tools to verify or debug
-a reported result. Isolated-Skill result envelopes carry the same
-`transcriptPath` line. No reading tool is added for the account layer:
-`file_read` / `file_grep` already cover it (the capability layer resolves
-absolute paths, so no permission widens), and the path stays readable after the
-child stops or exhausts its budget. `wait_agent` itself renders nothing — it
-reports the path and returns. A null path means only that the artifact is not on
-disk; the result is unaffected. The artifact's contents, naming, write model,
-and lifecycle are specified in
-[`agent-subagent-threads.md`](agent-subagent-threads.md).
+```text
+Launch a new agent to handle complex, multi-step tasks. Each agent type has specific capabilities and tools available to it.
+
+Available agent types are listed in <system-reminder> messages in the conversation.
+
+When using the agent tool, specify a subagent_type parameter to select which agent type to use. If omitted, the general-purpose agent is used.
+
+## When to use
+
+Reach for this when the task matches an available agent type, when you have independent work to run in parallel, or when answering would mean reading across several files — delegate it and you keep the conclusion, not the file dumps. For a single-fact lookup where you already know the file, symbol, or value, search directly. Once you've delegated a search, don't also run it yourself — wait for the result.
+
+- The agent's final report is not shown to the user — relay what matters.
+- Use agent_message with the agent's ID to continue a previously spawned agent with its context intact; a new agent call starts fresh.
+- Each agent type's model, reasoning effort, and tools come from its Tenon Role.
+- `isolation: "worktree"` gives the agent its own git worktree (auto-cleaned if unchanged).
+- Subagents run in the background by default; you'll be notified when one completes. Pass `run_in_background: false` only when your very next action depends on the result and nothing else could usefully happen while it runs — otherwise background it so the user can interject. Never fabricate or predict a pending agent's results — the notification is never something you write yourself; if the user asks before it arrives, say it's still running.
+```
+
+Its parameter descriptions are:
+
+| Field | Description |
+| --- | --- |
+| `description` | `A short (3-5 word) description of the task` |
+| `prompt` | `The task for the agent to perform` |
+| `subagent_type` | `The type of specialized agent to use for this task` |
+| `model` | `Optional model override for this agent. Takes precedence over the Role's model. If omitted, uses the Role's model, or inherits from the parent.` |
+| `run_in_background` | `Agents run in the background by default; you will be notified when one completes. Set to false only when your very next action depends on this agent's result and nothing else could usefully happen while it runs — otherwise leave it in the background so the user can hand you other work.` |
+| `isolation` | `Isolation mode. "worktree" creates a temporary git worktree so the agent works on an isolated copy of the repo.` |
+
+`agent_message` requires `to` and `message`; `summary` is optional. Its complete
+description is:
+
+````text
+# agent_message
+
+Send a message to another agent.
+
+```json
+{"to": "<agent-id>", "summary": "assign follow-up", "message": "continue with the follow-up"}
+```
+
+| `to` | |
+|---|---|
+| `"<agent-id>"` | Agent by ID |
+| `"main"` | The main conversation (background subagents only) |
+
+Your plain text output is NOT visible to other agents — to communicate, you MUST call this tool. Messages from agents are delivered automatically; you don't check an inbox. Use the raw `agentId` from the spawn result to steer or resume an agent. When relaying, don't quote the original — it's already rendered to the user.
+````
+
+The description's background-only wording is preserved from the captured
+catalog projection; a version-bound foreground flow projection separately
+shows that the handler accepts `main` from foreground Agents. `to` is described as
+`Recipient: agent ID or "main"` and must match `^[^\n\r]{0,200}$`; after schema
+admission, whitespace-only input receives `to must not be empty`. Lookup retains
+the original string, including leading and trailing whitespace. `message` is
+`Plain text message content`. `summary` is described as
+`A 5-10 word summary shown as a one-line preview in the UI. Defaults to the first line of a plain-text message; longer summaries are truncated to 200 characters rather than rejected.`
+Blank or omitted summary derives from the first line of `message.trim()`; any
+submitted or derived value over 200 characters keeps 199 characters plus one
+ellipsis. The normalized summary drives the handler and UI preview, while the
+original tool-use Item remains byte-faithful.
+
+`task_stop` intentionally has leading and trailing newlines in its description:
+
+```text
+
+- Stops a running background task by its ID
+- Takes a task_id parameter identifying the task to stop
+- To stop a background agent, pass its agent ID as task_id
+- Returns a success or failure status
+- Use this tool when you need to terminate a long-running task
+
+```
+
+Its optional `task_id` is described as
+`The ID of the background task to stop. Background agents are also accepted by agent ID.`;
+deprecated `shell_id` is `Deprecated: use task_id instead`. The schema omits a
+`required` key. Runtime preparation requires at least one ID and gives `task_id`
+precedence when both are supplied. It trims the selected ID, treats a blank
+`task_id` as absent so a non-blank deprecated `shell_id` may supply the value,
+and rejects an all-blank input as `Missing required parameter: task_id`.
+
+All three schemas use JSON Schema draft 2020-12, `type: "object"`, and
+`additionalProperties: false`. The required arrays are exactly
+`["description", "prompt"]` and `["to", "message"]`; `task_stop` has none.
+Canonical tool order is deterministic dictionary order before every provider
+request. Provider families compare the canonical names, descriptions, and
+schemas before adapter conversion. The Anthropic adapter uses Tenon's frozen
+adapter key order; this is tested as a local conversion contract rather than
+Claude full-request byte parity. OpenAI-family wire conversion remains adapter-
+owned and retains the strict-field invariant.
+
+The request budget, foreground/background lifecycle, exact launch and terminal
+result envelopes, direct-parent notification, resume, stop provenance, depth,
+concurrency, and transcript account are owned by
+[`agent-subagent-threads.md`](agent-subagent-threads.md). They do not add fields
+to these three model schemas. In particular, a successful foreground Agent that
+produces no text returns `Agent finished without text output.` rather than an
+empty text result.
 
 ### Skills
 
@@ -347,18 +440,40 @@ and lifecycle are specified in
 instructions may call other tools only when those tools survive the current
 Thread catalog and explicit blocks.
 
+The effective presence of `skill` is the admission gate for the entire Skill
+surface. When absent, the host constructs no Skill runtime, emits no catalog or
+Skill stable-prompt module, does not preload Role Skills, and does not recognize
+direct slash or natural-language Skill invocation. A configured Skill name or
+Role preload cannot bypass that gate.
+
+An isolated Skill persists a foreground execution policy before its child Turn
+starts. Its `allowed-tools` list is normalized into the durable requested-tool
+ceiling, while Agent kind, worktree restriction, and nesting permission inherit
+from the parent. The child source is `agent.skill`; its result returns only
+through the owning `skill` call, and neither `agent_message` nor `task_stop` can
+use its Thread ID as a collaboration address.
+
+For `explore` and `plan`, keeping a provider-visible tool is not permission to
+execute it. `bash` may run only when every classified action is a proven
+repository inspection. An extension or MCP tool may run only when every action
+kind is classified read-only; an empty, unknown, mixed-write, or newly introduced
+classification fails closed at execution and returns structured unavailability.
+
 ## Canonical Call History
 
 Every raw provider call crosses one ordered admission boundary: resolve canonical
-identity, run that tool's `prepareArguments` once when present, validate the resulting
-JSON exactly against the exposed schema, persist the canonical history envelope,
-evaluate argument-dependent capability blocks, bind host execution context, then
-execute. The shared boundary never converts scalar types: `null`, strings, numbers,
+identity, freeze the provider-authored arguments for history, run that tool's
+`prepareArguments` once when present, validate the resulting execution JSON exactly
+against the exposed schema, persist the canonical history envelope, evaluate
+argument-dependent capability blocks, bind host execution context, then execute. The
+shared boundary never converts scalar types: `null`, strings, numbers,
 integers, and booleans remain distinct; arrays retain order and cardinality; and unknown
 fields remain present for schema rejection. Valid empty strings, zeroes, and false values
 are not treated as missing. A tool-owned preparation may implement a specific public
-normalization, but no generic layer performs coercion after it. The same prepared value
-is used for canonical history, capability evaluation, and execution.
+normalization, but no generic layer performs coercion after it. The prepared value is
+used for capability evaluation, execution, and Item presentation; the frozen original
+remains the model-call history authority. This distinction lets a tool derive a UI-only
+default without rewriting what the provider actually submitted.
 
 Host context such as Thread `cwd`, workspace and scratch roots, environment,
 credentials, and private handles is never added to the model arguments. `bash` history

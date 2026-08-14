@@ -7,18 +7,21 @@ import {
   buildAgentLocalToolProcessEnv,
   createAgentLocalWorkspaceContext,
   createLocalTools,
+  hasBackgroundShellTask,
   POPPLER_RECOVERY_INSTRUCTIONS,
   RIPGREP_RECOVERY_INSTRUCTIONS,
   restorePostCompactReadFiles,
   scratchRootForWorkdir,
+  stopBackgroundShellTask,
+  stopBackgroundShellTaskResult,
   visibleBash,
+  visibleBackgroundShellStop,
   visibleFileGlob,
   visibleFileGrep,
-  visibleBashStop,
   type BashData,
+  type BackgroundShellStopData,
   type FileGlobData,
   type FileGrepData,
-  type BashStopData,
 } from '../../src/main/agent/capabilities/agentLocalTools';
 import { AgentSkillRuntime } from '../../src/main/agent/capabilities/agentSkills';
 import type { ToolEnvelope } from '../../src/main/agent/capabilities/agentToolEnvelope';
@@ -472,6 +475,31 @@ describe('agent local tools', () => {
     });
   });
 
+  test('isolated file writes fail closed when canonical containment cannot be resolved', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const loopPath = path.join(workspaceRoot, 'loop');
+      await symlink('loop', loopPath);
+      const workspace = createAgentLocalWorkspaceContext(
+        workspaceRoot,
+        undefined,
+        undefined,
+        undefined,
+        { root: workspaceRoot },
+      );
+      const fileWrite = createLocalTools({ workspace }).find((tool) => tool.name === 'file_write')!;
+
+      const result = await (fileWrite.execute as any)('write-through-loop', {
+        file_path: path.join(loopPath, 'escaped.txt'),
+        content: 'must not be written',
+      });
+      const details = result.details as ToolEnvelope<unknown>;
+
+      expect(details.ok).toBe(false);
+      expect(details.error?.code).toBe('write_outside_isolated_workspace');
+      expect(details.error?.message).toContain('Cannot verify');
+    });
+  });
+
   test('absolute paths use Full Access while relative paths keep the workdir base', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const outsideRoot = await mkdtemp(path.join(tmpdir(), 'lin-local-tools-outside-'));
@@ -790,7 +818,6 @@ describe('agent local tools', () => {
     const fileEdit = tools.find((tool) => tool.name === 'file_edit')!;
     const fileDelete = tools.find((tool) => tool.name === 'file_delete')!;
     const bash = tools.find((tool) => tool.name === 'bash')!;
-    const bashStop = tools.find((tool) => tool.name === 'bash_stop')!;
 
     expect(fileRead.description).toContain('relative paths resolve from the Thread working directory');
     expect(fileRead.description).toContain('For PDF files only');
@@ -805,8 +832,8 @@ describe('agent local tools', () => {
     expect(JSON.stringify(bash.parameters)).toContain('Do not use vague words');
     expect(JSON.stringify(bash.parameters)).not.toContain('dangerouslyDisableSandbox');
     expect(JSON.stringify(bash.parameters).toLowerCase()).not.toContain('sandbox');
-    expect(JSON.stringify(bashStop.parameters)).toContain('task_id returned by bash');
-    expect(JSON.stringify(bashStop.parameters)).not.toContain('shell_id');
+    expect(bash.description).toContain('use task_stop if the task needs to be stopped');
+    expect(tools.some((tool) => tool.name === 'bash_stop' || tool.name === 'task_stop')).toBe(false);
   });
 
   test('file_edit applies exact replacements only after file_read', async () => {
@@ -2659,7 +2686,7 @@ describe('agent local tools', () => {
     });
   });
 
-  test('bash background tasks can be stopped with bash_stop', async () => {
+  test('background shell task owner stops tasks launched by bash', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const started = await executeTool<{ backgroundTaskId: string; persistedOutputPath: string; taskStatus: string }>(workspaceRoot, 'bash', {
         command: 'sleep 5',
@@ -2669,17 +2696,73 @@ describe('agent local tools', () => {
       expect(started.data!.backgroundTaskId).toStartWith('task_');
       expect(started.data!.taskStatus).toBe('running');
 
-      const stopped = await executeTool<{ task_id: string; task_type: string; status: string; outputPath: string }>(workspaceRoot, 'bash_stop', {
-        task_id: started.data!.backgroundTaskId,
-      });
-      expect(stopped.ok).toBe(true);
-      expect(stopped.data).toMatchObject({ task_id: started.data!.backgroundTaskId, task_type: 'bash', status: 'stopped' });
-      expect(stopped.data!.outputPath).toBe(started.data!.persistedOutputPath);
-      expect(await readFile(stopped.data!.outputPath, 'utf8')).toContain('status: stopped');
+      const stopped = await stopBackgroundShellTask(started.data!.backgroundTaskId);
+      expect(stopped).toMatchObject({ task_id: started.data!.backgroundTaskId, task_type: 'bash', status: 'stopped' });
+      expect(stopped!.outputPath).toBe(started.data!.persistedOutputPath);
+      expect(await readFile(stopped!.outputPath, 'utf8')).toContain('status: stopped');
     });
   });
 
-  posixBashProcessTest('bash_stop kills descendant processes', async () => {
+  test('background shell task ownership is scoped to the launching Thread', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const ownerThreadId = 'thread-owner';
+      const otherThreadId = 'thread-other';
+      const bash = createLocalTools({ localRoot: workspaceRoot, threadId: ownerThreadId })
+        .find((tool) => tool.name === 'bash')!;
+      const startedResult = await (bash.execute as any)('start-owned-task', {
+        command: 'sleep 30',
+        run_in_background: true,
+      });
+      const started = startedResult.details as ToolEnvelope<{ backgroundTaskId: string }>;
+      const taskId = started.data!.backgroundTaskId;
+
+      try {
+        expect(hasBackgroundShellTask(taskId, ownerThreadId)).toBe(true);
+        expect(hasBackgroundShellTask(taskId, otherThreadId)).toBe(false);
+        expect(await stopBackgroundShellTask(taskId, otherThreadId)).toBeNull();
+        expect(hasBackgroundShellTask(taskId, ownerThreadId)).toBe(true);
+      } finally {
+        await stopBackgroundShellTask(taskId, ownerThreadId).catch(() => null);
+      }
+    });
+  });
+
+  test('task_stop shell failures preserve the structured local-tool envelope', async () => {
+    await withWorkspace(async (workspaceRoot) => {
+      const ownerThreadId = 'thread-envelope-owner';
+      const bash = createLocalTools({ localRoot: workspaceRoot, threadId: ownerThreadId })
+        .find((tool) => tool.name === 'bash')!;
+      const startedResult = await (bash.execute as any)('start-terminal-task', {
+        command: 'sleep 30',
+        run_in_background: true,
+      });
+      const started = startedResult.details as ToolEnvelope<{ backgroundTaskId: string }>;
+      const taskId = started.data!.backgroundTaskId;
+      await stopBackgroundShellTask(taskId, ownerThreadId);
+
+      const result = await stopBackgroundShellTaskResult(taskId, ownerThreadId);
+      expect(result).not.toBeNull();
+      const details = result!.details as ToolEnvelope<BackgroundShellStopData>;
+      expect(details).toMatchObject({
+        ok: false,
+        tool: 'task_stop',
+        status: 'error',
+        error: {
+          code: 'task_not_running',
+          message: `Task ${taskId} is not running (status: stopped)`,
+          recoverable: true,
+        },
+        instructions: 'No stop is needed for completed, failed, or already stopped tasks.',
+        metrics: { durationMs: expect.any(Number) },
+      });
+      expect(JSON.parse(result!.content[0]!.text)).toMatchObject({
+        ok: false,
+        error: { code: 'task_not_running' },
+      });
+    });
+  });
+
+  posixBashProcessTest('background shell task owner kills descendant processes', async () => {
     await withWorkspace(async (workspaceRoot) => {
       const pidFile = path.join(workspaceRoot, 'child.pid');
       let childPid: number | undefined;
@@ -2698,10 +2781,8 @@ describe('agent local tools', () => {
         expect(pidReady).toBe(true);
         expect(isProcessAlive(childPid!)).toBe(true);
 
-        const stopped = await executeTool(workspaceRoot, 'bash_stop', {
-          task_id: started.data!.backgroundTaskId,
-        });
-        expect(stopped.ok).toBe(true);
+        const stopped = await stopBackgroundShellTask(started.data!.backgroundTaskId);
+        expect(stopped).not.toBeNull();
         expect(await waitForCondition(() => !isProcessAlive(childPid!), 2000)).toBe(true);
       } finally {
         killProcessIfAlive(childPid);
@@ -2734,10 +2815,8 @@ describe('agent local tools', () => {
         expect(runningOutput).toContain('status: running');
         expect(runningOutput).not.toContain('status: completed');
 
-        const stopped = await executeTool(workspaceRoot, 'bash_stop', {
-          task_id: started.data!.backgroundTaskId,
-        });
-        expect(stopped.ok).toBe(true);
+        const stopped = await stopBackgroundShellTask(started.data!.backgroundTaskId);
+        expect(stopped).not.toBeNull();
         expect(await waitForCondition(() => !isProcessAlive(childPid!), 2000)).toBe(true);
       } finally {
         killProcessIfAlive(childPid);
@@ -2805,17 +2884,10 @@ describe('agent local tools', () => {
         expect(output).toContain('status: completed');
       }
 
-      const pruned = await executeTool(workspaceRoot, 'bash_stop', {
-        task_id: taskIds[0],
+      expect(await stopBackgroundShellTask(taskIds[0]!)).toBeNull();
+      await expect(stopBackgroundShellTask(taskIds.at(-1)!)).rejects.toMatchObject({
+        code: 'task_not_running',
       });
-      expect(pruned.ok).toBe(false);
-      expect(pruned.error?.code).toBe('task_not_found');
-
-      const recentCompleted = await executeTool(workspaceRoot, 'bash_stop', {
-        task_id: taskIds.at(-1),
-      });
-      expect(recentCompleted.ok).toBe(false);
-      expect(recentCompleted.error?.code).toBe('task_not_running');
     });
   });
 });
@@ -2886,8 +2958,8 @@ describe('local tool model-visible projections', () => {
     expect(countVisible).not.toHaveProperty('mode');
   });
 
-  test('bash_stop keeps only outputPath and drops the echoed message, id, and status', () => {
-    const data: BashStopData = {
+  test('background shell stop projection keeps only outputPath', () => {
+    const data: BackgroundShellStopData = {
       message: 'Successfully stopped task: task_1 (sleep 100)',
       task_id: 'task_1',
       task_type: 'bash',
@@ -2895,7 +2967,7 @@ describe('local tool model-visible projections', () => {
       status: 'stopped',
       outputPath: '/tmp/task_1.log',
     };
-    const visible = visibleBashStop(data);
+    const visible = visibleBackgroundShellStop(data);
     expect(visible).toEqual({ outputPath: '/tmp/task_1.log' });
     expect(visible).not.toHaveProperty('task_id');
     expect(visible).not.toHaveProperty('status');

@@ -85,7 +85,11 @@ afterEach(async () => {
 
 describe('provider config startup reconcile (Part A)', () => {
   test('normalizes nullable runtime integer settings within the safe range', async () => {
-    expect((await getAgentRuntimeSettings()).subagentTokenBudget).toBe(1_500_000);
+    expect(await getAgentRuntimeSettings()).toMatchObject({
+      subagentTokenBudget: 1_500_000,
+      subagentMaxDepth: 3,
+      subagentMaxConcurrent: 20,
+    });
 
     await updateAgentRuntimeSettings({ subagentTokenBudget: 250_000 });
     expect((await getAgentRuntimeSettings()).subagentTokenBudget).toBe(250_000);
@@ -93,15 +97,32 @@ describe('provider config startup reconcile (Part A)', () => {
     await updateAgentRuntimeSettings({ subagentTokenBudget: null });
     expect((await getAgentRuntimeSettings()).subagentTokenBudget).toBeNull();
 
+    await updateAgentRuntimeSettings({ subagentMaxDepth: 4, subagentMaxConcurrent: 32 });
+    expect(await getAgentRuntimeSettings()).toMatchObject({
+      subagentMaxDepth: 4,
+      subagentMaxConcurrent: 32,
+    });
+
     await writeProviderFileRaw({
       agent: { subagentTokenBudget: 12.9 },
       providers: [],
     });
     expect((await getAgentRuntimeSettings()).subagentTokenBudget).toBe(12);
 
-    for (const subagentTokenBudget of [0, Number.MAX_SAFE_INTEGER + 1, 'invalid']) {
-      await writeProviderFileRaw({ agent: { subagentTokenBudget }, providers: [] });
-      expect((await getAgentRuntimeSettings()).subagentTokenBudget).toBe(1_500_000);
+    for (const invalid of [0, Number.MAX_SAFE_INTEGER + 1, 'invalid']) {
+      await writeProviderFileRaw({
+        agent: {
+          subagentTokenBudget: invalid,
+          subagentMaxDepth: invalid,
+          subagentMaxConcurrent: invalid,
+        },
+        providers: [],
+      });
+      expect(await getAgentRuntimeSettings()).toMatchObject({
+        subagentTokenBudget: 1_500_000,
+        subagentMaxDepth: 3,
+        subagentMaxConcurrent: 20,
+      });
     }
 
     await writeProviderFileRaw({

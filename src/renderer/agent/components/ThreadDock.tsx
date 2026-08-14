@@ -455,6 +455,7 @@ export function ThreadDock({
               threadsById={threadsById}
               latestTurnByThread={snapshot.latestTurnByThread}
               turns={turns}
+              userView={userView}
             />
           </>
         ) : null}

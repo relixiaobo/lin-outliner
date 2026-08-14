@@ -43,25 +43,30 @@ something. The row that was opened does not move: the container grows below it,
 so there is no reading position to lose and none to restore. Scrolling is
 contained, so the inner region never chains into the transcript's.
 
-A GRANDCHILD replaces the container's contents rather than nesting inside them,
-and the header keeps a crumb naming the container it came from — a swap replaces
+A DESCENDANT replaces the container's contents rather than nesting inside them,
+and the header keeps a crumb naming its immediate parent — a swap replaces
 everything at once, so without one it reads as a jump with nothing left to
-orient against. Nesting would put a scroll region inside a
-scroll region, which fights at the boundary, and would draw depth as indentation
-the reader has to measure. Delegation is capped at depth two, so that header is
-never more than one step. The container carries the child's name, the delegated
-form's glyph, Stop while its Turn is active and its lineage root is a user
-Thread, and a standing note where a composer would be, since the absence of one
-is a contract rather than an omission.
+orient against. Nesting would put a scroll region inside a scroll region, which
+fights at the boundary, and would draw depth as indentation the reader has to
+measure. Delegation is capped at depth three beneath the user Thread. The one
+detail container therefore holds d1, d2, or d3 in turn; at d2 and d3 its single
+crumb steps back to the immediately preceding depth, so repeated Back actions
+unwind d3 → d2 → d1 without exposing or nesting another container. The
+container carries the current child's name, the delegated form's glyph, and Stop
+while its Turn is active and its lineage root is a user Thread. A collaboration
+Agent also carries a composer that starts an explicit user-authored continuation
+on that Agent. An isolated Skill remains read-only and carries a standing note
+where the composer would be.
 
 Inside the container the transcript renders EXACTLY as the main conversation
 does — same message stream, same bubbles, same rows — because it is the same
-thing: a request and the work it produced. What differs is only what cannot act
-there. A read-only embedded view has no composer, and it drops Edit and Continue
-in new chat, since neither can run against a child Thread; they are hidden
-rather than disabled, because a control that never works is not a control, and
-the actions that remain hold the row's height. Copy and Turn Details stay,
-because both work.
+thing: a request and the work it produced. What differs is which actions are
+valid there. Collaboration Agents accept new renderer-authored Turns through
+their Agent-resume admission path, while isolated Skills have no composer. Every
+embedded child drops Edit and Continue in new chat because neither rewrites or
+forks child history; they are hidden rather than disabled, because a control
+that never works is not a control, and the actions that remain hold the row's
+height. Copy and Turn Details stay, because both work.
 
 Parent Thread Details lists the descendant subtree newest-activity first with a
 readable name, status, and last activity; the read names the subtree while the
@@ -122,7 +127,7 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
   an open disclosure keeps the chevron visible. An empty live Item retains the
   `Thinking` placeholder and marks only that placeholder with `WorkingText`;
   once readable reasoning arrives, the streamed content remains static
-- consecutive command, file, MCP, dynamic-tool, collaboration, and search Items
+- consecutive command, file, MCP, dynamic-tool, Agent-task, and search Items
   form one counted activity disclosure without creating another data model
 - each tool row derives a readable summary from its canonical fields and exposes
   status plus direct argument/result data. Its readable act may use type-specific
@@ -160,7 +165,7 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
   the persisted output payload use; failure prose is never presented under a
   neutral result heading. The heading names the CONTENT — `Error` only where the
   content is an error payload — while the status colour carries the failure, so
-  a failed collaboration call reads `Result` in danger red over its state
+  a failed Agent-task call reads `Result` in danger red over its state
   snapshot. A call that produced nothing has no such section at all, failed or
   not: an exit code cannot outlive the output it qualifies, because both are
   written from the same tool envelope in one step, and a call cut off by an
@@ -264,48 +269,32 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
   working directory; glob checks apply only outside declared path fields. Glob
   expressions and URL text are not treated as concrete local paths, and
   main-process preview checks remain authoritative
-- collaboration Items and Subagent activity link directly to their canonical
-  child Thread. Every delegated form is projected the same way, including an
-  isolated Skill child, whose row is the parent's only live signal that a
-  delegated agent is working while its `skill` call is still in flight. A row
-  records which form it describes: a wait counts only collaboration children,
-  and a collaboration tool row is accountable only for those, so a Skill child
-  is never counted as work the parent is waiting for. Within one parent Turn,
-  all `subAgentActivity` Items for the same child collapse into one presentation
-  row. That row stands in for the tool call that delegated the work — the
-  `skill` call or the collaboration spawn call, named by the spawn-time Item's
-  `spawnItemId` — and takes its canonical slot, so one delegation is one row at
-  the position where it was decided and never above the reasoning that produced
-  it. The delegating row is suppressed in the projection, not at the leaf, so
-  nothing upstream keeps counting or grouping a row the reader cannot see; the
-  raw tool exchange stays in Turn Diagnostics. Only the spawn-time Item claims a
-  slot: a terminal activity flushed into a later parent Turn names no call there
-  and keeps the first Item's own position. A
-  terminal activity Item is authoritative; otherwise the row combines the
-  Thread catalog with the latest canonical child `turn/started` or
-  `turn/completed` DTO retained by `threadStore`, even when that child's paged
-  history is not loaded. This lets a running row show elapsed time and flip to
-  completed, interrupted, or failed as soon as the child Turn notification
-  arrives, without waiting for the parent activity queue to flush. A catalog
-  reload drops the latest-Turn cache entry for a ROOT it no longer returns, and
-  subtree deletion drops the whole subtree's entries; a child's absence from a
-  root-only list is not evidence about the child
-- Subagent rows use task-path identity first, then nickname, Role, and finally a
-  shortened Thread id — except where the task path is not a name. An isolated
-  Skill's segment is `skill_<slug>_<12 hex>`, an address whose suffix
-  distinguishes two runs of one Skill and whose slug has already folded case and
-  spaces away; such a segment yields to the recorded Skill name, and falls back
-  to the slug alone when no Thread record survives to carry it. The Skill name is
-  therefore what every user surface shows — the row, its title and accessible
-  label, the child's own header, and Thread Details — while the address stays
-  internal to host routing, built and parsed from one shared definition so the
-  two processes cannot drift. The rule is selected by the resolved delegation
-  form, not by the address shape: a collaboration `task_name` is model-chosen and
-  may legitimately carry that shape, and it keeps its full name because that is
-  the identity `list_agents` and `send_message` address it by. The child Thread's
-  `source` decides the form; only when no record survives does the address stand
-  in as evidence, which is also what keeps a deleted Skill child out of the
-  collaboration set the wait count is derived from.
+- Agent-task Items and Subagent activity link directly to their canonical child
+  Thread. Every delegated form is projected through the same row, including an
+  isolated Skill child whose `skill` call is still in flight. Within one parent
+  Turn, all activity for the same Agent ID and child Thread collapses into one
+  presentation row. That row stands in for the tool call that delegated the work
+  — `skill` or `agent`, named by the spawn-time Item's `spawnItemId` — and takes
+  its canonical slot. The raw tool exchange stays in Turn Diagnostics. Only
+  spawn-time activity claims a slot; a terminal event flushed into a later Turn
+  keeps the original row rather than claiming an unrelated call.
+- Projection membership comes from canonical parent lineage and Agent execution
+  records, never an in-progress wait Item or a model-maintained roster. The row
+  combines Agent ID/generation, the Thread catalog, the latest canonical child
+  `turn/started` or `turn/completed` DTO retained by `threadStore`, durable
+  activity, and pending notification state. Updates are monotonic within a
+  generation, and a later resume advances the same Agent identity to a new
+  generation rather than creating a second logical Agent. This lets a running
+  row show elapsed time and settle immediately even when paged child history is
+  unloaded. A catalog reload drops latest-Turn cache only for a root it actually
+  omits; subtree deletion drops the complete related projection.
+- Agent ID and child Thread ID are stable identity; neither is normally display
+  copy. Agent rows display the task description first, then Role nickname or
+  canonical Agent type, and finally a shortened ID. An isolated Skill displays
+  the recorded Skill name and uses its internal child identity only to
+  disambiguate repeated runs. The child Thread's source chooses the delegated
+  form; address-like text never changes semantics. Row title, accessible name,
+  child header, and Thread Details use the same display-name projection.
 - Display names are unique within a Turn. Two runs of one Skill would otherwise
   render two identically-named rows, the address suffix that told them apart
   being exactly what the row stops showing; repeats are numbered in canonical
@@ -329,16 +318,14 @@ with in-flight initial reads; it does not reuse or duplicate `threadStore`.
   survive hover and focus — the hover treatment exempts them rather than
   repainting a failure neutral — and every status is also named in text and
   accessible labels
-- persisted collaboration result snapshots contain, per child, `status`,
-  `taskPath`, `nickname`, and `role`. Spawn and wait rows render those identities
-  through the same live projection instead of treating the persisted status as
-  current truth. The snapshot remains available in expanded result JSON and in
-  Turn copy after a child is deleted. Renderer user surfaces never resolve a
-  collaboration Item's raw `outputRef`, because the model-facing result also
-  contains internal budget receipts; they expose only the typed snapshot. When a
-  collaboration tool detail is expanded, each child keeps its Agent glyph and
-  identity static while a live status phrase uses `WorkingText`; that mounted
-  child status owns motion instead of the parent tool summary
+- persisted Agent result snapshots contain the ID/generation, child identity,
+  status, canonical type, display metadata, and notification state needed for
+  historical rendering. Live projection wins over a stale snapshot; the
+  snapshot remains inspectable after child deletion. Renderer user surfaces do
+  not promote transcript paths, task IDs, pins, or budget receipts into labels.
+  When an Agent-task tool detail is expanded, each child keeps its Agent glyph
+  and identity static while a live status phrase uses `WorkingText`; that
+  mounted child status owns motion instead of the parent tool summary
 - Memory used by an answer renders through the ordinary inline Node-reference
   affordance next to the supported claim; `node_search` and `node_read` remain
   in the process and Turn Diagnostics, with no separate Memory Item or disclosure
@@ -380,11 +367,10 @@ fire-and-forget shape whose terminal activity lands in a later Turn) stays
 unfolded until that child settles. Work still happening and still stoppable is
 not history yet. Live and resultless process timelines remain visible; a live
 timeline uses the established `Working` / `Working for ...` status row even
-before its first process Item arrives. When `collaboration.wait_agent` is the
-only in-progress tool and at least one projected child remains active, that row
-instead reads `Waiting on N subagents` plus the same live elapsed time. A
-receiverless wait does not count as an additional agent; the count is the
-distinct active child Thread identities in the projection. Rendering builds one
+before its first process Item arrives. A foreground `agent` call remains an
+ordinary in-progress delegation row while it blocks; background Agents remain
+visible after the parent Turn settles until their direct-parent notification is
+consumed. There is no wait-specific status or count. Rendering builds one
 Turn-level process projection from every reasoning, non-empty commentary,
 image-view, Subagent, and tool Item. That block is placed before the first final
 response regardless of the Items' persisted arrival order, so a late reasoning
@@ -488,10 +474,11 @@ It is offered only where the action can actually run and could end differently.
 Only on the last Turn, because that path rolls back exactly one. Only where the
 composer is enabled, since rollback is available only on a persistent root user
 Thread — anywhere the user cannot type, a Retry could only fail. A failure
-qualifies, including one with no recorded error; an exhausted Subagent budget
+qualifies, including one with no recorded error; an exhausted Agent request budget
 qualifies because spend is request-scoped, so a new user Turn delegates against a
-fresh grant. A structural limit does not — depth and the direct-child count are
-Thread-lifetime, so the next attempt meets the same wall. An interrupt qualifies
+fresh grant. A structural depth limit does not, because the next attempt from the
+same lineage meets the same wall; a concurrent limit may clear when another Agent
+settles. An interrupt qualifies
 ONLY when the host restarted under the Turn: that is recorded as an interrupt but
 was nobody's decision, unlike a user pressing Stop, which keeps its ruling that
 neither Retry nor Regenerate is offered for a choice they made.
@@ -571,20 +558,20 @@ render as unbounded transcript prose. An interrupted response uses the
 established quiet stopped row and the same three actions. Hover and keyboard
 focus reveal the row without changing geometry.
 
-Subagent token limits are system internals. Stable admission- and mid-Turn-budget
+Agent request limits are system internals. Stable admission- and mid-Turn-budget
 errors carry `subagent_budget_exhausted`; renderer surfaces classify that code rather
 than model-facing copy. They translate it before transcript display or copy into
 localized resource-limit copy that says produced results were preserved. The same
 translation applies in Turn Details and structured Automation run errors. Token counts
 never render on these user surfaces. For a budget error, Turn Details omits the
-canonical error `detail`, replaces a Subagent activity's raw error record with
-the localized record, and does not resolve collaboration raw output; this holds
+canonical error `detail`, replaces an Agent activity's raw error record with
+the localized record, and does not resolve Agent-task raw output; this holds
 inside the lazy Canonical Items disclosure as well as the default Summary.
 
 Copy on a response copies the complete assistant side of that Turn in order:
 commentary, tool arguments, full tool results when available, and
 the final response. Tool arguments use the canonical envelope and never reverse-map
-command, file-change, MCP/dynamic display, collaboration, or result fields. A partial
+command, file-change, MCP/dynamic display, Agent-task, or result fields. A partial
 failed response remains the copy authority; its
 error summary is used only when the Turn has no copyable assistant content.
 Right-clicking the terminal response opens the native message menu with the same
@@ -846,10 +833,13 @@ or launching the model. A case variant submitted without accepting its canonical
 menu completion, `/new` with additional text, messages with attachments that are
 not exact `/new`, and unknown slash text remain ordinary Turn input.
 
-Only a root user Thread exposes the composer. Child, Automation, Memory, and
-other feature Threads remain fully inspectable but are driven through their
-own canonical admission path instead of accepting renderer-authored Turns. A
-user can fork terminal history into a root user Thread before continuing it.
+Root user Threads and collaboration Agent children expose the composer. A child
+Agent submission uses the persisted Agent identity and resume admission path;
+it does not turn the child into a root conversation. Isolated Skills,
+Automation, Memory, and other feature Threads remain fully inspectable but are
+driven through their own canonical admission paths instead of accepting
+renderer-authored Turns. A user can fork terminal root history into a new root
+user Thread before continuing it.
 
 Provider settings distinguish initial loading from a completed unavailable or
 failed read. Loading is neutral; once loaded, the selected Thread provider must
@@ -944,10 +934,12 @@ the accepted user message mounts and measures, that message is anchored at the
 transcript top inset and follow is re-derived from the resulting position. A long
 conversation therefore streams below the anchored message without moving it;
 short conversations that are still within the bottom threshold continue
-following. The existing `turn/start` response identifies the exact accepted Turn,
-so a concurrently loaded history page cannot be mistaken for the new send.
-Steering an existing active Turn keeps the bottom-follow path. The renderer does
-not insert an optimistic user message or alter notification order.
+following. The `turn/submit` response returns the exact newly accepted Turn when
+main started one and `null` when main steered or deduplicated the submission, so
+a concurrently loaded history page cannot be mistaken for the new send. Main,
+not the renderer's cached snapshot, owns that start-or-steer decision. Steering
+an existing active Turn keeps the bottom-follow path. The renderer does not
+insert an optimistic user message or alter notification order.
 A temporary renderer-only tail spacer gives the new message enough scroll runway
 to reach the top before response content exists. It carries no document state,
 shrinks as real response content replaces that runway, and is removed when no

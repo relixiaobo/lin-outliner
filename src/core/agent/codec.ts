@@ -40,6 +40,7 @@ import {
   type RequestUserInputRequest,
   type RequestUserInputQuestion,
   type RendererTurnStartRequest,
+  type RendererTurnSubmitRequest,
   type Thread,
   type ThreadAttachmentContent,
   type ThreadContextPayload,
@@ -322,7 +323,7 @@ export function decodeThreadItem(value: unknown): ThreadItem {
     case 'collabAgentToolCall': {
       exactKeys(record, [
         'type', 'id', 'provenance', 'tool', 'status', 'senderThreadId', 'receiverThreadIds', 'prompt',
-        'model', 'reasoningEffort', 'agentsStates', 'outputRef',
+        'summary', 'model', 'reasoningEffort', 'agentsStates', 'outputRef',
         'modelCall',
       ], 'item');
       const states = recordValue(record.agentsStates, 'item.agentsStates');
@@ -347,7 +348,7 @@ export function decodeThreadItem(value: unknown): ThreadItem {
         type,
         tool: enumValue(
           record.tool,
-          ['spawn_agent', 'send_message', 'followup_task', 'wait_agent', 'list_agents', 'interrupt_agent'],
+          ['agent', 'agent_message', 'task_stop'],
           'item.tool',
         ),
         status: itemExecutionStatus(record.status, 'item.status'),
@@ -357,6 +358,7 @@ export function decodeThreadItem(value: unknown): ThreadItem {
         receiverThreadIds: arrayValue(record.receiverThreadIds, 'item.receiverThreadIds')
           .map((entry, index) => uuidV7(entry, `item.receiverThreadIds[${index}]`)),
         prompt: nullableString(record.prompt, 'item.prompt', true),
+        summary: boundedAgentMessageSummary(record.summary ?? null, 'item.summary'),
         // Empty is tolerated here for the same reason it always was on `prompt`:
         // these are optional display strings, and an Item already carrying one
         // must stay readable. Rejecting it makes a whole Thread undecodable over
@@ -371,7 +373,10 @@ export function decodeThreadItem(value: unknown): ThreadItem {
     case 'subAgentActivity':
       exactKeys(
         record,
-        ['type', 'id', 'provenance', 'kind', 'agentThreadId', 'agentPath', 'error', 'spawnItemId'],
+        [
+          'type', 'id', 'provenance', 'kind', 'agentThreadId', 'agentTurnId',
+          'agentPath', 'error', 'spawnItemId',
+        ],
         'item',
       );
       result = {
@@ -379,6 +384,9 @@ export function decodeThreadItem(value: unknown): ThreadItem {
         type,
         kind: enumValue(record.kind, ['started', 'completed', 'interrupted', 'errored'], 'item.kind'),
         agentThreadId: uuidV7(record.agentThreadId, 'item.agentThreadId'),
+        // Old activity Items predate the exact child-Turn anchor. They remain
+        // readable, but consumers must not infer an unrelated latest Turn.
+        agentTurnId: nullableUuidV7(record.agentTurnId ?? null, 'item.agentTurnId'),
         agentPath: stringValue(record.agentPath, 'item.agentPath'),
         error: decodeTurnError(record.error, 'item.error'),
         // Additive and nullable, so an Item written before it existed decodes
@@ -506,6 +514,20 @@ export function decodeRendererTurnStartRequest(value: unknown): RendererTurnStar
     ...(record.clientUserMessageId === undefined
       ? {}
       : { clientUserMessageId: nullableString(record.clientUserMessageId, 'turnStart.clientUserMessageId') }),
+    ...(record.additionalContext === undefined
+      ? {}
+      : { additionalContext: decodeAdditionalContext(record.additionalContext, false) }),
+    ...(record.userView === undefined ? {} : { userView: decodeRendererUserViewHints(record.userView) }),
+  });
+}
+
+function decodeRendererTurnSubmitRequest(value: unknown): RendererTurnSubmitRequest {
+  const record = recordValue(value, 'turn/submit');
+  exactKeys(record, ['threadId', 'input', 'clientUserMessageId', 'additionalContext', 'userView'], 'turn/submit');
+  return deepFreeze({
+    threadId: uuidV7(record.threadId, 'turn/submit.threadId'),
+    input: arrayValue(record.input, 'turn/submit.input').map(decodeUserContent),
+    clientUserMessageId: stringValue(record.clientUserMessageId, 'turn/submit.clientUserMessageId'),
     ...(record.additionalContext === undefined
       ? {}
       : { additionalContext: decodeAdditionalContext(record.additionalContext, false) }),
@@ -1016,6 +1038,9 @@ export function decodeAgentCoreRequest<M extends AgentCoreMethod>(
     case 'thread/turn/details/read':
       decoded = decodeThreadTurnDetailsReadRequest(value);
       break;
+    case 'turn/submit':
+      decoded = decodeRendererTurnSubmitRequest(value);
+      break;
     case 'turn/start':
       decoded = decodeRendererTurnStartRequest(value);
       break;
@@ -1098,6 +1123,9 @@ export function decodeAgentCoreResponse<M extends AgentCoreMethod>(
       break;
     case 'thread/turn/details/read':
       decoded = decodeThreadTurnDetailsReadResponse(value);
+      break;
+    case 'turn/submit':
+      decoded = decodeTurnSubmitResponse(value);
       break;
     case 'turn/start':
       decoded = decodeTurnStartResponse(value);
@@ -1610,6 +1638,17 @@ function decodeTurnStartResponse(value: unknown): AgentCoreResponseByMethod['tur
     turn: decodeTurn(record.turn),
     acceptedItemId: stringValue(record.acceptedItemId, 'turn/start response.acceptedItemId'),
     deduplicated: booleanValue(record.deduplicated, 'turn/start response.deduplicated'),
+  });
+}
+
+function decodeTurnSubmitResponse(value: unknown): AgentCoreResponseByMethod['turn/submit'] {
+  const record = recordValue(value, 'turn/submit response');
+  exactKeys(record, ['turn', 'turnId', 'acceptedItemId', 'deduplicated'], 'turn/submit response');
+  return deepFreeze({
+    turn: record.turn === null ? null : decodeTurn(record.turn),
+    turnId: uuidV7(record.turnId, 'turn/submit response.turnId'),
+    acceptedItemId: stringValue(record.acceptedItemId, 'turn/submit response.acceptedItemId'),
+    deduplicated: booleanValue(record.deduplicated, 'turn/submit response.deduplicated'),
   });
 }
 
@@ -3767,6 +3806,12 @@ function nonEmptyTrimmedString(value: unknown, path: string): string {
 
 function nullableString(value: unknown, path: string, allowEmpty = false): string | null {
   return value === null ? null : stringValue(value, path, allowEmpty);
+}
+
+function boundedAgentMessageSummary(value: unknown, path: string): string | null {
+  const summary = nullableString(value, path, true);
+  if (summary !== null && summary.length > 200) fail(path, 'must not exceed 200 characters');
+  return summary;
 }
 
 function booleanValue(value: unknown, path: string): boolean {

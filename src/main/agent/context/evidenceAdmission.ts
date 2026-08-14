@@ -40,6 +40,7 @@ export async function admitContextEvidence(input: {
   readonly extensionContext: readonly ThreadContextContribution[];
   readonly skillCatalog?: SkillCatalogContextPayload | null;
   readonly roleCatalog?: RoleCatalogContextPayload | null;
+  readonly preloadedSkillInvocations?: readonly SkillInvocationContextPayload[];
   readonly skillInvocation?: SkillInvocationContextPayload | null;
   readonly includeHostContext: boolean;
   readonly projection: DocumentProjection | null;
@@ -87,6 +88,9 @@ export async function admitContextEvidence(input: {
     }
     if (input.roleCatalog) {
       await publish(input.roleCatalog, `Available Roles (${input.roleCatalog.entries.length})`);
+    }
+    for (const invocation of input.preloadedSkillInvocations ?? []) {
+      await publish(invocation, `Preloaded Skill: ${invocation.displayName}`);
     }
     if (input.skillInvocation) {
       await publish(input.skillInvocation, `Invoked Skill: ${input.skillInvocation.displayName}`);

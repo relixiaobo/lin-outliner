@@ -167,6 +167,8 @@ const DEFAULT_AGENT_RUNTIME_SETTINGS: AgentRuntimeSettings = {
   additionalSkillDirectories: [],
   // Captured as a fixed grant only when a new delegated tree creates its pool.
   subagentTokenBudget: 1_500_000,
+  subagentMaxDepth: 3,
+  subagentMaxConcurrent: 20,
   providerTimeoutMs: null,
   providerMaxRetries: null,
   providerMaxRetryDelayMs: 60_000,
@@ -691,6 +693,14 @@ function normalizeAgentRuntimeSettings(input?: StoredAgentRuntimeSettings | null
       input?.subagentTokenBudget,
       DEFAULT_AGENT_RUNTIME_SETTINGS.subagentTokenBudget,
     ),
+    subagentMaxDepth: normalizePositiveInteger(
+      input?.subagentMaxDepth,
+      DEFAULT_AGENT_RUNTIME_SETTINGS.subagentMaxDepth,
+    ),
+    subagentMaxConcurrent: normalizePositiveInteger(
+      input?.subagentMaxConcurrent,
+      DEFAULT_AGENT_RUNTIME_SETTINGS.subagentMaxConcurrent,
+    ),
     providerTimeoutMs: normalizeNullablePositiveInteger(input?.providerTimeoutMs, DEFAULT_AGENT_RUNTIME_SETTINGS.providerTimeoutMs),
     providerMaxRetries: normalizeNullableNonNegativeInteger(input?.providerMaxRetries, DEFAULT_AGENT_RUNTIME_SETTINGS.providerMaxRetries),
     providerMaxRetryDelayMs: normalizeNullableNonNegativeInteger(
@@ -731,6 +741,10 @@ function normalizeStringList(value: unknown, limit: number): string[] {
 function normalizeNullablePositiveInteger(value: unknown, fallback: number | null): number | null {
   if (value === null) return null;
   return normalizeInteger(value, fallback, 1);
+}
+
+function normalizePositiveInteger(value: unknown, fallback: number): number {
+  return normalizeInteger(value, fallback, 1) ?? fallback;
 }
 
 function normalizeNullableNonNegativeInteger(value: unknown, fallback: number | null): number | null {

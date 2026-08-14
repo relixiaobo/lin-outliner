@@ -47,7 +47,7 @@ Agent configuration has two structured JSON sources:
 
 Both files use the same exact-key schema with `defaultProfile`, `profiles`, and
 `roles`. Project definitions replace same-name user definitions. Built-in
-`default`, `worker`, and `explorer` Roles remain available unless a user or
+`default`, `explorer`, and `plan` Roles remain available unless a user or
 project definition deliberately replaces the same name.
 
 A Profile may define developer instructions, model, reasoning effort, tools,
@@ -58,11 +58,12 @@ unsupported effort values, malformed JSON, and unsafe nicknames fail closed.
 
 Creating a root Thread resolves its selected Profile into one immutable
 `EffectiveThreadConfiguration` and stores that snapshot with Thread metadata.
-Creating or resuming a child Thread resolves its named Role through the same
-loader, applies explicit spawn-time model/effort choices, then intersects every
-capability source with the parent ceiling. Explicit spawn choices and tool
-ceilings are private Thread metadata so resume does not mistake an old Role
-default for a user override.
+Creating a child Thread resolves its named Role through the same loader, applies
+explicit spawn-time model/effort choices, then intersects every capability
+source with the parent ceiling. Explicit spawn choices and tool ceilings are
+private Thread metadata. Resuming that child reuses its frozen configuration and
+history while reapplying current explicit capability blocks; it does not adopt
+later Role-file edits or mistake an old Role default for a user override.
 
 The config files contain no provider secrets, permission state, Memory content,
 Automation definitions, rollout history, or extension-private state.
@@ -92,7 +93,9 @@ configuration event store, self-maintenance history, or renderer-only change
 record.
 
 Configuration reads and edits are root-Thread-only because the root owns the
-project intent. A child asks its parent through `collaboration.send_message`.
+project intent. A child asks the main conversation through
+`agent_message({ to: "main", ... })`; that model-authored message cannot grant
+approval or widen the parent's capabilities.
 
 ### Recovery
 

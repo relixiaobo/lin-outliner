@@ -1,4 +1,5 @@
 import type { EffectiveThreadConfiguration } from '../../../core/agent/configuration';
+import type { AgentStartupContextSnapshot } from '../context/AgentStartupContext';
 import type {
   Thread,
   JsonValue,
@@ -63,6 +64,8 @@ export interface StagedContextCompaction {
 export interface TurnExecutionContext {
   readonly thread: Thread;
   readonly turn: Turn;
+  /** Immutable repository/session inputs for a child's first generation only. */
+  readonly startupContext?: AgentStartupContextSnapshot | null;
   readonly historyBeforeTurn: readonly Turn[];
   readonly configuration: EffectiveThreadConfiguration;
   readonly signal: AbortSignal;

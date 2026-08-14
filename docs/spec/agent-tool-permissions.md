@@ -14,6 +14,14 @@ Tenon does not add an agent filesystem sandbox, permission mode, approval policy
 or pause/resume authorization flow. `request_user_input` gathers missing product
 input only and must never be used as a risk confirmation prompt.
 
+This boundary is unchanged for child Agents. An `agent_message` to an Agent or
+the reserved `main` route is task direction authored by a model, not user
+authority. It cannot approve a plan, answer a pending user question, change
+configuration or capability blocks, clear user-stop provenance, or turn a
+denied operation into an allowed one. A recipient must refuse permission
+laundering and surface the blocked need to the user through the ordinary product
+flow.
+
 That extends to Skills. There is no per-Skill ratification gate: a Skill does not
 have to be accepted before the model may invoke it, and installing one enables it.
 An accept-before-use step is an approval policy by another name. For a
@@ -85,7 +93,7 @@ selection and blocks govern only new execution.
 
 Blocks operate on normalized action descriptors such as outline read/write,
 local file read/write/delete, shell execution classes, web access, publishing,
-external messaging, Goal control, collaboration, Skill invocation, image
+external messaging, Goal control, Agent orchestration, Skill invocation, image
 generation, and data import.
 
 Command matching normalizes whitespace outside quotes while preserving quoted

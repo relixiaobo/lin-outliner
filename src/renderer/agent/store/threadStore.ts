@@ -289,39 +289,47 @@ export class ThreadStore {
     contentInput: readonly ThreadUserContent[],
     userView?: RendererUserViewHints,
   ): Promise<Turn | null> {
-    const content = normalizeUserContent(contentInput);
     const threadId = this.snapshot.selectedThreadId;
-    if (!threadId || content.length === 0) return null;
-    const active = findLastInProgressTurn(this.turns(threadId));
+    if (!threadId) return null;
+    const content = normalizeUserContent(contentInput);
+    if (content.length === 0) return null;
     // Contexts staged onto the composer (the command surface's page handoff)
     // ride along as UNTRUSTED additional context — the only kind a renderer may
     // author — and are cleared once the turn has taken them, so a later turn
     // does not silently re-send a page the user has moved on from.
     const additionalContext = pendingComposerAdditionalContext();
     const stagedKeys = Object.keys(additionalContext);
-    const withContext = stagedKeys.length > 0 ? { additionalContext } : {};
-    if (active) {
-      await this.client.agentCoreRequest('turn/steer', {
-        threadId,
-        expectedTurnId: active.id,
-        input: content,
-        clientUserMessageId: crypto.randomUUID(),
-        ...(userView ? { userView } : {}),
-        ...withContext,
-      });
-      for (const key of stagedKeys) acknowledgeThreadComposerContext(key);
-      return null;
-    } else {
-      const response = await this.client.agentCoreRequest('turn/start', {
-        threadId,
-        input: content,
-        clientUserMessageId: crypto.randomUUID(),
-        ...(userView ? { userView } : {}),
-        ...withContext,
-      });
-      for (const key of stagedKeys) acknowledgeThreadComposerContext(key);
-      return response.turn;
-    }
+    const result = await this.sendToThread(threadId, content, userView, additionalContext);
+    for (const key of stagedKeys) acknowledgeThreadComposerContext(key);
+    return result;
+  }
+
+  /**
+   * Submit user-authored work to a specific Thread without selecting it.
+   *
+   * Agent transcripts are embedded in their parent conversation, so selecting
+   * the child would navigate the dock away from the user's conversation. A
+   * deliberate message here still uses the ordinary renderer Turn boundary;
+   * the host can therefore distinguish it from model-authored `agent_message`
+   * traffic and clear user-stop provenance for this Agent only.
+   */
+  async sendToThread(
+    threadId: ThreadId,
+    contentInput: readonly ThreadUserContent[],
+    userView?: RendererUserViewHints,
+    additionalContext: Readonly<Record<string, { readonly value: string; readonly kind: 'untrusted' }>> = {},
+  ): Promise<Turn | null> {
+    const content = normalizeUserContent(contentInput);
+    if (content.length === 0) return null;
+    const withContext = Object.keys(additionalContext).length > 0 ? { additionalContext } : {};
+    const response = await this.client.agentCoreRequest('turn/submit', {
+      threadId,
+      input: content,
+      clientUserMessageId: crypto.randomUUID(),
+      ...(userView ? { userView } : {}),
+      ...withContext,
+    });
+    return response.turn;
   }
 
   async setThreadConfiguration(
@@ -410,7 +418,7 @@ export class ThreadStore {
       turnsByThread,
       latestTurnByThread,
     });
-    await this.client.agentCoreRequest('turn/start', {
+    await this.client.agentCoreRequest('turn/submit', {
       threadId,
       input: content,
       clientUserMessageId: crypto.randomUUID(),

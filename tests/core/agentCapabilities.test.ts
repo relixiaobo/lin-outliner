@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { evaluateAgentToolCapability } from '../../src/main/agent/capabilities/agentCapabilities';
 import { unavailableToolResultMessage } from '../../src/main/agent/capabilities/agentCapabilityEvents';
 import { parseAgentCapabilitySettings } from '../../src/main/agent/capabilities/agentCapabilityRules';
 import { executeAgentSkillShellCommand } from '../../src/main/agent/capabilities/agentSkillShell';
+import type { SubagentToolPolicy } from '../../src/main/agent/capabilities/subagentToolPolicy';
 
 const roots: string[] = [];
 
@@ -94,6 +95,20 @@ describe('agent capabilities', () => {
     }
   });
 
+  test('keeps both Agent and shell stop blocks on the unified task_stop entry point', async () => {
+    const { workspace } = await workspaceFixture();
+    for (const actionKind of ['agent.subagent.interrupt', 'shell.stop']) {
+      expect(evaluateAgentToolCapability({
+        toolName: 'task_stop',
+        args: { task_id: 'task-or-agent-id' },
+        policy: {
+          workspaceRoot: workspace,
+          capabilityConfig: { blocks: [`Action(${actionKind})`] },
+        },
+      })).toMatchObject({ behavior: 'unavailable', code: 'user_blocked' });
+    }
+  });
+
   test('parses only explicit block rules and reports invalid entries', () => {
     const config = parseAgentCapabilitySettings({
       blocks: ['Action(git.publish_remote)', 'Command(git push origin main)', 'Action(unknown.action)', 42],
@@ -123,6 +138,49 @@ describe('agent capabilities', () => {
       localRoot: workspace,
       capabilityConfig: parseAgentCapabilitySettings({ blocks: ['Command(git push origin main)'] }),
     })).rejects.toMatchObject({ code: 'operation_unavailable' });
+  });
+
+  test('contains embedded Skill shell writes inside an isolated workspace', async () => {
+    if (process.platform !== 'darwin') return;
+    const { workspace, outside } = await workspaceFixture();
+    const inside = path.join(workspace, 'inside.txt');
+    const escaped = path.join(outside, 'escaped.txt');
+
+    await expect(executeAgentSkillShellCommand({
+      command: `printf inside > ${JSON.stringify(inside)}; printf escaped > ${JSON.stringify(escaped)}`,
+      localRoot: workspace,
+      capabilityConfig: parseAgentCapabilitySettings({ blocks: [] }),
+      writeBoundary: { root: workspace },
+    })).rejects.toMatchObject({ code: 'command_failed' });
+
+    expect(await readFile(inside, 'utf8')).toBe('inside');
+    await expect(readFile(escaped, 'utf8')).rejects.toThrow();
+  });
+
+  test('restricts embedded Skill shell for Explore and Plan Agents before execution', async () => {
+    const { workspace } = await workspaceFixture();
+    const policy = (kind: 'explore' | 'plan'): SubagentToolPolicy => ({
+      kind,
+      runInBackground: false,
+      worktree: false,
+      allowNesting: false,
+    });
+
+    for (const kind of ['explore', 'plan'] as const) {
+      await expect(executeAgentSkillShellCommand({
+        command: 'find . -type f',
+        localRoot: workspace,
+        capabilityConfig: parseAgentCapabilitySettings({ blocks: [] }),
+        subagentPolicy: policy(kind),
+      })).resolves.toEqual(expect.any(String));
+      await expect(executeAgentSkillShellCommand({
+        command: 'printf changed > tracked.txt',
+        localRoot: workspace,
+        capabilityConfig: parseAgentCapabilitySettings({ blocks: [] }),
+        subagentPolicy: policy(kind),
+      })).rejects.toMatchObject({ code: 'operation_unavailable' });
+      await expect(readFile(path.join(workspace, 'tracked.txt'), 'utf8')).rejects.toThrow();
+    }
   });
 
   test('injects the host process environment into embedded Skill shell', async () => {

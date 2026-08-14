@@ -10,10 +10,11 @@ import {
 } from 'react';
 import { Lexer, type Token, type Tokens } from 'marked';
 import type {
-  CollaborationToolName,
+  AgentTaskToolName,
   DynamicToolOutputContent,
   ItemExecutionStatus,
   JsonValue,
+  RendererUserViewHints,
   ThreadAttachmentContent,
   ThreadItem,
   ThreadUserContent,
@@ -110,6 +111,8 @@ interface ThreadItemViewProps {
   readonly expandState: ThreadDisclosureState;
   readonly index: DocumentIndex;
   readonly item: ThreadItem;
+  /** This user-role Item was authored by the host, as proven by its Turn. */
+  readonly hostAuthoredEvent?: boolean;
   readonly showMessageActions: boolean;
   readonly streaming: boolean;
   readonly subagents?: ReadonlyMap<string, SubagentPresentation>;
@@ -131,6 +134,7 @@ interface ThreadItemViewProps {
   readonly onSubagentDrill?: (threadId: string) => void;
   readonly onReadToolArguments: (item: ThreadToolItem) => Promise<JsonValue | null>;
   readonly onReadToolOutput: (item: ThreadToolItem) => Promise<string | null>;
+  readonly userView: RendererUserViewHints;
 }
 
 export interface ThreadDisclosureState {
@@ -331,6 +335,7 @@ function UserMessageItem({
   expandState,
   index,
   item,
+  hostAuthoredEvent = false,
   onEditUserMessage,
   onOpenNodeReference,
   showMessageActions,
@@ -356,7 +361,13 @@ function UserMessageItem({
   }
 
   return (
-    <article className="thread-item thread-user-message">
+    <article className={`thread-item ${hostAuthoredEvent ? 'thread-host-event' : 'thread-user-message'}`}>
+      {hostAuthoredEvent ? (
+        <div className="thread-host-event-label">
+          <AgentIcon aria-hidden size={ICON_SIZE.rowGlyph} />
+          <span>{t.agent.thread.agentEvent}</span>
+        </div>
+      ) : null}
       {editing ? (
         <div className="thread-message-editor">
           <textarea
@@ -394,7 +405,7 @@ function UserMessageItem({
           <div className="thread-message-actions-slot">
             {showMessageActions ? (
               <div className="thread-message-actions">
-                {canEditUserMessage && textEditable ? (
+                {!hostAuthoredEvent && canEditUserMessage && textEditable ? (
                   <IconButton
                     icon={PencilIcon}
                     iconSize={ICON_SIZE.menu}
@@ -1209,9 +1220,11 @@ function SubagentActivityItem({
   item,
   onInterruptThread,
   onOpenNodeReference,
+  onOpenThread,
   onOpenSubagentTurnDetails,
   onSubagentDrill,
   subagents,
+  userView,
   workingTextEnabled,
 }: {
   readonly expandState: ThreadDisclosureState;
@@ -1219,9 +1232,11 @@ function SubagentActivityItem({
   readonly item: Extract<ThreadItem, { type: 'subAgentActivity' }>;
   readonly onInterruptThread?: (threadId: string) => Promise<void>;
   readonly onOpenNodeReference: ThreadNodeReferenceOpenHandler;
+  readonly onOpenThread: (threadId: string) => Promise<void>;
   readonly onOpenSubagentTurnDetails?: (threadId: string, turnId: string) => void;
   readonly onSubagentDrill?: (threadId: string) => void;
   readonly subagents?: ReadonlyMap<string, SubagentPresentation>;
+  readonly userView: RendererUserViewHints;
   readonly workingTextEnabled: boolean;
 }) {
   const t = useT();
@@ -1284,8 +1299,10 @@ function SubagentActivityItem({
           index={index}
           {...(onInterruptThread ? { onInterruptThread } : {})}
           onOpenNodeReference={onOpenNodeReference}
+          onOpenThread={onOpenThread}
           {...(onOpenSubagentTurnDetails ? { onOpenTurnDetails: onOpenSubagentTurnDetails } : {})}
           rootThreadId={item.agentThreadId}
+          userView={userView}
         />
       ) : null}
     </div>
@@ -1429,7 +1446,7 @@ function toolItemAct(
       return toolActivityPhrase(kind, subjects.keys.length, subjects.names, running, labels, limit);
     }
     case 'collabAgentToolCall':
-      return collaborationAct(item.tool, running, labels);
+      return collaborationAct(item, running, labels);
     case 'webSearch': {
       // The Item's own fallback for a call the model made without a query is
       // the empty string, and `Searching the web for ""` names nothing. The
@@ -1452,20 +1469,18 @@ function namedToolAct(
 }
 
 /** The collaboration tools are a closed set, so each one gets real copy rather
- *  than leaking `spawn_agent` / `wait_agent` into the transcript. */
+ *  than leaking model-facing identifiers into the transcript. */
 function collaborationAct(
-  tool: CollaborationToolName,
+  item: Extract<ThreadToolItem, { readonly type: 'collabAgentToolCall' }>,
   running: boolean,
   labels: Messages['agent']['thread']['activity'],
 ): string {
-  switch (tool) {
-    case 'spawn_agent': return running ? labels.startingAgent : labels.startedAgent;
-    case 'send_message': return running ? labels.messagingAgent : labels.messagedAgent;
-    case 'followup_task': return running ? labels.sendingFollowup : labels.sentFollowup;
-    case 'wait_agent': return running ? labels.waitingForAgent : labels.waitedForAgent;
-    case 'list_agents': return running ? labels.listingAgents : labels.listedAgents;
-    case 'interrupt_agent': return running ? labels.interruptingAgent : labels.interruptedAgent;
-    default: return assertNever(tool);
+  if (item.tool === 'agent_message' && item.summary) return item.summary;
+  switch (item.tool) {
+    case 'agent': return running ? labels.startingAgent : labels.startedAgent;
+    case 'agent_message': return running ? labels.messagingAgent : labels.messagedAgent;
+    case 'task_stop': return running ? labels.stoppingTask : labels.stoppedTask;
+    default: return assertNever(item.tool);
   }
 }
 

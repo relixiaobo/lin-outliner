@@ -20,6 +20,7 @@ const configuration: EffectiveThreadConfiguration = {
   reasoningEffort: 'medium',
   tools: MODEL_TOOL_CATALOG.map((tool) => canonicalModelToolKey(tool.identity)),
   skills: ['*'],
+  preloadedSkills: [],
   plugins: [],
   mcpServers: [],
 };

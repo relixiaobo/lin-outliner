@@ -1,0 +1,102 @@
+[
+  {
+    "name": "agent",
+    "description": "Launch a new agent to handle complex, multi-step tasks. Each agent type has specific capabilities and tools available to it.\n\nAvailable agent types are listed in <system-reminder> messages in the conversation.\n\nWhen using the agent tool, specify a subagent_type parameter to select which agent type to use. If omitted, the general-purpose agent is used.\n\n## When to use\n\nReach for this when the task matches an available agent type, when you have independent work to run in parallel, or when answering would mean reading across several files — delegate it and you keep the conclusion, not the file dumps. For a single-fact lookup where you already know the file, symbol, or value, search directly. Once you've delegated a search, don't also run it yourself — wait for the result.\n\n- The agent's final report is not shown to the user — relay what matters.\n- Use agent_message with the agent's ID to continue a previously spawned agent with its context intact; a new agent call starts fresh.\n- Each agent type's model, reasoning effort, and tools come from its Tenon Role.\n- `isolation: \"worktree\"` gives the agent its own git worktree (auto-cleaned if unchanged).\n- Subagents run in the background by default; you'll be notified when one completes. Pass `run_in_background: false` only when your very next action depends on the result and nothing else could usefully happen while it runs — otherwise background it so the user can interject. Never fabricate or predict a pending agent's results — the notification is never something you write yourself; if the user asks before it arrives, say it's still running.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "description": {
+          "description": "A short (3-5 word) description of the task",
+          "type": "string"
+        },
+        "prompt": {
+          "description": "The task for the agent to perform",
+          "type": "string"
+        },
+        "subagent_type": {
+          "description": "The type of specialized agent to use for this task",
+          "type": "string"
+        },
+        "model": {
+          "description": "Optional model override for this agent. Takes precedence over the Role's model. If omitted, uses the Role's model, or inherits from the parent.",
+          "type": "string",
+          "enum": [
+            "claude-sonnet-test",
+            "claude-opus-test"
+          ]
+        },
+        "run_in_background": {
+          "description": "Agents run in the background by default; you will be notified when one completes. Set to false only when your very next action depends on this agent's result and nothing else could usefully happen while it runs — otherwise leave it in the background so the user can hand you other work.",
+          "type": "boolean"
+        },
+        "isolation": {
+          "description": "Isolation mode. \"worktree\" creates a temporary git worktree so the agent works on an isolated copy of the repo.",
+          "type": "string",
+          "enum": [
+            "worktree"
+          ]
+        }
+      },
+      "required": [
+        "description",
+        "prompt"
+      ],
+      "additionalProperties": false
+    },
+    "eager_input_streaming": true
+  },
+  {
+    "name": "agent_message",
+    "description": "# agent_message\n\nSend a message to another agent.\n\n```json\n{\"to\": \"<agent-id>\", \"summary\": \"assign follow-up\", \"message\": \"continue with the follow-up\"}\n```\n\n| `to` | |\n|---|---|\n| `\"<agent-id>\"` | Agent by ID |\n| `\"main\"` | The main conversation (background subagents only) |\n\nYour plain text output is NOT visible to other agents — to communicate, you MUST call this tool. Messages from agents are delivered automatically; you don't check an inbox. Use the raw `agentId` from the spawn result to steer or resume an agent. When relaying, don't quote the original — it's already rendered to the user.",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "to": {
+          "description": "Recipient: agent ID or \"main\"",
+          "type": "string",
+          "pattern": "^[^\\n\\r]{0,200}$"
+        },
+        "summary": {
+          "description": "A 5-10 word summary shown as a one-line preview in the UI. Defaults to the first line of a plain-text message; longer summaries are truncated to 200 characters rather than rejected.",
+          "type": "string",
+          "maxLength": 200
+        },
+        "message": {
+          "description": "Plain text message content",
+          "type": "string"
+        }
+      },
+      "required": [
+        "to",
+        "message"
+      ],
+      "additionalProperties": false
+    },
+    "eager_input_streaming": true
+  },
+  {
+    "name": "task_stop",
+    "description": "\n- Stops a running background task by its ID\n- Takes a task_id parameter identifying the task to stop\n- To stop a background agent, pass its agent ID as task_id\n- Returns a success or failure status\n- Use this tool when you need to terminate a long-running task\n",
+    "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "task_id": {
+          "description": "The ID of the background task to stop. Background agents are also accepted by agent ID.",
+          "type": "string"
+        },
+        "shell_id": {
+          "description": "Deprecated: use task_id instead",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "eager_input_streaming": true,
+    "cache_control": {
+      "type": "ephemeral"
+    }
+  }
+]

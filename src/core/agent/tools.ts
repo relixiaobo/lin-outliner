@@ -1,7 +1,7 @@
 import {
   REQUEST_USER_INPUT_MAX_AUTO_RESOLUTION_MS,
   REQUEST_USER_INPUT_MIN_AUTO_RESOLUTION_MS,
-  type CollaborationToolName,
+  type AgentTaskToolName,
   type RequestUserInputOption,
   type RequestUserInputQuestion,
   type TurnPlanSnapshot,
@@ -52,15 +52,11 @@ export interface ModelToolSchemaContribution {
   readonly outputSchema?: JsonSchema | null;
 }
 
-export const COLLABORATION_NAMESPACE = 'collaboration';
-export const COLLABORATION_TOOL_NAMES = [
-  'spawn_agent',
-  'send_message',
-  'followup_task',
-  'wait_agent',
-  'list_agents',
-  'interrupt_agent',
-] as const satisfies readonly CollaborationToolName[];
+export const AGENT_TASK_TOOL_NAMES = [
+  'agent',
+  'agent_message',
+  'task_stop',
+] as const satisfies readonly AgentTaskToolName[];
 
 export const RETAINED_CAPABILITY_TOOL_NAMES = [
   'node_search',
@@ -76,7 +72,6 @@ export const RETAINED_CAPABILITY_TOOL_NAMES = [
   'file_write',
   'file_delete',
   'bash',
-  'bash_stop',
   'web_search',
   'web_fetch',
   'generate_image',
@@ -91,7 +86,7 @@ export const CORE_CONTROL_TOOL_NAMES = [
   'update_goal',
 ] as const;
 
-export const CONFIGURATION_TOOL_NAMES = ['skill'] as const;
+export const CONFIGURATION_TOOL_NAMES = ['agent', 'skill'] as const;
 
 export const MODEL_TOOL_ACTION_KINDS = [
   'file.read.local_path',
@@ -124,7 +119,6 @@ export const MODEL_TOOL_ACTION_KINDS = [
   'agent.goal.update',
   'agent.automation.manage',
   'agent.subagent.spawn',
-  'agent.subagent.read',
   'agent.subagent.send',
   'agent.subagent.interrupt',
   'agent.skill.invoke',
@@ -142,7 +136,6 @@ const READ_ONLY_ACTION_KINDS = new Set<ModelToolActionKind>([
   'web.fetch',
   'shell.read_search',
   'agent.goal.read',
-  'agent.subagent.read',
 ]);
 
 export type RequestUserInputToolOption = RequestUserInputOption;
@@ -151,6 +144,26 @@ export type RequestUserInputToolQuestion = RequestUserInputQuestion;
 export interface RequestUserInputToolInput {
   readonly questions: readonly RequestUserInputToolQuestion[];
   readonly autoResolutionMs?: number;
+}
+
+export interface AgentToolInput {
+  readonly description: string;
+  readonly prompt: string;
+  readonly subagent_type: string;
+  readonly model?: string;
+  readonly run_in_background: boolean;
+  readonly isolation?: 'worktree';
+}
+
+export interface AgentMessageToolInput {
+  readonly to: string;
+  readonly summary: string;
+  readonly message: string;
+}
+
+export interface TaskStopToolInput {
+  readonly task_id?: string;
+  readonly shell_id?: string;
 }
 
 export type UpdatePlanToolStep = TurnPlanStep;
@@ -292,105 +305,153 @@ const automationUpdateToolSchema: JsonSchema = {
   ],
 };
 
-const spawnAgentSchema = objectSchema({
-  task_name: stringSchema('Lowercase task name using letters, digits, and underscores.'),
-  message: stringSchema('Initial plain-text task for the new Subagent.'),
-  max_total_tokens: numberSchema('Optional per-child token cap, honoured only at 1000000 or above; a smaller value is ignored and the child shares the request pool. It creates its own pool when honoured and no ancestor pool exists.'),
-  fork_turns: stringSchema('Use none, all, or a positive integer string. Defaults to all.'),
-  agent_type: stringSchema('Agent Role override. Omit unless explicitly requested.'),
-  model: stringSchema('Model override. Omit unless an explicit override is needed.'),
-  reasoning_effort: stringSchema('Reasoning effort override. Omit to inherit the parent effort.'),
-}, ['task_name', 'message']);
+export const AGENT_TOOL_DESCRIPTION = `Launch a new agent to handle complex, multi-step tasks. Each agent type has specific capabilities and tools available to it.
 
-const collaborationMessageSchema = objectSchema({
-  target: stringSchema('Relative or canonical task path returned by spawn_agent.'),
-  message: stringSchema('Message text for the target Subagent.'),
-}, ['target', 'message']);
+Available agent types are listed in <system-reminder> messages in the conversation.
 
-const collaborationTargetSchema = objectSchema({
-  target: stringSchema('Relative or canonical task path returned by spawn_agent.'),
-}, ['target']);
+When using the agent tool, specify a subagent_type parameter to select which agent type to use. If omitted, the general-purpose agent is used.
 
-const collaborationAgentViewSchema = objectSchema({
-  taskPath: stringSchema('Canonical child task path.'),
-  threadId: stringSchema('Child Thread identifier.'),
-  parentThreadId: stringSchema('Parent Thread identifier.'),
-  nickname: { type: ['string', 'null'] },
-  role: { type: ['string', 'null'] },
-  status: enumSchema(['pendingInit', 'running', 'interrupted', 'completed', 'errored']),
-  tokensUsed: { type: 'number' },
-  tokenBudget: { type: ['number', 'null'] },
-}, ['taskPath', 'threadId', 'parentThreadId', 'nickname', 'role', 'status', 'tokensUsed', 'tokenBudget']);
+## When to use
 
-const collaborationTerminalOutcomeSchema = objectSchema({
-  taskPath: stringSchema('Canonical child task path.'),
-  threadId: stringSchema('Child Thread identifier.'),
-  status: enumSchema(['interrupted', 'completed', 'errored']),
-  result: { type: ['string', 'null'] },
-  error: { type: ['string', 'null'] },
-  transcriptPath: { type: ['string', 'null'] },
-}, ['taskPath', 'threadId', 'status', 'result', 'error', 'transcriptPath']);
+Reach for this when the task matches an available agent type, when you have independent work to run in parallel, or when answering would mean reading across several files — delegate it and you keep the conclusion, not the file dumps. For a single-fact lookup where you already know the file, symbol, or value, search directly. Once you've delegated a search, don't also run it yourself — wait for the result.
 
-const collaborationToolContracts: readonly ModelToolContract[] = [
+- The agent's final report is not shown to the user — relay what matters.
+- Use agent_message with the agent's ID to continue a previously spawned agent with its context intact; a new agent call starts fresh.
+- Each agent type's model, reasoning effort, and tools come from its Tenon Role.
+- \`isolation: "worktree"\` gives the agent its own git worktree (auto-cleaned if unchanged).
+- Subagents run in the background by default; you'll be notified when one completes. Pass \`run_in_background: false\` only when your very next action depends on the result and nothing else could usefully happen while it runs — otherwise background it so the user can interject. Never fabricate or predict a pending agent's results — the notification is never something you write yourself; if the user asks before it arrives, say it's still running.`;
+
+export const AGENT_MESSAGE_TOOL_DESCRIPTION = `# agent_message
+
+Send a message to another agent.
+
+\`\`\`json
+{"to": "<agent-id>", "summary": "assign follow-up", "message": "continue with the follow-up"}
+\`\`\`
+
+| \`to\` | |
+|---|---|
+| \`"<agent-id>"\` | Agent by ID |
+| \`"main"\` | The main conversation (background subagents only) |
+
+Your plain text output is NOT visible to other agents — to communicate, you MUST call this tool. Messages from agents are delivered automatically; you don't check an inbox. Use the raw \`agentId\` from the spawn result to steer or resume an agent. When relaying, don't quote the original — it's already rendered to the user.`;
+
+export const TASK_STOP_TOOL_DESCRIPTION = `
+- Stops a running background task by its ID
+- Takes a task_id parameter identifying the task to stop
+- To stop a background agent, pass its agent ID as task_id
+- Returns a success or failure status
+- Use this tool when you need to terminate a long-running task
+`;
+
+const JSON_SCHEMA_DRAFT_2020_12 = 'https://json-schema.org/draft/2020-12/schema';
+
+export function agentInputSchema(modelIds: readonly string[]): JsonSchema {
+  const models = [...new Set(modelIds)];
+  if (models.some((modelId) => typeof modelId !== 'string' || !modelId)) {
+    throw new Error('agent model enum accepts only non-empty provider model ids');
+  }
+  return {
+    $schema: JSON_SCHEMA_DRAFT_2020_12,
+    type: 'object',
+    properties: {
+      description: {
+        description: 'A short (3-5 word) description of the task',
+        type: 'string',
+      },
+      prompt: {
+        description: 'The task for the agent to perform',
+        type: 'string',
+      },
+      subagent_type: {
+        description: 'The type of specialized agent to use for this task',
+        type: 'string',
+      },
+      ...(models.length === 0 ? {} : {
+        model: {
+          description: "Optional model override for this agent. Takes precedence over the Role's model. If omitted, uses the Role's model, or inherits from the parent.",
+          type: 'string',
+          enum: models,
+        },
+      }),
+      run_in_background: {
+        description: "Agents run in the background by default; you will be notified when one completes. Set to false only when your very next action depends on this agent's result and nothing else could usefully happen while it runs — otherwise leave it in the background so the user can hand you other work.",
+        type: 'boolean',
+      },
+      isolation: {
+        description: 'Isolation mode. "worktree" creates a temporary git worktree so the agent works on an isolated copy of the repo.',
+        type: 'string',
+        enum: ['worktree'],
+      },
+    },
+    required: ['description', 'prompt'],
+    additionalProperties: false,
+  };
+}
+
+export const AGENT_MESSAGE_INPUT_SCHEMA: JsonSchema = {
+  $schema: JSON_SCHEMA_DRAFT_2020_12,
+  type: 'object',
+  properties: {
+    to: {
+      description: 'Recipient: agent ID or "main"',
+      type: 'string',
+      pattern: '^[^\\n\\r]{0,200}$',
+    },
+    summary: {
+      description: 'A 5-10 word summary shown as a one-line preview in the UI. Defaults to the first line of a plain-text message; longer summaries are truncated to 200 characters rather than rejected.',
+      type: 'string',
+      maxLength: 200,
+    },
+    message: {
+      description: 'Plain text message content',
+      type: 'string',
+    },
+  },
+  required: ['to', 'message'],
+  additionalProperties: false,
+};
+
+export const TASK_STOP_INPUT_SCHEMA: JsonSchema = {
+  $schema: JSON_SCHEMA_DRAFT_2020_12,
+  type: 'object',
+  properties: {
+    task_id: {
+      description: 'The ID of the background task to stop. Background agents are also accepted by agent ID.',
+      type: 'string',
+    },
+    shell_id: {
+      description: 'Deprecated: use task_id instead',
+      type: 'string',
+    },
+  },
+  additionalProperties: false,
+};
+
+const agentTaskToolContracts: readonly ModelToolContract[] = [
   {
-    identity: { namespace: COLLABORATION_NAMESPACE, name: 'spawn_agent' },
-    description: 'Create a child Thread, resolve its Agent Role, and start its first Turn. Descendants share one fixed-grant host pool; max_total_tokens caps this child only at 1000000 or above, and a smaller value is ignored rather than starving it.',
+    identity: { namespace: null, name: 'agent' },
+    description: AGENT_TOOL_DESCRIPTION,
     scope: 'anyThread',
-    schemaOwner: 'core',
-    inputSchema: spawnAgentSchema,
-    outputSchema: objectSchema({
-      task_name: stringSchema('Canonical child task path.'),
-      thread_id: stringSchema('Child Thread identifier.'),
-      nickname: { type: ['string', 'null'] },
-    }, ['task_name', 'thread_id', 'nickname']),
+    schemaOwner: 'configuration',
+    inputSchema: null,
     actionKinds: ['agent.subagent.spawn'],
   },
   {
-    identity: { namespace: COLLABORATION_NAMESPACE, name: 'send_message' },
-    description: 'Queue a message for an existing child Thread without starting a Turn.',
+    identity: { namespace: null, name: 'agent_message' },
+    description: AGENT_MESSAGE_TOOL_DESCRIPTION,
     scope: 'anyThread',
     schemaOwner: 'core',
-    inputSchema: collaborationMessageSchema,
+    inputSchema: AGENT_MESSAGE_INPUT_SCHEMA,
     actionKinds: ['agent.subagent.send'],
   },
   {
-    identity: { namespace: COLLABORATION_NAMESPACE, name: 'followup_task' },
-    description: 'Start a child Turn when idle or deliver the task at a safe active-Turn boundary.',
+    identity: { namespace: null, name: 'task_stop' },
+    description: TASK_STOP_TOOL_DESCRIPTION,
     scope: 'anyThread',
     schemaOwner: 'core',
-    inputSchema: collaborationMessageSchema,
-    actionKinds: ['agent.subagent.send'],
-  },
-  {
-    identity: { namespace: COLLABORATION_NAMESPACE, name: 'wait_agent' },
-    description: 'Block without polling until a child reaches a terminal state or the sender receives steering. Returns batched terminal outcomes, including final results, plus the current child tree; returns immediately only when no child is running. Each agent view reports the live pool-or-cap tokensUsed and tokenBudget controlling its next refusal. Synthesize completed results instead of repeating covered work. To verify or debug a reported result, read or grep the child transcript at its transcriptPath with the file tools; it stays readable after the child stops or exhausts its budget.',
-    scope: 'anyThread',
-    schemaOwner: 'core',
-    inputSchema: objectSchema({}),
-    outputSchema: objectSchema({
-      reason: enumSchema(['terminal', 'steering', 'idle']),
-      updates: arraySchema(collaborationTerminalOutcomeSchema),
-      agents: arraySchema(collaborationAgentViewSchema),
-    }, ['reason', 'updates', 'agents']),
-    actionKinds: ['agent.subagent.read'],
-  },
-  {
-    identity: { namespace: COLLABORATION_NAMESPACE, name: 'list_agents' },
-    description: 'List the live child-Thread tree, optionally below a task-path prefix.',
-    scope: 'anyThread',
-    schemaOwner: 'core',
-    inputSchema: objectSchema({
-      path_prefix: stringSchema('Task-path prefix without a trailing slash.'),
-    }),
-    actionKinds: ['agent.subagent.read'],
-  },
-  {
-    identity: { namespace: COLLABORATION_NAMESPACE, name: 'interrupt_agent' },
-    description: 'Interrupt a child current Turn while retaining its Thread for later work.',
-    scope: 'anyThread',
-    schemaOwner: 'core',
-    inputSchema: collaborationTargetSchema,
-    actionKinds: ['agent.subagent.interrupt'],
+    inputSchema: TASK_STOP_INPUT_SCHEMA,
+    actionKinds: ['agent.subagent.interrupt', 'shell.stop'],
   },
 ];
 
@@ -484,7 +545,6 @@ const CAPABILITY_ACTION_KINDS = {
     'git.publish_remote',
     'deploy.publish_remote',
   ],
-  bash_stop: ['shell.stop'],
   web_search: ['web.search'],
   web_fetch: ['web.fetch'],
   generate_image: ['agent.image.generate'],
@@ -500,17 +560,19 @@ const retainedCapabilityToolContracts: readonly ModelToolContract[] = RETAINED_C
   actionKinds: CAPABILITY_ACTION_KINDS[name],
 }));
 
-const configurationToolContracts: readonly ModelToolContract[] = [{
-  identity: { namespace: null, name: 'skill' },
-  description: 'Invoke a configuration-selected Skill by canonical identity.',
-  scope: 'anyThread',
-  schemaOwner: 'configuration',
-  inputSchema: null,
-  actionKinds: ['agent.skill.invoke'],
-}];
+const configurationToolContracts: readonly ModelToolContract[] = [
+  {
+    identity: { namespace: null, name: 'skill' },
+    description: 'Invoke a configuration-selected Skill by canonical identity.',
+    scope: 'anyThread',
+    schemaOwner: 'configuration',
+    inputSchema: null,
+    actionKinds: ['agent.skill.invoke'],
+  },
+];
 
 export const MODEL_TOOL_CATALOG: readonly ModelToolContract[] = Object.freeze([
-  ...collaborationToolContracts,
+  ...agentTaskToolContracts,
   ...coreControlToolContracts,
   ...retainedCapabilityToolContracts,
   ...configurationToolContracts,
@@ -564,9 +626,6 @@ export function assembleModelToolRegistry(
     const key = canonicalModelToolKey(contract.identity);
     if (contract.schemaOwner !== 'extension') {
       throw new Error(`Extension model tool must be owned by extension: ${key}`);
-    }
-    if (contract.identity.namespace === COLLABORATION_NAMESPACE) {
-      throw new Error(`The ${COLLABORATION_NAMESPACE} namespace is reserved by Core`);
     }
     if (contract.inputSchema === null) throw new Error(`Extension model tool requires a concrete schema: ${key}`);
     if (resolved.has(key)) throw new Error(`Duplicate canonical model tool: ${key}`);
@@ -698,6 +757,42 @@ export function normalizeRequestUserInputToolInput(value: unknown): RequestUserI
   });
 }
 
+export function normalizeAgentToolInput(value: unknown): AgentToolInput {
+  if (!isRecord(value)) throw new Error('agent input must be an object');
+  exactInputKeys(
+    value,
+    ['description', 'prompt', 'subagent_type', 'model', 'run_in_background', 'isolation'],
+    'agent',
+  );
+  return Object.freeze({
+    ...value,
+    subagent_type: value.subagent_type === undefined ? 'general-purpose' : value.subagent_type,
+    run_in_background: value.run_in_background === undefined ? true : value.run_in_background,
+  }) as unknown as AgentToolInput;
+}
+
+export function normalizeAgentMessageToolInput(value: unknown): AgentMessageToolInput {
+  if (!isRecord(value)) throw new Error('agent_message input must be an object');
+  exactInputKeys(value, ['to', 'summary', 'message'], 'agent_message');
+  if (typeof value.to === 'string' && !value.to.trim()) {
+    throw new Error('<tool_use_error>to must not be empty</tool_use_error>');
+  }
+  const summary = normalizedAgentMessageSummary(value.summary, value.message);
+  return Object.freeze({ ...value, summary }) as unknown as AgentMessageToolInput;
+}
+
+export function normalizeTaskStopToolInput(value: unknown): TaskStopToolInput {
+  if (!isRecord(value)) throw new Error('task_stop input must be an object');
+  exactInputKeys(value, ['task_id', 'shell_id'], 'task_stop');
+  const taskId = typeof value.task_id === 'string' && value.task_id.trim()
+    ? value.task_id.trim()
+    : typeof value.shell_id === 'string' && value.shell_id.trim()
+      ? value.shell_id.trim()
+      : null;
+  if (!taskId) throw new Error('Missing required parameter: task_id');
+  return Object.freeze({ ...value, task_id: taskId }) as TaskStopToolInput;
+}
+
 export function normalizeUpdatePlanToolInput(value: unknown): UpdatePlanToolInput {
   if (!isRecord(value)) throw new Error('update_plan input must be an object');
   exactInputKeys(value, ['explanation', 'plan'], 'update_plan');
@@ -720,6 +815,17 @@ export function normalizeUpdatePlanToolInput(value: unknown): UpdatePlanToolInpu
       : { explanation: requiredString(value.explanation, 'update_plan.explanation') }),
     plan: Object.freeze(plan),
   });
+}
+
+function normalizedAgentMessageSummary(summary: unknown, message: unknown): unknown {
+  const source = typeof summary === 'string' && summary.trim()
+    ? summary
+    : typeof message === 'string'
+      ? message.trim().split(/\r\n?|\n/u, 1)[0] ?? ''
+      : summary;
+  return typeof source === 'string' && source.length > 200
+    ? `${source.slice(0, 199)}…`
+    : source;
 }
 
 function validateToolName(value: string, field: string): void {

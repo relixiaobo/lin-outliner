@@ -8,7 +8,11 @@ import { createThreadHistoryRollbackContext } from '../../src/core/agent/extensi
 import type { AgentCoreNotification, Thread, ThreadItem, Turn } from '../../src/core/agent/protocol';
 import { GoalStore } from '../../src/main/agent/extensions/goal/GoalStore';
 import { RolloutStore } from '../../src/main/agent/persistence/RolloutStore';
-import { SubagentRequestLedger, requestPoolIdForTurn } from '../../src/main/agent/persistence/SubagentRequestLedger';
+import {
+  cappedChildPoolId,
+  SubagentRequestLedger,
+  requestPoolIdForTurn,
+} from '../../src/main/agent/persistence/SubagentRequestLedger';
 import { ThreadHistoryProjectionStore } from '../../src/main/agent/persistence/ThreadHistoryProjectionStore';
 import { ThreadMetadataStore } from '../../src/main/agent/persistence/ThreadMetadataStore';
 import { uuidV7 } from '../../src/main/agent/uuid';
@@ -36,6 +40,7 @@ const configuration: EffectiveThreadConfiguration = {
   reasoningEffort: 'medium',
   tools: [],
   skills: [],
+  preloadedSkills: [],
   plugins: [],
   mcpServers: [],
 };
@@ -835,7 +840,6 @@ describe('Agent Core persistence', () => {
     }, false);
     budgets.addUsage(persistentChildId, persistentPoolId, 40);
     budgets.addUsage(persistentSiblingId, persistentPoolId, 10);
-    budgets.recordSpawnCount(persistentHolderId, 2, false);
     budgets.createPool({
       poolId: ephemeralPoolId,
       scope: 'turn',
@@ -850,33 +854,159 @@ describe('Agent Core persistence', () => {
       tokenCap: null,
     }, true);
     budgets.addUsage(ephemeralChildId, ephemeralPoolId, 10);
-    budgets.recordSpawnCount(ephemeralHolderId, 1, true);
     expect(goals.read(persistentChildId)?.goal.objective).toBe('Child-owned Goal');
     expect(budgets.readPool(persistentPoolId)).toMatchObject({ tokenBudget: 100, tokensUsed: 50 });
     expect(budgets.readMember(persistentChildId)).toMatchObject({ tokenCap: 60, tokensUsed: 40 });
     expect(budgets.readMember(persistentSiblingId)).toMatchObject({ tokenCap: null, tokensUsed: 10 });
-    expect(budgets.readSpawnCount(persistentHolderId)).toBe(2);
     expect(budgets.readPool(ephemeralPoolId)).toMatchObject({ tokenBudget: 50, tokensUsed: 10 });
-    expect(budgets.readSpawnCount(ephemeralHolderId)).toBe(1);
     goals.close();
 
     const reopenedDatabase = testDatabase(goalsPath);
     const reopened = new SubagentRequestLedger(reopenedDatabase);
     expect(reopened.readPool(persistentPoolId)).toMatchObject({ tokenBudget: 100, tokensUsed: 50 });
     expect(reopened.readMember(persistentChildId)).toMatchObject({ tokenCap: 60, tokensUsed: 40 });
-    expect(reopened.readSpawnCount(persistentHolderId)).toBe(2);
     expect(reopened.readPool(ephemeralPoolId)).toBeNull();
-    expect(reopened.readSpawnCount(ephemeralHolderId)).toBe(0);
     expect(reopened.clearThread(persistentChildId)).toBe(true);
     expect(reopened.readPool(persistentPoolId)).toMatchObject({ tokenBudget: 100, tokensUsed: 50 });
-    expect(reopened.readSpawnCount(persistentHolderId)).toBe(2);
     // Deleting the Thread that originated the pool takes the pool and every
     // remaining member with it.
     expect(reopened.clearThread(persistentHolderId)).toBe(true);
     expect(reopened.readPool(persistentPoolId)).toBeNull();
     expect(reopened.readMember(persistentSiblingId)).toBeNull();
-    expect(reopened.readSpawnCount(persistentHolderId)).toBe(0);
     reopenedDatabase.close();
+  });
+
+  test('rolls back every new Subagent pool when atomic member admission fails', async () => {
+    const root = await tempRoot();
+    const goalsPath = join(root, 'goals.sqlite');
+    const goalsDatabase = testDatabase(goalsPath);
+    const budgets = new SubagentRequestLedger(goalsDatabase);
+    const originThreadId = uuidV7(3_600);
+    const originTurnId = uuidV7(3_610);
+    const childThreadId = uuidV7(3_620);
+    const requestPoolId = requestPoolIdForTurn(originTurnId);
+    const cappedPoolId = cappedChildPoolId(childThreadId);
+    goalsDatabase.exec(`
+      CREATE TRIGGER fail_subagent_member_admission
+      BEFORE INSERT ON subagent_request_members
+      BEGIN
+        SELECT RAISE(ABORT, 'simulated member admission failure');
+      END;
+    `);
+
+    expect(() => budgets.createAdmission({
+      pools: [{
+        poolId: requestPoolId,
+        scope: 'turn',
+        originThreadId,
+        originTurnId,
+        tokenBudget: null,
+      }, {
+        poolId: cappedPoolId,
+        scope: 'thread',
+        originThreadId: childThreadId,
+        originTurnId,
+        tokenBudget: 1_000_000,
+      }],
+      member: {
+        threadId: childThreadId,
+        poolId: cappedPoolId,
+        originTurnId,
+        tokenCap: 1_000_000,
+      },
+    }, false)).toThrow('simulated member admission failure');
+
+    expect(budgets.readPool(requestPoolId)).toBeNull();
+    expect(budgets.readPool(cappedPoolId)).toBeNull();
+    expect(budgets.readMember(childThreadId)).toBeNull();
+    goalsDatabase.close();
+  });
+
+  test('restores Subagent members when atomic startup pool cleanup fails', async () => {
+    const root = await tempRoot();
+    const goalsPath = join(root, 'goals.sqlite');
+    const goalsDatabase = testDatabase(goalsPath);
+    const budgets = new SubagentRequestLedger(goalsDatabase);
+    const originThreadId = uuidV7(3_700);
+    const originTurnId = uuidV7(3_710);
+    const childThreadId = uuidV7(3_720);
+    const requestPoolId = requestPoolIdForTurn(originTurnId);
+    budgets.createAdmission({
+      pools: [{
+        poolId: requestPoolId,
+        scope: 'turn',
+        originThreadId,
+        originTurnId,
+        tokenBudget: null,
+      }],
+      member: {
+        threadId: childThreadId,
+        poolId: requestPoolId,
+        originTurnId,
+        tokenCap: null,
+      },
+    }, false);
+    goalsDatabase.exec(`
+      CREATE TRIGGER fail_subagent_pool_recovery_cleanup
+      BEFORE DELETE ON subagent_request_pools
+      BEGIN
+        SELECT RAISE(ABORT, 'simulated pool recovery cleanup failure');
+      END;
+    `);
+
+    expect(() => budgets.clearThreadsForRecovery([childThreadId]))
+      .toThrow('simulated pool recovery cleanup failure');
+
+    expect(budgets.readPool(requestPoolId)).not.toBeNull();
+    expect(budgets.readMember(childThreadId)).not.toBeNull();
+    goalsDatabase.close();
+  });
+
+  test('keeps request pools that still cover execution-only descendants during recovery', async () => {
+    const root = await tempRoot();
+    const goalsPath = join(root, 'goals.sqlite');
+    const goalsDatabase = testDatabase(goalsPath);
+    const budgets = new SubagentRequestLedger(goalsDatabase);
+    const originThreadId = uuidV7(3_800);
+    const originTurnId = uuidV7(3_810);
+    const parentThreadId = uuidV7(3_820);
+    const descendantTurnId = uuidV7(3_830);
+    const descendantThreadId = uuidV7(3_840);
+    const requestPoolId = requestPoolIdForTurn(originTurnId);
+    budgets.createAdmission({
+      pools: [{
+        poolId: requestPoolId,
+        scope: 'turn',
+        originThreadId,
+        originTurnId,
+        tokenBudget: null,
+      }],
+      member: {
+        threadId: parentThreadId,
+        poolId: requestPoolId,
+        originTurnId,
+        tokenCap: null,
+      },
+    }, false);
+    budgets.createAdmission({
+      pools: [],
+      member: {
+        threadId: descendantThreadId,
+        poolId: requestPoolId,
+        originTurnId: descendantTurnId,
+        tokenCap: null,
+      },
+    }, false);
+
+    expect(budgets.clearThreadsForRecovery([parentThreadId])).toBe(true);
+
+    expect(budgets.readMember(parentThreadId)).toBeNull();
+    expect(budgets.readMember(descendantThreadId)).toMatchObject({
+      poolId: requestPoolId,
+      originTurnId: descendantTurnId,
+    });
+    expect(budgets.readPool(requestPoolId)).not.toBeNull();
+    goalsDatabase.close();
   });
 });
 

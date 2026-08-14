@@ -3,8 +3,75 @@
 exports[`canonical provider tool catalog keeps names, order, descriptions, and JSON schemas byte-stable 1`] = `
 "[
   {
+    "name": "agent",
+    "description": "Launch a new agent to handle complex, multi-step tasks. Each agent type has specific capabilities and tools available to it.\\n\\nAvailable agent types are listed in <system-reminder> messages in the conversation.\\n\\nWhen using the agent tool, specify a subagent_type parameter to select which agent type to use. If omitted, the general-purpose agent is used.\\n\\n## When to use\\n\\nReach for this when the task matches an available agent type, when you have independent work to run in parallel, or when answering would mean reading across several files — delegate it and you keep the conclusion, not the file dumps. For a single-fact lookup where you already know the file, symbol, or value, search directly. Once you've delegated a search, don't also run it yourself — wait for the result.\\n\\n- The agent's final report is not shown to the user — relay what matters.\\n- Use agent_message with the agent's ID to continue a previously spawned agent with its context intact; a new agent call starts fresh.\\n- Each agent type's model, reasoning effort, and tools come from its Tenon Role.\\n- \`isolation: \\"worktree\\"\` gives the agent its own git worktree (auto-cleaned if unchanged).\\n- Subagents run in the background by default; you'll be notified when one completes. Pass \`run_in_background: false\` only when your very next action depends on the result and nothing else could usefully happen while it runs — otherwise background it so the user can interject. Never fabricate or predict a pending agent's results — the notification is never something you write yourself; if the user asks before it arrives, say it's still running.",
+    "parameters": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "description": {
+          "description": "A short (3-5 word) description of the task",
+          "type": "string"
+        },
+        "prompt": {
+          "description": "The task for the agent to perform",
+          "type": "string"
+        },
+        "subagent_type": {
+          "description": "The type of specialized agent to use for this task",
+          "type": "string"
+        },
+        "run_in_background": {
+          "description": "Agents run in the background by default; you will be notified when one completes. Set to false only when your very next action depends on this agent's result and nothing else could usefully happen while it runs — otherwise leave it in the background so the user can hand you other work.",
+          "type": "boolean"
+        },
+        "isolation": {
+          "description": "Isolation mode. \\"worktree\\" creates a temporary git worktree so the agent works on an isolated copy of the repo.",
+          "type": "string",
+          "enum": [
+            "worktree"
+          ]
+        }
+      },
+      "required": [
+        "description",
+        "prompt"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "agent_message",
+    "description": "# agent_message\\n\\nSend a message to another agent.\\n\\n\`\`\`json\\n{\\"to\\": \\"<agent-id>\\", \\"summary\\": \\"assign follow-up\\", \\"message\\": \\"continue with the follow-up\\"}\\n\`\`\`\\n\\n| \`to\` | |\\n|---|---|\\n| \`\\"<agent-id>\\"\` | Agent by ID |\\n| \`\\"main\\"\` | The main conversation (background subagents only) |\\n\\nYour plain text output is NOT visible to other agents — to communicate, you MUST call this tool. Messages from agents are delivered automatically; you don't check an inbox. Use the raw \`agentId\` from the spawn result to steer or resume an agent. When relaying, don't quote the original — it's already rendered to the user.",
+    "parameters": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "to": {
+          "description": "Recipient: agent ID or \\"main\\"",
+          "type": "string",
+          "pattern": "^[^\\\\n\\\\r]{0,200}$"
+        },
+        "summary": {
+          "description": "A 5-10 word summary shown as a one-line preview in the UI. Defaults to the first line of a plain-text message; longer summaries are truncated to 200 characters rather than rejected.",
+          "type": "string",
+          "maxLength": 200
+        },
+        "message": {
+          "description": "Plain text message content",
+          "type": "string"
+        }
+      },
+      "required": [
+        "to",
+        "message"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
     "name": "bash",
-    "description": "Executes a shell command in the Thread working directory with the current OS account authority.\\nUse file_read, file_edit, file_write, file_delete, file_glob, and file_grep for filesystem operations when possible.\\nFor document and image conversion, run the installed converters directly: soffice/libreoffice (office to PDF), pdftoppm (PDF to PNG/JPEG pages), and sips (image format conversion on macOS).\\nUse run_in_background for long-running commands. You do not need to append \\"&\\"; use bash_stop if the task needs to be stopped.\\nCommands should include a clear description of what they do in active voice.",
+    "description": "Executes a shell command in the Thread working directory with the current OS account authority.\\nUse file_read, file_edit, file_write, file_delete, file_glob, and file_grep for filesystem operations when possible.\\nFor document and image conversion, run the installed converters directly: soffice/libreoffice (office to PDF), pdftoppm (PDF to PNG/JPEG pages), and sips (image format conversion on macOS).\\nUse run_in_background for long-running commands. You do not need to append \\"&\\"; use task_stop if the task needs to be stopped.\\nCommands should include a clear description of what they do in active voice.",
     "parameters": {
       "type": "object",
       "additionalProperties": false,
@@ -32,152 +99,6 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
           "description": "Set to true to run this command in the background. You do not need to append \\"&\\"; use file_read on the returned output path later if needed."
         }
       }
-    }
-  },
-  {
-    "name": "bash_stop",
-    "description": "Stops a running background task by its ID.\\nUse this tool when you need to terminate a long-running task created by bash.\\nOnly task_id is supported; shell_id is not accepted.",
-    "parameters": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "task_id"
-      ],
-      "properties": {
-        "task_id": {
-          "type": "string",
-          "minLength": 1,
-          "description": "The ID of the background task to stop. Use the task_id returned by bash when a command runs in the background."
-        }
-      }
-    }
-  },
-  {
-    "name": "collaboration__followup_task",
-    "description": "Start a child Turn when idle or deliver the task at a safe active-Turn boundary.",
-    "parameters": {
-      "type": "object",
-      "properties": {
-        "target": {
-          "type": "string",
-          "description": "Relative or canonical task path returned by spawn_agent."
-        },
-        "message": {
-          "type": "string",
-          "description": "Message text for the target Subagent."
-        }
-      },
-      "required": [
-        "target",
-        "message"
-      ],
-      "additionalProperties": false
-    }
-  },
-  {
-    "name": "collaboration__interrupt_agent",
-    "description": "Interrupt a child current Turn while retaining its Thread for later work.",
-    "parameters": {
-      "type": "object",
-      "properties": {
-        "target": {
-          "type": "string",
-          "description": "Relative or canonical task path returned by spawn_agent."
-        }
-      },
-      "required": [
-        "target"
-      ],
-      "additionalProperties": false
-    }
-  },
-  {
-    "name": "collaboration__list_agents",
-    "description": "List the live child-Thread tree, optionally below a task-path prefix.",
-    "parameters": {
-      "type": "object",
-      "properties": {
-        "path_prefix": {
-          "type": "string",
-          "description": "Task-path prefix without a trailing slash."
-        }
-      },
-      "required": [],
-      "additionalProperties": false
-    }
-  },
-  {
-    "name": "collaboration__send_message",
-    "description": "Queue a message for an existing child Thread without starting a Turn.",
-    "parameters": {
-      "type": "object",
-      "properties": {
-        "target": {
-          "type": "string",
-          "description": "Relative or canonical task path returned by spawn_agent."
-        },
-        "message": {
-          "type": "string",
-          "description": "Message text for the target Subagent."
-        }
-      },
-      "required": [
-        "target",
-        "message"
-      ],
-      "additionalProperties": false
-    }
-  },
-  {
-    "name": "collaboration__spawn_agent",
-    "description": "Create a child Thread, resolve its Agent Role, and start its first Turn. Descendants share one fixed-grant host pool; max_total_tokens caps this child only at 1000000 or above, and a smaller value is ignored rather than starving it.",
-    "parameters": {
-      "type": "object",
-      "properties": {
-        "task_name": {
-          "type": "string",
-          "description": "Lowercase task name using letters, digits, and underscores."
-        },
-        "message": {
-          "type": "string",
-          "description": "Initial plain-text task for the new Subagent."
-        },
-        "max_total_tokens": {
-          "type": "number",
-          "description": "Optional per-child token cap, honoured only at 1000000 or above; a smaller value is ignored and the child shares the request pool. It creates its own pool when honoured and no ancestor pool exists."
-        },
-        "fork_turns": {
-          "type": "string",
-          "description": "Use none, all, or a positive integer string. Defaults to all."
-        },
-        "agent_type": {
-          "type": "string",
-          "description": "Agent Role override. Omit unless explicitly requested."
-        },
-        "model": {
-          "type": "string",
-          "description": "Model override. Omit unless an explicit override is needed."
-        },
-        "reasoning_effort": {
-          "type": "string",
-          "description": "Reasoning effort override. Omit to inherit the parent effort."
-        }
-      },
-      "required": [
-        "task_name",
-        "message"
-      ],
-      "additionalProperties": false
-    }
-  },
-  {
-    "name": "collaboration__wait_agent",
-    "description": "Block without polling until a child reaches a terminal state or the sender receives steering. Returns batched terminal outcomes, including final results, plus the current child tree; returns immediately only when no child is running. Each agent view reports the live pool-or-cap tokensUsed and tokenBudget controlling its next refusal. Synthesize completed results instead of repeating covered work. To verify or debug a reported result, read or grep the child transcript at its transcriptPath with the file tools; it stays readable after the child stops or exhausts its budget.",
-    "parameters": {
-      "type": "object",
-      "properties": {},
-      "required": [],
-      "additionalProperties": false
     }
   },
   {
@@ -1568,6 +1489,25 @@ exports[`canonical provider tool catalog keeps names, order, descriptions, and J
           "description": "Optional arguments to pass to the skill."
         }
       }
+    }
+  },
+  {
+    "name": "task_stop",
+    "description": "\\n- Stops a running background task by its ID\\n- Takes a task_id parameter identifying the task to stop\\n- To stop a background agent, pass its agent ID as task_id\\n- Returns a success or failure status\\n- Use this tool when you need to terminate a long-running task\\n",
+    "parameters": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "task_id": {
+          "description": "The ID of the background task to stop. Background agents are also accepted by agent ID.",
+          "type": "string"
+        },
+        "shell_id": {
+          "description": "Deprecated: use task_id instead",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
     }
   },
   {

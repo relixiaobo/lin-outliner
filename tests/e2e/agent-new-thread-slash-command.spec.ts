@@ -36,7 +36,7 @@ test.describe('new Thread composer slash command', () => {
     await composer.press('Enter');
 
     await expect.poll(() => callCount(page, 'thread/start')).toBe(initialThreadStarts + 1);
-    expect(await callCount(page, 'turn/start')).toBe(0);
+    expect(await callCount(page, 'turn/submit')).toBe(0);
     await expect(composer).toHaveText('');
     await expect(composer).toBeFocused();
     await page.getByRole('button', { name: 'Show Threads' }).click();
@@ -59,7 +59,7 @@ test.describe('new Thread composer slash command', () => {
     await expect(composer).toContainText('/new');
     await expect(page.locator('.thread-composer-inline-ref')).toContainText('Alpha');
     expect(await callCount(page, 'thread/start')).toBe(initialThreadStarts);
-    expect(await callCount(page, 'turn/start')).toBe(0);
+    expect(await callCount(page, 'turn/submit')).toBe(0);
 
     await composer.press('End');
     await composer.press('Backspace');
@@ -68,7 +68,7 @@ test.describe('new Thread composer slash command', () => {
     await expect(page.locator('.thread-composer-main .thread-inline-error')).toHaveCount(0);
     await composer.press('Enter');
     await expect.poll(() => callCount(page, 'thread/start')).toBe(initialThreadStarts + 1);
-    expect(await callCount(page, 'turn/start')).toBe(0);
+    expect(await callCount(page, 'turn/submit')).toBe(0);
   });
 
   test('uses menu completion for casing variants and keeps additional text on the ordinary Turn path', async ({ page }) => {
@@ -81,12 +81,12 @@ test.describe('new Thread composer slash command', () => {
     await composer.press('Enter');
     await expect(composer).toHaveText('/new');
     await expect(menu).toHaveCount(0);
-    expect(await callCount(page, 'turn/start')).toBe(0);
+    expect(await callCount(page, 'turn/submit')).toBe(0);
     expect(await callCount(page, 'thread/start')).toBe(initialThreadStarts);
 
     await composer.fill('/new project');
     await composer.press('Enter');
-    await expect.poll(() => callCount(page, 'turn/start')).toBe(1);
+    await expect.poll(() => callCount(page, 'turn/submit')).toBe(1);
 
     expect(await callCount(page, 'thread/start')).toBe(initialThreadStarts);
   });
@@ -98,9 +98,9 @@ test.describe('new Thread composer slash command', () => {
     await expect(page.getByRole('listbox', { name: 'Thread slash commands' })).toHaveCount(0);
     await composer.press('Enter');
 
-    await expect.poll(() => callCount(page, 'turn/start')).toBe(1);
-    const turnStart = (await commandCalls(page)).find((call) => call.cmd === 'turn/start');
-    expect(turnStart?.args.input).toEqual([{ type: 'text', text: '/clear' }]);
+    await expect.poll(() => callCount(page, 'turn/submit')).toBe(1);
+    const turnSubmit = (await commandCalls(page)).find((call) => call.cmd === 'turn/submit');
+    expect(turnSubmit?.args.input).toEqual([{ type: 'text', text: '/clear' }]);
   });
 
   test('uses any usable provider for /new instead of the selected Thread send gate', async ({ page }) => {
@@ -170,7 +170,7 @@ test.describe('new Thread composer slash command', () => {
     await expect(composer).toHaveText('/new');
     await expect(composer).toBeFocused();
     expect(await callCount(page, 'thread/start')).toBe(initialThreadStarts + 1);
-    expect(await callCount(page, 'turn/start')).toBe(0);
+    expect(await callCount(page, 'turn/submit')).toBe(0);
     await page.getByRole('button', { name: 'Show Threads' }).click();
     await expect(page.locator('.thread-list-row')).toHaveCount(1);
   });
@@ -209,7 +209,8 @@ test('leaves an active prior Turn running and marks its root as background work'
   const priorThread = page.locator('.thread-list-row').filter({ hasText: 'Keep working in the background.' });
   await expect(priorThread.getByRole('img', { name: 'Background work running' })).toBeVisible();
   const calls = await commandCalls(page);
-  expect(calls.filter((call) => call.cmd === 'turn/start')).toHaveLength(1);
+  expect(calls.filter((call) => call.cmd === 'turn/submit')).toHaveLength(1);
+  expect(calls.filter((call) => call.cmd === 'turn/start')).toHaveLength(0);
   expect(calls.filter((call) => call.cmd === 'turn/steer')).toHaveLength(0);
   expect(calls.filter((call) => call.cmd === 'turn/interrupt')).toHaveLength(0);
 });

@@ -117,8 +117,9 @@ after an earlier miss.
 
 Only isolated Skill metadata may select tools or execution settings, and it cannot
 widen the effective parent catalog. Isolated execution intersects its declared tools
-with the parent ceiling; read-only isolation removes write action kinds. Plugins and
-MCP servers obey the same parent ceiling through child configuration.
+with the parent ceiling. Plugins and MCP servers obey the same parent ceiling through
+child configuration. Generic `execution: isolated` remains; there is no dedicated
+read-only isolated execution partition.
 
 Embedded shell snippets are valid only in isolated Skills and execute from the already
 recorded canonical `skill` tool Item through the standard shell capability and its Full
@@ -140,22 +141,22 @@ active invocation set; the next ordinary admission records a complete baseline f
 then-current registry. No reducer state is reconstructed from reminder text or current
 Skill files during replay.
 
-Reduction recursively includes typed inherited Turns and prior compaction checkpoints.
-Child admission uses that inherited catalog hash and announced-entry state when comparing
-the current registry: an unchanged registry costs no additional Item or provider tokens,
-while a newly added, changed, or removed Skill appends the same deterministic delta used
-by an older root conversation. Repeated compaction carries active invocation references
-forward instead of re-reading mutable Skill files.
+Reduction recursively includes typed inherited Turns and prior compaction checkpoints
+for history forks and old canonical payloads. Fresh Agents do not inherit the parent
+Skill journal: general/Role startup receives a newly assembled available catalog plus
+complete Role-preloaded Skill content, while `explore` and `plan` omit the catalog.
+Repeated compaction carries an Agent's own active invocation references forward instead
+of re-reading mutable Skill files.
 
 Isolated child output is not restored as reusable Skill guidance. A future call
 starts a new child Turn under current configuration.
 
 Every isolated Skill catalog entry appends a host-derived execution constraint.
 The constraint states that invocation runs once in a single isolated child Thread
-under an explicit tool ceiling. When that ceiling does not declare
-`collaboration.spawn_agent`, the catalog explicitly tells the parent that the Skill
-cannot perform Subagent fan-out and that parallel orchestration belongs in the
-parent Thread. This capability fact is derived from the effective Skill definition;
+under an explicit tool ceiling. When that ceiling does not include `agent`, the
+catalog explicitly tells the parent that the Skill cannot perform Agent fan-out and
+that parallel orchestration belongs in the parent Thread. This capability fact is
+derived from the effective Skill definition;
 it is not hand-maintained prose in individual Skill bodies. Catalog budgeting
 reserves every isolated execution constraint before allocating space to authored
 descriptions, so pressure cannot silently remove the capability contract.
@@ -165,8 +166,9 @@ Skill execution mode. A completed outcome wraps the child's completed final
 text as a result to synthesize directly and tells the parent not to repeat covered
 work unless the result reports a gap or independent verification is explicitly
 required. The Skill tool is the only model-facing result channel for that isolated
-child; collaboration listing and waiting exclude it. Failed or interrupted outcomes
-are labeled as partial evidence rather than being described as completed.
+child; it never emits an Agent task notification or consumes Agent depth/concurrency.
+Failed or interrupted outcomes are labeled as partial evidence rather than being
+described as completed.
 
 ## Authoring And Provenance
 
@@ -264,7 +266,7 @@ legacy installations, or update the CLI independently of the active Skill.
 
 The packaged platform floor contains `tenon-import`, Tenon's external-data
 cleanup and import workflow. Development registration also provides the
-authoring and research workflows used by the runtime. Packaged resource staging
+authoring workflow used by the runtime. Packaged resource staging
 is explicit; arbitrary optional Skills are not copied into the application
 bundle. The packaged import wrapper is required: the macOS packaging hook
 restores its executable mode and fails the build when the resource is absent.

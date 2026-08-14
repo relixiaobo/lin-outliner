@@ -29,7 +29,12 @@ import { observedSkillFilePaths } from './agent/context/SkillContextReducer';
 import { AttachmentResolver } from './agent/tools/attachments';
 import { createImageArtifactReference, ImageObservationNormalizationError } from './agent/imageArtifacts';
 import { Mutex } from './agent/Mutex';
-import { AgentSkillRuntime, expandSkillDirectory, resolveUserSkillInvocation } from './agent/capabilities/agentSkills';
+import {
+  AgentSkillRuntime,
+  expandSkillDirectory,
+  resolvePreloadedSkillInvocations,
+  resolveUserSkillInvocation,
+} from './agent/capabilities/agentSkills';
 import { isValidSkillName } from './agent/capabilities/agentSkillAuthoring';
 import { createAgentSkillProvenanceStore } from './agent/capabilities/agentSkillProvenanceStore';
 import { executeAgentSkillShellCommand } from './agent/capabilities/agentSkillShell';
@@ -52,7 +57,9 @@ import {
   createAgentLocalWorkspaceContext,
   resolveAgentLocalReadPath,
   type AgentLocalWorkspaceContext,
+  type AgentWorkspaceWriteBoundary,
 } from './agent/capabilities/agentLocalTools';
+import { AgentWorktree } from './agent/worktree/AgentWorktree';
 import type { AgentImageGenerationRuntime } from './agent/capabilities/agentImageGenerationTool';
 import {
   piFindImageModel,
@@ -173,6 +180,7 @@ import {
   getProviderSecretStatus,
   getStoredProviderApiKey,
   getProviderSettings,
+  rankedModels,
   reconcileProviderConfig,
   refreshProviderModels,
   setActiveProvider,
@@ -647,6 +655,7 @@ async function findUnmanagedSkillNameConflict(name: string) {
 }
 let toolRuntime!: ToolRuntime;
 const agentConfigurationLoader = new AgentConfigurationLoader(resolvedUserDataDir);
+const agentWorktree = new AgentWorktree(resolvedUserDataDir);
 let threadService!: ThreadService;
 const agentImageObservationMutex = new Mutex();
 const attachmentResolver = new AttachmentResolver({
@@ -687,8 +696,23 @@ threadService = ThreadService.open(
       request.cwd,
     ),
     resolveRole: (name, cwd) => agentConfigurationLoader.resolveRole(name, cwd),
+    resolveAgentType: (name, cwd) => agentConfigurationLoader.resolveAgentType(name, cwd),
     resolveRoleCatalog: (cwd) => agentConfigurationLoader.buildRoleCatalogSnapshot(cwd),
+    resolveProviderModelIds: (providerId) => rankedModels(providerId).map((model) => model.id),
     resolveSubagentTokenBudget: async () => (await getAgentRuntimeSettings()).subagentTokenBudget,
+    resolveSubagentLimits: async () => {
+      const settings = await getAgentRuntimeSettings();
+      return {
+        maxDepth: settings.subagentMaxDepth,
+        maxConcurrent: settings.subagentMaxConcurrent,
+      };
+    },
+    planAgentWorktree: (input) => agentWorktree.plan(input),
+    prepareAgentWorktree: (input) => agentWorktree.prepare(input),
+    settleAgentWorktree: (worktree, options) => agentWorktree.settle(worktree, options),
+    recoverAgentWorktree: (input) => agentWorktree.recover(input),
+    cleanupResidualAgentWorktree: (input) => agentWorktree.cleanupResidual(input),
+    reportError,
     resolveRendererStartDefaults: async () => {
       const provider = await getActiveProviderRuntimeConfig();
       if (!provider) throw new Error('Configure an AI provider before starting a Thread.');
@@ -734,15 +758,17 @@ threadService = ThreadService.open(
       thread,
       turnId,
       configuration,
+      preloadedSkills,
       content,
       acceptedAt,
       observedFilePaths,
     }) => {
-      if (!configuration.tools.includes('skill')) {
-        return { catalogSnapshot: null, invocation: null };
+      const hasSkillTool = configuration.tools.includes('skill');
+      if (!hasSkillTool) {
+        return { catalogSnapshot: null, preloadedInvocations: [], invocation: null };
       }
       const runtime = new AgentSkillRuntime({
-        localRoot: agentLocalFileRoot,
+        localRoot: thread.cwd,
         threadId: thread.id,
         enabledSkills: configuration.skills,
         provenanceStore: createAgentSkillProvenanceStore(),
@@ -753,22 +779,29 @@ threadService = ThreadService.open(
         ),
         executeSkillShell: ({ command, signal }) => executeAgentSkillShellCommand({
           command,
-          localRoot: agentLocalFileRoot,
+          localRoot: thread.cwd,
           scratchRoot: agentScratchRoot,
           signal,
           processEnvironment: () => managedSkillShellEnvironment!.processEnvironment(thread.id, turnId),
+          writeBoundary: agentWriteBoundaryForThread(thread.id),
+          subagentPolicy: threadService.subagentExecution(thread.id)?.toolPolicy,
         }),
       });
       const settings = await getAgentRuntimeSettings();
       runtime.updateAdditionalSkillDirectories(settings.additionalSkillDirectories);
       runtime.updateDisabledSkills(settings.disabledSkills ?? []);
       await runtime.notifyFileTouched([...observedFilePaths]);
-      const directInput = directSkillAdmissionInput(content);
+      const preloaded = await resolvePreloadedSkillInvocations(runtime, preloadedSkills, acceptedAt, true);
+      for (const diagnostic of preloaded.diagnostics) {
+        console.warn(`[agent][skill-preload] ${diagnostic}`);
+      }
+      const directInput = hasSkillTool ? directSkillAdmissionInput(content) : null;
       const invocation = directInput
         ? await resolveUserSkillInvocation(runtime, directInput, { invokedAt: acceptedAt })
         : null;
       return {
-        catalogSnapshot: await runtime.buildSkillCatalogSnapshot(),
+        catalogSnapshot: hasSkillTool ? await runtime.buildSkillCatalogSnapshot() : null,
+        preloadedInvocations: preloaded.invocations,
         invocation: invocation?.ok ? invocation.evidence : null,
       };
     },
@@ -807,7 +840,7 @@ function skillRuntimeForTurn(context: Parameters<ToolRuntime['createTools']>[0])
   const existing = turnSkillRuntimes.get(context.turn.id);
   if (existing) return existing;
   const runtime = new AgentSkillRuntime({
-    localRoot: agentLocalFileRoot,
+    localRoot: context.thread.cwd,
     threadId: context.thread.id,
     enabledSkills: context.configuration.skills,
     provenanceStore: createAgentSkillProvenanceStore(),
@@ -818,16 +851,17 @@ function skillRuntimeForTurn(context: Parameters<ToolRuntime['createTools']>[0])
     ),
     executeSkillShell: ({ command, signal }) => executeAgentSkillShellCommand({
       command,
-      localRoot: agentLocalFileRoot,
+      localRoot: context.thread.cwd,
       scratchRoot: agentScratchRoot,
       signal,
       processEnvironment: () => managedSkillShellEnvironment!.processEnvironment(context.thread.id, context.turn.id),
+      writeBoundary: agentWriteBoundaryForThread(context.thread.id),
+      subagentPolicy: threadService.subagentExecution(context.thread.id)?.toolPolicy,
     }),
     executeIsolatedSkill: async ({
       skill,
       renderedContent,
       parentToolCallId,
-      readOnlyIsolated,
     }) => {
       if (!parentToolCallId) throw new Error('An isolated Skill requires its parent dynamic-tool Item identity.');
       const spawned = await threadService.spawnIsolatedSkillThread({
@@ -837,7 +871,6 @@ function skillRuntimeForTurn(context: Parameters<ToolRuntime['createTools']>[0])
         skillName: skill.name,
         prompt: renderedContent,
         allowedTools: skill.allowedTools,
-        readOnly: readOnlyIsolated === true,
         ...(skill.model === undefined ? {} : { model: skill.model }),
         ...(skill.effort === undefined ? {} : { reasoningEffort: parseSkillReasoningEffort(skill.effort) }),
       });
@@ -853,7 +886,7 @@ function skillRuntimeForTurn(context: Parameters<ToolRuntime['createTools']>[0])
       const transcriptPath = await threadService.threadTranscriptPath(spawned.thread.id);
       return {
         threadId: spawned.thread.id,
-        agentRole: spawned.thread.agentRole ?? (readOnlyIsolated ? 'explorer' : 'worker'),
+        agentRole: spawned.thread.agentRole ?? 'default',
         status: completed.status,
         ...(result ? { result } : {}),
         ...(transcriptPath ? { transcriptPath } : {}),
@@ -920,11 +953,26 @@ function parseSkillReasoningEffort(value: string): ReasoningEffort {
 
 function localWorkspaceForTurn(context: Parameters<ToolRuntime['createTools']>[0]): AgentLocalWorkspaceContext {
   return createAgentLocalWorkspaceContext(
-    agentLocalFileRoot,
+    context.thread.cwd,
     agentScratchRoot,
     skillRuntimeForTurn(context),
     () => managedSkillShellEnvironment!.processEnvironment(context.thread.id, context.turn.id),
+    agentWriteBoundaryForThread(context.thread.id),
+    context.thread.id,
   );
+}
+
+function agentWriteBoundaryForThread(
+  threadId: string,
+): AgentWorkspaceWriteBoundary | undefined {
+  const worktree = threadService.agentWorktree(threadId);
+  if (!worktree) return undefined;
+  const sandbox = agentWorktree.sandboxPaths(worktree);
+  return {
+    root: worktree.path,
+    shellWritablePaths: sandbox.writablePaths,
+    protectedGitObjectStores: sandbox.protectedGitObjectStores,
+  };
 }
 
 const automationStore = new AutomationStore(join(resolvedUserDataDir, 'agent', 'automations.sqlite'));

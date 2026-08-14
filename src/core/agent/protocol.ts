@@ -1032,13 +1032,7 @@ export interface DynamicToolCallThreadItem extends ThreadToolItemBase {
   readonly durationMs: number | null;
 }
 
-export type CollaborationToolName =
-  | 'spawn_agent'
-  | 'send_message'
-  | 'followup_task'
-  | 'wait_agent'
-  | 'list_agents'
-  | 'interrupt_agent';
+export type AgentTaskToolName = 'agent' | 'agent_message' | 'task_stop';
 
 export type SubagentExecutionStatus =
   | 'pendingInit'
@@ -1057,10 +1051,12 @@ export interface SubagentExecutionState {
 
 export interface CollabAgentToolCallThreadItem extends ThreadToolItemBase {
   readonly type: 'collabAgentToolCall';
-  readonly tool: CollaborationToolName;
+  readonly tool: AgentTaskToolName;
   readonly senderThreadId: ThreadId;
   readonly receiverThreadIds: readonly ThreadId[];
   readonly prompt: string | null;
+  /** Normalized one-line preview for `agent_message`; null for other tools and legacy Items. */
+  readonly summary: string | null;
   readonly model: string | null;
   readonly reasoningEffort: string | null;
   readonly agentsStates: Readonly<Record<ThreadId, SubagentExecutionState>>;
@@ -1070,6 +1066,8 @@ export interface SubAgentActivityThreadItem extends ThreadItemBase {
   readonly type: 'subAgentActivity';
   readonly kind: 'started' | 'completed' | 'interrupted' | 'errored';
   readonly agentThreadId: ThreadId;
+  /** Exact child Turn represented by this activity; null only for legacy Items. */
+  readonly agentTurnId: TurnId | null;
   readonly agentPath: string;
   readonly error: TurnError | null;
   /**
@@ -1399,6 +1397,10 @@ export interface RendererTurnStartRequest extends TurnInputRequest {
   readonly additionalContext?: Readonly<Record<string, AdditionalContextEntry & { readonly kind: 'untrusted' }>>;
 }
 
+export interface RendererTurnSubmitRequest extends Omit<RendererTurnStartRequest, 'clientUserMessageId'> {
+  readonly clientUserMessageId: string;
+}
+
 export interface PrivilegedTurnStartRequest extends TurnInputRequest {
   readonly turnId?: TurnId;
   readonly trigger: TurnTrigger;
@@ -1419,6 +1421,14 @@ export interface RendererTurnSteerRequest extends Omit<TurnSteerRequest, 'additi
 }
 
 export interface TurnSteerResponse {
+  readonly turnId: TurnId;
+  readonly acceptedItemId: ThreadItemId;
+  readonly deduplicated: boolean;
+}
+
+export interface TurnSubmitResponse {
+  /** Non-null only when this request admitted a new Turn. */
+  readonly turn: Turn | null;
   readonly turnId: TurnId;
   readonly acceptedItemId: ThreadItemId;
   readonly deduplicated: boolean;
@@ -1490,6 +1500,7 @@ export const AGENT_CORE_METHODS = [
   'thread/item/output/read',
   'thread/context/read',
   'thread/turn/details/read',
+  'turn/submit',
   'turn/start',
   'turn/steer',
   'turn/interrupt',
@@ -1522,6 +1533,7 @@ export interface AgentCoreRequestByMethod {
   readonly 'thread/item/output/read': ThreadItemOutputReadRequest;
   readonly 'thread/context/read': ThreadContextReadRequest;
   readonly 'thread/turn/details/read': ThreadTurnDetailsReadRequest;
+  readonly 'turn/submit': RendererTurnSubmitRequest;
   readonly 'turn/start': RendererTurnStartRequest;
   readonly 'turn/steer': RendererTurnSteerRequest;
   readonly 'turn/interrupt': TurnInterruptRequest;
@@ -1552,6 +1564,7 @@ export interface AgentCoreResponseByMethod {
   readonly 'thread/item/output/read': ThreadItemOutputReadResponse;
   readonly 'thread/context/read': ThreadContextReadResponse;
   readonly 'thread/turn/details/read': ThreadTurnDetailsReadResponse;
+  readonly 'turn/submit': TurnSubmitResponse;
   readonly 'turn/start': TurnStartResponse;
   readonly 'turn/steer': TurnSteerResponse;
   readonly 'turn/interrupt': TurnInterruptResponse;

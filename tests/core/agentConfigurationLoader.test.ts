@@ -25,9 +25,9 @@ describe('AgentConfigurationLoader', () => {
       reasoningEffort: 'medium',
       skills: ['*'],
     });
-    expect(loader.resolveProfile(undefined, cwd).tools).toContain('collaboration.spawn_agent');
-    expect(loader.resolveRole('worker', cwd)).toMatchObject({
-      name: 'worker',
+    expect(loader.resolveProfile(undefined, cwd).tools).toContain('skill');
+    expect(loader.resolveRole('plan', cwd)).toMatchObject({
+      name: 'plan',
       source: 'builtIn',
     });
     const roleCatalog = loader.buildRoleCatalogSnapshot(cwd);
@@ -41,9 +41,103 @@ describe('AgentConfigurationLoader', () => {
       source: entry.source,
       identity: entry.identity,
     }))).toEqual([
-      { name: 'default', source: 'built-in', identity: 'built-in:default' },
-      { name: 'explorer', source: 'built-in', identity: 'built-in:explorer' },
-      { name: 'worker', source: 'built-in', identity: 'built-in:worker' },
+      { name: 'general-purpose', source: 'built-in', identity: 'built-in:general-purpose' },
+      { name: 'explore', source: 'built-in', identity: 'built-in:explore' },
+      { name: 'plan', source: 'built-in', identity: 'built-in:plan' },
+    ]);
+  });
+
+  test('resolves canonical built-in and configured Agent types without exposing backing Roles', async () => {
+    const { userData, cwd } = await fixturePaths();
+    await writeJson(projectConfigurationPath(cwd), {
+      roles: {
+        worker: {
+          description: 'Project worker.',
+          developerInstructions: 'Run project work.',
+        },
+        foo_bar: {
+          description: 'Underscore Role.',
+          developerInstructions: 'Use underscores.',
+        },
+        'foo-bar': {
+          description: 'Hyphen Role.',
+          developerInstructions: 'Use hyphens.',
+        },
+      },
+    });
+    const loader = new AgentConfigurationLoader(userData);
+
+    expect(loader.resolveAgentType(undefined, cwd)).toMatchObject({
+      canonicalType: 'general-purpose',
+      kind: 'general-purpose',
+      role: { name: 'default' },
+    });
+    expect(loader.resolveAgentType('GENERAL PURPOSE', cwd)).toMatchObject({
+      canonicalType: 'general-purpose',
+      role: { name: 'default' },
+    });
+    expect(loader.resolveAgentType(' Plan ', cwd)).toMatchObject({
+      canonicalType: 'plan',
+      role: { name: 'plan' },
+    });
+    expect(loader.resolveAgentType('general-purpose', cwd).role.developerInstructions)
+      .toContain('Complete the task fully—don\'t gold-plate, but don\'t leave it half-done.');
+    expect(loader.resolveAgentType('explore', cwd).role.developerInstructions)
+      .toContain('multiple parallel tool calls for grepping and reading files');
+    expect(loader.resolveAgentType('plan', cwd).role.developerInstructions)
+      .toContain('### Critical Files for Implementation');
+    expect(loader.resolveAgentType('worker', cwd)).toMatchObject({
+      canonicalType: 'worker',
+      kind: 'role',
+      role: { source: 'project' },
+    });
+    expect(() => loader.resolveAgentType('foo bar', cwd)).toThrow(
+      "Agent type 'foo bar' is ambiguous — matches foo-bar, foo_bar. Use the exact name: foo-bar or foo_bar",
+    );
+    expect(() => loader.resolveAgentType('missing', cwd)).toThrow(
+      'Available agents: general-purpose, explore, plan, foo-bar, foo_bar, worker',
+    );
+    expect(loader.buildAgentTypeCatalogSnapshot(cwd).entries.map((entry) => entry.name)).toEqual([
+      'general-purpose',
+      'explore',
+      'plan',
+      'foo-bar',
+      'foo_bar',
+      'worker',
+    ]);
+  });
+
+  test('keeps an explicitly configured explorer Role selectable beside the canonical explore type', async () => {
+    const { userData, cwd } = await fixturePaths();
+    await writeJson(projectConfigurationPath(cwd), {
+      roles: {
+        explorer: {
+          description: 'Project-specific explorer.',
+          developerInstructions: 'Use the project exploration workflow.',
+        },
+      },
+    });
+    const loader = new AgentConfigurationLoader(userData);
+
+    expect(loader.resolveAgentType('explore', cwd)).toMatchObject({
+      canonicalType: 'explore',
+      kind: 'explore',
+      role: { name: 'explorer', source: 'builtIn' },
+    });
+    expect(loader.resolveAgentType('explorer', cwd)).toMatchObject({
+      canonicalType: 'explorer',
+      kind: 'role',
+      role: {
+        name: 'explorer',
+        source: 'project',
+        description: 'Project-specific explorer.',
+      },
+    });
+    expect(loader.buildAgentTypeCatalogSnapshot(cwd).entries.map((entry) => entry.name)).toEqual([
+      'general-purpose',
+      'explore',
+      'plan',
+      'explorer',
     ]);
   });
 
@@ -101,6 +195,7 @@ describe('AgentConfigurationLoader', () => {
       reasoningEffort: 'medium',
       tools: ['node_read'],
       skills: ['*'],
+      preloadedSkills: [],
       plugins: [],
       mcpServers: [],
     });

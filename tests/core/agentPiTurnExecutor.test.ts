@@ -8,8 +8,17 @@ import type {
 } from '../../src/main/agent/runtime/kernel/types';
 import { createAssistantMessageEventStream } from '@earendil-works/pi-ai';
 import type { Api, AssistantMessage, Message, Model, SimpleStreamOptions, UserMessage } from '@earendil-works/pi-ai';
+import { stream as streamAnthropicMessages } from '@earendil-works/pi-ai/api/anthropic-messages';
 import { convertResponsesMessages } from '@earendil-works/pi-ai/api/openai-responses-shared';
 import { decodeThread, decodeTurn } from '../../src/core/agent/codec';
+import {
+  AGENT_MESSAGE_INPUT_SCHEMA,
+  AGENT_MESSAGE_TOOL_DESCRIPTION,
+  AGENT_TOOL_DESCRIPTION,
+  TASK_STOP_INPUT_SCHEMA,
+  TASK_STOP_TOOL_DESCRIPTION,
+  agentInputSchema,
+} from '../../src/core/agent/tools';
 import type {
   AgentCoreNotification,
   ContextEvidenceThreadItem,
@@ -434,7 +443,7 @@ describe('PiTurnExecutor event normalization', () => {
     });
   });
 
-  test('reads a blank optional collaboration argument as absent', async () => {
+  test('reads Agent task arguments into the retained orchestration Item shape', async () => {
     // A provider that fills an omitted optional parameter with "" rather than
     // omitting the key: the empty string reached the Item, the Item failed to
     // decode, and the Turn died before anything was recorded.
@@ -442,8 +451,8 @@ describe('PiTurnExecutor event normalization', () => {
     const normalizer = new PiEventNormalizer(fixture.context);
     normalizer.handle(toolAdmissionEvent(
       'call-collab-blank',
-      'collaboration__spawn_agent',
-      { task_name: 'beijing', message: 'Check the weather', model: '', reasoning_effort: '   ' },
+      'agent',
+      { description: 'Check weather', prompt: 'Check the weather', model: '' },
     ));
     await normalizer.flush();
 
@@ -467,22 +476,22 @@ describe('PiTurnExecutor event normalization', () => {
     });
   });
 
-  test('uses the provider call id for collaboration control-plane identity', async () => {
+  test('records agentId from an Agent launch result', async () => {
     const fixture = createContext();
     const childThreadId = uuidV7(1_720_000_001_000);
     const normalizer = new PiEventNormalizer(fixture.context);
     normalizer.handle(toolAdmissionEvent(
       'call-collab-1',
-      'collaboration__spawn_agent',
-      { task_name: 'worker', message: 'Inspect it' },
+      'agent',
+      { description: 'Inspect code', prompt: 'Inspect it' },
     ));
     normalizer.handle({
       type: 'tool_execution_end',
       toolCallId: 'call-collab-1',
-      toolName: 'collaboration__spawn_agent',
+      toolName: 'agent',
       result: {
         content: [{ type: 'text', text: 'spawned' }],
-        details: { task_name: '/root/worker', thread_id: childThreadId, nickname: null },
+        details: { agentId: childThreadId },
       },
       isError: false,
     });
@@ -490,13 +499,13 @@ describe('PiTurnExecutor event normalization', () => {
     expect(fixture.recorder.orderedItems()[0]).toMatchObject({
       type: 'collabAgentToolCall',
       id: 'call-collab-1',
-      tool: 'spawn_agent',
+      tool: 'agent',
       status: 'completed',
       prompt: 'Inspect it',
       agentsStates: {
         [childThreadId]: {
           status: 'running',
-          taskPath: '/root/worker',
+          taskPath: null,
           nickname: null,
           role: null,
         },
@@ -504,34 +513,24 @@ describe('PiTurnExecutor event normalization', () => {
     });
   });
 
-  test('records child identities from structured collaboration wait results', async () => {
+  test('records resumedAgentId from an Agent message result', async () => {
     const fixture = createContext();
     const childThreadId = uuidV7(1_720_000_001_100);
     const normalizer = new PiEventNormalizer(fixture.context);
-    normalizer.handle(toolAdmissionEvent('call-collab-wait', 'collaboration__wait_agent', {}));
+    normalizer.handle(toolAdmissionEvent(
+      'call-collab-wait',
+      'agent_message',
+      { to: childThreadId, summary: 'Continue inspection', message: 'Continue' },
+    ));
     normalizer.handle({
       type: 'tool_execution_end',
       toolCallId: 'call-collab-wait',
-      toolName: 'collaboration__wait_agent',
+      toolName: 'agent_message',
       result: {
         content: [{ type: 'text', text: 'completed child result' }],
         details: {
-          reason: 'terminal',
-          updates: [{
-            taskPath: '/root/worker',
-            threadId: childThreadId,
-            status: 'completed',
-            result: 'Done',
-            error: null,
-          }],
-          agents: [{
-            taskPath: '/root/worker',
-            threadId: childThreadId,
-            parentThreadId: fixture.context.thread.id,
-            nickname: null,
-            role: 'worker',
-            status: 'completed',
-          }],
+          resumedAgentId: childThreadId,
+          pin: { id: childThreadId, name: childThreadId, ref: 'short-ref' },
         },
       },
       isError: false,
@@ -541,18 +540,48 @@ describe('PiTurnExecutor event normalization', () => {
     expect(fixture.recorder.orderedItems()[0]).toMatchObject({
       type: 'collabAgentToolCall',
       id: 'call-collab-wait',
-      tool: 'wait_agent',
+      tool: 'agent_message',
       status: 'completed',
       receiverThreadIds: [childThreadId],
       agentsStates: {
         [childThreadId]: {
-          status: 'completed',
-          taskPath: '/root/worker',
+          status: 'running',
+          taskPath: null,
           nickname: null,
-          role: 'worker',
+          role: null,
         },
       },
     });
+  });
+
+  test('writes the prepared Agent message summary without mutating canonical model history', async () => {
+    const fixture = createContext();
+    const normalizer = new PiEventNormalizer(fixture.context);
+    const rawArguments = {
+      to: uuidV7(1_720_000_001_150),
+      message: 'First line\nSecond line',
+    };
+    const modelCall = replayableModelCall('agent_message', rawArguments);
+    normalizer.handle({
+      type: 'tool_call_admission',
+      toolCallId: 'call-collab-summary',
+      providerToolCallId: 'call-collab-summary',
+      toolName: 'agent_message',
+      decision: {
+        execute: true,
+        modelCall,
+        displayArguments: { ...rawArguments, summary: 'First line' },
+      },
+    });
+    await normalizer.flush();
+
+    expect(fixture.recorder.orderedItems()[0]).toMatchObject({
+      type: 'collabAgentToolCall',
+      prompt: rawArguments.message,
+      summary: 'First line',
+      modelCall,
+    });
+    expect(modelCall).toEqual(replayableModelCall('agent_message', rawArguments));
   });
 
   test('does not turn a collaboration tool failure into a child failure', async () => {
@@ -561,13 +590,13 @@ describe('PiTurnExecutor event normalization', () => {
     const normalizer = new PiEventNormalizer(fixture.context);
     normalizer.handle(toolAdmissionEvent(
       'call-collab-send',
-      'collaboration__send_message',
-      { target: '/root/worker', message: 'Continue' },
+      'agent_message',
+      { to: childThreadId, summary: 'Continue inspection', message: 'Continue' },
     ));
     normalizer.handle({
       type: 'tool_execution_end',
       toolCallId: 'call-collab-send',
-      toolName: 'collaboration__send_message',
+      toolName: 'agent_message',
       result: {
         content: [{ type: 'text', text: 'message delivery failed' }],
         details: {
@@ -999,6 +1028,31 @@ describe('PiTurnExecutor event normalization', () => {
       await expect(execution).resolves.toEqual({ status: 'interrupted' });
       expect(agentCreations).toBe(0);
     }
+  });
+
+  test('builds capability instructions from provider-visible tools, not raw configuration', async () => {
+    const fixture = createContext();
+    const systemPrompts: string[] = [];
+    expect(fixture.context.configuration.tools).toContain('agent');
+    const executor = new PiTurnExecutor({
+      resolveRuntimeSettings: async () => runtimeSettings(),
+      resolveRuntime: async () => runtimeSelection(),
+      createTools: async () => [],
+      createAgent: (options) => {
+        systemPrompts.push(options.initialState?.systemPrompt ?? '');
+        return {
+          state: { errorMessage: undefined },
+          subscribe: () => () => undefined,
+          abort: () => undefined,
+          steer: () => undefined,
+          prompt: async () => undefined,
+        };
+      },
+    });
+
+    await expect(executor.execute(fixture.context)).resolves.toMatchObject({ status: 'completed' });
+    expect(systemPrompts).toHaveLength(1);
+    expect(systemPrompts[0]).not.toContain('# Agents');
   });
 
   test('passes canonical tool order and reset-epoch affinity into Agent creation', async () => {
@@ -2838,6 +2892,7 @@ describe('PiTurnExecutor event normalization', () => {
           arguments: largeArguments,
           redactedArguments: largeArguments,
           redactedPaths: [],
+          displayArguments: largeArguments,
           schemaDigest: TEST_TOOL_SCHEMA_DIGEST,
           redactedArgumentsReplayable: true,
         },
@@ -2972,6 +3027,7 @@ describe('PiTurnExecutor event normalization', () => {
         arguments: argumentsValue,
         redactedArguments: argumentsValue,
         redactedPaths: [],
+        displayArguments: argumentsValue,
         schemaDigest: TEST_TOOL_SCHEMA_DIGEST,
         redactedArgumentsReplayable: true,
       },
@@ -3056,6 +3112,69 @@ describe('PiTurnExecutor provider payload', () => {
       reasoning: { effort: 'high', summary: 'detailed' },
     });
     expect(agentProviderPayload({ model: 'test-model' }, testModel)).toBeUndefined();
+  });
+
+  test('restores the canonical Agent schemas after the real Anthropic tool conversion', async () => {
+    const models = ['claude-sonnet-test', 'claude-opus-test'];
+    const tools: AgentTool[] = [
+      parityTool('agent', AGENT_TOOL_DESCRIPTION, agentInputSchema(models)),
+      parityTool('agent_message', AGENT_MESSAGE_TOOL_DESCRIPTION, AGENT_MESSAGE_INPUT_SCHEMA),
+      parityTool('task_stop', TASK_STOP_TOOL_DESCRIPTION, TASK_STOP_INPUT_SCHEMA),
+    ];
+    const rawPayloads: unknown[] = [];
+    const restoredPayloads: unknown[] = [];
+    const client = {
+      messages: {
+        create: (payload: unknown) => ({
+          asResponse: async () => {
+            restoredPayloads.push(payload);
+            return anthropicTextResponse('done');
+          },
+        }),
+      },
+    };
+
+    const result = await streamAnthropicMessages(anthropicToolParityModel, {
+      systemPrompt: 'Test system prompt',
+      messages: [{ role: 'user', content: 'Test request', timestamp: 1 }],
+      tools,
+    }, {
+      client: client as never,
+      onPayload: (payload, model) => {
+        rawPayloads.push(structuredClone(payload));
+        return agentProviderPayload(payload, model, null, tools);
+      },
+    }).result();
+
+    expect(result.stopReason).toBe('stop');
+    const rawTools = providerPayloadTools(rawPayloads[0]);
+    expect(rawTools.map((tool) => Object.keys(tool.input_schema as object))).toEqual([
+      ['type', 'properties', 'required'],
+      ['type', 'properties', 'required'],
+      ['type', 'properties', 'required'],
+    ]);
+    expect(rawTools[2]?.input_schema).toMatchObject({ required: [] });
+
+    const restoredTools = providerPayloadTools(restoredPayloads[0]);
+    expect(restoredTools.map((tool) => Object.keys(tool))).toEqual([
+      ['name', 'description', 'input_schema', 'eager_input_streaming'],
+      ['name', 'description', 'input_schema', 'eager_input_streaming'],
+      ['name', 'description', 'input_schema', 'eager_input_streaming', 'cache_control'],
+    ]);
+    expect(restoredTools.map((tool) => tool.input_schema)).toEqual([
+      agentInputSchema(models),
+      AGENT_MESSAGE_INPUT_SCHEMA,
+      TASK_STOP_INPUT_SCHEMA,
+    ]);
+    expect(Object.keys(restoredTools[0]!.input_schema as object)).toEqual([
+      '$schema', 'type', 'properties', 'required', 'additionalProperties',
+    ]);
+    expect(Object.keys((restoredTools[0]!.input_schema as Record<string, any>).properties)).toEqual([
+      'description', 'prompt', 'subagent_type', 'model', 'run_in_background', 'isolation',
+    ]);
+    expect(Object.keys(restoredTools[2]!.input_schema as object)).toEqual([
+      '$schema', 'type', 'properties', 'additionalProperties',
+    ]);
   });
 
   test('reattaches signed same-Turn thinking without authoring reasoning markers across three provider calls', async () => {
@@ -3846,6 +3965,102 @@ const testModel = {
   maxTokens: 8_192,
 } as Model<Api>;
 
+const anthropicToolParityModel = {
+  id: 'claude-sonnet-test',
+  name: 'Claude Sonnet Test',
+  api: 'anthropic-messages',
+  provider: 'anthropic',
+  baseUrl: 'https://api.anthropic.test',
+  reasoning: false,
+  input: ['text'],
+  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+  contextWindow: 128_000,
+  maxTokens: 8_192,
+} satisfies Model<'anthropic-messages'>;
+
+function parityTool(
+  name: string,
+  description: string,
+  parameters: Readonly<Record<string, unknown>>,
+): AgentTool {
+  return {
+    name,
+    label: name,
+    description,
+    parameters: parameters as AgentTool['parameters'],
+    executionMode: 'sequential',
+    execute: async () => ({ content: [{ type: 'text', text: 'unused' }], details: {} }),
+  };
+}
+
+function providerPayloadTools(payload: unknown): Array<{
+  readonly name: string;
+  readonly input_schema: Readonly<Record<string, unknown>>;
+  readonly [key: string]: unknown;
+}> {
+  if (!payload || typeof payload !== 'object' || !Array.isArray((payload as { tools?: unknown }).tools)) {
+    throw new Error('Anthropic provider fixture did not contain tools');
+  }
+  return (payload as { tools: unknown[] }).tools.map((tool) => {
+    if (
+      !tool
+      || typeof tool !== 'object'
+      || typeof (tool as { name?: unknown }).name !== 'string'
+      || !(tool as { input_schema?: unknown }).input_schema
+      || typeof (tool as { input_schema?: unknown }).input_schema !== 'object'
+    ) {
+      throw new Error('Anthropic provider fixture contained an invalid tool');
+    }
+    return tool as {
+      readonly name: string;
+      readonly input_schema: Readonly<Record<string, unknown>>;
+      readonly [key: string]: unknown;
+    };
+  });
+}
+
+function anthropicTextResponse(text: string): Response {
+  const events = [
+    ['message_start', {
+      type: 'message_start',
+      message: {
+        id: 'msg_test',
+        type: 'message',
+        role: 'assistant',
+        content: [],
+        model: anthropicToolParityModel.id,
+        stop_reason: null,
+        stop_sequence: null,
+        usage: { input_tokens: 1, output_tokens: 0 },
+      },
+    }],
+    ['content_block_start', {
+      type: 'content_block_start',
+      index: 0,
+      content_block: { type: 'text', text: '' },
+    }],
+    ['content_block_delta', {
+      type: 'content_block_delta',
+      index: 0,
+      delta: { type: 'text_delta', text },
+    }],
+    ['content_block_stop', { type: 'content_block_stop', index: 0 }],
+    ['message_delta', {
+      type: 'message_delta',
+      delta: { stop_reason: 'end_turn', stop_sequence: null },
+      usage: { output_tokens: 1 },
+    }],
+    ['message_stop', { type: 'message_stop' }],
+  ] as const;
+  const body = events
+    .map(([event, data]) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
+    .join('');
+  return new Response(body, {
+    status: 200,
+    headers: { 'content-type': 'text/event-stream' },
+  });
+}
+
 function runtimeSelection() {
   return {
     model: testModel,
@@ -3964,7 +4179,7 @@ function createContext(): {
       developerInstructions: [],
       model: 'test-model',
       reasoningEffort: 'medium',
-      tools: ['bash', 'collaboration.spawn_agent'],
+      tools: ['bash', 'agent'],
       skills: [],
       plugins: [],
       mcpServers: [],

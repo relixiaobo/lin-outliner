@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { ItemExecutionStatus, ThreadItem } from '../../src/core/agent/protocol';
+import type { AgentTaskToolName, ItemExecutionStatus, ThreadItem } from '../../src/core/agent/protocol';
 import type { NodeProjection } from '../../src/core/types';
 import { en } from '../../src/core/i18n';
 import {
@@ -79,7 +79,7 @@ function shell(
 }
 
 function collab(
-  tool: string,
+  tool: AgentTaskToolName,
   status: ItemExecutionStatus = 'completed',
   receiver = 'r1',
 ): ThreadToolItem {
@@ -88,14 +88,15 @@ function collab(
     type: 'collabAgentToolCall',
     status,
     outputRef: null,
-    tool: tool as never,
+    tool,
     senderThreadId: 't',
     receiverThreadIds: [receiver],
     prompt: null,
+    summary: null,
     model: null,
     reasoningEffort: null,
     agentsStates: {},
-    modelCall: replayableModelCall(`collaboration__${tool}`, {}),
+    modelCall: replayableModelCall(tool, {}),
   };
 }
 
@@ -172,23 +173,23 @@ describe('every built-in tool says what it did, not which API was called', () =>
       query: 'epub', results: [], error: null,
       modelCall: replayableModelCall('web_search', { query: 'epub' }),
     }, 'Searched the web for "epub"'],
-    ['spawn_agent', collab('spawn_agent'), 'Started an agent'],
-    ['send_message', collab('send_message'), 'Messaged an agent'],
-    ['followup_task', collab('followup_task'), 'Sent a follow-up task'],
-    ['wait_agent', collab('wait_agent'), 'Waited for an agent'],
-    ['list_agents', collab('list_agents'), 'Listed agents'],
-    ['interrupt_agent', collab('interrupt_agent'), 'Interrupted an agent'],
+    ['agent', collab('agent'), 'Started an agent'],
+    ['agent_message', collab('agent_message'), 'Messaged an agent'],
+    ['task_stop', collab('task_stop'), 'Stopped a task'],
   ];
 
   for (const [name, item, expected] of cases) {
     test(name, () => {
       expect(summarizeThreadToolItem(item, labels)).toBe(expected);
       // Nothing in the user-facing wording may be the raw tool identifier.
-      // (`skill` is exempt: the identifier happens to be the English noun.)
+      // (`skill` and `agent` are exempt: their identifiers also happen to be
+      // ordinary English nouns in the product copy.)
       if (item.type === 'dynamicToolCall' && item.tool !== 'skill') {
         expect(expected).not.toContain(item.tool);
       }
-      if (item.type === 'collabAgentToolCall') expect(expected).not.toContain(item.tool);
+      if (item.type === 'collabAgentToolCall' && item.tool !== 'agent') {
+        expect(expected).not.toContain(item.tool);
+      }
     });
   }
 });
@@ -254,7 +255,7 @@ describe('status is one idiom across every tool kind', () => {
     ['file_read', (s) => dynamic('file_read', { file_path: '/w/a.md' }, s), 'Read a.md', 'Reading a.md'],
     ['command', (s) => shell('npm test', s), 'Ran "npm test"', 'Running "npm test"'],
     ['file change', (s) => ({ ...changes('/w/a.ts'), status: s }), 'Changed a.ts', 'Changing a.ts'],
-    ['spawn_agent', (s) => collab('spawn_agent', s), 'Started an agent', 'Starting an agent'],
+    ['agent', (s) => collab('agent', s), 'Started an agent', 'Starting an agent'],
     ['skill', (s) => dynamic('skill', { skill: 'dataviz' }, s), 'Used the dataviz skill', 'Using the dataviz skill'],
   ];
 
@@ -508,25 +509,18 @@ describe('group summaries name up to two subjects, then elide', () => {
       dynamic('update_plan', { plan: [] }, 'completed', { id: 'p-2' }),
       dynamic('update_plan', { plan: [] }, 'completed', { id: 'p-3' }),
     ], 'Updated the plan 3 times'],
-    ['two agents', [collab('spawn_agent', 'completed', 'r1'), collab('wait_agent', 'completed', 'r2')],
+    ['two agents', [collab('agent', 'completed', 'r1'), collab('agent', 'completed', 'r2')],
       'Worked with 2 agents'],
     // Two calls aimed at the same agent are one agent worked with, not two.
-    ['same agent twice', [collab('spawn_agent', 'completed', 'r1'), collab('wait_agent', 'completed', 'r1')],
+    ['same agent twice', [collab('agent', 'completed', 'r1'), collab('agent_message', 'completed', 'r1')],
       'Worked with an agent'],
-    ['receiverless wait is not another agent', [
-      collab('spawn_agent', 'completed', 'r1'),
-      { ...collab('wait_agent', 'completed', 'unused'), receiverThreadIds: [] },
+    ['receiverless task stop is not another agent', [
+      collab('agent', 'completed', 'r1'),
+      { ...collab('task_stop', 'completed', 'unused'), receiverThreadIds: [] },
     ], 'Worked with an agent'],
   ];
 
   for (const [name, items, expected] of cases) {
     test(name, () => expect(summarizeThreadToolActivity(items, labels)).toBe(expected));
   }
-
-  test('a live projection can supply the distinct children behind a receiverless wait', () => {
-    const wait = { ...collab('wait_agent', 'inProgress', 'unused'), receiverThreadIds: [] };
-    expect(summarizeThreadToolActivity([wait], labels, undefined, {
-      collaborationThreadIds: ['r1', 'r2'],
-    })).toBe('Working with 2 agents');
-  });
 });

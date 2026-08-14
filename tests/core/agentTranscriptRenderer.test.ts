@@ -338,6 +338,7 @@ function completedTurn(diagnosticsRef: TurnDiagnosticsPayloadReference | null = 
       senderThreadId: THREAD_ID,
       receiverThreadIds: ['thread-grandchild'],
       prompt: 'Audit the parser.',
+      summary: null,
       model: null,
       reasoningEffort: null,
       agentsStates: {
@@ -360,6 +361,7 @@ function completedTurn(diagnosticsRef: TurnDiagnosticsPayloadReference | null = 
       provenance: provenance('item-activity'),
       kind: 'completed',
       agentThreadId: 'thread-grandchild',
+      agentTurnId: null,
       agentPath: '/root/audit/parser',
       error: null,
       spawnItemId: null,

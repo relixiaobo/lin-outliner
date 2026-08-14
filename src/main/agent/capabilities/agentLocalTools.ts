@@ -1,7 +1,7 @@
 import type { AgentTool } from '../runtime/kernel/types';
 import { randomUUID } from 'node:crypto';
 import type { ChildProcess } from 'node:child_process';
-import { createReadStream, createWriteStream, existsSync, realpathSync, statSync } from 'node:fs';
+import { createReadStream, createWriteStream, lstatSync, realpathSync, statSync } from 'node:fs';
 import { appendFile, mkdir, open, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
@@ -68,6 +68,7 @@ export interface LocalToolOptions {
   localRoot?: string;
   scratchRoot?: string;
   workspace?: AgentLocalWorkspaceContext;
+  threadId?: string;
   skillRuntime?: AgentSkillRuntime;
   imageNormalizer?: AgentFileReadImageNormalizer;
   processEnvironment?: AgentShellProcessEnvironmentProvider;
@@ -92,6 +93,16 @@ export interface AgentLocalWorkspaceContext {
   readFileState: Map<string, ReadFileState>;
   skillRuntime?: AgentSkillRuntime;
   processEnvironment?: AgentShellProcessEnvironmentProvider;
+  writeBoundary?: AgentWorkspaceWriteBoundary;
+  /** Thread that owns background shell processes started from this workspace. */
+  threadId?: string;
+}
+
+export interface AgentWorkspaceWriteBoundary {
+  readonly root: string;
+  /** Additional Git metadata paths required to commit inside a linked worktree. */
+  readonly shellWritablePaths?: readonly string[];
+  readonly protectedGitObjectStores?: readonly string[];
 }
 
 type WorkspaceContext = AgentLocalWorkspaceContext;
@@ -332,11 +343,7 @@ export interface LocalBashRunResult {
   completedAt?: string;
 }
 
-interface BashStopParams {
-  task_id: string;
-}
-
-export interface BashStopData {
+export interface BackgroundShellStopData {
   message: string;
   task_id: string;
   task_type: string;
@@ -377,6 +384,7 @@ interface TextFileRead {
 
 interface BackgroundTask {
   taskId: string;
+  ownerThreadId?: string;
   command: string;
   process: BashProcessHandle;
   outputPath: string;
@@ -644,21 +652,13 @@ const BASH_PARAMETERS = {
   },
 };
 
-const BASH_STOP_PARAMETERS = {
-  type: 'object',
-  additionalProperties: false,
-  required: ['task_id'],
-  properties: {
-    task_id: { type: 'string', minLength: 1, description: 'The ID of the background task to stop. Use the task_id returned by bash when a command runs in the background.' },
-  },
-};
-
 export function createLocalTools(options: LocalToolOptions = {}): AgentTool<any>[] {
   const workspace = options.workspace ?? createWorkspaceContext(
     options.localRoot,
     options.scratchRoot,
     options.skillRuntime,
     options.processEnvironment,
+    options.threadId,
   );
   return [
     createFileReadTool(workspace, options.imageNormalizer),
@@ -668,7 +668,6 @@ export function createLocalTools(options: LocalToolOptions = {}): AgentTool<any>
     createFileWriteTool(workspace),
     createFileDeleteTool(workspace),
     createBashTool(workspace),
-    createBashStopTool(),
   ];
 }
 
@@ -680,13 +679,15 @@ export async function runLocalBashCommand(
     timeout?: number;
     signal?: AbortSignal;
     processEnvironment?: AgentShellProcessEnvironmentProvider;
+    writeBoundary?: AgentWorkspaceWriteBoundary;
   },
 ): Promise<LocalBashRunResult> {
-  const workspace = createWorkspaceContext(
+  const workspace = createAgentLocalWorkspaceContext(
     options.localRoot,
     options.scratchRoot,
     undefined,
     options.processEnvironment,
+    options.writeBoundary,
   );
   const params = normalizeBashParams({
     command: options.command,
@@ -731,6 +732,7 @@ function createWorkspaceContext(
   scratchRoot?: string,
   skillRuntime?: AgentSkillRuntime,
   processEnvironment?: AgentShellProcessEnvironmentProvider,
+  threadId?: string,
 ): WorkspaceContext {
   const root = path.resolve(localRoot ?? process.cwd());
   const resolvedScratchRoot = scratchRootForWorkdir(localRoot, scratchRoot);
@@ -740,6 +742,7 @@ function createWorkspaceContext(
     readFileState: new Map<string, ReadFileState>(),
     skillRuntime,
     processEnvironment,
+    ...(threadId ? { threadId } : {}),
   };
 }
 
@@ -748,8 +751,13 @@ export function createAgentLocalWorkspaceContext(
   scratchRoot?: string,
   skillRuntime?: AgentSkillRuntime,
   processEnvironment?: AgentShellProcessEnvironmentProvider,
+  writeBoundary?: AgentWorkspaceWriteBoundary,
+  threadId?: string,
 ): AgentLocalWorkspaceContext {
-  return createWorkspaceContext(localRoot, scratchRoot, skillRuntime, processEnvironment);
+  return {
+    ...createWorkspaceContext(localRoot, scratchRoot, skillRuntime, processEnvironment, threadId),
+    ...(writeBoundary ? { writeBoundary } : {}),
+  };
 }
 
 export async function restorePostCompactReadFiles(
@@ -1283,6 +1291,7 @@ function createFileEditTool(workspace: WorkspaceContext): AgentTool<any, ToolEnv
       try {
         const params = normalizeFileEditParams(rawParams);
         filePath = resolveWorkspacePath(workspace, params.file_path);
+        assertWorkspaceWritePath(workspace, filePath);
         if (path.extname(filePath).toLowerCase() === '.ipynb') {
           throw new LocalToolFailure(
             'notebook_edit_required',
@@ -1384,6 +1393,7 @@ function createFileWriteTool(workspace: WorkspaceContext): AgentTool<any, ToolEn
       try {
         const params = normalizeFileWriteParams(rawParams);
         filePath = resolveWorkspacePath(workspace, params.file_path);
+        assertWorkspaceWritePath(workspace, filePath);
         let original: TextFileRead | null = null;
         try {
           original = await readWorkspaceText(filePath);
@@ -1459,6 +1469,7 @@ function createFileDeleteTool(workspace: WorkspaceContext): AgentTool<any, ToolE
       try {
         const params = normalizeFileDeleteParams(rawParams);
         filePath = resolveWorkspacePath(workspace, params.file_path);
+        assertWorkspaceWritePath(workspace, filePath);
         if (isSelfDefinitionWritePath(workspace, filePath)) {
           throw new LocalToolFailure(
             'self_definition_delete_not_supported',
@@ -1503,7 +1514,7 @@ function createBashTool(workspace: WorkspaceContext): AgentTool<any, ToolEnvelop
       'Executes a shell command in the Thread working directory with the current OS account authority.',
       'Use file_read, file_edit, file_write, file_delete, file_glob, and file_grep for filesystem operations when possible.',
       'For document and image conversion, run the installed converters directly: soffice/libreoffice (office to PDF), pdftoppm (PDF to PNG/JPEG pages), and sips (image format conversion on macOS).',
-      'Use run_in_background for long-running commands. You do not need to append "&"; use bash_stop if the task needs to be stopped.',
+      'Use run_in_background for long-running commands. You do not need to append "&"; use task_stop if the task needs to be stopped.',
       'Commands should include a clear description of what they do in active voice.',
     ].join('\n'),
     parameters: BASH_PARAMETERS,
@@ -1515,7 +1526,7 @@ function createBashTool(workspace: WorkspaceContext): AgentTool<any, ToolEnvelop
         if (params.run_in_background) {
           const data = await startBackgroundCommand(workspace, params);
           return agentToolResult(successEnvelope('bash', data, {
-            instructions: `Command is running in the background as ${data.backgroundTaskId}. Use bash_stop with task_id if it needs to be stopped.`,
+            instructions: `Command is running in the background as ${data.backgroundTaskId}. Use task_stop with task_id if it needs to be stopped.`,
             metrics: metrics(started, data),
           }), visibleBash(data));
         }
@@ -1525,7 +1536,7 @@ function createBashTool(workspace: WorkspaceContext): AgentTool<any, ToolEnvelop
         const envelope = ok
           ? successEnvelope('bash', result, {
             instructions: result.backgroundTaskId
-              ? `Command is still running in the background as ${result.backgroundTaskId}. Read ${result.persistedOutputPath} with file_read to check output, or use bash_stop with task_id if it needs to be stopped.`
+              ? `Command is still running in the background as ${result.backgroundTaskId}. Read ${result.persistedOutputPath} with file_read to check output, or use task_stop with task_id if it needs to be stopped.`
               : undefined,
             metrics: metrics(started, result),
           })
@@ -1542,50 +1553,67 @@ function createBashTool(workspace: WorkspaceContext): AgentTool<any, ToolEnvelop
   };
 }
 
-function createBashStopTool(): AgentTool<any, ToolEnvelope<BashStopData>> {
+export async function stopBackgroundShellTask(
+  taskId: string,
+  ownerThreadId?: string,
+): Promise<BackgroundShellStopData | null> {
+  pruneBackgroundTasks();
+  const task = backgroundTasks.get(taskId);
+  if (!task || !backgroundTaskOwnedBy(task, ownerThreadId)) return null;
+  if (task.status !== 'running') {
+    throw new LocalToolFailure(
+      'task_not_running',
+      `Task ${taskId} is not running (status: ${task.status})`,
+      'No stop is needed for completed, failed, or already stopped tasks.',
+    );
+  }
+  task.status = 'stopped';
+  task.completedAt = Date.now();
+  clearBackgroundOutputWatchdog(task);
+  killBashProcessTree(task.process, 'SIGKILL');
+  await waitForOutputClosed(task.outputClosed);
+  await finalizeBackgroundTaskOutput(task);
+  pruneBackgroundTasks();
   return {
-    name: 'bash_stop',
-    label: 'Bash Stop',
-    description: [
-      'Stops a running background task by its ID.',
-      'Use this tool when you need to terminate a long-running task created by bash.',
-      'Only task_id is supported; shell_id is not accepted.',
-    ].join('\n'),
-    parameters: BASH_STOP_PARAMETERS,
-    executionMode: 'sequential',
-    execute: async (_toolCallId, rawParams: unknown) => {
-      const started = Date.now();
-      try {
-        const params = normalizeBashStopParams(rawParams);
-        pruneBackgroundTasks();
-        const task = backgroundTasks.get(params.task_id);
-        if (!task) {
-          throw new LocalToolFailure('task_not_found', `No background task found with id: ${params.task_id}`, 'Use the task_id returned by a recent bash run_in_background call.');
-        }
-        if (task.status !== 'running') {
-          throw new LocalToolFailure('task_not_running', `Task ${params.task_id} is not running.`, 'No stop is needed for completed, failed, or already stopped tasks.');
-        }
-        task.status = 'stopped';
-        task.completedAt = Date.now();
-        clearBackgroundOutputWatchdog(task);
-        killBashProcessTree(task.process, 'SIGKILL');
-        await waitForOutputClosed(task.outputClosed);
-        await finalizeBackgroundTaskOutput(task);
-        pruneBackgroundTasks();
-        const data: BashStopData = {
-          message: `Successfully stopped bash task: ${task.taskId} (${task.command})`,
-          task_id: task.taskId,
-          task_type: 'bash',
-          command: task.command,
-          status: task.status,
-          outputPath: task.outputPath,
-        };
-        return agentToolResult(successEnvelope('bash_stop', data, { metrics: metrics(started, data) }), visibleBashStop(data));
-      } catch (error) {
-        return localErrorResult('bash_stop', error, started);
-      }
-    },
+    message: `Successfully stopped task: ${task.taskId} (${task.command})`,
+    task_id: task.taskId,
+    task_type: 'bash',
+    command: task.command,
+    status: task.status,
+    outputPath: task.outputPath,
   };
+}
+
+/** Read-only ownership probe for the unified background-task dispatcher. */
+export function hasBackgroundShellTask(taskId: string, ownerThreadId?: string): boolean {
+  pruneBackgroundTasks();
+  const task = backgroundTasks.get(taskId);
+  return task !== undefined && backgroundTaskOwnedBy(task, ownerThreadId);
+}
+
+/**
+ * Structured task_stop result for the unified dispatcher. The dispatcher must
+ * return this AgentToolResult directly so the durable error envelope is not
+ * collapsed into the kernel's generic thrown-error string.
+ */
+export async function stopBackgroundShellTaskResult(
+  taskId: string,
+  ownerThreadId?: string,
+) {
+  const started = Date.now();
+  try {
+    const data = await stopBackgroundShellTask(taskId, ownerThreadId);
+    if (data === null) return null;
+    return agentToolResult(successEnvelope('task_stop', data, {
+      metrics: metrics(started, data),
+    }), visibleBackgroundShellStop(data));
+  } catch (error) {
+    return localErrorResult<BackgroundShellStopData>('task_stop', error, started);
+  }
+}
+
+function backgroundTaskOwnedBy(task: BackgroundTask, ownerThreadId: string | undefined): boolean {
+  return ownerThreadId === undefined || task.ownerThreadId === ownerThreadId;
 }
 
 function normalizeFileReadParams(rawParams: unknown): FileReadParams {
@@ -1676,11 +1704,6 @@ function normalizeBashParams(rawParams: unknown): BashParams {
     timeout: clampInteger(input.timeout, 1, BASH_MAX_TIMEOUT_MS, BASH_DEFAULT_TIMEOUT_MS),
     run_in_background: input.run_in_background === true,
   };
-}
-
-function normalizeBashStopParams(rawParams: unknown): BashStopParams {
-  const input = asRecord(rawParams);
-  return { task_id: requiredLocalString(input.task_id, 'task_id') };
 }
 
 async function runGrep(workspace: WorkspaceContext, params: FileGrepParams): Promise<FileGrepData> {
@@ -1977,6 +2000,7 @@ async function runForegroundCommand(workspace: WorkspaceContext, params: BashPar
       command: params.command,
       cwd: workspace.root,
       env,
+      sandbox: workspaceShellSandbox(workspace),
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: process.platform !== 'win32',
       windowsHide: true,
@@ -2106,6 +2130,7 @@ async function registerBackgroundTask(
         command: params.command,
         cwd: workspace.root,
         env,
+        sandbox: workspaceShellSandbox(workspace),
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: process.platform !== 'win32',
         windowsHide: true,
@@ -2123,6 +2148,7 @@ async function registerBackgroundTask(
 
   const task: BackgroundTask = {
     taskId,
+    ownerThreadId: workspace.threadId,
     command: params.command,
     process: processHandle,
     outputPath,
@@ -2170,6 +2196,15 @@ async function buildWorkspaceShellProcessEnv(workspace: WorkspaceContext): Promi
     env: host?.env,
     leadingToolPathSegments: host?.leadingToolPathSegments,
   });
+}
+
+function workspaceShellSandbox(workspace: WorkspaceContext) {
+  const boundary = workspace.writeBoundary;
+  if (!boundary) return undefined;
+  return {
+    writablePaths: [boundary.root, ...(boundary.shellWritablePaths ?? [])],
+    protectedGitObjectStores: boundary.protectedGitObjectStores ?? [],
+  };
 }
 
 interface FileGlobCandidates {
@@ -3469,7 +3504,7 @@ export function visibleFileDelete(data: FileDeleteData): unknown {
   };
 }
 
-export function visibleBashStop(data: BashStopData) {
+export function visibleBackgroundShellStop(data: BackgroundShellStopData) {
   // `task_id` echoes the sole arg; `status` is a constant 'stopped' beside the
   // envelope status. `outputPath` (where to read captured output) is the new bit.
   return {
@@ -3524,6 +3559,36 @@ function resolveWorkspacePath(workspace: WorkspaceContext, inputPath: string): s
   return path.resolve(path.isAbsolute(expanded) ? expanded : path.join(root, expanded));
 }
 
+function assertWorkspaceWritePath(workspace: WorkspaceContext, filePath: string): void {
+  const boundary = workspace.writeBoundary;
+  if (!boundary) return;
+  const root = path.resolve(boundary.root);
+  const target = path.resolve(filePath);
+  if (target !== root && !isPathInside(root, target)) {
+    throw new LocalToolFailure(
+      'write_outside_isolated_workspace',
+      `Cannot write outside the isolated Agent worktree: ${filePath}`,
+      'Write only inside the Agent worktree. Report any required live-outline or parent-checkout change to the parent Agent.',
+    );
+  }
+  const canonicalRoot = safeRealPath(root);
+  const canonicalTarget = resolveCanonicalPath(target)?.realPath ?? null;
+  if (!canonicalRoot || !canonicalTarget) {
+    throw new LocalToolFailure(
+      'write_outside_isolated_workspace',
+      `Cannot verify that the write remains inside the isolated Agent worktree: ${filePath}`,
+      'Use a path whose canonical target can be resolved inside the Agent worktree.',
+    );
+  }
+  if (canonicalTarget !== canonicalRoot && !isPathInside(canonicalRoot, canonicalTarget)) {
+    throw new LocalToolFailure(
+      'write_outside_isolated_workspace',
+      `Cannot write through a path that leaves the isolated Agent worktree: ${filePath}`,
+      'Use a path whose canonical target remains inside the Agent worktree.',
+    );
+  }
+}
+
 export function resolveAgentLocalReadPath(workspace: AgentLocalWorkspaceContext, inputPath: string): string {
   return resolveWorkspacePath(workspace, inputPath);
 }
@@ -3570,13 +3635,28 @@ interface CanonicalPathResolution {
 }
 
 function resolveCanonicalPath(target: string): CanonicalPathResolution | null {
-  const requestedPath = path.resolve(target);
-  const existingPath = nearestExistingPath(requestedPath);
-  const existingRealPath = safeRealPath(existingPath);
-  if (!existingRealPath) return null;
-  const suffix = path.relative(existingPath, requestedPath);
-  const realPath = suffix ? path.resolve(existingRealPath, suffix) : existingRealPath;
-  return { realPath };
+  let candidate = path.resolve(target);
+  const missingSuffix: string[] = [];
+  while (true) {
+    try {
+      return { realPath: path.resolve(realpathSync.native(candidate), ...missingSuffix) };
+    } catch (error) {
+      if (!isNodeError(error) || error.code !== 'ENOENT') return null;
+      try {
+        // A dangling symlink reports ENOENT from realpath but still exists. It
+        // can redirect a later write, so treating it as an ordinary missing
+        // suffix would fail open.
+        lstatSync(candidate, { throwIfNoEntry: true });
+        return null;
+      } catch (entryError) {
+        if (!isNodeError(entryError) || entryError.code !== 'ENOENT') return null;
+      }
+      const parent = path.dirname(candidate);
+      if (parent === candidate) return null;
+      missingSuffix.unshift(path.basename(candidate));
+      candidate = parent;
+    }
+  }
 }
 
 function isDirectoryPath(target: string): boolean {
@@ -3585,16 +3665,6 @@ function isDirectoryPath(target: string): boolean {
   } catch {
     return false;
   }
-}
-
-function nearestExistingPath(inputPath: string): string {
-  let current = path.resolve(inputPath);
-  while (!existsSync(current)) {
-    const parent = path.dirname(current);
-    if (parent === current) return current;
-    current = parent;
-  }
-  return current;
 }
 
 function localFsError(error: unknown, filePath: string): LocalToolFailure {

@@ -739,7 +739,7 @@ async function summaryLine(
 function toolLabel(item: HistoryToolItem): string {
   if (item.type === 'mcpToolCall') return `${item.server}.${item.tool}`;
   if (item.type === 'dynamicToolCall') return item.namespace ? `${item.namespace}.${item.tool}` : item.tool;
-  if (item.type === 'collabAgentToolCall') return `collaboration.${item.tool}`;
+  if (item.type === 'collabAgentToolCall') return item.tool;
   return item.type;
 }
 

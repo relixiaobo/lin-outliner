@@ -49,10 +49,7 @@ import {
 import { freezePendingToolOutputProjections } from '../context/ToolOutputProjection';
 import { cursorFor, latestContextEpochId, selectEffectiveContext } from '../context/ContextEpoch';
 import { composeStablePrompt } from '../context/stablePrompt';
-import {
-  applyAnthropicStablePromptCacheBreakpoints,
-  providerCacheAffinity,
-} from '../context/ProviderCache';
+import { providerCacheAffinity } from '../context/ProviderCache';
 import { contextPayloadReferenceKey } from '../context/contextDependencies';
 import { TurnDiagnosticsCollector } from '../context/TurnDiagnostics';
 import {
@@ -82,10 +79,7 @@ import {
   piCompleteSimple,
   piRequestApiKeyOverride,
 } from '../../piModels';
-import {
-  applyCustomOpenAIResponsesPayloadProfile,
-  customOpenAIResponsesPayloadProfileOption,
-} from '../../openAIResponsesCompat';
+import { customOpenAIResponsesPayloadProfileOption } from '../../openAIResponsesCompat';
 import type {
   ThreadNameGenerationContext,
   ThreadNameGenerator,
@@ -94,6 +88,9 @@ import type {
   TurnExecutor,
 } from './types';
 import { persistToolCallAdmission } from './toolCallHistory';
+import { agentProviderPayload } from './agentProviderPayload';
+
+export { agentProviderPayload } from './agentProviderPayload';
 
 export const MAX_PERSISTED_TOOL_ARGUMENT_CHARS = 32_000;
 export const MAX_PERSISTED_TOOL_OUTPUT_CHARS = 50_000;
@@ -172,7 +169,9 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
         : composeStablePrompt({
             thread: context.thread,
             configuration: context.configuration,
+            availableToolNames: tools.map((tool) => tool.name),
             transcriptIndexPath: this.options.transcriptIndexPath ?? null,
+            startupContext: context.startupContext ?? null,
           });
       const systemPrompt = stablePrompt?.text
         ?? context.configuration.developerInstructions.join('\n\n');
@@ -286,7 +285,7 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
       const gatewayOptions: PiModelGatewayOptions = {
         onProviderContext: (providerContext) => diagnostics.captureProviderContext(providerContext),
         onPayload: async (payload, model) => {
-          const transformed = agentProviderPayload(payload, model, stablePrompt);
+          const transformed = agentProviderPayload(payload, model, stablePrompt, tools);
           if (diagnostics.available) {
             try {
               await diagnostics.captureProviderRequest(transformed ?? payload);
@@ -637,41 +636,12 @@ function reasoningReplayIdentity(turnId: string, provider: string, api: Api, mod
   return `${turnId}\0${provider}\0${api}\0${model}`;
 }
 
-export function agentProviderPayload(
-  payload: unknown,
-  model: Model<Api>,
-  stablePrompt?: ReturnType<typeof composeStablePrompt> | null,
-): unknown | undefined {
-  const compatiblePayload = applyCustomOpenAIResponsesPayloadProfile(payload, model);
-  const cachePayload = stablePrompt
-    ? applyAnthropicStablePromptCacheBreakpoints(compatiblePayload ?? payload, model, stablePrompt)
-    : undefined;
-  const source = cachePayload ?? compatiblePayload ?? payload;
-  if (!isRecord(source) || !isOpenAIResponsesApi(model.api) || !isRecord(source.reasoning)) {
-    return cachePayload ?? compatiblePayload;
-  }
-  if (source.reasoning.summary === 'detailed') return cachePayload ?? compatiblePayload;
-  return {
-    ...source,
-    reasoning: {
-      ...source.reasoning,
-      summary: 'detailed',
-    },
-  };
-}
-
 export function canonicalizeAgentTools(tools: readonly AgentTool[]): AgentTool[] {
   return [...tools].sort((left, right) => {
     if (left.name < right.name) return -1;
     if (left.name > right.name) return 1;
     return 0;
   });
-}
-
-function isOpenAIResponsesApi(api: Api): boolean {
-  return api === 'openai-responses'
-    || api === 'openai-codex-responses'
-    || api === 'azure-openai-responses';
 }
 
 async function resolveDefaultRuntime(context: PiRuntimeContext): Promise<PiRuntimeSelection> {
@@ -1037,7 +1007,7 @@ function startedToolItem(
     outputRef: null,
     modelCall,
   };
-  if (identity.namespace === 'collaboration' && isCollaborationToolName(identity.name)) {
+  if (identity.namespace === null && isAgentTaskToolName(identity.name)) {
     const input = isRecord(args) ? args : {};
     return {
       ...base,
@@ -1046,9 +1016,16 @@ function startedToolItem(
       status: 'inProgress',
       senderThreadId: context.thread.id,
       receiverThreadIds: [],
-      prompt: optionalToolArgumentText(input.message),
+      prompt: identity.name === 'agent'
+        ? optionalToolArgumentText(input.prompt)
+        : identity.name === 'agent_message'
+          ? optionalToolArgumentText(input.message)
+          : null,
+      summary: identity.name === 'agent_message'
+        ? optionalToolArgumentText(input.summary)
+        : null,
       model: optionalToolArgumentText(input.model),
-      reasoningEffort: optionalToolArgumentText(input.reasoning_effort),
+      reasoningEffort: null,
       agentsStates: {},
     };
   }
@@ -1386,20 +1363,13 @@ function toolItemLabel(item: ThreadItem): string {
     case 'webSearch': return 'Web search';
     case 'mcpToolCall': return `${item.server}.${item.tool}`;
     case 'dynamicToolCall': return item.namespace ? `${item.namespace}.${item.tool}` : item.tool;
-    case 'collabAgentToolCall': return `Collaboration ${item.tool}`;
+    case 'collabAgentToolCall': return `Agent task ${item.tool}`;
     default: return 'Tool';
   }
 }
 
-function isCollaborationToolName(value: string): value is Extract<ThreadItem, { type: 'collabAgentToolCall' }>['tool'] {
-  return [
-    'spawn_agent',
-    'send_message',
-    'followup_task',
-    'wait_agent',
-    'list_agents',
-    'interrupt_agent',
-  ].includes(value);
+function isAgentTaskToolName(value: string): value is Extract<ThreadItem, { type: 'collabAgentToolCall' }>['tool'] {
+  return ['agent', 'agent_message', 'task_stop'].includes(value);
 }
 
 function isFileMutationTool(value: string): boolean {
@@ -1438,6 +1408,15 @@ function collaborationViews(result: unknown): Array<Record<string, unknown>> {
   if (Array.isArray(details)) return details.filter(isRecord);
   if (!isRecord(details)) return [];
   if (Array.isArray(details.agents)) return details.agents.filter(isRecord);
+  if (typeof details.agentId === 'string') {
+    return [{ ...details, threadId: details.agentId, status: 'running' }];
+  }
+  if (typeof details.resumedAgentId === 'string') {
+    return [{ ...details, threadId: details.resumedAgentId, status: 'running' }];
+  }
+  if (isRecord(details.pin) && typeof details.pin.id === 'string') {
+    return [{ ...details, threadId: details.pin.id, status: 'running' }];
+  }
   if (typeof details.thread_id === 'string') {
     return [{ ...details, status: 'running' }];
   }

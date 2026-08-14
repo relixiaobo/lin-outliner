@@ -36,26 +36,150 @@ const DEFAULT_PROFILE: ConfigurationProfile = Object.freeze({
   mcpServers: Object.freeze([]),
 });
 
+export const GENERAL_PURPOSE_AGENT_INSTRUCTIONS = `You are an agent for Tenon. Given the user's message, you should use the tools available to complete the task. Complete the task fully—don't gold-plate, but don't leave it half-done. When you complete the task, respond with a concise report covering what was done and any key findings — the caller will relay this to the user, so it only needs the essentials.
+
+Your strengths:
+- Searching for code, configurations, and patterns across large codebases
+- Analyzing multiple files to understand system architecture
+- Investigating complex questions that require exploring many files
+- Performing multi-step research tasks
+
+Guidelines:
+- For file searches: search broadly when you don't know where something lives. Use file_read when you know the specific file path.
+- For analysis: Start broad and narrow down. Use multiple search strategies if the first doesn't yield results.
+- Be thorough: Check multiple locations, consider different naming conventions, look for related files.
+- NEVER create files unless they're absolutely necessary for achieving your goal. ALWAYS prefer editing an existing file to creating a new one.
+- NEVER proactively create documentation files (*.md) or README files. Only create documentation files if explicitly requested.`;
+
+export const EXPLORE_AGENT_INSTRUCTIONS = `You are a file search specialist for Tenon. You excel at thoroughly navigating and exploring codebases.
+
+=== CRITICAL: READ-ONLY MODE - NO FILE MODIFICATIONS ===
+This is a READ-ONLY exploration task. You are STRICTLY PROHIBITED from:
+- Creating new files (no file_write, touch, or file creation of any kind)
+- Modifying existing files (no file_edit operations)
+- Deleting files (no rm, file_delete, or deletion)
+- Moving or copying files (no mv or cp)
+- Creating temporary files anywhere, including /tmp
+- Using redirect operators (>, >>, |) or heredocs to write to files
+- Running ANY commands that change system state
+
+Your role is EXCLUSIVELY to search and analyze existing code. You do NOT have access to file editing tools - attempting to edit files will fail.
+
+Your strengths:
+- Rapidly finding files using glob patterns
+- Searching code and text with powerful regex patterns
+- Reading and analyzing file contents
+
+Guidelines:
+- Use file_glob for broad file pattern matching
+- Use file_grep for searching file contents with regex
+- Use file_read when you know the specific file path you need to read
+- Use bash ONLY for read-only operations (ls, git status, git log, git diff, find, grep, cat, head, tail)
+- NEVER use bash for: mkdir, touch, rm, cp, mv, git add, git commit, npm install, pip install, or any file creation/modification
+- Adapt your search approach based on the thoroughness level specified by the caller
+- Communicate your final report directly as a regular message - do NOT attempt to create files
+
+NOTE: You are meant to be a fast agent that returns output as quickly as possible. In order to achieve this you must:
+- Make efficient use of the tools that you have at your disposal: be smart about how you search for files and implementations
+- Wherever possible you should try to spawn multiple parallel tool calls for grepping and reading files
+
+Complete the user's search request efficiently and report your findings clearly.`;
+
+export const PLAN_AGENT_INSTRUCTIONS = `You are a software architect and planning specialist for Tenon. Your role is to explore the codebase and design implementation plans.
+
+=== CRITICAL: READ-ONLY MODE - NO FILE MODIFICATIONS ===
+This is a READ-ONLY planning task. You are STRICTLY PROHIBITED from:
+- Creating new files (no file_write, touch, or file creation of any kind)
+- Modifying existing files (no file_edit operations)
+- Deleting files (no rm, file_delete, or deletion)
+- Moving or copying files (no mv or cp)
+- Creating temporary files anywhere, including /tmp
+- Using redirect operators (>, >>, |) or heredocs to write to files
+- Running ANY commands that change system state
+
+Your role is EXCLUSIVELY to explore the codebase and design implementation plans. You do NOT have access to file editing tools - attempting to edit files will fail.
+
+You will be provided with a set of requirements and optionally a perspective on how to approach the design process.
+
+## Your Process
+
+1. **Understand Requirements**: Focus on the requirements provided and apply your assigned perspective throughout the design process.
+
+2. **Explore Thoroughly**:
+   - Read any files provided to you in the initial prompt
+   - Find existing patterns and conventions using file_glob, file_grep, and file_read
+   - Understand the current architecture
+   - Identify similar features as reference
+   - Trace through relevant code paths
+   - Use bash ONLY for read-only operations (ls, git status, git log, git diff, find, grep, cat, head, tail)
+   - NEVER use bash for: mkdir, touch, rm, cp, mv, git add, git commit, npm install, pip install, or any file creation/modification
+
+3. **Design Solution**:
+   - Create implementation approach based on your assigned perspective
+   - Consider trade-offs and architectural decisions
+   - Follow existing patterns where appropriate
+
+4. **Detail the Plan**:
+   - Provide step-by-step implementation strategy
+   - Identify dependencies and sequencing
+   - Anticipate potential challenges
+
+## Required Output
+
+End your response with:
+
+### Critical Files for Implementation
+List 3-5 files most critical for implementing this plan:
+- path/to/file1.ts
+- path/to/file2.ts
+- path/to/file3.ts
+
+REMEMBER: You can ONLY explore and plan. You CANNOT and MUST NOT write, edit, or modify any files. You do NOT have access to file editing tools.`;
+
 export const BUILT_IN_AGENT_ROLE_DEFINITIONS: Readonly<Record<string, AgentRole>> = Object.freeze({
   default: Object.freeze({
     name: 'default',
     source: 'builtIn',
     description: 'General-purpose Subagent.',
-    developerInstructions: 'Work on the assigned task and report concrete results to the parent Thread.',
-  }),
-  worker: Object.freeze({
-    name: 'worker',
-    source: 'builtIn',
-    description: 'Implementation-focused Subagent.',
-    developerInstructions: 'Execute the assigned implementation carefully, verify it, and report the changed artifacts.',
+    developerInstructions: GENERAL_PURPOSE_AGENT_INSTRUCTIONS,
   }),
   explorer: Object.freeze({
     name: 'explorer',
     source: 'builtIn',
-    description: 'Read-oriented research Subagent.',
-    developerInstructions: 'Inspect the assigned area, gather evidence, and report findings without speculative changes.',
+    description: 'Fast Agent specialized for exploring codebases.',
+    developerInstructions: EXPLORE_AGENT_INSTRUCTIONS,
+  }),
+  plan: Object.freeze({
+    name: 'plan',
+    source: 'builtIn',
+    description: 'Software architect Agent for designing implementation plans.',
+    developerInstructions: PLAN_AGENT_INSTRUCTIONS,
   }),
 });
+
+export interface ResolvedAgentType {
+  readonly canonicalType: string;
+  readonly role: AgentRole;
+  readonly kind: 'general-purpose' | 'explore' | 'plan' | 'role';
+}
+
+const BUILT_IN_AGENT_TYPES = [
+  {
+    canonicalType: 'general-purpose',
+    backingRole: 'default',
+    description: 'General-purpose agent for researching complex questions, searching for code, and executing multi-step tasks. When you are searching for a keyword or file and are not confident that you will find the right match in the first few tries use this agent to perform the search for you.',
+  },
+  {
+    canonicalType: 'explore',
+    backingRole: 'explorer',
+    description: 'Fast agent specialized for exploring codebases. Use this when you need to quickly find files by patterns (eg. "src/components/**/*.tsx"), search code for keywords (eg. "API endpoints"), or answer questions about the codebase (eg. "how do API endpoints work?"). When calling this agent, specify the desired thoroughness level: "quick" for basic searches, "medium" for moderate exploration, or "very thorough" for comprehensive analysis across multiple locations and naming conventions.',
+  },
+  {
+    canonicalType: 'plan',
+    backingRole: 'plan',
+    description: 'Software architect agent for designing implementation plans. Use this when you need to plan the implementation strategy for a task. Returns step-by-step plans, identifies critical files, and considers architectural trade-offs.',
+  },
+] as const;
 
 export class AgentConfigurationLoader {
   constructor(private readonly userDataPath: string) {}
@@ -76,13 +200,33 @@ export class AgentConfigurationLoader {
     return role;
   }
 
+  resolveAgentType(nameInput: string | undefined, cwd: string): ResolvedAgentType {
+    const candidates = this.agentTypeCandidates(cwd);
+    const input = nameInput ?? 'general-purpose';
+    const exact = candidates.find((candidate) => candidate.canonicalType === input);
+    if (exact) return exact;
+    const normalizedInput = normalizeAgentTypeForMatch(input);
+    const matches = candidates.filter((candidate) => (
+      normalizeAgentTypeForMatch(candidate.canonicalType) === normalizedInput
+    ));
+    if (matches.length === 1) return matches[0]!;
+    if (matches.length > 1) {
+      const names = matches.map((candidate) => candidate.canonicalType);
+      throw new Error(
+        `Agent type '${input}' is ambiguous — matches ${names.join(', ')}. Use the exact name: ${joinAlternatives(names)}`,
+      );
+    }
+    throw new Error(
+      `Agent type '${input}' not found. Available agents: ${candidates.map((candidate) => candidate.canonicalType).join(', ')}`,
+    );
+  }
+
   buildRoleCatalogSnapshot(cwd: string): RoleCatalogContextPayload {
-    const merged = this.loadMerged(cwd);
-    const roles = new Map<string, AgentRole>(Object.entries(BUILT_IN_AGENT_ROLE_DEFINITIONS));
-    for (const [name, role] of merged.roles) roles.set(name, role);
-    const entries = [...roles.values()]
-      .sort((left, right) => compareStableText(left.name, right.name))
-      .map(roleCatalogEntry);
+    const entries = this.agentTypeCandidates(cwd).map((candidate) => (
+      roleCatalogEntry(candidate.role, candidate.canonicalType, candidate.kind === 'role'
+        ? candidate.role.description
+        : BUILT_IN_AGENT_TYPES.find((entry) => entry.canonicalType === candidate.canonicalType)!.description)
+    ));
     const catalogHash = createHash('sha256').update(JSON.stringify(entries.map((entry) => ({
       name: entry.name,
       displayName: entry.displayName,
@@ -101,6 +245,28 @@ export class AgentConfigurationLoader {
     };
   }
 
+  buildAgentTypeCatalogSnapshot(cwd: string): RoleCatalogContextPayload {
+    return this.buildRoleCatalogSnapshot(cwd);
+  }
+
+  private agentTypeCandidates(cwd: string): ResolvedAgentType[] {
+    const merged = this.loadMerged(cwd);
+    const builtIns = BUILT_IN_AGENT_TYPES.map((entry): ResolvedAgentType => ({
+      canonicalType: entry.canonicalType,
+      role: BUILT_IN_AGENT_ROLE_DEFINITIONS[entry.backingRole]!,
+      kind: entry.canonicalType,
+    }));
+    const dynamic = [...merged.roles.values()]
+      .filter((role) => !builtIns.some((candidate) => candidate.canonicalType === role.name))
+      .sort((left, right) => compareStableText(left.name, right.name))
+      .map((role): ResolvedAgentType => ({
+        canonicalType: role.name,
+        role,
+        kind: 'role',
+      }));
+    return [...builtIns, ...dynamic];
+  }
+
   private loadMerged(cwd: string): ConfigurationLayer {
     const user = readLayer(userConfigurationPath(this.userDataPath), 'user');
     const project = readLayer(projectConfigurationPath(cwd), 'project');
@@ -112,24 +278,24 @@ export class AgentConfigurationLoader {
   }
 }
 
-function roleCatalogEntry(role: AgentRole): RoleCatalogEntry {
+function roleCatalogEntry(role: AgentRole, name = role.name, description = role.description): RoleCatalogEntry {
   const source = role.source === 'builtIn' ? 'built-in' : role.source;
   const contentHash = createHash('sha256').update(JSON.stringify({
-    name: role.name,
+    name,
     source,
-    description: role.description,
+    description,
     developerInstructions: role.developerInstructions,
     nicknameCandidates: role.nicknameCandidates ?? [],
     overrides: role.overrides ?? null,
   })).digest('hex');
   return {
     change: 'available',
-    name: role.name,
-    displayName: role.name,
+    name,
+    displayName: name,
     source,
-    identity: `${source}:${role.name}`,
+    identity: `${source}:${name}`,
     contentHash,
-    description: role.description,
+    description,
   };
 }
 
@@ -278,6 +444,7 @@ function effectiveConfiguration(profile: ConfigurationProfile): EffectiveThreadC
     reasoningEffort: profile.reasoningEffort ?? DEFAULT_PROFILE.reasoningEffort!,
     tools: Object.freeze([...(profile.tools ?? DEFAULT_PROFILE.tools!)]),
     skills: Object.freeze([...(profile.skills ?? DEFAULT_PROFILE.skills!)]),
+    preloadedSkills: Object.freeze([]),
     plugins: Object.freeze([...(profile.plugins ?? DEFAULT_PROFILE.plugins!)]),
     mcpServers: Object.freeze([...(profile.mcpServers ?? DEFAULT_PROFILE.mcpServers!)]),
   });
@@ -337,6 +504,15 @@ function normalizeSelectedName(value: string, label: string): string {
   const normalized = value.trim();
   validateDefinitionName(normalized, label);
   return normalized;
+}
+
+function normalizeAgentTypeForMatch(value: string): string {
+  return value.trim().toLowerCase().replace(/[ _-]+/gu, '-');
+}
+
+function joinAlternatives(values: readonly string[]): string {
+  if (values.length < 2) return values[0] ?? '';
+  return `${values.slice(0, -1).join(', ')} or ${values.at(-1)}`;
 }
 
 function validateDefinitionName(value: string, path: string): void {

@@ -45,7 +45,7 @@ typed evidence.
 The runtime preserves the first non-empty unused provider call ID and replaces empty or
 repeated IDs with fresh Turn-local UUIDv7 values before admission. Only the resulting
 canonical ID identifies the Item, execution causation, paired result, and replay.
-Command text, file changes, MCP/dynamic display arguments, collaboration summaries,
+Command text, file changes, MCP/dynamic display arguments, Agent-task summaries,
 results, and host execution metadata never reconstruct model arguments. In particular,
 `commandExecution.cwd` is the Thread's host-resolved working directory and is not part
 of the `bash` model call. During the active Turn only, a transient raw-call overlay lets
@@ -174,10 +174,12 @@ modules under `src/main/agent/thread/`:
   observations, and admission content resolution.
 - `ThreadCatalogOps` owns Thread creation, resume, fork, rollback, naming,
   archival, deletion, configuration, and subtree stop.
-- `SubagentCollaboration` owns child spawning, inherited context, mailboxes,
-  task paths, activity queues, and collaboration waits.
+- `SubagentCollaboration` owns Agent execution identity, fresh child spawning,
+  direct-parent delivery, messaging, resume, stop provenance, activity queues,
+  and isolated-Skill child execution.
 - `TurnLifecycle` owns Turn admission, execution, steering, user input,
-  compaction, client bindings, active-Turn state, and Subagent budget usage.
+  compaction, client bindings, active-Turn state, Agent request-budget usage, and
+  terminal notification admission.
 
 `ThreadService` constructs those owners and preserves the host, extension, and
 protocol facade; it does not duplicate their state. There are no flat
@@ -212,14 +214,15 @@ developer instructions, and capability ceilings remain host-private. Feature
 and child Threads have no renderer-editable configuration. A fork inherits the
 source Thread's effective execution selection.
 
-An `AgentRole` configures a child Thread. Built-in Roles are `default`, `worker`,
-and `explorer`; user and project files may add or deliberately replace Roles.
-Child spawn applies the current parent configuration, the selected Role,
-explicit model/effort choices, and an optional tool ceiling. Tools, skills,
-plugins, and MCP servers are each intersected with the parent capability
-ceiling. Child resume reloads its stored Role and the parent's current snapshot,
-while private metadata preserves only actual spawn-time model/effort overrides
-and the explicit tool ceiling.
+An `AgentRole` configures a child Thread. The model-visible built-in Agent types
+are `general-purpose`, `explore`, and `plan`, backed respectively by hidden
+`default`, `explorer`, and `plan` Roles. User and project Roles extend the Agent
+type catalog; there is no built-in `worker`. A fresh spawn intersects its
+selected Role and mode policy with the parent's tool, Skill, plugin, and MCP
+ceilings, then persists the resolved definition, model, reasoning setting, and
+tool policy. Resume reuses that recorded configuration and Agent history rather
+than re-resolving a changed Role. The complete context and execution contract is
+owned by [`agent-subagent-threads.md`](agent-subagent-threads.md).
 
 ## Identity And Provenance
 
@@ -242,6 +245,20 @@ equivalent audit edge in Thread history.
 `TurnLifecycle`, reached through the unchanged `ThreadService` facade, is the
 only lifecycle coordinator. It serializes acceptance per Thread, enforces one
 active Turn, and deduplicates renderer submissions by stable client message ID.
+
+The renderer sends non-command user input through `turn/submit`; it never chooses
+`turn/start` versus `turn/steer` from a cached Turn snapshot. Main serializes
+submissions per Thread and re-evaluates canonical ownership until the input is
+admitted exactly once: an idle Thread starts a user Turn, an active Turn that is
+still accepting input is steered, and a finishing Turn is awaited before the
+same `clientUserMessageId` is retried. Internal notification admission may win
+the same race, but it cannot surface `ThreadBusyError` to the user: the input is
+then steered into that Turn or starts immediately after it settles. Archived,
+stopping, quarantined, unavailable, and shutting-down Threads remain real
+rejection states. Shutdown drains already-entered renderer submissions before
+closing their persistence stores; queued retries cannot admit after shutdown begins.
+The strict `turn/start` and `turn/steer` methods remain available for callers
+that already own an exact lifecycle precondition.
 
 Starting a Turn follows this order:
 
@@ -280,7 +297,9 @@ Skill routing. They require an idle Thread and create completed feature-triggere
 containing only a canonical `contextCompaction` or `contextReset`; they do not launch a
 model Turn. A command with no new eligible boundary returns the existing boundary as an
 idempotent no-op. Both commands retain the visible and auditable history they stop
-projecting implicitly.
+projecting implicitly. `turn/submit` preserves that idle-only boundary: it never steers a
+reserved command into an active model Turn, and an admission race therefore remains a
+real busy rejection for these commands.
 
 Steering uses the same evidence admission path. Its evidence and user Item become
 durable before the live executor is notified, so queued and immediate steering have
@@ -395,8 +414,8 @@ child admission, interrupts every active Turn and pending structured-input
 request, and waits for every descendant to become idle. Archive then marks the
 root and every descendant archived; unarchive restores only the explicitly
 selected Thread and never revives descendants implicitly. Delete removes every
-descendant Goal, history projection, rollout, catalog row, spawn edge, mailbox,
-pending activity, and barrier state. Concurrent overlapping teardown requests
+descendant Goal, history projection, rollout, catalog row, Agent execution edge,
+pending notification, pending activity, request-ledger membership, and barrier state. Concurrent overlapping teardown requests
 fail closed. Archived or stopping Threads cannot admit a Turn.
 
 ## History Replacement And Fork Semantics

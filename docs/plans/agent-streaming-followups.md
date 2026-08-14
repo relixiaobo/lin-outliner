@@ -82,11 +82,11 @@ audit):
     items that evidence it. A child-only change recomputes exactly that
     child's base entry.
   - *Collection layer* — the projection work that is irreducibly
-    collection-scoped and must recompute whenever its own inputs change, not
-    per child: the **eligible-child membership** during an in-progress
-    `wait_agent` (the projection scans the whole catalog for collaboration
-    children, so a NEW child mid-wait has no base entry to invalidate — the
-    membership set is itself a key); the **parent Turn's presentation fields**
+  collection-scoped and must recompute whenever its own inputs change, not
+  per child: **eligible Agent-child membership**, derived from canonical Agent
+  lineage and execution status (a newly admitted child can arrive through
+  catalog/Turn notifications before any parent Item changes, so the membership
+  set is itself a key); the **parent Turn's presentation fields**
     (`livePresentationState` reads the parent's status and `startedAt`, so
     parent settlement changes rows with no item or child-entry change); and the
     **display-name collision set** (`disambiguateDisplayNames` ordinal-numbers
@@ -124,9 +124,9 @@ audit):
   recomputation, so both are asserted); AND a child-only change (child Thread
   status/latest-Turn update with parent items untouched) refreshes exactly the
   items referencing that child — no stale nickname/status/duration, no
-  recomputation of unrelated items. Collection-layer cases: a NEW child
-  appearing during an active `wait_agent` shows up without any parent item
-  change; the parent Turn settling with unchanged items updates every row's
+  recomputation of unrelated items. Collection-layer cases: a newly admitted
+  Agent appearing through canonical lineage/status shows up without any parent
+  Item change; the parent Turn settling with unchanged items updates every row's
   live state; a same-named child joining, renaming, and being removed each
   renumber exactly the colliding siblings (and children whose final display
   name is unchanged keep identity-stable presentation objects). The elapsed

@@ -1,0 +1,108 @@
+{
+  "schemaVersion": 1,
+  "levels": {
+    "captured-byte": "Exact retained JSON values and key order from the capture projection; does not claim complete HTTP request byte parity.",
+    "captured-structural": "Sanitized structural facts retained from version-bound captures; omitted values are outside the claim.",
+    "capture-available-unadmitted": "A local capture exists, but its version identity or complete provenance is insufficient for a Claude Code 2.1.227 parity claim.",
+    "tenon-local": "A Tenon product, adapter, architecture, or safety contract with no Claude capture claim.",
+    "missing": "No admitted black-box evidence currently supports the claim."
+  },
+  "claims": [
+    {
+      "id": "tool-catalog-default",
+      "level": "captured-byte",
+      "claim": "The retained default-profile Agent, SendMessage, and TaskStop objects, their descriptions and schemas, and their captured JSON key order.",
+      "sources": ["capture:tool-catalog-default", "projection:captured/tool-catalog-default.json"]
+    },
+    {
+      "id": "tool-catalog-fork-profile",
+      "level": "capture-available-unadmitted",
+      "claim": "The retained Fork-profile catalog and absence of run_in_background need a digest-bound session record before being called Claude Code 2.1.227 parity.",
+      "sources": ["capture:tool-catalog-fork-profile", "projection:captured/tool-catalog-fork-profile.json"]
+    },
+    {
+      "id": "fresh-context",
+      "level": "captured-structural",
+      "claim": "Selected fresh-task, parent-sentinel, repository/status, message-role, block-count, and collaboration-tool facts for general-purpose, Explore, and Plan.",
+      "sources": ["capture:foreground-general-full", "capture:foreground-explore-full", "capture:foreground-plan-send-main", "projection:captured/fresh-context.json"]
+    },
+    {
+      "id": "foreground-execution-and-send-main",
+      "level": "captured-structural",
+      "claim": "Selected foreground completion ordering and foreground main-route delivery facts for general-purpose, Explore, and Plan.",
+      "sources": ["capture:foreground-general-full", "capture:foreground-explore-full", "capture:foreground-general-send-main", "capture:foreground-explore-send-main", "capture:foreground-plan-send-main", "projection:captured/execution-messaging.json"]
+    },
+    {
+      "id": "foreground-send-main-helper-text",
+      "level": "captured-byte",
+      "claim": "The retained foreground main-delivery helper strings before the closed Tenon branding and addressability normalization.",
+      "sources": ["capture:foreground-general-send-main", "capture:foreground-explore-send-main", "capture:foreground-plan-send-main", "projection:captured/output-helpers.json"]
+    },
+    {
+      "id": "background-send-main-structure",
+      "level": "captured-structural",
+      "claim": "Selected background main-route delivery and next-parent-turn ordering from the version-bound full capture.",
+      "sources": ["capture:background-send-main-full", "projection:captured/execution-messaging.json"]
+    },
+    {
+      "id": "background-launch-steer-resume-structure",
+      "level": "capture-available-unadmitted",
+      "claim": "Selected background launch/completion, running steering, and terminal resume observations need version-bound recapture before being called 2.1.227 parity.",
+      "sources": ["capture:background-general", "capture:steer-running", "capture:resume-explore", "projection:captured/execution-messaging.json"]
+    },
+    {
+      "id": "legacy-output-helper-text",
+      "level": "capture-available-unadmitted",
+      "claim": "The retained background launch, foreground general result, and completion-notification strings need version-bound recapture before being called 2.1.227 parity.",
+      "sources": ["capture:background-general", "capture:foreground-general-legacy", "projection:captured/output-helpers.json"]
+    },
+    {
+      "id": "anthropic-pi-ai-serializer",
+      "level": "tenon-local",
+      "claim": "The Anthropic tool objects after Tenon's pi-ai conversion, including eager_input_streaming and cache_control behavior.",
+      "sources": ["tenon-local:tenon-local/anthropic-pi-ai-serializer.json"]
+    },
+    {
+      "id": "provider-family-canonical-contract",
+      "level": "tenon-local",
+      "claim": "Canonical pre-adapter tool equality across provider families.",
+      "sources": ["tenon-local:production tests"]
+    },
+    {
+      "id": "budget-breaker",
+      "level": "tenon-local",
+      "claim": "Tenon's subagent token-budget refusal and interrupted-notification bytes.",
+      "sources": ["tenon-local:tenon-local/budget-breaker.json"]
+    },
+    {
+      "id": "output-scan",
+      "level": "tenon-local",
+      "claim": "Synthetic adversarial strings used to test Tenon's output scanner; not a Claude transformation oracle.",
+      "sources": ["tenon-local:tenon-local/output-scan.json"]
+    },
+    {
+      "id": "worktree-memory-undo",
+      "level": "tenon-local",
+      "claim": "Worktree containment, root-only Memory, and shared undo exclusion selected for Tenon's architecture.",
+      "sources": ["tenon-local:production tests"]
+    },
+    {
+      "id": "nested-depth-concurrency",
+      "level": "missing",
+      "claim": "Nested spawning, depth-limit, and concurrency-limit behavior lack admitted version-bound black-box evidence.",
+      "sources": []
+    },
+    {
+      "id": "model-user-stop",
+      "level": "missing",
+      "claim": "Model-stop and user-stop provenance behavior lack admitted version-bound black-box evidence.",
+      "sources": []
+    },
+    {
+      "id": "role-prompt-tool-map",
+      "level": "missing",
+      "claim": "Complete specialized Role prompt bytes and their complete tool-token map lack admitted version-bound black-box evidence.",
+      "sources": []
+    }
+  ]
+}

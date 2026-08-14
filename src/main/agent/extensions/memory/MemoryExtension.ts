@@ -67,7 +67,8 @@ export interface MemoryThreadHost extends ThreadServiceExtensionHost {
   persistentRootThreads(): readonly Thread[];
   activeRootUserTurns(): readonly { threadId: ThreadId; turnId: TurnId }[];
   interruptRootTurns(turns: readonly { threadId: ThreadId; turnId: TurnId }[]): Promise<void>;
-  readThread(input: { threadId: ThreadId; includeTurns: true }): { thread: Thread };
+  readThread(input: { threadId: ThreadId; includeTurns?: boolean }): { thread: Thread };
+  readTurnForHost(threadId: ThreadId, turnId: TurnId): Turn | null;
   isThreadNavigable(threadId: ThreadId): boolean;
   historyRollbackMarker(rollbackId: string): {
     readonly threadId: ThreadId;
@@ -493,7 +494,7 @@ export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy
     const admission = this.control.admission(causation.turnId);
     const status = this.control.status();
     const turn = this.turn(causation.threadId, causation.turnId);
-    const thread = this.requireHost().readThread({ threadId: causation.threadId, includeTurns: true }).thread;
+    const thread = this.requireHost().readThread({ threadId: causation.threadId }).thread;
     if (
       !admission?.eligibleAtAdmission
       || admission.resetEpoch !== status.resetEpoch
@@ -511,13 +512,20 @@ export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy
   }
 
   filterProjection(projection: DocumentProjection, causation: AgentMutationCausation): DocumentProjection {
-    const explicit = this.explicitNodeReferences(causation.threadId, causation.turnId);
+    const thread = this.requireHost().readThread({
+      threadId: causation.threadId,
+    }).thread;
+    const rootUserThread = thread.parentThreadId === null && thread.threadSource === 'user';
+    const explicit = rootUserThread
+      ? this.explicitNodeReferences(causation.threadId, causation.turnId)
+      : new Set<string>();
     const graph = this.timeline.graph(projection);
     const generated = new Set(this.control.generatedNodes()
       .filter((entry) => !entry.userAuthoritative)
       .map((entry) => entry.nodeId));
     const admission = this.control.admission(causation.turnId);
-    const implicitEnabled = Boolean(admission?.eligibleAtAdmission)
+    const implicitEnabled = rootUserThread
+      && Boolean(admission?.eligibleAtAdmission)
       && !this.control.isTurnExcluded(causation.turnId)
       && this.control.featureMode() === 'enabled'
       && admission?.featureModeGeneration === this.control.status().featureModeGeneration;
@@ -716,7 +724,7 @@ export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy
   }
 
   private turn(threadId: ThreadId, turnId: TurnId): Turn | null {
-    return this.requireHost().readThread({ threadId, includeTurns: true }).thread.turns?.find((turn) => turn.id === turnId) ?? null;
+    return this.requireHost().readTurnForHost(threadId, turnId);
   }
 
   private explicitNodeReferences(threadId: ThreadId, turnId: TurnId): ReadonlySet<string> {

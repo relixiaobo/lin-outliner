@@ -1,11 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Thread, ThreadId, Turn } from '../../../core/agent/protocol';
+import type { RendererUserViewHints, Thread, ThreadId, Turn } from '../../../core/agent/protocol';
 import type { DocumentIndex } from '../../state/document';
 import { useT } from '../../i18n/I18nProvider';
 import { AgentIcon, BackIcon, ICON_SIZE, SkillIcon, StopIcon } from '../../ui/icons';
 import { IconButton } from '../../ui/primitives/IconButton';
 import type { ThreadNodeReferenceOpenHandler } from '../threadReferences';
-import { consumeSubagentDrill, subscribeSubagentDrill } from '../store/subagentDrillIntent';
+import {
+  consumeSubagentDrill,
+  descendantDrillPath,
+  subscribeSubagentDrill,
+} from '../store/subagentDrillIntent';
 import { threadStore, useThreadStore } from '../store/threadStore';
 import { ThreadView } from './ThreadView';
 
@@ -22,25 +26,30 @@ import { ThreadView } from './ThreadView';
  * open would move the reader's place every time they looked at something. One
  * scroll region lives inside; the transcript outside keeps its own.
  *
- * A grandchild REPLACES the contents rather than nesting inside them. Nesting
+ * A descendant REPLACES the contents rather than nesting inside them. Nesting
  * would put a scroll region inside a scroll region, which fights the trackpad
  * at the boundary, and would express depth through indentation the reader has
  * to measure. Swapping keeps one viewport and says the depth out loud, in a
- * header that names the way back. Delegation is capped at depth two, so that
- * header is never more than one step.
+ * header that names the immediate way back. Delegation is capped at depth three;
+ * the stack walks d1 -> d2 -> d3 in this one container, and Back unwinds it one
+ * depth at a time.
  */
 export function SubagentRunDetail({
   index,
   onInterruptThread,
   onOpenNodeReference,
+  onOpenThread,
   onOpenTurnDetails,
   rootThreadId,
+  userView,
 }: {
   readonly index: DocumentIndex;
   readonly onInterruptThread?: (threadId: string) => Promise<void>;
   readonly onOpenNodeReference: ThreadNodeReferenceOpenHandler;
+  readonly onOpenThread: (threadId: ThreadId) => Promise<void>;
   readonly onOpenTurnDetails?: (threadId: string, turnId: string) => void;
   readonly rootThreadId: ThreadId;
+  readonly userView: RendererUserViewHints;
 }) {
   const t = useT();
   const snapshot = useThreadStore();
@@ -81,13 +90,22 @@ export function SubagentRunDetail({
     });
   }, [threadId]);
 
-  const drillTo = useCallback((target: ThreadId) => {
-    setStack((current) => (current[current.length - 1] === target ? current : [...current, target]));
-  }, []);
+  const openRelatedThread = useCallback(async (target: ThreadId) => {
+    const path = descendantDrillPath(threadId, target, threadsById);
+    if (path === null) {
+      await onOpenThread(target);
+      return;
+    }
+    if (path.length === 0) return;
+    setStack((current) => (
+      current[current.length - 1] === threadId ? [...current, ...path] : current
+    ));
+  }, [onOpenThread, threadId, threadsById]);
 
   const turns = snapshot.turnsByThread.get(threadId);
   const name = subagentName(thread, t.agent.thread.untitled);
   const FormIcon = thread?.source === 'agent.skill' ? SkillIcon : AgentIcon;
+  const agentComposerEnabled = thread?.source === 'collaboration';
   const running = thread?.status.type === 'active';
 
   return (
@@ -132,11 +150,9 @@ export function SubagentRunDetail({
       ) : (
         <div className="thread-subagent-detail-body" key={threadId}>
           <ThreadView
-            // Read-only by contract: a child is driven by its parent, and user
-            // control on it is interrupt-only.
-            composerEnabled={false}
+            composerEnabled={agentComposerEnabled}
             composerFocusToken={0}
-            configuration={snapshot.configurationsByThread.get(threadId) ?? null}
+            configuration={null}
             goal={snapshot.goalsByThread.get(threadId) ?? null}
             index={index}
             inputRequest={null}
@@ -146,24 +162,23 @@ export function SubagentRunDetail({
             onContinueInNewChat={noop}
             onCreateThread={noFallback}
             onEditUserMessage={noop}
-            onInterrupt={noop}
+            onInterrupt={() => threadStore.interruptThread(threadId)}
             {...(onInterruptThread ? { onInterruptThread } : { onInterruptThread: noop })}
             onOpenNodeReference={onOpenNodeReference}
-            // Every route to a grandchild swaps these contents: the delegation
-            // row AND the child links inside an expanded collaboration tool
-            // call, which reach the same Thread by another path. One of them
-            // silently doing nothing reads as a broken app, not a disabled one.
-            onOpenThread={async (target) => drillTo(target)}
-            onSubagentDrill={drillTo}
+            // Descendants swap this container. A sibling link from
+            // agent_message returns to the root navigation path instead of
+            // inventing a parent-child crumb between peers.
+            onOpenThread={openRelatedThread}
+            onSubagentDrill={(target) => { void openRelatedThread(target); }}
             onOpenTurnDetails={(turn: Turn) => onOpenTurnDetails?.(threadId, turn.id)}
             onReadToolArguments={(turnId, item) => threadStore.readToolArguments(threadId, turnId, item)}
             onReadToolOutput={(turnId, item) => threadStore.readItemOutput(threadId, turnId, item)}
-            onSend={noSend}
+            onSend={(content) => threadStore.sendToThread(threadId, content, userView)}
             onSubmitUserInput={noop}
             plan={snapshot.planByThread.get(threadId) ?? null}
             providerRetry={snapshot.providerRetryByThread.get(threadId) ?? null}
             providerSettings={null}
-            providerSettingsLoaded
+            providerSettingsLoaded={false}
             slashCommands={[]}
             threadCreationBlocked
             threadCreationPending={false}
@@ -172,19 +187,19 @@ export function SubagentRunDetail({
             threadModelProvider={thread.modelProvider}
             threadsById={threadsById}
             turns={turns}
+            userView={userView}
             waitingOnUserInput={false}
           />
         </div>
       )}
-      {/* Where a composer would be. Not an input: the sentence explains the
-          absence rather than leaving a reader to wonder why they cannot type. */}
-      <p className="thread-subagent-detail-note">{t.agent.thread.subagentReadOnly}</p>
+      {agentComposerEnabled ? null : (
+        <p className="thread-subagent-detail-note">{t.agent.thread.subagentReadOnly}</p>
+      )}
     </div>
   );
 }
 
 async function noop(): Promise<void> { return undefined; }
-async function noSend(): Promise<null> { return null; }
 async function noFallback(): Promise<boolean> { return false; }
 
 function errorMessage(error: unknown): string {

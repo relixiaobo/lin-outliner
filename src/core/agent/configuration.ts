@@ -32,7 +32,7 @@ export interface AgentRole {
   readonly overrides?: AgentRoleOverrides;
 }
 
-export const BUILT_IN_AGENT_ROLES = ['default', 'worker', 'explorer'] as const;
+export const BUILT_IN_AGENT_ROLES = ['default', 'explorer', 'plan'] as const;
 export type BuiltInAgentRoleName = typeof BUILT_IN_AGENT_ROLES[number];
 
 export interface EffectiveThreadConfiguration {
@@ -42,6 +42,8 @@ export interface EffectiveThreadConfiguration {
   readonly reasoningEffort: ReasoningEffort;
   readonly tools: readonly string[];
   readonly skills: readonly string[];
+  /** Role-declared Skills whose full content is admitted on a fresh child Turn. */
+  readonly preloadedSkills: readonly string[];
   readonly plugins: readonly string[];
   readonly mcpServers: readonly string[];
 }
@@ -57,20 +59,30 @@ export function resolveChildConfiguration(
   request: ChildConfigurationRequest,
 ): EffectiveThreadConfiguration {
   const overrides = request.role.overrides;
+  const preloadedSkills = constrainPreloadedSkills(parent.skills, overrides?.skills);
 
   return Object.freeze({
     profileName: parent.profileName,
-    developerInstructions: Object.freeze([
-      ...parent.developerInstructions,
-      request.role.developerInstructions,
-    ]),
+    developerInstructions: Object.freeze([request.role.developerInstructions]),
     model: request.model ?? overrides?.model ?? parent.model,
     reasoningEffort: request.reasoningEffort ?? overrides?.reasoningEffort ?? parent.reasoningEffort,
     tools: constrainChildCapabilities(parent.tools, overrides?.tools),
     skills: constrainChildCapabilities(parent.skills, overrides?.skills),
+    preloadedSkills,
     plugins: constrainChildCapabilities(parent.plugins, overrides?.plugins),
     mcpServers: constrainChildCapabilities(parent.mcpServers, overrides?.mcpServers),
   });
+}
+
+function constrainPreloadedSkills(
+  parent: readonly string[],
+  requested: readonly string[] | undefined,
+): readonly string[] {
+  if (!requested) return Object.freeze([]);
+  const concrete = [...new Set(requested)].filter((skill) => skill !== '*');
+  if (parent.includes('*')) return Object.freeze(concrete);
+  const parentCeiling = new Set(parent);
+  return Object.freeze(concrete.filter((skill) => parentCeiling.has(skill)));
 }
 
 function constrainChildCapabilities(

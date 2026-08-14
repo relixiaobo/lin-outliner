@@ -488,7 +488,7 @@ test.describe('canonical agent Thread surface', () => {
       'thread/start',
       'thread/turn/details/read',
       'thread/turns/list',
-      'turn/start',
+      'turn/submit',
       'goal/get',
     ]));
   });
@@ -1136,8 +1136,8 @@ test.describe('canonical agent Thread surface', () => {
     await expect(page.locator('.thread-composer-inline-ref')).toContainText('Alpha');
     await page.getByRole('button', { name: 'Send' }).click();
 
-    const start = (await commandCalls(page)).filter((call) => call.cmd === 'turn/start').at(-1);
-    expect(start?.args.input).toEqual([{
+    const submit = (await commandCalls(page)).filter((call) => call.cmd === 'turn/submit').at(-1);
+    expect(submit?.args.input).toEqual([{
       type: 'nodeReference',
       nodeId: ids.alpha,
       note: 'Alpha',
@@ -1153,8 +1153,8 @@ test.describe('canonical agent Thread surface', () => {
     await composer.pressSequentially('after');
     await page.getByRole('button', { name: 'Send' }).click();
 
-    const start = (await commandCalls(page)).filter((call) => call.cmd === 'turn/start').at(-1);
-    expect(start?.args.input).toEqual([
+    const submit = (await commandCalls(page)).filter((call) => call.cmd === 'turn/submit').at(-1);
+    expect(submit?.args.input).toEqual([
       { type: 'text', text: 'Before ' },
       { type: 'nodeReference', nodeId: ids.alpha, note: 'Alpha' },
       { type: 'text', text: ' after' },
@@ -1187,8 +1187,8 @@ test.describe('canonical agent Thread surface', () => {
     await expect(page.locator('.thread-composer-inline-ref')).toHaveCount(3);
     await page.getByRole('button', { name: 'Send' }).click();
 
-    const start = (await commandCalls(page)).filter((call) => call.cmd === 'turn/start').at(-1);
-    const input = start?.args.input as Array<{
+    const submit = (await commandCalls(page)).filter((call) => call.cmd === 'turn/submit').at(-1);
+    const input = submit?.args.input as Array<{
       name?: string;
       sizeBytes?: number;
       source?: { kind?: string; ref?: { id?: string } };
@@ -1266,8 +1266,8 @@ test.describe('canonical agent Thread surface', () => {
     await expect(directoryRef).toContainText('workspace');
     await page.getByRole('button', { name: 'Send' }).click();
 
-    const start = (await commandCalls(page)).filter((call) => call.cmd === 'turn/start').at(-1);
-    expect(start?.args.input).toEqual([expect.objectContaining({
+    const submit = (await commandCalls(page)).filter((call) => call.cmd === 'turn/submit').at(-1);
+    expect(submit?.args.input).toEqual([expect.objectContaining({
       type: 'attachment',
       name: 'workspace',
       mimeType: 'inode/directory',
@@ -1503,8 +1503,8 @@ test.describe('canonical agent Thread surface', () => {
     await expect(imageRef).toHaveAttribute('data-inline-ref-thumbnail-data-url', /^data:image\/png;base64,/);
     await page.getByRole('button', { name: 'Send' }).click();
 
-    const start = (await commandCalls(page)).filter((call) => call.cmd === 'turn/start').at(-1);
-    expect(start?.args.input).toEqual([expect.objectContaining({
+    const submit = (await commandCalls(page)).filter((call) => call.cmd === 'turn/submit').at(-1);
+    expect(submit?.args.input).toEqual([expect.objectContaining({
       type: 'attachment',
       name: 'reference.png',
       mimeType: 'image/png',
@@ -1538,8 +1538,8 @@ test.describe('canonical agent Thread surface', () => {
     await expect(imageRef).toHaveAttribute('data-inline-ref-thumbnail-data-url', /^blob:/);
     await page.getByRole('button', { name: 'Send' }).click();
 
-    const start = (await commandCalls(page)).filter((call) => call.cmd === 'turn/start').at(-1);
-    const attachment = (start?.args.input as Array<{
+    const submit = (await commandCalls(page)).filter((call) => call.cmd === 'turn/submit').at(-1);
+    const attachment = (submit?.args.input as Array<{
       mimeType?: string;
       sizeBytes?: number;
       source?: { kind?: string; ref?: { byteLength?: number; mimeType?: string } };
@@ -2121,9 +2121,9 @@ test.describe('canonical agent Thread surface', () => {
     await expect(composer).toHaveText('Keep this draft.');
   });
 
-  test('expands a Subagent run in place, like every other process row', async ({ page }) => {
+  test('opens a resumable Agent in place without switching the root conversation', async ({ page }) => {
     await createNewThread(page);
-    await page.evaluate(async () => {
+    const childId = await page.evaluate(async () => {
       const target = window as Window & {
         lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
         __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
@@ -2138,6 +2138,7 @@ test.describe('canonical agent Thread surface', () => {
         agentNickname: 'research',
         agentRole: 'explorer',
         name: 'Research child',
+        source: 'collaboration',
         threadSource: 'subagent',
         updatedAt: Number(root.updatedAt) + 1,
       };
@@ -2169,6 +2170,7 @@ test.describe('canonical agent Thread surface', () => {
           durationMs: 1,
         },
       });
+      return child.id;
     });
 
     const parentTitle = await page.locator('.thread-dock-title').innerText();
@@ -2186,10 +2188,22 @@ test.describe('canonical agent Thread surface', () => {
     // Nothing was navigated to and nothing was covered: the dock still names
     // the conversation the user chose, and its composer still belongs to it.
     await expect(page.locator('.thread-dock-title')).toHaveText(parentTitle);
-    await expect(detail.getByRole('textbox', { name: 'Message this Thread' })).toHaveCount(0);
-    await expect(detail).toContainText('Driven by this conversation');
-    // A settled child offers no Stop; there is no Turn to stop.
-    await expect(detail.getByRole('button', { name: /^Stop / })).toHaveCount(0);
+    const childComposer = detail.getByRole('textbox', { name: 'Message this Thread' });
+    await expect(childComposer).toBeVisible();
+    await expect(detail.locator('.thread-composer-model-control')).toHaveCount(0);
+    await childComposer.fill('/');
+    await expect(detail.getByRole('listbox', { name: 'Thread slash commands' })).toHaveCount(0);
+    await childComposer.fill('Continue with deployment logs.');
+    await detail.getByRole('button', { name: 'Send' }).click();
+    const childSubmit = (await commandCalls(page)).filter((call) => call.cmd === 'turn/submit').at(-1);
+    expect(childSubmit?.args).toMatchObject({
+      threadId: childId,
+      input: [{ type: 'text', text: 'Continue with deployment logs.' }],
+    });
+    expect(childSubmit?.args.userView).toBeDefined();
+    await expect(page.locator('.thread-dock-title')).toHaveText(parentTitle);
+    // The mock settles the resumed Turn synchronously, so no Stop remains.
+    await expect(detail.getByRole('button', { name: 'Interrupt Turn' })).toHaveCount(0);
 
     // The container is BOUNDED and scrolls itself, so opening it cannot push
     // the transcript around however long the child ran.
@@ -2211,7 +2225,7 @@ test.describe('canonical agent Thread surface', () => {
     await expect(list.locator('.thread-list-row small').filter({ hasText: 'Subagent' })).toHaveCount(0);
   });
 
-  test('swaps a grandchild into the same container, never nesting a second scroll region', async ({ page }) => {
+  test('drills root to depth three in one Subagent container and backs out one level at a time', async ({ page }) => {
     await createNewThread(page);
     const fixture = await page.evaluate(async () => {
       const target = window as Window & {
@@ -2242,7 +2256,18 @@ test.describe('canonical agent Thread surface', () => {
         parentThreadId: child.id,
         name: 'audit',
       };
-      for (const thread of [child, grandchild]) {
+      const greatGrandchild = {
+        ...grandchild,
+        id: '01910000-0000-7000-8000-00000000ea03',
+        parentThreadId: grandchild.id,
+        name: 'verify',
+      };
+      const sibling = {
+        ...child,
+        id: '01910000-0000-7000-8000-00000000ea04',
+        name: 'review',
+      };
+      for (const thread of [child, grandchild, greatGrandchild, sibling]) {
         target.__LIN_E2E__?.emitAgentCoreNotification({ type: 'thread/started', threadId: thread.id, thread });
       }
       const provenance = (threadId: string, turnId: string, itemId: string) => ({
@@ -2268,12 +2293,25 @@ test.describe('canonical agent Thread surface', () => {
                   agentPath: '/root/research',
                   error: null,
                   spawnItemId: null,
+                }, {
+                  id: '01910000-0000-7000-8000-00000000ecff',
+                  type: 'subAgentActivity',
+                  provenance: provenance(
+                    parentThreadId,
+                    turnId,
+                    '01910000-0000-7000-8000-00000000ecff',
+                  ),
+                  kind: 'completed',
+                  agentThreadId: sibling.id,
+                  agentPath: '/root/review',
+                  error: null,
+                  spawnItemId: null,
                 }]
               : [{
                   id: itemId,
                   type: 'agentMessage',
                   provenance: provenance(parentThreadId, turnId, itemId),
-                  phase: 'final',
+                  phase: 'final_answer',
                   text: `Answer ${index}\n\nwith enough body to give the transcript some height.`,
                 }],
             itemsView: 'full',
@@ -2310,6 +2348,38 @@ test.describe('canonical agent Thread surface', () => {
               error: null,
               spawnItemId: null,
             },
+            {
+              id: '01910000-0000-7000-8000-00000000ed04',
+              type: 'collabAgentToolCall',
+              provenance: provenance(child.id, childTurnId, '01910000-0000-7000-8000-00000000ed04'),
+              tool: 'agent_message',
+              modelCall: {
+                disposition: 'replayable',
+                identity: { namespace: null, name: 'agent_message' },
+                providerName: 'agent_message',
+                arguments: {
+                  storage: 'inline',
+                  value: { to: sibling.id, summary: 'ask for review', message: 'Review the evidence.' },
+                },
+                schemaDigest: '0'.repeat(64),
+              },
+              status: 'completed',
+              outputRef: null,
+              senderThreadId: child.id,
+              receiverThreadIds: [sibling.id],
+              prompt: 'Review the evidence.',
+              summary: 'ask for review',
+              model: null,
+              reasoningEffort: null,
+              agentsStates: {
+                [sibling.id]: {
+                  status: 'completed',
+                  taskPath: '/root/review',
+                  nickname: null,
+                  role: 'worker',
+                },
+              },
+            },
           ],
           itemsView: 'full',
           provenance: {
@@ -2324,6 +2394,51 @@ test.describe('canonical agent Thread surface', () => {
           durationMs: 1,
         },
       ]);
+      const grandchildTurnId = '01910000-0000-7000-8000-00000000ee01';
+      target.__LIN_E2E__?.setMockThreadTurns(grandchild.id, [
+        {
+          id: grandchildTurnId,
+          items: [
+            {
+              id: '01910000-0000-7000-8000-00000000ee02',
+              type: 'userMessage',
+              provenance: provenance(
+                grandchild.id,
+                grandchildTurnId,
+                '01910000-0000-7000-8000-00000000ee02',
+              ),
+              content: [{ type: 'text', text: 'Audit the deployment evidence.' }],
+            },
+            {
+              id: '01910000-0000-7000-8000-00000000ee03',
+              type: 'subAgentActivity',
+              provenance: provenance(
+                grandchild.id,
+                grandchildTurnId,
+                '01910000-0000-7000-8000-00000000ee03',
+              ),
+              kind: 'completed',
+              agentThreadId: greatGrandchild.id,
+              agentPath: '/root/research/audit/verify',
+              error: null,
+              spawnItemId: null,
+            },
+          ],
+          itemsView: 'full',
+          provenance: {
+            originThreadId: grandchild.id,
+            originTurnId: grandchildTurnId,
+            trigger: { kind: 'subagent', parentThreadId: child.id, parentItemId: 'spawn-audit' },
+          },
+          status: 'completed',
+          error: null,
+          startedAt: 1,
+          completedAt: 2,
+          durationMs: 1,
+        },
+      ]);
+      target.__LIN_E2E__?.setMockThreadTurns(greatGrandchild.id, []);
+      target.__LIN_E2E__?.setMockThreadTurns(sibling.id, []);
       return { parentThreadId };
     });
 
@@ -2342,17 +2457,17 @@ test.describe('canonical agent Thread surface', () => {
     const detail = page.locator('.thread-subagent-detail');
     await expect(detail).toBeVisible();
 
-    // A child transcript reads exactly like the main chat — same message stream,
-    // same bubble — because it is the same thing: one request and the work it
-    // produced. What differs is only what cannot act here: no composer, and no
-    // Edit or Continue-in-new-chat, since neither can run on a child Thread.
-    await expect(detail.locator('.thread-user-message')).toContainText('Investigate the deployment story.');
+    // Host-authored child input is an Agent event rather than a user bubble.
+    // The child can receive new direction, but its existing history cannot be
+    // rewritten or forked through root-only actions.
+    await expect(detail.locator('.thread-host-event')).toContainText('Investigate the deployment story.');
+    await expect(detail.getByRole('textbox', { name: 'Message this Thread' })).toBeVisible();
     await expect(detail.getByRole('button', { name: 'Edit message' })).toHaveCount(0);
     await expect(detail.getByRole('button', { name: 'Continue in new chat' })).toHaveCount(0);
 
     const outerHeight = await detail.evaluate((element) => element.getBoundingClientRect().height);
 
-    // Depth 2 REPLACES these contents and names the way back. A second box
+    // D2 REPLACES these contents and names the immediate way back. A second box
     // inside this one would put a scroll region inside a scroll region, which
     // fights the trackpad at the boundary and draws depth as indentation.
     await detail.getByRole('button', { name: /^Open Subagent Thread audit/u }).click();
@@ -2361,12 +2476,36 @@ test.describe('canonical agent Thread surface', () => {
     // Same box, same height: swapping cannot move the transcript around it.
     expect(await detail.evaluate((element) => element.getBoundingClientRect().height)).toBe(outerHeight);
 
-    // The crumb keeps the way back visible by name, so the swap has something
-    // to orient against rather than reading as a jump.
+    // D3 uses that same container and keeps only its immediate parent crumb.
+    await expect(detail.locator('.thread-subagent-detail-crumb')).toHaveText('research');
+    await detail.getByRole('button', { name: /^Open Subagent Thread verify/u }).click();
+    await expect(detail).toHaveCount(1);
+    await expect(detail.locator('.thread-subagent-detail-title')).toHaveText('verify');
+    await expect(detail.locator('.thread-subagent-detail-crumb')).toHaveText('audit');
+    expect(await detail.evaluate((element) => element.getBoundingClientRect().height)).toBe(outerHeight);
+
+    // Back unwinds the detail stack one depth at a time: d3 -> d2 -> d1.
+    await detail.locator('.thread-subagent-detail-crumb').click();
+    await expect(detail.locator('.thread-subagent-detail-title')).toHaveText('audit');
     await expect(detail.locator('.thread-subagent-detail-crumb')).toHaveText('research');
     await detail.locator('.thread-subagent-detail-crumb').click();
     await expect(detail.locator('.thread-subagent-detail-title')).toHaveText('research');
     await expect(detail.locator('.thread-subagent-detail-crumb')).toHaveCount(0);
+
+    // agent_message may address a sibling, but reachability is not lineage.
+    // Clicking that result opens the sibling's own root row; it must never draw
+    // a false research -> review crumb inside this detail stack.
+    await detail.locator('.thread-tool-toggle').click();
+    await detail.locator('.thread-agent-state button').click();
+    const siblingDetail = page.locator('.thread-subagent-detail').filter({
+      has: page.locator('.thread-subagent-detail-title', { hasText: /^review$/u }),
+    });
+    await expect(siblingDetail).toHaveCount(1);
+    await expect(siblingDetail.locator('.thread-subagent-detail-crumb')).toHaveCount(0);
+    const researchDetail = page.locator('.thread-subagent-detail').filter({
+      has: page.locator('.thread-subagent-detail-title', { hasText: /^research$/u }),
+    });
+    await expect(researchDetail).toHaveCount(1);
   });
 
   test('browses and cleans up Subagents from parent Thread Details', async ({ page }) => {
@@ -2754,6 +2893,11 @@ test.describe('canonical agent Thread surface', () => {
 
     // Stop one child from its row; the other keeps running.
     await parentTurn.getByRole('button', { name: 'Stop research' }).click();
+    const interrupts = (await commandCalls(page)).filter((call) => call.cmd === 'turn/interrupt');
+    expect(interrupts.at(-1)?.args).toEqual({
+      threadId: fixture.children[0]!.id,
+      turnId: fixture.children[0]!.turnId,
+    });
     await expect(parentTurn.locator('.thread-delegation-row.thread-subagent-interrupted')).toHaveCount(1);
     await expect(parentTurn.getByRole('button', { name: 'Stop audit' })).toBeVisible();
     await expect(parentTurn.getByRole('button', { name: 'Stop research' })).toHaveCount(0);
@@ -2855,6 +2999,7 @@ test.describe('canonical agent Thread surface', () => {
               provenance: provenance(activityId),
               kind: 'started',
               agentThreadId: childId,
+              agentTurnId: childTurnId,
               agentPath: '/root/research',
               error: null,
               // This test's subject is the fold, not the stand-in: the call that
@@ -2866,6 +3011,7 @@ test.describe('canonical agent Thread surface', () => {
               type: 'agentMessage',
               provenance: provenance(answerId),
               phase: 'final_answer',
+              memoryCitation: null,
               text: 'Delegated and answered.',
             },
       ];
@@ -3031,7 +3177,7 @@ test.describe('canonical agent Thread surface', () => {
     ]);
   });
   for (const colorScheme of ['light', 'dark'] as const) {
-    test(`projects live Subagent status and wait progress into the parent Turn in ${colorScheme}`, async ({ page }) => {
+    test(`projects live Agent status without inferring wait progress in ${colorScheme}`, async ({ page }) => {
       await page.emulateMedia({ colorScheme });
       await createNewThread(page);
       await page.clock.install({ time: new Date('2026-08-12T09:00:00Z') });
@@ -3045,13 +3191,13 @@ test.describe('canonical agent Thread surface', () => {
         if (!root) throw new Error('Mock root Thread not found');
         const parentThreadId = String(root.id);
         const parentTurnId = '01910000-0000-7000-8000-00000000de01';
-        const waitItemId = '01910000-0000-7000-8000-00000000de02';
         const startedAt = Date.now() - 9_000;
         const children = [
           {
             id: '01910000-0000-7000-8000-00000000de10',
             turnId: '01910000-0000-7000-8000-00000000de11',
             activityId: '01910000-0000-7000-8000-00000000de12',
+            callItemId: '01910000-0000-7000-8000-00000000de13',
             taskPath: '/root/research',
             nickname: 'Researcher',
           },
@@ -3059,6 +3205,7 @@ test.describe('canonical agent Thread surface', () => {
             id: '01910000-0000-7000-8000-00000000de20',
             turnId: '01910000-0000-7000-8000-00000000de21',
             activityId: '01910000-0000-7000-8000-00000000de22',
+            callItemId: '01910000-0000-7000-8000-00000000de23',
             taskPath: '/root/audit',
             nickname: 'Auditor',
           },
@@ -3095,7 +3242,7 @@ test.describe('canonical agent Thread surface', () => {
                 trigger: {
                   kind: 'subagent',
                   parentThreadId,
-                  parentItemId: waitItemId,
+                  parentItemId: child.callItemId,
                 },
               },
               status: 'inProgress',
@@ -3118,37 +3265,40 @@ test.describe('canonical agent Thread surface', () => {
           turn: {
             id: parentTurnId,
             items: [
-              ...children.map((child) => ({
-                id: child.activityId,
-                type: 'subAgentActivity',
-                provenance: provenance(child.activityId),
-                kind: 'started',
-                agentThreadId: child.id,
-                agentPath: child.taskPath,
-                error: null,
-                spawnItemId: null,
-              })),
-              {
-                id: waitItemId,
-                type: 'collabAgentToolCall',
-                provenance: provenance(waitItemId),
-                tool: 'wait_agent',
-                modelCall: {
-                  disposition: 'replayable',
-                  identity: { namespace: null, name: 'wait_agent' },
-                  providerName: 'wait_agent',
-                  arguments: { storage: 'inline', value: {} },
-                  schemaDigest: '0'.repeat(64),
-                },
-                status: 'inProgress',
-                outputRef: null,
-                senderThreadId: parentThreadId,
-                receiverThreadIds: [],
-                prompt: null,
-                model: null,
-                reasoningEffort: null,
-                agentsStates: {},
-              },
+              ...children.flatMap((child) => [{
+                  id: child.activityId,
+                  type: 'subAgentActivity',
+                  provenance: provenance(child.activityId),
+                  kind: 'started',
+                  agentThreadId: child.id,
+                  agentPath: child.taskPath,
+                  error: null,
+                  spawnItemId: child.callItemId,
+                }, {
+                  id: child.callItemId,
+                  type: 'collabAgentToolCall',
+                  provenance: provenance(child.callItemId),
+                  tool: 'agent',
+                  modelCall: {
+                    disposition: 'replayable',
+                    identity: { namespace: null, name: 'agent' },
+                    providerName: 'agent',
+                    arguments: {
+                      storage: 'inline',
+                      value: { description: child.nickname, prompt: `Run ${child.taskPath}` },
+                    },
+                    schemaDigest: '0'.repeat(64),
+                  },
+                  status: 'inProgress',
+                  outputRef: null,
+                  senderThreadId: parentThreadId,
+                  receiverThreadIds: [child.id],
+                  prompt: `Run ${child.taskPath}`,
+                  summary: null,
+                  model: null,
+                  reasoningEffort: null,
+                  agentsStates: {},
+                }]),
             ],
             itemsView: 'full',
             provenance: { originThreadId: parentThreadId, originTurnId: parentTurnId, trigger: { kind: 'user' } },
@@ -3164,7 +3314,7 @@ test.describe('canonical agent Thread surface', () => {
 
       const parentTurn = page.locator(`[data-thread-turn-row="${fixture.parentTurnId}"]`);
       await expect(parentTurn.locator('.thread-process-title'))
-        .toContainText(/Waiting on 2 subagents · \d+[smhd]/u);
+        .toContainText(/Working for \d+[smhd]/u);
       const rows = parentTurn.locator('.thread-delegation-row');
       await expect(rows).toHaveCount(2);
       await expect(rows.locator('.thread-delegation-row-status').first())
@@ -3205,12 +3355,12 @@ test.describe('canonical agent Thread surface', () => {
           probe.style.color = `var(${token})`;
           return getComputedStyle(probe).color;
         };
-        const sibling = element.closest('.thread-process-timeline')?.querySelector('.thread-tool-toggle');
         const status = element.querySelector('.thread-delegation-row-status');
+        probe.style.fontSize = 'var(--font-meta)';
         const paint = {
           fontSize: getComputedStyle(element).fontSize,
           ink: root.getPropertyValue('--ink').trim(),
-          siblingFontSize: sibling ? getComputedStyle(sibling).fontSize : '',
+          metaFontSize: getComputedStyle(probe).fontSize,
           status: status ? getComputedStyle(status).color : '',
           text: getComputedStyle(element).color,
           textSoft: resolve('--text-soft'),
@@ -3224,7 +3374,7 @@ test.describe('canonical agent Thread surface', () => {
       // this file for a change made in `tokens.css`.
       expect(rowPaint.text).toBe(rowPaint.textSoft);
       expect(rowPaint.status).toBe(rowPaint.textTertiary);
-      expect(rowPaint.fontSize).toBe(rowPaint.siblingFontSize);
+      expect(rowPaint.fontSize).toBe(rowPaint.metaFontSize);
       expect(rowPaint.ink).toBe(colorScheme === 'dark' ? '255 255 255' : '0 0 0');
       const auditRow = parentTurn.locator('.thread-delegation-row', { hasText: 'audit' });
 
@@ -3255,7 +3405,7 @@ test.describe('canonical agent Thread surface', () => {
       }, { child: fixture.children[0]!, parentThreadId: fixture.parentThreadId, startedAt: fixture.startedAt });
 
       await expect(parentTurn.locator('.thread-process-title'))
-        .toContainText(/Waiting on 1 subagent ·/u);
+        .toContainText(/Working for \d+[smhd]/u);
       const completedRow = parentTurn.locator('.thread-delegation-row.thread-subagent-completed');
       await expect(completedRow).toHaveCount(1);
       await expect(completedRow.locator('.thread-delegation-row-status.working-text')).toHaveCount(0);
@@ -5328,9 +5478,25 @@ test.describe('canonical agent Thread surface', () => {
             memoryCitation: null,
           },
         ],
+        itemsView: 'full',
+        provenance: { originThreadId: threadId, originTurnId: turnId, trigger: { kind: 'user' } },
         status: 'completed',
         error: null,
-        createdAt: Date.now(),
+        execution: {
+          modelProvider: 'openai',
+          model: 'openai/gpt-5.4',
+          reasoningEffort: 'medium',
+          diagnosticsRef: null,
+          usage: {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 0,
+            cost: null,
+          },
+        },
+        startedAt: Date.now() - 28,
         completedAt: Date.now(),
         durationMs: 28,
       };
@@ -5443,8 +5609,9 @@ test.describe('canonical agent Thread surface', () => {
     await expect(page.getByRole('button', { name: 'Interrupt Turn' })).toHaveCount(0);
     await page.getByRole('button', { name: 'Steer' }).click();
 
-    const steer = (await commandCalls(page)).filter((call) => call.cmd === 'turn/steer').at(-1);
-    expect(steer?.args.input).toEqual([{ type: 'text', text: 'Use the shorter path.' }]);
+    const submit = (await commandCalls(page)).filter((call) => call.cmd === 'turn/submit').at(-1);
+    expect(submit?.args.input).toEqual([{ type: 'text', text: 'Use the shorter path.' }]);
+    expect(submit?.args).not.toHaveProperty('expectedTurnId');
   });
 
   test('uses the established step flow for canonical user input without losing the composer draft', async ({ page }) => {
@@ -6263,8 +6430,8 @@ test.describe('canonical agent Thread surface', () => {
   });
 });
 
-test('restores the reader position when turn/start rejects', async ({ page }) => {
-  await openMockedApp(page, { agentTurnStartReject: 'Mock turn/start rejection' });
+test('restores the reader position when turn/submit rejects', async ({ page }) => {
+  await openMockedApp(page, { agentTurnSubmitReject: 'Mock turn/submit rejection' });
   await page.evaluate(async () => {
     const target = window as Window & {
       lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
@@ -6312,13 +6479,89 @@ test('restores the reader position when turn/start rejects', async ({ page }) =>
   await composer.fill('Keep my reading position when this fails.');
   await page.getByRole('button', { name: 'Send' }).click();
 
-  await expect(page.locator('.thread-inline-error')).toContainText('Mock turn/start rejection');
+  await expect(page.locator('.thread-inline-error')).toContainText('Mock turn/submit rejection');
   await expect(composer).toHaveText('Keep my reading position when this fails.');
   await expect.poll(() => transcript.evaluate((element) => element.scrollTop))
     .toBeGreaterThan(savedTop - 2);
   await expect.poll(() => transcript.evaluate((element) => element.scrollTop))
     .toBeLessThan(savedTop + 2);
   await expect(page.getByRole('button', { name: 'Jump to latest' })).toBeVisible();
+});
+
+test('anchors a new Turn when the request-time active Turn finishes during submission', async ({ page }) => {
+  await openMockedApp(page, { agentTurnSubmitFinishingDelayMs: 40 });
+  await seedOverflowingTranscript(page);
+  const activeTurnId = await page.evaluate(async () => {
+    const target = window as Window & {
+      lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+      __LIN_E2E__?: {
+        emitAgentCoreNotification: (notification: unknown) => void;
+        setMockThreadActive: (threadId: string, active: boolean) => void;
+      };
+    };
+    const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+    const threadId = response?.data[0]?.id;
+    if (!threadId) throw new Error('Mock Thread not found');
+    const turnId = '01910000-0000-7000-8000-00000000fd01';
+    const userItemId = '01910000-0000-7000-8000-00000000fd02';
+    const responseItemId = '01910000-0000-7000-8000-00000000fd03';
+    target.__LIN_E2E__?.emitAgentCoreNotification({
+      type: 'turn/started',
+      threadId,
+      turnId,
+      turn: {
+        id: turnId,
+        items: [
+          {
+            id: userItemId,
+            type: 'userMessage',
+            provenance: { originThreadId: threadId, originTurnId: turnId, originItemId: userItemId },
+            content: [{ type: 'text', text: 'Finish this request before admitting the next one.' }],
+          },
+          {
+            id: responseItemId,
+            type: 'agentMessage',
+            provenance: { originThreadId: threadId, originTurnId: turnId, originItemId: responseItemId },
+            text: 'Finishing response.',
+            phase: 'final_answer',
+            memoryCitation: null,
+          },
+        ],
+        itemsView: 'full',
+        provenance: { originThreadId: threadId, originTurnId: turnId, trigger: { kind: 'user' } },
+        status: 'inProgress',
+        error: null,
+        startedAt: 3,
+        completedAt: null,
+        durationMs: null,
+      },
+    });
+    target.__LIN_E2E__?.setMockThreadActive(threadId, true);
+    return turnId;
+  });
+
+  const transcript = page.locator('.thread-transcript');
+  await expect.poll(() => transcript.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+  await setTranscriptFollowingBottom(page);
+  const composer = page.getByRole('textbox', { name: 'Message this Thread' });
+  await composer.fill('Anchor the newly admitted Turn.');
+  await expect(page.getByRole('button', { name: 'Steer' })).toBeVisible();
+  await page.getByRole('button', { name: 'Steer' }).click();
+
+  const sent = page.locator('.thread-user-message').filter({ hasText: 'Anchor the newly admitted Turn.' });
+  await expect(sent).toBeVisible();
+  const sentRow = page.locator('[data-thread-turn-row]').filter({ has: sent });
+  await expect(sentRow).not.toHaveAttribute('data-thread-turn-row', activeTurnId);
+  await expect.poll(() => sent.evaluate((element) => {
+    const scroller = element.closest('.thread-transcript');
+    if (!(scroller instanceof HTMLElement)) throw new Error('Missing transcript');
+    const topInset = Number.parseFloat(getComputedStyle(scroller).paddingTop) || 0;
+    return Math.abs(element.getBoundingClientRect().top - scroller.getBoundingClientRect().top - topInset);
+  })).toBeLessThanOrEqual(2);
+  const calls = await commandCalls(page);
+  expect(calls.filter((call) => call.cmd === 'turn/submit')).toHaveLength(1);
+  expect(calls.filter((call) => call.cmd === 'turn/start')).toHaveLength(0);
+  expect(calls.filter((call) => call.cmd === 'turn/steer')).toHaveLength(0);
 });
 
 test('aborts an in-flight pathless upload when its Thread is left', async ({ page }) => {
@@ -6401,9 +6644,11 @@ test.describe('terminal Thread history actions', () => {
     await editor.press('Control+Enter');
 
     const calls = await commandCalls(page);
+    const submissions = calls.filter((call) => call.cmd === 'turn/submit');
     const starts = calls.filter((call) => call.cmd === 'turn/start');
-    expect(starts).toHaveLength(2);
-    expect(starts[1]?.args.input).toEqual([
+    expect(submissions).toHaveLength(2);
+    expect(starts).toHaveLength(0);
+    expect(submissions.at(-1)?.args.input).toEqual([
       { type: 'text', text: 'Try the attachment again' },
       expect.objectContaining({ type: 'attachment', name: 'diagram.png', mimeType: 'image/png' }),
     ]);
