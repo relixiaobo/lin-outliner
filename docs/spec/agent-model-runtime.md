@@ -505,11 +505,12 @@ bounded diagnostic under A12.
 
 Child tool assembly also applies the persisted execution policy, not just the
 current configuration. Role `tools: ['*']` is stored as a null requested ceiling
-and inherits the resolved parent pool; an explicit empty list remains a valid
-text-only provider request. Agent Role catalog evidence is emitted only when the
-effective runtime contains an executable `agent` tool. For a child, that requires
-persisted nesting permission, a non-leaf Agent kind, and a requested ceiling that
-admits `agent`.
+and inherits the resolved parent pool; an explicit empty Role list is a zero-tool
+configuration defect and refuses before provider I/O. An isolated Skill with
+omitted `allowed-tools` remains intentionally tool-free. Agent Role catalog
+evidence is emitted only when the effective runtime contains an executable
+`agent` tool. For a child, that requires persisted nesting permission, a non-leaf
+Agent kind, and a requested ceiling that admits `agent`.
 
 Specialized execution is fail-closed at the argument-dependent boundary.
 `explore` and `plan` may execute Bash only when capability classification proves

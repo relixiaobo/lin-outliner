@@ -251,6 +251,28 @@ class ControlledExecutor implements TurnExecutor {
   }
 }
 
+class SubagentToolAdmissionExecutor extends ControlledExecutor {
+  readonly admittedChildProviderCalls: string[] = [];
+  private service: ThreadService | null = null;
+
+  bindService(service: ThreadService): void {
+    this.service = service;
+  }
+
+  override async execute(context: TurnExecutionContext): Promise<TurnExecutionResult> {
+    if (context.thread.parentThreadId !== null) {
+      if (!this.service) throw new Error('Subagent tool-admission executor is not bound');
+      const runtime = new ToolRuntime(this.service, {
+        capabilityTools: runtimeSchemaTools,
+        assembleRegistry: true,
+      });
+      await runtime.createTools(context);
+      this.admittedChildProviderCalls.push(context.thread.id);
+    }
+    return super.execute(context);
+  }
+}
+
 class ForkPayloadExecutor extends ControlledExecutor {
   override async execute(context: TurnExecutionContext): Promise<TurnExecutionResult> {
     const itemId = context.recorder.createItemId();
@@ -7337,6 +7359,67 @@ describe('ThreadService', () => {
     await fixture.service.close();
   });
 
+  test('rejects an explicitly tool-less Role before child provider I/O', async () => {
+    const emptyRole: AgentRole = {
+      name: 'tool-less-role',
+      source: 'user',
+      description: 'Declares an explicit zero-tool ceiling.',
+      developerInstructions: 'Return a text-only answer.',
+      overrides: { tools: [] },
+    };
+    const executor = new SubagentToolAdmissionExecutor();
+    const fixture = await createFixture(undefined, {
+      resolveAgentType: () => ({
+        canonicalType: emptyRole.name,
+        role: emptyRole,
+        kind: 'role',
+      }),
+    }, executor);
+    executor.bindService(fixture.service);
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Delegate to the tool-less Role' }],
+    });
+    await executor.waitUntilWaiting(0);
+    await recordCollaborationSpawnBoundary(executor.contexts[0]!, 'tool-less-role-spawn');
+    const tools = await fixture.service.collaborationToolContributions({
+      threadId: root.id,
+      turnId: rootTurn.turn.id,
+    });
+
+    const foreground = executeTool(tools, 'agent', 'tool-less-role-spawn', {
+      description: 'Tool-less Role',
+      prompt: 'Attempt work without tools',
+      subagent_type: emptyRole.name,
+      run_in_background: false,
+    });
+    await waitUntil(() => fixture.service.listThreadDescendants({ threadId: root.id }).data.length === 1);
+    const child = fixture.service.listThreadDescendants({ threadId: root.id }).data[0]!;
+    await fixture.service.waitForIdle(child.id);
+    await foreground;
+
+    expect(fixture.service.subagentExecution(child.id)?.toolPolicy.requestedTools).toEqual([]);
+    expect(executor.admittedChildProviderCalls).toEqual([]);
+    expect(executor.contexts.some((context) => context.thread.id === child.id)).toBe(false);
+    expect(fixture.service.readThread({ threadId: child.id, includeTurns: true }).thread.turns?.at(-1))
+      .toMatchObject({
+        status: 'failed',
+        error: {
+          message: expect.stringContaining("Agent 'tool-less-role' would be spawned with zero tools"),
+        },
+      });
+
+    executor.finish(0);
+    await fixture.service.waitForIdle(root.id);
+    await fixture.service.close();
+  });
+
   test('reuses the recorded child Role and ceiling without inheriting changed parent instructions on resume', async () => {
     const parentConfiguration: EffectiveThreadConfiguration = {
       profileName: 'root',
@@ -11711,12 +11794,12 @@ async function createFixture(
     | 'cleanupResidualAgentWorktree'
     | 'reportError'
   > = {},
+  executor: ControlledExecutor = new ControlledExecutor(),
 ): Promise<Fixture> {
   const root = await mkdtemp(join(tmpdir(), 'tenon-thread-service-'));
   roots.push(root);
   let now = 1_720_000_000_000;
   const clock = () => ++now;
-  const executor = new ControlledExecutor();
   const opened = await openFixture(root, executor, clock, extensions, options);
   await opened.service.initialize();
   return { root, executor, clock, service: opened.service, stores: opened.stores };

@@ -298,8 +298,10 @@ current Thread can actually spawn. A root Thread requires `agent` in its
 effective tool set. A child additionally requires persisted nesting permission,
 a non-leaf policy, and a requested-tool ceiling that admits `agent`; a Role's
 configuration text cannot advertise an unreachable type. Role `tools: ['*']`
-normalizes to an inherited ceiling, while `tools: []` remains a deliberate
-text-only Agent rather than an admission error.
+normalizes to an inherited ceiling, while Role `tools: []` is an explicit
+zero-tool admission error that refuses before provider I/O. This does not change
+the separate isolated-Skill contract, where omitted `allowed-tools` deliberately
+creates a tool-free child.
 
 `agent_message` and Agent-form `task_stop` never target the caller itself or an
 isolated-Skill Thread. `task_stop` may address only a shell task owned by the

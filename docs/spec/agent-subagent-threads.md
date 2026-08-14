@@ -276,7 +276,8 @@ Role tool configuration distinguishes intent:
 - omitted tools use the Agent type's default pool;
 - `tools: ['*']`, alone or mixed with names, persists as `requestedTools: null`
   and inherits the resolved parent ceiling;
-- `tools: []` is a valid text-only Agent and still reaches provider I/O;
+- `tools: []` is an explicit zero-tool Role configuration and refuses before
+  provider I/O;
 - a mixed valid/unknown list records bounded diagnostics, drops unknown entries,
   and continues with valid entries;
 - a non-empty list that resolves entirely to unknown tools is an admission
@@ -534,7 +535,10 @@ creating an edge. `explore` and `plan` are leaf Agent types regardless of depth.
 The default session-wide running limit is 20 and may be configured to another
 positive integer. Admission is atomic across foreground, background, and nested
 new Agent calls. A terminal generation releases its slot. There is no lifetime
-spawn count, so deletion or a long session cannot exhaust future work.
+spawn count, matching Claude Code 2.1.227. A cumulative count is a poor resource
+proxy; depth and live concurrency are structural controls, while the request
+token budget (default `1,500,000`) is the resource backstop. Deletion or a long
+session therefore cannot exhaust future work merely by increasing a spawn count.
 
 Resume is intentionally different: an existing Agent occupies a running slot
 but bypasses the new-spawn gate and may temporarily take the live count above

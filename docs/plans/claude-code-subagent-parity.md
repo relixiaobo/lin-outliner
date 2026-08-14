@@ -582,17 +582,17 @@ Role tool admission distinguishes intent rather than treating every empty result
 the same:
 
 - an omitted tool restriction starts from the Agent type's default pool;
-- an explicit `tools: []` is a valid text-only Agent, performs provider I/O, and
-  may return text;
+- an explicit `tools: []` is a zero-tool Role configuration defect and refuses
+  before provider I/O;
 - a non-empty list with both recognized and unknown names records diagnostics,
   drops only the unknown names, and continues with the recognized tools;
 - a non-empty list whose entries all fail resolution is invalid configuration
   and refuses before provider I/O with
   `Agent '{canonicalType}' would be spawned with zero tools — refusing. Its tools list resolved to nothing: unrecognized [{unknownNames}]. Fix the Role's tools configuration or pass a different subagent_type.`
 
-The final case is admission failure under A12, while partial invalid runtime
-contributions degrade. It must not be conflated with an intentionally empty
-list.
+Explicit empty and all-invalid lists are admission failures under A12, while
+partial invalid runtime contributions degrade. The separate isolated-Skill
+contract still permits omitted `allowed-tools` to create a tool-free child.
 
 Fresh context composition gets one dedicated builder. Initial spawn records its
 resolved system/tool configuration. Every model-addressable child persists its
@@ -1015,7 +1015,7 @@ note.
 | --- | --- | --- |
 | **FR-1 Tool contract** | `agent`, `agent_message`, and `task_stop` use the closed name map; captured catalog fields match their sanitized projection and Tenon-local validation/default/result behavior remains explicit; `task_stop` replaces `bash_stop`. | AC-1, AC-3 |
 | **FR-2 Context contract** | Every Agent starts fresh; captured projections gate only their retained `general-purpose` / `explore` / `plan` context categories, while Tenon-only blocks have local tests. | AC-2 |
-| **FR-3 Capability contract** | Agent type normalization, run mode, depth, and Role policy resolve the Tenon pool, with captured tool-name observations used only where provenance supports them; intentional empty remains runnable while non-empty-all-invalid refuses. | AC-4, AC-10 |
+| **FR-3 Capability contract** | Agent type normalization, run mode, depth, and Role policy resolve the Tenon pool, with captured tool-name observations used only where provenance supports them; explicit empty and non-empty-all-invalid Role lists refuse before provider I/O. | AC-4, AC-10 |
 | **FR-4 Execution contract** | Foreground blocks; background detaches and completes through host delivery. | AC-5, AC-7 |
 | **FR-5 Authority contract** | User-authored input and user stop remain distinguishable from `main` delivery, Agent messages, and model stop; model traffic cannot manufacture user authority. | AC-6, AC-9 |
 | **FR-6 Handoff safety** | Every final report is scanned and framed exactly once before parent consumption. | AC-7, AC-8 |
@@ -1034,8 +1034,8 @@ note.
   appears. Full Access and explicit capability blocks remain unchanged.
 - **FLOW-3 Nested:** child `agent` admission -> descendant notification to its
   direct parent -> parent synthesis -> top-level notification to root. Capacity,
-  depth, invalid type, or non-empty-all-invalid tool refusal creates no child
-  edge; an explicitly zero-tool Role still runs as a text-only child.
+  depth, or invalid type creates no child edge. An explicit-empty or non-empty-
+  all-invalid Role persists a failed child but makes no provider call.
 - **FLOW-4 Continue or stop:** `agent_message({ to: "main", ... })` from a
   background child queues a non-user root message. A foreground child directly
   invoked by root returns success, then inserts the system-role safety envelope
@@ -1091,10 +1091,10 @@ note.
   read-only set. Exact, normalized, ambiguous, and missing Agent types match the
   resolver fixtures. Omission maps only to `general-purpose`; backing `default`
   and `explorer` names stay hidden; no built-in `worker` is listed, while a
-  user/project Role named `worker` is ordinary and explicit. An explicit empty
-  pool reaches provider I/O, partial unknown tools degrade, and a
-  non-empty-all-invalid pool refuses before I/O. `outline_undo_stack` is absent
-  from every Agent pool, while its root contract and existing core tests remain.
+  user/project Role named `worker` is ordinary and explicit. Explicit-empty and
+  non-empty-all-invalid pools refuse before provider I/O, while partial unknown
+  tools degrade. `outline_undo_stack` is absent from every Agent pool, while its
+  root contract and existing core tests remain.
 - **AC-5 Execution modes:** background returns before completion and survives
   parent Turn cancellation; foreground blocks, shares cancellation, returns the
   scanned outcome once, and never emits a later notification.
@@ -1253,9 +1253,10 @@ Checked `gh pr list`, `docs/TASKS.md`, active plans, and intended file scopes on
 - Run focused crash-point tests for terminal recording, transcript append,
   notification persistence/admission, stop provenance, and resume.
 - Run a production-provider smoke for fresh background fan-out, foreground
-  return, explicit-zero/partial-invalid/all-invalid tool policies, normalized and
-  ambiguous Agent types, nested depth-3 synthesis, exact concurrent-limit
-  refusal, separate foreground/background `agent_message({ to: "main", ... })`
+  return, explicit-zero refusal and partial-invalid/all-invalid tool policies,
+  normalized and ambiguous Agent types, nested depth-3 synthesis, exact
+  concurrent-limit refusal, separate foreground/background
+  `agent_message({ to: "main", ... })`
   envelopes, blank/truncated summary, blank/spaced
   recipient, next-tool-round steering, steer-at-finish, unified Agent/shell stop,
   killed notification, model/user stop, same-ID resume with `pin`, Full Access
@@ -1285,7 +1286,7 @@ parity defect, not as a local design choice.
   built-in `worker`, built-in `research`, `readOnlyIsolated`, and `bash_stop`
   handlers/prompts; route unified `task_stop` to Agent and shell task owners.
 - [ ] Build fresh `general-purpose` / `explore` / `plan` context, tool filtering,
-  zero-tool execution, root-only Memory gating, worktree outline containment,
+  zero-tool Role refusal, root-only Memory gating, worktree outline containment,
   all-Agent undo exclusion, model/thinking persistence, and depth rules.
 - [ ] Replace mailbox/wait orchestration with Agent-ID execution records,
   foreground/background ownership, direct-parent notifications, output scanning,

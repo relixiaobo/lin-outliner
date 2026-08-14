@@ -150,12 +150,33 @@ describe('Subagent ToolRuntime policy', () => {
       .toContain('not available under this Agent policy [request_user_input]');
   });
 
-  test('keeps an explicitly empty Role tool list empty without treating it as invalid', async () => {
+  test('rejects an explicitly empty Role tool list before provider preparation', async () => {
     const policy: PersistedSubagentToolPolicy = {
       ...CHILD_POLICY,
       requestedTools: [],
     };
     const runtime = new ToolRuntime(runtimeService(policy), {
+      capabilityTools: runtimeSchemaTools,
+      assembleRegistry: true,
+    });
+
+    await expect(runtime.createTools(runtimeContext(true)))
+      .rejects.toThrow(
+        "Agent 'custom-reviewer' would be spawned with zero tools — refusing. "
+        + 'Its tools list resolved to nothing: no admitted tools.',
+      );
+  });
+
+  test('keeps an isolated Skill with omitted allowed-tools intentionally tool-free', async () => {
+    const policy: PersistedSubagentToolPolicy = {
+      ...CHILD_POLICY,
+      requestedTools: [],
+    };
+    const runtime = new ToolRuntime(runtimeServiceWithExecution({
+      agentType: 'isolated-skill',
+      initialAdmissionState: 'committed',
+      toolPolicy: policy,
+    }), {
       capabilityTools: runtimeSchemaTools,
       assembleRegistry: true,
     });
