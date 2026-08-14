@@ -1998,6 +1998,7 @@ export class Core {
       const optionId = isDone ? mapping.checkedOptionIds[0] : mapping.uncheckedOptionIds[0];
       if (!optionId) continue;
       const entryId = this.ensureFieldEntryWithTemplateDirect(nodeId, mapping.fieldDefId, undefined, false);
+      if (!entryId) continue;
       // Done-state mapping is a controlled binary state-sync (part of the checkbox
       // mechanism): replace the prior state option rather than appending. Free
       // field-value editing always appends — this is the checkbox exception.
@@ -2437,16 +2438,9 @@ export class Core {
   private mergeFieldDefinitionsDirect(targetId: string, sourceIds: string[]) {
     const initial = this.snapshot();
     const targetType = fieldTypeOf(initial, targetId);
-    const targetSourceSupertag = configRefTarget(initial, targetId, 'sourceSupertag');
     for (const sourceId of sourceIds) {
-      const sourceType = fieldTypeOf(initial, sourceId);
-      if (sourceType !== targetType) {
-        throw CoreError.invalidOperation('field definition merge currently requires matching field types');
-      }
-      if (targetType === 'options_from_supertag' && configRefTarget(initial, sourceId, 'sourceSupertag') !== targetSourceSupertag) {
-        throw CoreError.invalidOperation('options-from-supertag field merge requires the same source supertag');
-      }
-      this.assertFieldDefinitionValuesCompatible(sourceId, targetId, targetType);
+      const compatibilityError = this.fieldDefinitionMergeCompatibilityError(initial, sourceId, targetId);
+      if (compatibilityError) throw CoreError.invalidOperation(compatibilityError);
     }
 
     for (const sourceId of sourceIds) {
@@ -2458,8 +2452,21 @@ export class Core {
     this.touchNodeDirect(targetId);
   }
 
-  private assertFieldDefinitionValuesCompatible(sourceFieldId: string, targetFieldId: string, targetType: FieldType) {
-    const state = this.snapshot();
+  private fieldDefinitionMergeCompatibilityError(
+    state: DocumentState,
+    sourceFieldId: string,
+    targetFieldId: string,
+  ): string | undefined {
+    const targetType = fieldTypeOf(state, targetFieldId);
+    if (fieldTypeOf(state, sourceFieldId) !== targetType) {
+      return 'field definition merge currently requires matching field types';
+    }
+    if (
+      targetType === 'options_from_supertag'
+      && configRefTarget(state, sourceFieldId, 'sourceSupertag') !== configRefTarget(state, targetFieldId, 'sourceSupertag')
+    ) {
+      return 'options-from-supertag field merge requires the same source supertag';
+    }
     for (const entry of Object.values(state.nodes)) {
       if (entry.type !== 'fieldEntry' || entry.fieldDefId !== sourceFieldId || isInTrash(state, entry.id)) continue;
       const values = entry.children
@@ -2470,8 +2477,9 @@ export class Core {
           targetId: value.type === 'reference' ? value.targetId : undefined,
         }));
       const validation = validateFieldValuesForType(fieldNameForDefId(state, targetFieldId), targetType, values);
-      if (!validation.ok) throw CoreError.invalidOperation(validation.error);
+      if (!validation.ok) return validation.error;
     }
+    return undefined;
   }
 
   private mergeOptionsIntoTargetFieldDirect(sourceFieldId: string, targetFieldId: string) {
@@ -2521,11 +2529,40 @@ export class Core {
 
   private mergeTagDefinitionsDirect(targetId: string, sourceIds: string[]) {
     for (const sourceId of sourceIds) {
+      this.unifyCompatibleTagTemplateFieldsDirect(sourceId, targetId);
       this.mergeTagTemplateChildrenDirect(sourceId, targetId);
       this.rewriteTagDefinitionRefsDirect(sourceId, targetId);
       this.removeSubtreeDirect(sourceId);
     }
     this.touchNodeDirect(targetId);
+  }
+
+  private unifyCompatibleTagTemplateFieldsDirect(sourceTagId: string, targetTagId: string) {
+    const sourceEntryIds = [...this.snapshot().nodes[sourceTagId]?.children ?? []];
+    for (const sourceEntryId of sourceEntryIds) {
+      const state = this.snapshot();
+      const sourceEntry = state.nodes[sourceEntryId];
+      const sourceFieldDefId = sourceEntry?.type === 'fieldEntry' ? sourceEntry.fieldDefId : undefined;
+      if (!sourceFieldDefId || !isActiveFieldDefinition(state, sourceFieldDefId)) continue;
+
+      const nameKey = definitionNameKey(fieldNameForDefId(state, sourceFieldDefId));
+      const targetEntries = (state.nodes[targetTagId]?.children ?? [])
+        .map((entryId) => state.nodes[entryId])
+        .filter((entry): entry is FieldEntryNode => entry?.type === 'fieldEntry' && !isInTrash(state, entry.id));
+      if (targetEntries.some((entry) => entry.fieldDefId === sourceFieldDefId)) continue;
+
+      for (const targetEntry of targetEntries) {
+        const targetFieldDefId = targetEntry.fieldDefId;
+        if (
+          !targetFieldDefId
+          || !isActiveFieldDefinition(state, targetFieldDefId)
+          || definitionNameKey(fieldNameForDefId(state, targetFieldDefId)) !== nameKey
+        ) continue;
+        if (this.fieldDefinitionMergeCompatibilityError(state, sourceFieldDefId, targetFieldDefId)) continue;
+        this.mergeFieldDefinitionsDirect(targetFieldDefId, [sourceFieldDefId]);
+        break;
+      }
+    }
   }
 
   private mergeTagTemplateChildrenDirect(sourceTagId: string, targetTagId: string) {
@@ -2539,7 +2576,9 @@ export class Core {
           return candidate?.type === 'fieldEntry' && candidate.fieldDefId === child.fieldDefId && !isInTrash(state, candidate.id);
         });
         if (targetEntryId) {
-          for (const valueId of [...child.children]) this.loro.moveNode(valueId, targetEntryId, undefined);
+          if (state.nodes[targetEntryId]?.children.length === 0) {
+            for (const valueId of [...child.children]) this.loro.moveNode(valueId, targetEntryId, undefined);
+          }
           this.removeSubtreeDirect(childId);
           this.touchNodeDirect(targetEntryId);
           continue;
@@ -4471,7 +4510,9 @@ export class Core {
       return child?.type === 'fieldEntry' && child.fieldDefId === fieldDefId;
     });
     if (existing) return existing;
-    assertOwnerDoesNotHaveFieldName(state, nodeId, fieldNameForDefId(state, fieldDefId));
+    if (findOwnerFieldEntriesByName(state, nodeId, fieldNameForDefId(state, fieldDefId)).length > 0) {
+      return undefined;
+    }
     const id = this.insertFieldEntryNodeDirect(nodeId, 0, fieldDefId);
     if (templateOriginId) {
       this.patchNodeData(id, (node) => {
@@ -5786,24 +5827,33 @@ function richTextPatchResultText(content: RichText, patch: RichTextPatch): strin
   return text;
 }
 
-function assertOwnerDoesNotHaveFieldName(
+function findOwnerFieldEntriesByName(
   state: DocumentState,
   ownerId: NodeId | null | undefined,
   fieldName: string,
   excludeEntryId?: NodeId,
-) {
+): NodeId[] {
   const key = normalizeFieldNameKey(fieldName);
-  if (!ownerId || !key) return;
+  if (!ownerId || !key) return [];
   const byId = fieldResolutionMap(state);
   const owner = state.nodes[ownerId];
-  if (!owner) return;
-  const matches = owner.children.filter((childId) => {
+  if (!owner) return [];
+  return owner.children.filter((childId) => {
     if (childId === excludeEntryId) return false;
     const child = state.nodes[childId];
     return child?.type === 'fieldEntry'
       && !isInTrash(state, childId)
       && normalizeFieldNameKey(fieldEntryDisplayName(byId, child as FieldResolutionNode)) === key;
   });
+}
+
+function assertOwnerDoesNotHaveFieldName(
+  state: DocumentState,
+  ownerId: NodeId | null | undefined,
+  fieldName: string,
+  excludeEntryId?: NodeId,
+) {
+  const matches = findOwnerFieldEntriesByName(state, ownerId, fieldName, excludeEntryId);
   if (matches.length > 0) {
     throw CoreError.invalidOperation(`duplicate field "${fieldName}" on owner ${ownerId}: ${matches.join(', ')}`);
   }

@@ -94,7 +94,8 @@ normalization are one mutation.
 `create_field_def`, `create_inline_field`, `create_inline_field_after_node`,
 `reuse_field_definition`, `register_collected_option`,
 `create_collected_field_option`, `select_field_option`,
-`set_field_free_text_value`, `clear_field_value`, `remove_field_value`.
+`set_field_free_text_value`, `clear_field_value`, `remove_field_value`,
+`merge_definitions`.
 
 `create_inline_field` may receive an existing `targetDefId`. That form validates
 the definition, rejects a duplicate field on the owner, and creates only the
@@ -107,6 +108,26 @@ live in the Trash subtree. Applying a tag, creating a tagged node, reusing a fie
 definition, configuring definitions, and selecting `options_from_supertag` values
 all reject trashed definitions. Name-based creation ignores trashed same-name
 definitions and creates a fresh active definition under Schema.
+
+`apply_tag` stamps active fields from the tag's specific-first inheritance chain.
+An existing entry backed by the same field definition is reused. If the owner
+instead has an entry with the same normalized display name backed by another
+definition, that template field is skipped while the tag and all non-colliding
+template content continue to apply. Forward done-state mapping uses the same
+runtime boundary: a collided mapped field is skipped without aborting the done
+toggle. Explicit field creation, reuse, and rename remain fail-closed on owner
+name collisions.
+
+`merge_definitions(targetId, sourceIds)` merges field definitions only when their
+types match, `options_from_supertag` sources match, and every stored source value
+is valid for the target type. A tag-definition merge rewrites source-tag uses and
+moves its direct template children into the target. Direct template fields with
+the same definition name are unified first when that field compatibility check
+succeeds; incompatible pairs remain as separate template entries, relying on the
+runtime collision rule above when the merged tag is applied. When unification
+deduplicates two template entries, existing target defaults win; source defaults
+fill the target only when it has no defaults. Instance values are user data and
+remain merged by the field-definition merge.
 
 `reuse_field_definition(entryId, targetDefId)` repoints a field entry at an
 existing definition instead of the throwaway draft `>` minted, dropping the now
