@@ -2,7 +2,8 @@ import type { NodeId, NodeProjection } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
 
 export function isNodeInTrash(index: DocumentIndex, nodeId: NodeId): boolean {
-  return isNodeInSubtree(index.byId, nodeId, index.projection.trashId);
+  return index.trashNodeIds?.has(nodeId)
+    ?? isNodeInSubtree(index.byId, nodeId, index.projection.trashId);
 }
 
 export function isNodeInSubtree(

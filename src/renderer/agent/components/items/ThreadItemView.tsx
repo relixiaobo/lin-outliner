@@ -24,6 +24,7 @@ import type {
 import type { Messages } from '../../../../core/i18n';
 import { useT } from '../../../i18n/I18nProvider';
 import type { DocumentIndex } from '../../../state/document';
+import type { DocumentIndexStore } from '../../../state/documentIndexStore';
 import { usePreviewObjectUrl } from '../../../ui/preview/usePreviewObjectUrl';
 import { dispatchPreviewTargetOpen } from '../../../ui/preview/previewEvents';
 import {
@@ -102,11 +103,14 @@ export type ThreadToolItem = Extract<ThreadItem, {
 }>;
 
 interface ThreadItemViewProps {
+  readonly active: boolean;
   readonly agentResponseTail: ReactNode;
   readonly canEditUserMessage: boolean;
   readonly defaultReasoningExpanded: boolean;
   readonly expandState: ThreadDisclosureState;
+  readonly getUserView: () => RendererUserViewHints;
   readonly index: DocumentIndex;
+  readonly indexStore: DocumentIndexStore;
   readonly item: ThreadItem;
   /** This user-role Item was authored by the host, as proven by its Turn. */
   readonly hostAuthoredEvent?: boolean;
@@ -133,7 +137,6 @@ interface ThreadItemViewProps {
   readonly onInterruptThread?: (threadId: string) => Promise<void>;
   readonly onReadToolArguments: (item: ThreadToolItem) => Promise<JsonValue | null>;
   readonly onReadToolOutput: (item: ThreadToolItem) => Promise<string | null>;
-  readonly userView: RendererUserViewHints;
 }
 
 export interface ThreadDisclosureState {
@@ -354,6 +357,7 @@ function UserMessageItem({
   canEditUserMessage,
   expandState,
   index,
+  indexStore,
   item,
   hostAuthoredEvent = false,
   onEditUserMessage,
@@ -364,10 +368,13 @@ function UserMessageItem({
   const t = useT();
   const textEditable = canEditUserContentText(item.content);
   const textParts = item.content.flatMap((content) => content.type === 'text' ? [content.text] : []);
-  const copyText = userMessageCopyText(item.content, index);
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(textParts[0] ?? '');
   const [saving, setSaving] = useState(false);
+  const copyMessage = useCallback(async () => {
+    const text = userMessageCopyText(item.content, indexStore.getCurrent());
+    if (text) await navigator.clipboard.writeText(text);
+  }, [indexStore, item.content]);
 
   async function save() {
     if (!text.trim() || saving) return;
@@ -438,7 +445,8 @@ function UserMessageItem({
                 <ThreadMessageCopyButton
                   iconSize={ICON_SIZE.menu}
                   label={t.agent.message.copyMessage}
-                  text={copyText}
+                  onCopy={copyMessage}
+                  text=""
                 />
               </div>
             ) : null}
@@ -1731,6 +1739,15 @@ function dynamicToolSubjects(
   kind: ToolActivityKind,
   index: DocumentIndex | undefined,
 ): ToolActivitySubjects {
+  const keys = dynamicToolSubjectValues(item, kind);
+  if (keys.length === 0) return { keys: [item.id], names: [] };
+  return { keys, names: keys.map((value) => subjectDisplayName(kind, value, index)) };
+}
+
+function dynamicToolSubjectValues(
+  item: Extract<ThreadToolItem, { type: 'dynamicToolCall' }>,
+  kind: ToolActivityKind,
+): readonly string[] {
   const values = (SUBJECT_ARGUMENT_KEYS[kind] ?? []).flatMap((key) => {
     const value = dynamicToolArgument(item, key);
     if (typeof value === 'string' && value.trim()) return [value.trim()];
@@ -1740,9 +1757,20 @@ function dynamicToolSubjects(
   // `SUBJECT_ARGUMENT_KEYS` reads both singular and plural argument spellings,
   // so the same subject can arrive twice; the grouped path dedupes through its
   // bucket Set and the single-row path has to match it.
-  const keys = [...new Set(values)];
-  if (keys.length === 0) return { keys: [item.id], names: [] };
-  return { keys, names: keys.map((value) => subjectDisplayName(kind, value, index)) };
+  return [...new Set(values)];
+}
+
+export function threadToolReferencedNodeIds(item: ThreadToolItem): readonly string[] {
+  if (item.type !== 'dynamicToolCall') return [];
+  const kind = dynamicToolActivityKind(item);
+  if (
+    kind !== 'nodeCreate'
+    && kind !== 'nodeEdit'
+    && kind !== 'nodeDelete'
+    && kind !== 'nodeRestore'
+    && kind !== 'nodeRead'
+  ) return [];
+  return dynamicToolSubjectValues(item, kind);
 }
 
 function subjectDisplayName(

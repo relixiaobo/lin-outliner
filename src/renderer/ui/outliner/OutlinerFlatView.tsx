@@ -16,7 +16,11 @@ import { api } from '../../api/client';
 import type { NodeId, NodeProjection } from '../../api/types';
 import { freshNodeId } from '../../../core/nodeId';
 import { outlinerChildParentId, type DocumentIndex, type UiState } from '../../state/document';
-import { buildVisualRows, type VisualRow } from '../../state/visualRows';
+import {
+  buildVisualRowsIncrementally,
+  type VisualRow,
+  type VisualRowsSnapshot,
+} from '../../state/visualRows';
 import type { CommandRunner, NavigateRootOptions, TriggerState } from '../shared';
 import { outlinerChildren } from '../shared';
 import { hiddenFieldKey, readViewConfig } from './row-model';
@@ -277,6 +281,7 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
   const selectionRootId = props.selectionRootId ?? props.rootId;
   const draftIdFor = useFlatDraftIds(byId);
   const [rootSearchRefreshing, setRootSearchRefreshing] = useState(false);
+  const visualRowsSnapshotRef = useRef<VisualRowsSnapshot | null>(null);
 
   const trailingFocusedParentId = ui.focusSurface === 'trailing' && ui.focusedPanelId === props.panelId
     ? ui.focusedId
@@ -293,19 +298,29 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
     : null;
 
   const rows = useMemo(
-    () => buildVisualRows(props.parentId, byId, {
-      expanded: ui.expanded,
-      expandedHiddenFields: ui.expandedHiddenFields,
-      showRootToolbar: props.showViewToolbar !== false,
-      rootTrailingDraft: props.trailingDraft ?? 'none',
-      draftIdFor,
-      trailingFocusedParentId,
-      draftFocusedParentId,
-      trailingDraftPlacement,
-    }),
+    () => {
+      const snapshot = buildVisualRowsIncrementally(
+        visualRowsSnapshotRef.current,
+        props.parentId,
+        index,
+        {
+          expanded: ui.expanded,
+          expandedHiddenFields: ui.expandedHiddenFields,
+          showRootToolbar: props.showViewToolbar !== false,
+          rootTrailingDraft: props.trailingDraft ?? 'none',
+          draftIdFor,
+          trailingFocusedParentId,
+          draftFocusedParentId,
+          trailingDraftPlacement,
+          systemFieldContext: { referenceSummary: index.referenceSummary },
+        },
+      );
+      visualRowsSnapshotRef.current = snapshot;
+      return snapshot.rows;
+    },
     [
       props.parentId,
-      byId,
+      index,
       ui.expanded,
       ui.expandedHiddenFields,
       props.showViewToolbar,

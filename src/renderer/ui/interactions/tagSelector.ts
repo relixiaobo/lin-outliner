@@ -14,17 +14,18 @@ import { clampMenuIndex } from './menuNavigation';
 // implementation. This module keeps the renderer's per-projection cache.
 export type TagSelectorItem = TagCandidate;
 
-const activeTagSelectorIndexes = new WeakMap<DocumentIndex, TagCandidateIndex>();
+const activeTagSelectorIndexes = new WeakMap<object, TagCandidateIndex>();
 
 function activeTagSelectorIndex(index: DocumentIndex): TagCandidateIndex {
-  const cached = activeTagSelectorIndexes.get(index);
+  const cacheKey = index.tagCandidateCacheKey ?? index;
+  const cached = activeTagSelectorIndexes.get(cacheKey);
   if (cached) return cached;
   const next = buildTagCandidateIndex({
     nodes: index.projection.nodes,
     byId: index.byId,
     trashId: index.projection.trashId,
   });
-  activeTagSelectorIndexes.set(index, next);
+  activeTagSelectorIndexes.set(cacheKey, next);
   return next;
 }
 

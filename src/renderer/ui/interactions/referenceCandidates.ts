@@ -5,7 +5,14 @@ import { isContentNode, textOf } from '../shared';
 import { textMatchRank } from './candidateRanking';
 import { isNodeInTrash } from './nodeLocation';
 import { getTreeReferenceBlockMessage, getTreeReferenceBlockReason } from './referenceRules';
-import { fileNodeTitle, isFileNode } from '../preview/fileNode';
+import type { TreeReferenceBlockReason } from './referenceRules';
+import { isFileNode } from '../preview/fileNode';
+import {
+  buildReferenceCandidateIndex,
+  queryReferenceCandidateIndex,
+  type ReferenceCandidateQueryStats,
+} from '../../state/referenceCandidateIndex';
+import { buildTrashNodeIds } from '../../state/projectionDerived';
 
 // Localized strings the candidate builder needs (it is a pure helper outside React).
 // Callers thread these from useT(); they default to the canonical English tree so
@@ -134,23 +141,42 @@ function nodeCandidates(
   excludeCurrentNode: boolean,
   includeFileNodes: boolean,
   labels: ReferenceCandidateLabels,
+  resolveTreeReferenceBlockReason: ((targetId: NodeId) => TreeReferenceBlockReason | null) | undefined,
+  skipTreeReferenceChecks: boolean,
+  stats: ReferenceCandidateQueryStats | undefined,
 ): ReferenceCandidate[] {
   const normalized = query.trim().toLowerCase();
   const currentNode = currentNodeId ? index.byId.get(currentNodeId) : undefined;
   const currentAncestors = ancestorIds(currentNode, index.byId);
-  const candidates = index.projection.nodes
-    .filter((node) => isReferenceCandidateNode(node, includeFileNodes)
-      && !(excludeCurrentNode && node.id === currentNodeId)
-      && !isNodeInTrash(index, node.id))
-    .map((node) => {
-      const label = referenceCandidateNodeLabel(node, labels.untitled);
-      const reason = treeReferenceParentId
-        ? getTreeReferenceBlockReason({
-          parentId: treeReferenceParentId,
-          targetId: node.id,
-          byId: index.byId,
-        })
-        : null;
+  const candidateIndex = index.referenceCandidates ?? buildReferenceCandidateIndex(
+    index.byId,
+    index.trashNodeIds ?? buildTrashNodeIds(index.byId, index.projection.trashId),
+  );
+  const candidates = queryReferenceCandidateIndex({
+    index: candidateIndex,
+    query: normalized,
+    untitledLabel: labels.untitled,
+    includeFileNodes,
+    limit: DEFAULT_REFERENCE_LIMIT + (excludeCurrentNode ? 1 : 0),
+    stats,
+  })
+    .flatMap((entry) => {
+      const node = index.byId.get(entry.id);
+      if (
+        !isReferenceCandidateNode(node, includeFileNodes)
+        || (excludeCurrentNode && node.id === currentNodeId)
+        || isNodeInTrash(index, node.id)
+      ) return [];
+      const label = entry.label || labels.untitled;
+      const reason = !treeReferenceParentId || skipTreeReferenceChecks
+        ? null
+        : resolveTreeReferenceBlockReason
+          ? resolveTreeReferenceBlockReason(node.id)
+          : getTreeReferenceBlockReason({
+              parentId: treeReferenceParentId,
+              targetId: node.id,
+              byId: index.byId,
+            });
       return {
         node,
         label,
@@ -190,13 +216,11 @@ function nodeCandidates(
   });
 }
 
-function isReferenceCandidateNode(node: NodeProjection | undefined, includeFileNodes: boolean): boolean {
+function isReferenceCandidateNode(
+  node: NodeProjection | undefined,
+  includeFileNodes: boolean,
+): node is NodeProjection {
   return isContentNode(node) || (includeFileNodes && isFileNode(node));
-}
-
-function referenceCandidateNodeLabel(node: NodeProjection, untitled: string): string {
-  if (isFileNode(node)) return fileNodeTitle(node) || untitled;
-  return textOf(node) || untitled;
 }
 
 export function buildReferenceCandidates(params: {
@@ -215,6 +239,9 @@ export function buildReferenceCandidates(params: {
   includeFileNodes?: boolean;
   // Localized labels; defaults to English so tests/non-localized callers still work.
   labels?: ReferenceCandidateLabels;
+  resolveTreeReferenceBlockReason?: (targetId: NodeId) => TreeReferenceBlockReason | null;
+  skipTreeReferenceChecks?: boolean;
+  stats?: ReferenceCandidateQueryStats;
 }): ReferenceCandidate[] {
   const {
     index,
@@ -225,11 +252,25 @@ export function buildReferenceCandidates(params: {
     excludeCurrentNode = true,
     includeFileNodes = false,
     labels = DEFAULT_REFERENCE_LABELS,
+    resolveTreeReferenceBlockReason,
+    skipTreeReferenceChecks = false,
+    stats,
   } = params;
   const normalized = query.trim();
   return [
     ...matchDateShortcuts(normalized, labels),
-    ...nodeCandidates(index, currentNodeId, normalized, treeReferenceParentId, excludeCurrentNode, includeFileNodes, labels),
+    ...nodeCandidates(
+      index,
+      currentNodeId,
+      normalized,
+      treeReferenceParentId,
+      excludeCurrentNode,
+      includeFileNodes,
+      labels,
+      resolveTreeReferenceBlockReason,
+      skipTreeReferenceChecks,
+      stats,
+    ),
     ...(normalized && allowCreate ? [{ type: 'create' as const, label: normalized }] : []),
   ];
 }

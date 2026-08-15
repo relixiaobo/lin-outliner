@@ -1,11 +1,14 @@
+import { REF_COUNT_FIELD, type SystemFieldContext } from '../../core/systemFields';
 import type { NodeId, NodeProjection } from '../api/types';
 import {
   buildOutlinerRows,
   readViewConfig,
   showsResultViewControls,
+  viewFieldValuesFor,
   type OutlinerRowItem,
+  type ViewConfig,
 } from './outlinerRows';
-import { outlinerChildParentId } from './document';
+import { outlinerChildParentId, type DocumentIndex } from './document';
 import type { TrailingDraftPlacement } from './document';
 import { resolveTrailingDraftAfterId } from './trailingDraftPlacement';
 
@@ -65,12 +68,30 @@ export interface VisualRowsOptions {
   // Parent whose renderer-only draft row currently holds settled row focus.
   draftFocusedParentId?: NodeId | null;
   trailingDraftPlacement?: TrailingDraftPlacement | null;
+  systemFieldContext?: SystemFieldContext;
+}
+
+interface VisualRowsBuildInstrumentation {
+  onLevelBuilt(parent: NodeProjection, view: ViewConfig, rows: readonly OutlinerRowItem[]): void;
+}
+
+export interface VisualRowsSnapshot {
+  readonly rows: readonly VisualRow[];
+  readonly revision: number;
+  readonly rootId: NodeId;
+  readonly options: VisualRowsOptions;
+  readonly configNodeIds: ReadonlySet<NodeId>;
+  readonly fieldDefinitionIds: ReadonlySet<NodeId>;
+  readonly modelValuesByRow: ReadonlyMap<NodeId, ReadonlyMap<string, readonly string[]>>;
+  readonly referenceGraphRevision: number;
+  readonly readsReferenceCounts: boolean;
 }
 
 export function buildVisualRows(
   rootId: NodeId,
   byId: Map<NodeId, NodeProjection>,
   options: VisualRowsOptions,
+  instrumentation?: VisualRowsBuildInstrumentation,
 ): VisualRow[] {
   const out: VisualRow[] = [];
   const expanded = options.expanded;
@@ -105,7 +126,11 @@ export function buildVisualRows(
       });
     }
 
-    const builtRows = buildOutlinerRows(parent, byId, { expandedHiddenFields });
+    const builtRows = buildOutlinerRows(parent, byId, {
+      expandedHiddenFields,
+      systemFieldContext: options.systemFieldContext,
+    });
+    instrumentation?.onLevelBuilt(parent, view, builtRows);
     const showDraft = trailingMode === 'always'
       || (
         trailingMode === 'auto'
@@ -236,6 +261,138 @@ export function buildVisualRows(
 
   visit(rootId, options.rootDepth ?? 0, [rootId], [rootId], options.rootTrailingDraft ?? 'none');
   return out;
+}
+
+export function buildVisualRowsIncrementally(
+  previous: VisualRowsSnapshot | null,
+  rootId: NodeId,
+  index: DocumentIndex,
+  options: VisualRowsOptions,
+): VisualRowsSnapshot {
+  if (previous && canReuseVisualRows(previous, rootId, index, options)) {
+    return previous.revision === index.revision
+      ? previous
+      : { ...previous, revision: index.revision, options };
+  }
+
+  const configNodeIds = new Set<NodeId>();
+  const fieldDefinitionIds = new Set<NodeId>();
+  const modelValuesByRow = new Map<NodeId, Map<string, readonly string[]>>();
+  let readsReferenceCounts = false;
+  const rows = buildVisualRows(rootId, index.byId, options, {
+    onLevelBuilt(parent, view, builtRows) {
+      if (view.viewDefId) {
+        configNodeIds.add(view.viewDefId);
+        const viewDef = index.byId.get(view.viewDefId);
+        for (const childId of viewDef?.children ?? []) configNodeIds.add(childId);
+      }
+      const fields = modelFieldIds(view);
+      if (fields.size === 0) return;
+      if (fields.has(REF_COUNT_FIELD)) readsReferenceCounts = true;
+      for (const fieldId of fields) {
+        if (index.byId.get(fieldId)?.type === 'fieldDef') fieldDefinitionIds.add(fieldId);
+      }
+      for (const rowId of modelRowIds(builtRows)) {
+        const row = index.byId.get(rowId);
+        if (!row) continue;
+        const values = new Map<string, readonly string[]>();
+        for (const fieldId of fields) {
+          values.set(fieldId, viewFieldValuesFor(
+            row,
+            fieldId,
+            index.byId,
+            options.systemFieldContext,
+          ));
+        }
+        modelValuesByRow.set(rowId, values);
+      }
+    },
+  });
+
+  return {
+    rows,
+    revision: index.revision,
+    rootId,
+    options,
+    configNodeIds,
+    fieldDefinitionIds,
+    modelValuesByRow,
+    referenceGraphRevision: index.semanticRevisions.referenceGraph,
+    readsReferenceCounts,
+  };
+}
+
+function canReuseVisualRows(
+  previous: VisualRowsSnapshot,
+  rootId: NodeId,
+  index: DocumentIndex,
+  options: VisualRowsOptions,
+): boolean {
+  if (previous.rootId !== rootId || !sameVisualRowsOptions(previous.options, options)) return false;
+  if (previous.revision === index.revision) return true;
+  if (index.revision !== previous.revision + 1 || index.delta.structureChanged) return false;
+  if (
+    previous.readsReferenceCounts
+    && previous.referenceGraphRevision !== index.semanticRevisions.referenceGraph
+  ) return false;
+
+  for (const dirtyId of index.delta.dirtyIds) {
+    if (previous.configNodeIds.has(dirtyId) || previous.fieldDefinitionIds.has(dirtyId)) return false;
+    const fields = previous.modelValuesByRow.get(dirtyId);
+    if (!fields) continue;
+    const row = index.byId.get(dirtyId);
+    if (!row) return false;
+    for (const [fieldId, previousValues] of fields) {
+      const nextValues = viewFieldValuesFor(
+        row,
+        fieldId,
+        index.byId,
+        options.systemFieldContext,
+      );
+      if (!sameStrings(previousValues, nextValues)) return false;
+    }
+  }
+  return true;
+}
+
+function sameVisualRowsOptions(left: VisualRowsOptions, right: VisualRowsOptions): boolean {
+  return left.expanded === right.expanded
+    && left.expandedHiddenFields === right.expandedHiddenFields
+    && left.rootDepth === right.rootDepth
+    && left.showRootToolbar === right.showRootToolbar
+    && left.rootTrailingDraft === right.rootTrailingDraft
+    && left.draftIdFor === right.draftIdFor
+    && left.trailingFocusedParentId === right.trailingFocusedParentId
+    && left.draftFocusedParentId === right.draftFocusedParentId
+    && left.trailingDraftPlacement === right.trailingDraftPlacement;
+}
+
+function modelFieldIds(view: ViewConfig): Set<string> {
+  const fields = new Set<string>();
+  if (view.groupField) fields.add(view.groupField);
+  for (const rule of view.sortRules) fields.add(rule.field);
+  for (const rule of view.filterRules) fields.add(rule.field);
+  return fields;
+}
+
+function modelRowIds(rows: readonly OutlinerRowItem[]): Set<NodeId> {
+  const ids = new Set<NodeId>();
+  const visit = (items: readonly OutlinerRowItem[]) => {
+    for (const row of items) {
+      if (row.type === 'content' || row.type === 'field') ids.add(row.id);
+      if (row.type === 'filteredOut') visit(row.rows);
+    }
+  };
+  visit(rows);
+  return ids;
+}
+
+function sameStrings(left: readonly string[], right: readonly string[]): boolean {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) return false;
+  }
+  return true;
 }
 
 // The content/field subsequence of the visual rows, in order. Body/reference rows

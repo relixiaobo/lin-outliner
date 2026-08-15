@@ -36,6 +36,19 @@ The renderer calls them through `window.lin.invoke(...)` via
 including content, optional descriptions, code block language, tags, fields, and
 task checkbox state. It is the bulk structural path for paste and import.
 
+`split_node` treats a same-parent split as continuation of the existing node: the
+new sibling carries the source tags and materializes their inherited field
+structure, including acquisition-time auto-initialization, but does not clone
+static template defaults or seed content. Tag acquisition clones a static field
+default before considering auto-initialization; a same-parent split omits that
+default, so a field configured with both mechanisms can keep the static default
+on the source while the new sibling receives an auto-initialized value. An empty
+split field still retains its template origin; `value_is_default` therefore hides
+a source value equal to the template default but leaves the empty sibling field
+visible. A cross-parent split does not carry the source tags; it applies the
+destination parent's configured child supertag as a new acquisition, including
+that tag's defaults and seed content.
+
 `create_capture` atomically creates one launcher-capture node: a plain node
 carrying a hidden, typed `capture` provenance sidecar (`CaptureNodeMetadata` on
 `NodeBase.capture`) plus the source projected into native outline shape — a
@@ -94,7 +107,8 @@ normalization are one mutation.
 `create_field_def`, `create_inline_field`, `create_inline_field_after_node`,
 `reuse_field_definition`, `register_collected_option`,
 `create_collected_field_option`, `select_field_option`,
-`set_field_free_text_value`, `clear_field_value`, `remove_field_value`.
+`set_field_free_text_value`, `clear_field_value`, `remove_field_value`,
+`merge_definitions`.
 
 `create_inline_field` may receive an existing `targetDefId`. That form validates
 the definition, rejects a duplicate field on the owner, and creates only the
@@ -107,6 +121,37 @@ live in the Trash subtree. Applying a tag, creating a tagged node, reusing a fie
 definition, configuring definitions, and selecting `options_from_supertag` values
 all reject trashed definitions. Name-based creation ignores trashed same-name
 definitions and creates a fresh active definition under Schema.
+
+`apply_tag` stamps active fields from the tag's specific-first inheritance chain.
+Field identity is the `fieldDefId`, not the normalized display name. An existing
+entry backed by the same definition is reused; same-name entries backed by
+different definitions are instantiated alongside one another. Reapplying a tag
+therefore stays idempotent without suppressing an independently defined field.
+Forward done-state mapping also addresses its exact `fieldDefId`. Explicit field
+creation, reuse, and rename remain fail-closed on owner name collisions.
+
+`merge_definitions(targetId, sourceIds)` merges field definitions only when their
+types match, `options_from_supertag` sources match, and every stored source value
+is valid for the target type. A field-definition merge is document-wide: every
+active use of each named source definition is relinked to the target and option
+pools are combined.
+
+A tag-definition merge instead follows template-child identity. It rewrites
+source-tag uses and moves direct template children into the target. A source
+field whose `fieldDefId` is absent from the target moves intact even when
+another target field has the same label. When both tags reuse the same
+`fieldDefId`, their template entries collapse: all source value children append
+to the target in source order, except an identical default already present is
+not appended twice. Scalar defaults compare by exact text; option defaults
+compare by option target node. Instance `templateId` references are repointed to
+the surviving entry, and the source entry is removed. Tag merge never unifies
+field definitions by name and does not rewrite a third tag outside the requested
+tag merge.
+
+Field-entry collapse passes its survivor to the subtree-removal boundary. That
+boundary repoints every surviving `templateId` that named the removed entry;
+ordinary permanent deletion clears a removed template origin. Referential
+healing preserves survivor timestamps, including for entries already in Trash.
 
 `reuse_field_definition(entryId, targetDefId)` repoints a field entry at an
 existing definition instead of the throwaway draft `>` minted, dropping the now

@@ -282,6 +282,103 @@ Entries reference the pull request that introduced them.
   appends over a disjoint fragment alphabet with zero divergence, against a
   control run that breaks the pre-fix code within 932 appends.
 
+- **Typing in a large document no longer rebuilds the whole document on every
+  keystroke (PR #541, codex-3)** — the last of the three `typing-hot-path` PRs,
+  and the one that closes the board's only P0. Each keystroke used to
+  synchronously rebuild document-wide derived data and notify broad React
+  subscriptions even when nothing visible had changed: References summaries were
+  rebuilt in full behind a cache keyed on a `byId` the delta path replaces every
+  time, the `@` picker filtered-mapped-ranked-sorted the entire projection twice
+  per key with per-candidate ancestor walks, the agent dock re-rendered its
+  transcript off `index` identity with the rail closed, `Sidebar` walked ancestors
+  per row to decide Trash styling, and a code block being edited re-highlighted
+  through Shiki on every key. Now: reference summaries are maintained
+  incrementally and unlinked mentions scan cooperatively; the `@`/`#` pickers
+  query a compact posting index over one shared normalized label per node
+  (offset postings ordered by generalized suffix-array rank, top-scores per
+  block) with a persistent edit overlay compacted *outside* the projection
+  commit; display-cycle rules resolve from a cooperatively-built reachability set
+  instead of a synchronous graph walk; Sidebar rows and visual rows are memoized
+  and incrementally reused; the dock and Thread subscribe to index-derived leaves
+  and pause entirely while closed without unmounting user state; and Shiki
+  re-highlights on a 150 ms debounce with plain text visible throughout. On the
+  probe scenario — 3,000 nodes, 48 inputs, agent rail open with a Subagent
+  streaming, References expanded — mean input latency goes from 127.35 ms to
+  104.69 ms and p95 from 141.2 ms to 124.1 ms.
+
+  The high gate found five defects. The one that mattered was an optimization
+  that recreated the problem it was written to solve: the candidate index built
+  one posting string per character offset of an untruncated label, so
+  construction was O(Σ label²) — 694 ms and ~160 MB for a single pasted 21.6 KB
+  node — and it ran synchronously on the keystroke that pushed the edit overlay
+  past 23 entries, i.e. a 340 ms freeze mid-typing on the 24th distinct node
+  edited in a session. Two more were user-visible: the `@` picker silently
+  dropped a click or Enter on a row that was still enabled because reachability
+  had not landed, and the same row could reorder underneath the highlight ~100 ms
+  after the popover opened, so an Enter at that moment inserted a reference to a
+  node the user was not looking at. The other two were a reachability scan that
+  stopped at the first dangling child reference instead of continuing on to find
+  later display cycles, and a Sidebar comparator that missed Trash styling for a
+  pinned node whose *ancestor* was deleted. The re-gate then held the merge for
+  two more: the rebuild was still one synchronous 160–700 ms block, only moved to
+  150 ms after typing stopped rather than removed, and its idle debounce re-armed
+  on every delta, so a continuous Agent stream could defer compaction forever.
+  Both are closed — the build is now sliced cooperatively (a 12,000-node probe
+  runs as ~6 s of background work across ~4,500 yields with a longest
+  uninterrupted slice of ~7.7 ms, against the 662 ms single pause the gate
+  measured before), and a non-resetting 750 ms deadline plus a 256-entry pressure
+  trigger guarantee progress, with deltas that arrive mid-build rebased before
+  the new base commits.
+
+### Fixed
+
+- **Two tags that define the same field name no longer exclude each other
+  (PR #540, codex-2)** — a field is now identified by its definition, never by
+  its display name, matching Tana (*"whenever you select an existing field to
+  use, it is retrieving the settings from the field definition of that field"*).
+  Before this, `#chore` and `#bug` each defining a `Status` were mutually
+  exclusive with a crash: applying the second threw out of the template-stamp
+  assert, and because the tag was pushed onto the node *before* instantiation,
+  the failure left the tag applied with partial fields. The same assert crashed
+  the checkbox whenever a done-mapped field's name collided. Merging two such
+  tags moved the collision inside the merged tag and poisoned every later
+  application of it. Same-named fields backed by different definitions now
+  simply coexist on a node, rendering as two rows exactly as Tana does — no
+  originating-tag suffix. Tag merge no longer unifies definitions by name at
+  all; it follows template-child identity, so a merge can no longer rewrite the
+  schema of a third tag the user never named (an earlier draft did, document-wide,
+  including that tag's option pool). Where two template entries do share a
+  definition, their values combine, identical values are not duplicated, and
+  instance template origins repoint to the survivor. Name-based writes —
+  `Status:: Open` from paste, the agent, or tree materialization — disambiguate
+  through the owner's applied tag chains, specific-first by inheritance depth,
+  at both the entry and the definition level; a genuinely tied layer still
+  refuses, with the entry ids and a remedy. `templateId` healing moved to the
+  removal boundary in `removeSubtreeDirect`, which retires a whole class of
+  dangling-origin bugs rather than the two known instances. Three review rounds:
+  a `high` pass, then a PM redirect to Tana's model that replaced the first
+  design outright, then an `xhigh` pass that caught a regression the redirect
+  introduced — agent `node_create` applied tags before writing fields, so the
+  new coexistence made every such write die mid-outline with the node already
+  created and no expressible remedy.
+- **Splitting a tagged node no longer re-stamps its template (PR #542,
+  codex-2)** — pressing Enter mid-text ran the tag's full template
+  instantiation on the new half, so a text edit minted creation-moment data:
+  field defaults reset to the template's value and seed children were conjured
+  again. A `#meeting` whose template holds a seed child `Agenda` and a `Status`
+  default `Inbox`, split while its instance read `Doing`, produced a right half
+  reading `Inbox` with a fresh `Agenda` under it. A same-parent split now
+  carries the source tags and materializes their inherited field structure,
+  including acquisition-time auto-initialization, but clones neither static
+  template defaults nor seed content; a cross-parent split still applies the
+  destination parent's configured child supertag as a genuine new acquisition.
+  Two consequences are pinned by tests and stated in `docs/spec/commands.md`: a
+  field configured with both a static default and an auto-init strategy keeps
+  the default on the source and receives the auto-initialized value on the new
+  sibling, and the sibling's empty field retains its template origin, so
+  `value_is_default` hides the source's default-equal value while leaving the
+  sibling's empty field visible.
+
 ### Internal
 
 - **Opened the 0.4.0 train (main-agent)** — `package.json` dials to `0.4.0`

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { RendererUserViewHints, ThreadId, Turn } from '../../../core/agent/protocol';
-import type { DocumentIndex } from '../../state/document';
+import type { DocumentIndexStore } from '../../state/documentIndexStore';
 import { useT } from '../../i18n/I18nProvider';
 import { BackIcon, GitForkIcon, ICON_SIZE, StopIcon } from '../../ui/icons';
 import { IconButton } from '../../ui/primitives/IconButton';
@@ -30,20 +30,20 @@ import { ThreadView } from './ThreadView';
  */
 export function SubagentDetailView({
   agentId,
-  index,
+  indexStore,
   onOpenNodeReference,
   onOpenThread,
   onOpenTurnDetails,
   subagentProjection,
-  userView,
+  getUserView,
 }: {
   readonly agentId: ThreadId;
-  readonly index: DocumentIndex;
+  readonly indexStore: DocumentIndexStore;
   readonly onOpenNodeReference: ThreadNodeReferenceOpenHandler;
   readonly onOpenThread: (threadId: ThreadId) => Promise<void>;
   readonly onOpenTurnDetails?: (threadId: string, turnId: string) => void;
   readonly subagentProjection: SubagentConversationProjection;
-  readonly userView: RendererUserViewHints;
+  readonly getUserView: () => RendererUserViewHints;
 }) {
   const t = useT();
   const snapshot = useThreadStore();
@@ -108,6 +108,7 @@ export function SubagentDetailView({
       ) : (
         <div className="thread-agent-detail-body" key={agentId}>
           <ThreadView
+            active
             composerEnabled={composerEnabled}
             composerFocusToken={0}
             composerPlaceholder={entry?.stoppedByUser
@@ -115,7 +116,7 @@ export function SubagentDetailView({
               : t.agent.thread.agent.composerPlaceholder}
             configuration={null}
             goal={snapshot.goalsByThread.get(agentId) ?? null}
-            index={index}
+            indexStore={indexStore}
             inputRequest={null}
             key={agentId}
             latestTurnByThread={snapshot.latestTurnByThread}
@@ -130,7 +131,7 @@ export function SubagentDetailView({
             onOpenTurnDetails={(turn: Turn) => onOpenTurnDetails?.(agentId, turn.id)}
             onReadToolArguments={(turnId, item) => threadStore.readToolArguments(agentId, turnId, item)}
             onReadToolOutput={(turnId, item) => threadStore.readItemOutput(agentId, turnId, item)}
-            onSend={(content) => threadStore.sendToThread(agentId, content, userView)}
+            onSend={(content) => threadStore.sendToThread(agentId, content, getUserView())}
             onSubmitUserInput={noop}
             plan={snapshot.planByThread.get(agentId) ?? null}
             providerRetry={snapshot.providerRetryByThread.get(agentId) ?? null}
@@ -154,7 +155,7 @@ export function SubagentDetailView({
             threadModelProvider={thread.modelProvider}
             threadsById={new Map(snapshot.threads.map((candidate) => [candidate.id, candidate]))}
             turns={turns}
-            userView={userView}
+            getUserView={getUserView}
             waitingOnUserInput={false}
           />
         </div>

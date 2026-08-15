@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from 'react';
+import { useCallback, useRef, useSyncExternalStore } from 'react';
 import {
   acknowledgeThreadComposerContext,
   pendingComposerAdditionalContext,
@@ -839,8 +839,35 @@ export class ThreadStore {
 
 export const threadStore = new ThreadStore();
 
-export function useThreadStore(): ThreadStoreSnapshot {
-  return useSyncExternalStore(threadStore.subscribe, threadStore.getSnapshot, threadStore.getSnapshot);
+export interface ThreadSnapshotSource {
+  readonly getSnapshot: () => ThreadStoreSnapshot;
+  readonly subscribe: (listener: () => void) => () => void;
+}
+
+export function useThreadStore(
+  active = true,
+  source: ThreadSnapshotSource = threadStore,
+): ThreadStoreSnapshot {
+  const frozenRef = useRef(source.getSnapshot());
+  const previousActiveRef = useRef(active);
+  const previousSourceRef = useRef(source);
+  if (
+    active
+    || previousActiveRef.current !== active
+    || previousSourceRef.current !== source
+  ) frozenRef.current = source.getSnapshot();
+  previousActiveRef.current = active;
+  previousSourceRef.current = source;
+
+  const subscribe = useCallback((listener: () => void) => (
+    active ? source.subscribe(listener) : () => undefined
+  ), [active, source]);
+  const getSnapshot = useCallback(() => {
+    if (active) frozenRef.current = source.getSnapshot();
+    return frozenRef.current;
+  }, [active, source]);
+
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
 
 function scheduleOnNextFrame(flush: () => void): void {

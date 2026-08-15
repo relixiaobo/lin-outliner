@@ -92,6 +92,14 @@ async function dispatchCompositionEvent(locator: Locator, type: 'compositionstar
   }, { type, data });
 }
 
+async function chooseSelectedReferenceSuggestion(page: import('@playwright/test').Page) {
+  const listbox = page.getByRole('listbox', { name: 'Reference suggestions' });
+  await expect(listbox).toBeVisible();
+  await expect(listbox.locator('[role="option"][data-selected="true"]'))
+    .not.toHaveAttribute('aria-disabled', 'true');
+  await page.keyboard.press('Enter');
+}
+
 async function expectTriggerPopoverAnchoredToCaret(page: import('@playwright/test').Page, label: string) {
   const listbox = page.getByRole('listbox', { name: label });
   await expect(listbox).toBeVisible();
@@ -468,8 +476,7 @@ test.describe('outliner trigger parity', () => {
 
     await trailingEditor(page).click();
     await page.keyboard.type('@RemoteTarget');
-    await expect(page.getByRole('listbox', { name: 'Reference suggestions' })).toBeVisible();
-    await page.keyboard.press('Enter');
+    await chooseSelectedReferenceSuggestion(page);
     await page.keyboard.type('test');
 
     await expect.poll(async () => (await todayChildren(page)).length).toBe(beforeChildren.length + 1);
@@ -668,8 +675,7 @@ test.describe('outliner trigger parity', () => {
 
     await rowEditor(page, emptyRowId!).click();
     await page.keyboard.type('@RemoteTarget');
-    await expect(page.getByRole('listbox', { name: 'Reference suggestions' })).toBeVisible();
-    await page.keyboard.press('Enter');
+    await chooseSelectedReferenceSuggestion(page);
     await page.keyboard.type('test');
 
     let inlineRowId = '';
@@ -704,8 +710,7 @@ test.describe('outliner trigger parity', () => {
 
     await trailingEditor(page).click();
     await page.keyboard.type('@RemoteTarget');
-    await expect(page.getByRole('listbox', { name: 'Reference suggestions' })).toBeVisible();
-    await page.keyboard.press('Enter');
+    await chooseSelectedReferenceSuggestion(page);
 
     let inlineRowId = '';
     await expect.poll(async () => {
@@ -747,8 +752,7 @@ test.describe('outliner trigger parity', () => {
 
     await rowEditor(page, emptyRowId!).click();
     await page.keyboard.type('@Al');
-    await expect(page.getByRole('listbox', { name: 'Reference suggestions' })).toBeVisible();
-    await page.keyboard.press('Enter');
+    await chooseSelectedReferenceSuggestion(page);
     await page.keyboard.type('test');
 
     await expect.poll(async () => nodeById(page, ids.alpha)).toMatchObject({
@@ -780,8 +784,7 @@ test.describe('outliner trigger parity', () => {
     const editor = rowEditor(page, emptyRowId!);
     await editor.click();
     await page.keyboard.type('@Al');
-    await expect(page.getByRole('listbox', { name: 'Reference suggestions' })).toBeVisible();
-    await page.keyboard.press('Enter');
+    await chooseSelectedReferenceSuggestion(page);
     await expect(editor).toBeFocused();
 
     const patchCountBeforeComposition = (await commandCalls(page))
@@ -815,8 +818,7 @@ test.describe('outliner trigger parity', () => {
 
     await rowEditor(page, nodeId!).click();
     await page.keyboard.type('See @Al');
-    await expect(page.getByRole('listbox', { name: 'Reference suggestions' })).toBeVisible();
-    await page.keyboard.press('Enter');
+    await chooseSelectedReferenceSuggestion(page);
     await expect(rowEditor(page, nodeId!)).toBeFocused();
 
     await page.keyboard.type('!');

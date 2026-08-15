@@ -60,6 +60,10 @@ export interface ReferenceSummaryOptions {
   minMentionLength?: number;
 }
 
+export interface UnlinkedReferenceMatcher {
+  matchNode(source: ReferenceNodeLike): readonly ReferenceSource[];
+}
+
 const MIN_MENTION_LENGTH = 3;
 const NON_MENTION_NODE_TYPES = new Set<NodeType>([
   ...INTERNAL_VIEW_NODE_TYPES,
@@ -111,12 +115,12 @@ export function buildReferenceSummary(
   }
 
   if (options.includeUnlinked) {
-    addUnlinkedMentions(byId, byTarget, isDeleted, isSearchReferenceSource, options);
+    addUnlinkedMentions(byId, byTarget, options);
   }
 
   return {
     byTarget,
-    countsByTarget: buildCountsByTarget(byTarget),
+    countsByTarget: buildReferenceCountsByTarget(byTarget),
   };
 }
 
@@ -211,7 +215,9 @@ function addReferenceSource(
   byTarget.set(source.targetId, [source]);
 }
 
-function buildCountsByTarget(byTarget: ReadonlyMap<NodeId, readonly ReferenceSource[]>): Map<NodeId, ReferenceCounts> {
+export function buildReferenceCountsByTarget(
+  byTarget: ReadonlyMap<NodeId, readonly ReferenceSource[]>,
+): Map<NodeId, ReferenceCounts> {
   const counts = new Map<NodeId, ReferenceCounts>();
   for (const [targetId, sources] of byTarget) {
     const linked = new Set<string>();
@@ -242,39 +248,54 @@ function referenceCountKey(source: ReferenceSource): string {
 function addUnlinkedMentions(
   byId: ReadonlyMap<NodeId, ReferenceNodeLike>,
   byTarget: Map<NodeId, ReferenceSource[]>,
-  isDeleted: (nodeId: NodeId) => boolean,
-  isSearchReferenceSource: (nodeId: NodeId) => boolean,
   options: ReferenceSummaryOptions,
 ): void {
+  const matcher = createUnlinkedReferenceMatcher(byId, options);
+  for (const source of byId.values()) {
+    for (const match of matcher.matchNode(source)) addReferenceSource(byTarget, match);
+  }
+}
+
+export function createUnlinkedReferenceMatcher(
+  byId: ReadonlyMap<NodeId, ReferenceNodeLike>,
+  options: ReferenceSummaryOptions = {},
+): UnlinkedReferenceMatcher {
+  const isDeleted = options.isDeleted ?? (() => false);
+  const isSearchReferenceSource = searchReferenceSourcePredicate(byId);
   const targetTitles = mentionTargetTitles(
     byId,
     isDeleted,
     options.minMentionLength ?? MIN_MENTION_LENGTH,
     options.mentionTargetIds,
   );
-  if (targetTitles.length === 0) return;
   const targetsByFirstChar = mentionTargetsByFirstChar(targetTitles);
-
   const scanDescriptions = options.includeDescriptions ?? true;
-  for (const source of byId.values()) {
-    if (!nodeCanSourceUnlinkedMention(source, isDeleted, isSearchReferenceSource)) continue;
-    addUnlinkedMentionsFromText(
-      byTarget,
-      source,
-      targetsByFirstChar,
-      'content',
-      source.content.text,
-    );
-    if (scanDescriptions && source.description) {
+  return {
+    matchNode(source) {
+      if (
+        targetTitles.length === 0
+        || !nodeCanSourceUnlinkedMention(source, isDeleted, isSearchReferenceSource)
+      ) return [];
+      const matches = new Map<NodeId, ReferenceSource[]>();
       addUnlinkedMentionsFromText(
-        byTarget,
+        matches,
         source,
         targetsByFirstChar,
-        'description',
-        source.description,
+        'content',
+        source.content.text,
       );
-    }
-  }
+      if (scanDescriptions && source.description) {
+        addUnlinkedMentionsFromText(
+          matches,
+          source,
+          targetsByFirstChar,
+          'description',
+          source.description,
+        );
+      }
+      return [...matches.values()].flat();
+    },
+  };
 }
 
 function mentionTargetTitles(
@@ -285,9 +306,13 @@ function mentionTargetTitles(
 ): MentionTarget[] {
   const targets: MentionTarget[] = [];
   const seenTitlesByNode = new Set<string>();
-  const allowedTargetIds = mentionTargetIds ? new Set(mentionTargetIds) : null;
-  for (const node of byId.values()) {
-    if (allowedTargetIds && !allowedTargetIds.has(node.id)) continue;
+  const targetNodes = mentionTargetIds
+    ? mentionTargetIds.flatMap((nodeId) => {
+        const candidate = byId.get(nodeId);
+        return candidate ? [candidate] : [];
+      })
+    : byId.values();
+  for (const node of targetNodes) {
     if (isDeleted(node.id) || !nodeCanBeMentionTarget(node)) continue;
     const text = node.content.text.trim();
     if (text.length < minMentionLength) continue;

@@ -55,28 +55,29 @@ theme-section entry below; this list is the ordering, not a second record):
   gated: **PM deferred the Apple Developer membership 2026-08-10** — the shipped
   prompt tier covers reach until that is revisited.
 - **Perf-audit lane (added 2026-08-11)**: a whole-app performance audit landed
-  five items under **Performance** — [`typing-hot-path`](plans/typing-hot-path.md)
-  (**P0**, the only P0 on the board: every keystroke pays multiple O(document)
-  passes in main and renderer) leads and outranks Lane A while it stands;
-  [`agent-tool-call-path`](plans/agent-tool-call-path.md) (P1) follows
+  five items under **Performance** — [`typing-hot-path`](plans/archive/typing-hot-path.md)
+  (the board's only P0) **closed 2026-08-15 with PR-C (#541)**, so the lane no
+  longer outranks Lane A; [`agent-tool-call-path`](plans/agent-tool-call-path.md) (P1) now leads
   (`agent-streaming-followups` shipped #539 2026-08-14, leaving the P2
   `streaming-markdown-repair-cost` tail); [`interaction-jank-cleanups`](plans/interaction-jank-cleanups.md)
   and [`startup-window-first`](plans/startup-window-first.md) (P2) trail.
-- **Outliner correctness lane (added 2026-08-13, build-ready 2026-08-14)**: the two
-  PM-ratified tag plans — [`tag-merge-and-split-fixes`](plans/tag-merge-and-split-fixes.md)
-  PRs A/B first, then [`tag-schema-projection`](plans/tag-schema-projection.md) PR 1.
-  Their sequencing predecessors #533 and #534 have both merged, so PR A can start
-  now; PR 1 must re-verify its reader sweep against #534's slot-aware readers
-  before building (noted in its entry).
+- **Outliner correctness lane (added 2026-08-13, build-ready 2026-08-14)**:
+  [`tag-merge-and-split-fixes`](plans/archive/tag-merge-and-split-fixes.md) PRs A/B
+  both shipped (#542, #540, 2026-08-15), leaving
+  [`tag-schema-projection`](plans/tag-schema-projection.md) PR 1 as the lane's
+  remaining work. PR 1 must re-verify its reader sweep against #534's slot-aware
+  readers before building, and now inherits #540's field-identity rule — a field
+  is its `fieldDefId`, never its label — as pinned behavior (noted in its entry).
 - **Lane D — test-signal infrastructure**: **still unclaimed and now the oldest
   untouched lane** — e2e stability, starting with the visual-media baseline fixture
   (`test.extend` default), then the run-dependent flaky set as one problem. Wave 1
   routed its intended owner elsewhere; give this lane the next free clone.
 
 **Design-gate queue** (PM bandwidth): _empty_ — `skill-path-ownership` shipped #513.
-**Release:** v0.3.0 + v0.3.1 shipped 2026-08-10; `main` is the **0.4.0 train** and the
-cadence rule fires again (9 user-visible entries aboard as of 2026-08-14, #525–#535):
-note drafted by main, PM ratifies, then tag + dial to 0.5.0.
+**Release:** v0.3.0 + v0.3.1 shipped 2026-08-10; `main` is the **0.4.0 train**, 13
+user-visible entries aboard (#525–#542). **PM call 2026-08-15: the train waits for
+`subagent-interaction` (#544) and freezes on its merge** — then note drafted by main,
+PM ratifies, tag + dial to 0.5.0.
 
 `pi-ai-0.80-upgrade` shipped #348 (clean `Models` migration, not the interim `/compat` shim) — see *Recently completed*.
 `dream-channel-and-memory-retire` shipped in full (PR1 #324 + PR2 #328 + PR3 #329) — see *Recently completed*.
@@ -546,27 +547,32 @@ archived `done` (see Recently completed). Remaining active work:
   the plan (untag keeps typed values; ghosts answer reads, never writes — `is
   empty` on a defaulted field matches nothing; same-name collisions render as two
   rows; tag fields sit above own fields). One open question (per-node drag for
-  tag fields) has a stated default and does not block. **PR 1 sequences after
-  #533, #534, and tag-merge-and-split-fixes PRs A/B** — #534 is a semantic overlap
-  (`addMissingTableDisplayFieldsDirect` must become slot-aware); re-verify the
-  reader sweep after it merges; the merge/split fix PRs land first and PR 1
-  inherits their behaviors as pinned tests.
+  tag fields) has a stated default and does not block. **All of PR 1's sequencing
+  predecessors have merged** (#533, #534, and tag-merge-and-split-fixes PRs A/B):
+  re-verify the reader sweep against #534's slot-aware
+  `addMissingTableDisplayFieldsDirect`, and treat #540's shipped behavior as
+  pinned — field identity is the `fieldDefId`, same-name fields from two tags
+  coexist as two rows, and name-based writes disambiguate through the owner's
+  specific-first tag chain.
   Design: [`tag-schema-projection`](plans/tag-schema-projection.md).
-- **tag-merge-and-split-fixes** (P1, `draft` 2026-08-13, **PM-ratified 2026-08-13**) —
+- **tag-merge-and-split-fixes** (P1, `done` 2026-08-15, **PM-ratified 2026-08-13**) —
   kills the crash-class remainder of the field/supertag audit (#537's review
   follow-up), all repro-verified: same-named fields from two tags make the tags
   mutually exclusive with a crash (`applyTag` throws out of the template-stamp
   assert; the same site crashes the checkbox done-mapping today); merging two
   such tags moves the collision inside the merged tag, poisoning every future
   `applyTag` of it; and a mid-text split re-stamps creation-moment data (defaults
-  reset, seed children re-conjured). Design: collisions skip at the stamp
-  boundary, authoring paths stay fail-closed (the A12 line); tag merge unifies
-  same-named definitions behind a non-throwing compatibility predicate with a
-  keep-both fallback, target's template defaults win; split stamps field
+  reset, seed children re-conjured). Design **redirected by the PM 2026-08-14 to
+  Tana's identity model**: a field is its `fieldDefId`, never its display name,
+  so same-named fields from two tags coexist on one node and tag merge stops
+  unifying definitions by name (which had let a merge rewrite a third tag's
+  schema); name-based writes disambiguate through the owner's specific-first tag
+  chain. Authoring paths stay fail-closed (the A12 line); split stamps field
   structure + auto-init only. Shape (b): **two independent PRs** (PR A collision
-  skip + merge unification; PR B split re-stamp removal), both before
+  semantics + merge; PR B split re-stamp removal), both before
   tag-schema-projection PR 1.
-  Design: [`tag-merge-and-split-fixes`](plans/tag-merge-and-split-fixes.md).
+  Shipped: PR B #542, PR A #540, both 2026-08-15.
+  Design: [`tag-merge-and-split-fixes`](plans/archive/tag-merge-and-split-fixes.md).
 - **nodex-parity-decisions** (meta, *standing reference — not a work item*) — the
   catalog of nodex features lin deliberately **will not** port, with reasons;
   companion to the active plans. Current-code parity status lives in
@@ -696,7 +702,7 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   shipped with #426. The catalog rows now cross-reference the owning plan (design voice, per the
   no-status-in-plans rule) — claim these units only through those plans' items, never from the
   catalog.
-- **typing-hot-path** (P0, `in-progress` 2026-08-11) — every keystroke pays O(document)
+- **typing-hot-path** (P0, `done` 2026-08-15) — every keystroke pays O(document)
   several times over. Main: the memory extension's two hooks (`guardMutation`'s
   eagerly-built projection + `memoryGraphMayChange`'s ~4 full-document passes
   before every command; `documentChanged`'s double graph build + SHA-256 digest +
@@ -709,7 +715,7 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   per-row trash walks in `Sidebar`, whole-branch `buildVisualRows`, per-key
   Shiki re-highlight. Three independent PRs: memory off the mutation path /
   save-export off the typing rhythm / renderer commit cost. Design:
-  [`typing-hot-path`](plans/typing-hot-path.md).
+  [`typing-hot-path`](plans/archive/typing-hot-path.md).
   **PR-A shipped 2026-08-11 (#530, codex-3):** incremental `MemoryMutationIndex`
   + transaction-aware observer; guard `0.436 ms` → `0.000295 ms` on a 5,009-node
   document, zero projection reads after a 3.6 ms bootstrap.
@@ -718,7 +724,27 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   700 ms idle / 5 s max wait) with a two-phase quit durability barrier; ~183 B in
   ~0.623 ms per incremental update vs ~669 KB in ~32.6 ms per snapshot on a
   536-node document. Text-search patches stopped cloning the node map.
-  **PR-C remains** (renderer keystroke commit cost).
+  **PR-C shipped 2026-08-15 (#541, codex-3):** renderer commit cost — incremental
+  reference summaries, a queryable `@`-candidate posting index (suffix-array ranks
+  over shared labels, rebuilt cooperatively off the commit path behind an idle
+  debounce with a non-resetting 750 ms max age), async display-reachability for
+  cycle rules, memoized Sidebar branches, dock suspension, debounced Shiki.
+  Item closes the P0; the gate's two tails are `reference-index-compaction-tails` below.
+- **reference-index-compaction-tails** (P3, `draft` 2026-08-15, no plan file yet) —
+  two tails the #541 gate measured but did not block on. (1) The cooperative
+  candidate build yields on a fixed unit count (`COOPERATIVE_BUILD_CHUNK_SIZE`
+  8,192), which lands a 2.2 ms longest block on a 3,000-node document — roughly
+  seven times more often than a frame budget needs — so a compaction costs 1.5 s
+  there and 6.3 s at 12,000 nodes under Bun, and more in a renderer where nested
+  `setTimeout(0)` clamps to ~4 ms; a wall-time deadline budget (yield past ~8 ms)
+  buys the same responsiveness for a fraction of the wall clock. Nothing breaks
+  meanwhile — queries stay complete through the overlay — but on a large document
+  compaction is then effectively always in flight. (2) The `@` picker disables
+  every node row until display-reachability resolves, so a fast `@Name`+Enter
+  burst can have its Enter swallowed; #541 had to teach six E2E call sites to
+  wait for the row to stop being `aria-disabled`, on small fixture documents.
+  Queueing the pending selection and applying it when reachability lands would
+  keep both the rule and the keystroke.
 - **agent-tool-call-path** (P1, `draft` 2026-08-11) — host overhead dominates
   agent Turns. `MemoryExtension.filterProjection` decodes the entire thread
   history and builds the memory graph 2-3× on every `getProjection()` (1-3 per

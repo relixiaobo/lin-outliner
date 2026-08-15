@@ -259,6 +259,11 @@
   pointer-events: none;
 }
 
+/* Keep freshly typed text visible while the syntax layer catches up. */
+.code-block[data-highlight-pending] .code-block-highlight {
+  visibility: hidden;
+}
+
 .code-block-highlight pre.shiki {
   color: var(--text-strong);
   padding-right: calc(var(--code-block-content-inset) + var(--control-size-xl));
@@ -280,6 +285,10 @@
   color: transparent;
   caret-color: var(--text-strong);
   outline: none;
+}
+
+.code-block[data-highlight-pending] .code-block-textarea {
+  color: var(--text-strong);
 }
 
 .code-block-textarea:focus-visible {

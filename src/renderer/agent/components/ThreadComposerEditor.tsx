@@ -15,6 +15,10 @@ import { EditorView } from 'prosemirror-view';
 import { sanitizeFileReferenceRef } from '../../../core/referenceMarkup';
 import type { AgentSlashCommandView, NodeId } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
+import {
+  type DocumentIndexStore,
+  useDocumentIndexSnapshot,
+} from '../../state/documentIndexStore';
 import { nextMenuIndex, clampMenuIndex } from '../../ui/interactions/menuNavigation';
 import { resolveEditorTriggerText } from '../../ui/interactions/rowInteractions';
 import { referenceItems } from '../../ui/outliner/ReferenceSelector';
@@ -115,7 +119,7 @@ interface ThreadComposerEditorProps {
   allowSlashCommands?: boolean;
   currentNodeId: NodeId | null;
   disabled?: boolean;
-  index: DocumentIndex;
+  indexStore: DocumentIndexStore;
   initialSnapshot?: ThreadComposerEditorSnapshot | null;
   initialText?: string;
   isStreaming: boolean;
@@ -312,6 +316,11 @@ export const ThreadComposerEditor = forwardRef<ThreadComposerEditorHandle, Threa
       status: 'idle' | 'loading' | 'ready' | 'error';
     }>({ error: null, query: '', results: [], status: 'idle' });
     const [filePreviewAnchor, setFilePreviewAnchor] = useState<FilePreviewAnchorRect | null>(null);
+    const mentionIndex = useDocumentIndexSnapshot(
+      props.indexStore,
+      null,
+      trigger?.mode === 'mention',
+    );
     // The editor view is created once (empty-deps effect); read the latest aria-label
     // through a ref so a language switch is picked up on the next view creation
     // without recreating the editor (and losing in-progress draft state) on each render.
@@ -328,7 +337,7 @@ export const ThreadComposerEditor = forwardRef<ThreadComposerEditorHandle, Threa
           allowFileReferences,
           allowNodeReferences,
           currentNodeId: props.currentNodeId,
-          index: props.index,
+          index: mentionIndex,
           localFileSearch,
           query: trigger.query,
           recentLocalFiles: props.recentLocalFiles,
@@ -339,7 +348,7 @@ export const ThreadComposerEditor = forwardRef<ThreadComposerEditorHandle, Threa
         allowNodeReferences,
         localFileSearch,
         props.currentNodeId,
-        props.index,
+        mentionIndex,
         props.recentLocalFiles,
         trigger?.mode,
         trigger?.query,
@@ -404,7 +413,7 @@ export const ThreadComposerEditor = forwardRef<ThreadComposerEditorHandle, Threa
         const range = { from: view.state.selection.from, to: view.state.selection.to };
         replaceWithNodeReference(view, range, {
           ...ref,
-          color: inlineReferenceTextColor(ref.nodeId, propsRef.current.index) ?? '',
+          color: inlineReferenceTextColor(ref.nodeId, propsRef.current.indexStore.getCurrent()) ?? '',
         });
         syncDraft(view);
         updateTrigger(view);
@@ -733,7 +742,7 @@ export const ThreadComposerEditor = forwardRef<ThreadComposerEditorHandle, Threa
               )
             : (
                 <MentionMenu
-                  index={props.index}
+                  index={mentionIndex}
                   items={mentionItems}
                   labels={{
                     couldNotSearchFiles: t.agent.composer.couldNotSearchFiles,
@@ -749,10 +758,11 @@ export const ThreadComposerEditor = forwardRef<ThreadComposerEditorHandle, Threa
                     const view = viewRef.current;
                     if (!view) return;
                     if (item.kind === 'node') {
+                      const currentIndex = props.indexStore.getCurrent();
                       replaceWithNodeReference(view, trigger, {
                         nodeId: item.id,
                         title: item.label,
-                        color: inlineReferenceTextColor(item.id, props.index) ?? '',
+                        color: inlineReferenceTextColor(item.id, currentIndex) ?? '',
                       });
                     } else {
                       const ref = await propsRef.current.onLocalFileSelect(item.file);
