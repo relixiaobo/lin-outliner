@@ -475,7 +475,7 @@ export function ThreadDock({
           // opened; covering keeps both, and `inert` keeps focus out of what is
           // no longer on screen.
           <div className="thread-dock-body">
-            <div className="thread-dock-conversation" inert={openAgentId !== null ? true : undefined}>
+            <div className={`thread-dock-conversation${openAgentId === null ? '' : ' is-covered'}`}>
             <ThreadView
               composerEnabled={thread.parentThreadId === null && thread.threadSource === 'user'}
               composerFocusToken={composerFocusToken}

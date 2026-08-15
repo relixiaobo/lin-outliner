@@ -3170,10 +3170,23 @@
   flex-direction: column;
 }
 
+/* Covered, not unmounted and not merely hidden behind something opaque:
+   `visibility` keeps the box, its measured layout, and its scroll position
+   while taking it out of paint, hit-testing, and the accessibility tree. That
+   is what lets the pushed level carry no background of its own. */
+.thread-dock-conversation.is-covered {
+  visibility: hidden;
+}
+
 .thread-dock-body {
   position: relative;
 }
 
+/* No fill of its own. The deck paints ONE surface and everything inside it is
+   transparent, so a background here would meet the header's in a seam — and on
+   a translucent window material it would kill the deck's own translucency for
+   the height of this view. It needs to hide nothing: the conversation beneath
+   is not painted while it is covered. */
 .thread-agent-detail {
   position: absolute;
   z-index: var(--z-raised);
@@ -3181,9 +3194,8 @@
   display: flex;
   min-height: 0;
   flex-direction: column;
-  background: var(--bg-window);
   /* Scrolling lives in the transcript inside; the pushed view itself never
-     scrolls, so the header and the composer stay where the reader left them. */
+     scrolls, so the composer stays where the reader left it. */
   overflow: hidden;
 }
 
