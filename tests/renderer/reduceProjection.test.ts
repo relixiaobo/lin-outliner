@@ -6,6 +6,7 @@ import {
   type UiState,
 } from '../../src/renderer/state/document';
 import { hiddenFieldKey } from '../../src/renderer/state/outlinerRows';
+import { fieldSlotId } from '../../src/core/fieldSlots';
 
 function node(id: string, patch: Partial<NodeProjection> = {}): NodeProjection {
   return {
@@ -345,6 +346,92 @@ describe('reduceProjection — revision discipline', () => {
 });
 
 describe('reduceUiStateForProjectionUpdate', () => {
+  test('prunes a virtual field slot when a tag change removes it without removing nodes', () => {
+    const slotId = fieldSlotId('owner', 'field');
+    const previous = reduceProjection(null, full(1, [
+      node('root', { children: ['owner', 'schema'] }),
+      node('owner', { parentId: 'root', tags: ['tag'] }),
+      node('schema', { parentId: 'root', children: ['tag', 'field'] }),
+      node('tag', { parentId: 'schema', type: 'tagDef', children: ['template-entry'] }),
+      node('template-entry', { parentId: 'tag', type: 'fieldEntry', fieldDefId: 'field' }),
+      node('field', { parentId: 'schema', type: 'fieldDef' }),
+    ]));
+    if (!previous) throw new Error('field-slot seed must produce a state');
+    const target = { nodeId: slotId, parentId: 'owner', panelId: 'panel-1', surface: 'field-name' as const };
+    const state = uiState({
+      focusedId: slotId,
+      focusedParentId: 'owner',
+      focusedPanelId: 'panel-1',
+      focusSurface: 'field-name',
+      selectedId: slotId,
+      selectedIds: new Set([slotId]),
+      selectionAnchorId: slotId,
+      selectionRootId: 'root',
+      selectionSource: 'global',
+      focusRequest: { target, placement: { kind: 'end' } },
+      pendingInputChar: { target, char: 'x' },
+      trailingDraftPlacement: { parentId: slotId, afterId: null, panelId: 'panel-1' },
+      expanded: new Set([slotId]),
+      expandedHiddenFields: new Set([hiddenFieldKey('owner', slotId)]),
+      batchTagSelectorOpen: true,
+    });
+
+    const next = applyAcceptedUiUpdate(state, previous, {
+      kind: 'delta',
+      revision: 2,
+      todayId: 'root',
+      changedNodes: [node('owner', { parentId: 'root', tags: [] })],
+      removedIds: [],
+    });
+
+    expect(next.focusedId).toBeNull();
+    expect(next.focusRequest).toBeNull();
+    expect(next.pendingInputChar).toBeNull();
+    expect(next.trailingDraftPlacement).toBeNull();
+    expect(next.selectedId).toBeNull();
+    expect(next.selectedIds).toEqual(new Set());
+    expect(next.selectionAnchorId).toBeNull();
+    expect(next.selectionRootId).toBe('root');
+    expect(next.selectionSource).toBeNull();
+    expect(next.expanded).toEqual(new Set());
+    expect(next.expandedHiddenFields).toEqual(new Set());
+    expect(next.batchTagSelectorOpen).toBe(false);
+  });
+
+  test('keeps a table-only field edit target that was never a projected slot', () => {
+    const slotId = fieldSlotId('owner', 'field');
+    const previous = reduceProjection(null, full(1, [
+      node('root', { children: ['owner', 'other', 'schema'] }),
+      node('owner', { parentId: 'root' }),
+      node('other', { parentId: 'root' }),
+      node('schema', { parentId: 'root', children: ['field'] }),
+      node('field', { parentId: 'schema', type: 'fieldDef' }),
+    ]));
+    if (!previous) throw new Error('table-slot seed must produce a state');
+    const target = { nodeId: slotId, parentId: slotId, panelId: 'panel-1', surface: 'trailing' as const };
+    const state = uiState({
+      focusedId: slotId,
+      focusedParentId: slotId,
+      focusedPanelId: 'panel-1',
+      focusSurface: 'trailing',
+      focusRequest: { target, placement: { kind: 'end' } },
+      pendingInputChar: { target, char: 'x' },
+    });
+
+    const next = applyAcceptedUiUpdate(state, previous, {
+      kind: 'delta',
+      revision: 2,
+      todayId: 'root',
+      changedNodes: [node('other', {
+        parentId: 'root',
+        content: { text: 'Changed', marks: [], inlineRefs: [] },
+      })],
+      removedIds: [],
+    });
+
+    expect(next).toBe(state);
+  });
+
   test('prunes removed focus, selection, expansion, and deferred state at the delta boundary', () => {
     const previous = seed(1);
     const focusTarget = { nodeId: 'c', parentId: 'b', panelId: 'panel-1', surface: 'row' as const };

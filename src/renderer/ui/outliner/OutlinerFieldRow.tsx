@@ -24,6 +24,7 @@ import {
   cursorOffset as cursorAtOffset,
   focusTarget,
   focusTargetMatches,
+  outlinerNavigationFocusTarget,
   rowFocusTarget,
   requestFocusState,
   selectFocusState,
@@ -62,10 +63,11 @@ import { OutlinerRowShell } from './OutlinerRowShell';
 import { RowLeading } from './RowLeading';
 import { useOutlinerRowInteraction } from './useOutlinerRowInteraction';
 import { useT } from '../../i18n/I18nProvider';
+import type { NodeFieldSlot } from '../../../core/fieldSlots';
 
 interface OutlinerFieldRowProps {
   panelId: string;
-  entryId: NodeId;
+  slot: NodeFieldSlot;
   parentId: NodeId;
   rootId: NodeId;
   selectionRootId: NodeId;
@@ -87,13 +89,12 @@ interface OutlinerFieldRowProps {
 }
 
 function resolveFieldOwnerColor(
-  entry: NodeProjection,
+  slot: NodeFieldSlot,
   field: NodeProjection | undefined,
   byId: Map<NodeId, NodeProjection>,
 ): string | undefined {
   const fieldSource = field ? projectFieldConfig(byId, field).sourceSupertag : undefined;
-  const entryFieldDefId = entry.type === 'fieldEntry' ? entry.fieldDefId : undefined;
-  const lookupIds = [entry.templateId, field?.id ?? entryFieldDefId, fieldSource]
+  const lookupIds = [slot.templateEntryId, slot.sourceTagId, field?.id ?? slot.fieldDefId, fieldSource]
     .filter((id): id is NodeId => Boolean(id));
 
   for (const lookupId of lookupIds) {
@@ -115,13 +116,15 @@ function resolveFieldOwnerColor(
 export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
   const t = useT();
   const tf = t.outliner.field;
-  const entry = props.index.byId.get(props.entryId);
-  const entryFieldDefId = entry?.type === 'fieldEntry' ? entry.fieldDefId : undefined;
-  const field = entryFieldDefId ? props.index.byId.get(entryFieldDefId) : undefined;
+  const slot = props.slot;
+  const rowId = slot.id;
+  const entry = slot.entryId ? props.index.byId.get(slot.entryId) : undefined;
+  const entryId = entry?.type === 'fieldEntry' ? entry.id : undefined;
+  const field = props.index.byId.get(slot.fieldDefId);
   const rowChildIds = outlinerChildren(entry, props.index.byId);
   const primaryValueId = rowChildIds[0];
   const row = useOutlinerRowInteraction({
-    rowId: props.entryId,
+    rowId,
     parentId: props.parentId,
     panelId: props.panelId,
     rootId: props.rootId,
@@ -133,7 +136,7 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
     uiRef: props.uiRef,
     setUi: props.setUi,
     run: props.run,
-    locked: entry?.locked ?? true,
+    locked: slot.source === 'tag' || (entry?.locked ?? true),
     dragId: props.dragId,
     setDragId: props.setDragId,
   });
@@ -142,8 +145,8 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
   const nameInputRef = useRef<HTMLInputElement>(null);
   const nameSelectAllRowsReadyRef = useRef(false);
   const descriptionReturnPlacementRef = useRef(cursorEnd());
-  const fieldNameFocusTarget = focusTarget(props.entryId, props.parentId, props.panelId, 'field-name');
-  const descriptionFocusTarget = focusTarget(props.entryId, props.parentId, props.panelId, 'description');
+  const fieldNameFocusTarget = focusTarget(rowId, props.parentId, props.panelId, 'field-name');
+  const descriptionFocusTarget = focusTarget(rowId, props.parentId, props.panelId, 'description');
 
   useEffect(() => {
     setNameDraft(field?.content.text ?? '');
@@ -189,18 +192,18 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
 
   // A built-in system field (`sys:*`) has no backing def node: its name is a fixed
   // label and its value is computed read-only from the owner (this entry's parent).
-  const systemFieldId = isSystemFieldId(entryFieldDefId) ? entryFieldDefId : undefined;
+  const systemFieldId = isSystemFieldId(slot.fieldDefId) ? slot.fieldDefId : undefined;
 
   // The reuse popover's state + (memoized) candidate scan live in the hook; the row
   // just wires the name input's focus/change/blur and Space to its handlers.
   const reuse = useFieldNameReuse({
     byId: props.index.byId,
-    entryId: props.entryId,
+    entryId: entryId ?? rowId,
     parentId: props.parentId,
     draftDefId: field?.id,
     trashId: props.index.projection.trashId,
     nameDraft,
-    disabled: Boolean(systemFieldId),
+    disabled: Boolean(systemFieldId) || slot.source === 'tag',
   });
 
   // Each read-only system field renders by its real type, not as bare text — the
@@ -208,17 +211,16 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
   // links, the Done checkbox). Memoized so the row's focus/selection/popover
   // re-renders don't repeat the owner scan (References is an O(N) backlink walk).
   const systemDisplay = useMemo<SystemFieldDisplay | null>(() => {
-    if (!systemFieldId || !entry) return null;
-    const owner = props.index.byId.get(props.parentId) ?? entry;
+    if (!systemFieldId) return null;
+    const owner = props.index.byId.get(props.parentId);
+    if (!owner) return null;
     return systemFieldDisplay(owner, systemFieldId, props.index.byId);
   }, [systemFieldId, entry, props.index.byId, props.parentId]);
 
-  if (!entry) return null;
-
   const fieldConfig = field ? projectFieldConfig(props.index.byId, field) : undefined;
   const fieldType = fieldConfig?.fieldType ?? 'plain';
-  const drillDownId = field?.id ?? props.entryId;
-  const fieldOwnerColor = resolveFieldOwnerColor(entry, field, props.index.byId);
+  const drillDownId = field?.id ?? rowId;
+  const fieldOwnerColor = resolveFieldOwnerColor(slot, field, props.index.byId);
 
   const systemFieldLabel = systemFieldId ? getSystemFieldLabel(systemFieldId) ?? '' : '';
 
@@ -226,7 +228,8 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
   // accepts as read-only), so reuse is a single relink either way.
   const onReuseSelect = (candidate: FieldReuseCandidate) => {
     reuse.dismiss();
-    void props.run(() => api.reuseFieldDefinition(props.entryId, candidate.id));
+    if (!entryId || slot.source === 'tag') return;
+    void props.run(() => api.reuseFieldDefinition(entryId, candidate.id));
   };
 
   const commitName = async (nextName = nameDraft) => {
@@ -254,9 +257,9 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
     props.setUi((prev) => ({
       ...clearFocusState(prev),
       focusedId: null,
-      selectedId: props.entryId,
-      selectedIds: new Set([props.entryId]),
-      selectionAnchorId: props.entryId,
+      selectedId: rowId,
+      selectedIds: new Set([rowId]),
+      selectionAnchorId: rowId,
       selectionRootId: props.selectionRootId,
       selectionSource: 'global',
     }));
@@ -273,6 +276,7 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
   };
 
   const deleteFieldRowFromNameStart = async () => {
+    if (!entryId || slot.source === 'tag') return;
     await commitDrafts();
     const selectableRows = buildSelectableRows(props.selectionRootId, props.index.byId, {
       expanded: props.uiRef.current.expanded,
@@ -280,12 +284,12 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
     });
     const rows = selectableRows.map((selectableRow) => selectableRow.id);
     const rowsById = selectableRowMap(selectableRows);
-    const currentIndex = rows.indexOf(props.entryId);
+    const currentIndex = rows.indexOf(rowId);
     const deletedWithEntry = (id: NodeId) => {
-      if (id === props.entryId) return true;
+      if (id === rowId || id === entryId) return true;
       let parentId = props.index.byId.get(id)?.parentId ?? null;
       while (parentId) {
-        if (parentId === props.entryId) return true;
+        if (parentId === entryId) return true;
         parentId = props.index.byId.get(parentId)?.parentId ?? null;
       }
       return false;
@@ -297,13 +301,17 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
       ? rows.slice(currentIndex + 1).find((id) => !deletedWithEntry(id)) ?? null
       : null;
     const rowTargetForId = (id: NodeId) => {
-      const parentId = rowsById.get(id)?.parentId ?? props.index.byId.get(id)?.parentId ?? null;
-      return props.index.byId.get(id)?.type === 'fieldEntry'
-        ? focusTarget(id, parentId, props.panelId, 'field-name')
-        : rowFocusTarget(id, parentId, props.panelId);
+      const selectableRow = rowsById.get(id);
+      const parentId = selectableRow?.parentId ?? props.index.byId.get(id)?.parentId ?? null;
+      return outlinerNavigationFocusTarget(
+        id,
+        parentId,
+        props.panelId,
+        selectableRow?.kind ?? 'content',
+      );
     };
     await props.run(() => runSelectionDelete({
-      ids: [props.entryId],
+      ids: [entryId],
       panelRootId: props.selectionRootId,
       byId: props.index.byId,
       rowMap: rowsById,
@@ -332,12 +340,13 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
   };
 
   const shiftDepth = async (shiftKey: boolean, cursorOffset: number) => {
+    if (!entryId || slot.source === 'tag') return;
     await commitDrafts();
-    const fieldNameTargetAfterStructureChange = focusTarget(props.entryId, null, props.panelId, 'field-name');
+    const fieldNameTargetAfterStructureChange = focusTarget(entryId, null, props.panelId, 'field-name');
     if (!shiftKey) {
-      const targetParentId = indentTargetParentId(props.entryId, props.index.byId);
+      const targetParentId = indentTargetParentId(entryId, props.index.byId);
       if (!targetParentId) return;
-      await props.run(() => api.indentNode(props.entryId), {
+      await props.run(() => api.indentNode(entryId), {
         applyFocus: false,
         beforeApply: () => {
           animateOutlinerRowMovementAfterNextCommit();
@@ -354,9 +363,9 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
       });
       return;
     }
-    const emptiedParentIds = parentIdsEmptiedByOutdent([props.entryId], props.index.byId, props.rootId);
+    const emptiedParentIds = parentIdsEmptiedByOutdent([entryId], props.index.byId, props.rootId);
     if (props.parentId === props.rootId) return;
-    await props.run(() => api.outdentNode(props.entryId), {
+    await props.run(() => api.outdentNode(entryId), {
       applyFocus: false,
       beforeApply: () => {
         animateOutlinerRowMovementAfterNextCommit();
@@ -379,13 +388,13 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
       if (primaryValueId) {
         return requestFocusState(
           prev,
-          rowFocusTarget(primaryValueId, props.entryId, props.panelId),
+          rowFocusTarget(primaryValueId, entryId ?? rowId, props.panelId),
           cursorEnd(),
         );
       }
       return requestFocusState(
         prev,
-        focusTarget(props.entryId, props.entryId, props.panelId, 'trailing'),
+        focusTarget(entryId ?? rowId, entryId ?? rowId, props.panelId, 'trailing'),
         cursorEnd(),
       );
     });
@@ -393,8 +402,12 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
 
   const createSiblingAfterField = async () => {
     await commitName();
+    if (!entryId || slot.source === 'tag') {
+      focusFieldValueNode();
+      return;
+    }
     const parent = props.index.byId.get(props.parentId);
-    const currentIndex = parent?.children.indexOf(props.entryId) ?? -1;
+    const currentIndex = parent?.children.indexOf(entryId) ?? -1;
     const insertIndex = currentIndex >= 0 ? currentIndex + 1 : null;
     await props.run(() => api.createNode(props.parentId, insertIndex, ''));
   };
@@ -420,7 +433,9 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
       return;
     }
     if (
-      event.ctrlKey
+      slot.source === 'own'
+      && Boolean(entry)
+      && event.ctrlKey
       && !event.metaKey
       && !event.altKey
       && !event.shiftKey
@@ -432,7 +447,7 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
         : 0;
       descriptionReturnPlacementRef.current = cursorAtOffset(cursor);
       props.setUi((prev) => requestFocusState(
-        { ...prev, editingDescriptionId: props.entryId },
+        { ...prev, editingDescriptionId: rowId },
         descriptionFocusTarget,
         cursorEnd(),
       ));
@@ -466,7 +481,9 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
     }
     if (mod && event.key === 'Enter') {
       event.preventDefault();
-      void commitDrafts().then(() => props.run(() => api.cycleDoneState(props.entryId)));
+      if (entryId && slot.source === 'own') {
+        void commitDrafts().then(() => props.run(() => api.cycleDoneState(entryId)));
+      }
       return;
     }
     if (event.key === 'Escape') {
@@ -525,9 +542,9 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
     props.setUi((prev) => ({
       ...clearFocusState(prev),
       focusedId: null,
-      selectedId: props.entryId,
-      selectedIds: prev.selectedIds.has(props.entryId) ? new Set(prev.selectedIds) : new Set([props.entryId]),
-      selectionAnchorId: prev.selectedIds.has(props.entryId) ? prev.selectionAnchorId ?? props.entryId : props.entryId,
+      selectedId: rowId,
+      selectedIds: prev.selectedIds.has(rowId) ? new Set(prev.selectedIds) : new Set([rowId]),
+      selectionAnchorId: prev.selectedIds.has(rowId) ? prev.selectionAnchorId ?? rowId : rowId,
       selectionRootId: props.selectionRootId,
       selectionSource: 'global',
     }));
@@ -537,8 +554,8 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
   const nameControl = (
     <TextInputControl
       ref={nameInputRef}
-      className={`field-name-input ${entry.completedAt ? 'done' : ''} ${systemFieldId ? 'system' : ''}`}
-      data-focus-node-id={props.entryId}
+      className={`field-name-input ${entry?.completedAt ? 'done' : ''} ${systemFieldId ? 'system' : ''}`}
+      data-focus-node-id={rowId}
       label={tf.fieldNameLabel}
       value={systemFieldId ? systemFieldLabel : nameDraft}
       readOnly={Boolean(systemFieldId)}
@@ -589,7 +606,7 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
       // field section in docs/spec/ui-behavior.md.
       <SystemReferenceValues
         panelId={props.panelId}
-        entryId={props.entryId}
+        entryId={entryId ?? rowId}
         ownerId={props.parentId}
         systemFieldId={systemFieldId}
         selectionRootId={props.selectionRootId}
@@ -618,7 +635,8 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
     <div className="field-value-cell">
       <FieldValueOutliner
         panelId={props.panelId}
-        entryId={props.entryId}
+        slot={slot}
+        ownerId={props.parentId}
         selectionRootId={props.selectionRootId}
         onRoot={props.onRoot}
         index={props.index}
@@ -638,16 +656,16 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
     </div>
   );
 
-  const description = (
+  const description = entry && slot.source === 'own' ? (
     <NodeDescription
       node={entry}
-      targetId={props.entryId}
-      editing={props.ui.editingDescriptionId === props.entryId}
+      targetId={entry.id}
+      editing={props.ui.editingDescriptionId === rowId}
       run={props.run}
       onEditingChange={(editing) => {
         props.setUi((prev) => ({
           ...prev,
-          editingDescriptionId: editing ? props.entryId : null,
+          editingDescriptionId: editing ? rowId : null,
         }));
       }}
       focusTarget={descriptionFocusTarget}
@@ -670,7 +688,7 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
         props.setUi((prev) => clearPendingInputState(prev, input));
       }}
     />
-  );
+  ) : null;
 
   return (
     <OutlinerRowShell
@@ -685,7 +703,7 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
         props.isLastInFieldGroup ? 'field-group-end' : '',
       ].filter(Boolean).join(' '))}
       onSelectFromPointer={row.selectFromPointer}
-      onContextMenu={openContextMenu}
+      onContextMenu={slot.source === 'own' && entry ? openContextMenu : undefined}
       rowContent={(
         <>
         <RowLeading
@@ -705,13 +723,13 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
         </>
       )}
     >
-      {contextMenu && (
+      {contextMenu && entry && slot.source === 'own' && (
         <NodeContextMenu
           x={contextMenu.x}
           y={contextMenu.y}
           node={entry}
-          targetId={props.entryId}
-          visualRowId={props.entryId}
+          targetId={entry.id}
+          visualRowId={rowId}
           viewToolbarVisibleInRow={false}
           openId={drillDownId}
           panelId={props.panelId}
@@ -725,7 +743,7 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
           onEditDescription={() => {
             descriptionReturnPlacementRef.current = cursorEnd();
             props.setUi((prev) => requestFocusState(
-              { ...prev, editingDescriptionId: props.entryId },
+              { ...prev, editingDescriptionId: rowId },
               descriptionFocusTarget,
               cursorEnd(),
             ));

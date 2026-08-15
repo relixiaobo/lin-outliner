@@ -907,6 +907,23 @@ describe('Codex Memory contracts', () => {
     expect(index.mayChangeMemory('apply_node_text_patch', { nodeId: 'belief:1' }, new Set())).toBe(false);
   });
 
+  test('classifies field slot writes by mutated nodes rather than reference targets', () => {
+    const index = new MemoryMutationIndex(memoryProjection());
+
+    expect(index.mayChangeMemory('update_field_slot', {
+      ownerId: 'ordinary:1',
+      fieldDefId: 'field:ordinary',
+      kind: 'appendReference',
+      targetId: 'belief:1',
+    }, new Set())).toBe(false);
+    expect(index.mayChangeMemory('update_field_slot', {
+      ownerId: 'belief:1',
+      fieldDefId: 'field:ordinary',
+      kind: 'appendReference',
+      targetId: 'ordinary:1',
+    }, new Set())).toBe(true);
+  });
+
   test('degrades cyclic ancestor state without hanging canonical classification', () => {
     const projection = memoryProjection();
     const index = new MemoryMutationIndex(projection);

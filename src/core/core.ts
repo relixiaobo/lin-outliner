@@ -48,6 +48,7 @@ import {
   validateFieldValuesForType,
   type FieldResolutionNode,
 } from './fieldResolution';
+import { nodeFieldSlots } from './fieldSlots';
 import type { TextSearchIndex } from './textSearchIndex';
 import {
   CONFIG_SCHEMA,
@@ -177,6 +178,50 @@ interface TemplateFieldRef {
   templateOriginId: NodeId;
 }
 
+export type FieldSlotMutation =
+  | { kind: 'appendText'; text: string; id?: NodeId; collect?: boolean; entryId?: NodeId }
+  | { kind: 'appendReference'; targetId: NodeId; id?: NodeId; entryId?: NodeId }
+  | { kind: 'selectOption'; optionNodeId: NodeId; id?: NodeId; entryId?: NodeId }
+  | {
+      kind: 'appendNodes';
+      nodes: CreateNodeTree[];
+      firstTagIds?: NodeId[];
+      id?: NodeId;
+      entryId?: NodeId;
+    }
+  | {
+      kind: 'appendField';
+      name: string;
+      fieldType: FieldType;
+      id?: NodeId;
+      entryId?: NodeId;
+    }
+  | {
+      kind: 'appendImage';
+      assetId?: string;
+      mediaUrl?: string;
+      width?: number | null;
+      height?: number | null;
+      alt?: string | null;
+      name?: string | null;
+      id?: NodeId;
+      entryId?: NodeId;
+    }
+  | {
+      kind: 'appendAttachment';
+      assetId?: string | null;
+      mimeType?: string | null;
+      originalFilename?: string | null;
+      fileSize?: number | null;
+      thumbnailAssetId?: string | null;
+      pdfPageCount?: number | null;
+      audioDurationMs?: number | null;
+      videoDurationMs?: number | null;
+      id?: NodeId;
+      entryId?: NodeId;
+    }
+  | { kind: 'commit'; entryId?: NodeId };
+
 type FieldEntryIdsByDefinition = ReadonlyMap<NodeId, readonly NodeId[]>;
 
 interface TreeMaterializeContext {
@@ -187,7 +232,14 @@ interface TreeMaterializeContext {
   fieldTypeById: Map<NodeId, FieldType>;
   activeTagIds: Set<NodeId>;
   childSupertagByTagId: Map<NodeId, NodeId | null>;
+  tagChainByTagId: Map<NodeId, readonly NodeId[]>;
+  templateFieldDefIdsByTagId: Map<NodeId, readonly NodeId[]>;
 }
+
+type ProjectedFieldDefinitionResolution =
+  | { kind: 'none' }
+  | { kind: 'ambiguous' }
+  | { kind: 'resolved'; fieldDefId: NodeId };
 
 interface TreeYieldContext {
   created: number;
@@ -1419,7 +1471,7 @@ export class Core {
         created.tags = copiedTags;
       });
       if (targetParentId === parentId) {
-        for (const tagId of copiedTags) this.instantiateTagFieldsDirect(newId, tagId, false);
+        for (const tagId of copiedTags) this.materializeTagAutoInitFieldsDirect(newId, tagId);
       } else {
         this.applyChildTagsDirect(targetParentId, newId);
       }
@@ -1999,7 +2051,7 @@ export class Core {
     for (const mapping of getDoneStateMappings(this.snapshot(), requiredNode(this.snapshot(), nodeId))) {
       const optionId = isDone ? mapping.checkedOptionIds[0] : mapping.uncheckedOptionIds[0];
       if (!optionId) continue;
-      const entryId = this.ensureFieldEntryWithTemplateDirect(nodeId, mapping.fieldDefId, undefined, false);
+      const entryId = this.ensureFieldEntryDirect(nodeId, mapping.fieldDefId);
       // Done-state mapping is a controlled binary state-sync (part of the checkbox
       // mechanism): replace the prior state option rather than appending. Free
       // field-value editing always appends — this is the checkbox exception.
@@ -2131,11 +2183,9 @@ export class Core {
       const state = this.snapshot();
       ensureNodeEditable(state, nodeId);
       const node = clone(requiredNode(state, nodeId));
-      const hadTag = node.tags.includes(tagId);
       node.tags = node.tags.filter((id) => id !== tagId);
       node.updatedAt = nowMs();
       this.loro.writeNode(node);
-      if (hadTag) this.cleanupFieldsFromRemovedTagDirect(nodeId, tagId);
       return focus(nodeId);
     });
   }
@@ -2300,14 +2350,8 @@ export class Core {
       ensureParentMutable(state, tagId);
       ensureTagDefinition(state, tagId);
       assertOwnerDoesNotHaveFieldName(state, tagId, normalized);
-      for (const taggedNodeId of findNodesWithTag(state, tagId)) {
-        assertOwnerDoesNotHaveFieldName(state, taggedNodeId, normalized);
-      }
       const fieldDefId = this.insertFieldDefNodeDirect(SCHEMA_ID, normalized, fieldType);
       const templateEntryId = this.insertFieldEntryNodeDirect(tagId, undefined, fieldDefId);
-      for (const taggedNodeId of findNodesWithTag(state, tagId)) {
-        this.ensureFieldEntryWithTemplateDirect(taggedNodeId, fieldDefId, templateEntryId, false);
-      }
       return focus(templateEntryId);
     });
   }
@@ -2708,6 +2752,168 @@ export class Core {
     return id;
   }
 
+  /**
+   * Mutate a field slot by definition identity. This is the only path that may
+   * materialize a field selected by a tag, table, agent, or paste operation: it
+   * creates the backing entry together with its first value and drops a tag
+   * entry again when a commit leaves it empty. User-authored field creation
+   * keeps its separate name-collision guard.
+   */
+  updateFieldSlot(ownerId: string, fieldDefId: string, mutation: FieldSlotMutation): CommandOutcome {
+    return this.mutate(() => {
+      const state = this.snapshot();
+      ensureParentMutable(state, ownerId);
+      ensureFieldDefinition(state, fieldDefId);
+      if (mutation.entryId) {
+        const requestedEntry = state.nodes[mutation.entryId];
+        if (
+          requestedEntry?.type !== 'fieldEntry'
+          || requestedEntry.parentId !== ownerId
+          || requestedEntry.fieldDefId !== fieldDefId
+          || isInTrash(state, requestedEntry.id)
+        ) {
+          throw CoreError.invalidOperation('field slot entry does not belong to the requested owner and definition');
+        }
+      }
+      const slot = nodeFieldSlots(state, ownerId).find((candidate) => (
+        mutation.entryId
+          ? candidate.entryId === mutation.entryId
+          : candidate.fieldDefId === fieldDefId
+      ));
+
+      if (mutation.kind === 'commit') {
+        if (!slot) return focus(ownerId);
+        const survivingEntryId = this.commitFieldSlotDirect(ownerId, fieldDefId, slot.entryId);
+        return focus(survivingEntryId ?? ownerId);
+      }
+
+      if (mutation.kind === 'appendNodes') {
+        if (mutation.nodes.length === 0) return focus(slot?.entryId ?? ownerId);
+        assertCreateNodeTreeReferencesAvailable(state, mutation.nodes);
+        for (const tagId of mutation.firstTagIds ?? []) ensureTagDefinition(state, tagId);
+        const valueId = this.resolveFieldValueId(state, mutation.id, 'value');
+        const entryId = slot?.entryId ?? this.insertFieldEntryNodeDirect(ownerId, undefined, fieldDefId);
+        const context = this.createTreeMaterializeContext(state);
+        const [first, ...rest] = mutation.nodes;
+        this.insertNodeTreeDirect(entryId, first!, undefined, context, valueId);
+        for (const tagId of mutation.firstTagIds ?? []) this.applyTagNoHistoryDirect(valueId, tagId);
+        for (const tree of rest) this.insertNodeTreeDirect(entryId, tree, undefined, context);
+        return focus(entryId);
+      }
+
+      if (mutation.kind === 'appendField') {
+        const normalized = mutation.name.trim();
+        const nestedEntryId = this.resolveFieldValueId(state, mutation.id, 'field_value');
+        if (slot?.entryId) assertOwnerDoesNotHaveFieldName(state, slot.entryId, normalized);
+        const entryId = slot?.entryId ?? this.insertFieldEntryNodeDirect(ownerId, undefined, fieldDefId);
+        const nestedFieldDefId = this.insertFieldDefNodeDirect(SCHEMA_ID, normalized, mutation.fieldType);
+        this.insertFieldEntryNodeDirect(entryId, undefined, nestedFieldDefId, nestedEntryId);
+        return focus(nestedEntryId, {
+          parentId: entryId,
+          surface: 'field-name',
+          placement: { kind: 'all' },
+        });
+      }
+
+      if (mutation.kind === 'appendImage') {
+        const source = resolveImageSource(mutation);
+        const displayName = mutation.name?.trim() ?? '';
+        const valueId = this.resolveFieldValueId(state, mutation.id, 'image_value');
+        const entryId = slot?.entryId ?? this.insertFieldEntryNodeDirect(ownerId, undefined, fieldDefId);
+        this.loro.createNodeWithId<ImageNode>(valueId, entryId, undefined, 'image', (node) => {
+          node.content = plainText(displayName);
+          if (source.assetId) node.assetId = source.assetId;
+          else node.mediaUrl = source.mediaUrl;
+          if (mutation.width != null) node.imageWidth = mutation.width;
+          if (mutation.height != null) node.imageHeight = mutation.height;
+          const alt = mutation.alt?.trim();
+          if (alt) node.mediaAlt = alt;
+        });
+        this.applyChildTagsDirect(entryId, valueId);
+        return focus(entryId);
+      }
+
+      if (mutation.kind === 'appendAttachment') {
+        const attachment = normalizeAttachmentOptions(mutation);
+        const valueId = this.resolveFieldValueId(state, mutation.id, 'attachment_value');
+        const entryId = slot?.entryId ?? this.insertFieldEntryNodeDirect(ownerId, undefined, fieldDefId);
+        this.loro.createNodeWithId<AttachmentNode>(valueId, entryId, undefined, 'attachment', (node) => {
+          node.content = plainText(attachment.originalFilename);
+          node.assetId = attachment.assetId;
+          node.mimeType = attachment.mimeType;
+          node.originalFilename = attachment.originalFilename;
+          node.fileSize = attachment.fileSize;
+          if (attachment.thumbnailAssetId) node.thumbnailAssetId = attachment.thumbnailAssetId;
+          if (attachment.pdfPageCount !== undefined) node.pdfPageCount = attachment.pdfPageCount;
+          if (attachment.audioDurationMs !== undefined) node.audioDurationMs = attachment.audioDurationMs;
+          if (attachment.videoDurationMs !== undefined) node.videoDurationMs = attachment.videoDurationMs;
+        });
+        this.applyChildTagsDirect(entryId, valueId);
+        return focus(entryId);
+      }
+
+      if (mutation.kind === 'appendText') {
+        const normalized = mutation.text.trim();
+        if (!normalized) {
+          if (!slot) return focus(ownerId);
+          const survivingEntryId = this.commitFieldSlotDirect(ownerId, fieldDefId, slot.entryId);
+          return focus(survivingEntryId ?? ownerId);
+        }
+        if (mutation.collect) ensureCollectableOptionsFieldDef(state, fieldDefId);
+        const valueId = this.resolveFieldValueId(
+          state,
+          mutation.id,
+          mutation.collect ? 'option_value' : 'value',
+        );
+        const entryId = slot?.entryId ?? this.insertFieldEntryNodeDirect(ownerId, undefined, fieldDefId);
+        const latest = this.snapshot();
+        if (mutation.collect) {
+          const existingOptionId = findOptionByName(latest, fieldDefId, normalized);
+          if (existingOptionId) {
+            this.selectFieldOptionDirect(entryId, fieldDefId, existingOptionId, mutation.id);
+          } else {
+            this.loro.createNodeWithId(valueId, entryId, undefined, undefined, (node) => {
+              node.content = plainText(normalized);
+            });
+            this.loro.createNodeWithId<ReferenceNode>(freshId('option_ref'), fieldDefId, undefined, 'reference', (node) => {
+              node.targetId = valueId;
+              node.autoCollected = true;
+            });
+          }
+        } else {
+          this.loro.createNodeWithId(valueId, entryId, undefined, undefined, (node) => {
+            node.content = plainText(normalized);
+          });
+        }
+        return focus(entryId);
+      }
+
+      if (mutation.kind === 'appendReference') {
+        if (fieldTypeOf(state, fieldDefId) !== 'plain') {
+          throw CoreError.invalidOperation('only plain fields can store node references');
+        }
+        const resolvedTargetId = resolveReferenceTargetId(state, mutation.targetId);
+        const cycleParentId = slot?.entryId ?? ownerId;
+        if (wouldCreateReferenceCycle(state, cycleParentId, resolvedTargetId)) throw CoreError.referenceCycle();
+        if (slot?.entryId) ensureParentCanContainChildInstance(state, slot.entryId, resolvedTargetId);
+        const valueId = this.resolveFieldValueId(state, mutation.id, 'ref');
+        const entryId = slot?.entryId ?? this.insertFieldEntryNodeDirect(ownerId, undefined, fieldDefId);
+        this.loro.createNodeWithId<ReferenceNode>(valueId, entryId, undefined, 'reference', (node) => {
+          node.targetId = resolvedTargetId;
+        });
+        return focus(entryId);
+      }
+
+      ensureOptionsFieldDef(state, fieldDefId);
+      ensureOptionBelongsToField(state, fieldDefId, mutation.optionNodeId);
+      if (mutation.id !== undefined) this.resolveFieldValueId(state, mutation.id, 'option_value');
+      const entryId = slot?.entryId ?? this.insertFieldEntryNodeDirect(ownerId, undefined, fieldDefId);
+      this.selectFieldOptionDirect(entryId, fieldDefId, mutation.optionNodeId, mutation.id);
+      this.applyReverseDoneMappingDirect(ownerId, fieldDefId, mutation.optionNodeId);
+      return focus(entryId);
+    });
+  }
+
   createCollectedFieldOption(fieldEntryId: string, name: string, id?: string): CommandOutcome {
     const normalized = name.trim();
     if (!normalized) throw CoreError.invalidOperation('option name cannot be empty');
@@ -2782,12 +2988,16 @@ export class Core {
       const state = this.snapshot();
       const fieldEntry = requiredNode(state, fieldEntryId);
       if (fieldEntry.type !== 'fieldEntry') throw CoreError.invalidOperation('field values can only be cleared on field entries');
+      const ownerId = fieldEntry.parentId;
       if (fieldEntry.fieldDefId) {
         this.clearFieldEntryValuesDirect(fieldEntryId, fieldEntry.fieldDefId);
       } else {
         for (const childId of [...fieldEntry.children]) this.removeSubtreeDirect(childId);
       }
-      return focus(fieldEntryId);
+      const survivingEntryId = ownerId && fieldEntry.fieldDefId
+        ? this.commitFieldSlotDirect(ownerId, fieldEntry.fieldDefId, fieldEntryId)
+        : fieldEntryId;
+      return focus(survivingEntryId ?? ownerId ?? fieldEntryId);
     });
   }
 
@@ -2815,7 +3025,10 @@ export class Core {
       } else {
         this.removeSubtreeDirect(valueId);
       }
-      return focus(fieldEntryId);
+      const survivingEntryId = fieldEntry?.type === 'fieldEntry' && fieldEntry.parentId && fieldDefId
+        ? this.commitFieldSlotDirect(fieldEntry.parentId, fieldDefId, fieldEntryId)
+        : fieldEntryId;
+      return focus(survivingEntryId ?? fieldEntry?.parentId ?? fieldEntryId);
     });
   }
 
@@ -4026,8 +4239,9 @@ export class Core {
     tree: CreateNodeTree,
     index?: number | null,
     context = this.createTreeMaterializeContext(this.snapshot()),
+    proposedId?: string,
   ): string {
-    const id = this.insertNodeTreeNodeDirect(parentId, tree, index, context);
+    const id = this.insertNodeTreeNodeDirect(parentId, tree, index, context, proposedId);
     for (const child of tree.children) this.insertNodeTreeDirect(id, child, undefined, context);
     return id;
   }
@@ -4056,8 +4270,9 @@ export class Core {
     tree: CreateNodeTree,
     index: number | null | undefined,
     context: TreeMaterializeContext,
+    proposedId?: string,
   ): string {
-    const id = freshId('node');
+    const id = proposedId ?? freshId('node');
     // Paste trees may carry a node type; only `codeBlock` is honored so the
     // materialization surface stays narrow and predictable.
     const type = tree.type === 'codeBlock' ? 'codeBlock' : undefined;
@@ -4084,6 +4299,8 @@ export class Core {
     const fieldTypeById = new Map<NodeId, FieldType>();
     const activeTagIds = new Set<NodeId>();
     const childSupertagByTagId = new Map<NodeId, NodeId | null>();
+    const tagChainByTagId = new Map<NodeId, readonly NodeId[]>();
+    const templateFieldDefIdsByTagId = new Map<NodeId, readonly NodeId[]>();
     for (const node of Object.values(state.nodes)) {
       const key = definitionNameKey(node.content.text);
       if (!key) continue;
@@ -4102,6 +4319,11 @@ export class Core {
     for (const tagId of activeTagIds) {
       const childSupertag = configRefTarget(state, tagId, 'childSupertag');
       childSupertagByTagId.set(tagId, childSupertag && activeTagIds.has(childSupertag) ? childSupertag : null);
+      tagChainByTagId.set(tagId, getExtendsChain(state, tagId));
+      templateFieldDefIdsByTagId.set(
+        tagId,
+        getTemplateFieldDefs(state, tagId).map((field) => field.fieldDefId),
+      );
     }
     return {
       tagDefByName,
@@ -4111,6 +4333,8 @@ export class Core {
       fieldTypeById,
       activeTagIds,
       childSupertagByTagId,
+      tagChainByTagId,
+      templateFieldDefIdsByTagId,
     };
   }
 
@@ -4124,8 +4348,13 @@ export class Core {
     return id;
   }
 
-  private insertFieldEntryNodeDirect(parentId: string, index: number | null | undefined, fieldDefId: string) {
-    const id = freshId('field_entry');
+  private insertFieldEntryNodeDirect(
+    parentId: string,
+    index: number | null | undefined,
+    fieldDefId: string,
+    proposedId?: string,
+  ) {
+    const id = proposedId ?? freshId('field_entry');
     this.loro.createNodeWithId<FieldEntryNode>(id, parentId, index, 'fieldEntry', (node) => {
       node.fieldDefId = fieldDefId;
       node.content = plainText('');
@@ -4154,6 +4383,8 @@ export class Core {
         context?.tagDefByName.set(key, tagId);
         context?.activeTagIds.add(tagId);
         context?.childSupertagByTagId.set(tagId, null);
+        context?.tagChainByTagId.set(tagId, [tagId]);
+        context?.templateFieldDefIdsByTagId.set(tagId, []);
       }
       this.applyTagNoHistoryDirect(nodeId, tagId);
     }
@@ -4173,6 +4404,19 @@ export class Core {
   ): void {
     if (context && this.applyResolvedFieldTextValueWithContextDirect(nodeId, name, value, context)) return;
 
+    const state = this.snapshot();
+    const key = normalizeFieldNameKey(name);
+    const projectedSlots = nodeFieldSlots(state, nodeId).filter((slot) => {
+      const fieldDef = state.nodes[slot.fieldDefId];
+      return fieldDef?.type === 'fieldDef'
+        && normalizeFieldNameKey(fieldDef.content.text) === key;
+    });
+    if (projectedSlots.length === 1) {
+      const fieldDefId = projectedSlots[0]!.fieldDefId;
+      const fieldType = fieldTypeOf(state, fieldDefId);
+      this.writeFieldSlotTextValueDirect(nodeId, fieldDefId, fieldType, value, name);
+      return;
+    }
     const resolution = resolveFieldWriteTarget(fieldResolutionMap(this.snapshot()), nodeId, name, [{ text: value }]);
     if (!resolution.ok) throw CoreError.invalidOperation(resolution.error);
 
@@ -4203,10 +4447,11 @@ export class Core {
     context?.fieldDefByName.set(normalizeFieldNameKey(fieldName), fieldDefId);
     context?.fieldNameById.set(fieldDefId, fieldName);
     context?.fieldTypeById.set(fieldDefId, fieldType);
-    const entryId = resolution.target.kind === 'existingEntry'
-      ? resolution.target.fieldEntryId
-      : this.reuseOrCreateFieldEntryDirect(nodeId, fieldDefId);
-    this.writeFieldTextValueDirect(entryId, fieldDefId, fieldType, value, fieldName);
+    if (resolution.target.kind === 'existingEntry') {
+      this.writeFieldTextValueDirect(resolution.target.fieldEntryId, fieldDefId, fieldType, value, fieldName);
+    } else {
+      this.writeFieldSlotTextValueDirect(nodeId, fieldDefId, fieldType, value, fieldName);
+    }
   }
 
   private applyResolvedFieldTextValueWithContextDirect(
@@ -4216,10 +4461,29 @@ export class Core {
     context: TreeMaterializeContext,
   ): boolean {
     const key = normalizeFieldNameKey(name);
-    if (!key || context.duplicateFieldDefNameKeys.has(key)) return false;
+    if (!key) return false;
 
     const owner = this.loro.materializeNode(nodeId);
     if (!owner) throw CoreError.nodeNotFound(nodeId);
+    const projectedResolution = this.projectedFieldDefinitionFromContext(owner, key, context);
+    if (projectedResolution.kind === 'ambiguous') return false;
+    if (projectedResolution.kind === 'resolved') {
+      const fieldDefId = projectedResolution.fieldDefId;
+      const matchingEntries = owner.children.flatMap((childId) => {
+        const child = this.loro.materializeNode(childId);
+        return child?.type === 'fieldEntry' && child.fieldDefId === fieldDefId ? [child] : [];
+      });
+      if (matchingEntries.length > 1) return false;
+      const fieldType = context.fieldTypeById.get(fieldDefId) ?? 'plain';
+      const fieldName = context.fieldNameById.get(fieldDefId) ?? name;
+      const validation = validateFieldValuesForType(fieldName, fieldType, [{ text: value }]);
+      if (!validation.ok) throw CoreError.invalidOperation(validation.error);
+      const entryId = matchingEntries[0]?.id
+        ?? this.insertFieldEntryNodeDirect(nodeId, undefined, fieldDefId);
+      this.writeFieldTextValueDirect(entryId, fieldDefId, fieldType, value, fieldName);
+      return true;
+    }
+
     const ownerMatches: FieldEntryNode[] = [];
     for (const childId of owner.children) {
       const child = this.loro.materializeNode(childId);
@@ -4251,6 +4515,7 @@ export class Core {
 
     const systemFieldId = systemFieldIdForName(name);
     if (systemFieldId) return false;
+    if (context.duplicateFieldDefNameKeys.has(key)) return false;
 
     let fieldDefId = context.fieldDefByName.get(key);
     let fieldType: FieldType;
@@ -4270,9 +4535,33 @@ export class Core {
       context.fieldTypeById.set(fieldDefId, fieldType);
     }
 
-    const entryId = this.reuseOrCreateFieldEntryDirect(nodeId, fieldDefId, fieldName, context);
+    const entryId = this.insertFieldEntryNodeDirect(nodeId, undefined, fieldDefId);
     this.writeFieldTextValueDirect(entryId, fieldDefId, fieldType, value, fieldName);
     return true;
+  }
+
+  private projectedFieldDefinitionFromContext(
+    owner: Node,
+    fieldNameKey: string,
+    context: TreeMaterializeContext,
+  ): ProjectedFieldDefinitionResolution {
+    const chains = owner.tags.map((tagId) => context.tagChainByTagId.get(tagId) ?? []);
+    const maxDepth = chains.reduce((max, chain) => Math.max(max, chain.length), 0);
+    for (let depth = 0; depth < maxDepth; depth += 1) {
+      const matches = new Set<NodeId>();
+      for (const chain of chains) {
+        const tagId = chain[depth];
+        if (!tagId) continue;
+        for (const fieldDefId of context.templateFieldDefIdsByTagId.get(tagId) ?? []) {
+          const fieldName = context.fieldNameById.get(fieldDefId);
+          if (fieldName && normalizeFieldNameKey(fieldName) === fieldNameKey) matches.add(fieldDefId);
+        }
+      }
+      if (matches.size > 1) return { kind: 'ambiguous' };
+      const match = matches.values().next().value as NodeId | undefined;
+      if (match) return { kind: 'resolved', fieldDefId: match };
+    }
+    return { kind: 'none' };
   }
 
   private fieldEntryDisplayNameFromContext(entry: FieldEntryNode, context: TreeMaterializeContext): string {
@@ -4328,14 +4617,28 @@ export class Core {
     }
   }
 
-  // Reuse a field entry the node already owns for this def (e.g. one a tag
-  // template just instantiated) so a pasted `field::` fills it instead of
-  // stacking a second empty entry; otherwise create one.
+  private writeFieldSlotTextValueDirect(
+    ownerId: string,
+    fieldDefId: string,
+    fieldType: FieldType,
+    value: string,
+    fieldName?: string,
+  ): string {
+    const entryId = nodeFieldSlots(this.snapshot(), ownerId)
+      .find((slot) => slot.fieldDefId === fieldDefId)?.entryId
+      ?? this.insertFieldEntryNodeDirect(ownerId, undefined, fieldDefId);
+    this.writeFieldTextValueDirect(entryId, fieldDefId, fieldType, value, fieldName);
+    return entryId;
+  }
+
+  // Reuse a field entry the node already owns for this definition, otherwise
+  // materialize it. Definition-aware writes intentionally do not compare names:
+  // two distinct definitions with the same label remain two honest fields.
   private reuseOrCreateFieldEntryDirect(
     nodeId: string,
     fieldDefId: string,
-    fieldName?: string,
-    context?: TreeMaterializeContext,
+    _fieldName?: string,
+    _context?: TreeMaterializeContext,
   ): string {
     const node = this.loro.materializeNode(nodeId);
     if (!node) throw CoreError.nodeNotFound(nodeId);
@@ -4344,26 +4647,7 @@ export class Core {
       return child?.type === 'fieldEntry' && child.fieldDefId === fieldDefId;
     });
     if (existing) return existing;
-    if (fieldName && context) this.assertOwnerDoesNotHaveFieldNameFromContext(node, fieldName, context);
-    else assertOwnerDoesNotHaveFieldName(this.snapshot(), nodeId, fieldNameForDefId(this.snapshot(), fieldDefId));
     return this.insertFieldEntryNodeDirect(nodeId, undefined, fieldDefId);
-  }
-
-  private assertOwnerDoesNotHaveFieldNameFromContext(
-    owner: Node,
-    fieldName: string,
-    context: TreeMaterializeContext,
-  ) {
-    const key = normalizeFieldNameKey(fieldName);
-    if (!key) return;
-    const matches = owner.children.filter((childId) => {
-      const child = this.loro.materializeNode(childId);
-      return child?.type === 'fieldEntry'
-        && normalizeFieldNameKey(this.fieldEntryDisplayNameFromContext(child, context)) === key;
-    });
-    if (matches.length > 0) {
-      throw CoreError.invalidOperation(`duplicate field "${fieldName}" on owner ${owner.id}: ${matches.join(', ')}`);
-    }
   }
 
   private touchNodeDirect(nodeId: string) {
@@ -4487,7 +4771,7 @@ export class Core {
 
   private instantiateTagTemplateDirect(nodeId: string, tagId: string) {
     const state = this.snapshot();
-    this.instantiateTagFieldsDirect(nodeId, tagId, true, state);
+    this.materializeTagAutoInitFieldsDirect(nodeId, tagId, state);
     // Default content is inherited along the extends chain too (Tana parity:
     // template objects are inherited wholesale, not just fields). Ancestor-first
     // so a base tag's content precedes the more specific tag's; dedup by
@@ -4499,76 +4783,86 @@ export class Core {
     }
   }
 
-  private instantiateTagFieldsDirect(
+  private materializeTagAutoInitFieldsDirect(
     nodeId: string,
     tagId: string,
-    cloneDefaults: boolean,
     state: DocumentState = this.snapshot(),
   ) {
+    const visitedFieldDefs = new Set<NodeId>();
     for (const chainTagId of getExtendsChain(state, tagId)) {
       for (const fieldRef of getTemplateFieldDefs(state, chainTagId)) {
-        this.ensureFieldEntryWithTemplateDirect(nodeId, fieldRef.fieldDefId, fieldRef.templateOriginId, cloneDefaults);
+        if (visitedFieldDefs.has(fieldRef.fieldDefId)) continue;
+        visitedFieldDefs.add(fieldRef.fieldDefId);
+        const current = this.snapshot();
+        const fieldDef = current.nodes[fieldRef.fieldDefId];
+        if (!fieldDef || fieldAutoInitOf(current, fieldRef.fieldDefId).length === 0) continue;
+        const existing = current.nodes[nodeId]?.children.find((childId) => {
+          const child = current.nodes[childId];
+          return child?.type === 'fieldEntry' && child.fieldDefId === fieldRef.fieldDefId;
+        });
+        if (existing && current.nodes[existing]?.children.length) continue;
+        const result = resolveAutoInit(current, nodeId, fieldDef);
+        if (!result) continue;
+        const entryId = existing ?? this.insertFieldEntryNodeDirect(nodeId, undefined, fieldRef.fieldDefId);
+        if (result.kind === 'reference') {
+          this.loro.createNodeWithId<ReferenceNode>(freshId('auto_value'), entryId, undefined, 'reference', (node) => {
+            node.targetId = result.targetId;
+          });
+        } else {
+          this.loro.createNodeWithId(freshId('auto_value'), entryId, undefined, undefined, (node) => {
+            node.content = plainText(result.value);
+          });
+        }
       }
     }
   }
 
-  private ensureFieldEntryWithTemplateDirect(
-    nodeId: string,
-    fieldDefId: string,
-    templateOriginId: string | undefined,
-    cloneDefaults: boolean,
-  ) {
+  private ensureFieldEntryDirect(nodeId: string, fieldDefId: string) {
     const state = this.snapshot();
     const existing = requiredNode(state, nodeId).children.find((childId) => {
       const child = state.nodes[childId];
       return child?.type === 'fieldEntry' && child.fieldDefId === fieldDefId;
     });
     if (existing) return existing;
-    const id = this.insertFieldEntryNodeDirect(nodeId, 0, fieldDefId);
-    if (templateOriginId) {
-      this.patchNodeData(id, (node) => {
-        node.templateId = templateOriginId;
-      });
-    }
-    if (cloneDefaults && templateOriginId) this.cloneTemplateFieldValuesDirect(id, templateOriginId);
-    if (requiredNode(this.snapshot(), id).children.length === 0) {
-      this.applyAutoInitializeDirect(nodeId, id, fieldDefId);
-    }
-    return id;
+    return this.insertFieldEntryNodeDirect(nodeId, undefined, fieldDefId);
   }
 
-  private applyAutoInitializeDirect(nodeId: string, fieldEntryId: string, fieldDefId: string) {
+  private commitFieldSlotDirect(
+    ownerId: string,
+    fieldDefId: string,
+    preferredEntryId?: string,
+  ): string | undefined {
     const state = this.snapshot();
-    const fieldDef = state.nodes[fieldDefId];
-    if (!fieldDef || fieldAutoInitOf(state, fieldDefId).length === 0) return;
-    const result = resolveAutoInit(state, nodeId, fieldDef);
-    if (!result) return;
-    if (result.kind === 'reference') {
-      this.loro.createNodeWithId<ReferenceNode>(freshId('auto_value'), fieldEntryId, undefined, 'reference', (node) => {
-        node.targetId = result.targetId;
-      });
-      return;
-    }
-    this.loro.createNodeWithId(freshId('auto_value'), fieldEntryId, undefined, undefined, (node) => {
-      node.content = plainText(result.value);
-    });
-  }
+    const entryId = preferredEntryId ?? nodeFieldSlots(state, ownerId)
+      .find((slot) => slot.fieldDefId === fieldDefId)?.entryId;
+    const entry = entryId ? state.nodes[entryId] : undefined;
+    if (!entryId || entry?.type !== 'fieldEntry' || entry.parentId !== ownerId) return undefined;
 
-  private cloneTemplateFieldValuesDirect(fieldEntryId: string, templateOriginId: string) {
-    const state = this.snapshot();
-    if (state.nodes[templateOriginId]?.type !== 'fieldEntry') return;
-    for (const valueId of state.nodes[templateOriginId]?.children ?? []) {
-      const value = state.nodes[valueId];
-      if (!value) continue;
-      const sourceTargetId = value.type === 'reference' ? value.targetId : undefined;
-      const sourceCodeLanguage = value.type === 'codeBlock' ? value.codeLanguage : undefined;
-      this.loro.createNodeWithId(freshId('value'), fieldEntryId, undefined, value.type, (node) => {
-        node.content = clone(value.content);
-        node.description = value.description;
-        if (sourceTargetId) (node as ReferenceNode).targetId = sourceTargetId;
-        if (sourceCodeLanguage) (node as CodeBlockNode).codeLanguage = sourceCodeLanguage;
-      });
+    for (const childId of [...entry.children]) {
+      const child = this.snapshot().nodes[childId];
+      if (
+        child
+        && child.type === undefined
+        && child.content.text.trim().length === 0
+        && child.content.inlineRefs.length === 0
+        && child.children.length === 0
+        && !child.description
+      ) {
+        this.removeSubtreeDirect(childId);
+      }
     }
+
+    const latest = this.snapshot();
+    const latestEntry = latest.nodes[entryId];
+    if (latestEntry?.type !== 'fieldEntry' || latestEntry.children.length > 0) return entryId;
+    const projected = nodeFieldSlots(latest, ownerId).some((slot) => (
+      slot.source === 'tag'
+      && slot.fieldDefId === fieldDefId
+      && slot.entryId === entryId
+    ));
+    if (!projected) return entryId;
+    this.removeSubtreeDirect(entryId);
+    return undefined;
   }
 
   private cloneTemplateContentNodeShallowDirect(parentId: string, templateNodeId: string) {
@@ -4590,29 +4884,6 @@ export class Core {
       target.imageWidth = image.imageWidth;
       target.imageHeight = image.imageHeight;
     });
-  }
-
-  private cleanupFieldsFromRemovedTagDirect(nodeId: string, removedTagId: string) {
-    const state = this.snapshot();
-    const remainingTags = state.nodes[nodeId]?.tags ?? [];
-    const requiredByRemaining = new Set<string>();
-    for (const tagId of remainingTags) {
-      for (const chainTagId of getExtendsChain(state, tagId)) {
-        for (const fieldRef of getTemplateFieldDefs(state, chainTagId)) requiredByRemaining.add(fieldRef.fieldDefId);
-      }
-    }
-    const removedFields = new Set<string>();
-    for (const chainTagId of getExtendsChain(state, removedTagId)) {
-      for (const fieldRef of getTemplateFieldDefs(state, chainTagId)) removedFields.add(fieldRef.fieldDefId);
-    }
-    const toRemove = (state.nodes[nodeId]?.children ?? []).filter((childId) => {
-      const child = state.nodes[childId];
-      return child?.type === 'fieldEntry'
-        && !!child.fieldDefId
-        && removedFields.has(child.fieldDefId)
-        && !requiredByRemaining.has(child.fieldDefId);
-    });
-    for (const fieldEntryId of toRemove) this.removeSubtreeDirect(fieldEntryId);
   }
 
   private ensureOptionNodeDirect(fieldDefId: string, name: string) {
@@ -5871,16 +6142,14 @@ function assertOwnerDoesNotHaveFieldName(
 ) {
   const key = normalizeFieldNameKey(fieldName);
   if (!ownerId || !key) return;
-  const byId = fieldResolutionMap(state);
   const owner = state.nodes[ownerId];
   if (!owner) return;
-  const matches = owner.children.filter((childId) => {
-    if (childId === excludeEntryId) return false;
-    const child = state.nodes[childId];
-    return child?.type === 'fieldEntry'
-      && !isInTrash(state, childId)
-      && normalizeFieldNameKey(fieldEntryDisplayName(byId, child as FieldResolutionNode)) === key;
-  });
+  const matches = nodeFieldSlots(state, ownerId)
+    .filter((slot) => (
+      (!excludeEntryId || slot.entryId !== excludeEntryId)
+      && normalizeFieldNameKey(fieldNameForDefId(state, slot.fieldDefId)) === key
+    ))
+    .map((slot) => slot.id);
   if (matches.length > 0) {
     throw CoreError.invalidOperation(`duplicate field "${fieldName}" on owner ${ownerId}: ${matches.join(', ')}`);
   }
@@ -5893,23 +6162,22 @@ function assertFieldRelinkDoesNotDuplicateOwner(state: DocumentState, entry: Fie
 function assertFieldDefRenameDoesNotDuplicateOwner(state: DocumentState, fieldDefId: NodeId, nextName: string) {
   const key = normalizeFieldNameKey(nextName);
   if (!key) return;
-  const byId = fieldResolutionMap(state);
   const duplicateOwners = new Set<NodeId>();
   const duplicateEntries: NodeId[] = [];
-  for (const entry of Object.values(state.nodes)) {
-    if (entry.type !== 'fieldEntry' || entry.fieldDefId !== fieldDefId || isInTrash(state, entry.id) || !entry.parentId) continue;
-    const owner = state.nodes[entry.parentId];
-    if (!owner) continue;
-    for (const siblingId of owner.children) {
-      if (siblingId === entry.id) continue;
-      const sibling = state.nodes[siblingId];
-      if (sibling?.type !== 'fieldEntry' || isInTrash(state, siblingId)) continue;
-      const siblingName = sibling.fieldDefId === fieldDefId
-        ? nextName
-        : fieldEntryDisplayName(byId, sibling as FieldResolutionNode);
-      if (normalizeFieldNameKey(siblingName) !== key) continue;
-      duplicateOwners.add(owner.id);
-      duplicateEntries.push(entry.id, sibling.id);
+  for (const owner of Object.values(state.nodes)) {
+    if (owner.tags.length === 0 && !owner.children.some((childId) => state.nodes[childId]?.type === 'fieldEntry')) continue;
+    const slots = nodeFieldSlots(state, owner.id);
+    for (const entry of slots) {
+      if (entry.fieldDefId !== fieldDefId) continue;
+      for (const sibling of slots) {
+        if (sibling.id === entry.id) continue;
+        const siblingName = sibling.fieldDefId === fieldDefId
+          ? nextName
+          : fieldNameForDefId(state, sibling.fieldDefId);
+        if (normalizeFieldNameKey(siblingName) !== key) continue;
+        duplicateOwners.add(owner.id);
+        duplicateEntries.push(entry.id, sibling.id);
+      }
     }
   }
   if (duplicateOwners.size > 0) {

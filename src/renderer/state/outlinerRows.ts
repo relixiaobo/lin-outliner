@@ -20,9 +20,10 @@ import type { ReferenceSummary } from '../../core/references';
 import { isDescendantOf, resolveReferenceChainTargetId } from '../../core/actions/rowFacets';
 import { TRASH_ID } from '../../core/types';
 import { INTERNAL_VIEW_NODE_TYPES, orderedByFiniteOrder } from '../../core/viewConfig';
+import { nodeFieldSlots, type NodeFieldSlot } from '../../core/fieldSlots';
 
 export type OutlinerRowItem =
-  | { id: NodeId; type: 'field' }
+  | { id: NodeId; type: 'field'; slot: NodeFieldSlot }
   // `draft` marks a renderer-only trailing row whose node is not in the
   // projection yet (eager materialization). `buildOutlinerRows` never emits it;
   // it is appended in the render layer so it stays out of nav/selection/agent
@@ -36,6 +37,7 @@ export interface RowBuildOptions {
   expandedHiddenFields?: Set<string>;
   suppressFieldEntries?: boolean;
   systemFieldContext?: SystemFieldContext;
+  fieldSlots?: (nodeId: NodeId) => readonly NodeFieldSlot[];
 }
 
 export interface ViewSortRule {
@@ -165,10 +167,16 @@ function displayNodeOrSelf(node: NodeProjection, byId: Map<NodeId, NodeProjectio
   return displayNode(node, byId) ?? node;
 }
 
-function fieldLabel(entry: NodeProjection, byId: Map<NodeId, NodeProjection>): string {
-  const fieldDefId = entry.type === 'fieldEntry' ? entry.fieldDefId : undefined;
-  const field = fieldDefId ? byId.get(fieldDefId) : undefined;
-  return nodeTitle(field) || nodeTitle(entry) || 'Field';
+function fieldLabel(slot: NodeFieldSlot, byId: Map<NodeId, NodeProjection>): string {
+  return nodeTitle(byId.get(slot.fieldDefId)) || 'Field';
+}
+
+function slotsForNode(
+  nodeId: NodeId,
+  byId: Map<NodeId, NodeProjection>,
+  resolver?: (nodeId: NodeId) => readonly NodeFieldSlot[],
+): readonly NodeFieldSlot[] {
+  return resolver?.(nodeId) ?? nodeFieldSlots(byId, nodeId);
 }
 
 function childText(node: NodeProjection | undefined, byId: Map<NodeId, NodeProjection>): string {
@@ -235,10 +243,10 @@ function resolvedViewFieldValuesFor(
   // a computed projection resolved by the shared `systemFields` module.
   if (isSystemFieldId(fieldId)) return systemFieldValues(displayed, fieldId, byId, systemFieldContext);
 
-  const fieldEntry = displayed.children
-    .map((childId) => byId.get(childId))
-    .find((child) => child?.type === 'fieldEntry' && child.fieldDefId === fieldId);
-  if (!fieldEntry) return [];
+  const entryId = nodeFieldSlots(byId, displayed.id)
+    .find((slot) => slot.fieldDefId === fieldId)?.entryId;
+  const fieldEntry = entryId ? byId.get(entryId) : undefined;
+  if (fieldEntry?.type !== 'fieldEntry') return [];
 
   const values = fieldEntry.children
     .map((childId) => childText(byId.get(childId), byId))
@@ -276,16 +284,16 @@ function hiddenFieldValue(entry: NodeProjection, byId: Map<NodeId, NodeProjectio
     .join(' ');
 }
 
-function isHiddenFieldEntry(entry: NodeProjection, byId: Map<NodeId, NodeProjection>): boolean {
-  if (entry.type !== 'fieldEntry') return false;
-  const field = entry.fieldDefId ? byId.get(entry.fieldDefId) : undefined;
+function isHiddenFieldSlot(slot: NodeFieldSlot, byId: Map<NodeId, NodeProjection>): boolean {
+  const field = byId.get(slot.fieldDefId);
   const mode = field ? projectFieldConfig(byId, field).hideField : undefined;
   if (mode === 'always' || mode === 'hidden') return true;
-  const value = hiddenFieldValue(entry, byId).trim();
+  const entry = slot.entryId ? byId.get(slot.entryId) : undefined;
+  const value = entry ? hiddenFieldValue(entry, byId).trim() : '';
   if (mode === 'empty') return value.length === 0;
   if (mode === 'not_empty') return value.length > 0;
   if (mode === 'value_is_default') {
-    const templateEntry = entry.templateId ? byId.get(entry.templateId) : undefined;
+    const templateEntry = slot.templateEntryId ? byId.get(slot.templateEntryId) : undefined;
     const defaultValue = templateEntry ? hiddenFieldValue(templateEntry, byId).trim() : '';
     return defaultValue.length > 0 && value === defaultValue;
   }
@@ -576,35 +584,43 @@ function buildChildRows(
 ): OutlinerRowItem[] {
   if (!parent) return [];
   const rows: OutlinerRowItem[] = [];
+  const slots = slotsForNode(parent.id, byId, options.fieldSlots);
+  const tagSlots = slots.filter((slot) => slot.source === 'tag');
+  const consumedEntryIds = new Set(tagSlots.flatMap((slot) => slot.entryId ? [slot.entryId] : []));
+  const ownSlotsByEntryId = new Map(
+    slots.flatMap((slot) => slot.source === 'own' && slot.entryId ? [[slot.entryId, slot] as const] : []),
+  );
+
+  const appendFieldSlot = (slot: NodeFieldSlot) => {
+    if (options.suppressFieldEntries && isActiveTableFieldSlot(slot, byId)) return;
+    if (
+      !options.suppressFieldEntries
+      && isHiddenFieldSlot(slot, byId)
+      && !options.expandedHiddenFields?.has(hiddenFieldKey(parent.id, slot.id))
+    ) {
+      rows.push({
+        id: `hidden:${parent.id}:${slot.id}`,
+        type: 'hiddenField',
+        fieldId: slot.id,
+        label: fieldLabel(slot, byId),
+      });
+      return;
+    }
+    rows.push({ id: slot.id, type: 'field', slot });
+  };
+
+  for (const slot of tagSlots) appendFieldSlot(slot);
   for (const childId of parent.children) {
     const child = byId.get(childId);
     if (!child) continue;
     if (child.type && INTERNAL_VIEW_NODE_TYPES.has(child.type)) continue;
-    if (
-      child.type === 'fieldEntry'
-      && options.suppressFieldEntries
-      && isActiveTableFieldEntry(child, byId)
-    ) {
+    if (child.type === 'fieldEntry') {
+      if (consumedEntryIds.has(child.id)) continue;
+      const slot = ownSlotsByEntryId.get(child.id);
+      if (slot) appendFieldSlot(slot);
       continue;
     }
-    if (
-      child.type === 'fieldEntry'
-      && !options.suppressFieldEntries
-      && isHiddenFieldEntry(child, byId)
-      && !options.expandedHiddenFields?.has(hiddenFieldKey(parent.id, child.id))
-    ) {
-      rows.push({
-        id: `hidden:${parent.id}:${child.id}`,
-        type: 'hiddenField',
-        fieldId: child.id,
-        label: fieldLabel(child, byId),
-      });
-      continue;
-    }
-    rows.push({
-      id: childId,
-      type: child.type === 'fieldEntry' ? 'field' : 'content',
-    });
+    rows.push({ id: childId, type: 'content' });
   }
 
   return rows;
@@ -708,12 +724,19 @@ export function fieldEntryForViewCell(
   fieldId: string,
   byId: Map<NodeId, NodeProjection>,
 ): NodeProjection | undefined {
+  const entryId = fieldSlotForViewCell(rowNode, fieldId, byId)?.entryId;
+  return entryId ? byId.get(entryId) : undefined;
+}
+
+export function fieldSlotForViewCell(
+  rowNode: NodeProjection,
+  fieldId: string,
+  byId: Map<NodeId, NodeProjection>,
+): NodeFieldSlot | undefined {
   if (isSystemFieldId(fieldId)) return undefined;
   const displayed = displayNode(rowNode, byId);
   if (!displayed) return undefined;
-  return displayed.children
-    .map((childId) => byId.get(childId))
-    .find((child) => child?.type === 'fieldEntry' && child.fieldDefId === fieldId);
+  return nodeFieldSlots(byId, displayed.id).find((slot) => slot.fieldDefId === fieldId);
 }
 
 export function viewDisplayValuesFor(
@@ -753,10 +776,9 @@ export function collectViewFieldChoices(
   for (const child of candidateRows) {
     const displayed = displayNode(child, byId);
     if (!displayed) continue;
-    for (const nestedId of displayed.children) {
-      const nested = byId.get(nestedId);
-      if (nested?.type !== 'fieldEntry' || !nested.fieldDefId || isSystemFieldId(nested.fieldDefId)) continue;
-      choices.set(nested.fieldDefId, { label: fieldChoiceLabel(nested.fieldDefId, byId), section: 'Fields' });
+    for (const slot of nodeFieldSlots(byId, displayed.id)) {
+      if (isSystemFieldId(slot.fieldDefId)) continue;
+      choices.set(slot.fieldDefId, { label: fieldChoiceLabel(slot.fieldDefId, byId), section: 'Fields' });
     }
   }
 
@@ -826,10 +848,9 @@ function customFieldIdsOnRows(
   for (const child of fieldCandidateRows(parent, byId, includeOwnerFieldEntries)) {
     const displayed = displayNode(child, byId);
     if (!displayed) continue;
-    for (const nestedId of displayed.children) {
-      const nested = byId.get(nestedId);
-      if (nested?.type !== 'fieldEntry' || !nested.fieldDefId || isSystemFieldId(nested.fieldDefId)) continue;
-      fields.add(nested.fieldDefId);
+    for (const slot of nodeFieldSlots(byId, displayed.id)) {
+      if (isSystemFieldId(slot.fieldDefId)) continue;
+      fields.add(slot.fieldDefId);
     }
   }
   return fields;
@@ -843,6 +864,15 @@ export function isActiveTableFieldEntry(
   if (!entry.fieldDefId) return false;
   if (isSystemFieldId(entry.fieldDefId)) return true;
   const field = byId.get(entry.fieldDefId);
+  return field?.type === 'fieldDef' && !isDescendantOf(byId, field.id, TRASH_ID);
+}
+
+function isActiveTableFieldSlot(
+  slot: NodeFieldSlot,
+  byId: Map<NodeId, NodeProjection>,
+): boolean {
+  if (isSystemFieldId(slot.fieldDefId)) return true;
+  const field = byId.get(slot.fieldDefId);
   return field?.type === 'fieldDef' && !isDescendantOf(byId, field.id, TRASH_ID);
 }
 

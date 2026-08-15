@@ -5,6 +5,7 @@ import type { PreviewTarget } from '../../core/preview';
 import { api } from '../api/client';
 import { parseIsoLocalDate, todayIsoLocalDate, type AssetMetadata, type FocusHint, type NodeId } from '../api/types';
 import { flattenVisibleRows, useProjectionStore, useUiState } from '../state/document';
+import { selectableRowForId } from '../state/selectableRows';
 import { ThreadDock, type ThreadRailState } from '../agent/components/ThreadDock';
 import { buildRendererUserViewHints } from './agent/userViewContext';
 import { Sidebar } from './Sidebar';
@@ -15,6 +16,7 @@ import {
   cursorAll,
   cursorEnd,
   cursorStart,
+  outlinerNavigationFocusTarget,
   requestFocusState,
   requestPendingInputState,
   rowFocusTarget,
@@ -136,13 +138,16 @@ export function App() {
       if (!firstVisibleRowId || !currentIndex) {
         return requestFocusState(prev, focusTarget(nodeId, nodeId, null, 'trailing'), cursorEnd());
       }
-      const firstVisibleRow = currentIndex.byId.get(firstVisibleRowId);
+      const firstVisibleRow = selectableRowForId(firstVisibleRowId, nodeId, currentIndex.byId);
       const firstVisibleParentId = firstVisibleRow?.parentId ?? nodeId;
       return requestFocusState(
         prev,
-        firstVisibleRow?.type === 'fieldEntry'
-          ? focusTarget(firstVisibleRowId, firstVisibleParentId, null, 'field-name')
-          : rowFocusTarget(firstVisibleRowId, firstVisibleParentId, null),
+        outlinerNavigationFocusTarget(
+          firstVisibleRowId,
+          firstVisibleParentId,
+          null,
+          firstVisibleRow?.kind ?? 'content',
+        ),
         cursorStart(),
       );
     });
@@ -553,11 +558,9 @@ export function App() {
 
   const appendTypedCharToRow = useCallback((rowId: NodeId, char: string) => {
     if (!index) return;
-    const row = index.byId.get(rowId);
+    const row = selectableRowForId(rowId, index.projection.rootId, index.byId);
     if (!row) return;
-    const target = row.type === 'fieldEntry'
-      ? focusTarget(rowId, row.parentId ?? null, null, 'field-name')
-      : rowFocusTarget(rowId, row.parentId ?? null, null);
+    const target = outlinerNavigationFocusTarget(rowId, row.parentId, null, row.kind);
     setUi((prev) => requestPendingInputState(prev, target, char, cursorEnd()));
   }, [index, setUi]);
 

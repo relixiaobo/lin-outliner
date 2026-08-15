@@ -57,6 +57,12 @@ import {
   type SparseNodeIdSet,
 } from './projectionDerived';
 import { DocumentIndexStore } from './documentIndexStore';
+import {
+  NodeFieldSlotCache,
+  nodeFieldSlotById,
+  parseFieldSlotId,
+  type NodeFieldSlot,
+} from '../../core/fieldSlots';
 
 export interface DocumentIndex {
   projection: DocumentProjection;
@@ -74,6 +80,7 @@ export interface DocumentIndex {
   trashNodeIds: SparseNodeIdSet;
   referenceSummary: ReferenceSummary;
   referenceCandidates: ReferenceCandidateIndex;
+  fieldSlotCache: NodeFieldSlotCache;
   tagCandidateCacheKey: object;
   displayGraphCacheKey: object;
 }
@@ -103,6 +110,7 @@ export function buildIndex(projection: DocumentProjection): DocumentIndex {
     trashNodeIds,
     referenceSummary: buildLinkedReferenceSummary(byId, trashNodeIds),
     referenceCandidates: buildReferenceCandidateIndex(byId, trashNodeIds),
+    fieldSlotCache: new NodeFieldSlotCache(),
     tagCandidateCacheKey: {},
     displayGraphCacheKey: {},
   };
@@ -172,6 +180,7 @@ export function reduceProjection(
         trashNodeIds,
         referenceSummary: buildLinkedReferenceSummary(byId, trashNodeIds),
         referenceCandidates: buildReferenceCandidateIndex(byId, trashNodeIds),
+        fieldSlotCache: new NodeFieldSlotCache(),
         tagCandidateCacheKey: {},
         displayGraphCacheKey: {},
       },
@@ -284,12 +293,17 @@ export function reduceProjection(
       trashNodeIds: trashPatch.nodeIds,
       referenceSummary,
       referenceCandidates,
+      fieldSlotCache: prev.index.fieldSlotCache,
       tagCandidateCacheKey: tagDefinitionsChanged ? {} : prev.index.tagCandidateCacheKey,
       displayGraphCacheKey: structureChanged || referenceGraphChanged ? {} : prev.index.displayGraphCacheKey,
     },
     revision: update.revision,
     reverseEdges,
   };
+}
+
+export function fieldSlotsForIndex(index: DocumentIndex, nodeId: NodeId): readonly NodeFieldSlot[] {
+  return index.fieldSlotCache.read(index.byId, nodeId, index.semanticRevisions.tagDefinitions);
 }
 
 function initialSemanticRevisions(): ProjectionSemanticRevisions {
@@ -517,14 +531,12 @@ export function useProjectionStore(
     update: ProjectionUpdate,
   ) => {
     if (next === previous) return;
-    const removals = projectionRemovals(
+    setUi((current) => reduceUiStateForProjectionUpdate(
+      current,
       previous?.index ?? null,
       next.index,
       update,
-    );
-    if (removals !== null) {
-      setUi((current) => reduceUiStateForProjectionRemovals(current, removals));
-    }
+    ));
     commit(next);
     scheduleCandidateCompaction(next, update);
   }, [commit, scheduleCandidateCompaction, setUi]);
@@ -705,7 +717,7 @@ export function reduceUiStateForProjectionUpdate(
   next: DocumentIndex,
   update: ProjectionUpdate,
 ): UiState {
-  const removals = projectionRemovals(previous, next, update);
+  const removals = projectionRemovals(previous, next, update, state);
   return removals === null ? state : reduceUiStateForProjectionRemovals(state, removals);
 }
 
@@ -798,6 +810,7 @@ function projectionRemovals(
   previous: DocumentIndex | null,
   next: DocumentIndex,
   update: ProjectionUpdate,
+  state?: UiState,
 ): ProjectionRemovals | null {
   if (previous === null) return null;
 
@@ -809,8 +822,6 @@ function projectionRemovals(
       if (!next.byId.has(id)) nodeIds.add(id);
     }
   }
-  if (nodeIds.size === 0) return null;
-
   const hiddenFieldKeys = new Set<string>();
   for (const id of nodeIds) {
     const removedNode = previous.byId.get(id);
@@ -824,7 +835,65 @@ function projectionRemovals(
       }
     }
   }
+  if (state) {
+    for (const slotId of invalidUiFieldSlotIds(state, previous, next)) {
+      nodeIds.add(slotId);
+      const parsed = parseFieldSlotId(slotId);
+      if (parsed) hiddenFieldKeys.add(hiddenFieldKey(parsed.ownerId, slotId));
+    }
+    for (const key of state.expandedHiddenFields) {
+      const marker = key.lastIndexOf(':slot:');
+      if (marker < 0) continue;
+      const slotId = key.slice(marker + 1);
+      if (
+        parseFieldSlotId(slotId)
+        && nodeFieldSlotById(previous.byId, slotId)
+        && !nodeFieldSlotById(next.byId, slotId)
+      ) {
+        hiddenFieldKeys.add(key);
+      }
+    }
+  }
+  if (nodeIds.size === 0 && hiddenFieldKeys.size === 0) return null;
   return { nodeIds, hiddenFieldKeys };
+}
+
+function invalidUiFieldSlotIds(
+  state: UiState,
+  previous: DocumentIndex,
+  next: DocumentIndex,
+): Set<NodeId> {
+  const invalid = new Set<NodeId>();
+  const inspect = (id: NodeId | null | undefined) => {
+    if (
+      id
+      && parseFieldSlotId(id)
+      && nodeFieldSlotById(previous.byId, id)
+      && !nodeFieldSlotById(next.byId, id)
+    ) invalid.add(id);
+  };
+  inspect(state.focusedId);
+  inspect(state.focusedParentId);
+  inspect(state.selectedId);
+  inspect(state.selectionAnchorId);
+  inspect(state.selectionRootId);
+  inspect(state.editingDescriptionId);
+  for (const id of state.selectedIds) inspect(id);
+  for (const id of state.expanded) inspect(id);
+  inspect(state.focusRequest?.target.nodeId);
+  inspect(state.focusRequest?.target.parentId);
+  inspect(state.pendingInputChar?.target.nodeId);
+  inspect(state.pendingInputChar?.target.parentId);
+  inspect(state.pendingReferenceConversion?.nodeId);
+  inspect(state.pendingReferenceConversion?.parentId);
+  inspect(state.pendingReferenceConversion?.targetId);
+  inspect(state.pendingReferenceTypeAhead?.nodeId);
+  inspect(state.pendingReferenceTypeAhead?.parentId);
+  inspect(state.pendingReferenceTypeAhead?.targetId);
+  inspect(state.trailingDraftPlacement?.parentId);
+  inspect(state.trailingDraftPlacement?.afterId);
+  inspect(state.toolbarDropdownRequest?.nodeId);
+  return invalid;
 }
 
 function nodeIdRemoved(id: NodeId | null | undefined, removedIds: ReadonlySet<NodeId>): boolean {

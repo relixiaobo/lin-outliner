@@ -44,7 +44,13 @@ describe('selection batch action policy', () => {
     const byId = byIdOf([
       node('root', { children: ['body', 'entry'] }),
       node('body', { parentId: 'root' }),
-      node('entry', { parentId: 'root', type: 'fieldEntry', children: ['value'] }),
+      node('field-def', { type: 'fieldDef' }),
+      node('entry', {
+        parentId: 'root',
+        type: 'fieldEntry',
+        fieldDefId: 'field-def',
+        children: ['value'],
+      }),
       node('value', { parentId: 'entry' }),
     ]);
     const rowsById = selectableRowMap(buildSelectableRows('root', byId, { expanded: new Set() }));
@@ -80,9 +86,20 @@ describe('selection batch action policy', () => {
   test('keeps a direct nested field entry inside its owning field boundary', () => {
     const byId = byIdOf([
       node('root', { children: ['entry'] }),
-      node('entry', { parentId: 'root', type: 'fieldEntry', children: ['value', 'nested-entry'] }),
+      node('outer-def', { type: 'fieldDef' }),
+      node('nested-def', { type: 'fieldDef' }),
+      node('entry', {
+        parentId: 'root',
+        type: 'fieldEntry',
+        fieldDefId: 'outer-def',
+        children: ['value', 'nested-entry'],
+      }),
       node('value', { parentId: 'entry' }),
-      node('nested-entry', { parentId: 'entry', type: 'fieldEntry' }),
+      node('nested-entry', {
+        parentId: 'entry',
+        type: 'fieldEntry',
+        fieldDefId: 'nested-def',
+      }),
     ]);
     const rowsById = selectableRowMap(buildSelectableRows('root', byId, { expanded: new Set() }));
     const ids = ['nested-entry'];

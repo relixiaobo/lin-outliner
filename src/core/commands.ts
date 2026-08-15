@@ -63,6 +63,7 @@ export const DOCUMENT_COMMANDS = [
   'create_field_def',
   'create_inline_field_after_node',
   'create_inline_field',
+  'update_field_slot',
   'reuse_field_definition',
   'merge_definitions',
   'register_collected_option',

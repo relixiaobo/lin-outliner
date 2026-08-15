@@ -37,17 +37,14 @@ including content, optional descriptions, code block language, tags, fields, and
 task checkbox state. It is the bulk structural path for paste and import.
 
 `split_node` treats a same-parent split as continuation of the existing node: the
-new sibling carries the source tags and materializes their inherited field
-structure, including acquisition-time auto-initialization, but does not clone
-static template defaults or seed content. Tag acquisition clones a static field
-default before considering auto-initialization; a same-parent split omits that
-default, so a field configured with both mechanisms can keep the static default
-on the source while the new sibling receives an auto-initialized value. An empty
-split field still retains its template origin; `value_is_default` therefore hides
-a source value equal to the template default but leaves the empty sibling field
-visible. A cross-parent split does not carry the source tags; it applies the
-destination parent's configured child supertag as a new acquisition, including
-that tag's defaults and seed content.
+new sibling carries the source tags, so their field slots project immediately
+without stored entries. Acquisition-time auto-initialization is the exception:
+each successfully resolved value is frozen in a stored entry, while unresolved
+strategies write nothing. A same-parent split does not clone static template
+field values or seed content. A cross-parent split does not carry the source
+tags; it applies the destination parent's configured child supertag as a new
+acquisition, including successfully resolved auto-initialization and one-shot
+freeform seed content.
 
 `create_capture` atomically creates one launcher-capture node: a plain node
 carrying a hidden, typed `capture` provenance sidecar (`CaptureNodeMetadata` on
@@ -105,15 +102,15 @@ normalization are one mutation.
 ### Document — knowledge model (tags and fields)
 `create_tag`, `apply_tag`, `remove_tag`, `set_tag_config`, `set_field_config`,
 `create_field_def`, `create_inline_field`, `create_inline_field_after_node`,
-`reuse_field_definition`, `register_collected_option`,
+`update_field_slot`, `reuse_field_definition`, `register_collected_option`,
 `create_collected_field_option`, `select_field_option`,
 `set_field_free_text_value`, `clear_field_value`, `remove_field_value`,
 `merge_definitions`.
 
 `create_inline_field` may receive an existing `targetDefId`. That form validates
 the definition, rejects a duplicate field on the owner, and creates only the
-field entry in one mutation. Table uses it to materialize an absent field cell
-without minting a throwaway definition or issuing a second relink command.
+field entry in one mutation. It remains an explicit field-authoring path and
+therefore keeps the owner name-collision guard.
 
 User tag and field definitions are reusable only while they are active: the
 definition node must exist, have the expected `tagDef` / `fieldDef` type, and not
@@ -122,12 +119,36 @@ definition, configuring definitions, and selecting `options_from_supertag` value
 all reject trashed definitions. Name-based creation ignores trashed same-name
 definitions and creates a fresh active definition under Schema.
 
-`apply_tag` stamps active fields from the tag's specific-first inheritance chain.
-Field identity is the `fieldDefId`, not the normalized display name. An existing
-entry backed by the same definition is reused; same-name entries backed by
-different definitions are instantiated alongside one another. Reapplying a tag
-therefore stays idempotent without suppressing an independently defined field.
-Forward done-state mapping also addresses its exact `fieldDefId`. Explicit field
+Fields on an ordinary node are a read-time projection, not copies. The ordered
+`nodeFieldSlots` projection places tag-defined fields before own stored fields,
+uses applied-tag order, and walks each inheritance chain ancestor-first in
+template order. Field identity is the `fieldDefId`, not the normalized display
+name, so same-name definitions remain separate slots. The first stored entry for
+a projected definition fills that tag slot; concurrent duplicates remain honest
+own slots in child order.
+
+`apply_tag` therefore writes no ordinary field entries. It materializes only an
+`autoInitialize` value that resolves successfully at acquisition time, because
+date- and ancestor-dependent values must stay frozen to that moment and tree
+position. Static values stored on a tag template entry are not copied into the
+instance. Reapplying a tag remains idempotent. `remove_tag` removes the projected
+shape without deleting user data: an entry that already holds a value survives
+as an own field. Instance field entries carry no template provenance; tag and
+template provenance lives on the projected slot, while `templateId` remains only
+on one-shot freeform seed clones.
+
+`update_field_slot(ownerId, fieldDefId, mutation)` is the slot-aware value write
+boundary used by renderer, Table, and agent paths; paste enforces the same
+invariant inside its surrounding tree transaction. `appendText`,
+`appendReference`, and `selectOption` create a backing entry together with the
+first accepted value when needed; failed or empty writes leave a virtual slot
+unmaterialized. `commit` removes an empty tag-backed entry and returns the
+field to its virtual form. Empty own entries survive because their entry is the
+only record that the field exists. `clear_field_value` and removal of the final
+value enforce the same dematerialization rule. A mutation may carry the exact
+stored `entryId` so a concurrent duplicate own slot is updated independently;
+Core verifies that it belongs to the requested owner and definition. Forward
+done-state mapping also addresses its exact `fieldDefId`. Explicit field
 creation, reuse, and rename remain fail-closed on owner name collisions.
 
 `merge_definitions(targetId, sourceIds)` merges field definitions only when their
@@ -143,8 +164,9 @@ another target field has the same label. When both tags reuse the same
 `fieldDefId`, their template entries collapse: all source value children append
 to the target in source order, except an identical default already present is
 not appended twice. Scalar defaults compare by exact text; option defaults
-compare by option target node. Instance `templateId` references are repointed to
-the surviving entry, and the source entry is removed. Tag merge never unifies
+compare by option target node. Freeform seed clones whose `templateId` named the
+collapsed template entry are repointed to the survivor, and the source entry is
+removed. Tag merge never unifies
 field definitions by name and does not rewrite a third tag outside the requested
 tag merge.
 

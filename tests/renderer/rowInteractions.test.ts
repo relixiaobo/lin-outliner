@@ -66,6 +66,7 @@ import { concatRichText } from '../../src/renderer/ui/editor/richTextCodec';
 import { getMessages } from '../../src/core/i18n';
 import { SEARCH_QUERY_COMPLEXITY_LIMITS } from '../../src/core/searchQueryCompiler';
 import { Core } from '../../src/core/core';
+import { fieldSlotId } from '../../src/core/fieldSlots';
 
 // The search-query outline helper takes localized labels; exercise English.
 const enMessages = getMessages('en');
@@ -106,6 +107,11 @@ describe('row interaction resolvers', () => {
     enumConfigEntries(defId, 'fieldType', fieldType);
   const fieldChoices = (parent: any, byId: Map<string, any>) =>
     collectViewFieldChoices(parent, byId, buildReferenceSummary(byId));
+  const ownFieldRow = (id: string, fieldDefId: string) => ({
+    id,
+    type: 'field' as const,
+    slot: { id, fieldDefId, source: 'own' as const, entryId: id },
+  });
 
   test('builds view rows with hidden field reveal placeholders', () => {
     const parent = makeNode('parent', 'Parent', { children: ['field'] });
@@ -123,7 +129,7 @@ describe('row interaction resolvers', () => {
     ]);
     expect(buildOutlinerRows(parent as any, byId, {
       expandedHiddenFields: new Set([hiddenFieldKey('parent', 'field')]),
-    })).toEqual([{ id: 'field', type: 'field' }]);
+    })).toEqual([ownFieldRow('field', 'field-def')]);
   });
 
   test('keeps same-name field entries as separate outliner rows', () => {
@@ -145,15 +151,26 @@ describe('row interaction resolvers', () => {
     ]);
 
     expect(buildOutlinerRows(parent as any, byId)).toEqual([
-      { id: 'project-status', type: 'field' },
-      { id: 'issue-status', type: 'field' },
+      ownFieldRow('project-status', 'project-status-def'),
+      ownFieldRow('issue-status', 'issue-status-def'),
     ]);
   });
 
-  test('resolves value-is-default hiding through each field entry template', () => {
-    const parent = makeNode('parent', 'Parent', { children: ['project-status', 'issue-status'] });
+  test('resolves value-is-default hiding through each projected slot template', () => {
+    const parent = makeNode('parent', 'Parent', {
+      children: ['project-status', 'issue-status'],
+      tags: ['project-tag', 'issue-tag'],
+    });
     const byId = new Map<string, any>([
       ['parent', parent],
+      ['project-tag', makeNode('project-tag', 'Project', {
+        type: 'tagDef',
+        children: ['project-template'],
+      })],
+      ['issue-tag', makeNode('issue-tag', 'Issue', {
+        type: 'tagDef',
+        children: ['issue-template'],
+      })],
       ['project-status-def', makeNode('project-status-def', 'Status', {
         type: 'fieldDef',
         children: ['project-status-def::cfg:hideField'],
@@ -166,12 +183,14 @@ describe('row interaction resolvers', () => {
       ...enumConfigEntries('issue-status-def', 'hideField', 'value_is_default'),
       ['project-template', makeNode('project-template', '', {
         type: 'fieldEntry',
+        parentId: 'project-tag',
         fieldDefId: 'project-status-def',
         children: ['project-default'],
       })],
       ['project-default', makeNode('project-default', 'Inbox', { parentId: 'project-template' })],
       ['issue-template', makeNode('issue-template', '', {
         type: 'fieldEntry',
+        parentId: 'issue-tag',
         fieldDefId: 'issue-status-def',
         children: ['issue-default'],
       })],
@@ -180,7 +199,6 @@ describe('row interaction resolvers', () => {
         type: 'fieldEntry',
         parentId: 'parent',
         fieldDefId: 'project-status-def',
-        templateId: 'project-template',
         children: ['project-value'],
       })],
       ['project-value', makeNode('project-value', 'Inbox', { parentId: 'project-status' })],
@@ -188,19 +206,31 @@ describe('row interaction resolvers', () => {
         type: 'fieldEntry',
         parentId: 'parent',
         fieldDefId: 'issue-status-def',
-        templateId: 'issue-template',
         children: ['issue-value'],
       })],
       ['issue-value', makeNode('issue-value', 'Inbox', { parentId: 'issue-status' })],
     ]);
 
+    const projectSlotId = fieldSlotId('parent', 'project-status-def');
+    const issueSlotId = fieldSlotId('parent', 'issue-status-def');
     expect(buildOutlinerRows(parent as any, byId)).toEqual([
-      { id: 'hidden:parent:project-status', type: 'hiddenField', fieldId: 'project-status', label: 'Status' },
-      { id: 'issue-status', type: 'field' },
+      { id: `hidden:parent:${projectSlotId}`, type: 'hiddenField', fieldId: projectSlotId, label: 'Status' },
+      {
+        id: issueSlotId,
+        type: 'field',
+        slot: {
+          id: issueSlotId,
+          fieldDefId: 'issue-status-def',
+          source: 'tag',
+          sourceTagId: 'issue-tag',
+          templateEntryId: 'issue-template',
+          entryId: 'issue-status',
+        },
+      },
     ]);
   });
 
-  test('keeps an empty split field visible when value-is-default hides the source value', () => {
+  test('keeps split projected fields visible without materializing static defaults', () => {
     const core = Core.new();
     const tagId = core.createTag('meeting').focus!.nodeId;
     const templateEntryId = core.createFieldDef(tagId, 'Status', 'plain').focus!.nodeId;
@@ -215,22 +245,34 @@ describe('row interaction resolvers', () => {
       { text: 'Planning', marks: [], inlineRefs: [] },
       { text: ' notes', marks: [], inlineRefs: [] },
     ).focus!.nodeId;
-    const state = core.state();
-    const sourceEntryId = state.nodes[sourceId].children.find((childId) => state.nodes[childId]?.type === 'fieldEntry')!;
-    const siblingEntryId = state.nodes[siblingId].children.find((childId) => state.nodes[childId]?.type === 'fieldEntry')!;
     const projection = core.projection();
     const byId = new Map(projection.nodes.map((node) => [node.id, node]));
+    const sourceSlotId = fieldSlotId(sourceId, fieldDefId);
+    const siblingSlotId = fieldSlotId(siblingId, fieldDefId);
 
     expect(buildOutlinerRows(byId.get(sourceId), byId)).toEqual([
       {
-        id: `hidden:${sourceId}:${sourceEntryId}`,
-        type: 'hiddenField',
-        fieldId: sourceEntryId,
-        label: 'Status',
+        id: sourceSlotId,
+        type: 'field',
+        slot: expect.objectContaining({
+          id: sourceSlotId,
+          fieldDefId,
+          source: 'tag',
+          templateEntryId,
+        }),
       },
     ]);
     expect(buildOutlinerRows(byId.get(siblingId), byId)).toEqual([
-      { id: siblingEntryId, type: 'field' },
+      {
+        id: siblingSlotId,
+        type: 'field',
+        slot: expect.objectContaining({
+          id: siblingSlotId,
+          fieldDefId,
+          source: 'tag',
+          templateEntryId,
+        }),
+      },
     ]);
   });
 
@@ -274,7 +316,7 @@ describe('row interaction resolvers', () => {
         type: 'filteredOut',
         count: 2,
         rows: [
-          { id: 'status', type: 'field' },
+          ownFieldRow('status', 'status-def'),
           { id: 'beta', type: 'content' },
         ],
       },
@@ -288,8 +330,8 @@ describe('row interaction resolvers', () => {
         type: 'filteredOut',
         count: 3,
         rows: [
-          { id: 'status', type: 'field' },
-          { id: 'hidden', type: 'field' },
+          ownFieldRow('status', 'status-def'),
+          ownFieldRow('hidden', 'hidden-def'),
           { id: 'beta', type: 'content' },
         ],
       },
@@ -365,7 +407,7 @@ describe('row interaction resolvers', () => {
     ]);
 
     expect(buildOutlinerRows(parent as any, byId)).toEqual([
-      { id: 'owner-field', type: 'field' },
+      ownFieldRow('owner-field', 'owner-def'),
       { id: 'alpha', type: 'content' },
       { id: 'beta', type: 'content' },
     ]);
@@ -466,8 +508,8 @@ describe('row interaction resolvers', () => {
     ]);
 
     expect(buildOutlinerRows(parent as any, byId, { suppressFieldEntries: true })).toEqual([
-      { id: 'trashed-entry', type: 'field' },
-      { id: 'missing-entry', type: 'field' },
+      ownFieldRow('trashed-entry', 'trashed-field'),
+      ownFieldRow('missing-entry', 'missing-field'),
       { id: 'child', type: 'content' },
     ]);
   });

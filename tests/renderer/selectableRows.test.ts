@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { NodeId, NodeProjection } from '../../src/core/types';
 import { OWNER_FIELD } from '../../src/core/systemFields';
+import { fieldSlotId } from '../../src/core/fieldSlots';
 import { flattenVisibleRows } from '../../src/renderer/state/document';
 import {
   buildSelectableRows,
@@ -8,6 +9,7 @@ import {
   selectableChildParentId,
   selectableRowAfterDraft,
 } from '../../src/renderer/state/selectableRows';
+import { outlinerNavigationFocusTarget } from '../../src/renderer/ui/focus/focusModel';
 
 function node(id: string, patch: Partial<NodeProjection> = {}): NodeProjection {
   return {
@@ -108,7 +110,13 @@ describe('buildSelectableRows', () => {
     const byId = byIdOf([
       node('root', { children: ['before', 'entry', 'after'] }),
       node('before', { parentId: 'root' }),
-      node('entry', { parentId: 'root', type: 'fieldEntry', children: ['value-a', 'value-b'] }),
+      node('field-def', { type: 'fieldDef' }),
+      node('entry', {
+        parentId: 'root',
+        type: 'fieldEntry',
+        fieldDefId: 'field-def',
+        children: ['value-a', 'value-b'],
+      }),
       node('value-a', { parentId: 'entry' }),
       node('value-b', { parentId: 'entry' }),
       node('after', { parentId: 'root' }),
@@ -133,7 +141,13 @@ describe('buildSelectableRows', () => {
   test('classifies field rows and stored value rows with explicit policies', () => {
     const byId = byIdOf([
       node('root', { children: ['entry'] }),
-      node('entry', { parentId: 'root', type: 'fieldEntry', children: ['value'] }),
+      node('field-def', { type: 'fieldDef' }),
+      node('entry', {
+        parentId: 'root',
+        type: 'fieldEntry',
+        fieldDefId: 'field-def',
+        children: ['value'],
+      }),
       node('value', { parentId: 'entry' }),
     ]);
 
@@ -173,13 +187,67 @@ describe('buildSelectableRows', () => {
     });
   });
 
+  test('keeps a virtual tag slot selectable with every structural action disabled', () => {
+    const slotId = fieldSlotId('root', 'field-def');
+    const byId = byIdOf([
+      node('root', { tags: ['tag'] }),
+      node('tag', {
+        type: 'tagDef',
+        children: ['template-entry'],
+      }),
+      node('template-entry', {
+        parentId: 'tag',
+        type: 'fieldEntry',
+        fieldDefId: 'field-def',
+      }),
+      node('field-def', { type: 'fieldDef' }),
+    ]);
+
+    const rows = buildSelectableRows('root', byId, { expanded: new Set() });
+    expect(rows).toEqual([
+      expect.objectContaining({
+        id: slotId,
+        parentId: 'root',
+        kind: 'fieldEntry',
+        stored: false,
+        mutable: false,
+        actionPolicy: {
+          delete: 'disabled',
+          move: 'disabled',
+          duplicate: 'disabled',
+          tag: 'disabled',
+          checkbox: 'disabled',
+        },
+      }),
+    ]);
+    expect(outlinerNavigationFocusTarget(
+      rows[0]!.id,
+      rows[0]!.parentId,
+      'panel',
+      rows[0]!.kind,
+    )).toEqual({
+      nodeId: slotId,
+      parentId: 'root',
+      panelId: 'panel',
+      surface: 'field-name',
+    });
+  });
+
   test('classifies a direct nested field entry by its owning field-value boundary', () => {
     const byId = byIdOf([
       node('root', { children: ['entry'] }),
-      node('entry', { parentId: 'root', type: 'fieldEntry', children: ['nested-entry'] }),
+      node('outer-def', { type: 'fieldDef' }),
+      node('nested-def', { type: 'fieldDef' }),
+      node('entry', {
+        parentId: 'root',
+        type: 'fieldEntry',
+        fieldDefId: 'outer-def',
+        children: ['nested-entry'],
+      }),
       node('nested-entry', {
         parentId: 'entry',
         type: 'fieldEntry',
+        fieldDefId: 'nested-def',
         children: ['nested-value'],
       }),
       node('nested-value', { parentId: 'nested-entry' }),
@@ -204,7 +272,13 @@ describe('buildSelectableRows', () => {
   test('treats expanded field value descendants as ordinary content rows', () => {
     const byId = byIdOf([
       node('root', { children: ['entry'] }),
-      node('entry', { parentId: 'root', type: 'fieldEntry', children: ['value'] }),
+      node('field-def', { type: 'fieldDef' }),
+      node('entry', {
+        parentId: 'root',
+        type: 'fieldEntry',
+        fieldDefId: 'field-def',
+        children: ['value'],
+      }),
       node('value', { parentId: 'entry', children: ['child'] }),
       node('child', { parentId: 'value', children: ['grandchild'] }),
       node('grandchild', { parentId: 'child' }),
@@ -237,9 +311,16 @@ describe('buildSelectableRows', () => {
   test('resumes after an empty field-value child draft at the next field', () => {
     const byId = byIdOf([
       node('root', { children: ['entry-a', 'entry-b'] }),
-      node('entry-a', { parentId: 'root', type: 'fieldEntry', children: ['value'] }),
+      node('field-a', { type: 'fieldDef' }),
+      node('field-b', { type: 'fieldDef' }),
+      node('entry-a', {
+        parentId: 'root',
+        type: 'fieldEntry',
+        fieldDefId: 'field-a',
+        children: ['value'],
+      }),
       node('value', { parentId: 'entry-a' }),
-      node('entry-b', { parentId: 'root', type: 'fieldEntry' }),
+      node('entry-b', { parentId: 'root', type: 'fieldEntry', fieldDefId: 'field-b' }),
     ]);
     const options = { expanded: new Set<NodeId>(['value']) };
 

@@ -109,6 +109,40 @@ describe('field definition identity resolution', () => {
     });
   });
 
+  test('prefers a projected tag definition over a same-name own entry', () => {
+    const byId = new Map<string, FieldResolutionNode>([
+      ['owner', node('owner', 'Record', {
+        children: ['own-status'],
+        tags: ['issue-tag'],
+      })],
+      ['own-status-def', node('own-status-def', 'Status', { type: 'fieldDef', parentId: SCHEMA_ID })],
+      ['issue-status-def', node('issue-status-def', 'Status', { type: 'fieldDef', parentId: SCHEMA_ID })],
+      ['own-status', node('own-status', '', {
+        type: 'fieldEntry',
+        parentId: 'owner',
+        fieldDefId: 'own-status-def',
+      })],
+      ['issue-tag', node('issue-tag', 'issue', {
+        type: 'tagDef',
+        children: ['issue-status-template'],
+      })],
+      ['issue-status-template', node('issue-status-template', '', {
+        type: 'fieldEntry',
+        parentId: 'issue-tag',
+        fieldDefId: 'issue-status-def',
+      })],
+    ]);
+
+    expect(resolveFieldWriteTarget(byId, 'owner', 'Status', [{ text: 'Open' }])).toEqual({
+      ok: true,
+      target: {
+        kind: 'existingFieldDef',
+        fieldDefId: 'issue-status-def',
+        fieldType: 'plain',
+      },
+    });
+  });
+
   test('keeps same-layer tag definitions ambiguous', () => {
     const byId = new Map<string, FieldResolutionNode>([
       ['owner', node('owner', 'Record', { tags: ['project-tag', 'issue-tag'] })],

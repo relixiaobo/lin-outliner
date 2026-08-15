@@ -1,4 +1,5 @@
 import type { NodeId, NodeProjection } from '../api/types';
+import { SCHEMA_ID } from '../../core/types';
 import { SparseProjectionMap } from './sparseProjectionMap';
 
 export interface ProjectionSemanticRevisions {
@@ -146,15 +147,18 @@ export function projectionTagDefinitionsChanged(params: {
   readonly trashMembershipChangedIds: ReadonlySet<NodeId>;
 }): boolean {
   for (const node of params.changedNodes) {
-    if (node.type === 'tagDef' || params.previousById.get(node.id)?.type === 'tagDef') return true;
+    if (
+      nodeIsInSubtree(params.nextById, node.id, SCHEMA_ID)
+      || nodeIsInSubtree(params.previousById, node.id, SCHEMA_ID)
+    ) return true;
   }
   for (const nodeId of params.removedIds) {
-    if (params.previousById.get(nodeId)?.type === 'tagDef') return true;
+    if (nodeIsInSubtree(params.previousById, nodeId, SCHEMA_ID)) return true;
   }
   for (const nodeId of params.trashMembershipChangedIds) {
     if (
-      params.previousById.get(nodeId)?.type === 'tagDef'
-      || params.nextById.get(nodeId)?.type === 'tagDef'
+      nodeIsInSubtree(params.previousById, nodeId, SCHEMA_ID)
+      || nodeIsInSubtree(params.nextById, nodeId, SCHEMA_ID)
     ) return true;
   }
   return false;

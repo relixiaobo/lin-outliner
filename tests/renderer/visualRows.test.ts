@@ -85,7 +85,13 @@ describe('buildVisualRows body/reference parity with flattenVisibleRows', () => 
     const byId = byIdOf([
       node('root', { children: ['before', 'entry', 'after'] }),
       node('before', { parentId: 'root' }),
-      node('entry', { parentId: 'root', type: 'fieldEntry', children: ['value-a', 'value-b'] }),
+      node('field-def', { type: 'fieldDef' }),
+      node('entry', {
+        parentId: 'root',
+        type: 'fieldEntry',
+        fieldDefId: 'field-def',
+        children: ['value-a', 'value-b'],
+      }),
       node('value-a', { parentId: 'entry' }),
       node('value-b', { parentId: 'entry' }),
       node('after', { parentId: 'root' }),
@@ -352,6 +358,57 @@ describe('buildVisualRowsIncrementally', () => {
     const second = rebuild(first, secondState);
 
     expect(second.rows).toBe(first.rows);
+    expect(second.rows).toEqual(buildVisualRows('lib', secondState.index.byId, options));
+  });
+
+  test('rebuilds when an owner gains a projected tag without changing children', () => {
+    const lib = node('lib', { children: ['body'] });
+    const body = node('body', { parentId: 'lib' });
+    const schema = node('schema', { children: ['tag', 'field-def'] });
+    const tag = node('tag', {
+      parentId: 'schema',
+      type: 'tagDef',
+      children: ['template-entry'],
+    });
+    const templateEntry = node('template-entry', {
+      parentId: 'tag',
+      type: 'fieldEntry',
+      fieldDefId: 'field-def',
+    });
+    const fieldDef = node('field-def', { parentId: 'schema', type: 'fieldDef' });
+    const trash = node('trash');
+    const firstState = seed([lib, body, schema, tag, templateEntry, fieldDef, trash]);
+    const first = rebuild(null, firstState);
+    const taggedLib = { ...lib, tags: ['tag'], updatedAt: 2 };
+    const secondState = reduceProjection(firstState, delta(2, [taggedLib]))!;
+    const second = rebuild(first, secondState);
+
+    expect(second.rows).not.toBe(first.rows);
+    expect(second.rows.map((row) => row.kind)).toEqual(['field', 'content']);
+    expect(second.rows).toEqual(buildVisualRows('lib', secondState.index.byId, options));
+  });
+
+  test('rebuilds when a stored field entry is relinked without changing structure', () => {
+    const lib = node('lib', { children: ['entry'] });
+    const entry = node('entry', {
+      parentId: 'lib',
+      type: 'fieldEntry',
+      fieldDefId: 'field-a',
+    });
+    const fieldA = node('field-a', { type: 'fieldDef' });
+    const fieldB = node('field-b', { type: 'fieldDef' });
+    const trash = node('trash');
+    const firstState = seed([lib, entry, fieldA, fieldB, trash]);
+    const first = rebuild(null, firstState);
+    const relinkedEntry = { ...entry, fieldDefId: 'field-b', updatedAt: 2 };
+    const secondState = reduceProjection(firstState, delta(2, [relinkedEntry]))!;
+    const second = rebuild(first, secondState);
+
+    expect(second.rows).not.toBe(first.rows);
+    expect(second.rows[0]).toMatchObject({
+      kind: 'field',
+      slot: { fieldDefId: 'field-b' },
+    });
     expect(second.rows).toEqual(buildVisualRows('lib', secondState.index.byId, options));
   });
 

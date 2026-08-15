@@ -11,7 +11,8 @@ import type { CommandRunner } from '../shared';
 import { useT } from '../../i18n/I18nProvider';
 
 interface CheckboxFieldControlProps {
-  entryId: string;
+  entryId?: string;
+  onCreateValue?: (value: string) => Promise<unknown> | unknown;
   run: CommandRunner;
   valueNode?: NodeProjection;
   focusTarget?: FocusTarget;
@@ -48,7 +49,11 @@ export function CheckboxFieldControl(props: CheckboxFieldControlProps) {
       void props.run(() => api.replaceNodeText(valueNode.id, plainText(next)));
       return;
     }
-    void props.run(() => api.createNode(props.entryId, null, next));
+    if (props.onCreateValue) {
+      void props.onCreateValue(next);
+      return;
+    }
+    if (props.entryId) void props.run(() => api.createNode(props.entryId!, null, next));
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {

@@ -128,7 +128,7 @@ export interface NodeFieldRead {
     valueNodeId?: string;
     targetId?: string;
   }>;
-  fieldEntryId: string;
+  fieldEntryId?: string;
   options?: string[];
 }
 

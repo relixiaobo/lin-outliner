@@ -1,3 +1,15 @@
+import { outlineChildIds } from '../../../core/actions/outlineStructure';
+import type { NodeFieldSlot } from '../../../core/fieldSlots';
+import type { NodeId, NodeProjection } from '../../../core/types';
+import type { UiState } from '../../state/document';
+import {
+  cursorEnd,
+  focusTarget,
+  requestFocusState,
+  requestPendingInputState,
+  rowFocusTarget,
+} from '../focus/focusModel';
+
 export const TABLE_TITLE_COLUMN_ID = '__title__';
 
 export interface TableCellAddress {
@@ -21,6 +33,24 @@ export interface TableNavigationInput {
   key: TableNavigationKey;
   shiftKey?: boolean;
   primaryModifier?: boolean;
+}
+
+export function requestTableFieldSlotEditState(
+  state: UiState,
+  slot: NodeFieldSlot,
+  byId: ReadonlyMap<NodeId, NodeProjection>,
+  panelId: string | null,
+  seed?: string,
+): UiState {
+  const entry = slot.entryId ? byId.get(slot.entryId) : undefined;
+  const primaryValueId = outlineChildIds(entry, byId)[0];
+  const parentId = entry?.type === 'fieldEntry' ? entry.id : slot.id;
+  const target = primaryValueId
+    ? rowFocusTarget(primaryValueId, parentId, panelId)
+    : focusTarget(parentId, parentId, panelId, 'trailing');
+  return seed === undefined
+    ? requestFocusState(state, target, cursorEnd())
+    : requestPendingInputState(state, target, seed, cursorEnd());
 }
 
 export function resolveTableCellNavigation(input: TableNavigationInput): TableCellAddress | null {

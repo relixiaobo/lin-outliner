@@ -136,6 +136,63 @@ async function invokeMockCommand(page: import('@playwright/test').Page, cmd: str
   }, { cmd, args });
 }
 
+function projectedFieldSlotId(ownerId: string, fieldDefId: string) {
+  return `slot:${encodeURIComponent(ownerId)}:${encodeURIComponent(fieldDefId)}`;
+}
+
+async function projectFieldFromTag(
+  page: import('@playwright/test').Page,
+  ownerId: string,
+  fieldDefId: string,
+  fieldType: string,
+) {
+  await invokeMockCommand(page, 'create_inline_field', {
+    parentId: ids.projectTag,
+    index: null,
+    name: '',
+    fieldType,
+    targetDefId: fieldDefId,
+  });
+  await invokeMockCommand(page, 'apply_tag', { nodeId: ownerId, tagId: ids.projectTag });
+  await rowBody(page, ownerId).hover();
+  const expand = row(page, ownerId).getByRole('button', { name: 'Expand' });
+  await expect(expand).toBeVisible();
+  await expand.click();
+  const slotId = projectedFieldSlotId(ownerId, fieldDefId);
+  await expect(row(page, slotId)).toBeVisible();
+  return slotId;
+}
+
+async function storedFieldEntryId(
+  page: import('@playwright/test').Page,
+  ownerId: string,
+  fieldDefId: string,
+) {
+  const projection = await e2eProjection(page);
+  return projection.nodes.find((node) => (
+    node.parentId === ownerId
+    && node.type === 'fieldEntry'
+    && (node as { fieldDefId?: string }).fieldDefId === fieldDefId
+  ))?.id;
+}
+
+async function pasteClipboardFile(
+  page: import('@playwright/test').Page,
+  file: { name: string; mimeType: string; text: string },
+) {
+  await page.evaluate((input) => {
+    const dataTransfer = new DataTransfer();
+    dataTransfer.items.add(new File([input.text], input.name, { type: input.mimeType }));
+    const target = document.activeElement;
+    if (!target) throw new Error('No active paste target');
+    target.dispatchEvent(new ClipboardEvent('paste', {
+      bubbles: true,
+      cancelable: true,
+      clipboardData: dataTransfer,
+    }));
+  }, file);
+}
+
 async function delayMockCommands(
   page: import('@playwright/test').Page,
   delayedCommands: string[],
@@ -1808,8 +1865,8 @@ test.describe('outliner plain field reference values', () => {
     await page.keyboard.press('Enter');
     await expect(page.getByRole('listbox', { name: 'Reference suggestions' })).toHaveCount(0);
 
-    // Leaving the untouched conversion row restores the structural reference
-    // value under the plain field entry.
+    // The field slot stores a structural reference directly; leaving the row
+    // does not require an inline-reference conversion round trip.
     await rowEditor(page, ids.beta).click();
 
     const valueCell = row(page, ids.referencesEntry).locator('.field-value-cell');
@@ -1828,12 +1885,16 @@ test.describe('outliner plain field reference values', () => {
     }).toEqual({ children: 1, type: 'reference', targetId: ids.alpha });
 
     const calls = await commandCalls(page);
-    expect(calls.some((call) => (
-      call.cmd === 'add_reference_conversion'
-      && call.args.parentId === ids.referencesEntry
+    expect(calls.filter((call) => (
+      call.cmd === 'update_field_slot'
+      && call.args.ownerId === ids.today
+      && call.args.fieldDefId === ids.referencesField
+      && call.args.entryId === ids.referencesEntry
+      && call.args.kind === 'appendReference'
       && call.args.targetId === ids.alpha
-    ))).toBe(true);
-    expect(calls.some((call) => call.cmd === 'restore_inline_reference_node_to_reference')).toBe(true);
+    ))).toHaveLength(1);
+    expect(calls.some((call) => call.cmd === 'add_reference_conversion')).toBe(false);
+    expect(calls.some((call) => call.cmd === 'restore_inline_reference_node_to_reference')).toBe(false);
   });
 
   test('plain field stores an inline reference inside text', async ({ page }) => {
@@ -1843,9 +1904,33 @@ test.describe('outliner plain field reference values', () => {
     await expect(listbox).toBeVisible();
     await listbox.getByRole('option', { name: 'Beta', exact: true }).click();
 
-    const valueCell = row(page, ids.referencesEntry).locator('.field-value-cell');
-    await expect(valueCell.locator('.inline-ref')).toHaveCount(1);
-    await expect(valueCell).toContainText('See Beta');
+    await expect.poll(async () => (await commandCalls(page)).filter((call) => (
+      call.cmd === 'update_field_slot'
+      && call.args.ownerId === ids.today
+      && call.args.fieldDefId === ids.referencesField
+    )).map((call) => ({
+      entryId: call.args.entryId,
+      kind: call.args.kind,
+      nodes: call.args.nodes,
+    }))).toEqual([
+      {
+        entryId: ids.referencesEntry,
+        kind: 'appendNodes',
+        nodes: [{
+          children: [],
+          content: {
+            inlineRefs: [{
+              displayName: 'Beta',
+              offset: 4,
+              target: { kind: 'node', nodeId: ids.beta },
+            }],
+            marks: [],
+            text: 'See  ',
+          },
+        }],
+      },
+      { entryId: ids.referencesEntry, kind: 'commit', nodes: undefined },
+    ]);
 
     await expect.poll(async () => {
       const projection = await e2eProjection(page);
@@ -1856,5 +1941,154 @@ test.describe('outliner plain field reference values', () => {
         targetId: valueNode?.content.inlineRefs[0] ? e2eInlineRefNodeId(valueNode.content.inlineRefs[0]) : undefined,
       };
     }).toEqual({ type: 'content', text: 'See  ', targetId: ids.beta });
+
+    const valueCell = row(page, ids.referencesEntry).locator('.field-value-cell');
+    await expect(valueCell.locator('.inline-ref')).toHaveCount(1);
+    await expect(valueCell).toContainText('See Beta');
+  });
+});
+
+test.describe('tag-projected field slot interactions', () => {
+  test.beforeEach(async ({ page }) => {
+    await openMockedApp(page, { optionsField: true });
+  });
+
+  test('virtual slots materialize nested fields, tags, and code blocks through field-slot commands', async ({ page }) => {
+    const alphaSlot = await projectFieldFromTag(page, ids.alpha, ids.statusField, 'plain');
+    await trailingEditor(page, alphaSlot).click();
+    await page.keyboard.type('>');
+
+    let nestedFieldId = '';
+    await expect.poll(async () => {
+      const entryId = await storedFieldEntryId(page, ids.alpha, ids.statusField);
+      const projection = await e2eProjection(page);
+      const entry = projection.nodes.find((node) => node.id === entryId);
+      const nested = projection.nodes.find((node) => (
+        node.parentId === entryId && node.type === 'fieldEntry'
+      ));
+      nestedFieldId = nested?.id ?? '';
+      return nestedFieldId;
+    }).not.toBe('');
+    await expect(row(page, nestedFieldId).locator('.field-name-input')).toBeFocused();
+    await page.keyboard.type('Nested');
+    await page.keyboard.press('Escape');
+
+    const betaSlot = await projectFieldFromTag(page, ids.beta, ids.statusField, 'plain');
+    await trailingEditor(page, betaSlot).click();
+    await page.keyboard.type('#project');
+    const tags = page.getByRole('listbox', { name: 'Tag suggestions' });
+    await expect(tags.getByRole('option', { name: 'project', exact: true })).toBeVisible();
+    await tags.getByRole('option', { name: 'project', exact: true }).click();
+
+    await expect.poll(async () => {
+      const entryId = await storedFieldEntryId(page, ids.beta, ids.statusField);
+      const projection = await e2eProjection(page);
+      return projection.nodes.find((node) => node.parentId === entryId)?.tags;
+    }).toContain(ids.projectTag);
+
+    const gammaSlot = await projectFieldFromTag(page, ids.gamma, ids.statusField, 'plain');
+    await trailingEditor(page, gammaSlot).click();
+    await page.keyboard.type('/code');
+    const slash = page.getByRole('listbox', { name: 'Slash commands' });
+    await expect(slash.getByRole('option', { name: 'Code block' })).toBeVisible();
+    await slash.getByRole('option', { name: 'Code block' }).click();
+
+    let codeId = '';
+    await expect.poll(async () => {
+      const entryId = await storedFieldEntryId(page, ids.gamma, ids.statusField);
+      const projection = await e2eProjection(page);
+      const code = projection.nodes.find((node) => node.parentId === entryId && node.type === 'codeBlock');
+      codeId = code?.id ?? '';
+      return codeId;
+    }).not.toBe('');
+    await expect(row(page, codeId).locator('.code-block-textarea')).toBeFocused();
+
+    const calls = await commandCalls(page);
+    expect(calls.filter((call) => call.cmd === 'update_field_slot').map((call) => call.args.kind))
+      .toEqual(expect.arrayContaining(['appendField', 'appendNodes']));
+  });
+
+  test('reference and option picks focus the trailing draft under the materialized entry', async ({ page }) => {
+    const alphaSlot = await projectFieldFromTag(page, ids.alpha, ids.statusField, 'plain');
+    await trailingEditor(page, alphaSlot).click();
+    await page.keyboard.type('@Beta');
+    const references = page.getByRole('listbox', { name: 'Reference suggestions' });
+    await expect(references.getByRole('option', { name: 'Beta', exact: true })).toBeVisible();
+    await references.getByRole('option', { name: 'Beta', exact: true }).click();
+
+    let statusEntryId = '';
+    await expect.poll(async () => {
+      statusEntryId = await storedFieldEntryId(page, ids.alpha, ids.statusField) ?? '';
+      return statusEntryId;
+    }).not.toBe('');
+    expect(await commandCalls(page)).toContainEqual(expect.objectContaining({
+      cmd: 'update_field_slot',
+      args: expect.objectContaining({
+        fieldDefId: ids.statusField,
+        kind: 'appendReference',
+        ownerId: ids.alpha,
+        targetId: ids.beta,
+      }),
+    }));
+    await expect(trailingEditor(page, statusEntryId)).toBeFocused();
+
+    const betaSlot = await projectFieldFromTag(page, ids.beta, ids.priorityField, 'options');
+    await trailingEditor(page, betaSlot).click();
+    const options = page.getByRole('listbox', { name: 'Field options' });
+    await expect(options.getByRole('option', { name: 'Low', exact: true })).toBeVisible();
+    await options.getByRole('option', { name: 'Low', exact: true }).click();
+
+    let priorityEntryId = '';
+    await expect.poll(async () => {
+      priorityEntryId = await storedFieldEntryId(page, ids.beta, ids.priorityField) ?? '';
+      return priorityEntryId;
+    }).not.toBe('');
+    await expect(trailingEditor(page, priorityEntryId)).toBeFocused();
+  });
+
+  test('clipboard files preserve typed text and append under the real field entry', async ({ page }) => {
+    const alphaSlot = await projectFieldFromTag(page, ids.alpha, ids.statusField, 'plain');
+    await trailingEditor(page, alphaSlot).click();
+    await page.keyboard.type('Caption');
+    await pasteClipboardFile(page, {
+      name: 'field-image.png',
+      mimeType: 'image/png',
+      text: 'mock png bytes',
+    });
+
+    await expect.poll(async () => {
+      const entryId = await storedFieldEntryId(page, ids.alpha, ids.statusField);
+      const projection = await e2eProjection(page);
+      const entry = projection.nodes.find((node) => node.id === entryId);
+      return (entry?.children ?? []).map((childId) => {
+        const child = projection.nodes.find((node) => node.id === childId);
+        return { text: child?.content.text, type: child?.type ?? 'content' };
+      });
+    }).toEqual([
+      { text: 'Caption', type: 'content' },
+      { text: '', type: 'image' },
+    ]);
+
+    const betaSlot = await projectFieldFromTag(page, ids.beta, ids.statusField, 'plain');
+    await trailingEditor(page, betaSlot).click();
+    await page.keyboard.type('Report');
+    await pasteClipboardFile(page, {
+      name: 'field-report.pdf',
+      mimeType: 'application/pdf',
+      text: '%PDF mock report',
+    });
+
+    await expect.poll(async () => {
+      const entryId = await storedFieldEntryId(page, ids.beta, ids.statusField);
+      const projection = await e2eProjection(page);
+      const entry = projection.nodes.find((node) => node.id === entryId);
+      return (entry?.children ?? []).map((childId) => {
+        const child = projection.nodes.find((node) => node.id === childId);
+        return { text: child?.content.text, type: child?.type ?? 'content' };
+      });
+    }).toEqual([
+      { text: 'Report', type: 'content' },
+      { text: 'field-report.pdf', type: 'attachment' },
+    ]);
   });
 });

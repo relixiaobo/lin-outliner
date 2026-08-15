@@ -293,6 +293,8 @@ export class MemoryMutationIndex {
         return changesOwned(direct('afterNodeId'));
       case 'create_inline_field':
         return createsInsideMemory(direct('parentId')) || changesOwned(direct('targetDefId'));
+      case 'update_field_slot':
+        return changesOwned(direct('ownerId'), direct('fieldDefId'), direct('entryId'), direct('id'));
       case 'reuse_field_definition':
         return changesOwned(direct('entryId'), direct('targetDefId'));
       case 'merge_definitions':

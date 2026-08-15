@@ -169,7 +169,7 @@ export function tagDrivenShowCheckbox(byId: ConfigNodeMap, node: Pick<Node, 'tag
  */
 export function nodeShowsCheckbox(
   byId: ConfigNodeMap,
-  node: Pick<Node, 'tags' | 'completedAt' | 'children'>,
+  node: Pick<Node, 'id' | 'tags' | 'completedAt' | 'children'>,
 ): boolean {
   return (
     node.completedAt !== undefined ||

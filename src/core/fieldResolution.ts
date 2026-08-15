@@ -1,5 +1,6 @@
 import { parseDateFieldValue } from './dateFieldValue';
 import { projectFieldConfig, projectTagConfig } from './configProjection';
+import { nodeFieldSlots } from './fieldSlots';
 import {
   CREATED_FIELD,
   DAY_FIELD,
@@ -61,6 +62,11 @@ export type FieldResolutionResult =
 export interface ResolveFieldWriteTargetOptions {
   isDeleted?: (nodeId: NodeId) => boolean;
   trashId?: NodeId;
+}
+
+interface OwnerFieldMatch {
+  readonly fieldDefId?: NodeId;
+  readonly entry?: FieldResolutionNode;
 }
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -227,28 +233,54 @@ export function resolveFieldWriteTarget(
     };
   }
   const isDeleted = deletedPredicate(byId, options);
-  const ownerMatches = owner.children
+  const directEntries = owner.children
     .map((childId) => byId.get(childId))
-    .filter((child): child is FieldResolutionNode => child !== undefined && child.type === 'fieldEntry' && !isDeleted(child.id))
-    .filter((child) => normalizeFieldNameKey(fieldEntryDisplayName(byId, child)) === key);
+    .filter((child): child is FieldResolutionNode => child !== undefined && child.type === 'fieldEntry' && !isDeleted(child.id));
+  const slots = nodeFieldSlots(byId, ownerId);
+  const slottedEntryIds = new Set(slots.flatMap((slot) => slot.entryId ? [slot.entryId] : []));
+  const ownerMatches: OwnerFieldMatch[] = [
+    ...slots.map((slot): OwnerFieldMatch => ({
+      fieldDefId: slot.fieldDefId,
+      ...(slot.entryId && byId.get(slot.entryId)
+        ? { entry: byId.get(slot.entryId)! }
+        : {}),
+    })),
+    ...directEntries
+      .filter((entry) => !slottedEntryIds.has(entry.id))
+      .map((entry): OwnerFieldMatch => ({ fieldDefId: entry.fieldDefId, entry })),
+  ].filter((match) => normalizeFieldNameKey(ownerFieldMatchDisplayName(byId, match)) === key);
+  const matchingEntryIds = new Set(ownerMatches.flatMap((match) => match.entry ? [match.entry.id] : []));
+  const ownerMatchEntryIds = directEntries
+    .filter((entry) => matchingEntryIds.has(entry.id))
+    .map((entry) => entry.id);
   let ownerMatch = ownerMatches[0];
   if (ownerMatches.length > 1) {
     const preferredFieldDefId = preferredFieldDefinitionIdFromTags(
       byId,
       owner,
-      ownerMatches.flatMap((entry) => entry.fieldDefId ? [entry.fieldDefId] : []),
+      ownerMatches.flatMap((match) => match.fieldDefId ? [match.fieldDefId] : []),
       isDeleted,
     );
     const preferredMatches = preferredFieldDefId
-      ? ownerMatches.filter((entry) => entry.fieldDefId === preferredFieldDefId)
+      ? ownerMatches.filter((match) => match.fieldDefId === preferredFieldDefId)
       : [];
-    if (preferredMatches.length !== 1) {
-      return duplicateOwnerError(fieldName, ownerMatches.map((entry) => entry.id));
+    if (preferredFieldDefId && preferredMatches.length === 1) {
+      ownerMatch = preferredMatches[0];
+    } else {
+      if (ownerMatchEntryIds.length === ownerMatches.length || preferredFieldDefId) {
+        return duplicateOwnerError(fieldName, ownerMatchEntryIds);
+      }
+      return duplicateFieldDefinitionsError(
+        fieldName,
+        [...new Set(ownerMatches.flatMap((match) => match.fieldDefId ? [match.fieldDefId] : []))],
+      );
     }
-    ownerMatch = preferredMatches[0];
   }
-  if (ownerMatch) {
-    return resolveExistingEntry(byId, fieldName, values, ownerMatch);
+  if (ownerMatch?.entry) {
+    return resolveExistingEntry(byId, fieldName, values, ownerMatch.entry);
+  }
+  if (ownerMatch?.fieldDefId) {
+    return resolveExistingFieldDefinition(byId, fieldName, values, ownerMatch.fieldDefId);
   }
 
   const systemFieldId = resolveSystemFieldId(fieldName);
@@ -267,21 +299,10 @@ export function resolveFieldWriteTarget(
     ? matchingDefs.find((definition) => definition.id === matchingDefId)
     : undefined;
   if (matchingDefs.length > 1 && !matchingDef) {
-    return {
-      ok: false,
-      code: 'duplicate_field_definitions',
-      error: `Multiple field definitions match "${fieldName}": ${matchingDefs.map((node) => node.id).join(', ')}`,
-      instructions: 'Use an existing field entry on the target node to disambiguate, or merge/delete duplicate field definitions first.',
-      nodeIds: matchingDefs.map((node) => node.id),
-    };
+    return duplicateFieldDefinitionsError(fieldName, matchingDefs.map((node) => node.id));
   }
   if (matchingDef) {
-    const fieldType = fieldTypeForFieldDef(byId, matchingDef.id);
-    const validation = validateFieldValuesForType(fieldName, fieldType, values);
-    if (!validation.ok) {
-      return { ok: false, code: 'invalid_field_value', error: validation.error, instructions: validation.instructions, nodeIds: [matchingDef.id] };
-    }
-    return { ok: true, target: { kind: 'existingFieldDef', fieldDefId: matchingDef.id, fieldType } };
+    return resolveExistingFieldDefinition(byId, fieldName, values, matchingDef.id);
   }
 
   const fieldType = inferFieldTypeFromValues(values);
@@ -300,6 +321,30 @@ export function duplicateOwnerError(fieldName: string, entryIds: NodeId[]): Fiel
     instructions: 'Address the intended field by entry id, or rename one of the fields before retrying the name-based write.',
     nodeIds: entryIds,
   };
+}
+
+function duplicateFieldDefinitionsError(
+  fieldName: string,
+  fieldDefIds: NodeId[],
+): FieldResolutionResult & { ok: false } {
+  return {
+    ok: false,
+    code: 'duplicate_field_definitions',
+    error: `Multiple field definitions match "${fieldName}": ${fieldDefIds.join(', ')}`,
+    instructions: 'Use an existing field entry on the target node to disambiguate, or merge/delete duplicate field definitions first.',
+    nodeIds: fieldDefIds,
+  };
+}
+
+function ownerFieldMatchDisplayName(
+  byId: ReadonlyMap<NodeId, FieldResolutionNode>,
+  match: OwnerFieldMatch,
+): string {
+  if (match.entry) return fieldEntryDisplayName(byId, match.entry);
+  if (!match.fieldDefId) return '';
+  return systemFieldLabel(match.fieldDefId)
+    ?? byId.get(match.fieldDefId)?.content.text
+    ?? '';
 }
 
 function preferredFieldDefinitionIdFromTags(
@@ -373,6 +418,20 @@ function resolveExistingEntry(
     return { ok: false, code: 'invalid_field_value', error: validation.error, instructions: validation.instructions, nodeIds: [entry.id] };
   }
   return { ok: true, target: { kind: 'existingEntry', fieldEntryId: entry.id, fieldDefId, fieldType } };
+}
+
+function resolveExistingFieldDefinition(
+  byId: ReadonlyMap<NodeId, FieldResolutionNode>,
+  fieldName: string,
+  values: readonly FieldResolutionValue[],
+  fieldDefId: NodeId,
+): FieldResolutionResult {
+  const fieldType = fieldTypeForFieldDef(byId, fieldDefId);
+  const validation = validateFieldValuesForType(fieldName, fieldType, values);
+  if (!validation.ok) {
+    return { ok: false, code: 'invalid_field_value', error: validation.error, instructions: validation.instructions, nodeIds: [fieldDefId] };
+  }
+  return { ok: true, target: { kind: 'existingFieldDef', fieldDefId, fieldType } };
 }
 
 function resolveSystemWrite(

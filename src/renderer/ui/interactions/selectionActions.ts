@@ -2,6 +2,7 @@ import type { NodeId, NodeProjection, RichText } from '../../api/types';
 import type { UiState } from '../../state/document';
 import { buildSelectableRows } from '../../state/selectableRows';
 import { formatTag } from '../../../core/textSyntax';
+import { nodeFieldSlotById, parseFieldSlotId } from '../../../core/fieldSlots';
 
 export type SelectionDirection = 'up' | 'down';
 
@@ -144,7 +145,7 @@ function selectedAncestorDepth(
   byId: Map<NodeId, NodeProjection>,
 ): number {
   let depth = 0;
-  let parentId = byId.get(nodeId)?.parentId;
+  let parentId = parseFieldSlotId(nodeId)?.ownerId ?? byId.get(nodeId)?.parentId;
   while (parentId) {
     if (selectedIds.has(parentId)) depth += 1;
     parentId = byId.get(parentId)?.parentId;
@@ -158,7 +159,16 @@ function rowClipboardLabel(
   selectedIds: ReadonlySet<NodeId>,
 ): string {
   const node = byId.get(nodeId);
-  if (!node) return nodeId;
+  if (!node) {
+    const slot = nodeFieldSlotById(byId, nodeId);
+    if (!slot) return nodeId;
+    const fieldName = byId.get(slot.fieldDefId)?.content.text || 'Field';
+    const entry = slot.entryId ? byId.get(slot.entryId) : undefined;
+    const values = (entry?.children ?? [])
+      .map((childId) => byId.get(childId)?.content.text)
+      .filter((text): text is string => Boolean(text));
+    return `>${fieldName}${values.length > 0 ? `: ${values.join(', ')}` : ''}`;
+  }
   if (node.type === 'fieldEntry') {
     const fieldName = node.fieldDefId ? byId.get(node.fieldDefId)?.content.text : undefined;
     if (node.children.some((childId) => selectedIds.has(childId))) {

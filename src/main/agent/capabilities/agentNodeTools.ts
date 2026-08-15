@@ -5,6 +5,7 @@ import { normalizeDateFieldValue } from '../../../core/dateFieldValue';
 import { isInternalConfigNode } from '../../../core/configSchema';
 import { projectFieldConfig, projectTagConfig, nodeIsDone, nodeShowsCheckbox } from '../../../core/configProjection';
 import { validateSearchQueries } from '../../../core/searchEngine';
+import { fieldSlotId, nodeFieldSlots } from '../../../core/fieldSlots';
 import {
   SCHEMA_ID,
   plainText,
@@ -4075,7 +4076,28 @@ async function applyResolvedField(
     return target.fieldEntryId;
   }
   if (target.kind === 'existingFieldDef') {
-    const fieldEntryId = await createFieldEntryForDefinition(host, parentId, target.fieldDefId, tracker, options.index ?? null, collector);
+    const latest = currentMutationIndex(host, collector);
+    const existingEntryId = nodeFieldSlots(latest.nodes, parentId)
+      .find((slot) => slot.fieldDefId === target.fieldDefId)?.entryId;
+    if (existingEntryId) {
+      if (options.usedFieldIds?.has(existingEntryId)) {
+        throw new Error(`Duplicate desired field "${field.name}" targets the same field entry: ${existingEntryId}`);
+      }
+      trackMatchedNode(tracker, existingEntryId);
+      await upsertFieldValues(host, existingEntryId, field, tracker, warnings, collector);
+      return existingEntryId;
+    }
+    const fieldEntryId = await materializeFieldValuesForDefinition(
+      host,
+      parentId,
+      target.fieldDefId,
+      target.fieldType,
+      field,
+      tracker,
+      warnings,
+      collector,
+    );
+    if (!currentMutationIndex(host, collector).nodes.has(fieldEntryId)) return fieldEntryId;
     await upsertFieldValues(host, fieldEntryId, field, tracker, warnings, collector);
     return fieldEntryId;
   }
@@ -4085,6 +4107,71 @@ async function applyResolvedField(
     return fieldEntryId;
   }
   return createField(host, parentId, field, tracker, options.index ?? null, target.fieldType, collector);
+}
+
+async function materializeFieldValuesForDefinition(
+  host: OutlinerToolHost,
+  parentId: string,
+  fieldDefId: string,
+  fieldType: FieldType,
+  field: OutlineField,
+  tracker: MutationTracker,
+  warnings: string[],
+  collector?: MutationEffectCollector,
+): Promise<string> {
+  const normalized = normalizeFieldValuesForType(field, fieldType);
+  const first = normalized.clear ? undefined : normalized.values[0];
+  trackMatchedNode(tracker, fieldDefId);
+  if (!first) return fieldSlotId(parentId, fieldDefId);
+
+  let outcome: unknown;
+  if (fieldType === 'options') {
+    outcome = first.targetId
+      ? await handleMutation(host, collector, 'update_field_slot', {
+        ownerId: parentId,
+        fieldDefId,
+        kind: 'selectOption',
+        optionNodeId: first.targetId,
+      })
+      : await handleMutation(host, collector, 'update_field_slot', {
+        ownerId: parentId,
+        fieldDefId,
+        kind: 'appendText',
+        text: first.text,
+        collect: true,
+      });
+  } else if (fieldType === 'options_from_supertag') {
+    if (!first.targetId) throw new Error('Options-from-supertag field values must use [[node:Display^id]].');
+    outcome = await handleMutation(host, collector, 'update_field_slot', {
+      ownerId: parentId,
+      fieldDefId,
+      kind: 'selectOption',
+      optionNodeId: first.targetId,
+    });
+  } else if (first.targetId) {
+    if (fieldType !== 'plain') throw new Error(`${fieldType} field values cannot store node references.`);
+    outcome = await handleMutation(host, collector, 'update_field_slot', {
+      ownerId: parentId,
+      fieldDefId,
+      kind: 'appendReference',
+      targetId: first.targetId,
+    });
+  } else {
+    outcome = await handleMutation(host, collector, 'update_field_slot', {
+      ownerId: parentId,
+      fieldDefId,
+      kind: 'appendText',
+      text: outlineValueSource(first),
+    });
+  }
+
+  const fieldEntryId = focusFromOutcome(outcome);
+  tracker.createdFieldEntryIds.push(fieldEntryId);
+  const entry = currentMutationIndex(host, collector).nodes.get(fieldEntryId);
+  if (entry?.type === 'fieldEntry') tracker.createdNodeIds.push(...activeChildIds(currentMutationIndex(host, collector), entry.id));
+  if (normalized.values.length === 1) return fieldEntryId;
+  pushDuplicateKeyWarning('desired field values', normalized.values.map(outlineValueKey), warnings);
+  return fieldEntryId;
 }
 
 async function createFieldEntryForDefinition(

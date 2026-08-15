@@ -16,7 +16,7 @@ import { TRANSLATION_LANGUAGES, type TranslationLanguage } from '../../../core/t
 import { api } from '../../api/client';
 import type { AgentProviderSettingsView, NodeId } from '../../api/types';
 import { useT } from '../../i18n/I18nProvider';
-import { type DocumentIndex, type UiState } from '../../state/document';
+import { fieldSlotsForIndex, type DocumentIndex, type UiState } from '../../state/document';
 import { referenceSummaryForIndex } from '../../state/referenceSummary';
 import { BacklinksSection } from '../BacklinksSection';
 import {
@@ -247,6 +247,7 @@ export function FilePreviewPanel(props: FilePreviewPanelProps) {
       ? buildOutlinerRows(fileRoot ?? undefined, props.index.byId, {
         expandedHiddenFields: props.ui.expandedHiddenFields,
         systemFieldContext: { referenceSummary },
+        fieldSlots: (nodeId) => fieldSlotsForIndex(props.index, nodeId),
       })
       : undefined
   ), [fileRoot, props.index.byId, props.ui.expandedHiddenFields, referenceSummary]);

@@ -50,6 +50,11 @@ import { buildReferenceSummary, type ReferenceSummary } from './references';
 import { cappedMultiplier } from './ranking';
 import { collectDescendantIds, nodeIsInSubtree } from './treeUtils';
 import {
+  NodeFieldSlotCache,
+  tagDefinitionChainSpecificFirst,
+  type NodeFieldSlot,
+} from './fieldSlots';
+import {
   SEARCH_QUERY_COMPLEXITY_LIMITS,
   compileSearchQueryExpr,
   type CompiledSearchQuery,
@@ -68,6 +73,7 @@ import {
   UPDATED_FIELD,
   displayNode,
   isSystemFieldId,
+  systemFieldLabel,
   systemFieldValues,
 } from './systemFields';
 
@@ -219,6 +225,7 @@ interface SearchIndex {
   nodes: Map<NodeId, SearchNode>;
   allNodes: SearchNode[];
   deletedNodeIds?: ReadonlySet<NodeId>;
+  fieldSlotCache: NodeFieldSlotCache;
 }
 
 interface SearchContext {
@@ -489,8 +496,10 @@ function sortValuesForNode(index: SearchIndex, node: SearchNode, fieldId: string
     return systemFieldValues(displayed, fieldId, index.nodes, { referenceSummary: references });
   }
 
-  const fieldEntry = fieldEntryNodes(index, displayed).find((entry) => entry.fieldDefId === fieldId);
-  if (!fieldEntry) return [];
+  const fieldEntryId = fieldSlotsForSearchNode(index, displayed)
+    .find((slot) => slot.fieldDefId === fieldId)?.entryId;
+  const fieldEntry = fieldEntryId ? index.nodes.get(fieldEntryId) : undefined;
+  if (fieldEntry?.type !== 'fieldEntry') return [];
   const values = fieldEntry.children
     .map((childId) => index.nodes.get(childId))
     .filter((value): value is SearchNode => value !== undefined && !isInTrash(index, value.id))
@@ -668,6 +677,7 @@ export function textSearchRecordForNodeMap(
     libraryId,
     nodes: nodes as Map<NodeId, SearchNode>,
     allNodes: [],
+    fieldSlotCache: new NodeFieldSlotCache(),
   }, nodeId);
 }
 
@@ -689,6 +699,7 @@ function indexSearchDocument(document: SearchDocument): SearchIndex {
     allNodes,
     nodes,
     deletedNodeIds: deletedNodeIdSet(nodes),
+    fieldSlotCache: new NodeFieldSlotCache(),
   };
 }
 
@@ -1374,7 +1385,8 @@ function textSearchRecordForNode(index: SearchIndex, nodeId: NodeId): NodeTextSe
   if (node.description?.trim()) fields.push({ key: 'description', text: node.description });
   if (node.type === 'codeBlock' && title) fields.push({ key: 'body', text: title });
 
-  const tagDefIds = uniqueStrings(node.tags);
+  const tagDefIds = uniqueStrings(node.tags.flatMap((tagId) =>
+    tagDefinitionChainSpecificFirst(index.nodes, tagId)));
   for (const tagName of tagNames(index, node)) {
     fields.push({ key: 'tag', text: tagName });
     fields.push({ key: 'tag', text: `#${tagName}` });
@@ -1454,7 +1466,10 @@ function comparableFieldScalars(index: SearchIndex, node: SearchNode, fieldDefId
 }
 
 function fieldDateRanges(index: SearchIndex, node: SearchNode, fieldDefId: NodeId): DateRange[] {
-  const entries = fieldEntryNodes(index, node).filter((fieldEntry) => fieldEntry.fieldDefId === fieldDefId);
+  const entries = fieldSlotsForSearchNode(index, node)
+    .filter((slot) => slot.fieldDefId === fieldDefId && slot.entryId)
+    .map((slot) => index.nodes.get(slot.entryId!))
+    .filter((entry): entry is Extract<SearchNode, { type: 'fieldEntry' }> => entry?.type === 'fieldEntry');
   return uniqueDateRanges(entries.flatMap((fieldEntry) =>
     fieldEntry.children.flatMap((valueId) => {
       const value = index.nodes.get(valueId);
@@ -1477,10 +1492,13 @@ function nodeIsOverdue(index: SearchIndex, node: SearchNode, conditionNode: Quer
 }
 
 function overdueDateRanges(index: SearchIndex, node: SearchNode, fieldDefId?: NodeId): DateRange[] {
-  const entries = fieldEntryNodes(index, node).filter((fieldEntry) => {
-    if (fieldDefId) return fieldEntry.fieldDefId === fieldDefId;
-    return fieldTypeOf(index, fieldEntry.fieldDefId) === 'date';
-  });
+  const entries = fieldSlotsForSearchNode(index, node)
+    .filter((slot) => (
+      Boolean(slot.entryId)
+      && (fieldDefId ? slot.fieldDefId === fieldDefId : fieldTypeOf(index, slot.fieldDefId) === 'date')
+    ))
+    .map((slot) => index.nodes.get(slot.entryId!))
+    .filter((entry): entry is Extract<SearchNode, { type: 'fieldEntry' }> => entry?.type === 'fieldEntry');
   return uniqueDateRanges(entries.flatMap((fieldEntry) =>
     fieldEntry.children.flatMap((valueId) => {
       const value = index.nodes.get(valueId);
@@ -1988,13 +2006,14 @@ function normalizeComparableValue(value: string): string {
 }
 
 function fieldReads(index: SearchIndex, node: SearchNode): Array<{ name: string; fieldDefId?: NodeId; values: string[] }> {
-  return fieldEntryNodes(index, node)
-    .map((fieldEntry) => {
-      const fieldDef = fieldEntry.fieldDefId ? index.nodes.get(fieldEntry.fieldDefId) : undefined;
+  return fieldSlotsForSearchNode(index, node)
+    .map((slot) => {
+      const fieldDef = index.nodes.get(slot.fieldDefId);
+      const fieldEntry = slot.entryId ? index.nodes.get(slot.entryId) : undefined;
       return {
-        name: fieldDef?.content.text || fieldEntry.content.text || 'Field',
-        fieldDefId: fieldEntry.fieldDefId,
-        values: fieldEntry.children
+        name: systemFieldLabel(slot.fieldDefId) || fieldDef?.content.text || fieldEntry?.content.text || 'Field',
+        fieldDefId: slot.fieldDefId,
+        values: (fieldEntry?.children ?? [])
           .map((valueId) => index.nodes.get(valueId))
           .filter((value): value is SearchNode => value !== undefined && !isInTrash(index, value.id))
           .map((value) => fieldValueText(index, value)),
@@ -2003,18 +2022,18 @@ function fieldReads(index: SearchIndex, node: SearchNode): Array<{ name: string;
 }
 
 function fieldValueNodes(index: SearchIndex, node: SearchNode): SearchNode[] {
-  return fieldEntryNodes(index, node)
+  return fieldSlotsForSearchNode(index, node)
+    .flatMap((slot) => slot.entryId ? [index.nodes.get(slot.entryId)] : [])
+    .filter((entry): entry is Extract<SearchNode, { type: 'fieldEntry' }> => entry?.type === 'fieldEntry')
     .flatMap((fieldEntry) =>
       fieldEntry.children
         .map((valueId) => index.nodes.get(valueId))
         .filter((value): value is SearchNode => value !== undefined && !isInTrash(index, value.id)));
 }
 
-function fieldEntryNodes(index: SearchIndex, node: SearchNode): Extract<SearchNode, { type: 'fieldEntry' }>[] {
+function fieldSlotsForSearchNode(index: SearchIndex, node: SearchNode): readonly NodeFieldSlot[] {
   if (node.type === 'tagDef' || node.type === 'fieldDef' || node.type === 'search') return [];
-  return node.children
-    .map((childId) => index.nodes.get(childId))
-    .filter((child): child is Extract<SearchNode, { type: 'fieldEntry' }> => child?.type === 'fieldEntry' && !isInTrash(index, child.id));
+  return index.fieldSlotCache.read(index.nodes, node.id, 0);
 }
 
 function fieldValueText(index: SearchIndex, value: SearchNode): string {

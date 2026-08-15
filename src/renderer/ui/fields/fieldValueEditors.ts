@@ -1,4 +1,11 @@
-import type { FieldType, NodeId, NodeProjection } from '../../api/types';
+import type {
+  AssetMetadata,
+  CommandResult,
+  CreateNodeTree,
+  FieldType,
+  NodeId,
+  NodeProjection,
+} from '../../api/types';
 import { fieldTypeInteraction, type FieldValueInteraction } from './fieldTypeRegistry';
 import type { FieldValueConstraints } from './fieldValueValidation';
 
@@ -43,11 +50,11 @@ export function fieldValueEditor(fieldType: FieldType | undefined): FieldValueEd
 // exactly like a body node, the only difference being WHICH create command runs.
 // `materializeValue` is that injected create — it accepts the renderer's draft
 // row id (so React identity / IME survive the draft->value transition, just like
-// materializeDraftNode) and routes to the field command set internally
-// (createCollectedFieldOption when auto-collecting, else setFieldFreeTextValue;
-// a typed text matching an existing option references it, deduped, in core).
+// materializeDraftNode) and routes through updateFieldSlot. Auto-collected text
+// that matches an existing option is deduped into a reference in core.
 export interface FieldValueContext {
-  entryId: NodeId;
+  ownerId: NodeId;
+  entryId?: NodeId;
   optionField: NodeProjection;
   descriptor: FieldValueEditorDescriptor;
   // The concrete field type + numeric constraints, threaded so a value row can
@@ -60,7 +67,17 @@ export interface FieldValueContext {
   // Materialize the trailing draft as a field value under `id` carrying `text`.
   // Mirrors api.materializeDraftNode so OutlinerItem's materializeDraft can call
   // it through the same code path with no field-value branch.
-  materializeValue: (id: NodeId, text: string) => Promise<unknown>;
+  materializeValue: (id: NodeId, text: string) => Promise<CommandResult>;
+  materializeReference: (id: NodeId, targetId: NodeId) => Promise<CommandResult>;
+  materializeNodes: (
+    id: NodeId,
+    nodes: CreateNodeTree[],
+    firstTagIds?: NodeId[],
+  ) => Promise<CommandResult>;
+  materializeField: (id: NodeId) => Promise<CommandResult>;
+  materializeAsset: (id: NodeId, asset: AssetMetadata) => Promise<CommandResult>;
+  materializeImageUrl: (id: NodeId, mediaUrl: string) => Promise<CommandResult>;
   // Append a reference to an existing pool option (the additive options overlay).
-  onSelectOption: (optionId: NodeId) => Promise<unknown>;
+  onSelectOption: (optionId: NodeId) => Promise<CommandResult>;
+  commitSlot: () => Promise<CommandResult>;
 }

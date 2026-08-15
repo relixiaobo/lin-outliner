@@ -190,7 +190,8 @@ function serializeAnnotatedOutlineNode(
   const lines = [`${indent}- ${nodeMarker(nodeId)}${outlineNodeText(index, node)}`];
   for (const field of fieldReads(index, node, includeDeleted)) {
     const fieldIndent = '  '.repeat(level + 1);
-    lines.push(`${fieldIndent}- ${nodeMarker(field.fieldEntryId)}${escapeSemanticText(field.name, { suffix: '::' })}::`);
+    const marker = field.fieldEntryId ? nodeMarker(field.fieldEntryId) : '';
+    lines.push(`${fieldIndent}- ${marker}${escapeSemanticText(field.name, { suffix: '::' })}::`);
     for (const value of field.values) {
       const marker = value.valueNodeId ? nodeMarker(value.valueNodeId) : '';
       lines.push(`${fieldIndent}  - ${marker}${value.text}`);

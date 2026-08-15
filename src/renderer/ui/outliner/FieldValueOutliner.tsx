@@ -2,17 +2,24 @@ import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 import { api } from '../../api/client';
 import type { NodeId, NodeProjection } from '../../api/types';
 import { projectFieldConfig } from '../../../core/configProjection';
-import type { DocumentIndex, UiState } from '../../state/document';
+import { freshNodeId } from '../../../core/nodeId';
+import { mediaKindForMimeType } from '../../../core/mediaKind';
+import { fieldSlotsForIndex, type DocumentIndex, type UiState } from '../../state/document';
 import { fieldValueEditor, type FieldValueContext } from '../fields/fieldValueEditors';
+import { requestFocusState, rowFocusTarget } from '../focus/focusModel';
+import { attachmentNodeInput } from '../interactions/attachmentIngest';
 import type { CommandRunner, NavigateRootOptions, TriggerState } from '../shared';
 import { OutlinerView } from './OutlinerView';
 import { buildOutlinerRows } from './row-model';
 import { CheckboxFieldControl } from './CheckboxFieldControl';
 import { useT } from '../../i18n/I18nProvider';
+import type { NodeFieldSlot } from '../../../core/fieldSlots';
+import { EMPTY_RICH_TEXT } from '../../api/types';
 
 interface FieldValueOutlinerProps {
   panelId: string;
-  entryId: NodeId;
+  slot: NodeFieldSlot;
+  ownerId: NodeId;
   selectionRootId: NodeId;
   onRoot: (nodeId: NodeId, options?: NavigateRootOptions) => void;
   index: DocumentIndex;
@@ -33,9 +40,24 @@ interface FieldValueOutlinerProps {
 
 export function FieldValueOutliner(props: FieldValueOutlinerProps) {
   const tf = useT().outliner.field;
-  const entry = props.index.byId.get(props.entryId);
-  const rows = buildOutlinerRows(entry, props.index.byId, {
+  const entry = props.slot.entryId ? props.index.byId.get(props.slot.entryId) : undefined;
+  const valueParentId = entry?.type === 'fieldEntry' ? entry.id : props.slot.id;
+  const valueParent: NodeProjection = entry?.type === 'fieldEntry' ? entry : {
+    id: props.slot.id,
+    type: 'fieldEntry',
+    fieldDefId: props.slot.fieldDefId,
+    parentId: props.ownerId,
+    children: [],
+    content: EMPTY_RICH_TEXT,
+    tags: [],
+    createdAt: 0,
+    updatedAt: 0,
+    locked: false,
+    autoCollected: false,
+  };
+  const rows = buildOutlinerRows(valueParent, props.index.byId, {
     expandedHiddenFields: props.ui.expandedHiddenFields,
+    fieldSlots: (nodeId) => fieldSlotsForIndex(props.index, nodeId),
   });
   const empty = rows.length === 0;
   const optionFieldConfig = props.optionField
@@ -59,21 +81,21 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
   // draft->value transition — the same contract as api.materializeDraftNode, so
   // OutlinerItem's materializeDraft drives both through one unified path.
   //
-  // applyFocus:false is essential: these field commands return focus(fieldEntryId),
-  // which (via the async pendingFocus effect) would otherwise override the
-  // renderer's own post-materialize focus on the next trailing draft, making the
-  // cursor vanish. The renderer owns focus after a field value commit, not core.
+  // These are raw command operations. OutlinerItem runs each exactly once with
+  // the focus policy appropriate to the interaction; trigger popovers already
+  // provide their own outer runner.
   //
-  // Auto-collect decides routing: on -> createCollectedFieldOption (joins the
-  // reusable pool; a typed name matching an existing option is deduped into a
-  // reference in core); off -> setFieldFreeTextValue (a plain value on this entry
-  // alone). Both append — everything is a node, there is no cardinality gate.
+  // updateFieldSlot owns both virtual-slot materialization and existing-entry
+  // routing. Auto-collect joins the reusable pool; plain text stays local. Both
+  // append — everything is a node, there is no cardinality gate.
   const materializeValue = (id: NodeId, text: string) => (
-    props.run(() => (
-      autocollect
-        ? api.createCollectedFieldOption(props.entryId, text, id)
-        : api.setFieldFreeTextValue(props.entryId, text, id)
-    ), { applyFocus: false })
+    api.updateFieldSlot(props.ownerId, props.slot.fieldDefId, {
+      kind: 'appendText',
+      text,
+      id,
+      ...(entry ? { entryId: entry.id } : {}),
+      ...(autocollect ? { collect: true } : {}),
+    })
   );
 
   // An empty checkbox field needs a toggle even though there is no stored value
@@ -85,6 +107,27 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
     && empty,
   );
 
+  const createWholeFieldValue = async (value: string) => {
+    const valueId = freshNodeId();
+    const result = await props.run(() => api.updateFieldSlot(
+      props.ownerId,
+      props.slot.fieldDefId,
+      {
+        kind: 'appendText',
+        text: value,
+        id: valueId,
+        ...(entry ? { entryId: entry.id } : {}),
+      },
+    ), { applyFocus: false });
+    if (result && 'update' in result && result.focus?.nodeId) {
+      props.setUi((previous) => requestFocusState(
+        previous,
+        rowFocusTarget(valueId, result.focus!.nodeId, props.panelId),
+      ));
+    }
+    return result;
+  };
+
   // Everything is a node: the value area always offers a trailing draft as the
   // uniform entry point for the next value (shown when empty or when nav focuses
   // the trailing surface). Values always append — there is no cardinality gate.
@@ -92,7 +135,8 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
 
   const ctx: FieldValueContext | undefined = props.optionField
     ? {
-      entryId: props.entryId,
+      ownerId: props.ownerId,
+      entryId: entry?.type === 'fieldEntry' ? entry.id : undefined,
       optionField: props.optionField,
       descriptor,
       fieldType: optionFieldType,
@@ -100,8 +144,69 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
       autocollect,
       placeholder: valuePlaceholder,
       materializeValue,
+      materializeReference: (id, targetId) => (
+        api.updateFieldSlot(props.ownerId, props.slot.fieldDefId, {
+          kind: 'appendReference',
+          targetId,
+          id,
+          ...(entry ? { entryId: entry.id } : {}),
+        })
+      ),
+      materializeNodes: (id, nodes, firstTagIds) => (
+        api.updateFieldSlot(props.ownerId, props.slot.fieldDefId, {
+          kind: 'appendNodes',
+          nodes,
+          id,
+          ...(firstTagIds && firstTagIds.length > 0 ? { firstTagIds } : {}),
+          ...(entry ? { entryId: entry.id } : {}),
+        })
+      ),
+      materializeField: (id) => (
+        api.updateFieldSlot(props.ownerId, props.slot.fieldDefId, {
+          kind: 'appendField',
+          name: '',
+          fieldType: 'plain',
+          id,
+          ...(entry ? { entryId: entry.id } : {}),
+        })
+      ),
+      materializeAsset: (id, asset) => (
+        mediaKindForMimeType(asset.mimeType) === 'image'
+          ? api.updateFieldSlot(props.ownerId, props.slot.fieldDefId, {
+              kind: 'appendImage',
+              assetId: asset.id,
+              width: asset.imageWidth,
+              height: asset.imageHeight,
+              name: asset.originalFilename,
+              id,
+              ...(entry ? { entryId: entry.id } : {}),
+            })
+          : api.updateFieldSlot(props.ownerId, props.slot.fieldDefId, {
+              kind: 'appendAttachment',
+              ...attachmentNodeInput(asset),
+              id,
+              ...(entry ? { entryId: entry.id } : {}),
+            })
+      ),
+      materializeImageUrl: (id, mediaUrl) => (
+        api.updateFieldSlot(props.ownerId, props.slot.fieldDefId, {
+          kind: 'appendImage',
+          mediaUrl,
+          id,
+          ...(entry ? { entryId: entry.id } : {}),
+        })
+      ),
       onSelectOption: (optionId) => (
-        props.run(() => api.selectFieldOption(props.entryId, optionId), { applyFocus: false })
+        api.updateFieldSlot(props.ownerId, props.slot.fieldDefId, {
+          kind: 'selectOption',
+          optionNodeId: optionId,
+          ...(entry ? { entryId: entry.id } : {}),
+        })
+      ),
+      commitSlot: () => api.updateFieldSlot(
+        props.ownerId,
+        props.slot.fieldDefId,
+        { kind: 'commit', ...(entry ? { entryId: entry.id } : {}) },
       ),
     }
     : undefined;
@@ -114,14 +219,16 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
     >
       {showEmptyWholeFieldControl ? (
         <CheckboxFieldControl
-          entryId={props.entryId}
+          entryId={entry?.type === 'fieldEntry' ? entry.id : undefined}
+          onCreateValue={createWholeFieldValue}
           run={props.run}
         />
       ) : (
         <OutlinerView
           panelId={props.panelId}
-          parentId={props.entryId}
-          rootId={props.entryId}
+          parentId={valueParentId}
+          parentOverride={entry ? undefined : valueParent}
+          rootId={valueParentId}
           selectionRootId={props.selectionRootId}
           onRoot={props.onRoot}
           depth={0}
@@ -136,7 +243,7 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
           setTrigger={props.setTrigger}
           dragId={props.dragId}
           setDragId={props.setDragId}
-          referencePath={[props.entryId]}
+          referencePath={[valueParentId]}
           fieldValue={ctx}
           trailingDraft={trailingMode}
           showViewToolbar={false}

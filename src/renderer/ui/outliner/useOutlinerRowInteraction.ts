@@ -28,6 +28,7 @@ import {
   cursorEnd,
   cursorStart,
   focusTarget,
+  outlinerNavigationFocusTarget,
   requestFocusState,
   rowFocusTarget,
   selectFocusState,
@@ -213,9 +214,7 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
     const nextParentId = nextRow.parentId ?? nextNode?.parentId ?? null;
     setUi((prev) => requestFocusState(
       prev,
-      nextNode?.type === 'fieldEntry'
-        ? focusTarget(nextRow.id, nextParentId, panelId, 'field-name')
-        : rowFocusTarget(nextRow.id, nextParentId, panelId),
+      outlinerNavigationFocusTarget(nextRow.id, nextParentId, panelId, nextRow.kind),
       direction === 1 ? cursorStart() : cursorEnd(),
     ));
   }, [

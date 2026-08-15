@@ -8,9 +8,10 @@ import {
   type OutlinerRowItem,
   type ViewConfig,
 } from './outlinerRows';
-import { outlinerChildParentId, type DocumentIndex } from './document';
+import { fieldSlotsForIndex, outlinerChildParentId, type DocumentIndex } from './document';
 import type { TrailingDraftPlacement } from './document';
 import { resolveTrailingDraftAfterId } from './trailingDraftPlacement';
+import type { NodeFieldSlot } from '../../core/fieldSlots';
 
 // A single flattened, depth-aware outliner row. The recursive
 // OutlinerView/OutlinerItem render is being replaced by one windowed flat list,
@@ -29,6 +30,7 @@ export type VisualRow =
     kind: 'field';
     key: string;
     nodeId: NodeId;
+    slot: NodeFieldSlot;
     depth: number;
     parentId: NodeId;
     referencePath: NodeId[];
@@ -84,6 +86,8 @@ export interface VisualRowsSnapshot {
   readonly fieldDefinitionIds: ReadonlySet<NodeId>;
   readonly modelValuesByRow: ReadonlyMap<NodeId, ReadonlyMap<string, readonly string[]>>;
   readonly referenceGraphRevision: number;
+  readonly tagDefinitionsRevision: number;
+  readonly fieldSlotOwnerTags: ReadonlyMap<NodeId, readonly NodeId[]>;
   readonly readsReferenceCounts: boolean;
 }
 
@@ -92,6 +96,7 @@ export function buildVisualRows(
   byId: Map<NodeId, NodeProjection>,
   options: VisualRowsOptions,
   instrumentation?: VisualRowsBuildInstrumentation,
+  fieldSlots?: (nodeId: NodeId) => readonly NodeFieldSlot[],
 ): VisualRow[] {
   const out: VisualRow[] = [];
   const expanded = options.expanded;
@@ -129,6 +134,7 @@ export function buildVisualRows(
     const builtRows = buildOutlinerRows(parent, byId, {
       expandedHiddenFields,
       systemFieldContext: options.systemFieldContext,
+      fieldSlots,
     });
     instrumentation?.onLevelBuilt(parent, view, builtRows);
     const showDraft = trailingMode === 'always'
@@ -212,6 +218,7 @@ export function buildVisualRows(
             kind: 'field',
             key: `${rowPrefix}>${row.id}`,
             nodeId: row.id,
+            slot: row.slot,
             depth: rowDepth,
             parentId,
             referencePath,
@@ -278,7 +285,13 @@ export function buildVisualRowsIncrementally(
   const configNodeIds = new Set<NodeId>();
   const fieldDefinitionIds = new Set<NodeId>();
   const modelValuesByRow = new Map<NodeId, Map<string, readonly string[]>>();
+  const fieldSlotOwnerTags = new Map<NodeId, readonly NodeId[]>();
   let readsReferenceCounts = false;
+  const resolveFieldSlots = (nodeId: NodeId) => {
+    const owner = index.byId.get(nodeId);
+    if (owner) fieldSlotOwnerTags.set(nodeId, owner.tags);
+    return fieldSlotsForIndex(index, nodeId);
+  };
   const rows = buildVisualRows(rootId, index.byId, options, {
     onLevelBuilt(parent, view, builtRows) {
       if (view.viewDefId) {
@@ -307,7 +320,7 @@ export function buildVisualRowsIncrementally(
         modelValuesByRow.set(rowId, values);
       }
     },
-  });
+  }, resolveFieldSlots);
 
   return {
     rows,
@@ -318,6 +331,8 @@ export function buildVisualRowsIncrementally(
     fieldDefinitionIds,
     modelValuesByRow,
     referenceGraphRevision: index.semanticRevisions.referenceGraph,
+    tagDefinitionsRevision: index.semanticRevisions.tagDefinitions,
+    fieldSlotOwnerTags,
     readsReferenceCounts,
   };
 }
@@ -335,8 +350,15 @@ function canReuseVisualRows(
     previous.readsReferenceCounts
     && previous.referenceGraphRevision !== index.semanticRevisions.referenceGraph
   ) return false;
+  if (previous.tagDefinitionsRevision !== index.semanticRevisions.tagDefinitions) return false;
 
   for (const dirtyId of index.delta.dirtyIds) {
+    const previousOwnerTags = previous.fieldSlotOwnerTags.get(dirtyId);
+    if (previousOwnerTags) {
+      const nextOwnerTags = index.byId.get(dirtyId)?.tags;
+      if (!nextOwnerTags || !sameStrings(previousOwnerTags, nextOwnerTags)) return false;
+    }
+    if (index.byId.get(dirtyId)?.type === 'fieldEntry') return false;
     if (previous.configNodeIds.has(dirtyId) || previous.fieldDefinitionIds.has(dirtyId)) return false;
     const fields = previous.modelValuesByRow.get(dirtyId);
     if (!fields) continue;

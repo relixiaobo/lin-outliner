@@ -169,6 +169,50 @@ describe('renderer Agent user-view hints', () => {
     expect(hints.panels[0]?.visibleOutlineTruncated).toBe(false);
   });
 
+  test('maps a materialized projected field row back to authoritative node ids', () => {
+    const index = buildIndex(projection([
+      node('root', 'Root', { children: ['record'] }),
+      node('schema', 'Schema', { children: ['task-tag', 'status-field'] }),
+      node('task-tag', 'task', {
+        parentId: 'schema',
+        type: 'tagDef',
+        children: ['status-template'],
+      }),
+      node('status-field', 'Status', { parentId: 'schema', type: 'fieldDef' }),
+      node('status-template', '', {
+        parentId: 'task-tag',
+        type: 'fieldEntry',
+        fieldDefId: 'status-field',
+      }),
+      node('record', 'Record', {
+        parentId: 'root',
+        tags: ['task-tag'],
+        children: ['status-entry'],
+      }),
+      node('status-entry', '', {
+        parentId: 'record',
+        type: 'fieldEntry',
+        fieldDefId: 'status-field',
+        children: ['status-value'],
+      }),
+      node('status-value', 'Active', { parentId: 'status-entry' }),
+    ]));
+
+    const hints = buildRendererUserViewHints({
+      activePanelId: 'panel-1',
+      panels: [panel()],
+      index,
+      ui: ui({ expanded: new Set(['record']) }),
+    });
+
+    expect(hints.panels[0]?.visibleNodes).toEqual([
+      { nodeId: 'root', depth: 0, expanded: true },
+      { nodeId: 'record', depth: 1, expanded: true },
+      { nodeId: 'status-entry', depth: 2, expanded: true },
+      { nodeId: 'status-value', depth: 3, expanded: false },
+    ]);
+  });
+
   test('includes expanded reference target children with rendered depth and cycle protection', () => {
     const index = buildIndex(projection([
       node('root', 'Root', { children: ['ref'] }),

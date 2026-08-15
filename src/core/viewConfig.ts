@@ -1,4 +1,5 @@
-import type { NodeId, NodeType, ViewMode } from './types';
+import { nodeFieldSlots, type FieldSlotSource } from './fieldSlots';
+import type { DefConfigKey, NodeId, NodeType, ViewMode } from './types';
 
 export interface ViewTreeNode {
   id: NodeId;
@@ -7,8 +8,11 @@ export interface ViewTreeNode {
 }
 
 export interface TableViewTreeNode extends ViewTreeNode {
+  parentId?: NodeId | null;
+  tags?: readonly NodeId[];
   targetId?: NodeId;
   fieldDefId?: NodeId;
+  configKey?: DefConfigKey;
   displayField?: NodeId;
   displayOrder?: number;
 }
@@ -136,15 +140,15 @@ export function tableDisplayFieldInitialization<T extends TableViewTreeNode>(par
     display.displayField ? [display.displayField] : []
   )));
   const usedFields = new Set<NodeId>();
+  const slotSource = (byId instanceof Map
+    ? byId
+    : { nodes: byId }) as FieldSlotSource;
   for (const childId of owner.children) {
     const child = resolve(childId);
     if (!child || !isViewRecordNode(child)) continue;
     const record = resolveViewRecordNode(byId, child);
     if (!record) continue;
-    for (const nestedId of record.children) {
-      const nested = resolve(nestedId);
-      if (nested?.type === 'fieldEntry' && nested.fieldDefId) usedFields.add(nested.fieldDefId);
-    }
+    for (const slot of nodeFieldSlots(slotSource, record.id)) usedFields.add(slot.fieldDefId);
   }
 
   const missingFieldIds = schema.children.filter((fieldId) => {

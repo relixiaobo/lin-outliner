@@ -233,6 +233,7 @@ describe('projection-neutral document system contract', () => {
       create_field_def: { tagId: definition.tagId },
       create_inline_field_after_node: { afterNodeId: definition.tagId },
       create_inline_field: { parentId: definition.tagId },
+      update_field_slot: { ownerId: definition.tagId, fieldDefId: 'field:ordinary', kind: 'commit' },
       reuse_field_definition: { entryId: definition.tagId },
       merge_definitions: { targetId: 'tag:other', sourceIds: [definition.tagId] },
       register_collected_option: { fieldDefId: definition.tagId },
@@ -277,6 +278,16 @@ describe('projection-neutral document system contract', () => {
     expect(documentCommandMutatesProtectedSystemTagDefinition(
       'split_node',
       { nodeId: 'node:ordinary', targetParentId: definition.tagId },
+      protectedIds,
+    )).toBe(true);
+    expect(documentCommandMutatesProtectedSystemTagDefinition(
+      'update_field_slot',
+      {
+        ownerId: 'node:ordinary',
+        fieldDefId: 'field:ordinary',
+        kind: 'appendReference',
+        targetId: definition.tagId,
+      },
       protectedIds,
     )).toBe(true);
     expect(documentCommandMutatesProtectedSystemTagDefinition(
