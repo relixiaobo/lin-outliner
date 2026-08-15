@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, DragEvent as ReactDragEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { formatHotkey } from '../../core/launcher/commands';
@@ -27,7 +27,6 @@ import { useMenuKeyboard } from './primitives/useMenuKeyboard';
 import { textOf } from './shared';
 import type { NavigateRootOptions } from './shared';
 import { useT } from '../i18n/I18nProvider';
-import { isNodeInTrash } from './interactions/nodeLocation';
 import { OUTLINER_NODE_DRAG_MIME, PINNED_NODE_REORDER_MIME } from './interactions/dragDrop';
 import { MAX_OUTLINE_INDENT_DEPTH } from './workspaceResponsiveLayout';
 
@@ -57,6 +56,159 @@ interface SidebarProps {
   pinnedNodeIds: NodeId[];
   projection: DocumentProjection;
   rootId: NodeId | null;
+}
+
+interface SidebarTreeLabels {
+  collapseNode: (params: { label: string }) => string;
+  expandNode: (params: { label: string }) => string;
+  missingReference: string;
+  untitled: string;
+}
+
+interface WorkspaceTreeBranchProps {
+  depth: number;
+  expandedIds: Set<NodeId>;
+  index: DocumentIndex;
+  labels: SidebarTreeLabels;
+  nodeId: NodeId;
+  onContextMenu: (state: SidebarContextMenuState) => void;
+  onNavigateRoot: (nodeId: NodeId) => void;
+  onOpenPanel: (nodeId: NodeId) => void;
+  onToggleTreeNode: (nodeId: NodeId) => void;
+  parentPath: readonly NodeId[];
+  rootId: NodeId | null;
+  trashId: NodeId;
+}
+
+const WorkspaceTreeBranch = memo(function WorkspaceTreeBranch({
+  depth,
+  expandedIds,
+  index,
+  labels,
+  nodeId,
+  onContextMenu,
+  onNavigateRoot,
+  onOpenPanel,
+  onToggleTreeNode,
+  parentPath,
+  rootId,
+  trashId,
+}: WorkspaceTreeBranchProps) {
+  const node = index.byId.get(nodeId);
+  if (!node) return null;
+  const presentation = sidebarNodePresentation(node, index.byId, labels);
+  const childParent = presentation.childParent;
+  const childParentId = childParent.id;
+  const referenceCycle = parentPath.includes(childParentId);
+  const children = referenceCycle ? [] : sidebarChildren(childParent, index.byId);
+  const hasChildren = children.length > 0;
+  const expanded = expandedIds.has(node.id);
+  const active = rootId === node.id || rootId === presentation.navigateId;
+  const label = presentation.label;
+  const childPath = referenceCycle ? parentPath : [...parentPath, childParentId];
+  const trashed = presentation.navigateId !== trashId
+    && index.trashNodeIds.has(presentation.navigateId);
+
+  return (
+    <div className="workspace-tree-branch">
+      <div
+        className={[
+          'workspace-tree-row',
+          active ? 'active' : '',
+          trashed ? 'trashed' : '',
+        ].filter(Boolean).join(' ')}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          onContextMenu({
+            x: event.clientX,
+            y: event.clientY,
+            nodeId: presentation.navigateId,
+            label,
+          });
+        }}
+        style={{ '--tree-depth': Math.min(depth, MAX_OUTLINE_INDENT_DEPTH) } as CSSProperties}
+      >
+        <ButtonControl
+          aria-label={expanded ? labels.collapseNode({ label }) : labels.expandNode({ label })}
+          className="workspace-tree-chevron-button"
+          disabled={!hasChildren}
+          onClick={() => onToggleTreeNode(node.id)}
+        >
+          {hasChildren && (
+            expanded
+              ? <ChevronDownIcon size={ICON_SIZE.menu} strokeWidth={2} />
+              : <ChevronRightIcon size={ICON_SIZE.menu} strokeWidth={2} />
+          )}
+        </ButtonControl>
+        <ButtonControl
+          className="workspace-tree-label"
+          onClick={(event) => {
+            if (event.altKey) onOpenPanel(presentation.navigateId);
+            else onNavigateRoot(presentation.navigateId);
+          }}
+        >
+          <span className="workspace-tree-label-text">{label}</span>
+        </ButtonControl>
+      </div>
+      {hasChildren && expanded && (
+        <div className="workspace-tree-children">
+          {children.map((child) => (
+            <WorkspaceTreeBranch
+              key={child.id}
+              depth={depth + 1}
+              expandedIds={expandedIds}
+              index={index}
+              labels={labels}
+              nodeId={child.id}
+              onContextMenu={onContextMenu}
+              onNavigateRoot={onNavigateRoot}
+              onOpenPanel={onOpenPanel}
+              onToggleTreeNode={onToggleTreeNode}
+              parentPath={childPath}
+              rootId={rootId}
+              trashId={trashId}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}, sameWorkspaceTreeBranchProps);
+
+function sameWorkspaceTreeBranchProps(
+  previous: WorkspaceTreeBranchProps,
+  next: WorkspaceTreeBranchProps,
+): boolean {
+  if (
+    previous.nodeId !== next.nodeId
+    || previous.depth !== next.depth
+    || previous.expandedIds !== next.expandedIds
+    || previous.labels !== next.labels
+    || previous.onContextMenu !== next.onContextMenu
+    || previous.onNavigateRoot !== next.onNavigateRoot
+    || previous.onOpenPanel !== next.onOpenPanel
+    || previous.onToggleTreeNode !== next.onToggleTreeNode
+    || previous.rootId !== next.rootId
+    || previous.trashId !== next.trashId
+    || previous.index.semanticRevisions.trashMembership
+      !== next.index.semanticRevisions.trashMembership
+    || !sameNodeIds(previous.parentPath, next.parentPath)
+  ) return false;
+  if (previous.index === next.index) return true;
+  const previousRevision = previous.index.renderRev?.get(previous.nodeId);
+  const nextRevision = next.index.renderRev?.get(next.nodeId);
+  return previousRevision !== undefined
+    && nextRevision !== undefined
+    && previousRevision === nextRevision;
+}
+
+function sameNodeIds(left: readonly NodeId[], right: readonly NodeId[]): boolean {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) return false;
+  }
+  return true;
 }
 
 export function Sidebar(props: SidebarProps) {
@@ -134,80 +286,21 @@ export function Sidebar(props: SidebarProps) {
     )) ?? [];
   const rootLabel = rootNode ? textOf(rootNode) || t.common.untitled : '';
   const rootActive = rootNode ? props.rootId === rootNode.id : false;
+  const treeLabels = useMemo<SidebarTreeLabels>(() => ({
+    collapseNode: t.shell.sidebar.collapseNode,
+    expandNode: t.shell.sidebar.expandNode,
+    missingReference: t.shell.sidebar.missingReference,
+    untitled: t.common.untitled,
+  }), [
+    t.common.untitled,
+    t.shell.sidebar.collapseNode,
+    t.shell.sidebar.expandNode,
+    t.shell.sidebar.missingReference,
+  ]);
   // The hint re-derives from the accelerator the SUMMON hotkey actually
   // registered under — resolved in main, since it may have fallen back — rather
   // than a renderer binding that no longer exists.
   const searchShortcutHint = useLauncherHotkeyHint();
-
-  const renderWorkspaceTree = (nodeId: NodeId, depth = 0, parentPath: readonly NodeId[] = []) => {
-    const node = props.index.byId.get(nodeId);
-    if (!node) return null;
-    const presentation = sidebarNodePresentation(node, props.index.byId, {
-      untitled: t.common.untitled,
-      missingReference: t.shell.sidebar.missingReference,
-    });
-    const childParent = presentation.childParent;
-    const childParentId = childParent.id;
-    const referenceCycle = parentPath.includes(childParentId);
-    const children = referenceCycle ? [] : sidebarChildren(childParent, props.index.byId);
-    const hasChildren = children.length > 0;
-    const expanded = props.expandedIds.has(node.id);
-    const active = props.rootId === node.id || props.rootId === presentation.navigateId;
-    const label = presentation.label;
-    const childPath = referenceCycle ? parentPath : [...parentPath, childParentId];
-    const trashed = presentation.navigateId !== props.projection.trashId
-      && isNodeInTrash(props.index, presentation.navigateId);
-
-    return (
-      <div className="workspace-tree-branch" key={node.id}>
-        <div
-          className={[
-            'workspace-tree-row',
-            active ? 'active' : '',
-            trashed ? 'trashed' : '',
-          ].filter(Boolean).join(' ')}
-          onContextMenu={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            setContextMenu({
-              x: event.clientX,
-              y: event.clientY,
-              nodeId: presentation.navigateId,
-              label,
-            });
-          }}
-          style={{ '--tree-depth': Math.min(depth, MAX_OUTLINE_INDENT_DEPTH) } as CSSProperties}
-        >
-          <ButtonControl
-            aria-label={expanded ? t.shell.sidebar.collapseNode({ label }) : t.shell.sidebar.expandNode({ label })}
-            className="workspace-tree-chevron-button"
-            disabled={!hasChildren}
-            onClick={() => props.onToggleTreeNode(node.id)}
-          >
-            {hasChildren && (
-              expanded
-                ? <ChevronDownIcon size={ICON_SIZE.menu} strokeWidth={2} />
-                : <ChevronRightIcon size={ICON_SIZE.menu} strokeWidth={2} />
-            )}
-          </ButtonControl>
-          <ButtonControl
-            className="workspace-tree-label"
-            onClick={(event) => {
-              if (event.altKey) props.onOpenPanel(presentation.navigateId);
-              else props.onNavigateRoot(presentation.navigateId);
-            }}
-          >
-            <span className="workspace-tree-label-text">{label}</span>
-          </ButtonControl>
-        </div>
-        {hasChildren && expanded && (
-          <div className="workspace-tree-children">
-            {children.map((child) => renderWorkspaceTree(child.id, depth + 1, childPath))}
-          </div>
-        )}
-      </div>
-    );
-  };
 
   return (
     <aside className="sidebar-dock" aria-label={t.shell.sidebar.ariaLabel}>
@@ -290,7 +383,20 @@ export function Sidebar(props: SidebarProps) {
                 onDragOver={(event) => handlePinRowDragOver(event, index)}
                 onDragEnd={resetPinDrag}
               >
-                {renderWorkspaceTree(nodeId)}
+                <WorkspaceTreeBranch
+                  depth={0}
+                  expandedIds={props.expandedIds}
+                  index={props.index}
+                  labels={treeLabels}
+                  nodeId={nodeId}
+                  onContextMenu={setContextMenu}
+                  onNavigateRoot={props.onNavigateRoot}
+                  onOpenPanel={props.onOpenPanel}
+                  onToggleTreeNode={props.onToggleTreeNode}
+                  parentPath={[]}
+                  rootId={props.rootId}
+                  trashId={props.projection.trashId}
+                />
               </div>
             ))}
           </div>
@@ -328,7 +434,21 @@ export function Sidebar(props: SidebarProps) {
           </div>
           <div className="workspace-tree" aria-label={t.shell.sidebar.workspaceRootTreeAriaLabel}>
             {rootChildren.map((child) => (
-              renderWorkspaceTree(child.id, 0, [props.projection.rootId])
+              <WorkspaceTreeBranch
+                key={child.id}
+                depth={0}
+                expandedIds={props.expandedIds}
+                index={props.index}
+                labels={treeLabels}
+                nodeId={child.id}
+                onContextMenu={setContextMenu}
+                onNavigateRoot={props.onNavigateRoot}
+                onOpenPanel={props.onOpenPanel}
+                onToggleTreeNode={props.onToggleTreeNode}
+                parentPath={[props.projection.rootId]}
+                rootId={props.rootId}
+                trashId={props.projection.trashId}
+              />
             ))}
           </div>
         </div>

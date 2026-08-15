@@ -249,6 +249,26 @@ entry. Picking inside surrounding text creates an inline reference in a plain
 value node. References are value shapes rather than a field type, and there is
 no field-only reference picker.
 
+The standard document reference suggestions are a deterministic bounded
+shortlist of at most 24 nodes. Matching retains the existing full substring
+semantics at every query length, including one- and two-character queries,
+single CJK characters, and mid-word matches. Retrieval is complete by text-rank
+tier: no excluded node has a better text rank than an included node, while the
+disabled, untitled, context, length, recency, and label tie-breaks apply within
+the retrieved set. Empty queries use recency order. Cycle status is evaluated
+only for shortlisted nodes from a cached reverse-reachability set. Posting keys
+share their normalized label storage through offsets, and an overflow edit
+overlay is compacted outside the projection commit by a cooperatively yielding
+rebuild. The idle timer follows input, while an independent maximum-age timer
+and a pressure ceiling ensure a continuous delta stream cannot starve the
+rebuild or grow the overlay indefinitely. Deltas accepted during a rebuild stay
+queryable in the overlay and are cooperatively rebased before the new base is
+committed. A cold or invalidated reachability set is built cooperatively after
+the picker opens, never inside the typing event. Node choices remain disabled
+until that set resolves; resolution updates candidate order and resets keyboard
+selection together, so Enter cannot act on a row that moved underneath the
+highlight. Breadcrumbs are derived only for the final visible results.
+
 For `options_from_supertag` fields, the source supertag must be an active tag
 definition. If the source tag is moved to Trash, the field's value picker no
 longer derives candidates from nodes carrying that deleted tag.
@@ -634,6 +654,13 @@ Rows do not show inline backlink counters. Counts live in the NodePanel footer
 only. The collapsed References count is the linked-reference count, matching the
 read-only `References` system field. Unlinked mentions are computed only for the
 expanded panel root and appear as a separate group count.
+
+Linked rows and counts update immediately from the incrementally maintained
+reference summary. An expanded section refreshes unlinked mentions after a
+150 ms debounce, scanning the corpus in fixed cooperative batches so a refresh
+cannot monopolize the renderer. Each scan is generation-checked; a newer edit,
+target switch, collapse, or unmount cancels pending work, and a stale result can
+never replace the current target's rows.
 
 The read-only `References` system field uses the same cached reference summary
 for its linked count and deduped source rows. Sorting, filtering, grouping, and

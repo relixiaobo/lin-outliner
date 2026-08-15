@@ -8,11 +8,11 @@ export type TreeReferenceBlockReason =
   | 'already_in_parent'
   | 'would_create_display_cycle';
 
-type EffectiveNodeResolution =
+export type EffectiveNodeResolution =
   | { ok: true; nodeId: NodeId }
   | { ok: false; reason: Extract<TreeReferenceBlockReason, 'missing_target' | 'would_create_display_cycle'> };
 
-function resolveEffectiveNodeId(
+export function resolveEffectiveNodeId(
   nodeId: NodeId,
   byId: Map<NodeId, NodeProjection>,
 ): EffectiveNodeResolution {
@@ -34,6 +34,39 @@ function resolveEffectiveNodeId(
     return { ok: true, nodeId: currentId };
   }
   return { ok: false, reason: 'missing_target' };
+}
+
+export interface TreeReferenceReachability {
+  readonly cyclicEffectiveNodeIds: ReadonlySet<NodeId>;
+  readonly directAlreadyEffectiveNodeIds: ReadonlySet<NodeId>;
+  readonly directChildCycle: boolean;
+  readonly effectiveNodeIds: ReadonlyMap<NodeId, EffectiveNodeResolution>;
+  readonly parentId: NodeId;
+  readonly reachesParentEffectiveNodeIds: ReadonlySet<NodeId>;
+}
+
+export function getTreeReferenceBlockReasonFromReachability(params: {
+  readonly parentId: NodeId;
+  readonly targetId: NodeId;
+  readonly byId: Map<NodeId, NodeProjection>;
+  readonly reachability: TreeReferenceReachability;
+}): TreeReferenceBlockReason | null {
+  const { parentId, targetId, byId, reachability } = params;
+  if (!parentId || !byId.has(parentId)) return 'missing_parent';
+  if (!targetId || !byId.has(targetId)) return 'missing_target';
+  const effectiveTarget = reachability.effectiveNodeIds.get(targetId)
+    ?? resolveEffectiveNodeId(targetId, byId);
+  if (!effectiveTarget.ok) return effectiveTarget.reason;
+  const effectiveTargetId = effectiveTarget.nodeId;
+  if (!byId.has(effectiveTargetId)) return 'missing_target';
+  if (parentId === effectiveTargetId) return 'self_parent';
+  if (reachability.directAlreadyEffectiveNodeIds.has(effectiveTargetId)) return 'already_in_parent';
+  if (
+    reachability.directChildCycle
+    || reachability.cyclicEffectiveNodeIds.has(effectiveTargetId)
+    || reachability.reachesParentEffectiveNodeIds.has(effectiveTargetId)
+  ) return 'would_create_display_cycle';
+  return null;
 }
 
 function canReachInDisplayGraph(

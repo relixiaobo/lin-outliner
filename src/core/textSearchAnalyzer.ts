@@ -214,12 +214,21 @@ function bestSnippetField(
 }
 
 function labelWordPrefixIndex(label: string, query: string): number {
-  for (const match of label.matchAll(LABEL_WORD_RE)) {
-    const word = match[1] ?? '';
+  for (const { index, word } of textSearchLabelWordStarts(label)) {
     if (!word.startsWith(query)) continue;
-    return match.index + match[0].length - word.length;
+    return index;
   }
   return -1;
+}
+
+export function textSearchLabelWordStarts(normalizedLabel: string): Array<{ index: number; word: string }> {
+  return [...normalizedLabel.matchAll(LABEL_WORD_RE)].map((match) => {
+    const word = match[1] ?? '';
+    return {
+      index: match.index + match[0].length - word.length,
+      word,
+    };
+  });
 }
 
 function wordSegmenter(): Intl.Segmenter | null {

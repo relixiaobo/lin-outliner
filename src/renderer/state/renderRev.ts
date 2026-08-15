@@ -29,9 +29,10 @@ import { SparseProjectionMap } from './sparseProjectionMap';
 //   references      — target node      -> reference nodes pointing at it (targetId)
 //   taggers         — tag definition   -> nodes carrying that tag
 //   inlineReferrers — inline-ref target -> nodes whose content links to it
+//   fieldEntries    — field definition  -> entries whose presentation reads it
 // They are keyed and patched identically, so every operation below iterates this
 // tuple rather than spelling the three out by hand.
-const REVERSE_CATEGORIES = ['references', 'taggers', 'inlineReferrers'] as const;
+const REVERSE_CATEGORIES = ['references', 'taggers', 'inlineReferrers', 'fieldEntries'] as const;
 type ReverseCategory = (typeof REVERSE_CATEGORIES)[number];
 
 export type ReverseEdges = {
@@ -39,7 +40,12 @@ export type ReverseEdges = {
 };
 
 export function emptyReverseEdges(): ReverseEdges {
-  return { references: new Map(), taggers: new Map(), inlineReferrers: new Map() };
+  return {
+    references: new Map(),
+    taggers: new Map(),
+    inlineReferrers: new Map(),
+    fieldEntries: new Map(),
+  };
 }
 
 // The reverse-edge keys a single node contributes, by category. The returned
@@ -56,6 +62,7 @@ function nodeReverseKeys(node: NodeProjection): Record<ReverseCategory, readonly
     references: node.type === 'reference' && node.targetId ? [node.targetId] : [],
     taggers: node.tags,
     inlineReferrers,
+    fieldEntries: node.type === 'fieldEntry' && node.fieldDefId ? [node.fieldDefId] : [],
   };
 }
 

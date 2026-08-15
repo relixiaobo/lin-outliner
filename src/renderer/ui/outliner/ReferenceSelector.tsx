@@ -1,8 +1,18 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../api/client';
 import type { CommandResult, NodeId, NodeProjection } from '../../api/types';
 import { nodeFromProjectionUpdate, type DocumentIndex } from '../../state/document';
+import {
+  displayReachabilityForParent,
+  type DisplayReachabilityResult,
+} from '../../state/displayReachability';
 import { AddIcon, CalendarIcon, ICON_SIZE } from '../icons';
 import { buildReferenceCandidates, referenceCandidateLabels, type ReferenceCandidate, type ReferenceCandidateLabels } from '../interactions/referenceCandidates';
+import {
+  getTreeReferenceBlockReason,
+  getTreeReferenceBlockReasonFromReachability,
+  type TreeReferenceBlockReason,
+} from '../interactions/referenceRules';
 import { commandRunnerNoop, type CommandRunner, type CommandRunnerOperationResult } from '../shared';
 import { NodeReferenceMenuIcon } from './NodeReferenceMenuIcon';
 import { PopoverEmpty, PopoverListItem } from './PopoverList';
@@ -29,6 +39,8 @@ export function referenceItems(params: {
   excludeCurrentNode?: boolean;
   includeFileNodes?: boolean;
   labels?: ReferenceCandidateLabels;
+  resolveTreeReferenceBlockReason?: (targetId: NodeId) => TreeReferenceBlockReason | null;
+  skipTreeReferenceChecks?: boolean;
 }): ReferenceCandidate[] {
   return buildReferenceCandidates({
     index: params.index,
@@ -38,6 +50,8 @@ export function referenceItems(params: {
     excludeCurrentNode: params.excludeCurrentNode,
     includeFileNodes: params.includeFileNodes,
     labels: params.labels,
+    resolveTreeReferenceBlockReason: params.resolveTreeReferenceBlockReason,
+    skipTreeReferenceChecks: params.skipTreeReferenceChecks,
   });
 }
 
@@ -62,13 +76,68 @@ function iconForItem(item: ReferenceCandidate, index: DocumentIndex) {
 export function ReferenceSelector(props: ReferenceSelectorProps) {
   const t = useT();
   const tr = t.outliner.field;
-  const items = referenceItems({
+  const treeReferenceParentId = props.treeReferenceParentId ?? null;
+  const displayGraphCacheKey = props.index.displayGraphCacheKey ?? props.index;
+  const latestIndexRef = useRef(props.index);
+  latestIndexRef.current = props.index;
+  const [reachabilityState, setReachabilityState] = useState<{
+    cacheKey: object;
+    parentId: NodeId;
+    value: DisplayReachabilityResult;
+  } | null>(null);
+  const reachability = reachabilityState?.cacheKey === displayGraphCacheKey
+    && reachabilityState.parentId === treeReferenceParentId
+    ? reachabilityState.value
+    : null;
+
+  useEffect(() => {
+    if (!treeReferenceParentId) return;
+    let cancelled = false;
+    void displayReachabilityForParent(latestIndexRef.current, treeReferenceParentId).then((value) => {
+      if (cancelled) return;
+      props.setSelectedIndex(0);
+      setReachabilityState({ cacheKey: displayGraphCacheKey, parentId: treeReferenceParentId, value });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [displayGraphCacheKey, props.setSelectedIndex, treeReferenceParentId]);
+
+  const labels = useMemo(() => referenceCandidateLabels(t), [t]);
+  const items = useMemo(() => referenceItems({
     query: props.query,
     index: props.index,
     currentNodeId: props.currentNodeId,
-    treeReferenceParentId: props.treeReferenceParentId,
-    labels: referenceCandidateLabels(t),
-  });
+    treeReferenceParentId,
+    labels,
+    resolveTreeReferenceBlockReason: reachability
+      ? (targetId) => getTreeReferenceBlockReasonFromReachability({
+          parentId: treeReferenceParentId!,
+          targetId,
+          byId: props.index.byId,
+          reachability,
+        })
+      : undefined,
+    skipTreeReferenceChecks: Boolean(treeReferenceParentId && !reachability),
+  }), [labels, props.currentNodeId, props.index, props.query, reachability, treeReferenceParentId]);
+  const reachabilityPending = Boolean(treeReferenceParentId && !reachability);
+
+  const targetIsSelectable = (targetId: NodeId): boolean => {
+    if (!treeReferenceParentId) return true;
+    const reason = reachability
+      ? getTreeReferenceBlockReasonFromReachability({
+          parentId: treeReferenceParentId,
+          targetId,
+          byId: props.index.byId,
+          reachability,
+        })
+      : getTreeReferenceBlockReason({
+          parentId: treeReferenceParentId,
+          targetId,
+          byId: props.index.byId,
+        });
+    return reason === null || reason === 'already_in_parent';
+  };
 
   const selectTarget = (target: NodeProjection) => {
     props.close();
@@ -127,14 +196,17 @@ export function ReferenceSelector(props: ReferenceSelectorProps) {
   return (
     <>
       {items.map((item, index) => {
-        const disabled = item.type === 'node' && Boolean(item.disabledReason);
+        const disabled = item.type === 'node'
+          && (reachabilityPending || Boolean(item.disabledReason));
         return (
           <PopoverListItem
             key={item.type === 'node' ? item.id : `${item.type}:${item.label}`}
             active={index === props.selectedIndex}
             disabled={disabled}
             data-create-reference={item.type === 'create' ? 'true' : undefined}
-            title={item.type === 'node' ? item.disabledReason ?? undefined : undefined}
+            title={item.type === 'node'
+              ? item.disabledReason ?? (reachabilityPending ? t.common.loading : undefined)
+              : undefined}
             icon={iconForItem(item, props.index)}
             iconClassName="popover-item-icon"
             label={(
@@ -152,6 +224,7 @@ export function ReferenceSelector(props: ReferenceSelectorProps) {
             onClick={() => {
               if (disabled) return;
               if (item.type === 'node') {
+                if (!targetIsSelectable(item.id)) return;
                 const target = props.index.byId.get(item.id);
                 if (target) selectTarget(target);
                 return;

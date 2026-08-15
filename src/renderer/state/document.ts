@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, type Dispatch, type SetStateAction } from 'react';
+import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import type {
   DocumentProjection,
   FocusPlacement,
@@ -34,10 +34,34 @@ import {
   patchDayNoteCountIndex,
   type DayNoteCountIndex,
 } from './dayNoteCounts';
+import type { ReferenceSummary } from '../../core/references';
+import {
+  buildLinkedReferenceSummary,
+  patchLinkedReferenceSummary,
+} from './incrementalReferenceSummary';
+import {
+  buildReferenceCandidateIndex,
+  buildReferenceCandidateIndexCooperatively,
+  patchReferenceCandidateIndex,
+  referenceCandidateIndexNeedsCompaction,
+  type ReferenceCandidateIndex,
+} from './referenceCandidateIndex';
+import {
+  buildTrashNodeIds,
+  patchTrashNodeIds,
+  projectionReferenceGraphChanged,
+  projectionStructureChanged,
+  projectionTagDefinitionsChanged,
+  type ProjectionDeltaFacts,
+  type ProjectionSemanticRevisions,
+  type SparseNodeIdSet,
+} from './projectionDerived';
+import { DocumentIndexStore } from './documentIndexStore';
 
 export interface DocumentIndex {
   projection: DocumentProjection;
   byId: Map<NodeId, NodeProjection>;
+  revision: number;
   // Per-node data revision, used by OutlinerItem's React.memo to skip rows whose
   // data did not change. Optional because `buildIndex` (tests, non-outliner
   // callers) does not track it; the live app always supplies it through the
@@ -45,6 +69,13 @@ export interface DocumentIndex {
   // memo from the `ui` prop, not carried here.
   renderRev?: ReadonlyMap<NodeId, number>;
   dayNoteCounts: DayNoteCountIndex;
+  semanticRevisions: ProjectionSemanticRevisions;
+  delta: ProjectionDeltaFacts;
+  trashNodeIds: SparseNodeIdSet;
+  referenceSummary: ReferenceSummary;
+  referenceCandidates: ReferenceCandidateIndex;
+  tagCandidateCacheKey: object;
+  displayGraphCacheKey: object;
 }
 
 export type FocusSurface = CoreFocusSurface;
@@ -54,10 +85,26 @@ export type SelectionSource = 'global' | 'ref-click';
 
 export function buildIndex(projection: DocumentProjection): DocumentIndex {
   const byId = new Map(projection.nodes.map((node) => [node.id, node]));
+  const changedIds = new Set<NodeId>(byId.keys());
+  const trashNodeIds = buildTrashNodeIds(byId, projection.trashId);
   return {
     projection,
     byId,
+    revision: 0,
     dayNoteCounts: buildDayNoteCountIndex(byId),
+    semanticRevisions: initialSemanticRevisions(),
+    delta: {
+      changedIds,
+      dirtyIds: changedIds,
+      removedIds: [],
+      structureChanged: true,
+      trashMembershipChangedIds: trashNodeIds,
+    },
+    trashNodeIds,
+    referenceSummary: buildLinkedReferenceSummary(byId, trashNodeIds),
+    referenceCandidates: buildReferenceCandidateIndex(byId, trashNodeIds),
+    tagCandidateCacheKey: {},
+    displayGraphCacheKey: {},
   };
 }
 
@@ -78,6 +125,16 @@ interface ProjectionState {
   reverseEdges: ReverseEdges;
 }
 
+const REFERENCE_CANDIDATE_COMPACTION_IDLE_MS = 150;
+const REFERENCE_CANDIDATE_COMPACTION_MAX_WAIT_MS = 750;
+const REFERENCE_CANDIDATE_COMPACTION_FORCE_PENDING = 256;
+const REFERENCE_CANDIDATE_REBASE_CHUNK_SIZE = 256;
+
+interface CandidateCompactionFlight {
+  readonly controller: AbortController;
+  readonly dirtyIds: Set<NodeId>;
+}
+
 // Fold a ProjectionUpdate into the previous state. Returns the next state, the
 // unchanged `prev` (already-applied duplicate / identical reseed), or `null` to
 // signal the caller must resync (a delta with no base, or a revision gap).
@@ -95,8 +152,29 @@ export function reduceProjection(
     const byId = SparseProjectionMap.fromEntries(update.projection.nodes.map((node) => [node.id, node] as const));
     const affected = new Set<NodeId>(byId.keys());
     const renderRev = nextRevisions(prev?.index.renderRev ?? null, affected, byId.keys());
+    const trashNodeIds = buildTrashNodeIds(byId, update.projection.trashId);
+    const semanticRevisions = nextFullSemanticRevisions(prev?.index.semanticRevisions);
     return {
-      index: { projection: update.projection, byId, renderRev, dayNoteCounts: buildDayNoteCountIndex(byId) },
+      index: {
+        projection: update.projection,
+        byId,
+        revision: update.revision,
+        renderRev,
+        dayNoteCounts: buildDayNoteCountIndex(byId),
+        semanticRevisions,
+        delta: {
+          changedIds: affected,
+          dirtyIds: affected,
+          removedIds: [],
+          structureChanged: true,
+          trashMembershipChangedIds: trashNodeIds,
+        },
+        trashNodeIds,
+        referenceSummary: buildLinkedReferenceSummary(byId, trashNodeIds),
+        referenceCandidates: buildReferenceCandidateIndex(byId, trashNodeIds),
+        tagCandidateCacheKey: {},
+        displayGraphCacheKey: {},
+      },
       revision: update.revision,
       reverseEdges: buildReverseEdges(byId),
     };
@@ -139,6 +217,48 @@ export function reduceProjection(
   const reverseEdges = patchReverseEdges(prev.reverseEdges, prev.index.byId, update.changedNodes, update.removedIds);
   const affected = propagateDirty(changed, byId, reverseEdges);
   const renderRev = patchRevisions(prev.index.renderRev, affected, byId, update.removedIds);
+  const structureChanged = projectionStructureChanged(prev.index.byId, update.changedNodes, update.removedIds);
+  const referenceGraphChanged = projectionReferenceGraphChanged(
+    prev.index.byId,
+    update.changedNodes,
+    update.removedIds,
+  );
+  const trashPatch = patchTrashNodeIds({
+    previous: prev.index.trashNodeIds,
+    previousById: prev.index.byId,
+    nextById: byId,
+    changedNodes: update.changedNodes,
+    removedIds: update.removedIds,
+    trashId: projection.trashId,
+  });
+  const tagDefinitionsChanged = projectionTagDefinitionsChanged({
+    previousById: prev.index.byId,
+    nextById: byId,
+    changedNodes: update.changedNodes,
+    removedIds: update.removedIds,
+    trashMembershipChangedIds: trashPatch.changedIds,
+  });
+  const semanticRevisions: ProjectionSemanticRevisions = {
+    structure: prev.index.semanticRevisions.structure + Number(structureChanged),
+    referenceGraph: prev.index.semanticRevisions.referenceGraph + Number(referenceGraphChanged),
+    tagDefinitions: prev.index.semanticRevisions.tagDefinitions + Number(tagDefinitionsChanged),
+    trashMembership: prev.index.semanticRevisions.trashMembership + Number(trashPatch.changedIds.size > 0),
+  };
+  const referenceSummary = patchLinkedReferenceSummary({
+    previous: prev.index.referenceSummary,
+    previousById: prev.index.byId,
+    nextById: byId,
+    changedNodes: update.changedNodes,
+    trashNodeIds: trashPatch.nodeIds,
+    rebuild: referenceGraphChanged || trashPatch.changedIds.size > 0,
+  });
+  const referenceCandidates = patchReferenceCandidateIndex({
+    previous: prev.index.referenceCandidates,
+    nextById: byId,
+    changedIds: changed,
+    trashMembershipChangedIds: trashPatch.changedIds,
+    trashNodeIds: trashPatch.nodeIds,
+  });
   const dayNoteCounts = patchDayNoteCountIndex({
     previous: prev.index.dayNoteCounts,
     previousById: prev.index.byId,
@@ -146,7 +266,46 @@ export function reduceProjection(
     changedNodes: update.changedNodes,
     removedIds: update.removedIds,
   });
-  return { index: { projection, byId, renderRev, dayNoteCounts }, revision: update.revision, reverseEdges };
+  return {
+    index: {
+      projection,
+      byId,
+      revision: update.revision,
+      renderRev,
+      dayNoteCounts,
+      semanticRevisions,
+      delta: {
+        changedIds: changed,
+        dirtyIds: affected,
+        removedIds: update.removedIds,
+        structureChanged,
+        trashMembershipChangedIds: trashPatch.changedIds,
+      },
+      trashNodeIds: trashPatch.nodeIds,
+      referenceSummary,
+      referenceCandidates,
+      tagCandidateCacheKey: tagDefinitionsChanged ? {} : prev.index.tagCandidateCacheKey,
+      displayGraphCacheKey: structureChanged || referenceGraphChanged ? {} : prev.index.displayGraphCacheKey,
+    },
+    revision: update.revision,
+    reverseEdges,
+  };
+}
+
+function initialSemanticRevisions(): ProjectionSemanticRevisions {
+  return { structure: 1, referenceGraph: 1, tagDefinitions: 1, trashMembership: 1 };
+}
+
+function nextFullSemanticRevisions(
+  previous: ProjectionSemanticRevisions | undefined,
+): ProjectionSemanticRevisions {
+  if (!previous) return initialSemanticRevisions();
+  return {
+    structure: previous.structure + 1,
+    referenceGraph: previous.referenceGraph + 1,
+    tagDefinitions: previous.tagDefinitions + 1,
+    trashMembership: previous.trashMembership + 1,
+  };
 }
 
 // Find a node by id within a ProjectionUpdate: the changed set for a `delta`, the
@@ -165,7 +324,12 @@ export function nodeFromProjectionUpdate(
 
 export interface ProjectionStore {
   index: DocumentIndex | null;
+  indexStore: DocumentIndexStore | null;
   applyProjectionUpdate: (update: ProjectionUpdate) => void;
+}
+
+export interface ProjectionStoreOptions {
+  readonly candidateCompactionYieldControl?: () => Promise<void>;
 }
 
 // Holds the projection-derived index across edits and folds in ProjectionUpdates.
@@ -183,17 +347,169 @@ export interface ProjectionStore {
 export function useProjectionStore(
   resync: () => Promise<ProjectionSnapshot>,
   setUi: Dispatch<SetStateAction<UiState>>,
+  options: ProjectionStoreOptions = {},
 ): ProjectionStore {
   const [state, setState] = useState<ProjectionState | null>(null);
   const stateRef = useRef<ProjectionState | null>(null);
+  const indexStoreRef = useRef<DocumentIndexStore | null>(null);
   const resyncInFlight = useRef(false);
+  const candidateCompactionIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const candidateCompactionMaxTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const candidateCompactionFlightRef = useRef<CandidateCompactionFlight | null>(null);
+  const startCandidateCompactionRef = useRef<() => void>(() => undefined);
+  const disposedRef = useRef(false);
 
   const commit = useCallback((next: ProjectionState | null) => {
     if (next !== null && next !== stateRef.current) {
       stateRef.current = next;
+      if (indexStoreRef.current) indexStoreRef.current.commit(next.index);
+      else indexStoreRef.current = new DocumentIndexStore(next.index);
       setState(next);
     }
   }, []);
+
+  const clearCandidateCompactionTimers = useCallback(() => {
+    if (candidateCompactionIdleTimerRef.current !== null) {
+      clearTimeout(candidateCompactionIdleTimerRef.current);
+      candidateCompactionIdleTimerRef.current = null;
+    }
+    if (candidateCompactionMaxTimerRef.current !== null) {
+      clearTimeout(candidateCompactionMaxTimerRef.current);
+      candidateCompactionMaxTimerRef.current = null;
+    }
+  }, []);
+
+  const scheduleCandidateCompaction = useCallback((
+    next: ProjectionState,
+    update: ProjectionUpdate | null,
+  ) => {
+    const activeFlight = candidateCompactionFlightRef.current;
+    if (activeFlight) {
+      if (update?.kind === 'full') {
+        activeFlight.controller.abort();
+        candidateCompactionFlightRef.current = null;
+      } else {
+        for (const nodeId of next.index.delta.changedIds) activeFlight.dirtyIds.add(nodeId);
+        for (const nodeId of next.index.delta.trashMembershipChangedIds) {
+          activeFlight.dirtyIds.add(nodeId);
+        }
+        return;
+      }
+    }
+
+    if (!referenceCandidateIndexNeedsCompaction(next.index.referenceCandidates)) {
+      clearCandidateCompactionTimers();
+      return;
+    }
+
+    if (candidateCompactionIdleTimerRef.current !== null) {
+      clearTimeout(candidateCompactionIdleTimerRef.current);
+    }
+    const idleDelay = next.index.referenceCandidates.pending.size
+      >= REFERENCE_CANDIDATE_COMPACTION_FORCE_PENDING
+      ? 0
+      : REFERENCE_CANDIDATE_COMPACTION_IDLE_MS;
+    candidateCompactionIdleTimerRef.current = setTimeout(() => {
+      candidateCompactionIdleTimerRef.current = null;
+      startCandidateCompactionRef.current();
+    }, idleDelay);
+
+    // The idle timer follows typing, but this timer does not. A continuous
+    // Agent delta stream therefore cannot starve compaction indefinitely.
+    candidateCompactionMaxTimerRef.current ??= setTimeout(() => {
+      candidateCompactionMaxTimerRef.current = null;
+      startCandidateCompactionRef.current();
+    }, REFERENCE_CANDIDATE_COMPACTION_MAX_WAIT_MS);
+  }, [clearCandidateCompactionTimers]);
+
+  const startCandidateCompaction = useCallback(() => {
+    clearCandidateCompactionTimers();
+    if (disposedRef.current || candidateCompactionFlightRef.current) return;
+    const snapshot = stateRef.current;
+    if (!snapshot || !referenceCandidateIndexNeedsCompaction(snapshot.index.referenceCandidates)) return;
+
+    const flight: CandidateCompactionFlight = {
+      controller: new AbortController(),
+      dirtyIds: new Set<NodeId>(),
+    };
+    candidateCompactionFlightRef.current = flight;
+    void (async () => {
+      let failed = false;
+      try {
+        let referenceCandidates = await buildReferenceCandidateIndexCooperatively(
+          snapshot.index.byId,
+          snapshot.index.trashNodeIds,
+          {
+            signal: flight.controller.signal,
+            yieldControl: options.candidateCompactionYieldControl,
+          },
+        );
+        if (!referenceCandidates) return;
+
+        // Deltas continue to commit while the base builds. Drain every id that
+        // changed after the snapshot in bounded batches; updates arriving during
+        // a yield re-enter `dirtyIds` and are applied by the next pass.
+        while (!flight.controller.signal.aborted) {
+          const dirtyIds = [...flight.dirtyIds];
+          flight.dirtyIds.clear();
+          if (dirtyIds.length === 0) break;
+          const current = stateRef.current;
+          if (!current) return;
+          referenceCandidates = await patchCandidateIndexCooperatively({
+            previous: referenceCandidates,
+            nextById: current.index.byId,
+            trashNodeIds: current.index.trashNodeIds,
+            dirtyIds,
+            signal: flight.controller.signal,
+          });
+          if (!referenceCandidates) return;
+        }
+
+        if (
+          disposedRef.current
+          || flight.controller.signal.aborted
+          || candidateCompactionFlightRef.current !== flight
+        ) return;
+        const current = stateRef.current;
+        if (!current) return;
+        const compacted = {
+          ...current,
+          index: { ...current.index, referenceCandidates },
+        };
+        candidateCompactionFlightRef.current = null;
+        commit(compacted);
+        scheduleCandidateCompaction(compacted, null);
+      } catch (error: unknown) {
+        failed = true;
+        console.error('[renderer] reference candidate compaction failed', error);
+      } finally {
+        if (candidateCompactionFlightRef.current === flight) {
+          candidateCompactionFlightRef.current = null;
+          const current = stateRef.current;
+          if (!failed && !disposedRef.current && current) {
+            scheduleCandidateCompaction(current, null);
+          }
+        }
+      }
+    })();
+  }, [
+    clearCandidateCompactionTimers,
+    commit,
+    options.candidateCompactionYieldControl,
+    scheduleCandidateCompaction,
+  ]);
+  startCandidateCompactionRef.current = startCandidateCompaction;
+
+  useEffect(() => {
+    disposedRef.current = false;
+    return () => {
+      disposedRef.current = true;
+      clearCandidateCompactionTimers();
+      const activeFlight = candidateCompactionFlightRef.current;
+      candidateCompactionFlightRef.current = null;
+      activeFlight?.controller.abort();
+    };
+  }, [clearCandidateCompactionTimers]);
 
   const commitAcceptedUpdate = useCallback((
     previous: ProjectionState | null,
@@ -210,7 +526,8 @@ export function useProjectionStore(
       setUi((current) => reduceUiStateForProjectionRemovals(current, removals));
     }
     commit(next);
-  }, [commit, setUi]);
+    scheduleCandidateCompaction(next, update);
+  }, [commit, scheduleCandidateCompaction, setUi]);
 
   const applyProjectionUpdate = useCallback((update: ProjectionUpdate) => {
     const previous = stateRef.current;
@@ -235,7 +552,41 @@ export function useProjectionStore(
       .finally(() => { resyncInFlight.current = false; });
   }, [commitAcceptedUpdate, resync]);
 
-  return { index: state?.index ?? null, applyProjectionUpdate };
+  return {
+    index: state?.index ?? null,
+    indexStore: state === null ? null : indexStoreRef.current,
+    applyProjectionUpdate,
+  };
+}
+
+async function patchCandidateIndexCooperatively(params: {
+  readonly previous: ReferenceCandidateIndex;
+  readonly nextById: ReadonlyMap<NodeId, NodeProjection>;
+  readonly trashNodeIds: ReadonlySet<NodeId>;
+  readonly dirtyIds: readonly NodeId[];
+  readonly signal: AbortSignal;
+}): Promise<ReferenceCandidateIndex | null> {
+  let index = params.previous;
+  for (let offset = 0; offset < params.dirtyIds.length; offset += REFERENCE_CANDIDATE_REBASE_CHUNK_SIZE) {
+    await yieldToRenderer();
+    if (params.signal.aborted) return null;
+    const changedIds = new Set(params.dirtyIds.slice(
+      offset,
+      offset + REFERENCE_CANDIDATE_REBASE_CHUNK_SIZE,
+    ));
+    index = patchReferenceCandidateIndex({
+      previous: index,
+      nextById: params.nextById,
+      changedIds,
+      trashMembershipChangedIds: new Set<NodeId>(),
+      trashNodeIds: params.trashNodeIds,
+    });
+  }
+  return index;
+}
+
+function yieldToRenderer(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 export interface UiState {

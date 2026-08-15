@@ -7,6 +7,7 @@ import type { DocumentProjection } from '../../src/core/types';
 import { ThreadTurnView } from '../../src/renderer/agent/components/ThreadView';
 import { I18nProvider } from '../../src/renderer/i18n/I18nProvider';
 import { buildIndex } from '../../src/renderer/state/document';
+import { DocumentIndexStore } from '../../src/renderer/state/documentIndexStore';
 import { replayableModelCall } from '../fixtures/agentToolCallHistory';
 
 const GLOBAL_KEYS = ['document', 'Event', 'HTMLElement', 'Node', 'ResizeObserver', 'window'] as const;
@@ -86,6 +87,7 @@ describe('streaming Turn item memoization', () => {
 
 function turnProps() {
   return {
+    active: true,
     canEditUserMessage: false,
     composerEnabled: true,
     expandState: {
@@ -95,7 +97,16 @@ function turnProps() {
       restoreAnchor: () => undefined,
       toggle: () => undefined,
     },
-    index: buildIndex(emptyProjection()),
+    getUserView: () => ({
+      activePanelId: null,
+      focusedNodeId: null,
+      focusedPanelId: null,
+      focusSurface: null,
+      panels: [],
+      selectedNodeIds: [],
+      truncated: false,
+    }),
+    indexStore: new DocumentIndexStore(buildIndex(emptyProjection())),
     isLastTurn: true,
     latchedReasoning: new Set<string>(),
     latestTurnByThread: new Map(),
@@ -112,15 +123,6 @@ function turnProps() {
     threadCwd: '/workspace',
     threadId: 'thread',
     threadsById: new Map(),
-    userView: {
-      activePanelId: null,
-      focusedNodeId: null,
-      focusedPanelId: null,
-      focusSurface: null,
-      panels: [],
-      selectedNodeIds: [],
-      truncated: false,
-    },
     waitingOnUserInput: false,
   } as const;
 }

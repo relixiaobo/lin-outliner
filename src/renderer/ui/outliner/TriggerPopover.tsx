@@ -36,34 +36,51 @@ interface TriggerPopoverProps {
   existingTagIds?: readonly NodeId[];
 }
 
+const EMPTY_NODE_IDS: readonly NodeId[] = [];
+
 export function TriggerPopover(props: TriggerPopoverProps) {
   const tf = useT().outliner.field;
+  const {
+    applyReference,
+    applyTag,
+    clearTriggerText,
+    close,
+    createTagAndApply,
+    enabledSlashCommandIds,
+    executeSlashCommand,
+    index,
+    nodeId,
+    run,
+    treeReferenceParentId,
+    trigger,
+  } = props;
   const [selectedIndex, setSelectedIndex] = useState(0);
   const menuRef = useRef<HTMLDivElement | null>(null);
-  const existingTagIds = props.existingTagIds ?? [];
+  const existingTagIds = props.existingTagIds ?? EMPTY_NODE_IDS;
 
   const itemCount = useMemo(() => {
-    if (props.trigger.kind === '#') {
+    if (trigger.kind === '#') {
       return tagSelectorItems({
-        query: props.trigger.query,
-        index: props.index,
+        query: trigger.query,
+        index,
         existingTagIds,
       }).length;
     }
-    if (props.trigger.kind === '@') {
+    if (trigger.kind === '@') {
       return referenceItems({
-        query: props.trigger.query,
-        index: props.index,
-        currentNodeId: props.nodeId,
-        treeReferenceParentId: props.treeReferenceParentId,
+        query: trigger.query,
+        index,
+        currentNodeId: nodeId,
+        treeReferenceParentId,
+        skipTreeReferenceChecks: true,
       }).length;
     }
-    if (!props.executeSlashCommand) return 0;
-    return slashCommandItems(props.trigger.query, props.enabledSlashCommandIds, tf.slashLabels).length;
-  }, [props, existingTagIds, tf.slashLabels]);
+    if (!executeSlashCommand) return 0;
+    return slashCommandItems(trigger.query, enabledSlashCommandIds, tf.slashLabels).length;
+  }, [enabledSlashCommandIds, executeSlashCommand, existingTagIds, index, nodeId, tf.slashLabels, treeReferenceParentId, trigger.kind, trigger.query]);
   const anchoredDropStyle = useAnchoredOverlay(menuRef, {
-    anchorRect: props.trigger.anchor ?? null,
-    layoutKey: `${props.trigger.kind}:${props.trigger.query}:${itemCount}`,
+    anchorRect: trigger.anchor ?? null,
+    layoutKey: `${trigger.kind}:${trigger.query}:${itemCount}`,
     maxHeight: 240,
     placement: 'bottom-start',
     width: 220,
@@ -71,7 +88,7 @@ export function TriggerPopover(props: TriggerPopoverProps) {
 
   useEffect(() => {
     setSelectedIndex(0);
-  }, [props.trigger.kind, props.trigger.query, itemCount]);
+  }, [trigger.kind, trigger.query, itemCount]);
 
   useEffect(() => {
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
@@ -81,7 +98,7 @@ export function TriggerPopover(props: TriggerPopoverProps) {
       event.stopPropagation();
 
       if (event.key === 'Escape') {
-        props.close();
+        close();
         return;
       }
       if (
@@ -89,8 +106,8 @@ export function TriggerPopover(props: TriggerPopoverProps) {
         && (event.metaKey || event.ctrlKey)
       ) {
         const intent = resolveTriggerForceCreateIntent({
-          triggerKind: props.trigger.kind,
-          query: props.trigger.query,
+          triggerKind: trigger.kind,
+          query: trigger.query,
         });
         if (intent === 'hashtag_create') {
           menuRef.current
@@ -118,7 +135,7 @@ export function TriggerPopover(props: TriggerPopoverProps) {
 
     window.addEventListener('keydown', onKeyDown, true);
     return () => window.removeEventListener('keydown', onKeyDown, true);
-  }, [itemCount, props, selectedIndex]);
+  }, [close, itemCount, selectedIndex, trigger.kind, trigger.query]);
 
   useEffect(() => {
     menuRef.current
@@ -126,9 +143,9 @@ export function TriggerPopover(props: TriggerPopoverProps) {
       ?.scrollIntoView({ block: 'nearest' });
   }, [selectedIndex]);
 
-  const label = props.trigger.kind === '#'
+  const label = trigger.kind === '#'
     ? tf.tagSuggestions
-    : props.trigger.kind === '@'
+    : trigger.kind === '@'
       ? tf.referenceSuggestions
       : tf.slashCommands;
 
@@ -141,44 +158,44 @@ export function TriggerPopover(props: TriggerPopoverProps) {
       style={anchoredDropStyle}
       onMouseDown={(event) => event.stopPropagation()}
     >
-      {props.trigger.kind === '#' && (
+      {trigger.kind === '#' && (
         <TagSelector
-          query={props.trigger.query}
-          index={props.index}
-          nodeId={props.nodeId}
+          query={trigger.query}
+          index={index}
+          nodeId={nodeId}
           existingTagIds={existingTagIds}
           selectedIndex={selectedIndex}
           setSelectedIndex={setSelectedIndex}
-          run={props.run}
-          close={props.close}
-          clearTriggerText={props.clearTriggerText}
-          applyTag={props.applyTag}
-          createTagAndApply={props.createTagAndApply}
+          run={run}
+          close={close}
+          clearTriggerText={clearTriggerText}
+          applyTag={applyTag}
+          createTagAndApply={createTagAndApply}
         />
       )}
-      {props.trigger.kind === '@' && (
+      {trigger.kind === '@' && (
         <ReferenceSelector
-          query={props.trigger.query}
-          index={props.index}
-          currentNodeId={props.nodeId}
-          treeReferenceParentId={props.treeReferenceParentId}
+          query={trigger.query}
+          index={index}
+          currentNodeId={nodeId}
+          treeReferenceParentId={treeReferenceParentId}
           selectedIndex={selectedIndex}
           setSelectedIndex={setSelectedIndex}
-          run={props.run}
-          close={props.close}
-          clearTriggerText={props.clearTriggerText}
-          applyReference={props.applyReference}
+          run={run}
+          close={close}
+          clearTriggerText={clearTriggerText}
+          applyReference={applyReference}
         />
       )}
-      {props.trigger.kind === '/' && props.executeSlashCommand && (
+      {trigger.kind === '/' && executeSlashCommand && (
         <SlashCommandMenu
-          query={props.trigger.query}
+          query={trigger.query}
           selectedIndex={selectedIndex}
           setSelectedIndex={setSelectedIndex}
-          enabledSlashCommandIds={props.enabledSlashCommandIds}
-          run={props.run}
-          executeSlashCommand={props.executeSlashCommand}
-          close={props.close}
+          enabledSlashCommandIds={enabledSlashCommandIds}
+          run={run}
+          executeSlashCommand={executeSlashCommand}
+          close={close}
         />
       )}
     </PopoverListbox>,

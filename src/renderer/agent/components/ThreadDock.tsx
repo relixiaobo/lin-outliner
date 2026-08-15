@@ -1,8 +1,8 @@
-import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { lazy, memo, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from 'react';
 import type { RendererUserViewHints, Thread, ThreadUserContent, Turn } from '../../../core/agent/protocol';
 import type { AgentProviderSettingsView, AgentSlashCommandView } from '../../api/types';
-import type { DocumentIndex } from '../../state/document';
+import type { DocumentIndexStore } from '../../state/documentIndexStore';
 import { api } from '../../api/client';
 import { useT } from '../../i18n/I18nProvider';
 import { threadStore, useThreadStore } from '../store/threadStore';
@@ -38,9 +38,9 @@ const AutomationsView = lazy(async () => {
 export type ThreadRailState = 'collapsed' | 'open';
 
 interface ThreadDockProps {
-  readonly index: DocumentIndex;
+  readonly getUserView: () => RendererUserViewHints;
+  readonly indexStore: DocumentIndexStore;
   readonly railState: ThreadRailState;
-  readonly userView: RendererUserViewHints;
   readonly onOpenNodeReference: ThreadNodeReferenceOpenHandler;
   readonly onOpenTurnDetails: (threadId: string, turnId: string) => void;
   readonly onResizeKeyDown: (event: ReactKeyboardEvent<HTMLButtonElement>) => void;
@@ -48,10 +48,10 @@ interface ThreadDockProps {
   readonly onResizeStart: (event: ReactPointerEvent<HTMLButtonElement>) => void;
 }
 
-export function ThreadDock({
-  index,
+export const ThreadDock = memo(function ThreadDock({
+  getUserView,
+  indexStore,
   railState,
-  userView,
   onOpenNodeReference,
   onOpenTurnDetails,
   onResizeKeyDown,
@@ -59,7 +59,8 @@ export function ThreadDock({
   onResizeStart,
 }: ThreadDockProps) {
   const t = useT();
-  const snapshot = useThreadStore();
+  const open = railState === 'open';
+  const snapshot = useThreadStore(open);
   const [listOpen, setListOpen] = useState(false);
   const [surface, setSurface] = useState<'thread' | 'automations'>('thread');
   const [creating, setCreating] = useState(false);
@@ -79,7 +80,6 @@ export function ThreadDock({
   const autoCreateAttemptedRef = useRef(false);
   const providerSettingsRequestRef = useRef(0);
   const slashCommandsRequestRef = useRef(0);
-  const open = railState === 'open';
   const openRef = useRef(open);
   const thread = snapshot.threads.find((candidate) => candidate.id === snapshot.selectedThreadId) ?? null;
   const threadsById = useMemo(
@@ -415,11 +415,13 @@ export function ThreadDock({
         {surface === 'thread' && thread ? (
           <>
             <ThreadView
+              active={open}
               composerEnabled={thread.parentThreadId === null && thread.threadSource === 'user'}
               composerFocusToken={composerFocusToken}
               configuration={configuration}
+              getUserView={getUserView}
               goal={goal}
-              index={index}
+              indexStore={indexStore}
               inputRequest={userInput ?? null}
               waitingOnUserInput={thread.status.type === 'active'
                 && thread.status.activeFlags.includes('waitingOnUserInput')}
@@ -427,7 +429,7 @@ export function ThreadDock({
               onConfigurationChange={(next) => threadStore.setThreadConfiguration(thread.id, next)}
               onCreateThread={createThread}
               onEditUserMessage={(_turn, content: readonly ThreadUserContent[]) => (
-                threadStore.rollbackAndSend(thread.id, content, userView)
+                threadStore.rollbackAndSend(thread.id, content, getUserView())
               )}
               onContinueInNewChat={(turn) => threadStore.continueInNewChat(thread.id, turn.id).then(() => undefined)}
               onInterrupt={() => threadStore.interrupt(thread.id)}
@@ -438,7 +440,7 @@ export function ThreadDock({
               onOpenTurnDetails={(turn) => onOpenTurnDetails(thread.id, turn.id)}
               onReadToolOutput={(turnId, item) => threadStore.readItemOutput(thread.id, turnId, item)}
               onReadToolArguments={(turnId, item) => threadStore.readToolArguments(thread.id, turnId, item)}
-              onSend={(content) => threadStore.send(content, userView)}
+              onSend={(content) => threadStore.send(content, getUserView())}
               onSubmitUserInput={(answers) => userInput
                 ? threadStore.respondToUserInput(userInput, answers)
                 : Promise.resolve()}
@@ -455,7 +457,6 @@ export function ThreadDock({
               threadsById={threadsById}
               latestTurnByThread={snapshot.latestTurnByThread}
               turns={turns}
-              userView={userView}
             />
           </>
         ) : null}
@@ -563,7 +564,7 @@ export function ThreadDock({
       />
     </aside>
   );
-}
+});
 
 /** The Thread a lineage roots at, or null when an ancestor is not in the catalog. */
 /**

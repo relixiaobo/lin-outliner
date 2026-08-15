@@ -43,8 +43,12 @@ import {
   modelCallDisplayArguments,
   modelCallDisplayName,
 } from '../../../core/agent/modelCallHistory';
-import type { AgentProviderSettingsView, AgentSlashCommandView } from '../../api/types';
+import type { AgentProviderSettingsView, AgentSlashCommandView, NodeId } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
+import {
+  useDocumentIndexSnapshot,
+  type DocumentIndexStore,
+} from '../../state/documentIndexStore';
 import { useI18n, useT } from '../../i18n/I18nProvider';
 import {
   acknowledgeThreadComposerContext,
@@ -90,6 +94,7 @@ import {
   ThreadItemView,
   ThreadMessageCopyButton,
   ThreadToolActivityGroup,
+  threadToolReferencedNodeIds,
   type ThreadDisclosureState,
   type ThreadToolItem,
 } from './items/ThreadItemView';
@@ -122,12 +127,15 @@ import {
   type SubagentTurnProjection,
 } from '../subagentPresentation';
 import { classifyNewThreadCommand } from '../threadComposerCommands';
+import { parseNodeReferenceMarkers } from '../../../core/referenceMarkup';
 
 interface ThreadViewProps {
+  readonly active: boolean;
   readonly composerEnabled: boolean;
   readonly composerFocusToken: number;
+  readonly getUserView: () => RendererUserViewHints;
   readonly goal: ThreadGoal | null;
-  readonly index: DocumentIndex;
+  readonly indexStore: DocumentIndexStore;
   readonly configuration: ThreadConfigurationSummary | null;
   readonly providerSettings: AgentProviderSettingsView | null;
   readonly providerSettingsLoaded: boolean;
@@ -171,7 +179,6 @@ interface ThreadViewProps {
   readonly onReadToolArguments: (turnId: string, item: ThreadToolItem) => Promise<JsonValue | null>;
   readonly onSend: (content: readonly ThreadUserContent[]) => Promise<Turn | null>;
   readonly onSubmitUserInput: (answers: readonly RequestUserInputAnswer[]) => Promise<void>;
-  readonly userView: RendererUserViewHints;
 }
 
 const MAX_ATTACHMENTS = 6;
@@ -429,11 +436,13 @@ interface PreparedComposerAttachment {
 }
 
 export function ThreadView({
+  active,
   composerEnabled,
   composerFocusToken,
   configuration,
+  getUserView,
   goal,
-  index,
+  indexStore,
   providerSettings,
   providerSettingsLoaded,
   plan,
@@ -464,7 +473,6 @@ export function ThreadView({
   onReadToolOutput,
   onSend,
   onSubmitUserInput,
-  userView,
 }: ThreadViewProps) {
   const t = useT();
   const waitingForInput = Boolean(inputRequest);
@@ -1675,6 +1683,7 @@ export function ThreadView({
                       virtualized={virtualized}
                     >
                       <ThreadTurnView
+                        active={active}
                         onInterruptThread={onInterruptThread}
                         canEditUserMessage={onSubagentDrill === undefined
                           && composerEnabled
@@ -1683,7 +1692,8 @@ export function ThreadView({
                         composerEnabled={composerEnabled}
                         isLastTurn={turnIndex === turns.length - 1}
                         expandState={expandState}
-                        index={index}
+                        getUserView={getUserView}
+                        indexStore={indexStore}
                         onEditUserMessage={onEditUserMessage}
                         onContinueInNewChat={onContinueInNewChat}
                         onOpenSubagentTurnDetails={onOpenSubagentTurnDetails}
@@ -1701,7 +1711,6 @@ export function ThreadView({
                         threadsById={threadsById}
                         latestTurnByThread={latestTurnByThread}
                         turn={turn}
-                        userView={userView}
                         waitingOnUserInput={waitingOnUserInput}
                       />
                     </ThreadTranscriptTurnShell>
@@ -1804,7 +1813,7 @@ export function ThreadView({
                 allowSlashCommands={slashCommands.length > 0}
                 currentNodeId={null}
                 disabled={waitingForInput || threadCreationPending}
-                index={index}
+                indexStore={indexStore}
                 isStreaming={Boolean(activeTurn)}
                 onChange={handleDraftChange}
                 onFilesPasted={(files) => void addBrowserFiles(files)}
@@ -1942,11 +1951,13 @@ function ThreadTranscriptTurnShell({
 }
 
 export const ThreadTurnView = memo(function ThreadTurnView({
+  active,
   canEditUserMessage,
   composerEnabled,
   isLastTurn,
   expandState,
-  index,
+  getUserView,
+  indexStore,
   latchedReasoning,
   liveReasoningSeen,
   onEditUserMessage,
@@ -1965,13 +1976,14 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   threadsById,
   latestTurnByThread,
   turn,
-  userView,
   waitingOnUserInput,
 }: {
+  readonly active: boolean;
   readonly canEditUserMessage: boolean;
   readonly composerEnabled: boolean;
   readonly expandState: ThreadDisclosureState;
-  readonly index: DocumentIndex;
+  readonly getUserView: () => RendererUserViewHints;
+  readonly indexStore: DocumentIndexStore;
   readonly isLastTurn: boolean;
   /** Reasoning Item ids that have been open by default this session. */
   readonly latchedReasoning: Set<string>;
@@ -1998,10 +2010,11 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   readonly threadsById: ReadonlyMap<ThreadId, Thread>;
   readonly latestTurnByThread: ReadonlyMap<ThreadId, Turn>;
   readonly turn: Turn;
-  readonly userView: RendererUserViewHints;
   readonly waitingOnUserInput: boolean;
 }) {
   const t = useT();
+  const documentNodeIds = useMemo(() => threadDocumentNodeIds(turn), [turn]);
+  const index = useDocumentIndexSnapshot(indexStore, documentNodeIds, active);
   const turnRef = useRef(turn);
   turnRef.current = turn;
   const responseTailTurnRef = useRef(turn);
@@ -2167,7 +2180,9 @@ export const ThreadTurnView = memo(function ThreadTurnView({
       canEditUserMessage={canEditUserMessage && showMessageActions}
       defaultReasoningExpanded={reasoningExpandedByDefault(turn, item)}
       expandState={expandState}
+      getUserView={getUserView}
       index={index}
+      indexStore={indexStore}
       item={item}
       hostAuthoredEvent={hostAuthoredEvent}
       key={item.id}
@@ -2186,7 +2201,7 @@ export const ThreadTurnView = memo(function ThreadTurnView({
       subagents={subagents.byThreadId}
       threadId={threadId}
       threadCwd={threadCwd}
-      userView={userView}
+      active={active}
       workingTextEnabled={workingTextEnabled}
     />
   );
@@ -2243,6 +2258,40 @@ export const ThreadTurnView = memo(function ThreadTurnView({
     </section>
   );
 });
+
+const threadItemDocumentNodeIdsCache = new WeakMap<ThreadItem, readonly NodeId[]>();
+
+export function threadDocumentNodeIds(turn: Turn): readonly NodeId[] {
+  const nodeIds = new Set<NodeId>();
+  for (const item of turn.items) {
+    for (const nodeId of threadItemDocumentNodeIds(item)) nodeIds.add(nodeId);
+  }
+  return [...nodeIds];
+}
+
+function threadItemDocumentNodeIds(item: ThreadItem): readonly NodeId[] {
+  const cached = threadItemDocumentNodeIdsCache.get(item);
+  if (cached) return cached;
+  const nodeIds = new Set<NodeId>();
+  const addMarkdownReferences = (text: string) => {
+    for (const reference of parseNodeReferenceMarkers(text)) nodeIds.add(reference.nodeId);
+  };
+  if (item.type === 'userMessage') {
+    for (const content of item.content) {
+      if (content.type === 'nodeReference') nodeIds.add(content.nodeId);
+    }
+  } else if (item.type === 'agentMessage') {
+    addMarkdownReferences(item.text);
+  } else if (item.type === 'reasoning') {
+    for (const part of item.summary) addMarkdownReferences(part);
+    for (const part of item.content) addMarkdownReferences(part);
+  } else if (isThreadToolItem(item)) {
+    for (const nodeId of threadToolReferencedNodeIds(item)) nodeIds.add(nodeId);
+  }
+  const result = [...nodeIds];
+  threadItemDocumentNodeIdsCache.set(item, result);
+  return result;
+}
 
 function sameResponseTailTurn(left: Turn, right: Turn): boolean {
   return left.id === right.id
