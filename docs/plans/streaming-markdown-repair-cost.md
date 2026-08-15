@@ -47,12 +47,20 @@ upstream order and output. Bold-italic is included because its unmatched-marker
 path delegates to the same single-asterisk scan and would otherwise retain a
 rarer version of the superlinear cost.
 
-Inputs without both math and emphasis markers stay on canonical `remend`, so
-ordinary prose and non-math Markdown do not pay to build the richer context.
-When the local stage is needed, one context map is reused through its synthetic
-closing-marker appends: those markers inherit the frozen end state and cannot
-change code, math, link, or HTML context. The final underscore insertion is the
-last emphasis handler and therefore needs no successor context.
+Inputs without emphasis markers stay on canonical `remend`, so ordinary prose
+does not pay to build the richer context. Inputs containing `*` or `_` use the
+linear stage even without math: upstream first-marker searches query preceding
+math context before rejecting many literal markers, so `snake_case` identifiers
+and `w*h` arithmetic otherwise retain the same superlinear cost. One context map
+is reused through synthetic closing-marker appends: those markers inherit the
+frozen end state and cannot change code, math, link, or HTML context. The final
+underscore insertion is the last emphasis handler and therefore needs no
+successor context.
+
+The local stage is derived from `remend@1.3.0` while the dependency admits later
+1.x releases. The committed differential suite is the compatibility guard: an
+upstream behavior change must fail before merge and requires synchronizing the
+adapter rather than silently changing the reference implementation.
 
 `appendStreamingMarkdown` and `parseFullStreamingMarkdown` call the adapter in
 place of `remend`; the existing lex boundary and fallback mechanism remain
@@ -74,8 +82,9 @@ blocks` continue comparing every parser commit with full repaired lexing.
 A standalone probe measures canonical `remend`, the adapter, and a warmed
 `createStreamingMarkdownBlockParser` append at fixed answer sizes. It reports
 medians rather than enforcing machine-dependent timing in CI. The acceptance
-measurement uses the same dollar-plus-emphasis workload that reproduces the
-gate profile; output equality is checked before any timing result is accepted.
+measurement covers both the dollar-plus-emphasis workload that reproduces the
+gate profile and identifier-heavy Markdown without dollars; output equality is
+checked before any timing result is accepted.
 
 ### Keep the current specification authoritative
 

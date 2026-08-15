@@ -1,6 +1,8 @@
 import remend, { isWordChar, type RemendOptions } from 'remend';
 
 // Emphasis behavior is derived from remend@1.3.0.
+// The differential suite is the compatibility guard for the semver-ranged
+// dependency: an upstream behavior change must fail before this copy can drift.
 // Copyright 2023 Vercel, Inc. Licensed under Apache-2.0:
 // https://www.apache.org/licenses/LICENSE-2.0
 // The implementation replaces repeated prefix scans with linear context maps.
@@ -54,7 +56,7 @@ interface RepairContext {
 }
 
 export function repairStreamingMarkdown(text: string): string {
-  if (!text.includes('$') || !text.includes('*') && !text.includes('_')) {
+  if (!text.includes('*') && !text.includes('_')) {
     return remend(text);
   }
 

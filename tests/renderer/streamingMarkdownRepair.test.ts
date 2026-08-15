@@ -12,6 +12,8 @@ describe('streaming Markdown repair', () => {
       '_Single underscore before **nested bold**\n\n',
       '`code with *literal emphasis*` and _open italic',
       '$5 leaves *emphasis* in alternating math context and _opens here',
+      'Identifiers such as read_only_flag and cached_entry_name stay literal.',
+      'Arithmetic such as 2*3 and w*h stays literal without a dollar sign.',
       'Text before an incomplete image ![partial alt',
       '`code before an incomplete image ![partial alt',
       'Text before an incomplete image with a space ![partial alt',

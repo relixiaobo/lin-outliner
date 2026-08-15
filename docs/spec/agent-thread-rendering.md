@@ -514,10 +514,15 @@ math context for every emphasis marker. An incomplete-link early return and a
 single trailing space exposed by incomplete-image removal retain `remend`'s
 original stage semantics. The adapter remains byte-equivalent to canonical
 `remend` after every append; it is a cost change, not a repair-policy fork.
-Text without both math and emphasis markers delegates directly to canonical
-repair. The linear path builds one context map and reuses its frozen end state
-for synthetic closing markers, so ordinary answers do not regress and an
-unfinished emphasis marker does not rebuild the full context per handler.
+The differential suite compares against the installed dependency, making an
+upstream behavior change fail before the renderer-local `remend@1.3.0` behavior
+can drift silently. Text without emphasis markers delegates directly to
+canonical repair. Inputs containing `*` or `_` take the linear path even without
+math because upstream marker searches query preceding math context before they
+reject many literal markers. The linear path builds one context map and reuses
+its frozen end state for synthetic closing markers, so ordinary prose does not
+regress and an unfinished emphasis marker does not rebuild the full context per
+handler.
 
 The reparsed tail retains the last two substantive tokens and trailing
 whitespace; a repaired prefix that differs from source or contains an unmatched
@@ -527,12 +532,14 @@ byte falls back to a full repaired lex; the definition fallback is required
 because definitions are attached to every visible block. Repairing the complete
 source is a correctness requirement, not an optimization: it is what lets the
 bounded tail lex match a full repaired lex byte for byte. On the gate-shaped
-dollar-plus-emphasis fixture, canonical repair remains superlinear while the
-split repair is linear and about 20x cheaper at 40 KB (roughly 5-8 ms versus
-90-150 ms in isolated samples). A 40 KB commit ending in unfinished emphasis
-stays on the same linear path rather than returning to canonical repair. Stable
-completed blocks are memoized, and every block keeps the same memoized React
-component identity as the final streaming block seals.
+dollar-plus-emphasis fixture and identifier-heavy Markdown without dollars,
+canonical repair remains superlinear while the split repair is linear. The
+dollar-plus fixture is about 18x cheaper at 40 KB (5.1 ms versus 92 ms in the
+latest isolated probe); the no-dollar `snake_case` and `w*h` fixture is about
+22x cheaper (5.5 ms versus 121 ms). A 40 KB commit ending in unfinished emphasis
+also stays on the linear path. Stable completed blocks are memoized, and every
+block keeps the same memoized React component identity as the final streaming
+block seals.
 Node and local-file
 reference markers render through the same inline reference and preview surfaces
 as the outliner; Cmd/Ctrl-click preserves new-pane navigation, and HTTP links use

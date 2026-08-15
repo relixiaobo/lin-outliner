@@ -9,7 +9,13 @@ import { repairStreamingMarkdown } from '../src/renderer/agent/streamingMarkdown
 const TARGET_BYTES = [2_500, 10_000, 20_000, 40_000] as const;
 const SAMPLE_COUNT = 7;
 
+interface ProbeFixture {
+  readonly name: string;
+  readonly part: (index: number) => string;
+}
+
 interface ProbeRow {
+  readonly scenario: string;
   readonly adapterMs: number;
   readonly appendBytes: number;
   readonly bytes: number;
@@ -18,11 +24,28 @@ interface ProbeRow {
   readonly repairSpeedup: number;
 }
 
-const rows = TARGET_BYTES.map(probeSize);
+const FIXTURES: readonly ProbeFixture[] = [
+  {
+    name: 'dollar-plus-emphasis',
+    part: (index) => (
+      `Paragraph ${index} compares *streamed emphasis* with $5 and _another marker_ safely.\n\n`
+    ),
+  },
+  {
+    name: 'identifier-heavy-no-dollar',
+    part: (index) => (
+      `Paragraph ${index} compares read_only_flag with cached_entry_name and 2*3 plus w*h safely.\n\n`
+    ),
+  },
+];
+
+const rows = FIXTURES.flatMap((fixture) => (
+  TARGET_BYTES.map((targetBytes) => probeSize(targetBytes, fixture))
+));
 console.table(rows);
 
-function probeSize(targetBytes: number): ProbeRow {
-  const parts = buildFixture(targetBytes);
+function probeSize(targetBytes: number, fixture: ProbeFixture): ProbeRow {
+  const parts = buildFixture(targetBytes, fixture);
   const appended = parts.at(-1)!;
   const before = parts.slice(0, -1).join('');
   const source = before + appended;
@@ -61,6 +84,7 @@ function probeSize(targetBytes: number): ProbeRow {
   const canonicalMs = medianDurationMs(() => remend(source));
 
   return {
+    scenario: fixture.name,
     adapterMs: roundMs(adapterMs),
     appendBytes: appended.length,
     bytes: source.length,
@@ -70,12 +94,12 @@ function probeSize(targetBytes: number): ProbeRow {
   };
 }
 
-function buildFixture(targetBytes: number): string[] {
+function buildFixture(targetBytes: number, fixture: ProbeFixture): string[] {
   const parts: string[] = [];
   let size = 0;
   let index = 0;
   while (size < targetBytes) {
-    const part = `Paragraph ${index} compares *streamed emphasis* with $5 and _another marker_ safely.\n\n`;
+    const part = fixture.part(index);
     parts.push(part);
     size += part.length;
     index += 1;
