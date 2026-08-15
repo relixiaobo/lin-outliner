@@ -59,7 +59,6 @@ theme-section entry below; this list is the ordering, not a second record):
   (the board's only P0) **closed 2026-08-15 with PR-C (#541)**, so the lane no
   longer outranks Lane A; [`agent-tool-call-path`](plans/agent-tool-call-path.md) (P1) now leads
   (`agent-streaming-followups` shipped #539 2026-08-14, leaving the P2
-  (`agent-streaming-followups` shipped #539 2026-08-14, leaving the P2
   `streaming-markdown-repair-cost` tail); [`interaction-jank-cleanups`](plans/interaction-jank-cleanups.md)
   and [`startup-window-first`](plans/startup-window-first.md) (P2) trail.
 - **Outliner correctness lane (added 2026-08-13, build-ready 2026-08-14)**:
@@ -76,8 +75,9 @@ theme-section entry below; this list is the ordering, not a second record):
 
 **Design-gate queue** (PM bandwidth): _empty_ — `skill-path-ownership` shipped #513.
 **Release:** v0.3.0 + v0.3.1 shipped 2026-08-10; `main` is the **0.4.0 train** and the
-cadence rule fires again (9 user-visible entries aboard as of 2026-08-14, #525–#535):
-note drafted by main, PM ratifies, then tag + dial to 0.5.0.
+cadence rule fires again (13 user-visible entries aboard as of 2026-08-15, #525–#542 —
+five days since the last train): note drafted by main, PM ratifies, then tag + dial
+to 0.5.0.
 
 `pi-ai-0.80-upgrade` shipped #348 (clean `Models` migration, not the interim `/compat` shim) — see *Recently completed*.
 `dream-channel-and-memory-retire` shipped in full (PR1 #324 + PR2 #328 + PR3 #329) — see *Recently completed*.
