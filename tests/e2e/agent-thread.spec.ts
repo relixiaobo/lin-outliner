@@ -2503,7 +2503,7 @@ test.describe('canonical agent Thread surface', () => {
     // The brief the parent wrote, named as the task it is — not as an "event",
     // which is what a peer Agent's message to a conversation is.
     await expect(detail.locator('.thread-host-event')).toContainText('Investigate the deployment story.');
-    await expect(detail.locator('.thread-host-event-label')).toHaveText('Task');
+    await expect(detail.locator('.thread-host-event-label')).toHaveText('From main');
     await expect(detail.getByRole('textbox', { name: 'Message this Thread' })).toBeVisible();
     await expect(detail.getByRole('button', { name: 'Edit message' })).toHaveCount(0);
     await expect(detail.getByRole('button', { name: 'Continue in new chat' })).toHaveCount(0);

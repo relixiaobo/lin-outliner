@@ -1728,6 +1728,19 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* B7: it appears on hover WITHOUT moving anything — the slot is always held. */
+.thread-agent-chip-open {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  opacity: 0;
+  transition: opacity var(--motion-fast);
+}
+
+.thread-agent-chip:hover .thread-agent-chip-open,
+.thread-agent-chip:focus-visible .thread-agent-chip-open {
+  opacity: 1;
+}
+
 .thread-agent-chip-line .icon-button {
   display: inline-flex;
   width: 22px;

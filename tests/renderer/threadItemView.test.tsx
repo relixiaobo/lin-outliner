@@ -923,8 +923,11 @@ describe('ThreadItemView Agent chips', () => {
 
     const chip = rendered.document.querySelector<HTMLButtonElement>('.thread-agent-chip');
     // The chip is a way in, not a disclosure: nothing about it claims an
-    // expandable region, because opening pushes the detail view instead.
+    // expandable region, and it carries the trailing mark of a control that
+    // opens somewhere rather than the leading one that expands in place.
     expect(chip?.getAttribute('aria-expanded')).toBeNull();
+    expect(chip?.querySelector('.thread-agent-chip-open')).not.toBeNull();
+    expect(chip?.querySelector('.thread-disclosure-chevron')).toBeNull();
     act(() => chip?.click());
     expect(opened).toEqual(['thread-child']);
   });

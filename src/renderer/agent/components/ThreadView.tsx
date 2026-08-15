@@ -152,6 +152,8 @@ interface ThreadViewProps {
   readonly composerPlaceholder?: string;
   /** This transcript belongs to one Agent, so its Turns are generations. */
   readonly agentTranscript?: boolean;
+  /** Who authored the host-written Items here — this Agent's delegator. */
+  readonly hostAuthorName?: string;
   readonly inputRequest: RequestUserInputRequest | null;
   /** The run is blocked on the user. Working phrases become static and the
    *  divider names the wait; elapsed time remains the Turn's wall-clock span. */
@@ -452,6 +454,7 @@ export function ThreadView({
   subagentProjection,
   composerPlaceholder,
   agentTranscript = false,
+  hostAuthorName,
   inputRequest,
   waitingOnUserInput,
   providerRetry,
@@ -1695,6 +1698,7 @@ export function ThreadView({
                         onContinueInNewChat={onContinueInNewChat}
                         onOpenSubagentTurnDetails={onOpenSubagentTurnDetails}
                         agentTranscript={agentTranscript}
+                        {...(hostAuthorName === undefined ? {} : { hostAuthorName })}
                         onOpenNodeReference={onOpenNodeReference}
                         onOpenThread={onOpenThread}
                         onOpenTurnDetails={onOpenTurnDetails}
@@ -1972,6 +1976,7 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   onOpenThread,
   onOpenSubagentTurnDetails,
   agentTranscript,
+  hostAuthorName,
   onOpenTurnDetails,
   onReadToolArguments,
   onReadToolOutput,
@@ -2009,6 +2014,8 @@ export const ThreadTurnView = memo(function ThreadTurnView({
    * transcript has no composer and can still be forked.
    */
   readonly agentTranscript: boolean;
+  /** Who authored the host-written Items here — this Agent's delegator. */
+  readonly hostAuthorName?: string;
   readonly onOpenTurnDetails: (turn: Turn) => void;
   readonly onReadToolArguments: (turnId: string, item: ThreadToolItem) => Promise<JsonValue | null>;
   readonly onReadToolOutput: (turnId: string, item: ThreadToolItem) => Promise<string | null>;
@@ -2196,7 +2203,7 @@ export const ThreadTurnView = memo(function ThreadTurnView({
       index={index}
       item={item}
       hostAuthoredEvent={hostAuthoredEvent}
-      agentTranscript={agentTranscript}
+      {...(hostAuthorName === undefined ? {} : { hostAuthorName })}
       key={item.id}
       onAgentMessageContextMenu={item.id === responseItem?.id ? handleResponseContextMenu : undefined}
       onEditUserMessage={editUserMessage}

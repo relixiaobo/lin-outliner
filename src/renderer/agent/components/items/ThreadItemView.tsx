@@ -110,8 +110,12 @@ interface ThreadItemViewProps {
   readonly item: ThreadItem;
   /** This user-role Item was authored by the host, as proven by its Turn. */
   readonly hostAuthoredEvent?: boolean;
-  /** This transcript belongs to one Agent, so a host-authored brief is its task. */
-  readonly agentTranscript?: boolean;
+  /**
+   * Who wrote a host-authored user-role Item: `main` for the conversation
+   * itself, otherwise the delegating Agent. Absent in a conversation, where a
+   * host event has no single author to name.
+   */
+  readonly hostAuthorName?: string;
   readonly showMessageActions: boolean;
   readonly streaming: boolean;
   /** This Item is where a delegation happened, so a chip takes its slot. */
@@ -336,7 +340,7 @@ function UserMessageItem({
   index,
   item,
   hostAuthoredEvent = false,
-  agentTranscript = false,
+  hostAuthorName,
   onEditUserMessage,
   onOpenNodeReference,
   showMessageActions,
@@ -364,12 +368,15 @@ function UserMessageItem({
   return (
     <article className={`thread-item ${hostAuthoredEvent ? 'thread-host-event' : 'thread-user-message'}`}>
       {hostAuthoredEvent ? (
-        // Inside an Agent's own transcript this is the brief it was given, not
-        // an event that happened to it — the one host-authored user-role Item
-        // left in a conversation is a peer Agent's message, which is.
+        // Not the user's own words, so it says whose they are. Inside an Agent
+        // that is its delegator — the brief it was given, and every later steer.
+        // A user message typed into the same composer carries no label at all,
+        // because it needs none: the reader wrote it.
         <div className="thread-host-event-label">
           <AgentIcon aria-hidden size={ICON_SIZE.rowGlyph} />
-          <span>{agentTranscript ? t.agent.thread.agent.task : t.agent.thread.agentEvent}</span>
+          <span>{hostAuthorName
+            ? t.agent.thread.agent.fromSender({ name: hostAuthorName })
+            : t.agent.thread.agentEvent}</span>
         </div>
       ) : null}
       {editing ? (

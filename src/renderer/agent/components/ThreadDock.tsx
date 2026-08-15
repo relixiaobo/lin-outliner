@@ -12,6 +12,7 @@ import {
   type SubagentConversationProjection,
 } from '../subagentPresentation';
 import { SubagentDetailTitle, SubagentDetailView } from './SubagentDetailView';
+import type { SubagentRegistryEntry } from '../subagentPresentation';
 import { SubagentRegistryProvider, type SubagentActions } from './SubagentRegistryContext';
 import { SubagentWorkStrip } from './SubagentWorkStrip';
 import {
@@ -263,7 +264,12 @@ export function ThreadDock({
     setListOpen(false);
     const parentThreadId = snapshot.selectedThreadId;
     if (!parentThreadId) return;
-    const path = lineagePathFromRoot(agentId, parentThreadId, threadsById);
+    const path = lineagePathFromRoot(
+      agentId,
+      parentThreadId,
+      threadsById,
+      subagentProjectionRef.current?.byAgentId ?? new Map(),
+    );
     if (!path) {
       reportActionError(t.agent.thread.threadUnavailable);
       return;
@@ -642,26 +648,34 @@ export function ThreadDock({
   );
 }
 
-/** The Thread a lineage roots at, or null when an ancestor is not in the catalog. */
 /**
  * The chain from the conversation's own child down to `targetId`, or null when
  * the target is not in this conversation's subtree at all.
+ *
+ * The Agent REGISTRY is asked first, because the execution record carries the
+ * canonical delegation edge while the Thread catalog is a cache that starts
+ * cold: `thread/list` is roots-only, so on the launch a conversation is
+ * restored into, its Agents have records and chips before their child Threads
+ * have been read. Resolving from the catalog alone reported them gone.
  */
-function lineagePathFromRoot(
+export function lineagePathFromRoot(
   targetId: string,
   rootThreadId: string,
   threadsById: ReadonlyMap<string, Thread>,
+  byAgentId: ReadonlyMap<string, SubagentRegistryEntry>,
 ): readonly string[] | null {
   const path: string[] = [];
   const seen = new Set<string>();
   let current: string | null = targetId;
   while (current !== null && !seen.has(current)) {
     seen.add(current);
-    const thread: Thread | undefined = threadsById.get(current);
-    if (!thread) return null;
+    const parentThreadId: string | null = byAgentId.get(current)?.parentThreadId
+      ?? threadsById.get(current)?.parentThreadId
+      ?? null;
+    if (parentThreadId === null) return null;
     path.unshift(current);
-    if (thread.parentThreadId === rootThreadId) return path;
-    current = thread.parentThreadId;
+    if (parentThreadId === rootThreadId) return path;
+    current = parentThreadId;
   }
   return null;
 }

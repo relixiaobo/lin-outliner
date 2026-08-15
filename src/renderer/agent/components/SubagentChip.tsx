@@ -1,7 +1,15 @@
 import type { ThreadId } from '../../../core/agent/protocol';
 import { useT } from '../../i18n/I18nProvider';
 import type { Messages } from '../../../core/i18n';
-import { AgentIcon, GitForkIcon, ICON_SIZE, RefreshIcon, SkillIcon, StopIcon } from '../../ui/icons';
+import {
+  AgentIcon,
+  ChevronRightIcon,
+  GitForkIcon,
+  ICON_SIZE,
+  RefreshIcon,
+  SkillIcon,
+  StopIcon,
+} from '../../ui/icons';
 import { IconButton } from '../../ui/primitives/IconButton';
 import { WorkingText } from '../../ui/primitives/WorkingText';
 import { userFacingAgentError } from '../threadErrorMessage';
@@ -87,6 +95,11 @@ export function SubagentChip({
         {running
           ? <WorkingText className="thread-agent-chip-meta" text={status} />
           : <span className="thread-agent-chip-meta">{status}</span>}
+        {/* Says where the click goes. The tool rows beside this one carry a
+            disclosure chevron at their LEFT edge that rotates open in place;
+            a trailing `›` is the ordinary mark for a control that opens
+            somewhere else, so the two affordances stop looking alike. */}
+        <ChevronRightIcon aria-hidden className="thread-agent-chip-open" size={ICON_SIZE.tiny} />
       </button>
       {running && actions.stopAgent ? (
         <IconButton

@@ -159,6 +159,10 @@ export class ThreadStore {
       error: null,
     });
     if (selected) {
+      // The same two reads a selection makes: `thread/list` is roots-only, so a
+      // restored conversation knows neither its Agents nor their child Threads
+      // until these land.
+      void this.listDescendants(selected).catch(() => undefined);
       void this.loadSubagentExecutions(selected).catch(() => undefined);
       await this.loadTurns(selected);
     }

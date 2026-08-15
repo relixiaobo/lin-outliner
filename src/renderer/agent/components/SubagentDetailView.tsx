@@ -79,6 +79,12 @@ export function SubagentDetailView({
     await onOpenThread(target);
   }, [actions, onOpenThread, subagentProjection]);
 
+  // Whose words the host-authored Items here are: the Agent that delegated
+  // this one, or the conversation itself when the delegator IS the conversation.
+  const parentThreadId = entry?.parentThreadId ?? null;
+  const hostAuthorName = parentThreadId === null
+    ? t.agent.thread.agent.main
+    : subagentProjection.byAgentId.get(parentThreadId)?.displayName ?? t.agent.thread.agent.main;
   // Only an Agent takes direction. An isolated Skill's result belongs to the
   // `skill` call that invoked it, so there is nothing here for a message to do.
   const composerEnabled = entry?.form !== 'isolatedSkill' && thread?.source === 'collaboration';
@@ -121,6 +127,7 @@ export function SubagentDetailView({
             providerSettingsLoaded={false}
             slashCommands={[]}
             agentTranscript
+            hostAuthorName={hostAuthorName}
             subagentProjection={subagentProjection}
             threadCreationBlocked
             threadCreationPending={false}
