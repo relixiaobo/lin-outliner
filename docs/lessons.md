@@ -987,3 +987,26 @@ The general rule for the gate: when a hot-path fix is "we moved it off the hot
 path", ask *where it landed and how long it is there* — measure the longest
 uninterrupted slice, not the total, and measure the deferral trigger against a
 continuous stream, not a burst that stops (A9).
+
+## A fast path's guard is part of the optimization — measure what it excludes
+
+`streaming-markdown-repair-cost` (#547) made Markdown repair linear and then
+guarded the new path with `!text.includes('$') || no emphasis marker → old path`.
+The reasoning was local and sounded right: the expensive scan is math-context
+lookup, so text without `$` cannot be paying for it. It was wrong about the
+library it was replacing, which consults math context *before* it rejects a
+literal `_` or `*` — so the guard sent every answer without a dollar sign back
+onto the quadratic path, which is the common case for answers about code. The
+benchmark on the branch used a fixture containing `$`, so it measured only the
+side of the guard that worked, and reported a large speedup for a change that
+left `snake_case` prose at 207 ms per 40 KB commit and over a second at 80 KB.
+The tell was cheap to produce and unmissable: prepending one `$` to the identical
+text made it 12–40× faster. Two rules for the gate. **Benchmark both sides of
+every guard** — a fast-path fixture that satisfies the condition proves nothing
+about the traffic the condition rejects, and the fixture set must include the
+workload the feature actually sees (here: identifiers and arithmetic, not
+formulas). **Justify a guard against the code it is bypassing, not against a
+model of it** — the premise "no `$` means no math work" was never checked against
+the upstream source, where it is false. When the guard turns out to be
+unnecessary, deleting it is usually the whole fix, and its removal is verifiable
+by the same differential harness that proved the fast path correct.

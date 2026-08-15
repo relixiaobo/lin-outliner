@@ -330,6 +330,33 @@ Entries reference the pull request that introduced them.
   trigger guarantee progress, with deltas that arrive mid-build rebased before
   the new base commits.
 
+- **A long streaming answer now costs the same per chunk however long it gets
+  (PR #547, codex-3)** — the tail #539 explicitly left open. Markdown repair ran
+  over the whole accumulated message on every 80 ms commit and was superlinear,
+  so it had grown into ~95% of a commit: ~20 ms at 20 KB, ~80 ms at 40 KB, and
+  worse from there. The repair library rescans the text from the start for each
+  emphasis marker it inspects; a renderer-local adapter now computes that context
+  once per repair as a set of maps and reuses them across the emphasis handlers,
+  which makes the pass linear. It is a cost change, not a repair-policy fork —
+  the output stays byte-identical to the library's after every append, which is
+  what lets the bounded tail lex from #539 keep matching a full repaired lex.
+  On a 40 KB answer a commit drops from ~97 ms to ~8 ms. The high gate found the
+  fast path guarding itself wrong: it required a `$` in the text, which sent
+  every answer *without* one back onto the slow path — the common case for
+  answers about code, where `snake_case` identifiers cost 207 ms at 40 KB and
+  over a second at 80 KB, and where adding a single `$` to the same text made it
+  12–40× faster. Math was never what made the scan expensive; the library
+  consults math context before it rejects a literal `_` or `*`. Dropping that
+  clause is the difference between the fix working on prose about code and not,
+  and it cost nothing: 40 KB of ordinary `**bold**` prose repairs in 11.6 ms
+  against 7.6 ms on the old path, linear either way, and text with no emphasis
+  markers at all still short-circuits. Verified with ~2.5M differential
+  comparisons against the canonical library plus an 800,000-state fuzz of the
+  corrected guard, both with zero divergence. Because the copied logic is
+  derived from one library version while the dependency admits later ones, that
+  committed differential suite is also the compatibility guard: an upstream
+  behavior change fails the build instead of silently drifting.
+
 ### Fixed
 
 - **Two tags that define the same field name no longer exclude each other
