@@ -1,17 +1,25 @@
 import type { ReactNode } from 'react';
 import { agentAvatarColor, agentAvatarInitial } from '../agentAvatarColor';
 
-/** Who said the block beneath: the avatar's colour key, and the name shown. */
+/** Who said the block beneath: which participant, what it looks like, its name. */
 export interface ThreadSpeaker {
+  /**
+   * WHICH participant this is — an Agent id, or `main`. Consecutive blocks
+   * merge under one header only within a single participant, so this cannot be
+   * the type: a `general-purpose` child inside a `general-purpose` parent would
+   * swallow the brief its parent wrote into its own header, and wear its own
+   * elapsed above someone else's words.
+   */
+  readonly participantId: string;
   /**
    * What the hue is derived from: the Agent TYPE, or `main` for the
    * conversation's own agent. One type, one avatar — everywhere, in every
    * conversation. It is not the displayed name, which is translated for `main`
    * and would repaint every disc when the language changed; and it is not the
-   * Agent id, which gave two siblings of one type the same NAME and different
-   * discs, and repainted an Agent on the way into its own view.
+   * participant, which gave two siblings of one type the same NAME and
+   * different discs, and repainted an Agent on the way into its own view.
    */
-  readonly identity: string;
+  readonly avatarKey: string;
   readonly name: string;
 }
 
@@ -50,7 +58,7 @@ export function ThreadSpeakerGroup({
   readonly meta?: ReactNode;
   readonly speaker: ThreadSpeaker;
 }) {
-  const color = agentAvatarColor(speaker.identity);
+  const color = agentAvatarColor(speaker.avatarKey);
   return (
     <div className="thread-speaker">
       <div className="thread-speaker-header">

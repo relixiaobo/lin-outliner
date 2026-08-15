@@ -166,9 +166,7 @@ interface ThreadViewProps {
   /** This transcript belongs to one Agent, so its Turns are generations. */
   readonly agentTranscript?: boolean;
   /** Who authored the host-written Items here — this Agent's delegator. */
-  readonly hostAuthorName?: string;
-  /** That delegator's avatar key: its Agent id, or `main` for the conversation. */
-  readonly hostAuthorIdentity?: string;
+  readonly hostSpeaker?: ThreadSpeaker;
   /**
    * The participant whose transcript this is: the conversation's own `main`, or
    * the Agent whose pushed view this is. Every response here is it speaking.
@@ -475,8 +473,7 @@ export function ThreadView({
   subagentProjection,
   composerPlaceholder,
   agentTranscript = false,
-  hostAuthorName,
-  hostAuthorIdentity,
+  hostSpeaker,
   selfSpeaker,
   inputRequest,
   waitingOnUserInput,
@@ -1722,8 +1719,7 @@ export function ThreadView({
                         onContinueInNewChat={onContinueInNewChat}
                         onOpenSubagentTurnDetails={onOpenSubagentTurnDetails}
                         agentTranscript={agentTranscript}
-                        {...(hostAuthorName === undefined ? {} : { hostAuthorName })}
-                        {...(hostAuthorIdentity === undefined ? {} : { hostAuthorIdentity })}
+                        {...(hostSpeaker === undefined ? {} : { hostSpeaker })}
                         selfSpeaker={selfSpeaker}
                         onOpenNodeReference={onOpenNodeReference}
                         onOpenThread={onOpenThread}
@@ -1998,8 +1994,7 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   onOpenThread,
   onOpenSubagentTurnDetails,
   agentTranscript,
-  hostAuthorName,
-  hostAuthorIdentity,
+  hostSpeaker,
   selfSpeaker,
   onOpenTurnDetails,
   onReadToolArguments,
@@ -2039,9 +2034,7 @@ export const ThreadTurnView = memo(function ThreadTurnView({
    */
   readonly agentTranscript: boolean;
   /** Who authored the host-written Items here — this Agent's delegator. */
-  readonly hostAuthorName?: string;
-  /** That delegator's avatar key: its Agent id, or `main` for the conversation. */
-  readonly hostAuthorIdentity?: string;
+  readonly hostSpeaker?: ThreadSpeaker;
   /** The participant whose transcript this is — it speaks every response here. */
   readonly selfSpeaker: ThreadSpeaker;
   readonly onOpenTurnDetails: (turn: Turn) => void;
@@ -2088,7 +2081,11 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   // The child that delivered into this Turn, if any: it speaks its own report.
   const reportEntry = useSubagentEntry(delivery?.agentId ?? null);
   const reportSpeaker: ThreadSpeaker | null = delivery !== null && reportEntry !== null
-    ? { identity: subagentSpeakerName(reportEntry), name: subagentSpeakerName(reportEntry) }
+    ? {
+      participantId: delivery.agentId,
+      avatarKey: subagentSpeakerName(reportEntry),
+      name: subagentSpeakerName(reportEntry),
+    }
     : null;
   // A delivering child's header states ITS OWN span, not this conversation's:
   // the Turn around it is the parent reading the result, which took no time at
@@ -2291,7 +2288,11 @@ export const ThreadTurnView = memo(function ThreadTurnView({
     if (block.item.type !== 'userMessage') return selfSpeaker;
     if (delivery !== null) return reportSpeaker ?? 'drop';
     if (!hostAuthoredEvent) return null;
-    return { identity: hostAuthorIdentity ?? MAIN_AVATAR_IDENTITY, name: hostAuthorName ?? '' };
+    return hostSpeaker ?? {
+      participantId: MAIN_AVATAR_IDENTITY,
+      avatarKey: MAIN_AVATAR_IDENTITY,
+      name: '',
+    };
   };
   const runs: Array<{
     readonly speaker: ThreadSpeaker | null;
@@ -2300,7 +2301,7 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   }> = [];
   const emit = (speaker: ThreadSpeaker | null, node: ReactNode): void => {
     const open = runs.at(-1);
-    if (open && open.speaker?.identity === speaker?.identity) open.nodes.push(node);
+    if (open && open.speaker?.participantId === speaker?.participantId) open.nodes.push(node);
     else runs.push({ speaker, nodes: [node] });
   };
   for (const block of contentBlocks) {

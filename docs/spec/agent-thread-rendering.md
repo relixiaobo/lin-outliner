@@ -91,8 +91,13 @@ the avatar lane down the margin that desktop IM uses costs a tenth of the
 reading measure in a 344px deck, spent repeating what the header already says
 (PM 2026-08-15). Before this, `main` was unattributed prose and a child's report was a
 labelled bubble, which made two participants look like two different sorts of
-thing (PM 2026-08-15). Consecutive blocks from one participant group under a
-single avatar, so an agent that works and then answers is named once, not twice;
+thing (PM 2026-08-15). Consecutive blocks group under a single header only within one
+PARTICIPANT — never merely within one type. A `general-purpose` child inside a
+`general-purpose` parent otherwise swallowed the brief its parent wrote into its
+own header and hung its own elapsed over someone else's words (PM 2026-08-15):
+which participant is speaking and what its avatar looks like are two questions,
+and only the first may merge two blocks. So an agent that works and then answers
+is named once, not twice;
 a delivery Turn genuinely has two speakers (the child, then the agent reading
 its result) and shows two.
 

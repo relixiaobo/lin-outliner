@@ -490,7 +490,11 @@ export const ThreadDock = memo(function ThreadDock({
               active={open && openAgentId === null}
               composerEnabled={thread.parentThreadId === null && thread.threadSource === 'user'}
               composerFocusToken={composerFocusToken}
-              selfSpeaker={{ identity: MAIN_AVATAR_IDENTITY, name: t.agent.thread.agent.main }}
+              selfSpeaker={{
+                participantId: MAIN_AVATAR_IDENTITY,
+                avatarKey: MAIN_AVATAR_IDENTITY,
+                name: t.agent.thread.agent.main,
+              }}
               configuration={configuration}
               getUserView={getUserView}
               goal={goal}

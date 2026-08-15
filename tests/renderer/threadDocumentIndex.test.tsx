@@ -336,7 +336,7 @@ function turnProps(indexStore: DocumentIndexStore) {
     providerRetry: null,
     // No delegation in these Turns: their own Items, no anchors, no delivery.
     delivery: null,
-    selfSpeaker: { identity: 'main', name: 'main' },
+    selfSpeaker: { participantId: 'main', avatarKey: 'main', name: 'main' },
     threadCwd: '/workspace',
     threadId: 'thread',
     threadsById: new Map(),
@@ -378,7 +378,7 @@ function threadViewProps(indexStore: DocumentIndexStore) {
     threadId: 'thread',
     threadModelProvider: 'openai',
     threadsById: new Map(),
-    selfSpeaker: { identity: 'main', name: 'main' },
+    selfSpeaker: { participantId: 'main', avatarKey: 'main', name: 'main' },
     subagentProjection: EMPTY_SUBAGENT_PROJECTION,
     turns: [],
     waitingOnUserInput: false,

@@ -8,6 +8,7 @@ import { api } from '../../api/client';
 import type { ThreadNodeReferenceOpenHandler } from '../threadReferences';
 import { threadStore, useThreadStore } from '../store/threadStore';
 import { MAIN_AVATAR_IDENTITY } from '../agentAvatarColor';
+import type { ThreadSpeaker } from './ThreadSpeaker';
 import { subagentSpeakerName, type SubagentConversationProjection } from '../subagentPresentation';
 import { useSubagentActions, useSubagentEntry } from './SubagentRegistryContext';
 import { formatSubagentDuration } from './subagentElapsed';
@@ -93,9 +94,17 @@ export function SubagentDetailView({
   // the way every other surface keys it: keyed by id, the one participant that
   // is always there wore a different hue inside a pushed view than it wore in
   // the conversation the reader had just left.
-  const hostAuthorName = parentEntry === null
-    ? t.agent.thread.agent.main
-    : subagentSpeakerName(parentEntry);
+  const hostSpeaker: ThreadSpeaker = parentEntry === null
+    ? {
+      participantId: MAIN_AVATAR_IDENTITY,
+      avatarKey: MAIN_AVATAR_IDENTITY,
+      name: t.agent.thread.agent.main,
+    }
+    : {
+      participantId: parentEntry.agentId,
+      avatarKey: subagentSpeakerName(parentEntry),
+      name: subagentSpeakerName(parentEntry),
+    };
   // Only an Agent takes direction. An isolated Skill's result belongs to the
   // `skill` call that invoked it, so there is nothing here for a message to do.
   const composerEnabled = entry?.form !== 'isolatedSkill' && thread?.source === 'collaboration';
@@ -139,12 +148,10 @@ export function SubagentDetailView({
             providerSettingsLoaded={false}
             slashCommands={[]}
             agentTranscript
-            hostAuthorName={hostAuthorName}
-            hostAuthorIdentity={parentEntry === null
-              ? MAIN_AVATAR_IDENTITY
-              : subagentSpeakerName(parentEntry)}
+            hostSpeaker={hostSpeaker}
             selfSpeaker={{
-              identity: entry === null ? agentId : subagentSpeakerName(entry),
+              participantId: agentId,
+              avatarKey: entry === null ? agentId : subagentSpeakerName(entry),
               name: entry === null ? t.agent.thread.untitled : subagentSpeakerName(entry),
             }}
             subagentProjection={subagentProjection}

@@ -2551,6 +2551,17 @@ test.describe('canonical agent Thread surface', () => {
     await expect(deckTitle).toHaveText('audit');
     await expect(page.getByRole('button', { name: 'Back: research' })).toBeVisible();
 
+    // Two participants of ONE type stay two speakers. The brief here was
+    // written by a `worker` parent and the work below it belongs to a `worker`
+    // child: merged on type, the child's header swallowed its parent's words
+    // and hung its own elapsed over them.
+    await expect(detail.locator('.thread-speaker')).toHaveCount(2);
+    await expect(detail.locator('.thread-speaker').first())
+      .toContainText('Audit the deployment evidence.');
+    await expect(detail.locator('.thread-speaker').first().locator('.thread-speaker-meta'))
+      .toHaveCount(0);
+    await expect(detail.locator('.thread-speaker-name')).toHaveText(['worker', 'worker']);
+
     await detail.getByRole('button', { name: /^Open verify/u }).click();
     await expect(detail).toHaveCount(1);
     await expect(deckTitle).toHaveText('verify');
