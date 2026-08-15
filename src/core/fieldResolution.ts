@@ -1,5 +1,5 @@
 import { parseDateFieldValue } from './dateFieldValue';
-import { projectFieldConfig } from './configProjection';
+import { projectFieldConfig, projectTagConfig } from './configProjection';
 import {
   CREATED_FIELD,
   DAY_FIELD,
@@ -20,6 +20,7 @@ export interface FieldResolutionNode {
   type?: NodeType;
   parentId?: NodeId | null;
   children: NodeId[];
+  tags?: NodeId[];
   content: RichText;
   fieldDefId?: NodeId;
   targetId?: NodeId;
@@ -230,12 +231,24 @@ export function resolveFieldWriteTarget(
     .map((childId) => byId.get(childId))
     .filter((child): child is FieldResolutionNode => child !== undefined && child.type === 'fieldEntry' && !isDeleted(child.id))
     .filter((child) => normalizeFieldNameKey(fieldEntryDisplayName(byId, child)) === key);
+  let ownerMatch = ownerMatches[0];
   if (ownerMatches.length > 1) {
-    return duplicateOwnerError(fieldName, ownerMatches.map((entry) => entry.id));
+    const preferredFieldDefId = preferredFieldDefinitionIdFromTags(
+      byId,
+      owner,
+      ownerMatches.flatMap((entry) => entry.fieldDefId ? [entry.fieldDefId] : []),
+      isDeleted,
+    );
+    const preferredMatches = preferredFieldDefId
+      ? ownerMatches.filter((entry) => entry.fieldDefId === preferredFieldDefId)
+      : [];
+    if (preferredMatches.length !== 1) {
+      return duplicateOwnerError(fieldName, ownerMatches.map((entry) => entry.id));
+    }
+    ownerMatch = preferredMatches[0];
   }
-  if (ownerMatches.length === 1) {
-    const entry = ownerMatches[0]!;
-    return resolveExistingEntry(byId, fieldName, values, entry);
+  if (ownerMatch) {
+    return resolveExistingEntry(byId, fieldName, values, ownerMatch);
   }
 
   const systemFieldId = resolveSystemFieldId(fieldName);
@@ -247,7 +260,13 @@ export function resolveFieldWriteTarget(
       && node.parentId === SCHEMA_ID
       && !isDeleted(node.id)
       && normalizeFieldNameKey(node.content.text) === key);
-  if (matchingDefs.length > 1) {
+  const matchingDefId = matchingDefs.length > 1
+    ? preferredFieldDefinitionIdFromTags(byId, owner, matchingDefs.map((definition) => definition.id), isDeleted)
+    : matchingDefs[0]?.id;
+  const matchingDef = matchingDefId
+    ? matchingDefs.find((definition) => definition.id === matchingDefId)
+    : undefined;
+  if (matchingDefs.length > 1 && !matchingDef) {
     return {
       ok: false,
       code: 'duplicate_field_definitions',
@@ -256,14 +275,13 @@ export function resolveFieldWriteTarget(
       nodeIds: matchingDefs.map((node) => node.id),
     };
   }
-  if (matchingDefs.length === 1) {
-    const fieldDef = matchingDefs[0]!;
-    const fieldType = fieldTypeForFieldDef(byId, fieldDef.id);
+  if (matchingDef) {
+    const fieldType = fieldTypeForFieldDef(byId, matchingDef.id);
     const validation = validateFieldValuesForType(fieldName, fieldType, values);
     if (!validation.ok) {
-      return { ok: false, code: 'invalid_field_value', error: validation.error, instructions: validation.instructions, nodeIds: [fieldDef.id] };
+      return { ok: false, code: 'invalid_field_value', error: validation.error, instructions: validation.instructions, nodeIds: [matchingDef.id] };
     }
-    return { ok: true, target: { kind: 'existingFieldDef', fieldDefId: fieldDef.id, fieldType } };
+    return { ok: true, target: { kind: 'existingFieldDef', fieldDefId: matchingDef.id, fieldType } };
   }
 
   const fieldType = inferFieldTypeFromValues(values);
@@ -274,38 +292,68 @@ export function resolveFieldWriteTarget(
   return { ok: true, target: { kind: 'newFieldDef', fieldType } };
 }
 
-export function duplicateOwnerFieldEntries(
-  byId: ReadonlyMap<NodeId, FieldResolutionNode>,
-  ownerId: NodeId,
-  options: ResolveFieldWriteTargetOptions = {},
-): Array<{ key: string; label: string; entryIds: NodeId[] }> {
-  const owner = byId.get(ownerId);
-  if (!owner) return [];
-  const isDeleted = deletedPredicate(byId, options);
-  const groups = new Map<string, { label: string; entryIds: NodeId[] }>();
-  for (const childId of owner.children) {
-    const child = byId.get(childId);
-    if (child?.type !== 'fieldEntry' || isDeleted(child.id)) continue;
-    const label = fieldEntryDisplayName(byId, child);
-    const key = normalizeFieldNameKey(label);
-    if (!key) continue;
-    const group = groups.get(key) ?? { label, entryIds: [] };
-    group.entryIds.push(child.id);
-    groups.set(key, group);
-  }
-  return [...groups.entries()]
-    .filter(([, group]) => group.entryIds.length > 1)
-    .map(([key, group]) => ({ key, ...group }));
-}
-
 export function duplicateOwnerError(fieldName: string, entryIds: NodeId[]): FieldResolutionResult & { ok: false } {
   return {
     ok: false,
     code: 'duplicate_field_entries',
     error: `Multiple field entries match "${fieldName}": ${entryIds.join(', ')}`,
-    instructions: 'Merge or delete duplicate field entries first, then retry the field write.',
+    instructions: 'Address the intended field by entry id, or rename one of the fields before retrying the name-based write.',
     nodeIds: entryIds,
   };
+}
+
+function preferredFieldDefinitionIdFromTags(
+  byId: ReadonlyMap<NodeId, FieldResolutionNode>,
+  owner: FieldResolutionNode,
+  candidateFieldDefIds: readonly NodeId[],
+  isDeleted: (nodeId: NodeId) => boolean,
+): NodeId | undefined {
+  const matchingIds = new Set(candidateFieldDefIds);
+  const chains = (owner.tags ?? []).map((tagId) => specificFirstTagChain(byId, tagId, isDeleted));
+  const maxDepth = chains.reduce((max, chain) => Math.max(max, chain.length), 0);
+
+  for (let depth = 0; depth < maxDepth; depth += 1) {
+    const layerMatches = new Set<NodeId>();
+    for (const chain of chains) {
+      const tagId = chain[depth];
+      if (!tagId) continue;
+      const tag = byId.get(tagId);
+      if (!tag) continue;
+      for (const childId of tag.children) {
+        const entry = byId.get(childId);
+        if (
+          entry?.type === 'fieldEntry'
+          && entry.fieldDefId
+          && matchingIds.has(entry.fieldDefId)
+          && !isDeleted(entry.id)
+        ) {
+          layerMatches.add(entry.fieldDefId);
+        }
+      }
+    }
+    if (layerMatches.size > 1) return undefined;
+    const fieldDefId = layerMatches.values().next().value as NodeId | undefined;
+    if (fieldDefId) return fieldDefId;
+  }
+  return undefined;
+}
+
+function specificFirstTagChain(
+  byId: ReadonlyMap<NodeId, FieldResolutionNode>,
+  tagId: NodeId,
+  isDeleted: (nodeId: NodeId) => boolean,
+): NodeId[] {
+  const chain: NodeId[] = [];
+  const visited = new Set<NodeId>();
+  let current: NodeId | undefined = tagId;
+  while (current && !visited.has(current)) {
+    const tag = byId.get(current);
+    if (tag?.type !== 'tagDef' || isDeleted(current)) break;
+    visited.add(current);
+    chain.push(current);
+    current = projectTagConfig(byId, tag).extends;
+  }
+  return chain;
 }
 
 function resolveExistingEntry(

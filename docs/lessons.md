@@ -949,3 +949,22 @@ baseline* rather than against the intermediate version, and any measurement clai
 written into a plan or spec re-derived from the new numbers. Otherwise the
 optimization's own documentation becomes the reason the remaining cost never gets
 found (A9, A8).
+
+## When a user-editable label is the identity key, collision handling compounds
+
+`tag-merge-and-split-fixes` (#540) started as three collision fixes and ended as
+an identity change, because the collisions were symptoms. Fields were identified
+by their normalized display name, so two tags each defining a `Status` were
+mutually exclusive with a crash. The first design patched the symptom: skip
+colliding fields at the stamp boundary, and unify same-named definitions when
+tags merge. Both patches spawned their own defects — the unify was document-wide,
+so merging two tags silently rewrote the schema of a third tag the user never
+named, and every "which name wins" question needed a normalization rule that then
+had to agree with three other call sites keyed the same way. Switching identity
+to the definition id deleted the unify entirely, dissolved the original crash and
+the merge-poisoning defect at once, and left exactly one new question — how a
+name-based write picks among several candidates — answered once by a precedence
+rule rather than N times by collision handlers. When a fix has to answer "which of
+these same-named things did the user mean", check whether the name should have
+been the key at all; the reference product (Tana here) usually settled it long
+ago, and checking took minutes against two review rounds of arguing.
