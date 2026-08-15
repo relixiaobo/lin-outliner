@@ -836,7 +836,10 @@
   width: 100%;
   min-width: 0;
   flex-direction: column;
-  gap: var(--space-3);
+  /* Tighter than the 12px between blocks, so a header still binds to its own
+     content, but with enough air that a bordered card is not pressed against
+     the line naming it — a hard edge needs more room than a line of text. */
+  gap: var(--space-4);
 }
 
 /* Avatar and name on ONE line, with the words below at full width. The margin
