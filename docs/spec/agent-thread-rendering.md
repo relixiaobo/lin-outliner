@@ -29,22 +29,33 @@ Turn does not duplicate its status in the list. This is also the only place a
 fire-and-forget child is visible after its parent Turn ended.
 
 **An Agent is read as a level pushed over the conversation.** A delegated child
-is an execution artifact of a Turn, so it is opened rather than travelled to:
-the Thread list never gains a row for it, and the dock keeps its title and its
-list. 330px of drawer inside a 344px deck is not a drawer, so the detail view
-takes the whole deck body and COVERS the conversation instead of replacing it in
-the tree. The transcript underneath stays mounted and `inert`, so it keeps its
-scroll position and its measured layout: returning is a reveal, not a reload.
+is an execution artifact of a Turn, so it is opened rather than travelled to and
+the Thread list never gains a row for it. 330px of drawer inside a 344px deck is
+not a drawer, so the detail view takes the whole deck body and COVERS the
+conversation instead of replacing it in the tree. The transcript underneath
+stays mounted and `inert`, so it keeps its scroll position and its measured
+layout: returning is a reveal, not a reload.
 
-`‹ Back` names the level below — the conversation at depth one, the delegating
-Agent deeper in — so position in the stack is legible rather than inferred, and
-each Back pops exactly one level. A nested Agent pushes through the same
-component; delegation is capped at depth three, so the stack is bounded at four
-levels by the protocol rather than by a rule of its own. Opening always resolves
-the target's lineage from the conversation, so a descendant deepens the stack
-while a sibling reached through `agent_message` opens at its own level:
-reachability is not lineage, and a stack that grew on reachability would draw a
-delegation edge that does not exist.
+The pushed level TAKES THE TITLE BAR, exactly as the Automations surface beside
+it does: a back arrow, the Agent's glyph, its name, a worktree mark when it is
+isolated, and its status holding the right edge where every other deck surface
+puts its actions. Leaving the conversation's title above it made the loudest
+line on screen the one thing the reader was not looking at, gave the Agent two
+headers, and kept offering a list chevron that could not act on anything below
+it. The Agent's own type is dropped here rather than truncated to a syllable —
+the name is the subject, and the type is on the chip that opened it.
+
+Back pops exactly one level and its accessible name says which level that is —
+the conversation at depth one, the delegating Agent deeper in. The visible title
+names the level you are ON rather than the one below, because the title bar can
+only carry one name and the current level is the one the reader needs; the
+parent's name rides the back control's label and tooltip. A nested Agent pushes
+through the same component; delegation is capped at depth three, so the stack is
+bounded at four levels by the protocol rather than by a rule of its own. Opening
+always resolves the target's lineage from the conversation, so a descendant
+deepens the stack while a sibling reached through `agent_message` opens at its
+own level: reachability is not lineage, and a stack that grew on reachability
+would draw a delegation edge that does not exist.
 
 Every anchor opens the same view. A chip in the transcript, a work-strip row, a
 Thread Details row, and a nested chip inside another Agent are one gesture to
@@ -68,9 +79,10 @@ user stop, so a user-stopped Agent's placeholder says so
 to documentation. An isolated Skill has no composer: its result is owned by the
 `skill` call that invoked it.
 
-The header states identity and status and NEVER moves. The Agent's own
+The title bar states identity and status and NEVER moves. The Agent's own
 transcript is directly below it and carries the live cue on the most specific
-row that is working; a moving header would be the same work claimed twice.
+row that is working; a moving title would be the same work claimed twice. A
+running Agent's clock stands in for its status there, as it does on the chip.
 
 A retained managed worktree gets a footer naming its branch and the number of
 changed paths, with a control to list those paths and one to reveal the

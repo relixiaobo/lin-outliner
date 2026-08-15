@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { RendererUserViewHints, ThreadId, Turn } from '../../../core/agent/protocol';
 import type { DocumentIndex } from '../../state/document';
 import { useT } from '../../i18n/I18nProvider';
-import { AgentIcon, GitForkIcon, ICON_SIZE, SkillIcon, StopIcon } from '../../ui/icons';
+import { AgentIcon, BackIcon, GitForkIcon, ICON_SIZE, SkillIcon, StopIcon } from '../../ui/icons';
 import { IconButton } from '../../ui/primitives/IconButton';
 import { api } from '../../api/client';
 import type { ThreadNodeReferenceOpenHandler } from '../threadReferences';
@@ -34,8 +34,6 @@ export function SubagentDetailView({
   onOpenNodeReference,
   onOpenThread,
   onOpenTurnDetails,
-  onPop,
-  parentName,
   subagentProjection,
   userView,
 }: {
@@ -44,9 +42,6 @@ export function SubagentDetailView({
   readonly onOpenNodeReference: ThreadNodeReferenceOpenHandler;
   readonly onOpenThread: (threadId: ThreadId) => Promise<void>;
   readonly onOpenTurnDetails?: (threadId: string, turnId: string) => void;
-  readonly onPop: () => void;
-  /** What Back returns to: the conversation, or the Agent one level down. */
-  readonly parentName: string;
   readonly subagentProjection: SubagentConversationProjection;
   readonly userView: RendererUserViewHints;
 }) {
@@ -54,7 +49,6 @@ export function SubagentDetailView({
   const snapshot = useThreadStore();
   const entry = useSubagentEntry(agentId);
   const actions = useSubagentActions();
-  const elapsedMs = useSubagentElapsedMs(entry ?? { status: 'notFound', startedAt: null });
   const loadedRef = useRef<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const thread = snapshot.threads.find((candidate) => candidate.id === agentId) ?? null;
@@ -85,53 +79,11 @@ export function SubagentDetailView({
     await onOpenThread(target);
   }, [actions, onOpenThread, subagentProjection]);
 
-  const name = entry?.displayName ?? thread?.name ?? thread?.agentNickname ?? t.agent.thread.untitled;
-  const running = entry?.status === 'running' || entry?.status === 'pendingInit';
-  const status = subagentChipStatus(entry ?? null, elapsedMs, false, t);
-  const FormIcon = entry?.form === 'isolatedSkill' ? SkillIcon : AgentIcon;
   // Only an Agent takes direction. An isolated Skill's result belongs to the
   // `skill` call that invoked it, so there is nothing here for a message to do.
   const composerEnabled = entry?.form !== 'isolatedSkill' && thread?.source === 'collaboration';
   return (
     <div className="thread-agent-detail">
-      <header className="thread-agent-detail-header">
-        <button className="thread-agent-detail-back" onClick={onPop} type="button">
-          <span aria-hidden className="thread-agent-detail-back-chevron">‹</span>
-          <span>{parentName}</span>
-        </button>
-        <div className="thread-agent-detail-identity">
-          <FormIcon aria-hidden size={ICON_SIZE.rowGlyph} />
-          <span className="thread-agent-detail-title">{name}</span>
-          {entry?.agentType ? (
-            <span className="thread-agent-detail-type">{entry.agentType}</span>
-          ) : null}
-          {entry?.worktree ? (
-            <span
-              aria-label={t.agent.thread.agent.worktree}
-              className="thread-agent-detail-worktree"
-              role="img"
-              title={t.agent.thread.agent.worktree}
-            >
-              <GitForkIcon aria-hidden size={ICON_SIZE.tiny} />
-            </span>
-          ) : null}
-          {/* Static, always. The Agent's own transcript is right below this
-              header and carries the live cue on the most specific row that is
-              working; a moving header would be the same work said twice, and
-              two movers for one run is exactly what the working-state
-              vocabulary exists to prevent. */}
-          <span className="thread-agent-detail-status">{status}</span>
-          {running ? (
-            <IconButton
-              icon={StopIcon}
-              iconSize={ICON_SIZE.tiny}
-              label={t.agent.thread.stopSubagent({ name })}
-              onClick={() => void threadStore.interruptThread(agentId).catch(() => undefined)}
-              variant="message"
-            />
-          ) : null}
-        </div>
-      </header>
       {loadError !== null ? (
         <p className="thread-agent-detail-empty" role="alert">{loadError}</p>
       ) : thread === null || turns === undefined ? (
@@ -187,6 +139,72 @@ export function SubagentDetailView({
       )}
       {entry?.worktree ? <SubagentWorktreeFooter agentId={agentId} branch={entry.worktree.branch} /> : null}
     </div>
+  );
+}
+
+/**
+ * The pushed level's title bar: Back, the Agent, and how it is doing.
+ *
+ * It replaces the conversation's title rather than sitting under it, because a
+ * navigation stack that leaves the previous level's title on screen inverts the
+ * hierarchy — the loudest line becomes the one thing the reader is not looking
+ * at. Back names the level below, so position in the stack stays legible.
+ */
+export function SubagentDetailTitle({
+  agentId,
+  onPop,
+  parentName,
+}: {
+  readonly agentId: ThreadId;
+  readonly onPop: () => void;
+  readonly parentName: string;
+}) {
+  const t = useT();
+  const entry = useSubagentEntry(agentId);
+  const elapsedMs = useSubagentElapsedMs(entry ?? { status: 'notFound', startedAt: null });
+  const name = entry?.displayName ?? t.agent.thread.untitled;
+  const running = entry?.status === 'running' || entry?.status === 'pendingInit';
+  const FormIcon = entry?.form === 'isolatedSkill' ? SkillIcon : AgentIcon;
+  return (
+    <>
+      <button
+        aria-label={`${t.agent.thread.agent.back}: ${parentName}`}
+        className="thread-dock-title-button"
+        onClick={onPop}
+        title={parentName}
+        type="button"
+      >
+        <BackIcon className="thread-dock-title-leading" size={ICON_SIZE.menu} />
+        <FormIcon aria-hidden className="thread-agent-title-glyph" size={ICON_SIZE.rowGlyph} />
+        <span className="thread-dock-title">{name}</span>
+        {entry?.worktree ? (
+          <span
+            aria-label={t.agent.thread.agent.worktree}
+            className="thread-agent-title-worktree"
+            role="img"
+            title={t.agent.thread.agent.worktree}
+          >
+            <GitForkIcon aria-hidden size={ICON_SIZE.tiny} />
+          </span>
+        ) : null}
+      </button>
+      {/* Static, always. The Agent's own transcript is directly below and
+          carries the live cue on the most specific row that is working; a
+          moving title would be the same work said twice. */}
+      <span className="thread-agent-title-status">
+        {subagentChipStatus(entry, elapsedMs, false, t, true)}
+      </span>
+      {running ? (
+        <IconButton
+          className="thread-dock-surface-action"
+          icon={StopIcon}
+          iconSize={ICON_SIZE.tiny}
+          label={t.agent.thread.stopSubagent({ name })}
+          onClick={() => void threadStore.interruptThread(agentId).catch(() => undefined)}
+          variant="chrome"
+        />
+      ) : null}
+    </>
   );
 }
 

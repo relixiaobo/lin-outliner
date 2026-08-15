@@ -11,7 +11,7 @@ import {
   projectSubagentConversation,
   type SubagentConversationProjection,
 } from '../subagentPresentation';
-import { SubagentDetailView } from './SubagentDetailView';
+import { SubagentDetailTitle, SubagentDetailView } from './SubagentDetailView';
 import { SubagentRegistryProvider, type SubagentActions } from './SubagentRegistryContext';
 import { SubagentWorkStrip } from './SubagentWorkStrip';
 import {
@@ -379,10 +379,9 @@ export function ThreadDock({
     >
       <div className="thread-dock">
         <header className="thread-dock-header">
-          {surface === 'thread' ? (
-            // The dock's title is always a conversation the user started. A
-            // delegated child is read in a drawer over this one, so the header
-            // never has to describe somewhere the user did not navigate to.
+          {surface === 'thread' && openAgentId === null ? (
+            // The dock's title is the conversation the user started, and its
+            // chevron opens the list of them.
             <div className="thread-dock-breadcrumb">
               <button
                 aria-expanded={listOpen}
@@ -399,7 +398,23 @@ export function ThreadDock({
                 />
               </button>
             </div>
-          ) : (
+          ) : null}
+          {surface === 'thread' && openAgentId !== null ? (
+            // A pushed level TAKES the title bar, the way the Automations
+            // surface beside it already does. Leaving the conversation's title
+            // up there would make the loudest thing on screen the one thing the
+            // reader is not looking at — and it would still offer a chevron
+            // into a list that cannot act on what is below it.
+            <SubagentDetailTitle
+              onPop={() => setAgentStack((current) => current.slice(0, -1))}
+              agentId={openAgentId}
+              parentName={openAgentStack.length > 1
+                ? subagentProjection.byAgentId.get(openAgentStack.at(-2)!)?.displayName
+                  ?? t.agent.thread.agent.back
+                : t.agent.thread.agent.back}
+            />
+          ) : null}
+          {surface === 'automations' ? (
             <button
               aria-label={t.agent.automations.backToThreads}
               className="thread-dock-title-button"
@@ -409,11 +424,11 @@ export function ThreadDock({
               <BackIcon className="thread-dock-title-leading" size={ICON_SIZE.menu} />
               <span className="thread-dock-title">{t.agent.automations.title}</span>
             </button>
-          )}
+          ) : null}
           {surface === 'thread' && openAgentId === null ? (
             <SubagentWorkStrip byAgentId={subagentProjection.byAgentId} />
           ) : null}
-          {surface === 'thread' ? (
+          {surface === 'thread' && openAgentId === null ? (
             <IconButton
               className="thread-dock-surface-action"
               icon={ScheduledIcon}
@@ -514,11 +529,6 @@ export function ThreadDock({
                 onOpenNodeReference={onOpenNodeReference}
                 onOpenThread={openThread}
                 onOpenTurnDetails={onOpenTurnDetails}
-                onPop={() => setAgentStack((current) => current.slice(0, -1))}
-                parentName={openAgentStack.length > 1
-                  ? subagentProjection.byAgentId.get(openAgentStack.at(-2)!)?.displayName
-                    ?? t.agent.thread.agent.back
-                  : t.agent.thread.agent.back}
                 subagentProjection={subagentProjection}
                 userView={userView}
               />

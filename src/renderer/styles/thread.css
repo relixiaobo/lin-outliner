@@ -3187,84 +3187,29 @@
   overflow: hidden;
 }
 
-.thread-agent-detail-header {
-  display: flex;
+/* The Agent's identity in the deck's own title bar. The name is the subject and
+   keeps the room: the type it carries on its chip is dropped here rather than
+   truncated to a syllable, and a running Agent's clock stands in for its status
+   the way it does on the chip. The status holds the right edge, where the
+   surface actions sit on every other deck surface. */
+.thread-agent-title-glyph {
   flex: 0 0 auto;
-  flex-direction: column;
-  gap: var(--space-1);
-  border-bottom: 1px solid var(--separator);
-  padding: var(--space-2) var(--space-3);
-}
-
-/* Position in the stack, said out loud: the level below by name, never a bare
-   arrow that leaves the reader to guess how far back it goes. */
-.thread-agent-detail-back {
-  display: inline-flex;
-  min-width: 0;
-  max-width: 100%;
-  align-self: flex-start;
-  align-items: center;
-  gap: var(--space-1);
-  border: 0;
-  background: transparent;
-  padding: 0;
-  color: var(--text-tertiary);
-  font-size: var(--font-meta);
-  line-height: var(--line-meta);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  transition: color var(--motion-fast);
-}
-
-.thread-agent-detail-back:hover,
-.thread-agent-detail-back:focus-visible {
-  color: var(--text-strong);
-}
-
-.thread-agent-detail-back-chevron {
-  flex: 0 0 auto;
-}
-
-.thread-agent-detail-identity {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: var(--space-2);
   color: var(--text-soft);
-  font-size: var(--font-meta);
-  line-height: var(--line-meta);
 }
 
-.thread-agent-detail-title {
-  min-width: 0;
-  flex: 0 1 auto;
-  overflow: hidden;
-  color: var(--text-strong);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.thread-agent-detail-type {
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--text-faint);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.thread-agent-detail-worktree {
+.thread-agent-title-worktree {
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
   color: var(--text-tertiary);
 }
 
-.thread-agent-detail-status {
+.thread-agent-title-status {
   flex: 0 0 auto;
   margin-left: auto;
   color: var(--text-tertiary);
+  font-size: var(--font-ui-2xs);
+  line-height: var(--line-ui-2xs);
   font-variant-numeric: tabular-nums;
 }
 

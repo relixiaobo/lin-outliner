@@ -2201,9 +2201,10 @@ test.describe('canonical agent Thread surface', () => {
 
     await chip.click();
     await expect(detail).toBeVisible();
-    // The deck still names the conversation the user chose: the Agent is read
-    // as a level pushed over it, not as a conversation navigated to.
-    await expect(page.locator('.thread-dock-title')).toHaveText(parentTitle);
+    // The pushed level takes the title bar, and the list chevron goes with it:
+    // there is nothing below that a conversation switch could act on.
+    await expect(page.locator('.thread-dock-title')).toHaveText('research');
+    await expect(page.locator('.thread-title-chevron')).toHaveCount(0);
     const childComposer = detail.getByRole('textbox', { name: 'Message this Thread' });
     await expect(childComposer).toBeVisible();
     await expect(detail.locator('.thread-composer-model-control')).toHaveCount(0);
@@ -2217,12 +2218,13 @@ test.describe('canonical agent Thread surface', () => {
       input: [{ type: 'text', text: 'Continue with deployment logs.' }],
     });
     expect(childSubmit?.args.userView).toBeDefined();
-    await expect(page.locator('.thread-dock-title')).toHaveText(parentTitle);
     // The mock settles the resumed Turn synchronously, so no Stop remains.
     await expect(detail.getByRole('button', { name: 'Interrupt Turn' })).toHaveCount(0);
 
-    await detail.locator('.thread-agent-detail-back').click();
+    // Back returns the title bar, and the conversation, to the reader.
+    await page.getByRole('button', { name: /^Back:/u }).click();
     await expect(detail).toHaveCount(0);
+    await expect(page.locator('.thread-dock-title')).toHaveText(parentTitle);
     await expect(chip).toBeVisible();
 
     // A child is an execution artifact, not a conversation: never a list row.
@@ -2488,9 +2490,12 @@ test.describe('canonical agent Thread surface', () => {
     await page.getByRole('button', { name: /^Open research/u }).click();
     const detail = page.locator('.thread-agent-detail');
     await expect(detail).toBeVisible();
-    // Back names the level below, so position in the stack is legible rather
-    // than inferred; at depth one that level is the conversation.
-    await expect(detail.locator('.thread-agent-detail-back')).toHaveText('‹Back');
+    const deckTitle = page.locator('.thread-dock-title');
+    // The pushed level owns the title bar, and Back names the level below — so
+    // position in the stack is legible rather than inferred. At depth one that
+    // level is the conversation.
+    await expect(deckTitle).toHaveText('research');
+    await expect(page.getByRole('button', { name: 'Back: Back' })).toBeVisible();
 
     // Host-authored child input is an Agent event rather than a user bubble.
     // The child can receive new direction, but its existing history cannot be
@@ -2507,27 +2512,27 @@ test.describe('canonical agent Thread surface', () => {
     // region, depth said in the header rather than drawn as indentation.
     await detail.getByRole('button', { name: /^Open audit/u }).click();
     await expect(detail).toHaveCount(1);
-    await expect(detail.locator('.thread-agent-detail-title')).toHaveText('audit');
-    await expect(detail.locator('.thread-agent-detail-back')).toHaveText('‹research');
+    await expect(deckTitle).toHaveText('audit');
+    await expect(page.getByRole('button', { name: 'Back: research' })).toBeVisible();
 
     await detail.getByRole('button', { name: /^Open verify/u }).click();
     await expect(detail).toHaveCount(1);
-    await expect(detail.locator('.thread-agent-detail-title')).toHaveText('verify');
-    await expect(detail.locator('.thread-agent-detail-back')).toHaveText('‹audit');
+    await expect(deckTitle).toHaveText('verify');
+    await expect(page.getByRole('button', { name: 'Back: audit' })).toBeVisible();
 
     // Back unwinds the stack one level at a time: d3 -> d2 -> d1 -> conversation.
-    await detail.locator('.thread-agent-detail-back').click();
-    await expect(detail.locator('.thread-agent-detail-title')).toHaveText('audit');
-    await detail.locator('.thread-agent-detail-back').click();
-    await expect(detail.locator('.thread-agent-detail-title')).toHaveText('research');
+    await page.getByRole('button', { name: 'Back: audit' }).click();
+    await expect(deckTitle).toHaveText('audit');
+    await page.getByRole('button', { name: 'Back: research' }).click();
+    await expect(deckTitle).toHaveText('research');
 
     // agent_message may address a sibling, but reachability is not lineage.
     // The sibling opens at ITS own level; the stack must never draw a
     // research -> review edge that the delegation graph does not have.
     await detail.getByRole('button', { name: /^Open review/u }).click();
-    await expect(detail.locator('.thread-agent-detail-title')).toHaveText('review');
-    await expect(detail.locator('.thread-agent-detail-back')).toHaveText('‹Back');
-    await detail.locator('.thread-agent-detail-back').click();
+    await expect(deckTitle).toHaveText('review');
+    await expect(page.getByRole('button', { name: 'Back: Back' })).toBeVisible();
+    await page.getByRole('button', { name: 'Back: Back' }).click();
     await expect(detail).toHaveCount(0);
   });
 
@@ -2649,7 +2654,7 @@ test.describe('canonical agent Thread surface', () => {
     await details.getByRole('button', { name: 'Open live worker' }).click();
     const detail = page.locator('.thread-agent-detail');
     await expect(detail).toBeVisible();
-    await expect(detail.locator('.thread-agent-detail-title')).toHaveText('live worker');
+    await expect(page.locator('.thread-dock-title')).toHaveText('live worker');
   });
   test('shows a live isolated Skill child and keeps nested Thread motion independent', async ({ page }) => {
     await createNewThread(page);
@@ -6556,7 +6561,7 @@ test.describe('canonical agent Thread surface', () => {
     }, { timeout: 15_000 }).toBe(true);
     await chip.click();
     await expect(detail).toBeVisible();
-    await expect(page.locator('.thread-dock-title')).toHaveText('Parent history');
+    await expect(page.locator('.thread-dock-title')).toHaveText('research worker');
 
     // Covered, not unmounted. The transcript under the pushed view keeps its
     // scroll position and its measured layout, and the reader's place is read
@@ -6570,8 +6575,9 @@ test.describe('canonical agent Thread surface', () => {
     const coveredHeight = await scrollHeight();
     const openedAt = await chipTop();
 
-    await detail.locator('.thread-agent-detail-back').click();
+    await page.getByRole('button', { name: /^Back:/u }).click();
     await expect(detail).toHaveCount(0);
+    await expect(page.locator('.thread-dock-title')).toHaveText('Parent history');
     // The invariant the push has to keep: returning is a reveal, not a reload —
     // same position, same measured transcript, same chip under the pointer.
     expect(await scrollTop()).toBe(coveredAt);
