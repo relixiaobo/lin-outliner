@@ -76,8 +76,9 @@ Other:
 ### PR-1 — memory filter cost + read-model re-enablement
 
 - **Cache `filterProjection` inputs.** Explicit node references resolve once
-  per (threadId, turnId) and update from recorded Item appends, with one targeted
-  Turn read only as recovery when the extension did not observe Turn start.
+  per (threadId, turnId) and update from recorded Item appends. When the
+  extension did not observe Turn start, recovery uses a targeted Turn read;
+  transient misses remain unresolved and retry until the first successful read.
   Canonical membership and explicit ancestor/descendant expansion reuse the
   already-maintained `MemoryMutationIndex`; no parallel full-graph cache is
   introduced. Hidden IDs and filtered views compute once per mutation-index,
@@ -155,8 +156,8 @@ explicitly NOT part of this plan.
 - Unit (`tests/core`, alongside existing memory/tool tests): instrumentation
   counters — one mutation-index build at initialization or a full projection
   replacement and no repeated graph build per filter access; no repeated Turn
-  read per projection access (at most one targeted Turn read when start
-  notification state is unavailable); and one payload read+hash per Turn per
+  read after a successful targeted recovery (unavailable recovery state retries
+  rather than caching an empty result); and one payload read+hash per Turn per
   output.
 - PR-1 search acceptance fixes the **ratified** semantics, not today's: with no
   hidden nodes, filtered `node_search` returns results identical to ordinary

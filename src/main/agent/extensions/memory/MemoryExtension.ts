@@ -109,6 +109,16 @@ interface TurnMemoryUsage {
   readonly threadId: ThreadId;
 }
 
+interface ProjectionFilterRevision {
+  readonly mutationRevision: number;
+  readonly controlRevision: number;
+  readonly explicitRevision: number;
+}
+
+interface HiddenNodesCache extends ProjectionFilterRevision {
+  readonly hiddenNodeIds: ReadonlySet<string>;
+}
+
 interface TurnProjectionFilterState {
   readonly threadId: ThreadId;
   readonly turnId: TurnId;
@@ -116,26 +126,18 @@ interface TurnProjectionFilterState {
   rootUserThread?: boolean;
   explicitReferencesComplete: boolean;
   explicitRevision: number;
-  hiddenNodesCache?: {
-    readonly mutationRevision: number;
-    readonly controlRevision: number;
-    readonly explicitRevision: number;
-    readonly hiddenNodeIds: ReadonlySet<string>;
-  };
-  projectionCache?: {
+  hiddenNodesCache?: HiddenNodesCache;
+  projectionCache?: ProjectionFilterRevision & {
     readonly source: DocumentProjection;
-    readonly hiddenNodeIds: ReadonlySet<string>;
     readonly filtered: DocumentProjection;
   };
-  projectionIndexCache?: {
+  projectionIndexCache?: ProjectionFilterRevision & {
     readonly sourceProjection: DocumentProjection;
     readonly sourceNodes: Map<string, NodeProjection>;
-    readonly hiddenNodeIds: ReadonlySet<string>;
     readonly filtered: ProjectionIndex;
   };
-  textSearchIndexCache?: {
+  textSearchIndexCache?: ProjectionFilterRevision & {
     readonly source: TextSearchIndex;
-    readonly hiddenNodeIds: ReadonlySet<string>;
     readonly filtered: TextSearchIndex;
   };
 }
@@ -572,21 +574,22 @@ export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy
 
   filterProjection(projection: DocumentProjection, causation: AgentMutationCausation): DocumentProjection {
     const state = this.turnProjectionFilterState(causation);
-    const hiddenNodeIds = this.hiddenNodeIds(projection, state);
-    return this.filteredProjection(projection, hiddenNodeIds, state);
+    const filter = this.hiddenNodeFilter(projection, state);
+    return this.filteredProjection(projection, filter, state);
   }
 
   filterProjectionIndex(index: ProjectionIndex, causation: AgentMutationCausation): ProjectionIndex {
     const state = this.turnProjectionFilterState(causation);
-    const hiddenNodeIds = this.hiddenNodeIds(index.projection, state);
+    const filter = this.hiddenNodeFilter(index.projection, state);
+    const { hiddenNodeIds } = filter;
     if (hiddenNodeIds.size === 0) return index;
     const cached = state.projectionIndexCache;
     if (
       cached?.sourceProjection === index.projection
       && cached.sourceNodes === index.nodes
-      && cached.hiddenNodeIds === hiddenNodeIds
+      && sameFilterRevision(cached, filter)
     ) return cached.filtered;
-    const projection = this.filteredProjection(index.projection, hiddenNodeIds, state);
+    const projection = this.filteredProjection(index.projection, filter, state);
     const filtered = {
       projection,
       nodes: new Map(projection.nodes.map((node) => [node.id, node])),
@@ -594,7 +597,9 @@ export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy
     state.projectionIndexCache = {
       sourceProjection: index.projection,
       sourceNodes: index.nodes,
-      hiddenNodeIds,
+      mutationRevision: filter.mutationRevision,
+      controlRevision: filter.controlRevision,
+      explicitRevision: filter.explicitRevision,
       filtered,
     };
     return filtered;
@@ -603,12 +608,19 @@ export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy
   filterTextSearchIndex(index: TextSearchIndex, causation: AgentMutationCausation): TextSearchIndex {
     const state = this.turnProjectionFilterState(causation);
     const projection = this.mutationIndex ? undefined : this.timeline.projection();
-    const hiddenNodeIds = this.hiddenNodeIds(projection, state);
+    const filter = this.hiddenNodeFilter(projection, state);
+    const { hiddenNodeIds } = filter;
     if (hiddenNodeIds.size === 0) return index;
     const cached = state.textSearchIndexCache;
-    if (cached?.source === index && cached.hiddenNodeIds === hiddenNodeIds) return cached.filtered;
+    if (cached?.source === index && sameFilterRevision(cached, filter)) return cached.filtered;
     const filtered = createFilteredTextSearchIndex(index, hiddenNodeIds);
-    state.textSearchIndexCache = { source: index, hiddenNodeIds, filtered };
+    state.textSearchIndexCache = {
+      source: index,
+      mutationRevision: filter.mutationRevision,
+      controlRevision: filter.controlRevision,
+      explicitRevision: filter.explicitRevision,
+      filtered,
+    };
     return filtered;
   }
 
@@ -819,9 +831,11 @@ export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy
     }
     if (this.isRootUserThread(state) && !state.explicitReferencesComplete) {
       const turn = this.turn(causation.threadId, causation.turnId);
-      for (const nodeId of explicitNodeReferences(turn?.items ?? [])) state.explicitNodeIds.add(nodeId);
-      state.explicitReferencesComplete = true;
-      state.explicitRevision += 1;
+      if (turn) {
+        for (const nodeId of explicitNodeReferences(turn.items)) state.explicitNodeIds.add(nodeId);
+        state.explicitReferencesComplete = true;
+        state.explicitRevision += 1;
+      }
     }
     return state;
   }
@@ -831,19 +845,10 @@ export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy
     turnId: TurnId,
     items: readonly ThreadItem[],
   ): void {
+    const state = this.turnProjectionFilters.get(turnId);
+    if (!state || state.threadId !== threadId) return;
     const references = explicitNodeReferences(items);
     if (references.size === 0) return;
-    let state = this.turnProjectionFilters.get(turnId);
-    if (!state || state.threadId !== threadId) {
-      state = {
-        threadId,
-        turnId,
-        explicitNodeIds: new Set(),
-        explicitReferencesComplete: false,
-        explicitRevision: 0,
-      };
-      this.turnProjectionFilters.set(turnId, state);
-    }
     let changed = false;
     for (const nodeId of references) {
       if (state.explicitNodeIds.has(nodeId)) continue;
@@ -861,10 +866,10 @@ export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy
     return rootUserThread;
   }
 
-  private hiddenNodeIds(
+  private hiddenNodeFilter(
     projection: DocumentProjection | undefined,
     state: TurnProjectionFilterState,
-  ): ReadonlySet<string> {
+  ): HiddenNodesCache {
     const mutationIndex = this.requireMutationIndex(() => projection ?? this.timeline.projection());
     const mutationRevision = mutationIndex.revision();
     const controlRevision = this.control.filteringRevision();
@@ -873,7 +878,7 @@ export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy
       cached?.mutationRevision === mutationRevision
       && cached.controlRevision === controlRevision
       && cached.explicitRevision === state.explicitRevision
-    ) return cached.hiddenNodeIds;
+    ) return cached;
 
     const rootUserThread = this.isRootUserThread(state);
     const explicitExpanded = rootUserThread
@@ -905,25 +910,33 @@ export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy
         ) hiddenNodeIds.add(nodeId);
       }
     }
-    state.hiddenNodesCache = {
+    const filter = {
       mutationRevision,
       controlRevision,
       explicitRevision: state.explicitRevision,
       hiddenNodeIds,
     };
-    return hiddenNodeIds;
+    state.hiddenNodesCache = filter;
+    return filter;
   }
 
   private filteredProjection(
     projection: DocumentProjection,
-    hiddenNodeIds: ReadonlySet<string>,
+    filter: HiddenNodesCache,
     state: TurnProjectionFilterState,
   ): DocumentProjection {
+    const { hiddenNodeIds } = filter;
     if (hiddenNodeIds.size === 0) return projection;
     const cached = state.projectionCache;
-    if (cached?.source === projection && cached.hiddenNodeIds === hiddenNodeIds) return cached.filtered;
+    if (cached?.source === projection && sameFilterRevision(cached, filter)) return cached.filtered;
     const filtered = filteredProjection(projection, hiddenNodeIds);
-    state.projectionCache = { source: projection, hiddenNodeIds, filtered };
+    state.projectionCache = {
+      source: projection,
+      mutationRevision: filter.mutationRevision,
+      controlRevision: filter.controlRevision,
+      explicitRevision: filter.explicitRevision,
+      filtered,
+    };
     return filtered;
   }
 
@@ -976,6 +989,16 @@ function explicitNodeReferences(items: readonly ThreadItem[]): Set<string> {
   return new Set(items.flatMap((item) => item.type === 'userMessage'
     ? item.content.flatMap((part) => part.type === 'nodeReference' ? [part.nodeId] : [])
     : []));
+}
+
+function sameFilterRevision(
+  left: ProjectionFilterRevision | undefined,
+  right: ProjectionFilterRevision,
+): boolean {
+  if (!left) return false;
+  return left.mutationRevision === right.mutationRevision
+    && left.controlRevision === right.controlRevision
+    && left.explicitRevision === right.explicitRevision;
 }
 
 function filteredProjection(projection: DocumentProjection, hidden: ReadonlySet<string>): DocumentProjection {

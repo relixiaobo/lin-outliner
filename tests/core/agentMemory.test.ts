@@ -306,6 +306,35 @@ describe('Codex Memory contracts', () => {
     expect(fullGraphReads).toBe(0);
   });
 
+  test('retries a targeted Turn read after a transient miss', () => {
+    const store = memoryStore();
+    const projection = memoryProjection();
+    const timeline = new TimelineMemoryStore(readOnlyTimelineHost(projection));
+    const turn = userTurn('read this', MEMORY_NODE_ID);
+    const thread = rootThread([turn]);
+    let readableTurn: Turn | null = null;
+    let turnReads = 0;
+    const extension = new MemoryExtension(store, timeline);
+    extension.bindHost({
+      ...memoryThreadHost(thread),
+      readTurnForHost: () => {
+        turnReads += 1;
+        return readableTurn;
+      },
+    });
+    const causation = { threadId: THREAD_ID, turnId: TURN_ID, itemId: ITEM_ID };
+
+    const before = extension.filterProjection(projection, causation);
+    expect(before.nodes.some((entry) => entry.id === MEMORY_NODE_ID)).toBe(false);
+
+    readableTurn = turn;
+    const after = extension.filterProjection(projection, causation);
+    const afterAgain = extension.filterProjection(projection, causation);
+    expect(after.nodes.some((entry) => entry.id === MEMORY_NODE_ID)).toBe(true);
+    expect(afterAgain).toBe(after);
+    expect(turnReads).toBe(2);
+  });
+
   test('updates cached explicit references when a user Item is appended', () => {
     const store = memoryStore();
     const projection = memoryProjection();
@@ -364,6 +393,34 @@ describe('Codex Memory contracts', () => {
     expect(after.nodes.some((entry) => entry.id === MEMORY_NODE_ID)).toBe(true);
   });
 
+  test('ignores Item reference notifications without active Turn filter state', () => {
+    const projection = memoryProjection();
+    const extension = new MemoryExtension(
+      memoryStore(),
+      new TimelineMemoryStore(readOnlyTimelineHost(projection)),
+    );
+    const item = userTurn(
+      'Read this',
+      MEMORY_NODE_ID,
+      { kind: 'user' },
+      'turn:orphan',
+      'item:orphan',
+    ).items[0]!;
+
+    extension.onNotification({
+      type: 'items/completed',
+      threadId: THREAD_ID,
+      turnId: 'turn:orphan',
+      items: [item],
+      completedAt: Date.now(),
+    });
+
+    const states = (extension as unknown as {
+      turnProjectionFilters: ReadonlyMap<string, unknown>;
+    }).turnProjectionFilters;
+    expect(states.size).toBe(0);
+  });
+
   test('reuses filtered read views until a visibility write invalidates them', () => {
     const store = memoryStore();
     const projection = memoryProjection();
@@ -397,20 +454,60 @@ describe('Codex Memory contracts', () => {
       },
     ]);
 
+    const firstProjection = extension.filterProjection(projection, causation);
+    const secondProjection = extension.filterProjection(projection, causation);
     const firstReadModel = extension.filterProjectionIndex({ projection, nodes }, causation);
     const secondReadModel = extension.filterProjectionIndex({ projection, nodes }, causation);
     const firstTextIndex = extension.filterTextSearchIndex(sourceTextIndex, causation);
     const secondTextIndex = extension.filterTextSearchIndex(sourceTextIndex, causation);
+    expect(secondProjection).toBe(firstProjection);
     expect(secondReadModel).toBe(firstReadModel);
     expect(secondTextIndex).toBe(firstTextIndex);
     expect(firstReadModel.nodes.has('belief:1')).toBe(false);
     expect(firstTextIndex.search('durable probe')).toEqual([]);
 
+    const filterStates = (extension as unknown as {
+      turnProjectionFilters: ReadonlyMap<string, {
+        projectionCache?: { mutationRevision: number };
+        projectionIndexCache?: { mutationRevision: number };
+      }>;
+    }).turnProjectionFilters;
+    const firstMutationRevision = filterStates.get(TURN_ID)?.projectionIndexCache?.mutationRevision;
+    if (firstMutationRevision === undefined) throw new Error('Expected a cached projection mutation revision');
+
+    const ordinaryIndex = projection.nodes.findIndex((entry) => entry.id === 'ordinary:1');
+    if (ordinaryIndex < 0) throw new Error('Expected ordinary fixture Node');
+    const updatedOrdinary = patchProjectionNode(projection, 'ordinary:1', {
+      content: { text: 'Updated ordinary note', spans: [] },
+      updatedAt: 2,
+    });
+    projection.nodes.splice(ordinaryIndex, 1, updatedOrdinary);
+    nodes.set(updatedOrdinary.id, updatedOrdinary);
+    extension.projectionChanged(memoryProjectionDelivery({
+      kind: 'delta',
+      revision: 1,
+      todayId: projection.todayId,
+      changedNodes: [updatedOrdinary],
+      removedIds: [],
+    }, false));
+
+    const updatedProjection = extension.filterProjection(projection, causation);
+    const updatedReadModel = extension.filterProjectionIndex({ projection, nodes }, causation);
+    const updatedTextIndex = extension.filterTextSearchIndex(sourceTextIndex, causation);
+    expect(updatedProjection).not.toBe(firstProjection);
+    expect(updatedReadModel).not.toBe(firstReadModel);
+    expect(updatedTextIndex).not.toBe(firstTextIndex);
+    expect(updatedReadModel.nodes.get('ordinary:1')?.content.text).toBe('Updated ordinary note');
+    expect(filterStates.get(TURN_ID)?.projectionCache?.mutationRevision)
+      .toBeGreaterThan(firstMutationRevision);
+    expect(filterStates.get(TURN_ID)?.projectionIndexCache?.mutationRevision)
+      .toBeGreaterThan(firstMutationRevision);
+
     store.markNodeUserAuthoritative('belief:1');
     const refreshedReadModel = extension.filterProjectionIndex({ projection, nodes }, causation);
     const refreshedTextIndex = extension.filterTextSearchIndex(sourceTextIndex, causation);
-    expect(refreshedReadModel).not.toBe(firstReadModel);
-    expect(refreshedTextIndex).not.toBe(firstTextIndex);
+    expect(refreshedReadModel).not.toBe(updatedReadModel);
+    expect(refreshedTextIndex).not.toBe(updatedTextIndex);
     expect(refreshedReadModel.nodes.get('belief:1')?.parentId).toBeUndefined();
     expect(refreshedTextIndex.search('durable probe').map((entry) => entry.id)).toEqual(['belief:1']);
   });

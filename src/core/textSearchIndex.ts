@@ -101,11 +101,15 @@ interface Posting {
 }
 
 interface CorpusStats {
-  readonly recordCount: number;
-  readonly excludedDocFreq: Map<string, number>;
-  readonly excludedFieldTotalLengths: Map<TextSearchFieldKey, number>;
-  readonly excludedFieldDocCounts: Map<TextSearchFieldKey, number>;
+  recordCount: number;
+  readonly excludedDocFreq: ReadonlyMap<string, number>;
+  readonly excludedFieldTotalLengths: ReadonlyMap<TextSearchFieldKey, number>;
+  readonly excludedFieldDocCounts: ReadonlyMap<TextSearchFieldKey, number>;
 }
+
+const EMPTY_EXCLUDED_DOC_FREQ: ReadonlyMap<string, number> = new Map();
+const EMPTY_EXCLUDED_FIELD_TOTAL_LENGTHS: ReadonlyMap<TextSearchFieldKey, number> = new Map();
+const EMPTY_EXCLUDED_FIELD_DOC_COUNTS: ReadonlyMap<TextSearchFieldKey, number> = new Map();
 
 const DEFAULT_FIELD_WEIGHTS: Record<TextSearchFieldKey, number> = {
   title: 4.2,
@@ -180,6 +184,12 @@ class InMemoryTextSearchIndex implements MutableTextSearchIndex {
   private docFreq = new Map<string, number>();
   private fieldTotalLengths = new Map<TextSearchFieldKey, number>();
   private fieldDocCounts = new Map<TextSearchFieldKey, number>();
+  private readonly unfilteredCorpusStats: CorpusStats = {
+    recordCount: 0,
+    excludedDocFreq: EMPTY_EXCLUDED_DOC_FREQ,
+    excludedFieldTotalLengths: EMPTY_EXCLUDED_FIELD_TOTAL_LENGTHS,
+    excludedFieldDocCounts: EMPTY_EXCLUDED_FIELD_DOC_COUNTS,
+  };
   private mutationRevision = 0;
   private readonly filteredCorpusStats = new WeakMap<object, {
     readonly revision: number;
@@ -418,12 +428,8 @@ class InMemoryTextSearchIndex implements MutableTextSearchIndex {
 
   private corpusStats(excludedRecordIds?: ReadonlySet<string>): CorpusStats {
     if (!excludedRecordIds || excludedRecordIds.size === 0) {
-      return {
-        recordCount: this.records.size,
-        excludedDocFreq: new Map(),
-        excludedFieldTotalLengths: new Map(),
-        excludedFieldDocCounts: new Map(),
-      };
+      this.unfilteredCorpusStats.recordCount = this.records.size;
+      return this.unfilteredCorpusStats;
     }
     const cacheKey = excludedRecordIds as object;
     const cached = this.filteredCorpusStats.get(cacheKey);

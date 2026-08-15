@@ -206,9 +206,13 @@ implicit discovery filtering.
 
 The active Turn's explicit Node references are seeded from `turn/started` and
 updated from recorded `item/completed` and `items/completed` appends. Recovery
-or an extension attached after Turn start performs one targeted Turn read, then
-reuses the cached reference set for the rest of that Turn. Reference expansion
-and canonical membership come from the incrementally maintained
+or an extension attached after Turn start attempts a targeted Turn read. A
+missing Turn leaves recovery unresolved so a later filter access retries; the
+first successful read seals and reuses the reference set for the rest of that
+Turn. Item notifications update only filter state already opened by Turn start
+or a live recovery access, so late and orphaned notifications cannot retain
+unbounded state. Reference expansion and canonical membership come from the
+incrementally maintained
 `MemoryMutationIndex`; projection filtering never rebuilds the Memory graph.
 The hidden-ID set is cached by document, control-store, and explicit-reference
 revision. The full filtered projection and the filtered projection index are
