@@ -849,12 +849,19 @@
   display: flex;
   min-width: 0;
   align-items: center;
+  /* With the avatar's own optical shift this is the row glyph's advance: the
+     name lands on the same text column as a chip or tool label below it. */
   gap: var(--space-2);
 }
 
 .thread-speaker-avatar {
   display: flex;
   width: var(--speaker-avatar-size);
+  /* Centred on the glyph column, not flush with it. The disc is wider than the
+     12px marks on the rows below, so sharing their left edge left every centre
+     2px apart and the column read as ragged. A round mark overhanging a text
+     edge by 2px is what optical alignment wants anyway. */
+  margin-left: calc(var(--space-1) * -1);
   height: var(--speaker-avatar-size);
   flex: 0 0 auto;
   align-items: center;

@@ -3519,6 +3519,31 @@ test.describe('canonical agent Thread surface', () => {
     // own first line. A task label standing where a name goes read as a
     // sentence fragment rather than as somebody speaking.
     await expect(deliveryTurn.locator('.thread-speaker-name')).toHaveText(['worker', 'main']);
+    // The avatar sits on the glyph column the rows below use — centred on it,
+    // not flush with its left edge, since the disc is wider than a 12px mark
+    // and sharing an edge left every centre 2px apart. The name lands on the
+    // same text column as a chip's label, so two glyph-and-label lines under
+    // each other do not read as a ragged edge.
+    expect(await page.evaluate(() => {
+      const chip = document.querySelector('.thread-agent-chip');
+      const avatar = document.querySelector('.thread-speaker-avatar');
+      const glyph = chip?.querySelector('svg');
+      const name = document.querySelector('.thread-speaker-name');
+      const chipName = chip?.querySelector('.thread-agent-chip-name');
+      if (!avatar || !glyph || !name || !chipName) throw new Error('Expected a chip beside a speaker');
+      const centre = (element: Element) => {
+        const box = element.getBoundingClientRect();
+        return Math.round(box.left + box.width / 2);
+      };
+      return {
+        centresApart: Math.abs(centre(avatar) - centre(glyph)),
+        textApart: Math.abs(
+          Math.round(name.getBoundingClientRect().left)
+            - Math.round(chipName.getBoundingClientRect().left),
+        ),
+      };
+    })).toEqual({ centresApart: 0, textApart: 0 });
+
     // Both headers are one line of the same shape: who, then what they did, in
     // the meta type. The child's elapsed is ITS OWN — the Turn around it is the
     // parent reading a result, which took no time next to the work reported.
