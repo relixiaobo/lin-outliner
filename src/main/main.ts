@@ -1093,17 +1093,22 @@ function notifyTerminalBackgroundAgent(execution: SubagentExecutionProjection): 
   if (execution.runMode !== 'background' || execution.terminalStatus === null) return;
   const key = `${execution.agentId}:${execution.generation}`;
   if (announcedAgentGenerations.has(key)) return;
-  // Marked only where a notification is actually issued. Marked before the
-  // window check, a generation whose terminal write landed while the window was
-  // still being created counted as announced and could never notify at all.
   const window = liveWindow(mainWindow);
-  if (!window || window.isFocused()) return;
-  if (!Notification.isSupported()) return;
+  // No window yet — the terminal write landed during startup — is the one case
+  // that must NOT be marked: there was nobody to tell, and the generation can
+  // still be announced once a window exists.
+  if (!window) return;
+  // Marked the moment a live window OBSERVES the settlement, focused or not.
+  // The ledger re-announces this generation on every later claim, release and
+  // delivery, so marking only on the unfocused path popped "a background Agent
+  // finished" minutes later, for work the reader had watched finish.
   announcedAgentGenerations.add(key);
   if (announcedAgentGenerations.size > MAX_ANNOUNCED_AGENT_GENERATIONS) {
     const oldest = announcedAgentGenerations.values().next();
     if (!oldest.done) announcedAgentGenerations.delete(oldest.value);
   }
+  if (window.isFocused()) return;
+  if (!Notification.isSupported()) return;
   try {
     new Notification({
       title: APP_NAME,
@@ -4332,12 +4337,21 @@ async function handleAgentCommand(_event: IpcMainInvokeEvent, command: AgentComm
         const status = await gitOutput(worktree.path, [
           '--no-optional-locks', '-c', 'core.quotePath=false', 'status', '--porcelain', '-z',
         ]);
-        const entries = status.split('\0')
-          .map((line) => line.slice(3).trim())
-          .filter(Boolean)
-          // A rename reports `old -> new`; the destination is the file that is
-          // now in the worktree, which is what the reader is being shown.
-          .map((entry) => entry.includes(' -> ') ? entry.slice(entry.indexOf(' -> ') + 4) : entry);
+        // `-z` is NUL-separated and never quotes, so no trimming and no ` -> `:
+        // a rename emits two records, `XY new\0old\0`, the second with no
+        // status prefix at all. Parsed as if each record were a whole entry, a
+        // rename's old path became a second row with its first three characters
+        // chopped off, and `total` counted it.
+        const records = status.split('\0').filter((record) => record.length > 0);
+        const entries: string[] = [];
+        for (let index = 0; index < records.length; index += 1) {
+          const record = records[index]!;
+          const code = record.slice(0, 2);
+          // The destination is the file that is now in the worktree, which is
+          // what the reader is being shown; the source record is consumed here.
+          if (code.includes('R') || code.includes('C')) index += 1;
+          entries.push(record.slice(3));
+        }
         // The COUNT is the truth about the worktree; the list is capped so a
         // 3,000-file Agent cannot flood the rail. Reporting `paths.length` as
         // the count stated exactly 200 as a fact.

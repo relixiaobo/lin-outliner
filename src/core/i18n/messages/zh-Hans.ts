@@ -1136,6 +1136,7 @@ export const zhHans: PartialMessages = {
       details: '线程详情',
       detailsTitle: '线程详情',
       closeDetails: '关闭线程详情',
+      agentEvent: '来自某个 Agent',
       backgroundWork: '有后台任务在运行',
       subagents: '子 Agent',
       noSubagents: '该线程没有子 Agent。',
@@ -1196,7 +1197,6 @@ export const zhHans: PartialMessages = {
       resourceLimitReached: '任务达到系统资源上限，成果已保全。',
       reconnecting: ({ attempt, maxRetries }) => `正在重新连接 ${attempt}/${maxRetries}`,
       retryTurn: '重试',
-      subagentReadOnly: '由本次对话驱动,可随时停止。',
       stopUnavailable: '该工作已经结束。',
       stopSubagent: ({ name }: { name: string }) => `停止 ${name}`,
       subagentStatuses: {

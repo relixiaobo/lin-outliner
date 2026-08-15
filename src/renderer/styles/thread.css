@@ -1931,6 +1931,14 @@
   opacity: 1;
 }
 
+/* Not one more changed path: the row that says how many were left out reads at
+   the meta tier, like every other note in the deck. */
+.thread-agent-worktree-elided {
+  color: var(--text-tertiary);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+}
+
 .thread-agent-report-empty {
   margin: 0;
   color: var(--text-tertiary);

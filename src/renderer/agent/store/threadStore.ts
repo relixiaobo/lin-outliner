@@ -411,12 +411,22 @@ export class ThreadStore {
   async interruptThread(threadId: ThreadId): Promise<void> {
     const loaded = findLastInProgressTurn(this.turns(threadId));
     const latest = this.snapshot.latestTurnByThread.get(threadId);
-    const active = loaded ?? (latest?.status === 'inProgress' ? latest : undefined);
+    // A conversation reopened cold loads no child Turns at all, so a delegated
+    // Agent that is verifiably mid-Turn had NOTHING here to interrupt and every
+    // Stop on it failed with "that work already finished" while it kept running.
+    // Its execution record names the Turn it is running; that is the same
+    // authority the chip read to decide it was still running at all.
+    const running = this.snapshot.subagentExecutionsByAgentId.get(threadId);
+    const active = loaded
+      ?? (latest?.status === 'inProgress' ? latest : undefined)
+      ?? (running?.currentTurnId === null ? undefined : running);
     // Reported rather than swallowed: a Stop that resolves without issuing a
     // request looks identical to one that worked, which is the worst of the
     // three outcomes. The caller surfaces this.
     if (!active) throw new Error(`No active Turn to interrupt: ${threadId}`);
-    await this.client.agentCoreRequest('turn/interrupt', { threadId, turnId: active.id });
+    const turnId = 'currentTurnId' in active ? active.currentTurnId : active.id;
+    if (turnId === null) throw new Error(`No active Turn to interrupt: ${threadId}`);
+    await this.client.agentCoreRequest('turn/interrupt', { threadId, turnId });
   }
 
   async continueInNewChat(threadId: ThreadId, turnId: string): Promise<Thread> {
@@ -1082,22 +1092,35 @@ function appendReasoningDelta(
   return { ...item, [key]: values };
 }
 
+/**
+ * Whether two execution projections say the same thing to the renderer.
+ *
+ * Compared over the record's OWN KEYS rather than a hand-written list: the list
+ * had already fallen behind the projection once, and a field it forgets is a
+ * change that silently never reaches the screen.
+ *
+ * `updatedAt` is the one deliberate exclusion. The ledger stamps it on every
+ * touch, including ones that change nothing anybody can see, and treating those
+ * as changes would patch the store — and re-render every chip — for nothing.
+ */
+const SUBAGENT_EXECUTION_UNRENDERED_KEYS = new Set(['updatedAt']);
+
 function subagentExecutionEqual(
   left: SubagentExecutionProjection,
   right: SubagentExecutionProjection,
 ): boolean {
-  return left.agentId === right.agentId
-    && left.parentThreadId === right.parentThreadId
-    && left.description === right.description
-    && left.agentType === right.agentType
-    && left.runMode === right.runMode
-    && left.generation === right.generation
-    && left.currentTurnId === right.currentTurnId
-    && left.stopProvenance === right.stopProvenance
-    && left.notificationState === right.notificationState
-    && left.worktree?.branch === right.worktree?.branch
-    && left.worktree?.path === right.worktree?.path
-    && left.createdAt === right.createdAt;
+  const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
+  for (const key of keys) {
+    if (SUBAGENT_EXECUTION_UNRENDERED_KEYS.has(key)) continue;
+    if (key === 'worktree') {
+      if (left.worktree?.branch !== right.worktree?.branch) return false;
+      if (left.worktree?.path !== right.worktree?.path) return false;
+      continue;
+    }
+    const field = key as keyof SubagentExecutionProjection;
+    if (left[field] !== right[field]) return false;
+  }
+  return true;
 }
 
 function errorMessage(error: unknown): string {

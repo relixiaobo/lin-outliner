@@ -13,7 +13,8 @@ describe('participant avatar identity colour', () => {
     // baked colour, and the disc mixes it toward the live content surface so it
     // is a soft wash in both themes instead of a glaring puck on dark.
     expect(first.text).toMatch(/^var\(--identity-tint-[1-7]\)$/u);
-    expect(first.background).toBe(`color-mix(in srgb, ${first.text} 14%, var(--bg-content))`);
+    // The same mix the tag chips use: one identity family, one derivation.
+    expect(first.background).toBe(`color-mix(in srgb, ${first.text} 12%, var(--bg-content))`);
   });
 
   test('never assigns the danger-adjacent red', () => {

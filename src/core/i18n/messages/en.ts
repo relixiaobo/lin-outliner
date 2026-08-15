@@ -1229,6 +1229,7 @@ export const en = {
       details: 'Thread Details',
       detailsTitle: 'Thread Details',
       closeDetails: 'Close Thread Details',
+      agentEvent: 'From an Agent',
       backgroundWork: 'Background work running',
       subagents: 'Subagents',
       noSubagents: 'No Subagents for this Thread.',
@@ -1291,7 +1292,6 @@ export const en = {
       resourceLimitReached: 'Task reached the system resource limit. Results have been preserved.',
       reconnecting: ({ attempt, maxRetries }: { attempt: number; maxRetries: number }) => `Reconnecting ${attempt}/${maxRetries}`,
       retryTurn: 'Retry',
-      subagentReadOnly: 'Driven by this conversation. You can stop it at any time.',
       stopUnavailable: 'That work already finished.',
       stopSubagent: ({ name }: { name: string }) => `Stop ${name}`,
       subagentStatuses: {

@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { turnTerminalAnswer } from '../../../core/agent/turnAnswer';
 import { useT } from '../../i18n/I18nProvider';
 import { ClickIcon, ICON_SIZE } from '../../ui/icons';
@@ -54,13 +54,20 @@ export function SubagentReport({
   // delta in the conversation around it.
   const turns = useThreadTurns(delivery.agentId);
   const loaded = turns !== undefined;
+  const [unreachable, setUnreachable] = useState(false);
 
   useEffect(() => {
     // Once, per Agent. Loaded history stays current through notifications, and
     // a conversation with thirty delivered results otherwise opened thirty
     // history reads every time it was rendered.
     if (loaded) return;
-    void threadStore.ensureThreadHistory(delivery.agentId).catch(() => undefined);
+    setUnreachable(false);
+    // A read that FAILS — a child retired while its execution record survived,
+    // or an IPC failure — leaves nothing to load and nothing to retry, since
+    // these deps cannot change again. Swallowed, the card said `Loading` for
+    // the rest of the session over a result the reader could not reach any
+    // other way.
+    void threadStore.ensureThreadHistory(delivery.agentId).catch(() => setUnreachable(true));
   }, [delivery.agentId, loaded]);
 
   if (!entry) return null;
@@ -78,7 +85,14 @@ export function SubagentReport({
   // in progress reported nothing, and a Turn the reader started from this
   // Agent's own composer is a run like any other. A history that has not caught
   // up yet falls back to the newest, which is the only run it can honestly show.
-  const settled = turns?.filter((candidate) => candidate.status !== 'inProgress');
+  // Runs the delegator started, in order. A Turn still in progress reported
+  // nothing, and a context command sent to the Agent — `/clear` and its kind —
+  // settles a Turn that skips generation admission entirely and so never
+  // delivers anything to anyone: counted as a run, it shifted every delivered
+  // card in the conversation onto its neighbour's answer, permanently.
+  const settled = turns?.filter((candidate) => (
+    candidate.status !== 'inProgress' && candidate.provenance.trigger.kind !== 'feature'
+  ));
   const reported = settled?.at(-1 - delivery.fromLatest) ?? settled?.at(-1);
   const report = reported ? turnTerminalAnswer(reported.items) : '';
   // The task it was handed, over what it answered. Suppressed when the speaker
@@ -106,7 +120,9 @@ export function SubagentReport({
             <ThreadMarkdown index={index} onNodeReferenceOpen={onOpenNodeReference} text={report} />
           ) : (
             <p className="thread-agent-report-empty">
-              {turns === undefined ? t.agent.thread.loading : t.agent.thread.agent.reportUnavailable}
+              {turns === undefined && !unreachable
+                ? t.agent.thread.loading
+                : t.agent.thread.agent.reportUnavailable}
             </p>
           )}
         </div>

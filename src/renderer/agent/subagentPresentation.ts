@@ -165,6 +165,12 @@ export const EMPTY_SUBAGENT_PROJECTION: SubagentConversationProjection = {
 interface ProjectionMemo {
   readonly projection: SubagentConversationProjection;
   readonly anchorsByTurn: ReadonlyMap<Turn, SubagentTurnAnchors>;
+  /** What the registry was derived FROM, so a delta elsewhere cannot re-derive it. */
+  readonly registryInputs: {
+    readonly executions: SubagentProjectionInput['executions'];
+    readonly threadsById: SubagentProjectionInput['threadsById'];
+    readonly latestTurnByThread: SubagentProjectionInput['latestTurnByThread'];
+  };
 }
 
 const memos = new WeakMap<SubagentConversationProjection, ProjectionMemo>();
@@ -185,7 +191,22 @@ export function projectSubagentConversation(
   previous: SubagentConversationProjection | null = null,
 ): SubagentConversationProjection {
   const previousMemo = previous ? memos.get(previous) ?? null : null;
-  const entries = projectRegistryEntries(input);
+  // The registry reads three collections and nothing else. A streaming frame
+  // replaces `turnsByThread` and leaves all three alone, so re-deriving it per
+  // delta walked the whole subtree, every thread in the store, and an O(n²)
+  // descendant count to arrive at what it already had.
+  const registryInputs = {
+    executions: input.executions,
+    threadsById: input.threadsById,
+    latestTurnByThread: input.latestTurnByThread,
+  };
+  const registryUnchanged = previousMemo !== null
+    && previousMemo.registryInputs.executions === registryInputs.executions
+    && previousMemo.registryInputs.threadsById === registryInputs.threadsById
+    && previousMemo.registryInputs.latestTurnByThread === registryInputs.latestTurnByThread;
+  const entries = registryUnchanged && previous !== null
+    ? previous.byAgentId
+    : projectRegistryEntries(input);
   const anchorsByTurn = new Map<Turn, SubagentTurnAnchors>();
   const anchorsByTurnId = new Map<TurnId, SubagentTurnAnchors>();
   const agentByCallItemId = new Map<ThreadItemId, ThreadId>();
@@ -204,7 +225,9 @@ export function projectSubagentConversation(
     }
   }
 
-  const byAgentId = reuseEntryMap(previous?.byAgentId ?? null, entries);
+  const byAgentId = registryUnchanged && previous !== null
+    ? previous.byAgentId
+    : reuseEntryMap(previous?.byAgentId ?? null, entries);
   const deliveryByTurnId = reuseDeliveryMap(
     previous?.deliveryByTurnId ?? null,
     deliveries(owners, input.turnsByThread, agentByCallItemId),
@@ -216,7 +239,7 @@ export function projectSubagentConversation(
     && deliveryByTurnId === previous.deliveryByTurnId
     ? previous
     : { anchorsByTurnId: anchors, byAgentId, deliveryByTurnId };
-  memos.set(projection, { projection, anchorsByTurn });
+  memos.set(projection, { projection, anchorsByTurn, registryInputs });
   return projection;
 }
 

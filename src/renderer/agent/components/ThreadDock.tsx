@@ -233,6 +233,14 @@ export const ThreadDock = memo(function ThreadDock({
   }, [refreshProviderSettings, refreshSlashCommands]);
 
   const title = useMemo(() => thread?.name || thread?.preview || t.agent.thread.untitled, [t, thread]);
+  // Stable across renders: minted inline it handed the memoized `ThreadTurnView`
+  // a new identity on every store patch, so the whole transcript re-rendered on
+  // every streaming frame — the exact hot path #541 optimized.
+  const conversationSpeaker = useMemo(() => ({
+    participantId: MAIN_AVATAR_IDENTITY,
+    avatarKey: MAIN_AVATAR_IDENTITY,
+    name: t.agent.thread.agent.main,
+  }), [t]);
 
   /**
    * Every transcript and details link goes through here: `openThreadById`
@@ -261,6 +269,9 @@ export const ThreadDock = memo(function ThreadDock({
    * its whole lineage, so Back unwinds through the Agent that delegated it
    * rather than jumping straight back to the conversation.
    */
+  const threadsByIdRef = useRef(threadsById);
+  threadsByIdRef.current = threadsById;
+
   const openSubagent = useCallback((agentId: string) => {
     setListOpen(false);
     const parentThreadId = snapshot.selectedThreadId;
@@ -268,7 +279,7 @@ export const ThreadDock = memo(function ThreadDock({
     const path = lineagePathFromRoot(
       agentId,
       parentThreadId,
-      threadsById,
+      threadsByIdRef.current,
       subagentProjectionRef.current?.byAgentId ?? new Map(),
     );
     if (!path) {
@@ -276,7 +287,11 @@ export const ThreadDock = memo(function ThreadDock({
       return;
     }
     setAgentStack(path);
-  }, [snapshot.selectedThreadId, t, threadsById]);
+    // Read through refs, so this callback — and the registry `actions` object
+    // built from it — keeps one identity. Depending on the Thread catalog
+    // rebuilt it at every Turn boundary, which churned the registry context and
+    // re-rendered every chip in the conversation.
+  }, [snapshot.selectedThreadId, t]);
 
   const subagentActions = useMemo<SubagentActions>(() => ({
     openAgent: openSubagent,
@@ -482,8 +497,8 @@ export const ThreadDock = memo(function ThreadDock({
           // The pushed view COVERS the conversation rather than replacing it in
           // the tree. Unmounting the transcript would throw away the reader's
           // place in it — and its measured layout — every time an Agent is
-          // opened; covering keeps both, and `inert` keeps focus out of what is
-          // no longer on screen.
+          // opened; covering keeps both, and hiding it keeps focus and the
+          // accessibility tree out of what is no longer on screen.
           <div className="thread-dock-body">
             <div className={`thread-dock-conversation${openAgentId === null ? '' : ' is-covered'}`}>
             <ThreadView
@@ -493,11 +508,7 @@ export const ThreadDock = memo(function ThreadDock({
               active={open && openAgentId === null}
               composerEnabled={thread.parentThreadId === null && thread.threadSource === 'user'}
               composerFocusToken={composerFocusToken}
-              selfSpeaker={{
-                participantId: MAIN_AVATAR_IDENTITY,
-                avatarKey: MAIN_AVATAR_IDENTITY,
-                name: t.agent.thread.agent.main,
-              }}
+              selfSpeaker={conversationSpeaker}
               configuration={configuration}
               getUserView={getUserView}
               goal={goal}

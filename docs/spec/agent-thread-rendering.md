@@ -33,8 +33,9 @@ is an execution artifact of a Turn, so it is opened rather than travelled to and
 the Thread list never gains a row for it. 330px of drawer inside a 344px deck is
 not a drawer, so the detail view takes the whole deck body and COVERS the
 conversation instead of replacing it in the tree. The transcript underneath
-stays mounted and `inert`, so it keeps its scroll position and its measured
-layout: returning is a reveal, not a reload.
+stays mounted but hidden (`visibility: hidden`), which keeps it out of tab order
+and out of the accessibility tree while it keeps its scroll position and its
+measured layout: returning is a reveal, not a reload.
 
 The pushed level TAKES THE TITLE BAR, exactly as the Automations surface beside
 it does: a back arrow, the Agent's name, what kind of Agent it is as a badge
@@ -514,7 +515,7 @@ ANCHOR in it at the point where it happened:
   that text is host framing addressed to the model and never a message to the
   reader. Position is identity here too (above): the report is one more speaker
   in the stream — its own avatar, its own name, its own elapsed on that header
-  line — and folds behind the same Show more every long message uses. Its body
+  line. Its body
   sits in an OUTLINED CARD rather than in the prose column `main` uses, because
   it is not part of this conversation's narrative: it is a self-contained thing
   brought back from somewhere else, which the reader may open. An outline says

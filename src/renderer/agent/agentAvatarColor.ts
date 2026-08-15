@@ -1,3 +1,5 @@
+import { IDENTITY_SURFACE_TINT, identitySlot } from '../ui/tags/identityHash';
+
 /**
  * The hue a participant's avatar wears.
  *
@@ -22,8 +24,6 @@ export interface AgentAvatarColor {
   readonly background: string;
 }
 
-const AVATAR_SURFACE_TINT = '14%';
-
 const AVATAR_HUES = [
   'var(--identity-tint-1)', // orange
   'var(--identity-tint-2)', // amber
@@ -34,7 +34,7 @@ const AVATAR_HUES = [
   'var(--identity-tint-7)', // pink
 ].map((hue): AgentAvatarColor => ({
   text: hue,
-  background: `color-mix(in srgb, ${hue} ${AVATAR_SURFACE_TINT}, var(--bg-content))`,
+  background: `color-mix(in srgb, ${hue} ${IDENTITY_SURFACE_TINT}, var(--bg-content))`,
 }));
 
 /**
@@ -66,16 +66,7 @@ export const MAIN_AVATAR_IDENTITY = 'main';
  * disc and is the identity of record.
  */
 export function agentAvatarColor(agentType: string): AgentAvatarColor {
-  let hash = 0;
-  for (let index = 0; index < agentType.length; index += 1) {
-    hash = Math.imul(hash ^ agentType.charCodeAt(index), 0x5bd1e995);
-  }
-  hash ^= hash >>> 16;
-  hash = Math.imul(hash, 0x85ebca6b);
-  hash ^= hash >>> 13;
-  hash = Math.imul(hash, 0xc2b2ae35);
-  hash ^= hash >>> 16;
-  return AVATAR_HUES[(hash >>> 0) % AVATAR_HUES.length]!;
+  return AVATAR_HUES[identitySlot(agentType, AVATAR_HUES.length)]!;
 }
 
 /**

@@ -320,13 +320,12 @@ function cacheThreadScrollSnapshot(threadId: string, snapshot: ThreadScrollSnaps
  * A Subagent run detail renders a full ThreadView inside one of these rows, and
  * that inner view emits Turn rows of its own — scrolled independently, so their
  * tops are neither this transcript's nor monotonic in document order, which is
- * the precondition the anchor search below depends on. Left in, a child's row
- * could be cached as the parent's reading anchor and restored against a row
- * clipped inside a fixed-height box.
+ * the precondition the anchor search below depends on. No filter is needed for
+ * that any more: a child transcript is a pushed level that COVERS this one, so
+ * it is never inside this scroll container to begin with.
  */
 function ownTranscriptRows(scroll: HTMLElement): HTMLElement[] {
-  return [...scroll.querySelectorAll<HTMLElement>('[data-thread-turn-row]')]
-    .filter((row) => !row.closest('.thread-subagent-detail'));
+  return [...scroll.querySelectorAll<HTMLElement>('[data-thread-turn-row]')];
 }
 
 /**
@@ -2078,16 +2077,33 @@ export const ThreadTurnView = memo(function ThreadTurnView({
     && isStandaloneContextBoundaryTurn(turn);
   const hostAuthoredEvent = turn.provenance.trigger.kind === 'subagent'
     && turn.provenance.originThreadId === threadId;
+  // A peer Agent that messaged this Thread directly: the continuation Turn its
+  // `agent_message` started names the SENDER as its parent, which is not a
+  // delegation of ours, so no delivery resolves for it. Naming the sender is
+  // still exactly possible — and rendering it as an unnamed `?` disc, which is
+  // what an empty fallback produced, is not.
+  const peerSenderId = hostAuthoredEvent && turn.provenance.trigger.kind === 'subagent'
+    && turn.provenance.trigger.parentThreadId !== threadId
+    ? turn.provenance.trigger.parentThreadId
+    : null;
+  const peerEntry = useSubagentEntry(peerSenderId);
+  const peerSpeaker: ThreadSpeaker | null = peerEntry === null ? null : {
+    participantId: peerEntry.agentId,
+    avatarKey: subagentSpeakerName(peerEntry),
+    name: subagentSpeakerName(peerEntry),
+  };
   // The child that delivered into this Turn, if any: it speaks its own report.
   const reportEntry = useSubagentEntry(delivery?.agentId ?? null);
   // WHICH Item the host wrote to wake the model: the Turn's first user-role
   // Item. A steering message typed while the continuation is still running is
-  // admitted into this same Turn as another one, and it belongs to the reader —
-  // replacing it too rendered the Agent's report twice and made the reader's
-  // own words disappear.
-  const deliveryNoticeItemId = delivery === null
+  // admitted into this same Turn as another one, and it belongs to the READER —
+  // it is not the host's, it is not the delegator's, and treating it as either
+  // rendered the Agent's report twice or put the reader's words in somebody
+  // else's mouth.
+  const hostNoticeItemId = !hostAuthoredEvent
     ? null
     : turn.items.find((item) => item.type === 'userMessage')?.id ?? null;
+  const deliveryNoticeItemId = delivery === null ? null : hostNoticeItemId;
   const reportSpeaker: ThreadSpeaker | null = delivery !== null && reportEntry !== null
     ? {
       participantId: delivery.agentId,
@@ -2260,7 +2276,7 @@ export const ThreadTurnView = memo(function ThreadTurnView({
         index={index}
         indexStore={indexStore}
         item={item}
-        hostAuthoredEvent={hostAuthoredEvent}
+        hostAuthoredEvent={hostAuthoredEvent && item.id === hostNoticeItemId}
         key={item.id}
         onAgentMessageContextMenu={item.id === responseItem?.id ? handleResponseContextMenu : undefined}
         onEditUserMessage={editUserMessage}
@@ -2295,11 +2311,13 @@ export const ThreadTurnView = memo(function ThreadTurnView({
     if (block.kind === 'process') return selfSpeaker;
     if (block.item.type !== 'userMessage') return selfSpeaker;
     if (block.item.id === deliveryNoticeItemId) return reportSpeaker ?? 'drop';
-    if (!hostAuthoredEvent) return null;
-    return hostSpeaker ?? {
+    // Only the Turn's own notice is somebody else's; anything the reader typed
+    // into it afterwards is theirs, wherever the Turn came from.
+    if (block.item.id !== hostNoticeItemId) return null;
+    return hostSpeaker ?? peerSpeaker ?? {
       participantId: MAIN_AVATAR_IDENTITY,
       avatarKey: MAIN_AVATAR_IDENTITY,
-      name: '',
+      name: t.agent.thread.agentEvent,
     };
   };
   const runs: Array<{

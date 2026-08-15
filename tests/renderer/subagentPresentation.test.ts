@@ -284,6 +284,29 @@ describe('Agent registry identity stability', () => {
     expect(after.deliveryByTurnId).toBe(before.deliveryByTurnId);
   });
 
+  test('re-derives no registry when only a Turn streamed', () => {
+    // A streaming frame replaces `turnsByThread` and touches none of the three
+    // collections the registry reads. Re-deriving it per delta walked the whole
+    // subtree, every thread in the store, and an O(n²) descendant count to
+    // arrive at what it already had.
+    const shared = {
+      executions: executionMap([execution()]),
+      threadsById: new Map([[CHILD_ID, childThread({ type: 'active', activeFlags: [] })]]),
+      latestTurnByThread: new Map(),
+    };
+    const before = projectSubagentConversation(input({
+      ...shared,
+      turnsByThread: new Map([[PARENT_ID, [parentTurn('turn-1', [])]]]),
+    }));
+    const after = projectSubagentConversation(input({
+      ...shared,
+      turnsByThread: new Map([[PARENT_ID, [parentTurn('turn-1', [reasoning('item-1')])]]]),
+    }), before);
+
+    expect(after.byAgentId).toBe(before.byAgentId);
+    expect(after.byAgentId.get(CHILD_ID)).toBe(before.byAgentId.get(CHILD_ID));
+  });
+
   test('returns the same projection object when nothing changed at all', () => {
     const turn = parentTurn('turn-1', [activity('spawn', 'started', null, null)]);
     const before = projectSubagentConversation(input({ turnsByThread: new Map([[PARENT_ID, [turn]]]) }));

@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ThreadId } from '../../../core/agent/protocol';
 import { useT } from '../../i18n/I18nProvider';
+import { useDismissibleOverlay } from '../../ui/primitives/useDismissibleOverlay';
 import { AgentIcon, GitForkIcon, ICON_SIZE, LoaderIcon, StopIcon } from '../../ui/icons';
 import { IconButton } from '../../ui/primitives/IconButton';
 import { WorkingText } from '../../ui/primitives/WorkingText';
@@ -45,27 +46,13 @@ export function SubagentWorkStrip({
     if (rows.length === 0) setOpen(false);
   }, [rows.length]);
 
-  // Dismissible like every other overlay in the deck. It floats over the
-  // transcript, so without this a click into the conversation or the composer
-  // left it sitting on top of what the reader had just gone back to.
+  // Dismissible like every other overlay in the deck, through the same hook they
+  // use: it floats over the transcript, so without this a click into the
+  // conversation or the composer left it sitting on top of what the reader had
+  // just gone back to.
   const strip = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    if (!open) return undefined;
-    const onPointerDown = (event: MouseEvent) => {
-      const target = event.target;
-      if (target instanceof Node && strip.current?.contains(target)) return;
-      setOpen(false);
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOpen(false);
-    };
-    window.addEventListener('mousedown', onPointerDown, true);
-    window.addEventListener('keydown', onKeyDown, true);
-    return () => {
-      window.removeEventListener('mousedown', onPointerDown, true);
-      window.removeEventListener('keydown', onKeyDown, true);
-    };
-  }, [open]);
+  const dismiss = useCallback(() => setOpen(false), []);
+  useDismissibleOverlay(strip, dismiss, { disabled: !open });
 
   if (rows.length === 0) return null;
   return (

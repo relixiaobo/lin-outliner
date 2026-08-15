@@ -101,17 +101,53 @@ export function SubagentDetailView({
   // the way every other surface keys it: keyed by id, the one participant that
   // is always there wore a different hue inside a pushed view than it wore in
   // the conversation the reader had just left.
-  const hostSpeaker: ThreadSpeaker = parentEntry === null
-    ? {
-      participantId: MAIN_AVATAR_IDENTITY,
-      avatarKey: MAIN_AVATAR_IDENTITY,
-      name: t.agent.thread.agent.main,
-    }
-    : {
-      participantId: parentEntry.agentId,
-      avatarKey: subagentSpeakerName(parentEntry),
-      name: subagentSpeakerName(parentEntry),
-    };
+  // Every one of these is stable across renders on purpose: this view
+  // re-renders on each store patch, and an inline handler or speaker object
+  // handed the memoized `ThreadTurnView` a new identity per streaming frame,
+  // re-rendering the pushed transcript entirely (A9).
+  const interrupt = useCallback(() => threadStore.interruptThread(agentId), [agentId]);
+  const openTurnDetails = useCallback(
+    (turn: Turn) => onOpenTurnDetails?.(agentId, turn.id),
+    [agentId, onOpenTurnDetails],
+  );
+  const readToolArguments = useCallback(
+    (turnId: string, item: Parameters<typeof threadStore.readToolArguments>[2]) => (
+      threadStore.readToolArguments(agentId, turnId, item)
+    ),
+    [agentId],
+  );
+  const readItemOutput = useCallback(
+    (turnId: string, item: Parameters<typeof threadStore.readItemOutput>[2]) => (
+      threadStore.readItemOutput(agentId, turnId, item)
+    ),
+    [agentId],
+  );
+  const send = useCallback(
+    (content: Parameters<typeof threadStore.sendToThread>[1]) => (
+      threadStore.sendToThread(agentId, content, getUserView())
+    ),
+    [agentId, getUserView],
+  );
+  const speakerName = entry === null ? null : subagentSpeakerName(entry);
+  const selfSpeaker: ThreadSpeaker = useMemo(() => ({
+    participantId: agentId,
+    avatarKey: speakerName ?? agentId,
+    name: speakerName ?? t.agent.thread.untitled,
+  }), [agentId, speakerName, t]);
+  const parentSpeakerName = parentEntry === null ? null : subagentSpeakerName(parentEntry);
+  const hostSpeaker: ThreadSpeaker = useMemo(() => (
+    parentEntry === null
+      ? {
+        participantId: MAIN_AVATAR_IDENTITY,
+        avatarKey: MAIN_AVATAR_IDENTITY,
+        name: t.agent.thread.agent.main,
+      }
+      : {
+        participantId: parentEntry.agentId,
+        avatarKey: parentSpeakerName ?? MAIN_AVATAR_IDENTITY,
+        name: parentSpeakerName ?? t.agent.thread.agent.main,
+      }
+  ), [parentEntry, parentSpeakerName, t]);
   // Only an Agent takes direction. An isolated Skill's result belongs to the
   // `skill` call that invoked it, so there is nothing here for a message to do.
   const composerEnabled = entry?.form !== 'isolatedSkill' && thread?.source === 'collaboration';
@@ -140,14 +176,14 @@ export function SubagentDetailView({
             onContinueInNewChat={noop}
             onCreateThread={noFallback}
             onEditUserMessage={noop}
-            onInterrupt={() => threadStore.interruptThread(agentId)}
+            onInterrupt={interrupt}
             onInterruptThread={(target) => threadStore.interruptThread(target)}
             onOpenNodeReference={onOpenNodeReference}
             onOpenThread={openRelated}
-            onOpenTurnDetails={(turn: Turn) => onOpenTurnDetails?.(agentId, turn.id)}
-            onReadToolArguments={(turnId, item) => threadStore.readToolArguments(agentId, turnId, item)}
-            onReadToolOutput={(turnId, item) => threadStore.readItemOutput(agentId, turnId, item)}
-            onSend={(content) => threadStore.sendToThread(agentId, content, getUserView())}
+            onOpenTurnDetails={openTurnDetails}
+            onReadToolArguments={readToolArguments}
+            onReadToolOutput={readItemOutput}
+            onSend={send}
             onSubmitUserInput={noop}
             plan={snapshot.planByThread.get(agentId) ?? null}
             providerRetry={snapshot.providerRetryByThread.get(agentId) ?? null}
@@ -156,11 +192,7 @@ export function SubagentDetailView({
             slashCommands={[]}
             agentTranscript
             hostSpeaker={hostSpeaker}
-            selfSpeaker={{
-              participantId: agentId,
-              avatarKey: entry === null ? agentId : subagentSpeakerName(entry),
-              name: entry === null ? t.agent.thread.untitled : subagentSpeakerName(entry),
-            }}
+            selfSpeaker={selfSpeaker}
             subagentProjection={subagentProjection}
             threadCreationBlocked
             threadCreationPending={false}

@@ -749,7 +749,21 @@ export class SubagentExecutionLedger {
     return this.touched(input.agentId);
   }
 
-  recordTerminal(input: Omit<SubagentPendingNotification, 'state' | 'deliveredAt'>): boolean {
+  /**
+   * How one generation ended.
+   *
+   * `owed` is what separates the two callers. A background generation owes its
+   * parent a notification, so its row starts `pending` and the delivery
+   * pipeline picks it up. A foreground one owes nothing — its result travels
+   * back through the `agent` call itself — but the row is still written, and
+   * marked settled on arrival, because this table is also the DURABLE record of
+   * how a generation ended: a conversation reopened later loads no child Turns,
+   * and without a row here a finished foreground Agent read as `Idle`.
+   */
+  recordTerminal(
+    input: Omit<SubagentPendingNotification, 'state' | 'deliveredAt'>,
+    owed: boolean = true,
+  ): boolean {
     if (this.deletedAgentIds.has(input.agentId)) return false;
     const run = this.require(input.agentId);
     if (run.generation !== input.generation || run.currentTurnId !== input.turnId) return false;
@@ -757,7 +771,7 @@ export class SubagentExecutionLedger {
       INSERT INTO subagent_execution_notifications(
         agent_id, generation, parent_thread_id, turn_id, tool_use_id,
         status, state, created_at, delivered_at
-      ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, NULL)
+      ) VALUES (?, ?, ?, ?, ?, ?, ${owed ? "'pending', ?, NULL" : "'delivered', ?, ?"})
       ON CONFLICT(agent_id, generation) DO NOTHING
     `).run(
       input.agentId,
@@ -767,6 +781,7 @@ export class SubagentExecutionLedger {
       input.toolUseId,
       input.status,
       input.createdAt,
+      ...(owed ? [] : [input.createdAt]),
     );
     this.announce(input.agentId);
     return true;
