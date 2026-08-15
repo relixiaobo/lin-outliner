@@ -3157,19 +3157,21 @@
    over it. Positioned so the pushed view can COVER the transcript instead of
    replacing it: unmounting would throw away the reader's place every time they
    looked at an Agent. */
-.thread-dock-body {
-  position: relative;
-  display: flex;
-  min-height: 0;
-  flex: 1 1 auto;
-  flex-direction: column;
-}
-
+/* Layout-identical to the view they wrap — `flex: 1` (basis 0), like
+   `.thread-view` — so inserting them changes nothing about how the transcript
+   viewport resolves. A `basis: auto` here let content participate in main-axis
+   sizing, and the transcript's own scroll maths raced the extra frame that
+   took to settle. */
+.thread-dock-body,
 .thread-dock-conversation {
   display: flex;
   min-height: 0;
-  flex: 1 1 auto;
+  flex: 1;
   flex-direction: column;
+}
+
+.thread-dock-body {
+  position: relative;
 }
 
 .thread-agent-detail {

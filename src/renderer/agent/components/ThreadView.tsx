@@ -2196,6 +2196,7 @@ export const ThreadTurnView = memo(function ThreadTurnView({
       index={index}
       item={item}
       hostAuthoredEvent={hostAuthoredEvent}
+      agentTranscript={agentTranscript}
       key={item.id}
       onAgentMessageContextMenu={item.id === responseItem?.id ? handleResponseContextMenu : undefined}
       onEditUserMessage={editUserMessage}

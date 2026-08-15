@@ -110,6 +110,8 @@ interface ThreadItemViewProps {
   readonly item: ThreadItem;
   /** This user-role Item was authored by the host, as proven by its Turn. */
   readonly hostAuthoredEvent?: boolean;
+  /** This transcript belongs to one Agent, so a host-authored brief is its task. */
+  readonly agentTranscript?: boolean;
   readonly showMessageActions: boolean;
   readonly streaming: boolean;
   /** This Item is where a delegation happened, so a chip takes its slot. */
@@ -334,6 +336,7 @@ function UserMessageItem({
   index,
   item,
   hostAuthoredEvent = false,
+  agentTranscript = false,
   onEditUserMessage,
   onOpenNodeReference,
   showMessageActions,
@@ -361,9 +364,12 @@ function UserMessageItem({
   return (
     <article className={`thread-item ${hostAuthoredEvent ? 'thread-host-event' : 'thread-user-message'}`}>
       {hostAuthoredEvent ? (
+        // Inside an Agent's own transcript this is the brief it was given, not
+        // an event that happened to it — the one host-authored user-role Item
+        // left in a conversation is a peer Agent's message, which is.
         <div className="thread-host-event-label">
           <AgentIcon aria-hidden size={ICON_SIZE.rowGlyph} />
-          <span>{t.agent.thread.agentEvent}</span>
+          <span>{agentTranscript ? t.agent.thread.agent.task : t.agent.thread.agentEvent}</span>
         </div>
       ) : null}
       {editing ? (

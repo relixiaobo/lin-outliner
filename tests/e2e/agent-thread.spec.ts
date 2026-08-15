@@ -2495,7 +2495,10 @@ test.describe('canonical agent Thread surface', () => {
     // Host-authored child input is an Agent event rather than a user bubble.
     // The child can receive new direction, but its existing history cannot be
     // rewritten or forked through root-only actions.
+    // The brief the parent wrote, named as the task it is — not as an "event",
+    // which is what a peer Agent's message to a conversation is.
     await expect(detail.locator('.thread-host-event')).toContainText('Investigate the deployment story.');
+    await expect(detail.locator('.thread-host-event-label')).toHaveText('Task');
     await expect(detail.getByRole('textbox', { name: 'Message this Thread' })).toBeVisible();
     await expect(detail.getByRole('button', { name: 'Edit message' })).toHaveCount(0);
     await expect(detail.getByRole('button', { name: 'Continue in new chat' })).toHaveCount(0);

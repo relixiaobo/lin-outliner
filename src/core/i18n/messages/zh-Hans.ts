@@ -1237,6 +1237,7 @@ export const zhHans: PartialMessages = {
         worktreeUnavailable: '该工作区已不在磁盘上。',
         back: '返回',
         readOnlySkill: '由调用它的 Skill 调用拥有。',
+        task: '任务',
         backgroundFinished: '一个后台 Agent 已完成。',
       },
       goal: '目标',
