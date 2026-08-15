@@ -987,3 +987,59 @@ The general rule for the gate: when a hot-path fix is "we moved it off the hot
 path", ask *where it landed and how long it is there* — measure the longest
 uninterrupted slice, not the total, and measure the deferral trigger against a
 continuous stream, not a burst that stops (A9).
+
+## A fast path's guard is part of the optimization — measure what it excludes
+
+`streaming-markdown-repair-cost` (#547) made Markdown repair linear and then
+guarded the new path with `!text.includes('$') || no emphasis marker → old path`.
+The reasoning was local and sounded right: the expensive scan is math-context
+lookup, so text without `$` cannot be paying for it. It was wrong about the
+library it was replacing, which consults math context *before* it rejects a
+literal `_` or `*` — so the guard sent every answer without a dollar sign back
+onto the quadratic path, which is the common case for answers about code. The
+benchmark on the branch used a fixture containing `$`, so it measured only the
+side of the guard that worked, and reported a large speedup for a change that
+left `snake_case` prose at 207 ms per 40 KB commit and over a second at 80 KB.
+The tell was cheap to produce and unmissable: prepending one `$` to the identical
+text made it 12–40× faster. Two rules for the gate. **Benchmark both sides of
+every guard** — a fast-path fixture that satisfies the condition proves nothing
+about the traffic the condition rejects, and the fixture set must include the
+workload the feature actually sees (here: identifiers and arithmetic, not
+formulas). **Justify a guard against the code it is bypassing, not against a
+model of it** — the premise "no `$` means no math work" was never checked against
+the upstream source, where it is false. When the guard turns out to be
+unnecessary, deleting it is usually the whole fix, and its removal is verifiable
+by the same differential harness that proved the fast path correct.
+
+## A cache key must state its own invalidation condition, not inherit one
+
+`agent-tool-call-path` PR 1 (#546) cached filtered projections per Turn behind
+`cached.source === projection && cached.hiddenNodeIds === hiddenNodeIds`. The
+first half can never fire: `DocumentReadModel.applyUpdate` splices the
+projection's node array and mutates its id map **in place**, so both identities
+stay stable for the life of the document. The cache was nevertheless correct —
+because the *other* half, an upstream `Set`, happened to be freshly allocated
+whenever the Memory revision moved. That is a working cache whose invariant
+lives in another file, with no test and no comment naming it: make
+`hiddenNodeIds` return a stable set for an unchanged graph — an obvious
+optimization someone will eventually make — and stale filtered reads start
+leaking silently. The fix keys the cache on the revisions themselves (document,
+control-store, explicit-reference) and tests it by mutating the projection in
+place. The gate rule: **when a cache key is an object identity, ask what mutates
+that object.** If the answer is "it is mutated in place", the identity is
+decoration and the real key is whichever counter moves — put that in the key.
+
+## Fixing a leak by deleting a redundant path is a behavior change
+
+Same PR, second round. Unbounded per-Turn filter state was closed by making the
+Item-notification handler a pure update: no existing state, no entry. Correct
+for the leak — but that handler was also the only path that captured the opening
+user message's `@Node` references *without* a Turn read. The two paths were
+redundant on the happy path and independent everywhere else, and the fix left
+one. Deleting redundancy is how a fallback quietly becomes a single point of
+failure. Either bound the state (evict on every terminal status, on thread
+deletion, cap the map) or prove the survivor always covers the case — #546 took
+the second and asserted the ordering it now rests on: recorded Items are
+canonical before observer delivery. Either resolution is fine; assuming it is
+not. **A "this path is redundant" fix has to name what it now depends on, and
+test that.**

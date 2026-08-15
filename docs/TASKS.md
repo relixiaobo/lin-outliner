@@ -58,8 +58,10 @@ theme-section entry below; this list is the ordering, not a second record):
   five items under **Performance** — [`typing-hot-path`](plans/archive/typing-hot-path.md)
   (the board's only P0) **closed 2026-08-15 with PR-C (#541)**, so the lane no
   longer outranks Lane A; [`agent-tool-call-path`](plans/agent-tool-call-path.md) (P1) now leads
-  (`agent-streaming-followups` shipped #539 2026-08-14, leaving the P2
-  `streaming-markdown-repair-cost` tail); [`interaction-jank-cleanups`](plans/interaction-jank-cleanups.md)
+  (the agent-streaming sub-lane is now closed end to end:
+  `agent-streaming-followups` #539 2026-08-14, then its P2
+  `streaming-markdown-repair-cost` tail #547 2026-08-15);
+  [`interaction-jank-cleanups`](plans/interaction-jank-cleanups.md)
   and [`startup-window-first`](plans/startup-window-first.md) (P2) trail.
 - **Outliner correctness lane (added 2026-08-13, build-ready 2026-08-14)**:
   [`tag-merge-and-split-fixes`](plans/archive/tag-merge-and-split-fixes.md) PRs A/B
@@ -745,30 +747,19 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   wait for the row to stop being `aria-disabled`, on small fixture documents.
   Queueing the pending selection and applying it when reachability lands would
   keep both the rule and the keystroke.
-- **agent-tool-call-path** (P1, `draft` 2026-08-11) — host overhead dominates
-  agent Turns. `MemoryExtension.filterProjection` decodes the entire thread
-  history and builds the memory graph 2-3× on every `getProjection()` (1-3 per
-  node tool call, plus N+1 SQLite), and its mere presence disables the read
-  model + text index for ALL agent tools (`node_search` goes linear, `node_edit`
-  does per-node `JSON.stringify` diffs — #414's work is switched off on this
-  path). Each model call re-projects the full history, re-tokenizes every
+- **agent-tool-call-path** (P1, `in-progress` 2026-08-11) — host overhead
+  dominates agent Turns. `MemoryExtension.filterProjection` decodes the entire
+  thread history and builds the memory graph 2-3× on every `getProjection()`
+  (1-3 per node tool call, plus N+1 SQLite), and its mere presence disables the
+  read model + text index for ALL agent tools (`node_search` goes linear,
+  `node_edit` does per-node `JSON.stringify` diffs — #414's work is switched off
+  on this path). Each model call re-projects the full history, re-tokenizes every
   message, re-reads + re-hashes every `full` tool output from disk, and
   deep-clones the whole context for diagnostics; tool-result secret scans run
   unbudgeted. Three independent PRs: filter cost + read-model re-enablement /
-  per-model-call costs / small tails. Design:
+  per-model-call costs / small tails. PR 1 (filter cost + read-model
+  re-enablement) shipped 2026-08-15 in #546; the other two remain. Design:
   [`agent-tool-call-path`](plans/agent-tool-call-path.md).
-- **streaming-markdown-repair-cost** (P2, `draft` 2026-08-14, no plan file yet) —
-  the tail left by #539. With lexing now bounded to a tail, `remend` over the
-  full text is what a streaming commit pays (gate measurement: ~95% of the
-  commit at 20 KB), and `remend` is superlinear, so a long answer still janks:
-  ~20 ms per commit at 20 KB, ~80 ms at 40 KB. #539 is still a ~3× win over the
-  previous full-repair-plus-full-lex, so this is a ceiling it did not lift, not
-  a regression. Options, cheapest first: bound `remend` input to the reparsed
-  tail plus the open-marker state carried forward from the frozen prefix (needs
-  a marker-state summary the boundary can freeze alongside `definitions`);
-  or make repair incremental the way lexing now is. Write the plan against a
-  measurement, not a guess — the harness shape that caught this is in the #539
-  gate comment.
 - **subagent-interaction** (P2, `draft` 2026-08-12) — process-shaped subagent
   presentation for the fresh/background-default protocol inside the 344px agent
   deck: Agent-registry projection (keyed by Agent ID + generation) replacing
@@ -1059,6 +1050,29 @@ One line per merge, newest first; the retrospective lives in the CHANGELOG entry
 and the merged PR, distilled rules in [`lessons.md`](lessons.md). Everything
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
+
+- **streaming-markdown-repair-cost** (codex-3, PR #547, merged 2026-08-15 — plan-track,
+  plan archived) — the superlinear `remend` cost #539 left as ~95% of a streaming
+  commit is now linear. A renderer-local adapter replaces `remend`'s repeated prefix
+  scans with context maps built once per repair and reused across the emphasis
+  handlers, staying byte-equivalent to canonical `remend` after every append: it is a
+  cost change, not a repair-policy fork. Gate ran `/code-review high` (2 findings):
+  the merge blocker was the fast-path guard itself — `!text.includes('$') || …` sent
+  every emphasis-bearing answer *without* a dollar sign back onto the quadratic path,
+  which is the common case for answers about code (`snake_case` identifiers cost
+  207 ms at 40 KB and 1029 ms at 80 KB; adding one `$` to the same text made it 12-40×
+  faster). Upstream's marker searches query preceding math context before rejecting
+  literal markers, so math is not what makes the scan expensive. Fixed in ee96e6c9 by
+  dropping the `$` clause, with the spec sentence and the probe corrected alongside;
+  the second finding (the copy derives from `remend@1.3.0` while the dependency admits
+  later 1.x) is answered by naming the committed differential suite as the
+  compatibility guard rather than pinning `package.json`. Verified at the gate:
+  ~2.5M differential comparisons and an 800k-state fuzz of the reduced guard, both
+  zero divergence; probe at 40 KB 8.4 ms vs 97 ms canonical (dollar fixture) and
+  10.3 ms vs 148 ms (no-dollar identifier fixture). typecheck, `test:core` (2404),
+  `test:renderer` (1247), `docs:check` green — the first suite run reported three
+  failures that were load artifacts of a sibling clone's e2e run, reproduced on the
+  parent commit and cleared on a quiet machine.
 
 - **agent-streaming-followups** (codex, PR #539, merged 2026-08-14 — plan-track,
   plan archived) — the three per-delta streaming costs the delta-pipeline plan left:

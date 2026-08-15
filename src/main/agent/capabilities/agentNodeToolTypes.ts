@@ -22,6 +22,21 @@ export interface OutlinerToolMutationMeta {
   causation?: AgentMutationCausation;
 }
 
+export interface OutlinerProjectionFilter {
+  filterProjection(
+    projection: DocumentProjection,
+    causation: AgentMutationCausation,
+  ): DocumentProjection;
+  filterProjectionIndex(
+    index: ProjectionIndex,
+    causation: AgentMutationCausation,
+  ): ProjectionIndex;
+  filterTextSearchIndex(
+    index: TextSearchIndex,
+    causation: AgentMutationCausation,
+  ): TextSearchIndex;
+}
+
 export interface OutlinerToolHost {
   getProjection(): DocumentProjection;
   getDocumentReadModel?(): { asProjectionIndex(): ProjectionIndex };

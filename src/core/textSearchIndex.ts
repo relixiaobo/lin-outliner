@@ -40,10 +40,14 @@ export interface TextSearchOptions {
   limit?: number;
   candidateLimit?: number;
   includeSnippets?: boolean;
+  /** Internal visibility seam used by filtered index views. */
+  excludedRecordIds?: ReadonlySet<string>;
 }
 
 export interface TextSearchScoreOptions {
   includeSnippet?: boolean;
+  /** Internal visibility seam used by filtered index views. */
+  excludedRecordIds?: ReadonlySet<string>;
 }
 
 export interface TextSearchScore {
@@ -96,6 +100,17 @@ interface Posting {
   fieldTf: Map<TextSearchFieldKey, number>;
 }
 
+interface CorpusStats {
+  recordCount: number;
+  readonly excludedDocFreq: ReadonlyMap<string, number>;
+  readonly excludedFieldTotalLengths: ReadonlyMap<TextSearchFieldKey, number>;
+  readonly excludedFieldDocCounts: ReadonlyMap<TextSearchFieldKey, number>;
+}
+
+const EMPTY_EXCLUDED_DOC_FREQ: ReadonlyMap<string, number> = new Map();
+const EMPTY_EXCLUDED_FIELD_TOTAL_LENGTHS: ReadonlyMap<TextSearchFieldKey, number> = new Map();
+const EMPTY_EXCLUDED_FIELD_DOC_COUNTS: ReadonlyMap<TextSearchFieldKey, number> = new Map();
+
 const DEFAULT_FIELD_WEIGHTS: Record<TextSearchFieldKey, number> = {
   title: 4.2,
   body: 2.4,
@@ -109,6 +124,59 @@ export function createTextSearchIndex(records: Iterable<TextSearchRecord> = []):
   return new InMemoryTextSearchIndex(records);
 }
 
+export function createFilteredTextSearchIndex(
+  source: TextSearchIndex,
+  excludedRecordIds: ReadonlySet<string>,
+): TextSearchIndex {
+  if (excludedRecordIds.size === 0) return source;
+  return new FilteredTextSearchIndex(source, new Set(excludedRecordIds));
+}
+
+class FilteredTextSearchIndex implements TextSearchIndex {
+  constructor(
+    private readonly source: TextSearchIndex,
+    private readonly excludedRecordIds: ReadonlySet<string>,
+  ) {}
+
+  get size(): number {
+    let excludedCount = 0;
+    for (const id of this.excludedRecordIds) {
+      if (this.source.hasRecord(id)) excludedCount += 1;
+    }
+    return Math.max(0, this.source.size - excludedCount);
+  }
+
+  hasRecord(id: string): boolean {
+    return !this.excludedRecordIds.has(id) && this.source.hasRecord(id);
+  }
+
+  search(query: string, options: TextSearchOptions = {}): TextSearchResult[] {
+    return this.source.search(query, withExcludedRecordIds(options, this.excludedRecordIds));
+  }
+
+  candidateIds(query: string, options: TextSearchOptions = {}): Set<string> {
+    return this.source.candidateIds(query, withExcludedRecordIds(options, this.excludedRecordIds));
+  }
+
+  scoreRecord(id: string, query: string, options: TextSearchScoreOptions = {}): TextSearchScore | null {
+    if (this.excludedRecordIds.has(id)) return null;
+    return this.source.scoreRecord(id, query, withExcludedRecordIds(options, this.excludedRecordIds));
+  }
+
+  scoreAnalyzedRecord(
+    id: string,
+    analysis: TextSearchQueryAnalysis,
+    options: TextSearchScoreOptions = {},
+  ): TextSearchScore | null {
+    if (this.excludedRecordIds.has(id)) return null;
+    return this.source.scoreAnalyzedRecord(
+      id,
+      analysis,
+      withExcludedRecordIds(options, this.excludedRecordIds),
+    );
+  }
+}
+
 class InMemoryTextSearchIndex implements MutableTextSearchIndex {
   private records = new Map<string, IndexedRecord>();
   private postings = new Map<string, Map<string, Posting>>();
@@ -116,6 +184,17 @@ class InMemoryTextSearchIndex implements MutableTextSearchIndex {
   private docFreq = new Map<string, number>();
   private fieldTotalLengths = new Map<TextSearchFieldKey, number>();
   private fieldDocCounts = new Map<TextSearchFieldKey, number>();
+  private readonly unfilteredCorpusStats: CorpusStats = {
+    recordCount: 0,
+    excludedDocFreq: EMPTY_EXCLUDED_DOC_FREQ,
+    excludedFieldTotalLengths: EMPTY_EXCLUDED_FIELD_TOTAL_LENGTHS,
+    excludedFieldDocCounts: EMPTY_EXCLUDED_FIELD_DOC_COUNTS,
+  };
+  private mutationRevision = 0;
+  private readonly filteredCorpusStats = new WeakMap<object, {
+    readonly revision: number;
+    readonly stats: CorpusStats;
+  }>();
 
   constructor(records: Iterable<TextSearchRecord>) {
     this.rebuild(records);
@@ -136,6 +215,7 @@ class InMemoryTextSearchIndex implements MutableTextSearchIndex {
     this.docFreq.clear();
     this.fieldTotalLengths.clear();
     this.fieldDocCounts.clear();
+    this.mutationRevision += 1;
     for (const record of records) this.upsert(record);
   }
 
@@ -159,6 +239,7 @@ class InMemoryTextSearchIndex implements MutableTextSearchIndex {
       termPostings.set(indexed.id, posting);
     }
     this.sortedPrefixTerms = null;
+    this.mutationRevision += 1;
   }
 
   remove(id: string) {
@@ -176,6 +257,7 @@ class InMemoryTextSearchIndex implements MutableTextSearchIndex {
       if (termPostings?.size === 0) this.postings.delete(term);
     }
     this.sortedPrefixTerms = null;
+    this.mutationRevision += 1;
   }
 
   candidateIds(query: string, options: TextSearchOptions = {}): Set<string> {
@@ -185,8 +267,9 @@ class InMemoryTextSearchIndex implements MutableTextSearchIndex {
 
   private candidateIdsForAnalysis(analysis: TextSearchQueryAnalysis, options: TextSearchOptions = {}): Set<string> {
     if (analysis.terms.length === 0) return new Set();
+    const excludedRecordIds = options.excludedRecordIds;
     const candidateSets = analysis.terms
-      .map((term) => this.matchingIdsForTerm(term))
+      .map((term) => this.matchingIdsForTerm(term, excludedRecordIds))
       .filter((ids) => ids.size > 0)
       .sort((left, right) => left.size - right.size);
     if (candidateSets.length === 0) return new Set();
@@ -210,7 +293,7 @@ class InMemoryTextSearchIndex implements MutableTextSearchIndex {
     const results: TextSearchResult[] = [];
     for (const id of candidates) {
       const record = this.records.get(id);
-      const score = record ? this.scoreIndexedRecord(record, analysis, false) : null;
+      const score = record ? this.scoreIndexedRecord(record, analysis, false, options.excludedRecordIds) : null;
       if (!score) continue;
       results.push(score);
     }
@@ -234,14 +317,20 @@ class InMemoryTextSearchIndex implements MutableTextSearchIndex {
     options: TextSearchScoreOptions = {},
   ): TextSearchScore | null {
     const record = this.records.get(id);
-    if (!record) return null;
-    return this.scoreIndexedRecord(record, analysis, options.includeSnippet !== false);
+    if (!record || options.excludedRecordIds?.has(id)) return null;
+    return this.scoreIndexedRecord(
+      record,
+      analysis,
+      options.includeSnippet !== false,
+      options.excludedRecordIds,
+    );
   }
 
   private scoreIndexedRecord(
     record: IndexedRecord,
     analysis: TextSearchQueryAnalysis,
     includeSnippet: boolean,
+    excludedRecordIds?: ReadonlySet<string>,
   ): TextSearchScore | null {
     if (!analysis.normalized || analysis.terms.length === 0) return null;
 
@@ -253,7 +342,8 @@ class InMemoryTextSearchIndex implements MutableTextSearchIndex {
     if (!phraseMatched && !allTermsMatched) return null;
 
     let score = 0;
-    for (const term of matchedTerms) score += this.bm25(record, term);
+    const stats = this.corpusStats(excludedRecordIds);
+    for (const term of matchedTerms) score += this.bm25(record, term, stats);
     score += boostScore(record, analysis, { phraseMatched, allTermsMatched, matchedTerms });
     if (!Number.isFinite(score) || score <= 0) return null;
 
@@ -267,51 +357,59 @@ class InMemoryTextSearchIndex implements MutableTextSearchIndex {
     };
   }
 
-  private matchingIdsForTerm(term: string): Set<string> {
-    const exact = idsForPosting(this.postings.get(term));
-    if (exact.size >= this.records.size) return exact;
-    const prefix = this.prefixMatchingIds(term);
+  private matchingIdsForTerm(term: string, excludedRecordIds?: ReadonlySet<string>): Set<string> {
+    const exact = idsForPosting(this.postings.get(term), excludedRecordIds);
+    const recordCount = this.corpusStats(excludedRecordIds).recordCount;
+    if (exact.size >= recordCount) return exact;
+    const prefix = this.prefixMatchingIds(term, excludedRecordIds);
     const tokenMatches = unionSets([exact, prefix]);
     if (isTextSearchGramTerm(term) || textSearchTextHasCjk(term) || term.length < 3) return tokenMatches;
-    if (tokenMatches.size >= this.records.size) return tokenMatches;
-    return unionSets([tokenMatches, this.trigramMatchingIds(term)]);
+    if (tokenMatches.size >= recordCount) return tokenMatches;
+    return unionSets([tokenMatches, this.trigramMatchingIds(term, excludedRecordIds)]);
   }
 
-  private prefixMatchingIds(term: string): Set<string> {
+  private prefixMatchingIds(term: string, excludedRecordIds?: ReadonlySet<string>): Set<string> {
     if (!isTextSearchPrefixIndexableTerm(term)) return new Set();
     const result = new Set<string>();
     const terms = this.prefixTerms();
     for (let index = lowerBound(terms, term); index < terms.length; index += 1) {
       const indexedTerm = terms[index]!;
       if (!indexedTerm.startsWith(term)) break;
-      for (const id of this.postings.get(indexedTerm)?.keys() ?? []) result.add(id);
+      for (const id of this.postings.get(indexedTerm)?.keys() ?? []) {
+        if (!excludedRecordIds?.has(id)) result.add(id);
+      }
     }
     return result;
   }
 
-  private trigramMatchingIds(term: string): Set<string> {
+  private trigramMatchingIds(term: string, excludedRecordIds?: ReadonlySet<string>): Set<string> {
     const grams = tokenizeSearchText(term).filter(isTextSearchGramTerm);
     if (grams.length === 0) return new Set();
     const sets = grams
-      .map((gram) => idsForPosting(this.postings.get(gram)))
+      .map((gram) => idsForPosting(this.postings.get(gram), excludedRecordIds))
       .filter((ids) => ids.size > 0)
       .sort((left, right) => left.size - right.size);
     if (sets.length !== grams.length) return new Set();
     return intersectSetList(sets);
   }
 
-  private bm25(record: IndexedRecord, term: string): number {
+  private bm25(record: IndexedRecord, term: string, stats: CorpusStats): number {
     const posting = this.postings.get(term)?.get(record.id);
     if (!posting) return 0;
-    const df = this.docFreq.get(term) ?? 0;
-    const totalRecords = Math.max(this.records.size, 1);
+    const df = Math.max(0, (this.docFreq.get(term) ?? 0) - (stats.excludedDocFreq.get(term) ?? 0));
+    const totalRecords = Math.max(stats.recordCount, 1);
     const idf = Math.log(1 + (totalRecords - df + 0.5) / (df + 0.5));
     const k1 = 1.2;
     const b = 0.72;
     let score = 0;
     for (const [fieldKey, tf] of posting.fieldTf) {
       const length = record.fieldLengths.get(fieldKey) ?? 1;
-      const avgLength = averageFieldLength(this.fieldTotalLengths, this.fieldDocCounts, fieldKey);
+      const avgLength = averageVisibleFieldLength(
+        this.fieldTotalLengths,
+        this.fieldDocCounts,
+        stats,
+        fieldKey,
+      );
       const normalizedTf = (tf * (k1 + 1)) / (tf + k1 * (1 - b + b * (length / avgLength)));
       const weight = record.fieldWeights.get(fieldKey) ?? DEFAULT_FIELD_WEIGHTS[fieldKey];
       score += idf * normalizedTf * weight;
@@ -326,6 +424,44 @@ class InMemoryTextSearchIndex implements MutableTextSearchIndex {
         .sort();
     }
     return this.sortedPrefixTerms;
+  }
+
+  private corpusStats(excludedRecordIds?: ReadonlySet<string>): CorpusStats {
+    if (!excludedRecordIds || excludedRecordIds.size === 0) {
+      this.unfilteredCorpusStats.recordCount = this.records.size;
+      return this.unfilteredCorpusStats;
+    }
+    const cacheKey = excludedRecordIds as object;
+    const cached = this.filteredCorpusStats.get(cacheKey);
+    if (cached?.revision === this.mutationRevision) return cached.stats;
+
+    let recordCount = this.records.size;
+    const excludedDocFreq = new Map<string, number>();
+    const excludedFieldTotalLengths = new Map<TextSearchFieldKey, number>();
+    const excludedFieldDocCounts = new Map<TextSearchFieldKey, number>();
+    for (const id of excludedRecordIds) {
+      const record = this.records.get(id);
+      if (!record) continue;
+      recordCount -= 1;
+      for (const [fieldKey, length] of record.fieldLengths) {
+        excludedFieldTotalLengths.set(
+          fieldKey,
+          (excludedFieldTotalLengths.get(fieldKey) ?? 0) + length,
+        );
+        excludedFieldDocCounts.set(fieldKey, (excludedFieldDocCounts.get(fieldKey) ?? 0) + 1);
+      }
+      for (const term of record.tokens.keys()) {
+        excludedDocFreq.set(term, (excludedDocFreq.get(term) ?? 0) + 1);
+      }
+    }
+    const stats = {
+      recordCount,
+      excludedDocFreq,
+      excludedFieldTotalLengths,
+      excludedFieldDocCounts,
+    };
+    this.filteredCorpusStats.set(cacheKey, { revision: this.mutationRevision, stats });
+    return stats;
   }
 }
 
@@ -406,12 +542,15 @@ function fieldHasTokenPrefix(field: IndexedField, term: string): boolean {
   return field.tokens.some((token) => !isTextSearchGramTerm(token) && token.startsWith(term));
 }
 
-function averageFieldLength(
+function averageVisibleFieldLength(
   totals: Map<TextSearchFieldKey, number>,
   counts: Map<TextSearchFieldKey, number>,
+  stats: CorpusStats,
   fieldKey: TextSearchFieldKey,
 ): number {
-  return Math.max(1, (totals.get(fieldKey) ?? 0) / Math.max(counts.get(fieldKey) ?? 0, 1));
+  const total = (totals.get(fieldKey) ?? 0) - (stats.excludedFieldTotalLengths.get(fieldKey) ?? 0);
+  const count = (counts.get(fieldKey) ?? 0) - (stats.excludedFieldDocCounts.get(fieldKey) ?? 0);
+  return Math.max(1, total / Math.max(count, 1));
 }
 
 function mapFor<K, V>(map: Map<K, Map<string, V>>, key: K): Map<string, V> {
@@ -429,8 +568,28 @@ function decrementMap<K>(map: Map<K, number>, key: K, value: number) {
   else map.delete(key);
 }
 
-function idsForPosting(posting: Map<string, Posting> | undefined): Set<string> {
-  return new Set(posting?.keys() ?? []);
+function idsForPosting(
+  posting: Map<string, Posting> | undefined,
+  excludedRecordIds?: ReadonlySet<string>,
+): Set<string> {
+  const result = new Set<string>();
+  for (const id of posting?.keys() ?? []) {
+    if (!excludedRecordIds?.has(id)) result.add(id);
+  }
+  return result;
+}
+
+function withExcludedRecordIds<T extends TextSearchOptions | TextSearchScoreOptions>(
+  options: T,
+  excludedRecordIds: ReadonlySet<string>,
+): T {
+  if (!options.excludedRecordIds || options.excludedRecordIds.size === 0) {
+    return { ...options, excludedRecordIds };
+  }
+  return {
+    ...options,
+    excludedRecordIds: new Set([...options.excludedRecordIds, ...excludedRecordIds]),
+  };
 }
 
 function normalizedResultLimit(limit: number | undefined): number | null {

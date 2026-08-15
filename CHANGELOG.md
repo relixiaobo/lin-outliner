@@ -330,6 +330,73 @@ Entries reference the pull request that introduced them.
   trigger guarantee progress, with deltas that arrive mid-build rebased before
   the new base commits.
 
+- **A long streaming answer now costs the same per chunk however long it gets
+  (PR #547, codex-3)** — the tail #539 explicitly left open. Markdown repair ran
+  over the whole accumulated message on every 80 ms commit and was superlinear,
+  so it had grown into ~95% of a commit: ~20 ms at 20 KB, ~80 ms at 40 KB, and
+  worse from there. The repair library rescans the text from the start for each
+  emphasis marker it inspects; a renderer-local adapter now computes that context
+  once per repair as a set of maps and reuses them across the emphasis handlers,
+  which makes the pass linear. It is a cost change, not a repair-policy fork —
+  the output stays byte-identical to the library's after every append, which is
+  what lets the bounded tail lex from #539 keep matching a full repaired lex.
+  On a 40 KB answer a commit drops from ~97 ms to ~8 ms. The high gate found the
+  fast path guarding itself wrong: it required a `$` in the text, which sent
+  every answer *without* one back onto the slow path — the common case for
+  answers about code, where `snake_case` identifiers cost 207 ms at 40 KB and
+  over a second at 80 KB, and where adding a single `$` to the same text made it
+  12–40× faster. Math was never what made the scan expensive; the library
+  consults math context before it rejects a literal `_` or `*`. Dropping that
+  clause is the difference between the fix working on prose about code and not,
+  and it cost nothing: 40 KB of ordinary `**bold**` prose repairs in 11.6 ms
+  against 7.6 ms on the old path, linear either way, and text with no emphasis
+  markers at all still short-circuits. Verified with ~2.5M differential
+  comparisons against the canonical library plus an 800,000-state fuzz of the
+  corrected guard, both with zero divergence. Because the copied logic is
+  derived from one library version while the dependency admits later ones, that
+  committed differential suite is also the compatibility guard: an upstream
+  behavior change fails the build instead of silently drifting.
+
+- **An agent tool read stops rebuilding the Memory graph, and the read model
+  comes back on (PR #546, codex-2)** — with Memory attached,
+  `MemoryExtension.filterProjection` decoded the whole thread history and
+  rebuilt the canonical Memory graph on every `getProjection()` (1–3 per node
+  tool call, plus an N+1 SQLite read per generated Node), and its mere presence
+  disabled the maintained projection index and text-search index for *every*
+  agent tool — `node_search` fell back to a linear scan and `node_edit` to
+  per-Node `JSON.stringify` diffs, switching #414's work off on this path.
+  Canonical membership and explicit ancestor/descendant expansion now reuse the
+  incrementally maintained `MemoryMutationIndex`; the hidden-ID set and both
+  filtered read views are cached per Turn and keyed by document, control-store
+  and explicit-reference revisions, so an in-place projection update invalidates
+  them and nothing else has to. The unsupported-generated-Node N+1 becomes one
+  grouped JOIN behind a process-local filtering revision. Hidden IDs are
+  excluded before text candidates, BM25 corpus statistics, scoring and limits,
+  so a filtered search equals an index rebuilt from only the visible records —
+  which is what lets the maintained index stay available under filtering, the
+  one deliberate behavior change here and PM-ratified: `node_search` now scores
+  through the index while Memory filters. On a fixed probe — 20,000 ordinary
+  Nodes, 250 canonical Memory Nodes, 12 consecutive filtered reads in one Turn —
+  the batch goes from a 197.8–778.9 ms median to ~0.018 ms, about 0.001–0.002 ms
+  per cached call; the baseline is a range rather than a single multiplier
+  because its spread *is* the old path's allocation and N+1 noise. The high gate
+  found four defects and one follow-up. Two mattered: the per-Turn
+  explicit-reference recovery latched "complete" even when the targeted Turn read
+  missed — which would have hidden every `@`-referenced Node from `node_read` and
+  `node_search` for the rest of that Turn, the exact failure the feature exists
+  to prevent — and the new `corpusStats` early return allocated a fresh object
+  plus three `Map`s per scored record *and* per query term on the **unfiltered**
+  path (the renderer launcher, document search, every non-Memory agent search),
+  where the old code just read a size. The other two were quieter: a cache guard
+  whose two identity comparisons could never fire, because `applyUpdate` mutates
+  the projection's Node array and map in place, leaving the whole invariant
+  resting on an upstream `Set` happening to be freshly allocated; and filter
+  state that a late or orphaned Item notification could create but nothing would
+  ever evict. Closing that leak by deleting the eager path narrowed behavior in
+  its turn, so the ordering it now depends on is proven instead of assumed:
+  recorded Items are canonical before observer delivery, asserted at the earliest
+  extension notification for both persistent and ephemeral delegated Turns.
+
 ### Fixed
 
 - **Two tags that define the same field name no longer exclude each other

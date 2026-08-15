@@ -6305,12 +6305,14 @@ describe('ThreadService', () => {
     }
   });
 
-  test('publishes delegated lifecycle once in marker-first order', async () => {
+  test('persists delegated Turns before publishing lifecycle once in marker-first order', async () => {
     for (const ephemeral of [false, true]) {
       let childId = '';
+      let childTurnId = '';
       let fixture!: Fixture;
       const events: string[] = [];
       const markerStates: string[] = [];
+      const readableTurnIdsBeforeStartNotification: Array<string | null> = [];
       const observe = (event: string) => {
         events.push(event);
         markerStates.push(fixture.stores.subagentExecutions.read(childId)?.initialAdmissionState ?? 'missing');
@@ -6319,7 +6321,11 @@ describe('ThreadService', () => {
       registry.register({
         id: `delegated-marker-order-${ephemeral ? 'ephemeral' : 'persistent'}`,
         onThreadStarted: (thread) => {
-          if (thread.id === childId) observe('onThreadStarted');
+          if (thread.id !== childId) return;
+          readableTurnIdsBeforeStartNotification.push(
+            fixture.service.readTurnForHost(childId, childTurnId)?.id ?? null,
+          );
+          observe('onThreadStarted');
         },
         onTurnStarted: (thread) => {
           if (thread.id === childId) observe('onTurnStarted');
@@ -6345,7 +6351,7 @@ describe('ThreadService', () => {
       });
       await fixture.executor.waitUntilWaiting(0);
       childId = uuidV7(fixture.clock());
-      const childTurnId = uuidV7(fixture.clock());
+      childTurnId = uuidV7(fixture.clock());
       const unsubscribe = fixture.service.subscribe((notification) => {
         if (
           notification.threadId === childId
@@ -6382,6 +6388,7 @@ describe('ThreadService', () => {
         'provider',
       ]);
       expect(markerStates).toEqual(Array(events.length).fill('committed'));
+      expect(readableTurnIdsBeforeStartNotification).toEqual([childTurnId]);
       if (ephemeral) {
         expect(fixture.service.readTurnForHost(childId, childTurnId)).toMatchObject({ status: 'inProgress' });
       } else {

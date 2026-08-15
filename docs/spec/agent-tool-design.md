@@ -68,8 +68,13 @@ Memory adds no parallel model tools. Eligible root-user Turns use the same Node
 catalog for explicit remember, update, and forget requests. Implicit
 `node_search` and `node_read` projections filter canonical Daily Timeline Memory
 through the admission-pinned visibility view; explicit user-supplied Node
-references remain ordinary input. Memory graph writes are causation-checked as
-specified in [`agent-memory.md`](agent-memory.md).
+references remain ordinary input. `ToolRuntime` applies that visibility view to
+the full projection, maintained projection index, and maintained text-search
+index under the executing Item's causation. Hidden IDs leave the text index
+before candidate selection, BM25 statistics, scoring, or limits; filtered and
+unfiltered Threads therefore share the indexed `node_search` scorer, while
+`node_edit` keeps sparse mutation effects. Memory graph writes are
+causation-checked as specified in [`agent-memory.md`](agent-memory.md).
 
 ### Local Files And Commands
 

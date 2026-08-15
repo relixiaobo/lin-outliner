@@ -9,7 +9,6 @@ import {
 } from 'react';
 import { Lexer, type Token } from 'marked';
 import Markdown, { defaultUrlTransform } from 'react-markdown';
-import remend from 'remend';
 import remarkGfm from 'remark-gfm';
 import {
   transformMarkdownReferenceTextNodes,
@@ -35,6 +34,7 @@ import {
   threadNodeReferenceStyle,
   type ThreadNodeReferenceOpenHandler,
 } from '../threadReferences';
+import { repairStreamingMarkdown } from '../streamingMarkdownRepair';
 
 interface ThreadMarkdownProps {
   readonly index?: DocumentIndex;
@@ -329,7 +329,7 @@ function appendStreamingMarkdown(
   previous: StreamingMarkdownBlockState,
   text: string,
 ): StreamingMarkdownBlockState {
-  const repaired = remend(text);
+  const repaired = repairStreamingMarkdown(text);
   if (
     previous.tailStart > repaired.length
     || repaired.slice(0, previous.tailStart) !== text.slice(0, previous.tailStart)
@@ -377,7 +377,7 @@ function appendStreamingMarkdown(
 
 function parseFullStreamingMarkdown(
   text: string,
-  repaired = remend(text),
+  repaired = repairStreamingMarkdown(text),
 ): StreamingMarkdownBlockState {
   let tokens: readonly Token[];
   try {
