@@ -81,7 +81,7 @@ describe('Agent registry projection', () => {
     expect(projection.anchorsByTurnId.get('turn-1')?.items.map((item) => item.id)).toEqual(['main-message']);
   });
 
-  test('names the Agent whose result each continuation Turn carries, across Turns', () => {
+  test('names whose result each delivery carries, and which of its runs, across Turns', () => {
     const spawn = activity('spawn', 'started', null, 'agent-call');
     const spawnTurn = parentTurn('turn-1', [collaborationItem('agent-call', 'agent', 'completed', CHILD_ID), spawn]);
     const continuation: Turn = {
@@ -98,8 +98,25 @@ describe('Agent registry projection', () => {
       turnsByThread: new Map([[PARENT_ID, [spawnTurn, continuation]]]),
     }));
 
-    expect(projection.continuationAgentByTurnId.get('turn-2')).toBe(CHILD_ID);
-    expect(projection.continuationAgentByTurnId.get('turn-1')).toBeUndefined();
+    expect(projection.deliveryByTurnId.get('turn-2')).toEqual({ agentId: CHILD_ID, generationIndex: 0 });
+    expect(projection.deliveryByTurnId.get('turn-1')).toBeUndefined();
+  });
+
+  test('counts each Agent\'s deliveries in order, so a resume shows its own run', () => {
+    const spawn = activity('spawn', 'started', null, 'agent-call');
+    const spawnTurn = parentTurn('turn-1', [collaborationItem('agent-call', 'agent', 'completed', CHILD_ID), spawn]);
+    const firstDelivery = continuationTurn('turn-2', 'agent-call');
+    const resumeTurn = parentTurn('turn-3', [collaborationItem('resume-call', 'agent_message', 'completed', CHILD_ID)]);
+    const secondDelivery = continuationTurn('turn-4', 'resume-call');
+
+    const projection = projectSubagentConversation(input({
+      turnsByThread: new Map([[PARENT_ID, [spawnTurn, firstDelivery, resumeTurn, secondDelivery]]]),
+    }));
+
+    // One generation is one child Turn, so the Nth delivery from an Agent is
+    // the Nth run — which is the report that anchor can show.
+    expect(projection.deliveryByTurnId.get('turn-2')).toEqual({ agentId: CHILD_ID, generationIndex: 0 });
+    expect(projection.deliveryByTurnId.get('turn-4')).toEqual({ agentId: CHILD_ID, generationIndex: 1 });
   });
 
   test('never reads an Agent\'s own delegated Turn as its own result arriving', () => {
@@ -121,8 +138,8 @@ describe('Agent registry projection', () => {
       turnsByThread: new Map([[PARENT_ID, [spawnTurn]], [CHILD_ID, [delegatedTurn]]]),
     }));
 
-    expect(projection.continuationAgentByTurnId.get('child-turn')).toBeUndefined();
-    expect([...projection.continuationAgentByTurnId.keys()]).toEqual([]);
+    expect(projection.deliveryByTurnId.get('child-turn')).toBeUndefined();
+    expect([...projection.deliveryByTurnId.keys()]).toEqual([]);
   });
 
   test('reads live status from the current generation Turn and settled status from the record', () => {
@@ -230,7 +247,7 @@ describe('Agent registry identity stability', () => {
     expect(after.byAgentId).toBe(before.byAgentId);
     expect(after.byAgentId.get(CHILD_ID)).toBe(before.byAgentId.get(CHILD_ID));
     expect(after.anchorsByTurnId.get('turn-1')).toBe(before.anchorsByTurnId.get('turn-1'));
-    expect(after.continuationAgentByTurnId).toBe(before.continuationAgentByTurnId);
+    expect(after.deliveryByTurnId).toBe(before.deliveryByTurnId);
   });
 
   test('returns the same projection object when nothing changed at all', () => {
@@ -298,6 +315,18 @@ describe('work strip membership', () => {
     expect(stripRows(old, now)).toEqual([]);
   });
 });
+
+/** A Turn the host started in the delegating conversation to deliver a result. */
+function continuationTurn(id: string, callItemId: string): Turn {
+  return {
+    ...parentTurn(id, []),
+    provenance: {
+      originThreadId: PARENT_ID,
+      originTurnId: id,
+      trigger: { kind: 'subagent', parentThreadId: PARENT_ID, parentItemId: callItemId },
+    },
+  };
+}
 
 function anchorList(
   projection: ReturnType<typeof projectSubagentConversation>,

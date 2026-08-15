@@ -84,16 +84,27 @@ export interface SubagentTurnAnchors {
   readonly agentIds: readonly ThreadId[];
 }
 
+/** One delivery: whose result arrived, and which of its runs produced it. */
+export interface SubagentDelivery {
+  readonly agentId: ThreadId;
+  /**
+   * Which run of that Agent this delivery carries, counted from zero in
+   * narrative order. One generation is one child Turn — steering joins the Turn
+   * already running, and only a resume starts another — so the Nth delivery
+   * from an Agent is its Nth Turn, which is the report this anchor can show.
+   */
+  readonly generationIndex: number;
+}
+
 export interface SubagentConversationProjection {
   readonly byAgentId: ReadonlyMap<ThreadId, SubagentRegistryEntry>;
   readonly anchorsByTurnId: ReadonlyMap<TurnId, SubagentTurnAnchors>;
   /**
-   * For a Turn the host started to deliver a child's result, the Agent that
-   * result came from. This is what the completion divider names, and it is
-   * resolved across Turns: the call that spawned or resumed the Agent is
-   * usually in a much earlier Turn than the one its result continues.
+   * For a Turn the host started to deliver a child's result, whose result it
+   * carries. Resolved across Turns: the call that spawned or resumed the Agent
+   * is usually in a much earlier Turn than the one its result continues.
    */
-  readonly continuationAgentByTurnId: ReadonlyMap<TurnId, ThreadId>;
+  readonly deliveryByTurnId: ReadonlyMap<TurnId, SubagentDelivery>;
 }
 
 export interface SubagentProjectionInput {
@@ -121,7 +132,7 @@ export function emptyTurnAnchors(turn: Turn): SubagentTurnAnchors {
 export const EMPTY_SUBAGENT_PROJECTION: SubagentConversationProjection = {
   byAgentId: new Map(),
   anchorsByTurnId: new Map(),
-  continuationAgentByTurnId: new Map(),
+  deliveryByTurnId: new Map(),
 };
 
 interface ProjectionMemo {
@@ -167,17 +178,17 @@ export function projectSubagentConversation(
   }
 
   const byAgentId = reuseEntryMap(previous?.byAgentId ?? null, entries);
-  const continuationAgentByTurnId = reuseIdMap(
-    previous?.continuationAgentByTurnId ?? null,
-    continuationAgents(owners, input.turnsByThread, agentByCallItemId),
+  const deliveryByTurnId = reuseDeliveryMap(
+    previous?.deliveryByTurnId ?? null,
+    deliveries(owners, input.turnsByThread, agentByCallItemId),
   );
   const anchors = reuseAnchorMap(previous?.anchorsByTurnId ?? null, anchorsByTurnId);
   const projection = previous
     && anchors === previous.anchorsByTurnId
     && byAgentId === previous.byAgentId
-    && continuationAgentByTurnId === previous.continuationAgentByTurnId
+    && deliveryByTurnId === previous.deliveryByTurnId
     ? previous
-    : { anchorsByTurnId: anchors, byAgentId, continuationAgentByTurnId };
+    : { anchorsByTurnId: anchors, byAgentId, deliveryByTurnId };
   memos.set(projection, { projection, anchorsByTurn });
   return projection;
 }
@@ -273,12 +284,13 @@ function spawnAnchor(item: SubAgentActivityThreadItem): SubagentAnchor {
  * a divider inside the Agent, announcing it complete while it ran, standing
  * where the task it was given should have been.
  */
-function continuationAgents(
+function deliveries(
   owners: readonly ThreadId[],
   turnsByThread: ReadonlyMap<ThreadId, readonly Turn[]>,
   agentByCallItemId: ReadonlyMap<ThreadItemId, ThreadId>,
-): Map<TurnId, ThreadId> {
-  const resolved = new Map<TurnId, ThreadId>();
+): Map<TurnId, SubagentDelivery> {
+  const resolved = new Map<TurnId, SubagentDelivery>();
+  const deliveredByAgent = new Map<ThreadId, number>();
   for (const ownerThreadId of owners) {
     for (const turn of turnsByThread.get(ownerThreadId) ?? []) {
       const trigger = turn.provenance.trigger;
@@ -288,7 +300,10 @@ function continuationAgents(
         || trigger.parentThreadId !== ownerThreadId
       ) continue;
       const agentId = agentByCallItemId.get(trigger.parentItemId);
-      if (agentId !== undefined) resolved.set(turn.id, agentId);
+      if (agentId === undefined) continue;
+      const generationIndex = deliveredByAgent.get(agentId) ?? 0;
+      deliveredByAgent.set(agentId, generationIndex + 1);
+      resolved.set(turn.id, { agentId, generationIndex });
     }
   }
   return resolved;
@@ -661,13 +676,16 @@ function reuseAnchorMap(
   return previous;
 }
 
-function reuseIdMap(
-  previous: ReadonlyMap<TurnId, ThreadId> | null,
-  next: ReadonlyMap<TurnId, ThreadId>,
-): ReadonlyMap<TurnId, ThreadId> {
+function reuseDeliveryMap(
+  previous: ReadonlyMap<TurnId, SubagentDelivery> | null,
+  next: ReadonlyMap<TurnId, SubagentDelivery>,
+): ReadonlyMap<TurnId, SubagentDelivery> {
   if (!previous || previous.size !== next.size) return next;
-  for (const [turnId, agentId] of next) {
-    if (previous.get(turnId) !== agentId) return next;
+  for (const [turnId, delivery] of next) {
+    const before = previous.get(turnId);
+    if (before?.agentId !== delivery.agentId || before.generationIndex !== delivery.generationIndex) {
+      return next;
+    }
   }
   return previous;
 }

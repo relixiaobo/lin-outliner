@@ -2502,11 +2502,12 @@ test.describe('canonical agent Thread surface', () => {
     // rewritten or forked through root-only actions.
     // The brief the parent wrote, named as the task it is — not as an "event",
     // which is what a peer Agent's message to a conversation is.
-    // The brief keeps the reader's own slot and shape; only its quieter fill and
-    // the attribution in its actions row say the words are someone else's.
+    // Position is identity: the brief sits opposite the reader's own messages
+    // and says who wrote it, so "main asked this" never rides on a hover.
     const brief = detail.locator('.thread-user-message.thread-host-event');
     await expect(brief).toContainText('Investigate the deployment story.');
-    await expect(brief.locator('.thread-message-author')).toHaveText('From main');
+    await expect(brief.locator('.thread-host-event-label')).toHaveText('From main');
+    expect(await brief.evaluate((element) => getComputedStyle(element).alignSelf)).toBe('flex-start');
     await expect(detail.getByRole('textbox', { name: 'Message this Thread' })).toBeVisible();
     await expect(detail.getByRole('button', { name: 'Edit message' })).toHaveCount(0);
     await expect(detail.getByRole('button', { name: 'Continue in new chat' })).toHaveCount(0);
@@ -3218,6 +3219,223 @@ test.describe('canonical agent Thread surface', () => {
     await expect(row).toHaveCount(0);
     await parentTurn.locator('.thread-process-toggle').click();
     await expect(row.locator('.thread-agent-chip-meta')).toHaveText('Completed · 3m 12s');
+  });
+
+  test('delivers a result as the Agent\'s own folded message, never the host notification', async ({ page }) => {
+    await createNewThread(page);
+    const fixture = await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(m: string, i?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: {
+          emitAgentCoreNotification: (n: unknown) => void;
+          setMockSubagentExecution: (agentId: string, patch: Record<string, unknown>) => void;
+          setMockThreadTurns: (threadId: string, turns: readonly unknown[]) => void;
+        };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<Record<string, unknown>> }>('thread/list', {});
+      const root = response?.data[0];
+      if (!root) throw new Error('Mock root Thread not found');
+      const parentThreadId = String(root.id);
+      const parentTurnId = '01910000-0000-7000-8000-000000004a01';
+      const callId = '01910000-0000-7000-8000-000000004a06';
+      const activityId = '01910000-0000-7000-8000-000000004a02';
+      const deliveryTurnId = '01910000-0000-7000-8000-000000004a03';
+      const noticeId = '01910000-0000-7000-8000-000000004a04';
+      const proseId = '01910000-0000-7000-8000-000000004a05';
+      const childId = '01910000-0000-7000-8000-000000004a10';
+      const childTurnId = '01910000-0000-7000-8000-000000004a11';
+      const childAnswerId = '01910000-0000-7000-8000-000000004a12';
+      const startedAt = Date.now() - 4_000;
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'thread/started',
+        threadId: childId,
+        thread: {
+          ...root,
+          id: childId,
+          parentThreadId,
+          agentNickname: null,
+          agentRole: 'worker',
+          name: null,
+          source: 'collaboration',
+          threadSource: 'subagent',
+          status: { type: 'idle' },
+          updatedAt: startedAt,
+        },
+      });
+      target.__LIN_E2E__?.setMockSubagentExecution(childId, {
+        description: 'research',
+        currentTurnId: null,
+      });
+      const childProvenance = {
+        originThreadId: childId,
+        originTurnId: childTurnId,
+        trigger: { kind: 'subagent', parentThreadId, parentItemId: callId },
+      };
+      const childTurn = {
+        id: childTurnId,
+        items: [{
+          id: childAnswerId,
+          type: 'agentMessage',
+          provenance: { originThreadId: childId, originTurnId: childTurnId, originItemId: childAnswerId },
+          text: [
+            'The rollout order is safe.',
+            ...Array.from({ length: 12 }, (_, index) => `Evidence line ${index + 1}.`),
+          ].join('\n\n'),
+          phase: 'final_answer',
+          memoryCitation: null,
+        }],
+        itemsView: 'full',
+        provenance: childProvenance,
+        status: 'completed',
+        error: null,
+        startedAt,
+        completedAt: startedAt + 2_000,
+        durationMs: 2_000,
+      };
+      target.__LIN_E2E__?.setMockThreadTurns(childId, [childTurn]);
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/completed',
+        threadId: childId,
+        turnId: childTurnId,
+        turn: childTurn,
+      });
+      const provenance = (itemId: string) => ({
+        originThreadId: parentThreadId,
+        originTurnId: parentTurnId,
+        originItemId: itemId,
+      });
+      const delegatingTurn = {
+        id: parentTurnId,
+        items: [{
+          id: callId,
+          type: 'collabAgentToolCall',
+          provenance: provenance(callId),
+          tool: 'agent',
+          status: 'completed',
+          outputRef: null,
+          senderThreadId: parentThreadId,
+          receiverThreadIds: [childId],
+          prompt: 'Check the rollout order.',
+          summary: null,
+          model: null,
+          reasoningEffort: null,
+          agentsStates: {},
+          modelCall: null,
+        }, {
+          id: activityId,
+          type: 'subAgentActivity',
+          provenance: provenance(activityId),
+          kind: 'started',
+          agentThreadId: childId,
+          agentTurnId: null,
+          agentPath: '/root/research',
+          error: null,
+          spawnItemId: callId,
+        }],
+        itemsView: 'full',
+        provenance: { originThreadId: parentThreadId, originTurnId: parentTurnId, trigger: { kind: 'user' } },
+        status: 'completed',
+        error: null,
+        startedAt,
+        completedAt: startedAt + 1_000,
+        durationMs: 1_000,
+      };
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/started',
+        threadId: parentThreadId,
+        turnId: parentTurnId,
+        turn: delegatingTurn,
+      });
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/completed',
+        threadId: parentThreadId,
+        turnId: parentTurnId,
+        turn: delegatingTurn,
+      });
+      // The delivery Turn: the host wakes the model with notification framing,
+      // and the model answers the reader.
+      const deliveryTurn = {
+        id: deliveryTurnId,
+        items: [
+          {
+            id: noticeId,
+            type: 'userMessage',
+            provenance: {
+              originThreadId: parentThreadId,
+              originTurnId: deliveryTurnId,
+              originItemId: noticeId,
+            },
+            clientId: null,
+            acceptedAt: startedAt + 2_100,
+            content: [{
+              type: 'text',
+              text: '<task-notification>Agent research finished. Read its transcript at …</task-notification>',
+            }],
+          },
+          {
+            id: proseId,
+            type: 'agentMessage',
+            provenance: {
+              originThreadId: parentThreadId,
+              originTurnId: deliveryTurnId,
+              originItemId: proseId,
+            },
+            text: 'Research says the order holds, so we can ship it.',
+            phase: 'final_answer',
+            memoryCitation: null,
+          },
+        ],
+        itemsView: 'full',
+        provenance: {
+          originThreadId: parentThreadId,
+          originTurnId: deliveryTurnId,
+          trigger: { kind: 'subagent', parentThreadId, parentItemId: callId },
+        },
+        status: 'completed',
+        error: null,
+        startedAt: startedAt + 2_100,
+        completedAt: startedAt + 3_000,
+        durationMs: 900,
+      };
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/started',
+        threadId: parentThreadId,
+        turnId: deliveryTurnId,
+        turn: deliveryTurn,
+      });
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/completed',
+        threadId: parentThreadId,
+        turnId: deliveryTurnId,
+        turn: deliveryTurn,
+      });
+      return { childId, deliveryTurnId, parentThreadId };
+    });
+
+    // The conversation is still the narrative: the main agent's prose is the
+    // thing to read, and the host's own wake-up framing reaches nobody.
+    const deliveryTurn = page.locator(`[data-thread-turn-row="${fixture.deliveryTurnId}"]`);
+    await expect(deliveryTurn).toContainText('Research says the order holds');
+    await expect(page.locator('.thread-transcript')).not.toContainText('task-notification');
+
+    // What replaces it is a MESSAGE from the Agent, in the bubble every other
+    // message wears: named, on the sender's side, never the reader's own slot.
+    const report = deliveryTurn.locator('.thread-agent-report');
+    await expect(report.locator('.thread-host-event-label')).toHaveText('From research');
+    await expect(report).toContainText('The rollout order is safe.');
+    expect(await report.evaluate((element) => getComputedStyle(element).alignSelf)).toBe('flex-start');
+
+    // Folded like any long message, behind the same one control.
+    const body = report.locator('.thread-user-content-body');
+    await expect(body).toHaveClass(/is-collapsed/u);
+    await report.getByRole('button', { name: 'Show more' }).click();
+    await expect(body).not.toHaveClass(/is-collapsed/u);
+    await expect(body).toContainText('Evidence line 12.');
+
+    // Depth beyond the report is the detail view, one push away.
+    await report.getByRole('button', { name: 'Details' }).click();
+    await expect(page.locator('.thread-agent-detail')).toBeVisible();
+    await expect(page.locator('.thread-dock-title')).toHaveText('research');
   });
 
   test('sends the composer Stop against the delegating Turn that owns the request', async ({ page }) => {

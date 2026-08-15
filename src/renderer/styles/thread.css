@@ -805,23 +805,33 @@
   gap: var(--space-3);
 }
 
-/* Someone else's request, in the same slot and shape as the reader's own. The
-   quieter fill is the whole difference at rest; who wrote it rides the actions
-   row, revealed on hover with everything else there. */
+/* Someone else's words: the opposite side from the reader's own, named, and in
+   a quieter fill. Position is identity here, as in any message stream — the
+   difference between "I asked this" and "main asked this" is who, and that is
+   not something to leave to a hover. */
+.thread-host-event {
+  align-self: flex-start;
+  align-items: flex-start;
+}
+
+.thread-host-event .thread-user-content-sequence,
+.thread-host-event .thread-user-content-shell,
+.thread-host-event .thread-message-actions {
+  align-items: flex-start;
+  align-self: flex-start;
+}
+
 .thread-host-event .thread-user-content-shell {
   background: var(--fill-1);
 }
 
-.thread-message-author {
+.thread-host-event-label {
   display: inline-flex;
-  min-width: 0;
   align-items: center;
-  gap: var(--space-1);
-  padding-right: var(--space-1);
+  gap: var(--space-2);
   color: var(--text-faint);
   font-size: var(--font-meta);
   line-height: var(--line-meta);
-  white-space: nowrap;
 }
 
 .thread-user-content-sequence {
@@ -1761,55 +1771,37 @@
   white-space: normal;
 }
 
-/* Why the agent just spoke: one muted line, with the way into the Agent at its
-   centre. It is an attribution, not a heading, so it stays at meta weight and
-   lets the rules carry the eye across. */
-.thread-agent-divider {
-  display: flex;
-  width: 100%;
-  min-width: 0;
-  align-items: center;
-  gap: var(--space-3);
+/* An Agent speaking in the conversation: folded by default, opposite the
+   reader's own side, in the quieter fill every non-reader message uses. It is a
+   participant's message, not a divider — the delegation graph is a set of
+   participants, and this is one of them reporting back. */
+/* The report IS a message: it inherits the whole host-event bubble — the
+   opposite side, the quieter fill, the label above — and adds only the two
+   things that are its own. */
+.thread-agent-report-empty {
+  margin: 0;
   color: var(--text-tertiary);
   font-size: var(--font-meta);
   line-height: var(--line-meta);
 }
 
-.thread-agent-divider-rule {
-  min-width: var(--space-4);
-  flex: 1 1 auto;
-  height: 1px;
-  background: var(--separator);
-}
-
-.thread-agent-divider-button {
-  display: flex;
-  min-width: 0;
-  flex: 0 1 auto;
+.thread-agent-report-open {
+  display: inline-flex;
+  align-self: flex-start;
   align-items: center;
-  gap: var(--space-2);
-  padding: 0;
+  gap: var(--space-1);
   border: 0;
   background: transparent;
-  color: inherit;
-  font: inherit;
+  padding: 0;
+  color: var(--link);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
   transition: color var(--motion-fast);
 }
 
-.thread-agent-divider-button:hover,
-.thread-agent-divider-button:focus-visible {
+.thread-agent-report-open:hover,
+.thread-agent-report-open:focus-visible {
   color: var(--text-strong);
-}
-
-.thread-agent-divider-label {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.thread-agent-divider-action {
-  flex: 0 0 auto;
 }
 
 /* An Agent the user stopped says so where its result would have been. */
@@ -3182,10 +3174,10 @@
   overflow: hidden;
   border-radius: var(--radius-sm);
   background: var(--fill-1);
-  padding: 0 var(--space-2);
+  padding: var(--space-1) var(--space-2);
   color: var(--text-tertiary);
   font-size: var(--font-ui-2xs);
-  line-height: calc(var(--line-ui-2xs) + var(--space-2));
+  line-height: var(--line-ui-2xs);
   text-overflow: ellipsis;
   white-space: nowrap;
 }

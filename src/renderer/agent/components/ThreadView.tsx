@@ -120,9 +120,10 @@ import {
   collaborationResultSnapshot,
   emptyTurnAnchors,
   type SubagentConversationProjection,
+  type SubagentDelivery,
   type SubagentTurnAnchors,
 } from '../subagentPresentation';
-import { SubagentCompletionDivider } from './SubagentCompletionDivider';
+import { SubagentReport } from './SubagentReport';
 import { useWorkingAgentIds } from './SubagentRegistryContext';
 import { classifyNewThreadCommand } from '../threadComposerCommands';
 
@@ -1713,7 +1714,7 @@ export function ThreadView({
                         latestTurnByThread={latestTurnByThread}
                         turn={turn}
                         anchors={subagentProjection.anchorsByTurnId.get(turn.id) ?? emptyTurnAnchors(turn)}
-                        continuationAgentId={subagentProjection.continuationAgentByTurnId.get(turn.id) ?? null}
+                        delivery={subagentProjection.deliveryByTurnId.get(turn.id) ?? null}
                         userView={userView}
                         waitingOnUserInput={waitingOnUserInput}
                       />
@@ -1982,7 +1983,7 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   latestTurnByThread,
   turn,
   anchors,
-  continuationAgentId,
+  delivery,
   userView,
   waitingOnUserInput,
 }: {
@@ -2022,7 +2023,7 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   /** This Turn's delegation anchors, projected once for the conversation. */
   readonly anchors: SubagentTurnAnchors;
   /** Set when the host started this Turn to deliver an Agent's result. */
-  readonly continuationAgentId: ThreadId | null;
+  readonly delivery: SubagentDelivery | null;
   readonly userView: RendererUserViewHints;
   readonly waitingOnUserInput: boolean;
 }) {
@@ -2176,41 +2177,46 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   );
   const renderItem = (item: ThreadItem, showMessageActions: boolean) => (
     // The host's own notification text is not a message to the reader. Where
-    // this Turn exists because an Agent's result arrived, the attribution
-    // divider replaces it: one muted line that says which Agent spoke and opens
-    // it, instead of the wall of task-notification framing addressed to the
-    // model.
-    continuationAgentId !== null && item.type === 'userMessage' ? (
-      <SubagentCompletionDivider agentId={continuationAgentId} key={item.id} />
+    // this Turn exists because an Agent's result arrived, the Agent's own
+    // report replaces it — folded, as a message from that Agent — instead of
+    // the wall of task-notification framing addressed to the model.
+    delivery !== null && item.type === 'userMessage' ? (
+      <SubagentReport
+        delivery={delivery}
+        expandState={expandState}
+        index={index}
+        key={item.id}
+        onOpenNodeReference={onOpenNodeReference}
+      />
     ) : (
-    <ThreadItemView
-      agentResponseTail={item.id === responseItem?.id ? responseTail : null}
-      canEditUserMessage={canEditUserMessage && showMessageActions}
-      defaultReasoningExpanded={reasoningExpandedByDefault(turn, item)}
-      expandState={expandState}
-      index={index}
-      item={item}
-      hostAuthoredEvent={hostAuthoredEvent}
-      {...(hostAuthorName === undefined ? {} : { hostAuthorName })}
-      key={item.id}
-      onAgentMessageContextMenu={item.id === responseItem?.id ? handleResponseContextMenu : undefined}
-      onEditUserMessage={editUserMessage}
-      onInterruptThread={onInterruptThread}
-      onOpenNodeReference={onOpenNodeReference}
-      onOpenTurnDetails={standaloneContextBoundary ? openTurnDetails : undefined}
-      onOpenThread={onOpenThread}
-      onReadToolArguments={readToolArguments}
-      onReadToolOutput={readToolOutput}
-      showMessageActions={showMessageActions}
-      streaming={turn.status === 'inProgress' && turn.items.at(-1)?.id === item.id}
-      {...(anchors.anchorByItemId.has(item.id)
-        ? { anchor: anchors.anchorByItemId.get(item.id)! }
-        : {})}
-      threadId={threadId}
-      threadCwd={threadCwd}
-      userView={userView}
-      workingTextEnabled={workingTextEnabled}
-    />
+      <ThreadItemView
+        agentResponseTail={item.id === responseItem?.id ? responseTail : null}
+        canEditUserMessage={canEditUserMessage && showMessageActions}
+        defaultReasoningExpanded={reasoningExpandedByDefault(turn, item)}
+        expandState={expandState}
+        index={index}
+        item={item}
+        hostAuthoredEvent={hostAuthoredEvent}
+        {...(hostAuthorName === undefined ? {} : { hostAuthorName })}
+        key={item.id}
+        onAgentMessageContextMenu={item.id === responseItem?.id ? handleResponseContextMenu : undefined}
+        onEditUserMessage={editUserMessage}
+        onInterruptThread={onInterruptThread}
+        onOpenNodeReference={onOpenNodeReference}
+        onOpenTurnDetails={standaloneContextBoundary ? openTurnDetails : undefined}
+        onOpenThread={onOpenThread}
+        onReadToolArguments={readToolArguments}
+        onReadToolOutput={readToolOutput}
+        showMessageActions={showMessageActions}
+        streaming={turn.status === 'inProgress' && turn.items.at(-1)?.id === item.id}
+        {...(anchors.anchorByItemId.has(item.id)
+          ? { anchor: anchors.anchorByItemId.get(item.id)! }
+          : {})}
+        threadId={threadId}
+        threadCwd={threadCwd}
+        userView={userView}
+        workingTextEnabled={workingTextEnabled}
+      />
     )
   );
   return (

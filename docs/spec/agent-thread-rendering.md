@@ -73,15 +73,18 @@ Inside the view the transcript renders EXACTLY as the main conversation does —
 same message stream, same bubbles, same rows — because it is the same thing: a
 request and the work it produced. What differs is which actions are valid.
 
-A request keeps the reader's own slot and shape whoever wrote it: the brief an
-Agent was given renders as the same right-aligned bubble, with the same action
-row at the same edge, because the Agent's transcript is a request and the work
-it produced exactly like the conversation above it. A quieter fill is the whole
-difference at rest. WHO wrote it rides the actions row, revealed on hover with
-everything else there: the delegating Agent, or `main` when the delegator is the
-conversation itself. That covers the brief and every later steer, which is not a
-task and must not be labelled as one. A message the reader typed into the same
-composer carries no attribution, because it needs none — they wrote it.
+**Position is identity.** The delegation graph is a set of participants sending
+each other messages, and every surface that shows one reads like any message
+stream: the reader's own words on the reader's side, everyone else's on the
+opposite side, named. So the brief an Agent was given — and every later steer
+from its delegator — renders left-aligned, in a quieter fill, under a standing
+label naming the sender (`From main` when the delegator is the conversation
+itself, otherwise the delegating Agent). The label is always visible, never a
+hover reveal: the difference between "I asked this" and "main asked this" is who
+is speaking, which is the one thing a message stream may not hide. A message the
+reader typed into the same composer keeps the reader's own right-aligned bubble
+and carries no label, because it needs none — they wrote it. The label names a
+sender and nothing else; a steer is not a task and must not be labelled as one.
 
 Each Turn after the first IS a new generation, and nothing marks it as one. A
 generation counter is the execution record's word for a resume, not the
@@ -428,20 +431,24 @@ ANCHOR in it at the point where it happened:
   prevent — and it can never precede the reasoning that produced it, because it
   takes the call's slot rather than the activity's;
 - a **resume chip** at each later `agent_message`, referencing the same Agent;
-- a **delivery divider** introducing the Turn the host started to deliver a
-  result: one muted attribution line whose centre opens the Agent. It replaces
-  the raw task-notification text, which is host framing addressed to the model
-  and never a message to the reader, and it means reviewing a finished Agent
-  never requires scrolling back to the spawn point. It says the Agent REPORTED
-  BACK rather than that it completed (PM 2026-08-15, replacing the ratified
-  `Research complete`): this anchor marks delivery, and delivery is not
-  settlement — a terminal generation queues its notification and the parent
-  materializes it at its next idle boundary, arbitrarily later while it is busy.
-  `Completed` is the state word and already the chip's; the divider needs the
-  verb for the event that happened here, which is the delegation contract's own:
-  the result is pushed to the delegator. The Turn's trigger names the call the
-  notification answers, so the whole conversation's anchors are the index that
-  resolves it across Turns;
+- a **report** at the head of the Turn the host started to deliver a result: the
+  Agent's own terminal answer, rendered as a MESSAGE from that Agent. It stands
+  exactly where the raw task-notification text would be and replaces it, because
+  that text is host framing addressed to the model and never a message to the
+  reader. Position is identity here too (above): it wears the same left-aligned
+  host-event bubble as a brief, under the same `From <name>` label, and folds
+  behind the same Show more every long message uses — one grammar, so a report
+  reads as somebody speaking rather than as one more row of what the Turn did.
+  A pill-shaped fold-to-nothing row was tried first and drowned among the tool
+  rows (PM 2026-08-15). It never wears the READER's bubble: Agent output is
+  untrusted content, and a surface that let it pass for the reader's own words
+  would be the first step in the laundering the protocol refuses. A `Details ›`
+  control beside it pushes the Agent's own view, so reviewing a finished Agent
+  never requires scrolling back to the spawn point. The Turn's trigger names the
+  call the notification answers, so the conversation's anchors are the index
+  that resolves it across Turns, and the Nth delivery from one Agent reads that
+  Agent's Nth Turn — its history is fetched when the report renders, since a
+  message with nothing in it is not a message;
 - a **stopped note** in place of the completion narration for an Agent the user
   stopped, naming the resume path.
 

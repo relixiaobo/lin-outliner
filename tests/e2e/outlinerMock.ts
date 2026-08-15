@@ -1962,18 +1962,18 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         emitAgentCoreNotification({ type: 'thread/status/changed', threadId, status: clone(thread.status) });
       },
       setMockSubagentExecution: (agentId, patch) => {
-      const merged = { ...mockSubagentExecutionPatches.get(agentId) ?? {}, ...clone(patch) };
-      mockSubagentExecutionPatches.set(agentId, merged);
-      const execution = subagentExecutionFor(agentId);
-      if (execution) {
-        emitAgentCoreNotification({
-          type: 'subagent/execution/changed',
-          threadId: execution.parentThreadId,
-          execution,
-        });
-      }
-    },
-    setNextThreadStartBehavior: (behavior) => {
+        const merged = { ...mockSubagentExecutionPatches.get(agentId) ?? {}, ...clone(patch) };
+        mockSubagentExecutionPatches.set(agentId, merged);
+        const execution = subagentExecutionFor(agentId);
+        if (execution) {
+          emitAgentCoreNotification({
+            type: 'subagent/execution/changed',
+            threadId: execution.parentThreadId,
+            execution,
+          });
+        }
+      },
+      setNextThreadStartBehavior: (behavior) => {
         nextThreadStartBehavior = {
           delayMs: Math.max(0, behavior.delayMs ?? 0),
           error: behavior.error ?? null,

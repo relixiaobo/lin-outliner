@@ -366,12 +366,20 @@ function UserMessageItem({
   }
 
   return (
-    // A request is a request whoever wrote it, so it renders in the same slot
-    // and the same shape as the reader's own — an Agent's transcript is a
-    // request and the work it produced, exactly like the conversation above it.
-    // Only the fill is quieter, and only the attribution says whose words these
-    // are; that rides the actions row rather than standing over the message.
+    // POSITION IS IDENTITY, the way it is in any message stream: the reader's
+    // own words sit on their side, and everyone else's sit opposite with a name
+    // on them. A brief from the delegating Agent shared the reader's slot until
+    // now, which put two different senders in one place and left the difference
+    // to a hover.
     <article className={`thread-item thread-user-message${hostAuthoredEvent ? ' thread-host-event' : ''}`}>
+      {hostAuthoredEvent ? (
+        <div className="thread-host-event-label">
+          <AgentIcon aria-hidden size={ICON_SIZE.rowGlyph} />
+          <span>{hostAuthorName
+            ? t.agent.thread.agent.fromSender({ name: hostAuthorName })
+            : t.agent.thread.agentEvent}</span>
+        </div>
+      ) : null}
       {editing ? (
         <div className="thread-message-editor">
           <textarea
@@ -409,14 +417,6 @@ function UserMessageItem({
           <div className="thread-message-actions-slot">
             {showMessageActions ? (
               <div className="thread-message-actions">
-                {hostAuthoredEvent ? (
-                  <span className="thread-message-author">
-                    <AgentIcon aria-hidden size={ICON_SIZE.rowGlyph} />
-                    <span>{hostAuthorName
-                      ? t.agent.thread.agent.fromSender({ name: hostAuthorName })
-                      : t.agent.thread.agentEvent}</span>
-                  </span>
-                ) : null}
                 {!hostAuthoredEvent && canEditUserMessage && textEditable ? (
                   <IconButton
                     icon={PencilIcon}
@@ -541,7 +541,12 @@ function renderUserContent(
 const USER_MESSAGE_COLLAPSED_LINES = 5;
 const USER_MESSAGE_COLLAPSED_EXTRA_PX = 16;
 
-function UserMessageCollapsibleContent({
+/**
+ * The bubble every long message wears, whoever sent it: clamped to a few lines
+ * with one Show more. Exported because an Agent's report is a message too, and
+ * a second collapse widget for it would be the same idea in a second dialect.
+ */
+export function UserMessageCollapsibleContent({
   children,
   expandState,
   measureKey,

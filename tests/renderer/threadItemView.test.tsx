@@ -79,7 +79,7 @@ describe('ThreadItemView user message presentation', () => {
     expect(narrative?.textContent).toBe('Compare first.png notes.pdf second.png with the notes.');
   });
 
-  test('renders a host-authored user-role Item as a copyable Agent event even when edit is offered', async () => {
+  test('names a host-authored user-role Item\'s sender, and keeps it copyable but not editable', async () => {
     const item: UserMessageThreadItem = {
       id: 'message-host-event',
       provenance: {
@@ -100,13 +100,13 @@ describe('ThreadItemView user message presentation', () => {
     });
     await flush();
 
-    // A request keeps the reader's own slot and shape whoever wrote it; the
-    // attribution rides the actions row rather than standing over the message.
+    // Position is identity: someone else's words sit opposite the reader's own,
+    // named, so the difference between "I asked this" and "main asked this" is
+    // never left to a hover.
     const message = rendered.document.querySelector('.thread-user-message');
     expect(message?.className).toContain('thread-host-event');
     expect(message?.textContent).toContain('Investigate the deployment story.');
-    expect(rendered.document.querySelector('.thread-message-actions .thread-message-author')?.textContent)
-      .toBe('From main');
+    expect(message?.querySelector('.thread-host-event-label')?.textContent).toBe('From main');
     // Its history is not the reader's to rewrite, but it is theirs to copy.
     expect(rendered.document.querySelector('[aria-label="Edit message"]')).toBeNull();
     expect(rendered.document.querySelector('[aria-label="Copy message"]')).not.toBeNull();
