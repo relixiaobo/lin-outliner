@@ -2243,13 +2243,18 @@ export const ThreadTurnView = memo(function ThreadTurnView({
     )
   );
   // Who says each block, so consecutive blocks from one participant sit under
-  // one avatar. Three speakers can appear in a single Turn: the reader (their
+  // one header. Three speakers can appear in a single Turn: the reader (their
   // own message), a child delivering a result, and this transcript's own agent
   // reading that result and answering.
-  const speakerOf = (block: ThreadContentBlock): ThreadSpeaker | null => {
+  //
+  // A delivery whose Agent is no longer in the registry has no report to show
+  // and no speaker to name, so its block is DROPPED rather than handed to this
+  // Turn's host author: that produced a header standing over nothing, which
+  // reads as a participant who said something the reader cannot see.
+  const speakerOf = (block: ThreadContentBlock): ThreadSpeaker | null | 'drop' => {
     if (block.kind === 'process') return selfSpeaker;
     if (block.item.type !== 'userMessage') return selfSpeaker;
-    if (reportSpeaker !== null) return reportSpeaker;
+    if (delivery !== null) return reportSpeaker ?? 'drop';
     if (!hostAuthoredEvent) return null;
     return { identity: hostAuthorIdentity ?? MAIN_AVATAR_IDENTITY, name: hostAuthorName ?? '' };
   };
@@ -2260,7 +2265,9 @@ export const ThreadTurnView = memo(function ThreadTurnView({
     else runs.push({ speaker, nodes: [node] });
   };
   for (const block of contentBlocks) {
-    emit(speakerOf(block), block.kind === 'process' ? (
+    const speaker = speakerOf(block);
+    if (speaker === 'drop') continue;
+    emit(speaker, block.kind === 'process' ? (
       <ThreadProcessBlock
         expandState={expandState}
         hasFinalResponse={responseItem !== null}

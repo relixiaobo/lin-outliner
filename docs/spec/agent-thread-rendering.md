@@ -77,16 +77,22 @@ request and the work it produced. What differs is which actions are valid.
 delegation graph is a set of participants sending each other messages, and every
 surface that shows one reads like any message stream.
 
-Every non-reader block therefore wears the SAME structure — an avatar in the
-margin, the participant's name above, and what they said beneath it, indented
-under the name. One structure for all of them: the conversation's own agent
+Every non-reader block therefore wears the SAME structure — a one-line header
+carrying an avatar and the participant's name, then what they said at full
+width beneath it. One structure for all of them: the conversation's own agent
 answering, a delegated child delivering its report, the Agent that wrote a
-brief. Before this, `main` was unattributed prose and a child's report was a
+brief. The header is one line and the words keep the whole column on purpose:
+the avatar lane down the margin that desktop IM uses costs a tenth of the
+reading measure in a 344px deck, spent repeating what the header already says
+(PM 2026-08-15). Before this, `main` was unattributed prose and a child's report was a
 labelled bubble, which made two participants look like two different sorts of
 thing (PM 2026-08-15). Consecutive blocks from one participant group under a
 single avatar, so an agent that works and then answers is named once, not twice;
 a delivery Turn genuinely has two speakers (the child, then the agent reading
-its result) and shows two.
+its result) and shows two. A delivery whose Agent is no longer in the registry
+has no report to show and no speaker to name, so its block is dropped outright
+rather than handed to the Turn's host author — that left a header standing over
+nothing, which reads as a participant who said something the reader cannot see.
 
 Content under a speaker is PLAIN PROSE, never a bubble. The avatar and name
 above already say who is talking, and a second container would draw the same

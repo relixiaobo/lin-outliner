@@ -14,7 +14,12 @@ export interface ThreadSpeaker {
 
 /**
  * One participant speaking, in the shape every message stream uses: an avatar
- * in the margin, the name above, and what they said beneath it.
+ * and a name over what they said.
+ *
+ * The header is ONE line and the words below it keep the full column. An avatar
+ * lane down the margin is the familiar desktop-IM shape, but this deck is 344px
+ * wide, where a 34px lane is a tenth of the reading measure spent on saying the
+ * same thing the header already says.
  *
  * Every non-reader block wears this — the conversation's own agent, a delegated
  * child delivering a result, the Agent that wrote a brief. One structure for
@@ -37,17 +42,17 @@ export function ThreadSpeakerGroup({
   const color = agentAvatarColor(speaker.identity);
   return (
     <div className="thread-speaker">
-      <span
-        aria-hidden
-        className="thread-speaker-avatar"
-        style={{ background: color.background, color: color.text }}
-      >
-        {agentAvatarInitial(speaker.name)}
-      </span>
-      <div className="thread-speaker-body">
-        <div className="thread-speaker-name">{speaker.name}</div>
-        <div className="thread-speaker-content">{children}</div>
+      <div className="thread-speaker-header">
+        <span
+          aria-hidden
+          className="thread-speaker-avatar"
+          style={{ background: color.background, color: color.text }}
+        >
+          {agentAvatarInitial(speaker.name)}
+        </span>
+        <span className="thread-speaker-name">{speaker.name}</span>
       </div>
+      <div className="thread-speaker-content">{children}</div>
     </div>
   );
 }

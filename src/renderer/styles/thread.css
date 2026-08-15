@@ -836,8 +836,18 @@
   display: flex;
   width: 100%;
   min-width: 0;
-  align-items: flex-start;
-  gap: var(--space-3);
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* Avatar and name on ONE line, with the words below at full width. The margin
+   lane a desktop IM uses costs a tenth of the reading measure in a 344px deck,
+   to repeat what the line above already says. */
+.thread-speaker-header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-2);
 }
 
 .thread-speaker-avatar {
@@ -856,14 +866,6 @@
   user-select: none;
 }
 
-.thread-speaker-body {
-  display: flex;
-  min-width: 0;
-  flex: 1;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
 /* The blocks keep the Turn's own rhythm: the speaker column replaces
    `.thread-turn` as their flex parent, so it must not quietly respace them. */
 .thread-speaker-content {
@@ -873,15 +875,14 @@
   gap: var(--space-6);
 }
 
-/* The name is set on the same box height as the disc beside it, so the two read
-   as one line without hand-tuning a line-height against an avatar size. */
 .thread-speaker-name {
-  display: flex;
-  min-height: var(--speaker-avatar-size);
-  align-items: center;
+  min-width: 0;
+  overflow: hidden;
   color: var(--text-secondary);
   font-size: var(--font-meta);
   line-height: var(--line-meta);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .thread-user-content-sequence {
