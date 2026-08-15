@@ -1322,8 +1322,6 @@ export const en = {
         ),
         composerPlaceholder: 'Message this Agent…',
         composerResumePlaceholder: 'Message this Agent… (resumes after your stop)',
-        generation: ({ count }: { count: number }) => `Generation ${count}`,
-        generationContinued: ({ count }: { count: number }) => `Generation ${count} · Continued by main`,
         worktreeFooter: ({ branch, count }: { branch: string; count: number }) => (
           `${branch} · ${count} ${count === 1 ? 'file' : 'files'}`
         ),

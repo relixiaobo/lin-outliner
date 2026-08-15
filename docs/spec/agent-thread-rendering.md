@@ -63,14 +63,28 @@ one surface, so an Agent has exactly one place it is read.
 
 Inside the view the transcript renders EXACTLY as the main conversation does —
 same message stream, same bubbles, same rows — because it is the same thing: a
-request and the work it produced. What differs is which actions are valid. Each
-Turn after the first is a new generation and carries a generation divider
-naming it (`Generation 2 · Continued by main` when the parent's message resumed
-it), because one generation IS one Turn: steering joins the Turn already
-running, and only a resume starts another. Every embedded child drops Edit and
-Continue in new chat because neither rewrites or forks child history; they are
-hidden rather than disabled, because a control that never works is not a
-control. Copy and Turn Details stay, because both work.
+request and the work it produced. What differs is which actions are valid.
+
+A request keeps the reader's own slot and shape whoever wrote it: the brief an
+Agent was given renders as the same right-aligned bubble, with the same action
+row at the same edge, because the Agent's transcript is a request and the work
+it produced exactly like the conversation above it. A quieter fill is the whole
+difference at rest. WHO wrote it rides the actions row, revealed on hover with
+everything else there: the delegating Agent, or `main` when the delegator is the
+conversation itself. That covers the brief and every later steer, which is not a
+task and must not be labelled as one. A message the reader typed into the same
+composer carries no attribution, because it needs none — they wrote it.
+
+Each Turn after the first IS a new generation, and nothing marks it as one. A
+generation counter is the execution record's word for a resume, not the
+reader's, and the message that started the run is directly below the boundary
+anyway: their own bubble, or one naming the Agent that sent it (PM 2026-08-15,
+replacing the ratified `Generation 2 · Continued by main` divider).
+
+Every embedded child drops Edit and Continue in new chat because neither
+rewrites or forks child history; they are hidden rather than disabled, because a
+control that never works is not a control. Copy and Turn Details stay, because
+both work.
 
 The composer is the physical form of user authority. A message sent here is the
 top-priority instruction for that Agent and is the only action that clears a

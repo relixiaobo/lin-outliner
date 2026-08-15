@@ -95,14 +95,19 @@ describe('ThreadItemView user message presentation', () => {
     const rendered = renderItem(item, {
       canEditUserMessage: true,
       hostAuthoredEvent: true,
+      hostAuthorName: 'main',
       showMessageActions: true,
     });
     await flush();
 
-    expect(rendered.document.querySelector('.thread-host-event')?.textContent)
-      .toContain('Agent event');
-    expect(rendered.document.querySelector('.thread-host-event')?.textContent)
-      .toContain('Investigate the deployment story.');
+    // A request keeps the reader's own slot and shape whoever wrote it; the
+    // attribution rides the actions row rather than standing over the message.
+    const message = rendered.document.querySelector('.thread-user-message');
+    expect(message?.className).toContain('thread-host-event');
+    expect(message?.textContent).toContain('Investigate the deployment story.');
+    expect(rendered.document.querySelector('.thread-message-actions .thread-message-author')?.textContent)
+      .toBe('From main');
+    // Its history is not the reader's to rewrite, but it is theirs to copy.
     expect(rendered.document.querySelector('[aria-label="Edit message"]')).toBeNull();
     expect(rendered.document.querySelector('[aria-label="Copy message"]')).not.toBeNull();
   });
@@ -1241,6 +1246,7 @@ interface RenderItemOptions {
   readonly expandState?: ThreadDisclosureState;
   readonly holdAnchorUntilSettled?: ThreadDisclosureState['holdAnchorUntilSettled'];
   readonly hostAuthoredEvent?: boolean;
+  readonly hostAuthorName?: string;
   readonly onReasoningResizeObserver?: () => void;
   readonly onReadToolOutput?: (item: ThreadToolItem) => Promise<string | null>;
   readonly onReadToolArguments?: (item: ThreadToolItem) => Promise<import('../../src/core/agent/protocol').JsonValue | null>;
@@ -1272,6 +1278,7 @@ function renderItem(item: ThreadItem, options: RenderItemOptions = {}): {
         holdAnchorUntilSettled={next.holdAnchorUntilSettled ?? options.holdAnchorUntilSettled ?? (() => null)}
         canEditUserMessage={next.canEditUserMessage ?? options.canEditUserMessage ?? false}
         hostAuthoredEvent={next.hostAuthoredEvent ?? options.hostAuthoredEvent ?? false}
+        hostAuthorName={next.hostAuthorName ?? options.hostAuthorName}
         initiallyExpanded={(next.expanded ?? options.expanded) === true}
         item={nextItem}
         onInterruptThread={options.onInterruptThread}
@@ -1365,6 +1372,7 @@ function ThreadItemProbe({
   holdAnchorUntilSettled,
   canEditUserMessage,
   hostAuthoredEvent,
+  hostAuthorName,
   initiallyExpanded,
   item,
   onReadToolOutput,
@@ -1381,6 +1389,7 @@ function ThreadItemProbe({
   readonly holdAnchorUntilSettled: ThreadDisclosureState['holdAnchorUntilSettled'];
   readonly canEditUserMessage: boolean;
   readonly hostAuthoredEvent: boolean;
+  readonly hostAuthorName?: string;
   readonly initiallyExpanded: boolean;
   readonly item: ThreadItem;
   readonly onReadToolOutput: (item: ThreadToolItem) => Promise<string | null>;
@@ -1416,6 +1425,7 @@ function ThreadItemProbe({
       index={buildIndex(emptyProjection())}
       item={item}
       hostAuthoredEvent={hostAuthoredEvent}
+      {...(hostAuthorName === undefined ? {} : { hostAuthorName })}
       onEditUserMessage={async () => undefined}
       onInterruptThread={onInterruptThread}
       onOpenNodeReference={() => undefined}

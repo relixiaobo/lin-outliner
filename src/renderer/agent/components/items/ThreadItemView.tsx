@@ -366,19 +366,12 @@ function UserMessageItem({
   }
 
   return (
-    <article className={`thread-item ${hostAuthoredEvent ? 'thread-host-event' : 'thread-user-message'}`}>
-      {hostAuthoredEvent ? (
-        // Not the user's own words, so it says whose they are. Inside an Agent
-        // that is its delegator — the brief it was given, and every later steer.
-        // A user message typed into the same composer carries no label at all,
-        // because it needs none: the reader wrote it.
-        <div className="thread-host-event-label">
-          <AgentIcon aria-hidden size={ICON_SIZE.rowGlyph} />
-          <span>{hostAuthorName
-            ? t.agent.thread.agent.fromSender({ name: hostAuthorName })
-            : t.agent.thread.agentEvent}</span>
-        </div>
-      ) : null}
+    // A request is a request whoever wrote it, so it renders in the same slot
+    // and the same shape as the reader's own — an Agent's transcript is a
+    // request and the work it produced, exactly like the conversation above it.
+    // Only the fill is quieter, and only the attribution says whose words these
+    // are; that rides the actions row rather than standing over the message.
+    <article className={`thread-item thread-user-message${hostAuthoredEvent ? ' thread-host-event' : ''}`}>
       {editing ? (
         <div className="thread-message-editor">
           <textarea
@@ -416,6 +409,14 @@ function UserMessageItem({
           <div className="thread-message-actions-slot">
             {showMessageActions ? (
               <div className="thread-message-actions">
+                {hostAuthoredEvent ? (
+                  <span className="thread-message-author">
+                    <AgentIcon aria-hidden size={ICON_SIZE.rowGlyph} />
+                    <span>{hostAuthorName
+                      ? t.agent.thread.agent.fromSender({ name: hostAuthorName })
+                      : t.agent.thread.agentEvent}</span>
+                  </span>
+                ) : null}
                 {!hostAuthoredEvent && canEditUserMessage && textEditable ? (
                   <IconButton
                     icon={PencilIcon}

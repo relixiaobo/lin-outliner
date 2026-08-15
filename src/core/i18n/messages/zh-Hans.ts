@@ -1225,8 +1225,6 @@ export const zhHans: PartialMessages = {
         stoppedNote: ({ name }: { name: string }) => `你已停止 ${name}。发送消息即可让它继续。`,
         composerPlaceholder: '给这个 Agent 发消息…',
         composerResumePlaceholder: '给这个 Agent 发消息…（发送后从你的停止处继续）',
-        generation: ({ count }: { count: number }) => `第 ${count} 轮`,
-        generationContinued: ({ count }: { count: number }) => `第 ${count} 轮 · 由主对话继续`,
         worktreeFooter: ({ branch, count }: { branch: string; count: number }) => (
           `${branch} · ${count} 个文件`
         ),

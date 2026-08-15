@@ -89,7 +89,7 @@ describe('streaming Turn item memoization', () => {
 
 /** A Turn with no delegation in it: its own Items, no anchors. */
 function turnAnchors(value: Turn) {
-  return { turn: value, anchors: emptyTurnAnchors(value), continuationAgentId: null, generationLabel: null };
+  return { turn: value, anchors: emptyTurnAnchors(value), continuationAgentId: null };
 }
 
 function turnProps() {

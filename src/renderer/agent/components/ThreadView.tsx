@@ -1714,11 +1714,6 @@ export function ThreadView({
                         turn={turn}
                         anchors={subagentProjection.anchorsByTurnId.get(turn.id) ?? emptyTurnAnchors(turn)}
                         continuationAgentId={subagentProjection.continuationAgentByTurnId.get(turn.id) ?? null}
-                        generationLabel={agentTranscript && turnIndex > 0
-                          ? turn.provenance.trigger.kind === 'subagent'
-                            ? t.agent.thread.agent.generationContinued({ count: turnIndex + 1 })
-                            : t.agent.thread.agent.generation({ count: turnIndex + 1 })
-                          : null}
                         userView={userView}
                         waitingOnUserInput={waitingOnUserInput}
                       />
@@ -1988,7 +1983,6 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   turn,
   anchors,
   continuationAgentId,
-  generationLabel,
   userView,
   waitingOnUserInput,
 }: {
@@ -2029,12 +2023,6 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   readonly anchors: SubagentTurnAnchors;
   /** Set when the host started this Turn to deliver an Agent's result. */
   readonly continuationAgentId: ThreadId | null;
-  /**
-   * Names the generation this Turn is, inside an Agent's own transcript. One
-   * generation is one Turn: steering joins the Turn already running, and only a
-   * resume — by the parent's message or by the user's — starts another.
-   */
-  readonly generationLabel: string | null;
   readonly userView: RendererUserViewHints;
   readonly waitingOnUserInput: boolean;
 }) {
@@ -2227,13 +2215,6 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   );
   return (
     <section className={`thread-turn thread-turn-${turn.status}`}>
-      {generationLabel ? (
-        <div className="thread-agent-generation">
-          <span aria-hidden className="thread-agent-generation-rule" />
-          <span className="thread-agent-generation-label">{generationLabel}</span>
-          <span aria-hidden className="thread-agent-generation-rule" />
-        </div>
-      ) : null}
       {contentBlocks.map((block) => {
         if (block.kind === 'process') {
           return (
