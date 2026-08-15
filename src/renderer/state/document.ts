@@ -41,6 +41,7 @@ import {
 } from './incrementalReferenceSummary';
 import {
   buildReferenceCandidateIndex,
+  buildReferenceCandidateIndexCooperatively,
   patchReferenceCandidateIndex,
   referenceCandidateIndexNeedsCompaction,
   type ReferenceCandidateIndex,
@@ -124,7 +125,15 @@ interface ProjectionState {
   reverseEdges: ReverseEdges;
 }
 
-const REFERENCE_CANDIDATE_COMPACTION_DELAY_MS = 150;
+const REFERENCE_CANDIDATE_COMPACTION_IDLE_MS = 150;
+const REFERENCE_CANDIDATE_COMPACTION_MAX_WAIT_MS = 750;
+const REFERENCE_CANDIDATE_COMPACTION_FORCE_PENDING = 256;
+const REFERENCE_CANDIDATE_REBASE_CHUNK_SIZE = 256;
+
+interface CandidateCompactionFlight {
+  readonly controller: AbortController;
+  readonly dirtyIds: Set<NodeId>;
+}
 
 // Fold a ProjectionUpdate into the previous state. Returns the next state, the
 // unchanged `prev` (already-applied duplicate / identical reseed), or `null` to
@@ -319,6 +328,10 @@ export interface ProjectionStore {
   applyProjectionUpdate: (update: ProjectionUpdate) => void;
 }
 
+export interface ProjectionStoreOptions {
+  readonly candidateCompactionYieldControl?: () => Promise<void>;
+}
+
 // Holds the projection-derived index across edits and folds in ProjectionUpdates.
 // If a delta can't apply (no base or a revision gap), it pulls a full snapshot via
 // `resync` and reseeds — the safety valve; in steady state (one ordered channel,
@@ -334,12 +347,17 @@ export interface ProjectionStore {
 export function useProjectionStore(
   resync: () => Promise<ProjectionSnapshot>,
   setUi: Dispatch<SetStateAction<UiState>>,
+  options: ProjectionStoreOptions = {},
 ): ProjectionStore {
   const [state, setState] = useState<ProjectionState | null>(null);
   const stateRef = useRef<ProjectionState | null>(null);
   const indexStoreRef = useRef<DocumentIndexStore | null>(null);
   const resyncInFlight = useRef(false);
-  const candidateCompactionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const candidateCompactionIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const candidateCompactionMaxTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const candidateCompactionFlightRef = useRef<CandidateCompactionFlight | null>(null);
+  const startCandidateCompactionRef = useRef<() => void>(() => undefined);
+  const disposedRef = useRef(false);
 
   const commit = useCallback((next: ProjectionState | null) => {
     if (next !== null && next !== stateRef.current) {
@@ -350,35 +368,148 @@ export function useProjectionStore(
     }
   }, []);
 
-  const scheduleCandidateCompaction = useCallback((next: ProjectionState) => {
-    if (candidateCompactionTimerRef.current !== null) {
-      clearTimeout(candidateCompactionTimerRef.current);
-      candidateCompactionTimerRef.current = null;
+  const clearCandidateCompactionTimers = useCallback(() => {
+    if (candidateCompactionIdleTimerRef.current !== null) {
+      clearTimeout(candidateCompactionIdleTimerRef.current);
+      candidateCompactionIdleTimerRef.current = null;
     }
-    if (!referenceCandidateIndexNeedsCompaction(next.index.referenceCandidates)) return;
-    // Repeated edits stay in the edit overlay. Compact only after input has
-    // settled so the 24th distinct edit never rebuilds the document in its fold.
-    candidateCompactionTimerRef.current = setTimeout(() => {
-      candidateCompactionTimerRef.current = null;
-      const current = stateRef.current;
-      if (!current || !referenceCandidateIndexNeedsCompaction(current.index.referenceCandidates)) return;
-      const referenceCandidates = buildReferenceCandidateIndex(
-        current.index.byId,
-        current.index.trashNodeIds,
-      );
-      if (stateRef.current !== current) return;
-      commit({
-        ...current,
-        index: { ...current.index, referenceCandidates },
-      });
-    }, REFERENCE_CANDIDATE_COMPACTION_DELAY_MS);
-  }, [commit]);
-
-  useEffect(() => () => {
-    if (candidateCompactionTimerRef.current !== null) {
-      clearTimeout(candidateCompactionTimerRef.current);
+    if (candidateCompactionMaxTimerRef.current !== null) {
+      clearTimeout(candidateCompactionMaxTimerRef.current);
+      candidateCompactionMaxTimerRef.current = null;
     }
   }, []);
+
+  const scheduleCandidateCompaction = useCallback((
+    next: ProjectionState,
+    update: ProjectionUpdate | null,
+  ) => {
+    const activeFlight = candidateCompactionFlightRef.current;
+    if (activeFlight) {
+      if (update?.kind === 'full') {
+        activeFlight.controller.abort();
+        candidateCompactionFlightRef.current = null;
+      } else {
+        for (const nodeId of next.index.delta.changedIds) activeFlight.dirtyIds.add(nodeId);
+        for (const nodeId of next.index.delta.trashMembershipChangedIds) {
+          activeFlight.dirtyIds.add(nodeId);
+        }
+        return;
+      }
+    }
+
+    if (!referenceCandidateIndexNeedsCompaction(next.index.referenceCandidates)) {
+      clearCandidateCompactionTimers();
+      return;
+    }
+
+    if (candidateCompactionIdleTimerRef.current !== null) {
+      clearTimeout(candidateCompactionIdleTimerRef.current);
+    }
+    const idleDelay = next.index.referenceCandidates.pending.size
+      >= REFERENCE_CANDIDATE_COMPACTION_FORCE_PENDING
+      ? 0
+      : REFERENCE_CANDIDATE_COMPACTION_IDLE_MS;
+    candidateCompactionIdleTimerRef.current = setTimeout(() => {
+      candidateCompactionIdleTimerRef.current = null;
+      startCandidateCompactionRef.current();
+    }, idleDelay);
+
+    // The idle timer follows typing, but this timer does not. A continuous
+    // Agent delta stream therefore cannot starve compaction indefinitely.
+    candidateCompactionMaxTimerRef.current ??= setTimeout(() => {
+      candidateCompactionMaxTimerRef.current = null;
+      startCandidateCompactionRef.current();
+    }, REFERENCE_CANDIDATE_COMPACTION_MAX_WAIT_MS);
+  }, [clearCandidateCompactionTimers]);
+
+  const startCandidateCompaction = useCallback(() => {
+    clearCandidateCompactionTimers();
+    if (disposedRef.current || candidateCompactionFlightRef.current) return;
+    const snapshot = stateRef.current;
+    if (!snapshot || !referenceCandidateIndexNeedsCompaction(snapshot.index.referenceCandidates)) return;
+
+    const flight: CandidateCompactionFlight = {
+      controller: new AbortController(),
+      dirtyIds: new Set<NodeId>(),
+    };
+    candidateCompactionFlightRef.current = flight;
+    void (async () => {
+      let failed = false;
+      try {
+        let referenceCandidates = await buildReferenceCandidateIndexCooperatively(
+          snapshot.index.byId,
+          snapshot.index.trashNodeIds,
+          {
+            signal: flight.controller.signal,
+            yieldControl: options.candidateCompactionYieldControl,
+          },
+        );
+        if (!referenceCandidates) return;
+
+        // Deltas continue to commit while the base builds. Drain every id that
+        // changed after the snapshot in bounded batches; updates arriving during
+        // a yield re-enter `dirtyIds` and are applied by the next pass.
+        while (!flight.controller.signal.aborted) {
+          const dirtyIds = [...flight.dirtyIds];
+          flight.dirtyIds.clear();
+          if (dirtyIds.length === 0) break;
+          const current = stateRef.current;
+          if (!current) return;
+          referenceCandidates = await patchCandidateIndexCooperatively({
+            previous: referenceCandidates,
+            nextById: current.index.byId,
+            trashNodeIds: current.index.trashNodeIds,
+            dirtyIds,
+            signal: flight.controller.signal,
+          });
+          if (!referenceCandidates) return;
+        }
+
+        if (
+          disposedRef.current
+          || flight.controller.signal.aborted
+          || candidateCompactionFlightRef.current !== flight
+        ) return;
+        const current = stateRef.current;
+        if (!current) return;
+        const compacted = {
+          ...current,
+          index: { ...current.index, referenceCandidates },
+        };
+        candidateCompactionFlightRef.current = null;
+        commit(compacted);
+        scheduleCandidateCompaction(compacted, null);
+      } catch (error: unknown) {
+        failed = true;
+        console.error('[renderer] reference candidate compaction failed', error);
+      } finally {
+        if (candidateCompactionFlightRef.current === flight) {
+          candidateCompactionFlightRef.current = null;
+          const current = stateRef.current;
+          if (!failed && !disposedRef.current && current) {
+            scheduleCandidateCompaction(current, null);
+          }
+        }
+      }
+    })();
+  }, [
+    clearCandidateCompactionTimers,
+    commit,
+    options.candidateCompactionYieldControl,
+    scheduleCandidateCompaction,
+  ]);
+  startCandidateCompactionRef.current = startCandidateCompaction;
+
+  useEffect(() => {
+    disposedRef.current = false;
+    return () => {
+      disposedRef.current = true;
+      clearCandidateCompactionTimers();
+      const activeFlight = candidateCompactionFlightRef.current;
+      candidateCompactionFlightRef.current = null;
+      activeFlight?.controller.abort();
+    };
+  }, [clearCandidateCompactionTimers]);
 
   const commitAcceptedUpdate = useCallback((
     previous: ProjectionState | null,
@@ -395,7 +526,7 @@ export function useProjectionStore(
       setUi((current) => reduceUiStateForProjectionRemovals(current, removals));
     }
     commit(next);
-    scheduleCandidateCompaction(next);
+    scheduleCandidateCompaction(next, update);
   }, [commit, scheduleCandidateCompaction, setUi]);
 
   const applyProjectionUpdate = useCallback((update: ProjectionUpdate) => {
@@ -426,6 +557,36 @@ export function useProjectionStore(
     indexStore: state === null ? null : indexStoreRef.current,
     applyProjectionUpdate,
   };
+}
+
+async function patchCandidateIndexCooperatively(params: {
+  readonly previous: ReferenceCandidateIndex;
+  readonly nextById: ReadonlyMap<NodeId, NodeProjection>;
+  readonly trashNodeIds: ReadonlySet<NodeId>;
+  readonly dirtyIds: readonly NodeId[];
+  readonly signal: AbortSignal;
+}): Promise<ReferenceCandidateIndex | null> {
+  let index = params.previous;
+  for (let offset = 0; offset < params.dirtyIds.length; offset += REFERENCE_CANDIDATE_REBASE_CHUNK_SIZE) {
+    await yieldToRenderer();
+    if (params.signal.aborted) return null;
+    const changedIds = new Set(params.dirtyIds.slice(
+      offset,
+      offset + REFERENCE_CANDIDATE_REBASE_CHUNK_SIZE,
+    ));
+    index = patchReferenceCandidateIndex({
+      previous: index,
+      nextById: params.nextById,
+      changedIds,
+      trashMembershipChangedIds: new Set<NodeId>(),
+      trashNodeIds: params.trashNodeIds,
+    });
+  }
+  return index;
+}
+
+function yieldToRenderer(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 export interface UiState {

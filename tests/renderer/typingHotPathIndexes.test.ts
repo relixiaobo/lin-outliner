@@ -15,6 +15,7 @@ import {
 import { displayReachabilityForParent } from '../../src/renderer/state/displayReachability';
 import { scanUnlinkedReferenceSources } from '../../src/renderer/state/cooperativeReferenceSummary';
 import {
+  buildReferenceCandidateIndexCooperatively,
   queryReferenceCandidateIndex,
   referenceCandidateIndexNeedsCompaction,
   type ReferenceCandidateQueryStats,
@@ -132,6 +133,36 @@ describe('typing hot-path reference candidate index', () => {
 
     expect(nodeIds(queryIndex(index, 'needle-at-the-tail', 24))).toEqual(['long']);
     expect(nodeIds(queryIndex(index, 'aaaaaneedle', 24))).toEqual(['long']);
+  });
+
+  test('cooperatively rebuilds the complete candidate index across bounded work slices', async () => {
+    const candidates = Array.from({ length: 240 }, (_, index) => node(
+      `candidate-${index}`,
+      `${'prefix '.repeat(index % 7)}Candidate ${index} middle-tail ${'x'.repeat(80)}`,
+      { parentId: 'root', updatedAt: 1_000 - index },
+    ));
+    const document = projection([
+      node('root', 'Root', { children: [...candidates.map((candidate) => candidate.id), 'trash'] }),
+      ...candidates,
+      node('trash', 'Trash', { parentId: 'root' }),
+    ]);
+    const expected = buildIndex(document);
+    let yields = 0;
+    const actualCandidates = await buildReferenceCandidateIndexCooperatively(
+      expected.byId,
+      expected.trashNodeIds,
+      {
+        chunkSize: 64,
+        yieldControl: async () => { yields += 1; },
+      },
+    );
+
+    expect(actualCandidates).not.toBeNull();
+    expect(yields).toBeGreaterThan(10);
+    const actual = { ...expected, referenceCandidates: actualCandidates! };
+    for (const query of ['', 'candidate', 'middle-t', 'x'.repeat(40), '239']) {
+      expect(queryIndex(actual, query, 24)).toEqual(queryIndex(expected, query, 24));
+    }
   });
 
   test('keeps empty and universal-match queries within the shortlist visit bound', () => {

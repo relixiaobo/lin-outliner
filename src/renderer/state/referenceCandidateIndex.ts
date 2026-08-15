@@ -9,6 +9,7 @@ import { SparseProjectionMap } from './sparseProjectionMap';
 const POSTING_TOP_LIMIT = 48;
 const POSTING_OVERLAY_LIMIT = 23;
 const POSTING_BLOCK_SIZE = 128;
+const COOPERATIVE_BUILD_CHUNK_SIZE = 8_192;
 
 export type ReferenceCandidateKind = 'content' | 'file';
 
@@ -69,10 +70,78 @@ export interface ReferenceCandidateQueryStats {
   postingRangesRead: number;
 }
 
+export interface CooperativeReferenceCandidateBuildOptions {
+  readonly chunkSize?: number;
+  readonly signal?: AbortSignal;
+  readonly yieldControl?: () => Promise<void>;
+}
+
 export function buildReferenceCandidateIndex(
   byId: ReadonlyMap<NodeId, NodeProjection>,
   trashNodeIds: ReadonlySet<NodeId>,
 ): ReferenceCandidateIndex {
+  return completeBuild(referenceCandidateIndexBuildSteps(
+    byId,
+    trashNodeIds,
+    createBuildBudget(COOPERATIVE_BUILD_CHUNK_SIZE),
+  ));
+}
+
+export async function buildReferenceCandidateIndexCooperatively(
+  byId: ReadonlyMap<NodeId, NodeProjection>,
+  trashNodeIds: ReadonlySet<NodeId>,
+  options: CooperativeReferenceCandidateBuildOptions = {},
+): Promise<ReferenceCandidateIndex | null> {
+  const yieldControl = options.yieldControl ?? yieldToRenderer;
+  const steps = referenceCandidateIndexBuildSteps(
+    byId,
+    trashNodeIds,
+    createBuildBudget(options.chunkSize ?? COOPERATIVE_BUILD_CHUNK_SIZE),
+  );
+
+  // The compaction caller starts this from a timer. Yield before even the first
+  // scan so task submission cannot append work to the input event's turn.
+  await yieldControl();
+  if (options.signal?.aborted) return null;
+  while (true) {
+    const step = steps.next();
+    if (step.done) return step.value;
+    await yieldControl();
+    if (options.signal?.aborted) return null;
+  }
+}
+
+interface BuildBudget {
+  readonly chunkSize: number;
+  remaining: number;
+}
+
+function createBuildBudget(chunkSize: number): BuildBudget {
+  const boundedChunkSize = Number.isFinite(chunkSize)
+    ? Math.max(1, Math.floor(chunkSize))
+    : COOPERATIVE_BUILD_CHUNK_SIZE;
+  return { chunkSize: boundedChunkSize, remaining: boundedChunkSize };
+}
+
+function spendBuildWork(budget: BuildBudget, amount = 1): boolean {
+  budget.remaining -= amount;
+  if (budget.remaining > 0) return false;
+  budget.remaining = budget.chunkSize;
+  return true;
+}
+
+function completeBuild<T>(steps: Generator<void, T, void>): T {
+  while (true) {
+    const step = steps.next();
+    if (step.done) return step.value;
+  }
+}
+
+function* referenceCandidateIndexBuildSteps(
+  byId: ReadonlyMap<NodeId, NodeProjection>,
+  trashNodeIds: ReadonlySet<NodeId>,
+  budget: BuildBudget,
+): Generator<void, ReferenceCandidateIndex, void> {
   const records: Array<readonly [NodeId, CandidateRecord]> = [];
   const entries = emptyPostingEntries();
   for (const node of byId.values()) {
@@ -80,13 +149,16 @@ export function buildReferenceCandidateIndex(
     const record = candidateRecord(node);
     if (!record) continue;
     records.push([node.id, record]);
-    appendRecordEntries(entries[record.entry.kind], record);
+    yield* appendRecordEntrySteps(entries[record.entry.kind], record, budget);
+    if (spendBuildWork(budget)) yield;
   }
   const recordsById = SparseProjectionMap.fromEntries(records);
+  const content = yield* buildForestSteps(entries.content, budget);
+  const files = yield* buildForestSteps(entries.file, budget);
   return {
     baseRecords: recordsById,
-    content: buildForest(entries.content),
-    files: buildForest(entries.file),
+    content,
+    files,
     pending: SparseProjectionMap.fromEntries<CandidateRecord | null>([]),
     records: recordsById,
   };
@@ -287,10 +359,11 @@ function emptyPostingEntries(): Record<ReferenceCandidateKind, CandidatePostingE
   return { content: create(), file: create() };
 }
 
-function appendRecordEntries(
+function* appendRecordEntrySteps(
   entries: CandidatePostingEntries,
   record: CandidateRecord,
-): void {
+  budget: BuildBudget,
+): Generator<void, void, void> {
   const entry = record.entry;
   if (entry.untitled) {
     entries.untitled.push(entry);
@@ -307,56 +380,81 @@ function appendRecordEntries(
     const posting = { offset, score: entry, sortRank: 0, text: entry.normalizedLabel };
     if (wordOffsets.has(offset)) entries.words.push(posting);
     entries.suffixes.push(posting);
+    if (spendBuildWork(budget)) yield;
   }
 }
 
-function buildForest(entries: CandidatePostingEntries): CandidatePostingForest {
-  assignPostingSortRanks(entries);
+function* buildForestSteps(
+  entries: CandidatePostingEntries,
+  budget: BuildBudget,
+): Generator<void, CandidatePostingForest, void> {
+  yield* assignPostingSortRankSteps(entries, budget);
   const exactLabels = new Map<string, readonly PostingScore[]>();
   for (const [label, scores] of entries.exactLabels) {
-    exactLabels.set(label, scores.sort(comparePostingScore));
+    yield* stableSortSteps(scores, comparePostingScore, budget);
+    exactLabels.set(label, scores);
+    if (spendBuildWork(budget)) yield;
   }
+  yield* stableSortSteps(entries.untitled, comparePostingScore, budget);
+  const labels = yield* buildPostingRangeIndexSteps(entries.labels, budget);
+  const suffixes = yield* buildPostingRangeIndexSteps(entries.suffixes, budget);
+  const words = yield* buildPostingRangeIndexSteps(entries.words, budget);
   return {
     exactLabels,
-    labels: buildPostingRangeIndex(entries.labels),
-    suffixes: buildPostingRangeIndex(entries.suffixes),
-    untitled: entries.untitled.sort(comparePostingScore),
-    words: buildPostingRangeIndex(entries.words),
+    labels,
+    suffixes,
+    untitled: entries.untitled,
+    words,
   };
 }
 
 // Postings retain one normalized label plus offsets. A generalized suffix-array
 // rank supplies lexical order without materializing every suffix string; zero is
 // reserved as a between-label separator outside the charCode + 1 alphabet.
-function assignPostingSortRanks(entries: CandidatePostingEntries): void {
+function* assignPostingSortRankSteps(
+  entries: CandidatePostingEntries,
+  budget: BuildBudget,
+): Generator<void, void, void> {
   const labelStarts = new Map<NodeId, number>();
-  const symbolCount = entries.labels.reduce((total, entry) => total + entry.text.length + 1, 0);
+  let symbolCount = 0;
+  for (const entry of entries.labels) {
+    symbolCount += entry.text.length + 1;
+    if (spendBuildWork(budget)) yield;
+  }
   const symbols = new Uint32Array(symbolCount);
   let cursor = 0;
   for (const entry of entries.labels) {
     labelStarts.set(entry.score.id, cursor);
     for (let index = 0; index < entry.text.length; index += 1) {
       symbols[cursor++] = entry.text.charCodeAt(index) + 1;
+      if (spendBuildWork(budget)) yield;
     }
     symbols[cursor++] = 0;
   }
-  const ranks = buildSuffixRanks(symbols);
+  const ranks = yield* buildSuffixRankSteps(symbols, budget);
   for (const postingEntries of [entries.labels, entries.words, entries.suffixes]) {
     for (const entry of postingEntries) {
       const labelStart = labelStarts.get(entry.score.id);
       if (labelStart === undefined) continue;
       entry.sortRank = ranks[labelStart + entry.offset] ?? 0;
+      if (spendBuildWork(budget)) yield;
     }
   }
 }
 
-function buildSuffixRanks(symbols: Uint32Array): Uint32Array {
+function* buildSuffixRankSteps(
+  symbols: Uint32Array,
+  budget: BuildBudget,
+): Generator<void, Uint32Array, void> {
   const length = symbols.length;
   if (length === 0) return new Uint32Array();
   let suffixes = new Uint32Array(length);
   let scratch = new Uint32Array(length);
-  for (let index = 0; index < length; index += 1) suffixes[index] = index;
-  countingSortSymbols(suffixes, scratch, symbols);
+  for (let index = 0; index < length; index += 1) {
+    suffixes[index] = index;
+    if (spendBuildWork(budget)) yield;
+  }
+  yield* countingSortSymbolSteps(suffixes, scratch, symbols, budget);
   [suffixes, scratch] = [scratch, suffixes];
 
   let ranks = new Uint32Array(length);
@@ -370,11 +468,12 @@ function buildSuffixRanks(symbols: Uint32Array): Uint32Array {
       classCount += 1;
     }
     ranks[suffix] = classCount - 1;
+    if (spendBuildWork(budget)) yield;
   }
 
   for (let width = 1; width < length && classCount < length; width *= 2) {
-    countingSortSuffixes(suffixes, scratch, ranks, width, classCount);
-    countingSortSuffixes(scratch, suffixes, ranks, 0, classCount);
+    yield* countingSortSuffixSteps(suffixes, scratch, ranks, width, classCount, budget);
+    yield* countingSortSuffixSteps(scratch, suffixes, ranks, 0, classCount, budget);
     let nextClass = 0;
     nextRanks[suffixes[0]!] = 0;
     for (let index = 1; index < length; index += 1) {
@@ -386,6 +485,7 @@ function buildSuffixRanks(symbols: Uint32Array): Uint32Array {
         nextClass += 1;
       }
       nextRanks[current] = nextClass;
+      if (spendBuildWork(budget)) yield;
     }
     classCount = nextClass + 1;
     [ranks, nextRanks] = [nextRanks, ranks];
@@ -393,72 +493,125 @@ function buildSuffixRanks(symbols: Uint32Array): Uint32Array {
   return ranks;
 }
 
-function countingSortSymbols(
+function* countingSortSymbolSteps(
   input: Uint32Array,
   output: Uint32Array,
   symbols: Uint32Array,
-): void {
+  budget: BuildBudget,
+): Generator<void, void, void> {
   const counts = new Uint32Array(65_537);
-  for (const suffix of input) counts[symbols[suffix]!] += 1;
-  prefixCountOffsets(counts);
-  for (const suffix of input) output[counts[symbols[suffix]!]++] = suffix;
+  for (const suffix of input) {
+    counts[symbols[suffix]!] += 1;
+    if (spendBuildWork(budget)) yield;
+  }
+  yield* prefixCountOffsetSteps(counts, budget);
+  for (const suffix of input) {
+    output[counts[symbols[suffix]!]++] = suffix;
+    if (spendBuildWork(budget)) yield;
+  }
 }
 
-function countingSortSuffixes(
+function* countingSortSuffixSteps(
   input: Uint32Array,
   output: Uint32Array,
   ranks: Uint32Array,
   offset: number,
   classCount: number,
-): void {
+  budget: BuildBudget,
+): Generator<void, void, void> {
   const counts = new Uint32Array(classCount + 1);
   for (const suffix of input) {
     const key = suffix + offset < ranks.length ? ranks[suffix + offset]! + 1 : 0;
     counts[key] += 1;
+    if (spendBuildWork(budget)) yield;
   }
-  prefixCountOffsets(counts);
+  yield* prefixCountOffsetSteps(counts, budget);
   for (const suffix of input) {
     const key = suffix + offset < ranks.length ? ranks[suffix + offset]! + 1 : 0;
     output[counts[key]++] = suffix;
+    if (spendBuildWork(budget)) yield;
   }
 }
 
-function prefixCountOffsets(counts: Uint32Array): void {
+function* prefixCountOffsetSteps(
+  counts: Uint32Array,
+  budget: BuildBudget,
+): Generator<void, void, void> {
   let offset = 0;
   for (let index = 0; index < counts.length; index += 1) {
     const count = counts[index]!;
     counts[index] = offset;
     offset += count;
+    if (spendBuildWork(budget)) yield;
   }
 }
 
 // Range queries scan at most two boundary blocks and merge the precomputed top
 // scores for aligned interior blocks. This keeps summaries proportional to
 // label text instead of storing a top-48 array on every suffix-tree node.
-function buildPostingRangeIndex(entries: PostingEntry[]): PostingRangeIndex {
-  entries.sort(comparePostingEntry);
+function* buildPostingRangeIndexSteps(
+  entries: PostingEntry[],
+  budget: BuildBudget,
+): Generator<void, PostingRangeIndex, void> {
+  yield* stableSortSteps(entries, comparePostingEntry, budget);
   const blockCount = Math.ceil(entries.length / POSTING_BLOCK_SIZE);
   let blockTreeLeafOffset = 1;
   while (blockTreeLeafOffset < blockCount) blockTreeLeafOffset *= 2;
-  const blockTree: PostingScore[][] = Array.from(
-    { length: blockTreeLeafOffset * 2 },
-    () => [],
-  );
+  const blockTree: PostingScore[][] = [];
+  for (let index = 0; index < blockTreeLeafOffset * 2; index += 1) {
+    blockTree.push([]);
+    if (spendBuildWork(budget)) yield;
+  }
   for (let block = 0; block < blockCount; block += 1) {
     const start = block * POSTING_BLOCK_SIZE;
     const end = Math.min(entries.length, start + POSTING_BLOCK_SIZE);
-    blockTree[blockTreeLeafOffset + block] = topPostingScores(
-      entries.slice(start, end).map((entry) => entry.score),
-    );
+    const scores: PostingScore[] = [];
+    for (let index = start; index < end; index += 1) scores.push(entries[index]!.score);
+    blockTree[blockTreeLeafOffset + block] = topPostingScores(scores);
+    if (spendBuildWork(budget, end - start)) yield;
   }
   for (let node = blockTreeLeafOffset - 1; node > 0; node -= 1) {
     blockTree[node] = mergeTop([blockTree[node * 2]!, blockTree[node * 2 + 1]!]);
+    if (spendBuildWork(budget, POSTING_TOP_LIMIT)) yield;
   }
   return {
     blockTree,
     blockTreeLeafOffset,
     entries,
   };
+}
+
+function* stableSortSteps<T>(
+  entries: T[],
+  compare: (left: T, right: T) => number,
+  budget: BuildBudget,
+): Generator<void, void, void> {
+  if (entries.length < 2) return;
+  let source = entries;
+  let target = new Array<T>(entries.length);
+  for (let width = 1; width < entries.length; width *= 2) {
+    for (let start = 0; start < entries.length; start += width * 2) {
+      const middle = Math.min(entries.length, start + width);
+      const end = Math.min(entries.length, middle + width);
+      let left = start;
+      let right = middle;
+      let output = start;
+      while (left < middle || right < end) {
+        if (right >= end || (left < middle && compare(source[left]!, source[right]!) <= 0)) {
+          target[output++] = source[left++]!;
+        } else {
+          target[output++] = source[right++]!;
+        }
+        if (spendBuildWork(budget)) yield;
+      }
+    }
+    [source, target] = [target, source];
+  }
+  if (source === entries) return;
+  for (let index = 0; index < entries.length; index += 1) {
+    entries[index] = source[index]!;
+    if (spendBuildWork(budget)) yield;
+  }
 }
 
 function postingPrefixTop(
@@ -650,4 +803,8 @@ function comparePostingScore(left: PostingScore, right: PostingScore): number {
 
 function compareKey(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function yieldToRenderer(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
 }

@@ -258,10 +258,14 @@ disabled, untitled, context, length, recency, and label tie-breaks apply within
 the retrieved set. Empty queries use recency order. Cycle status is evaluated
 only for shortlisted nodes from a cached reverse-reachability set. Posting keys
 share their normalized label storage through offsets, and an overflow edit
-overlay is compacted only after input settles, never inside the projection
-commit. A cold or invalidated reachability set is built cooperatively after the
-picker opens, never inside the typing event. Node choices remain disabled until
-that set resolves; resolution updates candidate order and resets keyboard
+overlay is compacted outside the projection commit by a cooperatively yielding
+rebuild. The idle timer follows input, while an independent maximum-age timer
+and a pressure ceiling ensure a continuous delta stream cannot starve the
+rebuild or grow the overlay indefinitely. Deltas accepted during a rebuild stay
+queryable in the overlay and are cooperatively rebased before the new base is
+committed. A cold or invalidated reachability set is built cooperatively after
+the picker opens, never inside the typing event. Node choices remain disabled
+until that set resolves; resolution updates candidate order and resets keyboard
 selection together, so Enter cannot act on a row that moved underneath the
 highlight. Breadcrumbs are derived only for the final visible results.
 

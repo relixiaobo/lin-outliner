@@ -7,7 +7,9 @@ import {
   useProjectionStore,
   useUiState,
   type ProjectionStore,
+  type ProjectionStoreOptions,
 } from '../../src/renderer/state/document';
+import { queryReferenceCandidateIndex } from '../../src/renderer/state/referenceCandidateIndex';
 
 const cleanups: Array<() => void> = [];
 
@@ -50,9 +52,97 @@ describe('reference candidate overlay compaction', () => {
     });
     expect(rendered.pendingCount()).toBe(0);
   });
+
+  test('cannot be starved by a continuous delta stream and retains in-flight edits', async () => {
+    let markBuildStarted: () => void = () => undefined;
+    const buildStarted = new Promise<void>((resolve) => { markBuildStarted = resolve; });
+    let releaseBuild: () => void = () => undefined;
+    const buildGate = new Promise<void>((resolve) => { releaseBuild = resolve; });
+    let firstYield = true;
+    const rendered = renderProjectionStore({
+      candidateCompactionYieldControl: async () => {
+        if (!firstYield) return;
+        firstYield = false;
+        markBuildStarted();
+        await buildGate;
+      },
+    });
+    const base = candidateProjection();
+    act(() => {
+      rendered.store().applyProjectionUpdate({
+        kind: 'full',
+        revision: 1,
+        projection: base,
+      });
+    });
+    const candidates = base.nodes.filter((candidate) => candidate.id.startsWith('candidate-'));
+    act(() => {
+      rendered.store().applyProjectionUpdate({
+        kind: 'delta',
+        revision: 2,
+        todayId: base.todayId,
+        changedNodes: candidates.slice(0, 24).map((candidate, index) => ({
+          ...candidate,
+          content: { ...candidate.content, text: `Initial ${index}` },
+          updatedAt: 100 + index,
+        })),
+        removedIds: [],
+      });
+    });
+    expect(rendered.pendingCount()).toBe(24);
+
+    const streamingCandidate = candidates[0]!;
+    for (let revision = 3; revision <= 10; revision += 1) {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 90));
+        rendered.store().applyProjectionUpdate({
+          kind: 'delta',
+          revision,
+          todayId: base.todayId,
+          changedNodes: [{
+            ...streamingCandidate,
+            content: { ...streamingCandidate.content, text: `Streaming ${revision}` },
+            updatedAt: 200 + revision,
+          }],
+          removedIds: [],
+        });
+      });
+    }
+
+    // Every gap stayed below the 150 ms idle delay. The build starting before
+    // another idle window proves the independent max-age timer cannot starve.
+    await act(async () => { await buildStarted; });
+    expect(rendered.pendingCount()).toBe(24);
+    act(() => {
+      rendered.store().applyProjectionUpdate({
+        kind: 'delta',
+        revision: 11,
+        todayId: base.todayId,
+        changedNodes: [{
+          ...streamingCandidate,
+          content: { ...streamingCandidate.content, text: 'Streaming 11' },
+          updatedAt: 211,
+        }],
+        removedIds: [],
+      });
+    });
+    await act(async () => {
+      releaseBuild();
+      await waitUntil(() => rendered.pendingCount() < 24);
+    });
+
+    const index = rendered.store().index!;
+    expect(queryReferenceCandidateIndex({
+      index: index.referenceCandidates,
+      query: 'Streaming 11',
+      untitledLabel: 'Untitled',
+      includeFileNodes: true,
+      limit: 24,
+    }).map((candidate) => candidate.id)).toEqual(['candidate-0']);
+  });
 });
 
-function renderProjectionStore(): {
+function renderProjectionStore(options?: ProjectionStoreOptions): {
   pendingCount: () => number;
   store: () => ProjectionStore;
 } {
@@ -74,6 +164,7 @@ function renderProjectionStore(): {
     const store = useProjectionStore(
       async () => { throw new Error('Unexpected resync'); },
       setUi,
+      options,
     );
     currentStore = store;
     return <span data-pending>{store.index?.referenceCandidates.pending.size ?? -1}</span>;
@@ -82,12 +173,22 @@ function renderProjectionStore(): {
   act(() => { root.render(<Harness />); });
   cleanups.push(() => act(() => root.unmount()));
   return {
-    pendingCount: () => Number(document.querySelector('[data-pending]')?.textContent ?? -1),
+    pendingCount: () => currentStore?.indexStore?.getCurrent()
+      .referenceCandidates.pending.size
+      ?? Number(document.querySelector('[data-pending]')?.textContent ?? -1),
     store: () => {
       if (!currentStore) throw new Error('Projection store is unavailable');
       return currentStore;
     },
   };
+}
+
+async function waitUntil(predicate: () => boolean): Promise<void> {
+  const deadline = Date.now() + 500;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error('Timed out waiting for candidate compaction');
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
 }
 
 function candidateProjection(): DocumentProjection {

@@ -395,8 +395,12 @@ Renderer (all inside the per-keystroke `flushSync` in `useCommandRunner`):
   text-rank-dominated and unchanged. Breadcrumb presentation is computed
   lazily for the final bounded results at render time, never stored per node —
   an ancestor rename therefore cannot invalidate descendants' cached entries.
-  Full rebuild only on
-  referenceGraphRevision / trash / tag-definition changes. Share one
+  Posting-base rebuilds run cooperatively outside projection commits. The edit
+  overlay compacts after input idle, but a non-resetting maximum age and a
+  pressure ceiling force progress under continuous Agent deltas; edits accepted
+  during the build are rebased before the new base commits. Other full rebuilds
+  key only on their relevant referenceGraphRevision / trash / tag-definition
+  changes. Share one
   trash-descendant set per trash revision (the precomputed-Trash-set precedent
   from the perf program) instead of per-candidate ancestor walks with `Set`
   allocations.
