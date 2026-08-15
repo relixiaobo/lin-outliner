@@ -74,10 +74,10 @@ theme-section entry below; this list is the ordering, not a second record):
   routed its intended owner elsewhere; give this lane the next free clone.
 
 **Design-gate queue** (PM bandwidth): _empty_ — `skill-path-ownership` shipped #513.
-**Release:** v0.3.0 + v0.3.1 shipped 2026-08-10; `main` is the **0.4.0 train** and the
-cadence rule fires again (13 user-visible entries aboard as of 2026-08-15, #525–#542 —
-five days since the last train): note drafted by main, PM ratifies, then tag + dial
-to 0.5.0.
+**Release:** v0.3.0 + v0.3.1 shipped 2026-08-10; `main` is the **0.4.0 train**, 13
+user-visible entries aboard (#525–#542). **PM call 2026-08-15: the train waits for
+`subagent-interaction` (#544) and freezes on its merge** — then note drafted by main,
+PM ratifies, tag + dial to 0.5.0.
 
 `pi-ai-0.80-upgrade` shipped #348 (clean `Models` migration, not the interim `/compat` shim) — see *Recently completed*.
 `dream-channel-and-memory-retire` shipped in full (PR1 #324 + PR2 #328 + PR3 #329) — see *Recently completed*.
