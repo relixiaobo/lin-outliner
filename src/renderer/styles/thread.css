@@ -805,12 +805,14 @@
   gap: var(--space-3);
 }
 
-/* Someone else's words: the opposite side from the reader's own, named, and in
-   a quieter fill. Position is identity here, as in any message stream — the
-   difference between "I asked this" and "main asked this" is who, and that is
-   not something to leave to a hover. */
+/* Someone else's words: the opposite side from the reader's own, and plain
+   prose rather than a bubble — the avatar and name above already say who is
+   speaking, so a second container would be the same fact drawn twice. Position
+   is identity here, as in any message stream: the difference between "I asked
+   this" and "main asked this" is who, and that is not left to a hover. */
 .thread-host-event {
-  align-self: flex-start;
+  width: 100%;
+  align-self: stretch;
   align-items: flex-start;
 }
 
@@ -818,18 +820,66 @@
 .thread-host-event .thread-user-content-shell,
 .thread-host-event .thread-message-actions {
   align-items: flex-start;
-  align-self: flex-start;
+  align-self: stretch;
 }
 
 .thread-host-event .thread-user-content-shell {
-  background: var(--fill-1);
+  background: transparent;
+  padding: 0;
 }
 
-.thread-host-event-label {
-  display: inline-flex;
+/* One participant speaking: avatar in the margin, name over what they said.
+   Every non-reader block wears it — the conversation's own agent, a delegated
+   child delivering a result, the Agent that wrote a brief — so `main` answering
+   and a Subagent reporting are visibly the same kind of event. */
+.thread-speaker {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.thread-speaker-avatar {
+  display: flex;
+  width: var(--speaker-avatar-size);
+  height: var(--speaker-avatar-size);
+  flex: 0 0 auto;
   align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-pill);
+  font-size: var(--font-ui-2xs);
+  /* The repo's emphasis weight: a 10px initial needs it to hold the disc. */
+  font-weight: 650;
+  /* The disc is a fixed circle: its glyph must not push it out of round. */
+  line-height: 1;
+  user-select: none;
+}
+
+.thread-speaker-body {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
   gap: var(--space-2);
-  color: var(--text-faint);
+}
+
+/* The blocks keep the Turn's own rhythm: the speaker column replaces
+   `.thread-turn` as their flex parent, so it must not quietly respace them. */
+.thread-speaker-content {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+/* The name is set on the same box height as the disc beside it, so the two read
+   as one line without hand-tuning a line-height against an avatar size. */
+.thread-speaker-name {
+  display: flex;
+  min-height: var(--speaker-avatar-size);
+  align-items: center;
+  color: var(--text-secondary);
   font-size: var(--font-meta);
   line-height: var(--line-meta);
 }

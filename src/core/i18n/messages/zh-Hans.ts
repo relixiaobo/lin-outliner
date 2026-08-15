@@ -1198,7 +1198,6 @@ export const zhHans: PartialMessages = {
       openSubagentThread: ({ id }) => `打开子智能体线程 ${id}`,
       retryTurn: '重试',
       subagentReadOnly: '由本次对话驱动,可随时停止。',
-      agentEvent: 'Agent 事件',
       stopUnavailable: '该工作已经结束。',
       stopSubagent: ({ name }: { name: string }) => `停止 ${name}`,
       subagentStatuses: {
@@ -1235,7 +1234,6 @@ export const zhHans: PartialMessages = {
         worktreeUnavailable: '该工作区已不在磁盘上。',
         back: '返回',
         readOnlySkill: '由调用它的 Skill 调用拥有。',
-        fromSender: ({ name }: { name: string }) => `来自 ${name}`,
         main: '主对话',
         skill: 'Skill',
         backgroundFinished: '一个后台 Agent 已完成。',

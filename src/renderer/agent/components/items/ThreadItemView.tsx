@@ -115,7 +115,6 @@ interface ThreadItemViewProps {
    * itself, otherwise the delegating Agent. Absent in a conversation, where a
    * host event has no single author to name.
    */
-  readonly hostAuthorName?: string;
   readonly showMessageActions: boolean;
   readonly streaming: boolean;
   /** This Item is where a delegation happened, so a chip takes its slot. */
@@ -340,7 +339,6 @@ function UserMessageItem({
   index,
   item,
   hostAuthoredEvent = false,
-  hostAuthorName,
   onEditUserMessage,
   onOpenNodeReference,
   showMessageActions,
@@ -367,19 +365,13 @@ function UserMessageItem({
 
   return (
     // POSITION IS IDENTITY, the way it is in any message stream: the reader's
-    // own words sit on their side, and everyone else's sit opposite with a name
-    // on them. A brief from the delegating Agent shared the reader's slot until
-    // now, which put two different senders in one place and left the difference
-    // to a hover.
+    // own words sit on their side in their own bubble, and everyone else's sit
+    // opposite as plain prose under the avatar and name of whoever wrote them.
+    // A brief from the delegating Agent shared the reader's slot until now,
+    // which put two different senders in one place and left the difference to a
+    // hover. The attribution itself lives in the speaker header above this, so
+    // one participant saying three things in a row is named once, not thrice.
     <article className={`thread-item thread-user-message${hostAuthoredEvent ? ' thread-host-event' : ''}`}>
-      {hostAuthoredEvent ? (
-        <div className="thread-host-event-label">
-          <AgentIcon aria-hidden size={ICON_SIZE.rowGlyph} />
-          <span>{hostAuthorName
-            ? t.agent.thread.agent.fromSender({ name: hostAuthorName })
-            : t.agent.thread.agentEvent}</span>
-        </div>
-      ) : null}
       {editing ? (
         <div className="thread-message-editor">
           <textarea

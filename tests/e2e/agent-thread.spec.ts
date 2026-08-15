@@ -2502,12 +2502,15 @@ test.describe('canonical agent Thread surface', () => {
     // rewritten or forked through root-only actions.
     // The brief the parent wrote, named as the task it is — not as an "event",
     // which is what a peer Agent's message to a conversation is.
-    // Position is identity: the brief sits opposite the reader's own messages
-    // and says who wrote it, so "main asked this" never rides on a hover.
+    // Position is identity: the brief leaves the reader's own slot and becomes
+    // prose under the avatar and name of the Agent that wrote it, so "main asked
+    // this" never rides on a hover.
     const brief = detail.locator('.thread-user-message.thread-host-event');
     await expect(brief).toContainText('Investigate the deployment story.');
-    await expect(brief.locator('.thread-host-event-label')).toHaveText('From main');
-    expect(await brief.evaluate((element) => getComputedStyle(element).alignSelf)).toBe('flex-start');
+    const briefSpeaker = detail.locator('.thread-speaker').first();
+    await expect(briefSpeaker.locator('.thread-user-message.thread-host-event')).toHaveCount(1);
+    await expect(briefSpeaker.locator('.thread-speaker-name')).toHaveText('main');
+    await expect(briefSpeaker.locator('.thread-speaker-avatar')).toHaveText('M');
     await expect(detail.getByRole('textbox', { name: 'Message this Thread' })).toBeVisible();
     await expect(detail.getByRole('button', { name: 'Edit message' })).toHaveCount(0);
     await expect(detail.getByRole('button', { name: 'Continue in new chat' })).toHaveCount(0);
@@ -3418,12 +3421,16 @@ test.describe('canonical agent Thread surface', () => {
     await expect(deliveryTurn).toContainText('Research says the order holds');
     await expect(page.locator('.thread-transcript')).not.toContainText('task-notification');
 
-    // What replaces it is a MESSAGE from the Agent, in the bubble every other
-    // message wears: named, on the sender's side, never the reader's own slot.
+    // What replaces it is a MESSAGE from the Agent, in the shape every
+    // participant here speaks in: its own avatar and name, never the reader's
+    // own slot. The Turn holds two speakers — the child that delivered, and the
+    // agent that read the result and answered — and says so.
     const report = deliveryTurn.locator('.thread-agent-report');
-    await expect(report.locator('.thread-host-event-label')).toHaveText('From research');
     await expect(report).toContainText('The rollout order is safe.');
-    expect(await report.evaluate((element) => getComputedStyle(element).alignSelf)).toBe('flex-start');
+    await expect(deliveryTurn.locator('.thread-speaker-name')).toHaveText(['research', 'main']);
+    const reportSpeaker = deliveryTurn.locator('.thread-speaker').first();
+    await expect(reportSpeaker.locator('.thread-agent-report')).toHaveCount(1);
+    await expect(reportSpeaker.locator('.thread-speaker-avatar')).toHaveText('R');
 
     // Folded like any long message, behind the same one control.
     const body = report.locator('.thread-user-content-body');

@@ -7,6 +7,7 @@ import { IconButton } from '../../ui/primitives/IconButton';
 import { api } from '../../api/client';
 import type { ThreadNodeReferenceOpenHandler } from '../threadReferences';
 import { threadStore, useThreadStore } from '../store/threadStore';
+import { MAIN_AVATAR_IDENTITY } from '../agentAvatarColor';
 import type { SubagentConversationProjection } from '../subagentPresentation';
 import { useSubagentActions, useSubagentEntry } from './SubagentRegistryContext';
 import { formatSubagentDuration } from './subagentElapsed';
@@ -127,6 +128,8 @@ export function SubagentDetailView({
             slashCommands={[]}
             agentTranscript
             hostAuthorName={hostAuthorName}
+            hostAuthorIdentity={parentThreadId ?? MAIN_AVATAR_IDENTITY}
+            selfSpeaker={{ identity: agentId, name: entry?.displayName ?? t.agent.thread.untitled }}
             subagentProjection={subagentProjection}
             threadCreationBlocked
             threadCreationPending={false}

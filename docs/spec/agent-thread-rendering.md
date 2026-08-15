@@ -73,24 +73,52 @@ Inside the view the transcript renders EXACTLY as the main conversation does —
 same message stream, same bubbles, same rows — because it is the same thing: a
 request and the work it produced. What differs is which actions are valid.
 
-**Position is identity.** The delegation graph is a set of participants sending
-each other messages, and every surface that shows one reads like any message
-stream: the reader's own words on the reader's side, everyone else's on the
-opposite side, named. So the brief an Agent was given — and every later steer
-from its delegator — renders left-aligned, in a quieter fill, under a standing
-label naming the sender (`From main` when the delegator is the conversation
-itself, otherwise the delegating Agent). The label is always visible, never a
-hover reveal: the difference between "I asked this" and "main asked this" is who
-is speaking, which is the one thing a message stream may not hide. A message the
-reader typed into the same composer keeps the reader's own right-aligned bubble
-and carries no label, because it needs none — they wrote it. The label names a
-sender and nothing else; a steer is not a task and must not be labelled as one.
+**Position is identity, and everyone who is not the reader is a speaker.** The
+delegation graph is a set of participants sending each other messages, and every
+surface that shows one reads like any message stream.
+
+Every non-reader block therefore wears the SAME structure — an avatar in the
+margin, the participant's name above, and what they said beneath it, indented
+under the name. One structure for all of them: the conversation's own agent
+answering, a delegated child delivering its report, the Agent that wrote a
+brief. Before this, `main` was unattributed prose and a child's report was a
+labelled bubble, which made two participants look like two different sorts of
+thing (PM 2026-08-15). Consecutive blocks from one participant group under a
+single avatar, so an agent that works and then answers is named once, not twice;
+a delivery Turn genuinely has two speakers (the child, then the agent reading
+its result) and shows two.
+
+Content under a speaker is PLAIN PROSE, never a bubble. The avatar and name
+above already say who is talking, and a second container would draw the same
+fact twice. That is what retires the `From <name>` label the report and the
+brief used to carry inside their own bubbles.
+
+The reader is the one exception, deliberately: their own messages keep the
+right-hand bubble and get no avatar. Which side a message is on is the fastest
+identity signal in the stream, and Tenon has no user profile to draw a face
+from — so `I asked this` stays a matter of position, and `main asked this` a
+matter of the name above it. Neither is ever left to a hover.
+
+The avatar is a coloured disc carrying the first character of the name. Its hue
+comes from the shared `--identity-tint-*` palette (`agentAvatarColor.ts`), keyed
+by Agent id — not by display name, so two siblings a task description named
+alike still differ — with `main` pinned to a fixed key so the participant that
+is always there looks the same in every conversation. Red is excluded: it sits
+next to `--status-danger`, and an Agent that reads as an error every time it
+speaks is a worse trade than one fewer hue. This is the design system's
+**identity** category (`design-system.md`), distinct from functional state (B3,
+neutral), status (B4), and the rose accent (B4) — the same category the tag
+chips already use, so the app reads as one coordinated set rather than three
+inventions. Identity colour never paints selection, hover, active, focus, or
+status; those stay exactly as neutral as they were. A hue may repeat across a
+large conversation; the name beside the disc is the identity of record.
 
 Each Turn after the first IS a new generation, and nothing marks it as one. A
 generation counter is the execution record's word for a resume, not the
 reader's, and the message that started the run is directly below the boundary
-anyway: their own bubble, or one naming the Agent that sent it (PM 2026-08-15,
-replacing the ratified `Generation 2 · Continued by main` divider).
+anyway: their own bubble, or one under the avatar and name of the Agent that
+sent it (PM 2026-08-15, replacing the ratified `Generation 2 · Continued by
+main` divider).
 
 Every embedded child drops Edit and Continue in new chat because neither
 rewrites or forks child history; they are hidden rather than disabled, because a
@@ -435,12 +463,15 @@ ANCHOR in it at the point where it happened:
   Agent's own terminal answer, rendered as a MESSAGE from that Agent. It stands
   exactly where the raw task-notification text would be and replaces it, because
   that text is host framing addressed to the model and never a message to the
-  reader. Position is identity here too (above): it wears the same left-aligned
-  host-event bubble as a brief, under the same `From <name>` label, and folds
-  behind the same Show more every long message uses — one grammar, so a report
-  reads as somebody speaking rather than as one more row of what the Turn did.
-  A pill-shaped fold-to-nothing row was tried first and drowned among the tool
-  rows (PM 2026-08-15). It never wears the READER's bubble: Agent output is
+  reader. Position is identity here too (above): the report is one more speaker
+  in the stream — its own avatar, its own name, the same prose column a brief or
+  `main`'s answer uses — and folds behind the same Show more every long message
+  uses. One grammar, so a report reads as somebody speaking rather than as one
+  more row of what the Turn did. A pill-shaped fold-to-nothing row was tried
+  first and drowned among the tool rows (PM 2026-08-15). Its speaker is the
+  CHILD, not this transcript's own agent, so a delivery Turn shows two speakers
+  in order: the child reporting, then the agent that read it answering. It never
+  wears the READER's bubble: Agent output is
   untrusted content, and a surface that let it pass for the reader's own words
   would be the first step in the laundering the protocol refuses. A `Details ›`
   control beside it pushes the Agent's own view, so reviewing a finished Agent

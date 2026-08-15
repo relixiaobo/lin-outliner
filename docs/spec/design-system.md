@@ -93,7 +93,9 @@ A Tenon UI is clean, clear, simple, and elegant only when all of these are true:
 5. Actions sit near the thing they affect and use native control idioms before
    custom styling.
 6. Colour carries semantic meaning only: neutral for functional state, blue for
-   links, rose for sparse brand accent, status colours for status.
+   links, rose for sparse brand accent, status colours for status, and the
+   `--identity-tint-*` palette for identity (tag chips, participant avatars) —
+   which is a decorative category, never a state.
 7. Density comes from alignment, measured slots, and shared rhythm, not cramped
    text or hidden affordances.
 8. Empty, loading, and error states occupy the action point; they do not become
@@ -161,6 +163,12 @@ carry the detailed form.
    controls use the neutral ladder, never brand or status colour.
 4. **One rose accent, one native-blue link.** Rose is sparse brand activity; links
    use `--link` and never status or accent colour.
+   **Identity is its own category.** One shared `--identity-tint-*` palette
+   (excluding the danger-adjacent red) marks WHO something belongs to — a tag,
+   a conversation participant's avatar — assigned deterministically from a
+   stable id. It is not a state, not a status, and not the accent: identity
+   colour never paints selection, hover, active, focus, or status, which rules 3
+   and 4 keep exactly as neutral as they are.
 5. **Two-layer material model.** Content is opaque; only chrome and overlays carry
    material. Every material has reduced-transparency and contrast fallbacks.
 6. **Icon controls deepen colour first.** Icon-only chrome controls do not gain a

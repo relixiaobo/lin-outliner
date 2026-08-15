@@ -31,6 +31,7 @@ import { IconButton } from '../../ui/primitives/IconButton';
 import { ResizeHandle } from '../../ui/primitives/ResizeHandle';
 import { ThreadList } from './ThreadList';
 import { ThreadDetailsDialog } from './ThreadDetailsDialog';
+import { MAIN_AVATAR_IDENTITY } from '../agentAvatarColor';
 import { ThreadView } from './ThreadView';
 import { resolveUsableActiveProvider } from '../../ui/agent/providerUsability';
 import { reportActionError } from '../../ui/interactions/actionSteps';
@@ -485,6 +486,7 @@ export function ThreadDock({
             <ThreadView
               composerEnabled={thread.parentThreadId === null && thread.threadSource === 'user'}
               composerFocusToken={composerFocusToken}
+              selfSpeaker={{ identity: MAIN_AVATAR_IDENTITY, name: t.agent.thread.agent.main }}
               configuration={configuration}
               goal={goal}
               index={index}

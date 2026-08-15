@@ -124,7 +124,9 @@ import {
   type SubagentTurnAnchors,
 } from '../subagentPresentation';
 import { SubagentReport } from './SubagentReport';
-import { useWorkingAgentIds } from './SubagentRegistryContext';
+import { ThreadSpeakerGroup, type ThreadSpeaker } from './ThreadSpeaker';
+import { MAIN_AVATAR_IDENTITY } from '../agentAvatarColor';
+import { useSubagentEntry, useWorkingAgentIds } from './SubagentRegistryContext';
 import { classifyNewThreadCommand } from '../threadComposerCommands';
 
 interface ThreadViewProps {
@@ -155,6 +157,13 @@ interface ThreadViewProps {
   readonly agentTranscript?: boolean;
   /** Who authored the host-written Items here — this Agent's delegator. */
   readonly hostAuthorName?: string;
+  /** That delegator's avatar key: its Agent id, or `main` for the conversation. */
+  readonly hostAuthorIdentity?: string;
+  /**
+   * The participant whose transcript this is: the conversation's own `main`, or
+   * the Agent whose pushed view this is. Every response here is it speaking.
+   */
+  readonly selfSpeaker: ThreadSpeaker;
   readonly inputRequest: RequestUserInputRequest | null;
   /** The run is blocked on the user. Working phrases become static and the
    *  divider names the wait; elapsed time remains the Turn's wall-clock span. */
@@ -456,6 +465,8 @@ export function ThreadView({
   composerPlaceholder,
   agentTranscript = false,
   hostAuthorName,
+  hostAuthorIdentity,
+  selfSpeaker,
   inputRequest,
   waitingOnUserInput,
   providerRetry,
@@ -1700,6 +1711,8 @@ export function ThreadView({
                         onOpenSubagentTurnDetails={onOpenSubagentTurnDetails}
                         agentTranscript={agentTranscript}
                         {...(hostAuthorName === undefined ? {} : { hostAuthorName })}
+                        {...(hostAuthorIdentity === undefined ? {} : { hostAuthorIdentity })}
+                        selfSpeaker={selfSpeaker}
                         onOpenNodeReference={onOpenNodeReference}
                         onOpenThread={onOpenThread}
                         onOpenTurnDetails={onOpenTurnDetails}
@@ -1973,6 +1986,8 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   onOpenSubagentTurnDetails,
   agentTranscript,
   hostAuthorName,
+  hostAuthorIdentity,
+  selfSpeaker,
   onOpenTurnDetails,
   onReadToolArguments,
   onReadToolOutput,
@@ -2011,6 +2026,10 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   readonly agentTranscript: boolean;
   /** Who authored the host-written Items here — this Agent's delegator. */
   readonly hostAuthorName?: string;
+  /** That delegator's avatar key: its Agent id, or `main` for the conversation. */
+  readonly hostAuthorIdentity?: string;
+  /** The participant whose transcript this is — it speaks every response here. */
+  readonly selfSpeaker: ThreadSpeaker;
   readonly onOpenTurnDetails: (turn: Turn) => void;
   readonly onReadToolArguments: (turnId: string, item: ThreadToolItem) => Promise<JsonValue | null>;
   readonly onReadToolOutput: (turnId: string, item: ThreadToolItem) => Promise<string | null>;
@@ -2051,6 +2070,11 @@ export const ThreadTurnView = memo(function ThreadTurnView({
     && isStandaloneContextBoundaryTurn(turn);
   const hostAuthoredEvent = turn.provenance.trigger.kind === 'subagent'
     && turn.provenance.originThreadId === threadId;
+  // The child that delivered into this Turn, if any: it speaks its own report.
+  const reportEntry = useSubagentEntry(delivery?.agentId ?? null);
+  const reportSpeaker: ThreadSpeaker | null = delivery !== null && reportEntry !== null
+    ? { identity: delivery.agentId, name: reportEntry.displayName }
+    : null;
   const workingAgentIds = useWorkingAgentIds();
   const contentGrouperRef = useRef<TurnContentGrouper | null>(null);
   if (contentGrouperRef.current === null) contentGrouperRef.current = createTurnContentGrouper();
@@ -2197,7 +2221,6 @@ export const ThreadTurnView = memo(function ThreadTurnView({
         index={index}
         item={item}
         hostAuthoredEvent={hostAuthoredEvent}
-        {...(hostAuthorName === undefined ? {} : { hostAuthorName })}
         key={item.id}
         onAgentMessageContextMenu={item.id === responseItem?.id ? handleResponseContextMenu : undefined}
         onEditUserMessage={editUserMessage}
@@ -2219,55 +2242,76 @@ export const ThreadTurnView = memo(function ThreadTurnView({
       />
     )
   );
+  // Who says each block, so consecutive blocks from one participant sit under
+  // one avatar. Three speakers can appear in a single Turn: the reader (their
+  // own message), a child delivering a result, and this transcript's own agent
+  // reading that result and answering.
+  const speakerOf = (block: ThreadContentBlock): ThreadSpeaker | null => {
+    if (block.kind === 'process') return selfSpeaker;
+    if (block.item.type !== 'userMessage') return selfSpeaker;
+    if (reportSpeaker !== null) return reportSpeaker;
+    if (!hostAuthoredEvent) return null;
+    return { identity: hostAuthorIdentity ?? MAIN_AVATAR_IDENTITY, name: hostAuthorName ?? '' };
+  };
+  const runs: Array<{ readonly speaker: ThreadSpeaker | null; readonly nodes: ReactNode[] }> = [];
+  const emit = (speaker: ThreadSpeaker | null, node: ReactNode): void => {
+    const open = runs.at(-1);
+    if (open && open.speaker?.identity === speaker?.identity) open.nodes.push(node);
+    else runs.push({ speaker, nodes: [node] });
+  };
+  for (const block of contentBlocks) {
+    emit(speakerOf(block), block.kind === 'process' ? (
+      <ThreadProcessBlock
+        expandState={expandState}
+        hasFinalResponse={responseItem !== null}
+        index={index}
+        items={block.items}
+        onOpenThread={onOpenThread}
+        motionOwner={motionOwner}
+        waitingOnUserInput={waitingOnUserInput}
+        workingTextEnabled={workingTextEnabled}
+        key={`process:${block.items[0]?.id ?? turn.id}`}
+        anchors={anchors}
+        turn={turn}
+      >
+        {processItemGroups.map((group) => group.kind === 'tools' ? (
+          <ThreadToolActivityGroup
+            expandState={expandState}
+            index={index}
+            items={group.items}
+            key={group.items[0]?.id}
+            onOpenThread={onOpenThread}
+            onReadToolArguments={readToolArguments}
+            onReadToolOutput={readToolOutput}
+            threadId={threadId}
+            threadCwd={threadCwd}
+            workingTextEnabled={workingTextEnabled}
+          />
+        ) : renderItem(group.item, false))}
+      </ThreadProcessBlock>
+    ) : renderItem(
+      block.item,
+      turn.status !== 'inProgress' && block.item.type === 'userMessage',
+    ));
+  }
+  if (responseItem === null && responseTail) {
+    emit(selfSpeaker, (
+      <article
+        className="thread-item thread-agent-message thread-agent-message-response"
+        key={`tail:${turn.id}`}
+        onContextMenu={turn.status === 'inProgress' ? undefined : handleResponseContextMenu}
+      >
+        {responseTail}
+      </article>
+    ));
+  }
   return (
     <section className={`thread-turn thread-turn-${turn.status}`}>
-      {contentBlocks.map((block) => {
-        if (block.kind === 'process') {
-          return (
-            <ThreadProcessBlock
-              expandState={expandState}
-              hasFinalResponse={responseItem !== null}
-              index={index}
-              items={block.items}
-              onOpenThread={onOpenThread}
-              motionOwner={motionOwner}
-              waitingOnUserInput={waitingOnUserInput}
-              workingTextEnabled={workingTextEnabled}
-              key={`process:${block.items[0]?.id ?? turn.id}`}
-              anchors={anchors}
-              turn={turn}
-            >
-              {processItemGroups.map((group) => group.kind === 'tools' ? (
-                <ThreadToolActivityGroup
-                  expandState={expandState}
-                  index={index}
-                  items={group.items}
-                  key={group.items[0]?.id}
-                  onOpenThread={onOpenThread}
-                  onReadToolArguments={readToolArguments}
-                  onReadToolOutput={readToolOutput}
-                  threadId={threadId}
-                  threadCwd={threadCwd}
-                  workingTextEnabled={workingTextEnabled}
-                />
-              ) : renderItem(group.item, false))}
-            </ThreadProcessBlock>
-          );
-        }
-        const item = block.item;
-        return renderItem(
-          item,
-          turn.status !== 'inProgress' && item.type === 'userMessage',
-        );
-      })}
-      {responseItem === null && responseTail ? (
-        <article
-          className="thread-item thread-agent-message thread-agent-message-response"
-          onContextMenu={turn.status === 'inProgress' ? undefined : handleResponseContextMenu}
-        >
-          {responseTail}
-        </article>
-      ) : null}
+      {runs.map((run, runIndex) => run.speaker === null ? run.nodes : (
+        <ThreadSpeakerGroup key={`speaker:${turn.id}:${runIndex}`} speaker={run.speaker}>
+          {run.nodes}
+        </ThreadSpeakerGroup>
+      ))}
     </section>
   );
 });

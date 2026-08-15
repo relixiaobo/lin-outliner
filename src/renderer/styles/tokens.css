@@ -427,6 +427,9 @@
      outliner = --panel-content-x + --row-leading-width, agent =
      --agent-content-x, settings = inset-row text padding. Do not flatten them
      into one value; converge within a surface instead. */
+  /* The participant avatar disc in the agent transcript: one size, shared by
+     the disc and the name line beside it so they sit on one baseline. */
+  --speaker-avatar-size: 22px;
   --row-leading-width: 42px;
   --row-leading-height: var(--line-content);
   --row-chevron-width: 15px;

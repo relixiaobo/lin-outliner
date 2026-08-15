@@ -117,6 +117,7 @@ function turnProps() {
     onReadToolArguments: async () => null,
     onReadToolOutput: async () => null,
     providerRetry: null,
+    selfSpeaker: { identity: 'main', name: 'main' },
     threadCwd: '/workspace',
     threadId: 'thread',
     threadsById: new Map(),

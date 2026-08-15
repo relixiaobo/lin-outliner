@@ -78,8 +78,9 @@ export function useWorkingAgentIds(): ReadonlySet<ThreadId> {
   return useContext(SubagentLivenessContext);
 }
 
-export function useSubagentEntry(agentId: ThreadId): SubagentRegistryEntry | null {
-  return useContext(SubagentRegistryContext).byAgentId.get(agentId) ?? null;
+export function useSubagentEntry(agentId: ThreadId | null): SubagentRegistryEntry | null {
+  const registry = useContext(SubagentRegistryContext);
+  return agentId === null ? null : registry.byAgentId.get(agentId) ?? null;
 }
 
 export function useSubagentActions(): SubagentActions {

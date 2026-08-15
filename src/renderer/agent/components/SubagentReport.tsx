@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { turnTerminalAnswer } from '../../../core/agent/turnAnswer';
 import { useT } from '../../i18n/I18nProvider';
-import { AgentIcon, ChevronRightIcon, ICON_SIZE, SkillIcon } from '../../ui/icons';
+import { ChevronRightIcon, ICON_SIZE } from '../../ui/icons';
 import type { DocumentIndex } from '../../state/document';
 import type { ThreadNodeReferenceOpenHandler } from '../threadReferences';
 import { threadStore, useThreadStore } from '../store/threadStore';
@@ -19,10 +19,11 @@ import { useSubagentActions, useSubagentEntry } from './SubagentRegistryContext'
  * what is shown. What is shown is the Agent's own report — as a MESSAGE from
  * that Agent, in the same bubble every other message in this stream wears.
  *
- * Position is identity: it sits opposite the reader, under a label naming its
- * sender, exactly as a brief `From main` does. Rendered as a row instead — a
- * pill among the tool rows — it read as one more thing the Turn did rather than
- * as somebody speaking, which is the one thing this anchor exists to say.
+ * Position is identity: it sits opposite the reader, under the avatar and name
+ * of the Agent that sent it, exactly as any other participant's message does.
+ * Rendered as a row instead — a pill among the tool rows — it read as one more
+ * thing the Turn did rather than as somebody speaking, which is the one thing
+ * this anchor exists to say.
  *
  * It never wears the reader's own bubble. Agent output is untrusted content by
  * contract — it cannot answer a question, approve a plan, or grant authority —
@@ -69,13 +70,8 @@ export function SubagentReport({
   // back to the newest, which is the only run it can honestly show.
   const reported = turns?.[delivery.generationIndex] ?? turns?.at(-1);
   const report = reported ? turnTerminalAnswer(reported.items) : '';
-  const SenderIcon = entry.form === 'isolatedSkill' ? SkillIcon : AgentIcon;
   return (
     <article className="thread-item thread-user-message thread-host-event thread-agent-report">
-      <div className="thread-host-event-label">
-        <SenderIcon aria-hidden size={ICON_SIZE.rowGlyph} />
-        <span>{t.agent.thread.agent.fromSender({ name: entry.displayName })}</span>
-      </div>
       <div className="thread-user-content-sequence">
         <UserMessageCollapsibleContent expandState={expandState} measureKey={report}>
           {report ? (

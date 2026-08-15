@@ -1293,7 +1293,6 @@ export const en = {
       openSubagentThread: ({ id }: { id: string }) => `Open Subagent Thread ${id}`,
       retryTurn: 'Retry',
       subagentReadOnly: 'Driven by this conversation. You can stop it at any time.',
-      agentEvent: 'Agent event',
       stopUnavailable: 'That work already finished.',
       stopSubagent: ({ name }: { name: string }) => `Stop ${name}`,
       subagentStatuses: {
@@ -1332,7 +1331,6 @@ export const en = {
         worktreeUnavailable: 'That worktree is no longer on disk.',
         back: 'Back',
         readOnlySkill: 'Owned by the Skill call that invoked it.',
-        fromSender: ({ name }: { name: string }) => `From ${name}`,
         main: 'main',
         skill: 'Skill',
         backgroundFinished: 'A background Agent finished.',
