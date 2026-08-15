@@ -45,9 +45,31 @@ export function SubagentWorkStrip({
     if (rows.length === 0) setOpen(false);
   }, [rows.length]);
 
+  // Dismissible like every other overlay in the deck. It floats over the
+  // transcript, so without this a click into the conversation or the composer
+  // left it sitting on top of what the reader had just gone back to.
+  const strip = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const onPointerDown = (event: MouseEvent) => {
+      const target = event.target;
+      if (target instanceof Node && strip.current?.contains(target)) return;
+      setOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+    window.addEventListener('mousedown', onPointerDown, true);
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => {
+      window.removeEventListener('mousedown', onPointerDown, true);
+      window.removeEventListener('keydown', onKeyDown, true);
+    };
+  }, [open]);
+
   if (rows.length === 0) return null;
   return (
-    <div className="thread-work-strip">
+    <div className="thread-work-strip" ref={strip}>
       <button
         aria-expanded={open}
         className="thread-work-strip-pill"
@@ -163,19 +185,21 @@ function useStripClock(
   injected: number | undefined,
 ): number {
   const [now, setNow] = useState(() => injected ?? Date.now());
-  const lingering = useRef(false);
-  lingering.current = [...byAgentId.values()].some((entry) => (
-    entry.settledAt !== null && (injected ?? Date.now()) - entry.settledAt < SUBAGENT_STRIP_LINGER_MS
+  // Derived and passed as a DEPENDENCY, not held in a ref. In a ref, the moment
+  // the last fade ended changed nothing the effect could see — the Agent map is
+  // identical by then — so the interval it had started ran for the rest of the
+  // session, once a second, over a strip that had already returned null.
+  const lingering = [...byAgentId.values()].some((entry) => (
+    entry.settledAt !== null && (injected ?? now) - entry.settledAt < SUBAGENT_STRIP_LINGER_MS
   ));
   useEffect(() => {
     if (injected !== undefined) {
       setNow(injected);
       return undefined;
     }
-    if (!lingering.current) return undefined;
-    setNow(Date.now());
+    if (!lingering) return undefined;
     const interval = window.setInterval(() => setNow(Date.now()), 1_000);
     return () => window.clearInterval(interval);
-  }, [byAgentId, injected]);
+  }, [injected, lingering]);
   return injected ?? now;
 }

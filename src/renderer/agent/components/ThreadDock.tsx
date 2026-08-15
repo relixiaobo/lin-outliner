@@ -415,10 +415,13 @@ export const ThreadDock = memo(function ThreadDock({
             <SubagentDetailTitle
               onPop={() => setAgentStack((current) => current.slice(0, -1))}
               agentId={openAgentId}
+              // At depth one the level below IS the conversation, so Back names
+              // it. Falling back to the Back label read `Back: Back` in the
+              // tooltip and to a screen reader — for the commonest case there
+              // is — while claiming to name the level below.
               parentName={openAgentStack.length > 1
-                ? subagentProjection.byAgentId.get(openAgentStack.at(-2)!)?.displayName
-                  ?? t.agent.thread.agent.back
-                : t.agent.thread.agent.back}
+                ? subagentProjection.byAgentId.get(openAgentStack.at(-2)!)?.displayName ?? title
+                : title}
             />
           ) : null}
           {surface === 'automations' ? (

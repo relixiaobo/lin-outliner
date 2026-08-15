@@ -660,7 +660,8 @@ const agentConfigurationLoader = new AgentConfigurationLoader(resolvedUserDataDi
 const agentWorktree = new AgentWorktree(resolvedUserDataDir);
 let threadService!: ThreadService;
 
-/** How many changed paths a worktree footer will list before eliding. */
+/** How many changed paths a worktree footer will LIST; the count it states is
+ *  the real total, which is why both travel back. */
 const MAX_REPORTED_WORKTREE_CHANGES = 200;
 
 /**
@@ -1067,8 +1068,16 @@ threadService.subscribe((notification) => {
   liveWindow(mainWindow)?.webContents.send(AGENT_CORE_NOTIFICATION_CHANNEL, notification);
 });
 
-/** Generations already announced, so one terminal event notifies exactly once. */
+/**
+ * Generations already announced, so one terminal event notifies exactly once.
+ *
+ * Bounded: the ledger emits repeatedly for one generation, so this must remember
+ * them — but a long session delegating steadily would otherwise grow it for the
+ * life of the process. The oldest keys are dropped once it passes the cap; a
+ * generation that old cannot still be settling.
+ */
 const announcedAgentGenerations = new Set<string>();
+const MAX_ANNOUNCED_AGENT_GENERATIONS = 512;
 
 /**
  * The one OS notification this feature issues.
@@ -1084,10 +1093,17 @@ function notifyTerminalBackgroundAgent(execution: SubagentExecutionProjection): 
   if (execution.runMode !== 'background' || execution.terminalStatus === null) return;
   const key = `${execution.agentId}:${execution.generation}`;
   if (announcedAgentGenerations.has(key)) return;
-  announcedAgentGenerations.add(key);
+  // Marked only where a notification is actually issued. Marked before the
+  // window check, a generation whose terminal write landed while the window was
+  // still being created counted as announced and could never notify at all.
   const window = liveWindow(mainWindow);
   if (!window || window.isFocused()) return;
   if (!Notification.isSupported()) return;
+  announcedAgentGenerations.add(key);
+  if (announcedAgentGenerations.size > MAX_ANNOUNCED_AGENT_GENERATIONS) {
+    const oldest = announcedAgentGenerations.values().next();
+    if (!oldest.done) announcedAgentGenerations.delete(oldest.value);
+  }
   try {
     new Notification({
       title: APP_NAME,
@@ -4308,19 +4324,30 @@ async function handleAgentCommand(_event: IpcMainInvokeEvent, command: AgentComm
       // A renderer-supplied path here would turn a footer into an arbitrary
       // filesystem read, so it is never accepted.
       const worktree = retainedAgentWorktree(String(args.agentId ?? ''));
-      if (!worktree) return { available: false, paths: [] };
+      if (!worktree) return { available: false, paths: [], total: 0 };
       try {
-        const status = await gitOutput(worktree.path, ['--no-optional-locks', 'status', '--porcelain']);
-        const paths = status.split('\n')
+        // `-z` and `core.quotePath=false`: git otherwise quotes and octal-escapes
+        // any path with a space or a non-ASCII character, which is most of them
+        // in a Chinese workspace, and the footer would list the escaping.
+        const status = await gitOutput(worktree.path, [
+          '--no-optional-locks', '-c', 'core.quotePath=false', 'status', '--porcelain', '-z',
+        ]);
+        const entries = status.split('\0')
           .map((line) => line.slice(3).trim())
           .filter(Boolean)
           // A rename reports `old -> new`; the destination is the file that is
           // now in the worktree, which is what the reader is being shown.
-          .map((entry) => entry.includes(' -> ') ? entry.slice(entry.indexOf(' -> ') + 4) : entry)
-          .slice(0, MAX_REPORTED_WORKTREE_CHANGES);
-        return { available: true, paths };
+          .map((entry) => entry.includes(' -> ') ? entry.slice(entry.indexOf(' -> ') + 4) : entry);
+        // The COUNT is the truth about the worktree; the list is capped so a
+        // 3,000-file Agent cannot flood the rail. Reporting `paths.length` as
+        // the count stated exactly 200 as a fact.
+        return {
+          available: true,
+          paths: entries.slice(0, MAX_REPORTED_WORKTREE_CHANGES),
+          total: entries.length,
+        };
       } catch {
-        return { available: false, paths: [] };
+        return { available: false, paths: [], total: 0 };
       }
     }
     case 'agent_reveal_worktree': {

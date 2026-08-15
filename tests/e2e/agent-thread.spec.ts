@@ -2493,15 +2493,19 @@ test.describe('canonical agent Thread surface', () => {
     // only exists when the transcript has stopped following.
     await expect(page.getByRole('button', { name: 'Jump to latest' })).toBeVisible();
 
+    const deckTitle = page.locator('.thread-dock-title');
+    const conversationTitle = (await deckTitle.textContent()) ?? '';
+    expect(conversationTitle).not.toBe('');
+
     await page.getByRole('button', { name: /^Open research/u }).click();
     const detail = page.locator('.thread-agent-detail');
     await expect(detail).toBeVisible();
-    const deckTitle = page.locator('.thread-dock-title');
     // The pushed level owns the title bar, and Back names the level below — so
     // position in the stack is legible rather than inferred. At depth one that
-    // level is the conversation.
+    // level is the conversation, and Back says its name: falling back to the
+    // Back label read `Back: Back` for the commonest case there is.
     await expect(deckTitle).toHaveText('research');
-    await expect(page.getByRole('button', { name: 'Back: Back' })).toBeVisible();
+    await expect(page.getByRole('button', { name: `Back: ${conversationTitle}` })).toBeVisible();
 
     // Host-authored child input is an Agent event rather than a user bubble.
     // The child can receive new direction, but its existing history cannot be
@@ -2578,8 +2582,8 @@ test.describe('canonical agent Thread surface', () => {
     // research -> review edge that the delegation graph does not have.
     await detail.getByRole('button', { name: /^Open review/u }).click();
     await expect(deckTitle).toHaveText('review');
-    await expect(page.getByRole('button', { name: 'Back: Back' })).toBeVisible();
-    await page.getByRole('button', { name: 'Back: Back' }).click();
+    await expect(page.getByRole('button', { name: `Back: ${conversationTitle}` })).toBeVisible();
+    await page.getByRole('button', { name: `Back: ${conversationTitle}` }).click();
     await expect(detail).toHaveCount(0);
   });
 
@@ -3601,6 +3605,34 @@ test.describe('canonical agent Thread surface', () => {
       hint.getBoundingClientRect().height === hint.closest('.thread-message-actions-slot')!
         .getBoundingClientRect().height
     ))).toBe(true);
+
+    // A steering message typed while the continuation is still running is the
+    // READER's, and belongs to the reader: replacing every user-role Item in a
+    // delivery Turn rendered the report twice and made those words vanish.
+    await page.evaluate((ids) => {
+      const target = window as Window & {
+        __LIN_E2E__?: { emitAgentCoreNotification: (n: unknown) => void };
+      };
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'item/completed',
+        threadId: ids.parentThreadId,
+        turnId: ids.deliveryTurnId,
+        item: {
+          id: '01910000-0000-7000-8000-000000004a0b',
+          type: 'userMessage',
+          provenance: {
+            originThreadId: ids.parentThreadId,
+            originTurnId: ids.deliveryTurnId,
+            originItemId: '01910000-0000-7000-8000-000000004a0b',
+          },
+          clientId: null,
+          acceptedAt: 3,
+          content: [{ type: 'text', text: 'Also check the changelog.' }],
+        },
+      });
+    }, fixture);
+    await expect(deliveryTurn.locator('.thread-agent-report')).toHaveCount(1);
+    await expect(deliveryTurn.locator('.thread-user-message')).toContainText('Also check the changelog.');
 
     // Depth beyond the report is the detail view, one push away — the whole
     // card is the control that gets there.

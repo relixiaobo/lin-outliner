@@ -108,6 +108,13 @@ export interface SubagentTurnAnchors {
 export interface SubagentDelivery {
   readonly agentId: ThreadId;
   /**
+   * How many of this Agent's deliveries came AFTER this one — 0 for the newest.
+   * The report reads the Agent's settled Turns from the end by this count, so a
+   * delivery the host never materialized cannot slide every earlier card onto
+   * the wrong run.
+   */
+  readonly fromLatest: number;
+  /**
    * Which run of that Agent this delivery carries, counted from zero in
    * narrative order. One generation is one child Turn — steering joins the Turn
    * already running, and only a resume starts another — so the Nth delivery
@@ -309,7 +316,7 @@ function deliveries(
   turnsByThread: ReadonlyMap<ThreadId, readonly Turn[]>,
   agentByCallItemId: ReadonlyMap<ThreadItemId, ThreadId>,
 ): Map<TurnId, SubagentDelivery> {
-  const resolved = new Map<TurnId, SubagentDelivery>();
+  const ordered = new Map<TurnId, { readonly agentId: ThreadId }>();
   const deliveredByAgent = new Map<ThreadId, number>();
   for (const ownerThreadId of owners) {
     for (const turn of turnsByThread.get(ownerThreadId) ?? []) {
@@ -321,19 +328,34 @@ function deliveries(
       ) continue;
       const agentId = agentByCallItemId.get(trigger.parentItemId);
       if (agentId === undefined) continue;
-      const generationIndex = deliveredByAgent.get(agentId) ?? 0;
-      deliveredByAgent.set(agentId, generationIndex + 1);
-      resolved.set(turn.id, { agentId, generationIndex });
+      deliveredByAgent.set(agentId, (deliveredByAgent.get(agentId) ?? 0) + 1);
+      ordered.set(turn.id, { agentId });
     }
+  }
+  // Counted BACKWARDS from the newest delivery, and matched against the child's
+  // settled Turns counted backwards too. Forwards, the two sequences only line
+  // up while nothing is ever missing from either — and something can be: a
+  // notification the host never materialized into a Turn because the Agent was
+  // deleted meanwhile, or a generation that ran in the foreground and reported
+  // through its tool call instead. A forward index that silently slipped by one
+  // stayed in range and showed a different run of the same Agent as the report.
+  const resolved = new Map<TurnId, SubagentDelivery>();
+  const seenByAgent = new Map<ThreadId, number>();
+  for (const [turnId, { agentId }] of ordered) {
+    const index = seenByAgent.get(agentId) ?? 0;
+    seenByAgent.set(agentId, index + 1);
+    resolved.set(turnId, {
+      agentId,
+      generationIndex: index,
+      fromLatest: (deliveredByAgent.get(agentId) ?? 1) - 1 - index,
+    });
   }
   return resolved;
 }
 
 function projectRegistryEntries(input: SubagentProjectionInput): Map<ThreadId, SubagentRegistryEntry> {
-  const members = [
-    ...conversationExecutions(input.rootThreadId, input.executions),
-    ...recordlessChildren(input),
-  ];
+  const committed = conversationExecutions(input.rootThreadId, input.executions);
+  const members = [...committed, ...recordlessChildren(input, committed)];
   const entries = new Map<ThreadId, SubagentRegistryEntry>();
   for (const execution of members) {
     const thread = input.threadsById.get(execution.agentId) ?? null;
@@ -375,7 +397,21 @@ function projectRegistryEntries(input: SubagentProjectionInput): Map<ThreadId, S
  * identity fields from the Thread keeps it readable instead of rendering an
  * anchor that says `Not found` about work the conversation plainly did.
  */
-function recordlessChildren(input: SubagentProjectionInput): readonly SubagentExecutionProjection[] {
+/**
+ * Delegated children this conversation made that have no execution record yet.
+ *
+ * Seeded from THIS conversation's own members, never from every execution the
+ * store holds. The store keeps records for conversations the reader visited
+ * earlier and `threadsById` holds their descendants, so a frontier of "every
+ * known agent" walked straight out of this conversation and synthesized another
+ * one's children into this registry — where, being synthesized as background
+ * work, they could surface in a work strip that is supposed to hold only what
+ * this conversation is running.
+ */
+function recordlessChildren(
+  input: SubagentProjectionInput,
+  committed: readonly SubagentExecutionProjection[],
+): readonly SubagentExecutionProjection[] {
   const childrenByParent = new Map<ThreadId, Thread[]>();
   for (const thread of input.threadsById.values()) {
     if (thread.parentThreadId === null || input.executions.has(thread.id)) continue;
@@ -384,7 +420,10 @@ function recordlessChildren(input: SubagentProjectionInput): readonly SubagentEx
     childrenByParent.set(thread.parentThreadId, siblings);
   }
   if (childrenByParent.size === 0) return [];
-  const known = new Set<ThreadId>([input.rootThreadId, ...input.executions.keys()]);
+  const known = new Set<ThreadId>([
+    input.rootThreadId,
+    ...committed.map((execution) => execution.agentId),
+  ]);
   const synthesized: SubagentExecutionProjection[] = [];
   const frontier = [...known];
   for (let index = 0; index < frontier.length; index += 1) {

@@ -559,9 +559,15 @@ ANCHOR in it at the point where it happened:
   control beside it pushes the Agent's own view, so reviewing a finished Agent
   never requires scrolling back to the spawn point. The Turn's trigger names the
   call the notification answers, so the conversation's anchors are the index
-  that resolves it across Turns, and the Nth delivery from one Agent reads that
-  Agent's Nth Turn — its history is fetched when the report renders, since a
-  message with nothing in it is not a message;
+  that resolves it across Turns. Only the Turn's FIRST user-role Item is that
+  notification: a steering message typed while the continuation is still running
+  is admitted into the same Turn and belongs to the reader. A delivery reads the
+  Agent's SETTLED Turns counted back from the newest, never forward from the
+  first — forwards, the two sequences line up only while nothing is missing from
+  either, and a notification the host never materialized slid every earlier card
+  silently onto a different run of the same Agent. History is fetched once per
+  Agent when the first report renders, since a message with nothing in it is not
+  a message;
 - a **stopped note** in place of the completion narration for an Agent the user
   stopped, naming the resume path.
 

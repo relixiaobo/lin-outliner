@@ -2080,6 +2080,14 @@ export const ThreadTurnView = memo(function ThreadTurnView({
     && turn.provenance.originThreadId === threadId;
   // The child that delivered into this Turn, if any: it speaks its own report.
   const reportEntry = useSubagentEntry(delivery?.agentId ?? null);
+  // WHICH Item the host wrote to wake the model: the Turn's first user-role
+  // Item. A steering message typed while the continuation is still running is
+  // admitted into this same Turn as another one, and it belongs to the reader —
+  // replacing it too rendered the Agent's report twice and made the reader's
+  // own words disappear.
+  const deliveryNoticeItemId = delivery === null
+    ? null
+    : turn.items.find((item) => item.type === 'userMessage')?.id ?? null;
   const reportSpeaker: ThreadSpeaker | null = delivery !== null && reportEntry !== null
     ? {
       participantId: delivery.agentId,
@@ -2235,7 +2243,7 @@ export const ThreadTurnView = memo(function ThreadTurnView({
     // this Turn exists because an Agent's result arrived, the Agent's own
     // report replaces it — folded, as a message from that Agent — instead of
     // the wall of task-notification framing addressed to the model.
-    delivery !== null && item.type === 'userMessage' ? (
+    delivery !== null && item.id === deliveryNoticeItemId ? (
       <SubagentReport
         delivery={delivery}
         index={index}
@@ -2286,7 +2294,7 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   const speakerOf = (block: ThreadContentBlock): ThreadSpeaker | null | 'drop' => {
     if (block.kind === 'process') return selfSpeaker;
     if (block.item.type !== 'userMessage') return selfSpeaker;
-    if (delivery !== null) return reportSpeaker ?? 'drop';
+    if (block.item.id === deliveryNoticeItemId) return reportSpeaker ?? 'drop';
     if (!hostAuthoredEvent) return null;
     return hostSpeaker ?? {
       participantId: MAIN_AVATAR_IDENTITY,
@@ -2883,11 +2891,7 @@ function useThreadProcessView({
   readonly waitingOnUserInput: boolean;
   readonly workingTextEnabled: boolean;
 }): { readonly header: ReactNode; readonly timelineVisible: boolean; readonly isError: boolean } {
-  const t = useT();
-  const disclosureId = `process:${turn.id}`;
-  const expanded = expandState.isExpanded(disclosureId, false);
-  const blockedOnUser = turn.status === 'inProgress' && waitingOnUserInput;
-  const liveElapsedMs = useTurnElapsedMs(turn);
+  const expanded = expandState.isExpanded(`process:${turn.id}`, false);
   const workingAgentIds = useWorkingAgentIds();
   // A Turn can settle while a child it spawned keeps running — the
   // fire-and-forget shape the protocol supports, where terminal activity lands
@@ -2901,52 +2905,109 @@ function useThreadProcessView({
     && !anchors.agentIds.some((agentId) => workingAgentIds.has(agentId));
   const terminalResponseOwnsStatus = hasFinalResponse
     && (turn.status === 'failed' || turn.status === 'interrupted');
+  const timelineVisible = items.length > 0 && (!collapsible || expanded);
+  // The clock lives in the SUMMARY, not here. Read at this level it ticked the
+  // whole Turn once a second — regrouping its content blocks, rebuilding every
+  // speaker run, re-rendering every Item and every report card — to repaint one
+  // line of text. This is the same reason `subagentElapsed.ts` pushes a child's
+  // clock down to the row that displays it.
+  return {
+    header: terminalResponseOwnsStatus && !timelineVisible ? null : (
+      <ThreadProcessSummary
+        collapsible={collapsible}
+        expandState={expandState}
+        expanded={expanded}
+        hasFinalResponse={hasFinalResponse}
+        index={index}
+        items={items}
+        motionOwner={motionOwner}
+        terminalResponseOwnsStatus={terminalResponseOwnsStatus}
+        turn={turn}
+        waitingOnUserInput={waitingOnUserInput}
+        workingTextEnabled={workingTextEnabled}
+      />
+    ),
+    timelineVisible,
+    isError: turn.status === 'failed' && !hasFinalResponse,
+  };
+}
+
+/**
+ * What a participant did, on their own header line — and the only thing in the
+ * Turn that a live clock re-renders.
+ */
+function ThreadProcessSummary({
+  collapsible,
+  expandState,
+  expanded,
+  hasFinalResponse,
+  index,
+  items,
+  motionOwner,
+  terminalResponseOwnsStatus,
+  turn,
+  waitingOnUserInput,
+  workingTextEnabled,
+}: {
+  readonly collapsible: boolean;
+  readonly expandState: ThreadDisclosureState;
+  readonly expanded: boolean;
+  readonly hasFinalResponse: boolean;
+  readonly index: DocumentIndex;
+  readonly items: readonly ThreadItem[];
+  readonly motionOwner: TurnMotionOwner;
+  readonly terminalResponseOwnsStatus: boolean;
+  readonly turn: Turn;
+  readonly waitingOnUserInput: boolean;
+  readonly workingTextEnabled: boolean;
+}) {
+  const t = useT();
+  const disclosureId = `process:${turn.id}`;
+  const blockedOnUser = turn.status === 'inProgress' && waitingOnUserInput;
+  const liveElapsedMs = useTurnElapsedMs(turn);
+  // The response tail owns the terminal status, but the timeline below still
+  // needs a name — otherwise it is an unlabelled list of rows.
+  if (terminalResponseOwnsStatus) {
+    return (
+      <div className="thread-speaker-meta">
+        <span className="thread-process-title">
+          {turn.durationMs !== null
+            ? t.agent.thread.workedFor({ duration: formatProcessDuration(turn.durationMs) })
+            : threadProcessNeutralHeader(turn, items, t, index)}
+        </span>
+      </div>
+    );
+  }
   const summary = threadProcessSummary(
     turn, items, hasFinalResponse, liveElapsedMs, t, index, blockedOnUser,
   );
-  const timelineVisible = items.length > 0 && (!collapsible || expanded);
-  const summaryWorking = motionOwner === 'summary'
-    && !blockedOnUser
-    && workingTextEnabled;
+  if (collapsible) {
+    return (
+      <ButtonControl
+        aria-expanded={expanded}
+        className="thread-speaker-meta thread-process-toggle"
+        data-thread-disclosure-id={disclosureId}
+        onClick={(event) => expandState.toggle(disclosureId, expanded, event.currentTarget)}
+      >
+        <span className="thread-process-title">{summary}</span>
+        <ChevronRightIcon
+          aria-hidden
+          className={`thread-process-chevron${expanded ? ' is-expanded' : ''}`}
+          size={ICON_SIZE.menu}
+        />
+      </ButtonControl>
+    );
+  }
   const processTitleClassName = `thread-process-title${turn.status === 'inProgress'
     ? ' thread-process-title-live'
     : ''}`;
-  // The response tail owns the terminal status, but the timeline below still
-  // needs a name — otherwise it is an unlabelled list of rows.
-  const header = terminalResponseOwnsStatus ? (timelineVisible ? (
+  return (
     <div className="thread-speaker-meta">
-      <span className="thread-process-title">
-        {turn.durationMs !== null
-          ? t.agent.thread.workedFor({ duration: formatProcessDuration(turn.durationMs) })
-          : threadProcessNeutralHeader(turn, items, t, index)}
-      </span>
-    </div>
-  ) : null) : collapsible ? (
-    <ButtonControl
-      aria-expanded={expanded}
-      className="thread-speaker-meta thread-process-toggle"
-      data-thread-disclosure-id={disclosureId}
-      onClick={(event) => expandState.toggle(disclosureId, expanded, event.currentTarget)}
-    >
-      <span className="thread-process-title">{summary}</span>
-      <ChevronRightIcon
-        aria-hidden
-        className={`thread-process-chevron${expanded ? ' is-expanded' : ''}`}
-        size={ICON_SIZE.menu}
-      />
-    </ButtonControl>
-  ) : (
-    <div className="thread-speaker-meta">
-      {summaryWorking
+      {motionOwner === 'summary' && !blockedOnUser && workingTextEnabled
         ? <WorkingText className={processTitleClassName} text={summary} truncate />
         : <span className={processTitleClassName}>{summary}</span>}
     </div>
   );
-  return {
-    header,
-    timelineVisible,
-    isError: turn.status === 'failed' && !hasFinalResponse,
-  };
 }
 
 export type TurnMotionOwner = 'none' | 'summary' | 'leaf';
@@ -2970,9 +3031,6 @@ export function turnMotionOwner(
   return 'summary';
 }
 
-function isSubagentWorkingStatus(status: string | undefined): boolean {
-  return status === 'pendingInit' || status === 'running';
-}
 
 function ThreadStreamingIndicator({
   shapeMotionSuppressed,

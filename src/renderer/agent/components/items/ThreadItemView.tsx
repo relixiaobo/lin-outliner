@@ -558,12 +558,10 @@ function renderUserContent(
 const USER_MESSAGE_COLLAPSED_LINES = 5;
 const USER_MESSAGE_COLLAPSED_EXTRA_PX = 16;
 
-/**
- * The bubble every long message wears, whoever sent it: clamped to a few lines
- * with one Show more. Exported because an Agent's report is a message too, and
- * a second collapse widget for it would be the same idea in a second dialect.
- */
-export function UserMessageCollapsibleContent({
+/** The bubble every long message wears: clamped to a few lines, one Show more.
+ *  A report card is NOT one of them — it is a preview whose whole surface opens
+ *  the Agent, so it clamps without offering a second way to read the same text. */
+function UserMessageCollapsibleContent({
   children,
   expandState,
   measureKey,
@@ -1510,7 +1508,7 @@ export function threadToolActivitySegments(
         add('web', item.query || item.id, running, item.query ? quoteSubject(item.query) : undefined);
         break;
       case 'collabAgentToolCall':
-        for (const threadId of options.collaborationThreadIds ?? item.receiverThreadIds) {
+        for (const threadId of item.receiverThreadIds) {
           add('collaboration', threadId, running);
         }
         break;
@@ -1605,7 +1603,6 @@ const NAMED_SUBJECT_LIMIT = 2;
 /** Display uses the elided form; `title` passes Infinity for the full list. */
 export interface ToolSummaryOptions {
   readonly subjectLimit?: number;
-  readonly collaborationThreadIds?: readonly string[];
 }
 
 function toolActivityPhrase(

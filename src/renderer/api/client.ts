@@ -424,7 +424,7 @@ export const api = {
    * read or a Finder window anywhere on disk.
    */
   readAgentWorktreeChanges: (agentId: string) =>
-    command<{ available: boolean; paths: readonly string[] }>(
+    command<{ available: boolean; paths: readonly string[]; total: number }>(
       'agent_worktree_changes',
       { agentId },
     ),

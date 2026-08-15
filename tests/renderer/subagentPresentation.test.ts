@@ -98,7 +98,8 @@ describe('Agent registry projection', () => {
       turnsByThread: new Map([[PARENT_ID, [spawnTurn, continuation]]]),
     }));
 
-    expect(projection.deliveryByTurnId.get('turn-2')).toEqual({ agentId: CHILD_ID, generationIndex: 0 });
+    expect(projection.deliveryByTurnId.get('turn-2'))
+      .toEqual({ agentId: CHILD_ID, generationIndex: 0, fromLatest: 0 });
     expect(projection.deliveryByTurnId.get('turn-1')).toBeUndefined();
   });
 
@@ -115,8 +116,13 @@ describe('Agent registry projection', () => {
 
     // One generation is one child Turn, so the Nth delivery from an Agent is
     // the Nth run — which is the report that anchor can show.
-    expect(projection.deliveryByTurnId.get('turn-2')).toEqual({ agentId: CHILD_ID, generationIndex: 0 });
-    expect(projection.deliveryByTurnId.get('turn-4')).toEqual({ agentId: CHILD_ID, generationIndex: 1 });
+    // Counted from the newest as well as from the start: the report reads the
+    // Agent's settled Turns backwards, so a delivery the host never
+    // materialized cannot slide every earlier card onto the wrong run.
+    expect(projection.deliveryByTurnId.get('turn-2'))
+      .toEqual({ agentId: CHILD_ID, generationIndex: 0, fromLatest: 1 });
+    expect(projection.deliveryByTurnId.get('turn-4'))
+      .toEqual({ agentId: CHILD_ID, generationIndex: 1, fromLatest: 0 });
   });
 
   test('never reads an Agent\'s own delegated Turn as its own result arriving', () => {
@@ -196,6 +202,34 @@ describe('Agent registry projection', () => {
     }));
 
     expect([...projection.byAgentId.keys()]).toEqual([CHILD_ID, GRANDCHILD_ID]);
+  });
+
+  test('never adopts another conversation\'s record-less child', () => {
+    // The store keeps every conversation the reader visited, and `threadsById`
+    // holds their descendants. A record-less child is synthesized as BACKGROUND
+    // work, so adopting one from elsewhere put another conversation's Agent in
+    // this one's work strip.
+    const projection = projectSubagentConversation(input({
+      executions: executionMap([
+        execution(),
+        execution({ agentId: 'thread-elsewhere', parentThreadId: 'thread-other-root' }),
+      ]),
+      threadsById: new Map([
+        [CHILD_ID, childThread({ type: 'active', activeFlags: [] })],
+        ['thread-ours', {
+          ...childThread({ type: 'active', activeFlags: [] }),
+          id: 'thread-ours',
+          parentThreadId: CHILD_ID,
+        }],
+        ['thread-theirs', {
+          ...childThread({ type: 'active', activeFlags: [] }),
+          id: 'thread-theirs',
+          parentThreadId: 'thread-elsewhere',
+        }],
+      ]),
+    }));
+
+    expect([...projection.byAgentId.keys()]).toEqual([CHILD_ID, 'thread-ours']);
   });
 
   test('numbers same-named siblings so two delegations of one task can be told apart', () => {

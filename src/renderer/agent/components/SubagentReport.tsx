@@ -4,7 +4,7 @@ import { useT } from '../../i18n/I18nProvider';
 import { ClickIcon, ICON_SIZE } from '../../ui/icons';
 import type { DocumentIndex } from '../../state/document';
 import type { ThreadNodeReferenceOpenHandler } from '../threadReferences';
-import { threadStore, useThreadStore } from '../store/threadStore';
+import { threadStore, useThreadTurns } from '../store/threadStore';
 import { subagentSpeakerName, type SubagentDelivery } from '../subagentPresentation';
 import { ThreadMarkdown } from './ThreadMarkdown';
 import { useSubagentActions, useSubagentEntry } from './SubagentRegistryContext';
@@ -49,11 +49,19 @@ export function SubagentReport({
   const t = useT();
   const entry = useSubagentEntry(delivery.agentId);
   const actions = useSubagentActions();
-  const snapshot = useThreadStore();
+  // This card needs one Agent's Turns, not the whole store: subscribed to the
+  // snapshot it re-rendered — and re-parsed its markdown — on every streaming
+  // delta in the conversation around it.
+  const turns = useThreadTurns(delivery.agentId);
+  const loaded = turns !== undefined;
 
   useEffect(() => {
+    // Once, per Agent. Loaded history stays current through notifications, and
+    // a conversation with thirty delivered results otherwise opened thirty
+    // history reads every time it was rendered.
+    if (loaded) return;
     void threadStore.ensureThreadHistory(delivery.agentId).catch(() => undefined);
-  }, [delivery.agentId]);
+  }, [delivery.agentId, loaded]);
 
   if (!entry) return null;
   // A user-stopped Agent gets a note instead: the conversation continued
@@ -66,10 +74,12 @@ export function SubagentReport({
     );
   }
 
-  const turns = snapshot.turnsByThread.get(delivery.agentId);
-  // The Nth delivery is the Nth run; a history that has not caught up yet falls
-  // back to the newest, which is the only run it can honestly show.
-  const reported = turns?.[delivery.generationIndex] ?? turns?.at(-1);
+  // Counted back from the newest, over the Agent's SETTLED Turns: a run still
+  // in progress reported nothing, and a Turn the reader started from this
+  // Agent's own composer is a run like any other. A history that has not caught
+  // up yet falls back to the newest, which is the only run it can honestly show.
+  const settled = turns?.filter((candidate) => candidate.status !== 'inProgress');
+  const reported = settled?.at(-1 - delivery.fromLatest) ?? settled?.at(-1);
   const report = reported ? turnTerminalAnswer(reported.items) : '';
   // The task it was handed, over what it answered. Suppressed when the speaker
   // above is already saying it — an Agent with no type falls back to its task

@@ -870,6 +870,27 @@ export function useThreadStore(
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
 
+/**
+ * One Thread's Turns, and nothing else.
+ *
+ * `useThreadStore()` hands back the whole snapshot, so a component that only
+ * needs one Thread's history still re-renders on every patch the store makes —
+ * including each streaming delta in the conversation around it. The per-Thread
+ * array is replaced only when that Thread's own Turns change, so returning it
+ * directly lets `useSyncExternalStore` skip the render entirely.
+ */
+export function useThreadTurns(
+  threadId: ThreadId,
+  source: ThreadSnapshotSource = threadStore,
+): readonly Turn[] | undefined {
+  const subscribe = useCallback((listener: () => void) => source.subscribe(listener), [source]);
+  const getSnapshot = useCallback(
+    () => source.getSnapshot().turnsByThread.get(threadId),
+    [source, threadId],
+  );
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+}
+
 function scheduleOnNextFrame(flush: () => void): void {
   if (typeof requestAnimationFrame === 'function') {
     requestAnimationFrame(() => flush());

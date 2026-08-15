@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { RendererUserViewHints, ThreadId, Turn } from '../../../core/agent/protocol';
 import type { DocumentIndexStore } from '../../state/documentIndexStore';
 import { useT } from '../../i18n/I18nProvider';
@@ -52,7 +52,14 @@ export function SubagentDetailView({
   const actions = useSubagentActions();
   const loadedRef = useRef<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const thread = snapshot.threads.find((candidate) => candidate.id === agentId) ?? null;
+  // Built once per catalog change, not once per store patch: rebuilt inline it
+  // handed `ThreadView` a new Map identity on every delta and invalidated every
+  // memo downstream that lists it.
+  const threadsById = useMemo(
+    () => new Map(snapshot.threads.map((candidate) => [candidate.id, candidate])),
+    [snapshot.threads],
+  );
+  const thread = threadsById.get(agentId) ?? null;
   const turns = snapshot.turnsByThread.get(agentId);
 
   useEffect(() => {
@@ -160,7 +167,7 @@ export function SubagentDetailView({
             threadCwd={thread.cwd}
             threadId={agentId}
             threadModelProvider={thread.modelProvider}
-            threadsById={new Map(snapshot.threads.map((candidate) => [candidate.id, candidate]))}
+            threadsById={threadsById}
             turns={turns}
             getUserView={getUserView}
             waitingOnUserInput={false}
@@ -194,6 +201,7 @@ export function SubagentDetailTitle({
 }) {
   const t = useT();
   const entry = useSubagentEntry(agentId);
+  const actions = useSubagentActions();
   const name = entry?.displayName ?? t.agent.thread.untitled;
   const running = entry?.status === 'running' || entry?.status === 'pendingInit';
   const badge = entry?.form === 'isolatedSkill'
@@ -232,7 +240,11 @@ export function SubagentDetailTitle({
           icon={StopIcon}
           iconSize={ICON_SIZE.tiny}
           label={t.agent.thread.stopSubagent({ name })}
-          onClick={() => void threadStore.interruptThread(agentId).catch(() => undefined)}
+          // Through the registry's own action, like the chip and the strip row:
+          // called directly, a Stop that the host refused — an Agent whose Turn
+          // had already settled, or an IPC failure — reported nothing at all
+          // from here while saying so everywhere else.
+          onClick={() => void actions.stopAgent?.(agentId)}
           variant="chrome"
         />
       ) : null}
@@ -257,7 +269,9 @@ function SubagentWorktreeFooter({
   readonly branch: string;
 }) {
   const t = useT();
-  const [changes, setChanges] = useState<readonly string[] | null>(null);
+  const [changes, setChanges] = useState<
+    { readonly paths: readonly string[]; readonly total: number } | null
+  >(null);
   const [expanded, setExpanded] = useState(false);
   const [unavailable, setUnavailable] = useState(false);
 
@@ -269,7 +283,7 @@ function SubagentWorktreeFooter({
     // recorded and revealing it may still work, so the footer keeps its
     // branch-only form rather than claiming a loss it has not observed.
     void api.readAgentWorktreeChanges(agentId).then((result) => {
-      if (!cancelled && result.available) setChanges(result.paths);
+      if (!cancelled && result.available) setChanges({ paths: result.paths, total: result.total });
     }).catch(() => undefined);
     return () => { cancelled = true; };
   }, [agentId]);
@@ -281,9 +295,9 @@ function SubagentWorktreeFooter({
         <span className="thread-agent-worktree-branch">
           {changes === null
             ? t.agent.thread.agent.worktreeFooterUnknown({ branch })
-            : t.agent.thread.agent.worktreeFooter({ branch, count: changes.length })}
+            : t.agent.thread.agent.worktreeFooter({ branch, count: changes.total })}
         </span>
-        {changes !== null && changes.length > 0 ? (
+        {changes !== null && changes.paths.length > 0 ? (
           <button
             className="thread-agent-worktree-action"
             onClick={() => setExpanded((current) => !current)}
@@ -309,7 +323,16 @@ function SubagentWorktreeFooter({
       ) : null}
       {expanded && changes !== null ? (
         <ul className="thread-agent-worktree-changes">
-          {changes.map((path) => <li key={path}><code>{path}</code></li>)}
+          {changes.paths.map((path) => <li key={path}><code>{path}</code></li>)}
+          {/* The count above is the whole truth; this list is capped, and a
+              list that just stopped would read as the whole worktree. */}
+          {changes.total > changes.paths.length ? (
+            <li className="thread-agent-worktree-elided">
+              {t.agent.thread.agent.worktreeChangesElided({
+                count: changes.total - changes.paths.length,
+              })}
+            </li>
+          ) : null}
         </ul>
       ) : null}
     </footer>

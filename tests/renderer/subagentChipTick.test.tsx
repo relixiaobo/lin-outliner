@@ -5,6 +5,10 @@ import { parseHTML } from 'linkedom';
 import type { ThreadId } from '../../src/core/agent/protocol';
 import { SubagentChip } from '../../src/renderer/agent/components/SubagentChip';
 import { SubagentRegistryProvider } from '../../src/renderer/agent/components/SubagentRegistryContext';
+import {
+  SUBAGENT_STRIP_LINGER_MS,
+  SubagentWorkStrip,
+} from '../../src/renderer/agent/components/SubagentWorkStrip';
 import type { SubagentRegistryEntry } from '../../src/renderer/agent/subagentPresentation';
 import { I18nProvider } from '../../src/renderer/i18n/I18nProvider';
 
@@ -111,7 +115,62 @@ async function render(root: ReturnType<typeof createRoot>, tree: ReactNode): Pro
   await act(async () => { root.render(<I18nProvider>{tree}</I18nProvider>); });
 }
 
-function installDom(): { readonly document: Document; readonly root: ReturnType<typeof createRoot> } {
+describe('background work strip clock', () => {
+  test('stops ticking once the last just-finished row has faded', async () => {
+    // The clock exists to fade a settled row out. Held in a ref, the moment the
+    // fade ended changed nothing the effect could see — the Agent map is
+    // identical by then — so its interval outlived the strip and kept firing
+    // once a second for the rest of the session.
+    const { root, window } = installDom();
+    const ticks = new Map<number, () => void>();
+    let nextId = 1;
+    Object.assign(window, {
+      setInterval: (handler: () => void) => {
+        const id = nextId;
+        nextId += 1;
+        ticks.set(id, handler);
+        return id;
+      },
+      clearInterval: (id: number) => { ticks.delete(id); },
+    });
+    const realNow = Date.now;
+    let clock = realNow();
+    Date.now = () => clock;
+    try {
+      const settled: SubagentRegistryEntry = {
+        ...runningEntry(clock - 4_000),
+        status: 'completed',
+        settledAt: clock - 1_000,
+      };
+      const byAgentId = new Map<ThreadId, SubagentRegistryEntry>([[settled.agentId, settled]]);
+      const strip = (
+        <SubagentRegistryProvider
+          actions={{ openAgent: () => undefined, stopAgent: null }}
+          byAgentId={byAgentId}
+        >
+          <SubagentWorkStrip byAgentId={byAgentId} />
+        </SubagentRegistryProvider>
+      );
+
+      await render(root, strip);
+      expect(ticks.size).toBe(1);
+
+      // Time passes; the row finishes fading. The Agent map is untouched, which
+      // is exactly the case a ref could not notice.
+      clock += SUBAGENT_STRIP_LINGER_MS * 2;
+      await act(async () => { for (const tick of [...ticks.values()]) tick(); });
+      expect(ticks.size).toBe(0);
+    } finally {
+      Date.now = realNow;
+    }
+  });
+});
+
+function installDom(): {
+  readonly document: Document;
+  readonly root: ReturnType<typeof createRoot>;
+  readonly window: Window & typeof globalThis;
+} {
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
   Object.assign(window, {
     lin: {
@@ -133,5 +192,5 @@ function installDom(): { readonly document: Document; readonly root: ReturnType<
   if (!container) throw new Error('Missing root container');
   const root = createRoot(container);
   mounted.push(() => act(() => root.unmount()));
-  return { document, root };
+  return { document, root, window: window as Window & typeof globalThis };
 }
