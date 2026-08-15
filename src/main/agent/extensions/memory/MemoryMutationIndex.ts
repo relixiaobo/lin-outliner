@@ -54,6 +54,7 @@ export class MemoryMutationIndex {
   private readonly canonicalDependentsByAncestor = new Map<NodeId, Set<NodeId>>();
   private transaction: TransactionJournal | null = null;
   private fullRebuilds = 0;
+  private currentRevision = 0;
 
   constructor(projection: DocumentProjection) {
     this.rebuild(projection);
@@ -61,6 +62,10 @@ export class MemoryMutationIndex {
 
   fullRebuildCount(): number {
     return this.fullRebuilds;
+  }
+
+  revision(): number {
+    return this.currentRevision;
   }
 
   beginTransaction(): void {
@@ -105,6 +110,16 @@ export class MemoryMutationIndex {
 
   allCanonicalNodeIds(): ReadonlySet<NodeId> {
     return new Set(this.canonicalById.keys());
+  }
+
+  expandReferences(nodeIds: ReadonlySet<NodeId>): ReadonlySet<NodeId> {
+    const expanded = new Set<NodeId>();
+    for (const nodeId of nodeIds) {
+      expanded.add(nodeId);
+      for (const descendantId of collectDescendantIds(this.nodes, nodeId)) expanded.add(descendantId);
+      for (const ancestorId of ancestorIds(nodeId, this.nodes)) expanded.add(ancestorId);
+    }
+    return expanded;
   }
 
   canonicalNodesInGraphOrder(): readonly CanonicalMemoryNode[] {
@@ -367,6 +382,7 @@ export class MemoryMutationIndex {
     }
     for (const entry of graph.nodes) this.addCanonicalEntry(entry);
     this.fullRebuilds += 1;
+    this.currentRevision += 1;
   }
 
   private applyDelta(delta: MemoryMutationIndexDelta, recordTransaction = true): MemoryMutationIndexUpdate {
@@ -405,6 +421,7 @@ export class MemoryMutationIndex {
     }
     for (const nodeId of this.canonicalDependents(directIds)) affectedCanonicalNodeIds.add(nodeId);
     for (const nodeId of directIds) affectedCanonicalNodeIds.add(nodeId);
+    this.currentRevision += 1;
 
     return { affectedCanonicalNodeIds, fullRebuild: false };
   }

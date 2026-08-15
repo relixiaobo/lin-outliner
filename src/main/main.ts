@@ -1024,7 +1024,7 @@ const wakeAutomationsOnResume = () => automationService.wake();
 
 toolRuntime = new ToolRuntime(threadService, {
   outliner: documentService,
-  filterOutlinerProjection: (projection, causation) => memoryExtension.filterProjection(projection, causation),
+  outlinerProjectionFilter: memoryExtension,
   localWorkspace: localWorkspaceForTurn,
   imageNormalizer: async ({ filePath, signal }) => {
     return prepareBoundedAgentImage(filePath, basename(filePath), signal);

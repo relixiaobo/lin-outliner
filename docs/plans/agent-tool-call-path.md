@@ -15,11 +15,10 @@ tool output. Verified costs:
 Per node tool call:
 
 - `MemoryExtension.filterProjection` wraps every `getProjection()` a node tool
-  makes (1–3 per call). Each invocation: `explicitNodeReferences` →
-  `readThread({ includeTurns: true })` — a paged SQLite read of the **entire
-  thread history** with `JSON.parse` + `decodeThreadItem` per item, decoded a
-  second time inside `decodeThread`, then deep-frozen; plus `timeline.graph()`
-  (full O(document) index + traversal) **twice** (once more via
+  makes (1–3 per call). A later targeted-read fix removed the original
+  whole-thread decode, but each invocation still re-reads and decodes the same
+  Turn for `explicitNodeReferences`; calls `timeline.graph()` (full O(document)
+  index + traversal) **twice** (once more via
   `visibleNodes`/`visibilityView`); plus `generatedNodes()` (SQLite `SELECT *`)
   and `generatedNodeIdsWithoutCurrentSupport` (N+1 SQLite queries).
 - The mere presence of `filterProjection` disables the maintained read model
@@ -77,13 +76,14 @@ Other:
 ### PR-1 — memory filter cost + read-model re-enablement
 
 - **Cache `filterProjection` inputs.** Explicit node references resolve once
-  per (threadId, turnId) and update on item append — the active Turn's
-  `ItemRecorder` already holds the items; never re-read the whole thread via
-  `readThread({ includeTurns: true })` per projection access. The memory graph,
-  generated-node set, and visibility view compute once per projection revision
-  and invalidate on `MemoryControlStore` writes.
+  per (threadId, turnId) and update from recorded Item appends, with one targeted
+  Turn read only as recovery when the extension did not observe Turn start.
+  Canonical membership and explicit ancestor/descendant expansion reuse the
+  already-maintained `MemoryMutationIndex`; no parallel full-graph cache is
+  introduced. Hidden IDs and filtered views compute once per mutation-index,
+  control-store, and Turn-reference revision.
   `generatedNodeIdsWithoutCurrentSupport` collapses its N+1 queries into one
-  join, cached the same way.
+  grouped join, cached behind a process-local control-store filtering revision.
 - **Filtered read model instead of no read model.** `ToolRuntime` provides
   `getDocumentReadModel`/`getTextSearchIndex` even when a projection filter is
   wired, wrapped with the filter's exclusion set. Two constraints the wrapper
@@ -153,8 +153,11 @@ explicitly NOT part of this plan.
 ## Verification
 
 - Unit (`tests/core`, alongside existing memory/tool tests): instrumentation
-  counters — one graph build per projection revision, one full-history read per
-  Turn (not per projection access), one payload read+hash per Turn per output.
+  counters — one mutation-index build at initialization or a full projection
+  replacement and no repeated graph build per filter access; no repeated Turn
+  read per projection access (at most one targeted Turn read when start
+  notification state is unavailable); and one payload read+hash per Turn per
+  output.
 - PR-1 search acceptance fixes the **ratified** semantics, not today's: with no
   hidden nodes, filtered `node_search` returns results identical to ordinary
   indexed search; with hidden nodes, results equal indexed search over the

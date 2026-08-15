@@ -14,15 +14,24 @@ import {
   type MemorySettingsView,
   type ThreadMemoryMode,
 } from '../../../../core/agent/memory';
+import {
+  createFilteredTextSearchIndex,
+  type TextSearchIndex,
+} from '../../../../core/textSearchIndex';
 import type {
   AgentCoreRecordedNotification,
   AgentMutationCausation,
   Thread,
   ThreadId,
+  ThreadItem,
   Turn,
   TurnId,
 } from '../../../../core/agent/protocol';
 import type { DocumentProjection, NodeProjection, ProjectionUpdate } from '../../../../core/types';
+import type {
+  OutlinerProjectionFilter,
+  ProjectionIndex,
+} from '../../capabilities/agentNodeToolTypes';
 import type {
   DocumentMutationMeta,
   DocumentMutationObserver,
@@ -85,20 +94,50 @@ export interface MemoryThreadHost extends ThreadServiceExtensionHost {
   }): Promise<string>;
 }
 
-export interface MemoryDocumentPolicy {
+export interface MemoryDocumentPolicy extends OutlinerProjectionFilter {
   authorizeMutation(
     command: DocumentCommand,
     args: Readonly<Record<string, unknown>>,
     meta: DocumentMutationMeta,
     projection: DocumentProjection | (() => DocumentProjection),
   ): boolean;
-  filterProjection(projection: DocumentProjection, causation: AgentMutationCausation): DocumentProjection;
   documentChanged(operationId?: string): void;
 }
 
 interface TurnMemoryUsage {
   readonly nodeIds: Set<string>;
   readonly threadId: ThreadId;
+}
+
+interface TurnProjectionFilterState {
+  readonly threadId: ThreadId;
+  readonly turnId: TurnId;
+  readonly explicitNodeIds: Set<string>;
+  rootUserThread?: boolean;
+  explicitReferencesComplete: boolean;
+  explicitRevision: number;
+  hiddenNodesCache?: {
+    readonly mutationRevision: number;
+    readonly controlRevision: number;
+    readonly explicitRevision: number;
+    readonly hiddenNodeIds: ReadonlySet<string>;
+  };
+  projectionCache?: {
+    readonly source: DocumentProjection;
+    readonly hiddenNodeIds: ReadonlySet<string>;
+    readonly filtered: DocumentProjection;
+  };
+  projectionIndexCache?: {
+    readonly sourceProjection: DocumentProjection;
+    readonly sourceNodes: Map<string, NodeProjection>;
+    readonly hiddenNodeIds: ReadonlySet<string>;
+    readonly filtered: ProjectionIndex;
+  };
+  textSearchIndexCache?: {
+    readonly source: TextSearchIndex;
+    readonly hiddenNodeIds: ReadonlySet<string>;
+    readonly filtered: TextSearchIndex;
+  };
 }
 
 export interface MemoryExtensionOptions {
@@ -116,6 +155,7 @@ export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy
   private workerStopPromise: Promise<void> | null = null;
   private storeClosed = false;
   private readonly turnMemoryUsage = new Map<TurnId, TurnMemoryUsage>();
+  private readonly turnProjectionFilters = new Map<TurnId, TurnProjectionFilterState>();
   private lastGraphDigest = '';
   private mutationIndex: MemoryMutationIndex | null = null;
   private transactionAffectedNodeIds: Set<string> | null = null;
@@ -415,7 +455,26 @@ export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy
   }
 
   onNotification(notification: AgentCoreRecordedNotification): void {
+    if (notification.type === 'turn/started') {
+      this.turnProjectionFilters.set(notification.turnId, {
+        threadId: notification.threadId,
+        turnId: notification.turnId,
+        explicitNodeIds: explicitNodeReferences(notification.turn.items),
+        explicitReferencesComplete: true,
+        explicitRevision: 1,
+      });
+      return;
+    }
+    if (notification.type === 'item/completed') {
+      this.recordExplicitNodeReferences(notification.threadId, notification.turnId, [notification.item]);
+      return;
+    }
+    if (notification.type === 'items/completed') {
+      this.recordExplicitNodeReferences(notification.threadId, notification.turnId, notification.items);
+      return;
+    }
     if (notification.type !== 'turn/completed') return;
+    this.turnProjectionFilters.delete(notification.turnId);
     const usage = this.turnMemoryUsage.get(notification.turnId);
     this.turnMemoryUsage.delete(notification.turnId);
     if (
@@ -512,31 +571,45 @@ export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy
   }
 
   filterProjection(projection: DocumentProjection, causation: AgentMutationCausation): DocumentProjection {
-    const thread = this.requireHost().readThread({
-      threadId: causation.threadId,
-    }).thread;
-    const rootUserThread = thread.parentThreadId === null && thread.threadSource === 'user';
-    const explicit = rootUserThread
-      ? this.explicitNodeReferences(causation.threadId, causation.turnId)
-      : new Set<string>();
-    const graph = this.timeline.graph(projection);
-    const generated = new Set(this.control.generatedNodes()
-      .filter((entry) => !entry.userAuthoritative)
-      .map((entry) => entry.nodeId));
-    const admission = this.control.admission(causation.turnId);
-    const implicitEnabled = rootUserThread
-      && Boolean(admission?.eligibleAtAdmission)
-      && !this.control.isTurnExcluded(causation.turnId)
-      && this.control.featureMode() === 'enabled'
-      && admission?.featureModeGeneration === this.control.status().featureModeGeneration;
-    const visible = implicitEnabled
-      ? new Set(this.timeline.visibleNodes(this.visibilityView(), generated).map((entry) => entry.node.id))
-      : new Set<string>();
-    const canonical = new Set(graph.nodes.map((entry) => entry.node.id));
-    const explicitExpanded = expandExplicitReferences(explicit, projection.nodes);
-    const hidden = new Set([...canonical].filter((nodeId) => !visible.has(nodeId) && !explicitExpanded.has(nodeId)));
-    if (hidden.size === 0) return projection;
-    return filteredProjection(projection, hidden);
+    const state = this.turnProjectionFilterState(causation);
+    const hiddenNodeIds = this.hiddenNodeIds(projection, state);
+    return this.filteredProjection(projection, hiddenNodeIds, state);
+  }
+
+  filterProjectionIndex(index: ProjectionIndex, causation: AgentMutationCausation): ProjectionIndex {
+    const state = this.turnProjectionFilterState(causation);
+    const hiddenNodeIds = this.hiddenNodeIds(index.projection, state);
+    if (hiddenNodeIds.size === 0) return index;
+    const cached = state.projectionIndexCache;
+    if (
+      cached?.sourceProjection === index.projection
+      && cached.sourceNodes === index.nodes
+      && cached.hiddenNodeIds === hiddenNodeIds
+    ) return cached.filtered;
+    const projection = this.filteredProjection(index.projection, hiddenNodeIds, state);
+    const filtered = {
+      projection,
+      nodes: new Map(projection.nodes.map((node) => [node.id, node])),
+    };
+    state.projectionIndexCache = {
+      sourceProjection: index.projection,
+      sourceNodes: index.nodes,
+      hiddenNodeIds,
+      filtered,
+    };
+    return filtered;
+  }
+
+  filterTextSearchIndex(index: TextSearchIndex, causation: AgentMutationCausation): TextSearchIndex {
+    const state = this.turnProjectionFilterState(causation);
+    const projection = this.mutationIndex ? undefined : this.timeline.projection();
+    const hiddenNodeIds = this.hiddenNodeIds(projection, state);
+    if (hiddenNodeIds.size === 0) return index;
+    const cached = state.textSearchIndexCache;
+    if (cached?.source === index && cached.hiddenNodeIds === hiddenNodeIds) return cached.filtered;
+    const filtered = createFilteredTextSearchIndex(index, hiddenNodeIds);
+    state.textSearchIndexCache = { source: index, hiddenNodeIds, filtered };
+    return filtered;
   }
 
   beginTransaction(_meta: DocumentMutationMeta, projection: () => DocumentProjection): void {
@@ -702,7 +775,12 @@ export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy
     const generated = new Set(this.control.generatedNodes()
       .filter((entry) => !entry.userAuthoritative)
       .map((entry) => entry.nodeId));
-    return this.timeline.visibleNodes(this.visibilityView(), generated);
+    const view = this.visibilityView();
+    const canonical = this.mutationIndex?.canonicalNodesInGraphOrder() ?? this.timeline.graph().nodes;
+    return canonical.filter((entry) => {
+      if (!generated.has(entry.node.id)) return true;
+      return !view.suppressAllGenerated && !view.suppressedGeneratedNodeIds.has(entry.node.id);
+    });
   }
 
   private visibilityView(): MemoryVisibilityView {
@@ -727,11 +805,126 @@ export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy
     return this.requireHost().readTurnForHost(threadId, turnId);
   }
 
-  private explicitNodeReferences(threadId: ThreadId, turnId: TurnId): ReadonlySet<string> {
-    const turn = this.turn(threadId, turnId);
-    return new Set(turn?.items.flatMap((item) => item.type === 'userMessage'
-      ? item.content.flatMap((part) => part.type === 'nodeReference' ? [part.nodeId] : [])
-      : []) ?? []);
+  private turnProjectionFilterState(causation: AgentMutationCausation): TurnProjectionFilterState {
+    let state = this.turnProjectionFilters.get(causation.turnId);
+    if (!state || state.threadId !== causation.threadId) {
+      state = {
+        threadId: causation.threadId,
+        turnId: causation.turnId,
+        explicitNodeIds: new Set(),
+        explicitReferencesComplete: false,
+        explicitRevision: 0,
+      };
+      this.turnProjectionFilters.set(causation.turnId, state);
+    }
+    if (this.isRootUserThread(state) && !state.explicitReferencesComplete) {
+      const turn = this.turn(causation.threadId, causation.turnId);
+      for (const nodeId of explicitNodeReferences(turn?.items ?? [])) state.explicitNodeIds.add(nodeId);
+      state.explicitReferencesComplete = true;
+      state.explicitRevision += 1;
+    }
+    return state;
+  }
+
+  private recordExplicitNodeReferences(
+    threadId: ThreadId,
+    turnId: TurnId,
+    items: readonly ThreadItem[],
+  ): void {
+    const references = explicitNodeReferences(items);
+    if (references.size === 0) return;
+    let state = this.turnProjectionFilters.get(turnId);
+    if (!state || state.threadId !== threadId) {
+      state = {
+        threadId,
+        turnId,
+        explicitNodeIds: new Set(),
+        explicitReferencesComplete: false,
+        explicitRevision: 0,
+      };
+      this.turnProjectionFilters.set(turnId, state);
+    }
+    let changed = false;
+    for (const nodeId of references) {
+      if (state.explicitNodeIds.has(nodeId)) continue;
+      state.explicitNodeIds.add(nodeId);
+      changed = true;
+    }
+    if (changed) state.explicitRevision += 1;
+  }
+
+  private isRootUserThread(state: TurnProjectionFilterState): boolean {
+    if (state.rootUserThread !== undefined) return state.rootUserThread;
+    const thread = this.requireHost().readThread({ threadId: state.threadId }).thread;
+    const rootUserThread = thread.parentThreadId === null && thread.threadSource === 'user';
+    state.rootUserThread = rootUserThread;
+    return rootUserThread;
+  }
+
+  private hiddenNodeIds(
+    projection: DocumentProjection | undefined,
+    state: TurnProjectionFilterState,
+  ): ReadonlySet<string> {
+    const mutationIndex = this.requireMutationIndex(() => projection ?? this.timeline.projection());
+    const mutationRevision = mutationIndex.revision();
+    const controlRevision = this.control.filteringRevision();
+    const cached = state.hiddenNodesCache;
+    if (
+      cached?.mutationRevision === mutationRevision
+      && cached.controlRevision === controlRevision
+      && cached.explicitRevision === state.explicitRevision
+    ) return cached.hiddenNodeIds;
+
+    const rootUserThread = this.isRootUserThread(state);
+    const explicitExpanded = rootUserThread
+      ? mutationIndex.expandReferences(state.explicitNodeIds)
+      : new Set<string>();
+    const canonicalNodeIds = mutationIndex.allCanonicalNodeIds();
+    const status = this.control.status();
+    const admission = this.control.admission(state.turnId);
+    const implicitEnabled = rootUserThread
+      && Boolean(admission?.eligibleAtAdmission)
+      && !this.control.isTurnExcluded(state.turnId)
+      && status.featureMode === 'enabled'
+      && admission?.featureModeGeneration === status.featureModeGeneration;
+    const hiddenNodeIds = new Set<string>();
+    if (!implicitEnabled) {
+      for (const nodeId of canonicalNodeIds) {
+        if (!explicitExpanded.has(nodeId)) hiddenNodeIds.add(nodeId);
+      }
+    } else {
+      const generatedNodeIds = new Set(this.control.generatedNodes()
+        .filter((entry) => !entry.userAuthoritative)
+        .map((entry) => entry.nodeId));
+      const view = this.visibilityView();
+      for (const nodeId of canonicalNodeIds) {
+        if (
+          generatedNodeIds.has(nodeId)
+          && (view.suppressAllGenerated || view.suppressedGeneratedNodeIds.has(nodeId))
+          && !explicitExpanded.has(nodeId)
+        ) hiddenNodeIds.add(nodeId);
+      }
+    }
+    state.hiddenNodesCache = {
+      mutationRevision,
+      controlRevision,
+      explicitRevision: state.explicitRevision,
+      hiddenNodeIds,
+    };
+    return hiddenNodeIds;
+  }
+
+  private filteredProjection(
+    projection: DocumentProjection,
+    hiddenNodeIds: ReadonlySet<string>,
+    state: TurnProjectionFilterState,
+  ): DocumentProjection {
+    if (hiddenNodeIds.size === 0) return projection;
+    const cached = state.projectionCache;
+    if (cached?.source === projection && cached.hiddenNodeIds === hiddenNodeIds) return cached.filtered;
+    const filtered = filteredProjection(projection, hiddenNodeIds);
+    state.projectionCache = { source: projection, hiddenNodeIds, filtered };
+    return filtered;
   }
 
   private reconcileRollbackHooks(host: MemoryThreadHost): void {
@@ -779,28 +972,10 @@ function turnHasExplicitMemoryIntent(turn: Turn): boolean {
   )));
 }
 
-function addDescendants(rootId: string, index: ReadonlyMap<string, NodeProjection>, output: Set<string>): void {
-  const stack = [rootId];
-  while (stack.length > 0) {
-    const nodeId = stack.pop()!;
-    if (output.has(nodeId)) continue;
-    output.add(nodeId);
-    stack.push(...(index.get(nodeId)?.children ?? []));
-  }
-}
-
-function expandExplicitReferences(references: ReadonlySet<string>, nodes: readonly NodeProjection[]): ReadonlySet<string> {
-  const index = new Map(nodes.map((node) => [node.id, node]));
-  const expanded = new Set<string>();
-  for (const nodeId of references) {
-    addDescendants(nodeId, index, expanded);
-    let current = index.get(nodeId);
-    while (current) {
-      expanded.add(current.id);
-      current = current.parentId ? index.get(current.parentId) : undefined;
-    }
-  }
-  return expanded;
+function explicitNodeReferences(items: readonly ThreadItem[]): Set<string> {
+  return new Set(items.flatMap((item) => item.type === 'userMessage'
+    ? item.content.flatMap((part) => part.type === 'nodeReference' ? [part.nodeId] : [])
+    : []));
 }
 
 function filteredProjection(projection: DocumentProjection, hidden: ReadonlySet<string>): DocumentProjection {

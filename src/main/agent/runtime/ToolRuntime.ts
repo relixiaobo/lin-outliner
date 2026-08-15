@@ -14,7 +14,6 @@ import {
   type ModelToolSchemaContribution,
 } from '../../../core/agent/tools';
 import type { AgentMutationCausation, JsonValue } from '../../../core/agent/protocol';
-import type { DocumentProjection } from '../../../core/types';
 import type { AgentImageGenerationRuntime } from '../capabilities/agentImageGenerationTool';
 import { AgentImportService, visibleImportServiceResult } from '../capabilities/agentImportService';
 import {
@@ -24,6 +23,7 @@ import {
   type AgentLocalWorkspaceContext,
 } from '../capabilities/agentLocalTools';
 import type { OutlinerToolHost } from '../capabilities/agentNodeTools';
+import type { OutlinerProjectionFilter } from '../capabilities/agentNodeToolTypes';
 import type { AgentSkillRuntime } from '../capabilities/agentSkills';
 import { evaluateAgentToolCapability } from '../capabilities/agentCapabilities';
 import {
@@ -69,10 +69,7 @@ export interface ToolRuntimeOptions {
   readonly assembleRegistry?: boolean;
   readonly dynamicTools?: (context: TurnExecutionContext) => readonly AgentTool[] | Promise<readonly AgentTool[]>;
   readonly capabilityConfig?: AgentCapabilityConfig | (() => AgentCapabilityConfig | Promise<AgentCapabilityConfig>);
-  readonly filterOutlinerProjection?: (
-    projection: DocumentProjection,
-    causation: AgentMutationCausation,
-  ) => DocumentProjection;
+  readonly outlinerProjectionFilter?: OutlinerProjectionFilter;
 }
 
 export class ToolRuntime {
@@ -89,7 +86,7 @@ export class ToolRuntime {
       ? outlinerWithCausation(
           options.outliner,
           () => this.mutationCausation.getStore(),
-          options.filterOutlinerProjection,
+          options.outlinerProjectionFilter,
         )
       : undefined;
     this.importService = this.outliner ? new AgentImportService(this.outliner) : null;
@@ -583,7 +580,7 @@ export class ToolRuntime {
 function outlinerWithCausation(
   host: OutlinerToolHost,
   causation: () => AgentMutationCausation | undefined,
-  filterProjection?: (projection: DocumentProjection, causation: AgentMutationCausation) => DocumentProjection,
+  projectionFilter?: OutlinerProjectionFilter,
 ): OutlinerToolHost {
   const mutationMeta = (meta: Parameters<OutlinerToolHost['handle']>[2]) => ({
     ...meta,
@@ -593,13 +590,28 @@ function outlinerWithCausation(
     getProjection: () => {
       const current = causation();
       const projection = host.getProjection();
-      return current && filterProjection ? filterProjection(projection, current) : projection;
+      return current && projectionFilter
+        ? projectionFilter.filterProjection(projection, current)
+        : projection;
     },
-    getDocumentReadModel: host.getDocumentReadModel && !filterProjection ? () => host.getDocumentReadModel!() : undefined,
+    getDocumentReadModel: host.getDocumentReadModel ? () => {
+      const current = causation();
+      const readModel = host.getDocumentReadModel!();
+      if (!current || !projectionFilter) return readModel;
+      return {
+        asProjectionIndex: () => projectionFilter.filterProjectionIndex(readModel.asProjectionIndex(), current),
+      };
+    } : undefined,
     drainTransactionProjectionChanges: host.drainTransactionProjectionChanges
       ? () => host.drainTransactionProjectionChanges!()
       : undefined,
-    getTextSearchIndex: host.getTextSearchIndex && !filterProjection ? () => host.getTextSearchIndex!() : undefined,
+    getTextSearchIndex: host.getTextSearchIndex ? () => {
+      const current = causation();
+      const index = host.getTextSearchIndex!();
+      return current && projectionFilter
+        ? projectionFilter.filterTextSearchIndex(index, current)
+        : index;
+    } : undefined,
     getTransientSearchOptions: host.getTransientSearchOptions ? () => host.getTransientSearchOptions!() : undefined,
     recordNodeAccess: host.recordNodeAccess
       ? (nodeIds, source) => host.recordNodeAccess!(nodeIds, source)

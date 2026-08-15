@@ -7,6 +7,7 @@ import {
 } from '../../src/core/agent/memory';
 import type { Thread, ThreadItem, Turn } from '../../src/core/agent/protocol';
 import type { DocumentSystemReceipt } from '../../src/core/documentSystem';
+import { createTextSearchIndex } from '../../src/core/textSearchIndex';
 import {
   MemoryControlStore,
   type MemoryGeneratedNodeRecord,
@@ -258,10 +259,18 @@ describe('Codex Memory contracts', () => {
     expect(authoritative.nodes.some((node) => node.id === MEMORY_NODE_ID)).toBe(true);
   });
 
-  test('filters a projection with metadata and one targeted Turn read', () => {
+  test('caches projection filtering metadata and one targeted Turn read', () => {
     const store = memoryStore();
     const projection = memoryProjection();
     const timeline = new TimelineMemoryStore(readOnlyTimelineHost(projection));
+    const originalGraph = timeline.graph.bind(timeline);
+    let fullGraphReads = 0;
+    Object.assign(timeline, {
+      graph: (override?: DocumentProjection) => {
+        fullGraphReads += 1;
+        return originalGraph(override);
+      },
+    });
     const thread = rootThread([userTurn('read this', MEMORY_NODE_ID)]);
     const includeTurnsRequests: Array<boolean | undefined> = [];
     const turnReads: Array<{ threadId: ThreadId; turnId: TurnId }> = [];
@@ -283,10 +292,127 @@ describe('Codex Memory contracts', () => {
       turnId: TURN_ID,
       itemId: ITEM_ID,
     });
+    const filteredAgain = extension.filterProjection(projection, {
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+      itemId: 'item:second-tool',
+    });
 
     expect(filtered.nodes.some((node) => node.id === MEMORY_NODE_ID)).toBe(true);
+    expect(filteredAgain).toEqual(filtered);
     expect(includeTurnsRequests).toEqual([undefined]);
     expect(turnReads).toEqual([{ threadId: THREAD_ID, turnId: TURN_ID }]);
+    expect(extension.mutationIndexFullRebuildCount()).toBe(1);
+    expect(fullGraphReads).toBe(0);
+  });
+
+  test('updates cached explicit references when a user Item is appended', () => {
+    const store = memoryStore();
+    const projection = memoryProjection();
+    const timeline = new TimelineMemoryStore(readOnlyTimelineHost(projection));
+    const turn = {
+      ...userTurn('Start without a reference'),
+      status: 'inProgress' as const,
+      completedAt: null,
+      durationMs: null,
+    };
+    const thread = {
+      ...rootThread([turn]),
+      status: { type: 'active' as const, activeFlags: [] },
+    };
+    const extension = new MemoryExtension(store, timeline);
+    extension.bindHost(memoryThreadHost(thread));
+    extension.contributeTurnAdmission(admissionContext(thread, turn));
+    seedGeneratedGraph(store, timeline);
+    store.prepareRollback({
+      rollbackId: 'rollback:item-cache',
+      threadId: THREAD_ID,
+      omittedTurnIds: ['turn:omitted'],
+      beforeVersion: 1,
+      afterVersion: 2,
+      suppressedNodeIds: [MEMORY_NODE_ID, EPISODE_NODE_ID, 'belief:1'],
+      suppressAllGenerated: false,
+    });
+    extension.onNotification({ type: 'turn/started', threadId: THREAD_ID, turnId: TURN_ID, turn });
+
+    const before = extension.filterProjection(projection, {
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+      itemId: ITEM_ID,
+    });
+    expect(before.nodes.some((entry) => entry.id === MEMORY_NODE_ID)).toBe(false);
+
+    const steered = userTurn(
+      'Read this',
+      MEMORY_NODE_ID,
+      { kind: 'user' },
+      TURN_ID,
+      'item:steered',
+    ).items[0]!;
+    extension.onNotification({
+      type: 'items/completed',
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+      items: [steered],
+      completedAt: Date.now(),
+    });
+    const after = extension.filterProjection(projection, {
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+      itemId: 'item:after-steer',
+    });
+    expect(after.nodes.some((entry) => entry.id === MEMORY_NODE_ID)).toBe(true);
+  });
+
+  test('reuses filtered read views until a visibility write invalidates them', () => {
+    const store = memoryStore();
+    const projection = memoryProjection();
+    const timeline = new TimelineMemoryStore(readOnlyTimelineHost(projection));
+    const thread = rootThread([userTurn('Use relevant Memory')]);
+    const extension = new MemoryExtension(store, timeline);
+    extension.bindHost(memoryThreadHost(thread));
+    extension.contributeTurnAdmission(admissionContext(thread, thread.turns![0]!));
+    seedGeneratedGraph(store, timeline);
+    store.prepareRollback({
+      rollbackId: 'rollback:filtered-views',
+      threadId: THREAD_ID,
+      omittedTurnIds: ['turn:omitted'],
+      beforeVersion: 1,
+      afterVersion: 2,
+      suppressedNodeIds: [MEMORY_NODE_ID, EPISODE_NODE_ID, 'belief:1'],
+      suppressAllGenerated: false,
+    });
+    const causation = { threadId: THREAD_ID, turnId: TURN_ID, itemId: ITEM_ID };
+    const nodes = new Map(projection.nodes.map((entry) => [entry.id, entry]));
+    const sourceTextIndex = createTextSearchIndex([
+      {
+        id: 'belief:1',
+        kind: 'text',
+        fields: [{ key: 'title', text: 'Durable probe belief' }],
+      },
+      {
+        id: 'ordinary:1',
+        kind: 'text',
+        fields: [{ key: 'title', text: 'Ordinary note' }],
+      },
+    ]);
+
+    const firstReadModel = extension.filterProjectionIndex({ projection, nodes }, causation);
+    const secondReadModel = extension.filterProjectionIndex({ projection, nodes }, causation);
+    const firstTextIndex = extension.filterTextSearchIndex(sourceTextIndex, causation);
+    const secondTextIndex = extension.filterTextSearchIndex(sourceTextIndex, causation);
+    expect(secondReadModel).toBe(firstReadModel);
+    expect(secondTextIndex).toBe(firstTextIndex);
+    expect(firstReadModel.nodes.has('belief:1')).toBe(false);
+    expect(firstTextIndex.search('durable probe')).toEqual([]);
+
+    store.markNodeUserAuthoritative('belief:1');
+    const refreshedReadModel = extension.filterProjectionIndex({ projection, nodes }, causation);
+    const refreshedTextIndex = extension.filterTextSearchIndex(sourceTextIndex, causation);
+    expect(refreshedReadModel).not.toBe(firstReadModel);
+    expect(refreshedTextIndex).not.toBe(firstTextIndex);
+    expect(refreshedReadModel.nodes.get('belief:1')?.parentId).toBeUndefined();
+    expect(refreshedTextIndex.search('durable probe').map((entry) => entry.id)).toEqual(['belief:1']);
   });
 
   test('keeps Memory projection root-only even when a child explicitly references a Memory Node', () => {
@@ -1272,6 +1398,43 @@ describe('Codex Memory contracts', () => {
     store.markNodeUserAuthoritative(MEMORY_NODE_ID);
     expect(store.generatedNodesById().get(MEMORY_NODE_ID)?.userAuthoritative).toBe(true);
     expect(generatedSelects).toBe(2);
+  });
+
+  test('queries unsupported generated Nodes with one cached join', () => {
+    const database = new Database(':memory:');
+    let unsupportedJoinSelects = 0;
+    const instrumented: SqliteDatabase = {
+      exec: (sql) => database.exec(sql),
+      prepare: (sql) => {
+        const normalized = sql.replace(/\s+/g, ' ').trim();
+        if (
+          normalized.includes('FROM generated_nodes AS generated')
+          && normalized.includes('LEFT JOIN node_lineage AS lineage')
+          && normalized.includes('LEFT JOIN origin_claims AS origin')
+        ) unsupportedJoinSelects += 1;
+        return database.prepare(sql) as unknown as ReturnType<SqliteDatabase['prepare']>;
+      },
+      close: () => database.close(),
+    };
+    const store = new MemoryControlStore(':memory:', instrumented);
+    stores.push(store);
+    const unsupportedOriginId = 'item:unsupported';
+    expect(store.claimOrigin(ITEM_ID, THREAD_ID, TURN_ID, '2026-07-24', 'hash')).toBe(true);
+    store.replaceGeneratedNodes(THREAD_ID, [
+      generatedNode(),
+      { ...generatedNode(), nodeId: EPISODE_NODE_ID },
+    ], [
+      { nodeId: MEMORY_NODE_ID, threadId: THREAD_ID, turnId: TURN_ID, originItemId: ITEM_ID },
+      { nodeId: EPISODE_NODE_ID, threadId: THREAD_ID, turnId: TURN_ID, originItemId: unsupportedOriginId },
+    ]);
+
+    expect(store.generatedNodeIdsWithoutCurrentSupport()).toEqual([EPISODE_NODE_ID]);
+    expect(store.generatedNodeIdsWithoutCurrentSupport()).toEqual([EPISODE_NODE_ID]);
+    expect(unsupportedJoinSelects).toBe(1);
+
+    expect(store.claimOrigin(unsupportedOriginId, THREAD_ID, TURN_ID, '2026-07-24', 'hash:second')).toBe(true);
+    expect(store.generatedNodeIdsWithoutCurrentSupport()).toEqual([]);
+    expect(unsupportedJoinSelects).toBe(2);
   });
 
   test('invalidates polluted origins before global reconciliation', () => {
