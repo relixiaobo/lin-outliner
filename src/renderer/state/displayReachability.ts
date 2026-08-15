@@ -91,9 +91,9 @@ async function buildDisplayReachability(
     const resolution = resolveEffectiveNodeIdCached(childId, byId, effectiveNodeIds);
     if (!resolution.ok) {
       if (resolution.reason === 'would_create_display_cycle') directChildCycle = true;
-      break;
+    } else {
+      directAlreadyEffectiveNodeIds.add(resolution.nodeId);
     }
-    directAlreadyEffectiveNodeIds.add(resolution.nodeId);
     if ((index + 1) % BUILD_CHUNK_SIZE === 0 && index + 1 < directChildren.length) {
       await yieldToRenderer();
     }

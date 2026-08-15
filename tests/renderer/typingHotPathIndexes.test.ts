@@ -16,6 +16,7 @@ import { displayReachabilityForParent } from '../../src/renderer/state/displayRe
 import { scanUnlinkedReferenceSources } from '../../src/renderer/state/cooperativeReferenceSummary';
 import {
   queryReferenceCandidateIndex,
+  referenceCandidateIndexNeedsCompaction,
   type ReferenceCandidateQueryStats,
 } from '../../src/renderer/state/referenceCandidateIndex';
 import { buildReferenceCandidates } from '../../src/renderer/ui/interactions/referenceCandidates';
@@ -121,6 +122,18 @@ describe('typing hot-path reference candidate index', () => {
     expect(stats.candidateEntriesVisited).toBe(1);
   });
 
+  test('finds a tail substring in a long repeated label without copied suffix keys', () => {
+    const longLabel = `${'a'.repeat(20_000)}needle-at-the-tail`;
+    const index = buildIndex(projection([
+      node('root', 'Root', { children: ['long', 'trash'] }),
+      node('long', longLabel, { parentId: 'root', updatedAt: 10 }),
+      node('trash', 'Trash', { parentId: 'root' }),
+    ]));
+
+    expect(nodeIds(queryIndex(index, 'needle-at-the-tail', 24))).toEqual(['long']);
+    expect(nodeIds(queryIndex(index, 'aaaaaneedle', 24))).toEqual(['long']);
+  });
+
   test('keeps empty and universal-match queries within the shortlist visit bound', () => {
     const candidates = Array.from({ length: 2_000 }, (_, index) => (
       node(`candidate-${index}`, `a-${index}`, { updatedAt: index })
@@ -148,6 +161,53 @@ describe('typing hot-path reference candidate index', () => {
           return match ? [match.rank] : [];
         });
       expect(Math.max(...includedRanks)).toBeLessThanOrEqual(Math.min(...excludedRanks));
+    }
+  });
+
+  test('matches deterministic rank and score order across a varied suffix corpus', () => {
+    const candidates = Array.from({ length: 320 }, (_, index) => {
+      const text = index % 5 === 0
+        ? `${'a'.repeat(index % 19)} needle ${index}`
+        : index % 5 === 1
+          ? `Prefix_${index} middle-tail`
+          : index % 5 === 2
+            ? `记录上海天气 ${index}`
+            : index % 5 === 3
+              ? `zero/word.${index}-suffix`
+              : `ordinary candidate ${index}`;
+      return node(`candidate-${index}`, text, {
+        parentId: 'root',
+        updatedAt: (index * 37) % 503,
+      });
+    });
+    const index = buildIndex(projection([
+      node('root', 'Root', { children: [...candidates.map((candidate) => candidate.id), 'trash'] }),
+      ...candidates,
+      node('trash', 'Trash', { parentId: 'root' }),
+    ]));
+
+    for (const query of ['', 'a', 'needle', 'middle-t', '上海', 'word.', 'didate 2']) {
+      const expected = candidates
+        .flatMap((candidate) => {
+          const match = rankTextSearchLabel(candidate.content.text, query);
+          return match ? [{ candidate, match }] : [];
+        })
+        .sort((left, right) => {
+          if (left.match.rank !== right.match.rank) return left.match.rank - right.match.rank;
+          if (left.candidate.updatedAt !== right.candidate.updatedAt) {
+            return right.candidate.updatedAt - left.candidate.updatedAt;
+          }
+          if (left.match.normalizedLabel.length !== right.match.normalizedLabel.length) {
+            return left.match.normalizedLabel.length - right.match.normalizedLabel.length;
+          }
+          if (left.match.normalizedLabel !== right.match.normalizedLabel) {
+            return left.match.normalizedLabel < right.match.normalizedLabel ? -1 : 1;
+          }
+          return left.candidate.id < right.candidate.id ? -1 : 1;
+        })
+        .slice(0, 24)
+        .map(({ candidate }) => candidate.id);
+      expect({ query, ids: nodeIds(queryIndex(index, query, 24)) }).toEqual({ query, ids: expected });
     }
   });
 
@@ -219,7 +279,7 @@ describe('typing hot-path reference candidate index', () => {
     }
   });
 
-  test('filters a full stale overlay and compacts before it can underfill the shortlist', () => {
+  test('keeps an overflow overlay complete without rebuilding on the projection hot path', () => {
     const candidates = Array.from({ length: 60 }, (_, index) => (
       node(`candidate-${index}`, `Alpha ${index}`, {
         parentId: 'root',
@@ -256,11 +316,25 @@ describe('typing hot-path reference candidate index', () => {
     };
     state = reduceProjection(state, delta(3, [compactedCandidate], []))!;
 
-    expect(state.index.referenceCandidates.content).not.toBe(baseForest);
-    expect(state.index.referenceCandidates.pending.size).toBe(0);
-    const compactedRebuild = buildIndex(projection([...state.index.byId.values()]));
+    expect(state.index.referenceCandidates.content).toBe(baseForest);
+    expect(state.index.referenceCandidates.pending.size).toBe(24);
+    expect(referenceCandidateIndexNeedsCompaction(state.index.referenceCandidates)).toBe(true);
+    const overflowRebuild = buildIndex(projection([...state.index.byId.values()]));
     for (const query of ['', 'alpha', 'zulu', 'compacted']) {
-      expect(queryIndex(state.index, query, 24)).toEqual(queryIndex(compactedRebuild, query, 24));
+      expect(queryIndex(state.index, query, 24)).toEqual(queryIndex(overflowRebuild, query, 24));
+    }
+
+    const secondPatch = candidates.slice(24, 50).map((candidate, index) => ({
+      ...candidate,
+      content: { ...candidate.content, text: `Omega ${index}` },
+      updatedAt: 4_000 + index,
+    }));
+    state = reduceProjection(state, delta(4, secondPatch, []))!;
+    expect(state.index.referenceCandidates.content).toBe(baseForest);
+    expect(state.index.referenceCandidates.pending.size).toBe(50);
+    const deepOverflowRebuild = buildIndex(projection([...state.index.byId.values()]));
+    for (const query of ['', 'alpha', 'zulu', 'omega']) {
+      expect(queryIndex(state.index, query, 24)).toEqual(queryIndex(deepOverflowRebuild, query, 24));
     }
   });
 });
@@ -386,6 +460,49 @@ describe('typing hot-path semantic revisions and reachability', () => {
     expect(checks).toBeLessThanOrEqual(24);
     expect(candidates.find((candidate) => candidate.type === 'node' && candidate.id === 'target'))
       .toMatchObject({ disabledReason: 'Would create a display cycle' });
+  });
+
+  test('keeps checking direct children after a dangling reference', async () => {
+    const root = node('root', 'Root', { children: ['parent', 'safe', 'trash'] });
+    const parent = node('parent', 'Parent', {
+      parentId: 'root',
+      children: ['dangling', 'cycle-a'],
+    });
+    const dangling = node('dangling', '', {
+      type: 'reference',
+      parentId: 'parent',
+      targetId: 'missing',
+    });
+    const cycleA = node('cycle-a', '', {
+      type: 'reference',
+      parentId: 'parent',
+      targetId: 'cycle-b',
+    });
+    const cycleB = node('cycle-b', '', {
+      type: 'reference',
+      targetId: 'cycle-a',
+    });
+    const safe = node('safe', 'Safe', { parentId: 'root' });
+    const trash = node('trash', 'Trash', { parentId: 'root' });
+    const index = buildIndex(projection([root, parent, dangling, cycleA, cycleB, safe, trash]));
+    const reachability = await displayReachabilityForParent(index, 'parent');
+
+    expect(reachability.directChildCycle).toBe(true);
+    expect(getTreeReferenceBlockReasonFromReachability({
+      parentId: 'parent',
+      targetId: 'safe',
+      byId: index.byId,
+      reachability,
+    })).toBe(getTreeReferenceBlockReason({
+      parentId: 'parent',
+      targetId: 'safe',
+      byId: index.byId,
+    }));
+    expect(getTreeReferenceBlockReason({
+      parentId: 'parent',
+      targetId: 'safe',
+      byId: index.byId,
+    })).toBe('would_create_display_cycle');
   });
 });
 

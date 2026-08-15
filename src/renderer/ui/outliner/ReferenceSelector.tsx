@@ -95,12 +95,13 @@ export function ReferenceSelector(props: ReferenceSelectorProps) {
     let cancelled = false;
     void displayReachabilityForParent(latestIndexRef.current, treeReferenceParentId).then((value) => {
       if (cancelled) return;
+      props.setSelectedIndex(0);
       setReachabilityState({ cacheKey: displayGraphCacheKey, parentId: treeReferenceParentId, value });
     });
     return () => {
       cancelled = true;
     };
-  }, [displayGraphCacheKey, treeReferenceParentId]);
+  }, [displayGraphCacheKey, props.setSelectedIndex, treeReferenceParentId]);
 
   const labels = useMemo(() => referenceCandidateLabels(t), [t]);
   const items = useMemo(() => referenceItems({
@@ -119,6 +120,7 @@ export function ReferenceSelector(props: ReferenceSelectorProps) {
       : undefined,
     skipTreeReferenceChecks: Boolean(treeReferenceParentId && !reachability),
   }), [labels, props.currentNodeId, props.index, props.query, reachability, treeReferenceParentId]);
+  const reachabilityPending = Boolean(treeReferenceParentId && !reachability);
 
   const targetIsSelectable = (targetId: NodeId): boolean => {
     if (!treeReferenceParentId) return true;
@@ -194,14 +196,17 @@ export function ReferenceSelector(props: ReferenceSelectorProps) {
   return (
     <>
       {items.map((item, index) => {
-        const disabled = item.type === 'node' && Boolean(item.disabledReason);
+        const disabled = item.type === 'node'
+          && (reachabilityPending || Boolean(item.disabledReason));
         return (
           <PopoverListItem
             key={item.type === 'node' ? item.id : `${item.type}:${item.label}`}
             active={index === props.selectedIndex}
             disabled={disabled}
             data-create-reference={item.type === 'create' ? 'true' : undefined}
-            title={item.type === 'node' ? item.disabledReason ?? undefined : undefined}
+            title={item.type === 'node'
+              ? item.disabledReason ?? (reachabilityPending ? t.common.loading : undefined)
+              : undefined}
             icon={iconForItem(item, props.index)}
             iconClassName="popover-item-icon"
             label={(

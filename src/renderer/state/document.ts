@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, type Dispatch, type SetStateAction } from 'react';
+import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import type {
   DocumentProjection,
   FocusPlacement,
@@ -42,6 +42,7 @@ import {
 import {
   buildReferenceCandidateIndex,
   patchReferenceCandidateIndex,
+  referenceCandidateIndexNeedsCompaction,
   type ReferenceCandidateIndex,
 } from './referenceCandidateIndex';
 import {
@@ -122,6 +123,8 @@ interface ProjectionState {
   // copy-on-write-patched one, so `prev`'s is never mutated.
   reverseEdges: ReverseEdges;
 }
+
+const REFERENCE_CANDIDATE_COMPACTION_DELAY_MS = 150;
 
 // Fold a ProjectionUpdate into the previous state. Returns the next state, the
 // unchanged `prev` (already-applied duplicate / identical reseed), or `null` to
@@ -336,6 +339,7 @@ export function useProjectionStore(
   const stateRef = useRef<ProjectionState | null>(null);
   const indexStoreRef = useRef<DocumentIndexStore | null>(null);
   const resyncInFlight = useRef(false);
+  const candidateCompactionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const commit = useCallback((next: ProjectionState | null) => {
     if (next !== null && next !== stateRef.current) {
@@ -343,6 +347,36 @@ export function useProjectionStore(
       if (indexStoreRef.current) indexStoreRef.current.commit(next.index);
       else indexStoreRef.current = new DocumentIndexStore(next.index);
       setState(next);
+    }
+  }, []);
+
+  const scheduleCandidateCompaction = useCallback((next: ProjectionState) => {
+    if (candidateCompactionTimerRef.current !== null) {
+      clearTimeout(candidateCompactionTimerRef.current);
+      candidateCompactionTimerRef.current = null;
+    }
+    if (!referenceCandidateIndexNeedsCompaction(next.index.referenceCandidates)) return;
+    // Repeated edits stay in the edit overlay. Compact only after input has
+    // settled so the 24th distinct edit never rebuilds the document in its fold.
+    candidateCompactionTimerRef.current = setTimeout(() => {
+      candidateCompactionTimerRef.current = null;
+      const current = stateRef.current;
+      if (!current || !referenceCandidateIndexNeedsCompaction(current.index.referenceCandidates)) return;
+      const referenceCandidates = buildReferenceCandidateIndex(
+        current.index.byId,
+        current.index.trashNodeIds,
+      );
+      if (stateRef.current !== current) return;
+      commit({
+        ...current,
+        index: { ...current.index, referenceCandidates },
+      });
+    }, REFERENCE_CANDIDATE_COMPACTION_DELAY_MS);
+  }, [commit]);
+
+  useEffect(() => () => {
+    if (candidateCompactionTimerRef.current !== null) {
+      clearTimeout(candidateCompactionTimerRef.current);
     }
   }, []);
 
@@ -361,7 +395,8 @@ export function useProjectionStore(
       setUi((current) => reduceUiStateForProjectionRemovals(current, removals));
     }
     commit(next);
-  }, [commit, setUi]);
+    scheduleCandidateCompaction(next);
+  }, [commit, scheduleCandidateCompaction, setUi]);
 
   const applyProjectionUpdate = useCallback((update: ProjectionUpdate) => {
     const previous = stateRef.current;

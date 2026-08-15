@@ -191,6 +191,8 @@ function sameWorkspaceTreeBranchProps(
     || previous.onToggleTreeNode !== next.onToggleTreeNode
     || previous.rootId !== next.rootId
     || previous.trashId !== next.trashId
+    || previous.index.semanticRevisions.trashMembership
+      !== next.index.semanticRevisions.trashMembership
     || !sameNodeIds(previous.parentPath, next.parentPath)
   ) return false;
   if (previous.index === next.index) return true;

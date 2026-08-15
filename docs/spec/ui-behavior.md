@@ -256,9 +256,14 @@ single CJK characters, and mid-word matches. Retrieval is complete by text-rank
 tier: no excluded node has a better text rank than an included node, while the
 disabled, untitled, context, length, recency, and label tie-breaks apply within
 the retrieved set. Empty queries use recency order. Cycle status is evaluated
-only for shortlisted nodes from a cached reverse-reachability set; a cold or
-invalidated set is built cooperatively after the picker opens, never inside the
-typing event. Breadcrumbs are derived only for the final visible results.
+only for shortlisted nodes from a cached reverse-reachability set. Posting keys
+share their normalized label storage through offsets, and an overflow edit
+overlay is compacted only after input settles, never inside the projection
+commit. A cold or invalidated reachability set is built cooperatively after the
+picker opens, never inside the typing event. Node choices remain disabled until
+that set resolves; resolution updates candidate order and resets keyboard
+selection together, so Enter cannot act on a row that moved underneath the
+highlight. Breadcrumbs are derived only for the final visible results.
 
 For `options_from_supertag` fields, the source supertag must be an active tag
 definition. If the source tag is moved to Trash, the field's value picker no
