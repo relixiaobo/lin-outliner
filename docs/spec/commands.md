@@ -36,6 +36,19 @@ The renderer calls them through `window.lin.invoke(...)` via
 including content, optional descriptions, code block language, tags, fields, and
 task checkbox state. It is the bulk structural path for paste and import.
 
+`split_node` treats a same-parent split as continuation of the existing node: the
+new sibling carries the source tags and materializes their inherited field
+structure, including acquisition-time auto-initialization, but does not clone
+static template defaults or seed content. Tag acquisition clones a static field
+default before considering auto-initialization; a same-parent split omits that
+default, so a field configured with both mechanisms can keep the static default
+on the source while the new sibling receives an auto-initialized value. An empty
+split field still retains its template origin; `value_is_default` therefore hides
+a source value equal to the template default but leaves the empty sibling field
+visible. A cross-parent split does not carry the source tags; it applies the
+destination parent's configured child supertag as a new acquisition, including
+that tag's defaults and seed content.
+
 `create_capture` atomically creates one launcher-capture node: a plain node
 carrying a hidden, typed `capture` provenance sidecar (`CaptureNodeMetadata` on
 `NodeBase.capture`) plus the source projected into native outline shape — a

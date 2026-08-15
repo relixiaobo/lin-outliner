@@ -552,20 +552,23 @@ archived `done` (see Recently completed). Remaining active work:
   reader sweep after it merges; the merge/split fix PRs land first and PR 1
   inherits their behaviors as pinned tests.
   Design: [`tag-schema-projection`](plans/tag-schema-projection.md).
-- **tag-merge-and-split-fixes** (P1, `draft` 2026-08-13, **PM-ratified 2026-08-13**) —
+- **tag-merge-and-split-fixes** (P1, `in-progress` 2026-08-13, **PM-ratified 2026-08-13**) —
   kills the crash-class remainder of the field/supertag audit (#537's review
   follow-up), all repro-verified: same-named fields from two tags make the tags
   mutually exclusive with a crash (`applyTag` throws out of the template-stamp
   assert; the same site crashes the checkbox done-mapping today); merging two
   such tags moves the collision inside the merged tag, poisoning every future
   `applyTag` of it; and a mid-text split re-stamps creation-moment data (defaults
-  reset, seed children re-conjured). Design: collisions skip at the stamp
-  boundary, authoring paths stay fail-closed (the A12 line); tag merge unifies
-  same-named definitions behind a non-throwing compatibility predicate with a
-  keep-both fallback, target's template defaults win; split stamps field
+  reset, seed children re-conjured). Design **redirected by the PM 2026-08-14 to
+  Tana's identity model**: a field is its `fieldDefId`, never its display name,
+  so same-named fields from two tags coexist on one node and tag merge stops
+  unifying definitions by name (which had let a merge rewrite a third tag's
+  schema); name-based writes disambiguate through the owner's specific-first tag
+  chain. Authoring paths stay fail-closed (the A12 line); split stamps field
   structure + auto-init only. Shape (b): **two independent PRs** (PR A collision
-  skip + merge unification; PR B split re-stamp removal), both before
+  semantics + merge; PR B split re-stamp removal), both before
   tag-schema-projection PR 1.
+  **PR B shipped (#542, 2026-08-15); PR A (#540) reworking after an xhigh NO-GO.**
   Design: [`tag-merge-and-split-fixes`](plans/tag-merge-and-split-fixes.md).
 - **nodex-parity-decisions** (meta, *standing reference — not a work item*) — the
   catalog of nodex features lin deliberately **will not** port, with reasons;
