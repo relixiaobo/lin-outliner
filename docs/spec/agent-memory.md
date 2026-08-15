@@ -204,6 +204,34 @@ is missing or unreadable, implicit Memory fails closed. A Node explicitly
 attached or referenced by the user remains ordinary supplied input and bypasses
 implicit discovery filtering.
 
+The active Turn's explicit Node references are seeded from `turn/started` and
+updated from recorded `item/completed` and `items/completed` appends. Recovery
+or an extension attached after Turn start attempts a targeted Turn read. A
+missing Turn leaves recovery unresolved so a later filter access retries; the
+first successful read seals and reuses the reference set for the rest of that
+Turn. Item notifications update only filter state already opened by Turn start
+or a live recovery access. Recorded Items are canonical before extension
+notification delivery, so a recovery read includes any pre-state append that
+was ignored; late and orphaned notifications cannot retain unbounded state.
+Reference expansion and canonical membership come from the incrementally
+maintained `MemoryMutationIndex`; projection filtering never rebuilds the
+Memory graph.
+The hidden-ID set is cached by document, control-store, and explicit-reference
+revision. The full filtered projection and the filtered projection index are
+then reused while those revisions remain stable.
+
+`ToolRuntime` keeps the maintained document read model and text-search index
+available under Memory filtering. Their filtered views remove hidden IDs before
+candidate generation, BM25 corpus statistics, scoring, and limits, so a filtered
+search is identical to rebuilding the index from only visible records. This
+means Memory-filtered `node_search` uses the same indexed scorer as ordinary
+Threads rather than the legacy linear fallback scorer. `node_edit` likewise
+retains sparse transaction effects instead of comparing full projections.
+Generated ownership rows and the unsupported-generated-ID query are cached in
+`MemoryControlStore`; the latter is one grouped join across generated Nodes,
+lineage, and current origin claims. Every write that can change visibility
+advances the process-local filtering revision and invalidates those caches.
+
 There are no model-callable Memory-specific tools. An eligible foreground root
 Turn may use ordinary Node tools to remember, update, or forget only when the
 user message explicitly requests that operation. Renderer-authored edits remain

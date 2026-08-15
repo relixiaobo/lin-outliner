@@ -141,6 +141,8 @@ export class MemoryControlStore {
   private generatedNodesCache: readonly MemoryGeneratedNodeRecord[] | null = null;
   private generatedNodeIdsCache: ReadonlySet<string> | null = null;
   private generatedNodesByIdCache: ReadonlyMap<string, MemoryGeneratedNodeRecord> | null = null;
+  private unsupportedGeneratedNodeIdsCache: readonly string[] | null = null;
+  private currentFilteringRevision = 0;
   private readonly db: SqliteDatabase;
 
   constructor(path: string, database?: SqliteDatabase) {
@@ -257,6 +259,10 @@ export class MemoryControlStore {
     this.db.close();
   }
 
+  filteringRevision(): number {
+    return this.currentFilteringRevision;
+  }
+
   status(): MemoryControlStatus {
     return {
       featureMode: this.featureMode(),
@@ -292,6 +298,7 @@ export class MemoryControlStore {
         this.incrementSetting('memoryVisibilityGeneration');
       }
     });
+    this.invalidateMemoryVisibilityCache();
     return this.status();
   }
 
@@ -331,6 +338,7 @@ export class MemoryControlStore {
       snapshot.memoryVisibilityGeneration,
       snapshot.admittedAt,
     );
+    this.invalidateMemoryVisibilityCache();
   }
 
   admission(turnId: TurnId): MemoryAdmissionSnapshot | null {
@@ -345,6 +353,7 @@ export class MemoryControlStore {
         if (!durableTurnIds.has(row.turn_id)) this.db.prepare('DELETE FROM turn_admissions WHERE turn_id = ?').run(row.turn_id);
       }
     });
+    this.invalidateMemoryVisibilityCache();
   }
 
   isTurnExcluded(turnId: TurnId): boolean {
@@ -377,6 +386,7 @@ export class MemoryControlStore {
       this.enqueueJob('phase2:global', 'phase2', { reason: 'stage1-no-output' }, now);
       this.recordSuccess(now);
     });
+    this.invalidateMemoryVisibilityCache();
   }
 
   markThreadPolluted(threadId: ThreadId, now = Date.now()): void {
@@ -395,6 +405,7 @@ export class MemoryControlStore {
       this.db.prepare('DELETE FROM origin_claims WHERE thread_id = ?').run(threadId);
       this.enqueueJob(`phase2:pollution:${threadId}`, 'phase2', { threadId }, now);
     });
+    this.invalidateMemoryVisibilityCache();
   }
 
   claimOrigin(
@@ -408,7 +419,10 @@ export class MemoryControlStore {
       INSERT OR IGNORE INTO origin_claims(origin_item_id, thread_id, turn_id, source_date, content_hash)
       VALUES (?, ?, ?, ?, ?)
     `).run(originItemId, threadId, turnId, sourceDate, contentHash);
-    if (Number(result.changes) === 1) return true;
+    if (Number(result.changes) === 1) {
+      this.invalidateMemoryVisibilityCache();
+      return true;
+    }
     const row = this.db.prepare('SELECT * FROM origin_claims WHERE origin_item_id = ?').get(originItemId) as {
       thread_id: string; turn_id: string; source_date: string; content_hash: string;
     };
@@ -428,13 +442,18 @@ export class MemoryControlStore {
   }
 
   generatedNodeIdsWithoutCurrentSupport(): readonly string[] {
-    return this.generatedNodes()
-      .filter((node) => !node.userAuthoritative)
-      .filter((node) => {
-        const lineage = this.lineageForNode(node.nodeId);
-        return lineage.length === 0 || lineage.every((edge) => !this.isOriginClaimed(edge.originItemId));
-      })
-      .map((node) => node.nodeId);
+    if (this.unsupportedGeneratedNodeIdsCache) return this.unsupportedGeneratedNodeIdsCache;
+    this.unsupportedGeneratedNodeIdsCache = Object.freeze((this.db.prepare(`
+      SELECT generated.node_id
+      FROM generated_nodes AS generated
+      LEFT JOIN node_lineage AS lineage ON lineage.node_id = generated.node_id
+      LEFT JOIN origin_claims AS origin ON origin.origin_item_id = lineage.origin_item_id
+      WHERE generated.user_authoritative = 0
+      GROUP BY generated.node_id, generated.generated_at
+      HAVING COUNT(origin.origin_item_id) = 0
+      ORDER BY generated.generated_at, generated.node_id
+    `).all() as Array<{ node_id: string }>).map((row) => row.node_id));
+    return this.unsupportedGeneratedNodeIdsCache;
   }
 
   preparePublication<T>(record: MemoryPublicationRecord<T>): void {
@@ -474,6 +493,7 @@ export class MemoryControlStore {
       }
       this.enqueueJob(`reset:${record.id}`, 'reset', { publicationId: record.id }, now);
     });
+    this.invalidateMemoryVisibilityCache();
   }
 
   publication<T = unknown>(id: string): MemoryPublicationRecord<T> | null {
@@ -679,6 +699,7 @@ export class MemoryControlStore {
       );
       this.incrementSetting('memoryVisibilityGeneration');
     });
+    this.invalidateMemoryVisibilityCache();
   }
 
   commitRollback(rollbackId: string, now = Date.now()): void {
@@ -703,6 +724,7 @@ export class MemoryControlStore {
       }
       this.enqueueJob(`rollback:${rollbackId}`, 'rollback', { rollbackId }, now);
     });
+    this.invalidateMemoryVisibilityCache();
   }
 
   abortRollback(rollbackId: string): void {
@@ -713,6 +735,7 @@ export class MemoryControlStore {
     }
     this.db.prepare(`UPDATE rollback_invalidations SET status = 'aborted' WHERE rollback_id = ?`).run(rollbackId);
     this.incrementSetting('memoryVisibilityGeneration');
+    this.invalidateMemoryVisibilityCache();
   }
 
   reconcileRollback(rollbackId: string): void {
@@ -724,6 +747,7 @@ export class MemoryControlStore {
       this.db.prepare('DELETE FROM dirty_jobs WHERE key = ?').run(`rollback:${rollbackId}`);
       this.incrementSetting('memoryVisibilityGeneration');
     });
+    this.invalidateMemoryVisibilityCache();
   }
 
   rollback(rollbackId: string): MemoryRollbackRecord | null {
@@ -923,6 +947,12 @@ export class MemoryControlStore {
     this.generatedNodesCache = null;
     this.generatedNodeIdsCache = null;
     this.generatedNodesByIdCache = null;
+    this.invalidateMemoryVisibilityCache();
+  }
+
+  private invalidateMemoryVisibilityCache(): void {
+    this.unsupportedGeneratedNodeIdsCache = null;
+    this.currentFilteringRevision += 1;
   }
 
   private finalizePublicationInsideTransaction(id: string): void {

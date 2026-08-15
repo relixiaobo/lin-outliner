@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  createFilteredTextSearchIndex,
   createTextSearchIndex,
   tokenizeSearchText,
   type TextSearchRecord,
@@ -117,6 +118,53 @@ describe('text search index', () => {
     const full = index.search('launch').map((result) => result.id);
     expect(index.search('launch', { limit: 2 }).map((result) => result.id)).toEqual(full.slice(0, 2));
     expect(index.search('launch', { limit: 0 })).toEqual([]);
+  });
+
+  test('filters records before candidate generation, scoring, and result limits', () => {
+    const records = [
+      record('hidden-exact', [{ key: 'title', text: 'Launch' }]),
+      record('hidden-body', [{ key: 'body', text: 'Launch launch launch' }]),
+      record('visible-prefix', [{ key: 'title', text: 'Launch review' }]),
+      record('visible-body', [{ key: 'body', text: 'Launch notes' }]),
+      record('visible-field', [{ key: 'fieldValue', text: 'Launch' }]),
+    ];
+    const hidden = new Set(['hidden-exact', 'hidden-body']);
+    const source = createTextSearchIndex(records);
+    const filtered = createFilteredTextSearchIndex(source, hidden);
+    const visible = createTextSearchIndex(records.filter((entry) => !hidden.has(entry.id)));
+
+    expect(filtered.size).toBe(visible.size);
+    expect(filtered.hasRecord('hidden-exact')).toBe(false);
+    expect(filtered.candidateIds('launch', { candidateLimit: 1 }))
+      .toEqual(visible.candidateIds('launch', { candidateLimit: 1 }));
+    expect(filtered.search('launch', { limit: 2 }))
+      .toEqual(visible.search('launch', { limit: 2 }));
+    expect(filtered.scoreRecord('hidden-body', 'launch')).toBeNull();
+    expect(filtered.scoreRecord('visible-prefix', 'launch'))
+      .toEqual(visible.scoreRecord('visible-prefix', 'launch'));
+  });
+
+  test('keeps a filtered view current across source index mutations', () => {
+    const hidden = new Set(['hidden']);
+    const source = createTextSearchIndex([
+      record('hidden', [{ key: 'title', text: 'Alpha' }]),
+      record('visible', [{ key: 'title', text: 'Alpha notes' }]),
+    ]);
+    const filtered = createFilteredTextSearchIndex(source, hidden);
+
+    source.upsert(record('later', [{ key: 'title', text: 'Alpha review' }]));
+    source.upsert(record('hidden', [{ key: 'title', text: 'Alpha alpha alpha' }]));
+    let visible = createTextSearchIndex([
+      record('visible', [{ key: 'title', text: 'Alpha notes' }]),
+      record('later', [{ key: 'title', text: 'Alpha review' }]),
+    ]);
+    expect(filtered.search('alpha')).toEqual(visible.search('alpha'));
+
+    source.remove('later');
+    visible = createTextSearchIndex([
+      record('visible', [{ key: 'title', text: 'Alpha notes' }]),
+    ]);
+    expect(filtered.search('alpha')).toEqual(visible.search('alpha'));
   });
 
   test('updates postings and corpus stats incrementally', () => {
