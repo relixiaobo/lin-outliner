@@ -62,12 +62,13 @@ theme-section entry below; this list is the ordering, not a second record):
   (`agent-streaming-followups` shipped #539 2026-08-14, leaving the P2
   `streaming-markdown-repair-cost` tail); [`interaction-jank-cleanups`](plans/interaction-jank-cleanups.md)
   and [`startup-window-first`](plans/startup-window-first.md) (P2) trail.
-- **Outliner correctness lane (added 2026-08-13, build-ready 2026-08-14)**: the two
-  PM-ratified tag plans — [`tag-merge-and-split-fixes`](plans/tag-merge-and-split-fixes.md)
-  PRs A/B first, then [`tag-schema-projection`](plans/tag-schema-projection.md) PR 1.
-  Their sequencing predecessors #533 and #534 have both merged, so PR A can start
-  now; PR 1 must re-verify its reader sweep against #534's slot-aware readers
-  before building (noted in its entry).
+- **Outliner correctness lane (added 2026-08-13, build-ready 2026-08-14)**:
+  [`tag-merge-and-split-fixes`](plans/archive/tag-merge-and-split-fixes.md) PRs A/B
+  both shipped (#542, #540, 2026-08-15), leaving
+  [`tag-schema-projection`](plans/tag-schema-projection.md) PR 1 as the lane's
+  remaining work. PR 1 must re-verify its reader sweep against #534's slot-aware
+  readers before building, and now inherits #540's field-identity rule — a field
+  is its `fieldDefId`, never its label — as pinned behavior (noted in its entry).
 - **Lane D — test-signal infrastructure**: **still unclaimed and now the oldest
   untouched lane** — e2e stability, starting with the visual-media baseline fixture
   (`test.extend` default), then the run-dependent flaky set as one problem. Wave 1
@@ -546,13 +547,15 @@ archived `done` (see Recently completed). Remaining active work:
   the plan (untag keeps typed values; ghosts answer reads, never writes — `is
   empty` on a defaulted field matches nothing; same-name collisions render as two
   rows; tag fields sit above own fields). One open question (per-node drag for
-  tag fields) has a stated default and does not block. **PR 1 sequences after
-  #533, #534, and tag-merge-and-split-fixes PRs A/B** — #534 is a semantic overlap
-  (`addMissingTableDisplayFieldsDirect` must become slot-aware); re-verify the
-  reader sweep after it merges; the merge/split fix PRs land first and PR 1
-  inherits their behaviors as pinned tests.
+  tag fields) has a stated default and does not block. **All of PR 1's sequencing
+  predecessors have merged** (#533, #534, and tag-merge-and-split-fixes PRs A/B):
+  re-verify the reader sweep against #534's slot-aware
+  `addMissingTableDisplayFieldsDirect`, and treat #540's shipped behavior as
+  pinned — field identity is the `fieldDefId`, same-name fields from two tags
+  coexist as two rows, and name-based writes disambiguate through the owner's
+  specific-first tag chain.
   Design: [`tag-schema-projection`](plans/tag-schema-projection.md).
-- **tag-merge-and-split-fixes** (P1, `in-progress` 2026-08-13, **PM-ratified 2026-08-13**) —
+- **tag-merge-and-split-fixes** (P1, `done` 2026-08-15, **PM-ratified 2026-08-13**) —
   kills the crash-class remainder of the field/supertag audit (#537's review
   follow-up), all repro-verified: same-named fields from two tags make the tags
   mutually exclusive with a crash (`applyTag` throws out of the template-stamp
@@ -568,8 +571,8 @@ archived `done` (see Recently completed). Remaining active work:
   structure + auto-init only. Shape (b): **two independent PRs** (PR A collision
   semantics + merge; PR B split re-stamp removal), both before
   tag-schema-projection PR 1.
-  **PR B shipped (#542, 2026-08-15); PR A (#540) reworking after an xhigh NO-GO.**
-  Design: [`tag-merge-and-split-fixes`](plans/tag-merge-and-split-fixes.md).
+  Shipped: PR B #542, PR A #540, both 2026-08-15.
+  Design: [`tag-merge-and-split-fixes`](plans/archive/tag-merge-and-split-fixes.md).
 - **nodex-parity-decisions** (meta, *standing reference — not a work item*) — the
   catalog of nodex features lin deliberately **will not** port, with reasons;
   companion to the active plans. Current-code parity status lives in

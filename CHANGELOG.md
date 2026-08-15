@@ -284,6 +284,35 @@ Entries reference the pull request that introduced them.
 
 ### Fixed
 
+- **Two tags that define the same field name no longer exclude each other
+  (PR #540, codex-2)** — a field is now identified by its definition, never by
+  its display name, matching Tana (*"whenever you select an existing field to
+  use, it is retrieving the settings from the field definition of that field"*).
+  Before this, `#chore` and `#bug` each defining a `Status` were mutually
+  exclusive with a crash: applying the second threw out of the template-stamp
+  assert, and because the tag was pushed onto the node *before* instantiation,
+  the failure left the tag applied with partial fields. The same assert crashed
+  the checkbox whenever a done-mapped field's name collided. Merging two such
+  tags moved the collision inside the merged tag and poisoned every later
+  application of it. Same-named fields backed by different definitions now
+  simply coexist on a node, rendering as two rows exactly as Tana does — no
+  originating-tag suffix. Tag merge no longer unifies definitions by name at
+  all; it follows template-child identity, so a merge can no longer rewrite the
+  schema of a third tag the user never named (an earlier draft did, document-wide,
+  including that tag's option pool). Where two template entries do share a
+  definition, their values combine, identical values are not duplicated, and
+  instance template origins repoint to the survivor. Name-based writes —
+  `Status:: Open` from paste, the agent, or tree materialization — disambiguate
+  through the owner's applied tag chains, specific-first by inheritance depth,
+  at both the entry and the definition level; a genuinely tied layer still
+  refuses, with the entry ids and a remedy. `templateId` healing moved to the
+  removal boundary in `removeSubtreeDirect`, which retires a whole class of
+  dangling-origin bugs rather than the two known instances. Three review rounds:
+  a `high` pass, then a PM redirect to Tana's model that replaced the first
+  design outright, then an `xhigh` pass that caught a regression the redirect
+  introduced — agent `node_create` applied tags before writing fields, so the
+  new coexistence made every such write die mid-outline with the node already
+  created and no expressible remedy.
 - **Splitting a tagged node no longer re-stamps its template (PR #542,
   codex-2)** — pressing Enter mid-text ran the tag's full template
   instantiation on the new half, so a text edit minted creation-moment data:
