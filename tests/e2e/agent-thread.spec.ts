@@ -3504,6 +3504,43 @@ test.describe('canonical agent Thread surface', () => {
         return meta === null ? '' : getComputedStyle(meta).fontSize;
       }))],
     }))).toEqual({ heights: [expect.any(Number)], fonts: [expect.any(String)] });
+    // A report is a block like any other: its BOX sits the same distance under
+    // its speaker's header as a paragraph's first line sits under its own.
+    expect(await deliveryTurn.locator('.thread-speaker').evaluateAll((groups) => {
+      const gaps = groups.flatMap((group) => {
+        const header = group.querySelector('.thread-speaker-header');
+        const block = group.querySelector('.thread-agent-report, .thread-agent-message-body');
+        return header === null || block === null
+          ? []
+          : [Math.round(block.getBoundingClientRect().top - header.getBoundingClientRect().bottom)];
+      });
+      return [...new Set(gaps)];
+    })).toEqual([expect.any(Number)]);
+    // A report keeps the measure every message here keeps. Run to the full width
+    // of a widened deck it stopped reading as one thing somebody said and
+    // started reading as a panel — measured against a wide box, since the deck
+    // is narrower than the cap until the reader drags it open.
+    expect(await report.evaluate((card) => {
+      const wide = document.createElement('div');
+      wide.style.width = '1200px';
+      document.body.append(wide);
+      const clone = card.cloneNode(false) as HTMLElement;
+      wide.append(clone);
+      const width = Math.round(clone.getBoundingClientRect().width);
+      wide.remove();
+      return width;
+    })).toBe(520);
+
+    // And inside it breathes on the prose rhythm: container-to-text is the same
+    // distance as text-to-text, rather than a tighter one of its own.
+    expect(await report.evaluate((card) => {
+      const probe = document.createElement('div');
+      probe.style.marginTop = 'var(--space-5)';
+      card.append(probe);
+      const matches = getComputedStyle(card).paddingTop === getComputedStyle(probe).marginTop;
+      probe.remove();
+      return matches;
+    })).toBe(true);
     const reportSpeaker = deliveryTurn.locator('.thread-speaker').first();
     await expect(reportSpeaker.locator('.thread-agent-report')).toHaveCount(1);
     await expect(reportSpeaker.locator('.thread-speaker-avatar')).toHaveText('W');
@@ -3519,13 +3556,26 @@ test.describe('canonical agent Thread surface', () => {
       pointerEvents: getComputedStyle(element).pointerEvents,
     }))).toEqual({ clamped: true, pointerEvents: 'none' });
     // The hint rides the slot the message actions hold, so saying what the card
-    // does moves nothing (B7).
+    // does moves nothing (B7) — and a report ends exactly where any other
+    // message ends, which means the same row occupying the same height.
     const shell = deliveryTurn.locator('.thread-agent-report-shell');
     const heightBefore = await shell.evaluate((element) => element.getBoundingClientRect().height);
     await shell.hover();
     await expect(shell.locator('.thread-agent-report-hint')).toBeVisible();
     expect(await shell.evaluate((element) => element.getBoundingClientRect().height))
       .toBe(heightBefore);
+    expect(await page.locator('.thread-message-actions-slot').evaluateAll((slots) => [
+      ...new Set(slots.map((slot) => slot.getBoundingClientRect().height)),
+    ])).toEqual([expect.any(Number)]);
+    expect(await shell.locator('.thread-agent-report-hint').evaluate((hint) => ({
+      height: hint.getBoundingClientRect().height,
+      slotHeight: hint.closest('.thread-message-actions-slot')!.getBoundingClientRect().height,
+      icons: hint.querySelectorAll('svg').length,
+    }))).toEqual({ height: expect.any(Number), slotHeight: expect.any(Number), icons: 1 });
+    expect(await shell.locator('.thread-agent-report-hint').evaluate((hint) => (
+      hint.getBoundingClientRect().height === hint.closest('.thread-message-actions-slot')!
+        .getBoundingClientRect().height
+    ))).toBe(true);
 
     // Depth beyond the report is the detail view, one push away — the whole
     // card is the control that gets there.

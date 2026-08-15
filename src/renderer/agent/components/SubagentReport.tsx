@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { turnTerminalAnswer } from '../../../core/agent/turnAnswer';
 import { useT } from '../../i18n/I18nProvider';
+import { ClickIcon, ICON_SIZE } from '../../ui/icons';
 import type { DocumentIndex } from '../../state/document';
 import type { ThreadNodeReferenceOpenHandler } from '../threadReferences';
 import { threadStore, useThreadStore } from '../store/threadStore';
@@ -100,11 +101,17 @@ export function SubagentReport({
           )}
         </div>
       </div>
-      {/* The hint takes the slot the message actions hold everywhere else, so
-          revealing it on hover moves nothing (B7). */}
+      {/* The hint takes the slot the message actions hold everywhere else — the
+          same height, the same row — so revealing it on hover moves nothing
+          (B7) and a report ends exactly where any other message ends. The
+          icon is a pointer, not a chevron: what this row teaches is that the
+          card TAKES A CLICK, which is the thing a reader cannot see. */}
       <div className="thread-message-actions-slot">
         <div className="thread-message-actions">
-          <span className="thread-agent-report-hint">{t.agent.thread.agent.clickForDetails}</span>
+          <span className="thread-agent-report-hint">
+            <ClickIcon aria-hidden size={ICON_SIZE.tiny} />
+            <span>{t.agent.thread.agent.clickForDetails}</span>
+          </span>
         </div>
       </div>
     </div>

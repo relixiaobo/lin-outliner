@@ -1838,13 +1838,20 @@
 .thread-agent-report {
   display: flex;
   width: 100%;
+  /* A report is a message, so it keeps the measure every message here keeps.
+     Run to the full width of a widened deck it stopped reading as one thing
+     somebody said and started reading as a panel. */
+  max-width: min(100%, 520px);
   min-width: 0;
   flex-direction: column;
   align-items: flex-start;
   gap: var(--space-2);
   border-radius: var(--radius-md);
   box-shadow: var(--outline-muted);
-  padding: var(--space-4);
+  /* Container-to-text is the same distance as text-to-text: the card breathes
+     on the prose rhythm (`.thread-markdown > * + *`) rather than inventing a
+     tighter one of its own. */
+  padding: var(--space-5);
   text-align: left;
   /* B3: the whole card is the control, and a control signals itself with the
      neutral fill ladder — never a brand or status colour. B10: no hand cursor,
@@ -1889,8 +1896,13 @@
 }
 
 /* Says what the card does, in the slot the message actions hold everywhere
-   else — so revealing it on hover moves nothing (B7). */
+   else — the same height and the same row, so revealing it on hover moves
+   nothing (B7) and a report ends exactly where any other message ends. */
 .thread-agent-report-hint {
+  display: inline-flex;
+  height: var(--chrome-control-height);
+  align-items: center;
+  gap: var(--space-1);
   color: var(--text-tertiary);
   font-size: var(--font-meta);
   line-height: var(--line-meta);

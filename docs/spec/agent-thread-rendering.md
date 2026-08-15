@@ -518,9 +518,25 @@ ANCHOR in it at the point where it happened:
   expander is a second, weaker way to read the same thing. Content inside takes
   no pointer events, so there is exactly one thing a click on the card can mean.
   It signals itself with the neutral fill ladder and the focus ring, never a
-  hand cursor (B3, B8, B10), and it says what it does through a hint in the slot
-  the message actions hold everywhere else — so revealing that on hover moves
-  nothing (B7). One grammar, so a report reads as somebody speaking rather than as one
+  hand cursor (B3, B8, B10), and it says what it does through a hint occupying
+  the message actions' own slot at the message actions' own height — so
+  revealing that on hover moves nothing (B7) and a report ends exactly where any
+  other message ends. The hint carries a POINTER, not a chevron: what that row
+  teaches is that the card takes a click, which is the one thing about it a
+  reader cannot see.
+
+  A report keeps the measure every message here keeps (`min(100%, 520px)`): run
+  to the full width of a deck the reader has widened, it stopped reading as one
+  thing somebody said and started reading as a panel. And it is a block like any
+  other: its BOX sits the same distance under its speaker's header as a
+  paragraph's first line sits under its own, with no
+  optical compensation for the padding it carries. Inside, it breathes on the
+  prose rhythm — container-to-text is the same distance as text-to-text
+  (`.thread-markdown > * + *`) rather than a tighter one of its own. Pulling the
+  card up to align its first LINE with a paragraph's instead was tried and
+  rejected (PM 2026-08-15): it made the two headers sit differently over their
+  content, and a negative first-child margin also shifted measured heights
+  during a streaming scroll replay. One grammar, so a report reads as somebody speaking rather than as one
   more row of what the Turn did. A pill-shaped fold-to-nothing row was tried
   first and drowned among the tool rows (PM 2026-08-15). Its speaker is the
   CHILD, not this transcript's own agent, so a delivery Turn shows two speakers
