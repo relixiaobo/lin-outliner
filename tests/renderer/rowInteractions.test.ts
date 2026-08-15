@@ -65,6 +65,7 @@ import {
 import { concatRichText } from '../../src/renderer/ui/editor/richTextCodec';
 import { getMessages } from '../../src/core/i18n';
 import { SEARCH_QUERY_COMPLEXITY_LIMITS } from '../../src/core/searchQueryCompiler';
+import { Core } from '../../src/core/core';
 
 // The search-query outline helper takes localized labels; exercise English.
 const enMessages = getMessages('en');
@@ -123,6 +124,40 @@ describe('row interaction resolvers', () => {
     expect(buildOutlinerRows(parent as any, byId, {
       expandedHiddenFields: new Set([hiddenFieldKey('parent', 'field')]),
     })).toEqual([{ id: 'field', type: 'field' }]);
+  });
+
+  test('keeps an empty split field visible when value-is-default hides the source value', () => {
+    const core = Core.new();
+    const tagId = core.createTag('meeting').focus!.nodeId;
+    const templateEntryId = core.createFieldDef(tagId, 'Status', 'plain').focus!.nodeId;
+    const fieldDefId = core.state().nodes[templateEntryId].fieldDefId!;
+    core.setFieldFreeTextValue(templateEntryId, 'Inbox');
+    core.setFieldConfig(fieldDefId, { fieldType: 'plain', hideField: 'value_is_default' });
+    const sourceId = core.createNode(core.projection().todayId, null, 'Planning notes').focus!.nodeId;
+    core.applyTag(sourceId, tagId);
+
+    const siblingId = core.splitNode(
+      sourceId,
+      { text: 'Planning', marks: [], inlineRefs: [] },
+      { text: ' notes', marks: [], inlineRefs: [] },
+    ).focus!.nodeId;
+    const state = core.state();
+    const sourceEntryId = state.nodes[sourceId].children.find((childId) => state.nodes[childId]?.type === 'fieldEntry')!;
+    const siblingEntryId = state.nodes[siblingId].children.find((childId) => state.nodes[childId]?.type === 'fieldEntry')!;
+    const projection = core.projection();
+    const byId = new Map(projection.nodes.map((node) => [node.id, node]));
+
+    expect(buildOutlinerRows(byId.get(sourceId), byId)).toEqual([
+      {
+        id: `hidden:${sourceId}:${sourceEntryId}`,
+        type: 'hiddenField',
+        fieldId: sourceEntryId,
+        label: 'Status',
+      },
+    ]);
+    expect(buildOutlinerRows(byId.get(siblingId), byId)).toEqual([
+      { id: siblingEntryId, type: 'field' },
+    ]);
   });
 
   test('keeps panel fields in the normal body row model', () => {
