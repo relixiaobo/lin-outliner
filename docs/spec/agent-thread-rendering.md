@@ -505,20 +505,34 @@ events.
 Agent Markdown reuses the shared read-only code surface and dual-theme Shiki
 highlighter. Streaming text commits are throttled to 80 ms. For a pure append,
 the complete source is repaired so inline-marker context can cross block
-boundaries, then lexing restarts at a safe blank-line boundary. The reparsed
-tail retains the last two substantive tokens and trailing whitespace; a repaired
-prefix that differs from source or contains an unmatched reference-label opener
-is not frozen. A non-append edit, lexer failure, definition-set change, or token
-stream that cannot account for every source byte falls back to a full repaired
-lex; the definition fallback is required because definitions are attached to
-every visible block. Repairing the complete source is a correctness requirement,
-not an optimization: it is what lets the bounded tail lex match a full repaired
-lex byte for byte. It is also what now bounds the cost — with lexing incremental,
-`remend` over the full text is the dominant term in a streaming commit (~95% at
-20 KB) and is itself superlinear, so per-commit cost still grows with answer
-length (~20 ms at 20 KB, ~80 ms at 40 KB, against ~67 ms and ~260 ms for a full
-repaired lex). Stable completed blocks are memoized, and every block keeps
-the same memoized React component identity as the final streaming block seals.
+boundaries, then lexing restarts at a safe blank-line boundary. Complete-source
+repair is an output-equivalent split of `remend@1.3.0`'s handler order:
+structural handlers, a renderer-local one-pass emphasis stage, then inline-code,
+strikethrough, and KaTeX handlers. The local stage carries code, math, link-URL,
+HTML-tag, escape, and delimiter context once instead of rescanning the preceding
+math context for every emphasis marker. An incomplete-link early return and a
+single trailing space exposed by incomplete-image removal retain `remend`'s
+original stage semantics. The adapter remains byte-equivalent to canonical
+`remend` after every append; it is a cost change, not a repair-policy fork.
+Text without both math and emphasis markers delegates directly to canonical
+repair. The linear path builds one context map and reuses its frozen end state
+for synthetic closing markers, so ordinary answers do not regress and an
+unfinished emphasis marker does not rebuild the full context per handler.
+
+The reparsed tail retains the last two substantive tokens and trailing
+whitespace; a repaired prefix that differs from source or contains an unmatched
+reference-label opener is not frozen. A non-append edit, lexer failure,
+definition-set change, or token stream that cannot account for every source
+byte falls back to a full repaired lex; the definition fallback is required
+because definitions are attached to every visible block. Repairing the complete
+source is a correctness requirement, not an optimization: it is what lets the
+bounded tail lex match a full repaired lex byte for byte. On the gate-shaped
+dollar-plus-emphasis fixture, canonical repair remains superlinear while the
+split repair is linear and about 20x cheaper at 40 KB (roughly 5-8 ms versus
+90-150 ms in isolated samples). A 40 KB commit ending in unfinished emphasis
+stays on the same linear path rather than returning to canonical repair. Stable
+completed blocks are memoized, and every block keeps the same memoized React
+component identity as the final streaming block seals.
 Node and local-file
 reference markers render through the same inline reference and preview surfaces
 as the outliner; Cmd/Ctrl-click preserves new-pane navigation, and HTTP links use

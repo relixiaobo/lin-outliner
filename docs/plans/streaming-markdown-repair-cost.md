@@ -30,19 +30,29 @@ the existing full `remend` path after every append.
 
 ### Preserve handler order while linearizing the expensive stage
 
-Add a renderer-local `repairStreamingMarkdown` adapter. It runs the handlers
-that precede italic repair through `remend`, applies an output-equivalent local
-italic stage with one-pass syntax context, then runs the handlers that follow
-italic repair through `remend`. The split follows `remend@1.3.0` handler
-priority, including its incomplete-link early return; the adapter does not
-reinterpret CommonMark or substitute a new repair policy.
+Add a renderer-local `repairStreamingMarkdown` adapter. It runs the structural
+handlers that precede emphasis repair through `remend`, applies an
+output-equivalent local emphasis stage with one-pass syntax context, then runs
+the handlers that follow emphasis repair through `remend`. The split follows
+`remend@1.3.0` handler priority, including its incomplete-link early return; the
+adapter does not reinterpret CommonMark or substitute a new repair policy.
 
 The local stage carries fenced/inline-code, math, link-URL, HTML-tag, escape,
-and delimiter context while scanning. It derives the same valid single-marker
-counts and first-marker decisions that the three upstream italic handlers use,
-without calling a prefix scanner once per marker. Double-underscore, single
-asterisk, single-underscore, half-closer, trailing-newline, and nested
-underscore-before-bold outcomes retain the upstream order and output.
+and delimiter context while scanning. It derives the same valid marker counts
+and first-marker decisions that the upstream emphasis handlers use, without
+calling a prefix scanner once per marker. Bold-italic, bold,
+double-underscore, single-asterisk, single-underscore, half-closer,
+trailing-newline, and nested underscore-before-bold outcomes retain the
+upstream order and output. Bold-italic is included because its unmatched-marker
+path delegates to the same single-asterisk scan and would otherwise retain a
+rarer version of the superlinear cost.
+
+Inputs without both math and emphasis markers stay on canonical `remend`, so
+ordinary prose and non-math Markdown do not pay to build the richer context.
+When the local stage is needed, one context map is reused through its synthetic
+closing-marker appends: those markers inherit the frozen end state and cannot
+change code, math, link, or HTML context. The final underscore insertion is the
+last emphasis handler and therefore needs no successor context.
 
 `appendStreamingMarkdown` and `parseFullStreamingMarkdown` call the adapter in
 place of `remend`; the existing lex boundary and fallback mechanism remain
@@ -87,4 +97,3 @@ return to the PM rather than weakening equivalence.
 - `bun run docs:check`
 - `bun run scripts/probe-streaming-markdown-repair.ts`
 - `git diff --check`
-
