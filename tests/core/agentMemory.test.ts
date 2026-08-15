@@ -393,25 +393,26 @@ describe('Codex Memory contracts', () => {
     expect(after.nodes.some((entry) => entry.id === MEMORY_NODE_ID)).toBe(true);
   });
 
-  test('ignores Item reference notifications without active Turn filter state', () => {
+  test('recovers canonical references after ignoring Item notifications without active filter state', () => {
     const projection = memoryProjection();
-    const extension = new MemoryExtension(
-      memoryStore(),
-      new TimelineMemoryStore(readOnlyTimelineHost(projection)),
-    );
-    const item = userTurn(
+    const turn = userTurn(
       'Read this',
       MEMORY_NODE_ID,
       { kind: 'user' },
       'turn:orphan',
       'item:orphan',
-    ).items[0]!;
+    );
+    const extension = new MemoryExtension(
+      memoryStore(),
+      new TimelineMemoryStore(readOnlyTimelineHost(projection)),
+    );
+    extension.bindHost(memoryThreadHost(rootThread([turn])));
 
     extension.onNotification({
       type: 'items/completed',
       threadId: THREAD_ID,
       turnId: 'turn:orphan',
-      items: [item],
+      items: [turn.items[0]!],
       completedAt: Date.now(),
     });
 
@@ -419,6 +420,14 @@ describe('Codex Memory contracts', () => {
       turnProjectionFilters: ReadonlyMap<string, unknown>;
     }).turnProjectionFilters;
     expect(states.size).toBe(0);
+
+    const recovered = extension.filterProjection(projection, {
+      threadId: THREAD_ID,
+      turnId: 'turn:orphan',
+      itemId: 'item:recovery-read',
+    });
+    expect(recovered.nodes.some((entry) => entry.id === MEMORY_NODE_ID)).toBe(true);
+    expect(states.size).toBe(1);
   });
 
   test('reuses filtered read views until a visibility write invalidates them', () => {

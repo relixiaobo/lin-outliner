@@ -210,10 +210,12 @@ or an extension attached after Turn start attempts a targeted Turn read. A
 missing Turn leaves recovery unresolved so a later filter access retries; the
 first successful read seals and reuses the reference set for the rest of that
 Turn. Item notifications update only filter state already opened by Turn start
-or a live recovery access, so late and orphaned notifications cannot retain
-unbounded state. Reference expansion and canonical membership come from the
-incrementally maintained
-`MemoryMutationIndex`; projection filtering never rebuilds the Memory graph.
+or a live recovery access. Recorded Items are canonical before extension
+notification delivery, so a recovery read includes any pre-state append that
+was ignored; late and orphaned notifications cannot retain unbounded state.
+Reference expansion and canonical membership come from the incrementally
+maintained `MemoryMutationIndex`; projection filtering never rebuilds the
+Memory graph.
 The hidden-ID set is cached by document, control-store, and explicit-reference
 revision. The full filtered projection and the filtered projection index are
 then reused while those revisions remain stable.

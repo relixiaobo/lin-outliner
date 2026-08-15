@@ -79,6 +79,9 @@ Other:
   per (threadId, turnId) and update from recorded Item appends. When the
   extension did not observe Turn start, recovery uses a targeted Turn read;
   transient misses remain unresolved and retry until the first successful read.
+  Item notifications do not create cache state: their canonical persistence
+  precedes observer delivery, so later recovery includes any pre-state append
+  without retaining orphan Turn IDs.
   Canonical membership and explicit ancestor/descendant expansion reuse the
   already-maintained `MemoryMutationIndex`; no parallel full-graph cache is
   introduced. Hidden IDs and filtered views compute once per mutation-index,
