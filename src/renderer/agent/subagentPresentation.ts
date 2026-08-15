@@ -263,6 +263,15 @@ function spawnAnchor(item: SubAgentActivityThreadItem): SubagentAnchor {
  * The Turn's trigger names the tool call the notification answers — the spawn
  * for a first generation, the `agent_message` that resumed a later one — so
  * the whole conversation's anchors are the index that resolves it.
+ *
+ * Two Turns carry a `subagent` trigger naming that same call, and only one of
+ * them is a result arriving: the delegator's continuation, and the delegated
+ * Turn itself. They are told apart by whose conversation the Turn is in — a
+ * continuation belongs to the Thread that DELEGATED, so its trigger names that
+ * same Thread as the parent, while a delegated Turn names the Thread above it.
+ * Without that check an Agent's own first Turn read as its own result arriving:
+ * a divider inside the Agent, announcing it complete while it ran, standing
+ * where the task it was given should have been.
  */
 function continuationAgents(
   owners: readonly ThreadId[],
@@ -273,7 +282,11 @@ function continuationAgents(
   for (const ownerThreadId of owners) {
     for (const turn of turnsByThread.get(ownerThreadId) ?? []) {
       const trigger = turn.provenance.trigger;
-      if (trigger.kind !== 'subagent' || turn.provenance.originThreadId !== ownerThreadId) continue;
+      if (
+        trigger.kind !== 'subagent'
+        || turn.provenance.originThreadId !== ownerThreadId
+        || trigger.parentThreadId !== ownerThreadId
+      ) continue;
       const agentId = agentByCallItemId.get(trigger.parentItemId);
       if (agentId !== undefined) resolved.set(turn.id, agentId);
     }

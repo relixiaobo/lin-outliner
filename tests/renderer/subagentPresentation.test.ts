@@ -102,6 +102,29 @@ describe('Agent registry projection', () => {
     expect(projection.continuationAgentByTurnId.get('turn-1')).toBeUndefined();
   });
 
+  test('never reads an Agent\'s own delegated Turn as its own result arriving', () => {
+    const spawn = activity('spawn', 'started', null, 'agent-call');
+    const spawnTurn = parentTurn('turn-1', [collaborationItem('agent-call', 'agent', 'completed', CHILD_ID), spawn]);
+    // The Agent's own first Turn: same `subagent` trigger, same call id — and
+    // the delegating Thread named as its parent, which is what tells it apart
+    // from the delegator's continuation.
+    const delegatedTurn: Turn = {
+      ...childTurn('child-turn', 'inProgress', 500),
+      provenance: {
+        originThreadId: CHILD_ID,
+        originTurnId: 'child-turn',
+        trigger: { kind: 'subagent', parentThreadId: PARENT_ID, parentItemId: 'agent-call' },
+      },
+    };
+
+    const projection = projectSubagentConversation(input({
+      turnsByThread: new Map([[PARENT_ID, [spawnTurn]], [CHILD_ID, [delegatedTurn]]]),
+    }));
+
+    expect(projection.continuationAgentByTurnId.get('child-turn')).toBeUndefined();
+    expect([...projection.continuationAgentByTurnId.keys()]).toEqual([]);
+  });
+
   test('reads live status from the current generation Turn and settled status from the record', () => {
     const running = projectSubagentConversation(input({
       latestTurnByThread: new Map([[CHILD_ID, childTurn('child-turn', 'inProgress', 500)]]),

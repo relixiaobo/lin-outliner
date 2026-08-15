@@ -2282,6 +2282,7 @@ test.describe('canonical agent Thread surface', () => {
       const provenance = (threadId: string, turnId: string, itemId: string) => ({
         originThreadId: threadId, originTurnId: turnId, originItemId: itemId,
       });
+      const researchCallId = '01910000-0000-7000-8000-00000000ecaa';
       // Enough parent Turns that the transcript scrolls at all.
       for (let index = 0; index < 12; index += 1) {
         const turnId = `01910000-0000-7000-8000-0000000eb0${index.toString(16)}`;
@@ -2294,6 +2295,24 @@ test.describe('canonical agent Thread surface', () => {
             id: turnId,
             items: index === 11
               ? [{
+                  // The real shape: the delegating call is in the Turn and the
+                  // spawn claims it, so the child's own Turn trigger names a
+                  // call this conversation actually indexes.
+                  id: researchCallId,
+                  type: 'collabAgentToolCall',
+                  provenance: provenance(parentThreadId, turnId, researchCallId),
+                  tool: 'agent',
+                  status: 'completed',
+                  outputRef: null,
+                  senderThreadId: parentThreadId,
+                  receiverThreadIds: [child.id],
+                  prompt: 'Investigate the deployment story.',
+                  summary: null,
+                  model: null,
+                  reasoningEffort: null,
+                  agentsStates: {},
+                  modelCall: null,
+                }, {
                   id: itemId,
                   type: 'subAgentActivity',
                   provenance: provenance(parentThreadId, turnId, itemId),
@@ -2302,7 +2321,7 @@ test.describe('canonical agent Thread surface', () => {
                   agentTurnId: null,
                   agentPath: '/root/research',
                   error: null,
-                  spawnItemId: null,
+                  spawnItemId: researchCallId,
                 }, {
                   id: '01910000-0000-7000-8000-00000000ecff',
                   type: 'subAgentActivity',
@@ -2397,7 +2416,7 @@ test.describe('canonical agent Thread surface', () => {
           provenance: {
             originThreadId: child.id,
             originTurnId: childTurnId,
-            trigger: { kind: 'subagent', parentThreadId, parentItemId: 'spawn' },
+            trigger: { kind: 'subagent', parentThreadId, parentItemId: researchCallId },
           },
           status: 'completed',
           error: null,
