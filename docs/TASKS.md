@@ -55,10 +55,10 @@ theme-section entry below; this list is the ordering, not a second record):
   gated: **PM deferred the Apple Developer membership 2026-08-10** — the shipped
   prompt tier covers reach until that is revisited.
 - **Perf-audit lane (added 2026-08-11)**: a whole-app performance audit landed
-  five items under **Performance** — [`typing-hot-path`](plans/typing-hot-path.md)
-  (**P0**, the only P0 on the board: every keystroke pays multiple O(document)
-  passes in main and renderer) leads and outranks Lane A while it stands;
-  [`agent-tool-call-path`](plans/agent-tool-call-path.md) (P1) follows
+  five items under **Performance** — [`typing-hot-path`](plans/archive/typing-hot-path.md)
+  (the board's only P0) **closed 2026-08-15 with PR-C (#541)**, so the lane no
+  longer outranks Lane A; [`agent-tool-call-path`](plans/agent-tool-call-path.md) (P1) now leads
+  (`agent-streaming-followups` shipped #539 2026-08-14, leaving the P2
   (`agent-streaming-followups` shipped #539 2026-08-14, leaving the P2
   `streaming-markdown-repair-cost` tail); [`interaction-jank-cleanups`](plans/interaction-jank-cleanups.md)
   and [`startup-window-first`](plans/startup-window-first.md) (P2) trail.
@@ -702,7 +702,7 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   shipped with #426. The catalog rows now cross-reference the owning plan (design voice, per the
   no-status-in-plans rule) — claim these units only through those plans' items, never from the
   catalog.
-- **typing-hot-path** (P0, `in-progress` 2026-08-11) — every keystroke pays O(document)
+- **typing-hot-path** (P0, `done` 2026-08-15) — every keystroke pays O(document)
   several times over. Main: the memory extension's two hooks (`guardMutation`'s
   eagerly-built projection + `memoryGraphMayChange`'s ~4 full-document passes
   before every command; `documentChanged`'s double graph build + SHA-256 digest +
@@ -715,7 +715,7 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   per-row trash walks in `Sidebar`, whole-branch `buildVisualRows`, per-key
   Shiki re-highlight. Three independent PRs: memory off the mutation path /
   save-export off the typing rhythm / renderer commit cost. Design:
-  [`typing-hot-path`](plans/typing-hot-path.md).
+  [`typing-hot-path`](plans/archive/typing-hot-path.md).
   **PR-A shipped 2026-08-11 (#530, codex-3):** incremental `MemoryMutationIndex`
   + transaction-aware observer; guard `0.436 ms` → `0.000295 ms` on a 5,009-node
   document, zero projection reads after a 3.6 ms bootstrap.
@@ -724,7 +724,27 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   700 ms idle / 5 s max wait) with a two-phase quit durability barrier; ~183 B in
   ~0.623 ms per incremental update vs ~669 KB in ~32.6 ms per snapshot on a
   536-node document. Text-search patches stopped cloning the node map.
-  **PR-C remains** (renderer keystroke commit cost).
+  **PR-C shipped 2026-08-15 (#541, codex-3):** renderer commit cost — incremental
+  reference summaries, a queryable `@`-candidate posting index (suffix-array ranks
+  over shared labels, rebuilt cooperatively off the commit path behind an idle
+  debounce with a non-resetting 750 ms max age), async display-reachability for
+  cycle rules, memoized Sidebar branches, dock suspension, debounced Shiki.
+  Item closes the P0; the gate's two tails are `reference-index-compaction-tails` below.
+- **reference-index-compaction-tails** (P3, `draft` 2026-08-15, no plan file yet) —
+  two tails the #541 gate measured but did not block on. (1) The cooperative
+  candidate build yields on a fixed unit count (`COOPERATIVE_BUILD_CHUNK_SIZE`
+  8,192), which lands a 2.2 ms longest block on a 3,000-node document — roughly
+  seven times more often than a frame budget needs — so a compaction costs 1.5 s
+  there and 6.3 s at 12,000 nodes under Bun, and more in a renderer where nested
+  `setTimeout(0)` clamps to ~4 ms; a wall-time deadline budget (yield past ~8 ms)
+  buys the same responsiveness for a fraction of the wall clock. Nothing breaks
+  meanwhile — queries stay complete through the overlay — but on a large document
+  compaction is then effectively always in flight. (2) The `@` picker disables
+  every node row until display-reachability resolves, so a fast `@Name`+Enter
+  burst can have its Enter swallowed; #541 had to teach six E2E call sites to
+  wait for the row to stop being `aria-disabled`, on small fixture documents.
+  Queueing the pending selection and applying it when reachability lands would
+  keep both the rule and the keystroke.
 - **agent-tool-call-path** (P1, `draft` 2026-08-11) — host overhead dominates
   agent Turns. `MemoryExtension.filterProjection` decodes the entire thread
   history and builds the memory graph 2-3× on every `getProjection()` (1-3 per

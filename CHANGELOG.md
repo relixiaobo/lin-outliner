@@ -282,6 +282,54 @@ Entries reference the pull request that introduced them.
   appends over a disjoint fragment alphabet with zero divergence, against a
   control run that breaks the pre-fix code within 932 appends.
 
+- **Typing in a large document no longer rebuilds the whole document on every
+  keystroke (PR #541, codex-3)** — the last of the three `typing-hot-path` PRs,
+  and the one that closes the board's only P0. Each keystroke used to
+  synchronously rebuild document-wide derived data and notify broad React
+  subscriptions even when nothing visible had changed: References summaries were
+  rebuilt in full behind a cache keyed on a `byId` the delta path replaces every
+  time, the `@` picker filtered-mapped-ranked-sorted the entire projection twice
+  per key with per-candidate ancestor walks, the agent dock re-rendered its
+  transcript off `index` identity with the rail closed, `Sidebar` walked ancestors
+  per row to decide Trash styling, and a code block being edited re-highlighted
+  through Shiki on every key. Now: reference summaries are maintained
+  incrementally and unlinked mentions scan cooperatively; the `@`/`#` pickers
+  query a compact posting index over one shared normalized label per node
+  (offset postings ordered by generalized suffix-array rank, top-scores per
+  block) with a persistent edit overlay compacted *outside* the projection
+  commit; display-cycle rules resolve from a cooperatively-built reachability set
+  instead of a synchronous graph walk; Sidebar rows and visual rows are memoized
+  and incrementally reused; the dock and Thread subscribe to index-derived leaves
+  and pause entirely while closed without unmounting user state; and Shiki
+  re-highlights on a 150 ms debounce with plain text visible throughout. On the
+  probe scenario — 3,000 nodes, 48 inputs, agent rail open with a Subagent
+  streaming, References expanded — mean input latency goes from 127.35 ms to
+  104.69 ms and p95 from 141.2 ms to 124.1 ms.
+
+  The high gate found five defects. The one that mattered was an optimization
+  that recreated the problem it was written to solve: the candidate index built
+  one posting string per character offset of an untruncated label, so
+  construction was O(Σ label²) — 694 ms and ~160 MB for a single pasted 21.6 KB
+  node — and it ran synchronously on the keystroke that pushed the edit overlay
+  past 23 entries, i.e. a 340 ms freeze mid-typing on the 24th distinct node
+  edited in a session. Two more were user-visible: the `@` picker silently
+  dropped a click or Enter on a row that was still enabled because reachability
+  had not landed, and the same row could reorder underneath the highlight ~100 ms
+  after the popover opened, so an Enter at that moment inserted a reference to a
+  node the user was not looking at. The other two were a reachability scan that
+  stopped at the first dangling child reference instead of continuing on to find
+  later display cycles, and a Sidebar comparator that missed Trash styling for a
+  pinned node whose *ancestor* was deleted. The re-gate then held the merge for
+  two more: the rebuild was still one synchronous 160–700 ms block, only moved to
+  150 ms after typing stopped rather than removed, and its idle debounce re-armed
+  on every delta, so a continuous Agent stream could defer compaction forever.
+  Both are closed — the build is now sliced cooperatively (a 12,000-node probe
+  runs as ~6 s of background work across ~4,500 yields with a longest
+  uninterrupted slice of ~7.7 ms, against the 662 ms single pause the gate
+  measured before), and a non-resetting 750 ms deadline plus a 256-entry pressure
+  trigger guarantee progress, with deltas that arrive mid-build rebased before
+  the new base commits.
+
 ### Fixed
 
 - **Two tags that define the same field name no longer exclude each other
