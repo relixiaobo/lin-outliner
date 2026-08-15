@@ -61,9 +61,14 @@ export function SubagentChip({
       : AgentIcon;
   // The glyph is the only thing that tells a resume chip from a spawn chip, so
   // the accessible name has to say it in words.
+  // Action first, the way a button's accessible name reads. The Agent type
+  // follows it here and in the title rather than taking room on the chip's one
+  // line: it is `general-purpose` for almost every Agent, so it spent the
+  // name's room on a fact the reader rarely needs — and truncated both.
   const openLabel = kind === 'resume'
     ? `${t.agent.thread.agent.openAgent({ name })} · ${t.agent.thread.agent.resumed}`
     : t.agent.thread.agent.openAgent({ name });
+
   return (
     <div
       className={`thread-item thread-agent-chip-block thread-subagent-${entry?.status ?? 'notFound'}`}
@@ -71,17 +76,15 @@ export function SubagentChip({
     >
       <div className="thread-agent-chip-line">
       <button
-        aria-label={`${openLabel}. ${status}${error ? `. ${error}` : ''}`}
+        aria-label={[openLabel, entry?.agentType, status, error]
+          .filter(Boolean).join('. ')}
         className="thread-agent-chip"
         onClick={() => actions.openAgent(agentId)}
-        title={error ?? `${name} · ${status}`}
+        title={error ?? [name, entry?.agentType, status].filter(Boolean).join(' · ')}
         type="button"
       >
         <KindIcon aria-hidden size={ICON_SIZE.rowGlyph} />
         <span className="thread-agent-chip-name">{name}</span>
-        {entry?.agentType ? (
-          <span className="thread-agent-chip-type">{entry.agentType}</span>
-        ) : null}
         {entry?.worktree ? (
           <span
             aria-label={t.agent.thread.agent.worktree}

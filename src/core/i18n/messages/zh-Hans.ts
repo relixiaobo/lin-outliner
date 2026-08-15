@@ -1237,6 +1237,7 @@ export const zhHans: PartialMessages = {
         readOnlySkill: '由调用它的 Skill 调用拥有。',
         fromSender: ({ name }: { name: string }) => `来自 ${name}`,
         main: '主对话',
+        skill: 'Skill',
         backgroundFinished: '一个后台 Agent 已完成。',
       },
       goal: '目标',

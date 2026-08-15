@@ -2791,8 +2791,10 @@ test.describe('canonical agent Thread surface', () => {
     await expect(skillLine).toHaveCount(1);
     await expect(skillLine.locator('.thread-agent-chip-name')).toHaveText('research');
     await expect(skillLine.locator('.thread-agent-chip-meta')).toContainText(/^\d+[smhd]/u);
-    // A Skill is not an Agent type, so the chip advertises none.
-    await expect(skillLine.locator('.thread-agent-chip-type')).toHaveCount(0);
+    // A Skill is not an Agent type, so nothing names one — not even the title,
+    // which is where an Agent's type lives now.
+    await expect(skillLine.locator('.thread-agent-chip'))
+      .toHaveAttribute('title', /^research · \d+[smhd] · waiting for it$/u);
     const skillRow = skillLine.getByRole('button', { name: /Open research/u });
     // No wait is in flight, so the divider must not claim to be waiting on it.
     await expect(parentTurn.locator('.thread-process-title')).toContainText(/Working for \d+[smhd]/u);

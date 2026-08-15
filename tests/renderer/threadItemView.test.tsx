@@ -893,7 +893,12 @@ describe('ThreadItemView Agent chips', () => {
     const chip = rendered.document.querySelector('.thread-agent-chip');
     expect(chip?.querySelector('.thread-agent-chip-name')?.textContent).toBe('survey the runtime');
     expect(chip?.querySelector('.thread-agent-chip-name .working-text')).toBeNull();
-    expect(chip?.querySelector('.thread-agent-chip-type')?.textContent).toBe('general-purpose');
+    // The type rides the title and the accessible name, not the chip's one
+    // line: it is `general-purpose` for almost every Agent, and spending the
+    // name's room on it truncated both.
+    expect(chip?.title).toMatch(/^survey the runtime · general-purpose · [4-6]s$/u);
+    expect(chip?.getAttribute('aria-label')).toContain('Open survey the runtime. general-purpose');
+    expect(chip?.textContent).not.toContain('general-purpose');
     // A running Agent's clock IS its status: the word `Running` would spend
     // half the chip's one line saying what the moving text already says.
     expect(chip?.querySelector('.thread-agent-chip-meta .working-text-base')?.textContent)

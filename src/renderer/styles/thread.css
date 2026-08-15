@@ -1695,17 +1695,6 @@
   white-space: nowrap;
 }
 
-/* The type is identity, not status: quieter than the name it qualifies, and the
-   first thing to go when the line runs out of room. */
-.thread-agent-chip-type {
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-faint);
-}
-
 .thread-agent-chip-worktree {
   display: inline-flex;
   flex: 0 0 auto;
@@ -3183,30 +3172,30 @@
   overflow: hidden;
 }
 
-/* The Agent's identity in the deck's own title bar. The name is the subject and
-   keeps the room: the type it carries on its chip is dropped here rather than
-   truncated to a syllable, and a running Agent's clock stands in for its status
-   the way it does on the chip. The status holds the right edge, where the
-   surface actions sit on every other deck surface. */
-.thread-agent-title-glyph {
-  flex: 0 0 auto;
-  color: var(--text-soft);
+/* The Agent's identity in the deck's own title bar: the name, then what kind of
+   Agent it is as a badge. No status — the transcript directly below says what
+   this run did and how long it took, and a title that repeated it would be the
+   same fact twice on one screen. */
+.thread-agent-title-badge {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: var(--fill-1);
+  padding: 0 var(--space-2);
+  color: var(--text-tertiary);
+  font-size: var(--font-ui-2xs);
+  line-height: calc(var(--line-ui-2xs) + var(--space-2));
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .thread-agent-title-worktree {
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
+  margin-right: auto;
   color: var(--text-tertiary);
-}
-
-.thread-agent-title-status {
-  flex: 0 0 auto;
-  margin-left: auto;
-  color: var(--text-tertiary);
-  font-size: var(--font-ui-2xs);
-  line-height: var(--line-ui-2xs);
-  font-variant-numeric: tabular-nums;
 }
 
 .thread-agent-detail-body {

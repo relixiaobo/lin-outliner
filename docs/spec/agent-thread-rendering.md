@@ -37,19 +37,27 @@ stays mounted and `inert`, so it keeps its scroll position and its measured
 layout: returning is a reveal, not a reload.
 
 The pushed level TAKES THE TITLE BAR, exactly as the Automations surface beside
-it does: a back arrow, the Agent's glyph, its name, a worktree mark when it is
-isolated, and its status holding the right edge where every other deck surface
-puts its actions. Leaving the conversation's title above it made the loudest
-line on screen the one thing the reader was not looking at, gave the Agent two
-headers, and kept offering a list chevron that could not act on anything below
-it. The Agent's own type is dropped here rather than truncated to a syllable —
-the name is the subject, and the type is on the chip that opened it.
+it does: a back arrow, the Agent's name, what kind of Agent it is as a badge
+after that name, a worktree mark when it is isolated, and Stop while it runs.
+Leaving the conversation's title above it made the loudest line on screen the
+one thing the reader was not looking at, gave the Agent two headers, and kept
+offering a list chevron that could not act on anything below it.
+
+The kind is a BADGE rather than a leading glyph, because a glyph asks the reader
+to know an icon while the badge carries the word — and the word is the useful
+half for the specialized types, which are the ones worth telling apart. The
+title carries NO status: the transcript directly below says what the run did and
+how long it took, so a status there would be the same fact twice on one screen
+(PM 2026-08-15).
 
 Back pops exactly one level and its accessible name says which level that is —
 the conversation at depth one, the delegating Agent deeper in. The visible title
-names the level you are ON rather than the one below, because the title bar can
-only carry one name and the current level is the one the reader needs; the
-parent's name rides the back control's label and tooltip. A nested Agent pushes
+names the level you are ON rather than the one below (PM 2026-08-15, replacing
+the ratified "the back button shows the parent level's name"): that wording was
+written for a drawer, which had no title bar to put the current level's name in.
+A 344px bar carries one name, and showing both truncated each to a syllable —
+`统计 render…` `核对…` — so the current level takes it and the parent's name
+rides the back control's label and tooltip. A nested Agent pushes
 through the same component; delegation is capped at depth three, so the stack is
 bounded at four levels by the protocol rather than by a rule of its own. Opening
 always resolves the target's lineage from the conversation, so a descendant
@@ -93,10 +101,9 @@ user stop, so a user-stopped Agent's placeholder says so
 to documentation. An isolated Skill has no composer: its result is owned by the
 `skill` call that invoked it.
 
-The title bar states identity and status and NEVER moves. The Agent's own
-transcript is directly below it and carries the live cue on the most specific
-row that is working; a moving title would be the same work claimed twice. A
-running Agent's clock stands in for its status there, as it does on the chip.
+The title bar states identity and NEVER moves: the Agent's own transcript is
+directly below it and carries the live cue on the most specific row that is
+working, so a moving title would be the same work claimed twice.
 
 A retained managed worktree gets a footer naming its branch and the number of
 changed paths, with a control to list those paths and one to reveal the
@@ -436,12 +443,18 @@ registry for that Agent's whole life, so the settled chip IS the live chip; a
 second row announcing the same settlement in a later Turn would be state the
 chip already shows, in a place the reader never asked about.
 
-A chip carries the delegated form's glyph, the Agent's name, its type muted, a
-worktree mark when it is isolated, and one trailing status segment; it shares
-the type ramp and resting colour of the tool rows around it, because a
-delegation is one more thing the Turn did. It is a way IN, not a disclosure:
-nothing about it claims an expandable region, because opening pushes the detail
-view. A live background chip carries a Stop that reaches that Agent alone; a
+A chip carries the delegated form's glyph, the Agent's name, a worktree mark
+when it is isolated, and one trailing status segment; it shares the type ramp
+and resting colour of the tool rows around it, because a delegation is one more
+thing the Turn did. The Agent TYPE is not on that line (PM 2026-08-15, replacing
+the ratified `truncating name, muted type`): it is `general-purpose` for almost
+every Agent, so it spent the name's room on a fact the reader rarely needs and
+truncated both to `統計 renderer TSX …` `general-purp…`. It rides the chip's
+title and accessible name instead, where a specialized `explore` or `plan` is
+still reachable. It is a way IN, not a disclosure: nothing about it claims an
+expandable region, and it carries the trailing `›` that ordinarily means "opens
+somewhere" rather than the leading disclosure chevron the tool rows beside it
+rotate open in place. A live background chip carries a Stop that reaches that Agent alone; a
 foreground chip says the parent is waiting on it, because a foreground child
 shares the invoking Turn's cancellation lifetime by contract. Like every
 delegation surface a chip speaks time and status only: no token quantity reaches

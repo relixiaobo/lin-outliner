@@ -1334,6 +1334,7 @@ export const en = {
         readOnlySkill: 'Owned by the Skill call that invoked it.',
         fromSender: ({ name }: { name: string }) => `From ${name}`,
         main: 'main',
+        skill: 'Skill',
         backgroundFinished: 'A background Agent finished.',
       },
       goal: 'Goal',

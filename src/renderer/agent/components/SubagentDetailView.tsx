@@ -2,15 +2,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { RendererUserViewHints, ThreadId, Turn } from '../../../core/agent/protocol';
 import type { DocumentIndex } from '../../state/document';
 import { useT } from '../../i18n/I18nProvider';
-import { AgentIcon, BackIcon, GitForkIcon, ICON_SIZE, SkillIcon, StopIcon } from '../../ui/icons';
+import { BackIcon, GitForkIcon, ICON_SIZE, StopIcon } from '../../ui/icons';
 import { IconButton } from '../../ui/primitives/IconButton';
 import { api } from '../../api/client';
 import type { ThreadNodeReferenceOpenHandler } from '../threadReferences';
 import { threadStore, useThreadStore } from '../store/threadStore';
 import type { SubagentConversationProjection } from '../subagentPresentation';
-import { subagentChipStatus } from './SubagentChip';
 import { useSubagentActions, useSubagentEntry } from './SubagentRegistryContext';
-import { formatSubagentDuration, useSubagentElapsedMs } from './subagentElapsed';
+import { formatSubagentDuration } from './subagentElapsed';
 import { ThreadView } from './ThreadView';
 
 /**
@@ -168,10 +167,11 @@ export function SubagentDetailTitle({
 }) {
   const t = useT();
   const entry = useSubagentEntry(agentId);
-  const elapsedMs = useSubagentElapsedMs(entry ?? { status: 'notFound', startedAt: null });
   const name = entry?.displayName ?? t.agent.thread.untitled;
   const running = entry?.status === 'running' || entry?.status === 'pendingInit';
-  const FormIcon = entry?.form === 'isolatedSkill' ? SkillIcon : AgentIcon;
+  const badge = entry?.form === 'isolatedSkill'
+    ? t.agent.thread.agent.skill
+    : entry?.agentType || null;
   return (
     <>
       <button
@@ -182,8 +182,12 @@ export function SubagentDetailTitle({
         type="button"
       >
         <BackIcon className="thread-dock-title-leading" size={ICON_SIZE.menu} />
-        <FormIcon aria-hidden className="thread-agent-title-glyph" size={ICON_SIZE.rowGlyph} />
         <span className="thread-dock-title">{name}</span>
+        {/* What kind of Agent this is, as a badge after the name rather than a
+            glyph before it: a glyph asks the reader to know an icon, while the
+            badge carries the word — and the word is the useful half for the
+            specialized types, which are the ones worth telling apart. */}
+        {badge ? <span className="thread-agent-title-badge">{badge}</span> : null}
         {entry?.worktree ? (
           <span
             aria-label={t.agent.thread.agent.worktree}
@@ -195,12 +199,6 @@ export function SubagentDetailTitle({
           </span>
         ) : null}
       </button>
-      {/* Static, always. The Agent's own transcript is directly below and
-          carries the live cue on the most specific row that is working; a
-          moving title would be the same work said twice. */}
-      <span className="thread-agent-title-status">
-        {subagentChipStatus(entry, elapsedMs, false, t, true)}
-      </span>
       {running ? (
         <IconButton
           className="thread-dock-surface-action"
