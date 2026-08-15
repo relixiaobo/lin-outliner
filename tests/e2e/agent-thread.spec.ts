@@ -3244,6 +3244,8 @@ test.describe('canonical agent Thread surface', () => {
       const activityId = '01910000-0000-7000-8000-000000004a02';
       const deliveryTurnId = '01910000-0000-7000-8000-000000004a03';
       const noticeId = '01910000-0000-7000-8000-000000004a04';
+      const settledActivityId = '01910000-0000-7000-8000-000000004a08';
+      const evidenceId = '01910000-0000-7000-8000-000000004a09';
       const proseId = '01910000-0000-7000-8000-000000004a05';
       const childId = '01910000-0000-7000-8000-000000004a10';
       const childTurnId = '01910000-0000-7000-8000-000000004a11';
@@ -3355,11 +3357,48 @@ test.describe('canonical agent Thread surface', () => {
         turnId: parentTurnId,
         turn: delegatingTurn,
       });
-      // The delivery Turn: the host wakes the model with notification framing,
-      // and the model answers the reader.
+      // The delivery Turn, in the shape the host actually writes: the settled
+      // activity Item flushed here, the context evidence for the wake-up, the
+      // notification framing, then the model's answer to the reader.
       const deliveryTurn = {
         id: deliveryTurnId,
         items: [
+          {
+            id: settledActivityId,
+            type: 'subAgentActivity',
+            provenance: {
+              originThreadId: parentThreadId,
+              originTurnId: deliveryTurnId,
+              originItemId: settledActivityId,
+            },
+            kind: 'completed',
+            agentThreadId: childId,
+            agentTurnId: childTurnId,
+            agentPath: '/root/research',
+            error: null,
+            spawnItemId: null,
+          },
+          {
+            id: evidenceId,
+            type: 'contextEvidence',
+            provenance: {
+              originThreadId: parentThreadId,
+              originTurnId: deliveryTurnId,
+              originItemId: evidenceId,
+            },
+            kind: 'turnEnvironment',
+            payloadRef: {
+              id: '0'.repeat(64),
+              mimeType: 'application/vnd.tenon.agent-context+json',
+              byteLength: 461,
+              schemaVersion: 1,
+              kind: 'turnEnvironment',
+            },
+            summary: 'Turn environment',
+            contextRefs: [],
+            resourceRefs: [],
+            outputRefs: [],
+          },
           {
             id: noticeId,
             type: 'userMessage',
@@ -3427,6 +3466,10 @@ test.describe('canonical agent Thread surface', () => {
     // agent that read the result and answered — and says so.
     const report = deliveryTurn.locator('.thread-agent-report');
     await expect(report).toContainText('The rollout order is safe.');
+    // Exactly two speakers, in order. The Turn opens with Items that draw
+    // nothing — the settled activity row, the context evidence — and a named
+    // `main` standing over that empty box, before the child that actually
+    // spoke, is what this asserts against.
     await expect(deliveryTurn.locator('.thread-speaker-name')).toHaveText(['research', 'main']);
     const reportSpeaker = deliveryTurn.locator('.thread-speaker').first();
     await expect(reportSpeaker.locator('.thread-agent-report')).toHaveCount(1);

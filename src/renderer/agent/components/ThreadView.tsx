@@ -87,6 +87,7 @@ import {
   isThreadToolItem,
   summarizeThreadToolActivity,
   summarizeThreadToolItem,
+  threadItemRendersNothing,
   ThreadItemView,
   ThreadMessageCopyButton,
   ThreadToolActivityGroup,
@@ -2265,6 +2266,14 @@ export const ThreadTurnView = memo(function ThreadTurnView({
     else runs.push({ speaker, nodes: [node] });
   };
   for (const block of contentBlocks) {
+    // A block that draws nothing must not open a speaker run either: a delivery
+    // Turn starts with a settled activity Item and three `contextEvidence`
+    // rows, which put a named `main` over an empty box before the child that
+    // actually spoke.
+    if (block.kind === 'item' && threadItemRendersNothing(
+      block.item,
+      anchors.anchorByItemId.has(block.item.id),
+    )) continue;
     const speaker = speakerOf(block);
     if (speaker === 'drop') continue;
     emit(speaker, block.kind === 'process' ? (

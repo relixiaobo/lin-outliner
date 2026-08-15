@@ -89,10 +89,17 @@ labelled bubble, which made two participants look like two different sorts of
 thing (PM 2026-08-15). Consecutive blocks from one participant group under a
 single avatar, so an agent that works and then answers is named once, not twice;
 a delivery Turn genuinely has two speakers (the child, then the agent reading
-its result) and shows two. A delivery whose Agent is no longer in the registry
-has no report to show and no speaker to name, so its block is dropped outright
-rather than handed to the Turn's host author — that left a header standing over
-nothing, which reads as a participant who said something the reader cannot see.
+its result) and shows two.
+
+Two things never open a speaker run, because both produce a header standing over
+nothing — a participant who apparently said something the reader cannot see. A
+delivery whose Agent is no longer in the registry has no report to show and no
+speaker to name, so its block is dropped rather than handed to the Turn's host
+author. And a block that DRAWS nothing is skipped before grouping at all: a
+delivery Turn as the host writes it opens with the settled activity Item and
+three `contextEvidence` rows, none of which the transcript renders, and all of
+which belong to this Thread's own agent — so ungrouped they put a named `main`
+above an empty box before the child that actually spoke.
 
 Content under a speaker is PLAIN PROSE, never a bubble. The avatar and name
 above already say who is talking, and a second container would draw the same

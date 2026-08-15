@@ -153,6 +153,23 @@ export function isThreadToolItem(item: ThreadItem): item is ThreadToolItem {
     || item.type === 'webSearch';
 }
 
+/**
+ * Items the transcript deliberately draws as nothing at all.
+ *
+ * Kept beside the `return null` branches below, because the caller that groups
+ * blocks by speaker has to know: a Turn that opens with a settled activity Item
+ * and three `contextEvidence` rows would otherwise put a named speaker over an
+ * empty box before the first thing anyone actually said.
+ */
+export function threadItemRendersNothing(item: ThreadItem, anchored: boolean): boolean {
+  // An anchored delegation renders as a chip; an unanchored settled one says
+  // only what that chip already says.
+  if (item.type === 'subAgentActivity') return !anchored;
+  // Inspection-only: what the context carried, for Turn Details to explain.
+  if (item.type === 'contextEvidence') return true;
+  return item.type === 'agentMessage' && item.phase === 'commentary' && !item.text.trim();
+}
+
 export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemViewProps) {
   const t = useT();
   // An anchored Item IS the delegation, so the chip replaces it outright: the
