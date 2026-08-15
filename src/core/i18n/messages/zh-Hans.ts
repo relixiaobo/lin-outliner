@@ -1220,7 +1220,7 @@ export const zhHans: PartialMessages = {
         waitingForAgent: '正在等待',
         running: ({ count }: { count: number }) => `${count} 个进行中`,
         backgroundWork: '后台 Agent',
-        completion: ({ name }: { name: string }) => `${name} 已完成`,
+        completion: ({ name }: { name: string }) => `${name} 已回报`,
         details: '详情',
         stoppedNote: ({ name }: { name: string }) => `你已停止 ${name}。发送消息即可让它继续。`,
         composerPlaceholder: '给这个 Agent 发消息…',

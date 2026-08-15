@@ -428,13 +428,20 @@ ANCHOR in it at the point where it happened:
   prevent — and it can never precede the reasoning that produced it, because it
   takes the call's slot rather than the activity's;
 - a **resume chip** at each later `agent_message`, referencing the same Agent;
-- a **completion divider** introducing the Turn the host started to deliver a
+- a **delivery divider** introducing the Turn the host started to deliver a
   result: one muted attribution line whose centre opens the Agent. It replaces
   the raw task-notification text, which is host framing addressed to the model
   and never a message to the reader, and it means reviewing a finished Agent
-  never requires scrolling back to the spawn point. The Turn's trigger names the
-  call the notification answers, so the whole conversation's anchors are the
-  index that resolves it across Turns;
+  never requires scrolling back to the spawn point. It says the Agent REPORTED
+  BACK rather than that it completed (PM 2026-08-15, replacing the ratified
+  `Research complete`): this anchor marks delivery, and delivery is not
+  settlement — a terminal generation queues its notification and the parent
+  materializes it at its next idle boundary, arbitrarily later while it is busy.
+  `Completed` is the state word and already the chip's; the divider needs the
+  verb for the event that happened here, which is the delegation contract's own:
+  the result is pushed to the delegator. The Turn's trigger names the call the
+  notification answers, so the whole conversation's anchors are the index that
+  resolves it across Turns;
 - a **stopped note** in place of the completion narration for an Agent the user
   stopped, naming the resume path.
 

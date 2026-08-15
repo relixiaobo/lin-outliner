@@ -12,6 +12,13 @@ import { useSubagentActions, useSubagentEntry } from './SubagentRegistryContext'
  * never addressed to them. One muted line answers it, and its centre is the way
  * into the Agent — so reviewing a finished Agent never means scrolling back to
  * find where it was spawned.
+ *
+ * It says REPORTED BACK, not complete. This anchor marks delivery, and delivery
+ * is not settlement: a terminal generation queues its notification, and the
+ * parent materializes it at its next idle boundary — arbitrarily later, while it
+ * is busy. `Completed` is the state word, and it is already the chip's; this
+ * line needs the verb for the event that actually happened here, which is also
+ * the delegation contract's own: the result is PUSHED to the delegator.
  */
 export function SubagentCompletionDivider({ agentId }: { readonly agentId: ThreadId }) {
   const t = useT();

@@ -1315,7 +1315,7 @@ export const en = {
         waitingForAgent: 'waiting for it',
         running: ({ count }: { count: number }) => `${count} running`,
         backgroundWork: 'Background Agents',
-        completion: ({ name }: { name: string }) => `${name} complete`,
+        completion: ({ name }: { name: string }) => `${name} reported back`,
         details: 'Details',
         stoppedNote: ({ name }: { name: string }) => (
           `You stopped ${name}. Send it a message to resume it.`
