@@ -357,6 +357,46 @@ Entries reference the pull request that introduced them.
   committed differential suite is also the compatibility guard: an upstream
   behavior change fails the build instead of silently drifting.
 
+- **An agent tool read stops rebuilding the Memory graph, and the read model
+  comes back on (PR #546, codex-2)** — with Memory attached,
+  `MemoryExtension.filterProjection` decoded the whole thread history and
+  rebuilt the canonical Memory graph on every `getProjection()` (1–3 per node
+  tool call, plus an N+1 SQLite read per generated Node), and its mere presence
+  disabled the maintained projection index and text-search index for *every*
+  agent tool — `node_search` fell back to a linear scan and `node_edit` to
+  per-Node `JSON.stringify` diffs, switching #414's work off on this path.
+  Canonical membership and explicit ancestor/descendant expansion now reuse the
+  incrementally maintained `MemoryMutationIndex`; the hidden-ID set and both
+  filtered read views are cached per Turn and keyed by document, control-store
+  and explicit-reference revisions, so an in-place projection update invalidates
+  them and nothing else has to. The unsupported-generated-Node N+1 becomes one
+  grouped JOIN behind a process-local filtering revision. Hidden IDs are
+  excluded before text candidates, BM25 corpus statistics, scoring and limits,
+  so a filtered search equals an index rebuilt from only the visible records —
+  which is what lets the maintained index stay available under filtering, the
+  one deliberate behavior change here and PM-ratified: `node_search` now scores
+  through the index while Memory filters. On a fixed probe — 20,000 ordinary
+  Nodes, 250 canonical Memory Nodes, 12 consecutive filtered reads in one Turn —
+  the batch goes from a 197.8–778.9 ms median to ~0.018 ms, about 0.001–0.002 ms
+  per cached call; the baseline is a range rather than a single multiplier
+  because its spread *is* the old path's allocation and N+1 noise. The high gate
+  found four defects and one follow-up. Two mattered: the per-Turn
+  explicit-reference recovery latched "complete" even when the targeted Turn read
+  missed — which would have hidden every `@`-referenced Node from `node_read` and
+  `node_search` for the rest of that Turn, the exact failure the feature exists
+  to prevent — and the new `corpusStats` early return allocated a fresh object
+  plus three `Map`s per scored record *and* per query term on the **unfiltered**
+  path (the renderer launcher, document search, every non-Memory agent search),
+  where the old code just read a size. The other two were quieter: a cache guard
+  whose two identity comparisons could never fire, because `applyUpdate` mutates
+  the projection's Node array and map in place, leaving the whole invariant
+  resting on an upstream `Set` happening to be freshly allocated; and filter
+  state that a late or orphaned Item notification could create but nothing would
+  ever evict. Closing that leak by deleting the eager path narrowed behavior in
+  its turn, so the ordering it now depends on is proven instead of assumed:
+  recorded Items are canonical before observer delivery, asserted at the earliest
+  extension notification for both persistent and ephemeral delegated Turns.
+
 ### Fixed
 
 - **Two tags that define the same field name no longer exclude each other

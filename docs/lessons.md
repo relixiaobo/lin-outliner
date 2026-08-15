@@ -1010,3 +1010,36 @@ model of it** — the premise "no `$` means no math work" was never checked agai
 the upstream source, where it is false. When the guard turns out to be
 unnecessary, deleting it is usually the whole fix, and its removal is verifiable
 by the same differential harness that proved the fast path correct.
+
+## A cache key must state its own invalidation condition, not inherit one
+
+`agent-tool-call-path` PR 1 (#546) cached filtered projections per Turn behind
+`cached.source === projection && cached.hiddenNodeIds === hiddenNodeIds`. The
+first half can never fire: `DocumentReadModel.applyUpdate` splices the
+projection's node array and mutates its id map **in place**, so both identities
+stay stable for the life of the document. The cache was nevertheless correct —
+because the *other* half, an upstream `Set`, happened to be freshly allocated
+whenever the Memory revision moved. That is a working cache whose invariant
+lives in another file, with no test and no comment naming it: make
+`hiddenNodeIds` return a stable set for an unchanged graph — an obvious
+optimization someone will eventually make — and stale filtered reads start
+leaking silently. The fix keys the cache on the revisions themselves (document,
+control-store, explicit-reference) and tests it by mutating the projection in
+place. The gate rule: **when a cache key is an object identity, ask what mutates
+that object.** If the answer is "it is mutated in place", the identity is
+decoration and the real key is whichever counter moves — put that in the key.
+
+## Fixing a leak by deleting a redundant path is a behavior change
+
+Same PR, second round. Unbounded per-Turn filter state was closed by making the
+Item-notification handler a pure update: no existing state, no entry. Correct
+for the leak — but that handler was also the only path that captured the opening
+user message's `@Node` references *without* a Turn read. The two paths were
+redundant on the happy path and independent everywhere else, and the fix left
+one. Deleting redundancy is how a fallback quietly becomes a single point of
+failure. Either bound the state (evict on every terminal status, on thread
+deletion, cap the map) or prove the survivor always covers the case — #546 took
+the second and asserted the ordering it now rests on: recorded Items are
+canonical before observer delivery. Either resolution is fine; assuming it is
+not. **A "this path is redundant" fix has to name what it now depends on, and
+test that.**

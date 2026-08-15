@@ -747,17 +747,18 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   wait for the row to stop being `aria-disabled`, on small fixture documents.
   Queueing the pending selection and applying it when reachability lands would
   keep both the rule and the keystroke.
-- **agent-tool-call-path** (P1, `draft` 2026-08-11) — host overhead dominates
-  agent Turns. `MemoryExtension.filterProjection` decodes the entire thread
-  history and builds the memory graph 2-3× on every `getProjection()` (1-3 per
-  node tool call, plus N+1 SQLite), and its mere presence disables the read
-  model + text index for ALL agent tools (`node_search` goes linear, `node_edit`
-  does per-node `JSON.stringify` diffs — #414's work is switched off on this
-  path). Each model call re-projects the full history, re-tokenizes every
+- **agent-tool-call-path** (P1, `in-progress` 2026-08-11) — host overhead
+  dominates agent Turns. `MemoryExtension.filterProjection` decodes the entire
+  thread history and builds the memory graph 2-3× on every `getProjection()`
+  (1-3 per node tool call, plus N+1 SQLite), and its mere presence disables the
+  read model + text index for ALL agent tools (`node_search` goes linear,
+  `node_edit` does per-node `JSON.stringify` diffs — #414's work is switched off
+  on this path). Each model call re-projects the full history, re-tokenizes every
   message, re-reads + re-hashes every `full` tool output from disk, and
   deep-clones the whole context for diagnostics; tool-result secret scans run
   unbudgeted. Three independent PRs: filter cost + read-model re-enablement /
-  per-model-call costs / small tails. Design:
+  per-model-call costs / small tails. PR 1 (filter cost + read-model
+  re-enablement) shipped 2026-08-15 in #546; the other two remain. Design:
   [`agent-tool-call-path`](plans/agent-tool-call-path.md).
 - **subagent-interaction** (P2, `draft` 2026-08-12) — process-shaped subagent
   presentation for the fresh/background-default protocol inside the 344px agent
