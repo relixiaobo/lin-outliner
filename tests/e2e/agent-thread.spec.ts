@@ -2517,6 +2517,20 @@ test.describe('canonical agent Thread surface', () => {
     await expect(briefSpeaker.locator('.thread-user-message.thread-host-event')).toHaveCount(1);
     await expect(briefSpeaker.locator('.thread-speaker-name')).toHaveText('main');
     await expect(briefSpeaker.locator('.thread-speaker-avatar')).toHaveText('M');
+    // And the same COLOUR it wears out in the conversation. `main` is keyed by
+    // name everywhere, not by the conversation's Thread id: keyed by id, the one
+    // participant that is always there wore a different hue inside a pushed view
+    // than in the conversation the reader had just left.
+    expect(await briefSpeaker.locator('.thread-speaker-avatar').evaluate((disc) => {
+      const outside = [...document.querySelectorAll('.thread-dock-conversation .thread-speaker')]
+        .map((group) => ({
+          name: group.querySelector('.thread-speaker-name')?.textContent,
+          color: getComputedStyle(group.querySelector('.thread-speaker-avatar')!).color,
+        }))
+        .find((speaker) => speaker.name === 'main');
+      if (outside === undefined) throw new Error('Expected a main speaker in the conversation');
+      return getComputedStyle(disc).color === outside.color;
+    })).toBe(true);
     // The pushed view names participants exactly as the conversation does: an
     // Agent that answers to its type out there cannot answer to its task
     // description in here, or its avatar changes letter and hue on the way in.

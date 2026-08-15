@@ -103,13 +103,15 @@ export function SubagentReport({
       </div>
       {/* The hint takes the slot the message actions hold everywhere else — the
           same height, the same row — so revealing it on hover moves nothing
-          (B7) and a report ends exactly where any other message ends. The
-          icon is a pointer, not a chevron: what this row teaches is that the
-          card TAKES A CLICK, which is the thing a reader cannot see. */}
+          (B7) and a report ends exactly where any other message ends — the same
+          height and the same glyph size as the copy and fork buttons a message
+          carries there. The icon is a pointer, not a chevron: what this row
+          teaches is that the card TAKES A CLICK, which is the thing a reader
+          cannot see. */}
       <div className="thread-message-actions-slot">
         <div className="thread-message-actions">
           <span className="thread-agent-report-hint">
-            <ClickIcon aria-hidden size={ICON_SIZE.tiny} />
+            <ClickIcon aria-hidden size={ICON_SIZE.menu} />
             <span>{t.agent.thread.agent.clickForDetails}</span>
           </span>
         </div>

@@ -4,9 +4,12 @@ import { agentAvatarColor, agentAvatarInitial } from '../agentAvatarColor';
 /** Who said the block beneath: the avatar's colour key, and the name shown. */
 export interface ThreadSpeaker {
   /**
-   * What the hue is derived from — an Agent id, or `main` for the
-   * conversation's own agent. NOT the display name: two siblings a task
-   * description named alike must still differ.
+   * What the hue is derived from: the Agent TYPE, or `main` for the
+   * conversation's own agent. One type, one avatar — everywhere, in every
+   * conversation. It is not the displayed name, which is translated for `main`
+   * and would repaint every disc when the language changed; and it is not the
+   * Agent id, which gave two siblings of one type the same NAME and different
+   * discs, and repainted an Agent on the way into its own view.
    */
   readonly identity: string;
   readonly name: string;

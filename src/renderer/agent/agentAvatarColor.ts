@@ -41,24 +41,34 @@ const AVATAR_HUES = [
  * The conversation's own agent, in every conversation.
  *
  * `main` is one participant from the reader's side of the screen — the one that
- * is always there — so its hue is pinned to a name rather than hashed from a
- * Thread id that changes with every new conversation. A participant whose
- * colour changed each time you opened a new chat would not be a participant.
+ * is always there — so its hue is pinned to this untranslated key rather than
+ * hashed from a Thread id that changes with every new conversation, or from its
+ * displayed name, which is translated. A participant whose colour changed when
+ * you opened a new chat, or switched language, would not be a participant.
  */
 export const MAIN_AVATAR_IDENTITY = 'main';
 
 /**
- * Deterministic, id-keyed, and stable for the Agent's whole life.
+ * One TYPE, one avatar — everywhere, in every conversation, for good.
  *
- * Keyed by Agent id rather than display name so two siblings that a task
- * description named alike still differ, which is the case the colour exists to
- * disambiguate. Colliding hues remain possible across a large conversation; the
- * name sits beside the disc and is the identity of record.
+ * Derived rather than enumerated: an Agent type is any name a project puts in
+ * `.claude/agents/*.md`, so a hand-kept table of hues would silently miss the
+ * ones that matter most to a given workspace. Hashing the type name is fixed
+ * per type without needing to know the types in advance.
+ *
+ * Keyed by type rather than by Agent id on purpose. Two `general-purpose`
+ * siblings share one NAME in this stream, so giving them different discs said
+ * they were different kinds of participant; and an id-keyed hue repainted the
+ * same Agent on the way into its own pushed view. What tells two siblings apart
+ * is the task on each one's report, not its colour.
+ *
+ * Colliding hues remain possible across many types; the name sits beside the
+ * disc and is the identity of record.
  */
-export function agentAvatarColor(identity: string): AgentAvatarColor {
+export function agentAvatarColor(agentType: string): AgentAvatarColor {
   let hash = 0;
-  for (let index = 0; index < identity.length; index += 1) {
-    hash = Math.imul(hash ^ identity.charCodeAt(index), 0x5bd1e995);
+  for (let index = 0; index < agentType.length; index += 1) {
+    hash = Math.imul(hash ^ agentType.charCodeAt(index), 0x5bd1e995);
   }
   hash ^= hash >>> 16;
   hash = Math.imul(hash, 0x85ebca6b);

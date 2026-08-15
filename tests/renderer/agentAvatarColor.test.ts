@@ -6,9 +6,9 @@ import {
 } from '../../src/renderer/agent/agentAvatarColor';
 
 describe('participant avatar identity colour', () => {
-  test('is stable for one identity and drawn from the shared identity palette', () => {
-    const first = agentAvatarColor('01910000-0000-7000-8000-0000000000a1');
-    expect(agentAvatarColor('01910000-0000-7000-8000-0000000000a1')).toEqual(first);
+  test('is stable for one type and drawn from the shared identity palette', () => {
+    const first = agentAvatarColor('general-purpose');
+    expect(agentAvatarColor('general-purpose')).toEqual(first);
     // Tokens, not literals: the hue follows the theme's palette rather than a
     // baked colour, and the disc mixes it toward the live content surface so it
     // is a soft wash in both themes instead of a glaring puck on dark.
@@ -21,24 +21,24 @@ describe('participant avatar identity colour', () => {
     // trade than one fewer hue, so tint 0 is out of the rotation entirely.
     const assigned = new Set(Array.from(
       { length: 500 },
-      (_, index) => agentAvatarColor(`01910000-0000-7000-8000-${String(index).padStart(12, '0')}`).text,
+      (_, index) => agentAvatarColor(`agent-type-${index}`).text,
     ));
     expect(assigned.has('var(--identity-tint-0)')).toBe(false);
     // The rotation is genuinely used rather than collapsing onto one hue.
     expect(assigned.size).toBe(7);
   });
 
-  test('keys on identity rather than name, so same-named siblings can differ', () => {
-    // The case the colour exists for: one task description, several children,
-    // hence one shared initial. Keying on the id is what lets them differ at
-    // all — though two ids may still land on one hue, which is why the NAME
-    // beside the disc stays the identity of record and the disc is never the
-    // only thing distinguishing two participants.
-    const siblings = ['b1', 'b2', 'b3', 'b4'].map(
-      (suffix) => agentAvatarColor(`01910000-0000-7000-8000-00000000000${suffix}`).text,
-    );
-    expect(new Set(siblings).size).toBeGreaterThan(1);
-    expect(new Set(['count spec Markdown', 'count spec Markdown'].map(agentAvatarInitial)).size).toBe(1);
+  test('gives one type one avatar, however many Agents wear it', () => {
+    // Two `general-purpose` siblings share one NAME in this stream, so giving
+    // them different discs would say they were different kinds of participant.
+    // What tells them apart is the task on each one's report.
+    expect(agentAvatarColor('general-purpose')).toEqual(agentAvatarColor('general-purpose'));
+    expect(agentAvatarColor('general-purpose')).not.toEqual(agentAvatarColor(MAIN_AVATAR_IDENTITY));
+    // Derived, not enumerated: a project can name a type anything at all, and
+    // it still gets a fixed avatar without this file knowing about it.
+    const custom = agentAvatarColor('deployment-auditor');
+    expect(custom).toEqual(agentAvatarColor('deployment-auditor'));
+    expect(custom.text).toMatch(/^var\(--identity-tint-[1-7]\)$/u);
   });
 
   test('pins the conversation\'s own agent to a name, not to a Thread id', () => {

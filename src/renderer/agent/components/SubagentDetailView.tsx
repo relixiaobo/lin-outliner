@@ -87,7 +87,12 @@ export function SubagentDetailView({
     : subagentProjection.byAgentId.get(parentThreadId) ?? null;
   // Named exactly as the conversation names them, so one Agent does not answer
   // to `general-purpose` out there and to its task description in here — the
-  // avatar is drawn from that name, so the disc would change letter and hue too.
+  // avatar is drawn from that name, so the disc would change letter too.
+  //
+  // The conversation itself is keyed as `main` rather than by its Thread id,
+  // the way every other surface keys it: keyed by id, the one participant that
+  // is always there wore a different hue inside a pushed view than it wore in
+  // the conversation the reader had just left.
   const hostAuthorName = parentEntry === null
     ? t.agent.thread.agent.main
     : subagentSpeakerName(parentEntry);
@@ -134,9 +139,11 @@ export function SubagentDetailView({
             slashCommands={[]}
             agentTranscript
             hostAuthorName={hostAuthorName}
-            hostAuthorIdentity={parentThreadId ?? MAIN_AVATAR_IDENTITY}
+            hostAuthorIdentity={parentEntry === null
+              ? MAIN_AVATAR_IDENTITY
+              : subagentSpeakerName(parentEntry)}
             selfSpeaker={{
-              identity: agentId,
+              identity: entry === null ? agentId : subagentSpeakerName(entry),
               name: entry === null ? t.agent.thread.untitled : subagentSpeakerName(entry),
             }}
             subagentProjection={subagentProjection}

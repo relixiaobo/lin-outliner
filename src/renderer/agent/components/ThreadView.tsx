@@ -2075,7 +2075,7 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   // The child that delivered into this Turn, if any: it speaks its own report.
   const reportEntry = useSubagentEntry(delivery?.agentId ?? null);
   const reportSpeaker: ThreadSpeaker | null = delivery !== null && reportEntry !== null
-    ? { identity: delivery.agentId, name: subagentSpeakerName(reportEntry) }
+    ? { identity: subagentSpeakerName(reportEntry), name: subagentSpeakerName(reportEntry) }
     : null;
   // A delivering child's header states ITS OWN span, not this conversation's:
   // the Turn around it is the parent reading the result, which took no time at

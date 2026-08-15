@@ -138,9 +138,16 @@ above it, so two headers that say the same kind of thing did not look alike.
 
 The avatar is a coloured disc carrying the first character of the name. Its hue
 comes from the shared `--identity-tint-*` palette (`agentAvatarColor.ts`), keyed
-by Agent id — not by display name, so two siblings a task description named
-alike still differ — with `main` pinned to a fixed key so the participant that
-is always there looks the same in every conversation. Red is excluded: it sits
+by the Agent TYPE: **one type, one avatar — everywhere, in every conversation.**
+Derived rather than enumerated, since a project can name a type anything at all
+in `.claude/agents/*.md` and a hand-kept table would miss exactly the ones that
+matter to that workspace. Keyed by Agent id instead, two `general-purpose`
+siblings shared one NAME in this stream but wore different discs — saying they
+were different kinds of participant — and the same Agent was repainted on the
+way into its own pushed view (PM 2026-08-15). What tells two siblings apart is
+the task on each one's report, not its colour. `main` is pinned to an
+untranslated key, so it is neither rehashed per conversation nor repainted when
+the language changes. Red is excluded: it sits
 next to `--status-danger`, and an Agent that reads as an error every time it
 speaks is a worse trade than one fewer hue. This is the design system's
 **identity** category (`design-system.md`), distinct from functional state (B3,
