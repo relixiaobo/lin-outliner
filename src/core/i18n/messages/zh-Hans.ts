@@ -1219,7 +1219,7 @@ export const zhHans: PartialMessages = {
         waitingForAgent: '正在等待',
         running: ({ count }: { count: number }) => `${count} 个进行中`,
         backgroundWork: '后台 Agent',
-        details: '详情',
+        clickForDetails: '点击查看详情',
         reportUnavailable: '这份回报已不可用。',
         stoppedNote: ({ name }: { name: string }) => `你已停止 ${name}。发送消息即可让它继续。`,
         composerPlaceholder: '给这个 Agent 发消息…',

@@ -499,7 +499,18 @@ ANCHOR in it at the point where it happened:
   that; a fill would shout it and bare prose would hide it. The card's first
   line is the task the Agent was handed, suppressed when the header is already
   saying it — an Agent with no type falls back to its task description for a
-  name, and one sentence printed twice is not a heading. One grammar, so a report reads as somebody speaking rather than as one
+  name, and one sentence printed twice is not a heading.
+
+  The WHOLE CARD is the control that opens the Agent (PM 2026-08-15). A preview
+  of something you can open should open when you click it, rather than hiding
+  that behind a link in its corner. Its body is clamped and faded rather than
+  carrying a Show more: once the card opens the full transcript, an in-place
+  expander is a second, weaker way to read the same thing. Content inside takes
+  no pointer events, so there is exactly one thing a click on the card can mean.
+  It signals itself with the neutral fill ladder and the focus ring, never a
+  hand cursor (B3, B8, B10), and it says what it does through a hint in the slot
+  the message actions hold everywhere else — so revealing that on hover moves
+  nothing (B7). One grammar, so a report reads as somebody speaking rather than as one
   more row of what the Turn did. A pill-shaped fold-to-nothing row was tried
   first and drowned among the tool rows (PM 2026-08-15). Its speaker is the
   CHILD, not this transcript's own agent, so a delivery Turn shows two speakers

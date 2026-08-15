@@ -1314,7 +1314,7 @@ export const en = {
         waitingForAgent: 'waiting for it',
         running: ({ count }: { count: number }) => `${count} running`,
         backgroundWork: 'Background Agents',
-        details: 'Details',
+        clickForDetails: 'Click to see details',
         reportUnavailable: 'This report is no longer available.',
         stoppedNote: ({ name }: { name: string }) => (
           `You stopped ${name}. Send it a message to resume it.`

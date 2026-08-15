@@ -3486,15 +3486,27 @@ test.describe('canonical agent Thread surface', () => {
     await expect(reportSpeaker.locator('.thread-speaker-avatar')).toHaveText('W');
     await expect(report.locator('.thread-agent-report-task')).toHaveText('research');
 
-    // Folded like any long message, behind the same one control.
-    const body = report.locator('.thread-user-content-body');
-    await expect(body).toHaveClass(/is-collapsed/u);
-    await report.getByRole('button', { name: 'Show more' }).click();
-    await expect(body).not.toHaveClass(/is-collapsed/u);
-    await expect(body).toContainText('Evidence line 12.');
+    // A preview, clamped: no in-place Show more, because opening the card is
+    // already the way to read the whole thing, and its content takes no clicks
+    // of its own so there is one meaning for a click here.
+    const body = report.locator('.thread-agent-report-body');
+    await expect(report.getByRole('button', { name: 'Show more' })).toHaveCount(0);
+    expect(await body.evaluate((element) => ({
+      clamped: element.scrollHeight > element.clientHeight,
+      pointerEvents: getComputedStyle(element).pointerEvents,
+    }))).toEqual({ clamped: true, pointerEvents: 'none' });
+    // The hint rides the slot the message actions hold, so saying what the card
+    // does moves nothing (B7).
+    const shell = deliveryTurn.locator('.thread-agent-report-shell');
+    const heightBefore = await shell.evaluate((element) => element.getBoundingClientRect().height);
+    await shell.hover();
+    await expect(shell.locator('.thread-agent-report-hint')).toBeVisible();
+    expect(await shell.evaluate((element) => element.getBoundingClientRect().height))
+      .toBe(heightBefore);
 
-    // Depth beyond the report is the detail view, one push away.
-    await report.getByRole('button', { name: 'Details' }).click();
+    // Depth beyond the report is the detail view, one push away — the whole
+    // card is the control that gets there.
+    await report.click();
     await expect(page.locator('.thread-agent-detail')).toBeVisible();
     await expect(page.locator('.thread-dock-title')).toHaveText('research');
   });

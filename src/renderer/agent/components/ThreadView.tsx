@@ -2228,7 +2228,6 @@ export const ThreadTurnView = memo(function ThreadTurnView({
     delivery !== null && item.type === 'userMessage' ? (
       <SubagentReport
         delivery={delivery}
-        expandState={expandState}
         index={index}
         key={item.id}
         onOpenNodeReference={onOpenNodeReference}

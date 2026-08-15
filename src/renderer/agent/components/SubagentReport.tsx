@@ -1,13 +1,11 @@
 import { useEffect } from 'react';
 import { turnTerminalAnswer } from '../../../core/agent/turnAnswer';
 import { useT } from '../../i18n/I18nProvider';
-import { ChevronRightIcon, ICON_SIZE } from '../../ui/icons';
 import type { DocumentIndex } from '../../state/document';
 import type { ThreadNodeReferenceOpenHandler } from '../threadReferences';
 import { threadStore, useThreadStore } from '../store/threadStore';
 import { subagentSpeakerName, type SubagentDelivery } from '../subagentPresentation';
 import { ThreadMarkdown } from './ThreadMarkdown';
-import { UserMessageCollapsibleContent, type ThreadDisclosureState } from './items/ThreadItemView';
 import { useSubagentActions, useSubagentEntry } from './SubagentRegistryContext';
 
 /**
@@ -17,34 +15,33 @@ import { useSubagentActions, useSubagentEntry } from './SubagentRegistryContext'
  * the model reads a task notification and carries on. That notification is
  * framing addressed to the model, never a message to the reader, so it is not
  * what is shown. What is shown is the Agent's own report — as a MESSAGE from
- * that Agent, in the same bubble every other message in this stream wears.
+ * that Agent, under its avatar and name like anything else anyone says here.
  *
- * It sits under the avatar and name of the Agent that sent it, like anything
- * else anyone says here — but in an OUTLINED CARD rather than as prose, because
- * it is not part of this conversation's narrative: it is a self-contained thing
- * brought back from somewhere else, which the reader may open. An outline says
- * that; a fill would shout it, and bare prose would hide it. Rendered as a row
- * instead — a pill among the tool rows — it read as one more thing the Turn did
- * rather than as somebody speaking, which is the one thing this anchor exists
- * to say.
+ * It is an OUTLINED CARD rather than prose, because it is not part of this
+ * conversation's narrative: it is a self-contained thing brought back from
+ * somewhere else, which the reader may open. An outline says that; a fill would
+ * shout it, and bare prose would hide it. Rendered as a row instead — a pill
+ * among the tool rows — it read as one more thing the Turn did rather than as
+ * somebody speaking, which is the one thing this anchor exists to say.
+ *
+ * The WHOLE CARD is the control. A preview of something you can open should
+ * open when you click it, rather than hiding that behind a link in its corner;
+ * and once the card opens the full transcript, an in-place Show more is a
+ * second, weaker way to read the same thing. The body is clamped and faded
+ * instead, which is what a preview looks like. Content inside takes no pointer
+ * events, so there is exactly one thing a click on this card can mean.
  *
  * It never wears the reader's own bubble. Agent output is untrusted content by
  * contract — it cannot answer a question, approve a plan, or grant authority —
  * and a surface that let it look like the reader's own words would be the first
  * step in exactly the laundering the protocol refuses.
- *
- * Long reports fold to a few lines behind the same Show more as any long
- * message, so the conversation stays the narrative: what must be read is the
- * main agent's prose below, and the rest is depth on request.
  */
 export function SubagentReport({
   delivery,
-  expandState,
   index,
   onOpenNodeReference,
 }: {
   readonly delivery: SubagentDelivery;
-  readonly expandState: ThreadDisclosureState;
   readonly index: DocumentIndex;
   readonly onOpenNodeReference: ThreadNodeReferenceOpenHandler;
 }) {
@@ -77,26 +74,39 @@ export function SubagentReport({
   // above is already saying it — an Agent with no type falls back to its task
   // description for a name, and printing one sentence twice is not a heading.
   const task = entry.displayName === subagentSpeakerName(entry) ? null : entry.displayName;
+  const open = () => actions.openAgent(delivery.agentId);
   return (
-    <article className="thread-item thread-agent-report">
-      {task === null ? null : <p className="thread-agent-report-task">{task}</p>}
-      <UserMessageCollapsibleContent expandState={expandState} measureKey={report}>
-        {report ? (
-          <ThreadMarkdown index={index} onNodeReferenceOpen={onOpenNodeReference} text={report} />
-        ) : (
-          <p className="thread-agent-report-empty">
-            {turns === undefined ? t.agent.thread.loading : t.agent.thread.agent.reportUnavailable}
-          </p>
-        )}
-      </UserMessageCollapsibleContent>
-      <button
-        className="thread-agent-report-open"
-        onClick={() => actions.openAgent(delivery.agentId)}
-        type="button"
+    <div className="thread-item thread-agent-report-shell">
+      <div
+        aria-label={t.agent.thread.agent.openAgent({ name: entry.displayName })}
+        className="thread-agent-report"
+        onClick={open}
+        onKeyDown={(event) => {
+          if (event.key !== 'Enter' && event.key !== ' ') return;
+          event.preventDefault();
+          open();
+        }}
+        role="button"
+        tabIndex={0}
       >
-        <span>{t.agent.thread.agent.details}</span>
-        <ChevronRightIcon aria-hidden size={ICON_SIZE.tiny} />
-      </button>
-    </article>
+        {task === null ? null : <p className="thread-agent-report-task">{task}</p>}
+        <div className="thread-agent-report-body">
+          {report ? (
+            <ThreadMarkdown index={index} onNodeReferenceOpen={onOpenNodeReference} text={report} />
+          ) : (
+            <p className="thread-agent-report-empty">
+              {turns === undefined ? t.agent.thread.loading : t.agent.thread.agent.reportUnavailable}
+            </p>
+          )}
+        </div>
+      </div>
+      {/* The hint takes the slot the message actions hold everywhere else, so
+          revealing it on hover moves nothing (B7). */}
+      <div className="thread-message-actions-slot">
+        <div className="thread-message-actions">
+          <span className="thread-agent-report-hint">{t.agent.thread.agent.clickForDetails}</span>
+        </div>
+      </div>
+    </div>
   );
 }
