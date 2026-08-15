@@ -984,6 +984,47 @@ describe('agent node tools', () => {
     expect(entries[0]!.children.map((childId) => core.state().nodes[childId].content.text)).toEqual(['Open']);
   });
 
+  test('node_create preflights nested tagged fields through the specific definition', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const baseTagId = mustFocus(core.createTag('record'));
+    const baseTemplateId = mustFocus(core.createFieldDef(baseTagId, 'Status', 'options'));
+    const baseFieldDefId = core.state().nodes[baseTemplateId].fieldDefId!;
+    const issueTagId = mustFocus(core.createTag('issue'));
+    const issueTemplateId = mustFocus(core.createFieldDef(issueTagId, 'Status', 'options'));
+    const issueFieldDefId = core.state().nodes[issueTemplateId].fieldDefId!;
+    core.setTagConfig(issueTagId, { extends: baseTagId });
+
+    const result = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
+      parent_id: today,
+      outline: '- Launch #issue\n  - Status:: Open',
+    }, {
+      nodeScope: {
+        nodes: [today, SCHEMA_ID],
+        writableNodes: [issueFieldDefId],
+        creatableNodeParents: [today],
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    const nodeId = result.data!.createdRootIds[0]!;
+    const entries = core.state().nodes[nodeId].children
+      .map((childId) => core.state().nodes[childId])
+      .filter((node) => node?.type === 'fieldEntry');
+    expect(entries).toHaveLength(2);
+    expect(entries.find((entry) => entry.fieldDefId === baseFieldDefId)!.children).toEqual([]);
+    const issueEntry = entries.find((entry) => entry.fieldDefId === issueFieldDefId)!;
+    expect(issueEntry.children).toHaveLength(1);
+    const optionValueId = issueEntry.children[0]!;
+    expect(core.state().nodes[optionValueId].content.text).toBe('Open');
+    expect(core.state().nodes[issueFieldDefId].children.some((childId) => (
+      core.state().nodes[childId]?.targetId === optionValueId
+    ))).toBe(true);
+    expect(core.state().nodes[baseFieldDefId].children.some((childId) => (
+      core.state().nodes[childId]?.targetId === optionValueId
+    ))).toBe(false);
+  });
+
   test('node_create writes Done through the system field and rejects read-only system fields', async () => {
     const core = Core.new();
     const today = core.projection().todayId;

@@ -136,12 +136,11 @@ describe('field definition identity resolution', () => {
     }
   });
 
-  test('keeps schema definitions ambiguous when owner tags reach none of them', () => {
+  test('keeps schema definitions ambiguous when the owner has no tag data', () => {
     const byId = new Map<string, FieldResolutionNode>([
-      ['owner', node('owner', 'Record', { tags: ['unrelated-tag'] })],
+      ['owner', node('owner', 'Record', { tags: undefined })],
       ['project-status-def', node('project-status-def', 'Status', { type: 'fieldDef', parentId: SCHEMA_ID })],
       ['issue-status-def', node('issue-status-def', 'Status', { type: 'fieldDef', parentId: SCHEMA_ID })],
-      ['unrelated-tag', node('unrelated-tag', 'note', { type: 'tagDef' })],
     ]);
 
     const result = resolveFieldWriteTarget(byId, 'owner', 'Status', [{ text: 'Open' }]);
@@ -181,11 +180,86 @@ describe('field definition identity resolution', () => {
     });
   });
 
-  test('requires entry-id disambiguation when same-name entries coexist on the owner', () => {
+  test('prefers the unique owner entry from the most specific tag layer', () => {
     const byId = new Map<string, FieldResolutionNode>([
-      ['owner', node('owner', 'Record', { children: ['project-status', 'issue-status'] })],
+      ['owner', node('owner', 'Record', {
+        children: ['base-status', 'issue-status'],
+        tags: ['issue-tag'],
+      })],
+      ['base-status-def', node('base-status-def', 'Status', { type: 'fieldDef', parentId: SCHEMA_ID })],
+      ['issue-status-def', node('issue-status-def', 'Status', { type: 'fieldDef', parentId: SCHEMA_ID })],
+      ['base-status', node('base-status', '', {
+        type: 'fieldEntry',
+        parentId: 'owner',
+        fieldDefId: 'base-status-def',
+      })],
+      ['issue-status', node('issue-status', '', {
+        type: 'fieldEntry',
+        parentId: 'owner',
+        fieldDefId: 'issue-status-def',
+      })],
+      ['issue-tag', node('issue-tag', 'issue', {
+        type: 'tagDef',
+        children: ['issue-status-template', 'issue-extends'],
+      })],
+      ['issue-status-template', node('issue-status-template', '', {
+        type: 'fieldEntry',
+        parentId: 'issue-tag',
+        fieldDefId: 'issue-status-def',
+      })],
+      ['issue-extends', node('issue-extends', 'extends', {
+        type: 'defConfig',
+        parentId: 'issue-tag',
+        configKey: 'extends',
+        children: ['issue-extends-value'],
+      })],
+      ['issue-extends-value', node('issue-extends-value', '', {
+        type: 'reference',
+        parentId: 'issue-extends',
+        targetId: 'base-tag',
+      })],
+      ['base-tag', node('base-tag', 'record', {
+        type: 'tagDef',
+        children: ['base-status-template'],
+      })],
+      ['base-status-template', node('base-status-template', '', {
+        type: 'fieldEntry',
+        parentId: 'base-tag',
+        fieldDefId: 'base-status-def',
+      })],
+    ]);
+
+    expect(resolveFieldWriteTarget(byId, 'owner', 'Status', [{ text: 'Open' }])).toEqual({
+      ok: true,
+      target: {
+        kind: 'existingEntry',
+        fieldEntryId: 'issue-status',
+        fieldDefId: 'issue-status-def',
+        fieldType: 'plain',
+      },
+    });
+  });
+
+  test('requires entry-id disambiguation when same-layer owner entries coexist', () => {
+    const byId = new Map<string, FieldResolutionNode>([
+      ['owner', node('owner', 'Record', {
+        children: ['project-status', 'issue-status'],
+        tags: ['project-tag', 'issue-tag'],
+      })],
       ['project-status-def', node('project-status-def', 'Status', { type: 'fieldDef', parentId: SCHEMA_ID })],
       ['issue-status-def', node('issue-status-def', 'Status', { type: 'fieldDef', parentId: SCHEMA_ID })],
+      ['project-tag', node('project-tag', 'project', { type: 'tagDef', children: ['project-status-template'] })],
+      ['project-status-template', node('project-status-template', '', {
+        type: 'fieldEntry',
+        parentId: 'project-tag',
+        fieldDefId: 'project-status-def',
+      })],
+      ['issue-tag', node('issue-tag', 'issue', { type: 'tagDef', children: ['issue-status-template'] })],
+      ['issue-status-template', node('issue-status-template', '', {
+        type: 'fieldEntry',
+        parentId: 'issue-tag',
+        fieldDefId: 'issue-status-def',
+      })],
       ['project-status', node('project-status', '', {
         type: 'fieldEntry',
         parentId: 'owner',
@@ -205,6 +279,68 @@ describe('field definition identity resolution', () => {
       expect(result.instructions).toContain('entry id');
       expect(result.instructions).toContain('rename');
       expect(result.nodeIds).toEqual(['project-status', 'issue-status']);
+    }
+  });
+
+  test('keeps duplicate owner entries for the preferred definition ambiguous', () => {
+    const byId = new Map<string, FieldResolutionNode>([
+      ['owner', node('owner', 'Record', {
+        children: ['issue-status-a', 'issue-status-b', 'base-status'],
+        tags: ['issue-tag'],
+      })],
+      ['issue-status-def', node('issue-status-def', 'Status', { type: 'fieldDef', parentId: SCHEMA_ID })],
+      ['base-status-def', node('base-status-def', 'Status', { type: 'fieldDef', parentId: SCHEMA_ID })],
+      ['issue-status-a', node('issue-status-a', '', {
+        type: 'fieldEntry',
+        parentId: 'owner',
+        fieldDefId: 'issue-status-def',
+      })],
+      ['issue-status-b', node('issue-status-b', '', {
+        type: 'fieldEntry',
+        parentId: 'owner',
+        fieldDefId: 'issue-status-def',
+      })],
+      ['base-status', node('base-status', '', {
+        type: 'fieldEntry',
+        parentId: 'owner',
+        fieldDefId: 'base-status-def',
+      })],
+      ['issue-tag', node('issue-tag', 'issue', {
+        type: 'tagDef',
+        children: ['issue-status-template', 'issue-extends'],
+      })],
+      ['issue-status-template', node('issue-status-template', '', {
+        type: 'fieldEntry',
+        parentId: 'issue-tag',
+        fieldDefId: 'issue-status-def',
+      })],
+      ['issue-extends', node('issue-extends', 'extends', {
+        type: 'defConfig',
+        parentId: 'issue-tag',
+        configKey: 'extends',
+        children: ['issue-extends-value'],
+      })],
+      ['issue-extends-value', node('issue-extends-value', '', {
+        type: 'reference',
+        parentId: 'issue-extends',
+        targetId: 'base-tag',
+      })],
+      ['base-tag', node('base-tag', 'record', {
+        type: 'tagDef',
+        children: ['base-status-template'],
+      })],
+      ['base-status-template', node('base-status-template', '', {
+        type: 'fieldEntry',
+        parentId: 'base-tag',
+        fieldDefId: 'base-status-def',
+      })],
+    ]);
+
+    const result = resolveFieldWriteTarget(byId, 'owner', 'Status', [{ text: 'Open' }]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.code).toBe('duplicate_field_entries');
+      expect(result.nodeIds).toEqual(['issue-status-a', 'issue-status-b', 'base-status']);
     }
   });
 });

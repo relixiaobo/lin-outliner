@@ -2476,8 +2476,7 @@ export class Core {
       return 'options-from-supertag field merge requires the same source supertag';
     }
     for (const entryId of entryIdsByDefinition.get(sourceFieldId) ?? []) {
-      const entry = state.nodes[entryId];
-      if (entry?.type !== 'fieldEntry' || entry.fieldDefId !== sourceFieldId || isInTrash(state, entry.id)) continue;
+      const entry = state.nodes[entryId]!;
       const values = entry.children
         .map((valueId) => state.nodes[valueId])
         .filter((value): value is Node => Boolean(value) && !isInTrash(state, value!.id))
@@ -2526,7 +2525,7 @@ export class Core {
         : undefined;
       if (targetEntryId && targetEntryId !== entryId) {
         for (const childId of [...entry.children]) this.loro.moveNode(childId, targetEntryId, undefined);
-        this.removeSubtreeDirect(entryId);
+        this.removeSubtreeDirect(entryId, { templateOriginReplacementId: targetEntryId });
         this.touchNodeDirect(targetEntryId);
         continue;
       }
@@ -2556,14 +2555,32 @@ export class Core {
           return candidate?.type === 'fieldEntry' && candidate.fieldDefId === child.fieldDefId && !isInTrash(state, candidate.id);
         });
         if (targetEntryId) {
-          for (const valueId of [...child.children]) this.loro.moveNode(valueId, targetEntryId, undefined);
-          this.rewriteTemplateOriginRefsDirect(childId, targetEntryId);
-          this.removeSubtreeDirect(childId);
+          this.mergeTagTemplateValuesDirect(childId, targetEntryId, child.fieldDefId);
+          this.removeSubtreeDirect(childId, { templateOriginReplacementId: targetEntryId });
           this.touchNodeDirect(targetEntryId);
           continue;
         }
       }
       this.loro.moveNode(childId, targetTagId, undefined);
+    }
+  }
+
+  private mergeTagTemplateValuesDirect(sourceEntryId: string, targetEntryId: string, fieldDefId: string) {
+    const state = this.snapshot();
+    const fieldType = fieldTypeOf(state, fieldDefId);
+    const seen = new Set(
+      (state.nodes[targetEntryId]?.children ?? [])
+        .map((valueId) => templateFieldValueIdentity(state, valueId, fieldType))
+        .filter((identity): identity is string => identity !== undefined),
+    );
+    for (const valueId of [...state.nodes[sourceEntryId]?.children ?? []]) {
+      const identity = templateFieldValueIdentity(state, valueId, fieldType);
+      if (identity !== undefined && seen.has(identity)) {
+        this.removeSubtreeDirect(valueId);
+        continue;
+      }
+      this.loro.moveNode(valueId, targetEntryId, undefined);
+      if (identity !== undefined) seen.add(identity);
     }
   }
 
@@ -2604,16 +2621,6 @@ export class Core {
       }
     }
     this.rewriteReferenceTargetsDirect(sourceId, targetId, { removeTargetSelfConfigRefs: false });
-  }
-
-  private rewriteTemplateOriginRefsDirect(sourceId: string, targetId: string) {
-    for (const node of Object.values(this.snapshot().nodes)) {
-      if (node.templateId !== sourceId) continue;
-      const next = clone(node);
-      next.templateId = targetId;
-      next.updatedAt = nowMs();
-      this.loro.writeNode(next);
-    }
   }
 
   private rewriteTagDefinitionRefsDirect(sourceId: string, targetId: string) {
@@ -4220,9 +4227,7 @@ export class Core {
       const label = this.fieldEntryDisplayNameFromContext(child, context);
       if (normalizeFieldNameKey(label) === key) ownerMatches.push(child);
     }
-    if (ownerMatches.length > 1) {
-      throw CoreError.invalidOperation(`Multiple field entries match "${name}": ${ownerMatches.map((entry) => entry.id).join(', ')}`);
-    }
+    if (ownerMatches.length > 1) return false;
     if (ownerMatches.length === 1) {
       const entry = ownerMatches[0]!;
       const fieldDefId = entry.fieldDefId;
@@ -4368,7 +4373,10 @@ export class Core {
     });
   }
 
-  private removeSubtreeDirect(nodeId: string) {
+  private removeSubtreeDirect(
+    nodeId: string,
+    options: { templateOriginReplacementId?: NodeId } = {},
+  ) {
     const state = this.snapshot();
     if (isSystemId(nodeId)) throw CoreError.lockedNode(nodeId);
     requiredNode(state, nodeId);
@@ -4384,6 +4392,14 @@ export class Core {
       if (next.type === 'reference' && next.targetId && removedIds.has(next.targetId)) delete next.targetId;
       if ((next.type === 'search' || next.type === 'queryCondition') && next.queryTargetId && removedIds.has(next.queryTargetId)) {
         delete next.queryTargetId;
+      }
+      if (next.templateId && removedIds.has(next.templateId)) {
+        const replacementId = options.templateOriginReplacementId;
+        if (replacementId && state.nodes[replacementId] && !removedIds.has(replacementId)) {
+          next.templateId = replacementId;
+        } else {
+          delete next.templateId;
+        }
       }
       next.content.inlineRefs = next.content.inlineRefs.filter((ref) => {
         const nodeId = inlineRefNodeId(ref);
@@ -5772,6 +5788,20 @@ function getTemplateFieldDefs(state: DocumentState, tagId: string): TemplateFiel
     }
   }
   return result;
+}
+
+function templateFieldValueIdentity(
+  state: DocumentState,
+  valueId: NodeId,
+  fieldType: FieldType,
+): string | undefined {
+  const value = state.nodes[valueId];
+  if (!value) return undefined;
+  if (fieldType === 'options' || fieldType === 'options_from_supertag') {
+    return `target:${optionValueTargetId(state, valueId)}`;
+  }
+  if (value.type === 'reference' && value.targetId) return `reference:${value.targetId}`;
+  return `text:${value.content.text}`;
 }
 
 function indexActiveFieldEntryIdsByDefinition(state: DocumentState): FieldEntryIdsByDefinition {

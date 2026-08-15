@@ -141,9 +141,17 @@ source-tag uses and moves direct template children into the target. A source
 field whose `fieldDefId` is absent from the target moves intact even when
 another target field has the same label. When both tags reuse the same
 `fieldDefId`, their template entries collapse: all source value children append
-to the target, instance `templateId` references are repointed to the surviving
-entry, and the source entry is removed. Tag merge never unifies field definitions
-by name and does not rewrite a third tag outside the requested tag merge.
+to the target in source order, except an identical default already present is
+not appended twice. Scalar defaults compare by exact text; option defaults
+compare by option target node. Instance `templateId` references are repointed to
+the surviving entry, and the source entry is removed. Tag merge never unifies
+field definitions by name and does not rewrite a third tag outside the requested
+tag merge.
+
+Field-entry collapse passes its survivor to the subtree-removal boundary. That
+boundary repoints every surviving `templateId` that named the removed entry;
+ordinary permanent deletion clears a removed template origin. Referential
+healing preserves survivor timestamps, including for entries already in Trash.
 
 `reuse_field_definition(entryId, targetDefId)` repoints a field entry at an
 existing definition instead of the throwaway draft `>` minted, dropping the now

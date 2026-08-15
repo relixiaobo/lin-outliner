@@ -6,8 +6,9 @@
   `fieldDefId`, not the display name, decides whether two fields are the same.
   Same-name fields backed by different definitions coexist.
 - Make name-based field writes deterministic when Schema contains duplicate
-  labels: direct owner entries take precedence, then the owner's applied tag
-  inheritance chains provide a specific-first definition choice.
+  labels or an owner carries same-name entries: direct owner entries take
+  precedence, and the owner's applied tag inheritance chains provide one shared
+  specific-first definition choice at both levels.
 - Make same-parent node splits retain tag-driven field structure without
   re-stamping defaults or seed content. Acquisition-time auto-initialization
   still runs.
@@ -15,8 +16,8 @@
 ## Non-goals
 
 - Automatically merging field definitions because their display names match.
-- Silently choosing between multiple same-name field entries already visible on
-  one owner.
+- Choosing between genuinely tied same-name field entries by traversal order or
+  display label alone.
 - Adding an originating-tag suffix or other visual disambiguator to duplicate
   field labels. Tana presents identical labels, and v1 follows that behavior.
 - Changing the field storage model; that belongs to `tag-schema-projection`.
@@ -93,9 +94,10 @@ treated as a likely mistake.
 - A source template entry whose `fieldDefId` is absent from the target moves
   to the target unchanged, regardless of its label or field type.
 - When source and target template entries share the same `fieldDefId`, all
-  source value children append to the surviving target entry. Existing
-  instances whose `templateId` names the removed source entry are rewritten to
-  the target entry before the source is deleted.
+  distinct source value children append to the surviving target entry in source
+  order. Scalar defaults deduplicate by exact text; option defaults deduplicate
+  by option target node. Existing instances whose `templateId` names the
+  removed source entry are rewritten to the target entry as part of deletion.
 - Source tag references are rewritten to the target tag, then the source tag is
   removed.
 
@@ -107,12 +109,16 @@ repeated full-document scans without changing the contract.
 
 #### Name-based field resolution
 
-The resolver keeps owner entries as the first authority:
+The resolver keeps owner entries as the first authority and uses one tag-chain
+precedence helper at both resolution levels:
 
 - One direct owner entry with the requested normalized label wins.
-- More than one direct owner entry is ambiguous. The write refuses and returns
-  the entry ids, instructing the caller to address the intended entry by id or
-  rename one field.
+- With multiple direct matches, walk the owner's applied tag chains
+  specific-first by inheritance depth. A layer containing one unique candidate
+  `fieldDefId` wins only when exactly one owner entry uses that definition.
+- No reachable owner candidate, multiple definitions at the winning layer, or
+  multiple owner entries using the winning definition remains ambiguous. The
+  write returns every matching entry id for explicit disambiguation.
 
 When the owner has no matching entry and Schema has multiple active definitions
 with that label, resolution uses the owner's applied tags. For every applied
@@ -123,10 +129,12 @@ still counts as one candidate. No reachable candidate, or multiple candidates
 at the winning depth, preserves the existing
 `duplicate_field_definitions` error.
 
-`FieldResolutionNode` therefore includes `tags`. Core projections already
-carry them. Agent create preflight gives each prospective owner the ids of its
-resolved tags so permission analysis selects the same definition as execution.
-Unknown tags contribute no existing definition.
+`FieldResolutionNode` therefore accepts optional `tags`; projections carry them
+while defensive callers may omit them. Agent create preflight gives each
+prospective owner the ids of its resolved tags so permission analysis selects
+the same definition as execution. Unknown tags contribute no existing
+definition. Nested-field preflight reuses one projection map while replacing
+only its virtual owner.
 
 #### Rendering and view identity
 
@@ -178,12 +186,15 @@ features edit disjoint symbols and test groups within their shared files.
 
 ## Risks
 
-- Multiple applied tags can expose genuinely ambiguous same-name entries.
-  Name-based writes must refuse rather than pick by traversal order.
+- Multiple applied tags can expose genuinely tied same-name entries. Name-based
+  writes must refuse rather than pick by traversal order.
 - Extends chains can contain cycles or inactive tags. Resolution uses a visited
   set and stops at the first invalid link.
-- Collapsing same-definition template entries must rewrite every live
-  `templateId` before deletion or `value_is_default` silently degrades.
+- Removing an entry must heal every surviving `templateId` at the deletion
+  boundary without changing survivor timestamps, or `value_is_default` silently
+  degrades and Trash ordering can change.
+- Same-definition template collapse must combine distinct defaults without
+  stamping identical scalar text or option targets twice.
 - View and row collections must never deduplicate by display label.
 - Split acquisition must preserve auto-init while excluding both static field
   defaults and non-field seed nodes.
@@ -197,12 +208,14 @@ features edit disjoint symbols and test groups within their shared files.
 - [ ] Done mapping updates its exact definition when a same-name field coexists.
 - [ ] Tag merge preserves same-name/different-definition template entries and
       does not rewrite a third tag sharing one source definition.
-- [ ] Tag merge combines all values and rewrites template origins only for the
-      same definition.
+- [ ] Tag merge combines distinct values, deduplicates identical text and option
+      defaults, and rewrites template origins only for the same definition.
 - [ ] Explicit field-definition merge remains compatible and document-wide.
 - [ ] Field resolution covers a specific tag over its ancestor, same-depth
       ambiguity, no reachable candidate, one definition reused by multiple tags,
-      and owner-entry ambiguity.
+      owner-entry precedence, and genuinely tied owner entries.
+- [ ] Nested agent-create preflight and paste materialization use the same
+      specific-first choice as runtime writes.
 - [ ] Outliner rows, `value_is_default`, Table defaults, and view choices keep
       duplicate labels as separate identities.
 

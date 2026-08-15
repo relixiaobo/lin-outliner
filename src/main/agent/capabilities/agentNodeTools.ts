@@ -4174,14 +4174,10 @@ function validateOutlineMutationScope(
   const nestedFields: Array<{ field: OutlineField; tagIds: string[] }> = [];
   let createsTagDefinition = false;
   const visitNode = (node: OutlineNode) => {
-    if (node.tags.some((tagName) => !findTagByName(index, tagName))) {
-      createsTagDefinition = true;
-    }
+    const tags = node.tags.map((tagName) => findTagByName(index, tagName));
+    if (tags.some((tag) => !tag)) createsTagDefinition = true;
     if (node.search) return;
-    const tagIds = node.tags.flatMap((tagName) => {
-      const tag = findTagByName(index, tagName);
-      return tag ? [tag.id] : [];
-    });
+    const tagIds = tags.flatMap((tag) => tag ? [tag.id] : []);
     nestedFields.push(...node.fields.map((field) => ({ field, tagIds })));
     node.children.forEach(visitNode);
   };
@@ -4201,8 +4197,9 @@ function validateOutlineMutationScope(
       { isDeleted: (nodeId) => isInTrash(index, nodeId) },
     ))
     .map((resolution) => resolution.ok ? resolution.target : null);
+  const prospectiveNodes = new Map<string, FieldResolutionNode>(fieldResolutionMap(index));
   const nestedTargets = nestedFields
-    .map(({ field, tagIds }, fieldIndex) => resolveProspectiveFieldWriteTarget(index, field, fieldIndex, tagIds));
+    .map(({ field, tagIds }) => resolveProspectiveFieldWriteTarget(index, prospectiveNodes, field, tagIds));
 
   for (const target of [...topLevelTargets, ...nestedTargets].filter(
     (candidate): candidate is FieldWriteTarget => candidate !== null,
@@ -4244,13 +4241,11 @@ function validateOutlineMutationScope(
 
 function resolveProspectiveFieldWriteTarget(
   index: ProjectionIndex,
+  nodes: Map<string, FieldResolutionNode>,
   field: OutlineField,
-  fieldIndex: number,
   tagIds: string[],
 ): FieldWriteTarget | null {
-  const ownerId = `virtual:node-create:${fieldIndex}`;
-  const nodes = new Map<string, FieldResolutionNode>();
-  for (const [nodeId, node] of index.nodes) nodes.set(nodeId, node);
+  const ownerId = 'virtual:node-create';
   nodes.set(ownerId, {
     id: ownerId,
     children: [],
