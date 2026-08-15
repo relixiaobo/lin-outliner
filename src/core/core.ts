@@ -1419,7 +1419,7 @@ export class Core {
         created.tags = copiedTags;
       });
       if (targetParentId === parentId) {
-        for (const tagId of copiedTags) this.instantiateTagTemplateDirect(newId, tagId);
+        for (const tagId of copiedTags) this.instantiateTagFieldsDirect(newId, tagId, false);
       } else {
         this.applyChildTagsDirect(targetParentId, newId);
       }
@@ -4471,11 +4471,7 @@ export class Core {
 
   private instantiateTagTemplateDirect(nodeId: string, tagId: string) {
     const state = this.snapshot();
-    for (const chainTagId of getExtendsChain(state, tagId)) {
-      for (const fieldRef of getTemplateFieldDefs(state, chainTagId)) {
-        this.ensureFieldEntryWithTemplateDirect(nodeId, fieldRef.fieldDefId, fieldRef.templateOriginId, true);
-      }
-    }
+    this.instantiateTagFieldsDirect(nodeId, tagId, true, state);
     // Default content is inherited along the extends chain too (Tana parity:
     // template objects are inherited wholesale, not just fields). Ancestor-first
     // so a base tag's content precedes the more specific tag's; dedup by
@@ -4483,6 +4479,19 @@ export class Core {
     for (const chainTagId of [...getExtendsChain(state, tagId)].reverse()) {
       for (const templateNodeId of getTemplateContentNodes(state, chainTagId)) {
         this.cloneTemplateContentNodeShallowDirect(nodeId, templateNodeId);
+      }
+    }
+  }
+
+  private instantiateTagFieldsDirect(
+    nodeId: string,
+    tagId: string,
+    cloneDefaults: boolean,
+    state: DocumentState = this.snapshot(),
+  ) {
+    for (const chainTagId of getExtendsChain(state, tagId)) {
+      for (const fieldRef of getTemplateFieldDefs(state, chainTagId)) {
+        this.ensureFieldEntryWithTemplateDirect(nodeId, fieldRef.fieldDefId, fieldRef.templateOriginId, cloneDefaults);
       }
     }
   }

@@ -2946,6 +2946,112 @@ describe('Core', () => {
     });
   });
 
+  test('same-parent split keeps tags without re-stamping defaults or seed content', () => {
+    const core = Core.new();
+    const tagId = mustFocus(core.createTag('meeting'));
+    const templateEntryId = mustFocus(core.createFieldDef(tagId, 'Status', 'plain'));
+    const fieldDefId = core.state().nodes[templateEntryId].fieldDefId!;
+    core.setFieldFreeTextValue(templateEntryId, 'Inbox');
+    core.createNode(tagId, null, 'Agenda');
+    const nodeId = mustFocus(core.createNode(core.projection().todayId, null, 'Planning notes'));
+    core.applyTag(nodeId, tagId);
+    const originalEntryId = core.state().nodes[nodeId].children.find((childId) => {
+      const child = core.state().nodes[childId];
+      return child?.type === 'fieldEntry' && child.fieldDefId === fieldDefId;
+    })!;
+    core.clearFieldValue(originalEntryId);
+    core.setFieldFreeTextValue(originalEntryId, 'Doing');
+
+    const outcome = core.splitNode(
+      nodeId,
+      { text: 'Planning', marks: [], inlineRefs: [] },
+      { text: ' notes', marks: [], inlineRefs: [] },
+    );
+    const newId = mustFocus(outcome);
+    const newEntryId = core.state().nodes[newId].children.find((childId) => {
+      const child = core.state().nodes[childId];
+      return child?.type === 'fieldEntry' && child.fieldDefId === fieldDefId;
+    });
+
+    expect(core.state().nodes[newId].tags).toEqual([tagId]);
+    expect(newEntryId).toBeDefined();
+    expect(core.state().nodes[newEntryId!].templateId).toBe(templateEntryId);
+    expect(core.state().nodes[newEntryId!].children).toEqual([]);
+    expect(core.state().nodes[newId].children
+      .map((childId) => core.state().nodes[childId])
+      .filter((child) => child.type === undefined || child.type === 'codeBlock'))
+      .toEqual([]);
+    expect(core.state().nodes[originalEntryId].children
+      .map((childId) => core.state().nodes[childId].content.text)).toEqual(['Doing']);
+  });
+
+  test('same-parent split auto-initializes instead of cloning a static field default', () => {
+    const core = Core.new();
+    const tagId = mustFocus(core.createTag('event'));
+    const templateEntryId = mustFocus(core.createFieldDef(tagId, 'When', 'date'));
+    const fieldDefId = core.state().nodes[templateEntryId].fieldDefId!;
+    core.setFieldFreeTextValue(templateEntryId, '2000-01-01');
+    core.setFieldConfig(fieldDefId, { fieldType: 'date', autoInitialize: 'current_date' });
+    const nodeId = mustFocus(core.createNode(core.projection().todayId, null, 'Launch review'));
+    core.applyTag(nodeId, tagId);
+    const sourceEntryId = core.state().nodes[nodeId].children.find((childId) => {
+      const child = core.state().nodes[childId];
+      return child?.type === 'fieldEntry' && child.fieldDefId === fieldDefId;
+    })!;
+
+    const newId = mustFocus(core.splitNode(
+      nodeId,
+      { text: 'Launch', marks: [], inlineRefs: [] },
+      { text: ' review', marks: [], inlineRefs: [] },
+    ));
+    const newEntryId = core.state().nodes[newId].children.find((childId) => {
+      const child = core.state().nodes[childId];
+      return child?.type === 'fieldEntry' && child.fieldDefId === fieldDefId;
+    })!;
+
+    expect(core.state().nodes[sourceEntryId].children
+      .map((childId) => core.state().nodes[childId].content.text)).toEqual(['2000-01-01']);
+    expect(core.state().nodes[newEntryId].children).toHaveLength(1);
+    const newValue = core.state().nodes[core.state().nodes[newEntryId].children[0]!]!.content.text;
+    expect(newValue).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(newValue).not.toBe('2000-01-01');
+  });
+
+  test('cross-parent split fully instantiates the destination child supertag', () => {
+    const core = Core.new();
+    const childTagId = mustFocus(core.createTag('task'));
+    const templateEntryId = mustFocus(core.createFieldDef(childTagId, 'Status', 'plain'));
+    const fieldDefId = core.state().nodes[templateEntryId].fieldDefId!;
+    core.setFieldFreeTextValue(templateEntryId, 'Inbox');
+    core.createNode(childTagId, null, 'Checklist');
+    const parentTagId = mustFocus(core.createTag('project'));
+    core.setTagConfig(parentTagId, { childSupertag: childTagId });
+    const today = core.projection().todayId;
+    const targetParentId = mustFocus(core.createNode(today, null, 'Destination project'));
+    core.applyTag(targetParentId, parentTagId);
+    const sourceId = mustFocus(core.createNode(today, null, 'Move this tail'));
+
+    const newId = mustFocus(core.splitNode(
+      sourceId,
+      { text: 'Move this', marks: [], inlineRefs: [] },
+      { text: ' tail', marks: [], inlineRefs: [] },
+      { targetParentId, targetIndex: null },
+    ));
+    const newEntryId = core.state().nodes[newId].children.find((childId) => {
+      const child = core.state().nodes[childId];
+      return child?.type === 'fieldEntry' && child.fieldDefId === fieldDefId;
+    })!;
+    const contentChildren = core.state().nodes[newId].children
+      .map((childId) => core.state().nodes[childId])
+      .filter((child) => child.type === undefined || child.type === 'codeBlock');
+
+    expect(core.state().nodes[newId].parentId).toBe(targetParentId);
+    expect(core.state().nodes[newId].tags).toEqual([childTagId]);
+    expect(core.state().nodes[newEntryId].children
+      .map((childId) => core.state().nodes[childId].content.text)).toEqual(['Inbox']);
+    expect(contentChildren.map((child) => child.content.text)).toEqual(['Checklist']);
+  });
+
   test('applies node text patches directly to Loro text', () => {
     const core = Core.new();
     const today = core.projection().todayId;

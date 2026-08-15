@@ -282,6 +282,26 @@ Entries reference the pull request that introduced them.
   appends over a disjoint fragment alphabet with zero divergence, against a
   control run that breaks the pre-fix code within 932 appends.
 
+### Fixed
+
+- **Splitting a tagged node no longer re-stamps its template (PR #542,
+  codex-2)** — pressing Enter mid-text ran the tag's full template
+  instantiation on the new half, so a text edit minted creation-moment data:
+  field defaults reset to the template's value and seed children were conjured
+  again. A `#meeting` whose template holds a seed child `Agenda` and a `Status`
+  default `Inbox`, split while its instance read `Doing`, produced a right half
+  reading `Inbox` with a fresh `Agenda` under it. A same-parent split now
+  carries the source tags and materializes their inherited field structure,
+  including acquisition-time auto-initialization, but clones neither static
+  template defaults nor seed content; a cross-parent split still applies the
+  destination parent's configured child supertag as a genuine new acquisition.
+  Two consequences are pinned by tests and stated in `docs/spec/commands.md`: a
+  field configured with both a static default and an auto-init strategy keeps
+  the default on the source and receives the auto-initialized value on the new
+  sibling, and the sibling's empty field retains its template origin, so
+  `value_is_default` hides the source's default-equal value while leaving the
+  sibling's empty field visible.
+
 ### Internal
 
 - **Opened the 0.4.0 train (main-agent)** — `package.json` dials to `0.4.0`
