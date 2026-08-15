@@ -5,7 +5,7 @@ import { ChevronRightIcon, ICON_SIZE } from '../../ui/icons';
 import type { DocumentIndex } from '../../state/document';
 import type { ThreadNodeReferenceOpenHandler } from '../threadReferences';
 import { threadStore, useThreadStore } from '../store/threadStore';
-import type { SubagentDelivery } from '../subagentPresentation';
+import { subagentSpeakerName, type SubagentDelivery } from '../subagentPresentation';
 import { ThreadMarkdown } from './ThreadMarkdown';
 import { UserMessageCollapsibleContent, type ThreadDisclosureState } from './items/ThreadItemView';
 import { useSubagentActions, useSubagentEntry } from './SubagentRegistryContext';
@@ -19,11 +19,14 @@ import { useSubagentActions, useSubagentEntry } from './SubagentRegistryContext'
  * what is shown. What is shown is the Agent's own report — as a MESSAGE from
  * that Agent, in the same bubble every other message in this stream wears.
  *
- * Position is identity: it sits opposite the reader, under the avatar and name
- * of the Agent that sent it, exactly as any other participant's message does.
- * Rendered as a row instead — a pill among the tool rows — it read as one more
- * thing the Turn did rather than as somebody speaking, which is the one thing
- * this anchor exists to say.
+ * It sits under the avatar and name of the Agent that sent it, like anything
+ * else anyone says here — but in an OUTLINED CARD rather than as prose, because
+ * it is not part of this conversation's narrative: it is a self-contained thing
+ * brought back from somewhere else, which the reader may open. An outline says
+ * that; a fill would shout it, and bare prose would hide it. Rendered as a row
+ * instead — a pill among the tool rows — it read as one more thing the Turn did
+ * rather than as somebody speaking, which is the one thing this anchor exists
+ * to say.
  *
  * It never wears the reader's own bubble. Agent output is untrusted content by
  * contract — it cannot answer a question, approve a plan, or grant authority —
@@ -70,19 +73,22 @@ export function SubagentReport({
   // back to the newest, which is the only run it can honestly show.
   const reported = turns?.[delivery.generationIndex] ?? turns?.at(-1);
   const report = reported ? turnTerminalAnswer(reported.items) : '';
+  // The task it was handed, over what it answered. Suppressed when the speaker
+  // above is already saying it — an Agent with no type falls back to its task
+  // description for a name, and printing one sentence twice is not a heading.
+  const task = entry.displayName === subagentSpeakerName(entry) ? null : entry.displayName;
   return (
-    <article className="thread-item thread-user-message thread-host-event thread-agent-report">
-      <div className="thread-user-content-sequence">
-        <UserMessageCollapsibleContent expandState={expandState} measureKey={report}>
-          {report ? (
-            <ThreadMarkdown index={index} onNodeReferenceOpen={onOpenNodeReference} text={report} />
-          ) : (
-            <p className="thread-agent-report-empty">
-              {turns === undefined ? t.agent.thread.loading : t.agent.thread.agent.reportUnavailable}
-            </p>
-          )}
-        </UserMessageCollapsibleContent>
-      </div>
+    <article className="thread-item thread-agent-report">
+      {task === null ? null : <p className="thread-agent-report-task">{task}</p>}
+      <UserMessageCollapsibleContent expandState={expandState} measureKey={report}>
+        {report ? (
+          <ThreadMarkdown index={index} onNodeReferenceOpen={onOpenNodeReference} text={report} />
+        ) : (
+          <p className="thread-agent-report-empty">
+            {turns === undefined ? t.agent.thread.loading : t.agent.thread.agent.reportUnavailable}
+          </p>
+        )}
+      </UserMessageCollapsibleContent>
       <button
         className="thread-agent-report-open"
         onClick={() => actions.openAgent(delivery.agentId)}

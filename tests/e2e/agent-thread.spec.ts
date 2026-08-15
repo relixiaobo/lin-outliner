@@ -313,7 +313,10 @@ test.describe('canonical agent Thread surface', () => {
     const response = turn.locator('.thread-agent-message');
     await expect(userMessage).toContainText('Summarize current outline.');
     await expect(response).toContainText('Current outline focuses on design-system work.');
-    await expect(turn.locator('.thread-process-rule')).toHaveCount(1);
+    // The Turn's work summary rides the speaker's own line — one header, not a
+    // band of its own under a separate name row.
+    await expect(turn.locator('.thread-speaker-header .thread-process-title')).toHaveCount(1);
+    await expect(turn.locator('.thread-process-rule')).toHaveCount(0);
     await page.evaluate(async () => {
       const target = window as unknown as {
         lin?: { agentCoreRequest: (method: string, input: unknown) => Promise<{ data: Array<{ id: string }> }> };
@@ -587,7 +590,7 @@ test.describe('canonical agent Thread surface', () => {
     await expect(answer.getByRole('link', { name: 'Saved preference' })).toBeVisible();
     await expect(turn.locator('.thread-memory-citations')).toHaveCount(0);
     await expect(turn.getByText('Used memory')).toHaveCount(0);
-    const process = turn.locator('.thread-process-block');
+    const process = turn.locator('.thread-speaker');
     await process.getByRole('button', { name: 'Worked for 1s' }).click();
     // The row stays in the process, but says what it did rather than which tool
     // was called.
@@ -678,12 +681,15 @@ test.describe('canonical agent Thread surface', () => {
     });
 
     const settledTurn = page.locator(`[data-thread-turn-row="${ids.settledTurnId}"]`);
-    const process = settledTurn.locator('.thread-process-block');
+    const process = settledTurn.locator('.thread-speaker');
     await expect(process).toHaveCount(1);
     await expect(process.getByRole('button', { name: 'Worked for 2s' })).toBeVisible();
-    expect(await settledTurn.locator('.thread-process-block, .thread-agent-message-final_answer')
+    // The work summary names the Turn from the speaker's own line, above the
+    // response it produced — the order this test exists for.
+    expect(await settledTurn
+      .locator('.thread-speaker-header, .thread-agent-message-final_answer')
       .evaluateAll((elements) => elements.map((element) => element.className))).toEqual([
-      'thread-process-block',
+      'thread-speaker-header',
       'thread-item thread-agent-message thread-agent-message-final_answer',
     ]);
     await process.getByRole('button', { name: 'Worked for 2s' }).click();
@@ -744,7 +750,7 @@ test.describe('canonical agent Thread surface', () => {
     }, ids);
 
     const liveTurn = page.locator(`[data-thread-turn-row="${ids.liveTurnId}"]`);
-    await expect(liveTurn.locator('.thread-process-block')).toHaveCount(1);
+    await expect(liveTurn.locator('.thread-process-timeline')).toHaveCount(1);
     await expect(liveTurn.locator('.thread-process-title')).toHaveText('Working');
     const liveTitleGeometry = await liveTurn.locator('.thread-process-title').evaluate((element) => {
       const divider = element.closest('.thread-work-divider');
@@ -790,20 +796,21 @@ test.describe('canonical agent Thread surface', () => {
     expect(await page.evaluate(() => (
       (window as Window & { __threadMessageContextMenuCalls?: number }).__threadMessageContextMenuCalls
     ))).toBe(0);
-    const liveProcessGaps = await liveTurn.locator('.thread-process-block').evaluate((element) => {
-      const title = element.querySelector<HTMLElement>('.thread-process-title');
-      const rule = element.querySelector<HTMLElement>('.thread-process-rule');
+    // The summary names the timeline from the speaker's own line, directly
+    // above it. There is no separator band between them to balance any more —
+    // what has to hold is that the name and the rows it names stay adjacent.
+    const liveProcessGaps = await liveTurn.locator('.thread-speaker').evaluate((element) => {
+      const title = element.querySelector<HTMLElement>('.thread-speaker-header .thread-process-title');
       const timeline = element.querySelector<HTMLElement>('.thread-process-timeline');
-      if (!title || !rule || !timeline) throw new Error('Expected live process geometry elements');
-      const titleRect = title.getBoundingClientRect();
-      const ruleRect = rule.getBoundingClientRect();
-      const timelineRect = timeline.getBoundingClientRect();
+      if (!title || !timeline) throw new Error('Expected live process geometry elements');
       return {
-        below: timelineRect.top - ruleRect.bottom,
-        above: ruleRect.top - titleRect.bottom,
+        gap: timeline.getBoundingClientRect().top - title.getBoundingClientRect().bottom,
+        rules: element.querySelectorAll('.thread-process-rule').length,
       };
     });
-    expect(Math.abs(liveProcessGaps.above - liveProcessGaps.below)).toBeLessThan(1);
+    expect(liveProcessGaps.rules).toBe(0);
+    expect(liveProcessGaps.gap).toBeGreaterThan(0);
+    expect(liveProcessGaps.gap).toBeLessThan(20);
 
     await page.evaluate(({ liveTurnId, threadId }) => {
       const target = window as Window & {
@@ -991,23 +998,20 @@ test.describe('canonical agent Thread surface', () => {
       const answerBody = element.querySelector<HTMLElement>('.thread-agent-message-body');
       const footer = element.querySelector<HTMLElement>('.thread-response-footer');
       const processTitle = element.querySelector<HTMLElement>('.thread-process-title');
-      const processRule = element.querySelector<HTMLElement>('.thread-process-rule');
       const scroller = element.closest('.thread-transcript');
-      if (!answerBody || !footer || !processTitle || !processRule || !(scroller instanceof HTMLElement)) {
+      if (!answerBody || !footer || !processTitle || !(scroller instanceof HTMLElement)) {
         throw new Error('Expected stable Turn geometry elements');
       }
       const turnRect = element.getBoundingClientRect();
       const answerRect = answerBody.getBoundingClientRect();
       const footerRect = footer.getBoundingClientRect();
       const titleRect = processTitle.getBoundingClientRect();
-      const ruleRect = processRule.getBoundingClientRect();
       return {
         answerOffset: answerRect.top - turnRect.top,
         answerTop: answerRect.top,
         bottomGap: scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight,
         footerHeight: footerRect.height,
-        ruleToAnswer: answerRect.top - ruleRect.bottom,
-        titleToRule: ruleRect.top - titleRect.bottom,
+        titleToAnswer: answerRect.top - titleRect.bottom,
       };
     });
     const before = await measure();
@@ -1051,7 +1055,9 @@ test.describe('canonical agent Thread surface', () => {
     expect(Math.abs(before.footerHeight - after.footerHeight)).toBeLessThan(1);
     expect(before.bottomGap).toBeLessThan(1);
     expect(after.bottomGap).toBeLessThan(1);
-    expect(Math.abs(after.titleToRule - after.ruleToAnswer)).toBeLessThan(1);
+    // The summary names the answer from one line above it, and completing the
+    // Turn does not respace them.
+    expect(Math.abs(before.titleToAnswer - after.titleToAnswer)).toBeLessThan(1);
   });
 
   test('forks history without changing the source Thread', async ({ page }) => {
@@ -3470,10 +3476,15 @@ test.describe('canonical agent Thread surface', () => {
     // nothing — the settled activity row, the context evidence — and a named
     // `main` standing over that empty box, before the child that actually
     // spoke, is what this asserts against.
-    await expect(deliveryTurn.locator('.thread-speaker-name')).toHaveText(['research', 'main']);
+    //
+    // A participant is named by its TYPE; the task it was handed is the card's
+    // own first line. A task label standing where a name goes read as a
+    // sentence fragment rather than as somebody speaking.
+    await expect(deliveryTurn.locator('.thread-speaker-name')).toHaveText(['worker', 'main']);
     const reportSpeaker = deliveryTurn.locator('.thread-speaker').first();
     await expect(reportSpeaker.locator('.thread-agent-report')).toHaveCount(1);
-    await expect(reportSpeaker.locator('.thread-speaker-avatar')).toHaveText('R');
+    await expect(reportSpeaker.locator('.thread-speaker-avatar')).toHaveText('W');
+    await expect(report.locator('.thread-agent-report-task')).toHaveText('research');
 
     // Folded like any long message, behind the same one control.
     const body = report.locator('.thread-user-content-body');
@@ -4443,7 +4454,7 @@ test.describe('canonical agent Thread surface', () => {
 
     const divider = page.locator('.thread-process-title').first();
     await expect(divider).toHaveText('Read notes.md');
-    await expect(page.locator('.thread-process-block')).not.toContainText('Working');
+    await expect(page.locator('.thread-speaker')).not.toContainText('Working');
 
     // Blocked on the user: the label says so, and no shimmer claims progress.
     await page.evaluate(async ({ liveTurnId, threadId }) => {
@@ -4500,7 +4511,7 @@ test.describe('canonical agent Thread surface', () => {
       });
     }, { ...ids, liveTurnId });
 
-    const live = page.locator(`[data-thread-turn-row="${liveTurnId}"] .thread-process-block`);
+    const live = page.locator(`[data-thread-turn-row="${liveTurnId}"] .thread-speaker`);
     await expect(live.locator('.thread-process-title')).toHaveText('Waiting for input');
     await expect(live.locator('.working-text')).toHaveCount(0);
     const requestedInput = live.locator('.thread-tool-inProgress');
@@ -4581,7 +4592,7 @@ test.describe('canonical agent Thread surface', () => {
       emit('02', true);
     });
 
-    const blocks = page.locator('.thread-process-block');
+    const blocks = page.locator('.thread-speaker');
     await expect(blocks).toHaveCount(2);
 
     // No response: exactly one "Turn interrupted", owned by the divider.
@@ -4643,6 +4654,7 @@ test.describe('canonical agent Thread surface', () => {
     });
 
     await expect(page.locator('.thread-process-block')).toHaveCount(0);
+    await expect(page.locator('.thread-process-title')).toHaveCount(0);
     // The status must still be stated — by the response tail, since nothing
     // else can.
     await expect(page.getByText('Turn interrupted')).toHaveCount(1);

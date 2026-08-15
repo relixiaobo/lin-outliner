@@ -613,15 +613,19 @@
   color: var(--status-danger);
 }
 
+/* The Turn's work summary rides the speaker's own line, so it is an inline part
+   of that header rather than a band of its own. It was a line, a rule, and
+   sometimes a second line, under a separate name row: four elements for one
+   sentence. */
 .thread-work-divider {
-  display: flex;
+  display: inline-flex;
+  min-width: 0;
   max-width: 100%;
   align-items: center;
-  gap: var(--space-3);
-  color: inherit;
+  gap: var(--space-2);
+  color: var(--text-soft);
   font-size: var(--font-meta);
   line-height: var(--line-meta);
-  padding: var(--space-2) 0;
   text-align: left;
 }
 
@@ -663,17 +667,11 @@
   color: var(--text-soft);
 }
 
-.thread-process-rule {
-  margin-top: var(--space-4);
-  border-top: 1px solid color-mix(in srgb, currentColor 20%, transparent);
-}
-
 .thread-process-timeline {
   display: flex;
   min-width: 0;
   flex-direction: column;
   gap: var(--space-3);
-  margin-top: var(--space-6);
 }
 
 .thread-streaming-indicator {
@@ -1826,9 +1824,42 @@
    reader's own side, in the quieter fill every non-reader message uses. It is a
    participant's message, not a divider — the delegation graph is a set of
    participants, and this is one of them reporting back. */
-/* The report IS a message: it inherits the whole host-event bubble — the
-   opposite side, the quieter fill, the label above — and adds only the two
-   things that are its own. */
+/* A report is not part of this conversation's narrative: it is a self-contained
+   thing brought back from somewhere else, which the reader may open. An OUTLINE
+   says that. A fill would shout it and bare prose would hide it. */
+.thread-agent-report {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  border-radius: var(--radius-md);
+  box-shadow: var(--outline-muted);
+  padding: var(--space-4);
+}
+
+/* What it was asked, over what it answered — one line, because a heading that
+   wraps is a paragraph. */
+.thread-agent-report-task {
+  max-width: 100%;
+  margin: 0;
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Inside the card the body is the card's own: the message shell's fill and
+   padding would be a second container drawn around the first. */
+.thread-agent-report .thread-user-content-shell {
+  width: 100%;
+  align-items: stretch;
+  background: transparent;
+  padding: 0;
+}
+
 .thread-agent-report-empty {
   margin: 0;
   color: var(--text-tertiary);

@@ -120,6 +120,7 @@ import {
 import {
   collaborationResultSnapshot,
   emptyTurnAnchors,
+  subagentSpeakerName,
   type SubagentConversationProjection,
   type SubagentDelivery,
   type SubagentTurnAnchors,
@@ -2074,8 +2075,16 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   // The child that delivered into this Turn, if any: it speaks its own report.
   const reportEntry = useSubagentEntry(delivery?.agentId ?? null);
   const reportSpeaker: ThreadSpeaker | null = delivery !== null && reportEntry !== null
-    ? { identity: delivery.agentId, name: reportEntry.displayName }
+    ? { identity: delivery.agentId, name: subagentSpeakerName(reportEntry) }
     : null;
+  // A delivering child's header states ITS OWN span, not this conversation's:
+  // the Turn around it is the parent reading the result, which took no time at
+  // all next to the work being reported.
+  const reportMeta: ReactNode = reportEntry?.durationMs == null ? null : (
+    <span className="thread-process-title">
+      {t.agent.thread.workedFor({ duration: formatProcessDuration(reportEntry.durationMs) })}
+    </span>
+  );
   const workingAgentIds = useWorkingAgentIds();
   const contentGrouperRef = useRef<TurnContentGrouper | null>(null);
   if (contentGrouperRef.current === null) contentGrouperRef.current = createTurnContentGrouper();
@@ -2085,6 +2094,17 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   const processItemGroups = useMemo(() => groupTurnItems(processItems), [processItems]);
   const workingTextEnabled = !waitingOnUserInput && providerRetry === null;
   const motionOwner = turnMotionOwner(turn, processItems, anchors, workingAgentIds);
+  const processView = useThreadProcessView({
+    anchors,
+    expandState,
+    hasFinalResponse: responseItem !== null,
+    index,
+    items: processItems,
+    motionOwner,
+    turn,
+    waitingOnUserInput,
+    workingTextEnabled,
+  });
   const workingTextOwnsMotion = workingTextEnabled && motionOwner !== 'none';
   // A blocked Turn cannot use a progressive cue. Keep the fallback response
   // shape static as well, otherwise it becomes the only moving element while
@@ -2259,7 +2279,11 @@ export const ThreadTurnView = memo(function ThreadTurnView({
     if (!hostAuthoredEvent) return null;
     return { identity: hostAuthorIdentity ?? MAIN_AVATAR_IDENTITY, name: hostAuthorName ?? '' };
   };
-  const runs: Array<{ readonly speaker: ThreadSpeaker | null; readonly nodes: ReactNode[] }> = [];
+  const runs: Array<{
+    readonly speaker: ThreadSpeaker | null;
+    readonly nodes: ReactNode[];
+    meta?: ReactNode;
+  }> = [];
   const emit = (speaker: ThreadSpeaker | null, node: ReactNode): void => {
     const open = runs.at(-1);
     if (open && open.speaker?.identity === speaker?.identity) open.nodes.push(node);
@@ -2276,39 +2300,43 @@ export const ThreadTurnView = memo(function ThreadTurnView({
     )) continue;
     const speaker = speakerOf(block);
     if (speaker === 'drop') continue;
-    emit(speaker, block.kind === 'process' ? (
-      <ThreadProcessBlock
-        expandState={expandState}
-        hasFinalResponse={responseItem !== null}
-        index={index}
-        items={block.items}
-        onOpenThread={onOpenThread}
-        motionOwner={motionOwner}
-        waitingOnUserInput={waitingOnUserInput}
-        workingTextEnabled={workingTextEnabled}
-        key={`process:${block.items[0]?.id ?? turn.id}`}
-        anchors={anchors}
-        turn={turn}
-      >
-        {processItemGroups.map((group) => group.kind === 'tools' ? (
-          <ThreadToolActivityGroup
-            expandState={expandState}
-            index={index}
-            items={group.items}
-            key={group.items[0]?.id}
-            onOpenThread={onOpenThread}
-            onReadToolArguments={readToolArguments}
-            onReadToolOutput={readToolOutput}
-            threadId={threadId}
-            threadCwd={threadCwd}
-            workingTextEnabled={workingTextEnabled}
-          />
-        ) : renderItem(group.item, false))}
-      </ThreadProcessBlock>
-    ) : renderItem(
+    if (block.kind === 'process') {
+      // The summary goes on this speaker's own line; only the rows stay here.
+      emit(speaker, processView.timelineVisible ? (
+        <div
+          className={`thread-process-block${processView.isError ? ' is-error' : ''}`}
+          key={`process:${block.items[0]?.id ?? turn.id}`}
+        >
+          <div className="thread-process-timeline">
+            {processItemGroups.map((group) => group.kind === 'tools' ? (
+              <ThreadToolActivityGroup
+                expandState={expandState}
+                index={index}
+                items={group.items}
+                key={group.items[0]?.id}
+                onOpenThread={onOpenThread}
+                onReadToolArguments={readToolArguments}
+                onReadToolOutput={readToolOutput}
+                threadId={threadId}
+                threadCwd={threadCwd}
+                workingTextEnabled={workingTextEnabled}
+              />
+            ) : renderItem(group.item, false))}
+          </div>
+        </div>
+      ) : null);
+      const open = runs.at(-1);
+      if (open) open.meta = processView.header;
+      continue;
+    }
+    emit(speaker, renderItem(
       block.item,
       turn.status !== 'inProgress' && block.item.type === 'userMessage',
     ));
+    if (speaker !== null && speaker === reportSpeaker) {
+      const open = runs.at(-1);
+      if (open) open.meta = reportMeta;
+    }
   }
   if (responseItem === null && responseTail) {
     emit(selfSpeaker, (
@@ -2324,7 +2352,11 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   return (
     <section className={`thread-turn thread-turn-${turn.status}`}>
       {runs.map((run, runIndex) => run.speaker === null ? run.nodes : (
-        <ThreadSpeakerGroup key={`speaker:${turn.id}:${runIndex}`} speaker={run.speaker}>
+        <ThreadSpeakerGroup
+          key={`speaker:${turn.id}:${runIndex}`}
+          {...(run.meta === undefined ? {} : { meta: run.meta })}
+          speaker={run.speaker}
+        >
           {run.nodes}
         </ThreadSpeakerGroup>
       ))}
@@ -2772,9 +2804,16 @@ function latestUserMessageTurnId(turns: readonly Turn[]): string | null {
   return null;
 }
 
-function ThreadProcessBlock({
-  onOpenThread,
-  children,
+/**
+ * A Turn's work, split into the two places it is shown.
+ *
+ * `header` rides the speaker's own line — who spoke and what they did is one
+ * sentence, so it is one line, and clicking it is the single way to open the
+ * timeline. It used to be a summary line, a rule, and sometimes a second
+ * summary line, all under a separate name row; four elements saying one thing.
+ * `timeline` is the rows themselves, below.
+ */
+function useThreadProcessView({
   expandState,
   hasFinalResponse,
   index,
@@ -2785,18 +2824,16 @@ function ThreadProcessBlock({
   waitingOnUserInput,
   workingTextEnabled,
 }: {
-  readonly children: ReactNode;
   readonly expandState: ThreadDisclosureState;
   readonly hasFinalResponse: boolean;
   readonly index: DocumentIndex;
   readonly items: readonly ThreadItem[];
   readonly motionOwner: TurnMotionOwner;
-  readonly onOpenThread: (threadId: string) => Promise<void>;
   readonly anchors: SubagentTurnAnchors;
   readonly turn: Turn;
   readonly waitingOnUserInput: boolean;
   readonly workingTextEnabled: boolean;
-}) {
+}): { readonly header: ReactNode; readonly timelineVisible: boolean; readonly isError: boolean } {
   const t = useT();
   const disclosureId = `process:${turn.id}`;
   const expanded = expandState.isExpanded(disclosureId, false);
@@ -2825,44 +2862,42 @@ function ThreadProcessBlock({
   const processTitleClassName = `thread-process-title${turn.status === 'inProgress'
     ? ' thread-process-title-live'
     : ''}`;
-  return (
-    <div className={`thread-process-block${turn.status === 'failed' && !hasFinalResponse ? ' is-error' : ''}`}>
-      {terminalResponseOwnsStatus ? null : collapsible ? (
-        <ButtonControl
-          aria-expanded={expanded}
-          className="thread-work-divider thread-process-toggle"
-          data-thread-disclosure-id={disclosureId}
-          onClick={(event) => expandState.toggle(disclosureId, expanded, event.currentTarget)}
-        >
-          <span className="thread-process-title">{summary}</span>
-          <ChevronRightIcon
-            aria-hidden
-            className={`thread-process-chevron${expanded ? ' is-expanded' : ''}`}
-            size={ICON_SIZE.menu}
-          />
-        </ButtonControl>
-      ) : (
-        <div className="thread-work-divider">
-          {summaryWorking
-            ? <WorkingText className={processTitleClassName} text={summary} truncate />
-            : <span className={processTitleClassName}>{summary}</span>}
-        </div>
-      )}
-      {terminalResponseOwnsStatus ? null : <div aria-hidden className="thread-process-rule" />}
-      {terminalResponseOwnsStatus && timelineVisible ? (
-        // The response tail owns the terminal status, but the timeline still
-        // needs a name — otherwise it is an unlabelled list of rows.
-        <div className="thread-work-divider">
-          <span className="thread-process-title">
-            {turn.durationMs !== null
-              ? t.agent.thread.workedFor({ duration: formatProcessDuration(turn.durationMs) })
-              : threadProcessNeutralHeader(turn, items, t, index)}
-          </span>
-        </div>
-      ) : null}
-      {timelineVisible ? <div className="thread-process-timeline">{children}</div> : null}
+  // The response tail owns the terminal status, but the timeline below still
+  // needs a name — otherwise it is an unlabelled list of rows.
+  const header = terminalResponseOwnsStatus ? (timelineVisible ? (
+    <div className="thread-work-divider">
+      <span className="thread-process-title">
+        {turn.durationMs !== null
+          ? t.agent.thread.workedFor({ duration: formatProcessDuration(turn.durationMs) })
+          : threadProcessNeutralHeader(turn, items, t, index)}
+      </span>
+    </div>
+  ) : null) : collapsible ? (
+    <ButtonControl
+      aria-expanded={expanded}
+      className="thread-work-divider thread-process-toggle"
+      data-thread-disclosure-id={disclosureId}
+      onClick={(event) => expandState.toggle(disclosureId, expanded, event.currentTarget)}
+    >
+      <span className="thread-process-title">{summary}</span>
+      <ChevronRightIcon
+        aria-hidden
+        className={`thread-process-chevron${expanded ? ' is-expanded' : ''}`}
+        size={ICON_SIZE.menu}
+      />
+    </ButtonControl>
+  ) : (
+    <div className="thread-work-divider">
+      {summaryWorking
+        ? <WorkingText className={processTitleClassName} text={summary} truncate />
+        : <span className={processTitleClassName}>{summary}</span>}
     </div>
   );
+  return {
+    header,
+    timelineVisible,
+    isError: turn.status === 'failed' && !hasFinalResponse,
+  };
 }
 
 export type TurnMotionOwner = 'none' | 'summary' | 'leaf';

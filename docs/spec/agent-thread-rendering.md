@@ -78,8 +78,13 @@ delegation graph is a set of participants sending each other messages, and every
 surface that shows one reads like any message stream.
 
 Every non-reader block therefore wears the SAME structure — a one-line header
-carrying an avatar and the participant's name, then what they said at full
-width beneath it. One structure for all of them: the conversation's own agent
+carrying an avatar, the participant's name, and what they did (the Turn's work
+summary for this transcript's own agent; a delegated child's own elapsed for its
+report) — then what they said at full width beneath it. Who spoke and how long
+it took is one sentence, so it is one line: that header IS the work summary and
+the only control that opens the timeline. It was a name row, a summary line, a
+rule, and sometimes a second summary line — four elements for one sentence (PM
+2026-08-15). One structure for all of them: the conversation's own agent
 answering, a delegated child delivering its report, the Agent that wrote a
 brief. The header is one line and the words keep the whole column on purpose:
 the avatar lane down the margin that desktop IM uses costs a tenth of the
@@ -111,6 +116,15 @@ right-hand bubble and get no avatar. Which side a message is on is the fastest
 identity signal in the stream, and Tenon has no user profile to draw a face
 from — so `I asked this` stays a matter of position, and `main asked this` a
 matter of the name above it. Neither is ever left to a hover.
+
+A participant is named by its TYPE, not by the task it was handed. The
+execution record's description (`count spec Markdown`) is a task label, and a
+task label standing where a name goes reads as a sentence fragment rather than
+as somebody speaking; the task appears right below it, as the report's own first
+line. This is deliberately NOT the chip's rule: down in the timeline the type is
+`general-purpose` for nearly every Agent, so there the task is the only thing
+that tells two rows apart. The two surfaces answer different questions (PM
+2026-08-15). An isolated Skill keeps its own name, which is its type.
 
 The avatar is a coloured disc carrying the first character of the name. Its hue
 comes from the shared `--identity-tint-*` palette (`agentAvatarColor.ts`), keyed
@@ -477,9 +491,15 @@ ANCHOR in it at the point where it happened:
   exactly where the raw task-notification text would be and replaces it, because
   that text is host framing addressed to the model and never a message to the
   reader. Position is identity here too (above): the report is one more speaker
-  in the stream — its own avatar, its own name, the same prose column a brief or
-  `main`'s answer uses — and folds behind the same Show more every long message
-  uses. One grammar, so a report reads as somebody speaking rather than as one
+  in the stream — its own avatar, its own name, its own elapsed on that header
+  line — and folds behind the same Show more every long message uses. Its body
+  sits in an OUTLINED CARD rather than in the prose column `main` uses, because
+  it is not part of this conversation's narrative: it is a self-contained thing
+  brought back from somewhere else, which the reader may open. An outline says
+  that; a fill would shout it and bare prose would hide it. The card's first
+  line is the task the Agent was handed, suppressed when the header is already
+  saying it — an Agent with no type falls back to its task description for a
+  name, and one sentence printed twice is not a heading. One grammar, so a report reads as somebody speaking rather than as one
   more row of what the Turn did. A pill-shaped fold-to-nothing row was tried
   first and drowned among the tool rows (PM 2026-08-15). Its speaker is the
   CHILD, not this transcript's own agent, so a delivery Turn shows two speakers

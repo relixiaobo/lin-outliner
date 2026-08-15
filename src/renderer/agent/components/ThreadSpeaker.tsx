@@ -34,9 +34,17 @@ export interface ThreadSpeaker {
  */
 export function ThreadSpeakerGroup({
   children,
+  meta,
   speaker,
 }: {
   readonly children: ReactNode;
+  /**
+   * What this participant did, on the same line as who they are: the Turn's
+   * work summary for the transcript's own agent, a delegated child's own
+   * elapsed for its report. Two lines and a rule said this before; who spoke
+   * and how long they took is one sentence, so it is one line.
+   */
+  readonly meta?: ReactNode;
   readonly speaker: ThreadSpeaker;
 }) {
   const color = agentAvatarColor(speaker.identity);
@@ -51,6 +59,7 @@ export function ThreadSpeakerGroup({
           {agentAvatarInitial(speaker.name)}
         </span>
         <span className="thread-speaker-name">{speaker.name}</span>
+        {meta}
       </div>
       <div className="thread-speaker-content">{children}</div>
     </div>

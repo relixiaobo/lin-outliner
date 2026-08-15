@@ -61,6 +61,26 @@ export interface SubagentRegistryEntry {
   readonly liveDescendantCount: number;
 }
 
+/**
+ * What to call a participant in the conversation's message stream.
+ *
+ * Its TYPE, not the task it was handed. The execution record's description
+ * ("count spec Markdown") is a task label, and a task label standing where a
+ * name goes reads as a sentence fragment rather than as somebody speaking. The
+ * type is what this participant IS — and the task it was given is right below,
+ * on its report.
+ *
+ * This is not the chip's rule, deliberately: down in the timeline the type is
+ * `general-purpose` for nearly every Agent, so there the task is the only thing
+ * that tells two rows apart. The two surfaces answer different questions.
+ *
+ * An isolated Skill keeps its own name, which IS its type.
+ */
+export function subagentSpeakerName(entry: SubagentRegistryEntry): string {
+  if (entry.form === 'isolatedSkill') return entry.displayName;
+  return entry.agentType ?? entry.displayName;
+}
+
 export type SubagentAnchorKind = 'spawn' | 'resume' | 'foreground';
 
 /** One lifecycle event, at the canonical Item position where it happened. */
