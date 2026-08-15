@@ -753,8 +753,8 @@ test.describe('canonical agent Thread surface', () => {
     await expect(liveTurn.locator('.thread-process-timeline')).toHaveCount(1);
     await expect(liveTurn.locator('.thread-process-title')).toHaveText('Working');
     const liveTitleGeometry = await liveTurn.locator('.thread-process-title').evaluate((element) => {
-      const divider = element.closest('.thread-work-divider');
-      if (!(divider instanceof HTMLElement)) throw new Error('Expected live process divider');
+      const divider = element.closest('.thread-speaker-meta');
+      if (!(divider instanceof HTMLElement)) throw new Error('Expected live process summary');
       return {
         numericVariant: getComputedStyle(element).fontVariantNumeric,
         widthDelta: Math.abs(
@@ -2517,6 +2517,15 @@ test.describe('canonical agent Thread surface', () => {
     await expect(briefSpeaker.locator('.thread-user-message.thread-host-event')).toHaveCount(1);
     await expect(briefSpeaker.locator('.thread-speaker-name')).toHaveText('main');
     await expect(briefSpeaker.locator('.thread-speaker-avatar')).toHaveText('M');
+    // The pushed view names participants exactly as the conversation does: an
+    // Agent that answers to its type out there cannot answer to its task
+    // description in here, or its avatar changes letter and hue on the way in.
+    // The TITLE bar is the other job — which Agent this is — so it keeps the
+    // task, the way a chip does.
+    await expect(detail.locator('.thread-speaker-name').last()).toHaveText('worker');
+    await expect(detail.locator('.thread-speaker-avatar').last()).toHaveText('W');
+    await expect(deckTitle).toHaveText('research');
+
     await expect(detail.getByRole('textbox', { name: 'Message this Thread' })).toBeVisible();
     await expect(detail.getByRole('button', { name: 'Edit message' })).toHaveCount(0);
     await expect(detail.getByRole('button', { name: 'Continue in new chat' })).toHaveCount(0);
@@ -3275,7 +3284,7 @@ test.describe('canonical agent Thread surface', () => {
       });
       target.__LIN_E2E__?.setMockSubagentExecution(childId, {
         description: 'research',
-        currentTurnId: null,
+        currentTurnId: childTurnId,
       });
       const childProvenance = {
         originThreadId: childId,
@@ -3481,6 +3490,20 @@ test.describe('canonical agent Thread surface', () => {
     // own first line. A task label standing where a name goes read as a
     // sentence fragment rather than as somebody speaking.
     await expect(deliveryTurn.locator('.thread-speaker-name')).toHaveText(['worker', 'main']);
+    // Both headers are one line of the same shape: who, then what they did, in
+    // the meta type. The child's elapsed is ITS OWN — the Turn around it is the
+    // parent reading a result, which took no time next to the work reported.
+    await expect(deliveryTurn.locator('.thread-speaker-meta')).toHaveText([
+      'Worked for 2s',
+      /^Worked for/u,
+    ]);
+    expect(await deliveryTurn.locator('.thread-speaker-header').evaluateAll((elements) => ({
+      heights: [...new Set(elements.map((element) => element.getBoundingClientRect().height))],
+      fonts: [...new Set(elements.map((element) => {
+        const meta = element.querySelector('.thread-speaker-meta');
+        return meta === null ? '' : getComputedStyle(meta).fontSize;
+      }))],
+    }))).toEqual({ heights: [expect.any(Number)], fonts: [expect.any(String)] });
     const reportSpeaker = deliveryTurn.locator('.thread-speaker').first();
     await expect(reportSpeaker.locator('.thread-agent-report')).toHaveCount(1);
     await expect(reportSpeaker.locator('.thread-speaker-avatar')).toHaveText('W');

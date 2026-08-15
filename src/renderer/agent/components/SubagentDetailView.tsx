@@ -8,7 +8,7 @@ import { api } from '../../api/client';
 import type { ThreadNodeReferenceOpenHandler } from '../threadReferences';
 import { threadStore, useThreadStore } from '../store/threadStore';
 import { MAIN_AVATAR_IDENTITY } from '../agentAvatarColor';
-import type { SubagentConversationProjection } from '../subagentPresentation';
+import { subagentSpeakerName, type SubagentConversationProjection } from '../subagentPresentation';
 import { useSubagentActions, useSubagentEntry } from './SubagentRegistryContext';
 import { formatSubagentDuration } from './subagentElapsed';
 import { ThreadView } from './ThreadView';
@@ -82,9 +82,15 @@ export function SubagentDetailView({
   // Whose words the host-authored Items here are: the Agent that delegated
   // this one, or the conversation itself when the delegator IS the conversation.
   const parentThreadId = entry?.parentThreadId ?? null;
-  const hostAuthorName = parentThreadId === null
+  const parentEntry = parentThreadId === null
+    ? null
+    : subagentProjection.byAgentId.get(parentThreadId) ?? null;
+  // Named exactly as the conversation names them, so one Agent does not answer
+  // to `general-purpose` out there and to its task description in here — the
+  // avatar is drawn from that name, so the disc would change letter and hue too.
+  const hostAuthorName = parentEntry === null
     ? t.agent.thread.agent.main
-    : subagentProjection.byAgentId.get(parentThreadId)?.displayName ?? t.agent.thread.agent.main;
+    : subagentSpeakerName(parentEntry);
   // Only an Agent takes direction. An isolated Skill's result belongs to the
   // `skill` call that invoked it, so there is nothing here for a message to do.
   const composerEnabled = entry?.form !== 'isolatedSkill' && thread?.source === 'collaboration';
@@ -129,7 +135,10 @@ export function SubagentDetailView({
             agentTranscript
             hostAuthorName={hostAuthorName}
             hostAuthorIdentity={parentThreadId ?? MAIN_AVATAR_IDENTITY}
-            selfSpeaker={{ identity: agentId, name: entry?.displayName ?? t.agent.thread.untitled }}
+            selfSpeaker={{
+              identity: agentId,
+              name: entry === null ? t.agent.thread.untitled : subagentSpeakerName(entry),
+            }}
             subagentProjection={subagentProjection}
             threadCreationBlocked
             threadCreationPending={false}

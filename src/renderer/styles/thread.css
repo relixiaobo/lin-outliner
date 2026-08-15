@@ -613,11 +613,12 @@
   color: var(--status-danger);
 }
 
-/* The Turn's work summary rides the speaker's own line, so it is an inline part
-   of that header rather than a band of its own. It was a line, a rule, and
-   sometimes a second line, under a separate name row: four elements for one
-   sentence. */
-.thread-work-divider {
+/* What a participant did, on the same line as who they are: the Turn's work
+   summary for this transcript's own agent, a delegated child's own elapsed for
+   its report. ONE rule for both — they sit on the same line and must read as
+   one sentence, and when the report's meta was styled separately it came out at
+   content size, which also pushed its whole header taller than main's. */
+.thread-speaker-meta {
   display: inline-flex;
   min-width: 0;
   max-width: 100%;

@@ -117,14 +117,24 @@ identity signal in the stream, and Tenon has no user profile to draw a face
 from — so `I asked this` stays a matter of position, and `main asked this` a
 matter of the name above it. Neither is ever left to a hover.
 
-A participant is named by its TYPE, not by the task it was handed. The
+A participant is named by its TYPE everywhere it SPEAKS — in the conversation
+and inside its own pushed view alike, since the avatar is drawn from that name
+and an Agent that answered to `general-purpose` outside would otherwise change
+letter and hue on the way in. Not by the task it was handed. The
 execution record's description (`count spec Markdown`) is a task label, and a
 task label standing where a name goes reads as a sentence fragment rather than
 as somebody speaking; the task appears right below it, as the report's own first
-line. This is deliberately NOT the chip's rule: down in the timeline the type is
-`general-purpose` for nearly every Agent, so there the task is the only thing
-that tells two rows apart. The two surfaces answer different questions (PM
-2026-08-15). An isolated Skill keeps its own name, which is its type.
+line. This is deliberately NOT the rule for the chip or the pushed view's TITLE bar:
+both answer *which* Agent this is, and the type is `general-purpose` for nearly
+every one, so there the task is the only thing that tells two of them apart.
+Naming (who is speaking) and identification (which one is this) are different
+questions (PM 2026-08-15). An isolated Skill keeps its own name, which is its
+type.
+
+Both halves of a header — the name and what that participant did — are one
+sentence on one line, and share one meta rule. Styled apart, the child's elapsed
+came out at content size and stood its whole header taller than the agent's
+above it, so two headers that say the same kind of thing did not look alike.
 
 The avatar is a coloured disc carrying the first character of the name. Its hue
 comes from the shared `--identity-tint-*` palette (`agentAvatarColor.ts`), keyed

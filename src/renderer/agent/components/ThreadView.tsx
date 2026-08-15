@@ -2081,7 +2081,7 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   // the Turn around it is the parent reading the result, which took no time at
   // all next to the work being reported.
   const reportMeta: ReactNode = reportEntry?.durationMs == null ? null : (
-    <span className="thread-process-title">
+    <span className="thread-speaker-meta">
       {t.agent.thread.workedFor({ duration: formatProcessDuration(reportEntry.durationMs) })}
     </span>
   );
@@ -2864,7 +2864,7 @@ function useThreadProcessView({
   // The response tail owns the terminal status, but the timeline below still
   // needs a name — otherwise it is an unlabelled list of rows.
   const header = terminalResponseOwnsStatus ? (timelineVisible ? (
-    <div className="thread-work-divider">
+    <div className="thread-speaker-meta">
       <span className="thread-process-title">
         {turn.durationMs !== null
           ? t.agent.thread.workedFor({ duration: formatProcessDuration(turn.durationMs) })
@@ -2874,7 +2874,7 @@ function useThreadProcessView({
   ) : null) : collapsible ? (
     <ButtonControl
       aria-expanded={expanded}
-      className="thread-work-divider thread-process-toggle"
+      className="thread-speaker-meta thread-process-toggle"
       data-thread-disclosure-id={disclosureId}
       onClick={(event) => expandState.toggle(disclosureId, expanded, event.currentTarget)}
     >
@@ -2886,7 +2886,7 @@ function useThreadProcessView({
       />
     </ButtonControl>
   ) : (
-    <div className="thread-work-divider">
+    <div className="thread-speaker-meta">
       {summaryWorking
         ? <WorkingText className={processTitleClassName} text={summary} truncate />
         : <span className={processTitleClassName}>{summary}</span>}
