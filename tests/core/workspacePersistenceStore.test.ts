@@ -477,6 +477,67 @@ describe('WorkspacePersistenceStore', () => {
     expect(loaded.snapshotRaw).toBe(compacted);
     expect(loaded.replay).toEqual([]);
   });
+
+  test('sets aside a pre-revision legacy workspace and loads fresh', async () => {
+    const root = await makeRoot();
+    const store = new WorkspacePersistenceStore(root);
+    const core = Core.new({ installationId: crypto.randomUUID() });
+    await store.compact(core.serializeState());
+    const legacy = JSON.parse(await readFile(store.snapshotPath, 'utf8')) as Record<string, unknown>;
+    delete legacy.persistenceRevision;
+    await writeFile(store.snapshotPath, JSON.stringify(legacy));
+
+    const fresh = new WorkspacePersistenceStore(root);
+    const loaded = await fresh.load();
+    expect(loaded.snapshot).toBeNull();
+    expect(loaded.replay).toEqual([]);
+    expect(loaded.recovery?.error).toBeDefined();
+    expect(loaded.recovery?.setAsidePaths?.length).toBe(2);
+
+    const entries = await readdir(root);
+    expect(entries.filter((entry) => entry.includes('.incompatible-'))).toHaveLength(2);
+    expect(entries).not.toContain('workspace.loro.json');
+    expect(entries).not.toContain('workspace.loro.updates.jsonl');
+
+    const restarted = Core.new({ installationId: crypto.randomUUID() });
+    await fresh.compact(restarted.serializeState());
+    const reloaded = await fresh.load();
+    expect(reloaded.snapshot).not.toBeNull();
+    expect(reloaded.recovery).toBeUndefined();
+  });
+
+  test('sets aside a legacy snapshot with no update log alongside it', async () => {
+    const root = await makeRoot();
+    const store = new WorkspacePersistenceStore(root);
+    const core = Core.new({ installationId: crypto.randomUUID() });
+    await store.compact(core.serializeState());
+    const legacy = JSON.parse(await readFile(store.snapshotPath, 'utf8')) as Record<string, unknown>;
+    delete legacy.persistenceRevision;
+    await writeFile(store.snapshotPath, JSON.stringify(legacy));
+    await rm(store.updateLogPath);
+
+    const loaded = await new WorkspacePersistenceStore(root).load();
+    expect(loaded.snapshot).toBeNull();
+    expect(loaded.recovery?.setAsidePaths?.length).toBe(1);
+    expect((await readdir(root)).filter((entry) => entry.includes('.incompatible-'))).toHaveLength(1);
+  });
+
+  test('keeps failing closed when persistenceRevision is present but invalid', async () => {
+    const root = await makeRoot();
+    const store = new WorkspacePersistenceStore(root);
+    const core = Core.new({ installationId: crypto.randomUUID() });
+    await store.compact(core.serializeState());
+    const corrupt = JSON.parse(await readFile(store.snapshotPath, 'utf8')) as Record<string, unknown>;
+    corrupt.persistenceRevision = -1;
+    await writeFile(store.snapshotPath, JSON.stringify(corrupt));
+
+    await expect(new WorkspacePersistenceStore(root).load()).rejects.toThrow(
+      'invalid workspace persistence revision',
+    );
+    const entries = await readdir(root);
+    expect(entries).toContain('workspace.loro.json');
+    expect(entries.filter((entry) => entry.includes('.incompatible-'))).toHaveLength(0);
+  });
 });
 
 async function makeRoot(): Promise<string> {

@@ -30,6 +30,7 @@ export interface WorkspacePersistenceRecovery {
   error: unknown;
   quarantinedLogPath?: string;
   recoveryError?: unknown;
+  setAsidePaths?: readonly string[];
 }
 
 export interface WorkspacePersistenceStoreOptions {
@@ -130,7 +131,21 @@ export class WorkspacePersistenceStore {
       }
       throw error;
     }
-    const snapshot = Core.deserializeState(snapshotRaw);
+    let snapshot: WorkspacePersistenceEnvelopeV3;
+    try {
+      snapshot = Core.deserializeState(snapshotRaw);
+    } catch (error) {
+      if (!isPreRevisionWorkspaceEnvelope(snapshotRaw)) throw error;
+      const setAsidePaths = await this.setAsideIncompatibleWorkspace();
+      return {
+        snapshot: null,
+        snapshotRaw: null,
+        snapshotDigest: null,
+        replay: [],
+        replayBytes: 0,
+        recovery: { error, setAsidePaths },
+      };
+    }
     const snapshotDigest = digest(snapshotRaw);
     let replay: ReadLogResult;
     let recovery: WorkspacePersistenceRecovery | undefined;
@@ -532,6 +547,28 @@ export class WorkspacePersistenceStore {
     return this.logCursor;
   }
 
+  private async setAsideIncompatibleWorkspace(): Promise<string[]> {
+    await this.closeAppendHandle();
+    this.logCursor = undefined;
+    this.snapshotDigestValue = undefined;
+    this.snapshotPersistenceRevisionValue = undefined;
+    this.snapshotMetadataSequenceValue = undefined;
+    this.snapshotIdentityValue = undefined;
+    const suffix = `incompatible-${Date.now()}-${crypto.randomUUID()}`;
+    const moved: string[] = [];
+    for (const filePath of [this.snapshotPath, this.updateLogPath]) {
+      const target = `${filePath}.${suffix}`;
+      try {
+        await rename(filePath, target);
+        moved.push(target);
+      } catch (error) {
+        if (!isNotFound(error)) throw error;
+      }
+    }
+    await syncDirectory(path.dirname(this.snapshotPath), this.fsyncHandle);
+    return moved;
+  }
+
   private async recoverUnreadableLog(
     snapshotDigest: string,
     records: readonly UpdateLogRecord[],
@@ -885,6 +922,23 @@ async function syncDirectory(
   } finally {
     await handle.close();
   }
+}
+
+// A pre-update-log workspace envelope (pre-release, no migration policy) shares
+// `kind` and `schemaVersion` with the current format; the absent
+// `persistenceRevision` field is the only durable discriminator. A PRESENT but
+// invalid field means corrupt current-format data and must stay fail-closed —
+// only the provably older shape is set aside for a fresh start.
+function isPreRevisionWorkspaceEnvelope(raw: string): boolean {
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    return false;
+  }
+  return typeof value === 'object' && value !== null
+    && (value as { kind?: unknown }).kind === 'tenon-workspace'
+    && !('persistenceRevision' in value);
 }
 
 function isNotFound(error: unknown): boolean {

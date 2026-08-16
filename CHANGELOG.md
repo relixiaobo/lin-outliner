@@ -459,6 +459,20 @@ Entries reference the pull request that introduced them.
 
 ### Fixed
 
+- **Upgrading from 0.3.x no longer dead-launches the app (main-agent,
+  PM-ratified 2026-08-16)** — the #533 persistence-format change made a
+  pre-update-log workspace fail startup outright (`invalid workspace
+  persistence revision`), with no failure surface to explain it; verified live
+  on a real 0.3.x data directory. Startup now detects the provably older
+  envelope shape — a `tenon-workspace` snapshot with no `persistenceRevision`
+  field — sets the old snapshot and any log aside as `*.incompatible-*` files
+  (never deleting them), and starts a fresh workspace, reporting the recovery
+  through the persistence error channel. Corrupt current-format data still
+  fails closed: a present-but-invalid revision is not set aside. This is the
+  ratified no-migration policy automated, not a migration: old content is not
+  read, and the set-aside files are recoverable by hand. Regression tests were
+  verified to fail against the pre-fix store, and the fallback was verified
+  against the real pre-#533 workspace file that surfaced the crash.
 - **Two tags that define the same field name no longer exclude each other
   (PR #540, codex-2)** — a field is now identified by its definition, never by
   its display name, matching Tana (*"whenever you select an existing field to
