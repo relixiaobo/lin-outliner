@@ -6,6 +6,7 @@ import {
   Core,
   type CorePersistenceSnapshot,
   type CoreTransactionMetadata,
+  type FieldSlotMutation,
   type OperationHistoryItem,
   type OperationHistoryQuery,
 } from '../core/core';
@@ -1070,6 +1071,82 @@ export class DocumentService implements DocumentSystemHost {
             fieldType(args.fieldType),
             nullableString(args.targetDefId),
           );
+        case 'update_field_slot': {
+          const kind = String(args.kind);
+          const entryId = typeof args.entryId === 'string' ? args.entryId : undefined;
+          let mutation: FieldSlotMutation;
+          if (kind === 'appendText') {
+            mutation = {
+              kind,
+              text: String(args.text ?? ''),
+              ...(entryId ? { entryId } : {}),
+              ...(typeof args.id === 'string' ? { id: args.id } : {}),
+              ...(args.collect === true ? { collect: true } : {}),
+            };
+          } else if (kind === 'appendReference') {
+            mutation = {
+              kind,
+              targetId: String(args.targetId),
+              ...(entryId ? { entryId } : {}),
+              ...(typeof args.id === 'string' ? { id: args.id } : {}),
+            };
+          } else if (kind === 'selectOption') {
+            mutation = {
+              kind,
+              optionNodeId: String(args.optionNodeId),
+              ...(entryId ? { entryId } : {}),
+              ...(typeof args.id === 'string' ? { id: args.id } : {}),
+            };
+          } else if (kind === 'appendNodes') {
+            const firstTagIds = stringArray(args.firstTagIds);
+            mutation = {
+              kind,
+              nodes: arrayArg<CreateNodeTree>(args.nodes),
+              ...(firstTagIds.length > 0 ? { firstTagIds } : {}),
+              ...(entryId ? { entryId } : {}),
+              ...(typeof args.id === 'string' ? { id: args.id } : {}),
+            };
+          } else if (kind === 'appendField') {
+            mutation = {
+              kind,
+              name: String(args.name ?? ''),
+              fieldType: fieldType(args.fieldType),
+              ...(entryId ? { entryId } : {}),
+              ...(typeof args.id === 'string' ? { id: args.id } : {}),
+            };
+          } else if (kind === 'appendImage') {
+            mutation = {
+              kind,
+              ...(typeof args.assetId === 'string' ? { assetId: args.assetId } : {}),
+              ...(typeof args.mediaUrl === 'string' ? { mediaUrl: args.mediaUrl } : {}),
+              width: nullableNumber(args.width),
+              height: nullableNumber(args.height),
+              alt: nullableString(args.alt),
+              name: nullableString(args.name),
+              ...(entryId ? { entryId } : {}),
+              ...(typeof args.id === 'string' ? { id: args.id } : {}),
+            };
+          } else if (kind === 'appendAttachment') {
+            mutation = {
+              kind,
+              assetId: nullableString(args.assetId),
+              mimeType: nullableString(args.mimeType),
+              originalFilename: nullableString(args.originalFilename),
+              fileSize: nullableNumber(args.fileSize),
+              thumbnailAssetId: nullableString(args.thumbnailAssetId),
+              pdfPageCount: nullableNumber(args.pdfPageCount),
+              audioDurationMs: nullableNumber(args.audioDurationMs),
+              videoDurationMs: nullableNumber(args.videoDurationMs),
+              ...(entryId ? { entryId } : {}),
+              ...(typeof args.id === 'string' ? { id: args.id } : {}),
+            };
+          } else if (kind === 'commit') {
+            mutation = { kind, ...(entryId ? { entryId } : {}) };
+          } else {
+            throw CoreError.invalidOperation('unknown field slot mutation');
+          }
+          return this.core.updateFieldSlot(String(args.ownerId), String(args.fieldDefId), mutation);
+        }
         case 'reuse_field_definition':
           return this.core.reuseFieldDefinition(String(args.entryId), String(args.targetDefId));
         case 'merge_definitions':
@@ -1351,7 +1428,14 @@ export class DocumentService implements DocumentSystemHost {
     for (const nodeId of changedNodeIds) {
       const before = previousNodes.get(nodeId);
       const after = this.textSearchNodes.get(nodeId);
-      this.addDependentRefreshIds(refreshIds, nodeId, before, after);
+      this.addDependentRefreshIds(
+        refreshIds,
+        nodeId,
+        before,
+        after,
+        previousNodes,
+        this.textSearchNodes,
+      );
 
       if (before && !after) {
         for (const descendantId of collectDescendantIds(previousNodes, nodeId)) {
@@ -1423,7 +1507,14 @@ export class DocumentService implements DocumentSystemHost {
       for (const nodeId of changedNodeIds) {
         const before = previousNodes.get(nodeId);
         const after = workingNodes.get(nodeId);
-        this.addDependentRefreshIds(refreshIds, nodeId, before, after);
+        this.addDependentRefreshIds(
+          refreshIds,
+          nodeId,
+          before,
+          after,
+          previousNodes,
+          workingNodes,
+        );
 
         if (before && !after) {
           for (const descendantId of collectDescendantIds(previousNodes, nodeId)) {
@@ -1470,14 +1561,31 @@ export class DocumentService implements DocumentSystemHost {
     nodeId: string,
     before: NodeProjection | undefined,
     after: NodeProjection | undefined,
+    previousNodes: ReadonlyMap<string, NodeProjection>,
+    nextNodes: ReadonlyMap<string, NodeProjection>,
   ) {
-    if (before?.type === 'tagDef' || after?.type === 'tagDef') {
-      for (const dependentId of this.textSearchTagDependents.get(nodeId) ?? []) refreshIds.add(dependentId);
-    }
-    if (before?.type === 'fieldDef' || after?.type === 'fieldDef') {
-      for (const dependentId of this.textSearchFieldDependents.get(nodeId) ?? []) refreshIds.add(dependentId);
-    }
+    this.addSchemaDefinitionDependents(refreshIds, before, previousNodes);
+    this.addSchemaDefinitionDependents(refreshIds, after, nextNodes);
     for (const dependentId of this.textSearchReferenceDependents.get(nodeId) ?? []) refreshIds.add(dependentId);
+  }
+
+  private addSchemaDefinitionDependents(
+    refreshIds: Set<string>,
+    start: NodeProjection | undefined,
+    nodes: ReadonlyMap<string, NodeProjection>,
+  ) {
+    let current = start;
+    const visited = new Set<string>();
+    while (current && !visited.has(current.id)) {
+      visited.add(current.id);
+      if (current.type === 'tagDef') {
+        for (const dependentId of this.textSearchTagDependents.get(current.id) ?? []) refreshIds.add(dependentId);
+      }
+      if (current.type === 'fieldDef') {
+        for (const dependentId of this.textSearchFieldDependents.get(current.id) ?? []) refreshIds.add(dependentId);
+      }
+      current = current.parentId ? nodes.get(current.parentId) : undefined;
+    }
   }
 
   private refreshTextSearchRecord(nodeId: string) {

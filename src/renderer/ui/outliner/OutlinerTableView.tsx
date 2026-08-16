@@ -32,7 +32,7 @@ import {
   isSystemFieldId,
   systemFieldDisplay,
 } from '../../../core/systemFields';
-import type { DocumentIndex, ToolbarDropdownRequest, UiState } from '../../state/document';
+import { fieldSlotsForIndex, type DocumentIndex, type ToolbarDropdownRequest, type UiState } from '../../state/document';
 import { outlinerChildParentId } from '../../state/document';
 import { referenceSummaryForIndex } from '../../state/referenceSummary';
 import {
@@ -76,7 +76,7 @@ import { RowMarker } from './RowMarker';
 import {
   buildOutlinerRows,
   fieldChoiceLabel,
-  fieldEntryForViewCell,
+  fieldSlotForViewCell,
   hiddenFieldKey,
   readViewConfig,
   showsResultViewControls,
@@ -86,12 +86,14 @@ import {
   type OutlinerRowItem,
   type ViewDisplayField,
 } from './row-model';
+import { fieldSlotId, type NodeFieldSlot } from '../../../core/fieldSlots';
 import { useTrailingDraftId } from './draftRow';
 import { SystemFieldValue } from './SystemFieldValue';
 import { FilteredOutHeading, HiddenFieldReveal } from './OutlinerViewChrome';
 import { OutlinerEmptyState } from './OutlinerEmptyState';
 import {
   nearestTableCell,
+  requestTableFieldSlotEditState,
   resolveTableCellNavigation,
   TABLE_TITLE_COLUMN_ID,
   type TableCellAddress,
@@ -117,10 +119,6 @@ interface TableLayoutItem {
 interface TableLayout {
   items: TableLayoutItem[];
   totalHeight: number;
-}
-
-interface PendingFieldMaterialization {
-  input: string;
 }
 
 type TableRenderRow =
@@ -388,6 +386,7 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
   const builtRows = useMemo(() => buildOutlinerRows(parent, props.index.byId, {
     expandedHiddenFields: props.ui.expandedHiddenFields,
     suppressFieldEntries: props.suppressOwnerFieldEntries,
+    fieldSlots: (nodeId) => fieldSlotsForIndex(props.index, nodeId),
   }), [parent, props.index.byId, props.suppressOwnerFieldEntries, props.ui.expandedHiddenFields]);
   const ownerRows = useMemo(
     () => builtRows.filter((row) => row.type === 'field' || row.type === 'hiddenField'),
@@ -403,7 +402,8 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
   const trailingFocused = props.ui.focusedId === props.parentId
     && props.ui.focusSurface === 'trailing'
     && props.ui.focusedPanelId === props.panelId;
-  const draftFocused = props.ui.focusedId === draftId && props.ui.focusedPanelId === props.panelId;
+  const draftFocused = props.ui.focusedId === draftId
+    && props.ui.focusedPanelId === props.panelId;
   const showDraft = parent?.type !== 'search' && Boolean(parent) && (
     trailingMode === 'always'
     || (trailingMode === 'auto' && (realContentCount === 0 || trailingFocused || draftFocused))
@@ -446,7 +446,6 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
   const widthCommitTokensRef = useRef(new Map<string, symbol>());
   const columnsRef = useRef(columns);
   columnsRef.current = columns;
-  const pendingFieldMaterializationsRef = useRef(new Map<string, PendingFieldMaterialization>());
   const consumeToolbarRequest = useCallback((request: ToolbarDropdownRequest) => {
     props.setUi((previous) => (
       previous.toolbarDropdownRequest === request
@@ -482,17 +481,17 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
     else cellRefs.current.delete(key);
   }, []);
 
-  const focusFieldValue = useCallback((entry: NodeProjection, seed?: string) => {
-    const primaryValueId = outlinerChildren(entry, props.index.byId)[0];
-    const target = primaryValueId
-      ? rowFocusTarget(primaryValueId, entry.id, props.panelId)
-      : focusTarget(entry.id, entry.id, props.panelId, 'trailing');
-    props.setUi((previous) => seed
-      ? requestPendingInputState(previous, target, seed, cursorEnd())
-      : requestFocusState(previous, target, cursorEnd()));
+  const focusFieldValue = useCallback((slot: NodeFieldSlot, seed?: string) => {
+    props.setUi((previous) => requestTableFieldSlotEditState(
+      previous,
+      slot,
+      props.index.byId,
+      props.panelId,
+      seed,
+    ));
   }, [props.index.byId, props.panelId, props.setUi]);
 
-  const beginFieldEdit = useCallback(async (rowId: NodeId, column: ViewDisplayField, seed?: string) => {
+  const beginFieldEdit = useCallback((rowId: NodeId, column: ViewDisplayField, seed?: string) => {
     const rowNode = props.index.byId.get(rowId);
     if (!rowNode) return;
     const ownerId = outlinerChildParentId(rowId, props.index.byId);
@@ -509,43 +508,13 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
 
     const field = props.index.byId.get(column.field);
     if (field?.type !== 'fieldDef') return;
-    const existing = fieldEntryForViewCell(rowNode, column.field, props.index.byId);
-    if (existing) {
-      focusFieldValue(existing, seed);
-      return;
-    }
-
-    const materializationKey = cellKey(address);
-    const existingMaterialization = pendingFieldMaterializationsRef.current.get(materializationKey);
-    if (existingMaterialization) {
-      if (seed) existingMaterialization.input += seed;
-      return;
-    }
-    const materialization: PendingFieldMaterialization = { input: seed ?? '' };
-    pendingFieldMaterializationsRef.current.set(materializationKey, materialization);
-
-    let createdEntryId: NodeId | undefined;
-    try {
-      await props.run(async () => {
-        const outcome = await api.createInlineField(ownerId, null, '', 'plain', column.field);
-        createdEntryId = outcome.focus?.nodeId;
-        return outcome;
-      }, {
-        applyFocus: false,
-        beforeApply: () => {
-          if (!createdEntryId) return;
-          const target = focusTarget(createdEntryId, createdEntryId, props.panelId, 'trailing');
-          props.setUi((previous) => materialization.input
-            ? requestPendingInputState(previous, target, materialization.input, cursorEnd())
-            : requestFocusState(previous, target, cursorEnd()));
-        },
-      });
-    } finally {
-      if (pendingFieldMaterializationsRef.current.get(materializationKey) === materialization) {
-        pendingFieldMaterializationsRef.current.delete(materializationKey);
-      }
-    }
-  }, [focusFieldValue, props.index.byId, props.panelId, props.run, props.setUi]);
+    const slot = fieldSlotForViewCell(rowNode, column.field, props.index.byId) ?? {
+      id: fieldSlotId(ownerId, column.field),
+      fieldDefId: column.field,
+      source: 'own' as const,
+    };
+    focusFieldValue(slot, seed);
+  }, [focusFieldValue, props.index.byId, props.run]);
 
   const onGridKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (isImeComposingEvent(event)) return;
@@ -785,19 +754,22 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
       ? buildOutlinerRows(childParent, props.index.byId, {
         expandedHiddenFields: props.ui.expandedHiddenFields,
         suppressFieldEntries: true,
+        fieldSlots: (nodeId) => fieldSlotsForIndex(props.index, nodeId),
       })
       : [];
     const nestedView = childParent ? readViewConfig(childParent, props.index.byId) : null;
     const nestedIsTable = nestedView?.viewMode === 'table';
     const focusedId = props.ui.focusedId;
-    const nestedDraftFocused = Boolean(childParent) && props.ui.focusedPanelId === props.panelId && (
-      (focusedId === ownerId && props.ui.focusSurface === 'trailing')
-      || (
-        props.ui.focusedParentId === ownerId
-        && focusedId !== null
-        && !props.index.byId.has(focusedId)
-      )
-    );
+    const nestedDraftFocused = Boolean(childParent)
+      && props.ui.focusedPanelId === props.panelId
+      && (
+        (focusedId === ownerId && props.ui.focusSurface === 'trailing')
+        || (
+          props.ui.focusedParentId === ownerId
+          && focusedId !== null
+          && !props.index.byId.has(focusedId)
+        )
+      );
     const showNested = expanded && Boolean(childParent) && (
       nestedRows.length > 0
       || nestedView?.viewMode === 'table'
@@ -974,7 +946,7 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
             renderField={(row, index, rows) => (
               <OutlinerFieldRow
                 panelId={props.panelId}
-                entryId={row.id}
+                slot={row.slot}
                 parentId={props.parentId}
                 rootId={props.rootId}
                 selectionRootId={selectionRootId}
@@ -1118,11 +1090,15 @@ function TableFieldCell(props: TableFieldCellProps) {
     ? outlinerChildParentId(props.rowNode.id, props.index.byId)
     : null;
   const owner = ownerId ? props.index.byId.get(ownerId) : undefined;
-  const entry = props.rowNode
-    ? fieldEntryForViewCell(props.rowNode, props.column.field, props.index.byId)
-    : undefined;
   const field = props.index.byId.get(props.column.field);
-  const hasNodeValue = Boolean(entry && field?.type === 'fieldDef');
+  const slot = owner && field?.type === 'fieldDef'
+    ? fieldSlotForViewCell(props.rowNode!, field.id, props.index.byId) ?? {
+      id: fieldSlotId(owner.id, field.id),
+      fieldDefId: field.id,
+      source: 'own' as const,
+    }
+    : undefined;
+  const hasNodeValue = Boolean(slot?.entryId);
   const valueTexts = owner
     ? viewFieldValuesFor(owner, props.column.field, props.index.byId, { referenceSummary: props.referenceSummary })
     : [];
@@ -1149,7 +1125,7 @@ function TableFieldCell(props: TableFieldCellProps) {
             : undefined}
         />
       );
-  } else if (entry && field?.type === 'fieldDef') {
+  } else if (owner && slot && field?.type === 'fieldDef') {
     const fieldType = projectFieldTypeById(props.index.byId, field.id);
     const placeholder = fieldType === 'options' || fieldType === 'options_from_supertag'
       ? tt.selectOption
@@ -1157,7 +1133,8 @@ function TableFieldCell(props: TableFieldCellProps) {
     content = (
       <FieldValueOutliner
         panelId={props.panelId}
-        entryId={entry.id}
+        slot={slot}
+        ownerId={owner.id}
         selectionRootId={props.selectionRootId}
         onRoot={props.onRoot}
         index={props.index}

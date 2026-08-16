@@ -35,6 +35,7 @@ import type {
   TagConfigPatch,
   ViewMode,
 } from './types';
+import type { FieldSlotMutation } from '../../core/core';
 import { replaceAllRichTextPatch } from './types';
 import type {
   AgentCoreMethod,
@@ -311,6 +312,8 @@ export const api = {
     fieldType: FieldType,
     targetDefId?: string,
   ) => command<CommandResult>('create_inline_field', { parentId, index, name, fieldType, targetDefId }),
+  updateFieldSlot: (ownerId: string, fieldDefId: string, mutation: FieldSlotMutation) =>
+    command<CommandResult>('update_field_slot', { ownerId, fieldDefId, ...mutation }),
   reuseFieldDefinition: (entryId: string, targetDefId: string) =>
     command<CommandResult>('reuse_field_definition', { entryId, targetDefId }),
   registerCollectedOption: (fieldDefId: string, name: string) =>

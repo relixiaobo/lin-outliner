@@ -9,6 +9,7 @@ import {
   type UiState,
 } from '../../state/document';
 import type { NodeId } from '../../api/types';
+import type { NodeRowKind } from '../../../core/actions/rowFacets';
 
 export function rowFocusTarget(nodeId: NodeId, parentId: NodeId | null, panelId: string | null): FocusTarget {
   return { nodeId, parentId, panelId, surface: 'row' };
@@ -21,6 +22,17 @@ export function focusTarget(
   surface: FocusSurface,
 ): FocusTarget {
   return { nodeId, parentId, panelId, surface };
+}
+
+export function outlinerNavigationFocusTarget(
+  nodeId: NodeId,
+  parentId: NodeId | null,
+  panelId: string | null,
+  kind: NodeRowKind,
+): FocusTarget {
+  return kind === 'fieldEntry'
+    ? focusTarget(nodeId, parentId, panelId, 'field-name')
+    : rowFocusTarget(nodeId, parentId, panelId);
 }
 
 export function cursorStart(): CursorPlacement {

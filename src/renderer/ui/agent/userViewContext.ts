@@ -4,7 +4,7 @@ import type {
   RendererUserViewVisibleNodeHint,
 } from '../../../core/agent/protocol';
 import type { NodeId } from '../../api/types';
-import { outlinerChildParentId, type DocumentIndex, type UiState } from '../../state/document';
+import { fieldSlotsForIndex, outlinerChildParentId, type DocumentIndex, type UiState } from '../../state/document';
 import {
   buildOutlinerRows,
   flattenExpandedOutlinerRows,
@@ -155,7 +155,12 @@ function visibleChildren(
     buildOutlinerRows(node, index.byId, {
       expandedHiddenFields: ui.expandedHiddenFields,
       suppressFieldEntries,
+      fieldSlots: (nodeId) => fieldSlotsForIndex(index, nodeId),
     }),
     ui.expanded,
-  ).flatMap((row) => row.type === 'field' || row.type === 'content' ? [row.id] : []);
+  ).flatMap((row) => {
+    if (row.type === 'content') return [row.id];
+    if (row.type === 'field' && row.slot.entryId) return [row.slot.entryId];
+    return [];
+  });
 }

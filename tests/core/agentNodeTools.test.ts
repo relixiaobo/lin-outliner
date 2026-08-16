@@ -2,14 +2,17 @@ import { describe, expect, test } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { Core } from '../../src/core/core';
+import { Core, type FieldSlotMutation } from '../../src/core/core';
 import { projectFieldConfig } from '../../src/core/configProjection';
 import { LoroOutlinerDocument } from '../../src/core/loroDocument';
 import { SEARCH_QUERY_COMPLEXITY_LIMITS } from '../../src/core/searchQueryCompiler';
 import { buildTextSearchIndex } from '../../src/core/searchEngine';
+import { nodeFieldSlots } from '../../src/core/fieldSlots';
+import { DONE_FIELD } from '../../src/core/systemFields';
 import { LIBRARY_ID, plainText, replaceAllRichTextPatch, SCHEMA_ID, TRASH_ID, WORKSPACE_ID } from '../../src/core/types';
 import { createNodeTools, visibleOutlineUndoStack, type OutlinerToolHost } from '../../src/main/agent/capabilities/agentNodeTools';
 import { validateSearchNodes } from '../../src/main/agent/capabilities/agentNodeToolSearch';
+import { fieldReads, indexProjection } from '../../src/main/agent/capabilities/agentNodeToolProjection';
 import { DocumentReadModel } from '../../src/main/documentReadModel';
 import type { OperationHistoryData } from '../../src/main/agent/capabilities/agentNodeToolTypes';
 import type { ToolEnvelope } from '../../src/main/agent/capabilities/agentToolEnvelope';
@@ -46,6 +49,11 @@ function hostFor(core: Core, overrides: Partial<OutlinerToolHost> = {}): Outline
       if (command === 'set_field_config') return core.setFieldConfig(String(args.fieldId), args.patch as any);
       if (command === 'create_field_definition') return core.createFieldDefinition(String(args.name), fieldTypeArg(args.fieldType));
       if (command === 'create_inline_field') return core.createInlineField(String(args.parentId), nullableNumber(args.index), String(args.name), fieldTypeArg(args.fieldType));
+      if (command === 'update_field_slot') return core.updateFieldSlot(
+        String(args.ownerId),
+        String(args.fieldDefId),
+        fieldSlotMutationArg(args),
+      );
       if (command === 'reuse_field_definition') return core.reuseFieldDefinition(String(args.entryId), String(args.targetDefId));
       if (command === 'merge_definitions') return core.mergeDefinitions(String(args.targetId), arrayArg(args.sourceIds));
       if (command === 'create_collected_field_option') return core.createCollectedFieldOption(String(args.fieldEntryId), String(args.name));
@@ -94,6 +102,28 @@ function fieldTypeArg(value: unknown) {
     return String(value) as any;
   }
   return 'plain';
+}
+
+function fieldSlotMutationArg(args: Record<string, unknown>): FieldSlotMutation {
+  const entryId = typeof args.entryId === 'string' ? args.entryId : undefined;
+  const id = typeof args.id === 'string' ? args.id : undefined;
+  if (args.kind === 'appendText') {
+    return {
+      kind: 'appendText',
+      text: String(args.text ?? ''),
+      ...(entryId ? { entryId } : {}),
+      ...(id ? { id } : {}),
+      ...(args.collect === true ? { collect: true } : {}),
+    };
+  }
+  if (args.kind === 'appendReference') {
+    return { kind: 'appendReference', targetId: String(args.targetId), ...(entryId ? { entryId } : {}), ...(id ? { id } : {}) };
+  }
+  if (args.kind === 'selectOption') {
+    return { kind: 'selectOption', optionNodeId: String(args.optionNodeId), ...(entryId ? { entryId } : {}), ...(id ? { id } : {}) };
+  }
+  if (args.kind === 'commit') return { kind: 'commit', ...(entryId ? { entryId } : {}) };
+  throw new Error(`unsupported field slot mutation: ${String(args.kind)}`);
 }
 
 function nodeRef(core: Core, nodeId: string, label?: string): string {
@@ -984,6 +1014,33 @@ describe('agent node tools', () => {
     expect(entries[0]!.children.map((childId) => core.state().nodes[childId].content.text)).toEqual(['Open']);
   });
 
+  test('node_create does not treat owner focus as an empty projected field entry', async () => {
+    const core = Core.new();
+    const taskTagId = mustFocus(core.createTag('task'));
+    const templateEntryId = mustFocus(core.createFieldDef(taskTagId, 'Status', 'plain'));
+    const fieldDefId = core.state().nodes[templateEntryId].fieldDefId!;
+    const ownerId = mustFocus(core.createNode(core.projection().todayId, null, 'Ship'));
+    core.applyTag(ownerId, taskTagId);
+
+    const result = await executeTool<{ createdFieldEntryIds?: string[] }>(core, 'node_create', {
+      parent_id: ownerId,
+      outline: '- Status::\n  - \n- Note:: Kept',
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.data!.createdFieldEntryIds).toHaveLength(1);
+    expect(result.data!.createdFieldEntryIds).not.toContain(ownerId);
+    expect(core.state().nodes[ownerId].children).toHaveLength(1);
+    expect(core.state().nodes[core.state().nodes[ownerId].children[0]!].type).toBe('fieldEntry');
+    expect(core.state().nodes[fieldEntryByName(core, ownerId, 'Note')].children
+      .map((childId) => core.state().nodes[childId].content.text)).toEqual(['Kept']);
+    const slots = nodeFieldSlots(core.state(), ownerId);
+    expect(slots).toHaveLength(2);
+    expect(slots[0]).toMatchObject({ fieldDefId, source: 'tag' });
+    expect(slots[0]!.entryId).toBeUndefined();
+    expect(slots[1]).toMatchObject({ source: 'own' });
+  });
+
   test('node_create preflights nested tagged fields through the specific definition', async () => {
     const core = Core.new();
     const today = core.projection().todayId;
@@ -1011,8 +1068,8 @@ describe('agent node tools', () => {
     const entries = core.state().nodes[nodeId].children
       .map((childId) => core.state().nodes[childId])
       .filter((node) => node?.type === 'fieldEntry');
-    expect(entries).toHaveLength(2);
-    expect(entries.find((entry) => entry.fieldDefId === baseFieldDefId)!.children).toEqual([]);
+    expect(entries).toHaveLength(1);
+    expect(entries.some((entry) => entry.fieldDefId === baseFieldDefId)).toBe(false);
     const issueEntry = entries.find((entry) => entry.fieldDefId === issueFieldDefId)!;
     expect(issueEntry.children).toHaveLength(1);
     const optionValueId = issueEntry.children[0]!;
@@ -1048,6 +1105,28 @@ describe('agent node tools', () => {
     });
     expect(created.ok).toBe(false);
     expect(created.error?.message).toContain('read-only');
+  });
+
+  test('node_create routes a projected Done field without creating a plain value', async () => {
+    const core = Core.new();
+    const taskTagId = mustFocus(core.createTag('task'));
+    const templateEntryId = mustFocus(core.createInlineField(taskTagId, null, '', 'plain'));
+    core.reuseFieldDefinition(templateEntryId, DONE_FIELD);
+    const ownerId = mustFocus(core.createNode(core.projection().todayId, null, 'Ship'));
+    core.applyTag(ownerId, taskTagId);
+
+    const result = await executeTool(core, 'node_create', {
+      parent_id: ownerId,
+      outline: '- Done:: true',
+    });
+
+    expect(result.ok).toBe(true);
+    expect(core.state().nodes[ownerId].completedAt).toBeGreaterThan(0);
+    expect(core.state().nodes[ownerId].children).toEqual([]);
+    const slots = nodeFieldSlots(core.state(), ownerId);
+    expect(slots).toHaveLength(1);
+    expect(slots[0]).toMatchObject({ fieldDefId: DONE_FIELD, source: 'tag' });
+    expect(slots[0]!.entryId).toBeUndefined();
   });
 
   test('node_create materializes markdown inline marks and links as rich text', async () => {
@@ -1273,7 +1352,7 @@ describe('agent node tools', () => {
     ]);
   });
 
-  test('node_create preserves reusable template field values while adding new values', async () => {
+  test('node_create does not copy template field values while adding new values', async () => {
     const core = Core.new();
     const today = core.projection().todayId;
     const tagId = mustFocus(core.createTag('project'));
@@ -1292,7 +1371,6 @@ describe('agent node tools', () => {
       core.state().nodes[childId]!.type === 'fieldEntry'
       && core.state().nodes[childId]!.fieldDefId === fieldDefId)!;
     expect(core.state().nodes[fieldEntryId]!.children.map((childId) => core.state().nodes[childId]!.content.text)).toEqual([
-      'Template default',
       'Active',
     ]);
   });
@@ -2120,13 +2198,16 @@ describe('agent node tools', () => {
     const dateFieldDefId = core.state().nodes[templateEntryId]!.fieldDefId!;
     const root = mustFocus(core.createNode(today, null, 'Launch'));
     core.applyTag(root, tagId);
-    const fieldEntryId = core.state().nodes[root]!.children.find((childId) =>
-      core.state().nodes[childId]!.fieldDefId === dateFieldDefId)!;
+    const fieldEntryId = mustFocus(core.updateFieldSlot(root, dateFieldDefId, {
+      kind: 'appendText',
+      text: '2026-05-19',
+    }));
+    const initialValueId = core.state().nodes[fieldEntryId]!.children[0]!;
 
     const valid = await executeTool(core, 'node_edit', {
       node_id: root,
-      old_string: `  - %%node:${fieldEntryId}%% Date::`,
-      new_string: `  - %%node:${fieldEntryId}%% Date::\n    - 2026-05-20 / 2026-05-24`,
+      old_string: `  - %%node:${fieldEntryId}%% Date::\n    - %%node:${initialValueId}%% 2026-05-19`,
+      new_string: `  - %%node:${fieldEntryId}%% Date::\n    - %%node:${initialValueId}%% 2026-05-20 / 2026-05-24`,
     });
     expect(valid.ok).toBe(true);
     expect(core.state().nodes[fieldEntryId]!.children.map((childId) => core.state().nodes[childId]!.content.text)).toEqual([
@@ -2754,8 +2835,7 @@ describe('agent node tools', () => {
     const nodeId = mustFocus(core.createNode(today, null, 'Launch'));
     core.updateNodeDescription(nodeId, 'Q2 rollout');
     core.applyTag(nodeId, tagId);
-    const fieldEntryId = core.state().nodes[nodeId].children.find((childId) => core.state().nodes[childId].fieldDefId === fieldDefId)!;
-    core.createNode(fieldEntryId, null, 'Active');
+    const fieldEntryId = mustFocus(core.updateFieldSlot(nodeId, fieldDefId, { kind: 'appendText', text: 'Active' }));
     const childId = mustFocus(core.createNode(nodeId, null, 'Draft plan'));
 
     const envelope = await executeTool<{
@@ -2781,6 +2861,49 @@ describe('agent node tools', () => {
     expect(item.outline).toContain('- Launch - Q2 rollout #project');
     expect(item.outline).toContain('  - Status:: Active');
     expect(item.outline).toContain('  - Draft plan');
+  });
+
+  test('field reads preserve stored values for a trashed owner when deleted nodes are included', () => {
+    const core = Core.new();
+    const root = mustFocus(core.createNode(core.projection().todayId, null, 'Archived task'));
+    const fieldEntryId = mustFocus(core.createInlineField(root, null, 'Status', 'plain'));
+    core.setFieldFreeTextValue(fieldEntryId, 'Done');
+    core.trashNode(root);
+
+    const index = indexProjection(core.projection());
+    const trashed = index.nodes.get(root)!;
+    expect(fieldReads(index, trashed, true)).toEqual([
+      expect.objectContaining({
+        name: 'Status',
+        fieldEntryId,
+        values: [expect.objectContaining({ text: 'Done' })],
+      }),
+    ]);
+    expect(fieldReads(index, trashed, false)).toEqual([]);
+  });
+
+  test('field reads include trashed direct entries on a live owner when requested', () => {
+    const core = Core.new();
+    const root = mustFocus(core.createNode(core.projection().todayId, null, 'Task'));
+    const statusEntryId = mustFocus(core.createInlineField(root, null, 'Status', 'plain'));
+    core.setFieldFreeTextValue(statusEntryId, 'Done');
+    const ownerEntryId = mustFocus(core.createInlineField(root, null, 'Owner', 'plain'));
+    core.setFieldFreeTextValue(ownerEntryId, 'Lin');
+    core.trashNode(statusEntryId);
+
+    const index = indexProjection(core.projection());
+    const liveOwner = index.nodes.get(root)!;
+    expect(fieldReads(index, liveOwner, false)).toEqual([
+      expect.objectContaining({ name: 'Owner', fieldEntryId: ownerEntryId }),
+    ]);
+    expect(fieldReads(index, liveOwner, true)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'Owner', fieldEntryId: ownerEntryId }),
+      expect.objectContaining({
+        name: 'Status',
+        fieldEntryId: statusEntryId,
+        values: [expect.objectContaining({ text: 'Done' })],
+      }),
+    ]));
   });
 
   test('node_read serializes local-file inline refs as file markers', async () => {
@@ -2921,8 +3044,8 @@ describe('agent node tools', () => {
     const fieldDefId = core.state().nodes[templateEntryId]!.fieldDefId!;
     const root = mustFocus(core.createNode(today, null, 'Task'));
     core.applyTag(root, tagId);
-    const fieldEntryId = core.state().nodes[root]!.children.find((childId) => core.state().nodes[childId]!.fieldDefId === fieldDefId)!;
-    const valueId = mustFocus(core.createNode(fieldEntryId, null, 'Open'));
+    const fieldEntryId = mustFocus(core.updateFieldSlot(root, fieldDefId, { kind: 'appendText', text: 'Open' }));
+    const valueId = core.state().nodes[fieldEntryId]!.children[0]!;
 
     const result = await executeRawTool(core, 'node_read', { node_id: root, depth: 1 });
     const visible = parseVisibleToolResult<{
@@ -3540,10 +3663,8 @@ describe('agent node tools', () => {
     const waiting = mustFocus(core.createNode(today, null, 'Partner followup'));
     core.applyTag(active, taskTagId);
     core.applyTag(waiting, taskTagId);
-    const activeStatus = core.state().nodes[active]!.children.find((childId) => core.state().nodes[childId]!.fieldDefId === statusFieldDefId)!;
-    const waitingStatus = core.state().nodes[waiting]!.children.find((childId) => core.state().nodes[childId]!.fieldDefId === statusFieldDefId)!;
-    core.createNode(activeStatus, null, 'Active');
-    core.createNode(waitingStatus, null, 'Waiting');
+    core.updateFieldSlot(active, statusFieldDefId, { kind: 'appendText', text: 'Active' });
+    core.updateFieldSlot(waiting, statusFieldDefId, { kind: 'appendText', text: 'Waiting' });
 
     const temporary = await executeTool<{
       total: number;

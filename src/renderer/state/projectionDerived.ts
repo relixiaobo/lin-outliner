@@ -1,4 +1,5 @@
 import type { NodeId, NodeProjection } from '../api/types';
+import { TRASH_ID } from '../../core/types';
 import { SparseProjectionMap } from './sparseProjectionMap';
 
 export interface ProjectionSemanticRevisions {
@@ -145,19 +146,154 @@ export function projectionTagDefinitionsChanged(params: {
   readonly removedIds: readonly NodeId[];
   readonly trashMembershipChangedIds: ReadonlySet<NodeId>;
 }): boolean {
-  for (const node of params.changedNodes) {
-    if (node.type === 'tagDef' || params.previousById.get(node.id)?.type === 'tagDef') return true;
+  const touchedIds = new Set<NodeId>([
+    ...params.changedNodes.map((node) => node.id),
+    ...params.removedIds,
+    ...params.trashMembershipChangedIds,
+  ]);
+  const candidateTagIds = new Set<NodeId>();
+  const activeChangedFieldDefIds = new Set<NodeId>();
+  for (const nodeId of touchedIds) {
+    collectTagShapeCandidates(params.previousById, nodeId, candidateTagIds);
+    collectTagShapeCandidates(params.nextById, nodeId, candidateTagIds);
+
+    const wasActive = activeFieldDefinition(params.previousById, nodeId);
+    const isActive = activeFieldDefinition(params.nextById, nodeId);
+    if (wasActive !== isActive) activeChangedFieldDefIds.add(nodeId);
   }
-  for (const nodeId of params.removedIds) {
-    if (params.previousById.get(nodeId)?.type === 'tagDef') return true;
+  collectTagsUsingFieldDefinitions(params.previousById, activeChangedFieldDefIds, candidateTagIds);
+  collectTagsUsingFieldDefinitions(params.nextById, activeChangedFieldDefIds, candidateTagIds);
+
+  for (const tagId of candidateTagIds) {
+    if (!sameTagSlotShape(
+      tagSlotShape(params.previousById, tagId),
+      tagSlotShape(params.nextById, tagId),
+    )) return true;
   }
-  for (const nodeId of params.trashMembershipChangedIds) {
+  return false;
+}
+
+export function projectionTagCandidatesChanged(params: {
+  readonly previousById: ReadonlyMap<NodeId, NodeProjection>;
+  readonly nextById: ReadonlyMap<NodeId, NodeProjection>;
+  readonly changedNodes: readonly NodeProjection[];
+  readonly removedIds: readonly NodeId[];
+  readonly trashMembershipChangedIds: ReadonlySet<NodeId>;
+}): boolean {
+  const candidateIds = new Set<NodeId>([
+    ...params.changedNodes.map((node) => node.id),
+    ...params.removedIds,
+    ...params.trashMembershipChangedIds,
+  ]);
+  for (const nodeId of candidateIds) {
     if (
       params.previousById.get(nodeId)?.type === 'tagDef'
       || params.nextById.get(nodeId)?.type === 'tagDef'
     ) return true;
   }
   return false;
+}
+
+interface TagSlotShape {
+  readonly active: boolean;
+  readonly extendsTargetId: NodeId | null;
+  readonly templates: readonly {
+    readonly entryId: NodeId;
+    readonly fieldDefId: NodeId;
+    readonly fieldDefActive: boolean;
+  }[];
+}
+
+function collectTagShapeCandidates(
+  byId: ReadonlyMap<NodeId, NodeProjection>,
+  nodeId: NodeId,
+  output: Set<NodeId>,
+): void {
+  const node = byId.get(nodeId);
+  if (!node) return;
+  if (node.type === 'tagDef') output.add(node.id);
+  const parent = node.parentId ? byId.get(node.parentId) : undefined;
+  if (
+    (node.type === 'fieldEntry' || node.type === 'defConfig')
+    && parent?.type === 'tagDef'
+  ) output.add(parent.id);
+  if (node.type !== 'reference' || parent?.type !== 'defConfig' || parent.configKey !== 'extends') return;
+  const tag = parent.parentId ? byId.get(parent.parentId) : undefined;
+  if (tag?.type === 'tagDef') output.add(tag.id);
+}
+
+function collectTagsUsingFieldDefinitions(
+  byId: ReadonlyMap<NodeId, NodeProjection>,
+  fieldDefIds: ReadonlySet<NodeId>,
+  output: Set<NodeId>,
+): void {
+  if (fieldDefIds.size === 0) return;
+  for (const node of byId.values()) {
+    if (node.type !== 'tagDef') continue;
+    if (node.children.some((childId) => {
+      const child = byId.get(childId);
+      return child?.type === 'fieldEntry'
+        && Boolean(child.fieldDefId)
+        && fieldDefIds.has(child.fieldDefId!);
+    })) output.add(node.id);
+  }
+}
+
+function tagSlotShape(
+  byId: ReadonlyMap<NodeId, NodeProjection>,
+  tagId: NodeId,
+): TagSlotShape {
+  const tag = byId.get(tagId);
+  const active = tag?.type === 'tagDef' && !nodeIsInSubtree(byId, tagId, TRASH_ID);
+  if (!tag || !active) return { active: false, extendsTargetId: null, templates: [] };
+
+  const extendsRow = tag.children
+    .map((childId) => byId.get(childId))
+    .find((child) => child?.type === 'defConfig' && child.configKey === 'extends');
+  const extendsValue = extendsRow?.children
+    .map((childId) => byId.get(childId))
+    .find((child) => child?.type === 'reference' && child.targetId);
+  const extendsTargetId = extendsValue?.type === 'reference'
+    ? extendsValue.targetId ?? null
+    : null;
+  const templates = tag.children.flatMap((childId): TagSlotShape['templates'][number][] => {
+    const child = byId.get(childId);
+    if (
+      child?.type !== 'fieldEntry'
+      || !child.fieldDefId
+      || nodeIsInSubtree(byId, child.id, TRASH_ID)
+    ) return [];
+    return [{
+      entryId: child.id,
+      fieldDefId: child.fieldDefId,
+      fieldDefActive: activeFieldDefinition(byId, child.fieldDefId),
+    }];
+  });
+  return { active, extendsTargetId, templates };
+}
+
+function activeFieldDefinition(
+  byId: ReadonlyMap<NodeId, NodeProjection>,
+  nodeId: NodeId,
+): boolean {
+  if (nodeId.startsWith('sys:')) return true;
+  const node = byId.get(nodeId);
+  return node?.type === 'fieldDef' && !nodeIsInSubtree(byId, nodeId, TRASH_ID);
+}
+
+function sameTagSlotShape(left: TagSlotShape, right: TagSlotShape): boolean {
+  if (
+    left.active !== right.active
+    || left.extendsTargetId !== right.extendsTargetId
+    || left.templates.length !== right.templates.length
+  ) return false;
+  return left.templates.every((template, index) => {
+    const other = right.templates[index];
+    if (!other) return false;
+    return template.entryId === other.entryId
+      && template.fieldDefId === other.fieldDefId
+      && template.fieldDefActive === other.fieldDefActive;
+  });
 }
 
 function inlineReferenceTargetIds(node: NodeProjection): NodeId[] {

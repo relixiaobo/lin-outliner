@@ -7,6 +7,7 @@ import {
 } from './localStorageStore';
 import { hiddenFieldKey } from './outlinerRows';
 import { isRecord } from './persistence';
+import { nodeFieldSlots } from '../../core/fieldSlots';
 
 const STORAGE_KEY = 'lin-outliner:outline-view-state:v1';
 const STORE_VERSION = 1;
@@ -117,10 +118,10 @@ function collectOutlineScope(
 
     const parent = byId.get(parentId);
     if (!parent) return;
+    for (const slot of nodeFieldSlots(byId, parentId)) {
+      hiddenFieldKeys.add(hiddenFieldKey(parentId, slot.id));
+    }
     for (const childId of parent.children) {
-      if (byId.get(childId)?.type === 'fieldEntry') {
-        hiddenFieldKeys.add(hiddenFieldKey(parentId, childId));
-      }
       visitRow(childId);
     }
   };

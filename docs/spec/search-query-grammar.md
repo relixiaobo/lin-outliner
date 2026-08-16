@@ -81,6 +81,31 @@ metadata, arbitrary text, filenames inside the search evaluator, and URLs never
 override the stored family. PDFs and other files remain available through text
 search and `IS_TYPE attachment`, not a media facet.
 
+## Field Slot Semantics
+
+Field rules read the same `nodeFieldSlots` projection as the renderer, Table,
+and agent node reader. A tag-defined field therefore participates in search as
+soon as the tag schema contains it, even when the node has no stored field entry.
+The field name is indexed for an empty virtual slot; field values and date ranges
+come only from stored value children.
+
+The state operators distinguish definition from storage:
+
+- `HAS_FIELD` and `FIELD_IS_DEFINED` match when the slot exists, whether it came
+  from a tag chain or an own entry.
+- `FIELD_IS_NOT_DEFINED` matches only when no slot for that `fieldDefId` exists.
+- `FIELD_IS_SET` matches when the slot has at least one non-empty stored value.
+- `FIELD_IS_NOT_SET` matches when there is no non-empty stored value, including
+  nodes where the field is not defined.
+- `IS_EMPTY` matches only the intersection: the slot exists and has no non-empty
+  stored value.
+
+`FIELD_IS`, comparison, sort, and date operators read stored values through the
+slot's backing entry. Removing a tag does not erase a stored value: the surviving
+own slot keeps answering the same value queries. Static values on a tag template
+are not instance values in the current projection and do not answer value
+queries.
+
 ## Complexity Budget
 
 Search query handling is admitted through a shared iterative compiler before
@@ -172,7 +197,10 @@ The main process keeps the node text index derived and disposable. It is built
 once on workspace load, updated incrementally from Core changed-node deltas, and
 rebuilt after undo/redo or other whole-tree rewrites. Tag and field definition
 changes fan out through dependency maps so dependent node records are refreshed
-without hiding a full rebuild behind `Core.revision()`.
+without hiding a full rebuild behind `Core.revision()`. A tagged node records the
+complete applied `extends` chains as dependencies, so adding a field to an
+ancestor tag or changing an ancestor's own `extends` target refreshes existing
+descendant-tag instances even when their node records did not change.
 
 The text normalization, query analysis, CJK/Latin tokenization, snippet building,
 and label ranking described above are one shared pure module

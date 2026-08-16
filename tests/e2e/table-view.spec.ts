@@ -273,42 +273,44 @@ test.describe('table view', () => {
     const statusCell = rootGrid(page)
       .locator(`.outliner-table-cell[data-table-row-id="${ids.alpha}"]`)
       .first();
-    const before = (await commandCalls(page)).filter((call) => call.cmd === 'create_inline_field').length;
+    const slotMutationsBefore = (await commandCalls(page)).filter((call) => call.cmd === 'update_field_slot').length;
 
     await statusCell.click();
     await page.keyboard.press('ArrowDown');
     await page.keyboard.press('ArrowUp');
-    expect((await commandCalls(page)).filter((call) => call.cmd === 'create_inline_field')).toHaveLength(before);
+    expect((await commandCalls(page)).filter((call) => call.cmd === 'update_field_slot')).toHaveLength(slotMutationsBefore);
 
     await statusCell.press('Enter');
-    await expect.poll(async () => (await commandCalls(page)).filter((call) => (
-      call.cmd === 'create_inline_field'
-      && call.args.parentId === ids.alpha
-      && call.args.targetDefId === ids.statusField
-    )).length).toBe(1);
+    await expect(statusCell.locator('.ProseMirror')).toBeFocused();
+    expect((await commandCalls(page)).filter((call) => call.cmd === 'update_field_slot')).toHaveLength(slotMutationsBefore);
 
-    const projection = await e2eProjection(page);
-    const alpha = projection.nodes.find((node) => node.id === ids.alpha)!;
-    const entries = projection.nodes.filter((node) => (
-      alpha.children.includes(node.id)
+    const beforeCommit = await e2eProjection(page);
+    const alphaBeforeCommit = beforeCommit.nodes.find((node) => node.id === ids.alpha)!;
+    expect(beforeCommit.nodes.filter((node) => (
+      alphaBeforeCommit.children.includes(node.id)
       && node.type === 'fieldEntry'
       && (node as typeof node & { fieldDefId?: string }).fieldDefId === ids.statusField
-    ));
-    expect(entries).toHaveLength(1);
+    ))).toHaveLength(0);
 
     const dueCell = rootGrid(page)
       .locator(`.outliner-table-cell[data-table-row-id="${ids.alpha}"]`)
       .nth(1);
-    await expect(statusCell.locator('.ProseMirror')).toBeFocused();
     await expect(statusCell.locator('.field-value-outliner .row-bullet-dot')).toBeVisible();
     await page.keyboard.type('3');
     await page.keyboard.press('Escape');
+    await expect.poll(async () => (await commandCalls(page)).filter((call) => (
+      call.cmd === 'update_field_slot'
+      && call.args.ownerId === ids.alpha
+      && call.args.fieldDefId === ids.statusField
+      && call.args.kind === 'appendText'
+      && call.args.text === '3'
+    )).length).toBe(1);
     await expect(statusCell).toBeFocused();
     await page.keyboard.press('Tab');
     await expect(dueCell).toBeFocused();
     await expect(statusCell.locator('.field-value-outliner')).toContainText('3');
     await expect(statusCell.locator('.row-bullet-shape.content .row-bullet-dot')).toBeVisible();
-    await expect(dueCell.locator('.outliner-table-empty-cell .row-bullet-dot')).toBeVisible();
+    await expect(dueCell.locator('.field-value-outliner .row-bullet-dot')).toBeVisible();
     expect((await commandCalls(page)).some((call) => call.cmd === 'indent_node')).toBe(false);
   });
 
@@ -322,7 +324,7 @@ test.describe('table view', () => {
       const originalInvoke = win.lin!.invoke.bind(win.lin);
       let delayed = false;
       win.lin!.invoke = async (cmd, args) => {
-        if (cmd === 'create_inline_field' && !delayed) {
+        if (cmd === 'update_field_slot' && args?.kind === 'appendText' && !delayed) {
           delayed = true;
           await new Promise<void>((resolve) => window.setTimeout(resolve, 80));
         }
@@ -333,14 +335,17 @@ test.describe('table view', () => {
     const statusCell = rootGrid(page)
       .locator(`.outliner-table-cell[data-table-row-id="${ids.alpha}"]`)
       .first();
-    const before = (await commandCalls(page)).filter((call) => call.cmd === 'create_inline_field').length;
+    const before = (await commandCalls(page)).filter((call) => call.cmd === 'update_field_slot').length;
     await statusCell.focus();
     await page.keyboard.type('ab');
+    await page.keyboard.press('Escape');
 
     await expect.poll(async () => (await commandCalls(page)).filter((call) => (
-      call.cmd === 'create_inline_field'
-      && call.args.parentId === ids.alpha
-      && call.args.targetDefId === ids.statusField
+      call.cmd === 'update_field_slot'
+      && call.args.ownerId === ids.alpha
+      && call.args.fieldDefId === ids.statusField
+      && call.args.kind === 'appendText'
+      && call.args.text === 'ab'
     )).length).toBe(before + 1);
     await expect(statusCell.locator('.field-value-outliner')).toContainText('ab');
   });
@@ -621,7 +626,7 @@ test.describe('table view', () => {
         `[data-node-id="table-interactive-value"] .row-bullet-dot`,
       )!;
       const emptyDot = element.querySelector<HTMLElement>(
-        `.outliner-table-cell[data-table-row-id="${alphaId}"] .outliner-table-empty-cell .row-bullet-dot`,
+        `.outliner-table-cell[data-table-row-id="${alphaId}"] .field-value-outliner.empty .row-bullet-dot`,
       )!;
       return [titleDot, valueDot, emptyDot].map((dot) => ({
         height: dot.getBoundingClientRect().height,
@@ -1016,15 +1021,21 @@ test('reads and edits saved-search table fields through the complete reference c
   await expect(statusCell).toContainText('Chain value');
   await expect(statusCell.locator(`[data-node-id="${ids.searchStatusValue}"]`)).toBeVisible();
 
-  const createsBefore = (await commandCalls(page)).filter((call) => call.cmd === 'create_inline_field').length;
+  const slotMutationsBefore = (await commandCalls(page)).filter((call) => call.cmd === 'update_field_slot').length;
   await dueCell.focus();
   await dueCell.press('Enter');
+  await expect(dueCell.locator('.ProseMirror')).toBeFocused();
+  expect((await commandCalls(page)).filter((call) => call.cmd === 'update_field_slot')).toHaveLength(slotMutationsBefore);
+  await page.keyboard.type('2026-05-20');
+  await page.keyboard.press('Escape');
   await expect.poll(async () => (await commandCalls(page)).filter((call) => (
-    call.cmd === 'create_inline_field'
-    && call.args.parentId === ids.alpha
-    && call.args.targetDefId === ids.dueField
+    call.cmd === 'update_field_slot'
+    && call.args.ownerId === ids.alpha
+    && call.args.fieldDefId === ids.dueField
+    && call.args.kind === 'appendText'
+    && call.args.text === '2026-05-20'
   )).length).toBe(1);
-  expect((await commandCalls(page)).filter((call) => call.cmd === 'create_inline_field')).toHaveLength(createsBefore + 1);
+  expect((await commandCalls(page)).filter((call) => call.cmd === 'update_field_slot')).toHaveLength(slotMutationsBefore + 2);
 
   const projection = await e2eProjection(page);
   const alpha = projection.nodes.find((node) => node.id === ids.alpha)!;
@@ -1033,6 +1044,7 @@ test('reads and edits saved-search table fields through the complete reference c
     && node.type === 'fieldEntry'
     && (node as typeof node & { fieldDefId?: string }).fieldDefId === ids.dueField
   ))).toBe(true);
+  await expect(dueCell).toContainText('2026-05-20');
 });
 
 test('table keeps a bounded DOM window for long outlines', async ({ page }) => {

@@ -8,6 +8,7 @@
 // it (it reads a structural node shape that `Node` and `NodeProjection` satisfy).
 
 import { buildReferenceSummary, type ReferenceSummary } from './references';
+import { nodeFieldSlots, type FieldSlotSource } from './fieldSlots';
 import { collectDescendantIds } from './treeUtils';
 import { TRASH_ID, type NodeId, type NodeType, type RefRole, type RichText } from './types';
 
@@ -276,17 +277,13 @@ export function systemFieldDisplay(
 }
 
 /**
- * True when the node carries a built-in Done field (a `sys:done` field entry
- * child). Typed structurally on the minimum it reads — a node's child ids and,
- * per child, its `type`/`fieldDefId` — so both core's `ConfigNodeMap` and the
- * renderer's projection map satisfy it without converting to `SysFieldNode`.
+ * True when the node carries a built-in Done slot, projected or stored. Typed
+ * structurally so both core's `ConfigNodeMap` and the renderer projection map
+ * satisfy it without converting to `SysFieldNode`.
  */
 export function nodeHasDoneField(
-  node: { children: readonly NodeId[] },
-  byId: ReadonlyMap<NodeId, { type?: NodeType; fieldDefId?: NodeId }>,
+  node: { id: NodeId },
+  byId: FieldSlotSource,
 ): boolean {
-  return node.children.some((childId) => {
-    const child = byId.get(childId);
-    return child?.type === 'fieldEntry' && child.fieldDefId === DONE_FIELD;
-  });
+  return nodeFieldSlots(byId, node.id).some((slot) => slot.fieldDefId === DONE_FIELD);
 }

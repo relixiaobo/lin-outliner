@@ -25,6 +25,7 @@ import type {
   ProjectionIndex,
 } from './agentNodeToolTypes';
 import { unique } from './agentNodeToolUtils';
+import { nodeFieldSlots } from '../../../core/fieldSlots';
 
 const SYSTEM_IDS = new Set([
   WORKSPACE_ID,
@@ -42,32 +43,61 @@ export function isSystemNodeId(nodeId: string): boolean {
 }
 
 export function fieldReads(index: ProjectionIndex, node: NodeProjection, includeDeleted: boolean): NodeFieldRead[] {
-  return node.children
-    .map((childId) => index.nodes.get(childId))
-    .filter((child): child is Extract<NodeProjection, { type: 'fieldEntry' }> => child !== undefined && child.type === 'fieldEntry' && (includeDeleted || !isInTrash(index, child.id)))
-    .map((fieldEntry) => {
-      const fieldDef = fieldEntry.fieldDefId ? index.nodes.get(fieldEntry.fieldDefId) : undefined;
-      const values = fieldEntry.children
-        .map((valueId) => index.nodes.get(valueId))
-        .filter((value): value is NodeProjection => value !== undefined && (includeDeleted || !isInTrash(index, value.id)))
-        .map((value) => ({
-          text: referenceText(index, value) ?? nodeContentText(value),
-          valueNodeId: value.id,
-          targetId: value.type === 'reference' ? value.targetId : undefined,
-        }));
-      const options = fieldDef?.children
-        .map((optionId) => index.nodes.get(optionId))
-        .filter((option): option is NodeProjection => Boolean(option) && !isInternalConfigNode(option!))
-        .map((option) => option.content.text.trim())
-        .filter((value): value is string => Boolean(value));
-      return {
-        name: fieldName(index, fieldEntry),
-        type: fieldDef?.type === 'fieldDef' ? projectFieldConfig(index.nodes, fieldDef).fieldType : 'plain',
-        values,
-        fieldEntryId: fieldEntry.id,
-        options: options && options.length ? options : undefined,
-      };
+  if (includeDeleted && isInTrash(index, node.id)) {
+    return node.children
+      .map((childId) => index.nodes.get(childId))
+      .filter((child): child is Extract<NodeProjection, { type: 'fieldEntry' }> => child?.type === 'fieldEntry')
+      .map((fieldEntry) => fieldRead(index, fieldEntry.fieldDefId, fieldEntry));
+  }
+  const reads = nodeFieldSlots(index.nodes, node.id)
+    .filter((slot) => includeDeleted || !slot.entryId || !isInTrash(index, slot.entryId))
+    .map((slot) => {
+      const fieldEntry = slot.entryId ? index.nodes.get(slot.entryId) : undefined;
+      return fieldRead(index, slot.fieldDefId, fieldEntry, includeDeleted);
     });
+  if (!includeDeleted) return reads;
+
+  const includedEntryIds = new Set(reads.flatMap((read) => read.fieldEntryId ? [read.fieldEntryId] : []));
+  const deletedDirectEntries = [...index.nodes.values()]
+    .filter((candidate): candidate is Extract<NodeProjection, { type: 'fieldEntry' }> => (
+      candidate.type === 'fieldEntry'
+      && candidate.trashedFromParentId === node.id
+      && isInTrash(index, candidate.id)
+      && !includedEntryIds.has(candidate.id)
+    ));
+  return [
+    ...reads,
+    ...deletedDirectEntries.map((fieldEntry) => fieldRead(index, fieldEntry.fieldDefId, fieldEntry, true)),
+  ];
+}
+
+function fieldRead(
+  index: ProjectionIndex,
+  fieldDefId: string | undefined,
+  fieldEntry: NodeProjection | undefined,
+  includeDeleted = true,
+): NodeFieldRead {
+  const fieldDef = fieldDefId ? index.nodes.get(fieldDefId) : undefined;
+  const values = (fieldEntry?.children ?? [])
+    .map((valueId) => index.nodes.get(valueId))
+    .filter((value): value is NodeProjection => value !== undefined && (includeDeleted || !isInTrash(index, value.id)))
+    .map((value) => ({
+      text: referenceText(index, value) ?? nodeContentText(value),
+      valueNodeId: value.id,
+      targetId: value.type === 'reference' ? value.targetId : undefined,
+    }));
+  const options = fieldDef?.children
+    .map((optionId) => index.nodes.get(optionId))
+    .filter((option): option is NodeProjection => Boolean(option) && !isInternalConfigNode(option!))
+    .map((option) => option.content.text.trim())
+    .filter((value): value is string => Boolean(value));
+  return {
+    name: systemFieldLabel(fieldDefId ?? '') ?? fieldDef?.content.text ?? fieldEntry?.content.text ?? 'Field',
+    type: fieldDef?.type === 'fieldDef' ? projectFieldConfig(index.nodes, fieldDef).fieldType : 'plain',
+    values,
+    fieldEntryId: fieldEntry?.id,
+    options: options && options.length ? options : undefined,
+  };
 }
 
 export function backlinks(index: ProjectionIndex, targetId: string, includeDeleted: boolean): NodeBacklink[] {

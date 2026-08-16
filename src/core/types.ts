@@ -536,11 +536,10 @@ type KeysOfUnion<T> = T extends unknown ? keyof T : never;
  */
 export type NodeFieldKey = KeysOfUnion<Node>;
 
-// The projection mirrors the `Node` union variant-by-variant (minus the trash
-// bookkeeping fields), so consumers narrow a projected node by `type` exactly
-// as they would a `Node`. While the variants still share their field set this
-// is structurally the old broad projection.
-export type NodeProjection = DistributiveOmit<Node, 'trashedFromParentId' | 'trashedFromIndex'>;
+// The projection mirrors the `Node` union variant-by-variant. Trash origin
+// metadata stays visible so read projections can associate deleted direct
+// children with their live owner; the restore index remains core-internal.
+export type NodeProjection = DistributiveOmit<Node, 'trashedFromIndex'>;
 
 export const LIN_DOCUMENT_EVENT_CHANNEL = 'lin-document-event';
 

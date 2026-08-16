@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from 'react';
 import { api } from '../../api/client';
-import type { NodeId } from '../../api/types';
-import type { DocumentIndex, UiState } from '../../state/document';
+import type { NodeId, NodeProjection } from '../../api/types';
+import { fieldSlotsForIndex, type DocumentIndex, type UiState } from '../../state/document';
 import type { CommandRunner, NavigateRootOptions, TriggerState } from '../shared';
 import { OutlinerFieldRow } from './OutlinerFieldRow';
 import { OutlinerItem } from './OutlinerItem';
@@ -40,6 +40,7 @@ interface OutlinerViewProps {
   setDragId: (nodeId: NodeId | null) => void;
   onTogglePin: (nodeId: NodeId) => void;
   rows?: OutlinerRowItem[];
+  parentOverride?: NodeProjection;
   suppressFieldEntries?: boolean;
   referencePath?: readonly NodeId[];
   showViewToolbar?: boolean;
@@ -67,7 +68,7 @@ function countRenderableChildRows(rows: readonly OutlinerRowItem[]): number {
 }
 
 export function OutlinerView(props: OutlinerViewProps) {
-  const parent = props.index.byId.get(props.parentId);
+  const parent = props.index.byId.get(props.parentId) ?? props.parentOverride;
   const [searchRefreshing, setSearchRefreshing] = useState(false);
   const searchRefreshInFlightRef = useRef(false);
   const selectionRootId = props.selectionRootId ?? props.rootId;
@@ -76,6 +77,7 @@ export function OutlinerView(props: OutlinerViewProps) {
   const builtRows = props.rows ?? buildOutlinerRows(parent, props.index.byId, {
     expandedHiddenFields: props.ui.expandedHiddenFields,
     suppressFieldEntries: props.suppressFieldEntries,
+    fieldSlots: (nodeId) => fieldSlotsForIndex(props.index, nodeId),
   });
 
   // The draft id is minted here (renderer-only) so it survives until the row
@@ -215,7 +217,7 @@ export function OutlinerView(props: OutlinerViewProps) {
         renderField={(row, index, rows) => (
           <OutlinerFieldRow
             panelId={props.panelId}
-            entryId={row.id}
+            slot={row.slot}
             parentId={props.parentId}
             rootId={props.rootId}
             selectionRootId={selectionRootId}
@@ -265,7 +267,12 @@ export function OutlinerView(props: OutlinerViewProps) {
             // legacy read-only option picker; keep feeding it optionField +
             // onSelectOption derived from the field-value context.
             optionField={props.fieldValue?.optionField}
-            onSelectOption={props.fieldValue?.onSelectOption}
+            onSelectOption={props.fieldValue
+              ? (optionId) => props.run(
+                () => props.fieldValue!.onSelectOption(optionId),
+                { applyFocus: false },
+              )
+              : undefined}
             semanticRole={props.rowSemanticRole}
           />
         )}

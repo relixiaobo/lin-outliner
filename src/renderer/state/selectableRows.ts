@@ -16,6 +16,11 @@ import {
   type OutlinerRowItem,
 } from './outlinerRows';
 import { systemReferenceValueIds } from './systemReferenceRows';
+import {
+  nodeFieldSlotById,
+  parseFieldSlotId,
+  type NodeFieldSlot,
+} from '../../core/fieldSlots';
 
 // Row applicability derives from the projection alone and is shared with the
 // core action registry (`core/actions/rowFacets.ts`); the pane root is the one
@@ -126,9 +131,10 @@ function visitSelectableRows(
           parentId,
           panelRootId,
           byId,
+          fieldSlot: row.type === 'field' ? row.slot : undefined,
         }));
         if (row.type === 'field') {
-          const fieldEntry = byId.get(row.id);
+          const fieldEntry = row.slot.entryId ? byId.get(row.slot.entryId) : undefined;
           const existingChildren = new Set(fieldEntry?.children ?? []);
           for (const syntheticId of systemReferenceValueIds(fieldEntry, byId)) {
             if (existingChildren.has(syntheticId)) continue;
@@ -150,7 +156,9 @@ function visitSelectableRows(
         }
         const shouldDescend = row.type === 'field' || options.expanded.has(row.id);
         if (shouldDescend) {
-          const childParentId = selectableChildParentId(row.id, byId);
+          const childParentId = row.type === 'field'
+            ? row.slot.entryId ?? null
+            : selectableChildParentId(row.id, byId);
           if (childParentId && !referencePath.includes(childParentId)) {
             visit(
               childParentId,
@@ -175,12 +183,15 @@ export function selectableRowForId(
   byId: Map<NodeId, NodeProjection>,
 ): SelectableRow | null {
   const node = byId.get(id);
-  if (!node && !isSyntheticSystemValueId(id)) return null;
+  const fieldSlot = nodeFieldSlotById(byId, id);
+  if (!node && !fieldSlot && !isSyntheticSystemValueId(id)) return null;
+  const slotOwnerId = fieldSlot ? parseFieldSlotId(fieldSlot.id)?.ownerId ?? null : null;
   return selectableRowFor({
     id,
-    parentId: node?.parentId ?? null,
+    parentId: slotOwnerId ?? node?.parentId ?? null,
     panelRootId,
     byId,
+    fieldSlot,
   });
 }
 
@@ -188,6 +199,8 @@ export function selectableChildParentId(
   rowId: NodeId,
   byId: Map<NodeId, NodeProjection>,
 ): NodeId | null {
+  const slot = nodeFieldSlotById(byId, rowId);
+  if (slot) return slot.entryId ?? null;
   const node = byId.get(rowId);
   if (!node) return null;
   if (node.type !== 'reference' || !node.targetId) return rowId;
@@ -201,9 +214,18 @@ function selectableRowFor(params: {
   parentId: NodeId | null;
   panelRootId: NodeId;
   byId: Map<NodeId, NodeProjection>;
+  fieldSlot?: NodeFieldSlot;
 }): SelectableRow {
+  const base = nodeRowFacetsFor({ id: params.id, parentId: params.parentId, byId: params.byId });
+  const fieldSlotIsNestedValue = params.fieldSlot
+    && params.parentId !== null
+    && params.byId.get(params.parentId)?.type === 'fieldEntry';
   return {
-    ...nodeRowFacetsFor({ id: params.id, parentId: params.parentId, byId: params.byId }),
+    ...base,
+    ...(params.fieldSlot && !fieldSlotIsNestedValue ? {
+      kind: 'fieldEntry' as const,
+      stored: Boolean(params.fieldSlot.entryId),
+    } : {}),
     panelRootId: params.panelRootId,
   };
 }

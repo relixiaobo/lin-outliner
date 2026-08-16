@@ -241,6 +241,116 @@ describe('DocumentService text search index', () => {
     expect(await searchNodeIds(service, 'original reference label')).not.toContain(ownerId);
   });
 
+  test('refreshes projected field names when an ancestor tag schema changes', async () => {
+    const service = await createService();
+    const rootId = service.getProjection().rootId;
+    const baseTagId = focusNodeId(await service.handle('create_tag', { name: 'base' }));
+    const issueTagId = focusNodeId(await service.handle('create_tag', { name: 'issue' }));
+    await service.handle('set_tag_config', {
+      tagId: issueTagId,
+      patch: { extends: baseTagId },
+    });
+    const ownerId = focusNodeId(await service.handle('create_node', {
+      parentId: rootId,
+      index: null,
+      text: 'Schema dependent owner',
+    }));
+    await service.handle('apply_tag', { nodeId: ownerId, tagId: issueTagId });
+
+    expect(await searchNodeIds(service, 'ancestor projected field')).not.toContain(ownerId);
+    await service.handle('create_field_def', {
+      tagId: baseTagId,
+      name: 'Ancestor projected field',
+      fieldType: 'plain',
+    });
+    expect(await searchNodeIds(service, 'ancestor projected field')).toContain(ownerId);
+
+    const rootTagId = focusNodeId(await service.handle('create_tag', { name: 'root tag' }));
+    await service.handle('create_field_def', {
+      tagId: rootTagId,
+      name: 'Extended projected field',
+      fieldType: 'plain',
+    });
+    expect(await searchNodeIds(service, 'extended projected field')).not.toContain(ownerId);
+    await service.handle('set_tag_config', {
+      tagId: baseTagId,
+      patch: { extends: rootTagId },
+    });
+    expect(await searchNodeIds(service, 'extended projected field')).toContain(ownerId);
+  });
+
+  test('restores projected-field search dependencies after a tag definition leaves Trash', async () => {
+    const service = await createService();
+    const rootId = service.getProjection().rootId;
+    const tagId = focusNodeId(await service.handle('create_tag', { name: 'recoverable tag' }));
+    await service.handle('create_field_def', {
+      tagId,
+      name: 'Recoverable projected field',
+      fieldType: 'plain',
+    });
+    const ownerId = focusNodeId(await service.handle('create_node', {
+      parentId: rootId,
+      index: null,
+      text: 'Dependency owner',
+    }));
+    await service.handle('apply_tag', { nodeId: ownerId, tagId });
+    expect(await searchNodeIds(service, 'recoverable projected field')).toContain(ownerId);
+
+    await service.handle('trash_node', { nodeId: tagId });
+    expect(await searchNodeIds(service, 'recoverable projected field')).not.toContain(ownerId);
+
+    await service.handle('restore_node', { nodeId: tagId });
+    expect(await searchNodeIds(service, 'recoverable projected field')).toContain(ownerId);
+  });
+
+  test('refreshes projected field names when a template entry changes definition', async () => {
+    const service = await createService();
+    const rootId = service.getProjection().rootId;
+    const recordTagId = focusNodeId(await service.handle('create_tag', { name: 'record tag' }));
+    const oldTemplateEntryId = focusNodeId(await service.handle('create_field_def', {
+      tagId: recordTagId,
+      name: 'Former projected field',
+      fieldType: 'plain',
+    }));
+    const oldFieldDefId = service.getProjection().nodes
+      .find((node) => node.id === oldTemplateEntryId)!.fieldDefId!;
+
+    const oldDefinitionHolderTagId = focusNodeId(await service.handle('create_tag', { name: 'old holder' }));
+    await service.handle('create_inline_field', {
+      parentId: oldDefinitionHolderTagId,
+      index: null,
+      name: '',
+      fieldType: 'plain',
+      targetDefId: oldFieldDefId,
+    });
+    const newDefinitionHolderTagId = focusNodeId(await service.handle('create_tag', { name: 'new holder' }));
+    const newTemplateEntryId = focusNodeId(await service.handle('create_field_def', {
+      tagId: newDefinitionHolderTagId,
+      name: 'Current projected field',
+      fieldType: 'plain',
+    }));
+    const newFieldDefId = service.getProjection().nodes
+      .find((node) => node.id === newTemplateEntryId)!.fieldDefId!;
+
+    const ownerId = focusNodeId(await service.handle('create_node', {
+      parentId: rootId,
+      index: null,
+      text: 'Relinked schema owner',
+    }));
+    await service.handle('apply_tag', { nodeId: ownerId, tagId: recordTagId });
+    expect(await searchNodeIds(service, 'former projected field')).toContain(ownerId);
+    expect(await searchNodeIds(service, 'current projected field')).not.toContain(ownerId);
+
+    await service.handle('reuse_field_definition', {
+      entryId: oldTemplateEntryId,
+      targetDefId: newFieldDefId,
+    });
+
+    expect(service.getProjection().nodes.some((node) => node.id === oldFieldDefId)).toBe(true);
+    expect(await searchNodeIds(service, 'former projected field')).not.toContain(ownerId);
+    expect(await searchNodeIds(service, 'current projected field')).toContain(ownerId);
+  });
+
   test('coalesces bursty structural saves until flush', async () => {
     const appendCounter = countWorkspaceAppends();
     try {

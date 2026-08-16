@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { e2eProjection, ids, nodeById, openMockedApp, row, rowEditor } from './outlinerMock';
+import { e2eProjection, ids, nodeById, openMockedApp, row, rowEditor, trailingEditor } from './outlinerMock';
 
 async function todayChildren(page: Page) {
   const projection = await e2eProjection(page);
@@ -48,6 +48,27 @@ async function pasteRich(page: Page, payload: { plain: string; html?: string }) 
       new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }),
     );
   }, payload);
+}
+
+async function invokeMockCommand(page: Page, cmd: string, args: Record<string, unknown>) {
+  await page.evaluate(async ({ cmd, args }) => {
+    const win = window as unknown as {
+      lin?: { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> };
+      __LIN_E2E__?: { emitDocumentEvent: (event: unknown) => void };
+    };
+    const result = await win.lin?.invoke(cmd, args);
+    const projection = result && typeof result === 'object' && 'update' in result
+      ? (result as { update: { projection: unknown } }).update.projection
+      : result;
+    if (projection) {
+      win.__LIN_E2E__?.emitDocumentEvent({
+        type: 'projection_changed',
+        origin: 'user',
+        projection,
+        timestamp: Date.now(),
+      });
+    }
+  }, { cmd, args });
 }
 
 test.describe('paste format support', () => {
@@ -101,6 +122,43 @@ test.describe('paste format support', () => {
     expect(alpha?.content.marks).toEqual([{ start: 6, end: 11, type: 'bold' }]);
 
     await expect.poll(() => siblingTextsAfter(page, ids.alpha, 2)).toEqual(['one', 'two']);
+  });
+
+  test('materializes a structured outline inside a virtual tag-projected field slot', async ({ page }) => {
+    await invokeMockCommand(page, 'create_inline_field', {
+      parentId: ids.projectTag,
+      index: null,
+      name: '',
+      fieldType: 'plain',
+      targetDefId: ids.statusField,
+    });
+    await invokeMockCommand(page, 'apply_tag', { nodeId: ids.alpha, tagId: ids.projectTag });
+    await row(page, ids.alpha).locator(':scope > .row').hover();
+    await row(page, ids.alpha).getByRole('button', { name: 'Expand' }).click();
+
+    const slotId = `slot:${encodeURIComponent(ids.alpha)}:${encodeURIComponent(ids.statusField)}`;
+    await expect(row(page, slotId)).toBeVisible();
+    await trailingEditor(page, slotId).click();
+    await pasteRich(page, { plain: 'parent\n  - child\nsibling' });
+
+    await expect.poll(async () => {
+      const projection = await e2eProjection(page);
+      const entry = projection.nodes.find((node) => (
+        node.parentId === ids.alpha
+        && node.type === 'fieldEntry'
+        && (node as { fieldDefId?: string }).fieldDefId === ids.statusField
+      ));
+      const values = (entry?.children ?? []).map((childId) => (
+        projection.nodes.find((node) => node.id === childId)
+      ));
+      const child = values[0]?.children[0]
+        ? projection.nodes.find((node) => node.id === values[0]!.children[0])
+        : undefined;
+      return {
+        child: child?.content.text,
+        values: values.map((value) => value?.content.text),
+      };
+    }).toEqual({ child: 'child', values: ['parent', 'sibling'] });
   });
 
   test('harvests HTML metadata while protecting anchor content and link offsets', async ({ page }) => {

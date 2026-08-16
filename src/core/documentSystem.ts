@@ -218,6 +218,9 @@ export function documentCommandMutatesProtectedSystemTagDefinition(
       return hasProtectedStringArgument(args, protectedTagIds, ['afterNodeId']);
     case 'create_inline_field':
       return hasProtectedStringArgument(args, protectedTagIds, ['parentId', 'targetDefId']);
+    case 'update_field_slot':
+      return hasProtectedStringArgument(args, protectedTagIds, ['ownerId', 'fieldDefId', 'entryId', 'optionNodeId', 'targetId', 'id'])
+        || hasProtectedStringArrayArgument(args, protectedTagIds, 'firstTagIds');
     case 'reuse_field_definition':
       return hasProtectedStringArgument(args, protectedTagIds, ['entryId', 'targetDefId']);
     case 'merge_definitions':

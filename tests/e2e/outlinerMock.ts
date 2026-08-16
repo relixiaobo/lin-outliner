@@ -388,6 +388,13 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     type CreateNodeTree = {
       content: RichText;
       children: CreateNodeTree[];
+      description?: string;
+      type?: string;
+      codeLanguage?: string;
+      tags?: string[];
+      fields?: Array<{ name: string; value: string }>;
+      checkbox?: boolean;
+      done?: boolean;
     };
 
     const win = window as E2EWindow;
@@ -1348,13 +1355,26 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         if (entry) createNode(entry.id, null, value);
       }
     };
-    const createTree = (parentId: string, tree: CreateNodeTree[], index: number | null = null) => {
+    const createTree = (
+      parentId: string,
+      tree: CreateNodeTree[],
+      index: number | null = null,
+      firstId?: string,
+    ) => {
       let lastId: string | null = null;
       tree.forEach((item, offset) => {
-        const nodeId = createNode(parentId, index === null ? null : index + offset, item.content.text);
+        const nodeId = createNode(
+          parentId,
+          index === null ? null : index + offset,
+          item.content.text,
+          {},
+          offset === 0 ? firstId : undefined,
+        );
         const node = nodes.get(nodeId);
         if (node) {
           node.content = clone(item.content);
+          const description = item.description?.trim();
+          if (description) node.description = description;
           if (item.type === 'codeBlock') {
             node.type = 'codeBlock';
             const lang = item.codeLanguage?.trim().toLowerCase();
@@ -1457,10 +1477,12 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
 	      if (!fieldEntry) return outcome();
       if (fieldEntry.fieldDefId) removeCollectedOptionRefs(fieldEntry.fieldDefId, fieldEntry.children);
       for (const childId of [...fieldEntry.children]) {
-        removeFromParent(childId);
-        nodes.delete(childId);
+        removeNode(childId);
 	      }
-	      return outcome({ nodeId: fieldEntryId, selectAll: false });
+	      const survivingEntryId = fieldEntry.parentId && fieldEntry.fieldDefId
+	        ? commitFieldSlot(fieldEntry.parentId, fieldEntry.fieldDefId, fieldEntryId)
+	        : fieldEntryId;
+	      return outcome({ nodeId: survivingEntryId ?? fieldEntry.parentId ?? fieldEntryId, selectAll: false });
 	    };
     // Everything is a node: a free-text value appends as a plain content child of
     // the entry under the renderer-proposed id (the draft->value contract). Empty
@@ -1480,9 +1502,11 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       const fieldEntryId = value?.parentId;
       const fieldEntry = fieldEntryId ? nodes.get(fieldEntryId) : undefined;
       if (fieldEntry?.fieldDefId) removeCollectedOptionRefs(fieldEntry.fieldDefId, [valueId]);
-      removeFromParent(valueId);
-      nodes.delete(valueId);
-      return outcome({ nodeId: fieldEntryId ?? valueId, selectAll: false });
+      removeNode(valueId);
+      const survivingEntryId = fieldEntry?.parentId && fieldEntry.fieldDefId
+        ? commitFieldSlot(fieldEntry.parentId, fieldEntry.fieldDefId, fieldEntryId)
+        : fieldEntryId;
+      return outcome({ nodeId: survivingEntryId ?? fieldEntry?.parentId ?? fieldEntryId ?? valueId, selectAll: false });
     };
 	    const setSearchQueryOutline = (nodeId: string, queryOutline: string) => {
 	      const search = nodes.get(nodeId);
@@ -1567,6 +1591,176 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       makeNode(fieldEntryId, '', { type: 'fieldEntry', parentId, fieldDefId, fieldType });
       appendChild(parentId, fieldEntryId, index);
       return fieldEntryId;
+    };
+    const fieldSlotEntry = (ownerId: string, fieldDefId: string, preferredEntryId?: string) => {
+      const preferred = preferredEntryId ? nodes.get(preferredEntryId) : undefined;
+      if (
+        preferred?.type === 'fieldEntry'
+        && preferred.parentId === ownerId
+        && preferred.fieldDefId === fieldDefId
+      ) return preferred;
+      const owner = nodes.get(ownerId);
+      return owner?.children
+        .map((childId) => nodes.get(childId))
+        .find((child) => child?.type === 'fieldEntry' && child.fieldDefId === fieldDefId);
+    };
+    const ensureFieldSlotEntry = (ownerId: string, fieldDefId: string, preferredEntryId?: string) => {
+      const existing = fieldSlotEntry(ownerId, fieldDefId, preferredEntryId);
+      if (existing) return existing;
+      const fieldDef = nodes.get(fieldDefId);
+      const entryId = inlineField(
+        ownerId,
+        null,
+        fieldDef?.content.text ?? '',
+        fieldDef?.fieldType ?? 'plain',
+        fieldDefId,
+      );
+      return nodes.get(entryId)!;
+    };
+    const tagProjectsField = (ownerId: string, fieldDefId: string) => {
+      const owner = nodes.get(ownerId);
+      for (const appliedTagId of owner?.tags ?? []) {
+        const visited = new Set<string>();
+        let currentTagId: string | undefined = appliedTagId;
+        while (currentTagId && !visited.has(currentTagId)) {
+          visited.add(currentTagId);
+          const tag = nodes.get(currentTagId);
+          if (tag?.type !== 'tagDef') break;
+          if (tag.children.some((childId) => {
+            const child = nodes.get(childId);
+            return child?.type === 'fieldEntry' && child.fieldDefId === fieldDefId;
+          })) return true;
+          currentTagId = tag.extends;
+        }
+      }
+      return false;
+    };
+    const commitFieldSlot = (ownerId: string, fieldDefId: string, preferredEntryId?: string) => {
+      const entry = fieldSlotEntry(ownerId, fieldDefId, preferredEntryId);
+      if (!entry) return undefined;
+      for (const childId of [...entry.children]) {
+        const child = nodes.get(childId);
+        if (
+          child?.type === undefined
+          && child.content.text.trim().length === 0
+          && child.content.inlineRefs.length === 0
+          && child.children.length === 0
+          && !child.description
+        ) removeNode(childId);
+      }
+      if (entry.children.length > 0 || !tagProjectsField(ownerId, fieldDefId)) return entry.id;
+      removeNode(entry.id);
+      return undefined;
+    };
+    const updateFieldSlot = (args: Record<string, unknown>) => {
+      const ownerId = String(args.ownerId);
+      const fieldDefId = String(args.fieldDefId);
+      const kind = String(args.kind);
+      const preferredEntryId = typeof args.entryId === 'string' ? args.entryId : undefined;
+      const proposedId = typeof args.id === 'string' ? args.id : undefined;
+      const currentEntry = fieldSlotEntry(ownerId, fieldDefId, preferredEntryId);
+
+      if (kind === 'commit') {
+        const survivingEntryId = commitFieldSlot(ownerId, fieldDefId, preferredEntryId);
+        return outcome({ nodeId: survivingEntryId ?? ownerId, selectAll: false });
+      }
+      if (kind === 'appendText') {
+        const text = String(args.text ?? '').trim();
+        if (!text) {
+          const survivingEntryId = commitFieldSlot(ownerId, fieldDefId, preferredEntryId);
+          return outcome({ nodeId: survivingEntryId ?? ownerId, selectAll: false });
+        }
+        const entry = currentEntry ?? ensureFieldSlotEntry(ownerId, fieldDefId, preferredEntryId);
+        if (args.collect === true) return createCollectedOption(entry.id, text, proposedId);
+        createNode(entry.id, null, text, {}, proposedId);
+        return outcome({ nodeId: entry.id, selectAll: false });
+      }
+      if (kind === 'appendReference') {
+        const entry = currentEntry ?? ensureFieldSlotEntry(ownerId, fieldDefId, preferredEntryId);
+        const targetId = resolveReferenceTargetId(String(args.targetId)) ?? String(args.targetId);
+        const target = nodes.get(targetId);
+        createNode(entry.id, null, target?.content.text ?? '', {
+          type: 'reference',
+          targetId,
+        }, proposedId);
+        return outcome({ nodeId: entry.id, selectAll: false });
+      }
+      if (kind === 'selectOption') {
+        const entry = currentEntry ?? ensureFieldSlotEntry(ownerId, fieldDefId, preferredEntryId);
+        return selectOption(entry.id, String(args.optionNodeId), proposedId);
+      }
+      if (kind === 'appendNodes') {
+        const trees = Array.isArray(args.nodes) ? args.nodes as CreateNodeTree[] : [];
+        if (trees.length === 0) return outcome({ nodeId: currentEntry?.id ?? ownerId, selectAll: false });
+        const entry = currentEntry ?? ensureFieldSlotEntry(ownerId, fieldDefId, preferredEntryId);
+        const firstIndex = entry.children.length;
+        createTree(entry.id, trees, null, proposedId);
+        const firstValue = nodes.get(entry.children[firstIndex] ?? '');
+        for (const tagId of Array.isArray(args.firstTagIds) ? args.firstTagIds : []) {
+          if (firstValue && typeof tagId === 'string' && !firstValue.tags.includes(tagId)) firstValue.tags.push(tagId);
+        }
+        return outcome({ nodeId: entry.id, selectAll: false });
+      }
+      if (kind === 'appendField') {
+        const entry = currentEntry ?? ensureFieldSlotEntry(ownerId, fieldDefId, preferredEntryId);
+        const nestedFieldDefId = `field-def-${++sequence}`;
+        const nestedFieldType = String(args.fieldType ?? 'plain');
+        makeNode(nestedFieldDefId, String(args.name ?? '').trim(), {
+          type: 'fieldDef',
+          fieldType: nestedFieldType,
+          parentId: ids.schema,
+          nullable: true,
+        });
+        appendChild(ids.schema, nestedFieldDefId);
+        const nestedEntryId = proposedId ?? `field-entry-${++sequence}`;
+        makeNode(nestedEntryId, '', {
+          type: 'fieldEntry',
+          parentId: entry.id,
+          fieldDefId: nestedFieldDefId,
+          fieldType: nestedFieldType,
+        });
+        appendChild(entry.id, nestedEntryId);
+        return outcome({
+          nodeId: nestedEntryId,
+          parentId: entry.id,
+          placement: { kind: 'all' },
+          selectAll: true,
+          surface: 'field-name',
+        });
+      }
+      if (kind === 'appendImage') {
+        const entry = currentEntry ?? ensureFieldSlotEntry(ownerId, fieldDefId, preferredEntryId);
+        createNode(entry.id, null, typeof args.name === 'string' ? args.name.trim() : '', {
+          type: 'image',
+          showCheckbox: false,
+          assetId: typeof args.assetId === 'string' ? args.assetId : undefined,
+          mediaUrl: typeof args.mediaUrl === 'string' ? args.mediaUrl : undefined,
+          imageWidth: typeof args.width === 'number' ? args.width : undefined,
+          imageHeight: typeof args.height === 'number' ? args.height : undefined,
+          mediaAlt: typeof args.alt === 'string' ? args.alt.trim() : undefined,
+        }, proposedId);
+        return outcome({ nodeId: entry.id, selectAll: false });
+      }
+      if (kind === 'appendAttachment') {
+        const entry = currentEntry ?? ensureFieldSlotEntry(ownerId, fieldDefId, preferredEntryId);
+        const originalFilename = typeof args.originalFilename === 'string'
+          ? args.originalFilename.trim() || 'attachment'
+          : 'attachment';
+        createNode(entry.id, null, originalFilename, {
+          type: 'attachment',
+          showCheckbox: false,
+          assetId: typeof args.assetId === 'string' ? args.assetId : '',
+          mimeType: typeof args.mimeType === 'string' ? args.mimeType : 'application/octet-stream',
+          originalFilename,
+          fileSize: typeof args.fileSize === 'number' ? args.fileSize : 0,
+          thumbnailAssetId: typeof args.thumbnailAssetId === 'string' ? args.thumbnailAssetId : undefined,
+          pdfPageCount: typeof args.pdfPageCount === 'number' ? args.pdfPageCount : undefined,
+          audioDurationMs: typeof args.audioDurationMs === 'number' ? args.audioDurationMs : undefined,
+          videoDurationMs: typeof args.videoDurationMs === 'number' ? args.videoDurationMs : undefined,
+        }, proposedId);
+        return outcome({ nodeId: entry.id, selectAll: false });
+      }
+      return outcome();
     };
     const convertNodeToInlineField = (nodeId: string, name: string, fieldType: string) => {
       const node = nodes.get(nodeId);
@@ -3747,6 +3941,9 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             selectAll: !targetDefId,
             surface: targetDefId ? 'trailing' : 'field-name',
           }));
+        }
+        if (cmd === 'update_field_slot') {
+          return clone(updateFieldSlot(args));
         }
         if (cmd === 'create_inline_field_after_node') {
           const fieldEntryId = convertNodeToInlineField(String(args.afterNodeId), String(args.name), String(args.fieldType));

@@ -283,11 +283,12 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
   const [rootSearchRefreshing, setRootSearchRefreshing] = useState(false);
   const visualRowsSnapshotRef = useRef<VisualRowsSnapshot | null>(null);
 
-  const trailingFocusedParentId = ui.focusSurface === 'trailing' && ui.focusedPanelId === props.panelId
+  const focusTargetsPanel = ui.focusedPanelId === props.panelId;
+  const trailingFocusedParentId = ui.focusSurface === 'trailing' && focusTargetsPanel
     ? ui.focusedId
     : null;
   const draftFocusedParentId = ui.focusSurface === 'row'
-    && ui.focusedPanelId === props.panelId
+    && focusTargetsPanel
     && ui.focusedId
     && !byId.has(ui.focusedId)
     ? ui.focusedParentId
@@ -492,10 +493,10 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
     if (!virtualize) return [];
     const targets = new Set<NodeId>();
     if (ui.focusedPanelId === props.panelId && ui.focusedId) targets.add(ui.focusedId);
-    if (ui.focusRequest && ui.focusRequest.target.panelId === props.panelId) {
+    if (ui.focusRequest?.target.panelId === props.panelId) {
       targets.add(ui.focusRequest.target.nodeId);
     }
-    if (ui.pendingInputChar && ui.pendingInputChar.target.panelId === props.panelId) {
+    if (ui.pendingInputChar?.target.panelId === props.panelId) {
       targets.add(ui.pendingInputChar.target.nodeId);
     }
     const indices: number[] = [];
@@ -734,7 +735,7 @@ export function OutlinerFlatView(props: OutlinerFlatViewProps) {
         return (
           <OutlinerFieldRow
             panelId={props.panelId}
-            entryId={row.nodeId}
+            slot={row.slot}
             parentId={row.parentId}
             rootId={props.rootId}
             selectionRootId={selectionRootId}

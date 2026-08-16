@@ -5,6 +5,7 @@ import {
   validateFieldValuesForType,
   type FieldResolutionNode,
 } from '../../src/core/fieldResolution';
+import { DONE_FIELD } from '../../src/core/systemFields';
 import { SCHEMA_ID, plainText } from '../../src/core/types';
 
 function node(
@@ -63,6 +64,23 @@ describe('field value type resolution', () => {
 });
 
 describe('field definition identity resolution', () => {
+  test('routes a projected Done slot through the mutable system field path', () => {
+    const byId = new Map<string, FieldResolutionNode>([
+      ['owner', node('owner', 'Task', { tags: ['task-tag'] })],
+      ['task-tag', node('task-tag', 'task', { type: 'tagDef', children: ['done-template'] })],
+      ['done-template', node('done-template', '', {
+        type: 'fieldEntry',
+        parentId: 'task-tag',
+        fieldDefId: DONE_FIELD,
+      })],
+    ]);
+
+    expect(resolveFieldWriteTarget(byId, 'owner', 'Done', [{ text: 'true' }])).toEqual({
+      ok: true,
+      target: { kind: 'systemDone', fieldDefId: DONE_FIELD },
+    });
+  });
+
   test('prefers the unique definition from the most specific owner tag layer', () => {
     const byId = new Map<string, FieldResolutionNode>([
       ['owner', node('owner', 'Record', { tags: ['issue-tag'] })],
@@ -96,6 +114,40 @@ describe('field definition identity resolution', () => {
         type: 'fieldEntry',
         parentId: 'base-tag',
         fieldDefId: 'base-status-def',
+      })],
+    ]);
+
+    expect(resolveFieldWriteTarget(byId, 'owner', 'Status', [{ text: 'Open' }])).toEqual({
+      ok: true,
+      target: {
+        kind: 'existingFieldDef',
+        fieldDefId: 'issue-status-def',
+        fieldType: 'plain',
+      },
+    });
+  });
+
+  test('prefers a projected tag definition over a same-name own entry', () => {
+    const byId = new Map<string, FieldResolutionNode>([
+      ['owner', node('owner', 'Record', {
+        children: ['own-status'],
+        tags: ['issue-tag'],
+      })],
+      ['own-status-def', node('own-status-def', 'Status', { type: 'fieldDef', parentId: SCHEMA_ID })],
+      ['issue-status-def', node('issue-status-def', 'Status', { type: 'fieldDef', parentId: SCHEMA_ID })],
+      ['own-status', node('own-status', '', {
+        type: 'fieldEntry',
+        parentId: 'owner',
+        fieldDefId: 'own-status-def',
+      })],
+      ['issue-tag', node('issue-tag', 'issue', {
+        type: 'tagDef',
+        children: ['issue-status-template'],
+      })],
+      ['issue-status-template', node('issue-status-template', '', {
+        type: 'fieldEntry',
+        parentId: 'issue-tag',
+        fieldDefId: 'issue-status-def',
       })],
     ]);
 

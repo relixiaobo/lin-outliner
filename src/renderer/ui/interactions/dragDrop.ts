@@ -36,6 +36,12 @@ export interface ResolvedOutlinerDropBatchMove {
   expandTargetId?: NodeId;
 }
 
+export interface OutlinerDropAnchor {
+  readonly targetNodeId: NodeId;
+  readonly targetParentId: NodeId;
+  readonly siblingIndex: number;
+}
+
 export const OUTLINER_NODE_DRAG_MIME = 'application/x-lin-outliner-node-id';
 
 /** Set while dragging an already-pinned sidebar node to reorder it within the
@@ -45,6 +51,21 @@ export const PINNED_NODE_REORDER_MIME = 'application/x-lin-pinned-node-id';
 /** Set while dragging a workspace pane by its breadcrumb header to reorder the
  *  canvas panes left/right. Carries the pane id. */
 export const WORKSPACE_PANEL_REORDER_MIME = 'application/x-lin-workspace-panel-id';
+
+export function resolveOutlinerDropAnchor(input: {
+  readonly rowId: NodeId;
+  readonly backingNodeId?: NodeId;
+  readonly parentId: NodeId;
+  readonly siblingIds: readonly NodeId[];
+  readonly draft?: boolean;
+}): OutlinerDropAnchor {
+  const targetNodeId = input.backingNodeId ?? input.rowId;
+  return {
+    targetNodeId,
+    targetParentId: input.parentId,
+    siblingIndex: input.draft ? input.siblingIds.length : input.siblingIds.indexOf(targetNodeId),
+  };
+}
 
 /** Remove-then-insert list reorder shared by pinned-node and pane reordering
  *  (and the pane drag's arrangement preview, so preview and commit can never

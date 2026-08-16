@@ -128,16 +128,6 @@ export function collapseExpandedParentIds(
   return next;
 }
 
-export function fieldEntries(
-  node: NodeProjection | undefined,
-  byId: Map<NodeId, NodeProjection>,
-): NodeProjection[] {
-  if (!node) return [];
-  return node.children
-    .map((childId) => byId.get(childId))
-    .filter((child): child is NodeProjection => child?.type === 'fieldEntry');
-}
-
 export function useCommandRunner(
   applyProjectionUpdate: (update: ProjectionUpdate) => void,
   setFocus: (focus: FocusHint | null) => void,

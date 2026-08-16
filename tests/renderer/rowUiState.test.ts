@@ -81,6 +81,25 @@ describe('deriveRowMemoState', () => {
     expect(state.trailingFocused).toBe(true);
   });
 
+  test('a null focused panel does not activate row or trailing editors in every panel', () => {
+    const row = deriveRowMemoState(
+      baseUi({ focusedId: 'a', focusSurface: 'row', focusedPanelId: null }),
+      null,
+      'a',
+      'root',
+      PANEL,
+    );
+    const trailing = deriveRowMemoState(
+      baseUi({ focusedId: 'root', focusSurface: 'trailing', focusedPanelId: null }),
+      null,
+      'draft',
+      'root',
+      PANEL,
+    );
+    expect(row.rowEditorFocused).toBe(false);
+    expect(trailing.trailingFocused).toBe(false);
+  });
+
   test('focusRequest is captured only when it targets this row', () => {
     const request: FocusRequest = {
       target: { nodeId: 'a', parentId: 'root', panelId: PANEL, surface: 'row' },

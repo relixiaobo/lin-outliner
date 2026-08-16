@@ -1,9 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 import {
   nearestTableCell,
+  requestTableFieldSlotEditState,
   resolveTableCellNavigation,
   TABLE_TITLE_COLUMN_ID,
 } from '../../src/renderer/ui/outliner/tableNavigation';
+import { fieldSlotId } from '../../src/core/fieldSlots';
+import type { NodeProjection } from '../../src/core/types';
+import type { UiState } from '../../src/renderer/state/document';
 
 const rows = ['row-a', 'row-b', 'row-c'];
 const columns = [TABLE_TITLE_COLUMN_ID, 'status', 'due'];
@@ -68,5 +72,25 @@ describe('table cell navigation', () => {
       columnId: 'due',
     })).toEqual({ rowId: 'row-a', columnId: 'status' });
     expect(nearestTableCell([], columns, null)).toBeNull();
+  });
+
+  test('routes the first character in an empty virtual field cell to its trailing editor', () => {
+    const slotId = fieldSlotId('record', 'status');
+    const state = requestTableFieldSlotEditState(
+      { selectedIds: new Set() } as UiState,
+      { id: slotId, fieldDefId: 'status', source: 'tag' },
+      new Map<string, NodeProjection>(),
+      'panel',
+      'I',
+    );
+
+    const target = {
+      nodeId: slotId,
+      parentId: slotId,
+      panelId: 'panel',
+      surface: 'trailing',
+    };
+    expect(state.focusRequest).toEqual({ target, placement: { kind: 'end' } });
+    expect(state.pendingInputChar).toEqual({ target, char: 'I' });
   });
 });

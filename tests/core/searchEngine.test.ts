@@ -8,6 +8,7 @@ import {
   SEARCH_EXECUTABLE_QUERY_OPS,
   SEARCH_UNSUPPORTED_QUERY_OPS,
   searchNodeToQueryExpr,
+  textSearchRecordForNodeMap,
   validateSearchQueries,
 } from '../../src/core/searchEngine';
 import type { TextSearchIndex } from '../../src/core/textSearchIndex';
@@ -23,7 +24,7 @@ import {
   SEARCH_QUERY_COMPLEXITY_LIMITS,
   compileSearchQueryExpr,
 } from '../../src/core/searchQueryCompiler';
-import { REF_COUNT_FIELD } from '../../src/core/systemFields';
+import { DONE_FIELD, REF_COUNT_FIELD } from '../../src/core/systemFields';
 
 function mustFocus<T extends { focus?: { nodeId: string } }>(outcome: T) {
   expect(outcome.focus).toBeDefined();
@@ -39,10 +40,13 @@ function addLocalDays(date: Date, days: number) {
 }
 
 function addFieldValue(core: Core, nodeId: string, fieldDefId: string, value: string) {
+  core.updateFieldSlot(nodeId, fieldDefId, { kind: 'appendText', text: value });
   const fieldEntryId = core.state().nodes[nodeId]!.children
     .find((childId) => core.state().nodes[childId]!.fieldDefId === fieldDefId);
   expect(fieldEntryId).toBeDefined();
-  return mustFocus(core.createNode(fieldEntryId!, null, value));
+  const valueId = core.state().nodes[fieldEntryId!]!.children.at(-1);
+  expect(valueId).toBeDefined();
+  return valueId!;
 }
 
 function ensureDateNodeFor(core: Core, date: Date) {
@@ -66,6 +70,25 @@ describe('core search engine', () => {
     expect(executable.has('HAS_TAG')).toBe(true);
     expect(executable.has('LINKS_TO')).toBe(true);
     expect(executable.has('FIELD_CONTAINS')).toBe(true);
+  });
+
+  test('indexes stored system fields once through the slot projection', () => {
+    const core = Core.new();
+    const nodeId = mustFocus(core.createNode(core.projection().todayId, null, 'Task'));
+    const entryId = mustFocus(core.createInlineField(nodeId, null, '', 'plain'));
+    core.reuseFieldDefinition(entryId, DONE_FIELD);
+    const projection = core.projection();
+    const nodes = new Map(projection.nodes.map((node) => [node.id, node]));
+    const indexed = textSearchRecordForNodeMap(
+      nodes,
+      projection.rootId,
+      projection.libraryId,
+      nodeId,
+    );
+
+    expect(indexed?.record.fields.filter((field) => field.key === 'fieldName')).toEqual([
+      { key: 'fieldName', text: 'Done' },
+    ]);
   });
 
   test('executes canonical query expressions', () => {
@@ -798,7 +821,7 @@ describe('core search engine', () => {
     expect(todoResult.ok ? todoResult.hits.map((hit) => hit.nodeId) : []).toEqual(expect.arrayContaining([todo, done]));
   });
 
-  test('executes field equality and emptiness query rules', () => {
+  test('executes field equality and the five virtual-slot state operators', () => {
     const core = Core.new();
     const today = core.projection().todayId;
     const taskTagId = mustFocus(core.createTag('task'));
@@ -811,10 +834,9 @@ describe('core search engine', () => {
     core.applyTag(active, taskTagId);
     core.applyTag(waiting, taskTagId);
     core.applyTag(empty, taskTagId);
-    const activeFieldId = core.state().nodes[active]!.children.find((childId) => core.state().nodes[childId]!.fieldDefId === statusFieldDefId)!;
-    const waitingFieldId = core.state().nodes[waiting]!.children.find((childId) => core.state().nodes[childId]!.fieldDefId === statusFieldDefId)!;
-    core.createNode(activeFieldId, null, 'Active');
-    core.createNode(waitingFieldId, null, 'Waiting');
+    addFieldValue(core, active, statusFieldDefId, 'Active');
+    addFieldValue(core, waiting, statusFieldDefId, 'Waiting');
+    expect(core.state().nodes[empty]!.children).toEqual([]);
 
     const searchId = mustFocus(core.createNode(core.projection().searchesId, null, 'Field search'));
     const conditionId = mustFocus(core.createNode(searchId, null, 'Active'));
@@ -878,10 +900,8 @@ describe('core search engine', () => {
     core.applyTag(small, taskTagId);
     core.applyTag(large, taskTagId);
     core.applyTag(empty, taskTagId);
-    const smallFieldId = core.state().nodes[small]!.children.find((childId) => core.state().nodes[childId]!.fieldDefId === estimateFieldDefId)!;
-    const largeFieldId = core.state().nodes[large]!.children.find((childId) => core.state().nodes[childId]!.fieldDefId === estimateFieldDefId)!;
-    core.createNode(smallFieldId, null, '3');
-    core.createNode(largeFieldId, null, '8');
+    addFieldValue(core, small, estimateFieldDefId, '3');
+    addFieldValue(core, large, estimateFieldDefId, '8');
 
     const searchId = mustFocus(core.createNode(core.projection().searchesId, null, 'Estimate search'));
     const conditionId = mustFocus(core.createNode(searchId, null, '5'));
@@ -1221,7 +1241,7 @@ describe('core search engine', () => {
       core.applyTag(nodeId, taskTagId);
     }
     addFieldValue(core, overdue, dueFieldDefId, yesterday);
-    const refOverdueValueId = addFieldValue(core, refOverdue, dueFieldDefId, '');
+    const refOverdueValueId = addFieldValue(core, refOverdue, dueFieldDefId, yesterday);
     addFieldValue(core, dueToday, dueFieldDefId, todayIso);
     addFieldValue(core, dueTomorrow, dueFieldDefId, tomorrow);
     addFieldValue(core, doneOverdue, dueFieldDefId, yesterday);

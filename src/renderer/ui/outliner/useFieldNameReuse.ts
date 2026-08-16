@@ -6,6 +6,7 @@ import {
   queryUserFieldReuseCandidates,
   type FieldReuseCandidate,
 } from '../interactions/fieldReuseCandidates';
+import { nodeFieldSlots } from '../../../core/fieldSlots';
 
 interface UseFieldNameReuseArgs {
   byId: Map<NodeId, NodeProjection>;
@@ -57,12 +58,8 @@ export function useFieldNameReuse(args: UseFieldNameReuseArgs): FieldNameReuse {
   const candidates = useMemo<FieldReuseCandidate[]>(() => {
     if (!focused || disabled) return [];
     const ownerDefIds = new Set<string>();
-    const owner = byId.get(parentId);
-    for (const childId of owner?.children ?? []) {
-      const child = byId.get(childId);
-      if (child?.type === 'fieldEntry' && child.id !== entryId && child.fieldDefId) {
-        ownerDefIds.add(child.fieldDefId);
-      }
+    for (const slot of nodeFieldSlots(byId, parentId)) {
+      if (slot.entryId !== entryId) ownerDefIds.add(slot.fieldDefId);
     }
     const userCandidates = queryUserFieldReuseCandidates(byId, nameDraft, {
       excludeDefId: draftDefId,

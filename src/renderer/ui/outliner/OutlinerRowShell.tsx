@@ -15,7 +15,7 @@ interface OutlinerRowShellProps {
   wrapClassName?: string;
   rowClassName: string;
   onSelectFromPointer: MouseEventHandler<HTMLDivElement>;
-  onContextMenu: MouseEventHandler<HTMLDivElement>;
+  onContextMenu?: MouseEventHandler<HTMLDivElement>;
   rowContent: ReactNode;
   semanticRole?: 'treeitem' | 'presentation';
   children?: ReactNode;

@@ -60,8 +60,8 @@ keyboard or pointer change should be checked against this matrix.
   which still moves live rows to Trash.
 - The root scope always renders a trailing input so typing can continue at the
   end of the page.
-- Field entries are ordinary outline rows with field-specific value rendering.
-  Each entry's top and bottom separators stay hidden until that row is hovered or
+- Field slots are ordinary outline rows with field-specific value rendering.
+  Each slot's top and bottom separators stay hidden until that row is hovered or
   focus is inside its field name/value area, including entries in the middle of a
   contiguous field group.
 
@@ -166,17 +166,34 @@ instead of reusing the trashed one.
 
 ## Field Row Matrix
 
+A node's complete field shape is projected from its tags plus its own stored
+entries. Tag slots render first in schema order; own entries follow in child
+order. A tag slot without a stored value has the stable virtual id
+`slot:<ownerId>:<fieldDefId>` and no `NodeProjection`. It is still selectable,
+Arrow-reachable, and focusable: row navigation targets its field-name surface,
+while value editing targets a synthetic trailing editor under the slot id. The
+first accepted value materializes the backing entry through `update_field_slot`
+without changing the visible row identity, so pending printable input and IME
+state survive the transition.
+
+A virtual tag slot has no instance-owned structure to mutate. Delete, drag,
+indent/outdent, duplicate, tag, checkbox, description, and structural context
+menu actions are disabled. Removing the tag removes a valueless virtual slot;
+stored values survive untagging as own fields. Clearing or removing the last
+value and committing an empty tag slot dematerializes its entry, while an empty
+own field entry remains stored.
+
 | Interaction | Expected behavior |
 | --- | --- |
 | Type in field name | Show a reuse popover of matching active existing fields ("Fields") and built-in system fields ("System fields"). Field definitions in Trash are excluded. Nothing is highlighted by default. Fields already present on the same owner node are excluded — a node may not carry the same field twice. |
 | `Space` on an empty field name | Summon the full reuse picker (every reusable field + system field, alphabetical) without typing a leading space. Once the name has text, `Space` types normally. |
 | `ArrowDown` + `Enter` (or click) in the reuse popover | Reuse that definition: relink the entry to it (`reuse_field_definition`) and drop the throwaway draft def. |
-| `Enter` in field name | With no popover candidate highlighted, commit the typed name as a new field and create/focus a sibling row after the field entry. |
+| `Enter` in field name | With no popover candidate highlighted, commit the typed name. An own field entry creates/focuses a sibling row after itself; a projected tag slot has no structural position and moves focus into its value editor. |
 | `Enter` in field value | Commit field and create a sibling row after the field entry. |
-| `Backspace` at start of field name | Delete the field row through the same selection-delete path used for selected rows. Focus the previous visible row at end; if there is no previous row, focus the next visible row at start or the panel trailing draft when the field row was the only body row. |
+| `Backspace` at start of field name | Delete an own field row through the same selection-delete path used for selected rows. Focus the previous visible row at end; if there is no previous row, focus the next visible row at start or the panel trailing draft when the field row was the only body row. A projected tag slot is not deletable from its instance. |
 | `Mod+A` in field name/value | First press selects the text in that control/editor. A second consecutive `Mod+A` while the editor text is fully selected leaves edit mode and selects every visible row in the panel selection scope. Empty controls have no text-selection step, so `Mod+A` can select visible rows immediately. |
 | `>` in field value content/trailing input | Create a nested field entry inside the field value scope. |
-| `Tab` / `Shift+Tab` | Stored values use normal structural indentation within the field boundary. Tab may move a direct value under its previous direct sibling; Shift+Tab may promote an ordinary descendant into a direct value. A direct value cannot Shift+Tab out of its owning field entry. |
+| `Tab` / `Shift+Tab` | Stored values use normal structural indentation within the field boundary. Tab may move a direct value under its previous direct sibling; Shift+Tab may promote an ordinary descendant into a direct value. A direct value cannot Shift+Tab out of its owning field entry, and a projected tag slot wrapper cannot move structurally. |
 | `ArrowUp` / `ArrowDown` | Move through visible outline rows across field boundaries. Auto-hidden field-value drafts are skipped rather than revealed by navigation; already-visible expanded-child drafts and the panel trailing draft remain navigation targets. |
 | `Escape` | Close the reuse popover if open, else leave edit mode and select the field row. |
 
@@ -224,7 +241,7 @@ done). Owner and Day are on-node fields only; they are not (yet) selectable in
 view sort/filter/group, so the protocol-surface `ViewSystemField` union is
 unchanged.
 
-A **field entry row is never expandable**: its direct children *are* its
+A **field slot row is never expandable**: a materialized entry's direct children *are* its
 value(s), rendered in the value column, so the entry has no separate child scope
 to open. Each stored value is still an ordinary expandable node. Its descendants
 render below it inside the value column, use normal node commands, and are not
@@ -374,15 +391,18 @@ When a field-first popover drills into an editor pane, focus moves to the pane's
 back control. That keeps Escape scoped to the popover and preserves keyboard
 dismissal after the clicked field row unmounts.
 
-Field display names are labels, not identities. A name-based write first uses a
-single matching direct entry on the owner. When several direct entries match,
-the owner's applied tag chains provide precedence by definition identity:
-resolution checks direct tags first, then each inheritance depth in
-specific-first order. The first layer with exactly one unique matching
-`fieldDefId` wins only when the owner has exactly one matching entry backed by
-that definition. No reachable candidate, multiple definitions at the winning
-layer, or multiple owner entries backed by the winning definition preserves the
-duplicate-entry error and returns all matching entry ids.
+Field display names are labels, not identities. A name-based write first resolves
+against the owner's complete projected field-slot shape. A single matching slot
+wins whether it is materialized or virtual. When several slots match, the
+owner's applied tag chains provide precedence by definition identity: resolution
+checks direct tags first, then each inheritance depth in specific-first order.
+The first layer with exactly one unique matching `fieldDefId` wins only when the
+owner has exactly one matching slot backed by that definition. A materialized
+winner addresses its entry; a virtual winner addresses the definition and
+materializes through the slot write boundary. Multiple stored matches preserve
+the duplicate-entry error and return all matching entry ids. If ambiguity
+includes a virtual slot, the duplicate-definition error returns the competing
+definition ids because no entry id exists for that slot yet.
 
 The same tag-chain walk resolves schema-level ambiguity when no direct owner
 entry matches and Schema contains several active definitions with that label.
@@ -488,11 +508,11 @@ and established type-aware field behavior. There is no separate read-only cell
 preview mode. Table preserves the ordinary leading geometry, with distinct
 chevron and bullet slots in both Title and authored-value cells.
 An absent value is a quiet empty cell and remains absent on hover, selection,
-focus, and arrow navigation. Enter, double-click, or a printable key begins
-editing and attaches exactly one entry to the chosen existing definition before
-focusing its editor. Attachment is single-flight per logical cell: printable
-characters received while the command is pending are buffered in order and
-delivered to the new editor without duplicate create commands or input loss.
+focus, and arrow navigation. Enter or double-click focuses the projected slot's
+trailing editor without writing an entry. A printable key travels on the pending
+input rail to that same editor; the accepted draft then materializes exactly one
+entry together with its first value, so the initiating character is not lost and
+an abandoned empty edit leaves no stored copy.
 Enter or a printable key on an inactive stored or trailing-draft Title cell opens
 its ordinary rich-text editor directly and seeds printable input there. Read-only
 system fields remain derived; Done keeps its direct toggle behavior. The trailing
