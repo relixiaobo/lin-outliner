@@ -79,7 +79,14 @@ theme-section entry below; this list is the ordering, not a second record):
 **Release:** v0.3.0 + v0.3.1 shipped 2026-08-10; `main` is the **0.4.0 train**,
 **frozen 2026-08-16** — #544 merged as its final load (14 user-visible entries,
 #525–#544). Note drafted by main, awaiting PM ratification; then tag + dial to
-0.5.0.
+0.5.0. **The note MUST lead with the #533 persistence-format break** (verified
+live 2026-08-16: a pre-#533 workspace fail-closes startup with `invalid
+workspace persistence revision`, and no startup-failure surface exists —
+`startup-window-first` is unbuilt): upgrading v0.3.x users must wipe
+`~/Library/Application Support/Tenon/` before v0.4.0 launches, unless the PM
+ratifies at freeze a ~dozen-line detect-old-envelope → set-aside → fresh-start
+fallback (not a migration — it automates the wipe; escalated 2026-08-16,
+undecided).
 
 `pi-ai-0.80-upgrade` shipped #348 (clean `Models` migration, not the interim `/compat` shim) — see *Recently completed*.
 `dream-channel-and-memory-retire` shipped in full (PR1 #324 + PR2 #328 + PR3 #329) — see *Recently completed*.
