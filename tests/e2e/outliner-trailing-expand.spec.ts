@@ -3,6 +3,7 @@ import {
   e2eProjection,
   emitDocumentEvent,
   ids,
+  nodeById,
   nodeByText,
   openMockedApp,
   row,
@@ -584,6 +585,24 @@ test.describe('outliner trailing input and expansion parity', () => {
     // advancing, matching the "every Enter creates a node and moves down" model.
     await expect(trailingEditor(page)).toBeFocused();
     await expect(trailingEditor(page)).toBeVisible();
+  });
+
+  test('Cmd+Enter in an empty trailing input creates an unchecked checkbox row', async ({ page }) => {
+    await trailingEditor(page).click();
+    await page.keyboard.press('Meta+Enter');
+
+    await expect.poll(async () => {
+      const projection = await e2eProjection(page);
+      return projection.nodes.find((node) => node.id === ids.today)?.children.length;
+    }).toBe(4);
+
+    const projection = await e2eProjection(page);
+    const today = projection.nodes.find((node) => node.id === ids.today)!;
+    const createdId = today.children.at(-1)!;
+    const created = await nodeById(page, createdId);
+    expect(created?.content.text).toBe('');
+    expect(created?.completedAt).toBe(0);
+    await expect(row(page, createdId).getByRole('checkbox')).toHaveAttribute('aria-checked', 'false');
   });
 
   test('Tab and Shift+Tab in an empty trailing input relocate the draft without materializing', async ({ page }) => {
