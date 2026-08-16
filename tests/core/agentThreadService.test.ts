@@ -7946,6 +7946,86 @@ describe('ThreadService', () => {
     await fixture.service.close();
   });
 
+  test('projects committed Agent executions to the conversation and announces every change', async () => {
+    const fixture = await createFixture();
+    const notifications: AgentCoreNotification[] = [];
+    fixture.service.subscribe((notification) => notifications.push(notification));
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Delegate the survey' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    expect(fixture.service.listThreadSubagents({ threadId: root.id }).data).toEqual([]);
+
+    await recordCollaborationSpawnBoundary(fixture.executor.contexts[0]!, 'projection-spawn');
+    const tools = await fixture.service.collaborationToolContributions({
+      threadId: root.id,
+      turnId: rootTurn.turn.id,
+    });
+    const launched = await executeTool(tools, 'agent', 'projection-spawn', {
+      description: 'survey the runtime',
+      prompt: 'Survey the runtime',
+      subagent_type: 'general-purpose',
+      run_in_background: true,
+    });
+    const childId = (launched.details as { agentId: string }).agentId;
+    await fixture.executor.waitUntilWaiting(1);
+
+    const running = fixture.service.listThreadSubagents({ threadId: root.id }).data;
+    expect(running).toEqual([expect.objectContaining({
+      agentId: childId,
+      parentThreadId: root.id,
+      description: 'survey the runtime',
+      agentType: 'general-purpose',
+      runMode: 'background',
+      generation: 1,
+      stopProvenance: 'none',
+      terminalStatus: null,
+      notificationState: 'none',
+      worktree: null,
+    })]);
+    // The record crosses the seam without the execution-side fields: a tool
+    // policy or startup snapshot the renderer cannot render must not be
+    // rendered by accident.
+    expect(Object.keys(running[0]!).sort()).toEqual([
+      'agentId', 'agentType', 'createdAt', 'currentTurnId', 'description', 'generation',
+      'notificationState', 'parentThreadId', 'runMode', 'stopProvenance', 'terminalStatus',
+      'updatedAt', 'worktree',
+    ]);
+    expect(notifications.filter((notification) => notification.type === 'subagent/execution/changed'))
+      .toContainEqual(expect.objectContaining({
+        type: 'subagent/execution/changed',
+        threadId: root.id,
+        execution: expect.objectContaining({ agentId: childId, generation: 1 }),
+      }));
+
+    fixture.executor.finish(1);
+    await fixture.service.waitForIdle(childId);
+    // Terminal settlement queues the direct-parent notification, which is the
+    // state a completion anchor reads before the parent has consumed it.
+    await waitUntil(() => (
+      fixture.service.listThreadSubagents({ threadId: root.id }).data[0]?.notificationState === 'pending'
+    ));
+    expect(fixture.service.listThreadSubagents({ threadId: root.id }).data[0]?.terminalStatus)
+      .toBe('completed');
+
+    await fixture.service.interruptUserWork(root.id, rootTurn.turn.id);
+    await fixture.service.waitForIdle(root.id);
+    expect(fixture.service.listThreadSubagents({ threadId: root.id }).data[0])
+      .toMatchObject({ agentId: childId, stopProvenance: 'user' });
+    expect(notifications.filter((notification) => (
+      notification.type === 'subagent/execution/changed'
+      && notification.execution.stopProvenance === 'user'
+    ))).not.toEqual([]);
+    await fixture.service.close();
+  });
+
   test('treats foreground Explore and Plan raw IDs as missing Agent targets', async () => {
     const fixture = await createFixture();
     const root = (await fixture.service.startThread({

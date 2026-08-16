@@ -50,6 +50,9 @@ ThreadDescendantsResponse,
 ThreadListResponse,
 ThreadReadRequest,
 ThreadReadResponse,
+ThreadSubagentsRequest,
+ThreadSubagentsResponse,
+SubagentExecutionProjection,
 ThreadImageArtifactReference,
 ThreadResourceReference,
 ThreadRollbackRequest,
@@ -103,6 +106,7 @@ import {
   type SubagentExecutionRecord,
   type SubagentRecordedToolPolicy,
 } from './persistence/SubagentExecutionLedger';
+import { projectSubagentExecution } from './thread/subagentExecutionProjection';
 import type {
 AgentWorktreeMetadata,
 AgentWorktreeIntentInput,
@@ -480,6 +484,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     this.goalStore = options.stores.goals;
     this.subagentBudgets = options.stores.subagentBudgets;
     this.subagentExecutions = options.stores.subagentExecutions;
+    this.subagentExecutions.observeChanges((agentId) => this.publishSubagentExecution(agentId));
     this.recoverAgentWorktree = options.recoverAgentWorktree;
     this.cleanupResidualAgentWorktree = options.cleanupResidualAgentWorktree;
     this.settleAgentWorktree = options.settleAgentWorktree;
@@ -1224,6 +1229,10 @@ export class ThreadService implements ThreadServiceExtensionHost {
         return this.listThreadDescendants(
           decoded as AgentCoreRequestByMethod['thread/descendants'],
         ) as AgentCoreResponseByMethod[Method];
+      case 'thread/subagents/list':
+        return this.listThreadSubagents(
+          decoded as AgentCoreRequestByMethod['thread/subagents/list'],
+        ) as AgentCoreResponseByMethod[Method];
       case 'thread/read':
         return this.readThread(decoded as AgentCoreRequestByMethod['thread/read']) as AgentCoreResponseByMethod[Method];
       case 'thread/start':
@@ -1382,6 +1391,52 @@ export class ThreadService implements ThreadServiceExtensionHost {
   listThreads(request: ThreadListRequest = {}): ThreadListResponse { return this.catalogOps.listThreads(request); }
   listThreadDescendants(request: ThreadDescendantsRequest): ThreadDescendantsResponse {
     return this.catalogOps.listThreadDescendants(request);
+  }
+  /**
+   * Every Agent this conversation has delegated, at any depth.
+   *
+   * Scoped to one conversation subtree rather than the installation: the
+   * delegating conversation is the only place these Agents are addressable, so
+   * a global roster would describe work no visible surface can act on.
+   */
+  listThreadSubagents(request: ThreadSubagentsRequest): ThreadSubagentsResponse {
+    const subtree = this.catalogOps.subtreeThreadIds(request.threadId);
+    const data = subtree
+      .flatMap((threadId) => this.subagentExecutions.listByParent(threadId))
+      // An uncommitted admission may still be rolled back, and the host
+      // publishes no start for one; projecting it would put a chip in the
+      // conversation for a delegation that never happened.
+      .filter((record) => record.initialAdmissionState === 'committed')
+      .map((record) => this.projectExecution(record))
+      .sort((left, right) => left.createdAt - right.createdAt || left.agentId.localeCompare(right.agentId));
+    return { data };
+  }
+  private projectExecution(record: SubagentExecutionRecord): SubagentExecutionProjection {
+    return projectSubagentExecution(
+      record,
+      this.subagentExecutions.terminalNotification(record.agentId, record.generation),
+    );
+  }
+  /**
+   * Announces one Agent's execution state to the conversation that delegated
+   * it. Transient by construction: the record is derived orchestration state,
+   * while the Agent's canonical history is its own Thread, Turns, and Items.
+   */
+  private publishSubagentExecution(agentId: ThreadId): void {
+    const record = this.subagentExecutions.read(agentId);
+    if (!record || record.initialAdmissionState !== 'committed') return;
+    if (!this.core.metadata.read(record.parentThreadId) && !this.core.ephemeral.has(record.parentThreadId)) return;
+    try {
+      this.core.emitTransientNotification({
+        type: 'subagent/execution/changed',
+        threadId: record.parentThreadId,
+        execution: this.projectExecution(record),
+      });
+    } catch (error) {
+      // Presentation state, never the write's problem: a parent that vanished
+      // between the write and this publication has no surface left to update.
+      console.warn(`[agent] Subagent execution notification skipped for ${agentId}`, error);
+    }
   }
   readThread(request: ThreadReadRequest): ThreadReadResponse { return this.catalogOps.readThread(request); }
   getThreadConfiguration(threadId: ThreadId): ThreadConfigurationResponse { return this.catalogOps.getThreadConfiguration(threadId); }

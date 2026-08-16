@@ -18,6 +18,8 @@ import type {
   ThreadItem,
   ThreadItemDelta,
   ThreadListResponse,
+  SubagentExecutionProjection,
+  ThreadSubagentsResponse,
   TurnPlanSnapshot,
   TurnId,
   ThreadUserContent,
@@ -51,6 +53,12 @@ export interface ThreadStoreSnapshot {
   readonly userInputByThread: ReadonlyMap<ThreadId, RequestUserInputRequest>;
   readonly providerRetryByThread: ReadonlyMap<ThreadId, { readonly turnId: string; readonly status: ProviderRetryStatus }>;
   readonly planByThread: ReadonlyMap<ThreadId, ActiveTurnPlan>;
+  /**
+   * Canonical Agent execution records for the loaded conversations, keyed by
+   * the stable Agent ID. This is the registry's input: a delegated child spans
+   * many Turns, so its lifecycle cannot be read off the Turn that spawned it.
+   */
+  readonly subagentExecutionsByAgentId: ReadonlyMap<ThreadId, SubagentExecutionProjection>;
   readonly loading: boolean;
   readonly error: string | null;
 }
@@ -65,6 +73,7 @@ const EMPTY_SNAPSHOT: ThreadStoreSnapshot = {
   userInputByThread: new Map(),
   providerRetryByThread: new Map(),
   planByThread: new Map(),
+  subagentExecutionsByAgentId: new Map(),
   loading: true,
   error: null,
 };
@@ -149,7 +158,14 @@ export class ThreadStore {
       loading: false,
       error: null,
     });
-    if (selected) await this.loadTurns(selected);
+    if (selected) {
+      // The same two reads a selection makes: `thread/list` is roots-only, so a
+      // restored conversation knows neither its Agents nor their child Threads
+      // until these land.
+      void this.listDescendants(selected).catch(() => undefined);
+      void this.loadSubagentExecutions(selected).catch(() => undefined);
+      await this.loadTurns(selected);
+    }
   }
 
   async selectThread(threadId: ThreadId): Promise<void> {
@@ -160,7 +176,26 @@ export class ThreadStore {
     // that merely finished. One subtree read per selection restores the catalog
     // this conversation needs, and prunes children the server no longer has.
     void this.listDescendants(threadId).catch(() => undefined);
+    void this.loadSubagentExecutions(threadId).catch(() => undefined);
     await this.loadTurns(threadId);
+  }
+
+  /**
+   * The conversation's Agent registry input, read once per selection.
+   *
+   * Live changes arrive as `subagent/execution/changed`, so this read is the
+   * cold-start half only: a conversation reopened days later still knows which
+   * Agents it delegated, which of them the user stopped, and which left a
+   * worktree behind.
+   */
+  async loadSubagentExecutions(threadId: ThreadId): Promise<void> {
+    const response: ThreadSubagentsResponse = await this.client.agentCoreRequest(
+      'thread/subagents/list',
+      { threadId },
+    );
+    const subagentExecutionsByAgentId = new Map(this.snapshot.subagentExecutionsByAgentId);
+    for (const execution of response.data) subagentExecutionsByAgentId.set(execution.agentId, execution);
+    this.patch({ subagentExecutionsByAgentId });
   }
 
   async openThreadById(threadId: ThreadId): Promise<void> {
@@ -252,6 +287,7 @@ export class ThreadStore {
     const userInputByThread = new Map(this.snapshot.userInputByThread);
     const providerRetryByThread = new Map(this.snapshot.providerRetryByThread);
     const planByThread = new Map(this.snapshot.planByThread);
+    const subagentExecutionsByAgentId = new Map(this.snapshot.subagentExecutionsByAgentId);
     for (const deletedId of deletedIds) {
       this.loadGenerations.set(deletedId, (this.loadGenerations.get(deletedId) ?? 0) + 1);
       turnsByThread.delete(deletedId);
@@ -261,6 +297,7 @@ export class ThreadStore {
       userInputByThread.delete(deletedId);
       providerRetryByThread.delete(deletedId);
       planByThread.delete(deletedId);
+      subagentExecutionsByAgentId.delete(deletedId);
     }
     const selectedThreadWasDeleted = Boolean(
       this.snapshot.selectedThreadId && deletedIds.has(this.snapshot.selectedThreadId),
@@ -280,6 +317,7 @@ export class ThreadStore {
       userInputByThread,
       providerRetryByThread,
       planByThread,
+      subagentExecutionsByAgentId,
       selectedThreadId: replacementThreadId,
     });
     if (selectedThreadWasDeleted && replacementThreadId) await this.loadTurns(replacementThreadId);
@@ -373,12 +411,22 @@ export class ThreadStore {
   async interruptThread(threadId: ThreadId): Promise<void> {
     const loaded = findLastInProgressTurn(this.turns(threadId));
     const latest = this.snapshot.latestTurnByThread.get(threadId);
-    const active = loaded ?? (latest?.status === 'inProgress' ? latest : undefined);
+    // A conversation reopened cold loads no child Turns at all, so a delegated
+    // Agent that is verifiably mid-Turn had NOTHING here to interrupt and every
+    // Stop on it failed with "that work already finished" while it kept running.
+    // Its execution record names the Turn it is running; that is the same
+    // authority the chip read to decide it was still running at all.
+    const running = this.snapshot.subagentExecutionsByAgentId.get(threadId);
+    const active = loaded
+      ?? (latest?.status === 'inProgress' ? latest : undefined)
+      ?? (running?.currentTurnId === null ? undefined : running);
     // Reported rather than swallowed: a Stop that resolves without issuing a
     // request looks identical to one that worked, which is the worst of the
     // three outcomes. The caller surfaces this.
     if (!active) throw new Error(`No active Turn to interrupt: ${threadId}`);
-    await this.client.agentCoreRequest('turn/interrupt', { threadId, turnId: active.id });
+    const turnId = 'currentTurnId' in active ? active.currentTurnId : active.id;
+    if (turnId === null) throw new Error(`No active Turn to interrupt: ${threadId}`);
+    await this.client.agentCoreRequest('turn/interrupt', { threadId, turnId });
   }
 
   async continueInNewChat(threadId: ThreadId, turnId: string): Promise<Thread> {
@@ -722,6 +770,16 @@ export class ThreadStore {
         this.patch({ goalsByThread });
         return;
       }
+      case 'subagent/execution/changed': {
+        const current = this.snapshot.subagentExecutionsByAgentId.get(notification.execution.agentId);
+        // Field-equal records keep their identity so the registry — and every
+        // memoized row projected from it — sees no change at all.
+        if (current && subagentExecutionEqual(current, notification.execution)) return;
+        const subagentExecutionsByAgentId = new Map(this.snapshot.subagentExecutionsByAgentId);
+        subagentExecutionsByAgentId.set(notification.execution.agentId, notification.execution);
+        this.patch({ subagentExecutionsByAgentId });
+        return;
+      }
     }
   }
 
@@ -819,6 +877,27 @@ export function useThreadStore(
     return frozenRef.current;
   }, [active, source]);
 
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+}
+
+/**
+ * One Thread's Turns, and nothing else.
+ *
+ * `useThreadStore()` hands back the whole snapshot, so a component that only
+ * needs one Thread's history still re-renders on every patch the store makes —
+ * including each streaming delta in the conversation around it. The per-Thread
+ * array is replaced only when that Thread's own Turns change, so returning it
+ * directly lets `useSyncExternalStore` skip the render entirely.
+ */
+export function useThreadTurns(
+  threadId: ThreadId,
+  source: ThreadSnapshotSource = threadStore,
+): readonly Turn[] | undefined {
+  const subscribe = useCallback((listener: () => void) => source.subscribe(listener), [source]);
+  const getSnapshot = useCallback(
+    () => source.getSnapshot().turnsByThread.get(threadId),
+    [source, threadId],
+  );
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
 
@@ -1011,6 +1090,37 @@ function appendReasoningDelta(
   if (values.length === 0) values.push(delta);
   else values[values.length - 1] = values.at(-1)! + delta;
   return { ...item, [key]: values };
+}
+
+/**
+ * Whether two execution projections say the same thing to the renderer.
+ *
+ * Compared over the record's OWN KEYS rather than a hand-written list: the list
+ * had already fallen behind the projection once, and a field it forgets is a
+ * change that silently never reaches the screen.
+ *
+ * `updatedAt` is the one deliberate exclusion. The ledger stamps it on every
+ * touch, including ones that change nothing anybody can see, and treating those
+ * as changes would patch the store — and re-render every chip — for nothing.
+ */
+const SUBAGENT_EXECUTION_UNRENDERED_KEYS = new Set(['updatedAt']);
+
+function subagentExecutionEqual(
+  left: SubagentExecutionProjection,
+  right: SubagentExecutionProjection,
+): boolean {
+  const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
+  for (const key of keys) {
+    if (SUBAGENT_EXECUTION_UNRENDERED_KEYS.has(key)) continue;
+    if (key === 'worktree') {
+      if (left.worktree?.branch !== right.worktree?.branch) return false;
+      if (left.worktree?.path !== right.worktree?.path) return false;
+      continue;
+    }
+    const field = key as keyof SubagentExecutionProjection;
+    if (left[field] !== right[field]) return false;
+  }
+  return true;
 }
 
 function errorMessage(error: unknown): string {

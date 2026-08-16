@@ -90,6 +90,10 @@ const materialSurfaceSelectors = new Map([
   // code-block language trigger. #467 registered the overlay and missed it.
   ['src/renderer/styles/thread.css|.thread-plan-progress-summary', 'Turn-local Plan checklist trigger.'],
   ['src/renderer/styles/thread.css|.thread-plan-progress-popover', 'Turn-local Plan checklist overlay.'],
+  // The deck is too narrow for a side-hung popover, so the work strip's list
+  // opens full-width under the header — still an overlay above the transcript
+  // viewport, and still level-1 chrome rather than transcript content.
+  ['src/renderer/styles/thread.css|.thread-work-strip-list', 'Background Agent work-strip overlay.'],
   ['src/renderer/styles/thread.css|.thread-response-usage-card', 'Thread response usage overlay.'],
   ['src/renderer/styles/thread-turn-details.css|.thread-turn-details-usage-popover', 'Turn Diagnostics usage overlay.'],
   ['src/renderer/styles/code.css|.agent-code-header > span', 'Floating code-block language label chrome.'],

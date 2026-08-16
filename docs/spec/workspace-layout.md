@@ -1112,7 +1112,7 @@ and the rule that sorts them:
   fails while it is up (the keyboard and preview bridges are already live) is
   reported as the action failure it is, not relabelled as a failure to start.
 - **A part of a record belongs in the record.** A failed Turn, tool row,
-  delegation row, or automation run renders inside the transcript or run view
+  Agent chip, or automation run renders inside the transcript or run view
   that contains it.
 
 The notice is anchored to the **window**: horizontally centred, below

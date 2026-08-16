@@ -38,6 +38,61 @@ describe('renderer Thread store', () => {
     });
   });
 
+  test('loads the conversation\'s Agent records and keeps field-equal ones by identity', async () => {
+    const owner = thread('thread-1', 1);
+    const execution = {
+      agentId: 'thread-child',
+      parentThreadId: owner.id,
+      description: 'survey the runtime',
+      agentType: 'general-purpose',
+      runMode: 'background' as const,
+      generation: 1,
+      currentTurnId: 'child-turn',
+      stopProvenance: 'none' as const,
+      terminalStatus: null,
+      notificationState: 'none' as const,
+      worktree: null,
+      createdAt: 10,
+      updatedAt: 10,
+    };
+    let notify: (notification: AgentCoreNotification) => void = () => undefined;
+    const client = {
+      onAgentCoreNotification: (listener: (notification: AgentCoreNotification) => void) => {
+        notify = listener;
+        return () => undefined;
+      },
+      agentCoreRequest: async (method: string) => {
+        if (method === 'thread/list') return { data: [owner], nextCursor: null };
+        if (method === 'thread/subagents/list') return { data: [execution] };
+        if (method === 'thread/turns/list') return { data: [], nextCursor: null, backwardsCursor: null };
+        if (method === 'goal/get') return { goal: null };
+        if (method === 'thread/configuration/get') return configurationResponse(owner);
+        throw new Error(`Unexpected method: ${method}`);
+      },
+    } as unknown as ThreadStoreClient;
+    const store = new ThreadStore(client);
+    await store.initialize();
+    await Promise.resolve();
+
+    // The cold-start half: a conversation reopened later still knows which
+    // Agents it delegated, without waiting for one of them to move.
+    const loaded = store.getSnapshot().subagentExecutionsByAgentId.get('thread-child');
+    expect(loaded).toMatchObject({ agentId: 'thread-child', description: 'survey the runtime' });
+
+    // A record that says nothing new keeps its identity, so the registry — and
+    // every memoized row projected from it — sees no change at all.
+    notify({ type: 'subagent/execution/changed', threadId: owner.id, execution: { ...execution } });
+    expect(store.getSnapshot().subagentExecutionsByAgentId.get('thread-child')).toBe(loaded);
+
+    notify({
+      type: 'subagent/execution/changed',
+      threadId: owner.id,
+      execution: { ...execution, stopProvenance: 'user', updatedAt: 20 },
+    });
+    expect(store.getSnapshot().subagentExecutionsByAgentId.get('thread-child'))
+      .toMatchObject({ stopProvenance: 'user' });
+  });
+
   test('applies an atomic completed Item batch in one renderer snapshot', async () => {
     const owner = thread('thread-1', 1);
     const active = { ...turn('turn-1', 'inProgress', ''), items: [] };

@@ -427,6 +427,12 @@
      outliner = --panel-content-x + --row-leading-width, agent =
      --agent-content-x, settings = inset-row text padding. Do not flatten them
      into one value; converge within a surface instead. */
+  /* The participant avatar disc in the agent transcript. Sized with its gap so
+     the name beside it lands on the SAME text column as a tool row's or a
+     chip's label directly below (their 12px glyph plus --space-3). Off that
+     column by 4px, two glyph-and-label lines under each other read as a ragged
+     left edge. */
+  --speaker-avatar-size: 16px;
   --row-leading-width: 42px;
   --row-leading-height: var(--line-content);
   --row-chevron-width: 15px;

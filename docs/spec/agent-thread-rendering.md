@@ -28,62 +28,185 @@ running and does not receive that indicator. The selected root's own foreground
 Turn does not duplicate its status in the list. This is also the only place a
 fire-and-forget child is visible after its parent Turn ended.
 
-**A child Thread is never a navigation destination, and never a surface of its
-own.** It is read by expanding its delegation row, the same disclosure gesture
-every other process row answers to — an execution artifact of a Turn is opened,
-not travelled to, and an overlay that arrives over the conversation is a second
-opening gesture for the one thing that already had one. Nothing is covered and
-nothing is navigated away from: the dock keeps its title, its list, and its
-composer, all still the conversation the user chose.
+**An Agent is read as a level pushed over the conversation.** A delegated child
+is an execution artifact of a Turn, so it is opened rather than travelled to and
+the Thread list never gains a row for it. 330px of drawer inside a 344px deck is
+not a drawer, so the detail view takes the whole deck body and COVERS the
+conversation instead of replacing it in the tree. The transcript underneath
+stays mounted but hidden (`visibility: hidden`), which keeps it out of tab order
+and out of the accessibility tree while it keeps its scroll position and its
+measured layout: returning is a reveal, not a reload.
 
-The expanded container has a FIXED height with its own scroll. Delegated work is
-unbounded — a child runs for minutes and a grandchild longer — so letting it push
-the timeline open would move the reader's place every time they looked at
-something. The row that was opened does not move: the container grows below it,
-so there is no reading position to lose and none to restore. Scrolling is
-contained, so the inner region never chains into the transcript's.
+The pushed level TAKES THE TITLE BAR, exactly as the Automations surface beside
+it does: a back arrow, the Agent's name, what kind of Agent it is as a badge
+after that name, a worktree mark when it is isolated, and Stop while it runs.
+Leaving the conversation's title above it made the loudest line on screen the
+one thing the reader was not looking at, gave the Agent two headers, and kept
+offering a list chevron that could not act on anything below it.
 
-A DESCENDANT replaces the container's contents rather than nesting inside them,
-and the header keeps a crumb naming its immediate parent — a swap replaces
-everything at once, so without one it reads as a jump with nothing left to
-orient against. Nesting would put a scroll region inside a scroll region, which
-fights at the boundary, and would draw depth as indentation the reader has to
-measure. Delegation is capped at depth three beneath the user Thread. The one
-detail container therefore holds d1, d2, or d3 in turn; at d2 and d3 its single
-crumb steps back to the immediately preceding depth, so repeated Back actions
-unwind d3 → d2 → d1 without exposing or nesting another container. The
-container carries the current child's name, the delegated form's glyph, and Stop
-while its Turn is active and its lineage root is a user Thread. A collaboration
-Agent also carries a composer that starts an explicit user-authored continuation
-on that Agent. An isolated Skill remains read-only and carries a standing note
-where the composer would be.
+The kind is a BADGE rather than a leading glyph, because a glyph asks the reader
+to know an icon while the badge carries the word — and the word is the useful
+half for the specialized types, which are the ones worth telling apart. The
+title carries NO status: the transcript directly below says what the run did and
+how long it took, so a status there would be the same fact twice on one screen
+(PM 2026-08-15).
 
-Inside the container the transcript renders EXACTLY as the main conversation
-does — same message stream, same bubbles, same rows — because it is the same
-thing: a request and the work it produced. What differs is which actions are
-valid there. Collaboration Agents accept new renderer-authored Turns through
-their Agent-resume admission path, while isolated Skills have no composer. Every
-embedded child drops Edit and Continue in new chat because neither rewrites or
-forks child history; they are hidden rather than disabled, because a control
-that never works is not a control, and the actions that remain hold the row's
-height. Copy and Turn Details stay, because both work.
+Back pops exactly one level and its accessible name says which level that is —
+the conversation at depth one, the delegating Agent deeper in. The visible title
+names the level you are ON rather than the one below (PM 2026-08-15, replacing
+the ratified "the back button shows the parent level's name"): that wording was
+written for a drawer, which had no title bar to put the current level's name in.
+A 344px bar carries one name, and showing both truncated each to a syllable —
+`统计 render…` `核对…` — so the current level takes it and the parent's name
+rides the back control's label and tooltip. A nested Agent pushes
+through the same component; delegation is capped at depth three, so the stack is
+bounded at four levels by the protocol rather than by a rule of its own. Opening
+always resolves the target's lineage from the conversation, so a descendant
+deepens the stack while a sibling reached through `agent_message` opens at its
+own level: reachability is not lineage, and a stack that grew on reachability
+would draw a delegation edge that does not exist.
+
+Every anchor opens the same view. A chip in the transcript, a work-strip row, a
+Thread Details row, and a nested chip inside another Agent are one gesture to
+one surface, so an Agent has exactly one place it is read.
+
+Inside the view the transcript renders EXACTLY as the main conversation does —
+same message stream, same bubbles, same rows — because it is the same thing: a
+request and the work it produced. What differs is which actions are valid.
+
+**Position is identity, and everyone who is not the reader is a speaker.** The
+delegation graph is a set of participants sending each other messages, and every
+surface that shows one reads like any message stream.
+
+Every non-reader block therefore wears the SAME structure — a one-line header
+carrying an avatar, the participant's name, and what they did (the Turn's work
+summary for this transcript's own agent; a delegated child's own elapsed for its
+report) — then what they said at full width beneath it. Who spoke and how long
+it took is one sentence, so it is one line: that header IS the work summary and
+the only control that opens the timeline. It was a name row, a summary line, a
+rule, and sometimes a second summary line — four elements for one sentence (PM
+2026-08-15). One structure for all of them: the conversation's own agent
+answering, a delegated child delivering its report, the Agent that wrote a
+brief. The header is one line and the words keep the whole column on purpose:
+the avatar lane down the margin that desktop IM uses costs a tenth of the
+reading measure in a 344px deck, spent repeating what the header already says
+(PM 2026-08-15). Before this, `main` was unattributed prose and a child's report was a
+labelled bubble, which made two participants look like two different sorts of
+thing (PM 2026-08-15). Consecutive blocks group under a single header only within one
+PARTICIPANT — never merely within one type. A `general-purpose` child inside a
+`general-purpose` parent otherwise swallowed the brief its parent wrote into its
+own header and hung its own elapsed over someone else's words (PM 2026-08-15):
+which participant is speaking and what its avatar looks like are two questions,
+and only the first may merge two blocks. So an agent that works and then answers
+is named once, not twice;
+a delivery Turn genuinely has two speakers (the child, then the agent reading
+its result) and shows two.
+
+Two things never open a speaker run, because both produce a header standing over
+nothing — a participant who apparently said something the reader cannot see. A
+delivery whose Agent is no longer in the registry has no report to show and no
+speaker to name, so its block is dropped rather than handed to the Turn's host
+author. And a block that DRAWS nothing is skipped before grouping at all: a
+delivery Turn as the host writes it opens with the settled activity Item and
+three `contextEvidence` rows, none of which the transcript renders, and all of
+which belong to this Thread's own agent — so ungrouped they put a named `main`
+above an empty box before the child that actually spoke.
+
+Content under a speaker is PLAIN PROSE, never a bubble. The avatar and name
+above already say who is talking, and a second container would draw the same
+fact twice. That is what retires the `From <name>` label the report and the
+brief used to carry inside their own bubbles.
+
+The reader is the one exception, deliberately: their own messages keep the
+right-hand bubble and get no avatar. Which side a message is on is the fastest
+identity signal in the stream, and Tenon has no user profile to draw a face
+from — so `I asked this` stays a matter of position, and `main asked this` a
+matter of the name above it. Neither is ever left to a hover.
+
+A participant is named by its TYPE everywhere it SPEAKS — in the conversation
+and inside its own pushed view alike, since the avatar is drawn from that name
+and an Agent that answered to `general-purpose` outside would otherwise change
+letter and hue on the way in. Not by the task it was handed. The
+execution record's description (`count spec Markdown`) is a task label, and a
+task label standing where a name goes reads as a sentence fragment rather than
+as somebody speaking; the task appears right below it, as the report's own first
+line. This is deliberately NOT the rule for the chip or the pushed view's TITLE bar:
+both answer *which* Agent this is, and the type is `general-purpose` for nearly
+every one, so there the task is the only thing that tells two of them apart.
+Naming (who is speaking) and identification (which one is this) are different
+questions (PM 2026-08-15). An isolated Skill keeps its own name, which is its
+type.
+
+Both halves of a header — the name and what that participant did — are one
+sentence on one line, and share one meta rule. Styled apart, the child's elapsed
+came out at content size and stood its whole header taller than the agent's
+above it, so two headers that say the same kind of thing did not look alike.
+
+The avatar is a coloured disc carrying the first character of the name. Its hue
+comes from the shared `--identity-tint-*` palette (`agentAvatarColor.ts`), keyed
+by the Agent TYPE: **one type, one avatar — everywhere, in every conversation.**
+Derived rather than enumerated, since a project can name a type anything at all
+in `.claude/agents/*.md` and a hand-kept table would miss exactly the ones that
+matter to that workspace. Keyed by Agent id instead, two `general-purpose`
+siblings shared one NAME in this stream but wore different discs — saying they
+were different kinds of participant — and the same Agent was repainted on the
+way into its own pushed view (PM 2026-08-15). What tells two siblings apart is
+the task on each one's report, not its colour. `main` is pinned to an
+untranslated key, so it is neither rehashed per conversation nor repainted when
+the language changes. Red is excluded: it sits
+next to `--status-danger`, and an Agent that reads as an error every time it
+speaks is a worse trade than one fewer hue. This is the design system's
+**identity** category (`design-system.md`), distinct from functional state (B3,
+neutral), status (B4), and the rose accent (B4) — the same category the tag
+chips already use, so the app reads as one coordinated set rather than three
+inventions. Identity colour never paints selection, hover, active, focus, or
+status; those stay exactly as neutral as they were. A hue may repeat across a
+large conversation; the name beside the disc is the identity of record.
+
+Each Turn after the first IS a new generation, and nothing marks it as one. A
+generation counter is the execution record's word for a resume, not the
+reader's, and the message that started the run is directly below the boundary
+anyway: their own bubble, or one under the avatar and name of the Agent that
+sent it (PM 2026-08-15, replacing the ratified `Generation 2 · Continued by
+main` divider).
+
+Every embedded child drops Edit and Continue in new chat because neither
+rewrites or forks child history; they are hidden rather than disabled, because a
+control that never works is not a control. Copy and Turn Details stay, because
+both work.
+
+The composer is the physical form of user authority. A message sent here is the
+top-priority instruction for that Agent and is the only action that clears a
+user stop, so a user-stopped Agent's placeholder says so
+(`Message this Agent… (resumes after your stop)`) rather than leaving the rule
+to documentation. An isolated Skill has no composer: its result is owned by the
+`skill` call that invoked it.
+
+The title bar states identity and NEVER moves: the Agent's own transcript is
+directly below it and carries the live cue on the most specific row that is
+working, so a moving title would be the same work claimed twice.
+
+A retained managed worktree gets a footer naming its branch and the number of
+changed paths, with a control to list those paths and one to reveal the
+directory. The renderer names the Agent, never a path: main resolves the
+directory from the execution record, so no renderer-supplied path can turn the
+footer into an arbitrary filesystem read or a Finder window anywhere on disk. A
+removed worktree is a tombstone and never resolves — the footer does not offer
+to open a directory the host has already deleted. Tenon has no diff viewer, so
+"view changes" lists the changed paths rather than pretending to be one.
 
 Parent Thread Details lists the descendant subtree newest-activity first with a
 readable name, status, and last activity; the read names the subtree while the
 Thread catalog keeps each status current, so a child that starts or stops while
-the dialog is open does not go stale. Each row opens that child where it is read — by expanding its
-delegation row in the transcript — and each can be deleted. Only the
-conversation's own children have a row here, so a request for a grandchild
-carries its lineage: the row that exists is expanded and the container opens
-already drilled to the child that was named, rather than to the ancestor that
-happened to be reachable. That request describes one navigation and is consumed
-on arrival, so reopening the same row later shows that row's own child. A bulk action removes finished Subagents, which means Threads whose
-whole subtree has stopped: a finished parent with a running child is never
-swept, because deletion cascades, and neither is a child holding queued work,
-because idle is not finished — work already handed to it has not run yet. Both
-deletions are confirmed first and re-decided against a fresh read at the moment
-they are confirmed, since deletion force-stops a live subtree and cannot be
-undone.
+the dialog is open does not go stale. Each row opens that child in the same
+pushed view, carrying its lineage so a grandchild opens at its own depth rather
+than at the ancestor that happened to be reachable, and each can be deleted. A
+bulk action removes finished Subagents, which means Threads whose whole subtree
+has stopped: a finished parent with a running child is never swept, because
+deletion cascades, and neither is a child holding queued work, because idle is
+not finished — work already handed to it has not run yet. Both deletions are
+confirmed first and re-decided against a fresh read at the moment they are
+confirmed, since deletion force-stops a live subtree and cannot be undone.
 
 Forks remain top-level user
 Threads and expose their source lineage in details rather than masquerading as
@@ -107,10 +230,21 @@ An active Turn preserves canonical Item identity across streamed deltas. Its
 content grouper compares Item references pairwise, rebuilds structure when an
 Item changes rendering role or order, and otherwise replaces only the affected
 item or process block. Turn actions keep stable callbacks keyed by Turn ID and
-read the current Turn through a ref. Field-equal Subagent projection entries,
-their map, and unchanged projected arrays retain identity. `ThreadItemView` and
-consecutive tool groups are memoized against those stable inputs, so a response
-delta does not render unrelated transcript Items again.
+read the current Turn through a ref. The Agent registry is identity-preserving
+by contract: a streaming delta replaces exactly one Turn object and touches no
+execution record, so every anchor set and every field-equal registry entry comes
+back by reference. Anchors are memoized on Turn identity, which is the exact
+invalidation signal. `ThreadItemView` and consecutive tool groups are memoized
+against those stable inputs, so a response delta does not render unrelated
+transcript Items again.
+
+Elapsed ticking is LEAF state. The 1 Hz clock lives in the component that
+displays the value — the chip, the strip row — including its accessible name and
+title, so an open Agent transcript is never re-rendered once a second by a
+counter above it. A Turn reads Agent liveness through a set of working Agent
+IDs that changes only when an Agent starts or stops working, which is exactly
+when motion ownership can change; per-Agent status and elapsed changes never
+reach it.
 
 - user and agent messages render readable text at the same content register as
   the outliner
@@ -344,22 +478,141 @@ delta does not render unrelated transcript Items again.
   feature Turn exposes Turn Diagnostics from that boundary and does not synthesize an empty
   response row with Copy or Continue-in-New-Chat actions
 
-A delegated child has ONE presentation for its whole life: the delegation row
-in its Turn's process timeline, in the delegating call's canonical slot. It does
-not change surface, shape, or position when the child settles — live it carries a
-moving status phrase and a Stop that interrupts that child alone, and settled it
-keeps the same slot and states the outcome, so the post-hoc rendering IS the live row
-rather than a second thing the reader has to re-find. It carries the delegated
-form's own glyph and shares the type ramp and resting colour of the tool rows
-around it: a delegation is one more thing the Turn did, not an event announced in
-its own vocabulary. Every delegated form gets one — an isolated Skill child is
-delegated work too — and membership is the Turn's projection rather than a second
-split by source. The container that reads a child exposes the same Stop while its
-Turn is active. Like every delegation surface the row speaks time and status
-only: no token quantity reaches its text, its title, or its accessible labels,
-and a failure carries the same bounded, code-classified copy the tool rows use.
-There is no dock-level agents panel and no Turn-level delegation card;
-cross-thread awareness is the Thread list's activity indicator.
+### Agent Anchors And The Work Strip
+
+Presentation re-derives an Agent's lifecycle from the canonical execution record
+projected across the seam (`thread/subagents/list` plus
+`subagent/execution/changed`), never from a wait Item or a model-maintained
+roster. The renderer holds one REGISTRY keyed by the stable Agent ID, scoped to
+the conversation subtree, built from those records joined to each child Thread
+and its current generation Turn. A resume appends a generation to the same
+Agent, so a Turn-anchored projection would duplicate that Agent under every Turn
+that touched it or orphan the generations no Turn owns.
+
+The record's `currentTurnId` names the generation being described. When the
+renderer holds that exact Turn it supplies the duration and the typed error;
+otherwise the durable terminal status still states the outcome, so a
+conversation reopened days later never calls a finished Agent `Idle` for want of
+a Turn it never loaded. A delegated child whose record was retired is still
+readable: its identity is synthesized from the Thread, because a chip that said
+`Not found` about work the conversation plainly did would be a worse answer than
+a thinner one. Uncommitted admissions are absent by construction — the host
+publishes no start for one and may still roll it back, so a chip for it would be
+a delegation the conversation never made.
+
+The conversation is the only narrative, and every lifecycle event leaves an
+ANCHOR in it at the point where it happened:
+
+- a **spawn chip** at the delegating call's canonical slot. The chip replaces
+  both the call and the activity row that repeated it — one delegation reaching
+  the reader twice in two vocabularies is the thing this collapse exists to
+  prevent — and it can never precede the reasoning that produced it, because it
+  takes the call's slot rather than the activity's;
+- a **resume chip** at each later `agent_message`, referencing the same Agent;
+- a **report** at the head of the Turn the host started to deliver a result: the
+  Agent's own terminal answer, rendered as a MESSAGE from that Agent. It stands
+  exactly where the raw task-notification text would be and replaces it, because
+  that text is host framing addressed to the model and never a message to the
+  reader. Position is identity here too (above): the report is one more speaker
+  in the stream — its own avatar, its own name, its own elapsed on that header
+  line. Its body
+  sits in an OUTLINED CARD rather than in the prose column `main` uses, because
+  it is not part of this conversation's narrative: it is a self-contained thing
+  brought back from somewhere else, which the reader may open. An outline says
+  that; a fill would shout it and bare prose would hide it. The card's first
+  line is the task the Agent was handed, suppressed when the header is already
+  saying it — an Agent with no type falls back to its task description for a
+  name, and one sentence printed twice is not a heading.
+
+  The WHOLE CARD is the control that opens the Agent (PM 2026-08-15). A preview
+  of something you can open should open when you click it, rather than hiding
+  that behind a link in its corner. Its body is clamped and faded rather than
+  carrying a Show more: once the card opens the full transcript, an in-place
+  expander is a second, weaker way to read the same thing. Content inside takes
+  no pointer events, so there is exactly one thing a click on the card can mean.
+  It signals itself with the neutral fill ladder and the focus ring, never a
+  hand cursor (B3, B8, B10), and it says what it does through a hint occupying
+  the message actions' own slot at the message actions' own height — so
+  revealing that on hover moves nothing (B7) and a report ends exactly where any
+  other message ends. The hint carries a POINTER, not a chevron: what that row
+  teaches is that the card takes a click, which is the one thing about it a
+  reader cannot see.
+
+  A report keeps the measure every message here keeps (`min(100%, 520px)`): run
+  to the full width of a deck the reader has widened, it stopped reading as one
+  thing somebody said and started reading as a panel. And it is a block like any
+  other: its BOX sits the same distance under its speaker's header as a
+  paragraph's first line sits under its own, with no
+  optical compensation for the padding it carries. Inside, it breathes on the
+  prose rhythm — container-to-text is the same distance as text-to-text
+  (`.thread-markdown > * + *`) rather than a tighter one of its own. Pulling the
+  card up to align its first LINE with a paragraph's instead was tried and
+  rejected (PM 2026-08-15): it made the two headers sit differently over their
+  content, and a negative first-child margin also shifted measured heights
+  during a streaming scroll replay. One grammar, so a report reads as somebody speaking rather than as one
+  more row of what the Turn did. A pill-shaped fold-to-nothing row was tried
+  first and drowned among the tool rows (PM 2026-08-15). Its speaker is the
+  CHILD, not this transcript's own agent, so a delivery Turn shows two speakers
+  in order: the child reporting, then the agent that read it answering. It never
+  wears the READER's bubble: Agent output is
+  untrusted content, and a surface that let it pass for the reader's own words
+  would be the first step in the laundering the protocol refuses. A `Details ›`
+  control beside it pushes the Agent's own view, so reviewing a finished Agent
+  never requires scrolling back to the spawn point. The Turn's trigger names the
+  call the notification answers, so the conversation's anchors are the index
+  that resolves it across Turns. Only the Turn's FIRST user-role Item is that
+  notification: a steering message typed while the continuation is still running
+  is admitted into the same Turn and belongs to the reader. A delivery reads the
+  Agent's SETTLED Turns counted back from the newest, never forward from the
+  first — forwards, the two sequences line up only while nothing is missing from
+  either, and a notification the host never materialized slid every earlier card
+  silently onto a different run of the same Agent. History is fetched once per
+  Agent when the first report renders, since a message with nothing in it is not
+  a message;
+- a **stopped note** in place of the completion narration for an Agent the user
+  stopped, naming the resume path.
+
+Terminal activity Items render nothing. The chip re-reads its Agent from the
+registry for that Agent's whole life, so the settled chip IS the live chip; a
+second row announcing the same settlement in a later Turn would be state the
+chip already shows, in a place the reader never asked about.
+
+A chip carries the delegated form's glyph, the Agent's name, a worktree mark
+when it is isolated, and one trailing status segment; it shares the type ramp
+and resting colour of the tool rows around it, because a delegation is one more
+thing the Turn did. The Agent TYPE is not on that line (PM 2026-08-15, replacing
+the ratified `truncating name, muted type`): it is `general-purpose` for almost
+every Agent, so it spent the name's room on a fact the reader rarely needs and
+truncated both to `統計 renderer TSX …` `general-purp…`. It rides the chip's
+title and accessible name instead, where a specialized `explore` or `plan` is
+still reachable. It is a way IN, not a disclosure: nothing about it claims an
+expandable region, and it carries the trailing `›` that ordinarily means "opens
+somewhere" rather than the leading disclosure chevron the tool rows beside it
+rotate open in place. A live background chip carries a Stop that reaches that Agent alone; a
+foreground chip says the parent is waiting on it, because a foreground child
+shares the invoking Turn's cancellation lifetime by contract. Like every
+delegation surface a chip speaks time and status only: no token quantity reaches
+its text, its title, or its accessible labels, and a failure carries the same
+bounded, code-classified copy the tool rows use, on its own wrapping line — a
+failure the chip had to truncate is a failure the reader cannot act on.
+
+The WORK STRIP is the only ambient status: one pill in the deck header, present
+only while this conversation has live or just-finished BACKGROUND Agents, that
+opens a full-width dropdown under the header (the deck is too narrow for a
+side-hung popover, so this is the one Liquid-Glass material in the transcript's
+file, with the shared opaque fallback). Rows sort running > stopped >
+just-finished, by what the reader can still act on. A finished row lingers
+briefly and leaves; when the last row leaves, the pill leaves with it, so the
+idle deck and the everything-finished deck are the same deck. A conversation
+whose Agents finished before it was opened shows nothing at all — old work is
+not news. Foreground work never appears here: it belongs to the Turn it blocks,
+and saying it twice would make the conversation look busier than it is. A parent
+with live descendants appends a child-task count to its own row rather than
+flattening the tree into the strip. The strip never becomes an archive; the
+conversation is the archive, and every Agent has an anchor there.
+
+There is no dock-level agents panel across conversations; cross-thread awareness
+is the Thread list's activity indicator.
 
 Superseded (PM 2026-08-07): the earlier shape pinned a live card above the
 timeline and stood the per-child rows down while it was up. It gave one
@@ -370,16 +623,16 @@ panel" stands unchanged; "the card replaces the rows" does not.
 A completed Turn with a final answer and known duration folds its process Items
 under the established `Worked for ...` disclosure while leaving the answer
 outside the fold — unless a child it delegated is still running. The fold
-defaults to closed, and a live delegation's status, elapsed time, and per-child
-Stop live inside it, so a Turn that settled while its child kept working (the
-fire-and-forget shape whose terminal activity lands in a later Turn) stays
-unfolded until that child settles. Work still happening and still stoppable is
+defaults to closed, and a live Agent's chip, elapsed time, and per-Agent Stop
+live inside it, so a Turn that settled while its child kept working (the
+fire-and-forget shape whose result lands in a later Turn) stays unfolded until
+that child settles. Work still happening and still stoppable is
 not history yet. Live and resultless process timelines remain visible; a live
 timeline uses the established `Working` / `Working for ...` status row even
 before its first process Item arrives. A foreground `agent` call remains an
-ordinary in-progress delegation row while it blocks; background Agents remain
-visible after the parent Turn settles until their direct-parent notification is
-consumed. There is no wait-specific status or count. Rendering builds one
+ordinary in-progress chip while it blocks, saying that the Turn is waiting on
+it; background Agents remain visible after the parent Turn settles until their
+direct-parent notification is consumed. There is no wait-specific status or count. Rendering builds one
 Turn-level process projection from every reasoning, non-empty commentary,
 image-view, Subagent, and tool Item. That block is placed before the first final
 response regardless of the Items' persisted arrival order, so a late reasoning
@@ -445,7 +698,7 @@ row below that indicator. While reconnect is visible, that Turn renders every
 mapped working phrase through its ordinary static text branch, including a
 closed Plan outside the transcript, so the retry spinner is its sole motion
 owner. This arbitration is passed explicitly within one `ThreadView`; it never
-uses descendant selectors that could cross into an expanded Subagent's nested
+uses descendant selectors that could cross into an Agent's pushed nested
 `ThreadView`, and a child retry cannot suppress its parent's working phrases.
 The visible footer retry is hidden from accessibility APIs. A separate
 visually-hidden `role="status"` announcer stays mounted outside the virtualized

@@ -6,8 +6,15 @@ import type { DocumentIndexStore } from '../../state/documentIndexStore';
 import { api } from '../../api/client';
 import { useT } from '../../i18n/I18nProvider';
 import { threadStore, useThreadStore } from '../store/threadStore';
-import { setThreadDisclosureOverride } from '../store/threadDisclosureStore';
-import { requestSubagentDrill } from '../store/subagentDrillIntent';
+import {
+  EMPTY_SUBAGENT_PROJECTION,
+  projectSubagentConversation,
+  type SubagentConversationProjection,
+} from '../subagentPresentation';
+import { SubagentDetailTitle, SubagentDetailView } from './SubagentDetailView';
+import type { SubagentRegistryEntry } from '../subagentPresentation';
+import { SubagentRegistryProvider, type SubagentActions } from './SubagentRegistryContext';
+import { SubagentWorkStrip } from './SubagentWorkStrip';
 import {
   BackIcon,
   ChevronDownIcon,
@@ -24,6 +31,7 @@ import { IconButton } from '../../ui/primitives/IconButton';
 import { ResizeHandle } from '../../ui/primitives/ResizeHandle';
 import { ThreadList } from './ThreadList';
 import { ThreadDetailsDialog } from './ThreadDetailsDialog';
+import { MAIN_AVATAR_IDENTITY } from '../agentAvatarColor';
 import { ThreadView } from './ThreadView';
 import { resolveUsableActiveProvider } from '../../ui/agent/providerUsability';
 import { reportActionError } from '../../ui/interactions/actionSteps';
@@ -63,6 +71,11 @@ export const ThreadDock = memo(function ThreadDock({
   const snapshot = useThreadStore(open);
   const [listOpen, setListOpen] = useState(false);
   const [surface, setSurface] = useState<'thread' | 'automations'>('thread');
+  /**
+   * The pushed Agent detail stack, root-most first. Empty is the conversation
+   * itself; each entry is one level deeper, and Back pops exactly one.
+   */
+  const [agentStack, setAgentStack] = useState<readonly string[]>([]);
   const [creating, setCreating] = useState(false);
   const [renameTarget, setRenameTarget] = useState<Thread | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
@@ -126,6 +139,31 @@ export const ThreadDock = memo(function ThreadDock({
     return roots;
   }, [snapshot.selectedThreadId, snapshot.threads]);
   const turns = thread ? snapshot.turnsByThread.get(thread.id) ?? [] : [];
+  /**
+   * The conversation's Agent registry and anchors, projected once for the whole
+   * subtree. The deck owns this rather than each Turn: an Agent outlives the
+   * Turn that spawned it, and a resume six Turns later has to reach the chip
+   * that already exists.
+   */
+  const subagentProjectionRef = useRef<SubagentConversationProjection | null>(null);
+  const subagentProjection = useMemo(() => {
+    if (!thread) return EMPTY_SUBAGENT_PROJECTION;
+    const projection = projectSubagentConversation({
+      rootThreadId: thread.id,
+      turnsByThread: snapshot.turnsByThread,
+      executions: snapshot.subagentExecutionsByAgentId,
+      threadsById,
+      latestTurnByThread: snapshot.latestTurnByThread,
+    }, subagentProjectionRef.current);
+    subagentProjectionRef.current = projection;
+    return projection;
+  }, [
+    snapshot.latestTurnByThread,
+    snapshot.subagentExecutionsByAgentId,
+    snapshot.turnsByThread,
+    thread,
+    threadsById,
+  ]);
   const goal = thread ? snapshot.goalsByThread.get(thread.id) ?? null : null;
   const configuration = thread ? snapshot.configurationsByThread.get(thread.id) ?? null : null;
   const userInput = thread ? snapshot.userInputByThread.get(thread.id) ?? null : null;
@@ -195,6 +233,14 @@ export const ThreadDock = memo(function ThreadDock({
   }, [refreshProviderSettings, refreshSlashCommands]);
 
   const title = useMemo(() => thread?.name || thread?.preview || t.agent.thread.untitled, [t, thread]);
+  // Stable across renders: minted inline it handed the memoized `ThreadTurnView`
+  // a new identity on every store patch, so the whole transcript re-rendered on
+  // every streaming frame — the exact hot path #541 optimized.
+  const conversationSpeaker = useMemo(() => ({
+    participantId: MAIN_AVATAR_IDENTITY,
+    avatarKey: MAIN_AVATAR_IDENTITY,
+    name: t.agent.thread.agent.main,
+  }), [t]);
 
   /**
    * Every transcript and details link goes through here: `openThreadById`
@@ -215,44 +261,57 @@ export const ThreadDock = memo(function ThreadDock({
   }, [t]);
 
   /**
-   * A delegated child is read where it was delegated: this expands its row in
-   * the parent transcript and brings it into view, rather than opening a
-   * surface of its own. Thread Details is a browse surface for children, so its
-   * rows land in the same place the transcript rows do.
+   * Open one Agent, from wherever it was named.
+   *
+   * Every anchor — a chip in the transcript, a strip row, a Thread Details row,
+   * a nested chip inside another Agent — pushes the SAME view, so there is one
+   * place an Agent is read and one gesture that gets there. A grandchild pushes
+   * its whole lineage, so Back unwinds through the Agent that delegated it
+   * rather than jumping straight back to the conversation.
    */
-  const openSubagent = useCallback((childThreadId: string) => {
+  const threadsByIdRef = useRef(threadsById);
+  threadsByIdRef.current = threadsById;
+
+  const openSubagent = useCallback((agentId: string) => {
     setListOpen(false);
     const parentThreadId = snapshot.selectedThreadId;
     if (!parentThreadId) return;
-    // Only the conversation's OWN children have a row here; a grandchild's row
-    // lives inside its parent's run detail. Walk up to the row that exists and
-    // carry the rest of the path, so Details opens the child it named rather
-    // than the ancestor that happens to be reachable.
-    const path = lineagePathFromRoot(childThreadId, parentThreadId, threadsById);
+    const path = lineagePathFromRoot(
+      agentId,
+      parentThreadId,
+      threadsByIdRef.current,
+      subagentProjectionRef.current?.byAgentId ?? new Map(),
+    );
     if (!path) {
       reportActionError(t.agent.thread.threadUnavailable);
       return;
     }
-    const [rowThreadId] = path;
-    // The row lives inside its Turn's process fold, and a settled Turn folds
-    // shut by default — expanding only the leaf writes a key nothing reads and
-    // nothing appears on screen. Open the fold that contains it too.
-    const hostTurn = (snapshot.turnsByThread.get(parentThreadId) ?? []).find((turn) => (
-      turn.items.some((item) => item.type === 'subAgentActivity' && item.agentThreadId === rowThreadId)
-    ));
-    if (!hostTurn) {
-      reportActionError(t.agent.thread.threadUnavailable);
-      return;
+    setAgentStack(path);
+    // Read through refs, so this callback — and the registry `actions` object
+    // built from it — keeps one identity. Depending on the Thread catalog
+    // rebuilt it at every Turn boundary, which churned the registry context and
+    // re-rendered every chip in the conversation.
+  }, [snapshot.selectedThreadId, t]);
+
+  const subagentActions = useMemo<SubagentActions>(() => ({
+    openAgent: openSubagent,
+    stopAgent: interruptThread,
+  }), [interruptThread, openSubagent]);
+
+  // A conversation switch leaves the stack behind with it: the Agents it held
+  // belong to a conversation the user is no longer in.
+  useEffect(() => { setAgentStack([]); }, [snapshot.selectedThreadId]);
+  // An Agent whose record left the conversation cannot be shown, and the level
+  // above it is the honest place to land.
+  const openAgentStack = useMemo(() => {
+    const known: string[] = [];
+    for (const agentId of agentStack) {
+      if (!subagentProjection.byAgentId.has(agentId)) break;
+      known.push(agentId);
     }
-    setThreadDisclosureOverride(parentThreadId, `process:${hostTurn.id}`, true);
-    setThreadDisclosureOverride(parentThreadId, `subagent:${rowThreadId}`, true);
-    if (path.length > 1) requestSubagentDrill(rowThreadId!, path);
-    requestAnimationFrame(() => {
-      document
-        .querySelector(`[data-thread-disclosure-id="subagent:${CSS.escape(rowThreadId!)}"]`)
-        ?.scrollIntoView({ block: 'center' });
-    });
-  }, [snapshot.selectedThreadId, snapshot.turnsByThread, t, threadsById]);
+    return known;
+  }, [agentStack, subagentProjection]);
+  const openAgentId = openAgentStack.at(-1) ?? null;
 
   /** Selecting a root conversation from the list or an Automation. */
   const openThread = useCallback(async (threadId: string) => {
@@ -333,6 +392,7 @@ export const ThreadDock = memo(function ThreadDock({
   }
 
   return (
+    <SubagentRegistryProvider actions={subagentActions} byAgentId={subagentProjection.byAgentId}>
     <aside
       aria-label={t.shell.agentDock.ariaLabel}
       className={`agent-dock agent-dock-${railState}`}
@@ -341,10 +401,9 @@ export const ThreadDock = memo(function ThreadDock({
     >
       <div className="thread-dock">
         <header className="thread-dock-header">
-          {surface === 'thread' ? (
-            // The dock's title is always a conversation the user started. A
-            // delegated child is read in a drawer over this one, so the header
-            // never has to describe somewhere the user did not navigate to.
+          {surface === 'thread' && openAgentId === null ? (
+            // The dock's title is the conversation the user started, and its
+            // chevron opens the list of them.
             <div className="thread-dock-breadcrumb">
               <button
                 aria-expanded={listOpen}
@@ -361,7 +420,26 @@ export const ThreadDock = memo(function ThreadDock({
                 />
               </button>
             </div>
-          ) : (
+          ) : null}
+          {surface === 'thread' && openAgentId !== null ? (
+            // A pushed level TAKES the title bar, the way the Automations
+            // surface beside it already does. Leaving the conversation's title
+            // up there would make the loudest thing on screen the one thing the
+            // reader is not looking at — and it would still offer a chevron
+            // into a list that cannot act on what is below it.
+            <SubagentDetailTitle
+              onPop={() => setAgentStack((current) => current.slice(0, -1))}
+              agentId={openAgentId}
+              // At depth one the level below IS the conversation, so Back names
+              // it. Falling back to the Back label read `Back: Back` in the
+              // tooltip and to a screen reader — for the commonest case there
+              // is — while claiming to name the level below.
+              parentName={openAgentStack.length > 1
+                ? subagentProjection.byAgentId.get(openAgentStack.at(-2)!)?.displayName ?? title
+                : title}
+            />
+          ) : null}
+          {surface === 'automations' ? (
             <button
               aria-label={t.agent.automations.backToThreads}
               className="thread-dock-title-button"
@@ -371,8 +449,11 @@ export const ThreadDock = memo(function ThreadDock({
               <BackIcon className="thread-dock-title-leading" size={ICON_SIZE.menu} />
               <span className="thread-dock-title">{t.agent.automations.title}</span>
             </button>
-          )}
-          {surface === 'thread' ? (
+          ) : null}
+          {surface === 'thread' && openAgentId === null ? (
+            <SubagentWorkStrip byAgentId={subagentProjection.byAgentId} />
+          ) : null}
+          {surface === 'thread' && openAgentId === null ? (
             <IconButton
               className="thread-dock-surface-action"
               icon={ScheduledIcon}
@@ -413,11 +494,21 @@ export const ThreadDock = memo(function ThreadDock({
           </div>
         ) : null}
         {surface === 'thread' && thread ? (
-          <>
+          // The pushed view COVERS the conversation rather than replacing it in
+          // the tree. Unmounting the transcript would throw away the reader's
+          // place in it — and its measured layout — every time an Agent is
+          // opened; covering keeps both, and hiding it keeps focus and the
+          // accessibility tree out of what is no longer on screen.
+          <div className="thread-dock-body">
+            <div className={`thread-dock-conversation${openAgentId === null ? '' : ' is-covered'}`}>
             <ThreadView
-              active={open}
+              // Covered by a pushed Agent view, the conversation is off screen:
+              // it keeps its scroll and its measured layout, but it has no
+              // reason to keep re-deriving a document index nobody can see.
+              active={open && openAgentId === null}
               composerEnabled={thread.parentThreadId === null && thread.threadSource === 'user'}
               composerFocusToken={composerFocusToken}
+              selfSpeaker={conversationSpeaker}
               configuration={configuration}
               getUserView={getUserView}
               goal={goal}
@@ -457,8 +548,22 @@ export const ThreadDock = memo(function ThreadDock({
               threadsById={threadsById}
               latestTurnByThread={snapshot.latestTurnByThread}
               turns={turns}
+              subagentProjection={subagentProjection}
             />
-          </>
+            </div>
+            {openAgentId !== null ? (
+              <SubagentDetailView
+                agentId={openAgentId}
+                getUserView={getUserView}
+                indexStore={indexStore}
+                key={openAgentId}
+                onOpenNodeReference={onOpenNodeReference}
+                onOpenThread={openThread}
+                onOpenTurnDetails={onOpenTurnDetails}
+                subagentProjection={subagentProjection}
+              />
+            ) : null}
+          </div>
         ) : null}
         {surface === 'automations' ? (
           <Suspense fallback={<p className="thread-empty-copy">{t.agent.automations.loading}</p>}>
@@ -563,29 +668,38 @@ export const ThreadDock = memo(function ThreadDock({
         title={t.shell.agentDock.resizeTitle}
       />
     </aside>
+    </SubagentRegistryProvider>
   );
 });
 
-/** The Thread a lineage roots at, or null when an ancestor is not in the catalog. */
 /**
  * The chain from the conversation's own child down to `targetId`, or null when
  * the target is not in this conversation's subtree at all.
+ *
+ * The Agent REGISTRY is asked first, because the execution record carries the
+ * canonical delegation edge while the Thread catalog is a cache that starts
+ * cold: `thread/list` is roots-only, so on the launch a conversation is
+ * restored into, its Agents have records and chips before their child Threads
+ * have been read. Resolving from the catalog alone reported them gone.
  */
-function lineagePathFromRoot(
+export function lineagePathFromRoot(
   targetId: string,
   rootThreadId: string,
   threadsById: ReadonlyMap<string, Thread>,
+  byAgentId: ReadonlyMap<string, SubagentRegistryEntry>,
 ): readonly string[] | null {
   const path: string[] = [];
   const seen = new Set<string>();
   let current: string | null = targetId;
   while (current !== null && !seen.has(current)) {
     seen.add(current);
-    const thread: Thread | undefined = threadsById.get(current);
-    if (!thread) return null;
+    const parentThreadId: string | null = byAgentId.get(current)?.parentThreadId
+      ?? threadsById.get(current)?.parentThreadId
+      ?? null;
+    if (parentThreadId === null) return null;
     path.unshift(current);
-    if (thread.parentThreadId === rootThreadId) return path;
-    current = thread.parentThreadId;
+    if (parentThreadId === rootThreadId) return path;
+    current = parentThreadId;
   }
   return null;
 }

@@ -1049,6 +1049,61 @@ export interface SubagentExecutionState {
   readonly role: string | null;
 }
 
+export type SubagentRunMode = 'foreground' | 'background';
+
+/** Who ended a generation, when one was ended deliberately. */
+export type SubagentStopProvenance = 'none' | 'model' | 'user' | 'budget' | 'hostRestart';
+
+/**
+ * Where this generation's terminal notification stands. `none` covers both a
+ * generation still running and one whose form never notifies (foreground), so
+ * the renderer reads liveness from the child's own Turn rather than from here.
+ */
+export type SubagentNotificationState = 'none' | 'pending' | 'delivering' | 'delivered';
+
+/** How one background generation ended, as the host recorded it. */
+export type SubagentTerminalStatus = 'completed' | 'failed' | 'interrupted' | 'killed';
+
+/** The retained managed worktree a settled generation left behind. */
+export interface SubagentWorktreeSummary {
+  readonly branch: string;
+  readonly path: string;
+}
+
+/**
+ * The canonical Agent execution record, projected across the process seam.
+ *
+ * Presentation re-derives a delegated child's lifecycle from this record — one
+ * entry per stable Agent ID, carrying the generation that a resume increments —
+ * rather than from the wait-era Turn Items that could only describe one episode
+ * inside one Turn. Only the identity, lifecycle, and placement fields cross:
+ * the tool policy, startup snapshot, and recovery intent stay main-side, since
+ * nothing the user reads is derived from them.
+ */
+export interface SubagentExecutionProjection {
+  readonly agentId: ThreadId;
+  readonly parentThreadId: ThreadId;
+  /** The model's own one-line description of the delegated task. */
+  readonly description: string;
+  readonly agentType: string;
+  readonly runMode: SubagentRunMode;
+  readonly generation: number;
+  readonly currentTurnId: TurnId;
+  readonly stopProvenance: SubagentStopProvenance;
+  /**
+   * How this generation ended, recorded when its result was queued for the
+   * parent. Durable, so a conversation reopened later states the outcome
+   * without reloading every child's Turns; `null` while the generation runs,
+   * and for foreground work, whose result travels back through its own call.
+   */
+  readonly terminalStatus: SubagentTerminalStatus | null;
+  readonly notificationState: SubagentNotificationState;
+  /** Present only while a managed worktree is retained for this Agent. */
+  readonly worktree: SubagentWorktreeSummary | null;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+}
+
 export interface CollabAgentToolCallThreadItem extends ThreadToolItemBase {
   readonly type: 'collabAgentToolCall';
   readonly tool: AgentTaskToolName;
@@ -1207,6 +1262,20 @@ export interface ThreadDescendantsResponse {
    * until admission, and deleting it would discard work already accepted.
    */
   readonly queuedWorkThreadIds: readonly ThreadId[];
+}
+
+export interface ThreadSubagentsRequest {
+  readonly threadId: ThreadId;
+}
+
+export interface ThreadSubagentsResponse {
+  /**
+   * Every committed Agent execution in this conversation's subtree, oldest
+   * first. An admission that has not committed is absent: the host publishes no
+   * start for it, and a chip for a child that may still be rolled back would be
+   * a delegation the conversation never made.
+   */
+  readonly data: readonly SubagentExecutionProjection[];
 }
 
 export interface ThreadReadRequest {
@@ -1482,6 +1551,7 @@ export type EmptyAgentCoreResponse = Readonly<Record<string, never>>;
 export const AGENT_CORE_METHODS = [
   'thread/list',
   'thread/descendants',
+  'thread/subagents/list',
   'thread/read',
   'thread/start',
   'thread/resume',
@@ -1515,6 +1585,7 @@ export type AgentCoreMethod = typeof AGENT_CORE_METHODS[number];
 export interface AgentCoreRequestByMethod {
   readonly 'thread/list': ThreadListRequest;
   readonly 'thread/descendants': ThreadDescendantsRequest;
+  readonly 'thread/subagents/list': ThreadSubagentsRequest;
   readonly 'thread/read': ThreadReadRequest;
   readonly 'thread/start': RendererThreadStartRequest;
   readonly 'thread/resume': ThreadResumeRequest;
@@ -1546,6 +1617,7 @@ export interface AgentCoreRequestByMethod {
 export interface AgentCoreResponseByMethod {
   readonly 'thread/list': ThreadListResponse;
   readonly 'thread/descendants': ThreadDescendantsResponse;
+  readonly 'thread/subagents/list': ThreadSubagentsResponse;
   readonly 'thread/read': ThreadReadResponse;
   readonly 'thread/start': ThreadStartResponse;
   readonly 'thread/resume': ThreadResumeResponse;
@@ -1642,6 +1714,17 @@ export type AgentCoreNotification =
       readonly turnId: TurnId;
     } & TurnPlanSnapshot)
   | {
+      /**
+       * One Agent's execution record changed. `threadId` is the direct parent,
+       * so the event is ordered with the conversation that delegated the work.
+       * Derived state, never history: an Agent's canonical lifecycle already
+       * lives in its own Thread, Turns, and Items.
+       */
+      readonly type: 'subagent/execution/changed';
+      readonly threadId: ThreadId;
+      readonly execution: SubagentExecutionProjection;
+    }
+  | {
       readonly type: 'userInput/requested';
       readonly threadId: ThreadId;
       readonly turnId: TurnId;
@@ -1658,7 +1741,11 @@ export type AgentCoreNotification =
   | ThreadGoalNotification;
 
 export type AgentCoreTransientNotification = Extract<AgentCoreNotification, {
-  readonly type: 'thread/name/updated' | 'turn/providerRetry/changed' | 'turn/plan/updated';
+  readonly type:
+    | 'thread/name/updated'
+    | 'turn/providerRetry/changed'
+    | 'turn/plan/updated'
+    | 'subagent/execution/changed';
 }>;
 
 export type AgentCoreRecordedNotification = Exclude<AgentCoreNotification, AgentCoreTransientNotification>;

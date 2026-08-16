@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, powerMonitor, protocol, session, shell } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, powerMonitor, protocol, session, shell } from 'electron';
 import type { IpcMainInvokeEvent, NativeImage } from 'electron';
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
@@ -11,6 +11,7 @@ import { DocumentService } from './documentService';
 import { AppQuitCoordinator, type QuitDecision } from './appQuitCoordinator';
 import { AssetService, mimeTypeForFilename, sniffMimeType } from './assetService';
 import { ThreadService } from './agent/ThreadService';
+import { gitOutput } from './agent/context/AgentStartupContext';
 import { closeAgentServices } from './agent/closeAgentServices';
 import { ExtensionRegistry } from './agent/ExtensionRegistry';
 import { MemoryControlStore } from './agent/extensions/memory/MemoryControlStore';
@@ -70,6 +71,7 @@ import {
 import type {
   AgentCoreMethod,
   AgentCoreRequestByMethod,
+  SubagentExecutionProjection,
   ThreadAttachmentContent,
   ThreadUserContent,
   ThreadMessageContextMenuAction,
@@ -657,6 +659,21 @@ let toolRuntime!: ToolRuntime;
 const agentConfigurationLoader = new AgentConfigurationLoader(resolvedUserDataDir);
 const agentWorktree = new AgentWorktree(resolvedUserDataDir);
 let threadService!: ThreadService;
+
+/** How many changed paths a worktree footer will LIST; the count it states is
+ *  the real total, which is why both travel back. */
+const MAX_REPORTED_WORKTREE_CHANGES = 200;
+
+/**
+ * The managed worktree an Agent still holds, resolved from its execution record.
+ * A removed worktree is a tombstone: its `removedAt` says the directory is gone,
+ * so it never resolves to a path a reveal could open.
+ */
+function retainedAgentWorktree(agentId: string): { readonly path: string } | null {
+  if (!agentId) return null;
+  const worktree = threadService.subagentExecution(agentId)?.worktree ?? null;
+  return worktree && worktree.removedAt === null ? { path: worktree.path } : null;
+}
 const agentImageObservationMutex = new Mutex();
 const attachmentResolver = new AttachmentResolver({
   useResourcePath: (threadId, ref, use) => threadService.useThreadResourcePath(threadId, ref, use),
@@ -1045,8 +1062,62 @@ threadService.subscribe((notification) => {
   if (notification.type === 'turn/completed' || notification.type === 'thread/status/changed') {
     automationService.wake();
   }
+  if (notification.type === 'subagent/execution/changed') {
+    notifyTerminalBackgroundAgent(notification.execution);
+  }
   liveWindow(mainWindow)?.webContents.send(AGENT_CORE_NOTIFICATION_CHANNEL, notification);
 });
+
+/**
+ * Generations already announced, so one terminal event notifies exactly once.
+ *
+ * Bounded: the ledger emits repeatedly for one generation, so this must remember
+ * them — but a long session delegating steadily would otherwise grow it for the
+ * life of the process. The oldest keys are dropped once it passes the cap; a
+ * generation that old cannot still be settling.
+ */
+const announcedAgentGenerations = new Set<string>();
+const MAX_ANNOUNCED_AGENT_GENERATIONS = 512;
+
+/**
+ * The one OS notification this feature issues.
+ *
+ * Strictly bounded: a terminal BACKGROUND generation, only while the window is
+ * unfocused, once per generation, with fixed content-free copy. Running and
+ * steering never notify, foreground settlement never notifies, and the body
+ * never carries an Agent's own words — an Agent's output is untrusted content,
+ * and the OS notification centre is not a place a user can judge it. The
+ * conversation says what happened; this only says to come back.
+ */
+function notifyTerminalBackgroundAgent(execution: SubagentExecutionProjection): void {
+  if (execution.runMode !== 'background' || execution.terminalStatus === null) return;
+  const key = `${execution.agentId}:${execution.generation}`;
+  if (announcedAgentGenerations.has(key)) return;
+  const window = liveWindow(mainWindow);
+  // No window yet — the terminal write landed during startup — is the one case
+  // that must NOT be marked: there was nobody to tell, and the generation can
+  // still be announced once a window exists.
+  if (!window) return;
+  // Marked the moment a live window OBSERVES the settlement, focused or not.
+  // The ledger re-announces this generation on every later claim, release and
+  // delivery, so marking only on the unfocused path popped "a background Agent
+  // finished" minutes later, for work the reader had watched finish.
+  announcedAgentGenerations.add(key);
+  if (announcedAgentGenerations.size > MAX_ANNOUNCED_AGENT_GENERATIONS) {
+    const oldest = announcedAgentGenerations.values().next();
+    if (!oldest.done) announcedAgentGenerations.delete(oldest.value);
+  }
+  if (window.isFocused()) return;
+  if (!Notification.isSupported()) return;
+  try {
+    new Notification({
+      title: APP_NAME,
+      body: getMessages(effectiveLocale()).agent.thread.agent.backgroundFinished,
+    }).show();
+  } catch (error) {
+    console.warn('[agent] Background Agent notification unavailable', error);
+  }
+}
 automationService.subscribe((notification) => {
   liveWindow(mainWindow)?.webContents.send(AUTOMATION_NOTIFICATION_CHANNEL, notification);
 });
@@ -4252,6 +4323,60 @@ async function handleAgentCommand(_event: IpcMainInvokeEvent, command: AgentComm
         // parent would actually surface it.
         nameValid: isValidSkillName(basename(resolvedPick)),
       };
+    }
+    case 'agent_worktree_changes': {
+      // The renderer names an Agent; the path comes from the execution record.
+      // A renderer-supplied path here would turn a footer into an arbitrary
+      // filesystem read, so it is never accepted.
+      const worktree = retainedAgentWorktree(String(args.agentId ?? ''));
+      if (!worktree) return { available: false, paths: [], total: 0 };
+      try {
+        // `-z` and `core.quotePath=false`: git otherwise quotes and octal-escapes
+        // any path with a space or a non-ASCII character, which is most of them
+        // in a Chinese workspace, and the footer would list the escaping.
+        const status = await gitOutput(worktree.path, [
+          '--no-optional-locks', '-c', 'core.quotePath=false', 'status', '--porcelain', '-z',
+        ]);
+        // `-z` is NUL-separated and never quotes, so no trimming and no ` -> `:
+        // a rename emits two records, `XY new\0old\0`, the second with no
+        // status prefix at all. Parsed as if each record were a whole entry, a
+        // rename's old path became a second row with its first three characters
+        // chopped off, and `total` counted it.
+        const records = status.split('\0').filter((record) => record.length > 0);
+        const entries: string[] = [];
+        for (let index = 0; index < records.length; index += 1) {
+          const record = records[index]!;
+          const code = record.slice(0, 2);
+          // The destination is the file that is now in the worktree, which is
+          // what the reader is being shown; the source record is consumed here.
+          if (code.includes('R') || code.includes('C')) index += 1;
+          entries.push(record.slice(3));
+        }
+        // The COUNT is the truth about the worktree; the list is capped so a
+        // 3,000-file Agent cannot flood the rail. Reporting `paths.length` as
+        // the count stated exactly 200 as a fact.
+        return {
+          available: true,
+          paths: entries.slice(0, MAX_REPORTED_WORKTREE_CHANGES),
+          total: entries.length,
+        };
+      } catch {
+        return { available: false, paths: [], total: 0 };
+      }
+    }
+    case 'agent_reveal_worktree': {
+      const worktree = retainedAgentWorktree(String(args.agentId ?? ''));
+      if (!worktree) return { revealed: false };
+      // showItemInFolder reports nothing, and the failing case — a worktree the
+      // host removed or a volume that went away — is exactly what the user
+      // clicks Reveal to investigate.
+      try {
+        await stat(worktree.path);
+      } catch {
+        return { revealed: false };
+      }
+      shell.showItemInFolder(worktree.path);
+      return { revealed: true };
     }
     case 'agent_reveal_skill_directory': {
       const target = String(args.path ?? '');

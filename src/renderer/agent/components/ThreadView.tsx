@@ -91,6 +91,7 @@ import {
   isThreadToolItem,
   summarizeThreadToolActivity,
   summarizeThreadToolItem,
+  threadItemRendersNothing,
   ThreadItemView,
   ThreadMessageCopyButton,
   ThreadToolActivityGroup,
@@ -123,9 +124,16 @@ import {
 } from '../threadScrollFollow';
 import {
   collaborationResultSnapshot,
-  projectSubagentsForTurn,
-  type SubagentTurnProjection,
+  emptyTurnAnchors,
+  subagentSpeakerName,
+  type SubagentConversationProjection,
+  type SubagentDelivery,
+  type SubagentTurnAnchors,
 } from '../subagentPresentation';
+import { SubagentReport } from './SubagentReport';
+import { ThreadSpeakerGroup, type ThreadSpeaker } from './ThreadSpeaker';
+import { MAIN_AVATAR_IDENTITY } from '../agentAvatarColor';
+import { useSubagentEntry, useWorkingAgentIds } from './SubagentRegistryContext';
 import { classifyNewThreadCommand } from '../threadComposerCommands';
 import { parseNodeReferenceMarkers } from '../../../core/referenceMarkup';
 
@@ -146,6 +154,24 @@ interface ThreadViewProps {
   readonly threadsById: ReadonlyMap<ThreadId, Thread>;
   readonly latestTurnByThread: ReadonlyMap<ThreadId, Turn>;
   readonly turns: readonly Turn[];
+  /**
+   * The conversation's Agent anchors and continuations, projected once by the
+   * deck. A transcript rendered inside an Agent's detail view shares the same
+   * projection: one registry spans the whole conversation, at every depth.
+   */
+  readonly subagentProjection: SubagentConversationProjection;
+  /** Overrides the composer's resting prompt — an Agent's own says what a
+   *  message to it will do, including that it clears the user's stop. */
+  readonly composerPlaceholder?: string;
+  /** This transcript belongs to one Agent, so its Turns are generations. */
+  readonly agentTranscript?: boolean;
+  /** Who authored the host-written Items here — this Agent's delegator. */
+  readonly hostSpeaker?: ThreadSpeaker;
+  /**
+   * The participant whose transcript this is: the conversation's own `main`, or
+   * the Agent whose pushed view this is. Every response here is it speaking.
+   */
+  readonly selfSpeaker: ThreadSpeaker;
   readonly inputRequest: RequestUserInputRequest | null;
   /** The run is blocked on the user. Working phrases become static and the
    *  divider names the wait; elapsed time remains the Turn's wall-clock span. */
@@ -166,15 +192,6 @@ interface ThreadViewProps {
   readonly onOpenTurnDetails: (turn: Turn) => void;
   /** Turn Details for a delegated child, read inside its own run detail. */
   readonly onOpenSubagentTurnDetails?: (threadId: string, turnId: string) => void;
-  /**
-   * Present only INSIDE a Subagent run detail. A delegation row there swaps
-   * that container's contents instead of opening a second one inside it —
-   * nesting would put a scroll region inside a scroll region. Its presence is
-   * also what makes this view EMBEDDED: a control that cannot act on a child
-   * Thread is hidden, which is a narrower thing than "has no composer" — an
-   * Automation transcript has no composer and can still be forked.
-   */
-  readonly onSubagentDrill?: (threadId: string) => void;
   readonly onReadToolOutput: (turnId: string, item: ThreadToolItem) => Promise<string | null>;
   readonly onReadToolArguments: (turnId: string, item: ThreadToolItem) => Promise<JsonValue | null>;
   readonly onSend: (content: readonly ThreadUserContent[]) => Promise<Turn | null>;
@@ -303,13 +320,12 @@ function cacheThreadScrollSnapshot(threadId: string, snapshot: ThreadScrollSnaps
  * A Subagent run detail renders a full ThreadView inside one of these rows, and
  * that inner view emits Turn rows of its own — scrolled independently, so their
  * tops are neither this transcript's nor monotonic in document order, which is
- * the precondition the anchor search below depends on. Left in, a child's row
- * could be cached as the parent's reading anchor and restored against a row
- * clipped inside a fixed-height box.
+ * the precondition the anchor search below depends on. No filter is needed for
+ * that any more: a child transcript is a pushed level that COVERS this one, so
+ * it is never inside this scroll container to begin with.
  */
 function ownTranscriptRows(scroll: HTMLElement): HTMLElement[] {
-  return [...scroll.querySelectorAll<HTMLElement>('[data-thread-turn-row]')]
-    .filter((row) => !row.closest('.thread-subagent-detail'));
+  return [...scroll.querySelectorAll<HTMLElement>('[data-thread-turn-row]')];
 }
 
 /**
@@ -453,6 +469,11 @@ export function ThreadView({
   threadsById,
   latestTurnByThread,
   turns,
+  subagentProjection,
+  composerPlaceholder,
+  agentTranscript = false,
+  hostSpeaker,
+  selfSpeaker,
   inputRequest,
   waitingOnUserInput,
   providerRetry,
@@ -467,7 +488,6 @@ export function ThreadView({
   onOpenNodeReference,
   onOpenThread,
   onOpenSubagentTurnDetails,
-  onSubagentDrill,
   onOpenTurnDetails,
   onReadToolArguments,
   onReadToolOutput,
@@ -1685,7 +1705,7 @@ export function ThreadView({
                       <ThreadTurnView
                         active={active}
                         onInterruptThread={onInterruptThread}
-                        canEditUserMessage={onSubagentDrill === undefined
+                        canEditUserMessage={!agentTranscript
                           && composerEnabled
                           && turn.id === editableTurnId
                           && turn.status !== 'inProgress'}
@@ -1697,7 +1717,9 @@ export function ThreadView({
                         onEditUserMessage={onEditUserMessage}
                         onContinueInNewChat={onContinueInNewChat}
                         onOpenSubagentTurnDetails={onOpenSubagentTurnDetails}
-                        onSubagentDrill={onSubagentDrill}
+                        agentTranscript={agentTranscript}
+                        {...(hostSpeaker === undefined ? {} : { hostSpeaker })}
+                        selfSpeaker={selfSpeaker}
                         onOpenNodeReference={onOpenNodeReference}
                         onOpenThread={onOpenThread}
                         onOpenTurnDetails={onOpenTurnDetails}
@@ -1711,6 +1733,8 @@ export function ThreadView({
                         threadsById={threadsById}
                         latestTurnByThread={latestTurnByThread}
                         turn={turn}
+                        anchors={subagentProjection.anchorsByTurnId.get(turn.id) ?? emptyTurnAnchors(turn)}
+                        delivery={subagentProjection.deliveryByTurnId.get(turn.id) ?? null}
                         waitingOnUserInput={waitingOnUserInput}
                       />
                     </ThreadTranscriptTurnShell>
@@ -1823,7 +1847,9 @@ export function ThreadView({
                 onNodeReferenceClick={onOpenNodeReference}
                 onStop={() => void onInterrupt()}
                 onSubmit={() => void submit()}
-                placeholder={activeTurn ? t.agent.composer.steerPlaceholder : t.agent.thread.composerPlaceholder}
+                placeholder={activeTurn
+                  ? t.agent.composer.steerPlaceholder
+                  : composerPlaceholder ?? t.agent.thread.composerPlaceholder}
                 recentLocalFiles={recentLocalFiles}
                 ref={composerRef}
                 slashCommands={slashCommands}
@@ -1966,7 +1992,9 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   onOpenNodeReference,
   onOpenThread,
   onOpenSubagentTurnDetails,
-  onSubagentDrill,
+  agentTranscript,
+  hostSpeaker,
+  selfSpeaker,
   onOpenTurnDetails,
   onReadToolArguments,
   onReadToolOutput,
@@ -1976,6 +2004,8 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   threadsById,
   latestTurnByThread,
   turn,
+  anchors,
+  delivery,
   waitingOnUserInput,
 }: {
   readonly active: boolean;
@@ -1996,11 +2026,16 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   readonly onOpenThread: (threadId: string) => Promise<void>;
   readonly onOpenSubagentTurnDetails?: (threadId: string, turnId: string) => void;
   /**
-   * Present only INSIDE a Subagent run detail. A delegation row there swaps
-   * that container's contents instead of opening a second one inside it —
-   * nesting would put a scroll region inside a scroll region.
+   * This transcript belongs to one Agent, read inside its pushed view. It is
+   * what makes the view EMBEDDED: a control that cannot act on a child Thread
+   * is hidden, which is narrower than "has no composer" — an Automation
+   * transcript has no composer and can still be forked.
    */
-  readonly onSubagentDrill?: (threadId: string) => void;
+  readonly agentTranscript: boolean;
+  /** Who authored the host-written Items here — this Agent's delegator. */
+  readonly hostSpeaker?: ThreadSpeaker;
+  /** The participant whose transcript this is — it speaks every response here. */
+  readonly selfSpeaker: ThreadSpeaker;
   readonly onOpenTurnDetails: (turn: Turn) => void;
   readonly onReadToolArguments: (turnId: string, item: ThreadToolItem) => Promise<JsonValue | null>;
   readonly onReadToolOutput: (turnId: string, item: ThreadToolItem) => Promise<string | null>;
@@ -2010,6 +2045,10 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   readonly threadsById: ReadonlyMap<ThreadId, Thread>;
   readonly latestTurnByThread: ReadonlyMap<ThreadId, Turn>;
   readonly turn: Turn;
+  /** This Turn's delegation anchors, projected once for the conversation. */
+  readonly anchors: SubagentTurnAnchors;
+  /** Set when the host started this Turn to deliver an Agent's result. */
+  readonly delivery: SubagentDelivery | null;
   readonly waitingOnUserInput: boolean;
 }) {
   const t = useT();
@@ -2038,26 +2077,68 @@ export const ThreadTurnView = memo(function ThreadTurnView({
     && isStandaloneContextBoundaryTurn(turn);
   const hostAuthoredEvent = turn.provenance.trigger.kind === 'subagent'
     && turn.provenance.originThreadId === threadId;
-  const subagentProjectionRef = useRef<{
-    readonly projection: SubagentTurnProjection;
-    readonly turnId: string;
-  } | null>(null);
-  const subagents = useMemo(() => {
-    const previous = subagentProjectionRef.current?.turnId === turn.id
-      ? subagentProjectionRef.current.projection
-      : null;
-    const projection = projectSubagentsForTurn(turn, threadsById, latestTurnByThread, previous);
-    subagentProjectionRef.current = { projection, turnId: turn.id };
-    return projection;
-  }, [latestTurnByThread, threadsById, turn]);
+  // A peer Agent that messaged this Thread directly: the continuation Turn its
+  // `agent_message` started names the SENDER as its parent, which is not a
+  // delegation of ours, so no delivery resolves for it. Naming the sender is
+  // still exactly possible — and rendering it as an unnamed `?` disc, which is
+  // what an empty fallback produced, is not.
+  const peerSenderId = hostAuthoredEvent && turn.provenance.trigger.kind === 'subagent'
+    && turn.provenance.trigger.parentThreadId !== threadId
+    ? turn.provenance.trigger.parentThreadId
+    : null;
+  const peerEntry = useSubagentEntry(peerSenderId);
+  const peerSpeaker: ThreadSpeaker | null = peerEntry === null ? null : {
+    participantId: peerEntry.agentId,
+    avatarKey: subagentSpeakerName(peerEntry),
+    name: subagentSpeakerName(peerEntry),
+  };
+  // The child that delivered into this Turn, if any: it speaks its own report.
+  const reportEntry = useSubagentEntry(delivery?.agentId ?? null);
+  // WHICH Item the host wrote to wake the model: the Turn's first user-role
+  // Item. A steering message typed while the continuation is still running is
+  // admitted into this same Turn as another one, and it belongs to the READER —
+  // it is not the host's, it is not the delegator's, and treating it as either
+  // rendered the Agent's report twice or put the reader's words in somebody
+  // else's mouth.
+  const hostNoticeItemId = !hostAuthoredEvent
+    ? null
+    : turn.items.find((item) => item.type === 'userMessage')?.id ?? null;
+  const deliveryNoticeItemId = delivery === null ? null : hostNoticeItemId;
+  const reportSpeaker: ThreadSpeaker | null = delivery !== null && reportEntry !== null
+    ? {
+      participantId: delivery.agentId,
+      avatarKey: subagentSpeakerName(reportEntry),
+      name: subagentSpeakerName(reportEntry),
+    }
+    : null;
+  // A delivering child's header states ITS OWN span, not this conversation's:
+  // the Turn around it is the parent reading the result, which took no time at
+  // all next to the work being reported.
+  const reportMeta: ReactNode = reportEntry?.durationMs == null ? null : (
+    <span className="thread-speaker-meta">
+      {t.agent.thread.workedFor({ duration: formatProcessDuration(reportEntry.durationMs) })}
+    </span>
+  );
+  const workingAgentIds = useWorkingAgentIds();
   const contentGrouperRef = useRef<TurnContentGrouper | null>(null);
   if (contentGrouperRef.current === null) contentGrouperRef.current = createTurnContentGrouper();
-  const contentBlocks = contentGrouperRef.current.group({ ...turn, items: subagents.items });
+  const contentBlocks = contentGrouperRef.current.group({ ...turn, items: anchors.items });
   const processBlock = contentBlocks.find((block) => block.kind === 'process');
   const processItems = processBlock?.kind === 'process' ? processBlock.items : EMPTY_THREAD_ITEMS;
   const processItemGroups = useMemo(() => groupTurnItems(processItems), [processItems]);
   const workingTextEnabled = !waitingOnUserInput && providerRetry === null;
-  const motionOwner = turnMotionOwner(turn, processItems, subagents);
+  const motionOwner = turnMotionOwner(turn, processItems, anchors, workingAgentIds);
+  const processView = useThreadProcessView({
+    anchors,
+    expandState,
+    hasFinalResponse: responseItem !== null,
+    index,
+    items: processItems,
+    motionOwner,
+    turn,
+    waitingOnUserInput,
+    workingTextEnabled,
+  });
   const workingTextOwnsMotion = workingTextEnabled && motionOwner !== 'none';
   // A blocked Turn cannot use a progressive cue. Keep the fallback response
   // shape static as well, otherwise it becomes the only moving element while
@@ -2099,7 +2180,7 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   );
   const handleResponseContextMenu = useCallback(async (event: MouseEvent<HTMLElement>) => {
     event.preventDefault();
-    const canContinueInNewChat = onSubagentDrill === undefined;
+    const canContinueInNewChat = !agentTranscript;
     const currentTurn = turnRef.current;
     const action = await window.lin?.showThreadMessageContextMenu?.({
       canCopy: hasTurnCopyContent(currentTurn),
@@ -2109,7 +2190,7 @@ export const ThreadTurnView = memo(function ThreadTurnView({
     if (action === 'copy') await copyTurn();
     else if (action === 'continueInNewChat') await continueInNewChat();
     else if (action === 'details') openTurnDetails();
-  }, [continueInNewChat, copyTurn, onSubagentDrill, openTurnDetails, turn.id]);
+  }, [agentTranscript, continueInNewChat, copyTurn, openTurnDetails, turn.id]);
   /**
    * Running the same request again, for a Turn where that could go differently.
    *
@@ -2128,13 +2209,13 @@ export const ThreadTurnView = memo(function ThreadTurnView({
     // persistent root user Thread, so anywhere the user cannot type they must
     // not be offered a button that can only fail.
     if (hostAuthoredEvent
-      || onSubagentDrill !== undefined
+      || agentTranscript
       || !composerEnabled
       || !isLastTurn
       || !isRetryableTurn(turn)) return null;
     const request = turn.items.find((item) => item.type === 'userMessage');
     return request?.content ?? null;
-  }, [composerEnabled, hostAuthoredEvent, isLastTurn, onSubagentDrill, turn]);
+  }, [agentTranscript, composerEnabled, hostAuthoredEvent, isLastTurn, turn]);
   const retryContentRef = useRef(retryContent);
   retryContentRef.current = retryContent;
   const retryTurn = useCallback(async () => {
@@ -2144,7 +2225,7 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   const responseTail = useMemo(
     () => standaloneContextBoundary ? null : (
       <ThreadResponseTail
-        canContinueInNewChat={onSubagentDrill === undefined}
+        canContinueInNewChat={!agentTranscript}
         onCopy={copyTurn}
         onContinueInNewChat={continueInNewChat}
         onOpenDetails={openTurnDetails}
@@ -2162,7 +2243,6 @@ export const ThreadTurnView = memo(function ThreadTurnView({
     [
       continueInNewChat,
       copyTurn,
-      onSubagentDrill,
       openTurnDetails,
       providerRetry,
       responseTailTurn,
@@ -2175,86 +2255,152 @@ export const ThreadTurnView = memo(function ThreadTurnView({
     ],
   );
   const renderItem = (item: ThreadItem, showMessageActions: boolean) => (
-    <ThreadItemView
-      agentResponseTail={item.id === responseItem?.id ? responseTail : null}
-      canEditUserMessage={canEditUserMessage && showMessageActions}
-      defaultReasoningExpanded={reasoningExpandedByDefault(turn, item)}
-      expandState={expandState}
-      getUserView={getUserView}
-      index={index}
-      indexStore={indexStore}
-      item={item}
-      hostAuthoredEvent={hostAuthoredEvent}
-      key={item.id}
-      onAgentMessageContextMenu={item.id === responseItem?.id ? handleResponseContextMenu : undefined}
-      onEditUserMessage={editUserMessage}
-      onInterruptThread={onInterruptThread}
-      onOpenNodeReference={onOpenNodeReference}
-      onOpenSubagentTurnDetails={onOpenSubagentTurnDetails}
-      onSubagentDrill={onSubagentDrill}
-      onOpenTurnDetails={standaloneContextBoundary ? openTurnDetails : undefined}
-      onOpenThread={onOpenThread}
-      onReadToolArguments={readToolArguments}
-      onReadToolOutput={readToolOutput}
-      showMessageActions={showMessageActions}
-      streaming={turn.status === 'inProgress' && turn.items.at(-1)?.id === item.id}
-      subagents={subagents.byThreadId}
-      threadId={threadId}
-      threadCwd={threadCwd}
-      active={active}
-      workingTextEnabled={workingTextEnabled}
-    />
+    // The host's own notification text is not a message to the reader. Where
+    // this Turn exists because an Agent's result arrived, the Agent's own
+    // report replaces it — folded, as a message from that Agent — instead of
+    // the wall of task-notification framing addressed to the model.
+    delivery !== null && item.id === deliveryNoticeItemId ? (
+      <SubagentReport
+        delivery={delivery}
+        index={index}
+        key={item.id}
+        onOpenNodeReference={onOpenNodeReference}
+      />
+    ) : (
+      <ThreadItemView
+        agentResponseTail={item.id === responseItem?.id ? responseTail : null}
+        canEditUserMessage={canEditUserMessage && showMessageActions}
+        defaultReasoningExpanded={reasoningExpandedByDefault(turn, item)}
+        expandState={expandState}
+        getUserView={getUserView}
+        index={index}
+        indexStore={indexStore}
+        item={item}
+        hostAuthoredEvent={hostAuthoredEvent && item.id === hostNoticeItemId}
+        key={item.id}
+        onAgentMessageContextMenu={item.id === responseItem?.id ? handleResponseContextMenu : undefined}
+        onEditUserMessage={editUserMessage}
+        onInterruptThread={onInterruptThread}
+        onOpenNodeReference={onOpenNodeReference}
+        onOpenTurnDetails={standaloneContextBoundary ? openTurnDetails : undefined}
+        onOpenThread={onOpenThread}
+        onReadToolArguments={readToolArguments}
+        onReadToolOutput={readToolOutput}
+        showMessageActions={showMessageActions}
+        streaming={turn.status === 'inProgress' && turn.items.at(-1)?.id === item.id}
+        {...(anchors.anchorByItemId.has(item.id)
+          ? { anchor: anchors.anchorByItemId.get(item.id)! }
+          : {})}
+        threadId={threadId}
+        threadCwd={threadCwd}
+        active={active}
+        workingTextEnabled={workingTextEnabled}
+      />
+    )
   );
+  // Who says each block, so consecutive blocks from one participant sit under
+  // one header. Three speakers can appear in a single Turn: the reader (their
+  // own message), a child delivering a result, and this transcript's own agent
+  // reading that result and answering.
+  //
+  // A delivery whose Agent is no longer in the registry has no report to show
+  // and no speaker to name, so its block is DROPPED rather than handed to this
+  // Turn's host author: that produced a header standing over nothing, which
+  // reads as a participant who said something the reader cannot see.
+  const speakerOf = (block: ThreadContentBlock): ThreadSpeaker | null | 'drop' => {
+    if (block.kind === 'process') return selfSpeaker;
+    if (block.item.type !== 'userMessage') return selfSpeaker;
+    if (block.item.id === deliveryNoticeItemId) return reportSpeaker ?? 'drop';
+    // Only the Turn's own notice is somebody else's; anything the reader typed
+    // into it afterwards is theirs, wherever the Turn came from.
+    if (block.item.id !== hostNoticeItemId) return null;
+    return hostSpeaker ?? peerSpeaker ?? {
+      participantId: MAIN_AVATAR_IDENTITY,
+      avatarKey: MAIN_AVATAR_IDENTITY,
+      name: t.agent.thread.agentEvent,
+    };
+  };
+  const runs: Array<{
+    readonly speaker: ThreadSpeaker | null;
+    readonly nodes: ReactNode[];
+    meta?: ReactNode;
+  }> = [];
+  const emit = (speaker: ThreadSpeaker | null, node: ReactNode): void => {
+    const open = runs.at(-1);
+    if (open && open.speaker?.participantId === speaker?.participantId) open.nodes.push(node);
+    else runs.push({ speaker, nodes: [node] });
+  };
+  for (const block of contentBlocks) {
+    // A block that draws nothing must not open a speaker run either: a delivery
+    // Turn starts with a settled activity Item and three `contextEvidence`
+    // rows, which put a named `main` over an empty box before the child that
+    // actually spoke.
+    if (block.kind === 'item' && threadItemRendersNothing(
+      block.item,
+      anchors.anchorByItemId.has(block.item.id),
+    )) continue;
+    const speaker = speakerOf(block);
+    if (speaker === 'drop') continue;
+    if (block.kind === 'process') {
+      // The summary goes on this speaker's own line; only the rows stay here.
+      emit(speaker, processView.timelineVisible ? (
+        <div
+          className={`thread-process-block${processView.isError ? ' is-error' : ''}`}
+          key={`process:${block.items[0]?.id ?? turn.id}`}
+        >
+          <div className="thread-process-timeline">
+            {processItemGroups.map((group) => group.kind === 'tools' ? (
+              <ThreadToolActivityGroup
+                expandState={expandState}
+                index={index}
+                items={group.items}
+                key={group.items[0]?.id}
+                onOpenThread={onOpenThread}
+                onReadToolArguments={readToolArguments}
+                onReadToolOutput={readToolOutput}
+                threadId={threadId}
+                threadCwd={threadCwd}
+                workingTextEnabled={workingTextEnabled}
+              />
+            ) : renderItem(group.item, false))}
+          </div>
+        </div>
+      ) : null);
+      const open = runs.at(-1);
+      if (open) open.meta = processView.header;
+      continue;
+    }
+    emit(speaker, renderItem(
+      block.item,
+      turn.status !== 'inProgress' && block.item.type === 'userMessage',
+    ));
+    if (speaker !== null && speaker === reportSpeaker) {
+      const open = runs.at(-1);
+      if (open) open.meta = reportMeta;
+    }
+  }
+  if (responseItem === null && responseTail) {
+    emit(selfSpeaker, (
+      <article
+        className="thread-item thread-agent-message thread-agent-message-response"
+        key={`tail:${turn.id}`}
+        onContextMenu={turn.status === 'inProgress' ? undefined : handleResponseContextMenu}
+      >
+        {responseTail}
+      </article>
+    ));
+  }
   return (
     <section className={`thread-turn thread-turn-${turn.status}`}>
-      {contentBlocks.map((block) => {
-        if (block.kind === 'process') {
-          return (
-            <ThreadProcessBlock
-              expandState={expandState}
-              hasFinalResponse={responseItem !== null}
-              index={index}
-              items={block.items}
-              onOpenThread={onOpenThread}
-              motionOwner={motionOwner}
-              waitingOnUserInput={waitingOnUserInput}
-              workingTextEnabled={workingTextEnabled}
-              key={`process:${block.items[0]?.id ?? turn.id}`}
-              subagents={subagents}
-              turn={turn}
-            >
-              {processItemGroups.map((group) => group.kind === 'tools' ? (
-                <ThreadToolActivityGroup
-                  expandState={expandState}
-                  index={index}
-                  items={group.items}
-                  key={group.items[0]?.id}
-                  onOpenThread={onOpenThread}
-                  onReadToolArguments={readToolArguments}
-                  onReadToolOutput={readToolOutput}
-                  subagents={subagents.byThreadId}
-                  threadId={threadId}
-                  threadCwd={threadCwd}
-                  workingTextEnabled={workingTextEnabled}
-                />
-              ) : renderItem(group.item, false))}
-            </ThreadProcessBlock>
-          );
-        }
-        const item = block.item;
-        return renderItem(
-          item,
-          turn.status !== 'inProgress' && item.type === 'userMessage',
-        );
-      })}
-      {responseItem === null && responseTail ? (
-        <article
-          className="thread-item thread-agent-message thread-agent-message-response"
-          onContextMenu={turn.status === 'inProgress' ? undefined : handleResponseContextMenu}
+      {runs.map((run, runIndex) => run.speaker === null ? run.nodes : (
+        <ThreadSpeakerGroup
+          key={`speaker:${turn.id}:${runIndex}`}
+          {...(run.meta === undefined ? {} : { meta: run.meta })}
+          speaker={run.speaker}
         >
-          {responseTail}
-        </article>
-      ) : null}
+          {run.nodes}
+        </ThreadSpeakerGroup>
+      ))}
     </section>
   );
 });
@@ -2733,36 +2879,38 @@ function latestUserMessageTurnId(turns: readonly Turn[]): string | null {
   return null;
 }
 
-function ThreadProcessBlock({
-  onOpenThread,
-  children,
+/**
+ * A Turn's work, split into the two places it is shown.
+ *
+ * `header` rides the speaker's own line — who spoke and what they did is one
+ * sentence, so it is one line, and clicking it is the single way to open the
+ * timeline. It used to be a summary line, a rule, and sometimes a second
+ * summary line, all under a separate name row; four elements saying one thing.
+ * `timeline` is the rows themselves, below.
+ */
+function useThreadProcessView({
   expandState,
   hasFinalResponse,
   index,
   items,
   motionOwner,
-  subagents,
+  anchors,
   turn,
   waitingOnUserInput,
   workingTextEnabled,
 }: {
-  readonly children: ReactNode;
   readonly expandState: ThreadDisclosureState;
   readonly hasFinalResponse: boolean;
   readonly index: DocumentIndex;
   readonly items: readonly ThreadItem[];
   readonly motionOwner: TurnMotionOwner;
-  readonly onOpenThread: (threadId: string) => Promise<void>;
-  readonly subagents: SubagentTurnProjection;
+  readonly anchors: SubagentTurnAnchors;
   readonly turn: Turn;
   readonly waitingOnUserInput: boolean;
   readonly workingTextEnabled: boolean;
-}) {
-  const t = useT();
-  const disclosureId = `process:${turn.id}`;
-  const expanded = expandState.isExpanded(disclosureId, false);
-  const blockedOnUser = turn.status === 'inProgress' && waitingOnUserInput;
-  const liveElapsedMs = useTurnElapsedMs(turn);
+}): { readonly header: ReactNode; readonly timelineVisible: boolean; readonly isError: boolean } {
+  const expanded = expandState.isExpanded(`process:${turn.id}`, false);
+  const workingAgentIds = useWorkingAgentIds();
   // A Turn can settle while a child it spawned keeps running — the
   // fire-and-forget shape the protocol supports, where terminal activity lands
   // in a LATER Turn. The fold defaults to closed, so folding here would hide a
@@ -2772,55 +2920,110 @@ function ThreadProcessBlock({
     && hasFinalResponse
     && turn.durationMs !== null
     && items.length > 0
-    && subagents.activeThreadIds.length === 0;
+    && !anchors.agentIds.some((agentId) => workingAgentIds.has(agentId));
   const terminalResponseOwnsStatus = hasFinalResponse
     && (turn.status === 'failed' || turn.status === 'interrupted');
-  const summary = threadProcessSummary(
-    turn, items, hasFinalResponse, liveElapsedMs, t, index, subagents, blockedOnUser,
-  );
   const timelineVisible = items.length > 0 && (!collapsible || expanded);
-  const summaryWorking = motionOwner === 'summary'
-    && !blockedOnUser
-    && workingTextEnabled;
+  // The clock lives in the SUMMARY, not here. Read at this level it ticked the
+  // whole Turn once a second — regrouping its content blocks, rebuilding every
+  // speaker run, re-rendering every Item and every report card — to repaint one
+  // line of text. This is the same reason `subagentElapsed.ts` pushes a child's
+  // clock down to the row that displays it.
+  return {
+    header: terminalResponseOwnsStatus && !timelineVisible ? null : (
+      <ThreadProcessSummary
+        collapsible={collapsible}
+        expandState={expandState}
+        expanded={expanded}
+        hasFinalResponse={hasFinalResponse}
+        index={index}
+        items={items}
+        motionOwner={motionOwner}
+        terminalResponseOwnsStatus={terminalResponseOwnsStatus}
+        turn={turn}
+        waitingOnUserInput={waitingOnUserInput}
+        workingTextEnabled={workingTextEnabled}
+      />
+    ),
+    timelineVisible,
+    isError: turn.status === 'failed' && !hasFinalResponse,
+  };
+}
+
+/**
+ * What a participant did, on their own header line — and the only thing in the
+ * Turn that a live clock re-renders.
+ */
+function ThreadProcessSummary({
+  collapsible,
+  expandState,
+  expanded,
+  hasFinalResponse,
+  index,
+  items,
+  motionOwner,
+  terminalResponseOwnsStatus,
+  turn,
+  waitingOnUserInput,
+  workingTextEnabled,
+}: {
+  readonly collapsible: boolean;
+  readonly expandState: ThreadDisclosureState;
+  readonly expanded: boolean;
+  readonly hasFinalResponse: boolean;
+  readonly index: DocumentIndex;
+  readonly items: readonly ThreadItem[];
+  readonly motionOwner: TurnMotionOwner;
+  readonly terminalResponseOwnsStatus: boolean;
+  readonly turn: Turn;
+  readonly waitingOnUserInput: boolean;
+  readonly workingTextEnabled: boolean;
+}) {
+  const t = useT();
+  const disclosureId = `process:${turn.id}`;
+  const blockedOnUser = turn.status === 'inProgress' && waitingOnUserInput;
+  const liveElapsedMs = useTurnElapsedMs(turn);
+  // The response tail owns the terminal status, but the timeline below still
+  // needs a name — otherwise it is an unlabelled list of rows.
+  if (terminalResponseOwnsStatus) {
+    return (
+      <div className="thread-speaker-meta">
+        <span className="thread-process-title">
+          {turn.durationMs !== null
+            ? t.agent.thread.workedFor({ duration: formatProcessDuration(turn.durationMs) })
+            : threadProcessNeutralHeader(turn, items, t, index)}
+        </span>
+      </div>
+    );
+  }
+  const summary = threadProcessSummary(
+    turn, items, hasFinalResponse, liveElapsedMs, t, index, blockedOnUser,
+  );
+  if (collapsible) {
+    return (
+      <ButtonControl
+        aria-expanded={expanded}
+        className="thread-speaker-meta thread-process-toggle"
+        data-thread-disclosure-id={disclosureId}
+        onClick={(event) => expandState.toggle(disclosureId, expanded, event.currentTarget)}
+      >
+        <span className="thread-process-title">{summary}</span>
+        <ChevronRightIcon
+          aria-hidden
+          className={`thread-process-chevron${expanded ? ' is-expanded' : ''}`}
+          size={ICON_SIZE.menu}
+        />
+      </ButtonControl>
+    );
+  }
   const processTitleClassName = `thread-process-title${turn.status === 'inProgress'
     ? ' thread-process-title-live'
     : ''}`;
   return (
-    <div className={`thread-process-block${turn.status === 'failed' && !hasFinalResponse ? ' is-error' : ''}`}>
-      {terminalResponseOwnsStatus ? null : collapsible ? (
-        <ButtonControl
-          aria-expanded={expanded}
-          className="thread-work-divider thread-process-toggle"
-          data-thread-disclosure-id={disclosureId}
-          onClick={(event) => expandState.toggle(disclosureId, expanded, event.currentTarget)}
-        >
-          <span className="thread-process-title">{summary}</span>
-          <ChevronRightIcon
-            aria-hidden
-            className={`thread-process-chevron${expanded ? ' is-expanded' : ''}`}
-            size={ICON_SIZE.menu}
-          />
-        </ButtonControl>
-      ) : (
-        <div className="thread-work-divider">
-          {summaryWorking
-            ? <WorkingText className={processTitleClassName} text={summary} truncate />
-            : <span className={processTitleClassName}>{summary}</span>}
-        </div>
-      )}
-      {terminalResponseOwnsStatus ? null : <div aria-hidden className="thread-process-rule" />}
-      {terminalResponseOwnsStatus && timelineVisible ? (
-        // The response tail owns the terminal status, but the timeline still
-        // needs a name — otherwise it is an unlabelled list of rows.
-        <div className="thread-work-divider">
-          <span className="thread-process-title">
-            {turn.durationMs !== null
-              ? t.agent.thread.workedFor({ duration: formatProcessDuration(turn.durationMs) })
-              : threadProcessNeutralHeader(turn, items, t, index, subagents)}
-          </span>
-        </div>
-      ) : null}
-      {timelineVisible ? <div className="thread-process-timeline">{children}</div> : null}
+    <div className="thread-speaker-meta">
+      {motionOwner === 'summary' && !blockedOnUser && workingTextEnabled
+        ? <WorkingText className={processTitleClassName} text={summary} truncate />
+        : <span className={processTitleClassName}>{summary}</span>}
     </div>
   );
 }
@@ -2830,14 +3033,14 @@ export type TurnMotionOwner = 'none' | 'summary' | 'leaf';
 export function turnMotionOwner(
   turn: Turn,
   items: readonly ThreadItem[],
-  subagents: SubagentTurnProjection,
+  anchors: SubagentTurnAnchors,
+  workingAgentIds: ReadonlySet<ThreadId>,
 ): TurnMotionOwner {
   if (turn.status !== 'inProgress') return 'none';
   if (items.some((item) => isThreadToolItem(item) && item.status === 'inProgress')) return 'leaf';
-  if (items.some((item) => (
-    item.type === 'subAgentActivity'
-    && isSubagentWorkingStatus(subagents.byThreadId.get(item.agentThreadId)?.status)
-  ))) return 'leaf';
+  // A live chip in this Turn is the more specific representation, so the Turn
+  // summary stays static while the chip carries the cue.
+  if (anchors.agentIds.some((agentId) => workingAgentIds.has(agentId))) return 'leaf';
   const tail = turn.items.at(-1);
   if (tail?.type === 'reasoning') {
     return [...tail.summary, ...tail.content].every((part) => !part.trim()) ? 'leaf' : 'none';
@@ -2846,9 +3049,6 @@ export function turnMotionOwner(
   return 'summary';
 }
 
-function isSubagentWorkingStatus(status: string | undefined): boolean {
-  return status === 'pendingInit' || status === 'running';
-}
 
 function ThreadStreamingIndicator({
   shapeMotionSuppressed,
@@ -2905,7 +3105,6 @@ export function threadProcessSummary(
   liveElapsedMs: number | null,
   t: Messages,
   index: DocumentIndex,
-  subagents: SubagentTurnProjection,
   blockedOnUser = false,
 ): string {
   // Blocked on the user is not work in progress, and it outranks the elapsed
@@ -2921,7 +3120,7 @@ export function threadProcessSummary(
   if (turn.status === 'completed' && hasFinalResponse && turn.durationMs !== null) {
     return t.agent.thread.workedFor({ duration: formatProcessDuration(turn.durationMs) });
   }
-  return threadProcessNeutralHeader(turn, items, t, index, subagents);
+  return threadProcessNeutralHeader(turn, items, t, index);
 }
 
 /**
@@ -2934,16 +3133,13 @@ function threadProcessNeutralHeader(
   items: readonly ThreadItem[],
   t: Messages,
   index: DocumentIndex,
-  subagents: SubagentTurnProjection,
 ): string {
   const tools = items.filter(isThreadToolItem);
   const reasoning = items.find((item): item is Extract<ThreadItem, { type: 'reasoning' }> => item.type === 'reasoning');
   const activity = tools.length === 1
     ? summarizeThreadToolItem(tools[0]!, t.agent.thread.activity, index)
     : tools.length > 1
-      ? summarizeThreadToolActivity(tools, t.agent.thread.activity, index, {
-          collaborationThreadIds: subagents.collaborationThreadIds,
-        })
+      ? summarizeThreadToolActivity(tools, t.agent.thread.activity, index)
       : '';
   if (reasoning) {
     if (activity) return `${t.agent.thinking.thought} · ${sentenceFragment(activity)}`;

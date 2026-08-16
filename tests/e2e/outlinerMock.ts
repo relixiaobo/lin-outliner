@@ -114,6 +114,13 @@ type E2EWindow = Window & {
     setMockThreadTurns: (threadId: string, turns: readonly unknown[]) => void;
     /** Flips a mock Thread between idle and active, as a Turn boundary would. */
     setMockThreadActive: (threadId: string, active: boolean) => void;
+    /**
+     * Overrides one Agent's execution record — the canonical lifecycle state
+     * the renderer's registry is built from. Every delegated mock Thread gets a
+     * default record; this is for the states a Thread alone cannot express,
+     * such as a user stop, a retained worktree, or foreground placement.
+     */
+    setMockSubagentExecution: (agentId: string, patch: Record<string, unknown>) => void;
     /** Applies one delayed or failed outcome to the next thread/start call. */
     setNextThreadStartBehavior: (behavior: { delayMs?: number; error?: string }) => void;
     emitDocumentEvent: (event: unknown) => void;
@@ -797,7 +804,20 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         threadId?: unknown;
         turnId?: unknown;
         turn?: unknown;
+        thread?: unknown;
       };
+      // A started Thread is in the catalog, so the mock's catalog learns it
+      // here rather than in every test that announces one. A delegated child
+      // also has an execution record by then — the host publishes its start
+      // only after that record commits — so the registry hears about it too.
+      if (
+        event.type === 'thread/started'
+        && event.thread !== null
+        && typeof event.thread === 'object'
+        && !mockThreads.some((candidate) => candidate.id === (event.thread as MockThread).id)
+      ) {
+        mockThreads.push(clone(event.thread) as unknown as MockThread);
+      }
       if (
         (event.type === 'turn/started' || event.type === 'turn/completed')
         && typeof event.threadId === 'string'
@@ -814,11 +834,69 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         }
       }
       for (const listener of agentCoreListeners) listener(clone(notification));
+      // A delegated child's Turn boundary IS an execution change: the host
+      // advances the record's current generation Turn and announces it.
+      if (
+        (event.type === 'turn/started' || event.type === 'turn/completed')
+        && typeof event.threadId === 'string'
+        && typeof event.turnId === 'string'
+      ) {
+        mockCurrentTurnByThread.set(event.threadId, event.turnId);
+      }
+      if (
+        (event.type === 'thread/started' || event.type === 'turn/started' || event.type === 'turn/completed')
+        && typeof event.threadId === 'string'
+      ) {
+        const execution = subagentExecutionFor(event.threadId);
+        if (execution) {
+          for (const listener of agentCoreListeners) {
+            listener(clone({
+              type: 'subagent/execution/changed',
+              threadId: execution.parentThreadId,
+              execution,
+            }));
+          }
+        }
+      }
     };
     const emitAutomationNotification = (notification: unknown) => {
       for (const listener of automationListeners) listener(clone(notification));
     };
     const mockQueuedWorkThreadIds = new Set<string>();
+    const mockSubagentExecutionPatches = new Map<string, Record<string, unknown>>();
+    /** The generation Turn a delegated Thread is on, as its record would say. */
+    const mockCurrentTurnByThread = new Map<string, string>();
+    /**
+     * The canonical Agent execution record for a delegated mock Thread.
+     *
+     * Every delegated child has one in the real host, so the mock derives a
+     * default from the Thread rather than making each test build one; a test
+     * that needs a state the Thread cannot express patches it.
+     */
+    const subagentExecutionFor = (agentId: string): Record<string, unknown> | null => {
+      const thread = mockThreads.find((candidate) => candidate.id === agentId);
+      if (!thread || thread.parentThreadId === null) return null;
+      const isolatedSkill = thread.source === 'agent.skill';
+      const turns = mockTurns.get(agentId) ?? [];
+      return {
+        agentId: thread.id,
+        parentThreadId: thread.parentThreadId,
+        description: thread.agentNickname ?? thread.name ?? '',
+        agentType: isolatedSkill ? 'isolated-skill' : thread.agentRole ?? 'general-purpose',
+        runMode: isolatedSkill ? 'foreground' : 'background',
+        generation: 1,
+        currentTurnId: mockCurrentTurnByThread.get(agentId)
+          ?? turns.at(-1)?.id
+          ?? `${thread.id}-generation-1`,
+        stopProvenance: 'none',
+        terminalStatus: null,
+        notificationState: 'none',
+        worktree: null,
+        createdAt: thread.createdAt,
+        updatedAt: thread.updatedAt,
+        ...mockSubagentExecutionPatches.get(agentId) ?? {},
+      };
+    };
     const createMockThread = (input: Record<string, unknown>, forkedFromId: string | null = null) => {
       const timestamp = ++now;
       const thread: MockThread = {
@@ -1883,6 +1961,18 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         thread.updatedAt = ++now;
         emitAgentCoreNotification({ type: 'thread/status/changed', threadId, status: clone(thread.status) });
       },
+      setMockSubagentExecution: (agentId, patch) => {
+        const merged = { ...mockSubagentExecutionPatches.get(agentId) ?? {}, ...clone(patch) };
+        mockSubagentExecutionPatches.set(agentId, merged);
+        const execution = subagentExecutionFor(agentId);
+        if (execution) {
+          emitAgentCoreNotification({
+            type: 'subagent/execution/changed',
+            threadId: execution.parentThreadId,
+            execution,
+          });
+        }
+      },
       setNextThreadStartBehavior: (behavior) => {
         nextThreadStartBehavior = {
           delayMs: Math.max(0, behavior.delayMs ?? 0),
@@ -2165,6 +2255,23 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
               .filter((thread) => mockQueuedWorkThreadIds.has(thread.id))
               .map((thread) => thread.id),
           }) as T;
+        }
+        if (method === 'thread/subagents/list') {
+          const rootId = String(input.threadId);
+          const data: Array<Record<string, unknown>> = [];
+          const pending = [rootId];
+          while (pending.length > 0) {
+            const parentId = pending.shift()!;
+            for (const thread of mockThreads) {
+              if (thread.parentThreadId !== parentId) continue;
+              if (data.some((seen) => seen.agentId === thread.id)) continue;
+              const execution = subagentExecutionFor(thread.id);
+              if (execution) data.push(execution);
+              pending.push(thread.id);
+            }
+          }
+          data.sort((left, right) => Number(left.createdAt) - Number(right.createdAt));
+          return clone({ data }) as T;
         }
         if (method === 'thread/read') {
           const thread = threadById(String(input.threadId));

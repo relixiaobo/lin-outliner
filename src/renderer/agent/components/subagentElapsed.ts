@@ -1,12 +1,18 @@
 import { useEffect, useState } from 'react';
-import type { SubagentPresentation } from '../subagentPresentation';
 
 /**
  * Live elapsed for one delegated child. Only a running child with a plausible
  * epoch start ticks; a settled one has no clock left to read, and its row falls
  * back to the duration its own Turn recorded.
+ *
+ * This hook belongs to the leaf that DISPLAYS the value — the chip, the strip
+ * row, the detail header — and to nothing above it. Owning the tick higher up
+ * re-rendered an expanded child's whole transcript once a second while nothing
+ * about it had changed.
  */
-export function useSubagentElapsedMs(presentation: SubagentPresentation): number | null {
+export function useSubagentElapsedMs(
+  presentation: { readonly status: string; readonly startedAt: number | null },
+): number | null {
   const [now, setNow] = useState(() => Date.now());
   const knownStart = presentation.status === 'running'
     && presentation.startedAt !== null

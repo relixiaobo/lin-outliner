@@ -1,0 +1,78 @@
+import type { ReactNode } from 'react';
+import { agentAvatarColor, agentAvatarInitial } from '../agentAvatarColor';
+
+/** Who said the block beneath: which participant, what it looks like, its name. */
+export interface ThreadSpeaker {
+  /**
+   * WHICH participant this is — an Agent id, or `main`. Consecutive blocks
+   * merge under one header only within a single participant, so this cannot be
+   * the type: a `general-purpose` child inside a `general-purpose` parent would
+   * swallow the brief its parent wrote into its own header, and wear its own
+   * elapsed above someone else's words.
+   */
+  readonly participantId: string;
+  /**
+   * What the hue is derived from: the Agent TYPE, or `main` for the
+   * conversation's own agent. One type, one avatar — everywhere, in every
+   * conversation. It is not the displayed name, which is translated for `main`
+   * and would repaint every disc when the language changed; and it is not the
+   * participant, which gave two siblings of one type the same NAME and
+   * different discs, and repainted an Agent on the way into its own view.
+   */
+  readonly avatarKey: string;
+  readonly name: string;
+}
+
+/**
+ * One participant speaking, in the shape every message stream uses: an avatar
+ * and a name over what they said.
+ *
+ * The header is ONE line and the words below it keep the full column. An avatar
+ * lane down the margin is the familiar desktop-IM shape, but this deck is 344px
+ * wide, where a 34px lane is a tenth of the reading measure spent on saying the
+ * same thing the header already says.
+ *
+ * Every non-reader block wears this — the conversation's own agent, a delegated
+ * child delivering a result, the Agent that wrote a brief. One structure for
+ * everyone, so `main` answering and a Subagent reporting are visibly the same
+ * kind of event: somebody spoke. Before this, `main` was unattributed prose and
+ * a child's report was a labelled bubble, which made two participants look like
+ * two different sorts of thing.
+ *
+ * The reader is the exception, and deliberately: their own messages keep the
+ * right-hand bubble and no avatar. Position is the fastest identity signal in
+ * the stream, and Tenon has no user profile to draw a face from.
+ */
+export function ThreadSpeakerGroup({
+  children,
+  meta,
+  speaker,
+}: {
+  readonly children: ReactNode;
+  /**
+   * What this participant did, on the same line as who they are: the Turn's
+   * work summary for the transcript's own agent, a delegated child's own
+   * elapsed for its report. Two lines and a rule said this before; who spoke
+   * and how long they took is one sentence, so it is one line.
+   */
+  readonly meta?: ReactNode;
+  readonly speaker: ThreadSpeaker;
+}) {
+  const color = agentAvatarColor(speaker.avatarKey);
+  return (
+    <div className="thread-speaker">
+      <div className="thread-speaker-header">
+        <span
+          aria-hidden
+          className="thread-speaker-avatar"
+          style={{ background: color.background, color: color.text }}
+        >
+          {agentAvatarInitial(speaker.name)}
+        </span>
+        <span className="thread-speaker-name">{speaker.name}</span>
+        {meta}
+      </div>
+      <div className="thread-speaker-content">{children}</div>
+    </div>
+  );
+}
