@@ -2,397 +2,443 @@ import { describe, expect, test } from 'bun:test';
 import type {
   AgentTaskToolName,
   SubAgentActivityThreadItem,
-  SubagentExecutionState,
+  SubagentExecutionProjection,
   Thread,
   ThreadItem,
   Turn,
 } from '../../src/core/agent/protocol';
-import { projectSubagentsForTurn } from '../../src/renderer/agent/subagentPresentation';
+import {
+  projectSubagentConversation,
+  type SubagentProjectionInput,
+} from '../../src/renderer/agent/subagentPresentation';
+import { stripRows, SUBAGENT_STRIP_LINGER_MS } from '../../src/renderer/agent/components/SubagentWorkStrip';
 
 const PARENT_ID = 'thread-parent';
 const CHILD_ID = 'thread-child';
+const SECOND_CHILD_ID = 'thread-child-2';
+const GRANDCHILD_ID = 'thread-grandchild';
 const SKILL_CHILD_ID = 'thread-skill-child';
 
-describe('Subagent parent-Turn presentation projection', () => {
-  test('keeps the first canonical slot while the latest terminal Item owns status and error', () => {
-    const started = activity('activity-started', 'started', null);
-    const terminalError = {
-      message: 'Token budget exhausted (120 of 100)',
-      code: 'subagent_budget_exhausted' as const,
-    };
-    const errored = activity('activity-errored', 'errored', terminalError);
-    const turn = parentTurn([
-      reasoning('reasoning-before'),
-      started,
-      reasoning('reasoning-middle'),
-      errored,
-    ]);
-    const projection = projectSubagentsForTurn(
-      turn,
-      new Map([[CHILD_ID, childThread({ type: 'active', activeFlags: [] })]]),
-      new Map([[CHILD_ID, childTurn('child-followup', 'inProgress', 250, 'later-parent-item')]]),
-    );
+describe('Agent registry projection', () => {
+  test('describes one Agent across generations, not one row per Turn that touched it', () => {
+    const spawn = activity('spawn', 'started', null, 'agent-call');
+    const spawnTurn = parentTurn('turn-1', [collaborationItem('agent-call', 'agent', 'completed', CHILD_ID), spawn]);
+    const resumeTurn = parentTurn('turn-2', [collaborationItem('resume-call', 'agent_message', 'completed', CHILD_ID)]);
 
-    expect(projection.items.map((item) => item.id)).toEqual([
-      'reasoning-before',
-      'activity-started',
-      'reasoning-middle',
-    ]);
-    expect(projection.byThreadId.get(CHILD_ID)).toMatchObject({
-      displayName: 'research',
-      status: 'errored',
-      error: terminalError,
+    const projection = projectSubagentConversation(input({
+      turnsByThread: new Map([[PARENT_ID, [spawnTurn, resumeTurn]]]),
+      executions: executionMap([execution({ generation: 2 })]),
+    }));
+
+    expect([...projection.byAgentId.keys()]).toEqual([CHILD_ID]);
+    expect(projection.byAgentId.get(CHILD_ID)).toMatchObject({
+      displayName: 'survey the runtime',
+      agentType: 'general-purpose',
+      form: 'agent',
+      generation: 2,
     });
+    // Both Turns anchor the SAME Agent: the spawn where it was delegated, the
+    // resume where it was steered again.
+    expect(anchorList(projection, 'turn-1')).toEqual([{ kind: 'spawn', agentId: CHILD_ID, itemId: 'spawn' }]);
+    expect(anchorList(projection, 'turn-2')).toEqual([{ kind: 'resume', agentId: CHILD_ID, itemId: 'resume-call' }]);
   });
 
-  test('uses a current child completion immediately, but renders an older completed child as idle', () => {
-    const turn = parentTurn([collaborationItem('message', 'agent_message', 'completed', CHILD_ID)], 100);
-    const idleChild = childThread({ type: 'idle' });
-    const completedNow = childTurn('child-current', 'completed', 120, 'older-parent-item', 180);
-    const completedBefore = childTurn('child-old', 'completed', 20, 'older-parent-item', 80);
+  test('collapses the delegating call into its chip and drops terminal activity entirely', () => {
+    const call = collaborationItem('agent-call', 'agent', 'completed', CHILD_ID);
+    const spawn = activity('spawn', 'started', null, 'agent-call');
+    const settled = activity('settled', 'completed', null, null);
+    const turn = parentTurn('turn-1', [reasoning('before'), call, spawn, reasoning('after'), settled]);
 
-    expect(projectSubagentsForTurn(
-      turn,
-      new Map([[CHILD_ID, idleChild]]),
-      new Map([[CHILD_ID, completedNow]]),
-    ).byThreadId.get(CHILD_ID)?.status).toBe('completed');
-    expect(projectSubagentsForTurn(
-      turn,
-      new Map([[CHILD_ID, idleChild]]),
-      new Map([[CHILD_ID, completedBefore]]),
-    ).byThreadId.get(CHILD_ID)?.status).toBe('idle');
+    const projection = projectSubagentConversation(input({
+      turnsByThread: new Map([[PARENT_ID, [turn]]]),
+    }));
+
+    // The chip takes the CALL's slot, so a delegation can never precede the
+    // reasoning that produced it; the terminal Item renders nothing at all.
+    expect(projection.anchorsByTurnId.get('turn-1')?.items.map((item) => item.id))
+      .toEqual(['before', 'spawn', 'after']);
   });
 
-  test('does not let a later follow-up Turn rewrite a settled parent Turn', () => {
-    const spawn = collaborationItem('spawn-item', 'agent', 'completed', CHILD_ID);
-    const settledParent = parentTurn([activity('activity-started', 'started', null), spawn], 100, 'completed');
-    const laterFollowup = childTurn('child-followup', 'inProgress', 300, 'followup-item');
-    const projection = projectSubagentsForTurn(
-      settledParent,
-      new Map([[CHILD_ID, childThread({ type: 'active', activeFlags: [] })]]),
-      new Map([[CHILD_ID, laterFollowup]]),
-    );
+  test('anchors a spawn whose delegating call is not in the Turn', () => {
+    const spawn = activity('spawn', 'started', null, 'call-from-another-turn');
+    const turn = parentTurn('turn-1', [spawn]);
 
-    expect(projection.byThreadId.get(CHILD_ID)?.startedAt).toBeNull();
-    expect(projection.byThreadId.get(CHILD_ID)?.status).toBe('running');
+    const projection = projectSubagentConversation(input({ turnsByThread: new Map([[PARENT_ID, [turn]]]) }));
+
+    expect(projection.anchorsByTurnId.get('turn-1')?.items.map((item) => item.id)).toEqual(['spawn']);
+    expect(anchorList(projection, 'turn-1')).toEqual([{ kind: 'spawn', agentId: CHILD_ID, itemId: 'spawn' }]);
   });
 
-  test('does not infer an Agent row from unrelated direct-child catalog state', () => {
-    const projection = projectSubagentsForTurn(
-      parentTurn([]),
-      new Map([[CHILD_ID, childThread({ type: 'active', activeFlags: [] })]]),
-      new Map([[CHILD_ID, childTurn('child-active', 'inProgress', 150, 'spawn-from-prior-turn')]]),
-    );
+  test('leaves a message to the conversation itself unanchored', () => {
+    // `main` addresses the conversation, not an Agent, so there is no recipient
+    // Thread for a chip to open.
+    const toMain = collaborationItem('main-message', 'agent_message', 'completed');
+    const turn = parentTurn('turn-1', [toMain]);
 
-    expect(projection.activeThreadIds).toEqual([]);
-    expect(projection.byThreadId.size).toBe(0);
+    const projection = projectSubagentConversation(input({ turnsByThread: new Map([[PARENT_ID, [turn]]]) }));
+
+    expect(anchorList(projection, 'turn-1')).toEqual([]);
+    expect(projection.anchorsByTurnId.get('turn-1')?.items.map((item) => item.id)).toEqual(['main-message']);
   });
 
-  test('projects only an explicitly recorded isolated Skill without scanning sibling Agents', () => {
-    const skillStarted: SubAgentActivityThreadItem = {
-      ...activity('activity-skill-started', 'started', null),
-      agentThreadId: SKILL_CHILD_ID,
-      agentPath: '/root/skill_research_ab12cd34ef56',
+  test('names whose result each delivery carries, and which of its runs, across Turns', () => {
+    const spawn = activity('spawn', 'started', null, 'agent-call');
+    const spawnTurn = parentTurn('turn-1', [collaborationItem('agent-call', 'agent', 'completed', CHILD_ID), spawn]);
+    const continuation: Turn = {
+      ...parentTurn('turn-2', []),
+      provenance: {
+        originThreadId: PARENT_ID,
+        originTurnId: 'turn-2',
+        // The notification answers the call that spawned this generation.
+        trigger: { kind: 'subagent', parentThreadId: PARENT_ID, parentItemId: 'agent-call' },
+      },
     };
-    const projection = projectSubagentsForTurn(
-      parentTurn([skillStarted]),
-      new Map([
-        [CHILD_ID, childThread({ type: 'active', activeFlags: [] })],
-        [SKILL_CHILD_ID, skillChildThread()],
-      ]),
-      new Map([
-        [CHILD_ID, childTurn('child-active', 'inProgress', 150, 'spawn-from-prior-turn')],
-      ]),
-    );
 
-    expect(projection.activeThreadIds).toEqual([SKILL_CHILD_ID]);
-    expect(projection.byThreadId.get(SKILL_CHILD_ID)).toMatchObject({
-      displayName: 'research',
+    const projection = projectSubagentConversation(input({
+      turnsByThread: new Map([[PARENT_ID, [spawnTurn, continuation]]]),
+    }));
+
+    expect(projection.deliveryByTurnId.get('turn-2'))
+      .toEqual({ agentId: CHILD_ID, generationIndex: 0, fromLatest: 0 });
+    expect(projection.deliveryByTurnId.get('turn-1')).toBeUndefined();
+  });
+
+  test('counts each Agent\'s deliveries in order, so a resume shows its own run', () => {
+    const spawn = activity('spawn', 'started', null, 'agent-call');
+    const spawnTurn = parentTurn('turn-1', [collaborationItem('agent-call', 'agent', 'completed', CHILD_ID), spawn]);
+    const firstDelivery = continuationTurn('turn-2', 'agent-call');
+    const resumeTurn = parentTurn('turn-3', [collaborationItem('resume-call', 'agent_message', 'completed', CHILD_ID)]);
+    const secondDelivery = continuationTurn('turn-4', 'resume-call');
+
+    const projection = projectSubagentConversation(input({
+      turnsByThread: new Map([[PARENT_ID, [spawnTurn, firstDelivery, resumeTurn, secondDelivery]]]),
+    }));
+
+    // One generation is one child Turn, so the Nth delivery from an Agent is
+    // the Nth run — which is the report that anchor can show.
+    // Counted from the newest as well as from the start: the report reads the
+    // Agent's settled Turns backwards, so a delivery the host never
+    // materialized cannot slide every earlier card onto the wrong run.
+    expect(projection.deliveryByTurnId.get('turn-2'))
+      .toEqual({ agentId: CHILD_ID, generationIndex: 0, fromLatest: 1 });
+    expect(projection.deliveryByTurnId.get('turn-4'))
+      .toEqual({ agentId: CHILD_ID, generationIndex: 1, fromLatest: 0 });
+  });
+
+  test('never reads an Agent\'s own delegated Turn as its own result arriving', () => {
+    const spawn = activity('spawn', 'started', null, 'agent-call');
+    const spawnTurn = parentTurn('turn-1', [collaborationItem('agent-call', 'agent', 'completed', CHILD_ID), spawn]);
+    // The Agent's own first Turn: same `subagent` trigger, same call id — and
+    // the delegating Thread named as its parent, which is what tells it apart
+    // from the delegator's continuation.
+    const delegatedTurn: Turn = {
+      ...childTurn('child-turn', 'inProgress', 500),
+      provenance: {
+        originThreadId: CHILD_ID,
+        originTurnId: 'child-turn',
+        trigger: { kind: 'subagent', parentThreadId: PARENT_ID, parentItemId: 'agent-call' },
+      },
+    };
+
+    const projection = projectSubagentConversation(input({
+      turnsByThread: new Map([[PARENT_ID, [spawnTurn]], [CHILD_ID, [delegatedTurn]]]),
+    }));
+
+    expect(projection.deliveryByTurnId.get('child-turn')).toBeUndefined();
+    expect([...projection.deliveryByTurnId.keys()]).toEqual([]);
+  });
+
+  test('reads live status from the current generation Turn and settled status from the record', () => {
+    const running = projectSubagentConversation(input({
+      latestTurnByThread: new Map([[CHILD_ID, childTurn('child-turn', 'inProgress', 500)]]),
+    })).byAgentId.get(CHILD_ID);
+    expect(running).toMatchObject({ status: 'running', startedAt: 500, durationMs: null });
+
+    const settledTurn = projectSubagentConversation(input({
+      latestTurnByThread: new Map([[CHILD_ID, childTurn('child-turn', 'completed', 500, 800)]]),
+    })).byAgentId.get(CHILD_ID);
+    expect(settledTurn).toMatchObject({ status: 'completed', durationMs: 10, settledAt: 800 });
+
+    // No Turn in hand — a conversation reopened days later — still states the
+    // outcome, because the terminal status is durable.
+    const fromRecord = projectSubagentConversation(input({
+      executions: executionMap([execution({ terminalStatus: 'failed', notificationState: 'delivered' })]),
+    })).byAgentId.get(CHILD_ID);
+    expect(fromRecord).toMatchObject({ status: 'errored', durationMs: null });
+  });
+
+  test('marks a user stop as the user\'s, so the model may not resume it', () => {
+    const entry = projectSubagentConversation(input({
+      executions: executionMap([execution({ stopProvenance: 'user', terminalStatus: 'interrupted' })]),
+    })).byAgentId.get(CHILD_ID);
+
+    expect(entry).toMatchObject({ status: 'interrupted', stoppedByUser: true });
+  });
+
+  test('counts live descendants without flattening the tree', () => {
+    const projection = projectSubagentConversation(input({
+      executions: executionMap([
+        execution(),
+        execution({ agentId: GRANDCHILD_ID, parentThreadId: CHILD_ID, description: 'read the docs' }),
+      ]),
+      threadsById: new Map([
+        [CHILD_ID, childThread({ type: 'active', activeFlags: [] })],
+        [GRANDCHILD_ID, { ...childThread({ type: 'active', activeFlags: [] }), id: GRANDCHILD_ID, parentThreadId: CHILD_ID }],
+      ]),
+    }));
+
+    expect(projection.byAgentId.get(CHILD_ID)?.liveDescendantCount).toBe(1);
+    expect(projection.byAgentId.get(GRANDCHILD_ID)?.liveDescendantCount).toBe(0);
+  });
+
+  test('scopes membership to this conversation, walking the delegation edges', () => {
+    const projection = projectSubagentConversation(input({
+      executions: executionMap([
+        execution(),
+        execution({ agentId: GRANDCHILD_ID, parentThreadId: CHILD_ID }),
+        // Another conversation's Agent: same store, different root.
+        execution({ agentId: 'thread-elsewhere', parentThreadId: 'thread-other-root' }),
+      ]),
+    }));
+
+    expect([...projection.byAgentId.keys()]).toEqual([CHILD_ID, GRANDCHILD_ID]);
+  });
+
+  test('never adopts another conversation\'s record-less child', () => {
+    // The store keeps every conversation the reader visited, and `threadsById`
+    // holds their descendants. A record-less child is synthesized as BACKGROUND
+    // work, so adopting one from elsewhere put another conversation's Agent in
+    // this one's work strip.
+    const projection = projectSubagentConversation(input({
+      executions: executionMap([
+        execution(),
+        execution({ agentId: 'thread-elsewhere', parentThreadId: 'thread-other-root' }),
+      ]),
+      threadsById: new Map([
+        [CHILD_ID, childThread({ type: 'active', activeFlags: [] })],
+        ['thread-ours', {
+          ...childThread({ type: 'active', activeFlags: [] }),
+          id: 'thread-ours',
+          parentThreadId: CHILD_ID,
+        }],
+        ['thread-theirs', {
+          ...childThread({ type: 'active', activeFlags: [] }),
+          id: 'thread-theirs',
+          parentThreadId: 'thread-elsewhere',
+        }],
+      ]),
+    }));
+
+    expect([...projection.byAgentId.keys()]).toEqual([CHILD_ID, 'thread-ours']);
+  });
+
+  test('numbers same-named siblings so two delegations of one task can be told apart', () => {
+    const projection = projectSubagentConversation(input({
+      executions: executionMap([
+        execution(),
+        execution({ agentId: SECOND_CHILD_ID, createdAt: 20 }),
+      ]),
+    }));
+
+    expect([...projection.byAgentId.values()].map((entry) => entry.displayName))
+      .toEqual(['survey the runtime (1)', 'survey the runtime (2)']);
+  });
+
+  test('reads an isolated Skill as a Skill, and gives it no Agent type to advertise', () => {
+    const projection = projectSubagentConversation(input({
+      executions: executionMap([execution({
+        agentId: SKILL_CHILD_ID,
+        agentType: 'isolated-skill',
+        description: 'Data Viz',
+        runMode: 'foreground',
+      })]),
+      threadsById: new Map([[SKILL_CHILD_ID, skillChildThread()]]),
+    }));
+
+    expect(projection.byAgentId.get(SKILL_CHILD_ID)).toMatchObject({
+      displayName: 'Data Viz',
       form: 'isolatedSkill',
-      status: 'running',
+      agentType: null,
     });
-    expect(projection.byThreadId.has(CHILD_ID)).toBe(false);
-  });
-
-  test('names an isolated Skill child by its recorded Skill name, not its address', () => {
-    const skillStarted: SubAgentActivityThreadItem = {
-      ...activity('activity-skill-started', 'started', null),
-      agentThreadId: SKILL_CHILD_ID,
-      agentPath: '/root/skill_data_viz_ab12cd34ef56',
-    };
-    const projection = projectSubagentsForTurn(
-      parentTurn([skillStarted]),
-      new Map([[SKILL_CHILD_ID, { ...skillChildThread(), agentNickname: 'Data Viz' }]]),
-      new Map(),
-    );
-
-    // The slug folded case and spaces away; the Thread record did not.
-    expect(projection.byThreadId.get(SKILL_CHILD_ID)?.displayName).toBe('Data Viz');
-  });
-
-  test('strips the address suffix when the Skill child is gone and only its path survives', () => {
-    const skillStarted: SubAgentActivityThreadItem = {
-      ...activity('activity-skill-started', 'started', null),
-      agentThreadId: SKILL_CHILD_ID,
-      agentPath: '/root/skill_research_ab12cd34ef56',
-    };
-    const projection = projectSubagentsForTurn(parentTurn([skillStarted]), new Map(), new Map());
-
-    // No Thread record left to carry the name, and no form to consult either —
-    // the shape of the address is the only thing to go on.
-    expect(projection.byThreadId.get(SKILL_CHILD_ID)).toMatchObject({
-      displayName: 'research',
-      status: 'notFound',
-    });
-  });
-
-  test('leaves a collaboration task name that merely looks addressed alone', () => {
-    // A model-chosen task_name may legitimately carry this exact shape, hex tail
-    // and all. The child Thread's own source is what decides, so the row keeps
-    // the persisted Agent identity recorded for it.
-    const skillShaped = '/root/skill_audit_0123456789ab';
-    const item = collaborationItem('spawn-item', 'agent', 'completed', CHILD_ID, {
-      status: 'completed',
-      taskPath: skillShaped,
-      nickname: 'Researcher',
-      role: 'worker',
-    });
-    const projection = projectSubagentsForTurn(
-      parentTurn([item]),
-      new Map([[CHILD_ID, childThread({ type: 'idle' })]]),
-      new Map(),
-    );
-
-    expect(projection.byThreadId.get(CHILD_ID)).toMatchObject({
-      displayName: 'skill_audit_0123456789ab',
-      form: 'collaboration',
-    });
-  });
-
-  test('reads the form from the address when the child record is gone', () => {
-    const skillStarted: SubAgentActivityThreadItem = {
-      ...activity('activity-skill-started', 'started', null),
-      agentThreadId: SKILL_CHILD_ID,
-      agentPath: '/root/skill_research_ab12cd34ef56',
-    };
-    const projection = projectSubagentsForTurn(parentTurn([skillStarted]), new Map(), new Map());
-
-    // Defaulting a dead Skill child to collaboration would incorrectly expose
-    // Agent resume semantics for an isolated Skill.
-    expect(projection.byThreadId.get(SKILL_CHILD_ID)?.form).toBe('isolatedSkill');
-    expect(projection.collaborationThreadIds).toEqual([]);
-  });
-
-  test('numbers repeated names so two runs of one Skill are tellable apart', () => {
-    const first: SubAgentActivityThreadItem = {
-      ...activity('activity-first', 'started', null),
-      agentThreadId: SKILL_CHILD_ID,
-      agentPath: '/root/skill_research_ab12cd34ef56',
-    };
-    const second: SubAgentActivityThreadItem = {
-      ...activity('activity-second', 'started', null),
-      agentThreadId: 'thread-skill-child-2',
-      agentPath: '/root/skill_research_ff99aa11bb22',
-    };
-    const projection = projectSubagentsForTurn(parentTurn([first, second]), new Map(), new Map());
-
-    expect([...projection.byThreadId.values()].map((entry) => entry.displayName))
-      .toEqual(['research (1)', 'research (2)']);
-  });
-
-  test('renders one delegation at the slot of the call that delegated it', () => {
-    const skillCall = skillToolCall('skill-call');
-    const started = activity('activity-started', 'started', null, 'skill-call');
-    const turn = parentTurn([reasoning('reasoning-before'), skillCall, started]);
-    const projection = projectSubagentsForTurn(
-      turn,
-      new Map([[CHILD_ID, childThread({ type: 'active', activeFlags: [] })]]),
-      new Map(),
-    );
-
-    // The tool call is gone and the row took its place: one delegation, named
-    // once, at the position where the model decided on it.
-    expect(projection.items.map((item) => item.id)).toEqual([
-      'reasoning-before',
-      'activity-started',
-    ]);
-  });
-
-  test('keeps the delegation row where the delegating call is not in this Turn', () => {
-    // A fire-and-forget child settling into a later parent Turn: its terminal
-    // activity names no call here, so it must not claim an unrelated Item.
-    const skillCall = skillToolCall('unrelated-call');
-    const settled = activity('activity-completed', 'completed', null);
-    const projection = projectSubagentsForTurn(
-      parentTurn([skillCall, settled]),
-      new Map(),
-      new Map(),
-    );
-
-    expect(projection.items.map((item) => item.id)).toEqual([
-      'unrelated-call',
-      'activity-completed',
-    ]);
-  });
-
-  test('collapses a started/terminal pair onto the delegating call exactly once', () => {
-    const skillCall = skillToolCall('skill-call');
-    const started = activity('activity-started', 'started', null, 'skill-call');
-    const done = activity('activity-completed', 'completed', null, null);
-    const projection = projectSubagentsForTurn(
-      parentTurn([skillCall, started, done]),
-      new Map(),
-      new Map(),
-    );
-
-    expect(projection.items.map((item) => item.id)).toEqual(['activity-started']);
-    expect(projection.byThreadId.get(CHILD_ID)?.status).toBe('completed');
-  });
-
-  test('carries the settled child Turn duration, since a finished row has no clock', () => {
-    const started = activity('activity-started', 'started', null);
-    const done = childTurn('child-done', 'completed', 100, 'spawn-item', 192_100);
-    const terminal = activity('activity-done', 'completed', null, null, done.id);
-    const projection = projectSubagentsForTurn(
-      parentTurn([started, terminal]),
-      new Map([[CHILD_ID, childThread({ type: 'idle' })]]),
-      new Map([[CHILD_ID, done]]),
-    );
-
-    expect(projection.byThreadId.get(CHILD_ID)).toMatchObject({
-      status: 'completed',
-      durationMs: done.durationMs,
-    });
-  });
-
-  test('does not borrow a resumed generation duration for an earlier terminal activity', () => {
-    const generationOne = activity('activity-generation-one', 'completed', null, null, 'child-generation-one');
-    const generationTwo = childTurn('child-generation-two', 'completed', 300, 'resume-item', 1_077);
-    const projection = projectSubagentsForTurn(
-      parentTurn([generationOne], 100, 'completed'),
-      new Map([[CHILD_ID, childThread({ type: 'idle' })]]),
-      new Map([[CHILD_ID, generationTwo]]),
-    );
-
-    expect(generationTwo.durationMs).not.toBeNull();
-    expect(projection.byThreadId.get(CHILD_ID)).toMatchObject({
-      status: 'completed',
-      durationMs: null,
-    });
-  });
-
-  test('reports no duration where only the terminal Item survived the reload', () => {
-    const projection = projectSubagentsForTurn(
-      parentTurn([activity('activity-done', 'completed', null)]),
-      new Map(),
-      new Map(),
-    );
-
-    // Better a row that says `Completed` than one inventing a span it never saw.
-    expect(projection.byThreadId.get(CHILD_ID)).toMatchObject({
-      status: 'completed',
-      durationMs: null,
-    });
-  });
-
-  test('does not project an unrelated Skill child from the catalog alone', () => {
-    const projection = projectSubagentsForTurn(
-      parentTurn([]),
-      new Map([[SKILL_CHILD_ID, skillChildThread()]]),
-      new Map(),
-    );
-
-    expect(projection.byThreadId.size).toBe(0);
-    expect(projection.activeThreadIds).toEqual([]);
-  });
-
-  test('keeps persisted identity after deletion without treating the snapshot as live truth', () => {
-    const item = collaborationItem('spawn-item', 'agent', 'completed', CHILD_ID);
-    const projection = projectSubagentsForTurn(parentTurn([item]), new Map(), new Map());
-
-    expect(projection.byThreadId.get(CHILD_ID)).toMatchObject({
-      displayName: 'research',
-      taskPath: '/root/research',
-      nickname: 'Researcher',
-      role: 'worker',
-      status: 'notFound',
-    });
-  });
-
-  test('reuses the projection Map and entries when only a non-Subagent Item changes', () => {
-    const started = activity('activity-started', 'started', null);
-    const initialReasoning = reasoning('reasoning');
-    const threads = new Map([[CHILD_ID, childThread({ type: 'active', activeFlags: [] })]]);
-    const first = projectSubagentsForTurn(
-      parentTurn([started, initialReasoning]),
-      threads,
-      new Map(),
-    );
-    const changedReasoning = { ...initialReasoning, summary: ['streamed delta'] };
-    const second = projectSubagentsForTurn(
-      parentTurn([started, changedReasoning]),
-      threads,
-      new Map(),
-      first,
-    );
-
-    expect(second.byThreadId).toBe(first.byThreadId);
-    expect(second.byThreadId.get(CHILD_ID)).toBe(first.byThreadId.get(CHILD_ID));
-    expect(second.items).not.toBe(first.items);
-    expect(second.items[0]).toBe(first.items[0]);
-    expect(second.items[1]).toBe(changedReasoning);
-  });
-
-  test('replaces exactly the child entry whose live state changed', () => {
-    const secondChildId = 'thread-child-second';
-    const firstItem = collaborationItem('first-child', 'agent', 'completed', CHILD_ID);
-    const secondItem = collaborationItem('second-child', 'agent', 'completed', secondChildId, {
-      status: 'running',
-      taskPath: '/root/second',
-      nickname: 'Second',
-      role: 'worker',
-    });
-    const turn = parentTurn([firstItem, secondItem]);
-    const secondChild = {
-      ...childThread({ type: 'active', activeFlags: [] }),
-      id: secondChildId,
-      agentNickname: 'Second',
-    };
-    const first = projectSubagentsForTurn(
-      turn,
-      new Map([
-        [CHILD_ID, childThread({ type: 'active', activeFlags: [] })],
-        [secondChildId, secondChild],
-      ]),
-      new Map(),
-    );
-    const second = projectSubagentsForTurn(
-      turn,
-      new Map([
-        [CHILD_ID, childThread({ type: 'idle' })],
-        [secondChildId, secondChild],
-      ]),
-      new Map(),
-      first,
-    );
-
-    expect(second.byThreadId).not.toBe(first.byThreadId);
-    expect(second.byThreadId.get(CHILD_ID)).not.toBe(first.byThreadId.get(CHILD_ID));
-    expect(second.byThreadId.get(CHILD_ID)?.status).toBe('idle');
-    expect(second.byThreadId.get(secondChildId)).toBe(first.byThreadId.get(secondChildId));
   });
 });
 
+describe('Agent registry identity stability', () => {
+  test('re-projects nothing when a delta touches neither the Agent nor its Turn', () => {
+    const spawn = activity('spawn', 'started', null, 'agent-call');
+    const first = parentTurn('turn-1', [collaborationItem('agent-call', 'agent', 'completed', CHILD_ID), spawn]);
+    const streaming = parentTurn('turn-2', [reasoning('thinking')]);
+    const before = projectSubagentConversation(input({
+      turnsByThread: new Map([[PARENT_ID, [first, streaming]]]),
+    }));
+
+    // Exactly what a streaming delta does: one Turn object replaced, every
+    // other input identical.
+    const after = projectSubagentConversation(input({
+      turnsByThread: new Map([[PARENT_ID, [first, parentTurn('turn-2', [reasoning('thinking'), reasoning('more')])]]]),
+    }), before);
+
+    expect(after.byAgentId).toBe(before.byAgentId);
+    expect(after.byAgentId.get(CHILD_ID)).toBe(before.byAgentId.get(CHILD_ID));
+    expect(after.anchorsByTurnId.get('turn-1')).toBe(before.anchorsByTurnId.get('turn-1'));
+    expect(after.deliveryByTurnId).toBe(before.deliveryByTurnId);
+  });
+
+  test('re-derives no registry when only a Turn streamed', () => {
+    // A streaming frame replaces `turnsByThread` and touches none of the three
+    // collections the registry reads. Re-deriving it per delta walked the whole
+    // subtree, every thread in the store, and an O(n²) descendant count to
+    // arrive at what it already had.
+    const shared = {
+      executions: executionMap([execution()]),
+      threadsById: new Map([[CHILD_ID, childThread({ type: 'active', activeFlags: [] })]]),
+      latestTurnByThread: new Map(),
+    };
+    const before = projectSubagentConversation(input({
+      ...shared,
+      turnsByThread: new Map([[PARENT_ID, [parentTurn('turn-1', [])]]]),
+    }));
+    const after = projectSubagentConversation(input({
+      ...shared,
+      turnsByThread: new Map([[PARENT_ID, [parentTurn('turn-1', [reasoning('item-1')])]]]),
+    }), before);
+
+    expect(after.byAgentId).toBe(before.byAgentId);
+    expect(after.byAgentId.get(CHILD_ID)).toBe(before.byAgentId.get(CHILD_ID));
+  });
+
+  test('returns the same projection object when nothing changed at all', () => {
+    const turn = parentTurn('turn-1', [activity('spawn', 'started', null, null)]);
+    const before = projectSubagentConversation(input({ turnsByThread: new Map([[PARENT_ID, [turn]]]) }));
+    const after = projectSubagentConversation(input({ turnsByThread: new Map([[PARENT_ID, [turn]]]) }), before);
+
+    expect(after).toBe(before);
+  });
+
+  test('replaces only the Agent that moved, leaving its siblings by reference', () => {
+    const before = projectSubagentConversation(input({
+      executions: executionMap([execution(), execution({ agentId: SECOND_CHILD_ID, description: 'draft the note' })]),
+    }));
+    const after = projectSubagentConversation(input({
+      executions: executionMap([
+        execution({ terminalStatus: 'completed', notificationState: 'pending' }),
+        execution({ agentId: SECOND_CHILD_ID, description: 'draft the note' }),
+      ]),
+    }), before);
+
+    expect(after.byAgentId.get(SECOND_CHILD_ID)).toBe(before.byAgentId.get(SECOND_CHILD_ID));
+    expect(after.byAgentId.get(CHILD_ID)).not.toBe(before.byAgentId.get(CHILD_ID));
+  });
+});
+
+describe('work strip membership', () => {
+  const now = 10_000;
+  const entryOf = (overrides: Partial<SubagentExecutionProjection>, threads?: SubagentProjectionInput['threadsById']) => (
+    projectSubagentConversation(input({
+      executions: executionMap([execution(overrides)]),
+      ...(threads ? { threadsById: threads } : {}),
+    })).byAgentId
+  );
+
+  test('leaves foreground work out: it belongs to the Turn it blocks', () => {
+    const foreground = entryOf({ runMode: 'foreground' });
+    expect(stripRows(foreground, now)).toEqual([]);
+  });
+
+  test('keeps a just-finished row briefly, then lets it leave', () => {
+    const settled = entryOf({ terminalStatus: 'completed', notificationState: 'pending', updatedAt: now - 1_000 });
+    expect(stripRows(settled, now)).toHaveLength(1);
+    expect(stripRows(settled, now + SUBAGENT_STRIP_LINGER_MS)).toEqual([]);
+  });
+
+  test('sorts running before stopped before just-finished', () => {
+    const byAgentId = projectSubagentConversation(input({
+      executions: executionMap([
+        execution({ agentId: 'agent-finished', terminalStatus: 'completed', updatedAt: now - 500 }),
+        execution({ agentId: 'agent-stopped', stopProvenance: 'user', terminalStatus: 'interrupted', updatedAt: now - 500 }),
+        execution({ agentId: 'agent-running' }),
+      ]),
+      threadsById: new Map([['agent-running', { ...childThread({ type: 'active', activeFlags: [] }), id: 'agent-running' }]]),
+    })).byAgentId;
+
+    expect(stripRows(byAgentId, now).map((entry) => entry.agentId))
+      .toEqual(['agent-running', 'agent-stopped', 'agent-finished']);
+  });
+
+  test('shows nothing for a conversation whose Agents finished before it was opened', () => {
+    // No settlement time the renderer can trust means the work is history, and
+    // the idle deck and the everything-finished deck must look identical.
+    const old = entryOf({ terminalStatus: 'completed', updatedAt: 0 });
+    expect(stripRows(old, now)).toEqual([]);
+  });
+});
+
+/** A Turn the host started in the delegating conversation to deliver a result. */
+function continuationTurn(id: string, callItemId: string): Turn {
+  return {
+    ...parentTurn(id, []),
+    provenance: {
+      originThreadId: PARENT_ID,
+      originTurnId: id,
+      trigger: { kind: 'subagent', parentThreadId: PARENT_ID, parentItemId: callItemId },
+    },
+  };
+}
+
+function anchorList(
+  projection: ReturnType<typeof projectSubagentConversation>,
+  turnId: string,
+): readonly unknown[] {
+  return [...projection.anchorsByTurnId.get(turnId)?.anchorByItemId.values() ?? []];
+}
+
+function input(overrides: Partial<SubagentProjectionInput> = {}): SubagentProjectionInput {
+  return {
+    rootThreadId: PARENT_ID,
+    turnsByThread: new Map(),
+    executions: executionMap([execution()]),
+    threadsById: new Map(),
+    latestTurnByThread: new Map(),
+    ...overrides,
+  };
+}
+
+function executionMap(
+  executions: readonly SubagentExecutionProjection[],
+): ReadonlyMap<string, SubagentExecutionProjection> {
+  return new Map(executions.map((execution) => [execution.agentId, execution]));
+}
+
+function execution(overrides: Partial<SubagentExecutionProjection> = {}): SubagentExecutionProjection {
+  return {
+    agentId: CHILD_ID,
+    parentThreadId: PARENT_ID,
+    description: 'survey the runtime',
+    agentType: 'general-purpose',
+    runMode: 'background',
+    generation: 1,
+    currentTurnId: 'child-turn',
+    stopProvenance: 'none',
+    terminalStatus: null,
+    notificationState: 'none',
+    worktree: null,
+    createdAt: 10,
+    updatedAt: 10,
+    ...overrides,
+  };
+}
+
 function parentTurn(
+  id: string,
   items: readonly ThreadItem[],
   startedAt = 100,
   status: Turn['status'] = 'inProgress',
 ): Turn {
   return {
-    id: 'turn-parent',
+    id,
     items,
     itemsView: 'full',
-    provenance: { originThreadId: PARENT_ID, originTurnId: 'turn-parent', trigger: { kind: 'user' } },
+    provenance: { originThreadId: PARENT_ID, originTurnId: id, trigger: { kind: 'user' } },
     status,
     error: null,
     startedAt,
@@ -405,7 +451,6 @@ function childTurn(
   id: string,
   status: Turn['status'],
   startedAt: number,
-  parentItemId: string,
   completedAt: number | null = null,
 ): Turn {
   return {
@@ -415,7 +460,7 @@ function childTurn(
     provenance: {
       originThreadId: CHILD_ID,
       originTurnId: id,
-      trigger: { kind: 'subagent', parentThreadId: PARENT_ID, parentItemId },
+      trigger: { kind: 'subagent', parentThreadId: PARENT_ID, parentItemId: 'agent-call' },
     },
     status,
     error: status === 'failed' ? { message: 'Child failed', code: 'runtime_failure' } : null,
@@ -462,7 +507,7 @@ function activity(
   kind: SubAgentActivityThreadItem['kind'],
   error: SubAgentActivityThreadItem['error'],
   spawnItemId: string | null = null,
-  agentTurnId: string | null = 'child-initial',
+  agentTurnId: string | null = 'child-turn',
 ): SubAgentActivityThreadItem {
   return {
     id,
@@ -477,29 +522,11 @@ function activity(
   };
 }
 
-function skillToolCall(id: string): ThreadItem {
-  return {
-    id,
-    provenance: { originThreadId: PARENT_ID, originTurnId: 'turn-parent', originItemId: id },
-    type: 'dynamicToolCall',
-    namespace: null,
-    tool: 'skill',
-    arguments: { name: 'research' },
-    modelCall: null,
-    contentItems: null,
-    status: 'inProgress',
-    success: null,
-    durationMs: null,
-    outputRef: null,
-  };
-}
-
 function collaborationItem(
   id: string,
   tool: AgentTaskToolName,
   status: 'inProgress' | 'completed',
   receiverThreadId?: string,
-  state?: SubagentExecutionState,
 ): Extract<ThreadItem, { type: 'collabAgentToolCall' }> {
   return {
     id,
@@ -514,14 +541,7 @@ function collaborationItem(
     summary: null,
     model: null,
     reasoningEffort: null,
-    agentsStates: receiverThreadId ? {
-      [receiverThreadId]: state ?? {
-        status: 'completed',
-        taskPath: '/root/research',
-        nickname: 'Researcher',
-        role: 'worker',
-      },
-    } : {},
+    agentsStates: {},
   };
 }
 

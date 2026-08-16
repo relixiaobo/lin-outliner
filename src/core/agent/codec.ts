@@ -57,7 +57,9 @@ import {
   type ThreadUserContent,
   type ThreadResourceReference,
   type Turn,
+  type SubagentExecutionProjection,
   type SubagentExecutionState,
+  type SubagentWorktreeSummary,
   type TurnDiagnosticsPayload,
   type TurnDiagnosticsMessagePartProvenance,
   type TurnDiagnosticsPayloadReference,
@@ -654,6 +656,7 @@ export function decodeAgentCoreNotification(value: unknown): AgentCoreNotificati
     'userInput/resolved',
     'goal/updated',
     'goal/cleared',
+    'subagent/execution/changed',
   ], 'notification.type');
   let result: AgentCoreNotification;
   switch (type) {
@@ -849,6 +852,16 @@ export function decodeAgentCoreNotification(value: unknown): AgentCoreNotificati
       exactKeys(record, ['type', 'threadId'], 'notification');
       result = { type, threadId: uuidV7(record.threadId, 'notification.threadId') };
       break;
+    case 'subagent/execution/changed': {
+      exactKeys(record, ['type', 'threadId', 'execution'], 'notification');
+      const threadId = uuidV7(record.threadId, 'notification.threadId');
+      const execution = decodeSubagentExecution(record.execution, 'notification.execution');
+      if (execution.parentThreadId !== threadId) {
+        fail('notification.execution', 'execution.parentThreadId must match the envelope');
+      }
+      result = { type, threadId, execution };
+      break;
+    }
     default:
       fail('notification.type', `unknown notification: ${type}`);
   }
@@ -861,6 +874,7 @@ export function decodeAgentCoreRecordedNotification(value: unknown): AgentCoreRe
     case 'thread/name/updated':
     case 'turn/providerRetry/changed':
     case 'turn/plan/updated':
+    case 'subagent/execution/changed':
       fail('notification.type', `cannot record transient notification ${notification.type}`);
     default:
       return notification;
@@ -873,6 +887,7 @@ export function decodeAgentCoreTransientNotification(value: unknown): AgentCoreT
     case 'thread/name/updated':
     case 'turn/providerRetry/changed':
     case 'turn/plan/updated':
+    case 'subagent/execution/changed':
       return notification;
     default:
       fail('notification.type', `expected transient notification, received ${notification.type}`);
@@ -994,6 +1009,9 @@ export function decodeAgentCoreRequest<M extends AgentCoreMethod>(
     case 'thread/descendants':
       decoded = decodeThreadDescendantsRequest(value);
       break;
+    case 'thread/subagents/list':
+      decoded = decodeThreadSubagentsRequest(value);
+      break;
     case 'thread/read':
       decoded = decodeThreadReadRequest(value);
       break;
@@ -1086,6 +1104,9 @@ export function decodeAgentCoreResponse<M extends AgentCoreMethod>(
       break;
     case 'thread/descendants':
       decoded = decodeThreadDescendantsResponse(value);
+      break;
+    case 'thread/subagents/list':
+      decoded = decodeThreadSubagentsResponse(value);
       break;
     case 'thread/read':
     case 'thread/start':
@@ -1203,6 +1224,12 @@ function decodeThreadDescendantsRequest(value: unknown): AgentCoreRequestByMetho
   const record = recordValue(value, 'thread/descendants');
   exactKeys(record, ['threadId'], 'thread/descendants');
   return deepFreeze({ threadId: uuidV7(record.threadId, 'thread/descendants.threadId') });
+}
+
+function decodeThreadSubagentsRequest(value: unknown): AgentCoreRequestByMethod['thread/subagents/list'] {
+  const record = recordValue(value, 'thread/subagents/list');
+  exactKeys(record, ['threadId'], 'thread/subagents/list');
+  return deepFreeze({ threadId: uuidV7(record.threadId, 'thread/subagents/list.threadId') });
 }
 
 function decodeThreadReadRequest(value: unknown): AgentCoreRequestByMethod['thread/read'] {
@@ -1493,6 +1520,61 @@ function decodeThreadDescendantsResponse(value: unknown): AgentCoreResponseByMet
     queuedWorkThreadIds: arrayValue(record.queuedWorkThreadIds, 'thread/descendants response.queuedWorkThreadIds')
       .map((value, index) => uuidV7(value, `thread/descendants response.queuedWorkThreadIds[${index}]`)),
   });
+}
+
+function decodeThreadSubagentsResponse(value: unknown): AgentCoreResponseByMethod['thread/subagents/list'] {
+  const record = recordValue(value, 'thread/subagents/list response');
+  exactKeys(record, ['data'], 'thread/subagents/list response');
+  return deepFreeze({
+    data: arrayValue(record.data, 'thread/subagents/list response.data')
+      .map((entry, index) => decodeSubagentExecution(entry, `thread/subagents/list response.data[${index}]`)),
+  });
+}
+
+function decodeSubagentExecution(value: unknown, path: string): SubagentExecutionProjection {
+  const record = recordValue(value, path);
+  exactKeys(record, [
+    'agentId', 'parentThreadId', 'description', 'agentType', 'runMode', 'generation',
+    'currentTurnId', 'stopProvenance', 'terminalStatus', 'notificationState', 'worktree',
+    'createdAt', 'updatedAt',
+  ], path);
+  return {
+    agentId: uuidV7(record.agentId, `${path}.agentId`),
+    parentThreadId: uuidV7(record.parentThreadId, `${path}.parentThreadId`),
+    description: stringValue(record.description, `${path}.description`, true),
+    agentType: stringValue(record.agentType, `${path}.agentType`, true),
+    runMode: enumValue(record.runMode, ['foreground', 'background'], `${path}.runMode`),
+    generation: positiveInteger(record.generation, `${path}.generation`),
+    currentTurnId: uuidV7(record.currentTurnId, `${path}.currentTurnId`),
+    stopProvenance: enumValue(
+      record.stopProvenance,
+      ['none', 'model', 'user', 'budget', 'hostRestart'],
+      `${path}.stopProvenance`,
+    ),
+    terminalStatus: record.terminalStatus === null ? null : enumValue(
+      record.terminalStatus,
+      ['completed', 'failed', 'interrupted', 'killed'],
+      `${path}.terminalStatus`,
+    ),
+    notificationState: enumValue(
+      record.notificationState,
+      ['none', 'pending', 'delivering', 'delivered'],
+      `${path}.notificationState`,
+    ),
+    worktree: decodeSubagentWorktree(record.worktree, `${path}.worktree`),
+    createdAt: nonNegativeInteger(record.createdAt, `${path}.createdAt`),
+    updatedAt: nonNegativeInteger(record.updatedAt, `${path}.updatedAt`),
+  };
+}
+
+function decodeSubagentWorktree(value: unknown, path: string): SubagentWorktreeSummary | null {
+  if (value === null) return null;
+  const record = recordValue(value, path);
+  exactKeys(record, ['branch', 'path'], path);
+  return {
+    branch: stringValue(record.branch, `${path}.branch`),
+    path: stringValue(record.path, `${path}.path`),
+  };
 }
 
 function decodeThreadResponse(value: unknown): AgentCoreResponseByMethod['thread/read'] {

@@ -5,6 +5,7 @@ import { parseHTML } from 'linkedom';
 import type { ThreadItem, Turn } from '../../src/core/agent/protocol';
 import type { DocumentProjection } from '../../src/core/types';
 import { ThreadTurnView } from '../../src/renderer/agent/components/ThreadView';
+import { emptyTurnAnchors } from '../../src/renderer/agent/subagentPresentation';
 import { I18nProvider } from '../../src/renderer/i18n/I18nProvider';
 import { buildIndex } from '../../src/renderer/state/document';
 import { DocumentIndexStore } from '../../src/renderer/state/documentIndexStore';
@@ -40,13 +41,13 @@ describe('streaming Turn item memoization', () => {
     const response = agentResponse('A');
     const props = turnProps();
 
-    await render(root, <ThreadTurnView {...props} turn={turn([user, response])} />);
+    await render(root, <ThreadTurnView {...props} {...turnAnchors(turn([user, response]))} />);
     const readsAfterFirstRender = userContentReads;
     expect(readsAfterFirstRender).toBeGreaterThan(0);
     expect(document.querySelector('.thread-user-message')?.textContent).toContain('Inspect the workspace.');
 
     const changedResponse = { ...response, text: 'AB' };
-    await render(root, <ThreadTurnView {...props} turn={turn([user, changedResponse])} />);
+    await render(root, <ThreadTurnView {...props} {...turnAnchors(turn([user, changedResponse]))} />);
 
     expect(userContentReads).toBe(readsAfterFirstRender);
     await act(async () => root.unmount());
@@ -69,14 +70,16 @@ describe('streaming Turn item memoization', () => {
       },
     };
 
-    await render(root, <ThreadTurnView {...props} turn={turn([firstTool, secondTool, response])} />);
+    await render(root, (
+      <ThreadTurnView {...props} {...turnAnchors(turn([firstTool, secondTool, response]))} />
+    ));
     const readsAfterFirstRender = outputReferenceReads;
     expect(readsAfterFirstRender).toBeGreaterThan(0);
 
     await render(root, (
       <ThreadTurnView
         {...props}
-        turn={turn([firstTool, secondTool, { ...response, text: 'AB' }])}
+        {...turnAnchors(turn([firstTool, secondTool, { ...response, text: 'AB' }]))}
       />
     ));
 
@@ -84,6 +87,11 @@ describe('streaming Turn item memoization', () => {
     await act(async () => root.unmount());
   });
 });
+
+/** A Turn with no delegation in it: its own Items, no anchors. */
+function turnAnchors(value: Turn) {
+  return { turn: value, anchors: emptyTurnAnchors(value), delivery: null };
+}
 
 function turnProps() {
   return {
@@ -120,6 +128,7 @@ function turnProps() {
     onReadToolArguments: async () => null,
     onReadToolOutput: async () => null,
     providerRetry: null,
+    selfSpeaker: { participantId: 'main', avatarKey: 'main', name: 'main' },
     threadCwd: '/workspace',
     threadId: 'thread',
     threadsById: new Map(),

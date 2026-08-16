@@ -8,18 +8,16 @@ import {
   turnMotionOwner,
 } from '../../src/renderer/agent/components/ThreadView';
 import {
-  collaborationThreadIds,
-  type SubagentPresentation,
-  type SubagentTurnProjection,
+  emptyTurnAnchors,
+  type SubagentTurnAnchors,
 } from '../../src/renderer/agent/subagentPresentation';
 import type { DocumentIndex } from '../../src/renderer/state/document';
 
 describe('active Turn process summary', () => {
   test('does not infer waiting from live Agent projections', () => {
     const launch = collaboration('launch', 'agent');
-    const projection = subagents(['child-a', 'child-b']);
 
-    expect(threadProcessSummary(turn([launch]), [launch], false, 5_000, en, emptyIndex(), projection))
+    expect(threadProcessSummary(turn([launch]), [launch], false, 5_000, en, emptyIndex()))
       .toBe('Working for 5s');
   });
 
@@ -28,7 +26,7 @@ describe('active Turn process summary', () => {
     const message = collaboration('message', 'agent_message');
     const items = [launch, message];
 
-    expect(threadProcessSummary(turn(items), items, false, 5_000, en, emptyIndex(), subagents(['child-a'])))
+    expect(threadProcessSummary(turn(items), items, false, 5_000, en, emptyIndex()))
       .toBe('Working for 5s');
   });
 
@@ -42,7 +40,6 @@ describe('active Turn process summary', () => {
       5_000,
       en,
       emptyIndex(),
-      subagents(['child-a'], ['skill-child']),
       true,
     )).toBe('Waiting for input');
   });
@@ -157,21 +154,28 @@ describe('Turn process projection', () => {
 
 describe('Turn motion ownership', () => {
   test('assigns the generic live summary when no specific leaf is active', () => {
-    expect(turnMotionOwner(turn([]), [], subagents([]))).toBe('summary');
+    expect(turnMotionOwner(turn([]), [], anchors(turn([])), new Set())).toBe('summary');
   });
 
   test('assigns a live tool or Subagent to the leaf', () => {
     const tool = collaboration('tool', 'list_agents');
     const activity = subagentActivity('activity', 'child-a');
-    expect(turnMotionOwner(turn([tool]), [tool], subagents([]))).toBe('leaf');
-    expect(turnMotionOwner(turn([activity]), [activity], subagents(['child-a']))).toBe('leaf');
+    expect(turnMotionOwner(turn([tool]), [tool], anchors(turn([tool])), new Set())).toBe('leaf');
+    // A live chip anchored in this Turn is the more specific representation,
+    // even though the Item that anchors it is not a tool row.
+    expect(turnMotionOwner(
+      turn([activity]),
+      [activity],
+      { items: [activity], anchorByItemId: new Map(), agentIds: ['child-a'] },
+      new Set(['child-a']),
+    )).toBe('leaf');
   });
 
   test('assigns empty Thinking to the leaf and populated streaming content to none', () => {
     const empty = reasoning('empty', ['', '   ']);
     const populated = reasoning('populated', ['Planning the next step.']);
-    expect(turnMotionOwner(turn([empty]), [empty], subagents([]))).toBe('leaf');
-    expect(turnMotionOwner(turn([populated]), [populated], subagents([]))).toBe('none');
+    expect(turnMotionOwner(turn([empty]), [empty], anchors(turn([empty])), new Set())).toBe('leaf');
+    expect(turnMotionOwner(turn([populated]), [populated], anchors(turn([populated])), new Set())).toBe('none');
   });
 
   test('does not assign motion to settled Turns or readable commentary', () => {
@@ -182,8 +186,13 @@ describe('Turn motion ownership', () => {
       completedAt: 2,
       durationMs: 1,
     };
-    expect(turnMotionOwner(turn([commentaryItem]), [commentaryItem], subagents([]))).toBe('none');
-    expect(turnMotionOwner(settled, [], subagents([]))).toBe('none');
+    expect(turnMotionOwner(
+      turn([commentaryItem]),
+      [commentaryItem],
+      anchors(turn([commentaryItem])),
+      new Set(),
+    )).toBe('none');
+    expect(turnMotionOwner(settled, [], anchors(settled), new Set())).toBe('none');
   });
 });
 
@@ -289,31 +298,8 @@ function interruptedResponse(id: string): Extract<ThreadItem, { type: 'agentMess
   };
 }
 
-function subagents(
-  activeThreadIds: readonly string[],
-  skillThreadIds: readonly string[] = [],
-): SubagentTurnProjection {
-  const byThreadId = new Map<string, SubagentPresentation>();
-  for (const threadId of [...activeThreadIds, ...skillThreadIds]) {
-    byThreadId.set(threadId, {
-      agentThreadId: threadId,
-      displayName: threadId,
-      durationMs: null,
-      error: null,
-      form: skillThreadIds.includes(threadId) ? 'isolatedSkill' : 'collaboration',
-      nickname: null,
-      role: null,
-      startedAt: null,
-      status: 'running',
-      taskPath: null,
-    });
-  }
-  return {
-    activeThreadIds: [...activeThreadIds, ...skillThreadIds],
-    byThreadId,
-    collaborationThreadIds: collaborationThreadIds(byThreadId),
-    items: [],
-  };
+function anchors(value: Turn): SubagentTurnAnchors {
+  return emptyTurnAnchors(value);
 }
 
 function emptyIndex(): DocumentIndex {

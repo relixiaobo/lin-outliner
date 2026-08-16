@@ -63,7 +63,6 @@ import {
   WebSearchToolIcon,
 } from '../../../ui/icons';
 import { ReadOnlyCodeBlock } from '../../../ui/editor/CodeBlockSurface';
-import { SubagentRunDetail } from '../SubagentRunDetail';
 import { IconButton } from '../../../ui/primitives/IconButton';
 import { ButtonControl } from '../../../ui/primitives/ButtonControl';
 import { WorkingText } from '../../../ui/primitives/WorkingText';
@@ -87,13 +86,10 @@ import { requestAddPreviewTargetToOutline } from '../../../ui/preview/previewIng
 import { ToolCodeBlock } from '../ToolCodeBlock';
 import type { DisclosureScrollAnchorHold } from '../../../ui/interactions/disclosureScrollAnchor';
 import { userFacingAgentError } from '../../threadErrorMessage';
-import { formatSubagentDuration, useSubagentElapsedMs } from '../subagentElapsed';
+import { SubagentChip } from '../SubagentChip';
 import {
   collaborationResultSnapshot,
-  collaborationThreadIds,
-  presentationFromActivity,
-  presentationFromSnapshot,
-  type SubagentPresentation,
+  type SubagentAnchor,
 } from '../../subagentPresentation';
 
 export type ThreadToolItem = Extract<ThreadItem, {
@@ -118,9 +114,15 @@ interface ThreadItemViewProps {
   readonly item: ThreadItem;
   /** This user-role Item was authored by the host, as proven by its Turn. */
   readonly hostAuthoredEvent?: boolean;
+  /**
+   * Who wrote a host-authored user-role Item: `main` for the conversation
+   * itself, otherwise the delegating Agent. Absent in a conversation, where a
+   * host event has no single author to name.
+   */
   readonly showMessageActions: boolean;
   readonly streaming: boolean;
-  readonly subagents?: ReadonlyMap<string, SubagentPresentation>;
+  /** This Item is where a delegation happened, so a chip takes its slot. */
+  readonly anchor?: SubagentAnchor;
   readonly threadId: string;
   readonly threadCwd: string;
   /** False while this Turn is blocked or recovering. The same phrases remain
@@ -133,10 +135,6 @@ interface ThreadItemViewProps {
   readonly onOpenThread: (threadId: string) => Promise<void>;
   /** Absent where no Stop belongs — a read-only or historical rendering. */
   readonly onInterruptThread?: (threadId: string) => Promise<void>;
-  /** Turn Details for a Thread other than this one — a delegated child's. */
-  readonly onOpenSubagentTurnDetails?: (threadId: string, turnId: string) => void;
-  /** Present only inside a run detail: swap that container, do not nest one. */
-  readonly onSubagentDrill?: (threadId: string) => void;
   readonly onReadToolArguments: (item: ThreadToolItem) => Promise<JsonValue | null>;
   readonly onReadToolOutput: (item: ThreadToolItem) => Promise<string | null>;
 }
@@ -158,8 +156,37 @@ export function isThreadToolItem(item: ThreadItem): item is ThreadToolItem {
     || item.type === 'webSearch';
 }
 
+/**
+ * Items the transcript deliberately draws as nothing at all.
+ *
+ * Kept beside the `return null` branches below, because the caller that groups
+ * blocks by speaker has to know: a Turn that opens with a settled activity Item
+ * and three `contextEvidence` rows would otherwise put a named speaker over an
+ * empty box before the first thing anyone actually said.
+ */
+export function threadItemRendersNothing(item: ThreadItem, anchored: boolean): boolean {
+  // An anchored delegation renders as a chip; an unanchored settled one says
+  // only what that chip already says.
+  if (item.type === 'subAgentActivity') return !anchored;
+  // Inspection-only: what the context carried, for Turn Details to explain.
+  if (item.type === 'contextEvidence') return true;
+  return item.type === 'agentMessage' && item.phase === 'commentary' && !item.text.trim();
+}
+
 export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemViewProps) {
   const t = useT();
+  // An anchored Item IS the delegation, so the chip replaces it outright: the
+  // tool call that spawned the Agent and the activity row announcing it are the
+  // same event, and rendering both said it twice in two vocabularies.
+  if (props.anchor) {
+    return (
+      <SubagentChip
+        agentId={props.anchor.agentId}
+        fallbackName={anchorFallbackName(props.item)}
+        kind={props.anchor.kind}
+      />
+    );
+  }
   switch (props.item.type) {
     case 'userMessage':
       return <UserMessageItem {...props} item={props.item} />;
@@ -210,15 +237,16 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
           onReadArguments={props.onReadToolArguments}
           onReadOutput={props.onReadToolOutput}
           onOpenThread={props.onOpenThread}
-          subagents={props.subagents}
           threadId={props.threadId}
           threadCwd={props.threadCwd}
           workingTextEnabled={props.workingTextEnabled}
         />
       );
-    case 'subAgentActivity': {
-      return <SubagentActivityItem {...props} item={props.item} />;
-    }
+    case 'subAgentActivity':
+      // Terminal activity says what the chip already says, in a place the
+      // reader never asked about; the anchored spawn Item is the only one that
+      // renders, and it renders as a chip above.
+      return null;
     case 'imageView':
       return <ImageViewItem path={props.item.path} />;
     case 'contextEvidence':
@@ -263,7 +291,6 @@ export const ThreadToolActivityGroup = memo(function ThreadToolActivityGroup({
   onReadToolOutput,
   onReadToolArguments,
   onOpenThread,
-  subagents,
   threadId,
   threadCwd,
   workingTextEnabled,
@@ -274,7 +301,6 @@ export const ThreadToolActivityGroup = memo(function ThreadToolActivityGroup({
   readonly onReadToolArguments: (item: ThreadToolItem) => Promise<JsonValue | null>;
   readonly onReadToolOutput: (item: ThreadToolItem) => Promise<string | null>;
   readonly onOpenThread: (threadId: string) => Promise<void>;
-  readonly subagents?: ReadonlyMap<string, SubagentPresentation>;
   readonly threadId: string;
   readonly threadCwd: string;
   readonly workingTextEnabled: boolean;
@@ -283,17 +309,11 @@ export const ThreadToolActivityGroup = memo(function ThreadToolActivityGroup({
   const disclosureId = `tools:${items[0]?.id ?? 'empty'}`;
   const expanded = expandState.isExpanded(disclosureId, false);
   const status = groupStatus(items);
-  const collaborationIds = subagents ? collaborationThreadIds(subagents) : undefined;
-  const segments = threadToolActivitySegments(items, t.agent.thread.activity, index, {
-    collaborationThreadIds: collaborationIds,
-  });
+  const segments = threadToolActivitySegments(items, t.agent.thread.activity, index);
   // The tooltip re-derives the summary with no elision, so the names the row
   // could not fit are still reachable.
   const title = summarizeThreadToolActivity(
-    items, t.agent.thread.activity, index, {
-      collaborationThreadIds: collaborationIds,
-      subjectLimit: Number.POSITIVE_INFINITY,
-    },
+    items, t.agent.thread.activity, index, { subjectLimit: Number.POSITIVE_INFINITY },
   );
   return (
     <div className={`thread-item thread-tool-activity-group thread-tool-${status}`}>
@@ -322,7 +342,6 @@ export const ThreadToolActivityGroup = memo(function ThreadToolActivityGroup({
               onReadArguments={onReadToolArguments}
               onReadOutput={onReadToolOutput}
               onOpenThread={onOpenThread}
-              subagents={subagents}
               threadId={threadId}
               threadCwd={threadCwd}
               workingTextEnabled={workingTextEnabled}
@@ -369,13 +388,14 @@ function UserMessageItem({
   }
 
   return (
-    <article className={`thread-item ${hostAuthoredEvent ? 'thread-host-event' : 'thread-user-message'}`}>
-      {hostAuthoredEvent ? (
-        <div className="thread-host-event-label">
-          <AgentIcon aria-hidden size={ICON_SIZE.rowGlyph} />
-          <span>{t.agent.thread.agentEvent}</span>
-        </div>
-      ) : null}
+    // POSITION IS IDENTITY, the way it is in any message stream: the reader's
+    // own words sit on their side in their own bubble, and everyone else's sit
+    // opposite as plain prose under the avatar and name of whoever wrote them.
+    // A brief from the delegating Agent shared the reader's slot until now,
+    // which put two different senders in one place and left the difference to a
+    // hover. The attribution itself lives in the speaker header above this, so
+    // one participant saying three things in a row is named once, not thrice.
+    <article className={`thread-item thread-user-message${hostAuthoredEvent ? ' thread-host-event' : ''}`}>
       {editing ? (
         <div className="thread-message-editor">
           <textarea
@@ -538,6 +558,9 @@ function renderUserContent(
 const USER_MESSAGE_COLLAPSED_LINES = 5;
 const USER_MESSAGE_COLLAPSED_EXTRA_PX = 16;
 
+/** The bubble every long message wears: clamped to a few lines, one Show more.
+ *  A report card is NOT one of them — it is a preview whose whole surface opens
+ *  the Agent, so it clamps without offering a second way to read the same text. */
 function UserMessageCollapsibleContent({
   children,
   expandState,
@@ -753,7 +776,6 @@ function ToolItemDisclosure({
   onReadArguments,
   onReadOutput,
   onOpenThread,
-  subagents,
   threadId,
   threadCwd,
   workingTextEnabled,
@@ -764,7 +786,6 @@ function ToolItemDisclosure({
   readonly onReadArguments: (item: ThreadToolItem) => Promise<JsonValue | null>;
   readonly onReadOutput: (item: ThreadToolItem) => Promise<string | null>;
   readonly onOpenThread: (threadId: string) => Promise<void>;
-  readonly subagents?: ReadonlyMap<string, SubagentPresentation>;
   readonly threadId: string;
   readonly threadCwd: string;
   readonly workingTextEnabled: boolean;
@@ -840,15 +861,7 @@ function ToolItemDisclosure({
   const argumentsValue = argumentsLoaded && loadedArguments.value !== null
     ? loadedArguments.value
     : fallbackArguments;
-  const detail = toolDetail(
-    item,
-    t,
-    onOpenThread,
-    threadId,
-    subagents,
-    argumentsValue,
-    workingTextEnabled,
-  );
+  const detail = toolDetail(item, t, threadId, argumentsValue);
   const detailInput = detail.input;
   const output = (outputLoaded ? loadedOutput.text : undefined) ?? detail.output;
   const segments = threadToolItemSegments(item, t.agent.thread.activity, index);
@@ -860,11 +873,9 @@ function ToolItemDisclosure({
     : summarizeThreadToolItem(item, t.agent.thread.activity, index, {
       subjectLimit: Number.POSITIVE_INFINITY,
     });
-  const expandedSubagentOwnsWorking = expanded
-    && item.type === 'collabAgentToolCall'
-    && item.receiverThreadIds.some((receiverThreadId) => (
-      isSubagentWorkingStatus(collaborationPresentation(item, receiverThreadId, subagents).status)
-    ));
+  // A delegating call is no longer a row at all — its chip is — so nothing an
+  // expanded tool row contains can own the Turn's live cue any more.
+  const expandedSubagentOwnsWorking = false;
   return (
     <div className={`thread-item thread-tool thread-tool-${item.status}`}>
       <ButtonControl
@@ -1060,11 +1071,8 @@ interface ToolDetail {
 function toolDetail(
   item: ThreadToolItem,
   t: Messages,
-  onOpenThread: (threadId: string) => Promise<void>,
   threadId: string,
-  subagents: ReadonlyMap<string, SubagentPresentation> | undefined,
   argumentsValue: JsonValue,
-  workingTextEnabled: boolean,
 ): ToolDetail {
   const empty = {
     input: null,
@@ -1167,18 +1175,6 @@ function toolDetail(
         output: jsonText(collaborationResultSnapshot(item)),
         outputLanguage: 'json',
         outcome: { label: t.agent.thread.item.result, failed: item.status === 'failed' },
-        body: item.receiverThreadIds.length > 0 ? (
-          <ul className="thread-agent-states">
-            {item.receiverThreadIds.map((receiverThreadId) => (
-              <SubagentStateItem
-                key={receiverThreadId}
-                onOpenThread={onOpenThread}
-                presentation={collaborationPresentation(item, receiverThreadId, subagents)}
-                workingTextEnabled={workingTextEnabled}
-              />
-            ))}
-          </ul>
-        ) : null,
       };
     case 'webSearch':
       // Error-first for the same reason as `mcpToolCall`, though not for the
@@ -1202,183 +1198,21 @@ function toolDetail(
   }
 }
 
-function collaborationPresentation(
-  item: Extract<ThreadToolItem, { type: 'collabAgentToolCall' }>,
-  receiverThreadId: string,
-  subagents: ReadonlyMap<string, SubagentPresentation> | undefined,
-): SubagentPresentation {
-  return subagents?.get(receiverThreadId)
-    ?? presentationFromSnapshot(receiverThreadId, item.agentsStates[receiverThreadId]);
-}
-
 /**
- * One delegated child, for its whole life: the same row, in the same slot,
- * while it runs and after it settles. It reads name-first with the status as a
- * trailing segment — the shape the tool rows beside it already use — so a
- * delegation is scanned as one more thing the Turn did rather than as an event
- * announced in its own vocabulary.
+ * The name a chip falls back to when the Agent's execution record is gone.
  *
- * Live it also carries the two affordances only a running child can offer: a
- * working status phrase, and a Stop that reaches this child alone. Interrupting
- * from here leaves the request open (the delegator may legitimately delegate
- * again); the composer's Stop is the one that closes it.
+ * A deleted Agent still has an anchor in the narrative that produced it, and
+ * the canonical Item is the only evidence left of what was delegated — so the
+ * chip says that, rather than an opaque address or nothing at all.
  */
-function SubagentActivityItem({
-  active,
-  expandState,
-  getUserView,
-  indexStore,
-  item,
-  onInterruptThread,
-  onOpenNodeReference,
-  onOpenThread,
-  onOpenSubagentTurnDetails,
-  onSubagentDrill,
-  subagents,
-  workingTextEnabled,
-}: {
-  readonly active: boolean;
-  readonly expandState: ThreadDisclosureState;
-  readonly getUserView: () => RendererUserViewHints;
-  readonly indexStore: DocumentIndexStore;
-  readonly item: Extract<ThreadItem, { type: 'subAgentActivity' }>;
-  readonly onInterruptThread?: (threadId: string) => Promise<void>;
-  readonly onOpenNodeReference: ThreadNodeReferenceOpenHandler;
-  readonly onOpenThread: (threadId: string) => Promise<void>;
-  readonly onOpenSubagentTurnDetails?: (threadId: string, turnId: string) => void;
-  readonly onSubagentDrill?: (threadId: string) => void;
-  readonly subagents?: ReadonlyMap<string, SubagentPresentation>;
-  readonly workingTextEnabled: boolean;
-}) {
-  const t = useT();
-  const presentation = subagents?.get(item.agentThreadId) ?? presentationFromActivity(item);
-  const elapsedMs = useSubagentElapsedMs(presentation);
-  const name = presentation.displayName;
-  const status = subagentStatusLabel(presentation, elapsedMs, t);
-  const error = presentation.status === 'errored' && presentation.error
-    ? userFacingAgentError(presentation.error, t.agent.thread.resourceLimitReached)
-    : null;
-  const openLabel = t.agent.thread.openSubagentThread({ id: name });
-  const FormIcon = presentation.form === 'isolatedSkill' ? SkillIcon : AgentIcon;
-  // Only where there is a Turn to stop: a child that has not started one yet
-  // has nothing `turn/interrupt` can address.
-  const running = presentation.status === 'running' && onInterruptThread !== undefined;
-  const disclosureId = `subagent:${item.agentThreadId}`;
-  // Inside a run detail this row drills that container instead of opening one
-  // of its own: one viewport, one scroll region, depth said in the header.
-  const drill = onSubagentDrill;
-  const expanded = drill === undefined && expandState.isExpanded(disclosureId, false);
-  return (
-    <div className={`thread-item thread-delegation-row thread-subagent-${presentation.status}`}>
-      <div className="thread-delegation-row-line">
-      <ButtonControl
-        {...(drill ? {} : { 'aria-expanded': expanded })}
-        aria-label={`${openLabel}. ${status}${error ? `. ${error}` : ''}`}
-        className="thread-delegation-row-open"
-        data-thread-disclosure-id={disclosureId}
-        onClick={(event) => (drill
-          ? drill(item.agentThreadId)
-          : expandState.toggle(disclosureId, expanded, event.currentTarget))}
-        title={error ?? `${name} · ${status}`}
-      >
-        <ChevronRightIcon
-          aria-hidden
-          className={`thread-delegation-row-chevron${expanded ? ' is-expanded' : ''}`}
-          size={ICON_SIZE.rowGlyph}
-        />
-        <FormIcon aria-hidden size={ICON_SIZE.rowGlyph} />
-        <span className="thread-delegation-row-name">{name}</span>
-        {workingTextEnabled && isSubagentWorkingStatus(presentation.status)
-          ? <WorkingText className="thread-delegation-row-status" text={status} />
-          : <span className="thread-delegation-row-status">{status}</span>}
-      </ButtonControl>
-        {running ? (
-          <IconButton
-            icon={StopIcon}
-            iconSize={ICON_SIZE.tiny}
-            label={t.agent.thread.stopSubagent({ name })}
-            onClick={() => void onInterruptThread(presentation.agentThreadId)}
-            variant="message"
-          />
-        ) : null}
-      </div>
-      {/* Its own line, wrapping in full: a failure the row had to truncate is a
-          failure the reader cannot act on. */}
-      {error ? <small className="thread-delegation-row-error">{error}</small> : null}
-      {expanded ? (
-        <SubagentRunDetail
-          active={active}
-          getUserView={getUserView}
-          indexStore={indexStore}
-          {...(onInterruptThread ? { onInterruptThread } : {})}
-          onOpenNodeReference={onOpenNodeReference}
-          onOpenThread={onOpenThread}
-          {...(onOpenSubagentTurnDetails ? { onOpenTurnDetails: onOpenSubagentTurnDetails } : {})}
-          rootThreadId={item.agentThreadId}
-        />
-      ) : null}
-    </div>
-  );
-}
-
-function SubagentStateItem({
-  onOpenThread,
-  presentation,
-  workingTextEnabled,
-}: {
-  readonly onOpenThread: (threadId: string) => Promise<void>;
-  readonly presentation: SubagentPresentation;
-  readonly workingTextEnabled: boolean;
-}) {
-  const t = useT();
-  const elapsedMs = useSubagentElapsedMs(presentation);
-  const status = t.agent.thread.subagentStatuses[presentation.status];
-  const statusWithDuration = elapsedMs !== null && elapsedMs >= 1_000
-    ? `${status} · ${formatSubagentDuration(elapsedMs)}`
-    : status;
-  const error = presentation.status === 'errored' && presentation.error
-    ? userFacingAgentError(presentation.error, t.agent.thread.resourceLimitReached)
-    : null;
-  const identity = presentation.taskPath ?? presentation.displayName;
-  return (
-    <li className={`thread-agent-state thread-subagent-${presentation.status}`}>
-      <button
-        aria-label={`${t.agent.thread.openSubagentThread({ id: identity })}. ${statusWithDuration}${error ? `. ${error}` : ''}`}
-        onClick={() => void onOpenThread(presentation.agentThreadId)}
-        title={error ?? identity}
-        type="button"
-      >
-        <AgentIcon size={ICON_SIZE.menu} />
-        <code>{identity}</code>
-        {workingTextEnabled && isSubagentWorkingStatus(presentation.status)
-          ? <WorkingText text={statusWithDuration} />
-          : <span>{error ?? statusWithDuration}</span>}
-      </button>
-    </li>
-  );
-}
-
-/**
- * Time and status, never a token quantity — the delegation surfaces owe the
- * user no budget judgement (Delegation Contract §3), and that holds for the
- * title and accessible label this feeds as much as for the visible text.
- */
-function subagentStatusLabel(
-  presentation: SubagentPresentation,
-  elapsedMs: number | null,
-  t: Messages,
-): string {
-  const status = t.agent.thread.subagentStatuses[presentation.status];
-  // Running children measure from their start; a settled one has no clock left,
-  // so its own Turn's recorded span is the only duration there is.
-  const durationMs = elapsedMs ?? presentation.durationMs;
-  return durationMs !== null && durationMs >= 1_000
-    ? `${status} · ${formatSubagentDuration(durationMs)}`
-    : status;
-}
-
-function isSubagentWorkingStatus(status: SubagentPresentation['status']): boolean {
-  return status === 'pendingInit' || status === 'running';
+function anchorFallbackName(item: ThreadItem): string {
+  if (item.type === 'subAgentActivity') {
+    return item.agentPath.split('/').filter(Boolean).at(-1)?.trim() || item.agentThreadId;
+  }
+  if (item.type === 'collabAgentToolCall') {
+    return item.summary?.trim() || item.receiverThreadIds[0] || item.id;
+  }
+  return item.id;
 }
 
 
@@ -1674,7 +1508,7 @@ export function threadToolActivitySegments(
         add('web', item.query || item.id, running, item.query ? quoteSubject(item.query) : undefined);
         break;
       case 'collabAgentToolCall':
-        for (const threadId of options.collaborationThreadIds ?? item.receiverThreadIds) {
+        for (const threadId of item.receiverThreadIds) {
           add('collaboration', threadId, running);
         }
         break;
@@ -1769,7 +1603,6 @@ const NAMED_SUBJECT_LIMIT = 2;
 /** Display uses the elided form; `title` passes Infinity for the full list. */
 export interface ToolSummaryOptions {
   readonly subjectLimit?: number;
-  readonly collaborationThreadIds?: readonly string[];
 }
 
 function toolActivityPhrase(

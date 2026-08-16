@@ -1043,3 +1043,16 @@ the second and asserted the ordering it now rests on: recorded Items are
 canonical before observer delivery. Either resolution is fine; assuming it is
 not. **A "this path is redundant" fix has to name what it now depends on, and
 test that.**
+
+## A memo guard that feeds its own stable props guards nothing
+
+PR #544, second review round. `threadTurnStreamingMemo.test.tsx` existed
+precisely to keep streaming deltas from re-rendering settled Turns, and it
+passed while the production `ThreadDock` defeated the memo on every frame — the
+test mounted `ThreadTurnView` with speaker objects it allocated once, while the
+real call site minted a fresh `selfSpeaker={{...}}` literal per render. The
+memo, the test, and the regression were each locally correct; the test asserted
+the callee's contract while the bug lived in the caller. **A render-identity
+guard must exercise the production caller** — render the actual parent and
+count child renders — or every new inline literal at the call site silently
+un-fixes what the guard claims to protect.

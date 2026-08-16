@@ -613,15 +613,20 @@
   color: var(--status-danger);
 }
 
-.thread-work-divider {
-  display: flex;
+/* What a participant did, on the same line as who they are: the Turn's work
+   summary for this transcript's own agent, a delegated child's own elapsed for
+   its report. ONE rule for both — they sit on the same line and must read as
+   one sentence, and when the report's meta was styled separately it came out at
+   content size, which also pushed its whole header taller than main's. */
+.thread-speaker-meta {
+  display: inline-flex;
+  min-width: 0;
   max-width: 100%;
   align-items: center;
-  gap: var(--space-3);
-  color: inherit;
+  gap: var(--space-2);
+  color: var(--text-soft);
   font-size: var(--font-meta);
   line-height: var(--line-meta);
-  padding: var(--space-2) 0;
   text-align: left;
 }
 
@@ -663,17 +668,11 @@
   color: var(--text-soft);
 }
 
-.thread-process-rule {
-  margin-top: var(--space-4);
-  border-top: 1px solid color-mix(in srgb, currentColor 20%, transparent);
-}
-
 .thread-process-timeline {
   display: flex;
   min-width: 0;
   flex-direction: column;
   gap: var(--space-3);
-  margin-top: var(--space-6);
 }
 
 .thread-streaming-indicator {
@@ -805,30 +804,94 @@
   gap: var(--space-3);
 }
 
+/* Someone else's words: the opposite side from the reader's own, and plain
+   prose rather than a bubble — the avatar and name above already say who is
+   speaking, so a second container would be the same fact drawn twice. Position
+   is identity here, as in any message stream: the difference between "I asked
+   this" and "main asked this" is who, and that is not left to a hover. */
 .thread-host-event {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: var(--space-2);
-  color: var(--text-secondary);
-}
-
-.thread-host-event-label {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  color: var(--text-faint);
-  font-size: var(--font-meta);
-  line-height: var(--line-meta);
-}
-
-.thread-host-event .thread-user-content-sequence,
-.thread-host-event .thread-user-content-shell {
+  width: 100%;
+  align-self: stretch;
   align-items: flex-start;
 }
 
+.thread-host-event .thread-user-content-sequence,
+.thread-host-event .thread-user-content-shell,
+.thread-host-event .thread-message-actions {
+  align-items: flex-start;
+  align-self: stretch;
+}
+
 .thread-host-event .thread-user-content-shell {
-  background: var(--fill-1);
+  background: transparent;
+  padding: 0;
+}
+
+/* One participant speaking: avatar in the margin, name over what they said.
+   Every non-reader block wears it — the conversation's own agent, a delegated
+   child delivering a result, the Agent that wrote a brief — so `main` answering
+   and a Subagent reporting are visibly the same kind of event. */
+.thread-speaker {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  flex-direction: column;
+  /* Tighter than the 12px between blocks, so a header still binds to its own
+     content, but with enough air that a bordered card is not pressed against
+     the line naming it — a hard edge needs more room than a line of text. */
+  gap: var(--space-4);
+}
+
+/* Avatar and name on ONE line, with the words below at full width. The margin
+   lane a desktop IM uses costs a tenth of the reading measure in a 344px deck,
+   to repeat what the line above already says. */
+.thread-speaker-header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  /* With the avatar's own optical shift this is the row glyph's advance: the
+     name lands on the same text column as a chip or tool label below it. */
+  gap: var(--space-2);
+}
+
+.thread-speaker-avatar {
+  display: flex;
+  width: var(--speaker-avatar-size);
+  /* Centred on the glyph column, not flush with it. The disc is wider than the
+     12px marks on the rows below, so sharing their left edge left every centre
+     2px apart and the column read as ragged. A round mark overhanging a text
+     edge by 2px is what optical alignment wants anyway. */
+  margin-left: calc(var(--space-1) * -1);
+  height: var(--speaker-avatar-size);
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-pill);
+  font-size: var(--font-ui-2xs);
+  /* The repo's emphasis weight: a 10px initial needs it to hold the disc. */
+  font-weight: 650;
+  /* The disc is a fixed circle: its glyph must not push it out of round. */
+  line-height: 1;
+  user-select: none;
+}
+
+/* The blocks keep the Turn's own rhythm: the speaker column replaces
+   `.thread-turn` as their flex parent, so it must not quietly respace them. */
+.thread-speaker-content {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.thread-speaker-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .thread-user-content-sequence {
@@ -1626,8 +1689,7 @@
   box-shadow: var(--focus-ring-shadow);
 }
 
-.thread-file-changes,
-.thread-agent-states {
+.thread-file-changes {
   display: grid;
   gap: var(--space-4);
   margin: 0;
@@ -1635,43 +1697,20 @@
   list-style: none;
 }
 
-.thread-file-changes li,
-.thread-agent-states li {
+.thread-file-changes li {
   display: grid;
   min-width: 0;
   grid-template-columns: auto minmax(0, 1fr) auto;
   gap: var(--space-4);
 }
 
-.thread-agent-states li > button {
-  display: grid;
-  min-width: 0;
-  width: 100%;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: var(--space-4);
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  padding: 0;
-  text-align: left;
-}
-
-.thread-agent-states code {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* One delegated child, live and settled alike, at the slot of the call that
-   delegated it. It sits in the process timeline among the tool rows, so it
-   takes their meta type ramp and soft base colour rather than the transcript's
-   content size — the row is one more thing the Turn did, not an announcement.
-   Content inside the process block, so it stays on the opaque base: a material
-   here would claim chrome status for part of the transcript (B5). */
-.thread-delegation-row {
+/* One delegation, at the point in the conversation where it happened. The chip
+   sits in the process timeline among the tool rows, so it takes their meta type
+   ramp and soft base colour: a delegation is one more thing the Turn did, not
+   an announcement in its own vocabulary. Content inside the process block, so
+   it stays on the opaque base — a material here would claim chrome status for
+   part of the transcript (B5). */
+.thread-agent-chip-block {
   display: flex;
   min-width: 0;
   flex-direction: column;
@@ -1682,11 +1721,9 @@
   line-height: var(--line-meta);
 }
 
-/* The row proper never wraps: its status and Stop belong beside the name, and
-   a long name must shorten rather than push them onto a line of their own. The
-   line reserves its full slot so an elapsed-time update cannot move Stop. Only
-   the failure reason below is allowed to run to several lines. */
-.thread-delegation-row-line {
+/* The chip proper never wraps: its status and Stop belong beside the name, and
+   a long name must shorten rather than push them onto a line of their own. */
+.thread-agent-chip-line {
   display: flex;
   width: 100%;
   min-width: 0;
@@ -1694,7 +1731,7 @@
   gap: var(--space-2);
 }
 
-.thread-delegation-row-open {
+.thread-agent-chip {
   display: flex;
   min-width: 0;
   max-width: min(100%, 520px);
@@ -1710,34 +1747,53 @@
   transition: color var(--motion-fast);
 }
 
-/* B6: colour deepens, no box — and the row must LOOK openable, which the card
-   line never did. Without a hover state the only cue that a delegation can be
-   inspected was the cursor, which this app does not change for non-links.
-   Scoped to a row that is still neutral: a status colour survives hover and
-   focus, so pointing at a failed delegation must not paint the failure away. */
-.thread-delegation-row:not(.thread-subagent-errored, .thread-subagent-interrupted, .thread-subagent-notFound)
-  .thread-delegation-row-open:hover,
-.thread-delegation-row:not(.thread-subagent-errored, .thread-subagent-interrupted, .thread-subagent-notFound)
-  .thread-delegation-row-open:focus-visible {
+/* B6: colour deepens, no box — and the chip must LOOK openable, since this app
+   does not change the cursor for non-links. Scoped to a chip that is still
+   neutral: a status colour survives hover and focus, so pointing at a failed
+   delegation must not paint the failure away. */
+.thread-agent-chip-block:not(.thread-subagent-errored, .thread-subagent-interrupted, .thread-subagent-notFound)
+  .thread-agent-chip:hover,
+.thread-agent-chip-block:not(.thread-subagent-errored, .thread-subagent-interrupted, .thread-subagent-notFound)
+  .thread-agent-chip:focus-visible {
   color: var(--text-strong);
 }
 
-.thread-delegation-row-name {
+.thread-agent-chip-name {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* The name ellipsizes; the status never does. A row whose "· Failed" truncated
+.thread-agent-chip-worktree {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  color: var(--text-tertiary);
+}
+
+/* The name ellipsizes; the status never does. A chip whose "· Failed" truncated
    away would assert that the delegation succeeded. */
-.thread-delegation-row-status {
+.thread-agent-chip-meta {
   flex: 0 0 auto;
   color: var(--text-tertiary);
   font-variant-numeric: tabular-nums;
 }
 
-.thread-delegation-row .icon-button {
+/* B7: it appears on hover WITHOUT moving anything — the slot is always held. */
+.thread-agent-chip-open {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+  opacity: 0;
+  transition: opacity var(--motion-fast);
+}
+
+.thread-agent-chip:hover .thread-agent-chip-open,
+.thread-agent-chip:focus-visible .thread-agent-chip-open {
+  opacity: 1;
+}
+
+.thread-agent-chip-line .icon-button {
   display: inline-flex;
   width: 22px;
   height: 22px;
@@ -1748,26 +1804,26 @@
   color: var(--text-soft);
 }
 
-.thread-delegation-row .icon-button:hover:not(:disabled),
-.thread-delegation-row .icon-button:focus-visible:not(:disabled) {
+.thread-agent-chip-line .icon-button:hover:not(:disabled),
+.thread-agent-chip-line .icon-button:focus-visible:not(:disabled) {
   color: var(--text-strong);
 }
 
-.thread-delegation-row.thread-subagent-errored .thread-delegation-row-open,
-.thread-delegation-row.thread-subagent-errored .thread-delegation-row-status {
+.thread-agent-chip-block.thread-subagent-errored .thread-agent-chip,
+.thread-agent-chip-block.thread-subagent-errored .thread-agent-chip-meta {
   color: var(--status-danger);
 }
 
-.thread-delegation-row.thread-subagent-interrupted .thread-delegation-row-open,
-.thread-delegation-row.thread-subagent-interrupted .thread-delegation-row-status,
-.thread-delegation-row.thread-subagent-notFound .thread-delegation-row-open,
-.thread-delegation-row.thread-subagent-notFound .thread-delegation-row-status {
+.thread-agent-chip-block.thread-subagent-interrupted .thread-agent-chip,
+.thread-agent-chip-block.thread-subagent-interrupted .thread-agent-chip-meta,
+.thread-agent-chip-block.thread-subagent-notFound .thread-agent-chip,
+.thread-agent-chip-block.thread-subagent-notFound .thread-agent-chip-meta {
   color: var(--text-tertiary);
 }
 
 /* A full second line under the name: the status segment stays short and
    unshrinkable, so the reason has to live somewhere it can wrap whole. */
-.thread-delegation-row-error {
+.thread-agent-chip-error {
   min-width: 0;
   padding-left: calc(var(--icon-size-xs) + var(--space-3));
   overflow-wrap: anywhere;
@@ -1775,31 +1831,130 @@
   white-space: normal;
 }
 
-.thread-agent-state.thread-subagent-errored > button,
-.thread-agent-state.thread-subagent-errored > button > span {
-  color: var(--status-danger);
+/* An Agent speaking in the conversation: folded by default, opposite the
+   reader's own side, in the quieter fill every non-reader message uses. It is a
+   participant's message, not a divider — the delegation graph is a set of
+   participants, and this is one of them reporting back. */
+/* A report is not part of this conversation's narrative: it is a self-contained
+   thing brought back from somewhere else, which the reader may open. An OUTLINE
+   says that. A fill would shout it and bare prose would hide it. */
+.thread-agent-report-shell {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  flex-direction: column;
 }
 
-.thread-agent-state.thread-subagent-errored > button {
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: start;
+.thread-agent-report {
+  display: flex;
+  width: 100%;
+  /* A report is a message, so it keeps the measure every message here keeps.
+     Run to the full width of a widened deck it stopped reading as one thing
+     somebody said and started reading as a panel. */
+  max-width: min(100%, 520px);
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  border-radius: var(--radius-md);
+  box-shadow: var(--outline-muted);
+  /* Container-to-text is the same distance as text-to-text: the card breathes
+     on the prose rhythm (`.thread-markdown > * + *`) rather than inventing a
+     tighter one of its own. */
+  padding: var(--space-5);
+  text-align: left;
+  /* B3: the whole card is the control, and a control signals itself with the
+     neutral fill ladder — never a brand or status colour. B10: no hand cursor,
+     which belongs to content hyperlinks. */
+  transition: background var(--motion-fast), box-shadow var(--motion-fast);
 }
 
-.thread-agent-state.thread-subagent-errored > button > span {
-  grid-column: 2;
-  overflow-wrap: anywhere;
+.thread-agent-report:hover {
+  background: var(--fill-1);
+  box-shadow: var(--outline-emphasis);
 }
 
-.thread-agent-state.thread-subagent-interrupted > button,
-.thread-agent-state.thread-subagent-notFound > button,
-.thread-agent-state.thread-subagent-interrupted > button > span,
-.thread-agent-state.thread-subagent-notFound > button > span {
-  color: var(--text-faint);
+.thread-agent-report:focus-visible {
+  background: var(--fill-1);
+  box-shadow: var(--outline-focus);
+  outline: none;
 }
 
-.thread-file-changes li > span,
-.thread-agent-states li > span,
-.thread-agent-states li > button > span {
+/* One thing a click here can mean. The body is a PREVIEW — its links and code
+   are read in the Agent's own view, which is what the card opens. */
+.thread-agent-report-body {
+  width: 100%;
+  min-width: 0;
+  max-height: calc(var(--line-content) * 5);
+  overflow: hidden;
+  pointer-events: none;
+  mask-image: linear-gradient(to bottom, black calc(100% - var(--line-content)), transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, black calc(100% - var(--line-content)), transparent 100%);
+}
+
+/* What it was asked, over what it answered — one line, because a heading that
+   wraps is a paragraph. */
+.thread-agent-report-task {
+  max-width: 100%;
+  margin: 0;
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Says what the card does, in the slot the message actions hold everywhere
+   else — the same height and the same row, so revealing it on hover moves
+   nothing (B7) and a report ends exactly where any other message ends. */
+.thread-agent-report-hint {
+  display: inline-flex;
+  height: var(--chrome-control-height);
+  align-items: center;
+  /* The icon sits on the same 26px square the action buttons occupy, so the
+     glyph lands where a copy or fork glyph lands rather than floating in
+     beside the text at a smaller size. */
+  gap: var(--space-2);
+  color: var(--text-soft);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+}
+
+.thread-agent-report-hint svg {
+  width: var(--chrome-control-height);
+  flex: 0 0 auto;
+}
+
+.thread-agent-report-shell:hover .thread-message-actions,
+.thread-agent-report-shell:focus-within .thread-message-actions {
+  opacity: 1;
+}
+
+/* Not one more changed path: the row that says how many were left out reads at
+   the meta tier, like every other note in the deck. */
+.thread-agent-worktree-elided {
+  color: var(--text-tertiary);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+}
+
+.thread-agent-report-empty {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+}
+
+/* An Agent the user stopped says so where its result would have been. */
+.thread-agent-note {
+  color: var(--text-tertiary);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+}
+
+
+.thread-file-changes li > span {
   color: var(--text-tertiary);
   font-size: var(--font-ui-xs);
 }
@@ -1960,23 +2115,6 @@
   align-items: center;
   gap: var(--space-3);
   color: var(--text-secondary);
-}
-
-.thread-agent-states li > button:hover {
-  color: var(--text-strong);
-}
-
-.thread-agent-states .thread-agent-state.thread-subagent-errored > button:hover {
-  color: var(--status-danger);
-}
-
-.thread-agent-states .thread-agent-state.thread-subagent-interrupted > button:hover,
-.thread-agent-states .thread-agent-state.thread-subagent-notFound > button:hover {
-  color: var(--text-faint);
-}
-
-.thread-agent-states li > button:focus-visible {
-  box-shadow: var(--focus-ring-shadow);
 }
 
 .thread-image-view code {
@@ -3116,104 +3254,100 @@
 }
 
 /* ════════════════════════════════════════════════════════════════════════════
-   SUBAGENT RUN DETAIL (SubagentRunDetail.tsx). A delegated child expands in
-   place, like every other process row, into a BOUNDED box with its own scroll.
-   Delegated work is unbounded — a child runs for minutes, a grandchild longer —
-   and letting it push the timeline open would move the reader's place every
-   time they looked at something. Fixed height keeps the outer transcript still.
+   AGENT DETAIL (SubagentDetailView.tsx). 330px of drawer over a 344px deck is
+   not a drawer, so detail is a full-deck PUSH: an anchor pushes it, Back pops
+   it, and the back button names the level below. Opaque content, never a
+   material — this is where the reader reads, not chrome laid over it (B5).
    ════════════════════════════════════════════════════════════════════════════ */
 
-.thread-subagent-detail {
+/* The deck body holds the conversation and, when one is open, the Agent pushed
+   over it. Positioned so the pushed view can COVER the transcript instead of
+   replacing it: unmounting would throw away the reader's place every time they
+   looked at an Agent. */
+/* Layout-identical to the view they wrap — `flex: 1` (basis 0), like
+   `.thread-view` — so inserting them changes nothing about how the transcript
+   viewport resolves. A `basis: auto` here let content participate in main-axis
+   sizing, and the transcript's own scroll maths raced the extra frame that
+   took to settle. */
+.thread-dock-body,
+.thread-dock-conversation {
   display: flex;
-  min-width: 0;
-  /* Tall enough to read a Turn, short enough to leave the conversation around
-     it. Viewport-relative so a short window is not swallowed whole. */
-  height: min(55vh, 420px);
-  /* Neither grows nor shrinks: the height IS the promise. `flex: 1 0 100%` here
-     read as a basis on the row's main axis once the row became a column, and
-     the box collapsed to its content the moment a swap emptied it. */
-  flex: 0 0 auto;
+  min-height: 0;
+  flex: 1;
   flex-direction: column;
-  margin-top: var(--space-2);
-  border: 1px solid var(--separator);
-  border-radius: var(--radius-sm);
-  background: var(--bg-elevated);
-  /* Its own scroll lives inside; nothing escapes to chain with the transcript. */
-  overflow: hidden;
-  overscroll-behavior: contain;
 }
 
-.thread-subagent-detail-header {
+/* Covered, not unmounted and not merely hidden behind something opaque:
+   `visibility` keeps the box, its measured layout, and its scroll position
+   while taking it out of paint, hit-testing, and the accessibility tree. That
+   is what lets the pushed level carry no background of its own. */
+.thread-dock-conversation.is-covered {
+  visibility: hidden;
+}
+
+.thread-dock-body {
+  position: relative;
+}
+
+/* No fill of its own. The deck paints ONE surface and everything inside it is
+   transparent, so a background here would meet the header's in a seam — and on
+   a translucent window material it would kill the deck's own translucency for
+   the height of this view. It needs to hide nothing: the conversation beneath
+   is not painted while it is covered. */
+.thread-agent-detail {
+  position: absolute;
+  z-index: var(--z-raised);
+  inset: 0;
   display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: var(--space-2);
-  border-bottom: 1px solid var(--separator);
-  padding: var(--space-2) var(--space-3);
-}
-
-.thread-subagent-detail-glyph {
-  flex: 0 0 auto;
-  color: var(--text-soft);
-}
-
-/* Depth is said out loud here — a grandchild replaces the contents and this
-   names the way back — rather than drawn as indentation the reader measures. */
-.thread-subagent-detail-title {
-  min-width: 0;
-  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+  /* Scrolling lives in the transcript inside; the pushed view itself never
+     scrolls, so the composer stays where the reader left it. */
   overflow: hidden;
-  color: var(--text-strong);
-  font-size: var(--font-meta);
-  line-height: var(--line-meta);
+}
+
+/* The Agent's identity in the deck's own title bar: the name, then what kind of
+   Agent it is as a badge. No status — the transcript directly below says what
+   this run did and how long it took, and a title that repeated it would be the
+   same fact twice on one screen. */
+.thread-agent-title-badge {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: var(--fill-1);
+  padding: var(--space-1) var(--space-2);
+  color: var(--text-tertiary);
+  font-size: var(--font-ui-2xs);
+  line-height: var(--line-ui-2xs);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.thread-subagent-detail-body {
+.thread-agent-title-worktree {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  margin-right: auto;
+  color: var(--text-tertiary);
+}
+
+.thread-agent-detail-body {
   display: flex;
   min-height: 0;
   flex: 1 1 auto;
   flex-direction: column;
-  /* A swap replaces everything at once, which reads as a jump. The fade gives
+  /* A push replaces everything at once, which reads as a jump. The fade gives
      the eye something to follow; reduced-motion flattens it globally. */
-  animation: subagent-detail-swap var(--motion-slow);
+  animation: agent-detail-push var(--motion-slow);
 }
 
-@keyframes subagent-detail-swap {
+@keyframes agent-detail-push {
   from { opacity: 0; }
   to { opacity: 1; }
 }
 
-/* Back to the container you came from, said by name. */
-.thread-subagent-detail-crumb {
-  display: inline-flex;
-  min-width: 0;
-  max-width: 40%;
-  align-items: center;
-  gap: var(--space-1);
-  border: 0;
-  background: transparent;
-  padding: 0;
-  color: var(--text-tertiary);
-  font: inherit;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  transition: color var(--motion-fast);
-}
-
-.thread-subagent-detail-crumb:hover,
-.thread-subagent-detail-crumb:focus-visible {
-  color: var(--text-strong);
-}
-
-.thread-subagent-detail-crumb-separator {
-  flex: 0 0 auto;
-  color: var(--text-faint);
-}
-
-.thread-subagent-detail-empty {
+.thread-agent-detail-empty {
   margin: 0;
   padding: var(--space-5);
   color: var(--text-tertiary);
@@ -3223,7 +3357,7 @@
 
 /* Where a composer would be. Not an input: the sentence explains the absence
    rather than leaving a reader to wonder why they cannot type. */
-.thread-subagent-detail-note {
+.thread-agent-detail-note {
   flex: 0 0 auto;
   margin: 0;
   border-top: 1px solid var(--separator);
@@ -3233,14 +3367,190 @@
   line-height: var(--line-ui-2xs);
 }
 
-/* B7: the chevron turns, the row does not move. */
-.thread-delegation-row-chevron {
+/* The workspace an Agent left behind: the one artifact of a delegated run that
+   outlives the conversation and lives outside it. */
+.thread-agent-worktree {
   flex: 0 0 auto;
-  transition: transform var(--motion-fast);
+  border-top: 1px solid var(--separator);
+  padding: var(--space-2) var(--space-3);
+  color: var(--text-tertiary);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
 }
 
-.thread-delegation-row-chevron.is-expanded {
-  transform: rotate(90deg);
+.thread-agent-worktree-line {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.thread-agent-worktree-branch {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread-agent-worktree-action {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--link);
+  font: inherit;
+  transition: color var(--motion-fast);
+}
+
+.thread-agent-worktree-action:hover,
+.thread-agent-worktree-action:focus-visible {
+  color: var(--text-strong);
+}
+
+.thread-agent-worktree-note {
+  margin: var(--space-1) 0 0;
+  color: var(--status-danger);
+}
+
+.thread-agent-worktree-changes {
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  max-height: 140px;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.thread-agent-worktree-changes li {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   WORK STRIP (SubagentWorkStrip.tsx). The deck's ONLY ambient status: one pill
+   in the header that does not exist when nothing is running. Chrome, so the
+   dropdown is the one Liquid-Glass material in this file — level 1, with the
+   shared opaque fallback under reduced transparency (B5).
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* The pill sits inline in the header; its list is positioned against the
+   HEADER, which is the surface the dropdown spans. */
+.thread-work-strip {
+  position: static;
+  flex: 0 0 auto;
+}
+
+.thread-work-strip-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--fill-1);
+  padding: var(--space-1) var(--space-2);
+  color: var(--text-tertiary);
+  font-size: var(--font-ui-2xs);
+  line-height: var(--line-ui-2xs);
+  font-variant-numeric: tabular-nums;
+  transition: color var(--motion-fast), background var(--motion-fast);
+}
+
+.thread-work-strip-pill:hover,
+.thread-work-strip-pill:focus-visible {
+  background: var(--fill-2);
+  color: var(--text-strong);
+}
+
+/* The same spin the in-progress tool rows use — one live cue, one cadence. */
+.thread-work-strip-spinner {
+  animation: thread-tool-spin var(--motion-spin-cycle) linear infinite;
+}
+
+/* Full width under the header rather than a side-hung popover: 344px of deck
+   has no side to hang one from. */
+.thread-work-strip-list {
+  position: absolute;
+  z-index: var(--z-popover);
+  top: calc(100% + var(--space-2));
+  right: var(--rail-pad);
+  left: var(--rail-pad);
+  display: grid;
+  gap: var(--space-1);
+  border: 1px solid var(--separator);
+  border-radius: var(--radius-md);
+  background: var(--material-popover);
+  backdrop-filter: var(--material-backdrop);
+  -webkit-backdrop-filter: var(--material-backdrop);
+  box-shadow: var(--overlay-shadow-level-1);
+  padding: var(--space-2);
+}
+
+.thread-work-strip-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-soft);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+}
+
+.thread-work-strip-open {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: var(--space-2);
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  transition: color var(--motion-fast);
+}
+
+.thread-work-strip-open:hover,
+.thread-work-strip-open:focus-visible {
+  color: var(--text-strong);
+}
+
+.thread-work-strip-name {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread-work-strip-type {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-faint);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread-work-strip-meta {
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* B7: the Stop appears on hover WITHOUT moving anything — its slot is always
+   held, so a row does not reflow under the pointer. */
+.thread-work-strip-stop {
+  flex: 0 0 auto;
+  opacity: 0;
+  transition: opacity var(--motion-fast);
+}
+
+.thread-work-strip-row:hover .thread-work-strip-stop,
+.thread-work-strip-stop:focus-visible {
+  opacity: 1;
 }
 
 /* Context staged onto the composer from the command surface. A visible,

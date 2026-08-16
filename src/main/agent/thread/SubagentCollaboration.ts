@@ -1740,7 +1740,12 @@ export class SubagentCollaboration {
         }
       }
 
-      if (reservation?.notifyParent === true) {
+      // Recorded for EVERY settled generation, not only the ones that notify a
+      // parent. The durable status is what a reopened conversation reads when
+      // no child Turn is loaded, and gating it on notification left a settled
+      // foreground Agent reading as `Idle` — or `Starting` — for work that had
+      // verifiably finished.
+      {
         const recorded = this.executions.recordTerminal({
           agentId: execution.agentId,
           generation: execution.generation,
@@ -1755,7 +1760,7 @@ export class SubagentCollaboration {
                 ? 'failed'
                 : 'interrupted',
           createdAt: this.now(),
-        });
+        }, reservation?.notifyParent === true);
         if (!recorded) return 'settled';
       }
 

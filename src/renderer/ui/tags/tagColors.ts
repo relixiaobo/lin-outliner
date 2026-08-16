@@ -3,6 +3,7 @@ import type { NodeProjection } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
 import { projectTagConfig, type ConfigNodeMap } from '../../../core/configProjection';
 import { TAG_COLOR_TOKENS, type TagColorToken } from '../../../core/configSchema';
+import { IDENTITY_SURFACE_TINT, identitySlot } from './identityHash';
 
 export interface TagColor {
   text: string;
@@ -14,12 +15,10 @@ export interface TagColor {
 // so the same tag reads as a soft light tint in light mode and a soft dark tint in
 // dark mode — never the baked near-white box that glared against a dark panel. The
 // accent stays the text colour (legible on both the light and dark tint).
-const TAG_SURFACE_TINT = '12%';
-
 function accentTagColor(accent: string): TagColor {
   return {
     text: accent,
-    background: `color-mix(in srgb, ${accent} ${TAG_SURFACE_TINT}, var(--bg-content))`,
+    background: `color-mix(in srgb, ${accent} ${IDENTITY_SURFACE_TINT}, var(--bg-content))`,
   };
 }
 
@@ -83,16 +82,7 @@ export const TAG_COLOR_PRESETS: readonly TagColorPreset[] = TAG_COLOR_TOKENS.map
 const JOURNAL_TAG_IDS = new Set(['tag:day', 'tag:week', 'tag:year']);
 
 function hashTagColor(tagId: string): TagColor {
-  let hash = 0;
-  for (let index = 0; index < tagId.length; index += 1) {
-    hash = Math.imul(hash ^ tagId.charCodeAt(index), 0x5bd1e995);
-  }
-  hash ^= hash >>> 16;
-  hash = Math.imul(hash, 0x85ebca6b);
-  hash ^= hash >>> 13;
-  hash = Math.imul(hash, 0xc2b2ae35);
-  hash ^= hash >>> 16;
-  return TAG_COLORS[(hash >>> 0) % TAG_COLORS.length];
+  return TAG_COLORS[identitySlot(tagId, TAG_COLORS.length)];
 }
 
 export function resolveTagColor(tag: NodeProjection | undefined, byId: ConfigNodeMap): TagColor {

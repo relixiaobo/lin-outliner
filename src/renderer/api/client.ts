@@ -420,6 +420,19 @@ export const api = {
     command<{ path: string | null; isSkillFolder?: boolean; nameValid?: boolean }>('agent_pick_skill_directory'),
   agentRevealSkillDirectory: (path: string) =>
     command<{ revealed: boolean }>('agent_reveal_skill_directory', { path }),
+  /**
+   * The changed paths in an Agent's retained worktree. The renderer names the
+   * Agent, never a path: main resolves the directory from the execution record,
+   * so no renderer-supplied path can turn these into an arbitrary filesystem
+   * read or a Finder window anywhere on disk.
+   */
+  readAgentWorktreeChanges: (agentId: string) =>
+    command<{ available: boolean; paths: readonly string[]; total: number }>(
+      'agent_worktree_changes',
+      { agentId },
+    ),
+  revealAgentWorktree: (agentId: string) =>
+    command<{ revealed: boolean }>('agent_reveal_worktree', { agentId }),
   agentListUserInvocableSkills: () =>
     command<SkillDefinition[]>('agent_list_all_skills', { userInvocableOnly: true }),
   agentUndoSkillAgentEdit: (skillName: string) =>

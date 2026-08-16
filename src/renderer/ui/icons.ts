@@ -52,6 +52,7 @@ export {
   CopyPlus as DuplicateIcon,
   CornerDownRight as ReferenceIcon,
   ExternalLink as OpenIcon,
+  MousePointerClick as ClickIcon,
   Database as DatabaseIcon,
   FileArchive as FileArchiveIcon,
   FileAudio as FileAudioIcon,

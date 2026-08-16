@@ -122,6 +122,10 @@ export const AGENT_COMMANDS = [
   // a path to store, and unbinding drops the pointer without touching files.
   'agent_pick_skill_directory',
   'agent_reveal_skill_directory',
+  // An Agent's retained worktree, addressed by Agent ID only: main resolves the
+  // directory from the execution record, so the renderer never names a path.
+  'agent_worktree_changes',
+  'agent_reveal_worktree',
   'agent_undo_skill_agent_edit',
   'agent_managed_skill_catalog',
   'agent_managed_skill_discover',

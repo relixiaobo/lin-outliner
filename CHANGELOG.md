@@ -396,6 +396,38 @@ Entries reference the pull request that introduced them.
   its turn, so the ordering it now depends on is proven instead of assumed:
   recorded Items are canonical before observer delivery, asserted at the earliest
   extension notification for both persistent and ephemeral delegated Turns.
+- **A delegated Agent now reads as a participant in the conversation, not a
+  widget inside one Turn (PR #544, cc)** — the old presentation derived every
+  child from the Turn that spawned it, which was true when delegation was an
+  episode inside one Turn and false of the shipped protocol, where an Agent is
+  spawned in one Turn, steered in another, resumed in a third and delivers in a
+  fourth: a Turn-anchored projection either duplicated the Agent under every
+  Turn that touched it or orphaned the generations no Turn owned. A registry
+  keyed by stable Agent ID + generation replaces it, fed by a new main→renderer
+  execution projection (the seam landed as the PR's first commit, A4-additive),
+  so a conversation reopened days later still knows how every generation ended
+  instead of calling finished work `Idle`. In the conversation, the delegation
+  graph reads as participants exchanging messages: spawn/resume chips at the
+  delegating call, every non-reader participant under one speaker-header shape
+  (avatar, name, what it did), and a delivered result rendered as a message
+  from its Agent — an outlined report card, task as its first line, whose whole
+  surface opens the Agent. A header work strip shows this conversation's
+  running / just-finished background work (foreground work stays on the Turn it
+  blocks); a full-deck pushed detail view covers the conversation rather than
+  replacing it (composer-as-user-authority, retained-worktree footer resolved
+  main-side by Agent ID, nesting ≤ depth 3); OS notifications fire once per
+  terminal background generation, unfocused only, content-free. Identity is a
+  new colour category: avatars share the tag chips' `--identity-tint-*` ladder
+  (red excluded — it neighbours `--status-danger`) and never paint
+  selection/hover/active/focus or status. Two review rounds preceded the gate
+  (xhigh 14 + high 10 findings, all 24 fixed on-branch), including a porcelain
+  `-z` rename mis-parse in the worktree footer, a Stop that could not reach a
+  cold-reopened running Agent, stale OS notifications for already-watched work,
+  and two streaming-hot-path memo regressions the existing guard test could not
+  see. The two known legibility tails — a failed Agent's error text after a
+  cold reopen, and a transient wrong-run report card while a delivery is
+  deferred — each need an A4 protocol addition and are board-tracked as
+  `subagent-projection-error-surface` rather than smuggled into a fix round.
 
 ### Fixed
 
