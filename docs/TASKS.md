@@ -65,11 +65,10 @@ theme-section entry below; this list is the ordering, not a second record):
   and [`startup-window-first`](plans/startup-window-first.md) (P2) trail.
 - **Outliner correctness lane (added 2026-08-13, build-ready 2026-08-14)**:
   [`tag-merge-and-split-fixes`](plans/archive/tag-merge-and-split-fixes.md) PRs A/B
-  both shipped (#542, #540, 2026-08-15), leaving
-  [`tag-schema-projection`](plans/tag-schema-projection.md) PR 1 as the lane's
-  remaining work. PR 1 must re-verify its reader sweep against #534's slot-aware
-  readers before building, and now inherits #540's field-identity rule — a field
-  is its `fieldDefId`, never its label — as pinned behavior (noted in its entry).
+  both shipped (#542, #540, 2026-08-15), and
+  [`tag-schema-projection`](plans/tag-schema-projection.md) PR 1 shipped
+  (#545, 2026-08-16); the lane's remaining work is that plan's PR 2 (defaults
+  as inherited ghosts) and PR 3 (seed backfill action).
 - **Lane D — test-signal infrastructure**: **still unclaimed and now the oldest
   untouched lane** — e2e stability, starting with the visual-media baseline fixture
   (`test.extend` default), then the run-dependent flaky set as one problem. Wave 1
@@ -160,6 +159,16 @@ before any directional/security-sensitive build.
 
 - **agent-program** (P1, `meta` — umbrella) — read first; it maps the rest (foundation /
   dependency graph / event taxonomy / milestones). See `docs/plans/reference/agent-program.md`.
+- **agent-view-surface** (P2, `draft` 2026-08-16) — the agent can neither see
+  nor set node view modes: `%%view:%%` parses but persists only on search
+  nodes, read paths hide an ordinary table node's mode, and no model-facing
+  text mentions views at all (observed dev:main failure: "整理成表格" produced
+  ASCII tables in code blocks). Two-PR set: (1) mode awareness — read + write +
+  vocabulary validation + guidance; (2) view-config read/write over the
+  existing sort/filter/group/display-field commands, sequenced after
+  `tag-schema-projection` PR 1 (#545, same reader files). Designed
+  mode-agnostic so future `cards`/`calendar` views extend a vocabulary
+  constant, not the surface. See [`plans/agent-view-surface.md`](plans/agent-view-surface.md).
 - **skill-directory-is-itself-a-skill** (P3, `draft`, *no plan file yet* — cut from #470
   at the gate 2026-08-01, deliberately, not abandoned) — picking `~/work/my-pdf-skill`
   is at least as natural as picking its parent, but the loader only ever looks one
@@ -548,7 +557,7 @@ archived `done` (see Recently completed). Remaining active work:
   **inline alt-text editing** (`mediaAlt` is writable only at node creation today).
 ### Outliner & UI polish
 
-- **tag-schema-projection** (P1, `draft` 2026-08-13, **PM-ratified 2026-08-13**) —
+- **tag-schema-projection** (P1, `in-progress` 2026-08-16, **PM-ratified 2026-08-13**) —
   fixes the PM-reported bug that template edits never reach already-tagged nodes,
   by making fields a read-time projection of the tag chain (nodes store values
   only), static defaults inherited ghosts, and seed content one-shot copies with
@@ -556,13 +565,11 @@ archived `done` (see Recently completed). Remaining active work:
   the plan (untag keeps typed values; ghosts answer reads, never writes — `is
   empty` on a defaulted field matches nothing; same-name collisions render as two
   rows; tag fields sit above own fields). One open question (per-node drag for
-  tag fields) has a stated default and does not block. **All of PR 1's sequencing
-  predecessors have merged** (#533, #534, and tag-merge-and-split-fixes PRs A/B):
-  re-verify the reader sweep against #534's slot-aware
-  `addMissingTableDisplayFieldsDirect`, and treat #540's shipped behavior as
-  pinned — field identity is the `fieldDefId`, same-name fields from two tags
-  coexist as two rows, and name-based writes disambiguate through the owner's
-  specific-first tag chain.
+  tag fields) has a stated default and does not block.
+  **PR 1 shipped #545 (2026-08-16, codex)** — read-time slot projection; xhigh
+  gate found 15 issues, all fixed on-branch (retrospective in the CHANGELOG entry
+  and the PR). Remaining: PR 2 (static defaults as inherited ghosts — the
+  template-defaults deferral is PM-ratified PR-2 scope) and PR 3 (seed backfill).
   Design: [`tag-schema-projection`](plans/tag-schema-projection.md).
 - **tag-merge-and-split-fixes** (P1, `done` 2026-08-15, **PM-ratified 2026-08-13**) —
   kills the crash-class remainder of the field/supertag audit (#537's review

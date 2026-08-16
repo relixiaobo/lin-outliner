@@ -428,6 +428,34 @@ Entries reference the pull request that introduced them.
   cold reopen, and a transient wrong-run report card while a delivery is
   deferred — each need an A4 protocol addition and are board-tracked as
   `subagent-projection-error-surface` rather than smuggled into a fix round.
+- **Tag-defined fields are now a read-time projection of the tag chain
+  (PR #545, codex)** — tagging a node no longer eagerly stamps template field
+  entries onto it: the fields a tag (and the tags it extends) defines are
+  projected onto tagged nodes at read time as virtual slots, and a slot becomes
+  a real stored entry only when a value is written. Template edits — adding,
+  removing, or retyping a field on a tag — now reach every already-tagged node
+  immediately, the PM-reported bug that motivated the plan
+  (tag-schema-projection PR 1 of 3; defaults-as-ghosts and seed backfill
+  follow). Nodes store values only; the tag chain answers structure. The xhigh
+  gate (10 finder angles → 47 candidates → 14 verifiers, one executed
+  dual-branch repro) confirmed 15 findings, all fixed on-branch with ~600 lines
+  of regression tests. The worst: a projected `sys:done` slot bypassed the
+  system-write router, so `Done:: true` stopped setting `completedAt` (proven
+  by repro); the agent materialization path mistook a focus outcome for a
+  created-entry id and patched the owner's body children as field values
+  (silent corruption); the slot cache ignored trash membership, so a restored
+  node's stored field rows stayed vanished; and a family of
+  "virtual slot id is not a node id" consumers — filter/group/sort, drag-drop
+  targets, clipboard serialization, Trash rendering — each silently degraded.
+  Three typing-hot-path regressions (A9) were rebuilt into precise
+  invalidation: field-value keystrokes reuse the visual-rows snapshot again,
+  the fieldDef-rename duplicate check walks a candidate set instead of
+  projecting every node, and the tagDefinitions revision now bumps only when a
+  tag's actual slot shape changes rather than on any Schema-subtree edit.
+  Blur-commit on a concurrently-deleted entry degrades to a no-op instead of
+  surfacing a raw internal error (A12), and `include_deleted` agent reads
+  surface trashed entries on live owners again via `trashedFromParentId` now
+  kept on the projection.
 
 ### Fixed
 

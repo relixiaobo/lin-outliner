@@ -1056,3 +1056,19 @@ the callee's contract while the bug lived in the caller. **A render-identity
 guard must exercise the production caller** — render the actual parent and
 count child renders — or every new inline literal at the call site silently
 un-fixes what the guard claims to protect.
+
+## A virtual id in a NodeId channel silently un-types every consumer
+
+tag-schema-projection PR 1 replaced eagerly-materialized field entries with
+virtual `slot:` rows whose ids flow through the same `NodeId`-typed row
+channel. Every consumer that assumed "row id names a node" kept typechecking
+and silently degraded instead of erroring: `byId.get(row.id)` in
+filter/sort/group dumped populated rows into the filtered bucket,
+`siblings.indexOf(rowId)` made drop targets permanently inert, the clipboard's
+ancestor walk duplicated values, Trash rendering lost field rows. Fifteen
+confirmed gate findings, one cause-shape. When a change introduces a virtual
+identity into an id-typed channel, the type system flags nothing — sweep every
+consumer of that channel (A11-style: from `rg` hits, not memory) and decide
+each one deliberately. The fix's `rowNodeForView` shows the durable form:
+carry the backing node id (`slot.entryId`) alongside the row id and resolve
+through it, rather than teaching each call site to parse virtual ids.
