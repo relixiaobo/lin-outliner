@@ -193,6 +193,16 @@ discarded without quarantine only when every intact record has the same replica
 identity, lies at or behind the snapshot's revision baselines, and its version
 is contained by the snapshot. Otherwise it follows the same quarantine recovery.
 
+A snapshot that parses as a `tenon-workspace` envelope but carries **no**
+`persistenceRevision` field is a pre-update-log workspace (the pre-release
+no-migration policy: formats break, old readers are deleted). The store renames
+the snapshot and any co-resident log to `*.incompatible-*` set-aside files —
+never deleting them — syncs the directory, and reports a fresh-start load with
+the decode error in the recovery channel; `DocumentService` then creates a new
+workspace exactly as on first run. A **present but invalid**
+`persistenceRevision` means corrupt current-format data and stays fail-closed:
+only the provably older shape is set aside.
+
 Quit is a two-phase operation. Phase 1 freezes new mutation admission, queues
 later mutation requests, waits for all admissions that already passed the gate,
 closes any open text undo group, and drains to a linearizable durable-revision
