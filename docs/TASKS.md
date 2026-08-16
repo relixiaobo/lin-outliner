@@ -76,10 +76,10 @@ theme-section entry below; this list is the ordering, not a second record):
   routed its intended owner elsewhere; give this lane the next free clone.
 
 **Design-gate queue** (PM bandwidth): _empty_ — `skill-path-ownership` shipped #513.
-**Release:** v0.3.0 + v0.3.1 shipped 2026-08-10; `main` is the **0.4.0 train**, 13
-user-visible entries aboard (#525–#542). **PM call 2026-08-15: the train waits for
-`subagent-interaction` (#544) and freezes on its merge** — then note drafted by main,
-PM ratifies, tag + dial to 0.5.0.
+**Release:** v0.3.0 + v0.3.1 shipped 2026-08-10; `main` is the **0.4.0 train**,
+**frozen 2026-08-16** — #544 merged as its final load (14 user-visible entries,
+#525–#544). Note drafted by main, awaiting PM ratification; then tag + dial to
+0.5.0.
 
 `pi-ai-0.80-upgrade` shipped #348 (clean `Models` migration, not the interim `/compat` shim) — see *Recently completed*.
 `dream-channel-and-memory-retire` shipped in full (PR1 #324 + PR2 #328 + PR3 #329) — see *Recently completed*.
@@ -640,7 +640,11 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   a per-Turn `turnMotionOwner` (`none | summary | leaf`) that arbitrates the single mover
   in TypeScript rather than through `.thread-turn:has(...)`; the in-progress glyph deepens
   to `--text-soft` when reduced motion or increased contrast removes the sweep. **PR2
-  remains** (Settings: Provider + managed-Skill progressive copy).
+  remains** (Settings: Provider + managed-Skill progressive copy). **Gate note
+  (#544):** the plan's Subagent motion rows are historical — #544 removed
+  `SubagentStateItem` and the `.thread-delegation-row` delegation row (terminal
+  activity Items render nothing; the chip and the work strip carry a running
+  Agent's state). PR2's remaining Settings scope is untouched.
 - **icon-semantics** (P3, Layer 3, small/isolated) — action↔icon collisions (Hash,
   unknown-tool, remove/X-vs-Trash, the gear catch-all that #118 sharpened). #461
   re-picked four glyphs (file delete, `web_fetch`, MCP vs unknown, skill) under a
@@ -760,38 +764,26 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   per-model-call costs / small tails. PR 1 (filter cost + read-model
   re-enablement) shipped 2026-08-15 in #546; the other two remain. Design:
   [`agent-tool-call-path`](plans/agent-tool-call-path.md).
-- **subagent-interaction** (P2, `draft` 2026-08-12) — process-shaped subagent
-  presentation for the fresh/background-default protocol inside the 344px agent
-  deck: Agent-registry projection (keyed by Agent ID + generation) replacing
-  turn-anchored `projectSubagentsForTurn`; lifecycle anchors in the
-  conversation (spawn/resume chips, clickable completion dividers, stopped
-  notes); header work strip (running > stopped > just-finished, fade-out —
-  **there is no needs-input state**: this entry previously said "amber
-  needs-input badge", tracking a prototype iteration the ratified plan
-  explicitly dropped; corrected 2026-08-14 against the plan text); full-deck
-  stacked detail view (generations, nested recursion ≤ depth 3,
-  composer-as-user-authority, retained-worktree footer); foreground children
-  placed on the main agent's working line and never in the strip; strict
-  OS-notification policy (terminal background generations only, unfocused
-  only). PM-ratified 2026-08-12 through an interactive prototype. One PR.
-  **Absorbed 2026-08-14 (PM-ratified restructure):** two requirements from
-  `agent-streaming-followups`, whose subjects this plan replaces — the
-  registry's output is identity-stable by contract (a delta that does not
-  touch a child re-projects nothing), and elapsed ticking lives in leaf header
-  components so the 1 Hz tick never re-renders a transcript. The plan also now
-  records that registry inputs (`SubagentExecutionRecord` in
-  `persistence/SubagentExecutionLedger.ts`) are main-side only today, so the
-  build starts with a main→renderer execution projection — a protocol-surface
-  addition (A4). **Sequenced after** the
-  `claude-code-subagent-parity` implementation (plan PR #532) and
-  `semantic-working-state` (#531) — both are its foundations (A7).
-  Design: [`subagent-interaction`](plans/subagent-interaction.md).
-  **Unblocked 2026-08-14** — both foundations have shipped:
-  `claude-code-subagent-parity` (#535) and the `semantic-working-state`
-  vocabulary it consumes (Thread/Plan PR, #531; the remaining
-  `semantic-working-state` PR2 is Settings copy only and is not a dependency).
-  The plan's own pacing note stands: living with the shipped mechanics for a
-  few days before building is intentional.
+- **subagent-interaction** — `done` 2026-08-16 (#544, cc; two review rounds —
+  xhigh 14 + high 10 findings — all 24 fixed on-branch; the gate re-verified
+  the fixes in code, reran typecheck / core / renderer / docs:check and the
+  three touched e2e suites (209/209), and visually verified light + dark). The
+  Agent registry projection (Agent ID + generation, identity-stable by
+  contract) replaced turn-anchored `projectSubagentsForTurn`; lifecycle
+  anchors, the header work strip, and the full-deck pushed detail view
+  replaced the nested `SubagentRunDetail` drill. Spec updated in the same PR
+  (`agent-subagent-threads`, `agent-thread-rendering`, `design-system`,
+  `workspace-layout`); archived at `docs/plans/archive/subagent-interaction.md`.
+- **subagent-projection-error-surface** (P3, `draft` 2026-08-16) — two
+  legibility gaps the #544 fix rounds deliberately left, because each needs an
+  A4 protocol-surface addition: a failed Agent's `TurnError` is unreachable
+  after a cold reopen (`SubagentExecutionProjection` has no terminal-error
+  field — the chip says only `Failed`), and a delivered report card maps to
+  its child Turn by count-from-the-end, so a settled-but-undelivered Turn (a
+  private detail-composer exchange during an active parent Turn) transiently
+  shows the wrong run until the deferred delivery lands — a durable
+  delivery→Turn link closes it. Flagged at the #544 gate; small, coordinated
+  change.
 - **interaction-jank-cleanups** (P2, `draft` 2026-08-11) — scroll/menu-path
   forced layouts and identity-keyed caches that can never hit:
   `useAnchoredOverlay` (≈20 consumers) capture-scroll + unbatched rect reads +
