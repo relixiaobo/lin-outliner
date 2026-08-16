@@ -401,9 +401,9 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
   }, 0), [builtRows]);
   const trailingFocused = props.ui.focusedId === props.parentId
     && props.ui.focusSurface === 'trailing'
-    && (props.ui.focusedPanelId === null || props.ui.focusedPanelId === props.panelId);
+    && props.ui.focusedPanelId === props.panelId;
   const draftFocused = props.ui.focusedId === draftId
-    && (props.ui.focusedPanelId === null || props.ui.focusedPanelId === props.panelId);
+    && props.ui.focusedPanelId === props.panelId;
   const showDraft = parent?.type !== 'search' && Boolean(parent) && (
     trailingMode === 'always'
     || (trailingMode === 'auto' && (realContentCount === 0 || trailingFocused || draftFocused))
@@ -723,10 +723,7 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
     if (!virtualize) return [];
     const targets = new Set<NodeId>();
     if (activeCell) targets.add(activeCell.rowId);
-    if (
-      (props.ui.focusedPanelId === null || props.ui.focusedPanelId === props.panelId)
-      && props.ui.focusedId
-    ) targets.add(props.ui.focusedId);
+    if (props.ui.focusedPanelId === props.panelId && props.ui.focusedId) targets.add(props.ui.focusedId);
     const indices: number[] = [];
     renderRows.forEach((row, index) => {
       if (row.kind === 'data' && (row.draft || targets.has(row.id))) indices.push(index);
@@ -764,7 +761,7 @@ export function OutlinerTableView(props: OutlinerTableViewProps) {
     const nestedIsTable = nestedView?.viewMode === 'table';
     const focusedId = props.ui.focusedId;
     const nestedDraftFocused = Boolean(childParent)
-      && (props.ui.focusedPanelId === null || props.ui.focusedPanelId === props.panelId)
+      && props.ui.focusedPanelId === props.panelId
       && (
         (focusedId === ownerId && props.ui.focusSurface === 'trailing')
         || (

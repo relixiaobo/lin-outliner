@@ -279,6 +279,30 @@ describe('DocumentService text search index', () => {
     expect(await searchNodeIds(service, 'extended projected field')).toContain(ownerId);
   });
 
+  test('restores projected-field search dependencies after a tag definition leaves Trash', async () => {
+    const service = await createService();
+    const rootId = service.getProjection().rootId;
+    const tagId = focusNodeId(await service.handle('create_tag', { name: 'recoverable tag' }));
+    await service.handle('create_field_def', {
+      tagId,
+      name: 'Recoverable projected field',
+      fieldType: 'plain',
+    });
+    const ownerId = focusNodeId(await service.handle('create_node', {
+      parentId: rootId,
+      index: null,
+      text: 'Dependency owner',
+    }));
+    await service.handle('apply_tag', { nodeId: ownerId, tagId });
+    expect(await searchNodeIds(service, 'recoverable projected field')).toContain(ownerId);
+
+    await service.handle('trash_node', { nodeId: tagId });
+    expect(await searchNodeIds(service, 'recoverable projected field')).not.toContain(ownerId);
+
+    await service.handle('restore_node', { nodeId: tagId });
+    expect(await searchNodeIds(service, 'recoverable projected field')).toContain(ownerId);
+  });
+
   test('refreshes projected field names when a template entry changes definition', async () => {
     const service = await createService();
     const rootId = service.getProjection().rootId;

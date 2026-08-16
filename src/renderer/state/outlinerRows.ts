@@ -179,6 +179,14 @@ function slotsForNode(
   return resolver?.(nodeId) ?? nodeFieldSlots(byId, nodeId);
 }
 
+function rowNodeForView(
+  row: Extract<OutlinerRowItem, { type: 'content' | 'field' }>,
+  byId: Map<NodeId, NodeProjection>,
+): NodeProjection | undefined {
+  const nodeId = row.type === 'field' ? row.slot.entryId : row.id;
+  return nodeId ? byId.get(nodeId) : undefined;
+}
+
 function childText(node: NodeProjection | undefined, byId: Map<NodeId, NodeProjection>): string {
   if (!node) return '';
   const displayed = displayNodeOrSelf(node, byId);
@@ -354,8 +362,8 @@ function compareRowsByField(
 ): number {
   if (left.type !== 'content' && left.type !== 'field') return 1;
   if (right.type !== 'content' && right.type !== 'field') return -1;
-  const leftNode = byId.get(left.id);
-  const rightNode = byId.get(right.id);
+  const leftNode = rowNodeForView(left, byId);
+  const rightNode = rowNodeForView(right, byId);
   if (!leftNode || !rightNode) return 0;
 
   if (isViewDateField(fieldId, byId)) {
@@ -393,7 +401,7 @@ function partitionFilterRows(
       visible.push(row);
       continue;
     }
-    const node = byId.get(row.id);
+    const node = rowNodeForView(row, byId);
     if (node && view.filterRules.every((rule) => rowMatchesFilter(node, rule, byId, systemFieldContext))) {
       visible.push(row);
     } else {
@@ -464,7 +472,7 @@ function sortRows(
   const displayedRows = new Map<NodeId, NodeProjection | undefined>();
   for (const row of rows) {
     if (row.type !== 'content' && row.type !== 'field') continue;
-    const node = byId.get(row.id);
+    const node = rowNodeForView(row, byId);
     if (node) displayedRows.set(node.id, displayNode(node, byId));
   }
   const resolveDisplayNode = (node: NodeProjection) => (
@@ -555,7 +563,7 @@ function groupRows(
       passthrough.push(row);
       continue;
     }
-    const node = byId.get(row.id);
+    const node = rowNodeForView(row, byId);
     const values = node ? viewFieldValuesFor(node, fieldId, byId, systemFieldContext) : [];
     const bucket = groupBucket(fieldId, values, byId);
     const group = groups.get(bucket.key) ?? { label: bucket.label, sortKey: bucket.sortKey, rows: [] };
@@ -584,7 +592,20 @@ function buildChildRows(
 ): OutlinerRowItem[] {
   if (!parent) return [];
   const rows: OutlinerRowItem[] = [];
-  const slots = slotsForNode(parent.id, byId, options.fieldSlots);
+  const projectedSlots = slotsForNode(parent.id, byId, options.fieldSlots);
+  const ownerIsTrashed = parent.id === TRASH_ID || isDescendantOf(byId, parent.id, TRASH_ID);
+  const slots = projectedSlots.length === 0 && ownerIsTrashed
+    ? parent.children.flatMap((childId): NodeFieldSlot[] => {
+      const child = byId.get(childId);
+      if (child?.type !== 'fieldEntry' || !child.fieldDefId) return [];
+      return [{
+        id: child.id,
+        fieldDefId: child.fieldDefId,
+        source: 'own',
+        entryId: child.id,
+      }];
+    })
+    : projectedSlots;
   const tagSlots = slots.filter((slot) => slot.source === 'tag');
   const consumedEntryIds = new Set(tagSlots.flatMap((slot) => slot.entryId ? [slot.entryId] : []));
   const ownSlotsByEntryId = new Map(

@@ -358,7 +358,10 @@ function canReuseVisualRows(
       const nextOwnerTags = index.byId.get(dirtyId)?.tags;
       if (!nextOwnerTags || !sameStrings(previousOwnerTags, nextOwnerTags)) return false;
     }
-    if (index.byId.get(dirtyId)?.type === 'fieldEntry') return false;
+    if (
+      index.delta.changedIds.has(dirtyId)
+      && index.byId.get(dirtyId)?.type === 'fieldEntry'
+    ) return false;
     if (previous.configNodeIds.has(dirtyId) || previous.fieldDefinitionIds.has(dirtyId)) return false;
     const fields = previous.modelValuesByRow.get(dirtyId);
     if (!fields) continue;
@@ -401,7 +404,8 @@ function modelRowIds(rows: readonly OutlinerRowItem[]): Set<NodeId> {
   const ids = new Set<NodeId>();
   const visit = (items: readonly OutlinerRowItem[]) => {
     for (const row of items) {
-      if (row.type === 'content' || row.type === 'field') ids.add(row.id);
+      if (row.type === 'content') ids.add(row.id);
+      if (row.type === 'field' && row.slot.entryId) ids.add(row.slot.entryId);
       if (row.type === 'filteredOut') visit(row.rows);
     }
   };

@@ -51,6 +51,7 @@ import {
   patchTrashNodeIds,
   projectionReferenceGraphChanged,
   projectionStructureChanged,
+  projectionTagCandidatesChanged,
   projectionTagDefinitionsChanged,
   type ProjectionDeltaFacts,
   type ProjectionSemanticRevisions,
@@ -247,6 +248,13 @@ export function reduceProjection(
     removedIds: update.removedIds,
     trashMembershipChangedIds: trashPatch.changedIds,
   });
+  const tagCandidatesChanged = projectionTagCandidatesChanged({
+    previousById: prev.index.byId,
+    nextById: byId,
+    changedNodes: update.changedNodes,
+    removedIds: update.removedIds,
+    trashMembershipChangedIds: trashPatch.changedIds,
+  });
   const semanticRevisions: ProjectionSemanticRevisions = {
     structure: prev.index.semanticRevisions.structure + Number(structureChanged),
     referenceGraph: prev.index.semanticRevisions.referenceGraph + Number(referenceGraphChanged),
@@ -294,7 +302,7 @@ export function reduceProjection(
       referenceSummary,
       referenceCandidates,
       fieldSlotCache: prev.index.fieldSlotCache,
-      tagCandidateCacheKey: tagDefinitionsChanged ? {} : prev.index.tagCandidateCacheKey,
+      tagCandidateCacheKey: tagCandidatesChanged ? {} : prev.index.tagCandidateCacheKey,
       displayGraphCacheKey: structureChanged || referenceGraphChanged ? {} : prev.index.displayGraphCacheKey,
     },
     revision: update.revision,
@@ -303,7 +311,12 @@ export function reduceProjection(
 }
 
 export function fieldSlotsForIndex(index: DocumentIndex, nodeId: NodeId): readonly NodeFieldSlot[] {
-  return index.fieldSlotCache.read(index.byId, nodeId, index.semanticRevisions.tagDefinitions);
+  return index.fieldSlotCache.read(
+    index.byId,
+    nodeId,
+    index.semanticRevisions.tagDefinitions,
+    index.semanticRevisions.trashMembership,
+  );
 }
 
 function initialSemanticRevisions(): ProjectionSemanticRevisions {

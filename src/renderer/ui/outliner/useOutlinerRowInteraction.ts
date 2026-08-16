@@ -12,7 +12,11 @@ import {
 import { api } from '../../api/client';
 import type { NodeId } from '../../api/types';
 import type { DocumentIndex, UiState } from '../../state/document';
-import { OUTLINER_NODE_DRAG_MIME, resolveOutlinerDropBatchMove } from '../interactions/dragDrop';
+import {
+  OUTLINER_NODE_DRAG_MIME,
+  resolveOutlinerDropAnchor,
+  resolveOutlinerDropBatchMove,
+} from '../interactions/dragDrop';
 import { flattenVisibleRows, isRowExpanded } from '../../state/document';
 import { buildSelectableRows, selectableRowAfterDraft } from '../../state/selectableRows';
 import { resolveDropHoverPosition, type DropHoverPosition } from '../interactions/dropPosition';
@@ -41,6 +45,7 @@ interface UseOutlinerRowInteractionOptions {
   rowId: NodeId;
   parentId: NodeId;
   childParentId?: NodeId;
+  dropTargetNodeId?: NodeId;
   panelId: string;
   rootId: NodeId;
   selectionRootId: NodeId;
@@ -77,6 +82,7 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
     rowId,
     parentId,
     childParentId = rowId,
+    dropTargetNodeId,
     panelId,
     rootId,
     selectionRootId,
@@ -421,19 +427,25 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
     const nodeIds = dragNodeIds();
     if (nodeIds.length === 0) return null;
     const siblings = byId.get(parentId)?.children ?? [];
-    const targetIndex = draft ? siblings.length : siblings.indexOf(rowId);
+    const target = resolveOutlinerDropAnchor({
+      rowId,
+      backingNodeId: dropTargetNodeId,
+      parentId,
+      siblingIds: siblings,
+      draft,
+    });
     return resolveOutlinerDropBatchMove({
       dragNodeIds: nodeIds,
-      targetNodeId: rowId,
-      targetParentId: parentId,
-      siblingIndex: targetIndex,
+      targetNodeId: target.targetNodeId,
+      targetParentId: target.targetParentId,
+      siblingIndex: target.siblingIndex,
       dropPosition: draft ? 'before' : position,
       targetHasChildren: !draft && hasChildren,
       targetIsExpanded: !draft && expanded,
       parentIdForNode: (nodeId) => byId.get(nodeId)?.parentId,
       childrenForParent: (nodeId) => byId.get(nodeId)?.children ?? [],
     });
-  }, [byId, dragNodeIds, draft, expanded, hasChildren, parentId, rowId]);
+  }, [byId, dragNodeIds, draft, dropTargetNodeId, expanded, hasChildren, parentId, rowId]);
 
   const onDragOver = useCallback((event: DragEvent<HTMLDivElement>) => {
     if (!dragId) {
@@ -472,7 +484,7 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
     if (move.expandTargetId) {
       setUi((prev) => {
         const expandedSet = new Set(prev.expanded);
-        expandedSet.add(move.expandTargetId!);
+        expandedSet.add(move.expandTargetId === dropTargetNodeId ? rowId : move.expandTargetId!);
         return { ...prev, expanded: expandedSet };
       });
     }
@@ -487,7 +499,7 @@ export function useOutlinerRowInteraction(options: UseOutlinerRowInteractionOpti
     } finally {
       clearDropState();
     }
-  }, [clearDropState, dropPosition, resolveDropMove, run, setUi]);
+  }, [clearDropState, dropPosition, dropTargetNodeId, resolveDropMove, rowId, run, setUi]);
 
   const wrapStyle: CSSProperties = { marginLeft: Math.min(depth, MAX_OUTLINE_INDENT_DEPTH) * 28 };
 

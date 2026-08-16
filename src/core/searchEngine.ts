@@ -51,7 +51,7 @@ import { cappedMultiplier } from './ranking';
 import { collectDescendantIds, nodeIsInSubtree } from './treeUtils';
 import {
   NodeFieldSlotCache,
-  tagDefinitionChainSpecificFirst,
+  tagDefinitionDependencyChainSpecificFirst,
   type NodeFieldSlot,
 } from './fieldSlots';
 import {
@@ -1386,7 +1386,7 @@ function textSearchRecordForNode(index: SearchIndex, nodeId: NodeId): NodeTextSe
   if (node.type === 'codeBlock' && title) fields.push({ key: 'body', text: title });
 
   const tagDefIds = uniqueStrings(node.tags.flatMap((tagId) =>
-    tagDefinitionChainSpecificFirst(index.nodes, tagId)));
+    tagDefinitionDependencyChainSpecificFirst(index.nodes, tagId)));
   for (const tagName of tagNames(index, node)) {
     fields.push({ key: 'tag', text: tagName });
     fields.push({ key: 'tag', text: `#${tagName}` });
@@ -2033,7 +2033,7 @@ function fieldValueNodes(index: SearchIndex, node: SearchNode): SearchNode[] {
 
 function fieldSlotsForSearchNode(index: SearchIndex, node: SearchNode): readonly NodeFieldSlot[] {
   if (node.type === 'tagDef' || node.type === 'fieldDef' || node.type === 'search') return [];
-  return index.fieldSlotCache.read(index.nodes, node.id, 0);
+  return index.fieldSlotCache.read(index.nodes, node.id, 0, 0);
 }
 
 function fieldValueText(index: SearchIndex, value: SearchNode): string {

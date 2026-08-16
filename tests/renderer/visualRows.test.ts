@@ -361,6 +361,35 @@ describe('buildVisualRowsIncrementally', () => {
     expect(second.rows).toEqual(buildVisualRows('lib', secondState.index.byId, options));
   });
 
+  test('reuses the row model when a plain-list field value changes', () => {
+    const lib = node('lib', { children: ['entry'] });
+    const entry = node('entry', {
+      parentId: 'lib',
+      type: 'fieldEntry',
+      fieldDefId: 'field',
+      children: ['value'],
+      content: { text: '', marks: [], inlineRefs: [] },
+    });
+    const value = node('value', {
+      parentId: 'entry',
+      content: { text: 'Before', marks: [], inlineRefs: [] },
+    });
+    const field = node('field', { type: 'fieldDef' });
+    const trash = node('trash');
+    const firstState = seed([lib, entry, value, field, trash]);
+    const first = rebuild(null, firstState);
+    const changedValue = {
+      ...value,
+      content: { ...value.content, text: 'After' },
+      updatedAt: 2,
+    };
+    const secondState = reduceProjection(firstState, delta(2, [changedValue]))!;
+    const second = rebuild(first, secondState);
+
+    expect(second.rows).toBe(first.rows);
+    expect(second.rows).toEqual(buildVisualRows('lib', secondState.index.byId, options));
+  });
+
   test('rebuilds when an owner gains a projected tag without changing children', () => {
     const lib = node('lib', { children: ['body'] });
     const body = node('body', { parentId: 'lib' });
@@ -409,6 +438,63 @@ describe('buildVisualRowsIncrementally', () => {
       kind: 'field',
       slot: { fieldDefId: 'field-b' },
     });
+    expect(second.rows).toEqual(buildVisualRows('lib', secondState.index.byId, options));
+  });
+
+  test('rebuilds a modeled projected field row when its stored value changes', () => {
+    const lib = node('lib', {
+      children: ['view', 'entry'],
+      tags: ['tag'],
+    });
+    const view = node('view', {
+      parentId: 'lib',
+      type: 'viewDef',
+      children: ['filter'],
+    });
+    const filter = node('filter', {
+      parentId: 'view',
+      type: 'filterRule',
+      filterField: 'sys:name',
+      filterOperator: 'contains',
+      filterValueLogic: 'any',
+      filterValues: ['Keep'],
+    });
+    const tag = node('tag', {
+      type: 'tagDef',
+      children: ['template'],
+    });
+    const template = node('template', {
+      parentId: 'tag',
+      type: 'fieldEntry',
+      fieldDefId: 'field',
+    });
+    const field = node('field', { type: 'fieldDef' });
+    const entry = node('entry', {
+      parentId: 'lib',
+      type: 'fieldEntry',
+      fieldDefId: 'field',
+      children: ['value'],
+      content: { text: '', marks: [], inlineRefs: [] },
+    });
+    const value = node('value', {
+      parentId: 'entry',
+      content: { text: 'Keep', marks: [], inlineRefs: [] },
+    });
+    const trash = node('trash');
+    const firstState = seed([lib, view, filter, tag, template, field, entry, value, trash]);
+    const first = rebuild(null, firstState);
+    expect(first.rows.map((row) => row.kind)).toEqual(['field']);
+
+    const changedValue = {
+      ...value,
+      content: { ...value.content, text: 'Drop' },
+      updatedAt: 2,
+    };
+    const secondState = reduceProjection(firstState, delta(2, [changedValue]))!;
+    const second = rebuild(first, secondState);
+
+    expect(second.rows).not.toBe(first.rows);
+    expect(second.rows.map((row) => row.kind)).toEqual(['filteredOut']);
     expect(second.rows).toEqual(buildVisualRows('lib', secondState.index.byId, options));
   });
 

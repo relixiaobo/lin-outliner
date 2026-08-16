@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { TAG_DAY_ID, type DocumentProjection, type NodeId, type NodeProjection, type ProjectionUpdate } from '../../src/core/types';
 import {
+  fieldSlotsForIndex,
   reduceProjection,
   reduceUiStateForProjectionUpdate,
   type UiState,
@@ -342,6 +343,200 @@ describe('reduceProjection — revision discipline', () => {
       removedIds: [],
     });
     expect(orphan).toBeNull();
+  });
+});
+
+describe('reduceProjection — field slot semantic revisions', () => {
+  test('invalidates cached slots when an unchanged owner crosses Trash through an ancestor', () => {
+    const root = node('root', { children: ['parent', 'schema', 'trash'] });
+    const parent = node('parent', { parentId: 'root', children: ['owner'] });
+    const owner = node('owner', {
+      parentId: 'parent',
+      children: ['entry'],
+      tags: ['tag'],
+    });
+    const entry = node('entry', {
+      parentId: 'owner',
+      type: 'fieldEntry',
+      fieldDefId: 'field',
+      children: ['value'],
+    });
+    const value = node('value', { parentId: 'entry' });
+    const schema = node('schema', { parentId: 'root', children: ['tag', 'field'] });
+    const tag = node('tag', {
+      parentId: 'schema',
+      type: 'tagDef',
+      children: ['template'],
+    });
+    const template = node('template', {
+      parentId: 'tag',
+      type: 'fieldEntry',
+      fieldDefId: 'field',
+    });
+    const field = node('field', { parentId: 'schema', type: 'fieldDef' });
+    const trash = node('trash', { parentId: 'root' });
+    const initial = reduceProjection(null, full(1, [
+      root, parent, owner, entry, value, schema, tag, template, field, trash,
+    ]))!;
+    const slotId = fieldSlotId('owner', 'field');
+    expect(fieldSlotsForIndex(initial.index, 'owner').map((slot) => slot.id)).toEqual([slotId]);
+
+    const trashed = reduceProjection(initial, {
+      kind: 'delta',
+      revision: 2,
+      todayId: 'root',
+      changedNodes: [
+        { ...root, children: ['schema', 'trash'], updatedAt: 2 },
+        { ...trash, children: ['parent'], updatedAt: 2 },
+        { ...parent, parentId: 'trash', trashedFromParentId: 'root', updatedAt: 2 },
+      ],
+      removedIds: [],
+    })!;
+    expect(trashed.index.byId.get('owner')).toBe(owner);
+    expect(fieldSlotsForIndex(trashed.index, 'owner')).toEqual([]);
+
+    const restored = reduceProjection(trashed, {
+      kind: 'delta',
+      revision: 3,
+      todayId: 'root',
+      changedNodes: [
+        { ...root, children: ['parent', 'schema', 'trash'], updatedAt: 3 },
+        { ...trash, children: [], updatedAt: 3 },
+        { ...parent, parentId: 'root', trashedFromParentId: undefined, updatedAt: 3 },
+      ],
+      removedIds: [],
+    })!;
+    expect(restored.index.byId.get('owner')).toBe(owner);
+    expect(fieldSlotsForIndex(restored.index, 'owner').map((slot) => slot.id)).toEqual([slotId]);
+  });
+
+  test('bumps the tag-definition revision only when slot shape changes', () => {
+    const root = node('root', { children: ['schema', 'trash'] });
+    const schema = node('schema', {
+      parentId: 'root',
+      children: ['tag', 'base-a', 'base-b', 'field-a', 'field-b'],
+    });
+    const tag = node('tag', {
+      parentId: 'schema',
+      type: 'tagDef',
+      children: ['template', 'extends-row'],
+    });
+    const template = node('template', {
+      parentId: 'tag',
+      type: 'fieldEntry',
+      fieldDefId: 'field-a',
+      children: ['default-value'],
+    });
+    const defaultValue = node('default-value', { parentId: 'template' });
+    const extendsRow = node('extends-row', {
+      parentId: 'tag',
+      type: 'defConfig',
+      configKey: 'extends',
+      children: ['extends-ref'],
+    });
+    const extendsRef = node('extends-ref', {
+      parentId: 'extends-row',
+      type: 'reference',
+      targetId: 'base-a',
+    });
+    const baseA = node('base-a', { parentId: 'schema', type: 'tagDef' });
+    const baseB = node('base-b', { parentId: 'schema', type: 'tagDef' });
+    const fieldA = node('field-a', {
+      parentId: 'schema',
+      type: 'fieldDef',
+      children: ['option'],
+    });
+    const fieldB = node('field-b', { parentId: 'schema', type: 'fieldDef' });
+    const option = node('option', { parentId: 'field-a', type: 'systemOption' });
+    const trash = node('trash', { parentId: 'root' });
+    let state = reduceProjection(null, full(1, [
+      root,
+      schema,
+      tag,
+      template,
+      defaultValue,
+      extendsRow,
+      extendsRef,
+      baseA,
+      baseB,
+      fieldA,
+      fieldB,
+      option,
+      trash,
+    ]))!;
+    const initialRevision = state.index.semanticRevisions.tagDefinitions;
+    const initialTagCandidateCacheKey = state.index.tagCandidateCacheKey;
+
+    state = reduceProjection(state, {
+      kind: 'delta',
+      revision: 2,
+      todayId: 'root',
+      changedNodes: [{
+        ...tag,
+        content: { ...tag.content, text: 'Renamed tag' },
+        updatedAt: 2,
+      }],
+      removedIds: [],
+    })!;
+    expect(state.index.semanticRevisions.tagDefinitions).toBe(initialRevision);
+    expect(state.index.tagCandidateCacheKey).not.toBe(initialTagCandidateCacheKey);
+
+    state = reduceProjection(state, {
+      kind: 'delta',
+      revision: 3,
+      todayId: 'root',
+      changedNodes: [{
+        ...defaultValue,
+        content: { ...defaultValue.content, text: 'New default' },
+        updatedAt: 3,
+      }],
+      removedIds: [],
+    })!;
+    expect(state.index.semanticRevisions.tagDefinitions).toBe(initialRevision);
+
+    state = reduceProjection(state, {
+      kind: 'delta',
+      revision: 4,
+      todayId: 'root',
+      changedNodes: [{
+        ...option,
+        content: { ...option.content, text: 'Renamed option' },
+        updatedAt: 4,
+      }],
+      removedIds: [],
+    })!;
+    expect(state.index.semanticRevisions.tagDefinitions).toBe(initialRevision);
+
+    state = reduceProjection(state, {
+      kind: 'delta',
+      revision: 5,
+      todayId: 'root',
+      changedNodes: [{ ...extendsRef, targetId: 'base-b', updatedAt: 5 }],
+      removedIds: [],
+    })!;
+    expect(state.index.semanticRevisions.tagDefinitions).toBe(initialRevision + 1);
+
+    state = reduceProjection(state, {
+      kind: 'delta',
+      revision: 6,
+      todayId: 'root',
+      changedNodes: [{ ...template, fieldDefId: 'field-b', updatedAt: 6 }],
+      removedIds: [],
+    })!;
+    expect(state.index.semanticRevisions.tagDefinitions).toBe(initialRevision + 2);
+
+    state = reduceProjection(state, {
+      kind: 'delta',
+      revision: 7,
+      todayId: 'root',
+      changedNodes: [
+        { ...schema, children: ['tag', 'base-a', 'base-b', 'field-a'], updatedAt: 7 },
+        { ...trash, children: ['field-b'], updatedAt: 7 },
+        { ...fieldB, parentId: 'trash', trashedFromParentId: 'schema', updatedAt: 7 },
+      ],
+      removedIds: [],
+    })!;
+    expect(state.index.semanticRevisions.tagDefinitions).toBe(initialRevision + 3);
   });
 });
 

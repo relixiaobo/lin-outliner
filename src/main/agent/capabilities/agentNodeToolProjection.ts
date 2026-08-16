@@ -49,12 +49,26 @@ export function fieldReads(index: ProjectionIndex, node: NodeProjection, include
       .filter((child): child is Extract<NodeProjection, { type: 'fieldEntry' }> => child?.type === 'fieldEntry')
       .map((fieldEntry) => fieldRead(index, fieldEntry.fieldDefId, fieldEntry));
   }
-  return nodeFieldSlots(index.nodes, node.id)
+  const reads = nodeFieldSlots(index.nodes, node.id)
     .filter((slot) => includeDeleted || !slot.entryId || !isInTrash(index, slot.entryId))
     .map((slot) => {
       const fieldEntry = slot.entryId ? index.nodes.get(slot.entryId) : undefined;
       return fieldRead(index, slot.fieldDefId, fieldEntry, includeDeleted);
     });
+  if (!includeDeleted) return reads;
+
+  const includedEntryIds = new Set(reads.flatMap((read) => read.fieldEntryId ? [read.fieldEntryId] : []));
+  const deletedDirectEntries = [...index.nodes.values()]
+    .filter((candidate): candidate is Extract<NodeProjection, { type: 'fieldEntry' }> => (
+      candidate.type === 'fieldEntry'
+      && candidate.trashedFromParentId === node.id
+      && isInTrash(index, candidate.id)
+      && !includedEntryIds.has(candidate.id)
+    ));
+  return [
+    ...reads,
+    ...deletedDirectEntries.map((fieldEntry) => fieldRead(index, fieldEntry.fieldDefId, fieldEntry, true)),
+  ];
 }
 
 function fieldRead(

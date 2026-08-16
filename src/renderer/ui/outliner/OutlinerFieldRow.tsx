@@ -126,6 +126,8 @@ export function OutlinerFieldRow(props: OutlinerFieldRowProps) {
   const row = useOutlinerRowInteraction({
     rowId,
     parentId: props.parentId,
+    childParentId: entryId ?? rowId,
+    dropTargetNodeId: entryId,
     panelId: props.panelId,
     rootId: props.rootId,
     selectionRootId: props.selectionRootId,

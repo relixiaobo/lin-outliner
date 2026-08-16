@@ -87,7 +87,7 @@ export function OutlinerView(props: OutlinerViewProps) {
   const trailingMode = props.trailingDraft ?? 'none';
   const trailingFocused = props.ui.focusedId === props.parentId
     && props.ui.focusSurface === 'trailing'
-    && (props.ui.focusedPanelId === null || props.ui.focusedPanelId === props.panelId);
+    && props.ui.focusedPanelId === props.panelId;
   // Once the trailing draft's editor takes focus, onFocus settles the focus
   // signal from (parent, 'trailing') to the draft row's own id (see OutlinerItem
   // trailingDraftFocused). Keep the draft mounted in that settled state too —
@@ -95,7 +95,7 @@ export function OutlinerView(props: OutlinerViewProps) {
   // it focuses, dropping the caret. The body uses 'always' so it never hits this;
   // field values use 'auto', which is why the bug surfaced only there.
   const draftFocused = props.ui.focusedId === draftId
-    && (props.ui.focusedPanelId === null || props.ui.focusedPanelId === props.panelId);
+    && props.ui.focusedPanelId === props.panelId;
   const placementAfterId = resolveTrailingDraftAfterId({
     placement: props.ui.trailingDraftPlacement,
     parentId: props.parentId,

@@ -48,7 +48,7 @@ import {
   validateFieldValuesForType,
   type FieldResolutionNode,
 } from './fieldResolution';
-import { nodeFieldSlots } from './fieldSlots';
+import { nodeFieldSlots, tagDefinitionChainSpecificFirst } from './fieldSlots';
 import type { TextSearchIndex } from './textSearchIndex';
 import {
   CONFIG_SCHEMA,
@@ -2772,6 +2772,7 @@ export class Core {
           || requestedEntry.fieldDefId !== fieldDefId
           || isInTrash(state, requestedEntry.id)
         ) {
+          if (mutation.kind === 'commit') return focus(ownerId);
           throw CoreError.invalidOperation('field slot entry does not belong to the requested owner and definition');
         }
       }
@@ -6164,25 +6165,70 @@ function assertFieldDefRenameDoesNotDuplicateOwner(state: DocumentState, fieldDe
   if (!key) return;
   const duplicateOwners = new Set<NodeId>();
   const duplicateEntries: NodeId[] = [];
-  for (const owner of Object.values(state.nodes)) {
-    if (owner.tags.length === 0 && !owner.children.some((childId) => state.nodes[childId]?.type === 'fieldEntry')) continue;
-    const slots = nodeFieldSlots(state, owner.id);
-    for (const entry of slots) {
-      if (entry.fieldDefId !== fieldDefId) continue;
-      for (const sibling of slots) {
-        if (sibling.id === entry.id) continue;
-        const siblingName = sibling.fieldDefId === fieldDefId
-          ? nextName
-          : fieldNameForDefId(state, sibling.fieldDefId);
-        if (normalizeFieldNameKey(siblingName) !== key) continue;
-        duplicateOwners.add(owner.id);
-        duplicateEntries.push(entry.id, sibling.id);
-      }
+  for (const ownerId of fieldDefRenameCandidateOwnerIds(state, fieldDefId)) {
+    const definitions = fieldDefinitionsForRenameCheck(state, ownerId);
+    const renamedEntryId = definitions.get(fieldDefId);
+    if (!renamedEntryId) continue;
+    for (const [siblingDefId, siblingEntryId] of definitions) {
+      if (siblingDefId === fieldDefId) continue;
+      if (normalizeFieldNameKey(fieldNameForDefId(state, siblingDefId)) !== key) continue;
+      duplicateOwners.add(ownerId);
+      duplicateEntries.push(renamedEntryId, siblingEntryId);
     }
   }
   if (duplicateOwners.size > 0) {
     throw CoreError.invalidOperation(`field rename would create duplicate field "${nextName}" on owner ${[...duplicateOwners].join(', ')}: ${[...new Set(duplicateEntries)].join(', ')}`);
   }
+}
+
+function fieldDefRenameCandidateOwnerIds(state: DocumentState, fieldDefId: NodeId): Set<NodeId> {
+  const candidateOwnerIds = new Set<NodeId>();
+  const sourceTagIds = new Set<NodeId>();
+  for (const node of Object.values(state.nodes)) {
+    if (node.type !== 'fieldEntry' || node.fieldDefId !== fieldDefId || isInTrash(state, node.id)) continue;
+    if (!node.parentId || isInTrash(state, node.parentId)) continue;
+    candidateOwnerIds.add(node.parentId);
+    if (state.nodes[node.parentId]?.type === 'tagDef') sourceTagIds.add(node.parentId);
+  }
+  if (sourceTagIds.size === 0) return candidateOwnerIds;
+
+  const affectedTagIds = new Set<NodeId>();
+  for (const node of Object.values(state.nodes)) {
+    if (node.type !== 'tagDef' || isInTrash(state, node.id)) continue;
+    if (tagDefinitionChainSpecificFirst(state, node.id).some((tagId) => sourceTagIds.has(tagId))) {
+      affectedTagIds.add(node.id);
+    }
+  }
+  for (const node of Object.values(state.nodes)) {
+    if (isInTrash(state, node.id)) continue;
+    if (node.tags.some((tagId) => affectedTagIds.has(tagId))) candidateOwnerIds.add(node.id);
+  }
+  return candidateOwnerIds;
+}
+
+function fieldDefinitionsForRenameCheck(state: DocumentState, ownerId: NodeId): Map<NodeId, NodeId> {
+  const owner = state.nodes[ownerId];
+  const definitions = new Map<NodeId, NodeId>();
+  if (!owner || isInTrash(state, ownerId)) return definitions;
+
+  const addEntry = (entryId: NodeId) => {
+    const entry = state.nodes[entryId];
+    const fieldDefId = entry?.type === 'fieldEntry' ? entry.fieldDefId : undefined;
+    if (!fieldDefId || definitions.has(fieldDefId) || isInTrash(state, entryId)) return;
+    if (!fieldDefId.startsWith('sys:')) {
+      const definition = state.nodes[fieldDefId];
+      if (definition?.type !== 'fieldDef' || isInTrash(state, fieldDefId)) return;
+    }
+    definitions.set(fieldDefId, entryId);
+  };
+
+  for (const childId of owner.children) addEntry(childId);
+  for (const appliedTagId of owner.tags) {
+    for (const tagId of tagDefinitionChainSpecificFirst(state, appliedTagId)) {
+      for (const templateEntryId of state.nodes[tagId]?.children ?? []) addEntry(templateEntryId);
+    }
+  }
+  return definitions;
 }
 
 function fieldNameForDefId(state: DocumentState, fieldDefId: NodeId): string {

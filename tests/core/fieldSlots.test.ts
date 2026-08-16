@@ -159,22 +159,24 @@ describe('nodeFieldSlots', () => {
     );
     const cache = new NodeFieldSlotCache();
 
-    const first = cache.read(nodes, 'owner', 1);
-    expect(cache.read(nodes, 'owner', 1)).toBe(first);
-    expect(cache.read(nodes, 'owner', 2)).not.toBe(first);
+    const first = cache.read(nodes, 'owner', 1, 1);
+    expect(cache.read(nodes, 'owner', 1, 1)).toBe(first);
+    expect(cache.read(nodes, 'owner', 2, 1)).not.toBe(first);
+    const afterSchemaChange = cache.read(nodes, 'owner', 2, 1);
+    expect(cache.read(nodes, 'owner', 2, 2)).not.toBe(afterSchemaChange);
 
     const relinkedNodes = new Map(nodes);
     relinkedNodes.set('own-entry', {
       ...nodes.get('own-entry')!,
       fieldDefId: 'renamed-def',
     });
-    expect(cache.read(relinkedNodes, 'owner', 2).map((slot) => slot.fieldDefId)).toEqual([
+    expect(cache.read(relinkedNodes, 'owner', 2, 2).map((slot) => slot.fieldDefId)).toEqual([
       'status-def',
       'renamed-def',
     ]);
 
     const nextNodes = new Map(nodes);
     nextNodes.set('owner', { ...owner, tags: [] });
-    expect(cache.read(nextNodes, 'owner', 2).map((slot) => slot.fieldDefId)).toEqual(['notes-def']);
+    expect(cache.read(nextNodes, 'owner', 2, 2).map((slot) => slot.fieldDefId)).toEqual(['notes-def']);
   });
 });

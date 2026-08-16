@@ -1508,6 +1508,22 @@ describe('Core', () => {
     expect(() => core.createFieldDef(secondTagId, ' status ', 'plain')).toThrow('duplicate field');
   });
 
+  test('stale field-entry commits degrade without weakening other slot mutations', () => {
+    const core = Core.new();
+    const tagId = mustFocus(core.createTag('project'));
+    const templateEntryId = mustFocus(core.createFieldDef(tagId, 'Status', 'plain'));
+    const fieldDefId = core.state().nodes[templateEntryId].fieldDefId!;
+    const ownerId = mustFocus(core.createNode(core.projection().todayId, null, 'Launch'));
+    core.applyTag(ownerId, tagId);
+    const entryId = mustFocus(core.updateFieldSlot(ownerId, fieldDefId, { kind: 'appendText', text: 'Active' }));
+    core.trashNode(entryId);
+
+    expect(core.updateFieldSlot(ownerId, fieldDefId, { kind: 'commit', entryId }).focus?.nodeId).toBe(ownerId);
+    expect(() => core.updateFieldSlot(ownerId, fieldDefId, { kind: 'appendText', text: 'Retry', entryId }))
+      .toThrow('field slot entry does not belong');
+    expect(fieldEntries(core, ownerId)).toEqual([]);
+  });
+
   test('done-state mapping updates its exact definition when a same-name field coexists', () => {
     const core = Core.new();
     const collisionTagId = mustFocus(core.createTag('project'));
@@ -2140,6 +2156,22 @@ describe('Core', () => {
     expect(() => core.applyNodeTextPatch(ownerDefId, replaceAllRichTextPatch(plainText(' status '))))
       .toThrow('field rename would create duplicate field');
     expect(core.state().nodes[ownerDefId].content.text).toBe('Owner');
+  });
+
+  test('field definition rename checks owners reached through inherited tag slots', () => {
+    const core = Core.new();
+    const baseTagId = mustFocus(core.createTag('record'));
+    const baseTemplateId = mustFocus(core.createFieldDef(baseTagId, 'Owner', 'plain'));
+    const baseFieldDefId = core.state().nodes[baseTemplateId].fieldDefId!;
+    const issueTagId = mustFocus(core.createTag('issue'));
+    mustFocus(core.createFieldDef(issueTagId, 'Status', 'plain'));
+    core.setTagConfig(issueTagId, { extends: baseTagId });
+    const ownerId = mustFocus(core.createNode(core.projection().todayId, null, 'Launch'));
+    core.applyTag(ownerId, issueTagId);
+
+    expect(() => core.applyNodeTextPatch(baseFieldDefId, replaceAllRichTextPatch(plainText(' status '))))
+      .toThrow('field rename would create duplicate field');
+    expect(core.state().nodes[baseFieldDefId].content.text).toBe('Owner');
   });
 
   test('reusing a field definition rejects duplicate owner field names', () => {

@@ -4124,25 +4124,26 @@ async function materializeFieldValuesForDefinition(
   trackMatchedNode(tracker, fieldDefId);
   if (!first) return fieldSlotId(parentId, fieldDefId);
 
-  let outcome: unknown;
   if (fieldType === 'options') {
-    outcome = first.targetId
-      ? await handleMutation(host, collector, 'update_field_slot', {
+    if (first.targetId) {
+      await handleMutation(host, collector, 'update_field_slot', {
         ownerId: parentId,
         fieldDefId,
         kind: 'selectOption',
         optionNodeId: first.targetId,
-      })
-      : await handleMutation(host, collector, 'update_field_slot', {
+      });
+    } else {
+      await handleMutation(host, collector, 'update_field_slot', {
         ownerId: parentId,
         fieldDefId,
         kind: 'appendText',
         text: first.text,
         collect: true,
       });
+    }
   } else if (fieldType === 'options_from_supertag') {
     if (!first.targetId) throw new Error('Options-from-supertag field values must use [[node:Display^id]].');
-    outcome = await handleMutation(host, collector, 'update_field_slot', {
+    await handleMutation(host, collector, 'update_field_slot', {
       ownerId: parentId,
       fieldDefId,
       kind: 'selectOption',
@@ -4150,14 +4151,14 @@ async function materializeFieldValuesForDefinition(
     });
   } else if (first.targetId) {
     if (fieldType !== 'plain') throw new Error(`${fieldType} field values cannot store node references.`);
-    outcome = await handleMutation(host, collector, 'update_field_slot', {
+    await handleMutation(host, collector, 'update_field_slot', {
       ownerId: parentId,
       fieldDefId,
       kind: 'appendReference',
       targetId: first.targetId,
     });
   } else {
-    outcome = await handleMutation(host, collector, 'update_field_slot', {
+    await handleMutation(host, collector, 'update_field_slot', {
       ownerId: parentId,
       fieldDefId,
       kind: 'appendText',
@@ -4165,10 +4166,14 @@ async function materializeFieldValuesForDefinition(
     });
   }
 
-  const fieldEntryId = focusFromOutcome(outcome);
+  const latest = currentMutationIndex(host, collector);
+  const fieldEntryId = nodeFieldSlots(latest.nodes, parentId)
+    .find((slot) => slot.fieldDefId === fieldDefId && slot.entryId)
+    ?.entryId;
+  if (!fieldEntryId) return fieldSlotId(parentId, fieldDefId);
   tracker.createdFieldEntryIds.push(fieldEntryId);
-  const entry = currentMutationIndex(host, collector).nodes.get(fieldEntryId);
-  if (entry?.type === 'fieldEntry') tracker.createdNodeIds.push(...activeChildIds(currentMutationIndex(host, collector), entry.id));
+  const entry = latest.nodes.get(fieldEntryId);
+  if (entry?.type === 'fieldEntry') tracker.createdNodeIds.push(...activeChildIds(latest, entry.id));
   if (normalized.values.length === 1) return fieldEntryId;
   pushDuplicateKeyWarning('desired field values', normalized.values.map(outlineValueKey), warnings);
   return fieldEntryId;
@@ -4203,14 +4208,13 @@ async function ensureSystemFieldEntry(
   collector?: MutationEffectCollector,
 ): Promise<string> {
   const latest = currentMutationIndex(host, collector);
-  const existing = requiredNode(latest, parentId).children.find((childId) => {
-    const child = latest.nodes.get(childId);
-    return child?.type === 'fieldEntry' && child.fieldDefId === targetDefId && !isInTrash(latest, childId);
-  });
-  if (existing) {
-    trackMatchedNode(tracker, existing);
-    return existing;
+  const existingSlot = nodeFieldSlots(latest.nodes, parentId)
+    .find((slot) => slot.fieldDefId === targetDefId);
+  if (existingSlot?.entryId) {
+    trackMatchedNode(tracker, existingSlot.entryId);
+    return existingSlot.entryId;
   }
+  if (existingSlot) return existingSlot.id;
   return createFieldEntryForDefinition(host, parentId, targetDefId, tracker, index, collector);
 }
 

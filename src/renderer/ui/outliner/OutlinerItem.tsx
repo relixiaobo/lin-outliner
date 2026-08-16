@@ -671,6 +671,10 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
     pendingTextPatchRef.current = pendingTextPatchRef.current
       .then(runCreate)
       .then((result) => {
+        if (result === null) {
+          materializeStartedRef.current = false;
+          return false;
+        }
         if (fieldValue) {
           rememberMaterializedFieldEntry(result);
         }
@@ -682,11 +686,16 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
           return props.run(
             () => api.applyNodeTextPatch(props.nodeId, replaceAllRichTextPatch(latest)),
             { applyFocus: false },
-          );
+          ).then(() => true);
         }
+        return true;
       })
-      .then(() => {
-        props.setUi(materializedDraftFocusState);
+      .then((materialized) => {
+        if (materialized) props.setUi(materializedDraftFocusState);
+      })
+      .catch((error) => {
+        materializeStartedRef.current = false;
+        throw error;
       });
     void pendingTextPatchRef.current;
   };

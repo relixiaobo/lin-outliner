@@ -28,29 +28,37 @@ interface CachedSlots {
   readonly node: FieldSlotNode;
   readonly directChildren: readonly (FieldSlotNode | undefined)[];
   readonly schemaEpoch: number;
+  readonly trashEpoch: number;
   readonly slots: readonly NodeFieldSlot[];
 }
 
 /**
  * Slots depend on the owner, its direct child entries, and the Schema subtree.
  * Object identity catches local changes; schemaEpoch invalidates unchanged
- * owners after a tag template, field definition, or extends chain changes.
+ * owners after a tag template, field definition, or extends chain changes,
+ * while trashEpoch covers deletion state inherited from any ancestor.
  */
 export class NodeFieldSlotCache {
   private readonly entries = new Map<NodeId, CachedSlots>();
 
-  read(source: FieldSlotSource, nodeId: NodeId, schemaEpoch: number): readonly NodeFieldSlot[] {
+  read(
+    source: FieldSlotSource,
+    nodeId: NodeId,
+    schemaEpoch: number,
+    trashEpoch: number,
+  ): readonly NodeFieldSlot[] {
     const node = fieldSlotNode(source, nodeId);
     if (!node) return [];
     const cached = this.entries.get(nodeId);
     if (
       cached?.node === node
       && cached.schemaEpoch === schemaEpoch
+      && cached.trashEpoch === trashEpoch
       && directChildrenMatch(source, node, cached.directChildren)
     ) return cached.slots;
     const slots = nodeFieldSlots(source, nodeId);
     const directChildren = node.children.map((childId) => fieldSlotNode(source, childId));
-    this.entries.set(nodeId, { node, directChildren, schemaEpoch, slots });
+    this.entries.set(nodeId, { node, directChildren, schemaEpoch, trashEpoch, slots });
     return slots;
   }
 
@@ -197,6 +205,25 @@ export function tagDefinitionChainSpecificFirst(source: FieldSlotSource, tagId: 
   const visited = new Set<NodeId>();
   let current: NodeId | undefined = tagId;
   while (current && !visited.has(current) && activeTagDefinition(source, current)) {
+    visited.add(current);
+    chain.push(current);
+    current = tagExtendsTarget(source, current);
+  }
+  return chain;
+}
+
+/**
+ * Return the structural tag chain even while one of its definitions is in
+ * Trash. Dependency indexes use this variant so a restore can still find and
+ * refresh owners whose active projection temporarily lost the tag schema.
+ */
+export function tagDefinitionDependencyChainSpecificFirst(source: FieldSlotSource, tagId: NodeId): NodeId[] {
+  const chain: NodeId[] = [];
+  const visited = new Set<NodeId>();
+  let current: NodeId | undefined = tagId;
+  while (current && !visited.has(current)) {
+    const tag = fieldSlotNode(source, current);
+    if (tag?.type !== 'tagDef') break;
     visited.add(current);
     chain.push(current);
     current = tagExtendsTarget(source, current);

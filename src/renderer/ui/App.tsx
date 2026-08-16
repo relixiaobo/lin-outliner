@@ -567,12 +567,16 @@ export function App() {
   const applyOutcomeFocus = useCallback((focus: FocusHint | null) => {
     if (!focus) return;
     if (focus.placement?.kind === 'preserve') return;
-    setUi((prev) => requestFocusState(
-      prev,
-      focusTarget(focus.nodeId, focus.parentId ?? null, null, focus.surface ?? 'row'),
-      focus.placement ?? (focus.selectAll ? cursorAll() : cursorEnd()),
-    ));
-  }, [setUi]);
+    setUi((prev) => {
+      const panelId = activeOutlinerPanel?.id ?? null;
+      if (!panelId) return prev;
+      return requestFocusState(
+        prev,
+        focusTarget(focus.nodeId, focus.parentId ?? null, panelId, focus.surface ?? 'row'),
+        focus.placement ?? (focus.selectAll ? cursorAll() : cursorEnd()),
+      );
+    });
+  }, [activeOutlinerPanel?.id, setUi]);
 
   useEffect(() => {
     applyOutcomeFocus(pendingFocus);

@@ -426,6 +426,8 @@ function resolveExistingFieldDefinition(
   values: readonly FieldResolutionValue[],
   fieldDefId: NodeId,
 ): FieldResolutionResult {
+  const systemResult = resolveSystemWrite(fieldName, values, fieldDefId);
+  if (systemResult.ok || systemResult.code === 'read_only_system_field') return systemResult;
   const fieldType = fieldTypeForFieldDef(byId, fieldDefId);
   const validation = validateFieldValuesForType(fieldName, fieldType, values);
   if (!validation.ok) {

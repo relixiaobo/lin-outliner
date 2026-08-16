@@ -42,6 +42,7 @@ import {
   previousVisibleRowId,
 } from '../../src/renderer/ui/interactions/outlinerStructure';
 import {
+  resolveOutlinerDropAnchor,
   resolveOutlinerDropBatchMove,
   resolveOutlinerDropMove,
 } from '../../src/renderer/ui/interactions/dragDrop';
@@ -273,6 +274,116 @@ describe('row interaction resolvers', () => {
           templateEntryId,
         }),
       },
+    ]);
+  });
+
+  test('sorts, filters, and groups populated projected field rows through their entries', () => {
+    const parent = makeNode('parent', 'Parent', {
+      children: ['view', 'beta-entry', 'alpha-entry'],
+      tags: ['tag'],
+    });
+    const view = makeNode('view', '', {
+      type: 'viewDef',
+      parentId: 'parent',
+      children: ['sort'],
+    });
+    const byId = new Map<string, any>([
+      ['parent', parent],
+      ['view', view],
+      ['sort', makeNode('sort', '', {
+        type: 'sortRule',
+        parentId: 'view',
+        sortField: NAME_FIELD,
+        sortDirection: 'asc',
+      })],
+      ['tag', makeNode('tag', 'Task', {
+        type: 'tagDef',
+        children: ['beta-template', 'alpha-template'],
+      })],
+      ['beta-template', makeNode('beta-template', '', {
+        type: 'fieldEntry',
+        parentId: 'tag',
+        fieldDefId: 'beta-field',
+      })],
+      ['alpha-template', makeNode('alpha-template', '', {
+        type: 'fieldEntry',
+        parentId: 'tag',
+        fieldDefId: 'alpha-field',
+      })],
+      ['beta-field', makeNode('beta-field', 'Beta field', { type: 'fieldDef' })],
+      ['alpha-field', makeNode('alpha-field', 'Alpha field', { type: 'fieldDef' })],
+      ['beta-entry', makeNode('beta-entry', '', {
+        type: 'fieldEntry',
+        parentId: 'parent',
+        fieldDefId: 'beta-field',
+        children: ['beta-value'],
+      })],
+      ['alpha-entry', makeNode('alpha-entry', '', {
+        type: 'fieldEntry',
+        parentId: 'parent',
+        fieldDefId: 'alpha-field',
+        children: ['alpha-value'],
+      })],
+      ['beta-value', makeNode('beta-value', 'Beta', { parentId: 'beta-entry' })],
+      ['alpha-value', makeNode('alpha-value', 'Alpha', { parentId: 'alpha-entry' })],
+    ]);
+    const alphaSlotId = fieldSlotId('parent', 'alpha-field');
+    const betaSlotId = fieldSlotId('parent', 'beta-field');
+
+    expect(buildOutlinerRows(parent as any, byId).map((row) => row.id)).toEqual([
+      alphaSlotId,
+      betaSlotId,
+    ]);
+
+    byId.set('view', { ...view, children: [], groupField: NAME_FIELD });
+    expect(buildOutlinerRows(parent as any, byId).map((row) => (
+      row.type === 'group' ? `${row.type}:${row.label}` : row.id
+    ))).toEqual([
+      'group:Alpha',
+      alphaSlotId,
+      'group:Beta',
+      betaSlotId,
+    ]);
+
+    byId.set('view', { ...view, children: ['filter'] });
+    byId.set('filter', makeNode('filter', '', {
+      type: 'filterRule',
+      parentId: 'view',
+      filterField: NAME_FIELD,
+      filterOperator: 'contains',
+      filterValueLogic: 'any',
+      filterValues: ['Alpha'],
+    }));
+    const filtered = buildOutlinerRows(parent as any, byId);
+    expect(filtered[0]?.id).toBe(alphaSlotId);
+    expect(filtered[1]).toMatchObject({
+      type: 'filteredOut',
+      count: 1,
+      rows: [{ id: betaSlotId }],
+    });
+  });
+
+  test('shows stored field rows while browsing a trashed owner', () => {
+    const trash = makeNode('trash', 'Trash', { children: ['owner'] });
+    const owner = makeNode('owner', 'Deleted owner', {
+      parentId: 'trash',
+      children: ['entry'],
+    });
+    const byId = new Map<string, any>([
+      ['trash', trash],
+      ['owner', owner],
+      ['field', makeNode('field', 'Status', { type: 'fieldDef' })],
+      ['entry', makeNode('entry', '', {
+        type: 'fieldEntry',
+        parentId: 'owner',
+        fieldDefId: 'field',
+        children: ['value'],
+      })],
+      ['value', makeNode('value', 'Done', { parentId: 'entry' })],
+    ]);
+
+    expect(buildOutlinerRows(owner as any, byId)).toEqual([
+      ownFieldRow('entry', 'field'),
     ]);
   });
 
@@ -1258,6 +1369,30 @@ describe('row interaction resolvers', () => {
       currentParentId: 'parent-a',
       currentIndex: 0,
     })).toEqual({ parentId: 'target', index: 0, expandTargetId: 'target' });
+  });
+
+  test('anchors projected field drops to the stored entry instead of the virtual row id', () => {
+    const slotId = fieldSlotId('owner', 'field');
+    const anchor = resolveOutlinerDropAnchor({
+      rowId: slotId,
+      backingNodeId: 'entry',
+      parentId: 'owner',
+      siblingIds: ['before', 'entry', 'after'],
+    });
+    expect(anchor).toEqual({
+      targetNodeId: 'entry',
+      targetParentId: 'owner',
+      siblingIndex: 1,
+    });
+    expect(resolveOutlinerDropBatchMove({
+      dragNodeIds: ['drag'],
+      ...anchor,
+      dropPosition: 'inside',
+      targetHasChildren: true,
+      targetIsExpanded: false,
+      parentIdForNode: (id) => ({ drag: 'source', entry: 'owner', owner: 'root' })[id],
+      childrenForParent: () => [],
+    })?.moves).toEqual([{ nodeId: 'drag', parentId: 'entry', index: 0 }]);
   });
 
   test('adjusts same-parent drag-drop indexes after source removal', () => {

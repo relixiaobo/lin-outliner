@@ -20,6 +20,7 @@ import {
   shouldPreserveSelectionForModifierGesture,
 } from '../../src/renderer/ui/interactions/selectionDismiss';
 import { flattenVisibleRows } from '../../src/renderer/state/document';
+import { fieldSlotId } from '../../src/core/fieldSlots';
 
 function keyboardEvent(params: Partial<KeyboardEvent>): KeyboardEvent {
   return {
@@ -120,6 +121,33 @@ describe('nodex outliner parity matrix', () => {
       '- >Status',
       '  - Todo',
       '  - Later',
+    ].join('\n'));
+  });
+
+  test('clipboard preserves nesting for a materialized projected field slot', () => {
+    const slotId = fieldSlotId('owner', 'field');
+    const byId = new Map<string, any>([
+      ['owner', node('owner', { children: ['entry'], tags: ['tag'] })],
+      ['tag', node('tag', { type: 'tagDef', children: ['template'] })],
+      ['template', node('template', { type: 'fieldEntry', parentId: 'tag', fieldDefId: 'field' })],
+      ['field', node('field', { type: 'fieldDef', content: { text: 'Status', marks: [], inlineRefs: [] } })],
+      ['entry', node('entry', {
+        type: 'fieldEntry',
+        parentId: 'owner',
+        fieldDefId: 'field',
+        children: ['value'],
+      })],
+      ['value', node('value', {
+        parentId: 'entry',
+        content: { text: 'Active', marks: [], inlineRefs: [] },
+      })],
+    ]);
+    const rows = ['owner', slotId, 'value'];
+
+    expect(serializeSelectedRows(rows, new Set(rows), byId)).toBe([
+      '- owner',
+      '  - >Status',
+      '    - Active',
     ].join('\n'));
   });
 

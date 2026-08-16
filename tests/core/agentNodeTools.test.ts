@@ -7,6 +7,8 @@ import { projectFieldConfig } from '../../src/core/configProjection';
 import { LoroOutlinerDocument } from '../../src/core/loroDocument';
 import { SEARCH_QUERY_COMPLEXITY_LIMITS } from '../../src/core/searchQueryCompiler';
 import { buildTextSearchIndex } from '../../src/core/searchEngine';
+import { nodeFieldSlots } from '../../src/core/fieldSlots';
+import { DONE_FIELD } from '../../src/core/systemFields';
 import { LIBRARY_ID, plainText, replaceAllRichTextPatch, SCHEMA_ID, TRASH_ID, WORKSPACE_ID } from '../../src/core/types';
 import { createNodeTools, visibleOutlineUndoStack, type OutlinerToolHost } from '../../src/main/agent/capabilities/agentNodeTools';
 import { validateSearchNodes } from '../../src/main/agent/capabilities/agentNodeToolSearch';
@@ -1012,6 +1014,33 @@ describe('agent node tools', () => {
     expect(entries[0]!.children.map((childId) => core.state().nodes[childId].content.text)).toEqual(['Open']);
   });
 
+  test('node_create does not treat owner focus as an empty projected field entry', async () => {
+    const core = Core.new();
+    const taskTagId = mustFocus(core.createTag('task'));
+    const templateEntryId = mustFocus(core.createFieldDef(taskTagId, 'Status', 'plain'));
+    const fieldDefId = core.state().nodes[templateEntryId].fieldDefId!;
+    const ownerId = mustFocus(core.createNode(core.projection().todayId, null, 'Ship'));
+    core.applyTag(ownerId, taskTagId);
+
+    const result = await executeTool<{ createdFieldEntryIds?: string[] }>(core, 'node_create', {
+      parent_id: ownerId,
+      outline: '- Status::\n  - \n- Note:: Kept',
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.data!.createdFieldEntryIds).toHaveLength(1);
+    expect(result.data!.createdFieldEntryIds).not.toContain(ownerId);
+    expect(core.state().nodes[ownerId].children).toHaveLength(1);
+    expect(core.state().nodes[core.state().nodes[ownerId].children[0]!].type).toBe('fieldEntry');
+    expect(core.state().nodes[fieldEntryByName(core, ownerId, 'Note')].children
+      .map((childId) => core.state().nodes[childId].content.text)).toEqual(['Kept']);
+    const slots = nodeFieldSlots(core.state(), ownerId);
+    expect(slots).toHaveLength(2);
+    expect(slots[0]).toMatchObject({ fieldDefId, source: 'tag' });
+    expect(slots[0]!.entryId).toBeUndefined();
+    expect(slots[1]).toMatchObject({ source: 'own' });
+  });
+
   test('node_create preflights nested tagged fields through the specific definition', async () => {
     const core = Core.new();
     const today = core.projection().todayId;
@@ -1076,6 +1105,28 @@ describe('agent node tools', () => {
     });
     expect(created.ok).toBe(false);
     expect(created.error?.message).toContain('read-only');
+  });
+
+  test('node_create routes a projected Done field without creating a plain value', async () => {
+    const core = Core.new();
+    const taskTagId = mustFocus(core.createTag('task'));
+    const templateEntryId = mustFocus(core.createInlineField(taskTagId, null, '', 'plain'));
+    core.reuseFieldDefinition(templateEntryId, DONE_FIELD);
+    const ownerId = mustFocus(core.createNode(core.projection().todayId, null, 'Ship'));
+    core.applyTag(ownerId, taskTagId);
+
+    const result = await executeTool(core, 'node_create', {
+      parent_id: ownerId,
+      outline: '- Done:: true',
+    });
+
+    expect(result.ok).toBe(true);
+    expect(core.state().nodes[ownerId].completedAt).toBeGreaterThan(0);
+    expect(core.state().nodes[ownerId].children).toEqual([]);
+    const slots = nodeFieldSlots(core.state(), ownerId);
+    expect(slots).toHaveLength(1);
+    expect(slots[0]).toMatchObject({ fieldDefId: DONE_FIELD, source: 'tag' });
+    expect(slots[0]!.entryId).toBeUndefined();
   });
 
   test('node_create materializes markdown inline marks and links as rich text', async () => {
@@ -2829,6 +2880,30 @@ describe('agent node tools', () => {
       }),
     ]);
     expect(fieldReads(index, trashed, false)).toEqual([]);
+  });
+
+  test('field reads include trashed direct entries on a live owner when requested', () => {
+    const core = Core.new();
+    const root = mustFocus(core.createNode(core.projection().todayId, null, 'Task'));
+    const statusEntryId = mustFocus(core.createInlineField(root, null, 'Status', 'plain'));
+    core.setFieldFreeTextValue(statusEntryId, 'Done');
+    const ownerEntryId = mustFocus(core.createInlineField(root, null, 'Owner', 'plain'));
+    core.setFieldFreeTextValue(ownerEntryId, 'Lin');
+    core.trashNode(statusEntryId);
+
+    const index = indexProjection(core.projection());
+    const liveOwner = index.nodes.get(root)!;
+    expect(fieldReads(index, liveOwner, false)).toEqual([
+      expect.objectContaining({ name: 'Owner', fieldEntryId: ownerEntryId }),
+    ]);
+    expect(fieldReads(index, liveOwner, true)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'Owner', fieldEntryId: ownerEntryId }),
+      expect.objectContaining({
+        name: 'Status',
+        fieldEntryId: statusEntryId,
+        values: [expect.objectContaining({ text: 'Done' })],
+      }),
+    ]));
   });
 
   test('node_read serializes local-file inline refs as file markers', async () => {
