@@ -519,6 +519,17 @@ streaming Items. If the rollout is wholly absent while a projection watermark ex
 startup atomically writes a minimal replacement rollout from projected final snapshots and
 then rebuilds the projection from it; projected rollback hooks are recovered before their
 markers are replaced.
+
+Reading the projection degrades; writing it fails closed (A12). A stored Item the
+current protocol can no longer decode — what a retired Item type or a narrowed tool
+enum leaves behind, since history is append-only and the row is never rewritten — is
+omitted from `listTurns`, `listItems`, `unfinishedItems`, and the projected rollout
+snapshot, and reported once per read as a `thread-item-unreadable` persistence
+diagnostic carrying its Thread, Turn, Item, and stored type. It costs that Item, not
+the Thread and not the launch: every reader of this projection is on the user's path,
+and startup reconciliation, Thread resume, and rendering all reach it. Terminal-Turn
+mutation checks and rollout-recovered open Items still decode fail-closed, because
+there the Item is input to a write.
 Context writes
 canonicalize through the Core codec before hashing. Context and text reads/copies
 verify digest and byte length, while text also selects storage by the referenced

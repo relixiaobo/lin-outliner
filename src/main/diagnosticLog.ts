@@ -57,6 +57,7 @@ const ALLOWED_CONTEXT_KEYS = new Set([
   'threadId',
   'turnId',
   'itemId',
+  'itemType',
 ]);
 
 export interface DiagnosticLogCounters {

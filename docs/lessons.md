@@ -1097,3 +1097,26 @@ condition that selects a branch is rarely the condition that makes the guard
 necessary. **When a fix guards a call, find every path that reaches that call**
 (`rg` the callee, not the branch) and guard at the join — here, by making the
 materialization helper return its outcome so one check covers both arms.
+
+## "Pre-release needs no migration" is a claim about dev data, not about the app you installed
+
+The tool rename that collapsed `spawn_agent`/`wait_agent` into
+`agent`/`agent_message`/`task_stop` (#535) shipped with no migration, which the
+pre-release rule allows — its escape hatch is "wipe `~/.lin-outliner-*` dev
+userData". But the **daily-use install** at
+`~/Library/Application Support/Tenon/` is never wiped, and its history is
+append-only, so the retired names sat there permanently. The next build could
+not decode 14 rows, and the app **exited at launch, every launch**. Narrowing a
+persisted enum is a data change against every store that survives the upgrade;
+the dev-wipe hatch only covers the stores we throw away. Before removing a value
+from a persisted enum, ask which store keeps it forever, and either migrate it
+there or make the reader tolerate it.
+
+The second half of the same incident is A12 misplaced by one layer. The decode
+lived in `ThreadHistoryProjectionStore.itemFromRow`, shared by every read of the
+projection — and `listTurns` is reached from startup reconciliation, Thread
+resume, and rendering alike. A `throw` that is correct at a write boundary
+became "the app cannot start" because one read path ran at launch. **The
+blast radius of a decode is decided by its callers, not by the fact that it is a
+decode.** Split the read helper from the write helper so each gets the failure
+mode its own path can afford.

@@ -489,6 +489,26 @@ export class ThreadService implements ThreadServiceExtensionHost {
     this.cleanupResidualAgentWorktree = options.cleanupResidualAgentWorktree;
     this.settleAgentWorktree = options.settleAgentWorktree;
     this.reportError = async (report) => { await options.reportError?.(report); };
+    // A row the projection can no longer decode is skipped rather than thrown on
+    // the read path, so this report is the only trace it leaves.
+    options.stores.history.setUnreadableItemHandler((unreadable) => {
+      void this.reportError({
+        domain: 'persistence',
+        severity: 'warn',
+        code: 'thread-item-unreadable',
+        message: 'A recorded Thread Item could not be decoded and was omitted from history.',
+        context: {
+          operation: 'read-thread-history',
+          threadId: unreadable.threadId,
+          turnId: unreadable.turnId,
+          itemId: unreadable.itemId,
+          itemType: unreadable.itemType,
+        },
+        error: unreadable.error,
+      }).catch(() => {
+        console.warn(`[agent] Failed to report an unreadable Thread Item: ${unreadable.itemId}`);
+      });
+    });
     this.resourceOps = new ThreadResourceOps(
       this.core,
       options.attachmentScratchRoot,

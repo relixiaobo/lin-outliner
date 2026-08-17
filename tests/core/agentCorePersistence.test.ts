@@ -513,6 +513,46 @@ describe('Agent Core persistence', () => {
     reopened.close();
   });
 
+  test('omits an Item the current protocol can no longer decode instead of failing the read', async () => {
+    // What a tool rename with no migration leaves behind: a stored Item whose
+    // `tool` is gone from the protocol's enum. History is append-only, so the row
+    // is never rewritten — throwing here fires on every read of the Thread, and
+    // `listTurns` is on the startup path, so it took the whole app down at launch.
+    // A12: the read projection degrades; only write/decode boundaries fail closed.
+    const root = await tempRoot();
+    const threadId = uuidV7(2_680);
+    const path = join(root, 'thread_history.sqlite');
+    const rollout = trackedRolloutStore(join(root, 'rollouts'));
+    for (const notification of lifecycle(threadId, 2_680)) await rollout.append(threadId, notification);
+    const entries = await rollout.read(threadId);
+    const store = new ThreadHistoryProjectionStore(path, testDatabase(path));
+    store.applyMany(entries);
+    expect(store.listTurns({ threadId, itemsView: 'full' }).data[0]?.items).toHaveLength(3);
+    store.close();
+
+    const db = testDatabase(path);
+    const row = db.prepare(
+      'SELECT item_id, item_json FROM thread_items WHERE thread_id = ? AND item_id = ?',
+    ).get(threadId, 'item-steer-2680') as { item_id: string; item_json: string };
+    const undecodable = { ...JSON.parse(row.item_json) as Record<string, unknown>, type: 'retiredToolCall' };
+    db.prepare('UPDATE thread_items SET item_json = ? WHERE thread_id = ? AND item_id = ?')
+      .run(JSON.stringify(undecodable), threadId, row.item_id);
+    db.close();
+
+    const reopened = new ThreadHistoryProjectionStore(path, testDatabase(path));
+    const reports: string[] = [];
+    reopened.setUnreadableItemHandler((report) => { reports.push(report.itemId); });
+
+    const turns = reopened.listTurns({ threadId, itemsView: 'full' });
+    expect(turns.data[0]?.status).toBe('completed');
+    expect(turns.data[0]?.items.map((item) => item.id)).toEqual(['item-user-2680', 'item-agent-2680']);
+    expect(reopened.listItems({ threadId }).data.map((entry) => entry.item.id))
+      .toEqual(['item-user-2680', 'item-agent-2680']);
+    // Reported once per read that touched it, never silently swallowed.
+    expect(reports).toEqual(['item-steer-2680', 'item-steer-2680']);
+    reopened.close();
+  });
+
   test('rebuilds paginated Turn and Item projections exactly from rollout JSONL', async () => {
     const root = await tempRoot();
     const rollout = trackedRolloutStore(join(root, 'rollouts'));
