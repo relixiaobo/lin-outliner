@@ -1841,12 +1841,12 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
 
   const handleModEnter = async (content: RichText) => {
     const emptyDraft = content.text.trim().length === 0 && content.inlineRefs.length === 0;
-    if (props.draft && !realNode && emptyDraft) {
+    if (props.draft && !realNode) {
       draftContentRef.current = content;
       setDraftContent(content);
-      // Empty field values intentionally do not materialize. A body trailing
-      // draft, however, must become a real node before checkbox commands target it.
-      if (props.fieldValue) return;
+      // Empty field values intentionally do not materialize. Every other trailing
+      // draft must become a real node before checkbox commands target it.
+      if (props.fieldValue && emptyDraft) return;
       const materialized = await materializeDraft();
       if (!materialized) return;
     } else {

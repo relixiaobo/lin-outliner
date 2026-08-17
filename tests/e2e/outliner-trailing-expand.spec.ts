@@ -31,6 +31,29 @@ async function delayCreateNode(page: Parameters<typeof trailingEditor>[0], delay
   }, delayMs);
 }
 
+async function rejectDraftMaterializations(
+  page: Parameters<typeof trailingEditor>[0],
+  messages: string[],
+  delayMs = 0,
+) {
+  await page.evaluate(async ({ delay, rejections }) => {
+    const win = window as Window & {
+      lin?: { invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
+    };
+    const originalInvoke = win.lin?.invoke;
+    if (!win.lin || !originalInvoke) return;
+    const pending = [...rejections];
+    win.lin.invoke = async <T,>(cmd: string, args: Record<string, unknown> = {}) => {
+      if (cmd === 'create_node' && args.materialize === true && pending.length > 0) {
+        const message = pending.shift()!;
+        if (delay > 0) await new Promise((resolve) => window.setTimeout(resolve, delay));
+        throw new Error(message);
+      }
+      return originalInvoke<T>(cmd, args);
+    };
+  }, { delay: delayMs, rejections: messages });
+}
+
 async function nodesWithText(page: Parameters<typeof trailingEditor>[0], text: string) {
   const projection = await e2eProjection(page);
   return projection.nodes.filter((node) => node.content.text === text);
@@ -608,21 +631,7 @@ test.describe('outliner trailing input and expansion parity', () => {
 
   test('Cmd+Enter stops when empty trailing draft materialization is rejected', async ({ page }) => {
     const rejection = 'Mock parent is immutable';
-    await page.evaluate((message) => {
-      const win = window as Window & {
-        lin?: { invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
-      };
-      const originalInvoke = win.lin?.invoke;
-      if (!win.lin || !originalInvoke) return;
-      let rejected = false;
-      win.lin.invoke = async <T,>(cmd: string, args: Record<string, unknown> = {}) => {
-        if (cmd === 'create_node' && args.materialize === true && !rejected) {
-          rejected = true;
-          throw new Error(message);
-        }
-        return originalInvoke<T>(cmd, args);
-      };
-    }, rejection);
+    await rejectDraftMaterializations(page, [rejection]);
 
     const before = await e2eProjection(page);
     const beforeCount = before.nodes.find((node) => node.id === ids.today)!.children.length;
@@ -635,6 +644,29 @@ test.describe('outliner trailing input and expansion parity', () => {
     expect((await commandCalls(page)).filter(({ cmd }) => cmd === 'cycle_done_state')).toHaveLength(0);
     const after = await e2eProjection(page);
     expect(after.nodes.find((node) => node.id === ids.today)!.children).toHaveLength(beforeCount);
+  });
+
+  test('Cmd+Enter stops when non-empty trailing draft materialization is rejected', async ({ page }) => {
+    const eagerRejection = 'Mock eager materialization rejected';
+    const retryRejection = 'Mock Cmd+Enter materialization rejected';
+    await rejectDraftMaterializations(page, [eagerRejection, retryRejection], 120);
+
+    const before = await e2eProjection(page);
+    const beforeCount = before.nodes.find((node) => node.id === ids.today)!.children.length;
+    const editor = trailingEditor(page);
+    await editor.click();
+    await page.keyboard.type('abc', { delay: 0 });
+    await expect(editor).toHaveText('abc');
+    await expect(page.locator('.action-notice')).toContainText(eagerRejection);
+
+    await page.keyboard.press('Meta+Enter');
+    await expect(page.locator('.action-notice')).toContainText(retryRejection);
+    await page.evaluate(() => new Promise<void>((resolve) => window.setTimeout(resolve, 0)));
+    await expect(page.locator('.action-notice')).toContainText(retryRejection);
+    expect((await commandCalls(page)).filter(({ cmd }) => cmd === 'cycle_done_state')).toHaveLength(0);
+    const after = await e2eProjection(page);
+    expect(after.nodes.find((node) => node.id === ids.today)!.children).toHaveLength(beforeCount);
+    await expect(editor).toHaveText('abc');
   });
 
   test('Tab and Shift+Tab in an empty trailing input relocate the draft without materializing', async ({ page }) => {
