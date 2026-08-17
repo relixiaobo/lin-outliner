@@ -30,16 +30,22 @@ Entries reference the pull request that introduced them.
   once and **quarantines for the session** any Thread that fails: it is kept out
   of resume, out of `persistentRootThreads`, and out of the history reads, which
   answer a named `ThreadBusyError` instead of leaking the codec error, and it is
-  reported once as a `thread-history-unreadable` diagnostic. Quarantine is
+  reported once as a `thread-history-unreadable` diagnostic. A metadata-only read
+  still succeeds, so the Thread list can name what it cannot open. Quarantine is
   in-memory and recomputed each launch, so the bytes stay untouched and a build
   that can read them again picks the Thread back up. A torn rollout still does
   *not* quarantine anything — that history remains browsable out of its
   projection; the only question asked is whether the Thread decodes. Verified
-  against the real broken userData. The review round that shaped this is worth
-  reading: the first attempt skipped the undecodable *Item*, which silently broke
-  the terminal-Turn mutation check and — because the projected rollout snapshot is
-  written back before the old rows are cascaded away — would have destroyed the
-  last copy of the very data it was trying to survive. Both rules are in
+  against the real broken userData. Two review rounds shaped this and both are
+  worth reading. The first attempt skipped the undecodable *Item*, which silently
+  broke the terminal-Turn mutation check and — because the projected rollout
+  snapshot is written back before the old rows are cascaded away — would have
+  destroyed the last copy of the very data it was trying to survive. The second
+  attempt then placed the readability probe one line after the Thread joined the
+  reconciled list, leaving an unguarded prune fan-out to kill the launch anyway,
+  and hiding the Thread from `persistentRootThreads()` armed the memory
+  orphan-admission sweep to delete its extraction state permanently — a filter is
+  invisible to a consumer that treats absence as deletion. The three rules are in
   `docs/lessons.md`; `docs/spec/agent-core.md` states the quarantine contract.
 
 ## [0.5.0] - 2026-08-17

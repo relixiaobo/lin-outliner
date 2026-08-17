@@ -74,6 +74,8 @@ interface ResetPublicationPayload {
 
 export interface MemoryThreadHost extends ThreadServiceExtensionHost {
   persistentRootThreads(): readonly Thread[];
+  /** True when this session quarantined a Thread whose history does not decode. */
+  hasUnreadableThreads(): boolean;
   activeRootUserTurns(): readonly { threadId: ThreadId; turnId: TurnId }[];
   interruptRootTurns(turns: readonly { threadId: ThreadId; turnId: TurnId }[]): Promise<void>;
   readThread(input: { threadId: ThreadId; includeTurns?: boolean }): { thread: Thread };
@@ -233,9 +235,18 @@ export class MemoryExtension implements AgentCoreExtension, MemoryDocumentPolicy
     const host = this.requireHost();
     await this.timeline.ensureTagDefinitions();
     this.reconcileRollbackHooks(host);
-    this.control.deleteOrphanAdmissions(new Set(host.persistentRootThreads().flatMap((thread) => (
-      host.readThread({ threadId: thread.id, includeTurns: true }).thread.turns?.map((turn) => turn.id) ?? []
-    ))));
+    // The orphan sweep deletes every admission row whose Turn it cannot see, so it
+    // is only sound when every durable Turn is enumerable. A Thread quarantined for
+    // unreadable history is excluded from `persistentRootThreads()`, which would
+    // make all of its Turns look orphaned and delete their admissions for good —
+    // turning a session-scoped, in-memory quarantine into a permanent loss of
+    // extraction state. Skip the sweep entirely for that session; the next launch
+    // that can read the Thread runs it against the complete set.
+    if (!host.hasUnreadableThreads()) {
+      this.control.deleteOrphanAdmissions(new Set(host.persistentRootThreads().flatMap((thread) => (
+        host.readThread({ threadId: thread.id, includeTurns: true }).thread.turns?.map((turn) => turn.id) ?? []
+      ))));
+    }
     this.lastGraphDigest = this.currentCanonicalGraphDigest();
     await this.requirePipeline().recover();
     this.preparedForTurnAdmission = true;

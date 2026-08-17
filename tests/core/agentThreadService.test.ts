@@ -956,10 +956,69 @@ describe('ThreadService', () => {
 
     expect(reopened.service.readThread({ threadId: readableId }).thread.name).toBe('Readable');
     expect(reopened.service.persistentRootThreads().map((thread) => thread.id)).toEqual([readableId]);
-    expect(() => reopened.service.readThread({ threadId: unreadableId })).toThrow(/quarantined/);
+    expect(() => reopened.service.readThread({ threadId: unreadableId, includeTurns: true }))
+      .toThrow(/quarantined/);
     expect(() => reopened.service.listTurns({ threadId: unreadableId })).toThrow(/quarantined/);
+    expect(() => reopened.service.listItems({ threadId: unreadableId })).toThrow(/quarantined/);
+    // Metadata-only reads never touch the codec, so the Thread stays nameable.
+    expect(reopened.service.readThread({ threadId: unreadableId }).thread.name).toBe('Unreadable');
     expect(reports.filter((report) => report.code === 'thread-history-unreadable'))
       .toEqual([{ code: 'thread-history-unreadable', threadId: unreadableId }]);
+    await reopened.service.close();
+  }, 20_000);
+
+  test('quarantines before admitting a Thread that reconciles but does not fully decode', async () => {
+    // Reconciliation decodes every Item but only the NEWEST Turn row, so a Thread
+    // can reconcile cleanly and still fail a full read — an older Turn row is
+    // enough. The startup payload-prune fan-out then walks `allTurns` for every
+    // reconciled Thread with no guard of its own, so admitting this Thread to that
+    // list is how a caught failure becomes an uncaught one and the launch dies.
+    const root = await mkdtemp(join(tmpdir(), 'tenon-late-quarantine-'));
+    roots.push(root);
+    let now = 1_720_000_000_000;
+    const clock = () => ++now;
+    const executor = new ControlledExecutor();
+    const first = await openFixture(root, executor, clock);
+    await first.service.initialize();
+    const thread = (await first.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: root,
+      name: 'Two Turns',
+    })).thread;
+    for (const index of [0, 1]) {
+      await first.service.startRendererTurn({
+        threadId: thread.id,
+        input: [{ type: 'text', text: `Turn ${index}` }],
+      });
+      await executor.waitUntilWaiting(index);
+      executor.finish(index);
+      await first.service.waitForIdle(thread.id);
+    }
+    await first.service.close();
+
+    // Retire a status value on the OLDER Turn row only: the rollout still decodes,
+    // and so does the newest Turn, so reconciliation succeeds.
+    const historyDb = database(join(root, 'agent', 'thread_history.sqlite'));
+    historyDb.prepare(
+      `UPDATE thread_turns SET status = 'retiredTurnStatus'
+       WHERE thread_id = ? AND position = (SELECT MIN(position) FROM thread_turns WHERE thread_id = ?)`,
+    ).run(thread.id, thread.id);
+    historyDb.close();
+
+    const reports: Array<string | undefined> = [];
+    const reopened = await openFixture(root, new ControlledExecutor(), clock, undefined, {
+      reportError: (report) => { reports.push(report.code); },
+    });
+    await reopened.service.initialize();
+
+    expect(reopened.service.hasUnreadableThreads()).toBe(true);
+    expect(reopened.service.persistentRootThreads().map((entry) => entry.id)).toEqual([]);
+    expect(() => reopened.service.listTurns({ threadId: thread.id })).toThrow(/quarantined/);
+    // A metadata-only read never touches the codec, so the sidebar can still name it.
+    expect(reopened.service.readThread({ threadId: thread.id }).thread.name).toBe('Two Turns');
+    expect(reports.filter((code) => code === 'thread-history-unreadable')).toHaveLength(1);
     await reopened.service.close();
   }, 20_000);
 

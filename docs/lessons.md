@@ -1123,6 +1123,22 @@ along a boundary that is self-consistent.** An Item is not one — it is half of
 Turn's invariants. A Thread is: quarantine it for the session, report it, leave
 its bytes alone.
 
+Then check what *reads* the thing you just filtered. Hiding the quarantined Thread
+from `persistentRootThreads()` protected the fan-out that was crashing — and
+silently armed a different one: the memory orphan-admission sweep deletes every
+row whose Turn it cannot enumerate, so the filtered list made that Thread's Turns
+look deleted and wiped its extraction state for good. **A filter is invisible to
+the consumer that treats absence as deletion**, which turns a session-scoped,
+in-memory quarantine into a permanent write. When you narrow an enumeration, grep
+its callers for the ones that delete, prune, or reconcile on absence, and give
+them the incompleteness explicitly (`hasUnreadableThreads()` here, which skips the
+sweep for the session).
+
+Ordering counts too: the readability probe ran one line *after* the Thread was
+pushed onto the reconciled/resumable lists, so the launch still died on a
+different unguarded fan-out over exactly those lists. **A guard placed after the
+registration it is supposed to prevent is not a guard.**
+
 And find the caller before choosing the layer. The fatal path here was not the
 one the stack trace showed: Node's default `Error.stackTraceLimit = 10` truncated
 it exactly at `listTurns`, which made the projection decode look like the culprit.

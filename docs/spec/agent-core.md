@@ -527,17 +527,34 @@ rollout snapshot is what `restoreMissing` writes back before `rebuildThread` cas
 the old rows away, so omitting a row there destroys its last copy.
 
 Startup therefore decides readability per Thread. After reconciling each Thread,
-initialization decodes that Thread's complete recorded history once — the same
-`allTurns` walk every later consumer performs — and a Thread that fails is
-**quarantined for the session**: excluded from resume, from `persistentRootThreads`,
-and from `thread/read`, `thread/turns/list`, and `thread/items/list`, which answer
-`ThreadBusyError` naming the quarantine rather than leaking the codec failure. This is
-what a retired Item type or a narrowed tool enum leaves behind in a userData directory
-that is never wiped: history is append-only, the row is never rewritten, and the decode
-fails on every launch. Quarantine is in-memory and recomputed each launch, so the bytes
-stay untouched and a build that can read them again picks the Thread back up with
-nothing to undo. It is reported once as a `thread-history-unreadable` persistence
-diagnostic naming the Thread — the only trace, since nothing durable records it.
+initialization pages that Thread's complete recorded history and discards it — decoding
+every Turn and Item exactly as every later consumer does, without holding them all
+resident — and a Thread that fails is **quarantined for the session**. The verdict is
+reached *before* the Thread joins the reconciled or resumable sets, because
+reconciliation decodes every Item but only the newest Turn row: a Thread can reconcile
+and still fail a full read, and the payload-prune fan-out over reconciled Threads walks
+`allTurns` with no guard of its own. Admitting one to either set is precisely how a
+caught failure becomes an uncaught one.
+
+A quarantined Thread is excluded from resume, from `persistentRootThreads`, and from
+`thread/turns/list`, `thread/items/list`, and `thread/read` **with `includeTurns`** —
+those answer `ThreadBusyError` naming the quarantine rather than leaking the codec
+failure. A metadata-only `thread/read` still succeeds, since it never reaches the codec
+and the Thread list must still be able to name what it cannot open. The quarantine set
+is kept separate from the delegated-Agent admission quarantine, whose Threads decode
+fine and were held back over a worktree.
+
+This is what a retired Item type or a narrowed tool enum leaves behind in a userData
+directory that is never wiped: history is append-only, the row is never rewritten, and
+the decode fails on every launch. Quarantine is in-memory and recomputed each launch, so
+the bytes stay untouched and a build that can read them again picks the Thread back up
+with nothing to undo — which also means no consumer may treat a quarantined Thread's
+absence as deletion. The memory orphan-admission sweep is skipped for any session with a
+quarantined Thread for exactly that reason: it deletes every admission row whose Turn it
+cannot enumerate, so running it against the filtered list would permanently discard that
+Thread's extraction state and make a session-scoped quarantine durable. It is reported
+once as a `thread-history-unreadable` persistence diagnostic naming the Thread — the
+only trace, since nothing durable records it.
 
 Reconciliation failing is deliberately *not* disqualifying on its own: a torn rollout
 leaves a Thread that no longer advances but still reads out of its projection, and that

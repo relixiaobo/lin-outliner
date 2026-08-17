@@ -403,6 +403,13 @@ export class ThreadService implements ThreadServiceExtensionHost {
   private readonly settleAgentWorktree: ThreadServiceOptions['settleAgentWorktree'];
   private readonly reportError: (report: ErrorReport) => Promise<void>;
   private readonly startupQuarantinedThreadIds = new Set<ThreadId>();
+  /**
+   * The subset quarantined because their recorded history does not decode. Kept
+   * apart from the admission-recovery quarantine above: those Threads read fine
+   * and were held back over a worktree, so answering their history reads with
+   * "could not be read" would be a lie.
+   */
+  private readonly unreadableThreadIds = new Set<ThreadId>();
   private readonly resourceOps: ThreadResourceOps;
   private readonly catalogOps: ThreadCatalogOps;
   private readonly collaboration: SubagentCollaboration;
@@ -674,10 +681,10 @@ export class ThreadService implements ThreadServiceExtensionHost {
         for (const thread of page.data) {
           knownThreadIds.push(thread.id);
           if (this.startupQuarantinedThreadIds.has(thread.id)) continue;
+          let reconciled = false;
           try {
             await this.catalogOps.reconcileThread(thread.id);
-            reconciledThreadIds.push(thread.id);
-            if (!archived) resumableThreadIds.push(thread.id);
+            reconciled = true;
           } catch (error) {
             console.error(`[agent] failed to reconcile Thread ${thread.id}`, error);
           }
@@ -688,7 +695,18 @@ export class ThreadService implements ThreadServiceExtensionHost {
           // startup fan-out over Threads is not guarded per Thread. So the question
           // asked here is exactly the one that matters — does this Thread decode? —
           // and only a Thread that fails it is quarantined (A12).
+          //
+          // This runs BEFORE the Thread joins either list, and both lists are then
+          // gated on the verdict: reconciliation decodes every Item but only the
+          // newest Turn row, so a Thread can reconcile and still fail to read. The
+          // payload-prune fan-out below walks `allTurns` for every reconciled id
+          // with no guard of its own, and resume refuses a quarantined Thread — so
+          // admitting one to either list is how a caught failure becomes an
+          // uncaught one.
           await this.quarantineThreadIfUnreadable(thread.id);
+          if (!reconciled || this.startupQuarantinedThreadIds.has(thread.id)) continue;
+          reconciledThreadIds.push(thread.id);
+          if (!archived) resumableThreadIds.push(thread.id);
         }
         cursor = page.nextCursor;
       } while (cursor);
@@ -1124,9 +1142,22 @@ export class ThreadService implements ThreadServiceExtensionHost {
   private async quarantineThreadIfUnreadable(threadId: ThreadId): Promise<void> {
     if (this.startupQuarantinedThreadIds.has(threadId)) return;
     try {
-      this.catalogOps.readThread({ threadId, includeTurns: true });
+      // Page and discard rather than `readThread({ includeTurns: true })`: the
+      // check needs every Turn and Item decoded, but nothing needs them all
+      // resident at once, and this runs for every Thread on the launch path (A9).
+      let cursor: string | null = null;
+      do {
+        const page: ThreadTurnsListResponse = this.core.history.listTurns({
+          threadId,
+          cursor,
+          limit: 50,
+          itemsView: 'full',
+        });
+        cursor = page.nextCursor;
+      } while (cursor);
     } catch (error) {
       console.error(`[agent] quarantined unreadable Thread ${threadId}`, error);
+      this.unreadableThreadIds.add(threadId);
       this.quarantineStartupSubtree(threadId);
       await this.reportUnreadableThread(threadId, 'read', error);
     }
@@ -1165,13 +1196,14 @@ export class ThreadService implements ThreadServiceExtensionHost {
   }
 
   /**
-   * Quarantine only — deliberately not the full `assertStartupThreadAvailable`,
-   * whose delegated-Agent admission checks belong to write paths. History reads
-   * need this narrow one so a quarantined Thread answers with what actually
+   * Unreadable-history quarantine only — deliberately not the full
+   * `assertStartupThreadAvailable`, whose delegated-Agent admission checks belong
+   * to write paths and cover Threads that decode perfectly well. History reads
+   * need this narrow one so an unreadable Thread answers with what actually
    * happened instead of leaking the raw codec failure through IPC.
    */
-  private assertNotStartupQuarantined(threadId: ThreadId): void {
-    if (!this.startupQuarantinedThreadIds.has(threadId)) return;
+  private assertThreadHistoryReadable(threadId: ThreadId): void {
+    if (!this.unreadableThreadIds.has(threadId)) return;
     throw new ThreadBusyError(
       `Thread history could not be read and the Thread is quarantined for this session: ${threadId}`,
     );
@@ -1271,6 +1303,13 @@ export class ThreadService implements ThreadServiceExtensionHost {
     return this.catalogOps.persistentRootThreads()
       .filter((thread) => !this.startupQuarantinedThreadIds.has(thread.id));
   }
+
+  /**
+   * Whether this session is enumerating an incomplete view of history. Consumers
+   * that delete on absence — the memory orphan-admission sweep — must not treat a
+   * quarantined Thread's Turns as gone.
+   */
+  hasUnreadableThreads(): boolean { return this.unreadableThreadIds.size > 0; }
   persistentThreadExecutionContext(threadId: ThreadId): PersistentThreadExecutionContext { return this.catalogOps.persistentThreadExecutionContext(threadId); }
   readTurnForHost(threadId: ThreadId, turnId: TurnId): Turn | null { return this.core.readTurn(threadId, turnId); }
   readTurnByClientUserMessageIdForHost(threadId: ThreadId, clientId: string): Turn | null { return this.turnLifecycle.readTurnByClientUserMessageIdForHost(threadId, clientId); }
@@ -1400,7 +1439,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     }
   }
   listTurns(request: ThreadTurnsListRequest): ThreadTurnsListResponse {
-    this.assertNotStartupQuarantined(request.threadId);
+    this.assertThreadHistoryReadable(request.threadId);
     return this.catalogOps.listTurns(request);
   }
   async readItemOutput(request: ThreadItemOutputReadRequest): Promise<ThreadItemOutputReadResponse> { return this.resourceOps.readItemOutput(request); }
@@ -1474,7 +1513,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     return this.resourceOps.resolveImageArtifactFile(threadId, artifact);
   }
   listItems(request: ThreadItemsListRequest): ThreadItemsListResponse {
-    this.assertNotStartupQuarantined(request.threadId);
+    this.assertThreadHistoryReadable(request.threadId);
     return this.catalogOps.listItems(request);
   }
   listThreads(request: ThreadListRequest = {}): ThreadListResponse { return this.catalogOps.listThreads(request); }
@@ -1528,7 +1567,9 @@ export class ThreadService implements ThreadServiceExtensionHost {
     }
   }
   readThread(request: ThreadReadRequest): ThreadReadResponse {
-    this.assertNotStartupQuarantined(request.threadId);
+    // Only the history read is refused. A metadata-only read never touches the
+    // codec, and the sidebar still has to name the Thread it cannot open.
+    if (request.includeTurns) this.assertThreadHistoryReadable(request.threadId);
     return this.catalogOps.readThread(request);
   }
   getThreadConfiguration(threadId: ThreadId): ThreadConfigurationResponse { return this.catalogOps.getThreadConfiguration(threadId); }
