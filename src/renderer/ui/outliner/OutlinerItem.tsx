@@ -1829,8 +1829,19 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   };
 
   const handleModEnter = async (content: RichText) => {
-    setDraftContent(content);
-    await commitDraft(content);
+    const emptyDraft = content.text.trim().length === 0 && content.inlineRefs.length === 0;
+    if (props.draft && !realNode && emptyDraft) {
+      draftContentRef.current = content;
+      setDraftContent(content);
+      // Empty field values intentionally do not materialize. A body trailing
+      // draft, however, must become a real node before checkbox commands target it.
+      if (props.fieldValue) return;
+      materializeDraft();
+      await pendingTextPatchRef.current;
+    } else {
+      setDraftContent(content);
+      await commitDraft(content);
+    }
     await props.run(() => api.cycleDoneState(targetEditId));
   };
 
