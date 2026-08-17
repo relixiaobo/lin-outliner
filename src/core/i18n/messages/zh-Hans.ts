@@ -850,6 +850,8 @@ export const zhHans: PartialMessages = {
       empty: '空',
       datePlaceholder: '按空格键选择日期…',
       fieldValueAriaLabel: '字段值',
+      inheritedDefaultAriaLabel: ({ value }: { value: string }) => `继承的默认值：${value}`,
+      acceptInheritedDefault: ({ value }: { value: string }) => `接受继承的默认值：${value}`,
       // 布尔（复选框）整字段控件。
       booleanYes: '是',
       booleanNo: '否',

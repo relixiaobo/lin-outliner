@@ -2863,6 +2863,33 @@ describe('agent node tools', () => {
     expect(item.outline).toContain('  - Draft plan');
   });
 
+  test('node_read presents inherited defaults without exposing template nodes as write targets', async () => {
+    const core = Core.new();
+    const tagId = mustFocus(core.createTag('project'));
+    const nodeId = mustFocus(core.createNode(core.projection().todayId, null, 'Launch'));
+    core.applyTag(nodeId, tagId);
+    const templateEntryId = mustFocus(core.createFieldDef(tagId, 'Status', 'plain'));
+    core.createNode(templateEntryId, null, 'Inbox');
+
+    const envelope = await executeTool<{
+      items: Array<{
+        fields: Array<{
+          name: string;
+          fieldEntryId?: string;
+          values: Array<{ text: string; valueNodeId?: string }>;
+        }>;
+        outline?: string;
+      }>;
+    }>(core, 'node_read', { node_id: nodeId, depth: 0 });
+
+    expect(envelope.ok).toBe(true);
+    const field = envelope.data!.items[0]!.fields[0]!;
+    expect(field).toMatchObject({ name: 'Status', values: [{ text: 'Inbox' }] });
+    expect(field.fieldEntryId).toBeUndefined();
+    expect(field.values[0]!.valueNodeId).toBeUndefined();
+    expect(envelope.data!.items[0]!.outline).toContain('  - Status:: Inbox');
+  });
+
   test('field reads preserve stored values for a trashed owner when deleted nodes are included', () => {
     const core = Core.new();
     const root = mustFocus(core.createNode(core.projection().todayId, null, 'Archived task'));

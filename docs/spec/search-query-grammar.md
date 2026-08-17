@@ -94,17 +94,18 @@ The state operators distinguish definition from storage:
 - `HAS_FIELD` and `FIELD_IS_DEFINED` match when the slot exists, whether it came
   from a tag chain or an own entry.
 - `FIELD_IS_NOT_DEFINED` matches only when no slot for that `fieldDefId` exists.
-- `FIELD_IS_SET` matches when the slot has at least one non-empty stored value.
-- `FIELD_IS_NOT_SET` matches when there is no non-empty stored value, including
+- `FIELD_IS_SET` matches when the slot presents at least one non-empty stored or
+  inherited value.
+- `FIELD_IS_NOT_SET` matches when there is no non-empty presented value, including
   nodes where the field is not defined.
-- `IS_EMPTY` matches only the intersection: the slot exists and has no non-empty
-  stored value.
+- `IS_EMPTY` matches only the intersection: the slot exists and presents no
+  non-empty value.
 
-`FIELD_IS`, comparison, sort, and date operators read stored values through the
-slot's backing entry. Removing a tag does not erase a stored value: the surviving
-own slot keeps answering the same value queries. Static values on a tag template
-are not instance values in the current projection and do not answer value
-queries.
+`FIELD_IS`, comparison, sort, filter, date, and text operators read the slot's
+stored entry first, then its inherited static default. Removing a tag does not
+erase a stored value: the surviving own slot keeps answering the same value
+queries. A defaulted field is therefore not empty even before it has an instance
+entry; ghosts affect reads only and never provide an instance-owned write id.
 
 ## Complexity Budget
 

@@ -931,6 +931,8 @@ export const en = {
       empty: 'Empty',
       datePlaceholder: 'Press Space to pick a date…',
       fieldValueAriaLabel: 'Field value',
+      inheritedDefaultAriaLabel: ({ value }: { value: string }) => `Inherited default: ${value}`,
+      acceptInheritedDefault: ({ value }: { value: string }) => `Accept inherited default: ${value}`,
       // Boolean (checkbox) whole-field control.
       booleanYes: 'Yes',
       booleanNo: 'No',

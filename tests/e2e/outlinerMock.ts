@@ -1664,6 +1664,38 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         const survivingEntryId = commitFieldSlot(ownerId, fieldDefId, preferredEntryId);
         return outcome({ nodeId: survivingEntryId ?? ownerId, selectAll: false });
       }
+      if (kind === 'acceptDefault') {
+        if (currentEntry) return outcome({ nodeId: currentEntry.id, selectAll: false });
+        const owner = nodes.get(ownerId);
+        let templateEntry: MockNode | undefined;
+        for (const appliedTagId of owner?.tags ?? []) {
+          const visited = new Set<string>();
+          let currentTagId: string | undefined = appliedTagId;
+          while (currentTagId && !visited.has(currentTagId) && !templateEntry) {
+            visited.add(currentTagId);
+            const tag = nodes.get(currentTagId);
+            if (tag?.type !== 'tagDef') break;
+            templateEntry = tag.children
+              .map((childId) => nodes.get(childId))
+              .find((child) => child?.type === 'fieldEntry' && child.fieldDefId === fieldDefId);
+            currentTagId = tag.extends;
+          }
+          if (templateEntry) break;
+        }
+        if (!templateEntry?.children.length) return outcome({ nodeId: ownerId, selectAll: false });
+        const entry = ensureFieldSlotEntry(ownerId, fieldDefId);
+        for (const valueId of templateEntry.children) {
+          const value = nodes.get(valueId);
+          if (!value) continue;
+          createNode(entry.id, null, value.content.text, {
+            type: value.type,
+            targetId: value.targetId,
+            codeLanguage: value.codeLanguage,
+            description: value.description,
+          });
+        }
+        return outcome({ nodeId: entry.id, selectAll: false });
+      }
       if (kind === 'appendText') {
         const text = String(args.text ?? '').trim();
         if (!text) {

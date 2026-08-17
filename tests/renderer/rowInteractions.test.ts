@@ -231,7 +231,7 @@ describe('row interaction resolvers', () => {
     ]);
   });
 
-  test('keeps split projected fields visible without materializing static defaults', () => {
+  test('hides split projected fields whose inherited value equals the static default', () => {
     const core = Core.new();
     const tagId = core.createTag('meeting').focus!.nodeId;
     const templateEntryId = core.createFieldDef(tagId, 'Status', 'plain').focus!.nodeId;
@@ -251,30 +251,18 @@ describe('row interaction resolvers', () => {
     const sourceSlotId = fieldSlotId(sourceId, fieldDefId);
     const siblingSlotId = fieldSlotId(siblingId, fieldDefId);
 
-    expect(buildOutlinerRows(byId.get(sourceId), byId)).toEqual([
-      {
-        id: sourceSlotId,
-        type: 'field',
-        slot: expect.objectContaining({
-          id: sourceSlotId,
-          fieldDefId,
-          source: 'tag',
-          templateEntryId,
-        }),
-      },
-    ]);
-    expect(buildOutlinerRows(byId.get(siblingId), byId)).toEqual([
-      {
-        id: siblingSlotId,
-        type: 'field',
-        slot: expect.objectContaining({
-          id: siblingSlotId,
-          fieldDefId,
-          source: 'tag',
-          templateEntryId,
-        }),
-      },
-    ]);
+    expect(buildOutlinerRows(byId.get(sourceId), byId)).toEqual([{
+      id: `hidden:${sourceId}:${sourceSlotId}`,
+      type: 'hiddenField',
+      fieldId: sourceSlotId,
+      label: 'Status',
+    }]);
+    expect(buildOutlinerRows(byId.get(siblingId), byId)).toEqual([{
+      id: `hidden:${siblingId}:${siblingSlotId}`,
+      type: 'hiddenField',
+      fieldId: siblingSlotId,
+      label: 'Status',
+    }]);
   });
 
   test('sorts, filters, and groups populated projected field rows through their entries', () => {
@@ -360,6 +348,74 @@ describe('row interaction resolvers', () => {
       type: 'filteredOut',
       count: 1,
       rows: [{ id: betaSlotId }],
+    });
+  });
+
+  test('sorts and filters table records by inherited defaults', () => {
+    const parent = makeNode('parent', 'Parent', {
+      children: ['view', 'inherited', 'authored'],
+    });
+    const view = makeNode('view', '', {
+      type: 'viewDef',
+      parentId: 'parent',
+      children: ['sort'],
+    });
+    const byId = new Map<string, any>([
+      ['parent', parent],
+      ['view', view],
+      ['sort', makeNode('sort', '', {
+        type: 'sortRule',
+        parentId: 'view',
+        sortField: 'status-def',
+        sortDirection: 'asc',
+      })],
+      ['tag', makeNode('tag', 'Project', {
+        type: 'tagDef',
+        children: ['status-template'],
+      })],
+      ['status-template', makeNode('status-template', '', {
+        type: 'fieldEntry',
+        parentId: 'tag',
+        fieldDefId: 'status-def',
+        children: ['status-default'],
+      })],
+      ['status-default', makeNode('status-default', 'Inbox', { parentId: 'status-template' })],
+      ['status-def', makeNode('status-def', 'Status', { type: 'fieldDef' })],
+      ['inherited', makeNode('inherited', 'Inherited', { parentId: 'parent', tags: ['tag'] })],
+      ['authored', makeNode('authored', 'Authored', {
+        parentId: 'parent',
+        tags: ['tag'],
+        children: ['authored-status'],
+      })],
+      ['authored-status', makeNode('authored-status', '', {
+        type: 'fieldEntry',
+        parentId: 'authored',
+        fieldDefId: 'status-def',
+        children: ['authored-value'],
+      })],
+      ['authored-value', makeNode('authored-value', 'Zebra', { parentId: 'authored-status' })],
+    ]);
+
+    expect(viewFieldValuesFor(byId.get('inherited'), 'status-def', byId)).toEqual(['Inbox']);
+    expect(buildOutlinerRows(parent as any, byId).map((row) => row.id)).toEqual([
+      'inherited',
+      'authored',
+    ]);
+
+    byId.set('view', { ...view, children: ['filter'] });
+    byId.set('filter', makeNode('filter', '', {
+      type: 'filterRule',
+      parentId: 'view',
+      filterField: 'status-def',
+      filterOperator: 'contains',
+      filterValueLogic: 'any',
+      filterValues: ['Inbox'],
+    }));
+    const filtered = buildOutlinerRows(parent as any, byId);
+    expect(filtered[0]).toEqual({ id: 'inherited', type: 'content' });
+    expect(filtered[1]).toMatchObject({
+      type: 'filteredOut',
+      rows: [{ id: 'authored', type: 'content' }],
     });
   });
 

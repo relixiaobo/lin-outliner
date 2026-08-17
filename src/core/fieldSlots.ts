@@ -24,6 +24,11 @@ export interface NodeFieldSlot {
   readonly entryId?: NodeId;
 }
 
+export interface FieldSlotValueSource {
+  readonly entryId: NodeId;
+  readonly inherited: boolean;
+}
+
 interface CachedSlots {
   readonly node: FieldSlotNode;
   readonly directChildren: readonly (FieldSlotNode | undefined)[];
@@ -101,6 +106,48 @@ export function nodeFieldSlotById(source: FieldSlotSource, id: NodeId): NodeFiel
   if (!parsed) return undefined;
   return nodeFieldSlots(source, parsed.ownerId)
     .find((slot) => slot.id === id && slot.fieldDefId === parsed.fieldDefId);
+}
+
+/**
+ * Resolve the entry whose children a field presents as its value. A stored
+ * entry always wins. An empty projected slot may instead read its tag template
+ * entry as an inherited static default, unless that field has an acquisition-
+ * time auto-initialize strategy. The returned template id is read-only
+ * provenance: callers must never expose it as an instance-owned write target.
+ */
+export function fieldSlotValueSource(
+  source: FieldSlotSource,
+  slot: NodeFieldSlot,
+): FieldSlotValueSource | undefined {
+  if (slot.entryId) {
+    const entry = fieldSlotNode(source, slot.entryId);
+    return entry?.type === 'fieldEntry' && !fieldSlotNodeIsDeleted(source, entry.id)
+      ? { entryId: entry.id, inherited: false }
+      : undefined;
+  }
+  if (
+    slot.source !== 'tag'
+    || !slot.templateEntryId
+    || fieldDefinitionHasAutoInitialize(source, slot.fieldDefId)
+  ) return undefined;
+
+  const templateEntry = fieldSlotNode(source, slot.templateEntryId);
+  if (
+    templateEntry?.type !== 'fieldEntry'
+    || fieldSlotNodeIsDeleted(source, templateEntry.id)
+    || !templateEntry.children.some((childId) => (
+      Boolean(fieldSlotNode(source, childId))
+      && !fieldSlotNodeIsDeleted(source, childId)
+    ))
+  ) return undefined;
+  return { entryId: templateEntry.id, inherited: true };
+}
+
+export function fieldSlotHasInheritedDefault(
+  source: FieldSlotSource,
+  slot: NodeFieldSlot,
+): boolean {
+  return fieldSlotValueSource(source, slot)?.inherited === true;
 }
 
 /**
@@ -198,6 +245,20 @@ function activeFieldDefinition(source: FieldSlotSource, nodeId: NodeId): boolean
   if (nodeId.startsWith('sys:')) return true;
   const node = fieldSlotNode(source, nodeId);
   return node?.type === 'fieldDef' && !fieldSlotNodeIsDeleted(source, nodeId);
+}
+
+function fieldDefinitionHasAutoInitialize(source: FieldSlotSource, fieldDefId: NodeId): boolean {
+  const fieldDef = fieldSlotNode(source, fieldDefId);
+  if (fieldDef?.type !== 'fieldDef') return false;
+  const row = fieldDef.children
+    .map((childId) => fieldSlotNode(source, childId))
+    .find((child) => child?.type === 'defConfig' && child.configKey === 'autoInitialize');
+  return Boolean(row?.children.some((childId) => {
+    const value = fieldSlotNode(source, childId);
+    return value?.type === 'reference'
+      && Boolean(value.targetId)
+      && !fieldSlotNodeIsDeleted(source, value.id);
+  }));
 }
 
 export function tagDefinitionChainSpecificFirst(source: FieldSlotSource, tagId: NodeId): NodeId[] {

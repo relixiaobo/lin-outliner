@@ -1075,7 +1075,9 @@ export class DocumentService implements DocumentSystemHost {
           const kind = String(args.kind);
           const entryId = typeof args.entryId === 'string' ? args.entryId : undefined;
           let mutation: FieldSlotMutation;
-          if (kind === 'appendText') {
+          if (kind === 'acceptDefault') {
+            mutation = { kind };
+          } else if (kind === 'appendText') {
             mutation = {
               kind,
               text: String(args.text ?? ''),

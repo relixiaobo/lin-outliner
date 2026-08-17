@@ -1916,6 +1916,44 @@ button.outliner-table-column-kind:focus-visible {
   color: color-mix(in srgb, var(--text-primary) 28%, transparent);
 }
 
+.field-value-node-preview.has-inherited-default {
+  position: relative;
+}
+
+.field-value-inherited-default {
+  position: absolute;
+  inset: 0 0 auto var(--row-leading-width);
+  overflow: hidden;
+  min-height: var(--field-value-row-min-height);
+  border: 0;
+  padding: var(--space-hairline) 0;
+  background: transparent;
+  color: var(--text-tertiary);
+  font: inherit;
+  line-height: var(--line-content);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.field-value-inherited-default:disabled {
+  opacity: 1;
+}
+
+.field-value-inherited-default:hover:not(:disabled) {
+  color: var(--text-secondary);
+}
+
+.field-value-inherited-default:focus-visible {
+  border-radius: var(--radius-row);
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.field-value-outliner:has(.trailing-editor:focus-within) > .field-value-inherited-default {
+  visibility: hidden;
+}
+
 /* The field value column lets its outliner shrink within the entry grid; the
    per-value validation warning rides inline on each value row (see
    .field-value-hint), so the cell no longer reserves a trailing slot. */

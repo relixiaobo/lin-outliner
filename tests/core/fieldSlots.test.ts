@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   NodeFieldSlotCache,
+  fieldSlotValueSource,
   fieldSlotId,
   nodeFieldSlots,
   parseFieldSlotId,
@@ -134,6 +135,71 @@ describe('nodeFieldSlots', () => {
       'status-a',
       'status-b',
     ]);
+  });
+
+  test('reads static template values as inherited defaults until a stored entry exists', () => {
+    const nodes = source(
+      node('owner', { tags: ['tag'] }),
+      node('tag', { type: 'tagDef', children: ['template-entry'] }),
+      node('template-entry', {
+        type: 'fieldEntry',
+        parentId: 'tag',
+        fieldDefId: 'status-def',
+        children: ['template-value'],
+      }),
+      node('template-value', { parentId: 'template-entry' }),
+      node('status-def', { type: 'fieldDef' }),
+    );
+    const slot = nodeFieldSlots(nodes, 'owner')[0]!;
+
+    expect(fieldSlotValueSource(nodes, slot)).toEqual({
+      entryId: 'template-entry',
+      inherited: true,
+    });
+
+    const storedNodes = new Map(nodes);
+    storedNodes.set('owner', node('owner', { children: ['stored-entry'], tags: ['tag'] }));
+    storedNodes.set('stored-entry', node('stored-entry', {
+      type: 'fieldEntry',
+      parentId: 'owner',
+      fieldDefId: 'status-def',
+      children: ['stored-value'],
+    }));
+    storedNodes.set('stored-value', node('stored-value', { parentId: 'stored-entry' }));
+
+    expect(fieldSlotValueSource(storedNodes, nodeFieldSlots(storedNodes, 'owner')[0]!)).toEqual({
+      entryId: 'stored-entry',
+      inherited: false,
+    });
+  });
+
+  test('does not inherit a static default from an auto-initialized field', () => {
+    const nodes = source(
+      node('owner', { tags: ['tag'] }),
+      node('tag', { type: 'tagDef', children: ['template-entry'] }),
+      node('template-entry', {
+        type: 'fieldEntry',
+        parentId: 'tag',
+        fieldDefId: 'date-def',
+        children: ['template-value'],
+      }),
+      node('template-value', { parentId: 'template-entry' }),
+      node('date-def', { type: 'fieldDef', children: ['auto-init'] }),
+      node('auto-init', {
+        type: 'defConfig',
+        parentId: 'date-def',
+        configKey: 'autoInitialize',
+        children: ['auto-init-ref'],
+      }),
+      node('auto-init-ref', {
+        type: 'reference',
+        parentId: 'auto-init',
+        targetId: 'current-date-option',
+      }),
+      node('current-date-option', { type: 'systemOption' }),
+    );
+
+    expect(fieldSlotValueSource(nodes, nodeFieldSlots(nodes, 'owner')[0]!)).toBeUndefined();
   });
 
   test('round-trips encoded virtual row ids', () => {

@@ -888,6 +888,55 @@ describe('core search engine', () => {
     expect(isNotDefined.ok ? isNotDefined.hits.map((hit) => hit.nodeId) : []).not.toContain(active);
   });
 
+  test('reads inherited defaults in value queries, date ranges, text indexing, and sort', () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const tagId = mustFocus(core.createTag('project'));
+    const inherited = mustFocus(core.createNode(today, null, 'defaulted project record'));
+    const authored = mustFocus(core.createNode(today, null, 'defaulted project record'));
+    core.applyTag(inherited, tagId);
+    core.applyTag(authored, tagId);
+
+    const statusTemplateId = mustFocus(core.createFieldDef(tagId, 'Status', 'plain'));
+    const statusFieldDefId = core.state().nodes[statusTemplateId]!.fieldDefId!;
+    core.setFieldFreeTextValue(statusTemplateId, 'Inbox');
+    const dueTemplateId = mustFocus(core.createFieldDef(tagId, 'Due', 'date'));
+    const dueFieldDefId = core.state().nodes[dueTemplateId]!.fieldDefId!;
+    core.setFieldFreeTextValue(dueTemplateId, '2026-08-17');
+    addFieldValue(core, authored, statusFieldDefId, 'Zebra');
+
+    const hitIds = (query: SearchQueryExpr) => {
+      const result = runSearchExpr(core.state(), query);
+      expect(result.ok).toBe(true);
+      return result.ok ? result.hits.map((hit) => hit.nodeId) : [];
+    };
+
+    expect(hitIds({ kind: 'rule', op: 'FIELD_IS', fieldDefId: statusFieldDefId, text: 'Inbox' }))
+      .toContain(inherited);
+    expect(hitIds({ kind: 'rule', op: 'FIELD_IS_SET', fieldDefId: statusFieldDefId }))
+      .toEqual(expect.arrayContaining([inherited, authored]));
+    expect(hitIds({ kind: 'rule', op: 'IS_EMPTY', fieldDefId: statusFieldDefId }))
+      .not.toContain(inherited);
+    expect(hitIds({ kind: 'rule', op: 'DATE_OVERLAPS', fieldDefId: dueFieldDefId, text: '2026-08-17' }))
+      .toEqual(expect.arrayContaining([inherited, authored]));
+
+    const indexed = buildTextSearchIndex(core.state());
+    const indexedResult = runTransientSearchExpr(core.state(), {
+      kind: 'rule',
+      op: 'STRING_MATCH',
+      text: 'Inbox',
+    }, { textIndex: indexed });
+    expect(indexedResult.ok ? indexedResult.hits.map((hit) => hit.nodeId) : []).toContain(inherited);
+
+    const searchId = mustFocus(core.createSearchNode(core.projection().searchesId, null, {
+      title: 'Defaulted projects',
+      query: { kind: 'rule', op: 'STRING_MATCH', text: 'defaulted project record' },
+    }));
+    core.addSortRule(searchId, statusFieldDefId, 'asc');
+    const sorted = runSearchNode(core.state(), searchId);
+    expect(sorted.ok ? sorted.hits.map((hit) => hit.nodeId) : []).toEqual([inherited, authored]);
+  });
+
   test('executes field presence and scalar comparison query rules', () => {
     const core = Core.new();
     const today = core.projection().todayId;

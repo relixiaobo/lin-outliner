@@ -50,6 +50,7 @@ import { buildReferenceSummary, type ReferenceSummary } from './references';
 import { cappedMultiplier } from './ranking';
 import { collectDescendantIds, nodeIsInSubtree } from './treeUtils';
 import {
+  fieldSlotValueSource,
   NodeFieldSlotCache,
   tagDefinitionDependencyChainSpecificFirst,
   type NodeFieldSlot,
@@ -496,8 +497,9 @@ function sortValuesForNode(index: SearchIndex, node: SearchNode, fieldId: string
     return systemFieldValues(displayed, fieldId, index.nodes, { referenceSummary: references });
   }
 
-  const fieldEntryId = fieldSlotsForSearchNode(index, displayed)
-    .find((slot) => slot.fieldDefId === fieldId)?.entryId;
+  const slot = fieldSlotsForSearchNode(index, displayed)
+    .find((candidate) => candidate.fieldDefId === fieldId);
+  const fieldEntryId = slot ? fieldSlotValueSource(index.nodes, slot)?.entryId : undefined;
   const fieldEntry = fieldEntryId ? index.nodes.get(fieldEntryId) : undefined;
   if (fieldEntry?.type !== 'fieldEntry') return [];
   const values = fieldEntry.children
@@ -1467,8 +1469,10 @@ function comparableFieldScalars(index: SearchIndex, node: SearchNode, fieldDefId
 
 function fieldDateRanges(index: SearchIndex, node: SearchNode, fieldDefId: NodeId): DateRange[] {
   const entries = fieldSlotsForSearchNode(index, node)
-    .filter((slot) => slot.fieldDefId === fieldDefId && slot.entryId)
-    .map((slot) => index.nodes.get(slot.entryId!))
+    .filter((slot) => slot.fieldDefId === fieldDefId)
+    .map((slot) => fieldSlotValueSource(index.nodes, slot)?.entryId)
+    .filter((entryId): entryId is NodeId => Boolean(entryId))
+    .map((entryId) => index.nodes.get(entryId))
     .filter((entry): entry is Extract<SearchNode, { type: 'fieldEntry' }> => entry?.type === 'fieldEntry');
   return uniqueDateRanges(entries.flatMap((fieldEntry) =>
     fieldEntry.children.flatMap((valueId) => {
@@ -2009,7 +2013,8 @@ function fieldReads(index: SearchIndex, node: SearchNode): Array<{ name: string;
   return fieldSlotsForSearchNode(index, node)
     .map((slot) => {
       const fieldDef = index.nodes.get(slot.fieldDefId);
-      const fieldEntry = slot.entryId ? index.nodes.get(slot.entryId) : undefined;
+      const valueSource = fieldSlotValueSource(index.nodes, slot);
+      const fieldEntry = valueSource ? index.nodes.get(valueSource.entryId) : undefined;
       return {
         name: systemFieldLabel(slot.fieldDefId) || fieldDef?.content.text || fieldEntry?.content.text || 'Field',
         fieldDefId: slot.fieldDefId,
@@ -2023,7 +2028,10 @@ function fieldReads(index: SearchIndex, node: SearchNode): Array<{ name: string;
 
 function fieldValueNodes(index: SearchIndex, node: SearchNode): SearchNode[] {
   return fieldSlotsForSearchNode(index, node)
-    .flatMap((slot) => slot.entryId ? [index.nodes.get(slot.entryId)] : [])
+    .flatMap((slot) => {
+      const valueSource = fieldSlotValueSource(index.nodes, slot);
+      return valueSource ? [index.nodes.get(valueSource.entryId)] : [];
+    })
     .filter((entry): entry is Extract<SearchNode, { type: 'fieldEntry' }> => entry?.type === 'fieldEntry')
     .flatMap((fieldEntry) =>
       fieldEntry.children

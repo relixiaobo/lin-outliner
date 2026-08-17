@@ -1195,6 +1195,67 @@ describe('Core', () => {
     expect(nodeFieldSlots(core.state(), emptyNodeId)).toEqual([]);
   });
 
+  test('accepts an inherited static default once without replacing authored values', () => {
+    const core = Core.new();
+    const tagId = mustFocus(core.createTag('project'));
+    const acceptedNodeId = mustFocus(core.createNode(core.projection().todayId, null, 'Accepted project'));
+    const authoredNodeId = mustFocus(core.createNode(core.projection().todayId, null, 'Authored project'));
+    core.applyTag(acceptedNodeId, tagId);
+    core.applyTag(authoredNodeId, tagId);
+
+    const templateEntryId = mustFocus(core.createFieldDef(tagId, 'Status', 'plain'));
+    const fieldDefId = core.state().nodes[templateEntryId].fieldDefId!;
+    core.setFieldFreeTextValue(templateEntryId, 'Inbox');
+    expect(fieldEntries(core, acceptedNodeId)).toEqual([]);
+    expect(fieldEntries(core, authoredNodeId)).toEqual([]);
+
+    core.updateFieldSlot(acceptedNodeId, fieldDefId, { kind: 'acceptDefault' });
+    const acceptedEntry = fieldEntryForDefinition(core, acceptedNodeId, fieldDefId)!;
+    expect(fieldValueTexts(core, acceptedEntry.id)).toEqual(['Inbox']);
+    expect(acceptedEntry.id).not.toBe(templateEntryId);
+    expect(core.state().nodes[acceptedEntry.children[0]!]!.parentId).toBe(acceptedEntry.id);
+
+    const acceptedChildren = [...acceptedEntry.children];
+    core.updateFieldSlot(acceptedNodeId, fieldDefId, { kind: 'acceptDefault' });
+    expect(fieldEntryForDefinition(core, acceptedNodeId, fieldDefId)!.children).toEqual(acceptedChildren);
+
+    core.updateFieldSlot(authoredNodeId, fieldDefId, { kind: 'appendText', text: 'Active' });
+    core.updateFieldSlot(authoredNodeId, fieldDefId, { kind: 'acceptDefault' });
+    expect(fieldValueTexts(core, fieldEntryForDefinition(core, authoredNodeId, fieldDefId)!.id))
+      .toEqual(['Active']);
+
+    const templateValueId = core.state().nodes[templateEntryId].children[0]!;
+    core.applyNodeTextPatch(templateValueId, replaceAllRichTextPatch(plainText('Backlog')));
+    expect(fieldValueTexts(core, acceptedEntry.id)).toEqual(['Inbox']);
+  });
+
+  test('accepting an inherited option default applies reverse done-state mapping', () => {
+    const core = Core.new();
+    const tagId = mustFocus(core.createTag('task'));
+    const templateEntryId = mustFocus(core.createFieldDef(tagId, 'Status', 'options'));
+    const fieldDefId = core.state().nodes[templateEntryId].fieldDefId!;
+    const doneOptionId = mustFocus(core.registerCollectedOption(fieldDefId, 'Done'));
+    core.setTagConfig(tagId, {
+      showCheckbox: true,
+      doneStateEnabled: true,
+      doneMapChecked: [doneOptionId],
+    });
+    core.selectFieldOption(templateEntryId, doneOptionId);
+
+    const nodeId = mustFocus(core.createNode(core.projection().todayId, null, 'Ship it'));
+    core.applyTag(nodeId, tagId);
+    expect(core.state().nodes[nodeId].completedAt).toBeUndefined();
+
+    core.updateFieldSlot(nodeId, fieldDefId, { kind: 'acceptDefault' });
+
+    expect(core.state().nodes[nodeId].completedAt).toBeGreaterThan(0);
+    const acceptedEntry = fieldEntryForDefinition(core, nodeId, fieldDefId)!;
+    expect(core.state().nodes[acceptedEntry.children[0]!]!).toMatchObject({
+      type: 'reference',
+      targetId: doneOptionId,
+    });
+  });
+
   test('updates the requested duplicate stored slot by entry identity', () => {
     const core = Core.new();
     const nodeId = mustFocus(core.createNode(core.projection().todayId, null, 'Record'));

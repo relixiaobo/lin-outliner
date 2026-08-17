@@ -131,7 +131,11 @@ own slots in child order.
 `autoInitialize` value that resolves successfully at acquisition time, because
 date- and ancestor-dependent values must stay frozen to that moment and tree
 position. Static values stored on a tag template entry are not copied into the
-instance. Reapplying a tag remains idempotent. `remove_tag` removes the projected
+instance. An unmaterialized slot reads them as an inherited default unless the
+field has an `autoInitialize` strategy; accepting the default copies its value
+subtree into a new instance entry exactly once. A stored value always wins and
+never tracks a later template edit. Reapplying a tag remains idempotent.
+`remove_tag` removes the projected
 shape without deleting user data: an entry that already holds a value survives
 as an own field. Instance field entries carry no template provenance; tag and
 template provenance lives on the projected slot, while `templateId` remains only
@@ -142,7 +146,9 @@ boundary used by renderer, Table, and agent paths; paste enforces the same
 invariant inside its surrounding tree transaction. `appendText`,
 `appendReference`, and `selectOption` create a backing entry together with the
 first accepted value when needed; failed or empty writes leave a virtual slot
-unmaterialized. `commit` removes an empty tag-backed entry and returns the
+unmaterialized. `acceptDefault` materializes the current inherited static
+default and is a no-op once the slot has a stored entry. `commit` removes an
+empty tag-backed entry and returns the
 field to its virtual form. Empty own entries survive because their entry is the
 only record that the field exists. `clear_field_value` and removal of the final
 value enforce the same dematerialization rule. A mutation may carry the exact

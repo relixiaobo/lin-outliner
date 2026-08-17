@@ -10,10 +10,10 @@ import { requestFocusState, rowFocusTarget } from '../focus/focusModel';
 import { attachmentNodeInput } from '../interactions/attachmentIngest';
 import type { CommandRunner, NavigateRootOptions, TriggerState } from '../shared';
 import { OutlinerView } from './OutlinerView';
-import { buildOutlinerRows } from './row-model';
+import { buildOutlinerRows, viewFieldValuesFor } from './row-model';
 import { CheckboxFieldControl } from './CheckboxFieldControl';
 import { useT } from '../../i18n/I18nProvider';
-import type { NodeFieldSlot } from '../../../core/fieldSlots';
+import { fieldSlotHasInheritedDefault, type NodeFieldSlot } from '../../../core/fieldSlots';
 import { EMPTY_RICH_TEXT } from '../../api/types';
 
 interface FieldValueOutlinerProps {
@@ -60,6 +60,11 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
     fieldSlots: (nodeId) => fieldSlotsForIndex(props.index, nodeId),
   });
   const empty = rows.length === 0;
+  const inheritedDefault = fieldSlotHasInheritedDefault(props.index.byId, props.slot);
+  const owner = props.index.byId.get(props.ownerId);
+  const inheritedDefaultText = inheritedDefault && owner
+    ? viewFieldValuesFor(owner, props.slot.fieldDefId, props.index.byId).join(', ')
+    : '';
   const optionFieldConfig = props.optionField
     ? projectFieldConfig(props.index.byId, props.optionField)
     : undefined;
@@ -104,8 +109,18 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
   const showEmptyWholeFieldControl = Boolean(
     props.optionField
     && descriptor.isWholeFieldControl
-    && empty,
+    && empty
+    && !inheritedDefault
   );
+
+  const acceptInheritedDefault = () => {
+    if (!inheritedDefault || owner?.locked) return;
+    void props.run(() => api.updateFieldSlot(
+      props.ownerId,
+      props.slot.fieldDefId,
+      { kind: 'acceptDefault' },
+    ));
+  };
 
   const createWholeFieldValue = async (value: string) => {
     const valueId = freshNodeId();
@@ -213,9 +228,11 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
 
   return (
     <div
-      className={`field-value-outliner field-value-node-preview ${empty ? 'empty' : ''}`}
+      className={`field-value-outliner field-value-node-preview ${empty ? 'empty' : ''} ${inheritedDefault ? 'has-inherited-default' : ''}`}
       data-field-value
-      aria-label={empty ? props.placeholder : tf.fieldValueAriaLabel}
+      aria-label={inheritedDefaultText
+        ? tf.inheritedDefaultAriaLabel({ value: inheritedDefaultText })
+        : empty ? props.placeholder : tf.fieldValueAriaLabel}
     >
       {showEmptyWholeFieldControl ? (
         <CheckboxFieldControl
@@ -250,6 +267,18 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
           rowSemanticRole={props.embeddedInGridCell ? 'presentation' : undefined}
         />
       )}
+      {inheritedDefaultText ? (
+        <button
+          aria-label={tf.acceptInheritedDefault({ value: inheritedDefaultText })}
+          className="field-value-inherited-default"
+          disabled={owner?.locked}
+          onClick={acceptInheritedDefault}
+          title={tf.acceptInheritedDefault({ value: inheritedDefaultText })}
+          type="button"
+        >
+          {inheritedDefaultText}
+        </button>
+      ) : null}
     </div>
   );
 }

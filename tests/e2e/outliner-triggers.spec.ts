@@ -1953,6 +1953,55 @@ test.describe('tag-projected field slot interactions', () => {
     await openMockedApp(page, { optionsField: true });
   });
 
+  test('shows a retroactive inherited default and materializes it only when accepted', async ({ page }) => {
+    const slotId = await projectFieldFromTag(page, ids.alpha, ids.statusField, 'plain');
+    const beforeDefault = await e2eProjection(page);
+    const templateEntryId = beforeDefault.nodes.find((node) => (
+      node.parentId === ids.projectTag
+      && node.type === 'fieldEntry'
+      && node.fieldDefId === ids.statusField
+    ))?.id;
+    expect(templateEntryId).toBeTruthy();
+
+    await invokeMockCommand(page, 'create_node', {
+      parentId: templateEntryId,
+      index: null,
+      text: 'Inbox',
+    });
+
+    const ghost = row(page, slotId).locator('.field-value-inherited-default');
+    await expect(ghost).toHaveText('Inbox');
+    await expect.poll(() => storedFieldEntryId(page, ids.alpha, ids.statusField)).toBeUndefined();
+    for (const colorScheme of ['light', 'dark'] as const) {
+      await page.emulateMedia({ colorScheme });
+      const colors = await ghost.evaluate((element) => ({
+        actual: getComputedStyle(element).color,
+        expected: (() => {
+          const probe = document.createElement('span');
+          probe.style.color = 'var(--text-tertiary)';
+          document.body.append(probe);
+          const color = getComputedStyle(probe).color;
+          probe.remove();
+          return color;
+        })(),
+      }));
+      expect(colors.actual).toBe(colors.expected);
+    }
+
+    await ghost.click();
+    let entryId = '';
+    await expect.poll(async () => {
+      entryId = await storedFieldEntryId(page, ids.alpha, ids.statusField) ?? '';
+      return entryId;
+    }).not.toBe('');
+    await expect(row(page, slotId).locator('.field-value-inherited-default')).toHaveCount(0);
+    await expect.poll(async () => {
+      const projection = await e2eProjection(page);
+      const entry = projection.nodes.find((node) => node.id === entryId);
+      return entry?.children.map((childId) => projection.nodes.find((node) => node.id === childId)?.content.text);
+    }).toEqual(['Inbox']);
+  });
+
   test('virtual slots materialize nested fields, tags, and code blocks through field-slot commands', async ({ page }) => {
     const alphaSlot = await projectFieldFromTag(page, ids.alpha, ids.statusField, 'plain');
     await trailingEditor(page, alphaSlot).click();
