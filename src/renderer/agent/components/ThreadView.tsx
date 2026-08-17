@@ -194,7 +194,15 @@ interface ThreadViewProps {
   readonly onOpenSubagentTurnDetails?: (threadId: string, turnId: string) => void;
   readonly onReadToolOutput: (turnId: string, item: ThreadToolItem) => Promise<string | null>;
   readonly onReadToolArguments: (turnId: string, item: ThreadToolItem) => Promise<JsonValue | null>;
-  readonly onSend: (content: readonly ThreadUserContent[]) => Promise<Turn | null>;
+  /**
+   * `clientMessageId` is the transcript's, not the store's: the view has to
+   * recognize the Turn its own send becomes as soon as it renders, and it
+   * cannot do that with an id minted after the round trip it is waiting on.
+   */
+  readonly onSend: (
+    content: readonly ThreadUserContent[],
+    clientMessageId: string,
+  ) => Promise<Turn | null>;
   readonly onSubmitUserInput: (answers: readonly RequestUserInputAnswer[]) => Promise<void>;
 }
 
@@ -205,6 +213,9 @@ const TRANSCRIPT_ROW_ESTIMATE_PX = 104;
 const TRANSCRIPT_VIRTUAL_MIN_TURNS = 40;
 const TRANSCRIPT_VIRTUAL_OVERSCAN_PX = 720;
 const MAX_CACHED_THREAD_UI_STATES = 32;
+const SENT_TURN_SEARCH_DEPTH = 16;
+/** Past this, the anchor's travel reads as a blur and the cut is more honest. */
+const ANCHOR_TRAVEL_MAX_VIEWPORTS = 2;
 /**
  * A restore corrects itself against the anchored row, and each correction can
  * change what is rendered and therefore where that row sits. The cap releases a
@@ -259,9 +270,35 @@ interface PendingScrollRestore {
 }
 
 interface PendingSendAnchor {
+  /**
+   * The id this send carries into the host, and the only exact way back to the
+   * row it becomes. The Turn arrives on the `turn/started` notification a whole
+   * round trip before `turn/submit` answers, and the reader is looking at it
+   * that entire time — anchoring off the response instead left the message
+   * sitting wherever it landed and then moved the viewport a full screen under
+   * a reader who had already started reading. Matching the id is what lets the
+   * anchor run on the frame the message first exists, so a send costs exactly
+   * one movement. A Turn appended by anything else — a delegated Agent's result
+   * delivery, most of all — arrives in the same window and is not this send.
+   */
+  readonly clientMessageId: string;
+  /**
+   * The tail Turn at click time, which is how a steer is told from a start.
+   * A steer appends into the Turn already running — always the tail — and
+   * anchoring that Turn would drag the viewport to the top of a reply the
+   * reader is in the middle of. A start appends a Turn that did not exist here
+   * yet. Reading it from the transcript rather than from the `turn/submit`
+   * answer keeps the distinction available a round trip earlier.
+   */
+  readonly previousTailTurnId: string | null;
   readonly releaseFollowOnAnchor: boolean;
   readonly threadId: string;
   targetTurnId: string | null;
+}
+
+interface PendingSendEcho {
+  readonly clientMessageId: string;
+  readonly turn: Turn;
 }
 
 interface SendAnchorSpacer {
@@ -326,6 +363,104 @@ function cacheThreadScrollSnapshot(threadId: string, snapshot: ThreadScrollSnaps
  */
 function ownTranscriptRows(scroll: HTMLElement): HTMLElement[] {
   return [...scroll.querySelectorAll<HTMLElement>('[data-thread-turn-row]')];
+}
+
+function prefersReducedMotion(): boolean {
+  return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true;
+}
+
+/**
+ * The system's layout-motion duration, in milliseconds, read from the token.
+ *
+ * Derived rather than restated: `--motion-layout-duration` is what every other
+ * layout movement in the app is spent over, and a number typed here again would
+ * be the one that stops matching.
+ */
+function readMotionDuration(): number {
+  const declared = window.getComputedStyle(document.documentElement)
+    .getPropertyValue('--motion-layout-duration')
+    .trim();
+  const value = Number.parseFloat(declared);
+  if (!Number.isFinite(value)) return 0;
+  return declared.endsWith('ms') ? value : value * 1000;
+}
+
+/**
+ * The message the reader just sent, drawn from the composer instead of waited
+ * for from the host.
+ *
+ * Every chat surface the reader has ever used puts their message on screen on
+ * the keystroke; this one cleared the composer and showed nothing until
+ * `turn/submit` answered, so what they typed spent a round trip existing
+ * nowhere. This Turn is view-only and never reaches the store, so nothing
+ * downstream of the transcript can mistake it for canonical state. It is
+ * dropped in the same render that first sees the real Turn carrying this
+ * `clientId` — a swap of one row for an identical one, never two of the
+ * message and never a gap between them.
+ *
+ * `inProgress` is the truth about it: the send is in flight, and it makes the
+ * row render exactly as the canonical Turn will a moment later, working
+ * indicator included. Turn-level actions are already suppressed while a Turn is
+ * in progress, so none of them can address an id the host has never heard of.
+ */
+function optimisticSendTurn(
+  clientMessageId: string,
+  content: readonly ThreadUserContent[],
+  threadId: string,
+  modelProvider: string,
+  startedAt: number,
+): Turn {
+  const id = `pending:${clientMessageId}`;
+  const itemId = `pending-item:${clientMessageId}`;
+  return {
+    id,
+    items: [{
+      id: itemId,
+      type: 'userMessage',
+      provenance: { originThreadId: threadId, originTurnId: id, originItemId: itemId },
+      clientId: clientMessageId,
+      content,
+      acceptedAt: startedAt,
+    }],
+    itemsView: 'full',
+    provenance: { originThreadId: threadId, originTurnId: id, trigger: { kind: 'user' } },
+    status: 'inProgress',
+    error: null,
+    execution: {
+      modelProvider,
+      model: '',
+      reasoningEffort: 'medium',
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: null },
+      diagnosticsRef: null,
+    },
+    startedAt,
+    completedAt: null,
+    durationMs: null,
+  };
+}
+
+/**
+ * The Turn carrying the message this view sent, found by the id it minted.
+ *
+ * Searched from the end, because the Item is either in the Turn the send opened
+ * or — when the send steered a Turn already running — appended to that one; both
+ * are at the tail. The id is the whole test: everything else that appends a Turn
+ * in the same breath (a delegated Agent's result delivery, a notification) also
+ * arrives as a `userMessage`, and anchoring the viewport onto one of those would
+ * scroll the reader to somebody else's arrival.
+ */
+function sentTurnId(turns: readonly Turn[], clientMessageId: string): string | null {
+  // Bounded because this runs per layout pass while a send is in flight, and an
+  // Item that is not within a few Turns of the end is not this send's.
+  const oldest = Math.max(0, turns.length - SENT_TURN_SEARCH_DEPTH);
+  for (let index = turns.length - 1; index >= oldest; index -= 1) {
+    const turn = turns[index];
+    if (!turn) continue;
+    for (const item of turn.items) {
+      if (item.type === 'userMessage' && item.clientId === clientMessageId) return turn.id;
+    }
+  }
+  return null;
 }
 
 /**
@@ -517,10 +652,11 @@ export function ThreadView({
   const bottomScrollFrameRef = useRef<number | null>(null);
   const bottomScrollFrameReplayRef = useRef(false);
   const bottomPinDeferredRef = useRef(false);
-  const pendingSendAnchorFrameRef = useRef<number | null>(null);
   const sendAnchorLayoutDeferredRef = useRef(false);
+  const anchorTravelFrameRef = useRef<number | null>(null);
+  const anchorTravelRef = useRef<{ wrote: number } | null>(null);
   const scheduleBottomPinRef = useRef<(replayAfterAnchor?: boolean) => void>(() => undefined);
-  const scheduleSendAnchorLayoutRef = useRef<() => void>(() => undefined);
+  const applySendAnchorLayoutRef = useRef<() => void>(() => undefined);
   const scrollMetricsFrameRef = useRef<number | null>(null);
   const virtualScrollAdjustmentFrameRef = useRef<number | null>(null);
   const followRef = useRef(follow);
@@ -568,6 +704,33 @@ export function ThreadView({
   const latchedReasoning = useRef(new Set<string>()).current;
   const liveReasoningSeen = useRef(new Set<string>()).current;
   const activeTurn = useMemo(() => findActiveTurn(turns), [turns]);
+  // The optimistic row lives here and nowhere else: `turns` stays the canonical
+  // list every derivation below reads, and only what is drawn gets the echo
+  // appended. Suppressing it during render rather than clearing it in an effect
+  // is what makes the handover seamless — an effect would have to run after a
+  // commit that already held both rows.
+  const [pendingEcho, setPendingEcho] = useState<PendingSendEcho | null>(null);
+  const echoTurn = pendingEcho !== null && sentTurnId(turns, pendingEcho.clientMessageId) === null
+    ? pendingEcho.turn
+    : null;
+  const renderedTurns = useMemo(
+    () => (echoTurn === null ? turns : [...turns, echoTurn]),
+    [echoTurn, turns],
+  );
+  const clearPendingEcho = useCallback((clientMessageId: string) => {
+    setPendingEcho((current) => (current?.clientMessageId === clientMessageId ? null : current));
+  }, []);
+  // Releasing what the render is already ignoring. Never the other way round:
+  // an effect that decided whether to draw the echo would decide it one commit
+  // late, and that commit is the one holding both rows.
+  useEffect(() => {
+    if (pendingEcho === null || echoTurn !== null) return;
+    // Its measured height goes with it; the id is single-use, so left behind it
+    // is one dead entry per send in a per-Thread cache that never sheds them.
+    measuredTurnHeights.delete(pendingEcho.turn.id);
+    setPendingEcho(null);
+  }, [echoTurn, measuredTurnHeights, pendingEcho]);
+  useEffect(() => () => setPendingEcho(null), [threadId]);
   const activePlan = activeTurn && plan?.turnId === activeTurn.id ? plan : null;
   const activeWorkingTextEnabled = !waitingOnUserInput && providerRetry === null;
   const editableTurnId = useMemo(() => latestUserMessageTurnId(turns), [turns]);
@@ -606,16 +769,16 @@ export function ThreadView({
       ? t.agent.thread.providerRequired
       : null;
   const virtualLayout = useMemo(
-    () => buildVirtualTurnLayout(turns, measuredTurnHeights),
-    [measureVersion, measuredTurnHeights, turns],
+    () => buildVirtualTurnLayout(renderedTurns, measuredTurnHeights),
+    [measureVersion, measuredTurnHeights, renderedTurns],
   );
-  const virtualized = turns.length > TRANSCRIPT_VIRTUAL_MIN_TURNS;
+  const virtualized = renderedTurns.length > TRANSCRIPT_VIRTUAL_MIN_TURNS;
   const virtualRange = virtualized
     ? visibleTurnRange(virtualLayout, scrollMetrics.top, scrollMetrics.height)
-    : { end: turns.length, start: 0 };
-  const visibleTurns = turns.slice(virtualRange.start, virtualRange.end);
-  const virtualStateRef = useRef({ layout: virtualLayout, turns, virtualized });
-  virtualStateRef.current = { layout: virtualLayout, turns, virtualized };
+    : { end: renderedTurns.length, start: 0 };
+  const visibleTurns = renderedTurns.slice(virtualRange.start, virtualRange.end);
+  const virtualStateRef = useRef({ layout: virtualLayout, turns: renderedTurns, virtualized });
+  virtualStateRef.current = { layout: virtualLayout, turns: renderedTurns, virtualized };
 
   const setFollowValue = useCallback((nextFollow: boolean) => {
     followRef.current = nextFollow;
@@ -716,6 +879,71 @@ export function ThreadView({
     synchronizeScrollPosition(element);
   }, [synchronizeScrollPosition]);
 
+  const cancelAnchorTravel = useCallback(() => {
+    if (anchorTravelFrameRef.current !== null) {
+      window.cancelAnimationFrame(anchorTravelFrameRef.current);
+      anchorTravelFrameRef.current = null;
+    }
+    anchorTravelRef.current = null;
+  }, []);
+
+  /**
+   * Move the transcript to the anchor over time instead of between two frames.
+   *
+   * The travel is the scroll itself, tweened — NOT a transform over a settled
+   * scroll. A transformed descendant contributes its transformed geometry to
+   * the scroll container's overflow, so translating the content inflates
+   * `scrollHeight` while it plays; the runway spacer is computed from exactly
+   * that number, so the FLIP version of this quietly deleted its own runway and
+   * the scroll clamped back up — the anchor undid itself over about a dozen
+   * frames. Tweening the scroll keeps every measurement true at every instant,
+   * at the cost of the machinery seeing intermediate positions, which is why
+   * each frame goes through `setProgrammaticScrollTop` and why the reader's own
+   * scroll cancels the rest.
+   *
+   * Reduced motion, a distance too short to read, and a distance too long to
+   * follow all take the cut instead.
+   */
+  const playAnchorTravel = useCallback((scroll: HTMLDivElement, from: number, to: number) => {
+    cancelAnchorTravel();
+    const distance = to - from;
+    const duration = readMotionDuration();
+    if (
+      duration <= 0
+      || Math.abs(distance) < 1
+      || Math.abs(distance) > scroll.clientHeight * ANCHOR_TRAVEL_MAX_VIEWPORTS
+      || prefersReducedMotion()
+    ) {
+      setProgrammaticScrollTop(scroll, to);
+      return;
+    }
+    setProgrammaticScrollTop(scroll, from);
+    const startedAt = performance.now();
+    anchorTravelRef.current = { wrote: scroll.scrollTop };
+    const step = () => {
+      anchorTravelFrameRef.current = null;
+      const state = anchorTravelRef.current;
+      const element = scrollRef.current;
+      if (!state || element !== scroll) return;
+      // The reader moved during the travel. Their scroll outranks it.
+      if (Math.abs(scroll.scrollTop - state.wrote) > 1) {
+        cancelAnchorTravel();
+        return;
+      }
+      const progress = Math.min(1, (performance.now() - startedAt) / duration);
+      // Ease-out: the movement is an arrival, and arrivals decelerate.
+      const eased = 1 - (1 - progress) ** 3;
+      setProgrammaticScrollTop(scroll, from + distance * eased);
+      if (progress >= 1) {
+        cancelAnchorTravel();
+        return;
+      }
+      state.wrote = scroll.scrollTop;
+      anchorTravelFrameRef.current = window.requestAnimationFrame(step);
+    };
+    anchorTravelFrameRef.current = window.requestAnimationFrame(step);
+  }, [cancelAnchorTravel, setProgrammaticScrollTop]);
+
   const scheduleScrollMetrics = useCallback((element: HTMLDivElement) => {
     if (scrollMetricsFrameRef.current !== null) return;
     scrollMetricsFrameRef.current = window.requestAnimationFrame(() => {
@@ -761,7 +989,7 @@ export function ThreadView({
   const resumeDeferredDisclosureScrollWork = useCallback(() => {
     if (sendAnchorLayoutDeferredRef.current) {
       sendAnchorLayoutDeferredRef.current = false;
-      scheduleSendAnchorLayoutRef.current();
+      applySendAnchorLayoutRef.current();
     }
     if (bottomPinDeferredRef.current) {
       bottomPinDeferredRef.current = false;
@@ -870,6 +1098,12 @@ export function ThreadView({
       if (replayAfterAnchor) bottomPinDeferredRef.current = true;
       return;
     }
+    // A send owns the viewport from the click until its message is anchored,
+    // and its travel owns it until the movement finishes. The message renders
+    // before the anchor can measure it, and a pin in that gap parks it at the
+    // bottom edge for as long as the round trip lasts — which is precisely the
+    // position the anchor then has to undo.
+    if (pendingSendScrollRef.current || anchorTravelRef.current) return;
     const currentScroll = scrollRef.current;
     if (currentScroll && releaseUnsynchronizedUpwardScroll(currentScroll)) {
       bottomPinDeferredRef.current = false;
@@ -892,6 +1126,7 @@ export function ThreadView({
         if (replayPendingPin) bottomPinDeferredRef.current = true;
         return;
       }
+      if (pendingSendScrollRef.current || anchorTravelRef.current) return;
       if (releaseUnsynchronizedUpwardScroll(scroll)) return;
       setProgrammaticScrollTop(scroll, scroll.scrollHeight);
     });
@@ -904,13 +1139,30 @@ export function ThreadView({
       || !followRef.current
       || hasPendingAnchor()
       || pendingSendScrollRef.current
+      || anchorTravelRef.current
       || sendAnchorSpacerRef.current
       || releaseUnsynchronizedUpwardScroll(scroll)
     ) return;
     setProgrammaticScrollTop(scroll, scroll.scrollHeight);
   }, [hasPendingAnchor, releaseUnsynchronizedUpwardScroll, setProgrammaticScrollTop]);
 
-  const scheduleSendAnchorLayout = useCallback(() => {
+  /**
+   * Put the message this reader just sent at the top of the viewport.
+   *
+   * Synchronous, and called from layout effects, so the spacer it needs and the
+   * scroll that uses it land in the same pre-paint pass: React flushes a layout
+   * effect's state update before painting, so the re-entrant second pass still
+   * belongs to the frame the first one started. Run a frame apart instead — as
+   * a `requestAnimationFrame` chain — and each pass measures a DOM the previous
+   * one has already moved, which is how the anchor came to paint one frame
+   * ~40px past the top before settling back onto it.
+   *
+   * The pass writes the scroll only on its OWN numbers: when the spacer it
+   * computes is already the rendered one, `naturalTargetTop` is reachable by
+   * construction and the clamp below cannot bite. A pass that had to change the
+   * spacer returns instead and lets the re-render bring it back.
+   */
+  const applySendAnchorLayout = useCallback(() => {
     if (!pendingSendScrollRef.current && !sendAnchorSpacerRef.current) {
       sendAnchorLayoutDeferredRef.current = false;
       return;
@@ -919,95 +1171,112 @@ export function ThreadView({
       sendAnchorLayoutDeferredRef.current = true;
       return;
     }
-    if (pendingSendAnchorFrameRef.current !== null) return;
     sendAnchorLayoutDeferredRef.current = false;
-    pendingSendAnchorFrameRef.current = window.requestAnimationFrame(() => {
-      pendingSendAnchorFrameRef.current = null;
-      if (hasPendingAnchor()) {
-        sendAnchorLayoutDeferredRef.current = true;
+    const pending = pendingSendScrollRef.current;
+    const currentSpacer = sendAnchorSpacerRef.current;
+    const scroll = scrollRef.current;
+    // The Turn this send became, the moment it is in the transcript — which is
+    // one notification, not one round trip, after the click.
+    if (pending && pending.targetTurnId === null) {
+      const sent = sentTurnId(virtualStateRef.current.turns, pending.clientMessageId);
+      if (sent !== null && sent === pending.previousTailTurnId) {
+        // A steer. It has no anchor of its own, and the reply it joined goes on
+        // streaming under a reader who asked to stay with it.
+        pendingSendScrollRef.current = null;
+        scheduleBottomPin();
         return;
       }
-      const pending = pendingSendScrollRef.current;
-      const currentSpacer = sendAnchorSpacerRef.current;
-      const scroll = scrollRef.current;
-      const targetTurnId = pending?.targetTurnId ?? currentSpacer?.turnId;
-      if (!targetTurnId || !scroll) return;
+      pending.targetTurnId = sent;
+    }
+    const targetTurnId = pending?.targetTurnId ?? currentSpacer?.turnId;
+    if (!targetTurnId || !scroll) return;
+    if (
+      pending
+      && virtualStateRef.current.virtualized
+      && !measuredTurnHeights.has(targetTurnId)
+    ) return;
+    const row = scroll.querySelector<HTMLElement>(
+      `[data-thread-turn-row="${CSS.escape(targetTurnId)}"]`,
+    );
+    const target = row?.querySelector<HTMLElement>('.thread-user-message') ?? row;
+    let naturalTargetTop = currentSpacer?.turnId === targetTurnId
+      ? currentSpacer.targetTop
+      : null;
+    if (target) {
+      const scrollRect = scroll.getBoundingClientRect();
+      const targetRect = target.getBoundingClientRect();
+      const topInset = Number.parseFloat(window.getComputedStyle(scroll).paddingTop) || 0;
+      naturalTargetTop = Math.max(
+        0,
+        scroll.scrollTop + targetRect.top - scrollRect.top - topInset,
+      );
+    } else if (pending) {
+      // The row is the whole measurement. Anchoring off a cached top while the
+      // Turn is out of the DOM would scroll to where it used to be.
+      return;
+    }
+    if (naturalTargetTop === null) return;
+    const releaseFollowOnAnchor = pending?.releaseFollowOnAnchor
+      ?? currentSpacer?.releaseFollowOnAnchor
+      ?? false;
+    const renderedSpacer = scroll.querySelector<HTMLElement>('.thread-send-anchor-spacer');
+    const contentScrollHeight = Math.max(
+      0,
+      scroll.scrollHeight
+        - (renderedSpacer?.getBoundingClientRect().height ?? 0)
+        - disclosureAnchorRunwayRef.current,
+    );
+    const requiredScrollHeight = naturalTargetTop
+      + scroll.clientHeight
+      + (releaseFollowOnAnchor
+        ? TRANSCRIPT_BOTTOM_FOLLOW_THRESHOLD_PX + 2
+        : 0);
+    const nextSpacerHeight = Math.max(
+      0,
+      Math.ceil(requiredScrollHeight - contentScrollHeight),
+    );
+    if (nextSpacerHeight > 0) {
+      const nextSpacer = {
+        height: nextSpacerHeight,
+        releaseFollowOnAnchor,
+        targetTop: naturalTargetTop,
+        turnId: targetTurnId,
+      };
       if (
-        pending
-        && virtualStateRef.current.virtualized
-        && !measuredTurnHeights.has(targetTurnId)
-      ) return;
-      const row = scroll.querySelector<HTMLElement>(
-        `[data-thread-turn-row="${CSS.escape(targetTurnId)}"]`,
-      );
-      const target = row?.querySelector<HTMLElement>('.thread-user-message') ?? row;
-      let naturalTargetTop = currentSpacer?.turnId === targetTurnId
-        ? currentSpacer.targetTop
-        : null;
-      if (target) {
-        const scrollRect = scroll.getBoundingClientRect();
-        const targetRect = target.getBoundingClientRect();
-        const topInset = Number.parseFloat(window.getComputedStyle(scroll).paddingTop) || 0;
-        naturalTargetTop = Math.max(
-          0,
-          scroll.scrollTop + targetRect.top - scrollRect.top - topInset,
-        );
+        currentSpacer?.height !== nextSpacer.height
+        || currentSpacer.releaseFollowOnAnchor !== nextSpacer.releaseFollowOnAnchor
+        || currentSpacer.targetTop !== nextSpacer.targetTop
+        || currentSpacer.turnId !== nextSpacer.turnId
+      ) {
+        updateSendAnchorSpacer(nextSpacer);
+        return;
       }
-      if (naturalTargetTop === null) return;
-      const releaseFollowOnAnchor = pending?.releaseFollowOnAnchor
-        ?? currentSpacer?.releaseFollowOnAnchor
-        ?? false;
-      const renderedSpacer = scroll.querySelector<HTMLElement>('.thread-send-anchor-spacer');
-      const contentScrollHeight = Math.max(
-        0,
-        scroll.scrollHeight
-          - (renderedSpacer?.getBoundingClientRect().height ?? 0)
-          - disclosureAnchorRunwayRef.current,
-      );
-      const requiredScrollHeight = naturalTargetTop
-        + scroll.clientHeight
-        + (releaseFollowOnAnchor
-          ? TRANSCRIPT_BOTTOM_FOLLOW_THRESHOLD_PX + 2
-          : 0);
-      const nextSpacerHeight = Math.max(
-        0,
-        Math.ceil(requiredScrollHeight - contentScrollHeight),
-      );
-      if (nextSpacerHeight > 0) {
-        const nextSpacer = {
-          height: nextSpacerHeight,
-          releaseFollowOnAnchor,
-          targetTop: naturalTargetTop,
-          turnId: targetTurnId,
-        };
-        if (
-          currentSpacer?.height !== nextSpacer.height
-          || currentSpacer.releaseFollowOnAnchor !== nextSpacer.releaseFollowOnAnchor
-          || currentSpacer.targetTop !== nextSpacer.targetTop
-          || currentSpacer.turnId !== nextSpacer.turnId
-        ) {
-          updateSendAnchorSpacer(nextSpacer);
-          return;
-        }
-      } else if (currentSpacer?.turnId === targetTurnId) {
-        updateSendAnchorSpacer(null);
-        if (pending) return;
-      }
-      if (!pending) return;
-      const maximumTop = Math.max(0, scroll.scrollHeight - scroll.clientHeight);
-      const targetTop = Math.max(0, Math.min(
-        maximumTop,
-        naturalTargetTop,
-      ));
-      pendingSendScrollRef.current = null;
-      setProgrammaticScrollTop(scroll, targetTop);
-    });
-  }, [hasPendingAnchor, measuredTurnHeights, setProgrammaticScrollTop, updateSendAnchorSpacer]);
+    } else if (currentSpacer?.turnId === targetTurnId) {
+      updateSendAnchorSpacer(null);
+      if (pending) return;
+    }
+    if (!pending) return;
+    const maximumTop = Math.max(0, scroll.scrollHeight - scroll.clientHeight);
+    // Unreachable means this pass is reading a layout that is still moving —
+    // a row above still growing, an image still arriving. Writing the clamped
+    // top would paint the message past the top of the viewport and then walk it
+    // back; the next pass has the settled numbers.
+    if (naturalTargetTop > maximumTop + 1) return;
+    pendingSendScrollRef.current = null;
+    playAnchorTravel(scroll, scroll.scrollTop, Math.max(0, Math.min(maximumTop, naturalTargetTop)));
+  }, [
+    hasPendingAnchor,
+    measuredTurnHeights,
+    playAnchorTravel,
+    scheduleBottomPin,
+    setProgrammaticScrollTop,
+    updateSendAnchorSpacer,
+  ]);
 
   useLayoutEffect(() => {
     scheduleBottomPinRef.current = scheduleBottomPin;
-    scheduleSendAnchorLayoutRef.current = scheduleSendAnchorLayout;
-  }, [scheduleBottomPin, scheduleSendAnchorLayout]);
+    applySendAnchorLayoutRef.current = applySendAnchorLayout;
+  }, [scheduleBottomPin, applySendAnchorLayout]);
 
   const measureTurn = useCallback((turnId: string, height: number, element: HTMLDivElement) => {
     const current = measuredTurnHeights.get(turnId);
@@ -1041,8 +1310,10 @@ export function ThreadView({
       if (pendingAdjustment) pendingAdjustment.applyAtMeasureVersion = version + 1;
       return version + 1;
     });
-    if (pendingSendScrollRef.current?.targetTurnId === turnId) scheduleSendAnchorLayout();
-  }, [hasPendingAnchor, measuredTurnHeights, scheduleSendAnchorLayout]);
+    // Any measurement can be the one that settles the anchor's geometry, and
+    // the Turn it is waiting for may not be identified yet.
+    if (pendingSendScrollRef.current) applySendAnchorLayout();
+  }, [hasPendingAnchor, measuredTurnHeights, applySendAnchorLayout]);
 
   useLayoutEffect(() => {
     const pendingAdjustment = pendingVirtualScrollAdjustmentRef.current;
@@ -1070,7 +1341,7 @@ export function ThreadView({
       reconcileDisclosureAnchorRunway(scroll);
       updateScrollMetrics(scroll);
       attemptScrollRestore();
-      scheduleSendAnchorLayout();
+      applySendAnchorLayout();
       scheduleBottomPin();
     };
     synchronizeLayout();
@@ -1086,7 +1357,7 @@ export function ThreadView({
     attemptScrollRestore,
     reconcileDisclosureAnchorRunway,
     scheduleBottomPin,
-    scheduleSendAnchorLayout,
+    applySendAnchorLayout,
     updateScrollMetrics,
   ]);
 
@@ -1097,16 +1368,20 @@ export function ThreadView({
       || previousContent.turns !== turns;
     bottomPinContentRef.current = { itemCount, turns };
     attemptScrollRestore();
-    scheduleSendAnchorLayout();
+    applySendAnchorLayout();
     if (structuralItemAdded) pinStructuralBottomBeforePaint();
     scheduleBottomPin(replayBottomPin);
   }, [
     attemptScrollRestore,
+    // The echo is content this effect has to see: it changes what is drawn
+    // without changing the Item count or the canonical Turn list, and it is the
+    // row the anchor below is waiting for.
+    echoTurn,
     itemCount,
     pendingSendVersion,
     pinStructuralBottomBeforePaint,
     scheduleBottomPin,
-    scheduleSendAnchorLayout,
+    applySendAnchorLayout,
     sendAnchorSpacer,
     turns,
     virtualLayout.totalHeight,
@@ -1121,22 +1396,19 @@ export function ThreadView({
     bottomScrollFrameReplayRef.current = false;
     sendAnchorLayoutDeferredRef.current = false;
     scheduleBottomPinRef.current = () => undefined;
-    scheduleSendAnchorLayoutRef.current = () => undefined;
+    applySendAnchorLayoutRef.current = () => undefined;
     if (bottomScrollFrameRef.current !== null) {
       window.cancelAnimationFrame(bottomScrollFrameRef.current);
       bottomScrollFrameRef.current = null;
-    }
-    if (pendingSendAnchorFrameRef.current !== null) {
-      window.cancelAnimationFrame(pendingSendAnchorFrameRef.current);
-      pendingSendAnchorFrameRef.current = null;
     }
     if (scrollMetricsFrameRef.current !== null) {
       window.cancelAnimationFrame(scrollMetricsFrameRef.current);
       scrollMetricsFrameRef.current = null;
     }
+    cancelAnchorTravel();
     cancelPendingVirtualScrollAdjustment();
     setDisclosureAnchorRunway(0);
-  }, [cancelPendingVirtualScrollAdjustment, setDisclosureAnchorRunway]);
+  }, [cancelAnchorTravel, cancelPendingVirtualScrollAdjustment, setDisclosureAnchorRunway]);
 
   /**
    * The reader's last position, taken while the transcript is still mounted.
@@ -1281,6 +1553,8 @@ export function ThreadView({
       top: scroll.scrollTop,
     } : null;
     const pendingSend: PendingSendAnchor = {
+      clientMessageId: crypto.randomUUID(),
+      previousTailTurnId: turns.at(-1)?.id ?? null,
       releaseFollowOnAnchor: Boolean(
         scroll
         && scroll.scrollHeight - scroll.clientHeight > TRANSCRIPT_BOTTOM_FOLLOW_THRESHOLD_PX,
@@ -1290,6 +1564,7 @@ export function ThreadView({
     };
     bottomPinDeferredRef.current = false;
     sendAnchorLayoutDeferredRef.current = false;
+    cancelAnchorTravel();
     cancelPendingVirtualScrollAdjustment();
     cancelPendingAnchor();
     clearSendAnchorSpacer();
@@ -1301,21 +1576,48 @@ export function ThreadView({
     // follow on the way so the reply streams away below the fold.
     scrollRestoreRef.current = null;
     pendingSendScrollRef.current = pendingSend;
+    // Only a send that opens a Turn draws itself. A steer joins the Turn already
+    // running, where this row does not belong — it would read as a Turn of its
+    // own and then vanish into somebody else's when the Item landed.
+    if (activeTurn === null) {
+      setPendingEcho({
+        clientMessageId: pendingSend.clientMessageId,
+        turn: optimisticSendTurn(
+          pendingSend.clientMessageId,
+          submittedContent,
+          threadId,
+          configuration?.modelProvider ?? threadModelProvider,
+          Date.now(),
+        ),
+      });
+    }
     setFollowValue(true);
-    if (scroll) setProgrammaticScrollTop(scroll, scroll.scrollHeight);
+    // No jump to the end here. The message is about to be anchored to the top of
+    // the viewport, and a send that first slams to the bottom spends a movement
+    // arriving somewhere it does not stay. The end is still where an unanchorable
+    // send lands — see the bottom pin below, on the branch that gives up.
     sendingRef.current = true;
     setSending(true);
     setError(null);
     composerRef.current?.clear();
     updateAttachments((current) => current.filter((attachment) => !submittedAttachmentIds.has(attachment.id)));
     try {
-      const acceptedTurn = await onSend(submittedContent);
+      const acceptedTurn = await onSend(submittedContent, pendingSend.clientMessageId);
       if (pendingSendScrollRef.current === pendingSend) {
         if (acceptedTurn && pendingSend.threadId === threadId) {
-          pendingSend.targetTurnId = acceptedTurn.id;
-          setPendingSendVersion((version) => version + 1);
+          // Usually a no-op by now: the Turn reached the transcript on its
+          // notification and the anchor already ran against the rendered row.
+          // This is the fallback for a send whose Item never arrives that way —
+          // a deduplicated resend, a host that answers before it notifies.
+          if (pendingSend.targetTurnId === null) {
+            pendingSend.targetTurnId = acceptedTurn.id;
+            setPendingSendVersion((version) => version + 1);
+          }
         } else {
+          // Nothing to anchor, so the send falls back to its older meaning: the
+          // reader asked to be at the end of the conversation.
           pendingSendScrollRef.current = null;
+          scheduleBottomPin();
         }
       }
       for (const attachmentId of submittedAttachmentIds) releaseAttachmentUiState(
@@ -1325,6 +1627,9 @@ export function ThreadView({
       );
     } catch (sendError) {
       if (pendingSendScrollRef.current === pendingSend) pendingSendScrollRef.current = null;
+      // The message is going back into the composer, so it must leave the
+      // transcript: a refused send that kept its row would read as sent.
+      clearPendingEcho(pendingSend.clientMessageId);
       const currentScroll = scrollRef.current;
       if (currentScroll && currentScroll === scroll && previousViewport) {
         updateSendAnchorSpacer(previousViewport.spacer);
@@ -1684,7 +1989,7 @@ export function ThreadView({
         >
           <div className="thread-transcript-content" ref={transcriptContentRef}>
             {goal ? <ThreadGoalView goal={goal} /> : null}
-            {turns.length > 0 ? (
+            {renderedTurns.length > 0 ? (
               <div
                 className={`thread-transcript-turns${virtualized ? ' is-virtual' : ''}`}
                 data-virtualized={virtualized ? 'true' : 'false'}
@@ -1710,7 +2015,7 @@ export function ThreadView({
                           && turn.id === editableTurnId
                           && turn.status !== 'inProgress'}
                         composerEnabled={composerEnabled}
-                        isLastTurn={turnIndex === turns.length - 1}
+                        isLastTurn={turnIndex === renderedTurns.length - 1}
                         expandState={expandState}
                         getUserView={getUserView}
                         indexStore={indexStore}
