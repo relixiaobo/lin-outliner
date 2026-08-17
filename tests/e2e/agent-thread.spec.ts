@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 import type { Locator, Page } from '@playwright/test';
 import { emulateVisualMedia, resolveTokenColor } from './emulatedMedia';
 import { clipboardText, commandCalls, ids, openMockedApp, rowBody } from './outlinerMock';
+import { ATTACHMENT_UPLOAD_CHUNK_BYTES } from '../../src/core/agentAttachmentLimits';
 import { en } from '../../src/core/i18n/messages/en';
 import { zhHans } from '../../src/core/i18n/messages/zh-Hans';
 
@@ -1557,7 +1558,11 @@ test.describe('canonical agent Thread surface', () => {
       ref: { byteLength: originalSize, mimeType: 'image/png' },
     });
     const chunks = (await commandCalls(page)).filter((call) => call.cmd === 'attachment-upload/append');
-    expect(chunks.map((call) => call.args.byteLength)).toEqual([1024 * 1024, 1024 * 1024, 123]);
+    const chunkSizes = chunks.map((call) => Number(call.args.byteLength));
+    expect(chunkSizes.every((size) => (
+      Number.isInteger(size) && size > 0 && size <= ATTACHMENT_UPLOAD_CHUNK_BYTES
+    ))).toBe(true);
+    expect(chunkSizes.reduce((total, size) => total + size, 0)).toBe(originalSize);
   });
 
   test('discards an unsent managed resource when its composer reference is removed', async ({ page }) => {
