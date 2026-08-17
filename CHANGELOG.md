@@ -8,7 +8,16 @@ Entries reference the pull request that introduced them.
 
 ## [Unreleased]
 
-`main` is the `0.5.0` train; entries here move under the next tag.
+`main` is the `0.6.0` train; entries here move under the next tag.
+
+## [0.5.0] - 2026-08-17
+
+**A small train, one fix aboard:** when creating a row from the trailing input
+is rejected, Cmd+Enter now leaves the accurate rejection notice on screen
+instead of overwriting it with a second, misleading error. (Also rides: test
+hygiene for the upload-chunking e2e.) Upgrading from 0.4.0 carries no format
+change — your workspace loads as-is; upgraders from 0.3.x still get the 0.4.0
+fresh start.
 
 ### Fixed
 

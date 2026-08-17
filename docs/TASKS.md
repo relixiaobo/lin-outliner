@@ -75,12 +75,12 @@ theme-section entry below; this list is the ordering, not a second record):
   routed its intended owner elsewhere; give this lane the next free clone.
 
 **Design-gate queue** (PM bandwidth): _empty_ — `skill-path-ownership` shipped #513.
-**Release:** **v0.4.0 shipped 2026-08-17** (17 user-visible entries, #525–#548; the
-train held per the PM's 2026-08-16/17 calls for the #549 fresh-start fallback and the
-#548 checkbox fix, and the packaged build passed upgrade + fresh-install boot smokes
-before tagging). `main` is now the **0.5.0 train**. The #533 persistence-format
-break rides this release: v0.3.x workspaces are set aside as `*.incompatible-*`
-files and the app starts fresh — no manual wipe, no dead launch (#549).
+**Release:** **v0.5.0 shipped 2026-08-17** (one fix aboard — the #550 rejected-
+materialization guard, plus #551 test hygiene; PM called the two-PR train
+2026-08-17). v0.4.0 shipped earlier the same day with 17 entries (#525–#548) and
+the #533 persistence-format break (v0.3.x workspaces set aside as
+`*.incompatible-*`, fresh start, no dead launch — #549). `main` is now the
+**0.6.0 train**.
 
 `pi-ai-0.80-upgrade` shipped #348 (clean `Models` migration, not the interim `/compat` shim) — see *Recently completed*.
 `dream-channel-and-memory-retire` shipped in full (PR1 #324 + PR2 #328 + PR3 #329) — see *Recently completed*.
