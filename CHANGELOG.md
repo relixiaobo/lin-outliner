@@ -10,6 +10,31 @@ Entries reference the pull request that introduced them.
 
 `main` is the `0.6.0` train; entries here move under the next tag.
 
+### Fixed
+
+- **One old Agent history row no longer stops the app from starting (PR #555,
+  main)** — the installed app exited at launch, every launch, against a userData
+  directory that had been in daily use since 2026-08-05. PR #535 collapsed the
+  agent tools into `agent` / `agent_message` / `task_stop` and dropped
+  `spawn_agent` / `wait_agent` from the codec enum with no migration, which the
+  pre-release rule permits — but its escape hatch is "wipe dev userData", and the
+  daily-use install is never wiped. 14 Items recorded on 2026-08-10 kept the
+  retired names, history is append-only so those rows are never rewritten, and
+  the decode threw out of `ThreadHistoryProjectionStore.itemFromRow` — shared by
+  every read of the projection, with `listTurns` reached from startup
+  reconciliation, Thread resume, and rendering alike. A `throw` that reads as a
+  correct decode-boundary invariant was sitting on the launch path: A12 misplaced
+  by one layer. The read helper is now split from the write helper, so each gets
+  the failure mode its own path can afford. `listTurns`, `listItems`,
+  `unfinishedItems`, and the projected rollout snapshot omit an Item they cannot
+  decode and report it as a `thread-item-unreadable` persistence diagnostic
+  naming the Thread, Turn, Item, and stored type; terminal-Turn mutation checks
+  and rollout-recovered open Items still fail closed, because there the Item is
+  input to a write. Verified against the real broken userData: the app starts,
+  the fatal decode is gone, and the diagnostic records the omissions. The two
+  carry-forward rules are in `docs/lessons.md`; `docs/spec/agent-core.md` states
+  the read-degrades / write-fails-closed split.
+
 ## [0.5.0] - 2026-08-17
 
 **A small train, one fix aboard:** when creating a row from the trailing input
