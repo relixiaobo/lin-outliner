@@ -921,14 +921,6 @@ anything.
   **F11** `backlinks()` rebuilds the full reference summary per call (main-process, not
   hot — cache only if it shows up). **Dedup** still valid: `references.ts:387`
   `isMentionWord`/`caseFold` vs `textSearchAnalyzer.ts:59` `WORD_RE`/`normalizeSearchText`.
-- **flaky-pathless-image-chunking-e2e** (P3, *fast-track, no plan file*, filed 2026-07-31 at the
-  #464 gate) — `agent-thread.spec.ts` › *"streams a pathless image in bounded chunks and records
-  only a managed reference"* (anchor by title — the 2026-08-09 audit found every line ref in
-  these entries had drifted; it sat at :1452 that day) fails under full-suite parallel load but passes in isolation (1 fail
-  in the gate's 538-test run, then 1/1 pass solo; #464's own probe saw 3 pass / 2 fail across five
-  runs). The total byte count stays correct in the failing runs, so the suspicion is a
-  chunk-boundary timing assumption in the test rather than a streaming bug. Reproduce the boundary
-  split deterministically before touching product code.
 - **e2e-visual-media-baseline-fixture** (P3, *fast-track, no plan file*, filed 2026-08-03 at
   the #479 gate) — #479 gave the suite `tests/e2e/emulatedMedia.ts`, which pins all five
   visual preferences over CDP, but it is **opt-in per call site**: two specs call it
