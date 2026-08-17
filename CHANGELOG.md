@@ -8,7 +8,22 @@ Entries reference the pull request that introduced them.
 
 ## [Unreleased]
 
-`main` is the `0.4.0` train; entries here move under the next tag.
+`main` is the `0.5.0` train; entries here move under the next tag.
+
+## [0.4.0] - 2026-08-17
+
+**Your workspace starts fresh on this upgrade.** 0.4.0 changes the on-disk
+workspace format — saving is now an incremental append log instead of a
+full-document rewrite on every change. Content from 0.3.x does not carry over:
+on first launch your old workspace files are set aside next to the new ones
+(named `*.incompatible-*`, never deleted) and the app starts clean. Beyond
+that, this train is about speed and agents: streaming answers render at a
+fraction of their former cost, typing in large documents no longer pays
+per-keystroke full-document passes, delegated agent runs are now proper
+Subagents with their own work strip and detail view, Table view materializes
+the columns its records use, and tag templates finally propagate — editing a
+tag's fields updates every node already carrying it, with the crash on
+same-named fields fixed.
 
 ### Changed
 
@@ -519,6 +534,16 @@ Entries reference the pull request that introduced them.
   sibling, and the sibling's empty field retains its template origin, so
   `value_is_default` hides the source's default-equal value while leaving the
   sibling's empty field visible.
+- **Cmd+Enter on an empty trailing input now creates an unchecked checkbox row
+  (PR #548, codex)** — the trailing draft commit path intentionally skips
+  materializing an empty body, but the keyboard handler still issued
+  `cycle_done_state` against the draft's UUID, so core answered `node not
+  found` and the user saw an error. The handler now materializes the empty
+  body draft under its stable draft ID before cycling, and skips cycling
+  entirely for an empty field-value draft, whose synthetic row cannot become a
+  checkbox. Covered by an end-to-end regression test; gate ran typecheck +
+  `test:renderer` (1279) + the full trailing-expand e2e spec (25) green in an
+  isolated worktree.
 
 ### Internal
 

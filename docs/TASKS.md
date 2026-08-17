@@ -75,18 +75,12 @@ theme-section entry below; this list is the ordering, not a second record):
   routed its intended owner elsewhere; give this lane the next free clone.
 
 **Design-gate queue** (PM bandwidth): _empty_ — `skill-path-ownership` shipped #513.
-**Release:** v0.3.0 + v0.3.1 shipped 2026-08-10; `main` is the **0.4.0 train**,
-**frozen 2026-08-16** — #544 merged as its final load (14 user-visible entries,
-#525–#544). Note drafted by main, awaiting PM ratification; then tag + dial to
-0.5.0. **The note MUST lead with the #533 persistence-format break** (verified
-live 2026-08-16: a pre-#533 workspace fail-closes startup with `invalid
-workspace persistence revision`, and no startup-failure surface exists —
-`startup-window-first` is unbuilt): **PM ratified option B
-2026-08-16** and the detect-old-envelope → set-aside → fresh-start fallback
-shipped the same day (main-agent): upgrading v0.3.x users now get a fresh
-workspace with their old data set aside as `*.incompatible-*` files instead of
-a dead launch. The note still leads with the format break (fresh start = data
-does not carry over), but no manual wipe is required.
+**Release:** **v0.4.0 shipped 2026-08-17** (17 user-visible entries, #525–#548; the
+train held per the PM's 2026-08-16/17 calls for the #549 fresh-start fallback and the
+#548 checkbox fix, and the packaged build passed upgrade + fresh-install boot smokes
+before tagging). `main` is now the **0.5.0 train**. The #533 persistence-format
+break rides this release: v0.3.x workspaces are set aside as `*.incompatible-*`
+files and the app starts fresh — no manual wipe, no dead launch (#549).
 
 `pi-ai-0.80-upgrade` shipped #348 (clean `Models` migration, not the interim `/compat` shim) — see *Recently completed*.
 `dream-channel-and-memory-retire` shipped in full (PR1 #324 + PR2 #328 + PR3 #329) — see *Recently completed*.
@@ -1057,6 +1051,13 @@ One line per merge, newest first; the retrospective lives in the CHANGELOG entry
 and the merged PR, distilled rules in [`lessons.md`](lessons.md). Everything
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
+
+- **empty-trailing-checkbox-shortcut** (codex, PR #548, merged 2026-08-17 — fast-track,
+  no plan file) — Cmd+Enter on an empty trailing input materializes the body draft
+  under its stable ID before `cycle_done_state` (empty field-value drafts skip cycling),
+  so it creates an unchecked checkbox row instead of erroring `node not found`. Gate:
+  typecheck + `test:renderer` (1279) + the trailing-expand e2e spec (25) green in an
+  isolated worktree. Last load aboard v0.4.0.
 
 - **streaming-markdown-repair-cost** (codex-3, PR #547, merged 2026-08-15 — plan-track,
   plan archived) — the superlinear `remend` cost #539 left as ~95% of a streaming
