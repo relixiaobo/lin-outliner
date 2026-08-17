@@ -7,6 +7,13 @@ export const NODE_REFERENCE_GUIDANCE =
 export const FINAL_ANSWER_NODE_REFERENCE_GUIDANCE =
   'For final answers, never show %%node:id%% edit handles. Mention concrete nodes with [[node:^exact-id]]; the renderer resolves the current title. Use [[node:Display^...]] only when an explicit display label is needed.';
 
+export const VIEW_MODE_GUIDANCE = [
+  'For tabular data inside the document, put %%view:table%% on the owner line, make each row a direct child record, and store columns as Field:: values.',
+  'Do not represent a document table as space-aligned text or a Markdown table inside a code block.',
+  'When an existing owner line contains %%view:table%%, it is already a table the user sees; add rows as child records and columns as fields instead of restructuring it.',
+  'Keep small inline enumerations in list mode. Agent-settable view modes are list and table.',
+].join(' ');
+
 export const LIN_OUTLINE_CREATE_GUIDANCE = [
   'Outline format uses "- Title" lines with exactly 2 spaces per child level.',
   'It supports #tags, #中文 tags, [[#tag]] / #[[multi word tags]], Field:: value, references, nested children, search nodes, and [ ]/[x] checkbox state when the marker is alone or whitespace-separated from the title.',
@@ -15,6 +22,7 @@ export const LIN_OUTLINE_CREATE_GUIDANCE = [
   'Use child nodes for ordinary notes, task details, meeting notes, and explanatory body text. Use "Title - description" only when the user explicitly asks for a description/caption, when preserving an existing description, or when importing external metadata that belongs in the node description.',
   'Use Field:: values, #tags, and [ ]/[x] checkbox state conservatively: only when the user asks for structured fields/tags/tasks, when preserving existing structure, or when the outline must be filterable/searchable as that structure.',
   'Field:: writes resolve existing owner fields and document field definitions before creating new fields; existing field types are preserved and incompatible values are rejected.',
+  VIEW_MODE_GUIDANCE,
   DATE_FIELD_VALUE_GUIDANCE,
   'Do not include %%node:id%% markers when creating new nodes; those markers belong to node_read/node_edit protocol.',
 ].join(' ');
@@ -27,6 +35,7 @@ export const ANNOTATED_OUTLINE_EDIT_GUIDANCE = [
   'Keep field and field-value %%node:id%% markers when updating existing field/value lines; they are not redundant with the target node_id.',
   'Do not edit child structure through node_edit outline fragments. Use node_create for new children, node_edit move for reordering/reparenting, and node_delete for removals.',
   'Omitted fields and field values are preserved; delete them explicitly with node_delete by id.',
+  VIEW_MODE_GUIDANCE,
   'Treat %%node:id%% as protocol metadata, not user-visible node text.',
   FINAL_ANSWER_NODE_REFERENCE_GUIDANCE,
 ].join(' ');
@@ -114,7 +123,7 @@ export const NODE_EDIT_DESCRIPTION = [
   '',
   'Usage:',
   '- Set operation explicitly: replace_outline, move, merge, replace_with_reference, configure_definition, reuse_field_definition, or merge_definition.',
-  '- For operation "replace_outline", use node_read first, then pass exact old_string/new_string against the target node line, its field lines, field value lines, or saved-search config.',
+  '- For operation "replace_outline", use node_read first, then pass exact old_string/new_string against the target node line, its view directive, field lines, field value lines, or saved-search config.',
   '- For operation "configure_definition", target a tagDef or fieldDef node_id and pass definition_patch. Do not edit locked defConfig child rows directly.',
   '- For operation "reuse_field_definition", target a field entry node_id and pass target_definition_id to relink the entry to an existing field definition.',
   '- For operation "merge_definition", target the surviving tagDef/fieldDef node_id and pass duplicate definitions in merge_from_node_ids. Do not use ordinary merge for definitions.',
@@ -126,7 +135,7 @@ export const NODE_EDIT_DESCRIPTION = [
 ].join('\n');
 
 export const NODE_EDIT_NEW_STRING_PARAMETER_DESCRIPTION = [
-  'Replacement fragment for the target node line, field lines, field value lines, or saved-search config. It must leave the one-node editable outline parseable and may keep %%node:id%% markers for existing nodes.',
+  'Replacement fragment for the target node line, view directive, field lines, field value lines, or saved-search config. It must leave the one-node editable outline parseable and may keep %%node:id%% markers for existing nodes.',
   ANNOTATED_OUTLINE_EDIT_GUIDANCE,
   DATE_FIELD_VALUE_GUIDANCE,
 ].join(' ');

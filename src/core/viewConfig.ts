@@ -1,6 +1,15 @@
 import { nodeFieldSlots, type FieldSlotSource } from './fieldSlots';
 import type { DefConfigKey, NodeId, NodeType, ViewMode } from './types';
 
+export const RENDERABLE_VIEW_MODES = ['list', 'table'] as const satisfies readonly ViewMode[];
+export type RenderableViewMode = (typeof RENDERABLE_VIEW_MODES)[number];
+
+const RENDERABLE_VIEW_MODE_SET: ReadonlySet<string> = new Set(RENDERABLE_VIEW_MODES);
+
+export function isRenderableViewMode(value: string): value is RenderableViewMode {
+  return RENDERABLE_VIEW_MODE_SET.has(value);
+}
+
 export interface ViewTreeNode {
   id: NodeId;
   type?: NodeType;

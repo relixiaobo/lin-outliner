@@ -148,6 +148,8 @@ import {
   type FieldWriteTarget,
 } from '../../../core/fieldResolution';
 import { DONE_FIELD, isSystemFieldId } from '../../../core/systemFields';
+import { isRenderableViewMode } from '../../../core/viewConfig';
+import { validateViewModes } from './agentNodeToolView';
 
 export type { OutlinerToolHost } from './agentNodeToolTypes';
 
@@ -622,6 +624,13 @@ async function executeOutlineEdit(
   if (searchValidation) {
     return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', searchValidation.code, searchValidation.error, {
       instructions: searchValidation.instructions,
+      metrics: { durationMs: elapsed(started) },
+    }));
+  }
+  const viewValidation = validateViewModes(parsed.document);
+  if (viewValidation) {
+    return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', viewValidation.code, viewValidation.error, {
+      instructions: viewValidation.instructions,
       metrics: { durationMs: elapsed(started) },
     }));
   }
@@ -1840,6 +1849,13 @@ function createNodeCreateTool(host: OutlinerToolHost, options: NodeToolsOptions)
           metrics: { durationMs: elapsed(started) },
         }));
       }
+      const viewValidation = validateViewModes(parsed.document);
+      if (viewValidation) {
+        return nodeErrorResult(errorEnvelope('node_create', viewValidation.code, viewValidation.error, {
+          instructions: viewValidation.instructions,
+          metrics: { durationMs: elapsed(started) },
+        }));
+      }
       const outlineMutationScopeIssue = validateOutlineMutationScope(
         options,
         initialIndex,
@@ -2934,7 +2950,7 @@ async function applySingleNodeEdit(
       nodeId,
       config: searchNodeConfigFromSpec(spec),
     });
-    await applySearchViewSpec(host, nodeId, spec.view, collector);
+    await applyViewSpec(host, nodeId, spec.view, collector);
     const current = currentMutationIndex(host, collector).nodes.get(nodeId);
     if ((current?.description ?? null) !== (root.description ?? null)) {
       await handleMutation(host, collector, 'update_node_description', { nodeId, description: root.description ?? null });
@@ -2943,10 +2959,9 @@ async function applySingleNodeEdit(
     const updatedTagIds = await syncTags(host, nodeId, root.tags, tracker, collector);
     return { updatedTagIds };
   }
-  if (root.view) warnings.push('View directives are only persisted on search nodes today.');
-
   const updatedTagIds = await syncOutlineNodeInPlace(host, nodeId, root, tracker, warnings, collector);
   await upsertFields(host, nodeId, root.fields, tracker, warnings, collector);
+  await applyViewSpec(host, nodeId, root.view, collector);
   return { updatedTagIds };
 }
 
@@ -2966,7 +2981,7 @@ async function syncOutlineNodeInPlace(
       nodeId,
       config: searchNodeConfigFromSpec(spec),
     });
-    await applySearchViewSpec(host, nodeId, spec.view, collector);
+    await applyViewSpec(host, nodeId, spec.view, collector);
     const latest = currentMutationIndex(host, collector);
     const current = requiredNode(latest, nodeId);
     trackMatchedNode(tracker, nodeId);
@@ -2976,8 +2991,6 @@ async function syncOutlineNodeInPlace(
     await setCheckboxState(host, nodeId, node.checked, collector);
     return syncTags(host, nodeId, node.tags, tracker, collector);
   }
-  if (node.view) warnings.push('View directives are only persisted on search nodes today.');
-
   const currentIndex = currentMutationIndex(host, collector);
   const current = requiredNode(currentIndex, nodeId);
   if (current.type === 'reference') throw new Error('Outline edit cannot update a reference node root; use replace_with_reference_to.');
@@ -3951,7 +3964,7 @@ async function createOutlineNode(
       index,
       config: searchNodeConfigFromSpec(spec),
     }));
-    await applySearchViewSpec(host, createdId, spec.view, collector);
+    await applyViewSpec(host, createdId, spec.view, collector);
     tracker.createdNodeIds.push(createdId);
     const createdSearch = currentMutationIndex(host, collector).nodes.get(createdId);
     if (createdSearch) tracker.createdNodeIds.push(...createdSearch.children);
@@ -3961,8 +3974,6 @@ async function createOutlineNode(
     await applyTags(host, createdId, node.tags, tracker, collector);
     return createdId;
   }
-  if (node.view) warnings.push('View directives are only persisted on search nodes today.');
-
   const createdId = node.referenceTargetId
     ? await addReference(host, parentId, node.referenceTargetId, index, collector)
     : node.codeBlock
@@ -3991,6 +4002,7 @@ async function createOutlineNode(
   for (const child of node.children) {
     await createOutlineNode(host, child, createdId, null, tracker, warnings, collector);
   }
+  await applyViewSpec(host, createdId, node.view, collector);
   return createdId;
 }
 
@@ -4031,13 +4043,14 @@ async function addReference(
   return focusFromOutcome(await handleMutation(host, collector, 'add_reference', { parentId, targetId, index }));
 }
 
-async function applySearchViewSpec(
+async function applyViewSpec(
   host: OutlinerToolHost,
   nodeId: string,
   view: string | undefined,
   collector?: MutationEffectCollector,
 ) {
   if (!view) return;
+  if (!isRenderableViewMode(view)) throw new Error(`Unsupported view mode: ${view}`);
   await handleMutation(host, collector, 'set_view_mode', { nodeId, mode: view });
 }
 

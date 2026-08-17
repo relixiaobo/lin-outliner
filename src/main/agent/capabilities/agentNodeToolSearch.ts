@@ -55,6 +55,7 @@ import type {
 } from './agentNodeToolTypes';
 import { escapeSemanticText } from '../../../core/semanticIngest/inlineScanner';
 import { asRecord, clampInteger, firstDuplicate } from './agentNodeToolUtils';
+import { viewModeOf } from './agentNodeToolView';
 
 const QUERY_LOGICS = new Set<QueryLogic>(['AND', 'OR', 'NOT']);
 const QUERY_OP_SET = new Set<QueryOp>(QUERY_OPS);
@@ -255,7 +256,7 @@ export function searchSpecFromSavedSearch(index: ProjectionIndex, node: NodeProj
   }
   return {
     title: node.content.text.trim() || 'Search',
-    view: searchViewModeOf(index, node),
+    view: viewModeOf(index.nodes, node),
     query: resolved.query,
     warnings: [],
   };
@@ -299,7 +300,7 @@ export function resolveSearch(index: ProjectionIndex, params: NormalizedSingleSe
   return {
     source: 'saved',
     title: node.content.text.trim() || 'Search',
-    view: searchViewModeOf(index, node),
+    view: viewModeOf(index.nodes, node),
     searchNodeId,
     query: spec.query,
     queryTerms: searchNodeQueryTerms(index.projection, searchNodeId),
@@ -350,13 +351,6 @@ export function combineSearchQueryFragments(
 ): SearchQueryExpr {
   if (!commonQuery) return query;
   return { kind: 'group', logic: 'AND', children: [commonQuery, query] };
-}
-
-export function searchViewModeOf(index: ProjectionIndex, node: NodeProjection): string | undefined {
-  const viewDef = node.children
-    .map((childId) => index.nodes.get(childId))
-    .find((child) => child?.type === 'viewDef');
-  return viewDef?.viewMode;
 }
 
 export function runSearch(index: ProjectionIndex, search: {

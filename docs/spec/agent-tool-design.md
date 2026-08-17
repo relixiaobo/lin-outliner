@@ -57,6 +57,20 @@ Node writes always use document commands. Tool helpers never mutate Loro or a
 projection directly. Read and write scopes are explicit; an empty scope denies
 all access. Definition resolution is deterministic and rejects ambiguous names.
 
+Node outline text represents an owner's effective non-list view mode with
+`%%view:<mode>%%` on that owner's line. `node_read` and user-view context emit
+the same directive for ordinary and saved-search owners; `node_create` and
+`node_edit` persist it through `set_view_mode`. The agent-settable vocabulary is
+the renderer's shared renderable-mode list (`list` and `table` today). A
+core-known but unrendered mode fails as `view_mode_not_available`; an unknown
+mode fails as `invalid_view_mode` and names the allowed set.
+
+Tabular document content uses a parent with `%%view:table%%`, direct child
+records as rows, and `Field::` values as columns. An existing table owner keeps
+that structure when rows or columns are added. The Agent does not simulate a
+document table with space-aligned or Markdown text inside code blocks; small
+inline enumerations remain ordinary lists.
+
 `node_edit` uses expected revisions for optimistic conflict detection. Results
 return stable Node edit handles for subsequent tool calls; final user text uses
 normal Node references rather than internal edit syntax.
