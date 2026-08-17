@@ -8,10 +8,12 @@ export const FINAL_ANSWER_NODE_REFERENCE_GUIDANCE =
   'For final answers, never show %%node:id%% edit handles. Mention concrete nodes with [[node:^exact-id]]; the renderer resolves the current title. Use [[node:Display^...]] only when an explicit display label is needed.';
 
 export const VIEW_MODE_GUIDANCE = [
-  'For tabular data inside the document, put %%view:table%% on the owner line, make each row a direct child record, and store columns as Field:: values.',
+  'For tabular data inside the document, put %%view:table%% on the owner line, make each row a direct child record, and store each cell under its column\'s Field:: name.',
   'Do not represent a document table as space-aligned text or a Markdown table inside a code block.',
-  'When an existing owner line contains %%view:table%%, it is already a table the user sees; add rows as child records and columns as fields instead of restructuring it.',
-  'Keep small inline enumerations in list mode. Agent-settable view modes are list and table.',
+  'When creating a table owner and its rows in one outline, the rows\' Field:: values initialize the visible columns.',
+  'When an existing owner line contains %%view:table%%, it is already a table the user sees; add rows as child records and store their cells as Field:: values instead of restructuring it.',
+  'New Field:: values added while the owner remains in table mode do not automatically become visible columns; after adding a new field, change the owner to %%view:list%% and then back to %%view:table%% to initialize missing columns.',
+  'Leave small inline enumerations as ordinary lists. Agent-settable view modes are list and table.',
 ].join(' ');
 
 export const LIN_OUTLINE_CREATE_GUIDANCE = [

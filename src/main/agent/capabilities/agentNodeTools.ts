@@ -149,7 +149,7 @@ import {
 } from '../../../core/fieldResolution';
 import { DONE_FIELD, isSystemFieldId } from '../../../core/systemFields';
 import { isRenderableViewMode } from '../../../core/viewConfig';
-import { validateViewModes } from './agentNodeToolView';
+import { validateViewModes, viewModeOf } from './agentNodeToolView';
 
 export type { OutlinerToolHost } from './agentNodeToolTypes';
 
@@ -536,7 +536,7 @@ async function executeOutlineEdit(
   if (scopeIssue) {
     return nodeScopeError<NodeEditData>('node_edit', scopeIssue, started);
   }
-  requiredNode(index, params.nodeId);
+  const targetNode = requiredNode(index, params.nodeId);
   const currentRevision = editableOutlineRevision(index, params.nodeId);
   if (params.expectedRevision && params.expectedRevision !== currentRevision) {
     return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', 'revision_mismatch', `Node changed since it was read: ${params.nodeId}`, {
@@ -627,7 +627,9 @@ async function executeOutlineEdit(
       metrics: { durationMs: elapsed(started) },
     }));
   }
-  const viewValidation = validateViewModes(parsed.document);
+  const viewValidation = validateViewModes(parsed.document, {
+    existingRootMode: viewModeOf(index.nodes, targetNode),
+  });
   if (viewValidation) {
     return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', viewValidation.code, viewValidation.error, {
       instructions: viewValidation.instructions,
@@ -2950,7 +2952,7 @@ async function applySingleNodeEdit(
       nodeId,
       config: searchNodeConfigFromSpec(spec),
     });
-    await applyViewSpec(host, nodeId, spec.view, collector);
+    await applyViewSpec(host, nodeId, spec.view ?? 'list', collector);
     const current = currentMutationIndex(host, collector).nodes.get(nodeId);
     if ((current?.description ?? null) !== (root.description ?? null)) {
       await handleMutation(host, collector, 'update_node_description', { nodeId, description: root.description ?? null });
@@ -2961,7 +2963,7 @@ async function applySingleNodeEdit(
   }
   const updatedTagIds = await syncOutlineNodeInPlace(host, nodeId, root, tracker, warnings, collector);
   await upsertFields(host, nodeId, root.fields, tracker, warnings, collector);
-  await applyViewSpec(host, nodeId, root.view, collector);
+  await applyViewSpec(host, nodeId, root.codeBlock ? undefined : root.view ?? 'list', collector);
   return { updatedTagIds };
 }
 
@@ -4050,6 +4052,8 @@ async function applyViewSpec(
   collector?: MutationEffectCollector,
 ) {
   if (!view) return;
+  const index = currentMutationIndex(host, collector);
+  if (viewModeOf(index.nodes, requiredNode(index, nodeId)) === view) return;
   if (!isRenderableViewMode(view)) throw new Error(`Unsupported view mode: ${view}`);
   await handleMutation(host, collector, 'set_view_mode', { nodeId, mode: view });
 }

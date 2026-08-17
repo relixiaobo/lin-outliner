@@ -284,6 +284,8 @@ describe('agent node tools', () => {
     expect(nodeCreateOutlineDescription).toContain('Field:: writes resolve existing owner fields');
     expect(nodeCreateOutlineDescription).toContain('put %%view:table%% on the owner line');
     expect(nodeCreateOutlineDescription).toContain('Do not represent a document table');
+    expect(nodeCreateOutlineDescription).toContain('do not automatically become visible columns');
+    expect(nodeCreateOutlineDescription).toContain('change the owner to %%view:list%% and then back to %%view:table%%');
     expect(`${nodeCreate.description}${nodeCreateOutlineDescription}`.split('Markdown inline syntax creates rich-text marks').length - 1).toBe(1);
     expect(JSON.stringify(nodeCreate.parameters)).toContain("today's journal node, not the current UI selection");
     expect(nodeSearch.description).toContain('DONE_LAST_DAYS value:: 7');
@@ -1685,7 +1687,7 @@ describe('agent node tools', () => {
     const viewDef = search.children
       .map((childId) => core.state().nodes[childId]!)
       .find((child) => child.type === 'viewDef');
-    expect(viewDef?.viewMode).toBe('list');
+    expect(viewDef).toBeUndefined();
     const searchChildTypes = search.children.map((childId) => core.state().nodes[childId]!.type);
     expect(searchChildTypes).toContain('queryCondition');
     const resultRefs = search.children
@@ -1782,6 +1784,69 @@ describe('agent node tools', () => {
       .toEqual([expect.objectContaining({ displayField: state.nodes[fieldEntryId]!.fieldDefId })]);
   });
 
+  test('node_edit removes a table directive and re-entry initializes fields added later', async () => {
+    const core = Core.new();
+    const created = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
+      parent_id: core.projection().todayId,
+      outline: '- %%view:table%% Team\n  - Ada\n    - Role:: Engineer',
+    });
+    expect(created.ok).toBe(true);
+    const ownerId = created.data!.createdRootIds[0]!;
+
+    const added = await executeTool(core, 'node_create', {
+      parent_id: ownerId,
+      outline: '- Grace\n  - Role:: Designer\n  - Location:: London',
+    });
+    expect(added.ok).toBe(true);
+
+    const viewDef = () => {
+      const state = core.state();
+      return state.nodes[ownerId]!.children
+        .map((childId) => state.nodes[childId])
+        .find((child) => child?.type === 'viewDef')!;
+    };
+    const displayFieldNames = () => {
+      const state = core.state();
+      return viewDef().children
+        .map((childId) => state.nodes[childId])
+        .filter((child) => child?.type === 'displayField')
+        .map((display) => state.nodes[display.displayField!]!.content.text);
+    };
+
+    expect(displayFieldNames()).toEqual(['Role']);
+
+    const toList = await executeTool<{ afterOutline?: string }>(core, 'node_edit', {
+      node_id: ownerId,
+      old_string: '- %%view:table%% Team',
+      new_string: '- Team',
+    });
+    expect(toList.ok).toBe(true);
+    expect(toList.data!.afterOutline).not.toContain('%%view:');
+    expect(viewDef().viewMode).toBe('list');
+    expect(displayFieldNames()).toEqual(['Role']);
+
+    const toTable = await executeTool(core, 'node_edit', {
+      node_id: ownerId,
+      old_string: '- Team',
+      new_string: '- %%view:table%% Team',
+    });
+    expect(toTable.ok).toBe(true);
+    expect(viewDef().viewMode).toBe('table');
+    expect(displayFieldNames()).toEqual(['Role', 'Location']);
+  });
+
+  test('node_create treats an explicit effective list mode as a structural no-op', async () => {
+    const core = Core.new();
+    const created = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
+      parent_id: core.projection().todayId,
+      outline: '- %%view:list%% Plain',
+    });
+
+    expect(created.ok).toBe(true);
+    const ownerId = created.data!.createdRootIds[0]!;
+    expect(core.state().nodes[ownerId]!.children).toEqual([]);
+  });
+
   test('view directive validation distinguishes unavailable and unknown modes before mutation', async () => {
     const core = Core.new();
     const today = core.projection().todayId;
@@ -1797,15 +1862,37 @@ describe('agent node tools', () => {
     expect(core.state().nodes[today]!.children).toHaveLength(childCount);
 
     const ownerId = mustFocus(core.createNode(today, null, 'Notes'));
-    const invalid = await executeTool(core, 'node_edit', {
+    core.setViewMode(ownerId, 'cards');
+    const preserved = await executeTool(core, 'node_edit', {
       node_id: ownerId,
+      old_string: '- %%view:cards%% Notes',
+      new_string: '- %%view:cards%% Renamed notes',
+    });
+    expect(preserved.ok).toBe(true);
+    expect(core.state().nodes[ownerId]!.content.text).toBe('Renamed notes');
+    const preservedView = core.state().nodes[ownerId]!.children
+      .map((childId) => core.state().nodes[childId])
+      .find((child) => child?.type === 'viewDef');
+    expect(preservedView?.viewMode).toBe('cards');
+
+    const changedUnavailable = await executeTool(core, 'node_edit', {
+      node_id: ownerId,
+      old_string: '- %%view:cards%% Renamed notes',
+      new_string: '- %%view:calendar%% Renamed notes',
+    });
+    expect(changedUnavailable.ok).toBe(false);
+    expect(changedUnavailable.error?.code).toBe('view_mode_not_available');
+
+    const invalidOwnerId = mustFocus(core.createNode(today, null, 'Notes'));
+    const invalid = await executeTool(core, 'node_edit', {
+      node_id: invalidOwnerId,
       old_string: '- Notes',
       new_string: '- %%view:grid%% Notes',
     });
     expect(invalid.ok).toBe(false);
     expect(invalid.error?.code).toBe('invalid_view_mode');
     expect(invalid.error?.message).toContain('Allowed view modes: list, table');
-    expect(core.state().nodes[ownerId]!.children).toEqual([]);
+    expect(core.state().nodes[invalidOwnerId]!.children).toEqual([]);
   });
 
   test('node_create preview validates canonical saved search rules', async () => {

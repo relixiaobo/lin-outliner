@@ -58,14 +58,19 @@ Core already has the full mechanism; the gap is entirely in the agent layer.
 
 ### Principles
 
-1. **One mode-agnostic directive.** `%%view:<mode>%%` on the owner's line is
-   the single read/write representation for every view mode, on any node. A
-   future view adds a vocabulary entry, never new syntax.
+1. **One mode-agnostic directive.** `%%view:<mode>%%` on a directive-capable
+   owner's line is the single read/write representation for every view mode. A
+   future view adds a vocabulary entry, never new syntax. A complete edit
+   outline without a directive means the effective default, `list`;
+   code-block syntax preserves its current mode because it cannot carry the
+   directive.
 2. **Vocabulary from one source.** Agent-settable modes are the modes the
    renderer can render — a single exported constant (today `['list', 'table']`)
    the tool layer validates against. A core-known but unshipped mode
-   (`cards`, `calendar`) fails with a stable `view_mode_not_available` error;
-   an unknown string fails with `invalid_view_mode` naming the allowed set.
+   (`cards`, `calendar`) fails with a stable `view_mode_not_available` error
+   when newly requested; an edit may preserve an identical already-stored mode
+   so an unrelated change is not blocked. An unknown string fails with
+   `invalid_view_mode` naming the allowed set.
    Shipping a new view extends the constant and adds a guidance paragraph —
    nothing structural.
 3. **View config is core-defined nodes; the agent reads/writes them as typed
@@ -77,9 +82,12 @@ Core already has the full mechanism; the gap is entirely in the agent layer.
    field binding; cards → card fields) and slots into the same serialization,
    without new tools.
 4. **Guidance teaches the task mapping, not just syntax.** Tabular data inside
-   the document = records as children + `Field::` values (fields become
-   columns) + `%%view:table%%` on the parent — never ASCII or Markdown tables
-   inside code blocks. Small inline enumerations stay list.
+   the document = records as children + `Field::` names as column identities +
+   values as cells +
+   `%%view:table%%` on the parent — never ASCII or Markdown tables inside code
+   blocks. Fields present on entry initialize visible columns. New fields on an
+   existing table require a list-to-table re-entry until PR 2 exposes display
+   field configuration. Small inline enumerations stay list.
 
 ### Shape
 
@@ -96,15 +104,20 @@ PR 2 builds on PR 1 but PR 1 is fully shippable and useful alone.
 - **Write.** `node_create` / `node_edit` persist the parsed `view` on ordinary
   nodes through the `set_view_mode` command (generalize `applySearchViewSpec`
   into `applyViewSpec`; delete the three "only persisted on search nodes"
-  warning sites). Core's entering-table transaction — search materialize-first,
-  column auto-initialization in Schema order — comes for free because it lives
-  inside `setViewMode`.
-- **Validate** per Principle 2. Repeating the current mode is a no-op, matching
-  core.
+  warning sites). On a directive-capable root, `node_edit` treats an omitted
+  directive as `list`; it preserves code-block owners whose syntax cannot carry
+  one.
+  Core's entering-table transaction — search materialize-first, column
+  auto-initialization in Schema order — comes for free because it lives inside
+  `setViewMode`.
+- **Validate** per Principle 2. Repeating the current effective mode is a no-op,
+  avoiding an unnecessary `viewDef` on a list owner. An unavailable mode
+  is accepted only when the edited root already persists that exact mode.
 - **Teach.**
   - `agentNodeToolGuidance.ts`: the task mapping from Principle 4, plus the
     inverse ("an existing `%%view:table%%` node is a table the user sees —
-    add rows as child records and columns as fields, don't restructure it").
+    add rows as child records and values as fields, don't restructure it") and
+    the list-to-table re-entry needed to initialize newly used columns.
   - `agentNodeToolSchemas.ts`: mention the directive where `%%search%%` is
     already described.
   - `docs/spec/agent-tool-design.md` Outline section: document the directive,
@@ -112,7 +125,10 @@ PR 2 builds on PR 1 but PR 1 is fully shippable and useful alone.
 - **Tests.** Parser round-trip for ordinary nodes; `node_create` with
   `%%view:table%%` over field-bearing records yields display fields (assert
   core state); `node_read` and user-view serialization surface the directive;
-  rejection paths for `cards` and unknown strings.
+  deletion of the directive restores list; explicit list is structurally
+  idempotent; an existing unavailable mode survives unrelated edits; rejection
+  paths cover newly requested `cards` and unknown strings; table re-entry adds
+  newly used fields.
 
 ### PR 2 — view-config read/write
 
