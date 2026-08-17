@@ -29,7 +29,7 @@ test.describe('tag template seed backfill', () => {
     await openMockedApp(page);
   });
 
-  test('previews exact counts and waits for confirmation before adding seeds', async ({ page }) => {
+  test('previews exact counts, confirms writes, and skips zero-addition apply', async ({ page }) => {
     await invokeDocumentCommand(page, 'apply_tag', { nodeId: ids.alpha, tagId: ids.projectTag });
     await invokeDocumentCommand(page, 'apply_tag', { nodeId: ids.beta, tagId: ids.projectTag });
     await invokeDocumentCommand(page, 'create_node', {
@@ -82,5 +82,14 @@ test.describe('tag template seed backfill', () => {
       templateIds,
       templateIds,
     ]);
+
+    await tag.click({ button: 'right' });
+    await menu.getByRole('menuitem', { name: 'Apply template to tagged nodes' }).click();
+    await expect.poll(async () => (
+      (await commandCalls(page)).filter((call) => call.cmd === 'preview_tag_template_backfill').length
+    )).toBe(2);
+    await expect(dialog).toHaveCount(0);
+    expect((await commandCalls(page)).filter((call) => call.cmd === 'apply_template_to_tagged_nodes')).toHaveLength(1);
+    await expect(row(page, ids.alpha).getByRole('button', { name: 'Open project tag' })).toBeFocused();
   });
 });

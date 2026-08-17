@@ -763,7 +763,7 @@ frozen.
 | Click bullet | Open/drill into the node. |
 | Drag bullet | Move the row, expanding inside-drop targets. If the dragged row is part of a block selection, move the selected structural roots together in visible order as one undoable document operation; dropping on a trailing draft row appends to that scope. Only the nearest hovered row owns the drop guide line, including nested rows. Invalid or completed drags clear any guide line and keep block selection instead of focusing a single row. |
 | Applied tag display | Render tags inline after node text using nodex-style badges; do not render a second-line chip strip. |
-| Right-click an applied tag → **Apply template to tagged nodes** | Preview the exact number of missing freeform seed children and affected active nodes without writing. Show those counts in the shared confirmation dialog; only confirmation runs the single undoable backfill command. Existing `templateId` clones are not duplicated, and nodes in Trash are not included. |
+| Right-click an applied tag → **Apply template to tagged nodes** | Preview the exact number of missing freeform seed children and affected active, editable nodes without writing. Targets include direct applications and applications of tags whose extends chain contains this tag; nodes in Trash and locked nodes are excluded. Show positive counts in the shared confirmation dialog, and only confirmation runs the single undoable backfill command. When the addition count is zero, restore focus to the originating tag badge without opening a dialog or dispatching apply. Existing `templateId` clones are not duplicated. |
 | Applied tag bullet color | Color the node bullet from applied tag colors, using pie segments for multiple tags. |
 
 ## Trigger Matrix

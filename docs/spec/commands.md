@@ -139,13 +139,15 @@ template provenance lives on the projected slot, while `templateId` remains only
 on one-shot freeform seed clones.
 
 Freeform template children remain one-shot seeds. The read-only
-`preview_tag_template_backfill(tagId)` command computes how many active tagged
+`preview_tag_template_backfill(tagId)` command computes how many active, editable
 nodes are missing at least one seed and the total number of shallow clones that
-would be added. `apply_template_to_tagged_nodes(tagId)` recomputes that plan and
-adds only the missing clones, preserving inherited ancestor-first template order
-and deduplicating each node by `templateId`. The whole fan-out is one mutation and
-therefore one undo step. Nodes in Trash and protected document-system tag
-definitions are excluded.
+would be added. Targets include nodes carrying `tagId` directly and nodes whose
+applied tag extends `tagId`. `apply_template_to_tagged_nodes(tagId)` recomputes
+that plan and adds only the missing clones, preserving inherited ancestor-first
+template order and deduplicating each node by `templateId`. The whole fan-out is
+one mutation and therefore one undo step. Nodes in Trash, locked nodes, and
+protected document-system tag definitions are excluded from both counts and
+writes.
 
 `update_field_slot(ownerId, fieldDefId, mutation)` is the slot-aware value write
 boundary used by renderer, Table, and agent paths; paste enforces the same

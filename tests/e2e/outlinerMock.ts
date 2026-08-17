@@ -1321,7 +1321,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       appendChild(ids.schema, tagId);
       return outcome({ nodeId: tagId, selectAll: false });
     };
-    const tagTemplateContentNodeIds = (tagId: string) => {
+    const tagExtendsChain = (tagId: string) => {
       const chain: string[] = [];
       const visited = new Set<string>();
       let currentId: string | undefined = tagId;
@@ -1332,13 +1332,16 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         chain.push(currentId);
         currentId = current.extends;
       }
-      return chain.reverse().flatMap((chainTagId) => (
+      return chain;
+    };
+    const tagTemplateContentNodeIds = (tagId: string) => (
+      tagExtendsChain(tagId).reverse().flatMap((chainTagId) => (
         nodes.get(chainTagId)?.children.filter((childId) => {
           const type = nodes.get(childId)?.type;
           return type === undefined || type === 'codeBlock';
         }) ?? []
-      ));
-    };
+      ))
+    );
     const cloneTemplateContentNode = (parentId: string, templateId: string) => {
       const parent = nodes.get(parentId);
       const template = nodes.get(templateId);
@@ -1359,8 +1362,15 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     };
     const tagTemplateBackfillPlan = (tagId: string) => {
       const templateNodeIds = tagTemplateContentNodeIds(tagId);
+      const matchingAppliedTagIds = new Set([...nodes.values()]
+        .filter((node) => node.type === 'tagDef' && tagExtendsChain(node.id).includes(tagId))
+        .map((node) => node.id));
       const targets = [...nodes.values()].flatMap((node) => {
-        if (!node.tags.includes(tagId) || isInTrash(node.id)) return [];
+        if (
+          node.locked
+          || isInTrash(node.id)
+          || !node.tags.some((appliedTagId) => matchingAppliedTagIds.has(appliedTagId))
+        ) return [];
         if (node.type === 'tagDef' && node.id === ids.dayTag) return [];
         const existingTemplateIds = new Set(node.children.flatMap((childId) => {
           const templateId = nodes.get(childId)?.templateId;
@@ -1370,7 +1380,6 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         return missingTemplateNodeIds.length > 0 ? [{ nodeId: node.id, templateNodeIds: missingTemplateNodeIds }] : [];
       });
       return {
-        templateNodeCount: templateNodeIds.length,
         nodeCount: targets.length,
         additionCount: targets.reduce((count, target) => count + target.templateNodeIds.length, 0),
         targets,
@@ -3940,8 +3949,8 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         }
         if (cmd === 'create_tag') return clone(createTag(String(args.name)));
         if (cmd === 'preview_tag_template_backfill') {
-          const { templateNodeCount, nodeCount, additionCount } = tagTemplateBackfillPlan(String(args.tagId));
-          return clone({ templateNodeCount, nodeCount, additionCount });
+          const { nodeCount, additionCount } = tagTemplateBackfillPlan(String(args.tagId));
+          return clone({ nodeCount, additionCount });
         }
         if (cmd === 'apply_template_to_tagged_nodes') {
           const plan = tagTemplateBackfillPlan(String(args.tagId));

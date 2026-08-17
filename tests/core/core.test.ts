@@ -2969,14 +2969,25 @@ describe('Core', () => {
     expect(afterReapply.length).toBe(2);
   });
 
-  test('tag template backfill previews missing seeds and applies them as one undoable step', () => {
+  test('tag template backfill follows extends, skips locked nodes, and applies as one undoable step', () => {
     const core = Core.new();
     const tagId = mustFocus(core.createTag('project'));
+    const childTagId = mustFocus(core.createTag('task'));
+    core.setTagConfig(childTagId, { extends: tagId });
     const missingBothId = mustFocus(core.createNode(core.projection().todayId, null, 'Missing both'));
+    const derivedTagId = mustFocus(core.createNode(core.projection().todayId, null, 'Derived tag'));
+    const lockedId = mustFocus(core.createNode(core.projection().todayId, null, 'Locked'));
     const trashedId = mustFocus(core.createNode(core.projection().todayId, null, 'Trashed'));
     core.applyTag(missingBothId, tagId);
+    core.applyTag(derivedTagId, childTagId);
+    core.applyTag(lockedId, tagId);
     core.applyTag(trashedId, tagId);
     core.trashNode(trashedId);
+    const loro = (core as unknown as { loro: LoroOutlinerDocument }).loro;
+    const locked = structuredClone(core.state().nodes[lockedId]!);
+    locked.locked = true;
+    loro.writeNode(locked);
+    loro.commit('system:test-lock');
 
     const firstTemplateId = mustFocus(core.createNode(tagId, null, 'First seed'));
     const missingOneId = mustFocus(core.createNode(core.projection().todayId, null, 'Missing one'));
@@ -2984,9 +2995,8 @@ describe('Core', () => {
     const secondTemplateId = mustFocus(core.createNode(tagId, null, 'Second seed'));
 
     expect(core.previewTagTemplateBackfill(tagId)).toEqual({
-      templateNodeCount: 2,
-      nodeCount: 2,
-      additionCount: 3,
+      nodeCount: 3,
+      additionCount: 5,
     });
 
     core.applyTemplateToTaggedNodes(tagId);
@@ -2995,21 +3005,26 @@ describe('Core', () => {
       .map((childId) => core.state().nodes[childId]?.templateId)
       .filter((templateId): templateId is string => Boolean(templateId));
     expect(templateIdsFor(missingBothId)).toEqual([firstTemplateId, secondTemplateId]);
+    expect(templateIdsFor(derivedTagId)).toEqual([firstTemplateId, secondTemplateId]);
     expect(templateIdsFor(missingOneId)).toEqual([firstTemplateId, secondTemplateId]);
+    expect(core.state().nodes[lockedId].children).toEqual([]);
     expect(core.state().nodes[trashedId].children).toEqual([]);
     expect(core.previewTagTemplateBackfill(tagId)).toEqual({
-      templateNodeCount: 2,
       nodeCount: 0,
       additionCount: 0,
     });
 
     core.applyTemplateToTaggedNodes(tagId);
     expect(templateIdsFor(missingBothId)).toEqual([firstTemplateId, secondTemplateId]);
+    expect(templateIdsFor(derivedTagId)).toEqual([firstTemplateId, secondTemplateId]);
     expect(templateIdsFor(missingOneId)).toEqual([firstTemplateId, secondTemplateId]);
 
     core.undo();
     expect(templateIdsFor(missingBothId)).toEqual([]);
+    expect(templateIdsFor(derivedTagId)).toEqual([]);
     expect(templateIdsFor(missingOneId)).toEqual([firstTemplateId]);
+    expect(core.state().nodes[lockedId].children).toEqual([]);
+    expect(core.state().nodes[trashedId].children).toEqual([]);
   });
 
   test('replace node with reference creates backlinks and remains undoable', () => {

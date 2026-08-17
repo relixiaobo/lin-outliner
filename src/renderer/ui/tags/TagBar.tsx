@@ -80,10 +80,20 @@ function TagBadge({ nodeId, tag, index, run, onRoot }: TagBadgeProps) {
     setMenu({ x: event.clientX, y: event.clientY });
   };
 
+  const badgeFocusTarget = () => (
+    badgeRef.current?.querySelector<HTMLElement>('.tag-badge-label') ?? badgeRef.current
+  );
+
   const previewTemplateBackfill = () => {
     setMenu(null);
     void run(async () => {
-      setBackfillPreview(await api.previewTagTemplateBackfill(tag.id));
+      const preview = await api.previewTagTemplateBackfill(tag.id);
+      if (preview.additionCount === 0) {
+        setBackfillPreview(null);
+        badgeFocusTarget()?.focus();
+      } else {
+        setBackfillPreview(preview);
+      }
       return commandRunnerNoop();
     });
   };
@@ -177,7 +187,7 @@ function TagBadge({ nodeId, tag, index, run, onRoot }: TagBadgeProps) {
           })}
           onCancel={() => setBackfillPreview(null)}
           onConfirm={applyTemplateBackfill}
-          restoreFocus={() => badgeRef.current?.querySelector<HTMLElement>('.tag-badge-label') ?? badgeRef.current}
+          restoreFocus={badgeFocusTarget}
           title={t.tags.applyTemplateTitle({ label })}
         />,
         document.body,

@@ -223,7 +223,6 @@ export type FieldSlotMutation =
   | { kind: 'commit'; entryId?: NodeId };
 
 export interface TagTemplateBackfillPreview {
-  readonly templateNodeCount: number;
   readonly nodeCount: number;
   readonly additionCount: number;
 }
@@ -3298,12 +3297,12 @@ export class Core {
   previewTagTemplateBackfill(tagId: string): TagTemplateBackfillPreview {
     this.refreshStateFromLoro();
     ensureTagDefinition(this.stateValue, tagId);
-    const { templateNodeCount, nodeCount, additionCount } = buildTagTemplateBackfillPlan(
+    const { nodeCount, additionCount } = buildTagTemplateBackfillPlan(
       this.stateValue,
       tagId,
       this.protectedDocumentSystemTagIds(),
     );
-    return { templateNodeCount, nodeCount, additionCount };
+    return { nodeCount, additionCount };
   }
 
   applyTemplateToTaggedNodes(tagId: string): CommandOutcome {
@@ -6157,10 +6156,10 @@ function buildTagTemplateBackfillPlan(
   const templateNodeIds = tagTemplateContentNodeIds(state, tagId);
   const targets: TagTemplateBackfillTarget[] = [];
   let additionCount = 0;
-  for (const nodeId of findNodesWithTag(state, tagId)) {
+  for (const nodeId of findNodesWithTagInExtendsChain(state, tagId)) {
     if (protectedNodeIds.has(nodeId)) continue;
     const node = state.nodes[nodeId];
-    if (!node) continue;
+    if (!node || node.locked || isInternalConfigNode(node)) continue;
     const existingTemplateIds = new Set(node.children
       .map((childId) => state.nodes[childId]?.templateId)
       .filter((templateId): templateId is NodeId => Boolean(templateId)));
@@ -6172,16 +6171,24 @@ function buildTagTemplateBackfillPlan(
     targets.push({ nodeId, templateNodeIds: missingTemplateNodeIds });
   }
   return {
-    templateNodeCount: templateNodeIds.length,
     nodeCount: targets.length,
     additionCount,
     targets,
   };
 }
 
-function findNodesWithTag(state: DocumentState, tagId: string) {
+function findNodesWithTagInExtendsChain(state: DocumentState, tagId: string) {
+  const matchingAppliedTagIds = new Set(Object.values(state.nodes)
+    .filter((node) => (
+      node.type === 'tagDef'
+      && getExtendsChain(state, node.id).includes(tagId)
+    ))
+    .map((node) => node.id));
   return Object.values(state.nodes)
-    .filter((node) => node.tags.includes(tagId) && !isInTrash(state, node.id))
+    .filter((node) => (
+      !isInTrash(state, node.id)
+      && node.tags.some((appliedTagId) => matchingAppliedTagIds.has(appliedTagId))
+    ))
     .map((node) => node.id);
 }
 
