@@ -71,7 +71,11 @@ theme-section entry below; this list is the ordering, not a second record):
   as inherited ghosts) and PR 3 (seed backfill action).
 - **Lane D — test-signal infrastructure**: **still unclaimed and now the oldest
   untouched lane** — e2e stability, starting with the visual-media baseline fixture
-  (`test.extend` default), then the run-dependent flaky set as one problem. Wave 1
+  (`test.extend` default), then the run-dependent flaky set as one problem. The
+  `thread-fold-e2e-failure` P2 red resolved with #544's presentation rewrite
+  (verified 3/3 on `main` 2026-08-17; item closed), so the lane is pure
+  infrastructure again — and it inherits the rotted real-Electron smoke suite
+  (see `smoke-suite-repair-and-freeze-wiring` under deferred follow-ups). Wave 1
   routed its intended owner elsewhere; give this lane the next free clone.
 
 **Design-gate queue** (PM bandwidth): _empty_ — `skill-path-ownership` shipped #513.
@@ -201,7 +205,12 @@ before any directional/security-sensitive build.
   `wait_agent` empty-final-text edge is answered by that plan's
   `empty-final-report` fixture under AC-7) — remaining verification
   tails from the prime-agent design study: (1) an untrusted-data framing audit
-  of existing injection surfaces; (2) the queued behavior-repetition notice
+  of existing injection surfaces — the 2026-08-17 audit located the prior art
+  and the concrete gap: `thread/subagentOutput.ts` (`scanSubagentOutput` /
+  `INSTRUCTION_MARKER`) is the one real wrap-in-warning implementation, while
+  `web_fetch` results reach the model with no framing at all
+  (`agentWebTools.ts` / `agentProviderPayload.ts` have zero untrusted labeling);
+  (2) the queued behavior-repetition notice
   (same action + same result ≥ 2 → one bounded nudge; evidence: 100 identical
   `web_fetch` failures with 17 consecutive retries in the measured rollouts).
 - **agent-canonical-tool-call-history** (P1, `done` 2026-08-05; plan PR #482,
@@ -414,9 +423,12 @@ see *Recently completed*.
   building. See `docs/plans/agent-self-modification.md`. **Refresh before build
   (2026-08-09 audit): ~60% of the plan describes removed code** — the
   `codex_app.configuration_*` tools (zero hits; removed #333), delivery unit 1 (shipped
-  #153, removed #333 — the plan does not know), and a lifecycle-hook list claiming
-  `turnAdmitted`/`turnErrored` seams that do not exist (`ExtensionRegistry.ts:39-127`
-  exposes seven others). §Configuration ownership (`AgentConfigurationLoader.ts:137,141`)
+  #153, removed #333 — the plan does not know), and a lifecycle-hook list whose premise the
+  2026-08-17 audit found wrong outright: `AgentCoreExtension`
+  (`src/core/agent/extensions.ts`) declares 18 optional hooks, and the two the
+  plan says are missing have present equivalents (`contributeTurnAdmission`,
+  `onTurnError`) — the sentence was wrong when written, strike it rather than
+  refresh it. §Configuration ownership (`AgentConfigurationLoader.ts:137,141`)
   and §Recovery semantics are intact; rewrite the rest around the `file_edit` +
   validated-pipeline alternative this entry already names.
 - **agent-generative-ui** (P3, M1/M2, directional CSP/A3 gate) — Claude-style custom
@@ -471,7 +483,8 @@ see *Recently completed*.
 - **computer-pilot-managed-skill** (P3, `draft`, *no plan file*) — ship macOS
   computer-use as a managed-Skill catalog entry (`computer-pilot` / `cu`) plus a
   `ManagedSkillShellEnvironment` contributor (env + PATH segment + per-Turn output dir —
-  the `browserPilotHost.ts` shape, ~200 lines); visual results reach the model through
+  the `browserPilotHost.ts` shape, ~200 lines; note the registry lives at
+  `src/main/managedSkillShellEnvironment.ts`, not under `src/main/agent/`); visual results reach the model through
   existing `file_read` image content. Artifact durability rides the tool-agnostic
   **agent-tool-artifact-resources** item under standalone agent items.
 Standalone agent items (not part of the program):
@@ -496,11 +509,17 @@ Standalone agent items (not part of the program):
   Add Windows ACL hardening if/when Windows becomes a supported target. See
   `[[agent-secrets-plaintext-decision]]` rationale.
 - **agent-tool-artifact-resources** (P3, `draft`, *no plan file* — re-filed 2026-08-09;
-  the browser-control close-out explicitly recommended boarding this tool-agnostically
-  and it never was) — tool artifacts (screenshots, PDFs, downloads) become durable
-  Thread resources readable by `file_read` and pruned by the resource system, plus a
-  per-Turn output root. Not browser-specific; also carries the artifact story for
-  **computer-pilot-managed-skill** above.
+  **narrowed by the 2026-08-17 audit**: the image half shipped with #490's line —
+  `persistOutputImage` / `persistOutputResource` (`runtime/types.ts`,
+  `TurnLifecycle.ts`) mint durable artifact references that `file_read` resolves
+  to a materialized path, and a per-Turn output root exists for managed Skills
+  (`browserPilotHost.ts` `prepareBrowserPilotOutputDirectory`,
+  `<scratch>/browser-pilot/<threadId>/<turnId>`)) — the remaining gap is
+  **non-image** artifacts: `web_fetch` downloads and generic tool outputs still
+  land in flat per-workspace scratch dirs (`agent-web-fetch`,
+  `agent-tool-outputs` — `agentTools.ts` / `agentLocalTools.ts`) with no
+  resource registration and no pruning. Not browser-specific; also carries the
+  artifact story for **computer-pilot-managed-skill** above.
 - **agent-dream-followups** — **REMOVED 2026-08-03.** Seven polish items for a subsystem
   that no longer exists: `dream-channel-and-memory-retire` retired Dream in full (#324, #328,
   #329) and `rg -i dream src/` is empty. It survived the retirement because nothing links a
@@ -607,9 +626,12 @@ archived `done` (see Recently completed). Remaining active work:
   selection extract in the floating editor toolbar. Destination policy
   **PM-ratified 2026-08-06: option A** (per-tag `defaultExtractParentId`). See
   `docs/plans/floating-toolbar-polish.md`. **2026-08-09 audit: VALID** (registry does
-  not claim at-caret surfaces, `action-registry.md:296`); two stale refs at build:
-  `TextMarkKind` is `types.ts:213` (not :110) and the Heading icon source is
-  `icons.ts:75` (`AgentMarkdown.tsx` is gone); mirror the registry `addTag`
+  not claim at-caret surfaces, `action-registry.md:296`); two refs re-verified 2026-08-17 (symbol-anchored;
+  the old line numbers had drifted again — the authoring rule exists for a reason):
+  `TextMarkKind` in `src/core/types.ts` already includes `'headingMark'`, and the icon
+  is `HeadingIcon` (`Heading1`) in `src/renderer/ui/icons.ts`; `headingMark` is fully
+  plumbed through schema/codec/paste — the floating toolbar is the only surface not
+  exposing it, so the gap is purely presentational; mirror the registry `addTag`
   create-then-apply candidate policy in the `#`-extract tag pick.
 `media-search-alignment` is **complete** — both PRs shipped (#510, #516); see
 *Recently completed*.
@@ -661,9 +683,11 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   shares `--text-faint` with a completed one, so the two read alike — giving
   interrupted its own hue is a B4 call this lane owns. See
   `docs/plans/icon-semantics.md`. **Call sites moved (2026-08-09 audit):** #504
-  extracted glyph mapping to `outliner/actionIcons.tsx` — G4 lands there and now also
-  reaches the launcher action panel; the `ConfigIcon` refs are
-  `DefinitionConfigPanel.tsx:161,166`. The interrupted-hue question is confirmed live
+  extracted glyph mapping to `outliner/actionIcons.tsx`, but the 2026-08-17 audit
+  found it did NOT unify: the launcher keeps its own separate `IconId`-keyed map
+  (`launcher/launcherIcons.tsx` `ICONS`), and `NodeValuePicker.tsx` declares a
+  third, shadowing local `actionIcon` — G4 must touch both maps (or unify them
+  first), not one; the `ConfigIcon` refs are in `DefinitionConfigPanel.tsx`. The interrupted-hue question is confirmed live
   (`thread.css:1481-1495`, identical `--text-faint` to completed, deliberately per its
   comment) — ratify or close it at this lane's gate.
 - **dark-mode-contrast-pass** (P3, cross-cutting) — runs **last**, after L1/L2, as a
@@ -716,7 +740,10 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   `typing-hot-path`; P3-11/12 to `interaction-jank-cleanups`; P3-3's field-picker half already
   shipped with #426. The catalog rows now cross-reference the owning plan (design voice, per the
   no-status-in-plans rule) — claim these units only through those plans' items, never from the
-  catalog.
+  catalog. (2026-08-17 audit: the plan's own roll-up section still lists the full P3
+  set as one execution unit — it predates the transfer; the rows still unclaimed by
+  any plan are P3-4, P3-7–P3-10, P3-17–P3-20, P3-22, P3-23, and IDs P3-6/14/15/16
+  are numbering gaps, not lost rows.)
 - **typing-hot-path** (P0, `done` 2026-08-15) — every keystroke pays O(document)
   several times over. Main: the memory extension's two hooks (`guardMutation`'s
   eagerly-built projection + `memoryGraphMayChange`'s ~4 full-document passes
@@ -799,8 +826,14 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   unconditional re-render, per-view window scroll listeners fanning out across
   panels, panel title-dock measure off-rAF, `tableFieldChoices`/definition
   options rescanned per delta, translated-preview O(blocks) rect scans per
-  scroll, launcher `actionProjection` identity-compare cache (never hits, per
-  search hit), per-query search-index rebuild (absorbs perf-program P3-11/12),
+  scroll, the `actionProjection` identity-compare cache (2026-08-17 audit: it
+  lives in main-process `actionInvocationService.ts`, not the launcher, and its
+  per-revision identity key looks correct by contract — the "never hits" claim
+  needs a measurement before any work), search-index reuse (2026-08-17 audit:
+  **largely shipped** — `ensureTextSearchIndex` now refreshes incrementally from
+  core deltas with dependency maps, #545-tested; the remaining narrow spot is
+  the unconditional full `buildTextSearchIndex` under an active transaction
+  store),
   keyboard listener resubscription per delta. Four independent PRs (reshaped
   2026-08-11 after plan review: translation geometry and search-index reuse are
   mechanism changes, not bundle-able cleanups). Design:
@@ -861,15 +894,18 @@ anything.
 
 - **Render-body ref writes in `ThreadTurnView`** (P3, *fast-track, no plan file*, filed 2026-08-14
   at the #539 gate) — `ThreadTurnView` (`src/renderer/agent/components/ThreadView.tsx`) assigns
-  `turnRef.current` / `responseTailTurnRef.current` in the render body, plus two more ref writes
-  inside `useMemo`. A render React starts and discards still advances them, so a committed handler
+  `turnRef.current` / `responseTailTurnRef.current` in the render body, plus two more render-body
+  ref writes (`contentGrouperRef` lazy-init, `retryContentRef` after its `useMemo` — none are
+  inside `useMemo`; corrected 2026-08-17, and #544/#550 left all four unchanged). A render React starts and discards still advances them, so a committed handler
   (`editUserMessage`, `copyTurn`, `continueInNewChat`, `openTurnDetails`, `retryTurn`) can act on a
   `Turn` snapshot the committed tree never rendered. Left open at the gate because the blast radius
   is small — the component is keyed by `turn.id`, so it is always the same Turn at a different
   revision — but latching in a `useLayoutEffect` removes the hazard outright and is the kind of
   thing that stops being harmless the moment the keying changes.
 - **Renderer's fourth in-trash spelling** (P3, *fast-track, no plan file*, filed 2026-08-14 at the
-  #534 gate) — `isActiveTableFieldEntry` (`src/renderer/state/outlinerRows.ts`) answers "is this
+  #534 gate; 2026-08-17 audit: #545 rewrote the file around it and left it intact, and added a twin —
+  `isActiveTableFieldSlot` carries the identical hardcoded final line, so the fix now covers two
+  sites) — `isActiveTableFieldEntry` (`src/renderer/state/outlinerRows.ts`) answers "is this
   field definition still active?" with `!isDescendantOf(byId, field.id, TRASH_ID)`, hardcoding the
   constant, while `nodeLocation.ts` already exports `isNodeInTrash(index, nodeId)` reading
   `index.projection.trashId` — the spelling `fieldOptions.ts` and `fieldReuseCandidates.ts` use for
@@ -895,8 +931,8 @@ anything.
   re-run instead of read, which is exactly how a real regression gets waved through.
 - **#514 update-check review tail** (P3, *fast-track, no plan file*, filed 2026-08-10 at the #514
   gate) — three findings the gate raised and the PR consciously left. **(a)** `appUpdate.ts`
-  `decodeRelease` picks the `.dmg` by `localeCompare` on the filename with no architecture
-  predicate; harmless today because `release.yml` ships one Apple-silicon image, and a hard
+  `decodeGitHubRelease` picks the `.dmg` by `localeCompare` on the filename with no
+  architecture predicate; harmless today because `release.yml` ships one Apple-silicon image, and a hard
   mis-download the first time a release carries two — select on `process.arch` with the release
   page as the fallback, and do it **before** any second image ships. **(b)** `appUpdateService.ts`
   `runCheck` spends one 5s `AbortController` on both the Releases request and the CHANGELOG
@@ -919,8 +955,12 @@ anything.
   `searchEngine.ts:1407`, `references.ts:91`); the test half remains: no test sets
   `refRole` on those ops. **F2** case-fold length edge (İ/ß; CJK unaffected, low).
   **F11** `backlinks()` rebuilds the full reference summary per call (main-process, not
-  hot — cache only if it shows up). **Dedup** still valid: `references.ts:387`
-  `isMentionWord`/`caseFold` vs `textSearchAnalyzer.ts:59` `WORD_RE`/`normalizeSearchText`.
+  hot — cache only if it shows up). **Dedup — STRUCK 2026-08-17**: the audit found the
+  pairs are not duplicates — `isMentionWord`/`caseFold` (single-char boundary predicate,
+  locale fold, offset-preserving) vs `WORD_RE`/`normalizeSearchText` (NFKC-normalizing
+  global tokenizer) have different semantics, and a merge would be a behavior change,
+  not a cleanup. Also noted: the `BACKLINK_REF_ROLES` allowlist is applied only in
+  `references.ts`; `searchEngine.ts` inherits the gate rather than applying it.
 - **e2e-visual-media-baseline-fixture** (P3, *fast-track, no plan file*, filed 2026-08-03 at
   the #479 gate) — #479 gave the suite `tests/e2e/emulatedMedia.ts`, which pins all five
   visual preferences over CDP, but it is **opt-in per call site**: two specs call it
@@ -932,7 +972,10 @@ anything.
   be written locally, pass, and turn red only after merge, which is the discovery-by-accident
   failure `e2e-signal-on-main` exists to end. A `test.extend` fixture in a shared e2e base
   that pins the baseline for every test by default (with an opt-out for the `reduce` case)
-  fixes it once instead of per spec.
+  fixes it once instead of per spec. (2026-08-17 audit: still exactly two importers,
+  and several specs additionally call raw `page.emulateMedia({ colorScheme })` bypassing
+  the helper — `agent-settings`, `workspace-layout`, `design-system-runtime`, plus
+  sites inside `agent-thread` — the fixture should absorb those too.)
 - **file-attachment-inline-preview-local-flake** (P3, *fast-track, no plan file*, filed
   2026-08-01 at the #475 gate, **rescoped 2026-08-01 once CI existed**) —
   `file-attachments.spec.ts`
@@ -996,18 +1039,31 @@ anything.
   ('... N chars omitted ...', head+tail) — one exported helper (or at least one marker
   format) so a transcript never shows two truncation conventions for the same field.
   Confirmed at the #460 high gate but omitted from the fix list; cosmetic, forensics-only.
-  The 2026-08-09 audit found a **third** dialect to fold in: `agentLocalTools.ts:3201`
-  (`...[N bytes omitted; full output saved to file]...`).
-- **packaged-boot-smoke** (P2, *fast-track, no plan file*, filed 2026-08-10 at the
-  v0.3.0 incident) — no suite in this repo loads the real Electron runtime: the
-  whole Playwright suite drives Chrome against the vite dev server with
-  `window.lin` mocked (`tests/e2e/outlinerMock.ts`), which is how v0.3.0 shipped
-  with a preload that could not load while every gate stayed green. The build-time
-  guard (`scripts/check-preload-bundle.ts`, in `app:build` since the hotfix) closes
-  the preload-require class; this item is the next ring: one minimal boot smoke
-  that launches the `out/`-built app in real Electron (CDP probe: `window.lin`
-  exists, document loads), runnable at freeze time. Scope the check to boot — the
-  mocked suite stays the behavior authority.
+  The 2026-08-09 audit found a **third** dialect to fold in: `agentLocalTools.ts`
+  `readTextPreview` (`...[N bytes omitted; full output saved to file]...`), and the
+  2026-08-17 audit counts further variants outside the fold scope
+  (`sseResilientFetch.ts` `...[truncated]`, `AgentStartupContext.ts`, the PDF /
+  MarkItDown ingestion markers) — settle the scope at build: unify the three
+  forensics dialects, list the rest as deliberate.
+- **smoke-suite-repair-and-freeze-wiring** (P2, *fast-track, no plan file*; filed
+  2026-08-10 at the v0.3.0 incident as `packaged-boot-smoke`, **rescoped by the
+  2026-08-17 audit** — the item's founding premise was false: a real-Electron
+  smoke suite has existed since #81 (`tests/smoke/`, 19 tests over
+  `electron.launch` of `out/main/main.js`, `bun run test:smoke`), and v0.3.0
+  shipped broken anyway because the suite is wired into **nothing** — no gate,
+  no freeze ritual, no CI, not even the AGENTS.md commands table — and has
+  rotted unmaintained: measured 2026-08-17, **6 of 19 fail**, three at
+  assertion speed (`first-frame` "a single main window" — predating the #171
+  launcher NSPanel, so the window count is now 2 — and two `native-menu`
+  structure drifts) plus three network-dependent URL-preview/translation
+  timeouts) — the work is repair-and-wire, not build: fix the boot-relevant
+  assertions, split the network-dependent specs out of the deterministic set,
+  and wire a boot-scoped green subset into the freeze ritual and the commands
+  table. The v0.4.0 freeze ran the boot check by hand (packaged `.dmg`,
+  upgrade + fresh-install scenarios, `ELECTRON_USER_DATA_DIR` isolated) — the
+  second hand-run; it should be the last. Note the suite launches the `out/`
+  dev build, not the packaged bundle — the packaged-bundle eyeball remains its
+  own item.
 - **plan-reference-guard** (P3, *fast-track, no plan file*, filed 2026-08-10 from the
   staleness audit) — extend `docs:check`: scan active plans and the board for
   `file:line`-shaped references and backticked symbol names, verify each still
@@ -1019,22 +1075,16 @@ anything.
   toward the durable form.
 - **scripts-typecheck-coverage** (P3, *fast-track, no plan file*) — `scripts/` sits outside
   tsconfig `include`, so nothing typechecks `scripts/agent-dump.ts` or its hand-rolled
-  `bunSqliteAdapter` (surfaced by the #460 gate; the 2026-08-09 audit counts the gap at
-  **16 scripts**, incl. the load-bearing `e2e-classify.ts` / `e2e-compare.ts` and
-  `docs-check.ts`). Fix = a
+  `bunSqliteAdapter` (surfaced by the #460 gate; the gap is
+  **17 scripts** as of the 2026-08-17 re-count, incl. the load-bearing
+  `e2e-classify.ts` / `e2e-compare.ts` and `docs-check.ts`; tsconfig has no
+  `exclude` at all — `include` simply omits `scripts/` and `tests/`). Fix = a
   `tsconfig.scripts.json` (or widened `include`) wired into `bun run typecheck`, plus whatever
   the first real check surfaces. **`tests/` is the same hole** (found at the #536 gate): the
   e2e specs import product modules — `agent-thread.spec.ts` reads `en.agent.thread` by key
   precisely so a rename is a compile error — and none of it is typechecked, so that
   protection does not exist today and the test had to re-assert the key set at runtime.
   Whatever shape the fix takes, cover both.
-- **thread-fold-e2e-failure** (P2, *fast-track, no plan file*, filed 2026-08-13 at the #536
-  gate) — `agent-thread.spec.ts` › *"never folds a settled Turn over a child that is still
-  running"* fails on `main`: the parent Turn renders no `.thread-process-toggle` while the
-  child is still running, so the fold never appears. Not the #536 branch and not a stale dev
-  server — reproduced on `origin/main` at `ffd5abff` in a clean worktree on its own
-  Playwright port, deterministically, twice. The `main` e2e job is the only signal covering
-  this and it is red until someone bisects it.
 
 
 ## Recently completed
