@@ -2969,6 +2969,49 @@ describe('Core', () => {
     expect(afterReapply.length).toBe(2);
   });
 
+  test('tag template backfill previews missing seeds and applies them as one undoable step', () => {
+    const core = Core.new();
+    const tagId = mustFocus(core.createTag('project'));
+    const missingBothId = mustFocus(core.createNode(core.projection().todayId, null, 'Missing both'));
+    const trashedId = mustFocus(core.createNode(core.projection().todayId, null, 'Trashed'));
+    core.applyTag(missingBothId, tagId);
+    core.applyTag(trashedId, tagId);
+    core.trashNode(trashedId);
+
+    const firstTemplateId = mustFocus(core.createNode(tagId, null, 'First seed'));
+    const missingOneId = mustFocus(core.createNode(core.projection().todayId, null, 'Missing one'));
+    core.applyTag(missingOneId, tagId);
+    const secondTemplateId = mustFocus(core.createNode(tagId, null, 'Second seed'));
+
+    expect(core.previewTagTemplateBackfill(tagId)).toEqual({
+      templateNodeCount: 2,
+      nodeCount: 2,
+      additionCount: 3,
+    });
+
+    core.applyTemplateToTaggedNodes(tagId);
+
+    const templateIdsFor = (nodeId: string) => core.state().nodes[nodeId].children
+      .map((childId) => core.state().nodes[childId]?.templateId)
+      .filter((templateId): templateId is string => Boolean(templateId));
+    expect(templateIdsFor(missingBothId)).toEqual([firstTemplateId, secondTemplateId]);
+    expect(templateIdsFor(missingOneId)).toEqual([firstTemplateId, secondTemplateId]);
+    expect(core.state().nodes[trashedId].children).toEqual([]);
+    expect(core.previewTagTemplateBackfill(tagId)).toEqual({
+      templateNodeCount: 2,
+      nodeCount: 0,
+      additionCount: 0,
+    });
+
+    core.applyTemplateToTaggedNodes(tagId);
+    expect(templateIdsFor(missingBothId)).toEqual([firstTemplateId, secondTemplateId]);
+    expect(templateIdsFor(missingOneId)).toEqual([firstTemplateId, secondTemplateId]);
+
+    core.undo();
+    expect(templateIdsFor(missingBothId)).toEqual([]);
+    expect(templateIdsFor(missingOneId)).toEqual([firstTemplateId]);
+  });
+
   test('replace node with reference creates backlinks and remains undoable', () => {
     const core = Core.new();
     const today = core.projection().todayId;

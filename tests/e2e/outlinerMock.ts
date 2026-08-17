@@ -325,6 +325,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       children: string[];
       content: RichText;
       description?: string;
+      templateId?: string;
       tags: string[];
       createdAt: number;
       updatedAt: number;
@@ -1103,6 +1104,17 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       appendChild(parentId, nodeId, index);
       node.updatedAt = ++now;
     };
+    const isInTrash = (nodeId: string) => {
+      const visited = new Set<string>();
+      let currentId: string | undefined = nodeId;
+      while (currentId) {
+        if (currentId === ids.trash) return true;
+        if (visited.has(currentId)) return false;
+        visited.add(currentId);
+        currentId = nodes.get(currentId)?.parentId;
+      }
+      return false;
+    };
     const removeNode = (nodeId: string) => {
       const node = nodes.get(nodeId);
       if (!node) return;
@@ -1308,6 +1320,61 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       makeNode(tagId, normalized, { type: 'tagDef', parentId: ids.schema, color: 'green' });
       appendChild(ids.schema, tagId);
       return outcome({ nodeId: tagId, selectAll: false });
+    };
+    const tagTemplateContentNodeIds = (tagId: string) => {
+      const chain: string[] = [];
+      const visited = new Set<string>();
+      let currentId: string | undefined = tagId;
+      while (currentId && !visited.has(currentId)) {
+        const current = nodes.get(currentId);
+        if (current?.type !== 'tagDef') break;
+        visited.add(currentId);
+        chain.push(currentId);
+        currentId = current.extends;
+      }
+      return chain.reverse().flatMap((chainTagId) => (
+        nodes.get(chainTagId)?.children.filter((childId) => {
+          const type = nodes.get(childId)?.type;
+          return type === undefined || type === 'codeBlock';
+        }) ?? []
+      ));
+    };
+    const cloneTemplateContentNode = (parentId: string, templateId: string) => {
+      const parent = nodes.get(parentId);
+      const template = nodes.get(templateId);
+      if (!parent || !template) return;
+      if (parent.children.some((childId) => nodes.get(childId)?.templateId === templateId)) return;
+      const cloneId = `template-${++sequence}`;
+      makeNode(cloneId, template.content.text, {
+        type: template.type,
+        parentId,
+        templateId,
+        showCheckbox: false,
+      });
+      const created = nodes.get(cloneId)!;
+      created.content = clone(template.content);
+      created.description = template.description;
+      created.codeLanguage = template.codeLanguage;
+      appendChild(parentId, cloneId);
+    };
+    const tagTemplateBackfillPlan = (tagId: string) => {
+      const templateNodeIds = tagTemplateContentNodeIds(tagId);
+      const targets = [...nodes.values()].flatMap((node) => {
+        if (!node.tags.includes(tagId) || isInTrash(node.id)) return [];
+        if (node.type === 'tagDef' && node.id === ids.dayTag) return [];
+        const existingTemplateIds = new Set(node.children.flatMap((childId) => {
+          const templateId = nodes.get(childId)?.templateId;
+          return templateId ? [templateId] : [];
+        }));
+        const missingTemplateNodeIds = templateNodeIds.filter((templateId) => !existingTemplateIds.has(templateId));
+        return missingTemplateNodeIds.length > 0 ? [{ nodeId: node.id, templateNodeIds: missingTemplateNodeIds }] : [];
+      });
+      return {
+        templateNodeCount: templateNodeIds.length,
+        nodeCount: targets.length,
+        additionCount: targets.reduce((count, target) => count + target.templateNodeIds.length, 0),
+        targets,
+      };
     };
     const applyPasteMetadata = (
       nodeId: string,
@@ -1552,6 +1619,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         minValue: node.minValue,
         maxValue: node.maxValue,
         sourceSupertag: node.sourceSupertag,
+        templateId: node.templateId,
       });
       const cloneNode = nodes.get(cloneId)!;
       cloneNode.content = clone(node.content);
@@ -3871,12 +3939,30 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           return clone(outcome());
         }
         if (cmd === 'create_tag') return clone(createTag(String(args.name)));
+        if (cmd === 'preview_tag_template_backfill') {
+          const { templateNodeCount, nodeCount, additionCount } = tagTemplateBackfillPlan(String(args.tagId));
+          return clone({ templateNodeCount, nodeCount, additionCount });
+        }
+        if (cmd === 'apply_template_to_tagged_nodes') {
+          const plan = tagTemplateBackfillPlan(String(args.tagId));
+          for (const target of plan.targets) {
+            for (const templateNodeId of target.templateNodeIds) {
+              cloneTemplateContentNode(target.nodeId, templateNodeId);
+            }
+          }
+          return clone(outcome());
+        }
         if (cmd === 'apply_tag' || cmd === 'batch_apply_tag') {
           const tagId = String(args.tagId);
           const targetIds = cmd === 'apply_tag' ? [String(args.nodeId)] : args.nodeIds as string[];
           for (const nodeId of targetIds) {
             const node = nodes.get(nodeId);
-            if (node && !node.tags.includes(tagId)) node.tags.push(tagId);
+            if (node && !node.tags.includes(tagId)) {
+              node.tags.push(tagId);
+              for (const templateNodeId of tagTemplateContentNodeIds(tagId)) {
+                cloneTemplateContentNode(nodeId, templateNodeId);
+              }
+            }
           }
           return clone(outcome(cmd === 'apply_tag' ? { nodeId: String(args.nodeId), selectAll: false } : undefined));
         }
@@ -4582,6 +4668,7 @@ export async function e2eProjection(page: Page): Promise<{ nodes: Array<{
   minValue?: number;
   maxValue?: number;
   sourceSupertag?: string;
+  templateId?: string;
 }> }> {
   return page.evaluate(() => {
     const win = window as E2EWindow;
@@ -4606,6 +4693,7 @@ export async function e2eProjection(page: Page): Promise<{ nodes: Array<{
       minValue?: number;
       maxValue?: number;
       sourceSupertag?: string;
+      templateId?: string;
     }> };
   });
 }

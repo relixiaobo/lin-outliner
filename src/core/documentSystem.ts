@@ -129,6 +129,8 @@ export function documentCommandMutatesProtectedSystemTagDefinition(
     case 'search_nodes':
     case 'backlinks':
     case 'create_tag':
+    case 'preview_tag_template_backfill':
+    case 'apply_template_to_tagged_nodes':
     case 'create_field_definition':
     case 'ensure_date_node':
     case 'ensure_tag_search':

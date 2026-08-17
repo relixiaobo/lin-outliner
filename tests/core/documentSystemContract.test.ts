@@ -225,6 +225,8 @@ describe('projection-neutral document system contract', () => {
       toggle_done: { nodeId: definition.tagId },
       cycle_done_state: { nodeId: definition.tagId },
       create_tag: null,
+      preview_tag_template_backfill: null,
+      apply_template_to_tagged_nodes: null,
       apply_tag: { nodeId: definition.tagId, tagId: 'tag:ordinary' },
       remove_tag: { nodeId: definition.tagId, tagId: 'tag:ordinary' },
       set_tag_config: { tagId: definition.tagId },

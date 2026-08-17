@@ -1666,6 +1666,14 @@ export const zhHans: PartialMessages = {
     removeTitle: '移除标签',
     openAriaLabel: ({ label }) => `打开 ${label} 标签`,
     everythingTagged: ({ label }) => `带 #${label} 标签的全部内容`,
+    applyTemplate: '将模板应用到已有标签节点',
+    applyTemplateTitle: ({ label }) => `应用 #${label} 模板？`,
+    applyTemplateMessage: ({ additionCount, nodeCount }) => (
+      additionCount === 0
+        ? '所有已有标签节点都已包含此模板。'
+        : `这会向 ${nodeCount} 个已有标签节点添加 ${additionCount} 个模板子节点。`
+    ),
+    applyTemplateConfirm: '应用',
     configureTag: '配置标签',
   },
   search: {

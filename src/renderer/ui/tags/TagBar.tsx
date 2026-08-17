@@ -4,15 +4,15 @@ import { api } from '../../api/client';
 import type { NodeId, NodeProjection } from '../../api/types';
 import type { DocumentIndex } from '../../state/document';
 import { isNodeInTrash } from '../interactions/nodeLocation';
-import { CloseIcon, ICON_SIZE, SearchIcon, SettingsIcon } from '../icons';
+import { CloseIcon, CopyIcon, ICON_SIZE, SearchIcon, SettingsIcon } from '../icons';
+import { ConfirmDialog } from '../primitives/ConfirmDialog';
 import { MenuItem } from '../primitives/MenuItem';
 import { MenuSurface } from '../primitives/MenuSurface';
 import { overlayAnchorFromPoint, useAnchoredOverlay } from '../primitives/useAnchoredOverlay';
 import { useDismissibleOverlay } from '../primitives/useDismissibleOverlay';
 import { useMenuKeyboard } from '../primitives/useMenuKeyboard';
 import { useT } from '../../i18n/I18nProvider';
-import type { CommandRunner } from '../shared';
-import { textOf } from '../shared';
+import { commandRunnerNoop, textOf, type CommandRunner } from '../shared';
 import { AppliedTag } from './AppliedTag';
 import { resolveTagColor } from './tagColors';
 
@@ -38,6 +38,8 @@ function TagBadge({ nodeId, tag, index, run, onRoot }: TagBadgeProps) {
   const label = textOf(tag) || t.common.untitled;
   const trashed = isNodeInTrash(index, tag.id);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const [backfillPreview, setBackfillPreview] = useState<Awaited<ReturnType<typeof api.previewTagTemplateBackfill>> | null>(null);
+  const badgeRef = useRef<HTMLSpanElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const menuAnchor = useMemo(
     () => menu ? overlayAnchorFromPoint(menu.x, menu.y) : null,
@@ -78,11 +80,25 @@ function TagBadge({ nodeId, tag, index, run, onRoot }: TagBadgeProps) {
     setMenu({ x: event.clientX, y: event.clientY });
   };
 
+  const previewTemplateBackfill = () => {
+    setMenu(null);
+    void run(async () => {
+      setBackfillPreview(await api.previewTagTemplateBackfill(tag.id));
+      return commandRunnerNoop();
+    });
+  };
+
+  const applyTemplateBackfill = () => {
+    setBackfillPreview(null);
+    void run(() => api.applyTemplateToTaggedNodes(tag.id));
+  };
+
   if (trashed) {
     return (
       <AppliedTag
         label={label}
         color={color}
+        rootRef={badgeRef}
         trashed
         onOpen={openTagSearch}
         onRemove={removeTag}
@@ -95,6 +111,7 @@ function TagBadge({ nodeId, tag, index, run, onRoot }: TagBadgeProps) {
       <AppliedTag
         label={label}
         color={color}
+        rootRef={badgeRef}
         onOpen={openTagSearch}
         onRemove={removeTag}
         onContextMenu={openMenu}
@@ -130,6 +147,13 @@ function TagBadge({ nodeId, tag, index, run, onRoot }: TagBadgeProps) {
             }}
             role="menuitem"
           />
+          <MenuItem
+            className="tag-context-item"
+            icon={<CopyIcon size={ICON_SIZE.menu} />}
+            label={t.tags.applyTemplate}
+            onClick={previewTemplateBackfill}
+            role="menuitem"
+          />
           <div className="tag-context-separator" role="separator" />
           <MenuItem
             className="tag-context-item"
@@ -142,6 +166,20 @@ function TagBadge({ nodeId, tag, index, run, onRoot }: TagBadgeProps) {
             role="menuitem"
           />
         </MenuSurface>,
+        document.body,
+      )}
+      {backfillPreview && createPortal(
+        <ConfirmDialog
+          confirmLabel={t.tags.applyTemplateConfirm}
+          message={t.tags.applyTemplateMessage({
+            additionCount: backfillPreview.additionCount,
+            nodeCount: backfillPreview.nodeCount,
+          })}
+          onCancel={() => setBackfillPreview(null)}
+          onConfirm={applyTemplateBackfill}
+          restoreFocus={() => badgeRef.current?.querySelector<HTMLElement>('.tag-badge-label') ?? badgeRef.current}
+          title={t.tags.applyTemplateTitle({ label })}
+        />,
         document.body,
       )}
     </>
