@@ -798,7 +798,19 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   deep-clones the whole context for diagnostics; tool-result secret scans run
   unbudgeted. Three independent PRs: filter cost + read-model re-enablement /
   per-model-call costs / small tails. PR 1 (filter cost + read-model
-  re-enablement) shipped 2026-08-15 in #546; the other two remain. Design:
+  re-enablement) shipped 2026-08-15 in #546; PR 2 (per-model-call costs) shipped
+  2026-08-17 in #552 — the Turn-scoped immutable read cache now covers `full`
+  tool-output payloads, so each is read and hash-verified once per Turn instead
+  of once per model call (~9.5× less wall time on the storage probe). PR 2's
+  measurement also redirects PR 3: with the payload reads gone, profiling put
+  ~73% of the remaining per-call cost in the bounded Secretlint scan and only
+  ~1% in diagnostics SHA fingerprinting, so the plan's diagnostics
+  fingerprint/deep-copy item was measured and dropped (A9), and PR 3's secret-scan
+  scheduling item is the real remaining win. Carry one known cost into PR 3: the
+  new `outputReads` memo never evicts successful entries, so outputs compacted
+  out of the effective context stay resident for the rest of the Turn (bounded
+  per entry by `MAX_SINGLE_FULL_OUTPUT_TOKENS`; evict keys absent from the
+  current freeze's `existing` set). Design:
   [`agent-tool-call-path`](plans/agent-tool-call-path.md).
 - **subagent-interaction** — `done` 2026-08-16 (#544, cc; two review rounds —
   xhigh 14 + high 10 findings — all 24 fixed on-branch; the gate re-verified
