@@ -12,28 +12,35 @@ Entries reference the pull request that introduced them.
 
 ### Fixed
 
-- **One old Agent history row no longer stops the app from starting (PR #555,
-  main)** — the installed app exited at launch, every launch, against a userData
-  directory that had been in daily use since 2026-08-05. PR #535 collapsed the
-  agent tools into `agent` / `agent_message` / `task_stop` and dropped
-  `spawn_agent` / `wait_agent` from the codec enum with no migration, which the
-  pre-release rule permits — but its escape hatch is "wipe dev userData", and the
-  daily-use install is never wiped. 14 Items recorded on 2026-08-10 kept the
-  retired names, history is append-only so those rows are never rewritten, and
-  the decode threw out of `ThreadHistoryProjectionStore.itemFromRow` — shared by
-  every read of the projection, with `listTurns` reached from startup
-  reconciliation, Thread resume, and rendering alike. A `throw` that reads as a
-  correct decode-boundary invariant was sitting on the launch path: A12 misplaced
-  by one layer. The read helper is now split from the write helper, so each gets
-  the failure mode its own path can afford. `listTurns`, `listItems`,
-  `unfinishedItems`, and the projected rollout snapshot omit an Item they cannot
-  decode and report it as a `thread-item-unreadable` persistence diagnostic
-  naming the Thread, Turn, Item, and stored type; terminal-Turn mutation checks
-  and rollout-recovered open Items still fail closed, because there the Item is
-  input to a write. Verified against the real broken userData: the app starts,
-  the fatal decode is gone, and the diagnostic records the omissions. The two
-  carry-forward rules are in `docs/lessons.md`; `docs/spec/agent-core.md` states
-  the read-degrades / write-fails-closed split.
+- **One unreadable Agent conversation no longer stops the app from starting (PR
+  #555, main)** — the installed app exited at launch, every launch, against a
+  userData directory that had been in daily use since 2026-08-05. PR #535
+  collapsed the agent tools into `agent` / `agent_message` / `task_stop` and
+  dropped `spawn_agent` / `wait_agent` from the codec enum with no migration,
+  which the pre-release rule permits — but its escape hatch is "wipe dev
+  userData", and the daily-use install is never wiped. 14 Items recorded on
+  2026-08-10 kept the retired names, history is append-only so those rows are
+  never rewritten, and the decode threw on every launch. The fatal caller was not
+  the one the stack trace named: Node truncates stacks at 10 frames, which cut it
+  off exactly at the projection read. The real path is startup's
+  `MemoryExtension.prepareForTurnAdmission`, which fans out over every root Thread
+  and reads its Turns inside `initialize` with no per-Thread guard — so one
+  Thread's bad row ended the process, even though reconciliation had already
+  caught the same failure and moved on. Startup now decodes each Thread's history
+  once and **quarantines for the session** any Thread that fails: it is kept out
+  of resume, out of `persistentRootThreads`, and out of the history reads, which
+  answer a named `ThreadBusyError` instead of leaking the codec error, and it is
+  reported once as a `thread-history-unreadable` diagnostic. Quarantine is
+  in-memory and recomputed each launch, so the bytes stay untouched and a build
+  that can read them again picks the Thread back up. A torn rollout still does
+  *not* quarantine anything — that history remains browsable out of its
+  projection; the only question asked is whether the Thread decodes. Verified
+  against the real broken userData. The review round that shaped this is worth
+  reading: the first attempt skipped the undecodable *Item*, which silently broke
+  the terminal-Turn mutation check and — because the projected rollout snapshot is
+  written back before the old rows are cascaded away — would have destroyed the
+  last copy of the very data it was trying to survive. Both rules are in
+  `docs/lessons.md`; `docs/spec/agent-core.md` states the quarantine contract.
 
 ## [0.5.0] - 2026-08-17
 

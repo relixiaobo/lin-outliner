@@ -67,23 +67,10 @@ type StreamingItemsByTurn = Map<string, Map<string, ThreadItem>>;
 
 export type ThreadProjectionReconcileResult = 'reconciled' | 'rolloutMissing';
 
-/**
- * An Item the projection stored but can no longer decode. Read paths skip it and
- * report it here; nothing else in the process learns about it.
- */
-export interface UnreadableThreadItemReport {
-  readonly threadId: ThreadId;
-  readonly turnId: string;
-  readonly itemId: string;
-  readonly itemType: string;
-  readonly error: unknown;
-}
-
 export class ThreadHistoryProjectionStore {
   private readonly db: SqliteDatabase;
   private readonly streamingItems = new Map<ThreadId, StreamingItemsByTurn>();
   private streamingUndoActions: Array<() => void> | null = null;
-  private onUnreadableItem: ((report: UnreadableThreadItemReport) => void) | null = null;
 
   constructor(path: string, database?: SqliteDatabase) {
     if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
@@ -144,10 +131,6 @@ export class ThreadHistoryProjectionStore {
   close(): void {
     this.streamingItems.clear();
     this.db.close();
-  }
-
-  setUnreadableItemHandler(handler: (report: UnreadableThreadItemReport) => void): void {
-    this.onUnreadableItem = handler;
   }
 
   watermark(threadId: ThreadId): ProjectionWatermark {
@@ -247,10 +230,7 @@ export class ThreadHistoryProjectionStore {
         recordedAt: turn.startedAt,
       });
       for (const row of itemRows) {
-        // Rebuilding a lost rollout from the projection is a recovery path, so an
-        // Item that no longer decodes costs that Item, not the Thread (A12).
-        const item = this.readItemFromRow(row);
-        if (!item) continue;
+        const item = this.itemFromRow(row);
         if (row.completed_at !== null) {
           records.push({
             event: decodeAgentCoreRecordedNotification({
@@ -376,13 +356,11 @@ export class ThreadHistoryProjectionStore {
     const page = rows.slice(0, limit);
     const first = page[0];
     const last = page.at(-1);
-    const data: ThreadItemEntry[] = [];
-    for (const row of page) {
-      const item = this.readItemFromRow(row);
-      if (item) data.push({ turnId: row.turn_id, item });
-    }
     return {
-      data,
+      data: page.map((row): ThreadItemEntry => ({
+        turnId: row.turn_id,
+        item: this.itemFromRow(row),
+      })),
       nextCursor: hasNext && last ? itemCursor(last, direction) : null,
       backwardsCursor: first ? itemCursor(first, opposite(direction)) : null,
     };
@@ -416,7 +394,7 @@ export class ThreadHistoryProjectionStore {
       WHERE thread_id = ? AND turn_id = ? AND completed_at IS NULL
       ORDER BY item_index
     `).all(threadId, turnId) as unknown as ItemRow[];
-    return this.readItemsFromRows(rows);
+    return rows.map((row) => this.itemFromRow(row));
   }
 
   restoreOpenItemsFromRollout(
@@ -754,10 +732,11 @@ export class ThreadHistoryProjectionStore {
   private turnFromRow(row: TurnRow, itemsView: TurnItemsView): Turn {
     const items = itemsView === 'notLoaded'
       ? []
-      : this.readItemsFromRows(this.db.prepare(`
+      : (this.db.prepare(`
           SELECT * FROM thread_items
           WHERE thread_id = ? AND turn_id = ? ORDER BY item_index
-        `).all(row.thread_id, row.turn_id) as unknown as ItemRow[]);
+        `).all(row.thread_id, row.turn_id) as unknown as ItemRow[])
+        .map((itemRow) => this.itemFromRow(itemRow));
     return decodeTurn({
       id: row.turn_id,
       items,
@@ -797,45 +776,9 @@ export class ThreadHistoryProjectionStore {
     }
   }
 
-  /** Overlay-then-decode for one row. Throws; every caller goes through `readItemFromRow`. */
   private itemFromRow(row: ItemRow): ThreadItem {
     return this.streamingItems.get(row.thread_id)?.get(row.turn_id)?.get(row.item_id)
       ?? decodeThreadItem(JSON.parse(row.item_json));
-  }
-
-  /**
-   * Decode for a READ path. A stored Item the current protocol can no longer
-   * decode is reported and skipped rather than thrown, because every reader of
-   * this projection sits on the user's path: `listTurns` alone is reached from
-   * startup reconciliation, Thread resume, and rendering, so one undecodable row
-   * used to take the whole app down at launch instead of costing one row of
-   * history (A12 — a runtime invariant on the user path degrades; only the write
-   * and decode boundaries fail closed). This is the shape that a tool rename
-   * with no migration leaves behind, and history is append-only: the bad row is
-   * never rewritten, so the failure repeats every launch until it is skipped.
-   */
-  private readItemFromRow(row: ItemRow): ThreadItem | null {
-    try {
-      return this.itemFromRow(row);
-    } catch (error) {
-      this.onUnreadableItem?.({
-        threadId: row.thread_id,
-        turnId: row.turn_id,
-        itemId: row.item_id,
-        itemType: row.item_type,
-        error,
-      });
-      return null;
-    }
-  }
-
-  private readItemsFromRows(rows: readonly ItemRow[]): ThreadItem[] {
-    const items: ThreadItem[] = [];
-    for (const row of rows) {
-      const item = this.readItemFromRow(row);
-      if (item) items.push(item);
-    }
-    return items;
   }
 
   private setStreamingItem(threadId: ThreadId, turnId: string, item: ThreadItem): void {

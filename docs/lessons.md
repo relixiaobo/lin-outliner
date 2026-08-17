@@ -1112,11 +1112,22 @@ the dev-wipe hatch only covers the stores we throw away. Before removing a value
 from a persisted enum, ask which store keeps it forever, and either migrate it
 there or make the reader tolerate it.
 
-The second half of the same incident is A12 misplaced by one layer. The decode
-lived in `ThreadHistoryProjectionStore.itemFromRow`, shared by every read of the
-projection — and `listTurns` is reached from startup reconciliation, Thread
-resume, and rendering alike. A `throw` that is correct at a write boundary
-became "the app cannot start" because one read path ran at launch. **The
-blast radius of a decode is decided by its callers, not by the fact that it is a
-decode.** Split the read helper from the write helper so each gets the failure
-mode its own path can afford.
+The second half of the same incident is about where a degrade is allowed to cut.
+The obvious fix — skip the Item that will not decode — was wrong twice over, and
+the review caught both: a Turn with one Item skipped no longer matches the
+terminal-Turn mutation check, and the projected rollout snapshot is not a read at
+all (`restoreMissing` writes it back, then `rebuildThread` cascades the old rows
+away), so "skipping" a row there **destroys its last surviving copy** where the
+throw had preserved the bytes for a later protocol fix. **A degrade has to cut
+along a boundary that is self-consistent.** An Item is not one — it is half of a
+Turn's invariants. A Thread is: quarantine it for the session, report it, leave
+its bytes alone.
+
+And find the caller before choosing the layer. The fatal path here was not the
+one the stack trace showed: Node's default `Error.stackTraceLimit = 10` truncated
+it exactly at `listTurns`, which made the projection decode look like the culprit.
+Raising the limit to 80 and re-running showed the real shape — startup's
+`MemoryExtension.prepareForTurnAdmission` fanning out over every root Thread with
+no per-Thread guard. **A stack that ends suspiciously close to where you were
+already looking is probably truncated**; check the frame count against the limit
+before you conclude anything from where it stops.

@@ -892,6 +892,77 @@ describe('ThreadService', () => {
     await fixture.service.close();
   });
 
+  test('quarantines a Thread whose recorded history the protocol can no longer read, and starts anyway', async () => {
+    // The shape a retired Item type or narrowed tool enum leaves in a userData
+    // directory that is never wiped: history is append-only, so the row is never
+    // rewritten and the decode fails on every launch. Startup must cost that one
+    // Thread, not the launch — including on the extension fan-out, which reads
+    // every root Thread's Turns inside `initialize` with no per-Thread guard.
+    const root = await mkdtemp(join(tmpdir(), 'tenon-unreadable-thread-'));
+    roots.push(root);
+    let now = 1_720_000_000_000;
+    const clock = () => ++now;
+    const executor = new ControlledExecutor();
+    const first = await openFixture(root, executor, clock);
+    await first.service.initialize();
+    const threadIds: string[] = [];
+    for (const [index, name] of ['Readable', 'Unreadable'].entries()) {
+      const thread = (await first.service.startThread({
+        source: 'app',
+        threadSource: 'user',
+        modelProvider: 'openai',
+        cwd: root,
+        name,
+      })).thread;
+      threadIds.push(thread.id);
+      await first.service.startRendererTurn({
+        threadId: thread.id,
+        input: [{ type: 'text', text: `Work on ${name}` }],
+      });
+      await executor.waitUntilWaiting(index);
+      executor.finish(index);
+      await first.service.waitForIdle(thread.id);
+    }
+    const [readableId, unreadableId] = threadIds as [string, string];
+    await first.service.close();
+
+    // Retire an Item type out from under the recorded history. Both stores carry
+    // it, exactly as a shipped rename does: the rollout is the source of truth
+    // and the projection was built from it.
+    const rolloutPath = join(root, 'agent', 'rollouts', `${unreadableId}.jsonl`);
+    await writeFile(
+      rolloutPath,
+      (await readFile(rolloutPath, 'utf8')).replaceAll('"type":"userMessage"', '"type":"retiredItemKind"'),
+    );
+    const historyDb = database(join(root, 'agent', 'thread_history.sqlite'));
+    historyDb.prepare(
+      `UPDATE thread_items SET item_json = replace(item_json, '"type":"userMessage"', '"type":"retiredItemKind"')
+       WHERE thread_id = ?`,
+    ).run(unreadableId);
+    historyDb.close();
+
+    const reports: Array<{ code?: string; threadId?: unknown }> = [];
+    const reopened = await openFixture(root, new ControlledExecutor(), clock, undefined, {
+      reportError: (report) => { reports.push({ code: report.code, threadId: report.context?.threadId }); },
+      // Stands in for MemoryExtension.prepareForTurnAdmission, the real caller
+      // that fans out over persistentRootThreads() and reads each one's Turns.
+      beforeInitialTurnAdmission: () => {
+        for (const thread of reopened.service.persistentRootThreads()) {
+          reopened.service.readThread({ threadId: thread.id, includeTurns: true });
+        }
+      },
+    });
+    await reopened.service.initialize();
+
+    expect(reopened.service.readThread({ threadId: readableId }).thread.name).toBe('Readable');
+    expect(reopened.service.persistentRootThreads().map((thread) => thread.id)).toEqual([readableId]);
+    expect(() => reopened.service.readThread({ threadId: unreadableId })).toThrow(/quarantined/);
+    expect(() => reopened.service.listTurns({ threadId: unreadableId })).toThrow(/quarantined/);
+    expect(reports.filter((report) => report.code === 'thread-history-unreadable'))
+      .toEqual([{ code: 'thread-history-unreadable', threadId: unreadableId }]);
+    await reopened.service.close();
+  }, 20_000);
+
   test('finalizes a completed Turn open Items as interrupted, never as failed', async () => {
     // A Turn that succeeded has no business painting a red failure mark on the
     // work it just did: an Item it finished without closing was cut off.

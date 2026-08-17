@@ -520,16 +520,32 @@ startup atomically writes a minimal replacement rollout from projected final sna
 then rebuilds the projection from it; projected rollback hooks are recovered before their
 markers are replaced.
 
-Reading the projection degrades; writing it fails closed (A12). A stored Item the
-current protocol can no longer decode — what a retired Item type or a narrowed tool
-enum leaves behind, since history is append-only and the row is never rewritten — is
-omitted from `listTurns`, `listItems`, `unfinishedItems`, and the projected rollout
-snapshot, and reported once per read as a `thread-item-unreadable` persistence
-diagnostic carrying its Thread, Turn, Item, and stored type. It costs that Item, not
-the Thread and not the launch: every reader of this projection is on the user's path,
-and startup reconciliation, Thread resume, and rendering all reach it. Terminal-Turn
-mutation checks and rollout-recovered open Items still decode fail-closed, because
-there the Item is input to a write.
+History decoding fails closed everywhere; the Thread, not the Item, is the unit that
+degrades (A12). Skipping an undecodable Item is not available as a fallback: it would
+change a Turn's Item count against the terminal-Turn mutation check, and the projected
+rollout snapshot is what `restoreMissing` writes back before `rebuildThread` cascades
+the old rows away, so omitting a row there destroys its last copy.
+
+Startup therefore decides readability per Thread. After reconciling each Thread,
+initialization decodes that Thread's complete recorded history once — the same
+`allTurns` walk every later consumer performs — and a Thread that fails is
+**quarantined for the session**: excluded from resume, from `persistentRootThreads`,
+and from `thread/read`, `thread/turns/list`, and `thread/items/list`, which answer
+`ThreadBusyError` naming the quarantine rather than leaking the codec failure. This is
+what a retired Item type or a narrowed tool enum leaves behind in a userData directory
+that is never wiped: history is append-only, the row is never rewritten, and the decode
+fails on every launch. Quarantine is in-memory and recomputed each launch, so the bytes
+stay untouched and a build that can read them again picks the Thread back up with
+nothing to undo. It is reported once as a `thread-history-unreadable` persistence
+diagnostic naming the Thread — the only trace, since nothing durable records it.
+
+Reconciliation failing is deliberately *not* disqualifying on its own: a torn rollout
+leaves a Thread that no longer advances but still reads out of its projection, and that
+history stays browsable. The quarantine question is only whether the Thread decodes.
+The reason this is a launch concern at all is that the startup fan-out over Threads —
+`MemoryExtension.prepareForTurnAdmission` reading every root Thread's Turns inside
+`initialize` — has no per-Thread guard, so before this an unreadable Thread ended the
+process at launch even though reconciliation had already caught the same failure.
 Context writes
 canonicalize through the Core codec before hashing. Context and text reads/copies
 verify digest and byte length, while text also selects storage by the referenced
