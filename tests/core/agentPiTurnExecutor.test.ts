@@ -1396,6 +1396,109 @@ describe('PiTurnExecutor event normalization', () => {
     expect(payloadReads).toBe(1);
   });
 
+  test('memoizes immutable output payload reads across provider boundaries in one Turn', async () => {
+    const fixture = createContext();
+    const output = 'Complete persisted tool output.';
+    const outputRef = {
+      id: createHash('sha256').update(output).digest('hex'),
+      mimeType: 'text/plain' as const,
+      byteLength: Buffer.byteLength(output),
+      summary: 'Tool output',
+    };
+    const projection = {
+      schemaVersion: 1 as const,
+      kind: 'toolOutputProjection' as const,
+      outputRef,
+      projection: { type: 'full' as const },
+    };
+    const serializedProjection = JSON.stringify(projection);
+    const projectionRef = {
+      id: createHash('sha256').update(serializedProjection).digest('hex'),
+      mimeType: 'application/vnd.tenon.agent-context+json' as const,
+      byteLength: Buffer.byteLength(serializedProjection),
+      schemaVersion: 1 as const,
+      kind: projection.kind,
+    };
+    const historyTurnId = uuidV7(1_719_999_998_000);
+    const historyUserId = uuidV7(1_719_999_998_010);
+    const toolId = uuidV7(1_719_999_998_020);
+    const projectionItemId = uuidV7(1_719_999_998_030);
+    const history = completedTurn(fixture.context.turn, historyTurnId, [{
+      type: 'userMessage',
+      id: historyUserId,
+      provenance: {
+        originThreadId: fixture.context.thread.id,
+        originTurnId: historyTurnId,
+        originItemId: historyUserId,
+      },
+      clientId: null,
+      acceptedAt: 1_719_999_998_010,
+      content: [{ type: 'text', text: 'Read the persisted output.' }],
+    }, {
+      type: 'dynamicToolCall',
+      id: toolId,
+      provenance: {
+        originThreadId: fixture.context.thread.id,
+        originTurnId: historyTurnId,
+        originItemId: toolId,
+      },
+      status: 'completed',
+      outputRef,
+      namespace: null,
+      tool: 'file_read',
+      arguments: { file_path: '/workspace/result.txt' },
+      modelCall: replayableModelCall('file_read', { file_path: '/workspace/result.txt' }),
+      contentItems: [{ type: 'text', text: 'Bounded output summary.' }],
+      success: true,
+      durationMs: 1,
+    }, {
+      type: 'contextEvidence',
+      id: projectionItemId,
+      provenance: {
+        originThreadId: fixture.context.thread.id,
+        originTurnId: historyTurnId,
+        originItemId: projectionItemId,
+      },
+      kind: 'toolOutputProjection',
+      payloadRef: projectionRef,
+      summary: 'Full tool output projection',
+      contextRefs: [],
+      resourceRefs: [],
+      outputRefs: [outputRef],
+    }], 1_719_999_998_000);
+    let outputReads = 0;
+    const providerContexts: Message[][] = [];
+    const executor = new PiTurnExecutor({
+      resolveRuntimeSettings: async () => runtimeSettings(),
+      resolveRuntime: async () => runtimeSelection(),
+      createAgent: (options) => ({
+        state: { errorMessage: undefined },
+        subscribe: () => () => undefined,
+        abort: () => undefined,
+        steer: () => undefined,
+        prompt: async () => {
+          providerContexts.push(await options.transformContext!([]));
+          providerContexts.push(await options.transformContext!([]));
+        },
+      }),
+    });
+
+    const result = await executor.execute({
+      ...fixture.context,
+      historyBeforeTurn: [history],
+      readContext: async (ref) => ref.id === projectionRef.id ? projection : null,
+      readOutput: async (ref) => {
+        outputReads += 1;
+        return ref.id === outputRef.id ? output : null;
+      },
+    });
+
+    expect(result).toMatchObject({ status: 'completed' });
+    expect(outputReads).toBe(1);
+    expect(providerContexts).toHaveLength(2);
+    expect(JSON.stringify(providerContexts)).toContain(output);
+  });
+
   test('runs the pre-provider hook without changing canonical user input', async () => {
     const fixture = createContext();
     const userItemId = uuidV7(1_720_000_000_110);

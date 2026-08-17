@@ -50,7 +50,7 @@ import { freezePendingToolOutputProjections } from '../context/ToolOutputProject
 import { cursorFor, latestContextEpochId, selectEffectiveContext } from '../context/ContextEpoch';
 import { composeStablePrompt } from '../context/stablePrompt';
 import { providerCacheAffinity } from '../context/ProviderCache';
-import { contextPayloadReferenceKey } from '../context/contextDependencies';
+import { contextPayloadReferenceKey, outputReferenceKey } from '../context/contextDependencies';
 import { TurnDiagnosticsCollector } from '../context/TurnDiagnostics';
 import {
   lowestThinkingLevel,
@@ -1229,24 +1229,42 @@ async function executionDetails(
 }
 
 function withTurnScopedContextReads(context: TurnExecutionContext): TurnExecutionContext {
-  const reads = new Map<string, ReturnType<TurnExecutionContext['readContext']>>();
+  const contextReads = new Map<string, ReturnType<TurnExecutionContext['readContext']>>();
+  const outputReads = new Map<string, ReturnType<TurnExecutionContext['readOutput']>>();
   return {
     ...context,
     readContext: (ref) => {
       const key = contextPayloadReferenceKey(ref);
-      const cached = reads.get(key);
+      const cached = contextReads.get(key);
       if (cached) return cached;
       const pending = context.readContext(ref).then(
         (payload) => {
-          if (!payload) reads.delete(key);
+          if (!payload) contextReads.delete(key);
           return payload;
         },
         (error) => {
-          reads.delete(key);
+          contextReads.delete(key);
           throw error;
         },
       );
-      reads.set(key, pending);
+      contextReads.set(key, pending);
+      return pending;
+    },
+    readOutput: (ref) => {
+      const key = outputReferenceKey(ref);
+      const cached = outputReads.get(key);
+      if (cached) return cached;
+      const pending = context.readOutput(ref).then(
+        (payload) => {
+          if (payload === null) outputReads.delete(key);
+          return payload;
+        },
+        (error) => {
+          outputReads.delete(key);
+          throw error;
+        },
+      );
+      outputReads.set(key, pending);
       return pending;
     },
   };
