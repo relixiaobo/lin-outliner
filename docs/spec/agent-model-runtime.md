@@ -928,8 +928,8 @@ and reports an internal warning, but never changes the real Turn status, respons
 usage.
 
 Fresh projection reducers are constructed at every provider boundary so environment,
-view, and additional-context deltas are replayed from canonical state. They share one
-Turn-scoped immutable context-payload read cache keyed by the complete typed reference;
-successful content-addressed reads therefore hit storage once per Turn, while missing or
-failed reads are not negatively cached and can become available after a new canonical
-write.
+view, and additional-context deltas are replayed from canonical state. They share
+Turn-scoped immutable payload read caches for context payloads and full tool outputs,
+each keyed by the complete typed reference. Successful content-addressed reads therefore
+hit storage once per Turn, while missing or failed reads are not negatively cached and
+can become available after a new canonical write.
