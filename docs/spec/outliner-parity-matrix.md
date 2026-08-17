@@ -157,6 +157,7 @@ keymap, not the removed `resolveTrailingRow*` / `*EffectiveParent` /
 | --- | --- | --- | --- |
 | Plain character in empty trailing draft | Eager-create a real node and focus it. | `OutlinerItem.applyTextPatch` (draft eager-materialize). | `outliner-trailing-expand.spec.ts` |
 | Empty Enter in trailing draft | Create an empty node in the current scope. | `OutlinerItem.handleEnter` draft branch (`materializeDraftAndAdvance`). | `outliner-trailing-expand.spec.ts` |
+| Mod+Enter in trailing draft | Create an empty unchecked checkbox row; an empty field-value draft does nothing. | `OutlinerItem.handleModEnter` materializes a body draft before cycling checkbox state and aborts the cycle when materialization fails. | `outliner-trailing-expand.spec.ts` |
 | Tab in trailing draft | Shift effective parent to the last visible child and expand it. | `OutlinerItem.handleTab` draft branch. | `outliner-trailing-expand.spec.ts` |
 | Shift+Tab in trailing draft | Return effective parent to the original scope. | `OutlinerItem.handleTab` draft branch (shiftKey). | `outliner-trailing-expand.spec.ts` |
 | Backspace in empty trailing draft | Focus last visible row, or collapse empty expanded parent. | `OutlinerItem.handleBackspaceAtStart` draft branch. | `outliner-trailing-expand.spec.ts` |

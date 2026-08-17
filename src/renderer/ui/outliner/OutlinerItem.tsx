@@ -226,10 +226,11 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   const localDraftSyncRef = useRef<{ nodeId: NodeId; content: RichText } | null>(null);
   const pendingTextPatchRef = useRef<Promise<unknown>>(Promise.resolve());
   const pendingTextPatchCountRef = useRef(0);
-  // Guards materialization so the create fires exactly once per draft. This alone
-  // prevents a double-commit: Enter materializes, then the resulting blur re-enters
-  // commitDraft, but the guard makes the second materializeDraft a no-op.
+  // Guards materialization so the create fires exactly once per draft. A second
+  // caller shares the in-flight result, so it can stop its dependent command when
+  // the create is rejected without starting another create.
   const materializeStartedRef = useRef(false);
+  const materializePromiseRef = useRef<Promise<boolean> | null>(null);
   const materializedFieldParentIdRef = useRef<NodeId | null>(null);
   // Synchronous mirror of the active trigger, set by onTriggerChange *before* the
   // patch callback runs in the same editor transaction (props.trigger is React
@@ -645,13 +646,17 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
   // the row keeps its React identity); a body node uses api.materializeDraftNode.
   // Both honour the same id contract, so the surrounding reconcile/focus logic is
   // shared — the field value path is no longer a separate editing mode.
-  const materializeDraft = () => {
-    if (realNode || materializeStartedRef.current) return;
+  const materializeDraft = (): Promise<boolean> => {
+    if (realNode) return Promise.resolve(true);
+    if (materializePromiseRef.current) return materializePromiseRef.current;
+    if (materializeStartedRef.current) return Promise.resolve(false);
     const seed = draftContentRef.current;
     const fieldValue = props.fieldValue;
     // An empty virtual tag slot has no backing entry to create. Keep its draft
     // reusable instead of arming the one-shot materialization guard forever.
-    if (fieldValue && seed.text.trim().length === 0 && seed.inlineRefs.length === 0) return;
+    if (fieldValue && seed.text.trim().length === 0 && seed.inlineRefs.length === 0) {
+      return Promise.resolve(false);
+    }
     materializeStartedRef.current = true;
     const createIndex = currentDraftCreateIndex();
     const runCreate = fieldValue
@@ -668,11 +673,12 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
           },
         },
       );
-    pendingTextPatchRef.current = pendingTextPatchRef.current
+    const materializePromise = pendingTextPatchRef.current
       .then(runCreate)
       .then((result) => {
         if (result === null) {
           materializeStartedRef.current = false;
+          materializePromiseRef.current = null;
           return false;
         }
         if (fieldValue) {
@@ -692,12 +698,17 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
       })
       .then((materialized) => {
         if (materialized) props.setUi(materializedDraftFocusState);
+        return materialized;
       })
       .catch((error) => {
         materializeStartedRef.current = false;
+        materializePromiseRef.current = null;
         throw error;
       });
-    void pendingTextPatchRef.current;
+    materializePromiseRef.current = materializePromise;
+    pendingTextPatchRef.current = materializePromise;
+    void materializePromise;
+    return materializePromise;
   };
 
   const applyTextPatch = (patch: RichTextPatch) => {
@@ -1830,14 +1841,14 @@ function OutlinerItemImpl(props: OutlinerItemProps) {
 
   const handleModEnter = async (content: RichText) => {
     const emptyDraft = content.text.trim().length === 0 && content.inlineRefs.length === 0;
-    if (props.draft && !realNode && emptyDraft) {
+    if (props.draft && !realNode) {
       draftContentRef.current = content;
       setDraftContent(content);
-      // Empty field values intentionally do not materialize. A body trailing
-      // draft, however, must become a real node before checkbox commands target it.
-      if (props.fieldValue) return;
-      materializeDraft();
-      await pendingTextPatchRef.current;
+      // Empty field values intentionally do not materialize. Every other trailing
+      // draft must become a real node before checkbox commands target it.
+      if (props.fieldValue && emptyDraft) return;
+      const materialized = await materializeDraft();
+      if (!materialized) return;
     } else {
       setDraftContent(content);
       await commitDraft(content);
