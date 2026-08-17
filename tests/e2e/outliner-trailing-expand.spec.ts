@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import {
+  commandCalls,
   e2eProjection,
   emitDocumentEvent,
   ids,
@@ -599,10 +600,41 @@ test.describe('outliner trailing input and expansion parity', () => {
     const projection = await e2eProjection(page);
     const today = projection.nodes.find((node) => node.id === ids.today)!;
     const createdId = today.children.at(-1)!;
+    await expect.poll(async () => (await nodeById(page, createdId))?.completedAt).toBe(0);
     const created = await nodeById(page, createdId);
     expect(created?.content.text).toBe('');
-    expect(created?.completedAt).toBe(0);
     await expect(row(page, createdId).getByRole('checkbox')).toHaveAttribute('aria-checked', 'false');
+  });
+
+  test('Cmd+Enter stops when empty trailing draft materialization is rejected', async ({ page }) => {
+    const rejection = 'Mock parent is immutable';
+    await page.evaluate((message) => {
+      const win = window as Window & {
+        lin?: { invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T> };
+      };
+      const originalInvoke = win.lin?.invoke;
+      if (!win.lin || !originalInvoke) return;
+      let rejected = false;
+      win.lin.invoke = async <T,>(cmd: string, args: Record<string, unknown> = {}) => {
+        if (cmd === 'create_node' && args.materialize === true && !rejected) {
+          rejected = true;
+          throw new Error(message);
+        }
+        return originalInvoke<T>(cmd, args);
+      };
+    }, rejection);
+
+    const before = await e2eProjection(page);
+    const beforeCount = before.nodes.find((node) => node.id === ids.today)!.children.length;
+    await trailingEditor(page).click();
+    await page.keyboard.press('Meta+Enter');
+
+    await expect(page.locator('.action-notice')).toContainText(rejection);
+    await page.evaluate(() => new Promise<void>((resolve) => window.setTimeout(resolve, 0)));
+    await expect(page.locator('.action-notice')).toContainText(rejection);
+    expect((await commandCalls(page)).filter(({ cmd }) => cmd === 'cycle_done_state')).toHaveLength(0);
+    const after = await e2eProjection(page);
+    expect(after.nodes.find((node) => node.id === ids.today)!.children).toHaveLength(beforeCount);
   });
 
   test('Tab and Shift+Tab in an empty trailing input relocate the draft without materializing', async ({ page }) => {
