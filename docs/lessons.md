@@ -1072,3 +1072,28 @@ consumer of that channel (A11-style: from `rg` hits, not memory) and decide
 each one deliberately. The fix's `rowNodeForView` shows the durable form:
 carry the backing node id (`slot.entryId`) alongside the row id and resolve
 through it, rather than teaching each call site to parse virtual ids.
+
+## A test that pins a browser-chosen buffer size asserts the platform, not your contract
+
+PR #551. The pathless-upload e2e spec asserted the exact append sequence
+`[1 MiB, 1 MiB, 123]` for a 2 MiB + 123-byte file. But the renderer does not
+choose those boundaries — it reads `file.stream()` and only re-splits what
+exceeds `ATTACHMENT_UPLOAD_CHUNK_BYTES`, so the sizes are Chromium's buffering
+decision, free to change under a browser bump and unrelated to any behavior the
+code promises. **Assert the invariant the code enforces, not the shape one
+runtime happened to produce**: every append positive and within the limit, and
+the appends summing to the source length. That still fails a single oversized
+append or a truncated stream — the two regressions the test exists for — while
+surviving a Chromium upgrade.
+
+## A guard added to one branch leaves the sibling branch calling the same command
+
+PR #548 stopped `cycle_done_state` from firing against an unmaterialized draft —
+but only inside the `emptyDraft` branch it was written for. The `else` branch
+reached the identical `cycle_done_state` call through `commitDraft`, which
+discards the create's outcome, so a rejected create on a *non-empty* draft
+reproduced the exact bug the PR closed, and #550 had to fix it again. The
+condition that selects a branch is rarely the condition that makes the guard
+necessary. **When a fix guards a call, find every path that reaches that call**
+(`rg` the callee, not the branch) and guard at the join — here, by making the
+materialization helper return its outcome so one check covers both arms.

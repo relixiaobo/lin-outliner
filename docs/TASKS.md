@@ -1052,6 +1052,22 @@ and the merged PR, distilled rules in [`lessons.md`](lessons.md). Everything
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
 
+- **pathless-upload-chunk-test** (codex, PR #551, merged 2026-08-17 — fast-track, no
+  plan file) — the streaming-upload e2e spec pinned Chromium's `file.stream()` buffer
+  sizes as if they were the contract; it now asserts what the renderer guarantees —
+  every append ≤ `ATTACHMENT_UPLOAD_CHUNK_BYTES` and the appends summing to the source
+  byte length. Gate: typecheck + `docs:check` + the agent-thread e2e spec green.
+
+- **empty-trailing-checkbox-review-fixes** (codex, PR #550, merged 2026-08-17 —
+  fast-track, no plan file) — closes the two `/code-review high` findings on #548: a
+  *non-empty* trailing draft whose materialization was rejected still issued
+  `cycle_done_state`, so `node not found` overwrote the real rejection notice, and the
+  spec stated the abort rule more strongly than the code honoured it. `handleModEnter`
+  now routes every non-`realNode` draft through `materializeDraft` (which shares the
+  in-flight create promise) and bails when it fails; the `Mod+Enter` rows land in both
+  key matrices. Gate: typecheck + `docs:check` + `test:renderer` (1279) + the
+  trailing-expand and agent-thread e2e specs (109) green in an isolated worktree.
+
 - **empty-trailing-checkbox-shortcut** (codex, PR #548, merged 2026-08-17 — fast-track,
   no plan file) — Cmd+Enter on an empty trailing input materializes the body draft
   under its stable ID before `cycle_done_state` (empty field-value drafts skip cycling),

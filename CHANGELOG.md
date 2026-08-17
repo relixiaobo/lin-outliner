@@ -10,6 +10,41 @@ Entries reference the pull request that introduced them.
 
 `main` is the `0.5.0` train; entries here move under the next tag.
 
+### Fixed
+
+- **A rejected trailing-draft materialization no longer swallows its own error
+  on Cmd+Enter (PR #550, codex)** — 0.4.0's fix (PR #548) only guarded the
+  *empty* body draft. A draft with text took the `commitDraft` path, which
+  discards the create's outcome, so when the create was rejected — a locked or
+  otherwise immutable parent — the handler still issued `cycle_done_state`
+  against a node that was never created, and core's `node not found` overwrote
+  the accurate rejection notice the user should have read. `handleModEnter` now
+  routes every non-`realNode` draft through `materializeDraft`, which shares the
+  in-flight create promise so a second caller reads the real outcome, and bails
+  before the checkbox command when materialization did not succeed; the empty
+  field-value draft still returns early, since its synthetic row cannot become a
+  checkbox. The `docs/spec/ui-behavior.md` trailing-input matrix and the
+  `docs/spec/outliner-parity-matrix.md` per-key list gain the `Mod+Enter` rows
+  the behavior had been missing. Covered by an end-to-end regression test that
+  rejects both the eager and the retry materialization and asserts no
+  `cycle_done_state` is issued; the earlier success test now polls the checkbox
+  state instead of the child count, closing a race where it could observe the
+  node before the cycle ran. Gate ran typecheck + `docs:check` +
+  `test:renderer` (1279) + the trailing-expand and agent-thread e2e specs (109)
+  green in an isolated worktree.
+
+### Internal
+
+- **Pathless upload test asserts the chunking contract, not one browser's
+  buffer sizes (PR #551, codex)** — the streaming-upload spec pinned the exact
+  append sequence `[1 MiB, 1 MiB, 123]`, but chunk boundaries come from
+  `file.stream()`'s reader, whose buffer size is Chromium's to choose; the
+  renderer only re-splits anything larger than `ATTACHMENT_UPLOAD_CHUNK_BYTES`.
+  The assertion now checks what the code actually guarantees — every append is a
+  positive integer no larger than the chunk limit, and the appends sum to the
+  original byte length — which still fails a regression to a single oversized
+  append or to a truncated stream. 20 targeted repeats green.
+
 ## [0.4.0] - 2026-08-17
 
 **Your workspace starts fresh on this upgrade.** 0.4.0 changes the on-disk
