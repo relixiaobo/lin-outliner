@@ -175,7 +175,8 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
           });
       const systemPrompt = stablePrompt?.text
         ?? context.configuration.developerInstructions.join('\n\n');
-      const projectionContext = withTurnScopedContextReads(context);
+      const turnScopedReads = withTurnScopedContextReads(context);
+      const projectionContext = turnScopedReads.context;
       const projector = new CanonicalContextProjector(runtime.model, projectionContext);
       const priorMessages = await projector.projectTurns(context.historyBeforeTurn);
       const currentMessages = await projector.projectTurns([context.turn]);
@@ -267,6 +268,7 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
               model: runtime.model,
               readContext: projectionContext.readContext,
               persist: (payload, summary) => context.persistContextEvidence(payload, summary),
+              onActiveOutputKeys: turnScopedReads.retainOutputReads,
             });
             return projectCanonicalProviderContext(
               projectionContext,
@@ -1228,44 +1230,55 @@ async function executionDetails(
   };
 }
 
-function withTurnScopedContextReads(context: TurnExecutionContext): TurnExecutionContext {
+function withTurnScopedContextReads(context: TurnExecutionContext): {
+  readonly context: TurnExecutionContext;
+  readonly retainOutputReads: (activeKeys: readonly string[]) => void;
+} {
   const contextReads = new Map<string, ReturnType<TurnExecutionContext['readContext']>>();
   const outputReads = new Map<string, ReturnType<TurnExecutionContext['readOutput']>>();
   return {
-    ...context,
-    readContext: (ref) => {
-      const key = contextPayloadReferenceKey(ref);
-      const cached = contextReads.get(key);
-      if (cached) return cached;
-      const pending = context.readContext(ref).then(
-        (payload) => {
-          if (!payload) contextReads.delete(key);
-          return payload;
-        },
-        (error) => {
-          contextReads.delete(key);
-          throw error;
-        },
-      );
-      contextReads.set(key, pending);
-      return pending;
+    context: {
+      ...context,
+      readContext: (ref) => {
+        const key = contextPayloadReferenceKey(ref);
+        const cached = contextReads.get(key);
+        if (cached) return cached;
+        const pending = context.readContext(ref).then(
+          (payload) => {
+            if (!payload) contextReads.delete(key);
+            return payload;
+          },
+          (error) => {
+            contextReads.delete(key);
+            throw error;
+          },
+        );
+        contextReads.set(key, pending);
+        return pending;
+      },
+      readOutput: (ref) => {
+        const key = outputReferenceKey(ref);
+        const cached = outputReads.get(key);
+        if (cached) return cached;
+        const pending = context.readOutput(ref).then(
+          (payload) => {
+            if (payload === null) outputReads.delete(key);
+            return payload;
+          },
+          (error) => {
+            outputReads.delete(key);
+            throw error;
+          },
+        );
+        outputReads.set(key, pending);
+        return pending;
+      },
     },
-    readOutput: (ref) => {
-      const key = outputReferenceKey(ref);
-      const cached = outputReads.get(key);
-      if (cached) return cached;
-      const pending = context.readOutput(ref).then(
-        (payload) => {
-          if (payload === null) outputReads.delete(key);
-          return payload;
-        },
-        (error) => {
-          outputReads.delete(key);
-          throw error;
-        },
-      );
-      outputReads.set(key, pending);
-      return pending;
+    retainOutputReads: (activeKeys) => {
+      const retained = new Set(activeKeys);
+      for (const key of outputReads.keys()) {
+        if (!retained.has(key)) outputReads.delete(key);
+      }
     },
   };
 }

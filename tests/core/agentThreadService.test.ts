@@ -762,6 +762,42 @@ class AbortIgnoringExecutor extends ControlledExecutor {
 }
 
 describe('ThreadService', () => {
+  test('reuses one canonical Turn snapshot across terminal payload pruning', async () => {
+    const fixture = await createFixture();
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Finish this Turn.' }],
+    });
+    await fixture.executor.waitUntilWaiting();
+
+    const allTurns = spyOn(fixture.stores.history, 'allTurns');
+    const pruneContexts = fixture.stores.payloads.pruneUnreferencedContexts.bind(fixture.stores.payloads);
+    const pruneDiagnostics = fixture.stores.payloads.pruneUnreferencedTurnDiagnostics.bind(fixture.stores.payloads);
+    const allTurnsCountsAtPrune: number[] = [];
+    fixture.stores.payloads.pruneUnreferencedContexts = async (...args) => {
+      allTurnsCountsAtPrune.push(allTurns.mock.calls.length);
+      return await pruneContexts(...args);
+    };
+    fixture.stores.payloads.pruneUnreferencedTurnDiagnostics = async (...args) => {
+      allTurnsCountsAtPrune.push(allTurns.mock.calls.length);
+      return await pruneDiagnostics(...args);
+    };
+
+    fixture.executor.finish();
+    await fixture.service.waitForIdle(thread.id);
+
+    expect(allTurnsCountsAtPrune).toEqual([1, 1]);
+    allTurns.mockRestore();
+    fixture.stores.payloads.pruneUnreferencedContexts = pruneContexts;
+    fixture.stores.payloads.pruneUnreferencedTurnDiagnostics = pruneDiagnostics;
+  });
+
   test('resolves renderer-owned Thread defaults at the host boundary', async () => {
     const fixture = await createFixture(undefined, {
       resolveRendererStartDefaults: () => ({ modelProvider: 'openai', cwd: '/tmp/agent-workdir' }),

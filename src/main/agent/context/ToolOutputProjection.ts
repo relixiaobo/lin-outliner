@@ -26,6 +26,7 @@ export async function freezePendingToolOutputProjections(input: {
     payload: ToolOutputProjectionContextPayload,
     summary: string,
   ) => Promise<ContextEvidenceThreadItem>;
+  readonly onActiveOutputKeys?: (keys: readonly string[]) => void;
 }): Promise<readonly ContextEvidenceThreadItem[]> {
   const existing = new Map<string, ToolOutputProjectionContextPayload>();
   const unavailable = new Set<string>();
@@ -98,6 +99,7 @@ export async function freezePendingToolOutputProjections(input: {
     published.push(evidence);
     if (projection.type === 'full') remainingFullTokens -= fullTokens;
   }
+  input.onActiveOutputKeys?.([...existing.keys()]);
   return published;
 }
 

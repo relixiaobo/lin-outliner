@@ -300,6 +300,33 @@ describe('agent secret redaction', () => {
     });
   });
 
+  test('keeps one ordered diagnostic budget across a batched scan', async () => {
+    const first = 'ordinary first text '.repeat(1_500);
+    const second = `credential=${OPENAI_KEY}`;
+    const third = 'ordinary overflow text '.repeat(1_600);
+    const result = await redactSecretLikeJsonForDiagnostics({ first, second, third });
+
+    expect(result.value).toEqual({
+      first,
+      second: 'credential=[redacted secret-like content]',
+      third: `[diagnostic text omitted after secret-scan budget: ${third.length} chars]`,
+    });
+    expect(result.redactedPaths).toEqual(['/second', '/third']);
+  });
+
+  test('keeps arbitrary-span private-key redaction byte-identical in a large batch', async () => {
+    const privateKey = [
+      '-----BEGIN OPENSSH PRIVATE KEY-----',
+      'ordinary key material words '.repeat(10_000),
+      '-----END OPENSSH PRIVATE KEY-----',
+    ].join('\n');
+    const expected = redactSecretLikeContent(privateKey);
+    const result = await redactSecretLikeJsonAsync({ content: privateKey });
+
+    expect(result).toEqual({ value: { content: expected }, redactedPaths: ['/content'] });
+    expect(expected).toBe('[redacted secret-like content]');
+  });
+
   test('reports a redaction path only when the persisted value changes', async () => {
     expect(await redactSecretLikeJsonAsync({ secret: '[redacted]', authorization: null, token: 0 })).toEqual({
       value: { secret: '[redacted]', authorization: null, token: 0 },

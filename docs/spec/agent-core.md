@@ -540,16 +540,22 @@ strings, placeholders, and ambiguous free-form content pass unchanged. Ambiguous
 letters and digits. Serialized JSON key inspection is limited to `args`, `arguments`,
 `body`, and `payload` strings, preserves unrelated formatting, and never reinterprets
 nested JSON strings. Rule exceptions, unsupported asynchronous rules, malformed JSON,
-and scanner depth failures all fail open. Durable scanning yields cooperatively;
-diagnostic copies additionally have one 64,000-character budget and use an omission
-marker beyond it. The diagnostic copy never becomes Item or replay data. Redacted replay
+and scanner depth failures all fail open. Each structured value stages its strings in
+canonical traversal order. A sufficiently large batch runs the same complete scanner on
+a lazy unreferenced Node worker; a small batch runs directly, and worker failure retries
+the direct scanner before the fail-open boundary. Durable scanning has no character
+budget. Diagnostic copies separately spend one 64,000-character budget before dispatch
+and use an omission marker beyond it. Whole strings are scanned without chunking, so
+credential matches spanning arbitrary distances retain identical coverage and bytes.
+The diagnostic copy never becomes Item or replay data. Redacted replay
 compatibility is decided once
 against the admission schema: a compatible copy becomes `redactedReplay`; an
 incompatible copy becomes executed `evidenceOnly`, while the validated transient source
 call may still run. Evidence provider names, corrections, and argument summaries have
 independent UTF-8 bounds, and malformed redaction pointers fail at the
-codec boundary. A newly written tool image that
-no terminal Item references is reclaimed at Turn finalization; startup reconciliation
+codec boundary. Turn finalization reads canonical Turns once and derives created-resource,
+context-payload, and diagnostics retention sets from that one snapshot. A newly written
+tool image that no terminal Item references is reclaimed there; startup reconciliation
 handles crash leftovers.
 
 A history rollback reclaims contexts, Turn diagnostics, and tool text outputs
@@ -738,7 +744,8 @@ service's tool-completion notification, which has the Thread and the tool name i
 hand. There is no per-tool hook, so a node tool added later is covered without
 remembering to call anything, and `node_search` is covered like every other even
 though its arguments never say which nodes the model will see: its results are
-the rendering.
+the rendering. Tool-name eligibility is checked before building a document
+projection index, so non-belief tools do no document-wide observation work.
 
 **The belief set is a projection of the canonical record** and takes its bound
 from the record rather than from a cap of its own. Re-observing a node replaces

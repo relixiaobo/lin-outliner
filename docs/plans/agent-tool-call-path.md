@@ -128,31 +128,36 @@ explicitly NOT part of this plan.
   same key, different real token counts.) If the A9 measurement shows budget
   estimation itself is material, a follow-up plan can introduce the sidecar
   identity deliberately.
-- **Diagnostics: no contract cuts.** `TurnDiagnosticsCollector` already
-  deduplicates canonical fragments via its fingerprint map, and the audit
-  contract requires the complete reconstructable set — retained copies are NOT
-  capped. The remaining cost item is narrow: within its own redacted-copy
-  keyspace, reuse fingerprints for content the fingerprint pass has already
-  seen this Turn, and avoid the second deep clone where the normalized value is
-  provably the same object graph. Measure-first; if the win is marginal, drop
-  it.
+- **Diagnostics fingerprint reuse: dropped after measurement.**
+  `TurnDiagnosticsCollector` already deduplicates canonical fragments, and the
+  audit contract requires the complete reconstructable set. Profiling after the
+  output-read fix attributed about 73% of the remaining provider-boundary cost
+  to the bounded Secretlint scan and about 1% to SHA fingerprinting, so another
+  fingerprint/deep-copy cache would optimize the wrong operation.
 
 ### PR-3 — small tails
 
 - Hoist the `BELIEF_BEARING_TOOLS` check in front of `indexProjection` in
   `ThreadDocumentBeliefs.observe`.
-- **Durable secret scan: full coverage, finer yielding — never a budget.** The
-  durable path's null budget is deliberate (`redactSecretLikeJsonAsync` scans
-  completely; only the diagnostics copy is budget-bounded) — bounding it would
-  let a large crafted output bypass redaction into durable storage
-  deterministically. The fix is scheduling only: chunk long strings so the
-  scanner yields *within* a rule pass (rule × chunk granularity, with overlap
-  windows so patterns spanning chunk boundaries still match), or run the
-  complete scan on a worker thread. Coverage and redaction outcomes stay
-  byte-identical; the existing fail-open applies only to scanner *errors*, as
-  today.
+- **Shared secret-scan scheduling, distinct budgets.** Profiling measured the
+  64,000-character diagnostics copy, while the durable path deliberately has a
+  null budget and must scan completely; bounding durable work would let a large
+  crafted output bypass redaction into storage deterministically. Both paths
+  stage their ordered strings into one batch and use the same pure scanner.
+  Sufficiently large batches run on one lazy, unreferenced Node worker; small
+  batches run directly to avoid IPC overhead, and worker failure retries the
+  same complete scanner directly before the existing fail-open boundary.
+  Diagnostics spends its global budget before worker dispatch and preserves its
+  omission markers. The worker scans whole strings rather than chunks, so
+  arbitrary-span credentials such as private keys require no overlap heuristic
+  and redaction outcomes remain byte-identical.
+- At every provider freeze, evict successful Turn-scoped `readOutput` entries
+  whose complete typed keys are absent from the effective context's existing
+  frozen-projection set. Compacted-away output stays recoverable from storage
+  but no longer stays resident for the rest of the Turn.
 - Turn completion computes `allTurns` once and passes the result to both prune
-  sweeps (and any other same-boundary consumer in `TurnLifecycle`).
+  sweeps and the created-resource retention check, so all three derive from one
+  canonical snapshot.
 
 ## Verification
 
@@ -171,6 +176,11 @@ explicitly NOT part of this plan.
 - Existing agent tool and memory extension suites stay green, with one scoped
   exception: `node_search` ranking fixtures under a filter update once to the
   ratified indexed semantics. Everything else in PR-1/2/3 is pure cost.
+- PR-3 additionally proves that non-belief tools never index a projection, a
+  compacted-away output is re-read if it later re-enters effective context,
+  terminal cleanup performs one canonical Turn decode, the diagnostics budget
+  remains ordered across a batch, and long cross-boundary credential fixtures
+  produce the same bytes through direct and worker scans.
 - **A9 manual:** a multi-tool research Turn (10+ tool calls) on the large test
   document — wall-clock and main-process CPU before/after each PR, recorded in
   the PR body.

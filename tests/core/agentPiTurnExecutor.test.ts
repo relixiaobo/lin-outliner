@@ -1499,6 +1499,124 @@ describe('PiTurnExecutor event normalization', () => {
     expect(JSON.stringify(providerContexts)).toContain(output);
   });
 
+  test('evicts output reads that leave the effective context between provider boundaries', async () => {
+    const fixture = createContext();
+    const outputText = ['First persisted output.', 'Second persisted output.'];
+    const outputRefs = outputText.map((output, index) => ({
+      id: createHash('sha256').update(output).digest('hex'),
+      mimeType: 'text/plain' as const,
+      byteLength: Buffer.byteLength(output),
+      summary: `Tool output ${index + 1}`,
+    }));
+    const payloads = outputRefs.map((outputRef) => ({
+      schemaVersion: 1 as const,
+      kind: 'toolOutputProjection' as const,
+      outputRef,
+      projection: { type: 'full' as const },
+    }));
+    const payloadRefs = payloads.map((payload) => {
+      const serialized = JSON.stringify(payload);
+      return {
+        id: createHash('sha256').update(serialized).digest('hex'),
+        mimeType: 'application/vnd.tenon.agent-context+json' as const,
+        byteLength: Buffer.byteLength(serialized),
+        schemaVersion: 1 as const,
+        kind: payload.kind,
+      };
+    });
+    const historyTurnId = uuidV7(1_719_999_997_000);
+    const userId = uuidV7(1_719_999_997_010);
+    const userItem: ThreadItem = {
+      type: 'userMessage',
+      id: userId,
+      provenance: {
+        originThreadId: fixture.context.thread.id,
+        originTurnId: historyTurnId,
+        originItemId: userId,
+      },
+      clientId: null,
+      acceptedAt: 1_719_999_997_010,
+      content: [{ type: 'text', text: 'Inspect the persisted output.' }],
+    };
+    const itemSets = outputRefs.map((outputRef, index): readonly ThreadItem[] => {
+      const toolId = uuidV7(1_719_999_997_020 + index * 10);
+      const evidenceId = uuidV7(1_719_999_997_021 + index * 10);
+      return [userItem, {
+        type: 'dynamicToolCall',
+        id: toolId,
+        provenance: {
+          originThreadId: fixture.context.thread.id,
+          originTurnId: historyTurnId,
+          originItemId: toolId,
+        },
+        status: 'completed',
+        outputRef,
+        namespace: null,
+        tool: 'file_read',
+        arguments: { file_path: `/workspace/result-${index + 1}.txt` },
+        modelCall: replayableModelCall('file_read', { file_path: `/workspace/result-${index + 1}.txt` }),
+        contentItems: [{ type: 'text', text: `Bounded output ${index + 1}.` }],
+        success: true,
+        durationMs: 1,
+      }, {
+        type: 'contextEvidence',
+        id: evidenceId,
+        provenance: {
+          originThreadId: fixture.context.thread.id,
+          originTurnId: historyTurnId,
+          originItemId: evidenceId,
+        },
+        kind: 'toolOutputProjection',
+        payloadRef: payloadRefs[index]!,
+        summary: `Full tool output projection ${index + 1}`,
+        contextRefs: [],
+        resourceRefs: [],
+        outputRefs: [outputRef],
+      }];
+    });
+    const history = completedTurn(
+      fixture.context.turn,
+      historyTurnId,
+      itemSets[0]!,
+      1_719_999_997_000,
+    );
+    const outputReads = [0, 0];
+    const executor = new PiTurnExecutor({
+      resolveRuntimeSettings: async () => runtimeSettings(),
+      resolveRuntime: async () => runtimeSelection(),
+      createAgent: (options) => ({
+        state: { errorMessage: undefined },
+        subscribe: () => () => undefined,
+        abort: () => undefined,
+        steer: () => undefined,
+        prompt: async () => {
+          await options.transformContext!([]);
+          Object.assign(history, { items: itemSets[1]! });
+          await options.transformContext!([]);
+          Object.assign(history, { items: itemSets[0]! });
+          await options.transformContext!([]);
+        },
+      }),
+    });
+
+    await expect(executor.execute({
+      ...fixture.context,
+      historyBeforeTurn: [history],
+      readContext: async (ref) => {
+        const index = payloadRefs.findIndex((candidate) => candidate.id === ref.id);
+        return index < 0 ? null : payloads[index]!;
+      },
+      readOutput: async (ref) => {
+        const index = outputRefs.findIndex((candidate) => candidate.id === ref.id);
+        if (index < 0) return null;
+        outputReads[index] += 1;
+        return outputText[index]!;
+      },
+    })).resolves.toMatchObject({ status: 'completed' });
+
+    expect(outputReads).toEqual([2, 1]);
+  });
+
   test('runs the pre-provider hook without changing canonical user input', async () => {
     const fixture = createContext();
     const userItemId = uuidV7(1_720_000_000_110);

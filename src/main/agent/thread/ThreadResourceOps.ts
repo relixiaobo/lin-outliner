@@ -17,6 +17,7 @@ ThreadResourceReference,
 ThreadTurnDetailsReadRequest,
 ThreadTurnDetailsReadResponse,
 ThreadUserContent,
+Turn,
 TurnDiagnosticsPayloadReference,
 } from '../../../core/agent/protocol';
 import {
@@ -392,8 +393,11 @@ export class ThreadResourceOps {
       stableProviderPath ? { stableWorkspaceKey: threadId } : {},
     );
   }
-  threadResourceReferences(threadId: ThreadId): ThreadResourceReference[] {
-    return this.core.allTurns(threadId).flatMap((turn) => turn.items.flatMap(itemResourceReferences));
+  threadResourceReferences(
+    threadId: ThreadId,
+    turns: readonly Turn[] = this.core.allTurns(threadId),
+  ): ThreadResourceReference[] {
+    return turns.flatMap((turn) => turn.items.flatMap(itemResourceReferences));
   }
   async threadImageArtifactReferences(threadId: ThreadId): Promise<readonly ThreadImageArtifactReference[]> {
     return (await this.scanResourceUsage(
@@ -408,11 +412,17 @@ export class ThreadResourceOps {
     );
     return { artifacts: usage.artifacts, protectedResources: usage.genericResources };
   }
-  threadContextPayloadReferences(threadId: ThreadId): ThreadContextPayloadReference[] {
-    return this.core.allTurns(threadId).flatMap((turn) => turn.items.flatMap(itemContextPayloadReferences));
+  threadContextPayloadReferences(
+    threadId: ThreadId,
+    turns: readonly Turn[] = this.core.allTurns(threadId),
+  ): ThreadContextPayloadReference[] {
+    return turns.flatMap((turn) => turn.items.flatMap(itemContextPayloadReferences));
   }
-  threadTurnDiagnosticsReferences(threadId: ThreadId): TurnDiagnosticsPayloadReference[] {
-    return this.core.allTurns(threadId).flatMap((turn) => (
+  threadTurnDiagnosticsReferences(
+    threadId: ThreadId,
+    turns: readonly Turn[] = this.core.allTurns(threadId),
+  ): TurnDiagnosticsPayloadReference[] {
+    return turns.flatMap((turn) => (
       turn.execution.diagnosticsRef ? [turn.execution.diagnosticsRef] : []
     ));
   }
@@ -446,8 +456,9 @@ export class ThreadResourceOps {
   async discardUnreferencedCreatedResources(
     threadId: ThreadId,
     resources: readonly ThreadResourceReference[],
+    turns?: readonly Turn[],
   ): Promise<void> {
-    const referenced = this.threadResourceReferences(threadId);
+    const referenced = this.threadResourceReferences(threadId, turns);
     const unique = resources.filter((ref, index) => (
       resources.findIndex((candidate) => referencesSameResourceFile(candidate, ref)) === index
       && !referenced.some((candidate) => referencesSameResourceFile(candidate, ref))
