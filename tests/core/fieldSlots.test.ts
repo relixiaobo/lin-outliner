@@ -196,10 +196,30 @@ describe('nodeFieldSlots', () => {
         parentId: 'auto-init',
         targetId: 'current-date-option',
       }),
-      node('current-date-option', { type: 'systemOption' }),
+      node('current-date-option', {
+        type: 'systemOption',
+        content: { text: 'current_date' },
+      }),
     );
 
     expect(fieldSlotValueSource(nodes, nodeFieldSlots(nodes, 'owner')[0]!)).toBeUndefined();
+
+    const invalidStrategyNodes = new Map(nodes);
+    invalidStrategyNodes.set('current-date-option', node('current-date-option', {
+      type: 'systemOption',
+      content: { text: 'not_a_strategy' },
+    }));
+    expect(fieldSlotValueSource(
+      invalidStrategyNodes,
+      nodeFieldSlots(invalidStrategyNodes, 'owner')[0]!,
+    )).toEqual({ entryId: 'template-entry', inherited: true });
+
+    const danglingStrategyNodes = new Map(nodes);
+    danglingStrategyNodes.delete('current-date-option');
+    expect(fieldSlotValueSource(
+      danglingStrategyNodes,
+      nodeFieldSlots(danglingStrategyNodes, 'owner')[0]!,
+    )).toEqual({ entryId: 'template-entry', inherited: true });
   });
 
   test('round-trips encoded virtual row ids', () => {

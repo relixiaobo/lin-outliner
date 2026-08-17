@@ -1922,36 +1922,55 @@ button.outliner-table-column-kind:focus-visible {
 
 .field-value-inherited-default {
   position: absolute;
-  inset: 0 0 auto var(--row-leading-width);
+  inset: 0 calc(var(--control-size-sm) + var(--space-1)) auto var(--row-leading-width);
   overflow: hidden;
   min-height: var(--field-value-row-min-height);
-  border: 0;
   padding: var(--space-hairline) 0;
-  background: transparent;
   color: var(--text-tertiary);
   font: inherit;
   line-height: var(--line-content);
+  pointer-events: none;
   text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.field-value-inherited-default:disabled {
+.field-value-inherited-default-accept {
+  position: absolute;
+  z-index: var(--z-raised);
+  inset-block-start: 50%;
+  inset-inline-end: 0;
+  display: inline-flex;
+  width: var(--control-size-sm);
+  height: var(--control-size-sm);
+  translate: 0 -50%;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  opacity: 0;
+  transition: color var(--motion-fast), opacity var(--motion-fast);
+}
+
+.field-value-node-preview:hover > .field-value-inherited-default-accept,
+.field-value-inherited-default-accept:focus-visible {
   opacity: 1;
 }
 
-.field-value-inherited-default:hover:not(:disabled) {
-  color: var(--text-secondary);
-}
-
-.field-value-inherited-default:focus-visible {
-  border-radius: var(--radius-row);
-  outline: 2px solid var(--focus-ring);
-  outline-offset: -2px;
+.field-value-inherited-default-accept:hover,
+.field-value-inherited-default-accept:active {
+  color: var(--text-primary);
 }
 
 .field-value-outliner:has(.trailing-editor:focus-within) > .field-value-inherited-default {
   visibility: hidden;
+}
+
+.field-value-outliner:has(.trailing-editor:focus-within) > .field-value-inherited-default-accept {
+  opacity: 0;
+  pointer-events: none;
 }
 
 /* The field value column lets its outliner shrink within the entry grid; the
@@ -2346,6 +2365,11 @@ button.outliner-table-column-kind:focus-visible {
 
 .typed-field-boolean.checked {
   color: var(--text-primary);
+}
+
+.typed-field-boolean.inherited,
+.typed-field-boolean.inherited.checked {
+  color: var(--text-tertiary);
 }
 
 .typed-field-boolean:not(.is-readonly):hover .checkbox-mark:not(.checked) {

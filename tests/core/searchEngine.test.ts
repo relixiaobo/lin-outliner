@@ -902,7 +902,7 @@ describe('core search engine', () => {
     core.setFieldFreeTextValue(statusTemplateId, 'Inbox');
     const dueTemplateId = mustFocus(core.createFieldDef(tagId, 'Due', 'date'));
     const dueFieldDefId = core.state().nodes[dueTemplateId]!.fieldDefId!;
-    core.setFieldFreeTextValue(dueTemplateId, '2026-08-17');
+    core.setFieldFreeTextValue(dueTemplateId, '2020-01-01');
     addFieldValue(core, authored, statusFieldDefId, 'Zebra');
 
     const hitIds = (query: SearchQueryExpr) => {
@@ -917,7 +917,9 @@ describe('core search engine', () => {
       .toEqual(expect.arrayContaining([inherited, authored]));
     expect(hitIds({ kind: 'rule', op: 'IS_EMPTY', fieldDefId: statusFieldDefId }))
       .not.toContain(inherited);
-    expect(hitIds({ kind: 'rule', op: 'DATE_OVERLAPS', fieldDefId: dueFieldDefId, text: '2026-08-17' }))
+    expect(hitIds({ kind: 'rule', op: 'DATE_OVERLAPS', fieldDefId: dueFieldDefId, text: '2020-01-01' }))
+      .toEqual(expect.arrayContaining([inherited, authored]));
+    expect(hitIds({ kind: 'rule', op: 'OVERDUE', fieldDefId: dueFieldDefId }))
       .toEqual(expect.arrayContaining([inherited, authored]));
 
     const indexed = buildTextSearchIndex(core.state());

@@ -186,10 +186,13 @@ own field entry remains stored.
 
 When the template entry carries a static value, an unmaterialized slot presents
 that value as an inherited ghost in `--text-tertiary`. The ghost is read-only:
-clicking it explicitly accepts and materializes the current default, while
-typing into the underlying empty editor creates the user's own value. A stored
-value replaces the ghost and no longer follows template edits. Fields configured
-with `autoInitialize` never show a ghost because their acquisition-time value is
+it does not take pointer input, so clicking or typing in the underlying empty
+editor creates the user's own value. A trailing check affordance revealed by row
+hover or keyboard focus explicitly accepts and materializes the current default.
+Whole-field controls such as checkbox present the inherited state in their native
+control while keeping the same separate accept affordance. A stored value replaces
+the ghost and no longer follows template edits. Fields configured with
+`autoInitialize` never show a ghost because their acquisition-time value is
 resolved and frozen only when the tag is applied.
 
 | Interaction | Expected behavior |

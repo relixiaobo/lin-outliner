@@ -15,6 +15,8 @@ import { CheckboxFieldControl } from './CheckboxFieldControl';
 import { useT } from '../../i18n/I18nProvider';
 import { fieldSlotHasInheritedDefault, type NodeFieldSlot } from '../../../core/fieldSlots';
 import { EMPTY_RICH_TEXT } from '../../api/types';
+import { CheckIcon, ICON_SIZE } from '../icons';
+import { ButtonControl } from '../primitives/ButtonControl';
 
 interface FieldValueOutlinerProps {
   panelId: string;
@@ -110,7 +112,6 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
     props.optionField
     && descriptor.isWholeFieldControl
     && empty
-    && !inheritedDefault
   );
 
   const acceptInheritedDefault = () => {
@@ -236,7 +237,9 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
     >
       {showEmptyWholeFieldControl ? (
         <CheckboxFieldControl
+          displayValue={inheritedDefaultText || undefined}
           entryId={entry?.type === 'fieldEntry' ? entry.id : undefined}
+          inherited={Boolean(inheritedDefaultText)}
           onCreateValue={createWholeFieldValue}
           run={props.run}
         />
@@ -267,17 +270,24 @@ export function FieldValueOutliner(props: FieldValueOutlinerProps) {
           rowSemanticRole={props.embeddedInGridCell ? 'presentation' : undefined}
         />
       )}
-      {inheritedDefaultText ? (
-        <button
-          aria-label={tf.acceptInheritedDefault({ value: inheritedDefaultText })}
+      {inheritedDefaultText && !descriptor.isWholeFieldControl ? (
+        <span
+          aria-hidden="true"
           className="field-value-inherited-default"
-          disabled={owner?.locked}
-          onClick={acceptInheritedDefault}
-          title={tf.acceptInheritedDefault({ value: inheritedDefaultText })}
-          type="button"
         >
           {inheritedDefaultText}
-        </button>
+        </span>
+      ) : null}
+      {inheritedDefaultText && !owner?.locked ? (
+        <ButtonControl
+          aria-label={tf.acceptInheritedDefault({ value: inheritedDefaultText })}
+          className="field-value-inherited-default-accept"
+          data-preserve-selection
+          onClick={acceptInheritedDefault}
+          title={tf.acceptInheritedDefault({ value: inheritedDefaultText })}
+        >
+          <CheckIcon size={ICON_SIZE.rowGlyph} strokeWidth={2} />
+        </ButtonControl>
       ) : null}
     </div>
   );

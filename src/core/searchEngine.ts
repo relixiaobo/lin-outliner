@@ -1498,10 +1498,11 @@ function nodeIsOverdue(index: SearchIndex, node: SearchNode, conditionNode: Quer
 function overdueDateRanges(index: SearchIndex, node: SearchNode, fieldDefId?: NodeId): DateRange[] {
   const entries = fieldSlotsForSearchNode(index, node)
     .filter((slot) => (
-      Boolean(slot.entryId)
-      && (fieldDefId ? slot.fieldDefId === fieldDefId : fieldTypeOf(index, slot.fieldDefId) === 'date')
+      fieldDefId ? slot.fieldDefId === fieldDefId : fieldTypeOf(index, slot.fieldDefId) === 'date'
     ))
-    .map((slot) => index.nodes.get(slot.entryId!))
+    .map((slot) => fieldSlotValueSource(index.nodes, slot)?.entryId)
+    .filter((entryId): entryId is NodeId => Boolean(entryId))
+    .map((entryId) => index.nodes.get(entryId))
     .filter((entry): entry is Extract<SearchNode, { type: 'fieldEntry' }> => entry?.type === 'fieldEntry');
   return uniqueDateRanges(entries.flatMap((fieldEntry) =>
     fieldEntry.children.flatMap((valueId) => {

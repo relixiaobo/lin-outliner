@@ -1953,8 +1953,8 @@ test.describe('tag-projected field slot interactions', () => {
     await openMockedApp(page, { optionsField: true });
   });
 
-  test('shows a retroactive inherited default and materializes it only when accepted', async ({ page }) => {
-    const slotId = await projectFieldFromTag(page, ids.alpha, ids.statusField, 'plain');
+  test('keeps inherited defaults out of the edit target and materializes them only from accept', async ({ page }) => {
+    const alphaSlotId = await projectFieldFromTag(page, ids.alpha, ids.statusField, 'plain');
     const beforeDefault = await e2eProjection(page);
     const templateEntryId = beforeDefault.nodes.find((node) => (
       node.parentId === ids.projectTag
@@ -1969,8 +1969,9 @@ test.describe('tag-projected field slot interactions', () => {
       text: 'Inbox',
     });
 
-    const ghost = row(page, slotId).locator('.field-value-inherited-default');
+    const ghost = row(page, alphaSlotId).locator('.field-value-inherited-default');
     await expect(ghost).toHaveText('Inbox');
+    await expect(ghost).toHaveCSS('pointer-events', 'none');
     await expect.poll(() => storedFieldEntryId(page, ids.alpha, ids.statusField)).toBeUndefined();
     for (const colorScheme of ['light', 'dark'] as const) {
       await page.emulateMedia({ colorScheme });
@@ -1988,18 +1989,84 @@ test.describe('tag-projected field slot interactions', () => {
       expect(colors.actual).toBe(colors.expected);
     }
 
-    await ghost.click();
-    let entryId = '';
+    await trailingEditor(page, alphaSlotId).click();
+    await expect(trailingEditor(page, alphaSlotId)).toBeFocused();
+    await expect.poll(() => storedFieldEntryId(page, ids.alpha, ids.statusField)).toBeUndefined();
+    await page.keyboard.type('Blocked');
+    await expect.poll(() => storedFieldEntryId(page, ids.alpha, ids.statusField)).toBeUndefined();
+    await page.keyboard.press('Enter');
+
+    let alphaEntryId = '';
     await expect.poll(async () => {
-      entryId = await storedFieldEntryId(page, ids.alpha, ids.statusField) ?? '';
-      return entryId;
+      alphaEntryId = await storedFieldEntryId(page, ids.alpha, ids.statusField) ?? '';
+      return alphaEntryId;
     }).not.toBe('');
-    await expect(row(page, slotId).locator('.field-value-inherited-default')).toHaveCount(0);
     await expect.poll(async () => {
+      const projection = await e2eProjection(page);
+      const entry = projection.nodes.find((node) => node.id === alphaEntryId);
+      return entry?.children.map((childId) => projection.nodes.find((node) => node.id === childId)?.content.text);
+    }).toEqual(['Blocked']);
+
+    await invokeMockCommand(page, 'apply_tag', { nodeId: ids.beta, tagId: ids.projectTag });
+    await rowBody(page, ids.beta).hover();
+    await row(page, ids.beta).getByRole('button', { name: 'Expand' }).click();
+    const betaSlotId = projectedFieldSlotId(ids.beta, ids.statusField);
+    await expect(row(page, betaSlotId).locator('.field-value-inherited-default')).toHaveText('Inbox');
+
+    await row(page, betaSlotId).hover();
+    await row(page, betaSlotId)
+      .getByRole('button', { name: 'Accept inherited default: Inbox' })
+      .click();
+    let betaEntryId = '';
+    await expect.poll(async () => {
+      betaEntryId = await storedFieldEntryId(page, ids.beta, ids.statusField) ?? '';
+      return betaEntryId;
+    }).not.toBe('');
+    await expect(row(page, betaSlotId).locator('.field-value-inherited-default')).toHaveCount(0);
+    await expect.poll(async () => {
+      const projection = await e2eProjection(page);
+      const entry = projection.nodes.find((node) => node.id === betaEntryId);
+      return entry?.children.map((childId) => projection.nodes.find((node) => node.id === childId)?.content.text);
+    }).toEqual(['Inbox']);
+  });
+
+  test('renders an inherited checkbox default as an editable checkbox', async ({ page }) => {
+    await invokeMockCommand(page, 'create_inline_field', {
+      parentId: ids.projectTag,
+      index: null,
+      name: 'Ready',
+      fieldType: 'checkbox',
+    });
+    const templateProjection = await e2eProjection(page);
+    const templateEntry = templateProjection.nodes.find((node) => (
+      node.parentId === ids.projectTag
+      && node.type === 'fieldEntry'
+      && node.fieldDefId !== ids.statusField
+    ));
+    expect(templateEntry?.fieldDefId).toBeTruthy();
+    await invokeMockCommand(page, 'create_node', {
+      parentId: templateEntry!.id,
+      index: null,
+      text: 'true',
+    });
+    await invokeMockCommand(page, 'apply_tag', { nodeId: ids.alpha, tagId: ids.projectTag });
+    await rowBody(page, ids.alpha).hover();
+    await row(page, ids.alpha).getByRole('button', { name: 'Expand' }).click();
+
+    const slotId = projectedFieldSlotId(ids.alpha, templateEntry!.fieldDefId!);
+    const checkbox = row(page, slotId).getByRole('checkbox');
+    await expect(checkbox).toHaveAttribute('aria-checked', 'true');
+    await expect(row(page, slotId).locator('.field-value-inherited-default')).toHaveCount(0);
+    await expect.poll(() => storedFieldEntryId(page, ids.alpha, templateEntry!.fieldDefId!)).toBeUndefined();
+
+    await checkbox.click();
+    await expect(checkbox).toHaveAttribute('aria-checked', 'false');
+    await expect.poll(async () => {
+      const entryId = await storedFieldEntryId(page, ids.alpha, templateEntry!.fieldDefId!);
       const projection = await e2eProjection(page);
       const entry = projection.nodes.find((node) => node.id === entryId);
       return entry?.children.map((childId) => projection.nodes.find((node) => node.id === childId)?.content.text);
-    }).toEqual(['Inbox']);
+    }).toEqual(['false']);
   });
 
   test('virtual slots materialize nested fields, tags, and code blocks through field-slot commands', async ({ page }) => {

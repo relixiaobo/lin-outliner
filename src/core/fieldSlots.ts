@@ -1,3 +1,4 @@
+import { ENUM_DOMAINS } from './configSchema';
 import { TRASH_ID, type DefConfigKey, type NodeId, type NodeType } from './types';
 
 export interface FieldSlotNode {
@@ -5,6 +6,7 @@ export interface FieldSlotNode {
   readonly type?: NodeType;
   readonly parentId?: NodeId | null;
   readonly children: readonly NodeId[];
+  readonly content?: { readonly text: string };
   readonly tags?: readonly NodeId[];
   readonly fieldDefId?: NodeId;
   readonly configKey?: DefConfigKey;
@@ -121,7 +123,9 @@ export function fieldSlotValueSource(
 ): FieldSlotValueSource | undefined {
   if (slot.entryId) {
     const entry = fieldSlotNode(source, slot.entryId);
-    return entry?.type === 'fieldEntry' && !fieldSlotNodeIsDeleted(source, entry.id)
+    // Current slots already exclude deleted entries. Rewalking ancestry here
+    // multiplies the cost across every candidate on the search hot path.
+    return entry?.type === 'fieldEntry'
       ? { entryId: entry.id, inherited: false }
       : undefined;
   }
@@ -134,11 +138,7 @@ export function fieldSlotValueSource(
   const templateEntry = fieldSlotNode(source, slot.templateEntryId);
   if (
     templateEntry?.type !== 'fieldEntry'
-    || fieldSlotNodeIsDeleted(source, templateEntry.id)
-    || !templateEntry.children.some((childId) => (
-      Boolean(fieldSlotNode(source, childId))
-      && !fieldSlotNodeIsDeleted(source, childId)
-    ))
+    || !templateEntry.children.some((childId) => Boolean(fieldSlotNode(source, childId)))
   ) return undefined;
   return { entryId: templateEntry.id, inherited: true };
 }
@@ -255,9 +255,10 @@ function fieldDefinitionHasAutoInitialize(source: FieldSlotSource, fieldDefId: N
     .find((child) => child?.type === 'defConfig' && child.configKey === 'autoInitialize');
   return Boolean(row?.children.some((childId) => {
     const value = fieldSlotNode(source, childId);
-    return value?.type === 'reference'
-      && Boolean(value.targetId)
-      && !fieldSlotNodeIsDeleted(source, value.id);
+    const target = value?.type === 'reference' && value.targetId
+      ? fieldSlotNode(source, value.targetId)
+      : undefined;
+    return ENUM_DOMAINS.autoInitialize.values.some((strategy) => strategy === target?.content?.text);
   }));
 }
 
