@@ -45,8 +45,13 @@ Entries reference the pull request that introduced them.
   reconciled list, leaving an unguarded prune fan-out to kill the launch anyway,
   and hiding the Thread from `persistentRootThreads()` armed the memory
   orphan-admission sweep to delete its extraction state permanently — a filter is
-  invisible to a consumer that treats absence as deletion. The three rules are in
-  `docs/lessons.md`; `docs/spec/agent-core.md` states the quarantine contract.
+  invisible to a consumer that treats absence as deletion. The third round found
+  that same delete armed once more on a second quarantine path, because the fix
+  had introduced two sets that were supposed to agree and did not; the signal now
+  evaluates the same predicate the filter does, so it cannot disagree with itself.
+  The rules are in `docs/lessons.md` — including that a typecheck scoped to `src`
+  will not tell you a test double has gone stale; `docs/spec/agent-core.md` states
+  the quarantine contract.
 
 ## [0.5.0] - 2026-08-17
 

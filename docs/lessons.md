@@ -1139,6 +1139,14 @@ pushed onto the reconciled/resumable lists, so the launch still died on a
 different unguarded fan-out over exactly those lists. **A guard placed after the
 registration it is supposed to prevent is not a guard.**
 
+The fix for the filter problem then grew the same bug a third time, in a new
+place: a second quarantine path set only one of the two tracking sets, so the
+enumeration was incomplete while the "enumeration is incomplete" flag read false.
+**Two sets that must agree will not.** The durable fix was to delete the second
+set — the flag now evaluates the very predicate the filter evaluates, so it cannot
+disagree with itself — and to funnel every writer through one method. When a
+correctness property is "these two things always match", encode it as one thing.
+
 And find the caller before choosing the layer. The fatal path here was not the
 one the stack trace showed: Node's default `Error.stackTraceLimit = 10` truncated
 it exactly at `listTurns`, which made the projection decode look like the culprit.
@@ -1147,3 +1155,15 @@ Raising the limit to 80 and re-running showed the real shape — startup's
 no per-Thread guard. **A stack that ends suspiciously close to where you were
 already looking is probably truncated**; check the frame count against the limit
 before you conclude anything from where it stops.
+
+## A typecheck that excludes tests will not tell you a test double has gone stale
+
+`tsconfig.json` here is `"include": ["src", …]`, so `bun run typecheck` never
+looks at `tests/`. During #555 an interface gained a required method and the only
+other implementation — a hand-written fake in `agentMemory.test.ts` — was not
+updated; typecheck stayed green over a structurally invalid object, and the same
+gap swallowed a later rename, which surfaced as `x is not a function` at runtime
+instead of as a type error. **When you add to or rename on an interface, `rg` the
+test doubles by hand**; the compiler is not covering them for you. A green
+typecheck says nothing about the fakes, and a fake that no current test exercises
+will look fine until the day one does.

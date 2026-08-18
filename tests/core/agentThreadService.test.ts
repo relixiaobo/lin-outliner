@@ -1013,7 +1013,7 @@ describe('ThreadService', () => {
     });
     await reopened.service.initialize();
 
-    expect(reopened.service.hasUnreadableThreads()).toBe(true);
+    expect(reopened.service.hasHiddenRootThreads()).toBe(true);
     expect(reopened.service.persistentRootThreads().map((entry) => entry.id)).toEqual([]);
     expect(() => reopened.service.listTurns({ threadId: thread.id })).toThrow(/quarantined/);
     // A metadata-only read never touches the codec, so the sidebar can still name it.

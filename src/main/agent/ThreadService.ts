@@ -680,7 +680,14 @@ export class ThreadService implements ThreadServiceExtensionHost {
         const page = this.core.metadata.list({ archived, cursor, limit: 100 });
         for (const thread of page.data) {
           knownThreadIds.push(thread.id);
-          if (this.startupQuarantinedThreadIds.has(thread.id)) continue;
+          if (this.startupQuarantinedThreadIds.has(thread.id)) {
+            // Held back by delegated-Agent admission recovery, which says nothing
+            // about whether its history decodes. Ask anyway: without this its reads
+            // would leak the raw codec failure instead of the contracted refusal,
+            // and the guard keys off unreadability, not off quarantine.
+            await this.quarantineThreadIfUnreadable(thread.id);
+            continue;
+          }
           let reconciled = false;
           try {
             await this.catalogOps.reconcileThread(thread.id);
@@ -756,7 +763,14 @@ export class ThreadService implements ThreadServiceExtensionHost {
         // history, so a Thread that reconciled but cannot be projected still has
         // to cost only itself.
         console.error(`[agent] failed to resume Thread ${threadId}`, error);
-        this.quarantineStartupSubtree(threadId);
+        // Already quarantined means this Thread was swept up in an ancestor's
+        // subtree between passing its own probe and being resumed — a background
+        // delegated Agent sorts ahead of its parent under `updated_at DESC`, so
+        // this happens. The refusal it hit is an availability check, not a decode
+        // failure, and reporting it would name a perfectly readable Thread in the
+        // one durable trace quarantine leaves.
+        if (this.startupQuarantinedThreadIds.has(threadId)) continue;
+        this.markThreadUnreadable(threadId);
         await this.reportUnreadableThread(threadId, 'resume', error);
       }
     }
@@ -1140,7 +1154,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
    * read the Thread again picks it back up with nothing to undo.
    */
   private async quarantineThreadIfUnreadable(threadId: ThreadId): Promise<void> {
-    if (this.startupQuarantinedThreadIds.has(threadId)) return;
+    if (this.unreadableThreadIds.has(threadId)) return;
     try {
       // Page and discard rather than `readThread({ includeTurns: true })`: the
       // check needs every Turn and Item decoded, but nothing needs them all
@@ -1157,8 +1171,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       } while (cursor);
     } catch (error) {
       console.error(`[agent] quarantined unreadable Thread ${threadId}`, error);
-      this.unreadableThreadIds.add(threadId);
-      this.quarantineStartupSubtree(threadId);
+      this.markThreadUnreadable(threadId);
       await this.reportUnreadableThread(threadId, 'read', error);
     }
   }
@@ -1185,6 +1198,17 @@ export class ThreadService implements ThreadServiceExtensionHost {
     } catch {
       console.warn(`[agent] Failed to report an unreadable Thread: ${threadId}`);
     }
+  }
+
+  /**
+   * The single writer of unreadability. Both quarantine sets are always set
+   * together here, because the read guard keys off one and the root enumeration
+   * off the other, and updating only one is what previously let a session-scoped
+   * quarantine become a permanent delete.
+   */
+  private markThreadUnreadable(threadId: ThreadId): void {
+    this.unreadableThreadIds.add(threadId);
+    this.quarantineStartupSubtree(threadId);
   }
 
   private quarantineStartupSubtree(threadId: ThreadId): void {
@@ -1301,15 +1325,27 @@ export class ThreadService implements ThreadServiceExtensionHost {
    */
   persistentRootThreads(): readonly Thread[] {
     return this.catalogOps.persistentRootThreads()
-      .filter((thread) => !this.startupQuarantinedThreadIds.has(thread.id));
+      .filter((thread) => !this.isHiddenFromRootEnumeration(thread.id));
   }
 
   /**
-   * Whether this session is enumerating an incomplete view of history. Consumers
-   * that delete on absence — the memory orphan-admission sweep — must not treat a
-   * quarantined Thread's Turns as gone.
+   * Whether this session is enumerating an incomplete view of the root Threads.
+   * Consumers that delete on absence — the memory orphan-admission sweep — must
+   * not read a hidden Thread's Turns as gone.
+   *
+   * Deliberately asks the same predicate `persistentRootThreads()` filters on,
+   * rather than tracking a parallel set: the first version of this pair kept two
+   * sets and they promptly diverged, which is how a session-scoped quarantine
+   * turned into a permanent delete. One predicate cannot disagree with itself.
    */
-  hasUnreadableThreads(): boolean { return this.unreadableThreadIds.size > 0; }
+  hasHiddenRootThreads(): boolean {
+    return this.catalogOps.persistentRootThreads()
+      .some((thread) => this.isHiddenFromRootEnumeration(thread.id));
+  }
+
+  private isHiddenFromRootEnumeration(threadId: ThreadId): boolean {
+    return this.startupQuarantinedThreadIds.has(threadId);
+  }
   persistentThreadExecutionContext(threadId: ThreadId): PersistentThreadExecutionContext { return this.catalogOps.persistentThreadExecutionContext(threadId); }
   readTurnForHost(threadId: ThreadId, turnId: TurnId): Turn | null { return this.core.readTurn(threadId, turnId); }
   readTurnByClientUserMessageIdForHost(threadId: ThreadId, clientId: string): Turn | null { return this.turnLifecycle.readTurnByClientUserMessageIdForHost(threadId, clientId); }

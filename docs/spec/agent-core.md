@@ -552,9 +552,16 @@ with nothing to undo — which also means no consumer may treat a quarantined Th
 absence as deletion. The memory orphan-admission sweep is skipped for any session with a
 quarantined Thread for exactly that reason: it deletes every admission row whose Turn it
 cannot enumerate, so running it against the filtered list would permanently discard that
-Thread's extraction state and make a session-scoped quarantine durable. It is reported
-once as a `thread-history-unreadable` persistence diagnostic naming the Thread — the
-only trace, since nothing durable records it.
+Thread's extraction state and make a session-scoped quarantine durable. The filter and
+the `hasHiddenRootThreads()` signal that guards it evaluate the same predicate rather
+than two sets that could disagree. It is reported once as a `thread-history-unreadable`
+persistence diagnostic naming the Thread — the only trace, since nothing durable records
+it, so it is never emitted for a Thread that merely inherited quarantine from an
+ancestor's subtree and was refused on availability rather than on decoding.
+
+Threads already held back by delegated-Agent admission recovery are still probed, so a
+Thread whose history also fails to decode answers the contracted refusal rather than
+leaking the codec error — the read guard keys off unreadability, not off quarantine.
 
 Reconciliation failing is deliberately *not* disqualifying on its own: a torn rollout
 leaves a Thread that no longer advances but still reads out of its projection, and that
