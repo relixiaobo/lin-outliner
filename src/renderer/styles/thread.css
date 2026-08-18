@@ -842,9 +842,12 @@
   gap: var(--space-4);
 }
 
-/* Avatar and name on ONE line, with the words below at full width. The margin
-   lane a desktop IM uses costs a tenth of the reading measure in a 344px deck,
-   to repeat what the line above already says. */
+/* Portrait, name, and what this participant is, on ONE line — with the words
+   below sharing the NAME's left edge, not the portrait's. The avatar lane is
+   what mobile IM spends at exactly this width, and it earns the ~26px here
+   because it carries a face: a portrait is an identity signal in itself rather
+   than a restatement of the name beside it, and the shared text edge turns a
+   change of speaker into something the eye catches without reading. */
 .thread-speaker-header {
   display: flex;
   min-width: 0;
@@ -852,6 +855,15 @@
   /* With the avatar's own optical shift this is the row glyph's advance: the
      name lands on the same text column as a chip or tool label below it. */
   gap: var(--space-2);
+}
+
+/* The lane the words hang from: portrait, its optical shift, and the gap that
+   follows it. Derived here so the header and the content below cannot drift
+   apart when the portrait size changes. */
+.thread-speaker {
+  --speaker-text-inset: calc(
+    var(--speaker-avatar-size) + var(--space-2) - var(--space-1)
+  );
 }
 
 .thread-speaker-avatar {
@@ -866,13 +878,34 @@
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
+  /* A portrait fills its disc edge to edge; the crop is the frame. */
+  overflow: hidden;
   border-radius: var(--radius-pill);
-  font-size: var(--font-ui-2xs);
-  /* The repo's emphasis weight: a 10px initial needs it to hold the disc. */
+  font-size: var(--font-ui-xs);
+  /* The repo's emphasis weight: an initial needs it to hold the disc. */
   font-weight: 650;
   /* The disc is a fixed circle: its glyph must not push it out of round. */
   line-height: 1;
   user-select: none;
+}
+
+.thread-speaker-avatar > svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* What the participant IS, beside what it is called. Quieter than the name: one
+   line answers both questions, and only the first is the identity. */
+.thread-speaker-role {
+  min-width: 0;
+  overflow: hidden;
+  flex: 0 1 auto;
+  color: var(--text-tertiary);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* The blocks keep the Turn's own rhythm: the speaker column replaces
@@ -881,7 +914,19 @@
   display: flex;
   min-width: 0;
   flex-direction: column;
+  /* Hung from the name above, so a block of prose and the line naming it read
+     as one column. */
+  padding-left: var(--speaker-text-inset);
   gap: var(--space-6);
+}
+
+/* Media breaks the lane and reclaims it. A picture is not read left-to-right
+   off a text edge, and at 344px the difference between 276px and 302px of
+   image is the difference between seeing it and squinting — the same trade
+   every IM makes for wide media. */
+.thread-speaker-content > .thread-image-gallery,
+.thread-speaker-content > .thread-item > .thread-image-gallery {
+  margin-left: calc(var(--speaker-text-inset) * -1);
 }
 
 .thread-speaker-name {

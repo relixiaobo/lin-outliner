@@ -160,7 +160,7 @@ describe('AgentConfigurationLoader', () => {
         reviewer: {
           description: 'Review the implementation.',
           developerInstructions: 'Find concrete correctness issues.',
-          nicknameCandidates: ['Ada'],
+          presentation: { persona: 'Ada' },
           overrides: { tools: ['node_read'] },
         },
       },
@@ -177,7 +177,7 @@ describe('AgentConfigurationLoader', () => {
         reviewer: {
           description: 'Review this project.',
           developerInstructions: 'Use the project review policy.',
-          nicknameCandidates: ['Noether'],
+          presentation: { persona: 'Noether', avatar: 'owl' },
           overrides: {
             model: 'review-model',
             reasoningEffort: 'xhigh',
@@ -204,7 +204,7 @@ describe('AgentConfigurationLoader', () => {
       source: 'project',
       description: 'Review this project.',
       developerInstructions: 'Use the project review policy.',
-      nicknameCandidates: ['Noether'],
+      presentation: { persona: 'Noether', avatar: 'owl' },
       overrides: {
         model: 'review-model',
         reasoningEffort: 'xhigh',
@@ -231,6 +231,116 @@ describe('AgentConfigurationLoader', () => {
     await writeJson(userConfigurationPath(userData), {});
     expect(() => loader.resolveProfile('missing', cwd)).toThrow('Unknown Configuration Profile');
     expect(() => loader.resolveRole('missing', cwd)).toThrow('Unknown Agent Role');
+  });
+
+  test('names every identity from built-in defaults before anything is configured', async () => {
+    const { userData, cwd } = await fixturePaths();
+    const loader = new AgentConfigurationLoader(userData);
+
+    const catalog = loader.resolveIdentityCatalog(cwd);
+
+    expect(catalog).toEqual([
+      { agentType: 'main', persona: 'Tenon', avatar: 'beaver', source: 'built-in' },
+      { agentType: 'general-purpose', persona: 'Bear', avatar: 'bear', source: 'built-in' },
+      { agentType: 'explore', persona: 'Fox', avatar: 'fox', source: 'built-in' },
+      { agentType: 'plan', persona: 'Owl', avatar: 'owl', source: 'built-in' },
+    ]);
+  });
+
+  test('layers presentation overrides project over user over the definition', async () => {
+    const { userData, cwd } = await fixturePaths();
+    await writeJson(userConfigurationPath(userData), {
+      presentationOverrides: {
+        main: { persona: 'Ash' },
+        explore: { persona: 'Scout', avatar: 'owl' },
+      },
+      roles: {
+        reviewer: {
+          description: 'Review the implementation.',
+          developerInstructions: 'Find concrete correctness issues.',
+          presentation: { persona: 'Ada', avatar: 'owl' },
+        },
+      },
+    });
+    await writeJson(projectConfigurationPath(cwd), {
+      presentationOverrides: { explore: { persona: 'Pathfinder' } },
+    });
+    const loader = new AgentConfigurationLoader(userData);
+
+    const byType = new Map(loader.resolveIdentityCatalog(cwd).map((entry) => [entry.agentType, entry]));
+
+    // One entry REPLACES another, the way a project Profile or Role replaces a
+    // user one — the layering rule is the same everywhere in this file. So the
+    // project's persona-only override drops the user's avatar back to the
+    // built-in default rather than merging with it.
+    expect(byType.get('explore')).toEqual({
+      agentType: 'explore', persona: 'Pathfinder', avatar: 'fox', source: 'built-in',
+    });
+    expect(byType.get('main')).toEqual({
+      agentType: 'main', persona: 'Ash', avatar: 'beaver', source: 'built-in',
+    });
+    // A Role speaks for itself, and is named after itself when it does not.
+    expect(byType.get('reviewer')).toEqual({
+      agentType: 'reviewer', persona: 'Ada', avatar: 'owl', source: 'user',
+    });
+  });
+
+  test('names an unconfigured Role after itself and gives it no portrait', async () => {
+    const { userData, cwd } = await fixturePaths();
+    await writeJson(userConfigurationPath(userData), {
+      roles: {
+        auditor: { description: 'Audit it.', developerInstructions: 'Audit it carefully.' },
+      },
+    });
+    const loader = new AgentConfigurationLoader(userData);
+
+    expect(loader.resolveIdentityCatalog(cwd).find((entry) => entry.agentType === 'auditor')).toEqual({
+      agentType: 'auditor', persona: 'auditor', avatar: null, source: 'user',
+    });
+  });
+
+  test('keeps presentation out of the catalog the model is told about', async () => {
+    const { userData, cwd } = await fixturePaths();
+    await writeJson(userConfigurationPath(userData), {
+      roles: {
+        reviewer: { description: 'Review it.', developerInstructions: 'Review it well.' },
+      },
+    });
+    const loader = new AgentConfigurationLoader(userData);
+    const before = loader.buildRoleCatalogSnapshot(cwd);
+
+    await writeJson(userConfigurationPath(userData), {
+      presentationOverrides: { explore: { persona: 'Scout', avatar: 'owl' } },
+      roles: {
+        reviewer: {
+          description: 'Review it.',
+          developerInstructions: 'Review it well.',
+          presentation: { persona: 'Ada', avatar: 'bear' },
+        },
+      },
+    });
+    const after = loader.buildRoleCatalogSnapshot(cwd);
+
+    // Renaming an Agent on screen tells the model nothing new, so nothing it
+    // was told may move — including the hashes that gate re-announcement.
+    expect(after).toEqual(before);
+  });
+
+  test('refuses a reserved Role name and an unknown portrait', async () => {
+    const { userData, cwd } = await fixturePaths();
+    await writeJson(userConfigurationPath(userData), {
+      roles: {
+        main: { description: 'Impostor.', developerInstructions: 'Impersonate the conversation.' },
+      },
+    });
+    const loader = new AgentConfigurationLoader(userData);
+
+    expect(() => loader.resolveIdentityCatalog(cwd)).toThrow('reserved');
+
+    await writeJson(userConfigurationPath(userData), {
+      presentationOverrides: { explore: { avatar: 'dragon' } },
+    });
+    expect(() => loader.resolveIdentityCatalog(cwd)).toThrow('must be one of');
   });
 });
 

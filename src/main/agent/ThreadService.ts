@@ -1,4 +1,5 @@
 import type { Stats } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import {
 decodeAgentCoreRequest,
@@ -23,6 +24,7 @@ AgentCoreRequestByMethod,
 AgentCoreResponseByMethod,
 EmptyAgentCoreResponse,
 JsonValue,
+AgentIdentityEntry,
 PrivilegedTurnStartRequest,
 RendererTurnStartRequest,
 RendererTurnSubmitRequest,
@@ -213,6 +215,7 @@ export interface ThreadServiceOptions {
   readonly resolveRoleCatalog?: (
     cwd: string,
   ) => RoleCatalogContextPayload | Promise<RoleCatalogContextPayload>;
+  readonly resolveIdentityCatalog?: (cwd: string) => readonly AgentIdentityEntry[];
   readonly resolveProviderModelIds?: (
     providerId: string,
   ) => readonly string[] | Promise<readonly string[]>;
@@ -388,6 +391,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
   private readonly resolveRoleCatalog: (
     cwd: string,
   ) => Promise<RoleCatalogContextPayload | null>;
+  private readonly resolveIdentityCatalog: (cwd: string) => readonly AgentIdentityEntry[];
   private readonly resolveProviderModelIds: (providerId: string) => Promise<readonly string[]>;
   private readonly resolveAgentStartupContext: (
     parent: Pick<Thread, 'id' | 'sessionId' | 'cwd'>,
@@ -447,6 +451,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     const resolveRole = options.resolveRole ?? defaultAgentRole;
     const resolveAgentType = options.resolveAgentType ?? defaultResolvedAgentType;
     this.resolveRoleCatalog = async (cwd) => await options.resolveRoleCatalog?.(cwd) ?? null;
+    this.resolveIdentityCatalog = options.resolveIdentityCatalog ?? (() => []);
     this.resolveProviderModelIds = async (providerId) => (
       await options.resolveProviderModelIds?.(providerId) ?? []
     );
@@ -1432,6 +1437,19 @@ export class ThreadService implements ThreadServiceExtensionHost {
         return {
           recorded: this.isThreadRecorded((decoded as AgentCoreRequestByMethod['thread/records/get']).threadId),
         } as AgentCoreResponseByMethod[Method];
+      case 'identities/get': {
+        const request = decoded as AgentCoreRequestByMethod['identities/get'];
+        // A Thread names the project layer to read. An unreadable or absent
+        // Thread is not an error here: the user layer alone is a complete
+        // answer, and a dock that cannot name its participants is worse than
+        // one that names them from built-ins.
+        const cwd = request.threadId === null
+          ? null
+          : this.core.metadata.read(request.threadId)?.thread.cwd ?? null;
+        return {
+          entries: this.resolveIdentityCatalog(cwd ?? homedir()),
+        } as AgentCoreResponseByMethod[Method];
+      }
       case 'thread/records/set': {
         const request = decoded as AgentCoreRequestByMethod['thread/records/set'];
         await this.setThreadRecorded(request.threadId, request.recorded);

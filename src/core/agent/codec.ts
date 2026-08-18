@@ -1029,6 +1029,9 @@ export function decodeAgentCoreRequest<M extends AgentCoreMethod>(
     case 'thread/records/set':
       decoded = decodeThreadRecordsSetRequest(value);
       break;
+    case 'identities/get':
+      decoded = decodeAgentIdentityCatalogRequest(value);
+      break;
     case 'thread/fork':
       decoded = decodeThreadForkRequest(value);
       break;
@@ -1129,6 +1132,9 @@ export function decodeAgentCoreResponse<M extends AgentCoreMethod>(
     case 'thread/records/get':
     case 'thread/records/set':
       decoded = decodeThreadRecordsResponse(value);
+      break;
+    case 'identities/get':
+      decoded = decodeAgentIdentityCatalogResponse(value);
       break;
     case 'thread/turns/list':
       decoded = decodeThreadTurnsListResponse(value);
@@ -1282,6 +1288,31 @@ function decodeThreadRecordsSetRequest(value: unknown): AgentCoreRequestByMethod
   return deepFreeze({
     threadId: uuidV7(record.threadId, 'threadId'),
     recorded: booleanValue(record.recorded, 'recorded'),
+  });
+}
+
+function decodeAgentIdentityCatalogRequest(value: unknown): AgentCoreRequestByMethod['identities/get'] {
+  const record = recordValue(value, 'identities/get');
+  exactKeys(record, ['threadId'], 'identities/get');
+  return deepFreeze({
+    threadId: record.threadId === null ? null : uuidV7(record.threadId, 'threadId'),
+  });
+}
+
+function decodeAgentIdentityCatalogResponse(value: unknown): AgentCoreResponseByMethod['identities/get'] {
+  const record = recordValue(value, 'identities response');
+  exactKeys(record, ['entries'], 'identities response');
+  return deepFreeze({
+    entries: arrayValue(record.entries, 'identities.entries').map((entry) => {
+      const profile = recordValue(entry, 'identities.entry');
+      exactKeys(profile, ['agentType', 'persona', 'avatar', 'source'], 'identities.entry');
+      return {
+        agentType: stringValue(profile.agentType, 'identities.entry.agentType'),
+        persona: stringValue(profile.persona, 'identities.entry.persona'),
+        avatar: nullableString(profile.avatar, 'identities.entry.avatar'),
+        source: enumValue(profile.source, ['built-in', 'user', 'project'] as const, 'identities.entry.source'),
+      };
+    }),
   });
 }
 

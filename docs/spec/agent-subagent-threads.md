@@ -172,6 +172,32 @@ same separator. One normalized match resolves to its canonical spelling;
 multiple matches are an ambiguity error, and no match reports the available
 types. Diagnostics and persistence use the canonical result.
 
+### Presentation
+
+Every Agent type carries a **presentation** — a `persona` (the name a reader
+sees) and an `avatar` (a bundled portrait key) — resolved into the identity
+catalog that the renderer reads through `identities/get`. Presentation is
+host-side only: the model addresses canonical types and raw Agent IDs, and no
+persona reaches a tool description, a catalog payload, a prompt block, or the
+`contentHash` that gates catalog re-announcement. Renaming an Agent on screen
+therefore tells the model nothing.
+
+A Role declares its own under `presentation`. The identities a user cannot
+redefine without forking them — the three built-in types and the conversation's
+own agent — are re-skinned through a `presentationOverrides` map in either
+configuration layer, keyed by Agent type plus the reserved pseudo-key `main`.
+Layering matches Profiles and Roles: project replaces user, entry by entry
+rather than field by field. `main` is refused as a Role name so the two key
+spaces cannot collide, and an `avatar` naming no bundled portrait is refused at
+the write boundary rather than drawn blank.
+
+Defaults are Tenon (`main`), Fox (`explore`), Owl (`plan`), and Bear
+(`general-purpose`). An identity with no persona is named after its type and
+wears the initial disc, which is what an unconfigured Role looks like on first
+run. Identity attaches to the TYPE, not to an Agent: concurrent children of one
+type share a name and a face by design, and the task on each one's report is
+what tells them apart.
+
 The model choice resolves in this order: per-call override, Role override, then
 parent model. Reasoning effort has no model-visible Agent argument; a Role may
 narrow it, otherwise it follows the parent. A successful spawn records the

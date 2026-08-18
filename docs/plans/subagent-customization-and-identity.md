@@ -13,8 +13,8 @@ signed report cards under those same headers.
 Concretely, this ships:
 
 1. Presentation fields (`persona`, `avatar`) on Agent Role definitions, plus a
-   presentation-override layer so built-ins and the main agent are customizable
-   without redefining them.
+   `presentationOverrides` layer so built-ins and the root identity are
+   customizable without redefining them.
 2. A default roster with bundled avatar art: **Tenon** (beaver, main), **Fox**
    (fox, `explore`), **Owl** (owl, `plan`), **Bear** (bear, `general-purpose`).
 3. The portrait/persona/layout upgrade of the shipped speaker system in the
@@ -90,7 +90,7 @@ transparency features (durations, tool activity, usage) stay first-class.
   portraits, personas, layout, the duration-line disclosure (§3) — amending
   the spec's speaker section in the same change (see Spec Amendments).
 
-### 1. Profile model
+### 1. Identity model
 
 `AgentRole` (`src/core/agent/configuration.ts`) gains one optional grouped
 field:
@@ -140,9 +140,9 @@ readonly presentation?: {
   Precedence mirrors `loadMerged`: project over user over the definition's own
   `presentation`. The pseudo-key `main` addresses the root agent, which has no
   Role.
-- **Main agent profile.** A frozen constant in `configuration.ts` —
-  `MAIN_AGENT_PROFILE = { persona: 'Tenon', avatar: 'beaver' }` — overlayable
-  through `presentationOverrides.main`.
+- **The root identity.** A frozen constant in `configuration.ts` —
+  `DEFAULT_AGENT_PRESENTATIONS.main = { persona: 'Tenon', avatar: 'beaver' }` —
+  overlayable through `presentationOverrides.main`.
 - **Default roster.** Built-in Roles carry default presentation in their
   definitions:
 
@@ -175,7 +175,7 @@ readonly presentation?: {
   1. main-thread rows → `main` profile (overlay-resolved);
   2. child rows/cards → the child's recorded agent type / Role name
      (`Thread.agentRole`, i.e. the execution record's selected definition) →
-     profile catalog;
+     identity catalog;
   3. persona missing → the Role/type name verbatim;
   4. avatar missing or Role unknown/deleted → letter fallback below.
 
@@ -183,9 +183,11 @@ readonly presentation?: {
 
 - Bundled set under `src/renderer/assets/agent-avatars/`, imported through
   Vite exactly like `src/renderer/assets/provider-icons/` (the repo has no
-  `public/` directory; do not invent a second asset mechanism). Square PNGs at
-  48px and 96px (`<key>.png`, `<key>@2x.png`), displayed at 24px (flow) and
-  40px (detail view), circle-cropped by CSS (`border-radius: 50%`).
+  `public/` directory; do not invent a second asset mechanism). **SVG, inlined
+  as raw markup** rather than raster asset URLs — the same choice
+  `providerIcon.ts` makes: one file serves every size, scales with its
+  container, and stays diffable in review. 24×24 viewBox, drawn edge to edge,
+  circle-cropped by CSS (`border-radius: 50%` + `overflow: hidden`).
 - **Four keys ship in PR-A** — `beaver`, `fox`, `owl`, `bear` — one per default
   identity. No speculative pool: a custom Role picks the letter fallback (or
   any of the four) until demand justifies expanding the set; candidate names
@@ -193,13 +195,15 @@ readonly presentation?: {
   `capybara`, `heron`, `badger`) are recorded here so the naming principle
   stays coherent, but producing them is out of scope.
 - **Production path (PR-A critical path, explicit).** The four portraits are
-  produced by one-off image generation *outside* the app, before implementation
-  completes: one consistent illustration style, readable at 24px, holding up on
-  both light and dark surfaces. The generation method and prompts are recorded
-  in the PR body so a future pool expansion can match the style. **The PM
-  ratifies the four portraits (and thereby the art direction) as part of PR-A's
-  review gate** — the gate's light+dark visual verification covers them; a PR-A
-  without ratified assets is not mergeable.
+  authored as flat SVG against one shared formula, recorded in the asset
+  README: coloured disc, warm off-white head, near-black features, and a
+  SILHOUETTE that carries the species because features vanish first at 24px.
+  Two animals sharing a silhouette must not share a hue (beaver and bear are
+  the pair to watch). **The PM ratifies the four portraits — and thereby the
+  art direction — at PR-A's review gate**, whose light+dark visual verification
+  covers them; a PR-A without ratified assets is not mergeable. Because the
+  asset map is one module, replacing the art later is a file swap with no code
+  change.
 - **Produced once, committed, frozen.** A regenerated avatar is a different
   face; identity requires stability. Re-render an asset only on a deliberate,
   PM-ratified art-direction change — never as a side effect.
@@ -230,7 +234,7 @@ clamped, whole-card-clickable card under that child's header. PR-A does not
 rebuild any of this. It upgrades four things:
 
 **Upgrade 1 — portrait avatars.** The letter disc becomes the bundled portrait
-resolved through the profile catalog (`resolveAgentIdentity`, §1); the shipped
+resolved through the identity catalog (`resolveAgentIdentity`, §1); the shipped
 `agentAvatarColor` disc remains as the fallback for identities without a
 portrait. `--speaker-avatar-size` moves 16px → 24px — a 16px disc carries an
 initial, not a face. `avatarKey` semantics (one type, one avatar, everywhere)
@@ -264,15 +268,15 @@ wide-media convention); code blocks keep the column and their existing
 spec's speaker section in the same change — the old argument must not survive
 as text once the code stops embodying it.
 
-**Upgrade 4 — the duration line becomes the process disclosure.** The main
-speaker's `meta` (built from `threadProcessSummary` /
-`t.agent.thread.workedFor` via `formatProcessDuration`, ticking live through
-`useTurnElapsedMs`) becomes a real button (visible `:focus-visible` ring, B8)
-that toggles the Turn's process detail — reasoning disclosures and
-`ThreadToolActivityGroup` content — in place. No separate process header
-remains; the prototype's clean flow and process visibility become the same
-surface. A delivered report's meta (the child's own elapsed) stays a plain
-span — its disclosure surface is the card itself.
+**Upgrade 4 — the duration line is already the process disclosure.** Verified
+against the shipped tree: the main speaker's `meta` is a `ButtonControl`
+(`.thread-speaker-meta.thread-process-toggle`) carrying
+`threadProcessSummary` — "Worked for …" once settled, ticking live through
+`useTurnElapsedMs` — and toggling the Turn's process detail in place, while a
+delivered report's meta stays a plain span because its disclosure surface is
+the card itself. #544 landed exactly the behaviour this plan specifies, so
+there is nothing to build here; it is listed to keep the contract complete and
+to stop a later reader from "restoring" a separate process header.
 
 **Unchanged by design (stated so the executing dev does not "fix" them):**
 

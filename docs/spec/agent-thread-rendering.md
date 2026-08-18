@@ -87,10 +87,20 @@ the only control that opens the timeline. It was a name row, a summary line, a
 rule, and sometimes a second summary line — four elements for one sentence (PM
 2026-08-15). One structure for all of them: the conversation's own agent
 answering, a delegated child delivering its report, the Agent that wrote a
-brief. The header is one line and the words keep the whole column on purpose:
-the avatar lane down the margin that desktop IM uses costs a tenth of the
-reading measure in a 344px deck, spent repeating what the header already says
-(PM 2026-08-15). Before this, `main` was unattributed prose and a child's report was a
+brief. The header is one line, and the words beneath HANG FROM THE NAME: the
+portrait sits in a margin lane and every line of text in the block — header and
+content alike — shares one left edge (`--speaker-text-inset`, the portrait plus
+its gap). That lane costs a tenth of the reading measure in a 344px deck, and
+what buys it is the PORTRAIT: a face identifies a speaker before its name is
+read, so the lane carries something the header does not repeat, and one shared
+text edge makes a change of speaker visible without reading. This deliberately
+reverses the first shape, an initial disc over full-width text, which was the
+right call while the avatar was a letter — a letter restates the name, and
+paying a margin for a restatement is what that rule refused (PM 2026-08-15;
+reversed PM 2026-08-18 with portraits). Media is the exception and breaks back
+out to the portrait's edge: a picture is not read off a text edge, and at this
+width the reclaimed lane is the difference between seeing it and squinting.
+Before this, `main` was unattributed prose and a child's report was a
 labelled bubble, which made two participants look like two different sorts of
 thing (PM 2026-08-15). Consecutive blocks group under a single header only within one
 PARTICIPANT — never merely within one type. A `general-purpose` child inside a
@@ -123,10 +133,20 @@ identity signal in the stream, and Tenon has no user profile to draw a face
 from — so `I asked this` stays a matter of position, and `main asked this` a
 matter of the name above it. Neither is ever left to a hover.
 
-A participant is named by its TYPE everywhere it SPEAKS — in the conversation
-and inside its own pushed view alike, since the avatar is drawn from that name
-and an Agent that answered to `general-purpose` outside would otherwise change
-letter and hue on the way in. Not by the task it was handed. The
+A participant is named by its PERSONA everywhere it SPEAKS — in the
+conversation and inside its own pushed view alike — with the Agent TYPE beside
+it in a quieter register: who it is, then what it is. The persona comes from
+the identity catalog (`identities/get`, resolved by `resolveAgentIdentity`),
+keyed by type, and an identity with none configured is named after its type,
+which is what an unconfigured Role should look like. Resolution happens at
+RENDER time, never recorded on the message: renaming a persona renames the
+speaker of every message that Agent ever sent. The type label reads as a
+translated word for `main` alone, because that is a role in this conversation
+rather than a string anyone configures; every other type appears verbatim,
+because that IS what a user writes in configuration and passes as
+`subagent_type`. A participant that is not a type at all — an isolated Skill —
+keeps its own name and shows no type label, since its name already says what it
+is. Not the task it was handed. The
 execution record's description (`count spec Markdown`) is a task label, and a
 task label standing where a name goes reads as a sentence fragment rather than
 as somebody speaking; the task appears right below it, as the report's own first
@@ -142,8 +162,16 @@ sentence on one line, and share one meta rule. Styled apart, the child's elapsed
 came out at content size and stood its whole header taller than the agent's
 above it, so two headers that say the same kind of thing did not look alike.
 
-The avatar is a coloured disc carrying the first character of the name. Its hue
-comes from the shared `--identity-tint-*` palette (`agentAvatarColor.ts`), keyed
+The avatar is a bundled PORTRAIT where the identity has one
+(`src/renderer/assets/agent-avatars/`, resolved by `agentPortraits.ts`), and
+otherwise a coloured disc carrying the first character of the name. The default
+roster is Tenon (beaver, `main`), Fox (`explore`), Owl (`plan`), and Bear
+(`general-purpose`) — **the persona IS the animal**, so a roster is learnable
+without a legend. Portraits are drawn once and frozen: a redrawn face reads as a
+different participant. Every custom Role wears the disc until someone gives it a
+portrait, and the disc is also what a missing portrait degrades to, so a
+transcript never depends on an image. The disc hue comes from the shared
+`--identity-tint-*` palette (`agentAvatarColor.ts`), keyed
 by the Agent TYPE: **one type, one avatar — everywhere, in every conversation.**
 Derived rather than enumerated, since a project can name a type anything at all
 in `.claude/agents/*.md` and a hand-kept table would miss exactly the ones that

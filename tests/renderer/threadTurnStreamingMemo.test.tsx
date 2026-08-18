@@ -1,15 +1,30 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, mock, test } from 'bun:test';
 import { act, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
+// agentPortraits.ts loads the vendored roster through Vite's import.meta.glob,
+// which does not exist outside the bundler. The stub returns markup rather than
+// undefined so the speaker header renders its portrait branch — the one
+// production takes — instead of the initial-disc fallback.
+mock.module('../../src/renderer/agent/agentPortraits', () => ({
+  agentPortraitSvg: (avatarKey: string | null) => (
+    avatarKey === null ? undefined : `<svg data-fixture-portrait="${avatarKey}"></svg>`
+  ),
+}));
+
 import type { ThreadItem, Turn } from '../../src/core/agent/protocol';
 import type { DocumentProjection } from '../../src/core/types';
-import { ThreadTurnView } from '../../src/renderer/agent/components/ThreadView';
 import { emptyTurnAnchors } from '../../src/renderer/agent/subagentPresentation';
 import { I18nProvider } from '../../src/renderer/i18n/I18nProvider';
 import { buildIndex } from '../../src/renderer/state/document';
 import { DocumentIndexStore } from '../../src/renderer/state/documentIndexStore';
 import { replayableModelCall } from '../fixtures/agentToolCallHistory';
+
+// Imported dynamically, after the mock above: a static import would hoist above
+// it and pull the real Vite-only portrait module in first.
+async function loadThreadTurnView(): Promise<typeof import('../../src/renderer/agent/components/ThreadView')['ThreadTurnView']> {
+  return (await import('../../src/renderer/agent/components/ThreadView')).ThreadTurnView;
+}
 
 const GLOBAL_KEYS = ['document', 'Event', 'HTMLElement', 'Node', 'ResizeObserver', 'window'] as const;
 let savedGlobals: Array<[string, PropertyDescriptor | undefined]> = [];
@@ -40,6 +55,7 @@ describe('streaming Turn item memoization', () => {
     } satisfies Extract<ThreadItem, { type: 'userMessage' }>;
     const response = agentResponse('A');
     const props = turnProps();
+    const ThreadTurnView = await loadThreadTurnView();
 
     await render(root, <ThreadTurnView {...props} {...turnAnchors(turn([user, response]))} />);
     const readsAfterFirstRender = userContentReads;
@@ -70,6 +86,7 @@ describe('streaming Turn item memoization', () => {
       },
     };
 
+    const ThreadTurnView = await loadThreadTurnView();
     await render(root, (
       <ThreadTurnView {...props} {...turnAnchors(turn([firstTool, secondTool, response]))} />
     ));
