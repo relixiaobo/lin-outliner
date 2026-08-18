@@ -856,11 +856,10 @@
 .thread-speaker-header {
   display: flex;
   min-width: 0;
-  /* Two stacked lines beside the portrait, so the disc keeps the first one. */
-  align-items: flex-start;
-  /* With the avatar's own optical shift this is the row glyph's advance: the
-     name lands on the same text column as a chip or tool label below it. */
-  gap: var(--space-2);
+  /* The portrait anchors BOTH header lines, so it centres against them rather
+     than hanging off the first one. */
+  align-items: center;
+  gap: var(--space-4);
 }
 
 /* WHO on one line, WHAT THEY DID on the next. Both are quiet metadata over the
@@ -890,7 +889,7 @@
    follows it. Derived here so the header and the content below cannot drift
    apart when the portrait size changes. */
 .thread-speaker {
-  --speaker-text-inset: calc(var(--speaker-avatar-size) + var(--space-2));
+  --speaker-text-inset: calc(var(--speaker-avatar-size) + var(--space-4));
 }
 
 .thread-speaker-avatar {

@@ -166,6 +166,16 @@ meta rule. Styled apart, the child's elapsed
 came out at content size and stood its whole header taller than the agent's
 above it, so two headers that say the same kind of thing did not look alike.
 
+The portrait is sized to ANCHOR the header, not to match a line of text. Every
+mobile IM does this — Slack 36, Discord 40, WeChat and Telegram 40, iMessage 28,
+all against ~18px lines — and Tenon's two-line header makes the requirement
+stronger rather than weaker: a disc scaled to one line covers the name and
+leaves the work line under it dangling beside empty margin (PM 2026-08-18). It
+centres against both lines rather than hanging off the first. Tenon departs
+from those apps in one way, deliberately: they put the timestamp on the name's
+own line, which is only safe because a timestamp is fixed-width. Ours grows
+while a Turn runs.
+
 One column, one anchor. The portrait sits in the margin lane and every text
 line of the block — the persona, the work line under it, and the words below —
 hangs from the SAME left edge (`--speaker-text-inset`); nothing in the header

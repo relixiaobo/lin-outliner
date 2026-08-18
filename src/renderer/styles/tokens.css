@@ -431,9 +431,16 @@
      everything that participant said hangs from (--speaker-text-inset). Sized
      for a FACE rather than for an initial: at 16px a portrait is a smudge, and
      the whole reason the lane is worth a tenth of a 344px deck is that a face
-     identifies a speaker faster than reading its name does. Content below hangs
-     from the name, so rows inside it keep their own glyph column intact. */
-  --speaker-avatar-size: 24px;
+     identifies a speaker faster than reading its name does.
+
+     Sized to ANCHOR THE HEADER, not to match one line of text — the rule every
+     mobile IM follows (Slack 36, Discord 40, WeChat/Telegram 40, iMessage 28,
+     all against ~18px lines). Tenon's header is two lines because its work line
+     grows while a Turn runs, which makes the requirement stronger, not weaker:
+     at 24px the disc covered the name and left the line under it dangling
+     beside empty margin. Content below hangs from the name, so rows inside it
+     keep their own glyph column intact. */
+  --speaker-avatar-size: 32px;
   --row-leading-width: 42px;
   --row-leading-height: var(--line-content);
   --row-chevron-width: 15px;

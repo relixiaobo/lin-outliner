@@ -14,7 +14,7 @@ const tokensCss = await Bun.file('src/renderer/styles/tokens.css').text();
 describe('speaker header column CSS guards', () => {
   test('derives the text inset from the portrait and its gap, with nothing to compensate for', () => {
     expect(threadCss).toMatch(
-      /--speaker-text-inset:\s*calc\(var\(--speaker-avatar-size\)\s*\+\s*var\(--space-2\)\);/,
+      /--speaker-text-inset:\s*calc\(var\(--speaker-avatar-size\)\s*\+\s*var\(--space-4\)\);/,
     );
     expect(threadCss).toMatch(/\.thread-speaker-content \{[^}]*padding-left:\s*var\(--speaker-text-inset\);/);
   });
@@ -45,7 +45,10 @@ describe('speaker header column CSS guards', () => {
     expect(role).toContain('color: var(--text-secondary);');
   });
 
-  test('sizes the portrait for a face rather than an initial', () => {
-    expect(tokensCss).toMatch(/--speaker-avatar-size:\s*24px;/);
+  test('sizes the portrait to anchor the header, the way every IM does', () => {
+    // Against ~18px lines: Slack 36, Discord 40, WeChat/Telegram 40, iMessage
+    // 28. A disc scaled to ONE line leaves the line under it dangling.
+    expect(tokensCss).toMatch(/--speaker-avatar-size:\s*32px;/);
+    expect(threadCss).toMatch(/\.thread-speaker-header \{[^}]*align-items:\s*center;/);
   });
 });
