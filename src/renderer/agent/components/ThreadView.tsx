@@ -293,11 +293,20 @@ interface PendingSendAnchor {
   readonly previousTailTurnId: string | null;
   readonly releaseFollowOnAnchor: boolean;
   readonly threadId: string;
+  /**
+   * The Turn the host reported accepting, once it has answered. It is the only
+   * handle on a submission that never becomes a message of the reader's — a
+   * context command — and it is what keeps such a send from stranding this
+   * anchor on a row that will never exist.
+   */
+  acceptedTurnId: string | null;
   targetTurnId: string | null;
 }
 
 interface PendingSendEcho {
   readonly clientMessageId: string;
+  /** Set when the host answers; see `PendingSendAnchor.acceptedTurnId`. */
+  readonly acceptedTurnId: string | null;
   readonly turn: Turn;
 }
 
@@ -403,6 +412,10 @@ function readMotionDuration(): number {
  * indicator included. Turn-level actions are already suppressed while a Turn is
  * in progress, so none of them can address an id the host has never heard of.
  */
+function optimisticTurnId(clientMessageId: string): string {
+  return `pending:${clientMessageId}`;
+}
+
 function optimisticSendTurn(
   clientMessageId: string,
   content: readonly ThreadUserContent[],
@@ -410,7 +423,7 @@ function optimisticSendTurn(
   modelProvider: string,
   startedAt: number,
 ): Turn {
-  const id = `pending:${clientMessageId}`;
+  const id = optimisticTurnId(clientMessageId);
   const itemId = `pending-item:${clientMessageId}`;
   return {
     id,
@@ -440,27 +453,39 @@ function optimisticSendTurn(
 }
 
 /**
- * The Turn carrying the message this view sent, found by the id it minted.
+ * The Turn this send became, once the transcript has it.
  *
- * Searched from the end, because the Item is either in the Turn the send opened
- * or — when the send steered a Turn already running — appended to that one; both
- * are at the tail. The id is the whole test: everything else that appends a Turn
- * in the same breath (a delegated Agent's result delivery, a notification) also
- * arrives as a `userMessage`, and anchoring the viewport onto one of those would
- * scroll the reader to somebody else's arrival.
+ * Two ways in, because a send does not always become a message. The first is the
+ * client id the view minted: it identifies the reader's own `userMessage` among
+ * Turns that arrive in the same window — a delegated Agent's result delivery
+ * also appends a user-role Item, and anchoring onto one of those would scroll
+ * the reader to somebody else's arrival. The second is the Turn the host said it
+ * accepted, which is the only way home for a submission that produces no message
+ * of the reader's at all: `/clear` and `/compact` are ordinary composer text on
+ * the way out and come back as a `contextReset` / `contextCompaction` Item under
+ * a Turn of their own. Waiting on the client id alone left those sends with a
+ * stand-in row that nothing could ever retire.
+ *
+ * Searched from the end and bounded: the Item is in the Turn the send opened,
+ * or — when it steered a Turn already running — appended to that one, and both
+ * are at the tail. This runs per layout pass while a send is in flight.
  */
-function sentTurnId(turns: readonly Turn[], clientMessageId: string): string | null {
-  // Bounded because this runs per layout pass while a send is in flight, and an
-  // Item that is not within a few Turns of the end is not this send's.
+function resolveSentTurn(
+  turns: readonly Turn[],
+  clientMessageId: string,
+  acceptedTurnId: string | null,
+): string | null {
   const oldest = Math.max(0, turns.length - SENT_TURN_SEARCH_DEPTH);
+  let accepted: string | null = null;
   for (let index = turns.length - 1; index >= oldest; index -= 1) {
     const turn = turns[index];
     if (!turn) continue;
     for (const item of turn.items) {
       if (item.type === 'userMessage' && item.clientId === clientMessageId) return turn.id;
     }
+    if (turn.id === acceptedTurnId) accepted = turn.id;
   }
-  return null;
+  return accepted;
 }
 
 /**
@@ -710,7 +735,11 @@ export function ThreadView({
   // is what makes the handover seamless — an effect would have to run after a
   // commit that already held both rows.
   const [pendingEcho, setPendingEcho] = useState<PendingSendEcho | null>(null);
-  const echoTurn = pendingEcho !== null && sentTurnId(turns, pendingEcho.clientMessageId) === null
+  const echoTurn = pendingEcho !== null && resolveSentTurn(
+    turns,
+    pendingEcho.clientMessageId,
+    pendingEcho.acceptedTurnId,
+  ) === null
     ? pendingEcho.turn
     : null;
   const renderedTurns = useMemo(
@@ -718,7 +747,17 @@ export function ThreadView({
     [echoTurn, turns],
   );
   const clearPendingEcho = useCallback((clientMessageId: string) => {
+    // The height goes with the row here too, not only on the settled path: the
+    // id is single-use either way, and a refused send is the one that repeats.
+    measuredTurnHeights.delete(optimisticTurnId(clientMessageId));
     setPendingEcho((current) => (current?.clientMessageId === clientMessageId ? null : current));
+  }, [measuredTurnHeights]);
+  const recordAcceptedTurn = useCallback((clientMessageId: string, acceptedTurnId: string) => {
+    setPendingEcho((current) => (
+      current?.clientMessageId === clientMessageId && current.acceptedTurnId !== acceptedTurnId
+        ? { ...current, acceptedTurnId }
+        : current
+    ));
   }, []);
   // Releasing what the render is already ignoring. Never the other way round:
   // an effect that decided whether to draw the echo would decide it one commit
@@ -1177,8 +1216,20 @@ export function ThreadView({
     const scroll = scrollRef.current;
     // The Turn this send became, the moment it is in the transcript — which is
     // one notification, not one round trip, after the click.
-    if (pending && pending.targetTurnId === null) {
-      const sent = sentTurnId(virtualStateRef.current.turns, pending.clientMessageId);
+    //
+    // Re-resolved every pass, never latched: the first answer is usually the
+    // echo's own synthetic id, and that row leaves the DOM the instant the
+    // canonical Turn lands. Held from an earlier pass it would name a row that
+    // no longer exists, and this function would then return at the missing-row
+    // guard below forever — with `pendingSendScrollRef` still set, which is
+    // what suspends the bottom pin, so the transcript would never follow a
+    // streaming reply again for the life of the mount.
+    if (pending) {
+      const sent = resolveSentTurn(
+        virtualStateRef.current.turns,
+        pending.clientMessageId,
+        pending.acceptedTurnId,
+      );
       if (sent !== null && sent === pending.previousTailTurnId) {
         // A steer. It has no anchor of its own, and the reply it joined goes on
         // streaming under a reader who asked to stay with it.
@@ -1186,7 +1237,7 @@ export function ThreadView({
         scheduleBottomPin();
         return;
       }
-      pending.targetTurnId = sent;
+      if (sent !== null) pending.targetTurnId = sent;
     }
     const targetTurnId = pending?.targetTurnId ?? currentSpacer?.turnId;
     if (!targetTurnId || !scroll) return;
@@ -1553,6 +1604,7 @@ export function ThreadView({
       top: scroll.scrollTop,
     } : null;
     const pendingSend: PendingSendAnchor = {
+      acceptedTurnId: null,
       clientMessageId: crypto.randomUUID(),
       previousTailTurnId: turns.at(-1)?.id ?? null,
       releaseFollowOnAnchor: Boolean(
@@ -1581,6 +1633,7 @@ export function ThreadView({
     // own and then vanish into somebody else's when the Item landed.
     if (activeTurn === null) {
       setPendingEcho({
+        acceptedTurnId: null,
         clientMessageId: pendingSend.clientMessageId,
         turn: optimisticSendTurn(
           pendingSend.clientMessageId,
@@ -1603,19 +1656,23 @@ export function ThreadView({
     updateAttachments((current) => current.filter((attachment) => !submittedAttachmentIds.has(attachment.id)));
     try {
       const acceptedTurn = await onSend(submittedContent, pendingSend.clientMessageId);
-      if (pendingSendScrollRef.current === pendingSend) {
-        if (acceptedTurn && pendingSend.threadId === threadId) {
-          // Usually a no-op by now: the Turn reached the transcript on its
-          // notification and the anchor already ran against the rendered row.
-          // This is the fallback for a send whose Item never arrives that way —
-          // a deduplicated resend, a host that answers before it notifies.
-          if (pendingSend.targetTurnId === null) {
-            pendingSend.targetTurnId = acceptedTurn.id;
-            setPendingSendVersion((version) => version + 1);
-          }
-        } else {
-          // Nothing to anchor, so the send falls back to its older meaning: the
-          // reader asked to be at the end of the conversation.
+      const ourThread = pendingSend.threadId === threadId;
+      if (acceptedTurn && ourThread) {
+        // Which Turn the host made of this send. Usually the anchor has already
+        // run against the row that arrived by notification, and this only
+        // confirms it — but a submission that becomes no message of the
+        // reader's at all (`/clear`, `/compact`) has no other way to be
+        // recognized, and its stand-in row has no other way to be retired.
+        pendingSend.acceptedTurnId = acceptedTurn.id;
+        recordAcceptedTurn(pendingSend.clientMessageId, acceptedTurn.id);
+        setPendingSendVersion((version) => version + 1);
+      } else {
+        // Nothing to anchor: a deduplicated resend, a steer, a Thread the
+        // reader has since left. The row goes with it — there is no Turn coming
+        // that could ever replace it — and the send falls back to its older
+        // meaning, that the reader asked to be at the end of the conversation.
+        clearPendingEcho(pendingSend.clientMessageId);
+        if (pendingSendScrollRef.current === pendingSend) {
           pendingSendScrollRef.current = null;
           scheduleBottomPin();
         }

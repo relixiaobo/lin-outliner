@@ -1244,19 +1244,33 @@ transcript draws the sent message itself, from the composer, as a view-only
 in-progress Turn appended after the canonical list — the renderer's only
 optimistic state, held in the view and never admitted to the store, so no
 derivation outside the transcript can read it as canonical. It is suppressed in
-the first render that sees the canonical Turn carrying the same
-`clientUserMessageId`, which makes the handover a swap of one row for an
-identical one rather than an arrival: no frame holds two of the message and none
-holds neither. A refused send takes its row back out along with the composer
-draft it restores. Only a send that opens a Turn draws one; a steer joins the
-Turn already running, where the row does not belong.
+the first render that resolves the Turn the send became, which makes the
+handover a swap of one row for an identical one rather than an arrival: no frame
+holds two of the message and none holds neither.
+
+That Turn is resolved two ways, because not every send becomes a message. The
+first is the `clientUserMessageId` the view minted. The second is the Turn the
+host reports accepting, which is the only way home for a submission that carries
+nothing of the reader's at all: `/clear` and `/compact` leave the composer as
+ordinary text and come back as a `contextReset` / `contextCompaction` Item under
+a Turn of their own, so the client id never appears anywhere and a row waiting
+only on it could never be retired. A submission the host answers with no Turn —
+a deduplicated repeat, a steer, a Thread the reader has left — retires the row on
+the spot, since nothing is coming that could replace it. A refused send takes its
+row back out along with the composer draft it restores. Only a send that opens a
+Turn draws one; a steer joins the Turn already running, where the row does not
+belong.
 
 The message is anchored at the transcript top inset on the layout pass it first
-renders, and follow is re-derived from the resulting position. The transcript
-recognizes its own send by the `clientUserMessageId` it mints and passes down
-through the submit, searched over the tail Turns: a delegated Agent's result
-delivery also appends a user-role Item and can arrive in the same window, and it
-is not this send. The bottom pin is suspended from the click until the anchor
+renders, and follow is re-derived from the resulting position. The anchor names
+its Turn by the same two-way resolution, re-run on every pass and never latched:
+the id it resolves first is usually the stand-in row's, and that row leaves the
+DOM the moment the canonical Turn lands — an anchor holding it would have
+nothing to measure, and since a pending anchor is what suspends the bottom pin,
+the transcript would stop following streaming replies for the life of the mount.
+Searching by client id rather than by "a Turn appeared" is what keeps a delegated
+Agent's result delivery — also a user-role Item, also arriving in this window —
+from being mistaken for this send. The bottom pin is suspended from the click until the anchor
 lands, so the message is never parked at the bottom edge on the way. A long
 conversation therefore streams below the anchored message without moving it;
 short conversations that are still within the bottom threshold continue

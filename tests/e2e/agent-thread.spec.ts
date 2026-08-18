@@ -6663,6 +6663,140 @@ test.describe('canonical agent Thread surface', () => {
     await expect.poll(anchoredOffset).toBeLessThanOrEqual(2);
   });
 
+  /**
+   * Not every send becomes a message. `/clear` and `/compact` leave the composer
+   * as ordinary text and come back as a `contextReset` Item under a Turn of
+   * their own, carrying nothing of the reader's — so the client id the stand-in
+   * row waits for never arrives, and waiting on it alone left a permanent
+   * phantom bubble spinning under the reset it had just performed. The Turn the
+   * host reports accepting is the other way home, and the deduplicated repeat —
+   * which reports no Turn at all — has to retire the row on the spot.
+   */
+  test('retires the stand-in row for a send that becomes no message at all', async ({ page }) => {
+    await createNewThread(page);
+    await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+      const threadId = response?.data[0]?.id;
+      if (!threadId) throw new Error('Mock Thread not found');
+      for (let index = 0; index < 3; index += 1) {
+        await target.lin?.agentCoreRequest('turn/start', {
+          threadId,
+          input: [{ type: 'text', text: `Context evidence ${index + 1}` }],
+          clientUserMessageId: `context-evidence-${index + 1}`,
+        });
+      }
+    });
+    const composer = page.getByRole('textbox', { name: 'Message this Thread' });
+    const phantom = page.locator('.thread-user-message').filter({ hasText: '/clear' });
+
+    await composer.fill('/clear');
+    await page.getByRole('button', { name: 'Send' }).click();
+    await expect(page.getByText('Context cleared.')).toHaveCount(1);
+    await expect(phantom).toHaveCount(0);
+
+    // The repeat is deduplicated by the host, which answers with no Turn at all.
+    await composer.fill('/clear');
+    await page.getByRole('button', { name: 'Send' }).click();
+    await expect.poll(async () => (
+      (await commandCalls(page)).filter((call) => call.cmd === 'turn/submit').length
+    )).toBe(2);
+    await expect(phantom).toHaveCount(0);
+    await expect(page.getByText('Context cleared.')).toHaveCount(1);
+
+    // And the anchor let go on the way: a send that resolves to a row the
+    // transcript no longer has used to leave the pending anchor set forever,
+    // which is what suspends the bottom pin — the transcript would never follow
+    // a streaming reply again for the life of the mount.
+    const transcript = page.locator('.thread-transcript');
+    const jump = page.getByRole('button', { name: 'Jump to latest' });
+    if (await jump.count() > 0) await jump.click();
+    await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+      const threadId = response?.data[0]?.id;
+      if (!threadId) throw new Error('Mock Thread not found');
+      const turnId = '01910000-0000-7000-8000-00000000cc01';
+      const itemId = '01910000-0000-7000-8000-00000000cc02';
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/started',
+        threadId,
+        turnId,
+        turn: {
+          id: turnId,
+          items: [{
+            id: itemId,
+            type: 'agentMessage',
+            provenance: { originThreadId: threadId, originTurnId: turnId, originItemId: itemId },
+            text: Array.from({ length: 24 }, (_, index) => `Following after the reset ${index + 1}.`).join('\n\n'),
+            phase: 'final_answer',
+            memoryCitation: null,
+          }],
+          itemsView: 'full',
+          provenance: { originThreadId: threadId, originTurnId: turnId, trigger: { kind: 'user' } },
+          status: 'inProgress',
+          error: null,
+          startedAt: 9,
+          completedAt: null,
+          durationMs: null,
+        },
+      });
+    });
+    await expect(page.getByText('Following after the reset 24.')).toBeVisible();
+    await expect.poll(() => transcript.evaluate((element) => (
+      element.scrollHeight - element.scrollTop - element.clientHeight
+    ))).toBeLessThanOrEqual(1);
+  });
+
+  /**
+   * The virtualized path is where a latched anchor target used to become fatal:
+   * the row has no measured height on the pass that first sees it, so the anchor
+   * bails there and has to come back on a later pass — against a Turn id it must
+   * resolve afresh, because the id it saw first may have been the stand-in's and
+   * that row leaves the DOM as soon as the canonical Turn lands. An anchor that
+   * never completes also never releases, and a pending anchor is what suspends
+   * the bottom pin.
+   */
+  test('completes the anchor for a send into a virtualized transcript', async ({ page }) => {
+    await createNewThread(page);
+    await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+      const threadId = response?.data[0]?.id;
+      if (!threadId) throw new Error('Mock Thread not found');
+      // Past TRANSCRIPT_VIRTUAL_MIN_TURNS, so the transcript virtualizes.
+      for (let index = 0; index < 45; index += 1) {
+        await target.lin?.agentCoreRequest('turn/start', {
+          threadId,
+          input: [{ type: 'text', text: `Virtual evidence ${index + 1}` }],
+          clientUserMessageId: `virtual-evidence-${index + 1}`,
+        });
+      }
+    });
+    const transcript = page.locator('.thread-transcript');
+    await expect.poll(() => transcript.evaluate((element) => (
+      element.querySelector('[data-virtualized="true"]') !== null
+    ))).toBe(true);
+
+    await page.getByRole('textbox', { name: 'Message this Thread' }).fill('Send into a virtual transcript.');
+    await page.getByRole('button', { name: 'Send' }).click();
+    const sent = page.locator('.thread-user-message').filter({ hasText: 'Send into a virtual transcript.' });
+    await expect(sent).toHaveCount(1);
+    await expect.poll(() => sent.evaluate((element) => {
+      const scroller = element.closest('.thread-transcript');
+      if (!(scroller instanceof HTMLElement)) throw new Error('Missing transcript');
+      const topInset = Number.parseFloat(getComputedStyle(scroller).paddingTop) || 0;
+      return Math.abs(element.getBoundingClientRect().top - scroller.getBoundingClientRect().top - topInset);
+    })).toBeLessThanOrEqual(2);
+  });
+
   test('keeps a bottom-positioned long-message disclosure anchored', async ({ page }) => {
     await createNewThread(page);
     const composer = page.getByRole('textbox', { name: 'Message this Thread' });
