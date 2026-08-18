@@ -890,45 +890,41 @@
 .thread-speaker-avatar {
   display: flex;
   width: var(--speaker-avatar-size);
-  /* Flush with the block's left edge — no optical overhang. The 2px shift this
-     had was aligning a 16px disc with the 12px glyph column of the rows below;
-     those rows now sit inside the hanging indent, so the shift aligned nothing
-     and only pushed a round mark outside the block box, where a containing
-     ancestor could shave a chord off it. */
   height: var(--speaker-avatar-size);
-  /* The disc must stay round even if a parent ever stretches its box. */
   aspect-ratio: 1;
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  /* A portrait fills its tile edge to edge; the crop is the frame. */
-  overflow: hidden;
-  /* A rounded square, on the ladder this app already uses for identity tiles:
-     `.settings-provider-avatar` takes --radius-sm at 22px and --radius-md at
-     38px, and 28px sits nearer the small end. Not a B6 case — that rule governs
-     icon CONTROLS, whose fills must stay pill-shaped; this is an identity mark,
-     and the app's other identity marks are rounded squares. */
-  border-radius: var(--radius-sm);
-  /* The painted art carries its own pale ground, which has no edge of its own:
-     on a light panel it dissolves into the surface and the character floats,
-     on a dark one it reads as a lit block. The hairline gives the picture a
-     frame in both — the same edge grouped cards use to become their own
-     region. */
-  box-shadow: var(--inset-hairline);
-  font-size: var(--font-ui-xs);
-  /* The repo's emphasis weight: an initial needs it to hold the disc. */
-  font-weight: 650;
-  /* The disc is a fixed circle: its glyph must not push it out of round. */
-  line-height: 1;
+  /* Deliberately frameless: the mark's form is its own edge. The tile
+     treatment — fill, rounding, hairline — existed to give raster portraits a
+     boundary their painted grounds lacked; a generated shape needs none of it. */
   user-select: none;
 }
 
-.thread-speaker-avatar > img {
+.thread-speaker-avatar > svg {
   width: 100%;
   height: 100%;
   display: block;
-  /* Painted square art: fill the tile, never letterbox inside it. */
-  object-fit: cover;
+}
+
+/* The mark's eyes. Holes in the mask, closed by a fast lid and reopened by a
+   slower one — equal speeds both ways are the tell of a machine. */
+.agent-mark-eye {
+  transform-box: view-box;
+  transition: transform 150ms cubic-bezier(.22, .61, .36, 1);
+}
+
+.agent-mark-eye.is-shut {
+  transform: scaleY(.08);
+  transition: transform 55ms cubic-bezier(.4, 0, 1, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-mark-eye,
+  .agent-mark-eye.is-shut {
+    transform: none;
+    transition: none;
+  }
 }
 
 /* What the participant IS, beside what it is called. Quieter than the name: one

@@ -1682,7 +1682,7 @@ describe('Codex Agent Core protocol codec', () => {
       'goal/update': { goal: { ...goal, status: 'complete' } },
       'userInput/respond': {},
       'identities/get': {
-        entries: [{ agentType: 'explore', persona: 'Rena', avatar: 'fox', source: 'built-in' }],
+        entries: [{ agentType: 'explore', persona: 'Rena', color: 'orange', source: 'built-in' }],
       },
     };
 

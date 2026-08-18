@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { AgentIdentityEntry } from '../../src/core/agent/protocol';
+import { deriveIdentityColor } from '../../src/core/agent/configuration';
 import {
   EMPTY_IDENTITY_CATALOG,
   identityCatalogFrom,
@@ -7,57 +8,43 @@ import {
 } from '../../src/renderer/agent/agentIdentity';
 
 const CATALOG = identityCatalogFrom([
-  { agentType: 'main', persona: 'Tenon', avatar: 'beaver', source: 'built-in' },
-  { agentType: 'explore', persona: 'Rena', avatar: 'fox', source: 'built-in' },
-  { agentType: 'auditor', persona: 'auditor', avatar: null, source: 'user' },
+  { agentType: 'main', persona: 'Aspen', color: 'teal', source: 'built-in' },
+  { agentType: 'explore', persona: 'Rena', color: 'orange', source: 'built-in' },
+  { agentType: 'auditor', persona: 'auditor', color: 'violet', source: 'user' },
 ] satisfies AgentIdentityEntry[]);
 
 describe('agent identity resolution', () => {
-  test('names a configured type by its persona and dresses it in its portrait', () => {
-    expect(resolveAgentIdentity(CATALOG, 'explore')).toMatchObject({
-      name: 'Rena',
-      avatarKey: 'fox',
-      initial: 'R',
+  test('names a configured type by its persona and wears its catalog colour', () => {
+    expect(resolveAgentIdentity(CATALOG, 'explore')).toEqual({
+      name: 'Rena', color: 'orange', tint: 1,
+    });
+    expect(resolveAgentIdentity(CATALOG, 'main')).toEqual({
+      name: 'Aspen', color: 'teal', tint: 4,
     });
   });
 
-  test('falls back to the type name, then the caller name, and never throws', () => {
+  test('falls back to the type name and a derived colour, and never throws', () => {
     // A type the catalog does not know — a Role deleted after its run.
-    expect(resolveAgentIdentity(CATALOG, 'retired-role')).toMatchObject({
+    expect(resolveAgentIdentity(CATALOG, 'retired-role')).toEqual({
       name: 'retired-role',
-      avatarKey: null,
+      color: deriveIdentityColor('retired-role'),
+      tint: expect.any(Number),
     });
     // Not a type at all: an isolated Skill carries its own name.
-    expect(resolveAgentIdentity(CATALOG, null, 'code-review')).toMatchObject({
-      name: 'code-review',
-      avatarKey: null,
-    });
+    expect(resolveAgentIdentity(CATALOG, null, 'code-review').name).toBe('code-review');
     // Nothing to go on at all still resolves to something drawable.
-    expect(resolveAgentIdentity(EMPTY_IDENTITY_CATALOG, null)).toMatchObject({
-      name: '?',
-      avatarKey: null,
-    });
+    expect(resolveAgentIdentity(EMPTY_IDENTITY_CATALOG, null).name).toBe('?');
   });
 
-  test('keeps a configured Role without a portrait on the initial disc', () => {
-    expect(resolveAgentIdentity(CATALOG, 'auditor')).toMatchObject({
-      name: 'auditor',
-      avatarKey: null,
-      initial: 'A',
-    });
-  });
-
-  test('colours by type, so renaming a persona does not repaint its disc', () => {
-    const before = resolveAgentIdentity(CATALOG, 'explore').color;
-    const renamed = identityCatalogFrom([
-      { agentType: 'explore', persona: 'Scout', avatar: 'fox', source: 'user' },
+  test('degrades a stale catalog colour to derivation instead of drawing nothing', () => {
+    const stale = identityCatalogFrom([
+      { agentType: 'explore', persona: 'Rena', color: 'chartreuse', source: 'user' },
     ]);
-
-    expect(resolveAgentIdentity(renamed, 'explore').color).toEqual(before);
+    expect(resolveAgentIdentity(stale, 'explore').color).toBe(deriveIdentityColor('explore'));
   });
 
-  test('an empty catalog still names every type, so a slow load is not a blank deck', () => {
-    expect(resolveAgentIdentity(EMPTY_IDENTITY_CATALOG, 'explore').name).toBe('explore');
-    expect(resolveAgentIdentity(EMPTY_IDENTITY_CATALOG, 'main').name).toBe('main');
+  test('keys the derived colour off the type, so renaming a persona cannot repaint it', () => {
+    const before = resolveAgentIdentity(EMPTY_IDENTITY_CATALOG, 'reviewer');
+    expect(resolveAgentIdentity(EMPTY_IDENTITY_CATALOG, 'reviewer')).toEqual(before);
   });
 });

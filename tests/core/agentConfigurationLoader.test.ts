@@ -7,6 +7,10 @@ import {
   projectConfigurationPath,
   userConfigurationPath,
 } from '../../src/main/agent/AgentConfigurationLoader';
+import {
+  DERIVED_IDENTITY_COLORS,
+  deriveIdentityColor,
+} from '../../src/core/agent/configuration';
 
 const roots: string[] = [];
 
@@ -177,7 +181,7 @@ describe('AgentConfigurationLoader', () => {
         reviewer: {
           description: 'Review this project.',
           developerInstructions: 'Use the project review policy.',
-          presentation: { persona: 'Noether', avatar: 'owl' },
+          presentation: { persona: 'Noether', color: 'pink' },
           overrides: {
             model: 'review-model',
             reasoningEffort: 'xhigh',
@@ -204,7 +208,7 @@ describe('AgentConfigurationLoader', () => {
       source: 'project',
       description: 'Review this project.',
       developerInstructions: 'Use the project review policy.',
-      presentation: { persona: 'Noether', avatar: 'owl' },
+      presentation: { persona: 'Noether', color: 'pink' },
       overrides: {
         model: 'review-model',
         reasoningEffort: 'xhigh',
@@ -240,10 +244,10 @@ describe('AgentConfigurationLoader', () => {
     const catalog = loader.resolveIdentityCatalog(cwd);
 
     expect(catalog).toEqual([
-      { agentType: 'main', persona: 'Aspen', avatar: 'beaver', source: 'built-in' },
-      { agentType: 'general-purpose', persona: 'Bruno', avatar: 'bear', source: 'built-in' },
-      { agentType: 'explore', persona: 'Rena', avatar: 'fox', source: 'built-in' },
-      { agentType: 'plan', persona: 'Ada', avatar: 'owl', source: 'built-in' },
+      { agentType: 'main', persona: 'Aspen', color: 'teal', source: 'built-in' },
+      { agentType: 'general-purpose', persona: 'Bruno', color: 'amber', source: 'built-in' },
+      { agentType: 'explore', persona: 'Rena', color: 'orange', source: 'built-in' },
+      { agentType: 'plan', persona: 'Ada', color: 'blue', source: 'built-in' },
     ]);
   });
 
@@ -252,13 +256,13 @@ describe('AgentConfigurationLoader', () => {
     await writeJson(userConfigurationPath(userData), {
       presentationOverrides: {
         main: { persona: 'Ash' },
-        explore: { persona: 'Scout', avatar: 'owl' },
+        explore: { persona: 'Scout', color: 'violet' },
       },
       roles: {
         reviewer: {
           description: 'Review the implementation.',
           developerInstructions: 'Find concrete correctness issues.',
-          presentation: { persona: 'Ada', avatar: 'owl' },
+          presentation: { persona: 'Ada', color: 'violet' },
         },
       },
     });
@@ -271,21 +275,21 @@ describe('AgentConfigurationLoader', () => {
 
     // One entry REPLACES another, the way a project Profile or Role replaces a
     // user one — the layering rule is the same everywhere in this file. So the
-    // project's persona-only override drops the user's avatar back to the
+    // project's persona-only override drops the user's colour back to the
     // built-in default rather than merging with it.
     expect(byType.get('explore')).toEqual({
-      agentType: 'explore', persona: 'Pathfinder', avatar: 'fox', source: 'built-in',
+      agentType: 'explore', persona: 'Pathfinder', color: 'orange', source: 'built-in',
     });
     expect(byType.get('main')).toEqual({
-      agentType: 'main', persona: 'Ash', avatar: 'beaver', source: 'built-in',
+      agentType: 'main', persona: 'Ash', color: 'teal', source: 'built-in',
     });
     // A Role speaks for itself, and is named after itself when it does not.
     expect(byType.get('reviewer')).toEqual({
-      agentType: 'reviewer', persona: 'Ada', avatar: 'owl', source: 'user',
+      agentType: 'reviewer', persona: 'Ada', color: 'violet', source: 'user',
     });
   });
 
-  test('names an unconfigured Role after itself and gives it no portrait', async () => {
+  test('names an unconfigured Role after itself, in a colour derived from its name', async () => {
     const { userData, cwd } = await fixturePaths();
     await writeJson(userConfigurationPath(userData), {
       roles: {
@@ -294,9 +298,15 @@ describe('AgentConfigurationLoader', () => {
     });
     const loader = new AgentConfigurationLoader(userData);
 
-    expect(loader.resolveIdentityCatalog(cwd).find((entry) => entry.agentType === 'auditor')).toEqual({
-      agentType: 'auditor', persona: 'auditor', avatar: null, source: 'user',
+    const entry = loader.resolveIdentityCatalog(cwd).find((e) => e.agentType === 'auditor');
+    expect(entry).toEqual({
+      agentType: 'auditor', persona: 'auditor', color: deriveIdentityColor('auditor'), source: 'user',
     });
+    // Derived hues stay off the default roster's pinned colours AND off the
+    // danger-adjacent red, so a fresh Role can neither impersonate Aspen nor
+    // read as an error.
+    expect(DERIVED_IDENTITY_COLORS).toEqual(['green', 'violet', 'pink']);
+    expect(DERIVED_IDENTITY_COLORS).toContain(entry?.color);
   });
 
   test('keeps presentation out of the catalog the model is told about', async () => {
@@ -310,12 +320,12 @@ describe('AgentConfigurationLoader', () => {
     const before = loader.buildRoleCatalogSnapshot(cwd);
 
     await writeJson(userConfigurationPath(userData), {
-      presentationOverrides: { explore: { persona: 'Scout', avatar: 'owl' } },
+      presentationOverrides: { explore: { persona: 'Scout', color: 'violet' } },
       roles: {
         reviewer: {
           description: 'Review it.',
           developerInstructions: 'Review it well.',
-          presentation: { persona: 'Ada', avatar: 'bear' },
+          presentation: { persona: 'Ada', color: 'green' },
         },
       },
     });
@@ -338,7 +348,7 @@ describe('AgentConfigurationLoader', () => {
     expect(() => loader.resolveIdentityCatalog(cwd)).toThrow('reserved');
 
     await writeJson(userConfigurationPath(userData), {
-      presentationOverrides: { explore: { avatar: 'dragon' } },
+      presentationOverrides: { explore: { color: 'crimson' } },
     });
     expect(() => loader.resolveIdentityCatalog(cwd)).toThrow('must be one of');
   });

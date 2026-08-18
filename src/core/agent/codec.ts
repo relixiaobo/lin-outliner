@@ -1305,11 +1305,11 @@ function decodeAgentIdentityCatalogResponse(value: unknown): AgentCoreResponseBy
   return deepFreeze({
     entries: arrayValue(record.entries, 'identities.entries').map((entry) => {
       const profile = recordValue(entry, 'identities.entry');
-      exactKeys(profile, ['agentType', 'persona', 'avatar', 'source'], 'identities.entry');
+      exactKeys(profile, ['agentType', 'persona', 'color', 'source'], 'identities.entry');
       return {
         agentType: stringValue(profile.agentType, 'identities.entry.agentType'),
         persona: stringValue(profile.persona, 'identities.entry.persona'),
-        avatar: nullableString(profile.avatar, 'identities.entry.avatar'),
+        color: stringValue(profile.color, 'identities.entry.color'),
         source: enumValue(profile.source, ['built-in', 'user', 'project'] as const, 'identities.entry.source'),
       };
     }),

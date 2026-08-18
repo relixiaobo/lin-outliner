@@ -137,12 +137,12 @@ through a compact title and scan-first list, not provider/model strings. Work in
 flight appears in canonical Item order, never as a floating corner pill. Live
 controls use shared overlay primitives and dense unboxed actions.
 
-PARTICIPANT identity is the one place identity colour and imagery live: a
-portrait (or its initial-disc fallback) plus a persona and the Agent type, in
-the speaker header. Identity is its own decorative category — not a functional
-state (B3), not a status (B4), not the rose accent — and it stays on the avatar:
+PARTICIPANT identity is the one place identity colour lives: a generated mark
+(one shared form filled with the identity's `--identity-tint-*` hue, two eye
+holes) plus a persona and the Agent type, in the speaker header. Identity is its own decorative category — not a functional
+state (B3), not a status (B4), not the rose accent — and it stays on the mark:
 a card, a chip, or a row that carries a participant's work keeps neutral chrome,
-so nothing outside the avatar has to be read as a colour code.
+so nothing outside the mark has to be read as a colour code.
 
 Composer controls stay subordinate to the send/stop slot. Product-input requests
 remain in the dock and never become authorization overlays.

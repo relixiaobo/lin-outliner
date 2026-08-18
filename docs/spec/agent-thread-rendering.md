@@ -79,7 +79,7 @@ delegation graph is a set of participants sending each other messages, and every
 surface that shows one reads like any message stream.
 
 Every non-reader block therefore wears the SAME structure — a header carrying a
-portrait beside two stacked lines, WHO (persona and Agent type) over WHAT THEY
+mark beside two stacked lines, WHO (persona and Agent type) over WHAT THEY
 DID (the Turn's work summary for this transcript's own agent; a delegated
 child's own elapsed for its report) — then what they said beneath it. The work
 line IS the work summary and the only control that opens the timeline. It is
@@ -88,17 +88,17 @@ second one GROWS: an elapsed time ticking up beside a name squeezes the name at
 deck width, and a persona is the thing that must never be truncated. What the
 earlier one-line rule refused was four elements for one sentence — a name row,
 a summary line, a rule, and sometimes a second summary line (PM 2026-08-15);
-two tight lines under one portrait are not that, and the prototype the identity
+two tight lines under one mark are not that, and the prototype the identity
 system was ratified from stacks them (PM 2026-08-18). One structure for all of them: the conversation's own agent
 answering, a delegated child delivering its report, the Agent that wrote a
-brief. The portrait and the two identity lines form a header ROW at the block's
+brief. The mark and the two identity lines form a header ROW at the block's
 left edge, and the words beneath take the WHOLE column — no avatar lane, no
 hanging indent. An avatar lane is what a chat app spends on short bubbles; what
 arrives in this deck is documents — tables, code blocks, galleries — in the
 narrowest column the app has, where a lane costs 13% of the measure and a
 three-column table pays for it (PM 2026-08-18). What an indent would buy is a
 visible change of speaker, and the header row says that louder anyway: a
-portrait, and a persona in the content register. Before this, `main` was unattributed prose and a child's report was a
+mark, and a persona in the content register. Before this, `main` was unattributed prose and a child's report was a
 labelled bubble, which made two participants look like two different sorts of
 thing (PM 2026-08-15). Consecutive blocks group under a single header only within one
 PARTICIPANT — never merely within one type. A `general-purpose` child inside a
@@ -160,7 +160,7 @@ meta rule. Styled apart, the child's elapsed
 came out at content size and stood its whole header taller than the agent's
 above it, so two headers that say the same kind of thing did not look alike.
 
-The portrait is sized to ANCHOR the header, not to match a line of text. Every
+The mark is sized to ANCHOR the header, not to match a line of text. Every
 mobile IM does this — Slack 36, Discord 40, WeChat and Telegram 40, iMessage 28,
 all against ~18px lines — and Tenon's two-line header makes the requirement
 stronger rather than weaker: a disc scaled to one line covers the name and
@@ -184,8 +184,8 @@ only thing about that participant nobody was wondering. The label answers
 "which kind of helper is this", which is a question only a delegate raises.
 
 One header, one anchor. The header's own two lines share one left edge beside
-the portrait: nothing in it may poke outside the block or indent past that
-edge, which is why the portrait carries no optical overhang and the work line's
+the mark: nothing in it may poke outside the block or indent past that
+edge, which is why the mark carries no optical overhang and the work line's
 control carries no inline padding — as a `<button>` it otherwise wears the UA's
 inline padding and steps out of the column. Within the header the PERSONA is
 the only emphasis, because a message stream is scanned by who said it; the
@@ -193,29 +193,27 @@ Agent type beside it and the work line below share one quieter level. Three
 separate greys made the header read as loose fragments and grouped it against
 its own meaning (PM 2026-08-18).
 
-The portrait is a rounded square on the identity-tile ladder the settings
-surface already uses (`--radius-sm` at this size), not a pill: B6 reserves the
-pill for an icon CONTROL's fill, and this is an identity mark. It carries an inset hairline, because a
-portrait's own ground has no edge: on a light panel it dissolves into the
-surface, on a dark one it reads as a lit block, and the frame is what makes it a
-picture in both. Portrait art stays quiet against the words beside it — these
-sit in a rail whose every other mark is neutral.
+The mark is frameless — no tile, no crop, no hairline. The form is its own
+edge; the frame treatment existed for raster portraits whose painted grounds
+had no boundary of their own, and it retired with them.
 
-The avatar is a bundled PORTRAIT where the identity has one
-(`src/renderer/assets/agent-avatars/`, resolved by `agentPortraits.ts`), and
-otherwise a coloured disc carrying the first character of the name. The default
-roster is Aspen (beaver, `main`), Rena (fox, `explore`), Ada (owl, `plan`), and
-Bruno (bear, `general-purpose`). **A portrait names the kind; the persona names
-the one**, and the two never say the same thing — a bear face signed `Bear`
-adds nothing the face already said, so the word reads as a caption rather than
-as somebody speaking (PM 2026-08-18). The conversation's own agent is named the
-same way as the rest and does NOT carry the product's name: a transcript names
-the participants in it, not the application they run inside (PM 2026-08-18). Portraits are drawn once and frozen: a redrawn face reads as a
-different participant. Every custom Role wears the disc until someone gives it a
-portrait, and the disc is also what a missing portrait degrades to, so a
-transcript never depends on an image. The disc hue comes from the shared
-`--identity-tint-*` palette (`agentAvatarColor.ts`), keyed
-by the Agent TYPE: **one type, one avatar — everywhere, in every conversation.**
+The avatar is a GENERATED MARK (`AgentMark.tsx`): one soft form shared by every
+participant, filled with the identity's colour, with two round-capped eye holes
+cut through the mask to the panel behind — so a mark has exactly one colour and
+its eyes can never be mis-paired against a theme. Identity IS the colour, from
+the shared `--identity-tint-*` palette: the default roster pins well-separated
+hues (Aspen teal `main`, Rena orange `explore`, Ada blue `plan`, Bruno amber
+`general-purpose`), and every other identity derives its hue from its type name
+(core `deriveIdentityColor`) over the hues the roster did not take — a
+user-created Role is distinct the moment it is named, nobody draws anything,
+and a fresh Role can neither walk in wearing Aspen's teal nor the
+danger-adjacent red (PM 2026-08-18, replacing the portrait assets tried
+first). The conversation's own agent is named the same way as the rest and does
+NOT carry the product's name: a transcript names the participants in it, not
+the application they run inside (PM 2026-08-18). Keyed by Agent TYPE: **one
+type, one mark — everywhere, in every conversation.** The marks BLINK — mostly
+both eyes, now and then just one, each mark on its own clock — with a fast shut
+and a relaxed open; `prefers-reduced-motion` stills them entirely.
 Derived rather than enumerated, since a project can name a type anything at all
 in `.claude/agents/*.md` and a hand-kept table would miss exactly the ones that
 matter to that workspace. Keyed by Agent id instead, two `general-purpose`

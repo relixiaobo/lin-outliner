@@ -1561,7 +1561,8 @@ export type EmptyAgentCoreResponse = Readonly<Record<string, never>>;
 export interface AgentIdentityEntry {
   readonly agentType: string;
   readonly persona: string;
-  readonly avatar: string | null;
+  /** An identity-palette colour name; always resolved, never empty. */
+  readonly color: string;
   readonly source: 'built-in' | 'user' | 'project';
 }
 

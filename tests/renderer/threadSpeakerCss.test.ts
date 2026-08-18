@@ -20,19 +20,22 @@ describe('speaker header column CSS guards', () => {
     expect(threadCss).not.toContain('--speaker-text-inset');
   });
 
-  test('keeps the portrait inside the block box, and square-cropped', () => {
+  test('gives the mark no frame — the form is its own edge', () => {
     const avatar = threadCss.match(/\.thread-speaker-avatar \{[^}]*\}/)?.[0] ?? '';
     expect(avatar).toContain('aspect-ratio: 1;');
-    // On the identity-tile ladder (--radius-sm at 22px, --radius-md at 38px),
-    // not the pill an icon control's fill would take.
-    expect(avatar).toContain('border-radius: var(--radius-sm);');
-    // A negative inline margin put the disc outside its own block, where an
-    // ancestor clipped a flat edge onto it.
-    expect(avatar).not.toMatch(/margin-left:\s*calc\(var\(--space-1\)\s*\*\s*-1\)/);
-    expect(avatar).toContain('overflow: hidden;');
-    // A portrait's own ground has no edge: unframed it dissolves into a light
-    // panel and glares on a dark one.
-    expect(avatar).toContain('box-shadow: var(--inset-hairline);');
+    // The tile-and-frame treatment existed for raster portraits whose painted
+    // grounds had no boundary of their own. A generated form needs none of it,
+    // and reintroducing any of the three would put a box around a shape.
+    expect(avatar).not.toContain('background');
+    expect(avatar).not.toContain('border-radius');
+    expect(avatar).not.toContain('box-shadow');
+  });
+
+  test('blinks asymmetrically and honors reduced motion', () => {
+    // Fast shut, relaxed open — equal speeds read as a machine.
+    expect(threadCss).toMatch(/\.agent-mark-eye \{[^}]*transition:\s*transform 150ms/);
+    expect(threadCss).toMatch(/\.agent-mark-eye\.is-shut \{[^}]*transition:\s*transform 55ms/);
+    expect(threadCss).toMatch(/prefers-reduced-motion[^}]*\{[^{]*\.agent-mark-eye/);
   });
 
   test('lands the work line on the same edge as the name it sits under', () => {

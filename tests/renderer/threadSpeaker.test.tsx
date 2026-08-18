@@ -1,18 +1,7 @@
-import { afterEach, describe, expect, mock, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import { act, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
-
-// agentPortraits.ts resolves the vendored roster through Vite's
-// import.meta.glob, which does not exist outside the bundler. Stubbed with URLs
-// so the header's portrait branch — the one production takes — is what these
-// assertions read, rather than the initial-disc fallback it degrades to under a
-// test runner.
-mock.module('../../src/renderer/agent/agentPortraits', () => ({
-  agentPortraitUrl: (avatarKey: string | null) => (
-    avatarKey === null ? undefined : `/fixture/${avatarKey}.png`
-  ),
-}));
 
 import type { AgentIdentityEntry } from '../../src/core/agent/protocol';
 import { identityCatalogFrom } from '../../src/renderer/agent/agentIdentity';
@@ -20,9 +9,9 @@ import { ThreadStore } from '../../src/renderer/agent/store/threadStore';
 import { I18nProvider } from '../../src/renderer/i18n/I18nProvider';
 
 const ROSTER = [
-  { agentType: 'main', persona: 'Aspen', avatar: 'beaver', source: 'built-in' },
-  { agentType: 'explore', persona: 'Rena', avatar: 'fox', source: 'built-in' },
-  { agentType: 'auditor', persona: 'auditor', avatar: null, source: 'user' },
+  { agentType: 'main', persona: 'Aspen', color: 'teal', source: 'built-in' },
+  { agentType: 'explore', persona: 'Rena', color: 'orange', source: 'built-in' },
+  { agentType: 'auditor', persona: 'auditor', color: 'violet', source: 'user' },
 ] satisfies AgentIdentityEntry[];
 
 const mounted: Array<() => void> = [];
@@ -45,8 +34,9 @@ describe('speaker headers', () => {
     expect(document.querySelector('.thread-speaker-name')?.textContent).toBe('Rena');
     // The type stays visible: a persona says who, the label says what.
     expect(document.querySelector('.thread-speaker-role')?.textContent).toBe('explore');
-    expect(document.querySelector('.thread-speaker-avatar img')?.getAttribute('src'))
-      .toBe('/fixture/fox.png');
+    // The mark wears the catalog colour as a palette token, never a literal.
+    expect(document.querySelector('.thread-speaker-avatar svg [fill^="var(--identity-tint-"]')
+      ?.getAttribute('fill')).toBe('var(--identity-tint-1)');
   });
 
   test('names the conversation\'s own agent and does not label it', async () => {
@@ -57,16 +47,18 @@ describe('speaker headers', () => {
     // the only thing about this participant nobody was wondering. A type label
     // answers "which kind of helper is this" — a delegate's question.
     expect(document.querySelector('.thread-speaker-role')).toBeNull();
-    expect(document.querySelector('.thread-speaker-avatar img')?.getAttribute('src'))
-      .toBe('/fixture/beaver.png');
+    expect(document.querySelector('.thread-speaker-avatar svg [fill^="var(--identity-tint-"]')
+      ?.getAttribute('fill')).toBe('var(--identity-tint-4)');
   });
 
-  test('wears the initial disc when an identity has no portrait', async () => {
+  test('gives every identity the same mark with two independent eyes', async () => {
     const { document } = await renderSpeaker({ avatarKey: 'auditor', name: 'auditor' });
 
     const avatar = document.querySelector('.thread-speaker-avatar');
+    // One generated form for everyone — no image assets, no letter fallback.
     expect(avatar?.querySelector('img')).toBeNull();
-    expect(avatar?.textContent).toBe('A');
+    // Two eye groups, each its own node, so one can close without the other.
+    expect(avatar?.querySelectorAll('.agent-mark-eye').length).toBe(2);
   });
 
   test('stacks what a participant did under who they are', async () => {

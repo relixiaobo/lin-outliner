@@ -4,19 +4,19 @@
 
 Subagents stop being a black box. Users can see, rename, re-skin, create, and
 edit agent definitions; every agent has a persistent visual identity (persona
-name + portrait avatar) that renders in the conversation flow; and the shipped
-speaker layout completes its mobile-IM form: an avatar-gutter hanging indent,
+name + identity-coloured mark) that renders in the conversation flow; and the shipped
+speaker layout completes its mobile-IM form: a mark-gutter header,
 portrait + persona + role label in the header, and a "Worked for …" duration
 line that doubles as the process disclosure — with subagent results staying
 signed report cards under those same headers.
 
 Concretely, this ships:
 
-1. Presentation fields (`persona`, `avatar`) on Agent Role definitions, plus a
+1. Presentation fields (`persona`, `color`) on Agent Role definitions, plus a
    `presentationOverrides` layer so built-ins and the root identity are
    customizable without redefining them.
-2. A default roster with bundled avatar art: **Aspen** (beaver, main), **Rena**
-   (fox, `explore`), **Ada** (owl, `plan`), **Bruno** (bear,
+2. A default roster of generated identity marks: **Aspen** (teal, main),
+   **Rena** (orange, `explore`), **Ada** (blue, `plan`), **Bruno** (amber,
    `general-purpose`).
 3. The portrait/persona/layout upgrade of the shipped speaker system in the
    344px agent deck (§3).
@@ -31,15 +31,16 @@ Concretely, this ships:
   upheld, and its sole ratified exception stays as-is (a user-stopped worker is
   resumed only by the user from its detail view).
 - **No model-contract changes.** The `claude-code-subagent-parity` byte-locked
-  tool contract is untouched. Persona and avatar never reach any model-facing
+  tool contract is untouched. Persona and colour never reach any model-facing
   surface — the model addresses canonical type/Role names and raw Agent IDs
   only, and never learns that "Fox" exists.
 - **No durable-individual semantics.** Identity attaches to the *definition*
   (Role / agent type), not to a persistent individual with its own memory.
   Concurrent children of one type deliberately share a face and are
   disambiguated by task description, never by per-instance persona variation.
-- **No runtime avatar generation.** Assets are bundled, committed, and frozen;
-  no image-gen calls, no network.
+- **No image generation, no network, no per-agent artwork.** The mark is a
+  deterministic inline SVG computed from configuration; there are no avatar
+  assets at all.
 - **No personas for Skill runs.** Isolated Skill executions keep the `SkillIcon`
   glyph treatment — agents have faces, skills are tools.
 - **No migration / back-compat** (pre-release policy): config additions are
@@ -51,8 +52,8 @@ Concretely, this ships:
 (b) a SET of two independent complete features, each its own PR, ordered by
 dependency:
 
-- **PR-A — Identity presentation.** The profile model, the default roster and
-  avatar assets, and the conversation-flow identity layout. Complete and
+- **PR-A — Identity presentation.** The identity model, the default roster of
+  generated marks, and the conversation-flow identity layout. Complete and
   verifiable with built-in defaults alone — no editor needed to ship it.
 - **PR-B — Agent editor.** The white-box editing surface over PR-A's profile
   model. Depends on PR-A's fields; independently shippable after it.
@@ -98,16 +99,17 @@ field:
 
 ```ts
 readonly presentation?: {
-  readonly persona?: string; // display name, e.g. "Fox" — a proper noun, never translated
-  readonly avatar?: string;  // key into the bundled avatar set, e.g. "fox"
+  readonly persona?: string; // display name, e.g. "Rena" — a proper noun, never translated
+  readonly color?: string;   // identity-palette name, e.g. "orange"
 };
 ```
 
 - Parsed in `AgentConfigurationLoader`: extend the role-record key allowlist,
   add strict-shape parsing in the loader's existing style, and validate persona
-  like a nickname (single line, trimmed, length cap ≈ 40 chars) and avatar
-  against the bundled key list (unknown key → config error at the write
-  boundary, letter fallback at the read boundary).
+  like a nickname (single line, trimmed, length cap ≈ 40 chars) and colour
+  against the identity palette (unknown name → config error at the write
+  boundary; a stale stored colour degrades to derivation at the read
+  boundary).
 - **Persona supersedes nickname (ruling).** The shipped parity feature kept
   nicknames for UI labels; this plan replaces that display path so the agent
   has exactly one name system:
@@ -135,93 +137,63 @@ readonly presentation?: {
   ```jsonc
   // <userData>/agent/config.json (user) and <cwd>/.tenon/agent.json (project)
   { "presentationOverrides": { "explore": { "persona": "Scout" },
-                               "main":    { "avatar": "otter" } } }
+                               "main":    { "color": "violet" } } }
   ```
 
   Precedence mirrors `loadMerged`: project over user over the definition's own
   `presentation`. The pseudo-key `main` addresses the root agent, which has no
   Role.
 - **The root identity.** A frozen constant in `configuration.ts` —
-  `DEFAULT_AGENT_PRESENTATIONS.main = { persona: 'Aspen', avatar: 'beaver' }` —
+  `DEFAULT_AGENT_PRESENTATIONS.main = { persona: 'Aspen', color: 'teal' }` —
   overlayable through `presentationOverrides.main`.
 - **Default roster.** Built-in Roles carry default presentation in their
   definitions:
 
-  | identity | agent type | persona | avatar key |
+  | identity | agent type | persona | colour |
   |---|---|---|---|
-  | root | main | Aspen | `beaver` |
-  | built-in | `explore` | Rena | `fox` |
-  | built-in | `plan` | Ada | `owl` |
-  | built-in | `general-purpose` | Bruno | `bear` |
+  | root | main | Aspen | `teal` |
+  | built-in | `explore` | Rena | `orange` |
+  | built-in | `plan` | Ada | `blue` |
+  | built-in | `general-purpose` | Bruno | `amber` |
 
-  **Naming principle (binding for future additions):** a portrait names the
-  KIND, a persona names the ONE, and they never say the same thing. `Bear` over
-  a bear face is a caption, not a signature — the word adds nothing the picture
-  already said, which is how it read in the running app (PM 2026-08-18). Names
-  are short proper names with a hook worth remembering: Rena from Reynard the
-  fox, Ada from Ada Lovelace (who wrote the first plan a machine could run),
-  Bruno from the brown of a bear, Aspen from the tree a beaver builds with. This
-  supersedes the earlier persona-is-the-animal rule. The conversation's own
-  agent is named like the rest and does NOT carry the product's name: a
-  transcript names the participants in it, not the application they run
-  inside.
-- **Model-surface isolation (hard rule).** `presentation` must not change any
-  model-facing byte: `RoleCatalogContextPayload` / `RoleCatalogEntry` entries
-  and hashes (`buildRoleCatalogSnapshot`), stable-prompt blocks, tool
-  descriptions and results. A unit test locks this (see Tests).
-- **Renderer delivery.** A new request/notification pair on the agent protocol
-  (`src/core/agent/protocol.ts` + `src/core/agent/codec.ts` — a coordinated
-  protocol-surface change per A4): a `profiles/get` request returning the
-  resolved catalog
-  `{ main: Presentation, roles: Record<name, Presentation & { source }> }`
-  for a cwd, and a transient (never recorded — presentation is not history)
-  `profiles/changed` notification on configuration reload. The renderer caches
-  the catalog in `threadStore` (new `profileCatalog` field on
-  `ThreadStoreSnapshot`), fetched at dock mount. Exact request names are
-  reversible locals.
-- **Identity resolution at render.** One shared helper (`resolveAgentIdentity`)
-  applies the fallback chain; it degrades and never throws (A12):
-  1. main-thread rows → `main` profile (overlay-resolved);
-  2. child rows/cards → the child's recorded agent type / Role name
-     (`Thread.agentRole`, i.e. the execution record's selected definition) →
-     identity catalog;
-  3. persona missing → the Role/type name verbatim;
-  4. avatar missing or Role unknown/deleted → letter fallback below.
+  **Naming principle (binding for future additions):** the persona is a short
+  proper name with a hook worth remembering — Rena from Reynard the fox, Ada
+  from Ada Lovelace (who wrote the first plan a machine could run), Bruno from
+  the brown of a bear, Aspen from the tree a beaver builds with. The
+  conversation's own agent is named like the rest and does NOT carry the
+  product's name: a transcript names the participants in it, not the
+  application they run inside.
 
-### 2. Avatar assets
+### 2. Identity marks
 
-- Bundled set under `src/renderer/assets/agent-avatars/`, imported through
-  Vite exactly like `src/renderer/assets/provider-icons/` (the repo has no
-  `public/` directory; do not invent a second asset mechanism). **SVG, inlined
-  as raw markup** rather than raster asset URLs — the same choice
-  `providerIcon.ts` makes: one file serves every size, scales with its
-  container, and stays diffable in review. 24×24 viewBox, drawn edge to edge,
-  circle-cropped by CSS (`border-radius: 50%` + `overflow: hidden`).
-- **Four keys ship in PR-A** — `beaver`, `fox`, `owl`, `bear` — one per default
-  identity. No speculative pool: a custom Role picks the letter fallback (or
-  any of the four) until demand justifies expanding the set; candidate names
-  for that expansion (`panda`, `otter`, `lynx`, `raccoon`, `hedgehog`,
-  `capybara`, `heron`, `badger`) are recorded here so the naming principle
-  stays coherent, but producing them is out of scope.
-- **Production path (PR-A critical path, explicit).** The four portraits are
-  authored as flat SVG against one shared formula, recorded in the asset
-  README: coloured disc, warm off-white head, near-black features, and a
-  SILHOUETTE that carries the species because features vanish first at 24px.
-  Two animals sharing a silhouette must not share a hue (beaver and bear are
-  the pair to watch). **The PM ratifies the four portraits — and thereby the
-  art direction — at PR-A's review gate**, whose light+dark visual verification
-  covers them; a PR-A without ratified assets is not mergeable. Because the
-  asset map is one module, replacing the art later is a file swap with no code
-  change.
-- **Produced once, committed, frozen.** A regenerated avatar is a different
-  face; identity requires stability. Re-render an asset only on a deliberate,
-  PM-ratified art-direction change — never as a side effect.
-- **Letter fallback: already shipped — reuse it, do not reinvent.**
-  `agentAvatarColor.ts` (`agentAvatarColor`, `agentAvatarInitial`,
-  `MAIN_AVATAR_IDENTITY`) already renders identities as a first-grapheme disc
-  tinted from the shared `--identity-tint-*` palette, type-keyed and
-  theme-correct. Identities without a portrait keep exactly this treatment; no
-  new color tokens.
+- **One soft form for every participant; identity is the colour.** The mark
+  (`AgentMark.tsx`) is a generated inline SVG: the shared squircle-ish form
+  filled with `var(--identity-tint-<n>)`, with two round-capped eye strokes cut
+  through the mask — the eyes are holes showing the panel behind, so a mark has
+  exactly one colour and the eyes can never be mis-paired against a theme. No
+  ground, no crop, no frame: the form is its own edge, which retires the whole
+  tile/hairline treatment raster portraits needed. (This supersedes the three
+  portrait-art cuts tried during review — full figures shrank to nothing at
+  28px, painted heads lost their detail to the downscale, and flat faces still
+  needed framing; the mark needs nobody to draw anything, ever.)
+- **Colours: pinned for the roster, derived for everyone else.** The default
+  four wear hand-picked, well-separated hues — hashing four names into seven
+  buckets collides about half the time, and it did. Every other identity
+  derives its hue from its type name (core `deriveIdentityColor`, FNV-1a) over
+  the hues the roster did not take, so a fresh Role cannot walk in wearing
+  Aspen's teal; the danger-adjacent red (`--identity-tint-0`) is outside the
+  identity palette entirely, continuing the shipped letter-disc rule. An
+  explicit `presentation.color` may choose any palette hue.
+- **The marks blink.** Mostly both eyes, now and then just one, occasionally a
+  quick double — each mark on its own clock (shared beats read as a
+  screensaver), with a fast shut (55ms) and a relaxed open (150ms), because
+  equal speeds read as a machine. Scheduled by ref-driven class toggles, never
+  React state (A9: a transcript of marks must not re-render to blink);
+  `prefers-reduced-motion` stills them entirely.
+- **Deferred, deliberately:** the demo's expression system (mood-parameterised
+  eye strokes) and spherical gaze pose. Both are proven in
+  `tmp/agent-marks/demo.html` and belong to surfaces large enough to read them
+  — the detail view and the PR-B editor — not to a 28px transcript mark.
 
 ### 3. Conversation-flow identity layout (PR-A)
 
@@ -242,12 +214,10 @@ excepted, and `SubagentReport` delivering a child's result as an outlined,
 clamped, whole-card-clickable card under that child's header. PR-A does not
 rebuild any of this. It upgrades four things:
 
-**Upgrade 1 — portrait avatars.** The letter disc becomes the bundled portrait
-resolved through the identity catalog (`resolveAgentIdentity`, §1); the shipped
-`agentAvatarColor` disc remains as the fallback for identities without a
-portrait. `--speaker-avatar-size` moves 16px → 24px — a 16px disc carries an
-initial, not a face. `avatarKey` semantics (one type, one avatar, everywhere)
-are unchanged.
+**Upgrade 1 — generated marks.** The letter disc and its `agentAvatarColor`
+module retire together with the raster-portrait pipeline; `ThreadSpeakerGroup`
+renders `AgentMark` for every participant. `--speaker-avatar-size` stays 28px.
+`avatarKey` semantics (one type, one mark, everywhere) are unchanged.
 
 **Upgrade 2 — persona names, on their own line.** The header becomes a
 portrait beside two stacked lines — persona + type, then the work line — as the

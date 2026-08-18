@@ -1,17 +1,7 @@
-import { afterEach, describe, expect, mock, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import { act, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
-// agentPortraits.ts loads the vendored roster through Vite's import.meta.glob,
-// which does not exist outside the bundler. The stub returns markup rather than
-// undefined so the speaker header renders its portrait branch — the one
-// production takes — instead of the initial-disc fallback.
-mock.module('../../src/renderer/agent/agentPortraits', () => ({
-  agentPortraitUrl: (avatarKey: string | null) => (
-    avatarKey === null ? undefined : `/fixture/${avatarKey}.png`
-  ),
-}));
-
 import type { ThreadItem, Turn } from '../../src/core/agent/protocol';
 import type { DocumentProjection } from '../../src/core/types';
 import { emptyTurnAnchors } from '../../src/renderer/agent/subagentPresentation';
@@ -20,8 +10,8 @@ import { buildIndex } from '../../src/renderer/state/document';
 import { DocumentIndexStore } from '../../src/renderer/state/documentIndexStore';
 import { replayableModelCall } from '../fixtures/agentToolCallHistory';
 
-// Imported dynamically, after the mock above: a static import would hoist above
-// it and pull the real Vite-only portrait module in first.
+// The identity mark is generated inline, so the component tree no longer pulls
+// any bundler-only module; the dynamic import is simply how this file loads it.
 async function loadThreadTurnView(): Promise<typeof import('../../src/renderer/agent/components/ThreadView')['ThreadTurnView']> {
   return (await import('../../src/renderer/agent/components/ThreadView')).ThreadTurnView;
 }

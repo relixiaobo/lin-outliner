@@ -31,7 +31,7 @@ import { IconButton } from '../../ui/primitives/IconButton';
 import { ResizeHandle } from '../../ui/primitives/ResizeHandle';
 import { ThreadList } from './ThreadList';
 import { ThreadDetailsDialog } from './ThreadDetailsDialog';
-import { MAIN_AVATAR_IDENTITY } from '../agentAvatarColor';
+import { MAIN_IDENTITY_KEY } from '../agentIdentity';
 import { ThreadView } from './ThreadView';
 import { resolveUsableActiveProvider } from '../../ui/agent/providerUsability';
 import { reportActionError } from '../../ui/interactions/actionSteps';
@@ -237,8 +237,8 @@ export const ThreadDock = memo(function ThreadDock({
   // a new identity on every store patch, so the whole transcript re-rendered on
   // every streaming frame — the exact hot path #541 optimized.
   const conversationSpeaker = useMemo(() => ({
-    participantId: MAIN_AVATAR_IDENTITY,
-    avatarKey: MAIN_AVATAR_IDENTITY,
+    participantId: MAIN_IDENTITY_KEY,
+    avatarKey: MAIN_IDENTITY_KEY,
     name: t.agent.thread.agent.main,
   }), [t]);
 

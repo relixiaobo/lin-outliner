@@ -53,31 +53,33 @@ export type BuiltInAgentRoleName = typeof BUILT_IN_AGENT_ROLES[number];
  */
 export interface AgentPresentationOverride {
   readonly persona?: string;
-  readonly avatar?: string;
+  readonly color?: string;
 }
 
 /** A presentation with every field settled: what the renderer draws. */
 export interface AgentPresentation {
   readonly persona: string;
-  /** A bundled portrait key, or null to wear the initial-disc fallback. */
-  readonly avatar: string | null;
+  /** An identity-palette colour name; the mark is drawn in this hue. */
+  readonly color: string;
 }
 
 /**
- * The bundled portraits.
+ * The identity palette, by name.
  *
- * A portrait names the KIND; the persona names the ONE. They must not say the
- * same thing: a bear face signed `Bear` adds nothing the face did not already
- * say, so the eye reads the word as a caption rather than as somebody speaking.
- * Three layers, no overlap — the face is recognised, the name is spoken, and
- * the Agent type beside it is exact.
- *
- * Adding a key here is adding an image to
- * `src/renderer/assets/agent-avatars/`; a configuration naming a key that does
- * not exist is refused at the write boundary rather than silently drawn blank.
+ * Every agent wears the SAME soft mark; what tells them apart is the colour,
+ * drawn from the `--identity-tint-*` ladder the app already uses for identity
+ * (tags, usage chart). Names map to tint indices below. Red — tint 0 — is
+ * deliberately absent: it sits next to `--status-danger`, and an agent whose
+ * mark reads as an error every time it speaks is a worse trade than one fewer
+ * hue.
  */
-export const AGENT_AVATAR_KEYS = ['beaver', 'fox', 'owl', 'bear'] as const;
-export type AgentAvatarKey = typeof AGENT_AVATAR_KEYS[number];
+export const IDENTITY_COLORS = ['orange', 'amber', 'green', 'teal', 'blue', 'violet', 'pink'] as const;
+export type IdentityColor = typeof IDENTITY_COLORS[number];
+
+/** Colour name → `--identity-tint-<n>` index. */
+export const IDENTITY_COLOR_TINT: Readonly<Record<IdentityColor, number>> = Object.freeze({
+  orange: 1, amber: 2, green: 3, teal: 4, blue: 5, violet: 6, pink: 7,
+});
 
 /**
  * The conversation's own agent, addressed where an Agent type would go.
@@ -89,13 +91,47 @@ export type AgentAvatarKey = typeof AGENT_AVATAR_KEYS[number];
  */
 export const MAIN_PRESENTATION_KEY = 'main';
 
-/** The roster a fresh install starts with, keyed by Agent type. */
+/**
+ * The roster a fresh install starts with, keyed by Agent type. The four hues
+ * are hand-picked and well separated — four names hashed into seven buckets
+ * collide about half the time, and a fixed roster is small enough to assign.
+ */
 export const DEFAULT_AGENT_PRESENTATIONS: Readonly<Record<string, AgentPresentation>> = Object.freeze({
-  [MAIN_PRESENTATION_KEY]: Object.freeze({ persona: 'Aspen', avatar: 'beaver' }),
-  'general-purpose': Object.freeze({ persona: 'Bruno', avatar: 'bear' }),
-  explore: Object.freeze({ persona: 'Rena', avatar: 'fox' }),
-  plan: Object.freeze({ persona: 'Ada', avatar: 'owl' }),
+  [MAIN_PRESENTATION_KEY]: Object.freeze({ persona: 'Aspen', color: 'teal' }),
+  'general-purpose': Object.freeze({ persona: 'Bruno', color: 'amber' }),
+  explore: Object.freeze({ persona: 'Rena', color: 'orange' }),
+  plan: Object.freeze({ persona: 'Ada', color: 'blue' }),
 });
+
+/**
+ * Hues open to DERIVATION — everything the default roster did not take. A
+ * custom Role gets its colour from its name so it is distinct the moment it is
+ * created; deriving over the built-ins' hues would let a fresh Role walk in
+ * wearing Aspen's teal, and a collision with `main` is the one that misleads.
+ * (An explicit `presentation.color` may still choose any palette hue.)
+ */
+export const DERIVED_IDENTITY_COLORS: readonly IdentityColor[] = Object.freeze(
+  IDENTITY_COLORS.filter((color) => !Object.values(DEFAULT_AGENT_PRESENTATIONS).some((p) => p.color === color)),
+);
+
+/** FNV-1a, folded — the stable hash the identity system keys off. */
+export function identityHash(value: string): number {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index++) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash ^ (hash >>> 16)) >>> 0;
+}
+
+/**
+ * The colour an identity wears when nobody chose one. Deterministic in the
+ * identity key, so the same Role is the same hue in every conversation and
+ * after every restart; degrades never — any string resolves to a palette hue.
+ */
+export function deriveIdentityColor(key: string): IdentityColor {
+  return DERIVED_IDENTITY_COLORS[identityHash(key) % DERIVED_IDENTITY_COLORS.length]!;
+}
 
 export interface EffectiveThreadConfiguration {
   readonly profileName: string | null;

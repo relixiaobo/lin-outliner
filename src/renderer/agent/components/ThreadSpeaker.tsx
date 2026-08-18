@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { MAIN_IDENTITY_KEY, resolveAgentIdentity } from '../agentIdentity';
-import { agentPortraitUrl } from '../agentPortraits';
 import { useIdentityCatalog, type ThreadSnapshotSource } from '../store/threadStore';
+import { AgentMark } from './AgentMark';
 
 /** Who said the block beneath: which participant, what it looks like, its name. */
 export interface ThreadSpeaker {
@@ -14,22 +14,22 @@ export interface ThreadSpeaker {
    */
   readonly participantId: string;
   /**
-   * What the hue is derived from: the Agent TYPE, or `main` for the
-   * conversation's own agent. One type, one avatar — everywhere, in every
-   * conversation. It is not the displayed name, which is translated for `main`
-   * and would repaint every disc when the language changed; and it is not the
-   * participant, which gave two siblings of one type the same NAME and
-   * different discs, and repainted an Agent on the way into its own view.
+   * What the identity resolves from: the Agent TYPE, or `main` for the
+   * conversation's own agent. One type, one mark — everywhere, in every
+   * conversation. It is not the displayed name, which is a persona the user
+   * can rename; and it is not the participant, which would give two siblings
+   * of one type the same NAME and different marks, and repaint an Agent on
+   * the way into its own view.
    */
   readonly avatarKey: string;
   readonly name: string;
 }
 
 /**
- * One participant speaking, in the shape every message stream uses: a portrait
+ * One participant speaking, in the shape every message stream uses: a mark
  * and a name over what they said.
  *
- * The header is a portrait beside TWO stacked lines — who this is, then what
+ * The header is the identity mark beside TWO stacked lines — who this is, then what
  * they did — and the words below take the WHOLE column. Stacked rather than run
  * together because the second line grows: an elapsed time ticking up beside a
  * name squeezes the name at deck width, and the persona is the one thing here
@@ -74,7 +74,6 @@ export function ThreadSpeakerGroup({
   // fallback: a participant that is not a type at all — an isolated Skill —
   // keeps the name it came with and simply has no persona to find.
   const identity = resolveAgentIdentity(catalog, speaker.avatarKey, speaker.name);
-  const portrait = agentPortraitUrl(identity.avatarKey);
   // What it IS, beside what it is called — for DELEGATES only. The
   // conversation's own agent needs no label: there is exactly one of it, the
   // reader is talking to it, and `main` beside its name states the only thing
@@ -90,20 +89,8 @@ export function ThreadSpeakerGroup({
   return (
     <div className="thread-speaker">
       <div className="thread-speaker-header">
-        <span
-          aria-hidden
-          className="thread-speaker-avatar"
-          // The tint rides along under a portrait too: it is what shows if the
-          // portrait is missing, and what the initial sits on.
-          style={portrait === undefined
-            ? { background: identity.color.background, color: identity.color.text }
-            : undefined}
-        >
-          {portrait === undefined
-            ? identity.initial
-            // Decorative: the name is right beside it, so a second reading of
-            // the same identity would only repeat itself to a screen reader.
-            : <img alt="" src={portrait} />}
+        <span aria-hidden className="thread-speaker-avatar">
+          <AgentMark size={28} tint={identity.tint} />
         </span>
         <div className="thread-speaker-identity">
           <div className="thread-speaker-title">

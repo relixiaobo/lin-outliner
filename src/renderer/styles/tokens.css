@@ -146,8 +146,9 @@
   /* control state — checked/on controls, separate from semantic status */
   --control-on: #3f9e6a;
 
-  /* identity tints — a per-agent avatar hue, assigned deterministically by
-     identity (agentAvatarColor.ts). Identity is its OWN decorative category: not a
+  /* identity tints — a per-agent mark hue, pinned for the default roster and
+     derived from the name otherwise (core deriveIdentityColor, drawn by
+     AgentMark.tsx). Identity is its OWN decorative category: not a
      functional state (B3 keeps those neutral), not a status (B4 reserves these for
      state), not the rose accent (B4). It therefore gets a dedicated muted palette.
      One family with the tag-chip palette (tagColors.ts) so the app reads as one

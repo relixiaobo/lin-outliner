@@ -132,7 +132,7 @@ import {
 } from '../subagentPresentation';
 import { SubagentReport } from './SubagentReport';
 import { ThreadSpeakerGroup, type ThreadSpeaker } from './ThreadSpeaker';
-import { MAIN_AVATAR_IDENTITY } from '../agentAvatarColor';
+import { MAIN_IDENTITY_KEY } from '../agentIdentity';
 import { useSubagentEntry, useWorkingAgentIds } from './SubagentRegistryContext';
 import { classifyNewThreadCommand } from '../threadComposerCommands';
 import { parseNodeReferenceMarkers } from '../../../core/referenceMarkup';
@@ -2677,8 +2677,8 @@ export const ThreadTurnView = memo(function ThreadTurnView({
     // into it afterwards is theirs, wherever the Turn came from.
     if (block.item.id !== hostNoticeItemId) return null;
     return hostSpeaker ?? peerSpeaker ?? {
-      participantId: MAIN_AVATAR_IDENTITY,
-      avatarKey: MAIN_AVATAR_IDENTITY,
+      participantId: MAIN_IDENTITY_KEY,
+      avatarKey: MAIN_IDENTITY_KEY,
       name: t.agent.thread.agentEvent,
     };
   };

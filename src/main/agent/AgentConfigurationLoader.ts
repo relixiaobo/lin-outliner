@@ -2,13 +2,14 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  AGENT_AVATAR_KEYS,
   DEFAULT_AGENT_PRESENTATIONS,
+  IDENTITY_COLORS,
   MAIN_PRESENTATION_KEY,
   REASONING_EFFORTS,
-  type AgentAvatarKey,
+  deriveIdentityColor,
   type AgentPresentation,
   type AgentPresentationOverride,
+  type IdentityColor,
   type AgentRole,
   type AgentRoleOverrides,
   type ConfigurationProfile,
@@ -272,9 +273,9 @@ export class AgentConfigurationLoader {
    *
    * Resolution is layered the way configuration is: the definition's own
    * presentation, then a user re-skin, then a project one. An identity with
-   * nothing to say for itself falls back to its type name and no portrait,
-   * which is what an unconfigured custom Role should look like — named after
-   * what it is, wearing the initial disc.
+   * nothing to say for itself is named after its type and wears the colour its
+   * name derives — which is what an unconfigured custom Role should look like:
+   * distinct the moment it exists, without anyone drawing anything.
    *
    * Deliberately NOT part of `buildRoleCatalogSnapshot`: that payload is the
    * model's view of the Agent catalog and its hashes gate re-announcement.
@@ -286,7 +287,7 @@ export class AgentConfigurationLoader {
       const override = merged.presentationOverrides.get(key);
       return {
         persona: override?.persona ?? base.persona,
-        avatar: override?.avatar ?? base.avatar,
+        color: override?.color ?? base.color,
       };
     };
     const main = overlay(
@@ -296,7 +297,7 @@ export class AgentConfigurationLoader {
     const entries: AgentIdentityEntry[] = [{
       agentType: MAIN_PRESENTATION_KEY,
       persona: main.persona,
-      avatar: main.avatar,
+      color: main.color,
       source: 'built-in',
     }];
     for (const candidate of this.agentTypeCandidates(cwd)) {
@@ -304,13 +305,13 @@ export class AgentConfigurationLoader {
       const declared = candidate.role.presentation;
       const base: AgentPresentation = {
         persona: declared?.persona ?? DEFAULT_AGENT_PRESENTATIONS[type]?.persona ?? type,
-        avatar: declared?.avatar ?? DEFAULT_AGENT_PRESENTATIONS[type]?.avatar ?? null,
+        color: declared?.color ?? DEFAULT_AGENT_PRESENTATIONS[type]?.color ?? deriveIdentityColor(type),
       };
       const resolved = overlay(type, base);
       entries.push({
         agentType: type,
         persona: resolved.persona,
-        avatar: resolved.avatar,
+        color: resolved.color,
         source: candidate.role.source === 'builtIn' ? 'built-in' : candidate.role.source,
       });
     }
@@ -500,22 +501,22 @@ function decodeRole(
 
 function decodePresentation(value: unknown, path: string): AgentPresentationOverride {
   const record = objectValue(value, path);
-  exactKeys(record, ['persona', 'avatar'], path);
+  exactKeys(record, ['persona', 'color'], path);
   const persona = record.persona === undefined
     ? undefined
     : nonEmptyString(record.persona, `${path}.persona`);
   if (persona !== undefined) validatePersona(persona, `${path}.persona`);
-  const avatar = record.avatar === undefined
+  const color = record.color === undefined
     ? undefined
-    : nonEmptyString(record.avatar, `${path}.avatar`);
-  if (avatar !== undefined && !AGENT_AVATAR_KEYS.includes(avatar as AgentAvatarKey)) {
+    : nonEmptyString(record.color, `${path}.color`);
+  if (color !== undefined && !IDENTITY_COLORS.includes(color as IdentityColor)) {
     throw new Error(
-      `${path}.avatar must be one of ${AGENT_AVATAR_KEYS.join(', ')} — got '${avatar}'`,
+      `${path}.color must be one of ${IDENTITY_COLORS.join(', ')} — got '${color}'`,
     );
   }
   return Object.freeze({
     ...(persona === undefined ? {} : { persona }),
-    ...(avatar === undefined ? {} : { avatar }),
+    ...(color === undefined ? {} : { color }),
   });
 }
 
