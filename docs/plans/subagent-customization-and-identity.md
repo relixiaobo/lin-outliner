@@ -1,23 +1,14 @@
 # Subagent Customization And Identity
 
-**Shape:** (b) a SET of two independent complete features, each its own PR,
-ordered by dependency:
-
-- **PR-A — Identity presentation.** The profile model, the default roster and
-  avatar assets, and the conversation-flow identity layout. Complete and
-  verifiable with built-in defaults alone — no editor needed to ship it.
-- **PR-B — Agent editor.** The white-box editing surface over PR-A's profile
-  model. Depends on PR-A's fields; independently shippable after it.
-
 ## Goal
 
 Subagents stop being a black box. Users can see, rename, re-skin, create, and
 edit agent definitions; every agent has a persistent visual identity (persona
-name + avatar) that renders in the conversation flow; and the flow itself adopts
-a mobile-IM identity layout: an avatar-gutter hanging indent, a two-line
-identity header per speaker block, a "Worked for …" duration line that doubles
-as the process disclosure, and subagent results delivered as signed report
-cards.
+name + portrait avatar) that renders in the conversation flow; and the shipped
+speaker layout completes its mobile-IM form: an avatar-gutter hanging indent,
+portrait + persona + role label in the header, and a "Worked for …" duration
+line that doubles as the process disclosure — with subagent results staying
+signed report cards under those same headers.
 
 Concretely, this ships:
 
@@ -26,7 +17,8 @@ Concretely, this ships:
    without redefining them.
 2. A default roster with bundled avatar art: **Tenon** (beaver, main), **Fox**
    (fox, `explore`), **Owl** (owl, `plan`), **Bear** (bear, `general-purpose`).
-3. The identity-header transcript layout in the 344px agent deck.
+3. The portrait/persona/layout upgrade of the shipped speaker system in the
+   344px agent deck (§3).
 4. An "Agents" management pane: list, create, edit, delete; built-ins editable
    in presentation only, custom Roles editable in full.
 
@@ -53,6 +45,17 @@ Concretely, this ships:
   additive and optional; no legacy reader; a format break means a dev userData
   wipe, not a compatibility path.
 
+## Shape
+
+(b) a SET of two independent complete features, each its own PR, ordered by
+dependency:
+
+- **PR-A — Identity presentation.** The profile model, the default roster and
+  avatar assets, and the conversation-flow identity layout. Complete and
+  verifiable with built-in defaults alone — no editor needed to ship it.
+- **PR-B — Agent editor.** The white-box editing surface over PR-A's profile
+  model. Depends on PR-A's fields; independently shippable after it.
+
 ## Design
 
 ### Product thesis (context for the executing dev)
@@ -66,21 +69,26 @@ chose the name and the face. That is *authorship*, not personhood — this plan
 deliberately does not import the "agents as human-like colleagues" framing;
 transparency features (durations, tool activity, usage) stay first-class.
 
-### Foundations and sequencing
+### Foundations (both shipped)
 
-- **Builds on `claude-code-subagent-parity`** (its dynamic Role/agent-type
-  catalog — `general-purpose`, `explore`, `plan`, user/project Roles — its
-  Agent execution record persisted with Thread metadata, and its byte-locked
-  tool contract). PR-A lands only after that implementation; building identity
-  on the retiring `spawn_agent`-era nickname path
-  (`input.nickname ?? role.nicknameCandidates`) would be work on a mechanism
-  scheduled for replacement.
-- **Coordinates with `subagent-interaction`.** That plan owns lifecycle-anchor
-  *semantics* (where anchors appear in the conversation, click pushes the
-  full-deck detail stack, the work strip, notification policy). This plan owns
-  anchor *visual form* (the signed report card) and the identity-header system.
-  The one seam is amended in that plan file in the same change (see Spec And
-  Plan Amendments).
+- **`claude-code-subagent-parity` shipped** (#535, 2026-08-14; plan archived).
+  The dynamic Role/agent-type catalog (`general-purpose`, `explore`, `plan`,
+  user/project Roles), the Agent execution record persisted with Thread
+  metadata, and the byte-locked tool contract are current reality, specified in
+  `docs/spec/agent-subagent-threads.md`. No sequencing gate remains; PR-A can
+  start immediately.
+- **`subagent-interaction` shipped** (#544, 2026-08-16; plan archived). The
+  surfaces this plan upgrades are live: the worker-registry projection
+  (`projectSubagentConversation`, `SubagentRegistryEntry`,
+  `subagentSpeakerName` in `subagentPresentation.ts`) feeds `SubagentChip`
+  (`.thread-agent-chip`, placed by `ThreadItemView.tsx`), the work strip, the
+  pushed detail view (`SubagentDetailView`), the `SubagentReport` result card,
+  and the `ThreadSpeakerGroup` identity headers. Anchor *semantics*
+  (placement, one-gesture open, notification policy) are contracted in
+  `docs/spec/agent-thread-rendering.md` §Agent Anchors And The Work Strip and
+  stay unchanged; this plan upgrades the speaker system's *presentation* —
+  portraits, personas, layout, the duration-line disclosure (§3) — amending
+  the spec's speaker section in the same change (see Spec Amendments).
 
 ### 1. Profile model
 
@@ -94,11 +102,30 @@ readonly presentation?: {
 };
 ```
 
-- Parsed in `AgentConfigurationLoader` beside `nicknameCandidates`: extend the
-  role-record key allowlist, add strict-shape parsing in the loader's existing
-  style, and validate persona like a nickname (single line, trimmed, length
-  cap ≈ 40 chars) and avatar against the bundled key list (unknown key → config
-  error at the write boundary, letter fallback at the read boundary).
+- Parsed in `AgentConfigurationLoader`: extend the role-record key allowlist,
+  add strict-shape parsing in the loader's existing style, and validate persona
+  like a nickname (single line, trimmed, length cap ≈ 40 chars) and avatar
+  against the bundled key list (unknown key → config error at the write
+  boundary, letter fallback at the read boundary).
+- **Persona supersedes nickname (ruling).** The shipped parity feature kept
+  nicknames for UI labels; this plan replaces that display path so the agent
+  has exactly one name system:
+  - `presentation.persona` is the **only** renderer display name. The three
+    surfaces that show `agentNickname` today convert to `resolveAgentIdentity`:
+    the `ThreadList.tsx` row label (`nickname [role]` becomes persona + role
+    label), the `ThreadDetailsDialog.tsx` title fallback, and the name/
+    description fallbacks in `subagentPresentation.ts`
+    (`subagentSpeakerName` and the registry-entry description chain).
+  - `nicknameCandidates` retires from `AgentRole` — superseded by
+    `presentation.persona`. The loader allowlist drops it, and the spawn-time
+    fallback `role.nicknameCandidates?.[0]` in `SubagentCollaboration` is
+    removed with it (pre-release: no migration; stale config keys are a parse
+    error like any other unknown key).
+  - `Thread.agentNickname` stays recorded at the data layer — it is a spawn
+    fact and may feed model-facing collaboration payloads, which this plan must
+    not touch (see Non-goals). No renderer surface reads it as a display name
+    after PR-A; retiring the field itself is a separate cleanup if later proven
+    dead.
 - **Built-in presentation overlay.** Built-in definitions
   (`BUILT_IN_AGENT_ROLE_DEFINITIONS`) stay frozen code constants; users
   customize their *look* via a new optional config section, valid in both
@@ -146,113 +173,130 @@ readonly presentation?: {
 - **Identity resolution at render.** One shared helper (`resolveAgentIdentity`)
   applies the fallback chain; it degrades and never throws (A12):
   1. main-thread rows → `main` profile (overlay-resolved);
-  2. child rows/cards → the child's recorded agent type / Role name (today
-     `Thread.agentRole`; post-parity, the execution record's selected
-     definition) → profile catalog;
+  2. child rows/cards → the child's recorded agent type / Role name
+     (`Thread.agentRole`, i.e. the execution record's selected definition) →
+     profile catalog;
   3. persona missing → the Role/type name verbatim;
   4. avatar missing or Role unknown/deleted → letter fallback below.
 
 ### 2. Avatar assets
 
-- Bundled set under `public/agent-avatars/`: square PNGs at 48px and 96px
-  (`<key>.png`, `<key>@2x.png`), displayed at 24px (flow) and 40px (detail
-  view), circle-cropped by CSS (`border-radius: 50%`).
-- Twelve keys initially: `beaver`, `fox`, `owl`, `bear`, `panda`, `otter`,
-  `lynx`, `raccoon`, `hedgehog`, `capybara`, `heron`, `badger`. Four are the
-  defaults; the rest exist so custom Roles can pick without colliding.
-- One consistent illustration style across the set; must stay readable at 24px
-  and hold up on both light and dark surfaces.
+- Bundled set under `src/renderer/assets/agent-avatars/`, imported through
+  Vite exactly like `src/renderer/assets/provider-icons/` (the repo has no
+  `public/` directory; do not invent a second asset mechanism). Square PNGs at
+  48px and 96px (`<key>.png`, `<key>@2x.png`), displayed at 24px (flow) and
+  40px (detail view), circle-cropped by CSS (`border-radius: 50%`).
+- **Four keys ship in PR-A** — `beaver`, `fox`, `owl`, `bear` — one per default
+  identity. No speculative pool: a custom Role picks the letter fallback (or
+  any of the four) until demand justifies expanding the set; candidate names
+  for that expansion (`panda`, `otter`, `lynx`, `raccoon`, `hedgehog`,
+  `capybara`, `heron`, `badger`) are recorded here so the naming principle
+  stays coherent, but producing them is out of scope.
+- **Production path (PR-A critical path, explicit).** The four portraits are
+  produced by one-off image generation *outside* the app, before implementation
+  completes: one consistent illustration style, readable at 24px, holding up on
+  both light and dark surfaces. The generation method and prompts are recorded
+  in the PR body so a future pool expansion can match the style. **The PM
+  ratifies the four portraits (and thereby the art direction) as part of PR-A's
+  review gate** — the gate's light+dark visual verification covers them; a PR-A
+  without ratified assets is not mergeable.
 - **Produced once, committed, frozen.** A regenerated avatar is a different
   face; identity requires stability. Re-render an asset only on a deliberate,
   PM-ratified art-direction change — never as a side effect.
-- **Letter fallback.** Identities without an avatar render a circle with the
-  identity's first grapheme on a deterministic background:
-  `--avatar-fallback-1` … `--avatar-fallback-8` tokens declared in
-  `src/renderer/styles/tokens.css` for both themes (B1 — no raw hex outside
-  token declarations); index = a stable string hash of the identity key mod 8.
+- **Letter fallback: already shipped — reuse it, do not reinvent.**
+  `agentAvatarColor.ts` (`agentAvatarColor`, `agentAvatarInitial`,
+  `MAIN_AVATAR_IDENTITY`) already renders identities as a first-grapheme disc
+  tinted from the shared `--identity-tint-*` palette, type-keyed and
+  theme-correct. Identities without a portrait keep exactly this treatment; no
+  new color tokens.
 
 ### 3. Conversation-flow identity layout (PR-A)
 
-Rendering authority: `docs/spec/agent-thread-rendering.md`. Components:
-`ThreadView.tsx`, `items/ThreadItemView.tsx`; styles: `styles/thread.css`.
+Rendering authority: `docs/spec/agent-thread-rendering.md` — its speaker
+section already contracts most of this surface. Components: `ThreadView.tsx`,
+`ThreadSpeaker.tsx`, `agentAvatarColor.ts`, `items/ThreadItemView.tsx`,
+`SubagentChip.tsx`, `SubagentReport.tsx`; styles: `styles/thread.css`,
+`styles/tokens.css`.
 
-**Identity header.** Each headed block opens with a two-line header:
+**Baseline — the shipped speaker system (#544).** The transcript already
+renders every non-reader block under a one-line identity header:
+`ThreadSpeakerGroup` (a 16px letter-disc avatar from `agentAvatarColor`, the
+speaker name, and a `meta` slot carrying the Turn's work summary or a
+delivered child's own "Worked for …"), with consecutive same-participant merge
+keyed by `ThreadSpeaker.participantId`, avatar hue keyed by agent type
+(`avatarKey`; `MAIN_AVATAR_IDENTITY` for main), the reader's right-hand bubble
+excepted, and `SubagentReport` delivering a child's result as an outlined,
+clamped, whole-card-clickable card under that child's header. PR-A does not
+rebuild any of this. It upgrades four things:
 
-- line 1 — 24px avatar in the gutter, persona at the content register
-  (semibold), role label beside it in the secondary register (`--text-3`
-  color). The role label is UI copy: i18n keys for the built-in types
-  (`main`, `explore`, `plan`, `general-purpose`), the custom Role's name
-  verbatim otherwise. The persona is a literal proper noun and is never
-  translated.
-- line 2 — the duration line (below).
+**Upgrade 1 — portrait avatars.** The letter disc becomes the bundled portrait
+resolved through the profile catalog (`resolveAgentIdentity`, §1); the shipped
+`agentAvatarColor` disc remains as the fallback for identities without a
+portrait. `--speaker-avatar-size` moves 16px → 24px — a 16px disc carries an
+initial, not a face. `avatarKey` semantics (one type, one avatar, everywhere)
+are unchanged.
 
-**Hanging indent (mobile-IM layout — ratified over a header-only indent).** The
-avatar forms a gutter; all *text* content of a block — both header lines and
-body — shares one left edge at avatar width + one spacing-ladder gap
-(24px + `--space-4`-class gap ≈ 34px). Inside the 344px deck
-(`--agent-width`) this leaves a ≈ 276px content column — deliberately inside
-the mobile-IM line-length range, where this layout is proven at exactly this
-width. Two break-out rules:
+**Upgrade 2 — persona names.** The speaker name becomes the persona: "Fox"
+where `subagentSpeakerName` shows the raw type `explore` today; "Tenon"
+(untranslated) for main. A Role/type label joins the header line in
+`--text-secondary` (the type ladder is
+`--text-primary/secondary/tertiary/quaternary`; there is no numeric
+`--text-N`): built-in types use i18n labels, a custom Role's name appears
+verbatim; the persona is a literal proper noun and is never translated.
+`SubagentChip`, the work strip, and the detail-view title adopt the same names
+through the shared resolver; their visual form is otherwise unchanged.
 
-- **media break out** — `ThreadImageGallery` and image items extend left to the
-  avatar edge (full width minus deck padding), the IM wide-media convention;
-- **code keeps the column** — code blocks keep the indent and their existing
-  wrap behavior (`.thread-tool pre` is `white-space: pre-wrap` today; no new
-  overflow mode).
+**Upgrade 3 — hanging indent (a deliberate reversal of a shipped decision).**
+The shipped header keeps the body at full column width, and the
+`ThreadSpeaker.tsx` comment argues the position: a ~34px avatar lane in a
+344px deck spends a tenth of the reading measure repeating what the header
+already says. The PM weighed exactly that trade against the mobile-IM
+convention and ratified the IM layout: the avatar forms a gutter, and all
+*text* content of a block — header and body — shares one left edge (24px
+avatar + one spacing-ladder gap ≈ 34px, leaving a ≈ 276px column, inside the
+line-length range mobile IM has proven at exactly this width). Two things make
+the lane earn its cost now: it carries a *portrait* — an identity signal in
+itself, not a repeat of the name — and the shared left edge makes speaker
+switches a pure scanning operation. Break-out rules: media
+(`ThreadImageGallery`, image items) extends left to the avatar edge (the IM
+wide-media convention); code blocks keep the column and their existing
+`pre-wrap` behavior. Update the `ThreadSpeaker.tsx` rationale comment and the
+spec's speaker section in the same change — the old argument must not survive
+as text once the code stops embodying it.
 
-**The duration line IS the process disclosure.** The collapsed process block's
-header (today built from `threadProcessSummary` and
-`t.agent.thread.workedFor` with `formatProcessDuration`) moves into header
-line 2: a live turn ticks via `useTurnElapsedMs` with the existing live
-phrasing; a completed turn reads "Worked for {duration}". The line is a real
-button (visible `:focus-visible` ring, B8) that toggles the turn's process
-detail — reasoning disclosures and `ThreadToolActivityGroup` content — in
-place. No separate process header remains; the prototype's clean flow and the
-existing process visibility are the same surface.
+**Upgrade 4 — the duration line becomes the process disclosure.** The main
+speaker's `meta` (built from `threadProcessSummary` /
+`t.agent.thread.workedFor` via `formatProcessDuration`, ticking live through
+`useTurnElapsedMs`) becomes a real button (visible `:focus-visible` ring, B8)
+that toggles the Turn's process detail — reasoning disclosures and
+`ThreadToolActivityGroup` content — in place. No separate process header
+remains; the prototype's clean flow and process visibility become the same
+surface. A delivered report's meta (the child's own elapsed) stays a plain
+span — its disclosure surface is the card itself.
 
-**Consecutive-speaker merge.** A block renders headerless (body only, same
-indent) when the previous rendered block has the same resolved identity and no
-interrupting block (user message, subagent report card, lifecycle anchor, error
-banner) sits between; any interruption re-triggers the header. Rationale:
-vertical economy — the prototype shows a header on every block only because its
-speakers happen to alternate.
+**Unchanged by design (stated so the executing dev does not "fix" them):**
 
-**User messages: unchanged.** `.thread-user-message` (right-aligned,
-`--fill-3` bubble, `min(88%, 520px)`) already matches the target design.
-
-**Subagent report card (signed).** The delegation anchor (today
-`SubagentActivityItem` → `.thread-delegation-row`; after
-`subagent-interaction`, the completion anchor) becomes a card under the child
-identity's header:
-
-- header — child avatar + persona + Role/type label + "Worked for {child run
-  duration}" (`SubagentPresentation.durationMs` / the worker registry);
-- card chrome — neutral only (B3/B4): `--fill-2` surface, hairline edge
-  (`--inset-hairline`), `--radius-md`. **No purple, no accent borders**; the
-  prototype's violet card must land neutral. Status meaning stays in the
-  existing status/error text styling, never in card chrome;
-- content — a single-line title (ellipsis) plus a result excerpt clamped to
-  3 lines (`-webkit-line-clamp`), so card height is bounded;
-- interaction — click pushes the subagent detail view exactly per
-  `subagent-interaction` (semantics owned there); no inline expansion; hover
-  must not shift layout (B7); no `cursor: pointer` (B10);
-- running children — the header slot shows live elapsed
-  (`useSubagentElapsedMs`) and the Stop affordance as today; the card body
-  appears when a result exists.
-
-**Concurrency and disambiguation.** Children of one type share a face by
-design; the card title / task description is the only disambiguator.
-
-**Depth.** Grandchildren inside the child transcript (`SubagentRunDetail` /
-the detail stack) use the same identity system; hierarchy is conveyed by the
-containing surface, never by the avatar.
-
-**Skill runs.** Isolated Skill rows keep the `SkillIcon` treatment — no header,
-no avatar.
+- `SubagentReport` card semantics and chrome: outlined, not filled — the
+  outline says "a self-contained thing brought back from elsewhere" — task
+  title over a clamped, faded body, the whole card one click opening the
+  detail view per `agent-thread-rendering.md` §Agent Anchors And The Work
+  Strip. **The mockup's violet border does not land** (B3/B4: card chrome
+  stays neutral); identity color belongs to the avatar alone.
+- Consecutive-speaker merge: shipped, participant-keyed (so a child and a
+  same-typed parent never merge under one header); unchanged.
+- User messages: `.thread-user-message` right-hand `--fill-3` bubble, no
+  avatar — position is the reader's identity signal, and there is no user
+  profile to draw a face from.
+- Skill runs keep the `SkillIcon` treatment — no persona, no portrait.
+- Concurrency: children of one type share a face by design; the report card's
+  task title is the only disambiguator.
+- Depth: the pushed detail view (`SubagentDetailView`) renders its transcript
+  through the same speaker system; hierarchy is conveyed by the containing
+  surface, never by the avatar.
 
 **Virtualization.** `estimateTurnHeight` and `TRANSCRIPT_ROW_ESTIMATE_PX`
-(`ThreadView.tsx`) must account for header lines and clamped card heights;
-measured heights still win.
+(`ThreadView.tsx`) must account for the taller header and the indent-narrowed
+column; measured heights still win.
 
 ### 4. Agent editor (PR-B)
 
@@ -274,7 +318,9 @@ is not.
   description, `developerInstructions`, and `overrides` (model,
   reasoningEffort, tools). Validation reuses the loader's existing validators
   and parity's Role tool-admission semantics — do **not** build a second
-  validator.
+  validator. `main` is reserved: it is the presentation pseudo-key for the
+  root agent, and the loader rejects it as a custom Role name (editor and
+  parser both).
 - **Scope.** Create-time choice of layer: user
   (`<userData>/agent/config.json`) or project (`<cwd>/.tenon/agent.json`,
   git-shareable); shown on the row.
@@ -288,22 +334,22 @@ is not.
   children keep their resolved configuration; historical transcripts degrade
   through the identity fallback chain (§1). Confirmation dialog; no cascade.
 
-### 5. Spec and plan amendments (same change as the code)
+### 5. Spec amendments (same change as the code)
 
-- `docs/spec/agent-thread-rendering.md` — identity-header contract, hanging
-  indent + break-out rules, merge rule, duration-line disclosure, signed card.
-  (PR-A)
-- `docs/spec/design-system/patterns.md` §Agent Thread Flow — replace the
-  "identity via compact title, no avatars" doctrine with the identity-header
-  system; record the neutral-card rule. (PR-A)
+- `docs/spec/agent-thread-rendering.md` — the speaker section: portrait
+  avatars over the letter disc (24px), persona + role-label header, the
+  hanging-indent layout replacing the full-column rationale (the reversal in
+  §3 Upgrade 3), the duration-line disclosure. §Agent Anchors And The Work
+  Strip is untouched — anchor semantics do not change. (PR-A)
+- `docs/spec/design-system/patterns.md` §Agent Thread Flow — add the
+  portrait/persona identity rule (identity color lives on the avatar; card
+  chrome stays neutral). (PR-A)
 - `docs/spec/agent-subagent-threads.md` §Roles And Configuration —
-  presentation fields, overlay precedence, main profile, naming principle.
-  (PR-A; the editor contract joins in PR-B)
-- `docs/plans/subagent-interaction.md` — one surgical edit: the completion
-  anchor's visual form becomes the signed report card; all semantics unchanged.
-  (PR-A)
-- Design guards (B11): the token/hex guards cover the new CSS; the
-  avatar-fallback tokens are declared in `tokens.css`, not inline.
+  presentation fields, overlay precedence, the `main` pseudo-key reservation,
+  the main profile, the naming principle, and the `nicknameCandidates`
+  retirement. (PR-A; the editor contract joins in PR-B)
+- Design guards (B11): the token/hex guards cover the new CSS; identity color
+  stays on the shipped `--identity-tint-*` palette — no new color tokens.
 
 ### 6. Tests
 
@@ -318,11 +364,14 @@ Unit (core / main):
 
 Renderer:
 
-- header presence/absence per the merge rule (same-speaker continuation;
-  interruption resets)
+- speaker headers render persona + portrait through `resolveAgentIdentity`;
+  an unknown/custom type falls back to the `agentAvatarColor` letter disc
+- no renderer surface displays `agentNickname` (ThreadList, details dialog,
+  registry-fed surfaces all go through the resolver)
 - the duration line toggles the process block; live vs completed copy
-- card clamps to bounded height and uses neutral tokens (guard-style DOM/CSS
-  assertions)
+- the hanging indent holds one text edge for header and body; media breaks out
+  to the avatar edge (guard-style DOM/CSS assertions)
+- "a custom Role named `main` is rejected" (loader)
 
 PR-B: editor write → reload round-trip; duplicate-as-custom seeds correctly;
 post-deletion transcripts render through the fallback chain.
@@ -331,9 +380,8 @@ Gate: visual verification in light and dark (the UI row of the gate table).
 
 ## Open Questions
 
-- The final animal pool beyond the four defaults — PM taste at
-  asset-production time; the twelve keys above are earnest placeholders.
-- Art direction of the avatar set (flat illustration vs painterly) — a one-shot
-  decision at production, frozen afterward.
+- Art direction of the four portraits (flat illustration vs painterly) — a
+  one-shot decision at production, PM-ratified at the PR-A gate, frozen
+  afterward.
 - Whether the editor should also surface Configuration Profiles (root
   execution defaults) — out of scope here; candidate for a future plan.
