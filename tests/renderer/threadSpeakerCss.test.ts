@@ -52,7 +52,7 @@ describe('speaker header column CSS guards', () => {
   test('sizes the portrait to anchor the header, the way every IM does', () => {
     // Against ~18px lines: Slack 36, Discord 40, WeChat/Telegram 40, iMessage
     // 28. A disc scaled to ONE line leaves the line under it dangling.
-    expect(tokensCss).toMatch(/--speaker-avatar-size:\s*32px;/);
+    expect(tokensCss).toMatch(/--speaker-avatar-size:\s*28px;/);
     expect(threadCss).toMatch(/\.thread-speaker-header \{[^}]*align-items:\s*center;/);
   });
 });

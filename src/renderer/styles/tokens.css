@@ -437,10 +437,17 @@
      mobile IM follows (Slack 36, Discord 40, WeChat/Telegram 40, iMessage 28,
      all against ~18px lines). Tenon's header is two lines because its work line
      grows while a Turn runs, which makes the requirement stronger, not weaker:
-     at 24px the disc covered the name and left the line under it dangling
-     beside empty margin. Content below hangs from the name, so rows inside it
-     keep their own glyph column intact. */
-  --speaker-avatar-size: 32px;
+     a disc scaled to one line covered the name and left the line under it
+     dangling beside empty margin.
+
+     Held at the low end of that range because this portrait is a flat drawing
+     on a saturated disc, not a photograph: it carries more graphic weight per
+     pixel than the faces those apps show, and in a rail whose every other mark
+     is neutral it starts to dominate before it reaches their sizes. It still
+     spans about three quarters of the two-line header, which is what anchoring
+     asks for. Content below hangs from the name, so rows inside it keep their
+     own glyph column intact. */
+  --speaker-avatar-size: 28px;
   --row-leading-width: 42px;
   --row-leading-height: var(--line-content);
   --row-chevron-width: 15px;
