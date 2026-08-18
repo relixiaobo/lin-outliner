@@ -524,6 +524,30 @@ to these three model schemas. In particular, a successful foreground Agent that
 produces no text returns `Agent finished without text output.` rather than an
 empty text result.
 
+A foreground `agent` call waits on the terminal-settlement authority for its
+exact `{agentId, generation}`. The spawning call and the first terminal
+reservation share one deferred even when the child settles before admission
+returns. Its result is explicitly one of `settled`, `abandoned`, or `failed`.
+Only `settled` permits the caller to read the final Turn and construct a
+successful tool result.
+
+The authority reports `settled` only when the current generation and Turn still
+own a successful terminal pipeline. Outstanding background descendants are a
+normal deferral. A notification Turn advances `currentTurnId` without advancing
+the generation, so that transition preserves the reservation until the new Turn
+terminalizes and revises it; it never settles the old Turn as the generation's
+result. This keeps the foreground call waiting while descendant output is
+pending or being consumed.
+
+Initial-admission failure and terminal retry exhaustion report `failed`, with
+the original admission error or the stable recovery error. Generation
+replacement, Thread deletion, and service close report `abandoned`. Those
+outcomes reject the foreground operation before it reads execution or Turn
+state, so teardown cannot fabricate a completed Agent result. Foreground
+completion therefore consumes the level-triggered settlement state machine
+directly; it does not maintain a second edge-triggered idle/activity predicate
+or run a duplicate terminal pipeline wait afterwards.
+
 ### Skills
 
 `skill` invokes one configuration-selected Skill by canonical identity. Skill
