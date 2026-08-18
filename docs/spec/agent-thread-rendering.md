@@ -166,6 +166,16 @@ meta rule. Styled apart, the child's elapsed
 came out at content size and stood its whole header taller than the agent's
 above it, so two headers that say the same kind of thing did not look alike.
 
+One column, one anchor. The portrait sits in the margin lane and every text
+line of the block — the persona, the work line under it, and the words below —
+hangs from the SAME left edge (`--speaker-text-inset`); nothing in the header
+may poke outside that block or indent past it, which is why the portrait
+carries no optical overhang and the work line's control carries no inline
+padding. Within the header the PERSONA is the only emphasis, because a message
+stream is scanned by who said it; the Agent type beside it and the work line
+below share one quieter level. Three separate greys made the header read as
+loose fragments and grouped it against its own meaning (PM 2026-08-18).
+
 The avatar is a bundled PORTRAIT where the identity has one
 (`src/renderer/assets/agent-avatars/`, resolved by `agentPortraits.ts`), and
 otherwise a coloured disc carrying the first character of the name. The default
