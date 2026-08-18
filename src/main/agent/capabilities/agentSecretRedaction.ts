@@ -15,6 +15,11 @@ export { containsSecretLikeContent, redactSecretLikeContent };
 export const DIAGNOSTIC_SECRET_REDACTION_OMISSION = '[diagnostic payload omitted after redaction failure]';
 const DIAGNOSTIC_SECRET_SCAN_CHARS = 64_000;
 const SECRET_SCAN_YIELD_INTERVAL_MS = 8;
+const DURABLE_SECRET_SCAN_FAILURE_WARNING = '[agent] Secret scanner worker failed; redacted all pending durable strings.';
+
+type ScanSecretStringsOffMain = (
+  jobs: readonly SecretStringScanJob[],
+) => Promise<readonly string[] | null>;
 
 // A long unbroken token run (base64 / blob / data URI) - elided to a length note
 // so an inline image/blob cannot bloat a debug payload or the cache.
@@ -28,12 +33,15 @@ export interface SecretRedactionResult<T> {
 
 /**
  * Redact complete durable values. Large batches run on the scanner worker;
- * scanner failure reaches the existing fail-open boundary without blocking
- * Electron's main loop with a second synchronous scan.
+ * worker failure preserves the traversed shape while failing closed for every
+ * pending string, without blocking Electron's main loop with a synchronous retry.
  */
-export async function redactSecretLikeJsonAsync<T>(value: T): Promise<SecretRedactionResult<T>> {
+export async function redactSecretLikeJsonAsync<T>(
+  value: T,
+  scanOffMain: ScanSecretStringsOffMain = scanSecretStringsOffMain,
+): Promise<SecretRedactionResult<T>> {
   try {
-    return await scanSecretLikeJson(value, null);
+    return await scanSecretLikeJson(value, null, scanOffMain);
   } catch {
     return { value, redactedPaths: [] };
   }
@@ -47,7 +55,7 @@ export async function redactSecretLikeJsonForDiagnostics<T>(
   value: T,
 ): Promise<SecretRedactionResult<T | typeof DIAGNOSTIC_SECRET_REDACTION_OMISSION>> {
   try {
-    return await scanSecretLikeJson(value, DIAGNOSTIC_SECRET_SCAN_CHARS);
+    return await scanSecretLikeJson(value, DIAGNOSTIC_SECRET_SCAN_CHARS, scanSecretStringsOffMain);
   } catch {
     return { value: DIAGNOSTIC_SECRET_REDACTION_OMISSION, redactedPaths: [''] };
   }
@@ -70,6 +78,7 @@ interface RedactedPath {
 async function scanSecretLikeJson<T>(
   value: T,
   scanBudget: number | null,
+  scanOffMain: ScanSecretStringsOffMain,
 ): Promise<SecretRedactionResult<T>> {
   let remainingChars = scanBudget;
   let pathOrder = 0;
@@ -148,7 +157,21 @@ async function scanSecretLikeJson<T>(
 
   await visit(value, '', false, (output) => { root.value = output; });
   const jobs = pending.map((entry) => entry.job);
-  const outputs = await scanSecretStringsOffMain(jobs) ?? scanSecretStrings(jobs);
+  let offMainOutputs: readonly string[] | null;
+  try {
+    offMainOutputs = await scanOffMain(jobs);
+  } catch {
+    if (scanBudget !== null) throw new Error('Diagnostic secret scanner worker failed.');
+    for (const entry of pending) {
+      entry.apply(REDACTED_SECRET);
+      if (entry.job.content !== REDACTED_SECRET) {
+        redactedPaths.push({ path: entry.path, order: entry.order });
+      }
+    }
+    warnDurableSecretScanFailure();
+    return buildSecretRedactionResult(root, redactedPaths);
+  }
+  const outputs = offMainOutputs ?? scanSecretStrings(jobs);
   if (outputs.length !== pending.length) throw new Error('Secret scanner returned an incomplete batch.');
   for (const [index, entry] of pending.entries()) {
     const output = outputs[index];
@@ -157,12 +180,27 @@ async function scanSecretLikeJson<T>(
     if (output !== entry.job.content) redactedPaths.push({ path: entry.path, order: entry.order });
   }
 
+  return buildSecretRedactionResult(root, redactedPaths);
+}
+
+function buildSecretRedactionResult<T>(
+  root: { value?: unknown },
+  redactedPaths: RedactedPath[],
+): SecretRedactionResult<T> {
   return {
     value: root.value as T,
     redactedPaths: redactedPaths
       .sort((left, right) => left.order - right.order)
       .map((entry) => entry.path),
   };
+}
+
+function warnDurableSecretScanFailure(): void {
+  try {
+    console.warn(DURABLE_SECRET_SCAN_FAILURE_WARNING);
+  } catch {
+    // Logging must not turn a worker failure back into the outer fail-open path.
+  }
 }
 
 function escapeJsonPointerToken(value: string): string {

@@ -288,6 +288,39 @@ describe('agent secret redaction', () => {
     });
   });
 
+  test('preserves durable structure and redacts every pending string when the worker fails', async () => {
+    const scannerError = new Error(`worker exposed ${OPENAI_KEY}`);
+    const warnings: unknown[][] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => { warnings.push(args); };
+    try {
+      const input = {
+        ordinary: 'keep me',
+        nested: ['array text', 42, false, null, { note: 'nested text' }],
+        password: CREDENTIAL_VALUE,
+        metadata: { count: 3 },
+      };
+      const result = await redactSecretLikeJsonAsync(input, async () => { throw scannerError; });
+
+      expect(result).toEqual({
+        value: {
+          ordinary: '[redacted]',
+          nested: ['[redacted]', 42, false, null, { note: '[redacted]' }],
+          password: '[redacted]',
+          metadata: { count: 3 },
+        },
+        redactedPaths: ['/ordinary', '/nested/0', '/nested/4/note', '/password'],
+      });
+      expect(input.ordinary).toBe('keep me');
+      expect(warnings).toEqual([[
+        '[agent] Secret scanner worker failed; redacted all pending durable strings.',
+      ]]);
+      expect(JSON.stringify(warnings)).not.toContain(scannerError.message);
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+
   test('applies the diagnostic scan budget before parsing serialized JSON arguments', async () => {
     const encoded = JSON.stringify({ password: 'x'.repeat(70_000) });
     const result = await redactSecretLikeJsonForDiagnostics({ arguments: encoded });

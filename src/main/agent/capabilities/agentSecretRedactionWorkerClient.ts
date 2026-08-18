@@ -19,7 +19,7 @@ interface PendingRequest {
   readonly expectedOutputs: number;
   readonly resolve: (outputs: readonly string[]) => void;
   readonly reject: (error: Error) => void;
-  readonly timer: ReturnType<typeof setTimeout>;
+  timer: ReturnType<typeof setTimeout> | null;
   settled: boolean;
 }
 
@@ -36,7 +36,7 @@ interface SecretScanWorkerPoolOptions {
 export class SecretScanWorkerPool {
   private readonly slots = new Set<WorkerSlot>();
   private readonly queue: PendingRequest[] = [];
-  private startingWorkers = 0;
+  private readonly startingRequests = new Set<PendingRequest>();
   private nextRequestId = 1;
   private closed = false;
 
@@ -55,15 +55,13 @@ export class SecretScanWorkerPool {
     const id = this.nextRequestId;
     this.nextRequestId = this.nextRequestId >= Number.MAX_SAFE_INTEGER ? 1 : this.nextRequestId + 1;
     return new Promise<readonly string[]>((resolve, reject) => {
-      let request: PendingRequest;
-      const timer = setTimeout(() => this.timeoutRequest(request), this.options.requestTimeoutMs);
-      request = {
+      const request: PendingRequest = {
         id,
         jobs,
         expectedOutputs: jobs.length,
         resolve,
         reject,
-        timer,
+        timer: null,
         settled: false,
       };
       this.queue.push(request);
@@ -76,6 +74,8 @@ export class SecretScanWorkerPool {
     this.closed = true;
     const error = new Error('Secret scanner worker pool is closed.');
     for (const request of this.queue.splice(0)) this.rejectRequest(request, error);
+    for (const request of this.startingRequests) this.rejectRequest(request, error);
+    this.startingRequests.clear();
     const terminations: Array<Promise<number>> = [];
     for (const slot of this.slots) {
       this.slots.delete(slot);
@@ -94,17 +94,18 @@ export class SecretScanWorkerPool {
     }
     while (
       this.queue.length > 0
-      && this.slots.size + this.startingWorkers < this.options.maxWorkers
+      && this.slots.size + this.startingRequests.size < this.options.maxWorkers
     ) {
       this.startWorker(this.queue.shift()!);
     }
   }
 
   private startWorker(request: PendingRequest): void {
-    this.startingWorkers += 1;
+    this.startingRequests.add(request);
+    this.armWatchdog(request);
     void this.createWorker().then((worker) => {
-      this.startingWorkers -= 1;
-      if (this.closed || request.settled) {
+      const wasStarting = this.startingRequests.delete(request);
+      if (!wasStarting || this.closed || request.settled) {
         void worker.terminate().catch(() => undefined);
         this.pump();
         return;
@@ -118,8 +119,9 @@ export class SecretScanWorkerPool {
       this.dispatch(slot, request);
       this.pump();
     }, (error) => {
-      this.startingWorkers -= 1;
-      this.rejectRequest(request, toError(error));
+      if (this.startingRequests.delete(request)) {
+        this.rejectRequest(request, toError(error));
+      }
       this.pump();
     });
   }
@@ -129,6 +131,7 @@ export class SecretScanWorkerPool {
       this.pump();
       return;
     }
+    this.armWatchdog(request);
     slot.current = request;
     try {
       slot.worker.postMessage({ id: request.id, jobs: request.jobs });
@@ -159,8 +162,13 @@ export class SecretScanWorkerPool {
 
   private timeoutRequest(request: PendingRequest): void {
     if (request.settled) return;
-    const slot = [...this.slots].find((candidate) => candidate.current === request);
     const error = new Error(`Secret scanner worker exceeded ${this.options.requestTimeoutMs}ms.`);
+    if (this.startingRequests.delete(request)) {
+      this.rejectRequest(request, error);
+      this.pump();
+      return;
+    }
+    const slot = [...this.slots].find((candidate) => candidate.current === request);
     if (slot) {
       this.failSlot(slot, error);
       return;
@@ -168,6 +176,14 @@ export class SecretScanWorkerPool {
     const queuedIndex = this.queue.indexOf(request);
     if (queuedIndex >= 0) this.queue.splice(queuedIndex, 1);
     this.rejectRequest(request, error);
+  }
+
+  private armWatchdog(request: PendingRequest): void {
+    if (request.settled || request.timer) return;
+    request.timer = setTimeout(
+      () => this.timeoutRequest(request),
+      this.options.requestTimeoutMs,
+    );
   }
 
   private failSlot(slot: WorkerSlot, value: unknown): void {
@@ -183,14 +199,16 @@ export class SecretScanWorkerPool {
   private resolveRequest(request: PendingRequest, outputs: readonly string[]): void {
     if (request.settled) return;
     request.settled = true;
-    clearTimeout(request.timer);
+    if (request.timer) clearTimeout(request.timer);
+    request.timer = null;
     request.resolve(outputs);
   }
 
   private rejectRequest(request: PendingRequest, error: Error): void {
     if (request.settled) return;
     request.settled = true;
-    clearTimeout(request.timer);
+    if (request.timer) clearTimeout(request.timer);
+    request.timer = null;
     request.reject(error);
   }
 }

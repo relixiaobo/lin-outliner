@@ -148,15 +148,23 @@ explicitly NOT part of this plan.
   stage their ordered strings into one batch and use the same pure scanner.
   Sufficiently large batches use a bounded pool of at most two lazy,
   unreferenced Node workers; small batches run the direct scanner exactly once
-  to avoid IPC overhead. Every pooled request has an enqueue-to-completion
-  watchdog. A worker error or timeout terminates that worker and takes the large
-  batch directly to the existing fail-open boundary, without repeating an
-  unbounded scan on Electron's main thread. Private-key matching pre-indexes
+  to avoid IPC overhead. Every pooled request starts a five-second watchdog only
+  when it leaves the queue for a new or idle worker. A startup timeout releases
+  pool capacity, and any worker that finishes starting after its request settled
+  is terminated. A worker error or timeout terminates that worker without
+  repeating an unbounded scan on Electron's main thread. For durable values, a
+  worker rejection preserves the traversed JSON container and non-string scalar
+  structure, replaces every pending string with `[redacted]`, and records one
+  fixed content-free warning. Diagnostics retains its whole-payload omission
+  boundary. Private-key matching pre-indexes
   BEGIN/END markers so unmatched markers do not repeatedly rescan the suffix.
   Diagnostics spends its global budget before worker dispatch and preserves its
   omission markers. The worker scans whole strings rather than chunks, so
   arbitrary-span credentials such as private keys require no overlap heuristic
   and redaction outcomes remain byte-identical.
+  **PM decision (2026-08-18):** the durable off-main failure boundary is
+  structure-preserving fail-closed; direct scanner, traversal, malformed JSON,
+  and depth failures retain their existing fail-open behavior.
 - At every provider boundary, track the complete typed keys actually visited by
   `readContext` and `readOutput`, including recursive inherited-context reads.
   The freeze contributes all active frozen output keys even if projection

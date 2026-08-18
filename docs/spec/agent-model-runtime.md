@@ -841,17 +841,23 @@ Each tool execution diagnostic records its admission disposition, canonical iden
 and schema digest when one exists. Assistant responses and tool observations pass the
 same Secretlint-backed, high-confidence redaction policy before diagnostics persistence;
 structured fields require both a credential name and a credential-candidate string, while
-ambiguous values and scanner failures pass unchanged. Raw recognized credentials and host
-credentials are not diagnostic history.
+ambiguous values pass unchanged. Direct scanner failures retain the existing boundary
+behavior: durable values fail open, while diagnostic copies are omitted. An off-main
+durable worker rejection instead preserves the traversed JSON container and non-string
+scalar structure, replaces every pending string with `[redacted]`, and emits one fixed
+content-free warning. Raw recognized credentials and host credentials are not diagnostic
+history.
 Canonical-message snapshots and post-adapter request fragments are redacted only in the
 diagnostic copy immediately before persistence. Serialized function-call arguments are
 scanned only at their outer adapter boundary and nested JSON strings are left intact.
 Each provider copy has a 64,000-character scan budget; text beyond it is replaced only in
 diagnostics. The ordered budget is spent before one batched scan; sufficiently large
 batches run the same whole-string scanner on the bounded Node worker pool, while small
-batches run directly exactly once. A worker error or watchdog timeout terminates that
-worker and stores a typed whole-copy omission marker without a main-thread retry. No
-chunk boundary can change a credential match. The live provider request and the raw
+batches run directly exactly once. A pooled request starts its five-second watchdog only
+after leaving the queue for a new or idle worker; startup timeout releases capacity and
+a late worker is terminated. A diagnostic worker error or watchdog timeout terminates
+that worker and stores a typed whole-copy omission marker without a main-thread retry.
+No chunk boundary can change a credential match. The live provider request and the raw
 normalized value used for its fingerprint remain unchanged.
 If diagnostic preparation or provenance alignment itself fails, the collector is
 disabled for that Turn and `diagnosticsRef` remains null; provider transport, event

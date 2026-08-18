@@ -80,6 +80,67 @@ describe('agent secret redaction worker', () => {
     await expect(Promise.all([first, second])).resolves.toEqual([['first batch'], ['second batch']]);
   });
 
+  test('starts the watchdog only after a queued batch is dispatched', async () => {
+    const worker = new ControlledWorker();
+    const pool = createPool(
+      async () => worker as unknown as Worker,
+      { maxWorkers: 1, requestTimeoutMs: 100 },
+    );
+    const first = pool.scan([{ content: 'first batch', inspectEncodedJson: false }]);
+    const second = pool.scan([{ content: 'second batch', inspectEncodedJson: false }]);
+    const third = pool.scan([{ content: 'third batch', inspectEncodedJson: false }]);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    await Bun.sleep(60);
+    const firstRequest = worker.requests[0]!;
+    worker.emit('message', { id: firstRequest.id, outputs: [firstRequest.jobs[0]!.content] });
+
+    await Bun.sleep(60);
+    const secondRequest = worker.requests[1]!;
+    worker.emit('message', { id: secondRequest.id, outputs: [secondRequest.jobs[0]!.content] });
+    const thirdRequest = worker.requests[2]!;
+    worker.emit('message', { id: thirdRequest.id, outputs: [thirdRequest.jobs[0]!.content] });
+
+    await expect(Promise.all([first, second, third])).resolves.toEqual([
+      ['first batch'],
+      ['second batch'],
+      ['third batch'],
+    ]);
+  });
+
+  test('releases capacity after worker startup times out and terminates the late worker', async () => {
+    let resolveLateWorker: ((worker: Worker) => void) | undefined;
+    const lateWorkerPromise = new Promise<Worker>((resolve) => { resolveLateWorker = resolve; });
+    const replacementWorker = new ControlledWorker();
+    let factoryCalls = 0;
+    const pool = createPool(
+      () => {
+        factoryCalls += 1;
+        return factoryCalls === 1
+          ? lateWorkerPromise
+          : Promise.resolve(replacementWorker as unknown as Worker);
+      },
+      { maxWorkers: 1, requestTimeoutMs: 20 },
+    );
+    const timedOut = pool.scan([{ content: 'startup stalls', inspectEncodedJson: false }]);
+    const replacement = pool.scan([{ content: 'replacement batch', inspectEncodedJson: false }]);
+
+    await expect(timedOut).rejects.toThrow('exceeded 20ms');
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(factoryCalls).toBe(2);
+    const replacementRequest = replacementWorker.requests[0]!;
+    replacementWorker.emit('message', {
+      id: replacementRequest.id,
+      outputs: [replacementRequest.jobs[0]!.content],
+    });
+    await expect(replacement).resolves.toEqual(['replacement batch']);
+
+    const lateWorker = new ControlledWorker();
+    resolveLateWorker!(lateWorker as unknown as Worker);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(lateWorker.terminated).toBe(true);
+  });
+
   test('times out and terminates a busy but live worker', async () => {
     const worker = new ControlledWorker();
     const pool = createPool(

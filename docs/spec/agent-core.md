@@ -594,14 +594,21 @@ nested JSON strings. Rule exceptions, unsupported asynchronous rules, malformed 
 and scanner depth failures all fail open. Each structured value stages its strings in
 canonical traversal order. A sufficiently large batch runs the same complete scanner on
 a bounded pool of at most two lazy unreferenced Node workers; a small batch runs the
-direct scanner exactly once. Every pooled request has a five-second
-enqueue-to-completion watchdog. A worker error or timeout terminates that worker and
-takes a large durable batch directly to the fail-open boundary rather than repeating the
-unbounded scan on Electron's main thread. Private-key matching pre-indexes BEGIN/END
+direct scanner exactly once. A pooled request starts its five-second watchdog only when
+it leaves the queue for a new or idle worker. A startup timeout releases pool capacity,
+and a worker that finishes starting after its request settled is terminated. A worker
+error or timeout terminates that worker rather than repeating the unbounded scan on
+Electron's main thread. For durable values, an off-main worker rejection preserves the
+traversed JSON container and non-string scalar structure, replaces every pending string
+with `[redacted]`, and records one fixed warning with no error detail or user content.
+This structure-preserving fail-closed boundary was approved by the PM on 2026-08-18;
+direct scanner, traversal, malformed JSON, and depth failures retain their existing
+fail-open behavior. Private-key matching pre-indexes BEGIN/END
 markers, and whole strings are scanned without chunking, so credential matches spanning
 arbitrary distances retain identical coverage and bytes without repeated suffix scans.
 Durable scanning has no character budget. Diagnostic copies separately spend one
-64,000-character budget before dispatch and use an omission marker beyond it.
+64,000-character budget before dispatch, use an omission marker beyond it, and replace
+the whole copy with the typed omission marker if their worker rejects.
 The diagnostic copy never becomes Item or replay data. Redacted replay
 compatibility is decided once
 against the admission schema: a compatible copy becomes `redactedReplay`; an
