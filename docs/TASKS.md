@@ -79,15 +79,11 @@ theme-section entry below; this list is the ordering, not a second record):
   routed its intended owner elsewhere; give this lane the next free clone.
 
 **Design-gate queue** (PM bandwidth): _empty_ — `skill-path-ownership` shipped #513.
-**Release:** **v0.5.0 shipped 2026-08-17** (one fix aboard — the #550 rejected-
-materialization guard, plus #551 test hygiene; PM called the two-PR train
-2026-08-17). v0.4.0 shipped earlier the same day with 17 entries (#525–#548) and
-the #533 persistence-format break (v0.3.x workspaces set aside as
-`*.incompatible-*`, fresh start, no dead launch — #549). `main` is now the
-**0.6.0 train** and the cadence rule fires again (8 user-visible entries aboard as
-of 2026-08-18, #552–#559 — headlined by the agent view surface: "整理成表格" now
-produces a real table): note drafted by main, PM ratifies, then tag + dial to
-0.7.0.
+**Release:** **v0.6.0 shipped 2026-08-18** (8 user-visible entries, #552–#559 —
+headlined by the agent view surface: "整理成表格" now produces a real table; no
+workspace format change). v0.4.0 + v0.5.0 shipped 2026-08-17; the #533
+persistence-format break rides v0.4.0 (v0.3.x workspaces set aside as
+`*.incompatible-*`, fresh start — #549). `main` is now the **0.7.0 train**.
 
 `pi-ai-0.80-upgrade` shipped #348 (clean `Models` migration, not the interim `/compat` shim) — see *Recently completed*.
 `dream-channel-and-memory-retire` shipped in full (PR1 #324 + PR2 #328 + PR3 #329) — see *Recently completed*.

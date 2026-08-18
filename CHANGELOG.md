@@ -8,7 +8,19 @@ Entries reference the pull request that introduced them.
 
 ## [Unreleased]
 
-`main` is the `0.6.0` train; entries here move under the next tag.
+`main` is the `0.7.0` train; entries here move under the next tag.
+
+## [0.6.0] - 2026-08-18
+
+**Ask for a table, get a table.** The agent can now see, set, and configure
+node views: "整理成表格" produces a real table view over field-structured
+records — columns, sorting, filtering, grouping — instead of ASCII art in a
+code block. Tags got the same end-to-end attention: a tag's static defaults
+now show on every node already carrying it, and template seeds can be
+backfilled on demand. Under the hood, agent turns shed their remaining
+per-call overhead, sending a message starts on the keystroke, and one
+unreadable conversation no longer stops the app from launching. No workspace
+format change — upgrading from 0.4.0 or 0.5.0 loads your data as-is.
 
 ### Added
 
