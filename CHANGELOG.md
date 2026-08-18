@@ -44,6 +44,70 @@ Entries reference the pull request that introduced them.
   successful entries are never evicted, so outputs compacted out of the effective
   context stay resident for the rest of the Turn — bounded per entry by
   `MAX_SINGLE_FULL_OUTPUT_TOKENS` (~32 KB), a few MB in the worst realistic case.
+
+- **A tag's static field default now shows on every node already carrying the
+  tag, without writing anything (PR #553, codex)** — a literal value typed into a
+  tag's field slot (`Status: Inbox`) is context-free, so it is now read at
+  projection time as an inherited ghost rather than stamped into each node when
+  the tag is applied. Adding or editing a default is instantly true for every
+  instance, past and future, with zero writes and no risk of overwriting a value
+  someone typed; the old behavior reached only nodes tagged after the edit. The
+  ghost renders in `--text-tertiary` and is inert — it takes no pointer input, so
+  clicking or typing in the row creates the user's own value, and a trailing
+  check affordance revealed on row hover or keyboard focus is the explicit way to
+  accept and materialize the default. A whole-field control such as a checkbox
+  shows the inherited state in the native control instead of a text ghost. Once a
+  value is stored it is the user's and never tracks the template again. Ghosts
+  answer reads as well as renders: search comparison, sort, filter, date and text
+  operators, Table, and the agent node projection all resolve the slot's stored
+  entry first and its inherited default second (decision D2). The accepted cost,
+  ratified with the plan: on a field that carries a static default, `is empty`
+  matches nothing, because clearing a stored value dematerializes the entry and
+  the ghost returns — the empty state is reached by storing a real value or
+  removing the default from the tag. The high gate found five issues, all fixed
+  on-branch: the accept control covered the whole value area so no mouse user
+  could ever type their own value; `overdueDateRanges` was the one date reader
+  left unconverted, so `IS_OVERDUE` disagreed with `DATE_BEFORE` on the same
+  nodes; the checkbox suppression test and the ghost render test read different
+  values, leaving a checkbox field with no affordance at all when a template
+  child rendered empty; `fieldDefinitionHasAutoInitialize` accepted any reference
+  instead of validating the strategy, silently hiding a ghost that Search and
+  Agent still honored; and the per-slot deleted-node ancestor walk added to the
+  search hot path was removed rather than traded, once the slot builder was
+  confirmed to filter deleted entries already (A9). Visual verification then
+  caught what static reading had missed: the ghost painted directly on top of the
+  empty editor's `Empty` placeholder, at the same origin in both themes, so the
+  feature's most common state read as illegible overlapping text — the
+  placeholder is now suppressed while a ghost shows and restored when the editor
+  takes focus, with E2E guards on both halves.
+
+- **A tag's freeform template children can now be handed to nodes that already
+  carry the tag, on demand (PR #554, codex)** — template *fields* project at read
+  time, but freeform content children stay one-shot seeds copied when the tag is
+  applied, so a seed added later never reached older nodes and there was no way
+  to give it to them short of re-tagging. Right-clicking a tag badge now offers
+  an explicit backfill: `preview_tag_template_backfill(tagId)` reports how many
+  active, editable nodes are missing at least one seed and how many clones would
+  be added, and `apply_template_to_tagged_nodes(tagId)` adds only the missing
+  ones, deduplicated by `templateId`, preserving inherited ancestor-first
+  template order, as a single mutation and therefore a single undo step. Explicit
+  user intent, no background mirroring and no heuristic about what an unedited
+  copy means. Nodes in Trash, locked nodes, and protected document-system tag
+  definitions are excluded from both the counts and the writes. The high gate
+  found three issues, all fixed on-branch: the backfill skipped the
+  locked-node guard that `apply_tag` enforces, so seeds a locked node had
+  legitimately refused were injected anyway; the seed set was collected over the
+  whole `extends` chain while the target set matched direct appliers only, so
+  with `#task extends #work` a new `#work` seed silently missed every `#task`
+  node and the dialog's counts understated the work; and a zero-addition preview
+  still opened a dialog with a live Apply button that dispatched a no-op. A
+  fourth defect was in the new test rather than the feature: it locked its
+  fixture node by writing straight to Loro after the Core was live, which
+  bypassed touch tracking and tripped the projection-cache verifier on the *next*
+  mutation — the failure pointed at an innocent `createNode`, and because the
+  test threw before its first assertion the ratified locked-node skip was
+  effectively unverified. The fixture is now built before the Core exists.
+
 ### Fixed
 
 - **One unreadable Agent conversation no longer stops the app from starting (PR
@@ -86,42 +150,6 @@ Entries reference the pull request that introduced them.
   The rules are in `docs/lessons.md` — including that a typecheck scoped to `src`
   will not tell you a test double has gone stale; `docs/spec/agent-core.md` states
   the quarantine contract.
-
-- **A tag's static field default now shows on every node already carrying the
-  tag, without writing anything (PR #553, codex)** — a literal value typed into a
-  tag's field slot (`Status: Inbox`) is context-free, so it is now read at
-  projection time as an inherited ghost rather than stamped into each node when
-  the tag is applied. Adding or editing a default is instantly true for every
-  instance, past and future, with zero writes and no risk of overwriting a value
-  someone typed; the old behavior reached only nodes tagged after the edit. The
-  ghost renders in `--text-tertiary` and is inert — it takes no pointer input, so
-  clicking or typing in the row creates the user's own value, and a trailing
-  check affordance revealed on row hover or keyboard focus is the explicit way to
-  accept and materialize the default. A whole-field control such as a checkbox
-  shows the inherited state in the native control instead of a text ghost. Once a
-  value is stored it is the user's and never tracks the template again. Ghosts
-  answer reads as well as renders: search comparison, sort, filter, date and text
-  operators, Table, and the agent node projection all resolve the slot's stored
-  entry first and its inherited default second (decision D2). The accepted cost,
-  ratified with the plan: on a field that carries a static default, `is empty`
-  matches nothing, because clearing a stored value dematerializes the entry and
-  the ghost returns — the empty state is reached by storing a real value or
-  removing the default from the tag. The high gate found five issues, all fixed
-  on-branch: the accept control covered the whole value area so no mouse user
-  could ever type their own value; `overdueDateRanges` was the one date reader
-  left unconverted, so `IS_OVERDUE` disagreed with `DATE_BEFORE` on the same
-  nodes; the checkbox suppression test and the ghost render test read different
-  values, leaving a checkbox field with no affordance at all when a template
-  child rendered empty; `fieldDefinitionHasAutoInitialize` accepted any reference
-  instead of validating the strategy, silently hiding a ghost that Search and
-  Agent still honored; and the per-slot deleted-node ancestor walk added to the
-  search hot path was removed rather than traded, once the slot builder was
-  confirmed to filter deleted entries already (A9). Visual verification then
-  caught what static reading had missed: the ghost painted directly on top of the
-  empty editor's `Empty` placeholder, at the same origin in both themes, so the
-  feature's most common state read as illegible overlapping text — the
-  placeholder is now suppressed while a ghost shows and restored when the editor
-  takes focus, with E2E guards on both halves.
 
 ## [0.5.0] - 2026-08-17
 

@@ -66,7 +66,7 @@ theme-section entry below; this list is the ordering, not a second record):
 - **Outliner correctness lane (added 2026-08-13, build-ready 2026-08-14)**:
   [`tag-merge-and-split-fixes`](plans/archive/tag-merge-and-split-fixes.md) PRs A/B
   both shipped (#542, #540, 2026-08-15), and
-  [`tag-schema-projection`](plans/tag-schema-projection.md) PR 1 shipped
+  [`tag-schema-projection`](plans/archive/tag-schema-projection.md) PR 1 shipped
   (#545, 2026-08-16); the lane's remaining work is that plan's PR 2 (defaults
   as inherited ghosts) and PR 3 (seed backfill action).
 - **Lane D — test-signal infrastructure**: **still unclaimed and now the oldest
@@ -571,7 +571,7 @@ archived `done` (see Recently completed). Remaining active work:
   **inline alt-text editing** (`mediaAlt` is writable only at node creation today).
 ### Outliner & UI polish
 
-- **tag-schema-projection** (P1, `in-progress` 2026-08-16, **PM-ratified 2026-08-13**) —
+- **tag-schema-projection** (P1, `done` 2026-08-18, **PM-ratified 2026-08-13**) —
   fixes the PM-reported bug that template edits never reach already-tagged nodes,
   by making fields a read-time projection of the tag chain (nodes store values
   only), static defaults inherited ghosts, and seed content one-shot copies with
@@ -584,9 +584,12 @@ archived `done` (see Recently completed). Remaining active work:
   gate found 15 issues, all fixed on-branch (retrospective in the CHANGELOG entry
   and the PR). **PR 2 shipped #553 (2026-08-18, codex)** — static defaults as
   inherited ghosts; high gate found 5 issues plus a rendered-only overlap the
-  first pass missed, all fixed on-branch. Remaining: PR 3 (seed backfill, #554,
-  ready and ordered behind this merge).
-  Design: [`tag-schema-projection`](plans/tag-schema-projection.md).
+  first pass missed, all fixed on-branch. **PR 3 shipped #554 (2026-08-18,
+  codex)** — on-demand seed backfill; high gate found 3 issues plus a fixture
+  defect that left the ratified locked-node skip unverified, all fixed
+  on-branch. All three PRs shipped; design folded into
+  `spec/commands.md`, `spec/ui-behavior.md` and `spec/search-query-grammar.md`.
+  Design: [`tag-schema-projection`](plans/archive/tag-schema-projection.md).
 - **tag-merge-and-split-fixes** (P1, `done` 2026-08-15, **PM-ratified 2026-08-13**) —
   kills the crash-class remainder of the field/supertag audit (#537's review
   follow-up), all repro-verified: same-named fields from two tags make the tags
