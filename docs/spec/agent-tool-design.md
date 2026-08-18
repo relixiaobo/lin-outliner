@@ -524,6 +524,23 @@ to these three model schemas. In particular, a successful foreground Agent that
 produces no text returns `Agent finished without text output.` rather than an
 empty text result.
 
+A foreground `agent` call waits on the terminal-settlement authority for its
+exact `{agentId, generation}`. The spawning call and the first terminal
+reservation share one deferred even when the child settles before admission
+returns. The reservation resolves it only when the generation's terminal
+pipeline succeeds and removes that reservation; discovering outstanding
+background descendants is a normal deferral and does not resolve it. The same
+reservation survives the child's notification Turns, so the foreground result
+cannot return at the child's first idle edge while a descendant result is still
+pending or being consumed.
+
+Every path that makes the reservation unable or unnecessary to continue also
+settles that deferred: a stale generation/Turn removal and orderly service close
+resolve it, while terminal retry exhaustion rejects it with the stable recovery
+error. Foreground completion therefore consumes the level-triggered settlement
+state machine directly; it does not maintain a second edge-triggered idle/activity
+predicate or run a duplicate terminal pipeline wait afterwards.
+
 ### Skills
 
 `skill` invokes one configuration-selected Skill by canonical identity. Skill

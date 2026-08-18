@@ -82,7 +82,11 @@ export interface PendingSubagentActivity {
 }
 interface CollaborationActivityState {
   pending: boolean;
-  readonly waiters: Set<() => void>;
+}
+interface TerminalSettlementDeferred {
+  readonly promise: Promise<void>;
+  readonly resolve: () => void;
+  readonly reject: (error: Error) => void;
 }
 interface TerminalSettlementReservation {
   readonly key: string;
@@ -120,6 +124,10 @@ export class SubagentCollaboration {
   private readonly terminalPipelines = new Map<string, Promise<void>>();
   /** Keeps a delegated child live from Turn completion until its ledger row is durable. */
   private readonly terminalSettlementReservations = new Map<string, TerminalSettlementReservation>();
+  /** One completion authority for each foreground Agent generation awaiting its tool result. */
+  private readonly terminalSettlementDeferreds = new Map<string, TerminalSettlementDeferred>();
+  /** Lets a terminal reservation create the deferred before spawn admission returns. */
+  private readonly foregroundSettlementWaits = new Set<string>();
   private readonly parentDeliveryPipelines = new Map<ThreadId, Promise<void>>();
   private readonly resumePipelines = new Map<ThreadId, Promise<unknown>>();
   private readonly deletingThreadIds = new Set<ThreadId>();
@@ -298,7 +306,16 @@ export class SubagentCollaboration {
         if (!key.startsWith(`${threadId}:`)) continue;
         const reservation = this.terminalSettlementReservations.get(key);
         if (reservation?.retryTimer) clearTimeout(reservation.retryTimer);
+        this.terminalSettlementDeferreds.get(key)?.resolve();
+        this.terminalSettlementDeferreds.delete(key);
+        this.foregroundSettlementWaits.delete(key);
         this.terminalSettlementReservations.delete(key);
+      }
+      for (const key of [...this.foregroundSettlementWaits]) {
+        if (!key.startsWith(`${threadId}:`)) continue;
+        this.terminalSettlementDeferreds.get(key)?.resolve();
+        this.terminalSettlementDeferreds.delete(key);
+        this.foregroundSettlementWaits.delete(key);
       }
       this.parentDeliveryPipelines.delete(threadId);
       this.resumePipelines.delete(threadId);
@@ -368,9 +385,7 @@ export class SubagentCollaboration {
         this.closeAttemptedTerminalRevisions.set(reservation.key, reservation.revision);
       }
     }
-    for (const state of this.collaborationActivity.values()) {
-      for (const resolve of [...state.waiters]) resolve();
-    }
+    for (const deferred of this.terminalSettlementDeferreds.values()) deferred.resolve();
   }
 
   /**
@@ -520,7 +535,14 @@ export class SubagentCollaboration {
     const agentId = uuidV7(this.now());
     const turnId = uuidV7(this.now());
     const taskPath = `${parentPath}/${agentId}`;
-    const result = await this.spawnChild({
+    const foregroundSettlementKey = input.runInBackground
+      ? null
+      : executionKey(agentId, 1);
+    if (foregroundSettlementKey) this.foregroundSettlementWaits.add(foregroundSettlementKey);
+    let result: SpawnChildThreadResult;
+    let execution: SubagentExecutionRecord;
+    try {
+      result = await this.spawnChild({
         id: agentId,
         parentThreadId: input.senderThreadId,
         parentTurnId: input.senderTurnId,
@@ -550,7 +572,14 @@ export class SubagentCollaboration {
         ...(input.model === undefined ? {} : { model: input.model }),
         ...(input.signal === undefined ? {} : { parentSignal: input.signal }),
       });
-    const execution = this.executions.require(result.thread.id);
+      execution = this.executions.require(result.thread.id);
+    } catch (error) {
+      if (foregroundSettlementKey) {
+        this.foregroundSettlementWaits.delete(foregroundSettlementKey);
+        this.terminalSettlementDeferreds.delete(foregroundSettlementKey);
+      }
+      throw error;
+    }
     if (input.runInBackground) {
       return {
         agentId: execution.agentId,
@@ -565,12 +594,17 @@ export class SubagentCollaboration {
       if (turnId) void this.turnLifecycle.interruptTurn(execution.agentId, turnId).catch(() => undefined);
     };
     input.signal?.addEventListener('abort', abort, { once: true });
+    const key = executionKey(execution.agentId, execution.generation);
+    const settlement = this.terminalSettlementDeferred(key);
     try {
-      await this.waitForAgentSettlement(execution.agentId);
+      await settlement.promise;
     } finally {
       input.signal?.removeEventListener('abort', abort);
+      this.foregroundSettlementWaits.delete(key);
+      if (this.terminalSettlementDeferreds.get(key) === settlement) {
+        this.terminalSettlementDeferreds.delete(key);
+      }
     }
-    await this.ensureTerminalPipeline(execution.agentId, execution.generation);
     // A foreground child may send `agent_message("main")` while its provider
     // turn is running. Deliver that envelope only after the ordinary Agent
     // result is ready, so the parent consumes it immediately before its next
@@ -591,23 +625,6 @@ export class SubagentCollaboration {
         : foregroundUsageText({ agentId: execution.agentId, turn: terminal, worktree: settled.worktree }),
       outputFile: await this.transcripts.pathForReader(execution.agentId),
     };
-  }
-
-  private async waitForAgentSettlement(agentId: ThreadId): Promise<void> {
-    for (;;) {
-      await this.turnLifecycle.waitForIdle(agentId);
-      if (this.closing) return;
-      if (!this.hasOutstandingChildren(agentId)) return;
-      await new Promise<void>((resolve) => {
-        const state = this.collaborationActivityState(agentId);
-        const done = () => {
-          state.waiters.delete(done);
-          resolve();
-        };
-        state.waiters.add(done);
-        if (this.closing || this.turnLifecycle.hasActiveTurn(agentId) || !this.hasOutstandingChildren(agentId)) done();
-      });
-    }
   }
 
   private async ensureTerminalPipeline(agentId: ThreadId, generation: number): Promise<void> {
@@ -1486,6 +1503,7 @@ export class SubagentCollaboration {
 
   private reserveTerminalSettlement(execution: SubagentExecutionRecord, turn: Turn): void {
     const key = executionKey(execution.agentId, execution.generation);
+    if (this.foregroundSettlementWaits.has(key)) this.terminalSettlementDeferred(key);
     const existing = this.terminalSettlementReservations.get(key);
     if (existing) {
       if (existing.turn.id === turn.id) return;
@@ -1547,6 +1565,7 @@ export class SubagentCollaboration {
       ) {
         if (reservation.retryTimer) clearTimeout(reservation.retryTimer);
         this.terminalSettlementReservations.delete(reservation.key);
+        this.terminalSettlementDeferreds.get(reservation.key)?.resolve();
       }
     });
     reservation.pipeline = pipeline;
@@ -1603,6 +1622,9 @@ export class SubagentCollaboration {
     ) return;
     if (reservation.retryAttempt >= MAX_TERMINAL_SETTLEMENT_RETRIES) {
       reservation.retryExhausted = true;
+      this.terminalSettlementDeferreds.get(reservation.key)?.reject(
+        new Error(TERMINAL_SETTLEMENT_RETRY_EXHAUSTED_MESSAGE),
+      );
       console.warn(
         `[agent] Subagent terminal settlement retry budget exhausted for ${reservation.execution.agentId}; startup recovery required`,
       );
@@ -1628,6 +1650,7 @@ export class SubagentCollaboration {
       ) {
         if (reservation.retryTimer) clearTimeout(reservation.retryTimer);
         this.terminalSettlementReservations.delete(reservation.key);
+        this.terminalSettlementDeferreds.get(reservation.key)?.resolve();
         continue;
       }
       this.startReservedTerminalSettlement(reservation);
@@ -2192,7 +2215,7 @@ export class SubagentCollaboration {
   private collaborationActivityState(threadId: ThreadId): CollaborationActivityState {
       let state = this.collaborationActivity.get(threadId);
       if (!state) {
-        state = { pending: false, waiters: new Set() };
+        state = { pending: false };
         this.collaborationActivity.set(threadId, state);
       }
       return state;
@@ -2200,13 +2223,43 @@ export class SubagentCollaboration {
   signalCollaborationActivity(threadId: ThreadId): void {
       const state = this.collaborationActivityState(threadId);
       state.pending = true;
-      for (const resolve of [...state.waiters]) resolve();
     }
   takePendingCollaborationActivity(threadId: ThreadId): boolean {
       const state = this.collaborationActivity.get(threadId);
       if (!state?.pending) return false;
       state.pending = false;
       return true;
+    }
+
+  private terminalSettlementDeferred(key: string): TerminalSettlementDeferred {
+      const existing = this.terminalSettlementDeferreds.get(key);
+      if (existing) return existing;
+      let settled = false;
+      let resolvePromise!: () => void;
+      let rejectPromise!: (error: Error) => void;
+      const promise = new Promise<void>((resolve, reject) => {
+        resolvePromise = resolve;
+        rejectPromise = reject;
+      });
+      // A reservation can reach retry exhaustion before the spawning call has
+      // returned far enough to await it. Keep that early rejection observed.
+      void promise.catch(() => undefined);
+      const deferred: TerminalSettlementDeferred = {
+        promise,
+        resolve: () => {
+          if (settled) return;
+          settled = true;
+          resolvePromise();
+        },
+        reject: (error) => {
+          if (settled) return;
+          settled = true;
+          rejectPromise(error);
+        },
+      };
+      this.terminalSettlementDeferreds.set(key, deferred);
+      if (this.closing) deferred.resolve();
+      return deferred;
     }
 
   private async prepareWorktreeForResume(execution: SubagentExecutionRecord): Promise<PreparedResumeWorktree> {
