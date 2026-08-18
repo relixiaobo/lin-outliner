@@ -582,8 +582,10 @@ archived `done` (see Recently completed). Remaining active work:
   tag fields) has a stated default and does not block.
   **PR 1 shipped #545 (2026-08-16, codex)** — read-time slot projection; xhigh
   gate found 15 issues, all fixed on-branch (retrospective in the CHANGELOG entry
-  and the PR). Remaining: PR 2 (static defaults as inherited ghosts — the
-  template-defaults deferral is PM-ratified PR-2 scope) and PR 3 (seed backfill).
+  and the PR). **PR 2 shipped #553 (2026-08-18, codex)** — static defaults as
+  inherited ghosts; high gate found 5 issues plus a rendered-only overlap the
+  first pass missed, all fixed on-branch. Remaining: PR 3 (seed backfill, #554,
+  ready and ordered behind this merge).
   Design: [`tag-schema-projection`](plans/tag-schema-projection.md).
 - **tag-merge-and-split-fixes** (P1, `done` 2026-08-15, **PM-ratified 2026-08-13**) —
   kills the crash-class remainder of the field/supertag audit (#537's review

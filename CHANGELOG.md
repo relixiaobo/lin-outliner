@@ -45,6 +45,42 @@ Entries reference the pull request that introduced them.
   context stay resident for the rest of the Turn — bounded per entry by
   `MAX_SINGLE_FULL_OUTPUT_TOKENS` (~32 KB), a few MB in the worst realistic case.
 
+- **A tag's static field default now shows on every node already carrying the
+  tag, without writing anything (PR #553, codex)** — a literal value typed into a
+  tag's field slot (`Status: Inbox`) is context-free, so it is now read at
+  projection time as an inherited ghost rather than stamped into each node when
+  the tag is applied. Adding or editing a default is instantly true for every
+  instance, past and future, with zero writes and no risk of overwriting a value
+  someone typed; the old behavior reached only nodes tagged after the edit. The
+  ghost renders in `--text-tertiary` and is inert — it takes no pointer input, so
+  clicking or typing in the row creates the user's own value, and a trailing
+  check affordance revealed on row hover or keyboard focus is the explicit way to
+  accept and materialize the default. A whole-field control such as a checkbox
+  shows the inherited state in the native control instead of a text ghost. Once a
+  value is stored it is the user's and never tracks the template again. Ghosts
+  answer reads as well as renders: search comparison, sort, filter, date and text
+  operators, Table, and the agent node projection all resolve the slot's stored
+  entry first and its inherited default second (decision D2). The accepted cost,
+  ratified with the plan: on a field that carries a static default, `is empty`
+  matches nothing, because clearing a stored value dematerializes the entry and
+  the ghost returns — the empty state is reached by storing a real value or
+  removing the default from the tag. The high gate found five issues, all fixed
+  on-branch: the accept control covered the whole value area so no mouse user
+  could ever type their own value; `overdueDateRanges` was the one date reader
+  left unconverted, so `IS_OVERDUE` disagreed with `DATE_BEFORE` on the same
+  nodes; the checkbox suppression test and the ghost render test read different
+  values, leaving a checkbox field with no affordance at all when a template
+  child rendered empty; `fieldDefinitionHasAutoInitialize` accepted any reference
+  instead of validating the strategy, silently hiding a ghost that Search and
+  Agent still honored; and the per-slot deleted-node ancestor walk added to the
+  search hot path was removed rather than traded, once the slot builder was
+  confirmed to filter deleted entries already (A9). Visual verification then
+  caught what static reading had missed: the ghost painted directly on top of the
+  empty editor's `Empty` placeholder, at the same origin in both themes, so the
+  feature's most common state read as illegible overlapping text — the
+  placeholder is now suppressed while a ghost shows and restored when the editor
+  takes focus, with E2E guards on both halves.
+
 ## [0.5.0] - 2026-08-17
 
 **A small train, one fix aboard:** when creating a row from the trailing input
