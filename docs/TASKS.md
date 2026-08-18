@@ -64,12 +64,11 @@ theme-section entry below; this list is the ordering, not a second record):
   `streaming-markdown-repair-cost` tail #547 2026-08-15);
   [`interaction-jank-cleanups`](plans/interaction-jank-cleanups.md)
   and [`startup-window-first`](plans/startup-window-first.md) (P2) trail.
-- **Outliner correctness lane (added 2026-08-13, build-ready 2026-08-14)**:
-  [`tag-merge-and-split-fixes`](plans/archive/tag-merge-and-split-fixes.md) PRs A/B
-  both shipped (#542, #540, 2026-08-15), and
-  [`tag-schema-projection`](plans/archive/tag-schema-projection.md) PR 1 shipped
-  (#545, 2026-08-16); the lane's remaining work is that plan's PR 2 (defaults
-  as inherited ghosts) and PR 3 (seed backfill action).
+- **Outliner correctness lane — CLOSED 2026-08-18**:
+  [`tag-merge-and-split-fixes`](plans/archive/tag-merge-and-split-fixes.md) (#540,
+  #542) and [`tag-schema-projection`](plans/archive/tag-schema-projection.md)
+  (#545, #553, #554) shipped in full; both plans archived. The PM-reported
+  template-edit bug that opened the lane is closed end to end.
 - **Lane D — test-signal infrastructure**: **still unclaimed and now the oldest
   untouched lane** — e2e stability, starting with the visual-media baseline fixture
   (`test.extend` default), then the run-dependent flaky set as one problem. The
@@ -85,7 +84,10 @@ materialization guard, plus #551 test hygiene; PM called the two-PR train
 2026-08-17). v0.4.0 shipped earlier the same day with 17 entries (#525–#548) and
 the #533 persistence-format break (v0.3.x workspaces set aside as
 `*.incompatible-*`, fresh start, no dead launch — #549). `main` is now the
-**0.6.0 train**.
+**0.6.0 train** and the cadence rule fires again (8 user-visible entries aboard as
+of 2026-08-18, #552–#559 — headlined by the agent view surface: "整理成表格" now
+produces a real table): note drafted by main, PM ratifies, then tag + dial to
+0.7.0.
 
 `pi-ai-0.80-upgrade` shipped #348 (clean `Models` migration, not the interim `/compat` shim) — see *Recently completed*.
 `dream-channel-and-memory-retire` shipped in full (PR1 #324 + PR2 #328 + PR3 #329) — see *Recently completed*.
