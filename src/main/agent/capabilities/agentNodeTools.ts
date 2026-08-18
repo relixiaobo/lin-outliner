@@ -148,8 +148,18 @@ import {
   type FieldWriteTarget,
 } from '../../../core/fieldResolution';
 import { DONE_FIELD, isSystemFieldId } from '../../../core/systemFields';
-import { isRenderableViewMode } from '../../../core/viewConfig';
+import { findViewDef, isRenderableViewMode } from '../../../core/viewConfig';
 import { validateViewModes, viewModeOf } from './agentNodeToolView';
+import {
+  hasOutlineViewConfig,
+  hasPersistedViewConfig,
+  resolveViewConfig,
+  validateViewConfigs,
+  type ResolvedViewConfig,
+  type ResolvedViewDisplayField,
+  type ResolvedViewFilterRule,
+  type ResolvedViewSortRule,
+} from './agentNodeToolViewConfig';
 
 export type { OutlinerToolHost } from './agentNodeToolTypes';
 
@@ -595,6 +605,13 @@ async function executeOutlineEdit(
       metrics: { durationMs: elapsed(started) },
     }));
   }
+  const viewConfigValidation = validateViewConfigs(index, parsed.document);
+  if (viewConfigValidation) {
+    return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', viewConfigValidation.code, viewConfigValidation.error, {
+      instructions: viewConfigValidation.instructions,
+      metrics: { durationMs: elapsed(started) },
+    }));
+  }
   const annotationValidation = validateEditAnnotations(index, params.nodeId, parsed.document);
   if (annotationValidation) {
     return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', annotationValidation.code, annotationValidation.error, {
@@ -664,6 +681,8 @@ async function executeOutlineEdit(
   const warnings = [...parsed.warnings];
   const beforeProjection = host.getDocumentReadModel ? undefined : index.projection;
   let updatedTags: string[] = [];
+  const shouldSyncViewConfig = hasOutlineViewConfig(parsed.document.roots[0]!)
+    || hasPersistedViewConfig(index, targetNode);
   try {
     const valueKindValidation = validateFieldValueKindUpdates(index, params.nodeId, parsed.document.roots[0]!);
     if (valueKindValidation) {
@@ -679,7 +698,15 @@ async function executeOutlineEdit(
     }));
   }
   try {
-    const applied = await applySingleNodeEdit(host, params.nodeId, parsed.document.roots[0]!, tracker, warnings, collector);
+    const applied = await applySingleNodeEdit(
+      host,
+      params.nodeId,
+      parsed.document.roots[0]!,
+      shouldSyncViewConfig,
+      tracker,
+      warnings,
+      collector,
+    );
     updatedTags = applied.updatedTagIds;
   } catch (error) {
     return nodeErrorResult(errorEnvelope<NodeEditData>('node_edit', 'mutation_failed', errorMessage(error), {
@@ -1830,6 +1857,13 @@ function createNodeCreateTool(host: OutlinerToolHost, options: NodeToolsOptions)
           metrics: { durationMs: elapsed(started) },
         }));
       }
+      const viewConfigValidation = validateViewConfigs(initialIndex, parsed.document);
+      if (viewConfigValidation) {
+        return nodeErrorResult(errorEnvelope('node_create', viewConfigValidation.code, viewConfigValidation.error, {
+          instructions: viewConfigValidation.instructions,
+          metrics: { durationMs: elapsed(started) },
+        }));
+      }
       const referenceValidation = await validateOutlineReferenceTargets(options, initialIndex, parsed.document);
       if (referenceValidation) {
         return nodeErrorResult(errorEnvelope('node_create', referenceValidation.code, referenceValidation.error, {
@@ -2940,6 +2974,7 @@ async function applySingleNodeEdit(
   host: OutlinerToolHost,
   nodeId: string,
   root: OutlineNode,
+  syncViewConfig: boolean,
   tracker: MutationTracker,
   warnings: string[],
   collector?: MutationEffectCollector,
@@ -2952,6 +2987,7 @@ async function applySingleNodeEdit(
       nodeId,
       config: searchNodeConfigFromSpec(spec),
     });
+    if (syncViewConfig) await applyViewConfigSpec(host, nodeId, root, collector);
     await applyViewSpec(host, nodeId, spec.view ?? 'list', collector);
     const current = currentMutationIndex(host, collector).nodes.get(nodeId);
     if ((current?.description ?? null) !== (root.description ?? null)) {
@@ -2963,6 +2999,7 @@ async function applySingleNodeEdit(
   }
   const updatedTagIds = await syncOutlineNodeInPlace(host, nodeId, root, tracker, warnings, collector);
   await upsertFields(host, nodeId, root.fields, tracker, warnings, collector);
+  if (syncViewConfig) await applyViewConfigSpec(host, nodeId, root, collector);
   await applyViewSpec(host, nodeId, root.codeBlock ? undefined : root.view ?? 'list', collector);
   return { updatedTagIds };
 }
@@ -3867,8 +3904,24 @@ function recordKnownMutationArgs(
     case 'toggle_done':
     case 'set_search_node':
     case 'set_view_mode':
+    case 'add_sort_rule':
+    case 'clear_sort_rules':
+    case 'add_filter_rule':
+    case 'clear_filter_rules':
+    case 'set_group_field':
+    case 'add_display_field':
     case 'trash_node':
       recordChangedArg(collector, args, 'nodeId');
+      return;
+    case 'update_sort_rule':
+    case 'remove_sort_rule':
+    case 'update_filter_rule':
+    case 'remove_filter_rule':
+      recordChangedArg(collector, args, 'ruleId');
+      return;
+    case 'update_display_field':
+    case 'remove_display_field':
+      recordChangedArg(collector, args, 'displayFieldId');
       return;
     case 'apply_tag':
     case 'remove_tag':
@@ -3966,6 +4019,7 @@ async function createOutlineNode(
       index,
       config: searchNodeConfigFromSpec(spec),
     }));
+    if (hasOutlineViewConfig(node)) await applyViewConfigSpec(host, createdId, node, collector);
     await applyViewSpec(host, createdId, spec.view, collector);
     tracker.createdNodeIds.push(createdId);
     const createdSearch = currentMutationIndex(host, collector).nodes.get(createdId);
@@ -4004,6 +4058,7 @@ async function createOutlineNode(
   for (const child of node.children) {
     await createOutlineNode(host, child, createdId, null, tracker, warnings, collector);
   }
+  if (hasOutlineViewConfig(node)) await applyViewConfigSpec(host, createdId, node, collector);
   await applyViewSpec(host, createdId, node.view, collector);
   return createdId;
 }
@@ -4043,6 +4098,271 @@ async function addReference(
   collector?: MutationEffectCollector,
 ): Promise<string> {
   return focusFromOutcome(await handleMutation(host, collector, 'add_reference', { parentId, targetId, index }));
+}
+
+async function applyViewConfigSpec(
+  host: OutlinerToolHost,
+  nodeId: string,
+  outlineNode: OutlineNode,
+  collector?: MutationEffectCollector,
+): Promise<void> {
+  const resolved = resolveViewConfig(currentMutationIndex(host, collector), outlineNode);
+  if ('error' in resolved) throw new Error(resolved.error);
+  await syncSortRules(host, nodeId, resolved.sortRules, collector);
+  await syncFilterRules(host, nodeId, resolved.filterRules, collector);
+  await syncGroupField(host, nodeId, resolved.groupField, collector);
+  await syncDisplayFields(host, nodeId, resolved.displayFields, collector);
+}
+
+function persistedViewChildren(
+  index: ProjectionIndex,
+  nodeId: string,
+): NodeProjection[] {
+  const owner = requiredNode(index, nodeId);
+  const viewDef = findViewDef(index.nodes, owner);
+  if (viewDef?.type !== 'viewDef') return [];
+  return viewDef.children.flatMap((childId) => index.nodes.get(childId) ?? []);
+}
+
+async function syncSortRules(
+  host: OutlinerToolHost,
+  nodeId: string,
+  desired: readonly ResolvedViewSortRule[],
+  collector?: MutationEffectCollector,
+): Promise<void> {
+  const existing = persistedViewChildren(currentMutationIndex(host, collector), nodeId)
+    .filter((node): node is Extract<NodeProjection, { type: 'sortRule' }> => node.type === 'sortRule');
+  if (desired.length === 0 && existing.length > 0) {
+    await handleMutation(host, collector, 'clear_sort_rules', { nodeId });
+    return;
+  }
+  const matches = matchConfigNodes(existing, desired, { preserveExistingOrder: true })
+    .flatMap((match) => match ? [match] : []);
+  const keptIds = new Set(matches.map((rule) => rule.id));
+  for (let index = existing.length - 1; index >= 0; index -= 1) {
+    const current = existing[index]!;
+    if (!keptIds.has(current.id)) {
+      await handleMutation(host, collector, 'remove_sort_rule', { ruleId: current.id });
+    }
+  }
+  for (let index = 0; index < matches.length; index += 1) {
+    const current = matches[index]!;
+    const next = desired[index]!;
+    if (current.sortField === next.field && (current.sortDirection ?? 'asc') === next.direction) continue;
+    await handleMutation(host, collector, 'update_sort_rule', {
+      ruleId: current.id,
+      field: next.field,
+      direction: next.direction,
+    });
+  }
+  for (let index = matches.length; index < desired.length; index += 1) {
+    const next = desired[index]!;
+    await handleMutation(host, collector, 'add_sort_rule', {
+      nodeId,
+      field: next.field,
+      direction: next.direction,
+    });
+  }
+}
+
+async function syncFilterRules(
+  host: OutlinerToolHost,
+  nodeId: string,
+  desired: readonly ResolvedViewFilterRule[],
+  collector?: MutationEffectCollector,
+): Promise<void> {
+  const existing = persistedViewChildren(currentMutationIndex(host, collector), nodeId)
+    .filter((node): node is Extract<NodeProjection, { type: 'filterRule' }> => node.type === 'filterRule');
+  if (desired.length === 0 && existing.length > 0) {
+    await handleMutation(host, collector, 'clear_filter_rules', { nodeId });
+    return;
+  }
+  const matches = matchConfigNodes(existing, desired, { preserveExistingOrder: true })
+    .flatMap((match) => match ? [match] : []);
+  const keptIds = new Set(matches.map((rule) => rule.id));
+  for (let index = existing.length - 1; index >= 0; index -= 1) {
+    const current = existing[index]!;
+    if (!keptIds.has(current.id)) {
+      await handleMutation(host, collector, 'remove_filter_rule', { ruleId: current.id });
+    }
+  }
+  for (let index = 0; index < matches.length; index += 1) {
+    const current = matches[index]!;
+    const next = desired[index]!;
+    const values = current.filterValues ?? [];
+    if (
+      current.filterField === next.field
+      && (current.filterOperator ?? 'contains') === next.operator
+      && (current.filterValueLogic ?? 'any') === next.logic
+      && sameStrings(values, next.values)
+    ) continue;
+    await handleMutation(host, collector, 'update_filter_rule', {
+      ruleId: current.id,
+      field: next.field,
+      operator: next.operator,
+      values: next.values,
+      valueLogic: next.logic,
+    });
+  }
+  for (let index = matches.length; index < desired.length; index += 1) {
+    const next = desired[index]!;
+    await handleMutation(host, collector, 'add_filter_rule', {
+      nodeId,
+      field: next.field,
+      operator: next.operator,
+      values: next.values,
+      valueLogic: next.logic,
+    });
+  }
+}
+
+function matchConfigNodes<T extends { id: string }, TDesired extends { nodeId?: string }>(
+  existing: readonly T[],
+  desired: readonly TDesired[],
+  options: {
+    sameValue?: (current: T, next: TDesired) => boolean;
+    preserveExistingOrder?: boolean;
+  } = {},
+): Array<T | undefined> {
+  const unused = new Set(existing.map((node) => node.id));
+  const byId = new Map(existing.map((node) => [node.id, node]));
+  const matches: Array<T | undefined> = Array.from({ length: desired.length });
+
+  for (const [desiredIndex, next] of desired.entries()) {
+    if (!next.nodeId) continue;
+    const annotated = byId.get(next.nodeId);
+    if (!annotated || !unused.has(annotated.id)) continue;
+    matches[desiredIndex] = annotated;
+    unused.delete(annotated.id);
+  }
+
+  for (const [desiredIndex, next] of desired.entries()) {
+    if (matches[desiredIndex] || next.nodeId) continue;
+    const sameValue = options.sameValue
+      ? existing.find((current) => unused.has(current.id) && options.sameValue!(current, next))
+      : undefined;
+    const positional = existing[desiredIndex];
+    const match = sameValue
+      ?? (positional && unused.has(positional.id) ? positional : undefined)
+      ?? existing.find((current) => unused.has(current.id));
+    if (!match) continue;
+    matches[desiredIndex] = match;
+    unused.delete(match.id);
+  }
+
+  if (options.preserveExistingOrder) {
+    const existingIndexById = new Map(existing.map((node, index) => [node.id, index]));
+    let previousExistingIndex = -1;
+    let recreateSuffix = false;
+    for (let desiredIndex = 0; desiredIndex < matches.length; desiredIndex += 1) {
+      const match = matches[desiredIndex];
+      const existingIndex = match ? existingIndexById.get(match.id) : undefined;
+      if (recreateSuffix || existingIndex === undefined || existingIndex <= previousExistingIndex) {
+        matches[desiredIndex] = undefined;
+        recreateSuffix = true;
+        continue;
+      }
+      previousExistingIndex = existingIndex;
+    }
+  }
+  return matches;
+}
+
+async function syncGroupField(
+  host: OutlinerToolHost,
+  nodeId: string,
+  desired: ResolvedViewConfig['groupField'],
+  collector?: MutationEffectCollector,
+): Promise<void> {
+  const index = currentMutationIndex(host, collector);
+  const viewDef = findViewDef(index.nodes, requiredNode(index, nodeId));
+  const current = viewDef?.type === 'viewDef' ? viewDef.groupField : undefined;
+  const hasStoredGroup = viewDef?.type === 'viewDef'
+    && Object.prototype.hasOwnProperty.call(viewDef, 'groupField');
+  if ((current ?? null) === desired && (desired !== null || !hasStoredGroup)) return;
+  await handleMutation(host, collector, 'set_group_field', { nodeId, field: desired });
+}
+
+async function syncDisplayFields(
+  host: OutlinerToolHost,
+  nodeId: string,
+  desired: readonly ResolvedViewDisplayField[],
+  collector?: MutationEffectCollector,
+): Promise<void> {
+  const existing = persistedViewChildren(currentMutationIndex(host, collector), nodeId)
+    .filter((node): node is Extract<NodeProjection, { type: 'displayField' }> => node.type === 'displayField');
+  const matches = matchConfigNodes(existing, desired, {
+    sameValue: (display, next) => display.displayField === next.field,
+  });
+  const keptIds = new Set(matches.flatMap((display) => display ? [display.id] : []));
+
+  for (const display of existing) {
+    if (!keptIds.has(display.id)) {
+      await handleMutation(host, collector, 'remove_display_field', { displayFieldId: display.id });
+    }
+  }
+
+  for (const [index, next] of desired.entries()) {
+    const current = matches[index];
+    if (!current) {
+      const displayFieldId = focusFromOutcome(await handleMutation(host, collector, 'add_display_field', {
+        nodeId,
+        field: next.field,
+      }));
+      const created = currentMutationIndex(host, collector).nodes.get(displayFieldId);
+      if (
+        created?.type !== 'displayField'
+        || !newDisplayFieldMatches(created, next)
+      ) {
+        await handleMutation(host, collector, 'update_display_field', {
+          displayFieldId,
+          field: next.field,
+          visible: next.visible,
+          width: next.width ?? (created?.type === 'displayField' ? created.displayWidth ?? null : null),
+          order: next.order ?? (created?.type === 'displayField' ? created.displayOrder ?? null : null),
+          label: next.label ?? (created?.type === 'displayField' ? created.displayLabel ?? null : null),
+          placement: created?.type === 'displayField' ? created.displayPlacement ?? null : null,
+        });
+      }
+      continue;
+    }
+    if (displayFieldMatches(current, next)) continue;
+    await handleMutation(host, collector, 'update_display_field', {
+      displayFieldId: current.id,
+      field: next.field,
+      visible: next.visible,
+      width: next.width ?? null,
+      order: next.order ?? null,
+      label: next.label ?? null,
+      placement: current.displayPlacement ?? null,
+    });
+  }
+}
+
+function displayFieldMatches(
+  current: Extract<NodeProjection, { type: 'displayField' }>,
+  desired: ResolvedViewDisplayField,
+): boolean {
+  return current.displayField === desired.field
+    && (current.displayVisible !== false) === desired.visible
+    && current.displayWidth === desired.width
+    && current.displayOrder === desired.order
+    && current.displayLabel === desired.label;
+}
+
+function newDisplayFieldMatches(
+  current: Extract<NodeProjection, { type: 'displayField' }>,
+  desired: ResolvedViewDisplayField,
+): boolean {
+  return current.displayField === desired.field
+    && (current.displayVisible !== false) === desired.visible
+    && (desired.width === undefined || current.displayWidth === desired.width)
+    && (desired.order === undefined || current.displayOrder === desired.order)
+    && (desired.label === undefined || current.displayLabel === desired.label);
+}
+
+function sameStrings(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 async function applyViewSpec(
@@ -4533,6 +4853,9 @@ function collectNodeLocalFileReferencePaths(node: OutlineNode, paths: string[]) 
     collectTextLocalFileReferencePaths(field.name, paths);
     for (const value of field.values) collectTextLocalFileReferencePaths(outlineValueSource(value), paths);
   }
+  for (const config of node.viewConfig ?? []) {
+    for (const field of config.fields) collectFieldLocalFileReferencePaths(field, paths);
+  }
   for (const child of node.children) collectNodeLocalFileReferencePaths(child, paths);
 }
 
@@ -4564,6 +4887,10 @@ function collectNodeAnnotationIds(node: OutlineNode, ids: string[]) {
     for (const value of field.values) {
       if (value.nodeId) ids.push(value.nodeId);
     }
+  }
+  for (const config of node.viewConfig ?? []) {
+    if (config.nodeId) ids.push(config.nodeId);
+    for (const field of config.fields) collectFieldAnnotationIds(field, ids);
   }
   for (const child of node.children) collectNodeAnnotationIds(child, ids);
 }
@@ -4629,6 +4956,9 @@ function collectNodeReferenceTargets(node: OutlineNode, targets: ReferenceTarget
   collectTextReferenceTargets(node.title, targets);
   for (const field of node.fields) {
     collectFieldReferenceTargets(field, targets);
+  }
+  for (const config of node.viewConfig ?? []) {
+    for (const field of config.fields) collectFieldReferenceTargets(field, targets);
   }
   for (const child of node.children) collectNodeReferenceTargets(child, targets);
 }

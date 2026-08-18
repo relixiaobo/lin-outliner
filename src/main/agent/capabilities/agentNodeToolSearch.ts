@@ -56,6 +56,7 @@ import type {
 import { escapeSemanticText } from '../../../core/semanticIngest/inlineScanner';
 import { asRecord, clampInteger, firstDuplicate } from './agentNodeToolUtils';
 import { viewModeOf } from './agentNodeToolView';
+import { documentHasOutlineViewConfig, validateViewConfigs } from './agentNodeToolViewConfig';
 
 const QUERY_LOGICS = new Set<QueryLogic>(['AND', 'OR', 'NOT']);
 const QUERY_OP_SET = new Set<QueryOp>(QUERY_OPS);
@@ -318,6 +319,9 @@ export function resolveSearchQueryFragment(index: ProjectionIndex, outline: stri
       instructions: 'Use one query rule/group outline fragment with "- " lines and 2-space indentation.',
     };
   }
+  if (documentHasOutlineViewConfig(parsed.document)) return temporarySearchViewConfigIssue();
+  const viewConfigValidation = validateViewConfigs(index, parsed.document);
+  if (viewConfigValidation) return viewConfigValidation;
   if (parsed.document.fields.length > 0 || parsed.document.roots.length !== 1) {
     return {
       code: 'ambiguous_search',
@@ -441,6 +445,9 @@ function parseSearchOutline(index: ProjectionIndex, outline: string): ResolvedSe
       instructions: 'Fix the search outline so every non-empty line uses "- " and 2-space indentation.',
     };
   }
+  if (documentHasOutlineViewConfig(parsed.document)) return temporarySearchViewConfigIssue();
+  const viewConfigValidation = validateViewConfigs(index, parsed.document);
+  if (viewConfigValidation) return viewConfigValidation;
   if (parsed.document.roots.length !== 1) {
     return {
       code: 'ambiguous_search',
@@ -449,6 +456,14 @@ function parseSearchOutline(index: ProjectionIndex, outline: string): ResolvedSe
     };
   }
   return resolveSearchSpecFromOutlineNode(index, parsed.document.roots[0]!);
+}
+
+function temporarySearchViewConfigIssue(): NodeToolIssue {
+  return {
+    code: 'invalid_view_config',
+    error: 'Temporary search outlines do not persist view configuration.',
+    instructions: 'Remove the %%view-sort%%, %%view-filter%%, %%view-group%%, and %%view-display%% lines. Use node_create or node_edit only when the user wants a saved search with persistent view configuration.',
+  };
 }
 
 function queryExprFromOutlineNode(index: ProjectionIndex, node: OutlineNode): SearchQueryExpr | NodeToolIssue {

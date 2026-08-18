@@ -86,8 +86,8 @@ Core already has the full mechanism; the gap is entirely in the agent layer.
    values as cells +
    `%%view:table%%` on the parent — never ASCII or Markdown tables inside code
    blocks. Fields present on entry initialize visible columns. New fields on an
-   existing table require a list-to-table re-entry until PR 2 exposes display
-   field configuration. Small inline enumerations stay list.
+   existing table become visible through display-field configuration. Small
+   inline enumerations stay list.
 
 ### Shape
 
@@ -133,14 +133,25 @@ PR 2 builds on PR 1 but PR 1 is fully shippable and useful alone.
 ### PR 2 — view-config read/write
 
 - **Read.** When serializing an owner that has a `viewDef`, emit its config as
-  typed lines under the owner, in the saved-search rule-line style: sort rules
-  (field + direction), filter rules, group field, and — for table — display
-  fields with label / width / visibility / order. Emission follows the same
-  placement rules as saved-search query lines so depth/limit semantics stay
-  uniform.
-- **Write.** `node_edit` patches those lines and routes to the existing
-  commands (`add/update/remove/clear_sort_rule`, filter equivalents,
-  `set_group_field`, `add/update/remove_display_field`). No new core commands.
+  namespaced typed lines under the owner, in the saved-search rule-line style:
+  `%%view-sort%%` (field + direction), `%%view-filter%%` (field + operator +
+  logic + values), `%%view-group%%` (field), and `%%view-display%%` (field +
+  label / width / visibility / order). Emit them for each requested read root at
+  every requested depth, including depth 0, without consuming document child
+  pagination. Do not recursively emit configuration for descendant owners;
+  callers read a descendant as a root when they need its config. A representative
+  owner carrying all four config kinds adds 503 UTF-8 bytes (16 config lines),
+  which remains bounded per requested root instead of multiplying across a deep
+  content read.
+- **Write.** `node_create` applies explicitly supplied config to a new owner;
+  `node_edit` patches the complete editable config and routes to the existing
+  commands (`add_sort_rule`, `update_sort_rule`, `remove_sort_rule`,
+  `clear_sort_rules`, filter equivalents, `set_group_field`,
+  `add_display_field`, `update_display_field`, `remove_display_field`). No new
+  core commands. Custom fields accept either a field-definition reference or an
+  active field-entry id already exposed by an annotated `Field::` line. Display
+  writes preserve unexposed placement metadata and Core-assigned order defaults;
+  width and order use the renderer's integer bounds.
 - **Teach.** Per-view config guidance; note that table columns are hidden, not
   removed, matching the header's Hide-only affordance in the Table View spec.
 - **Tests.** Config-line round-trip per rule type; edit paths assert the
@@ -155,6 +166,3 @@ PR 2 builds on PR 1 but PR 1 is fully shippable and useful alone.
 - Table over field-less records: `%%view:table%%` still switches (Title-only
   grid), matching the UI. Guidance steers the agent to create fields first.
   Confirm at PR 1 review that this default reads well in practice.
-- PR 2 token cost: whether config lines emit whenever the owner serializes
-  (saved-search parity) or only at `depth >= 1`. Default is saved-search
-  parity; measure real `node_read` output size during PR 2 and decide there.

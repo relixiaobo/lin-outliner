@@ -33,7 +33,7 @@ export function unique<T>(values: T[]): T[] {
   return [...new Set(values)];
 }
 
-export function firstDuplicate<T>(values: T[]): T | undefined {
+export function firstDuplicate<T>(values: readonly T[]): T | undefined {
   const seen = new Set<T>();
   for (const value of values) {
     if (seen.has(value)) return value;

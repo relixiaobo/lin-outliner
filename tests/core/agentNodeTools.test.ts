@@ -9,7 +9,16 @@ import { SEARCH_QUERY_COMPLEXITY_LIMITS } from '../../src/core/searchQueryCompil
 import { buildTextSearchIndex } from '../../src/core/searchEngine';
 import { nodeFieldSlots } from '../../src/core/fieldSlots';
 import { DONE_FIELD } from '../../src/core/systemFields';
-import { LIBRARY_ID, plainText, replaceAllRichTextPatch, SCHEMA_ID, TRASH_ID, WORKSPACE_ID } from '../../src/core/types';
+import {
+  LIBRARY_ID,
+  plainText,
+  replaceAllRichTextPatch,
+  SCHEMA_ID,
+  TRASH_ID,
+  WORKSPACE_ID,
+  type SortRuleNode,
+  type ViewDefNode,
+} from '../../src/core/types';
 import { createNodeTools, visibleOutlineUndoStack, type OutlinerToolHost } from '../../src/main/agent/capabilities/agentNodeTools';
 import { validateSearchNodes } from '../../src/main/agent/capabilities/agentNodeToolSearch';
 import { fieldReads, indexProjection } from '../../src/main/agent/capabilities/agentNodeToolProjection';
@@ -72,6 +81,37 @@ function hostFor(core: Core, overrides: Partial<OutlinerToolHost> = {}): Outline
       if (command === 'create_search_node') return core.createSearchNode(String(args.parentId), nullableNumber(args.index), args.config as any);
       if (command === 'set_search_node') return core.setSearchNode(String(args.nodeId), args.config as any);
       if (command === 'set_view_mode') return core.setViewMode(String(args.nodeId), String(args.mode) as any);
+      if (command === 'add_sort_rule') return core.addSortRule(String(args.nodeId), String(args.field), String(args.direction) as any);
+      if (command === 'update_sort_rule') return core.updateSortRule(String(args.ruleId), String(args.field), String(args.direction) as any);
+      if (command === 'remove_sort_rule') return core.removeSortRule(String(args.ruleId));
+      if (command === 'clear_sort_rules') return core.clearSortRules(String(args.nodeId));
+      if (command === 'add_filter_rule') return core.addFilterRule(
+        String(args.nodeId),
+        String(args.field),
+        String(args.operator) as any,
+        arrayArg(args.values),
+        String(args.valueLogic) as any,
+      );
+      if (command === 'update_filter_rule') return core.updateFilterRule(String(args.ruleId), {
+        field: nullableString(args.field),
+        operator: nullableString(args.operator) as any,
+        values: args.values === undefined ? undefined : arrayArg(args.values),
+        valueLogic: nullableString(args.valueLogic) as any,
+      });
+      if (command === 'remove_filter_rule') return core.removeFilterRule(String(args.ruleId));
+      if (command === 'clear_filter_rules') return core.clearFilterRules(String(args.nodeId));
+      if (command === 'set_group_field') return core.setGroupField(String(args.nodeId), nullableString(args.field));
+      if (command === 'add_display_field') return core.addDisplayField(String(args.nodeId), nullableString(args.field));
+      if (command === 'update_display_field') return core.updateDisplayField(String(args.displayFieldId), {
+        field: nullableString(args.field),
+        visible: args.visible === undefined ? undefined : Boolean(args.visible),
+        width: nullableNumber(args.width),
+        order: nullableNumber(args.order),
+        label: nullableString(args.label),
+        placement: displayPlacement(args.placement),
+        move: args.move === 'left' || args.move === 'right' ? args.move : undefined,
+      });
+      if (command === 'remove_display_field') return core.removeDisplayField(String(args.displayFieldId));
       if (command === 'undo') return core.operationHistory({ action: 'undo', origin: meta.origin === 'agent' ? 'agent' : 'all' });
       if (command === 'redo') return core.operationHistory({ action: 'redo', origin: meta.origin === 'agent' ? 'agent' : 'all' });
       throw new Error(`unsupported test command: ${command}`);
@@ -91,6 +131,11 @@ function nullableNumber(value: unknown): number | null {
   if (value === null || value === undefined) return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function displayPlacement(value: unknown) {
+  if (value === 'title' || value === 'body' || value === 'footer' || value === 'hidden') return value;
+  return null;
 }
 
 function arrayArg(value: unknown): string[] {
@@ -285,7 +330,10 @@ describe('agent node tools', () => {
     expect(nodeCreateOutlineDescription).toContain('put %%view:table%% on the owner line');
     expect(nodeCreateOutlineDescription).toContain('Do not represent a document table');
     expect(nodeCreateOutlineDescription).toContain('do not automatically become visible columns');
-    expect(nodeCreateOutlineDescription).toContain('change the owner to %%view:list%% and then back to %%view:table%%');
+    expect(nodeCreateOutlineDescription).toContain('add a %%view-display%% configuration line');
+    expect(nodeCreateOutlineDescription).toContain('field-entry id');
+    expect(nodeCreateOutlineDescription).toContain('Use %%view-sort%%');
+    expect(nodeCreateOutlineDescription).toContain('set visible:: false instead of deleting %%view-display%%');
     expect(`${nodeCreate.description}${nodeCreateOutlineDescription}`.split('Markdown inline syntax creates rich-text marks').length - 1).toBe(1);
     expect(JSON.stringify(nodeCreate.parameters)).toContain("today's journal node, not the current UI selection");
     expect(nodeSearch.description).toContain('DONE_LAST_DAYS value:: 7');
@@ -1717,6 +1765,46 @@ describe('agent node tools', () => {
     ].join('\n'));
   });
 
+  test('saved-search query and view configuration lines keep separate direct-child grammars', async () => {
+    const core = Core.new();
+    const created = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
+      parent_id: core.projection().searchesId,
+      outline: [
+        '- %%search%% Recent work',
+        '  - EDITED_LAST_DAYS',
+        '    - value:: 30',
+        '  - %%view-sort%%',
+        '    - field:: sys:updatedAt',
+        '    - direction:: desc',
+        '  - %%view-filter%%',
+        '    - field:: sys:done',
+        '    - operator:: is',
+        '    - logic:: any',
+        '    - value:: false',
+      ].join('\n'),
+    });
+
+    expect(created.ok).toBe(true);
+    const searchId = created.data!.createdRootIds[0]!;
+    const read = await executeTool<{ items: Array<{ outline?: string }> }>(core, 'node_read', {
+      node_id: searchId,
+      depth: 0,
+    });
+    expect(read.data!.items[0]!.outline).toBe([
+      '- %%search%% Recent work',
+      '  - EDITED_LAST_DAYS',
+      '    - value:: 30',
+      '  - %%view-sort%%',
+      '    - field:: sys:updatedAt',
+      '    - direction:: desc',
+      '  - %%view-filter%%',
+      '    - field:: sys:done',
+      '    - operator:: is',
+      '    - logic:: any',
+      '    - value:: false',
+    ].join('\n'));
+  });
+
   test('node_create round-trips an ordinary table view after initializing record fields as columns', async () => {
     const core = Core.new();
     const created = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
@@ -1756,6 +1844,71 @@ describe('agent node tools', () => {
     expect(read.details.data!.items[0]!.outline).toContain('- %%view:table%% Team');
     expect(read.details.data!.items[0]!.outline).toContain('  - Ada');
     expect(visible.data!.outline).toContain(`- %%node:${ownerId}%% %%view:table%% Team`);
+  });
+
+  test('node_create applies explicit display configuration before entering table mode', async () => {
+    const core = Core.new();
+    const statusFieldId = mustFocus(core.createFieldDefinition('Status', 'plain'));
+    const created = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
+      parent_id: core.projection().todayId,
+      outline: [
+        '- %%view:table%% Team',
+        '  - %%view-display%%',
+        `    - field:: ${nodeRef(core, statusFieldId)}`,
+        '    - label:: Workflow state',
+        '    - width:: 220',
+        '    - visible:: false',
+        '    - order:: 3',
+        '  - Ada',
+        '    - Status:: Active',
+      ].join('\n'),
+    });
+
+    expect(created.ok).toBe(true);
+    const state = core.state();
+    const ownerId = created.data!.createdRootIds[0]!;
+    const viewDef = state.nodes[ownerId]!.children
+      .map((childId) => state.nodes[childId])
+      .find((child) => child?.type === 'viewDef')!;
+    expect(viewDef.viewMode).toBe('table');
+    expect(viewDef.children.map((childId) => state.nodes[childId]!))
+      .toEqual([expect.objectContaining({
+        type: 'displayField',
+        displayField: statusFieldId,
+        displayLabel: 'Workflow state',
+        displayWidth: 220,
+        displayVisible: false,
+        displayOrder: 3,
+      })]);
+  });
+
+  test('node_create preserves the auto-assigned order when patching a new display field', async () => {
+    const core = Core.new();
+    const statusFieldId = mustFocus(core.createFieldDefinition('Status', 'plain'));
+    const created = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
+      parent_id: core.projection().todayId,
+      outline: [
+        '- Board',
+        '  - %%view-display%%',
+        `    - field:: ${nodeRef(core, statusFieldId)}`,
+        '    - visible:: false',
+      ].join('\n'),
+    });
+
+    expect(created.ok).toBe(true);
+    const state = core.state();
+    const ownerId = created.data!.createdRootIds[0]!;
+    const viewDef = state.nodes[ownerId]!.children
+      .map((childId) => state.nodes[childId])
+      .find((child) => child?.type === 'viewDef')!;
+    expect(viewDef.children.map((childId) => state.nodes[childId]!)).toEqual([
+      expect.objectContaining({
+        type: 'displayField',
+        displayField: statusFieldId,
+        displayVisible: false,
+        displayOrder: 0,
+      }),
+    ]);
   });
 
   test('node_edit persists an ordinary table directive through set_view_mode', async () => {
@@ -1893,6 +2046,486 @@ describe('agent node tools', () => {
     expect(invalid.error?.code).toBe('invalid_view_mode');
     expect(invalid.error?.message).toContain('Allowed view modes: list, table');
     expect(core.state().nodes[invalidOwnerId]!.children).toEqual([]);
+  });
+
+  test('node_read and node_edit round-trip every view configuration type through core commands', async () => {
+    const core = Core.new();
+    const ownerId = mustFocus(core.createNode(core.projection().todayId, null, 'Board'));
+    const statusFieldId = mustFocus(core.createFieldDefinition('Status', 'plain'));
+    const dueFieldId = mustFocus(core.createFieldDefinition('Due', 'date'));
+    core.setViewMode(ownerId, 'table');
+    core.addSortRule(ownerId, statusFieldId, 'asc');
+    core.addSortRule(ownerId, 'sys:createdAt', 'desc');
+    core.addFilterRule(ownerId, statusFieldId, 'contains', ['Active', 'Ready'], 'any');
+    core.addFilterRule(ownerId, dueFieldId, 'before', ['2026-09-01'], 'all');
+    core.setGroupField(ownerId, statusFieldId);
+    const statusDisplayId = mustFocus(core.addDisplayField(ownerId, statusFieldId));
+    core.updateDisplayField(statusDisplayId, {
+      label: 'Workflow status',
+      width: 180,
+      visible: true,
+      order: 0,
+    });
+    const initialState = core.state();
+    const initialViewDef = initialState.nodes[ownerId]!.children
+      .map((childId) => initialState.nodes[childId])
+      .find((child) => child?.type === 'viewDef')!;
+    const initialConfig = initialViewDef.children.map((childId) => initialState.nodes[childId]!);
+    const statusSortId = initialConfig.find((child) => (
+      child.type === 'sortRule' && child.sortField === statusFieldId
+    ))!.id;
+    const createdSortId = initialConfig.find((child) => (
+      child.type === 'sortRule' && child.sortField === 'sys:createdAt'
+    ))!.id;
+    const statusFilterId = initialConfig.find((child) => (
+      child.type === 'filterRule' && child.filterField === statusFieldId
+    ))!.id;
+    const dueFilterId = initialConfig.find((child) => (
+      child.type === 'filterRule' && child.filterField === dueFieldId
+    ))!.id;
+
+    const read = await executeRawTool<{
+      items: Array<{ outline?: string; revision: string }>;
+    }>(core, 'node_read', { node_id: ownerId, depth: 0 });
+    const outline = read.details.data!.items[0]!.outline!;
+    expect(outline).toContain([
+      '  - %%view-sort%%',
+      `    - field:: ${nodeRef(core, statusFieldId)}`,
+      '    - direction:: asc',
+    ].join('\n'));
+    expect(outline).toContain([
+      '  - %%view-filter%%',
+      `    - field:: ${nodeRef(core, dueFieldId)}`,
+      '    - operator:: before',
+      '    - logic:: all',
+      '    - value:: 2026-09-01',
+    ].join('\n'));
+    expect(outline).toContain([
+      '  - %%view-group%%',
+      `    - field:: ${nodeRef(core, statusFieldId)}`,
+    ].join('\n'));
+    expect(outline).toContain([
+      '  - %%view-display%%',
+      `    - field:: ${nodeRef(core, statusFieldId)}`,
+      '    - label:: Workflow status',
+      '    - width:: 180',
+      '    - visible:: true',
+      '    - order:: 0',
+    ].join('\n'));
+    const visible = parseVisibleToolResult<{ data?: { outline?: string } }>(read.contentText);
+    expect(visible.data!.outline).toContain(`%%node:${statusSortId}%% %%view-sort%%`);
+    expect(visible.data!.outline).toContain(`%%node:${statusFilterId}%% %%view-filter%%`);
+    expect(visible.data!.outline).toContain(`%%node:${statusDisplayId}%% %%view-display%%`);
+
+    const beforeConfig = core.state().nodes[ownerId]!.children
+      .flatMap((childId) => {
+        const child = core.state().nodes[childId];
+        return child?.type === 'viewDef' ? child.children.map((configId) => core.state().nodes[configId]!) : [];
+      })
+      .map((node) => ({ id: node.id, updatedAt: node.updatedAt }));
+    const renamed = await executeTool(core, 'node_edit', {
+      node_id: ownerId,
+      old_string: '- %%view:table%% Board',
+      new_string: '- %%view:table%% Planning board',
+    });
+    expect(renamed.ok).toBe(true);
+    const afterConfig = core.state().nodes[ownerId]!.children
+      .flatMap((childId) => {
+        const child = core.state().nodes[childId];
+        return child?.type === 'viewDef' ? child.children.map((configId) => core.state().nodes[configId]!) : [];
+      })
+      .map((node) => ({ id: node.id, updatedAt: node.updatedAt }));
+    expect(afterConfig).toEqual(beforeConfig);
+
+    const latestRead = await executeTool<{
+      items: Array<{ revision: string }>;
+    }>(core, 'node_read', { node_id: ownerId, depth: 0 });
+    const edited = await executeTool<{ afterOutline?: string }>(core, 'node_edit', {
+      node_id: ownerId,
+      old_string: '*',
+      expected_revision: latestRead.data!.items[0]!.revision,
+      new_string: [
+        '- %%view:table%% Planning board',
+        `  - %%node:${createdSortId}%% %%view-sort%%`,
+        '    - field:: sys:updatedAt',
+        '    - direction:: desc',
+        '  - %%view-sort%%',
+        '    - field:: sys:name',
+        '    - direction:: asc',
+        `  - %%node:${dueFilterId}%% %%view-filter%%`,
+        `    - field:: ${nodeRef(core, dueFieldId)}`,
+        '    - operator:: after',
+        '    - logic:: any',
+        '    - value:: 2026-08-31',
+        `  - %%node:${statusDisplayId}%% %%view-display%%`,
+        `    - field:: ${nodeRef(core, statusFieldId)}`,
+        '    - label:: State',
+        '    - width:: 240',
+        '    - visible:: false',
+        '    - order:: 1',
+        '  - %%view-display%%',
+        '    - field:: sys:done',
+        '    - visible:: true',
+        '    - order:: 0',
+      ].join('\n'),
+    });
+
+    expect(edited.ok).toBe(true);
+    const state = core.state();
+    const viewDef = state.nodes[ownerId]!.children
+      .map((childId) => state.nodes[childId])
+      .find((child) => child?.type === 'viewDef')!;
+    expect(viewDef.groupField).toBeUndefined();
+    const sortRules = viewDef.children.map((childId) => state.nodes[childId]!)
+      .filter((child) => child.type === 'sortRule');
+    expect(sortRules).toEqual([
+      expect.objectContaining({ id: createdSortId, sortField: 'sys:updatedAt', sortDirection: 'desc' }),
+      expect.objectContaining({ sortField: 'sys:name', sortDirection: 'asc' }),
+    ]);
+    const filterRules = viewDef.children.map((childId) => state.nodes[childId]!)
+      .filter((child) => child.type === 'filterRule');
+    expect(filterRules).toEqual([
+      expect.objectContaining({
+        id: dueFilterId,
+        filterField: dueFieldId,
+        filterOperator: 'after',
+        filterValueLogic: 'any',
+        filterValues: ['2026-08-31'],
+      }),
+    ]);
+    const displayFields = viewDef.children.map((childId) => state.nodes[childId]!)
+      .filter((child) => child.type === 'displayField');
+    expect(displayFields).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: statusDisplayId,
+        displayField: statusFieldId,
+        displayLabel: 'State',
+        displayWidth: 240,
+        displayVisible: false,
+        displayOrder: 1,
+      }),
+      expect.objectContaining({
+        displayField: 'sys:done',
+        displayVisible: true,
+        displayOrder: 0,
+      }),
+    ]));
+
+    const beforeClear = await executeTool<{ items: Array<{ revision: string }> }>(core, 'node_read', {
+      node_id: ownerId,
+      depth: 0,
+    });
+    const cleared = await executeTool(core, 'node_edit', {
+      node_id: ownerId,
+      old_string: '*',
+      expected_revision: beforeClear.data!.items[0]!.revision,
+      new_string: '- %%view:table%% Planning board',
+    });
+    expect(cleared.ok).toBe(true);
+    const clearedState = core.state();
+    const clearedView = clearedState.nodes[ownerId]!.children
+      .map((childId) => clearedState.nodes[childId])
+      .find((child) => child?.type === 'viewDef')!;
+    expect(clearedView.children.map((childId) => clearedState.nodes[childId]!.type)).toEqual([]);
+    expect(clearedView.groupField).toBeUndefined();
+  });
+
+  test('node_edit reserves annotated display identities and preserves unexposed placement', async () => {
+    const core = Core.new();
+    const ownerId = mustFocus(core.createNode(core.projection().todayId, null, 'Board'));
+    const statusFieldId = mustFocus(core.createFieldDefinition('Status', 'plain'));
+    const statusDisplayId = mustFocus(core.addDisplayField(ownerId, statusFieldId));
+    core.updateDisplayField(statusDisplayId, {
+      label: 'Keep me',
+      width: 321,
+      visible: true,
+      order: 0,
+      placement: 'footer',
+    });
+    const read = await executeTool<{ items: Array<{ revision: string }> }>(core, 'node_read', {
+      node_id: ownerId,
+      depth: 0,
+    });
+
+    const edited = await executeTool(core, 'node_edit', {
+      node_id: ownerId,
+      old_string: '*',
+      expected_revision: read.data!.items[0]!.revision,
+      new_string: [
+        '- Board',
+        '  - %%view-display%%',
+        '    - field:: sys:done',
+        '    - visible:: true',
+        '    - order:: 0',
+        `  - %%node:${statusDisplayId}%% %%view-display%%`,
+        `    - field:: ${nodeRef(core, statusFieldId)}`,
+        '    - label:: Keep me',
+        '    - width:: 321',
+        '    - visible:: true',
+        '    - order:: 1',
+      ].join('\n'),
+    });
+
+    expect(edited.ok).toBe(true);
+    expect(core.state().nodes[statusDisplayId]).toMatchObject({
+      type: 'displayField',
+      displayField: statusFieldId,
+      displayLabel: 'Keep me',
+      displayWidth: 321,
+      displayVisible: true,
+      displayOrder: 1,
+      displayPlacement: 'footer',
+    });
+    const state = core.state();
+    const viewDef = state.nodes[ownerId]!.children
+      .map((childId) => state.nodes[childId])
+      .find((child) => child?.type === 'viewDef')!;
+    expect(viewDef.children.map((childId) => state.nodes[childId]!)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ displayField: 'sys:done', displayOrder: 0 }),
+      expect.objectContaining({ id: statusDisplayId, displayField: statusFieldId, displayOrder: 1 }),
+    ]));
+  });
+
+  test('node_read keeps view configuration on requested roots and round-trips owner and day fields', async () => {
+    const core = Core.new();
+    const ownerId = mustFocus(core.createNode(core.projection().todayId, null, 'Board'));
+    const childId = mustFocus(core.createNode(ownerId, null, 'Nested table'));
+    core.addSortRule(ownerId, 'sys:day', 'desc');
+    core.setGroupField(ownerId, 'sys:owner');
+    core.addDisplayField(ownerId, 'sys:owner');
+    core.addSortRule(childId, 'sys:refCount', 'asc');
+
+    const ownerRead = await executeRawTool<{ items: Array<{ outline?: string }> }>(core, 'node_read', {
+      node_id: ownerId,
+      depth: 1,
+    });
+    const visible = parseVisibleToolResult<{ data?: { outline?: string } }>(ownerRead.contentText);
+    expect(ownerRead.details.data!.items[0]!.outline).toContain('field:: sys:day');
+    expect(ownerRead.details.data!.items[0]!.outline).toContain('field:: sys:owner');
+    expect(ownerRead.details.data!.items[0]!.outline).not.toContain('field:: sys:refCount');
+    expect(visible.data!.outline).not.toContain('field:: sys:refCount');
+
+    const childRead = await executeTool<{ items: Array<{ outline?: string }> }>(core, 'node_read', {
+      node_id: childId,
+      depth: 0,
+    });
+    expect(childRead.data!.items[0]!.outline).toContain('field:: sys:refCount');
+
+    const renamed = await executeTool(core, 'node_edit', {
+      node_id: ownerId,
+      old_string: '- Board',
+      new_string: '- Planning board',
+    });
+    expect(renamed.ok).toBe(true);
+    const state = core.state();
+    const viewDef = state.nodes[ownerId]!.children
+      .map((storedId) => state.nodes[storedId])
+      .find((stored) => stored?.type === 'viewDef')!;
+    expect(viewDef.groupField).toBe('sys:owner');
+    expect(viewDef.children.map((storedId) => state.nodes[storedId]!)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'sortRule', sortField: 'sys:day', sortDirection: 'desc' }),
+      expect.objectContaining({ type: 'displayField', displayField: 'sys:owner' }),
+    ]));
+  });
+
+  test('view configuration accepts an annotated field entry id as a field definition handle', async () => {
+    const core = Core.new();
+    const ownerId = mustFocus(core.createNode(core.projection().todayId, null, 'Board'));
+    const rowId = mustFocus(core.createNode(ownerId, null, 'First row'));
+    const fieldEntryId = mustFocus(core.createInlineField(rowId, null, 'Status', 'plain'));
+    const fieldDefId = core.state().nodes[fieldEntryId]!.fieldDefId!;
+
+    const edited = await executeTool(core, 'node_edit', {
+      node_id: ownerId,
+      old_string: '- Board',
+      new_string: [
+        '- Board',
+        '  - %%view-display%%',
+        `    - field:: ${fieldEntryId}`,
+        '    - visible:: true',
+      ].join('\n'),
+    });
+
+    expect(edited.ok).toBe(true);
+    const state = core.state();
+    const viewDef = state.nodes[ownerId]!.children
+      .map((childId) => state.nodes[childId])
+      .find((child) => child?.type === 'viewDef')!;
+    expect(viewDef.children.map((childId) => state.nodes[childId]!)).toEqual([
+      expect.objectContaining({ type: 'displayField', displayField: fieldDefId }),
+    ]);
+  });
+
+  test('node_read degrades malformed persisted view configuration and a complete edit heals it', async () => {
+    const legacy = new LoroOutlinerDocument();
+    legacy.createNodeWithId(WORKSPACE_ID, undefined, undefined, undefined, (node) => {
+      node.content = plainText('Tenon');
+    });
+    legacy.createNodeWithId(LIBRARY_ID, WORKSPACE_ID, undefined, undefined, (node) => {
+      node.content = plainText('Library');
+    });
+    legacy.createNodeWithId(SCHEMA_ID, WORKSPACE_ID, undefined, undefined, (node) => {
+      node.content = plainText('Schema');
+    });
+    legacy.createNodeWithId(TRASH_ID, WORKSPACE_ID, undefined, undefined, (node) => {
+      node.content = plainText('Trash');
+    });
+    legacy.createNodeWithId('board', LIBRARY_ID, undefined, undefined, (node) => {
+      node.content = plainText('Board');
+    });
+    legacy.createNodeWithId<ViewDefNode>('board-view', 'board', undefined, 'viewDef', (node) => {
+      node.viewMode = 'table';
+    });
+    legacy.createNodeWithId<SortRuleNode>('broken-sort', 'board-view', undefined, 'sortRule', (node) => {
+      node.sortDirection = 'desc';
+    });
+    const core = coreFromLoroDocument(legacy);
+
+    const read = await executeTool<{ items: Array<{ outline?: string; revision: string }> }>(core, 'node_read', {
+      node_id: 'board',
+      depth: 0,
+    });
+    expect(read.ok).toBe(true);
+    expect(read.data!.items[0]!.outline).toContain('%%view:table%% Board');
+    expect(read.data!.items[0]!.outline).not.toContain('%%view-sort%%');
+
+    const edited = await executeTool(core, 'node_edit', {
+      node_id: 'board',
+      old_string: '*',
+      expected_revision: read.data!.items[0]!.revision,
+      new_string: '- %%view:table%% Repaired board',
+    });
+    expect(edited.ok).toBe(true);
+    const state = core.state();
+    const viewDef = state.nodes.board!.children
+      .map((childId) => state.nodes[childId])
+      .find((child) => child?.type === 'viewDef')!;
+    expect(viewDef.children).toEqual([]);
+  });
+
+  test('view configuration validation fails closed with recovery grammar before mutation', async () => {
+    const core = Core.new();
+    const ownerId = mustFocus(core.createNode(core.projection().todayId, null, 'Notes'));
+    const before = core.state().nodes[ownerId]!.updatedAt;
+
+    const unknown = await executeTool(core, 'node_edit', {
+      node_id: ownerId,
+      old_string: '- Notes',
+      new_string: '- Notes\n  - %%view-columns%%\n    - field:: sys:name',
+    });
+
+    expect(unknown.ok).toBe(false);
+    expect(unknown.error?.code).toBe('invalid_view_config');
+    expect(unknown.error?.message).toContain('Unknown view configuration directive');
+    expect(unknown.instructions).toContain('%%view-display%%');
+    expect(core.state().nodes[ownerId]!.updatedAt).toBe(before);
+
+    const invalidField = await executeTool(core, 'node_edit', {
+      node_id: ownerId,
+      old_string: '- Notes',
+      new_string: '- Notes\n  - %%view-sort%%\n    - field:: Status\n    - direction:: asc',
+    });
+    expect(invalidField.ok).toBe(false);
+    expect(invalidField.error?.code).toBe('invalid_view_config');
+    expect(invalidField.error?.message).toContain('field definition');
+    expect(core.state().nodes[ownerId]!.updatedAt).toBe(before);
+
+    const temporarySearch = await executeTool(core, 'node_search', {
+      outline: [
+        '- %%search%% Recent notes',
+        '  - STRING_MATCH',
+        '    - value:: notes',
+        '  - %%view-sort%%',
+        '    - field:: Status',
+        '    - direction:: desc',
+      ].join('\n'),
+    });
+    expect(temporarySearch.ok).toBe(false);
+    expect(temporarySearch.error?.code).toBe('invalid_view_config');
+    expect(temporarySearch.error?.message).toContain('do not persist view configuration');
+
+    const batchSearch = await executeTool(core, 'node_search', {
+      count: true,
+      queries: [{
+        name: 'recent',
+        query: [
+          '- STRING_MATCH',
+          '  - value:: notes',
+          '  - %%view-display%%',
+          '    - field:: Missing',
+        ].join('\n'),
+      }],
+    });
+    expect(batchSearch.ok).toBe(false);
+    expect(batchSearch.error?.code).toBe('invalid_view_config');
+    expect(batchSearch.error?.message).toContain('do not persist view configuration');
+
+    const headerMetadata = await executeTool(core, 'node_edit', {
+      node_id: ownerId,
+      old_string: '- Notes',
+      new_string: '- Notes\n  - [x] %%view-sort%% #workflow\n    - field:: sys:updatedAt',
+    });
+    expect(headerMetadata.ok).toBe(false);
+    expect(headerMetadata.error?.code).toBe('invalid_view_config');
+    expect(headerMetadata.error?.message).toContain('header must not include');
+    expect(core.state().nodes[ownerId]!.updatedAt).toBe(before);
+  });
+
+  test('view configuration rejects invalid owners and display numbers before mutation', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const ownerId = mustFocus(core.createNode(today, null, 'Board'));
+    const initialOwnerRevision = core.state().nodes[ownerId]!.updatedAt;
+
+    for (const [property, value, message] of [
+      ['width', '-100', 'whole number between 112 and 520'],
+      ['width', '0x80', 'whole number between 112 and 520'],
+      ['order', '-5.5', 'whole number at least 0'],
+    ] as const) {
+      const invalid = await executeTool(core, 'node_edit', {
+        node_id: ownerId,
+        old_string: '- Board',
+        new_string: [
+          '- Board',
+          '  - %%view-display%%',
+          '    - field:: sys:name',
+          `    - ${property}:: ${value}`,
+        ].join('\n'),
+      });
+      expect(invalid.ok).toBe(false);
+      expect(invalid.error?.code).toBe('invalid_view_config');
+      expect(invalid.error?.message).toContain(message);
+      expect(core.state().nodes[ownerId]!.updatedAt).toBe(initialOwnerRevision);
+    }
+
+    const childCount = core.state().nodes[today]!.children.length;
+    const codeBlock = await executeTool(core, 'node_create', {
+      parent_id: today,
+      outline: [
+        '- ```ts',
+        'const value = 1;',
+        '```',
+        '  - %%view-sort%%',
+        '    - field:: sys:name',
+      ].join('\n'),
+    });
+    expect(codeBlock.ok).toBe(false);
+    expect(codeBlock.error?.code).toBe('invalid_view_config');
+    expect(codeBlock.error?.message).toContain('not code blocks or references');
+
+    const targetId = mustFocus(core.createNode(today, null, 'Target'));
+    const reference = await executeTool(core, 'node_create', {
+      parent_id: today,
+      outline: [
+        `- ${nodeRef(core, targetId)}`,
+        '  - %%view-sort%%',
+        '    - field:: sys:name',
+      ].join('\n'),
+    });
+    expect(reference.ok).toBe(false);
+    expect(reference.error?.code).toBe('invalid_view_config');
+    expect(reference.error?.message).toContain('not code blocks or references');
+    expect(core.state().nodes[today]!.children).toHaveLength(childCount + 1);
   });
 
   test('node_create preview validates canonical saved search rules', async () => {

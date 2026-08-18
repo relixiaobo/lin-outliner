@@ -26,6 +26,18 @@ export interface OutlineNode {
   codeLanguage?: string;
   search?: boolean;
   view?: string;
+  viewConfig?: OutlineViewConfigLine[];
+}
+
+export type OutlineViewConfigKind = 'sort' | 'filter' | 'group' | 'display';
+
+export interface OutlineViewConfigLine {
+  nodeId?: string;
+  directive: string;
+  kind?: OutlineViewConfigKind;
+  hasUnsupportedHeaderSyntax?: boolean;
+  fields: OutlineField[];
+  children: OutlineNode[];
 }
 
 export interface OutlineField {
@@ -196,7 +208,48 @@ export function parseLinOutline(
     return { ok: false, error: { message: 'Outline must contain at least one node or field.', line: 1, column: 1 } };
   }
 
+  for (const root of roots) extractViewConfigLines(root);
+
   return { ok: true, document: { roots, fields: documentFields }, warnings };
+}
+
+const VIEW_CONFIG_DIRECTIVES = new Map<string, OutlineViewConfigKind>([
+  ['%%view-sort%%', 'sort'],
+  ['%%view-filter%%', 'filter'],
+  ['%%view-group%%', 'group'],
+  ['%%view-display%%', 'display'],
+]);
+
+function extractViewConfigLines(node: OutlineNode): void {
+  const children: OutlineNode[] = [];
+  const viewConfig: OutlineViewConfigLine[] = [];
+  for (const child of node.children) {
+    const directive = child.title.trim();
+    const kind = VIEW_CONFIG_DIRECTIVES.get(directive);
+    const isViewConfigDirective = kind !== undefined || directive.startsWith('%%view-');
+    if (isViewConfigDirective) {
+      const hasUnsupportedHeaderSyntax = child.tags.length > 0
+        || child.checked !== undefined
+        || (child.description !== undefined && child.description !== null)
+        || child.search === true
+        || child.view !== undefined
+        || child.referenceTargetId !== undefined
+        || child.codeBlock === true;
+      viewConfig.push({
+        ...(child.nodeId ? { nodeId: child.nodeId } : {}),
+        directive,
+        ...(kind ? { kind } : {}),
+        ...(hasUnsupportedHeaderSyntax ? { hasUnsupportedHeaderSyntax: true } : {}),
+        fields: child.fields,
+        children: child.children,
+      });
+      continue;
+    }
+    extractViewConfigLines(child);
+    children.push(child);
+  }
+  node.children = children;
+  if (viewConfig.length > 0) node.viewConfig = viewConfig;
 }
 
 function isClosingFenceLine(line: string, marker: string): boolean {
