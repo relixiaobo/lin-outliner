@@ -1098,6 +1098,22 @@ necessary. **When a fix guards a call, find every path that reaches that call**
 (`rg` the callee, not the branch) and guard at the join — here, by making the
 materialization helper return its outcome so one check covers both arms.
 
+## An approved optimization is a hypothesis; the profile decides whether it ships
+
+`agent-tool-call-path` PR-2 (#552) carried two PM-approved items. The first —
+memoizing tool-output reads per Turn — measured 9.5× and shipped. The second, a
+diagnostics fingerprint/deep-copy cache, profiled at **~1%** of the per-call
+cost, while ~73% sat in the bounded Secretlint scan the plan had filed under a
+*later* PR. The dev built the first and dropped the second, which is A9 read
+correctly: approval says an optimization is *permitted*, never that it is
+*worth it*, and the plan's own "measure-first; if the win is marginal, drop it"
+clause is the one that binds. Building it anyway would have added a cross-call
+redaction cache and new budget accounting to buy 1%. **A dropped optimization
+still owes its measurement**: the attribution is the deliverable, because it
+re-orders what remains — here it promoted the secret-scan scheduling item from
+"small tail" to the real remaining win. Record the profile in the PR and the
+board, not just the code you kept.
+
 ## "Pre-release needs no migration" is a claim about dev data, not about the app you installed
 
 The tool rename that collapsed `spawn_agent`/`wait_agent` into
@@ -1131,7 +1147,7 @@ look deleted and wiped its extraction state for good. **A filter is invisible to
 the consumer that treats absence as deletion**, which turns a session-scoped,
 in-memory quarantine into a permanent write. When you narrow an enumeration, grep
 its callers for the ones that delete, prune, or reconcile on absence, and give
-them the incompleteness explicitly (`hasUnreadableThreads()` here, which skips the
+them the incompleteness explicitly (`hasHiddenRootThreads()` here, which skips the
 sweep for the session).
 
 Ordering counts too: the readability probe ran one line *after* the Thread was

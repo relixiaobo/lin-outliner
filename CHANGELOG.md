@@ -10,6 +10,40 @@ Entries reference the pull request that introduced them.
 
 `main` is the `0.6.0` train; entries here move under the next tag.
 
+### Changed
+
+- **A tool output is read and hash-verified once per agent Turn, not once per
+  model call (PR #552, codex-2)** — `CanonicalContextProjector` is deliberately
+  rebuilt at every provider boundary so environment, view and additional-context
+  deltas replay from canonical state, but only `readContext` was memoized at the
+  Turn boundary. Every historical `full` tool-output projection therefore re-read
+  its payload file and repeated the SHA-256 verification on every model step,
+  making host storage work outputs × model calls. The Turn-scoped immutable read
+  cache now covers output payloads too, keyed by the complete
+  `ThreadItemOutputReference` and shared by the initial projection and every
+  fresh provider-boundary projector — the reference is content-addressed and
+  `ToolPayloadStore.readTextReference` re-verifies the digest, so the same key
+  can only ever yield the same bytes and the fresh-projector contract is
+  untouched. Missing and failed reads stay retryable: `null` and rejected reads
+  are evicted rather than negatively cached, so a later canonical write is picked
+  up and the `Full tool output is unavailable or corrupt` guard stays reachable.
+  On a deterministic storage probe — 100 distinct 50 KB content-addressed outputs
+  across 10 provider projections, filesystem cache pre-warmed — reads drop from
+  1,000 to 100 and the median from 292.44 ms wall / 230.16 ms CPU to 30.75 ms /
+  27.24 ms, about 9.5× less wall time. The plan's second candidate, a diagnostics
+  fingerprint/deep-copy cache, was measured and **not** built: with an 80-message
+  prefix, 16 stable tools and 10 provider calls, profiling attributed ~73% of the
+  416.03 ms baseline to the bounded Secretlint scan and ~1% to SHA
+  fingerprinting, so the pre-approved optimization would have bought ~1% in
+  exchange for a cross-call redaction cache and new budget accounting — A9's
+  measure-before-trading clause taken at its word, and the attribution now
+  redirects this plan's remaining PR. The high gate confirmed the immutability
+  premise and the eviction path (no microtask race; the awaited derived promise
+  means a second caller can never latch onto an entry mid-eviction) and found no
+  correctness defect; its one note, carried to the plan's last PR, is that
+  successful entries are never evicted, so outputs compacted out of the effective
+  context stay resident for the rest of the Turn — bounded per entry by
+  `MAX_SINGLE_FULL_OUTPUT_TOKENS` (~32 KB), a few MB in the worst realistic case.
 ### Fixed
 
 - **One unreadable Agent conversation no longer stops the app from starting (PR
