@@ -2970,24 +2970,29 @@ describe('Core', () => {
   });
 
   test('tag template backfill follows extends, skips locked nodes, and applies as one undoable step', () => {
-    const core = Core.new();
-    const tagId = mustFocus(core.createTag('project'));
-    const childTagId = mustFocus(core.createTag('task'));
-    core.setTagConfig(childTagId, { extends: tagId });
-    const missingBothId = mustFocus(core.createNode(core.projection().todayId, null, 'Missing both'));
-    const derivedTagId = mustFocus(core.createNode(core.projection().todayId, null, 'Derived tag'));
-    const lockedId = mustFocus(core.createNode(core.projection().todayId, null, 'Locked'));
-    const trashedId = mustFocus(core.createNode(core.projection().todayId, null, 'Trashed'));
-    core.applyTag(missingBothId, tagId);
-    core.applyTag(derivedTagId, childTagId);
-    core.applyTag(lockedId, tagId);
-    core.applyTag(trashedId, tagId);
-    core.trashNode(trashedId);
-    const loro = (core as unknown as { loro: LoroOutlinerDocument }).loro;
-    const locked = structuredClone(core.state().nodes[lockedId]!);
+    const seed = Core.new();
+    const tagId = mustFocus(seed.createTag('project'));
+    const childTagId = mustFocus(seed.createTag('task'));
+    seed.setTagConfig(childTagId, { extends: tagId });
+    const missingBothId = mustFocus(seed.createNode(seed.projection().todayId, null, 'Missing both'));
+    const derivedTagId = mustFocus(seed.createNode(seed.projection().todayId, null, 'Derived tag'));
+    const lockedId = mustFocus(seed.createNode(seed.projection().todayId, null, 'Locked'));
+    const trashedId = mustFocus(seed.createNode(seed.projection().todayId, null, 'Trashed'));
+    seed.applyTag(missingBothId, tagId);
+    seed.applyTag(derivedTagId, childTagId);
+    seed.applyTag(lockedId, tagId);
+    seed.applyTag(trashedId, tagId);
+    seed.trashNode(trashedId);
+
+    const shared = seed.exportSharedState();
+    const document = new LoroOutlinerDocument({ shared: shared.document });
+    const locked = structuredClone(seed.state().nodes[lockedId]!);
     locked.locked = true;
-    loro.writeNode(locked);
-    loro.commit('system:test-lock');
+    document.writeNode(locked);
+    const core = Core.fromSharedState({
+      ...shared,
+      document: document.exportSharedState('system:test-lock'),
+    });
 
     const firstTemplateId = mustFocus(core.createNode(tagId, null, 'First seed'));
     const missingOneId = mustFocus(core.createNode(core.projection().todayId, null, 'Missing one'));
