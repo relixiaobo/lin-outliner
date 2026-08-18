@@ -9,6 +9,7 @@ import type {
   Turn,
 } from '../../src/core/agent/protocol';
 import { freezePendingToolOutputProjections } from '../../src/main/agent/context/ToolOutputProjection';
+import { outputReferenceKey } from '../../src/main/agent/context/contextDependencies';
 import { uuidV7 } from '../../src/main/agent/uuid';
 
 const model = {
@@ -112,6 +113,32 @@ describe('tool-output projection freezing', () => {
       readContext: async (ref) => payloads.get(ref.id) ?? null,
       persist: async () => { throw new Error('Conflicting output must not be refrozen.'); },
     })).resolves.toEqual([]);
+  });
+
+  test('reports active output keys when publishing a new projection fails', async () => {
+    const existingOutput = outputReference('5', 800);
+    const pendingOutput = outputReference('6', 800);
+    const payload = {
+      schemaVersion: 1 as const,
+      kind: 'toolOutputProjection' as const,
+      outputRef: existingOutput,
+      projection: { type: 'full' as const },
+    };
+    const payloadRef = contextReference('7', payload.kind);
+    const activeKeys: string[][] = [];
+
+    await expect(freezePendingToolOutputProjections({
+      turns: [turn('failed-publish-turn', [
+        evidence('existing-projection', payloadRef, existingOutput),
+        completedTool('pending-output', pendingOutput),
+      ])],
+      model,
+      readContext: async (ref) => ref.id === payloadRef.id ? payload : null,
+      persist: async () => { throw new Error('simulated projection write failure'); },
+      onActiveOutputKeys: (keys) => activeKeys.push([...keys]),
+    })).rejects.toThrow('simulated projection write failure');
+
+    expect(activeKeys).toEqual([[outputReferenceKey(existingOutput)]]);
   });
 });
 

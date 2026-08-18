@@ -288,6 +288,39 @@ describe('agent secret redaction', () => {
     });
   });
 
+  test('preserves durable structure and redacts every pending string when the worker fails', async () => {
+    const scannerError = new Error(`worker exposed ${OPENAI_KEY}`);
+    const warnings: unknown[][] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => { warnings.push(args); };
+    try {
+      const input = {
+        ordinary: 'keep me',
+        nested: ['array text', 42, false, null, { note: 'nested text' }],
+        password: CREDENTIAL_VALUE,
+        metadata: { count: 3 },
+      };
+      const result = await redactSecretLikeJsonAsync(input, async () => { throw scannerError; });
+
+      expect(result).toEqual({
+        value: {
+          ordinary: '[redacted]',
+          nested: ['[redacted]', 42, false, null, { note: '[redacted]' }],
+          password: '[redacted]',
+          metadata: { count: 3 },
+        },
+        redactedPaths: ['/ordinary', '/nested/0', '/nested/4/note', '/password'],
+      });
+      expect(input.ordinary).toBe('keep me');
+      expect(warnings).toEqual([[
+        '[agent] Secret scanner worker failed; redacted all pending durable strings.',
+      ]]);
+      expect(JSON.stringify(warnings)).not.toContain(scannerError.message);
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+
   test('applies the diagnostic scan budget before parsing serialized JSON arguments', async () => {
     const encoded = JSON.stringify({ password: 'x'.repeat(70_000) });
     const result = await redactSecretLikeJsonForDiagnostics({ arguments: encoded });
@@ -298,6 +331,33 @@ describe('agent secret redaction', () => {
       },
       redactedPaths: ['/arguments'],
     });
+  });
+
+  test('keeps one ordered diagnostic budget across a batched scan', async () => {
+    const first = 'ordinary first text '.repeat(1_500);
+    const second = `credential=${OPENAI_KEY}`;
+    const third = 'ordinary overflow text '.repeat(1_600);
+    const result = await redactSecretLikeJsonForDiagnostics({ first, second, third });
+
+    expect(result.value).toEqual({
+      first,
+      second: 'credential=[redacted secret-like content]',
+      third: `[diagnostic text omitted after secret-scan budget: ${third.length} chars]`,
+    });
+    expect(result.redactedPaths).toEqual(['/second', '/third']);
+  });
+
+  test('keeps arbitrary-span private-key redaction byte-identical in a large direct-path batch', async () => {
+    const privateKey = [
+      '-----BEGIN OPENSSH PRIVATE KEY-----',
+      'ordinary key material words '.repeat(10_000),
+      '-----END OPENSSH PRIVATE KEY-----',
+    ].join('\n');
+    const expected = redactSecretLikeContent(privateKey);
+    const result = await redactSecretLikeJsonAsync({ content: privateKey });
+
+    expect(result).toEqual({ value: { content: expected }, redactedPaths: ['/content'] });
+    expect(expected).toBe('[redacted secret-like content]');
   });
 
   test('reports a redaction path only when the persisted value changes', async () => {

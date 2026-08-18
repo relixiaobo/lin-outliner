@@ -591,17 +591,37 @@ strings, placeholders, and ambiguous free-form content pass unchanged. Ambiguous
 letters and digits. Serialized JSON key inspection is limited to `args`, `arguments`,
 `body`, and `payload` strings, preserves unrelated formatting, and never reinterprets
 nested JSON strings. Rule exceptions, unsupported asynchronous rules, malformed JSON,
-and scanner depth failures all fail open. Durable scanning yields cooperatively;
-diagnostic copies additionally have one 64,000-character budget and use an omission
-marker beyond it. The diagnostic copy never becomes Item or replay data. Redacted replay
+and scanner depth failures all fail open. Each structured value stages its strings in
+canonical traversal order. A sufficiently large batch runs the same complete scanner on
+a bounded pool of at most two lazy unreferenced Node workers; a small batch runs the
+direct scanner exactly once. A pooled request starts its five-second watchdog only when
+it leaves the queue for a new or idle worker. A startup timeout releases pool capacity,
+and a worker that finishes starting after its request settled is terminated. A worker
+error or timeout terminates that worker rather than repeating the unbounded scan on
+Electron's main thread. For durable values, an off-main worker rejection preserves the
+traversed JSON container and non-string scalar structure, replaces every pending string
+with `[redacted]`, and records one fixed warning with no error detail or user content.
+This structure-preserving fail-closed boundary was approved by the PM on 2026-08-18;
+direct scanner, traversal, malformed JSON, and depth failures retain their existing
+fail-open behavior. Private-key matching pre-indexes BEGIN/END
+markers, and whole strings are scanned without chunking, so credential matches spanning
+arbitrary distances retain identical coverage and bytes without repeated suffix scans.
+Durable scanning has no character budget. Diagnostic copies separately spend one
+64,000-character budget before dispatch, use an omission marker beyond it, and replace
+the whole copy with the typed omission marker if their worker rejects.
+The diagnostic copy never becomes Item or replay data. Redacted replay
 compatibility is decided once
 against the admission schema: a compatible copy becomes `redactedReplay`; an
 incompatible copy becomes executed `evidenceOnly`, while the validated transient source
 call may still run. Evidence provider names, corrections, and argument summaries have
 independent UTF-8 bounds, and malformed redaction pointers fail at the
-codec boundary. A newly written tool image that
-no terminal Item references is reclaimed at Turn finalization; startup reconciliation
-handles crash leftovers.
+codec boundary. Cleanup boundaries decode canonical Turns once into shared resource,
+context-payload, diagnostics, and text-output reference sets. Turn finalization first
+takes the resource-reference snapshot and reclaims newly written tool images that no
+terminal Item references. It then refreshes the canonical payload-reference snapshot
+once and prunes contexts and diagnostics in parallel, so canonical appends during the
+resource cleanup are visible to both payload pruners. Startup reconciliation handles
+crash leftovers.
 
 A history rollback reclaims contexts, Turn diagnostics, and tool text outputs
 against the surviving history, and resources against the surviving history PLUS
@@ -789,7 +809,10 @@ service's tool-completion notification, which has the Thread and the tool name i
 hand. There is no per-tool hook, so a node tool added later is covered without
 remembering to call anything, and `node_search` is covered like every other even
 though its arguments never say which nodes the model will see: its results are
-the rendering.
+the rendering. Tool-name eligibility is checked before building a document
+projection index on the live path and before projection indexing, payload reads,
+or JSON parsing during canonical rebuild, so non-belief tools do no document-wide
+observation or output-materialization work.
 
 **The belief set is a projection of the canonical record** and takes its bound
 from the record rather than from a cap of its own. Re-observing a node replaces

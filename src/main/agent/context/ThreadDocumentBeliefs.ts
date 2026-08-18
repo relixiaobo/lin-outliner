@@ -21,6 +21,7 @@ import {
   type DocumentBelief,
   driftedNodes,
   DocumentBeliefSet,
+  isBeliefBearingTool,
   type DocumentDriftedNode,
 } from './DocumentBeliefs';
 
@@ -42,6 +43,7 @@ export class ThreadDocumentBeliefs {
 
   observe(threadId: ThreadId, tool: string, result: unknown, projection: DocumentProjection | null): void {
     try {
+      if (!isBeliefBearingTool(tool)) return;
       const beliefs = beliefsFromToolResult(
         tool,
         result,

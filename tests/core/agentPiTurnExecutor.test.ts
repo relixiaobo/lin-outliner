@@ -1396,6 +1396,105 @@ describe('PiTurnExecutor event normalization', () => {
     expect(payloadReads).toBe(1);
   });
 
+  test('evicts context reads that leave the effective context between provider boundaries', async () => {
+    const fixture = createContext();
+    const payloads = ['first', 'second'].map((name, index) => ({
+      schemaVersion: 1 as const,
+      kind: 'skillCatalog' as const,
+      mode: 'baseline' as const,
+      previousCatalogHash: null,
+      catalogHash: String(index + 1).repeat(64),
+      entries: [{
+        change: 'available' as const,
+        name: `${name}-skill`,
+        displayName: `${name} skill`,
+        source: 'project' as const,
+        identity: `project:${name}-skill`,
+        contentHash: String(index + 3).repeat(64),
+        description: `${name} immutable payload`,
+      }],
+    }));
+    const payloadRefs = payloads.map((payload) => {
+      const serialized = JSON.stringify(payload);
+      return {
+        id: createHash('sha256').update(serialized).digest('hex'),
+        mimeType: 'application/vnd.tenon.agent-context+json' as const,
+        byteLength: Buffer.byteLength(serialized),
+        schemaVersion: 1 as const,
+        kind: payload.kind,
+      };
+    });
+    const historyTurnId = uuidV7(1_719_999_998_500);
+    const userId = uuidV7(1_719_999_998_510);
+    const userItem: ThreadItem = {
+      type: 'userMessage',
+      id: userId,
+      provenance: {
+        originThreadId: fixture.context.thread.id,
+        originTurnId: historyTurnId,
+        originItemId: userId,
+      },
+      clientId: null,
+      acceptedAt: 1_719_999_998_510,
+      content: [{ type: 'text', text: 'Use the active Skill catalog.' }],
+    };
+    const itemSets = payloadRefs.map((payloadRef, index): readonly ThreadItem[] => {
+      const evidenceId = uuidV7(1_719_999_998_520 + index);
+      return [{
+        type: 'contextEvidence',
+        id: evidenceId,
+        provenance: {
+          originThreadId: fixture.context.thread.id,
+          originTurnId: historyTurnId,
+          originItemId: evidenceId,
+        },
+        kind: 'skillCatalog',
+        payloadRef,
+        summary: `Skill catalog ${index + 1}`,
+        contextRefs: [],
+        resourceRefs: [],
+        outputRefs: [],
+      }, userItem];
+    });
+    const history = completedTurn(
+      fixture.context.turn,
+      historyTurnId,
+      itemSets[0]!,
+      1_719_999_998_500,
+    );
+    const payloadReads = [0, 0];
+    const executor = new PiTurnExecutor({
+      resolveRuntimeSettings: async () => runtimeSettings(),
+      resolveRuntime: async () => runtimeSelection(),
+      createAgent: (options) => ({
+        state: { errorMessage: undefined },
+        subscribe: () => () => undefined,
+        abort: () => undefined,
+        steer: () => undefined,
+        prompt: async () => {
+          await options.transformContext!([]);
+          Object.assign(history, { items: itemSets[1]! });
+          await options.transformContext!([]);
+          Object.assign(history, { items: itemSets[0]! });
+          await options.transformContext!([]);
+        },
+      }),
+    });
+
+    await expect(executor.execute({
+      ...fixture.context,
+      historyBeforeTurn: [history],
+      readContext: async (ref) => {
+        const index = payloadRefs.findIndex((candidate) => candidate.id === ref.id);
+        if (index < 0) return null;
+        payloadReads[index] += 1;
+        return payloads[index]!;
+      },
+    })).resolves.toMatchObject({ status: 'completed' });
+
+    expect(payloadReads).toEqual([2, 1]);
+  });
+
   test('memoizes immutable output payload reads across provider boundaries in one Turn', async () => {
     const fixture = createContext();
     const output = 'Complete persisted tool output.';
@@ -1497,6 +1596,265 @@ describe('PiTurnExecutor event normalization', () => {
     expect(outputReads).toBe(1);
     expect(providerContexts).toHaveLength(2);
     expect(JSON.stringify(providerContexts)).toContain(output);
+  });
+
+  test('retains inherited full-output reads across provider boundaries', async () => {
+    const fixture = createContext();
+    const output = 'Inherited complete persisted tool output.';
+    const outputRef = {
+      id: createHash('sha256').update(output).digest('hex'),
+      mimeType: 'text/plain' as const,
+      byteLength: Buffer.byteLength(output),
+      summary: 'Inherited tool output',
+    };
+    const projection = {
+      schemaVersion: 1 as const,
+      kind: 'toolOutputProjection' as const,
+      outputRef,
+      projection: { type: 'full' as const },
+    };
+    const serializedProjection = JSON.stringify(projection);
+    const projectionRef = {
+      id: createHash('sha256').update(serializedProjection).digest('hex'),
+      mimeType: 'application/vnd.tenon.agent-context+json' as const,
+      byteLength: Buffer.byteLength(serializedProjection),
+      schemaVersion: 1 as const,
+      kind: projection.kind,
+    };
+    const sourceThreadId = uuidV7(1_719_999_996_000);
+    const sourceTurnId = uuidV7(1_719_999_996_010);
+    const sourceUserId = uuidV7(1_719_999_996_020);
+    const sourceToolId = uuidV7(1_719_999_996_030);
+    const sourceProjectionId = uuidV7(1_719_999_996_040);
+    const sourceTurn = completedTurn(fixture.context.turn, sourceTurnId, [{
+      type: 'userMessage',
+      id: sourceUserId,
+      provenance: { originThreadId: sourceThreadId, originTurnId: sourceTurnId, originItemId: sourceUserId },
+      clientId: null,
+      acceptedAt: 1_719_999_996_020,
+      content: [{ type: 'text', text: 'Read inherited output.' }],
+    }, {
+      type: 'dynamicToolCall',
+      id: sourceToolId,
+      provenance: { originThreadId: sourceThreadId, originTurnId: sourceTurnId, originItemId: sourceToolId },
+      status: 'completed',
+      outputRef,
+      namespace: null,
+      tool: 'file_read',
+      arguments: { file_path: '/workspace/inherited.txt' },
+      modelCall: replayableModelCall('file_read', { file_path: '/workspace/inherited.txt' }),
+      contentItems: [{ type: 'text', text: 'Inherited bounded output.' }],
+      success: true,
+      durationMs: 1,
+    }, {
+      type: 'contextEvidence',
+      id: sourceProjectionId,
+      provenance: {
+        originThreadId: sourceThreadId,
+        originTurnId: sourceTurnId,
+        originItemId: sourceProjectionId,
+      },
+      kind: 'toolOutputProjection',
+      payloadRef: projectionRef,
+      summary: 'Inherited full tool output projection',
+      contextRefs: [],
+      resourceRefs: [],
+      outputRefs: [outputRef],
+    }], 1_719_999_996_010);
+    const inheritedPayload = {
+      schemaVersion: 1 as const,
+      kind: 'inheritedContext' as const,
+      sourceThreadId,
+      coveredThrough: { turnId: sourceTurnId, itemId: sourceProjectionId },
+      requestedTurns: 'all' as const,
+      turns: [sourceTurn],
+    };
+    const serializedInherited = JSON.stringify(inheritedPayload);
+    const inheritedRef = {
+      id: createHash('sha256').update(serializedInherited).digest('hex'),
+      mimeType: 'application/vnd.tenon.agent-context+json' as const,
+      byteLength: Buffer.byteLength(serializedInherited),
+      schemaVersion: 1 as const,
+      kind: inheritedPayload.kind,
+    };
+    const outerTurnId = uuidV7(1_719_999_996_100);
+    const inheritedItemId = uuidV7(1_719_999_996_110);
+    const outerUserId = uuidV7(1_719_999_996_120);
+    const history = completedTurn(fixture.context.turn, outerTurnId, [{
+      type: 'contextEvidence',
+      id: inheritedItemId,
+      provenance: {
+        originThreadId: fixture.context.thread.id,
+        originTurnId: outerTurnId,
+        originItemId: inheritedItemId,
+      },
+      kind: 'inheritedContext',
+      payloadRef: inheritedRef,
+      summary: 'Inherited parent context',
+      contextRefs: [projectionRef],
+      resourceRefs: [],
+      outputRefs: [outputRef],
+    }, {
+      type: 'userMessage',
+      id: outerUserId,
+      provenance: {
+        originThreadId: fixture.context.thread.id,
+        originTurnId: outerTurnId,
+        originItemId: outerUserId,
+      },
+      clientId: null,
+      acceptedAt: 1_719_999_996_120,
+      content: [{ type: 'text', text: 'Continue with inherited evidence.' }],
+    }], 1_719_999_996_100);
+    let outputReads = 0;
+    const executor = new PiTurnExecutor({
+      resolveRuntimeSettings: async () => runtimeSettings(),
+      resolveRuntime: async () => runtimeSelection(),
+      createAgent: (options) => ({
+        state: { errorMessage: undefined },
+        subscribe: () => () => undefined,
+        abort: () => undefined,
+        steer: () => undefined,
+        prompt: async () => {
+          await options.transformContext!([]);
+          await options.transformContext!([]);
+        },
+      }),
+    });
+
+    await expect(executor.execute({
+      ...fixture.context,
+      historyBeforeTurn: [history],
+      readContext: async (ref) => {
+        if (ref.id === inheritedRef.id) return inheritedPayload;
+        if (ref.id === projectionRef.id) return projection;
+        return null;
+      },
+      readOutput: async (ref) => {
+        outputReads += 1;
+        return ref.id === outputRef.id ? output : null;
+      },
+    })).resolves.toMatchObject({ status: 'completed' });
+
+    expect(outputReads).toBe(1);
+  });
+
+  test('evicts output reads that leave the effective context between provider boundaries', async () => {
+    const fixture = createContext();
+    const outputText = ['First persisted output.', 'Second persisted output.'];
+    const outputRefs = outputText.map((output, index) => ({
+      id: createHash('sha256').update(output).digest('hex'),
+      mimeType: 'text/plain' as const,
+      byteLength: Buffer.byteLength(output),
+      summary: `Tool output ${index + 1}`,
+    }));
+    const payloads = outputRefs.map((outputRef) => ({
+      schemaVersion: 1 as const,
+      kind: 'toolOutputProjection' as const,
+      outputRef,
+      projection: { type: 'full' as const },
+    }));
+    const payloadRefs = payloads.map((payload) => {
+      const serialized = JSON.stringify(payload);
+      return {
+        id: createHash('sha256').update(serialized).digest('hex'),
+        mimeType: 'application/vnd.tenon.agent-context+json' as const,
+        byteLength: Buffer.byteLength(serialized),
+        schemaVersion: 1 as const,
+        kind: payload.kind,
+      };
+    });
+    const historyTurnId = uuidV7(1_719_999_997_000);
+    const userId = uuidV7(1_719_999_997_010);
+    const userItem: ThreadItem = {
+      type: 'userMessage',
+      id: userId,
+      provenance: {
+        originThreadId: fixture.context.thread.id,
+        originTurnId: historyTurnId,
+        originItemId: userId,
+      },
+      clientId: null,
+      acceptedAt: 1_719_999_997_010,
+      content: [{ type: 'text', text: 'Inspect the persisted output.' }],
+    };
+    const itemSets = outputRefs.map((outputRef, index): readonly ThreadItem[] => {
+      const toolId = uuidV7(1_719_999_997_020 + index * 10);
+      const evidenceId = uuidV7(1_719_999_997_021 + index * 10);
+      return [userItem, {
+        type: 'dynamicToolCall',
+        id: toolId,
+        provenance: {
+          originThreadId: fixture.context.thread.id,
+          originTurnId: historyTurnId,
+          originItemId: toolId,
+        },
+        status: 'completed',
+        outputRef,
+        namespace: null,
+        tool: 'file_read',
+        arguments: { file_path: `/workspace/result-${index + 1}.txt` },
+        modelCall: replayableModelCall('file_read', { file_path: `/workspace/result-${index + 1}.txt` }),
+        contentItems: [{ type: 'text', text: `Bounded output ${index + 1}.` }],
+        success: true,
+        durationMs: 1,
+      }, {
+        type: 'contextEvidence',
+        id: evidenceId,
+        provenance: {
+          originThreadId: fixture.context.thread.id,
+          originTurnId: historyTurnId,
+          originItemId: evidenceId,
+        },
+        kind: 'toolOutputProjection',
+        payloadRef: payloadRefs[index]!,
+        summary: `Full tool output projection ${index + 1}`,
+        contextRefs: [],
+        resourceRefs: [],
+        outputRefs: [outputRef],
+      }];
+    });
+    const history = completedTurn(
+      fixture.context.turn,
+      historyTurnId,
+      itemSets[0]!,
+      1_719_999_997_000,
+    );
+    const outputReads = [0, 0];
+    const executor = new PiTurnExecutor({
+      resolveRuntimeSettings: async () => runtimeSettings(),
+      resolveRuntime: async () => runtimeSelection(),
+      createAgent: (options) => ({
+        state: { errorMessage: undefined },
+        subscribe: () => () => undefined,
+        abort: () => undefined,
+        steer: () => undefined,
+        prompt: async () => {
+          await options.transformContext!([]);
+          Object.assign(history, { items: itemSets[1]! });
+          await options.transformContext!([]);
+          Object.assign(history, { items: itemSets[0]! });
+          await options.transformContext!([]);
+        },
+      }),
+    });
+
+    await expect(executor.execute({
+      ...fixture.context,
+      historyBeforeTurn: [history],
+      readContext: async (ref) => {
+        const index = payloadRefs.findIndex((candidate) => candidate.id === ref.id);
+        return index < 0 ? null : payloads[index]!;
+      },
+      readOutput: async (ref) => {
+        const index = outputRefs.findIndex((candidate) => candidate.id === ref.id);
+        if (index < 0) return null;
+        outputReads[index] += 1;
+        return outputText[index]!;
+      },
+    })).resolves.toMatchObject({ status: 'completed' });
+
+    expect(outputReads).toEqual([2, 1]);
   });
 
   test('runs the pre-provider hook without changing canonical user input', async () => {
