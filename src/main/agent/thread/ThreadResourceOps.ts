@@ -17,6 +17,7 @@ ThreadResourceReference,
 ThreadTurnDetailsReadRequest,
 ThreadTurnDetailsReadResponse,
 ThreadUserContent,
+Turn,
 TurnDiagnosticsPayloadReference,
 } from '../../../core/agent/protocol';
 import {
@@ -42,6 +43,13 @@ ResolvedThreadResourceFile,
 ThreadUserContentResolutionContext,
 } from '../ThreadService';
 import { ThreadCore } from './ThreadCore';
+
+export interface ThreadStorageReferences {
+  readonly resources: readonly ThreadResourceReference[];
+  readonly contexts: readonly ThreadContextPayloadReference[];
+  readonly diagnostics: readonly TurnDiagnosticsPayloadReference[];
+  readonly textOutputs: readonly ThreadItemOutputReference[];
+}
 
 export class ThreadResourceOps {
   private readonly detachedResourceObservations = new Map<string, {
@@ -392,8 +400,17 @@ export class ThreadResourceOps {
       stableProviderPath ? { stableWorkspaceKey: threadId } : {},
     );
   }
+  threadStorageReferences(threadId: ThreadId): ThreadStorageReferences {
+    const turns = this.core.allTurns(threadId);
+    return {
+      resources: resourceReferencesFromTurns(turns),
+      contexts: contextReferencesFromTurns(turns),
+      diagnostics: diagnosticsReferencesFromTurns(turns),
+      textOutputs: textOutputReferencesFromTurns(turns),
+    };
+  }
   threadResourceReferences(threadId: ThreadId): ThreadResourceReference[] {
-    return this.core.allTurns(threadId).flatMap((turn) => turn.items.flatMap(itemResourceReferences));
+    return resourceReferencesFromTurns(this.core.allTurns(threadId));
   }
   async threadImageArtifactReferences(threadId: ThreadId): Promise<readonly ThreadImageArtifactReference[]> {
     return (await this.scanResourceUsage(
@@ -409,18 +426,13 @@ export class ThreadResourceOps {
     return { artifacts: usage.artifacts, protectedResources: usage.genericResources };
   }
   threadContextPayloadReferences(threadId: ThreadId): ThreadContextPayloadReference[] {
-    return this.core.allTurns(threadId).flatMap((turn) => turn.items.flatMap(itemContextPayloadReferences));
+    return contextReferencesFromTurns(this.core.allTurns(threadId));
   }
   threadTurnDiagnosticsReferences(threadId: ThreadId): TurnDiagnosticsPayloadReference[] {
-    return this.core.allTurns(threadId).flatMap((turn) => (
-      turn.execution.diagnosticsRef ? [turn.execution.diagnosticsRef] : []
-    ));
+    return diagnosticsReferencesFromTurns(this.core.allTurns(threadId));
   }
   threadTextPayloadReferences(threadId: ThreadId): ThreadItemOutputReference[] {
-    return this.core.allTurns(threadId).flatMap((turn) => turn.items.flatMap((item) => [
-      ...('outputRef' in item && item.outputRef ? [item.outputRef] : []),
-      ...(item.type === 'contextEvidence' || item.type === 'contextCompaction' ? item.outputRefs : []),
-    ]));
+    return textOutputReferencesFromTurns(this.core.allTurns(threadId));
   }
   async resolveAdmissionContent(
     content: readonly ThreadUserContent[],
@@ -447,7 +459,17 @@ export class ThreadResourceOps {
     threadId: ThreadId,
     resources: readonly ThreadResourceReference[],
   ): Promise<void> {
-    const referenced = this.threadResourceReferences(threadId);
+    await this.discardCreatedResourcesAgainstReferences(
+      threadId,
+      resources,
+      this.threadResourceReferences(threadId),
+    );
+  }
+  async discardCreatedResourcesAgainstReferences(
+    threadId: ThreadId,
+    resources: readonly ThreadResourceReference[],
+    referenced: readonly ThreadResourceReference[],
+  ): Promise<void> {
     const unique = resources.filter((ref, index) => (
       resources.findIndex((candidate) => referencesSameResourceFile(candidate, ref)) === index
       && !referenced.some((candidate) => referencesSameResourceFile(candidate, ref))
@@ -461,6 +483,27 @@ export class ThreadResourceOps {
       (ref) => this.core.payloads.readContext(threadId, ref),
     );
   }
+}
+
+function resourceReferencesFromTurns(turns: readonly Turn[]): ThreadResourceReference[] {
+  return turns.flatMap((turn) => turn.items.flatMap(itemResourceReferences));
+}
+
+function contextReferencesFromTurns(turns: readonly Turn[]): ThreadContextPayloadReference[] {
+  return turns.flatMap((turn) => turn.items.flatMap(itemContextPayloadReferences));
+}
+
+function diagnosticsReferencesFromTurns(turns: readonly Turn[]): TurnDiagnosticsPayloadReference[] {
+  return turns.flatMap((turn) => (
+    turn.execution.diagnosticsRef ? [turn.execution.diagnosticsRef] : []
+  ));
+}
+
+function textOutputReferencesFromTurns(turns: readonly Turn[]): ThreadItemOutputReference[] {
+  return turns.flatMap((turn) => turn.items.flatMap((item) => [
+    ...('outputRef' in item && item.outputRef ? [item.outputRef] : []),
+    ...(item.type === 'contextEvidence' || item.type === 'contextCompaction' ? item.outputRefs : []),
+  ]));
 }
 
 function attachmentSourcesEqual(

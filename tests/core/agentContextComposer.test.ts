@@ -1,6 +1,6 @@
 import { describe, expect, spyOn, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import type { Api, Message, Model, TextContent } from '@earendil-works/pi-ai';
+import type { Api, AssistantMessage, Message, Model, TextContent } from '@earendil-works/pi-ai';
 import { encodeThreadContextPayload } from '../../src/core/agent/codec';
 import type { EffectiveThreadConfiguration } from '../../src/core/agent/configuration';
 import type {
@@ -623,6 +623,44 @@ describe('canonical context projection', () => {
     await steeringProjector.projectTurns([firstTurn]);
     const steeringMessage = await steeringProjector.projectUserItems(steeringItems, 0);
     expect(steeringMessage).toEqual(turnMessage);
+  });
+
+  test('keeps authored Subagent and image markers out of the assistant channel', async () => {
+    const payloads = new Map<string, ThreadContextPayload>();
+    const messages = await new CanonicalContextProjector(model, projectionResources(payloads)).projectTurns([
+      turn(1, [
+        userItem('user-1', 1_720_000_000_123, 'Research the pricing pages'),
+        agentItem('agent-1', 'Delegating.'),
+        subAgentActivityItem('activity-started', 'started'),
+        subAgentActivityItem('activity-completed', 'completed'),
+        imageViewItem('image-1'),
+      ], true),
+    ]);
+
+    for (const message of messages) {
+      expect(messageText(message)).not.toContain('[Subagent ');
+      expect(messageText(message)).not.toContain('[Viewed image:');
+    }
+    const assistant = messages.filter((message): message is AssistantMessage => message.role === 'assistant');
+    expect(assistant).toHaveLength(1);
+    expect(messageText(assistant[0]!)).toBe('Delegating.');
+  });
+
+  test('keeps a Subagent activity recorded mid-batch out of the provider message boundary', async () => {
+    const payloads = new Map<string, ThreadContextPayload>();
+    const messages = await new CanonicalContextProjector(model, projectionResources(payloads)).projectTurns([
+      turn(1, [
+        userItem('user-1', 1_720_000_000_123, 'Delegate both parts'),
+        dynamicToolItem('tool-1', 'file_read', 'first'),
+        subAgentActivityItem('activity-started', 'started'),
+        dynamicToolItem('tool-2', 'file_read', 'second'),
+      ], true),
+    ]);
+
+    const assistant = messages.filter((message): message is AssistantMessage => message.role === 'assistant');
+    expect(assistant).toHaveLength(1);
+    expect(assistant[0]!.content.filter((part) => part.type === 'toolCall')).toHaveLength(2);
+    expect(messages.filter((message) => message.role === 'toolResult')).toHaveLength(2);
   });
 
   test('projects inline Skill instructions but keeps isolated instructions out of the parent context', async () => {
@@ -1827,6 +1865,29 @@ function agentItem(id: string, text: string): ThreadItem {
     text,
     phase: 'final_answer',
     memoryCitation: null,
+  };
+}
+
+function subAgentActivityItem(id: string, kind: 'started' | 'completed'): ThreadItem {
+  return {
+    type: 'subAgentActivity',
+    id,
+    provenance: { originThreadId: rootThread(1).id, originTurnId: uuidV7(1_720_000_100_001), originItemId: id },
+    kind,
+    agentThreadId: 'child-thread',
+    agentTurnId: uuidV7(1_720_000_100_002),
+    agentPath: '/root/root-thread/child-thread',
+    error: null,
+    spawnItemId: null,
+  };
+}
+
+function imageViewItem(id: string): ThreadItem {
+  return {
+    type: 'imageView',
+    id,
+    provenance: { originThreadId: rootThread(1).id, originTurnId: uuidV7(1_720_000_100_001), originItemId: id },
+    path: '/workspace/screenshot.png',
   };
 }
 

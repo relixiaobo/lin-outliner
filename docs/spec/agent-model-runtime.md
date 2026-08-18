@@ -209,11 +209,20 @@ results retain their ordered text, JSON, and actual image content at the provide
 boundary. Each image is preceded by a stable identity marker derived from its alt text
 and canonical source filename or path, plus immutable snapshot MIME and byte length;
 images no longer degrade to filename-only text. Plans and context
-reset Items select context state rather than becoming user prose. Subagent activity
-and viewed images intentionally remain textual context because the model must know that
-it delegated work and observed an image; neither fact has an equivalent private native
-replay contract. The `[Subagent ...]` marker's imitation risk, including hallucinated
-delegation, is a separate follow-up rather than a reason to broaden the reasoning fix.
+reset Items select context state rather than becoming user prose. The assistant channel
+is a few-shot demonstration of the model's own prose, so a marker Tenon authors into it
+teaches the model to write more of the same: the former `[Subagent ...]` line was
+observed teaching a Thread to invent lifecycle kinds that do not exist and render a
+hallucinated delegation to its user. Subagent activity and viewed image Items therefore
+contribute no provider content, and because an Item that contributes no content must not
+act as a boundary either, they are skipped before the pending-user and tool flushes
+rather than closing an assistant message that a Subagent spawn recorded mid-batch. The
+model still learns what it delegated from the `agent`/`skill` tool call and result, and
+learns each terminal transition from the task notification, or for an isolated Skill from
+the awaited `skill` result; the Item itself exists for the parent-visible row. The one
+authored line that remains in this channel is the redacted-replay notice, which names the
+argument paths a completed tool call no longer replays and is required to stay atomic
+with that call rather than degrade to separate evidence.
 A compaction serializes its lossy summary, uses
 its validated reducer checkpoint to restore complete Skill/Role catalogs, inline Skill
 instructions, user view, Thread state, file/Node observations, and optional durable
@@ -357,8 +366,9 @@ non-Responses adapters do not use this wrapper.
 An execution or streamed Item is recorded with `item/started`, optional typed deltas,
 and one terminal `item/completed`. Initial evidence and user facts are complete inside
 the atomic `turn/started` event. Subagent activity already queued while the Thread was
-idle is admitted before that evidence and the trailing user message, so it remains prior
-assistant history without breaking the active user boundary. Later steering evidence and
+idle is admitted before that evidence and the trailing user message, so it settles into
+prior canonical history without breaking the active user boundary; it contributes no
+provider content of its own once there. Later steering evidence and
 input use `items/completed`. Neither path synthesizes a streaming lifecycle.
 The recorder applies every delta to its current decoded Item before the next provider
 event can observe it. Core may coalesce adjacent string deltas for the same Thread,
@@ -841,15 +851,24 @@ Each tool execution diagnostic records its admission disposition, canonical iden
 and schema digest when one exists. Assistant responses and tool observations pass the
 same Secretlint-backed, high-confidence redaction policy before diagnostics persistence;
 structured fields require both a credential name and a credential-candidate string, while
-ambiguous values and scanner failures pass unchanged. Raw recognized credentials and host
-credentials are not diagnostic history.
+ambiguous values pass unchanged. Direct scanner failures retain the existing boundary
+behavior: durable values fail open, while diagnostic copies are omitted. An off-main
+durable worker rejection instead preserves the traversed JSON container and non-string
+scalar structure, replaces every pending string with `[redacted]`, and emits one fixed
+content-free warning. Raw recognized credentials and host credentials are not diagnostic
+history.
 Canonical-message snapshots and post-adapter request fragments are redacted only in the
 diagnostic copy immediately before persistence. Serialized function-call arguments are
 scanned only at their outer adapter boundary and nested JSON strings are left intact.
 Each provider copy has a 64,000-character scan budget; text beyond it is replaced only in
-diagnostics, scanner work yields cooperatively, and an unexpected whole-copy failure
-stores a typed omission marker. The live provider request and the raw normalized value
-used for its fingerprint remain unchanged.
+diagnostics. The ordered budget is spent before one batched scan; sufficiently large
+batches run the same whole-string scanner on the bounded Node worker pool, while small
+batches run directly exactly once. A pooled request starts its five-second watchdog only
+after leaving the queue for a new or idle worker; startup timeout releases capacity and
+a late worker is terminated. A diagnostic worker error or watchdog timeout terminates
+that worker and stores a typed whole-copy omission marker without a main-thread retry.
+No chunk boundary can change a credential match. The live provider request and the raw
+normalized value used for its fingerprint remain unchanged.
 If diagnostic preparation or provenance alignment itself fails, the collector is
 disabled for that Turn and `diagnosticsRef` remains null; provider transport, event
 normalization, and the Turn continue.
@@ -930,6 +949,11 @@ usage.
 Fresh projection reducers are constructed at every provider boundary so environment,
 view, and additional-context deltas are replayed from canonical state. They share
 Turn-scoped immutable payload read caches for context payloads and full tool outputs,
-each keyed by the complete typed reference. Successful content-addressed reads therefore
-hit storage once per Turn, while missing or failed reads are not negatively cached and
-can become available after a new canonical write.
+each keyed by the complete typed reference. Every provider boundary records the context
+and output keys actually visited by freezing and projection, including recursive
+inherited-context reads; the freeze contributes all active frozen output keys even when
+projection publication fails. When the boundary ends, successful cached reads absent
+from those active sets are evicted. A payload that remains reachable therefore hits
+storage once per Turn, while compaction releases context and output payloads the provider
+can no longer reach; a later re-entry reads and verifies them again. Missing or failed
+reads are not negatively cached and can become available after a new canonical write.

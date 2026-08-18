@@ -1279,3 +1279,61 @@ that one is about doubles the compiler stopped checking, this one is about
 doubles the compiler still accepts and that lie anyway. It also earns a review
 habit — when a finding implies "the tests should have caught this", diff the
 double against the real handler before believing the tests.
+
+## Moving work off-thread makes a dormant error boundary load-bearing
+
+`agent-tool-call-path` PR 3 (#557) moved the durable secret scan from a
+cooperative main-thread scanner into a worker pool. The scan's caller already
+had `try { … } catch { return { value, redactedPaths: [] } }` — a fail-open
+boundary that had been in the file for months and read as deliberate policy. It
+was, in practice, dead code: the only `throw`s reachable inside the durable path
+were encoded-JSON helpers that were caught locally, so the outer `catch` had
+never fired. The worker gave it three live routes at once — startup failure, a
+crash, and the new watchdog — and on any of them a tool call's durable arguments
+and results would have been persisted **unredacted**, silently, where the
+main-thread path had always redacted at the cost of a UI hitch. The off-thread
+move was measured, reviewed, and correct on its own terms; the regression was
+entirely in a handler nobody had touched. **When an operation crosses a
+process or thread boundary, re-audit every error boundary it passes through: the
+failure modes are new, the handlers are old, and a handler written for a failure
+that could not happen encodes no policy at all — it just picks whichever
+direction was easy to type.** The question to ask at the seam is not "is this
+`catch` correct?" but "what does this `catch` do now that it can actually fire,
+and is that the trade I want?" The answer here was to fail *closed* on the
+durable path (structure preserved, every pending string `[redacted]`, one fixed
+content-free warning) while diagnostics kept its whole-payload omission marker —
+and to move the watchdog from enqueue to dispatch, so queue pressure could not
+trigger the new boundary on its own. This is A12 read in the other direction:
+A12 says put fail-closed `throw`s at write boundaries and let the user path
+degrade, and this is the case where a write boundary had been quietly degrading
+because its `throw` was unreachable.
+
+## The assistant channel is a few-shot demonstration, not a place to write notes
+
+`subagent-marker-assistant-channel` (#561). `ContextProjector` had, for months,
+pushed a `[Subagent started: <path> (<id>)]` line into the *assistant* content it
+replays to the model — a status note, obviously informational, addressed to
+nobody. In a `main` dev run a root Thread then streamed
+`[Subagent message sent: …][Subagent finished: …]` to its user as ordinary prose.
+Those were real `agentMessage` deltas: the model wrote them, and neither `kind`
+exists in the protocol. It had not copied our text, it had learned the *shape*
+from three genuine markers seconds earlier and continued the pattern — a
+hallucinated delegation rendered to a human. **Anything the runtime authors into
+the assistant channel is a worked example of what to write next, because that
+channel is the model's own voice being shown back to it.** A fact the model needs
+belongs in a channel it cannot mistake for its prose: the tool call and its
+result, a tool-result message, a user-role observation. Ask of every authored
+string not "is this accurate?" but "am I willing to see the model produce more
+lines like it?" The one authored line we kept — the redacted-replay notice —
+earns its place by having to stay atomic with the tool call it explains, and that
+exception is named in the spec rather than left for the next reader to
+rediscover.
+
+The second-order rule, found at the gate: **an Item that contributes no content
+must not act as a boundary either.** The first fix left the two Item types in the
+projection switch, below the tool flush, so they emitted nothing but still closed
+a provider assistant message — and `SubagentCollaboration` records a child's
+`started` activity *between* the two `agent` calls of one batch, so a single
+batch replayed as two assistant messages and lost that much cached prefix. "Emits
+no content" and "has no effect" are different claims; in a projector that
+batches, position relative to the flushes is the effect.

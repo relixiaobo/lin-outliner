@@ -38,6 +38,10 @@ import type { ProjectionIndex } from '../capabilities/agentNodeToolTypes';
 /** The node tools whose results say something about a node's current state. */
 const BELIEF_BEARING_TOOLS = new Set(['node_read', 'node_search', 'node_edit', 'node_create']);
 
+export function isBeliefBearingTool(tool: string): boolean {
+  return BELIEF_BEARING_TOOLS.has(tool);
+}
+
 /**
  * Which function produced the token, and therefore which one must reproduce it.
  * `outline` is `editableOutlineRevision`; `updatedAt` is the raw epoch stamp.
@@ -85,7 +89,7 @@ export function beliefsFromToolResult(
   index: ProjectionIndex | null,
   observedAt: number,
 ): readonly DocumentBelief[] {
-  if (!BELIEF_BEARING_TOOLS.has(tool)) return [];
+  if (!isBeliefBearingTool(tool)) return [];
   const data = (result as { data?: unknown } | null)?.data;
   if (!isRecord(data)) return [];
   const beliefs: DocumentBelief[] = [];

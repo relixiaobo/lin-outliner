@@ -4,6 +4,7 @@ import {
   driftedNodes,
   DocumentBeliefSet,
 } from '../../src/main/agent/context/DocumentBeliefs';
+import { ThreadDocumentBeliefs } from '../../src/main/agent/context/ThreadDocumentBeliefs';
 import { indexProjection, revisionOf } from '../../src/main/agent/capabilities/agentNodeToolProjection';
 import { editableOutlineRevision } from '../../src/main/agent/capabilities/agentNodeToolRead';
 import { TRASH_ID, type DocumentProjection, type NodeProjection } from '../../src/core/types';
@@ -25,6 +26,26 @@ const PLAN = '019fb2da-0000-7000-8000-000000000002';
  * agree with it.
  */
 describe('document beliefs', () => {
+  test('does not index the document for a tool that cannot express beliefs', () => {
+    let projectionReads = 0;
+    const projection = new Proxy(documentWith([]), {
+      get(target, property, receiver) {
+        if (property === 'nodes') projectionReads += 1;
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    const beliefs = new ThreadDocumentBeliefs(() => 1, async () => []);
+
+    beliefs.observe(
+      '019fb2da-0000-7000-8000-00000000000a',
+      'bash',
+      { ok: true, data: { items: [] } },
+      projection,
+    );
+
+    expect(projectionReads).toBe(0);
+  });
+
   test('a belief compares against the function that produced it', () => {
     const projection = documentWith([textNode(PRICING, 'Enterprise ¥3,900/seat')]);
     const index = indexProjection(projection);
