@@ -136,17 +136,22 @@ PR 2 builds on PR 1 but PR 1 is fully shippable and useful alone.
   namespaced typed lines under the owner, in the saved-search rule-line style:
   `%%view-sort%%` (field + direction), `%%view-filter%%` (field + operator +
   logic + values), `%%view-group%%` (field), and `%%view-display%%` (field +
-  label / width / visibility / order). Emit them at every read depth, including
-  depth 0, matching saved-search config visibility without consuming document
-  child pagination. A representative owner carrying all four config kinds adds
-  503 UTF-8 bytes (16 config lines), small enough to keep that parity instead of
-  making configuration visibility depend on read depth.
+  label / width / visibility / order). Emit them for each requested read root at
+  every requested depth, including depth 0, without consuming document child
+  pagination. Do not recursively emit configuration for descendant owners;
+  callers read a descendant as a root when they need its config. A representative
+  owner carrying all four config kinds adds 503 UTF-8 bytes (16 config lines),
+  which remains bounded per requested root instead of multiplying across a deep
+  content read.
 - **Write.** `node_create` applies explicitly supplied config to a new owner;
   `node_edit` patches the complete editable config and routes to the existing
   commands (`add_sort_rule`, `update_sort_rule`, `remove_sort_rule`,
   `clear_sort_rules`, filter equivalents, `set_group_field`,
   `add_display_field`, `update_display_field`, `remove_display_field`). No new
-  core commands.
+  core commands. Custom fields accept either a field-definition reference or an
+  active field-entry id already exposed by an annotated `Field::` line. Display
+  writes preserve unexposed placement metadata and Core-assigned order defaults;
+  width and order use the renderer's integer bounds.
 - **Teach.** Per-view config guidance; note that table columns are hidden, not
   removed, matching the header's Hide-only affordance in the Table View spec.
 - **Tests.** Config-line round-trip per rule type; edit paths assert the

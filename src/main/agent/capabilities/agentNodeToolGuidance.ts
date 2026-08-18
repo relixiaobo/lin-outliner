@@ -14,7 +14,7 @@ export const VIEW_MODE_GUIDANCE = [
   'Do not represent a document table as space-aligned text or a Markdown table inside a code block.',
   'When creating a table owner and its rows in one outline, the rows\' Field:: values initialize the visible columns.',
   'When an existing owner line contains %%view:table%%, it is already a table the user sees; add rows as child records and store their cells as Field:: values instead of restructuring it.',
-  'New Field:: values added while the owner remains in table mode do not automatically become visible columns; add a %%view-display%% configuration line for each new column that should be visible.',
+  'New Field:: values added while the owner remains in table mode do not automatically become visible columns; call node_read on a row when needed, then add a %%view-display%% configuration line using the field definition reference or the annotated Field:: line\'s field-entry id.',
   'Leave small inline enumerations as ordinary lists. Agent-settable view modes are list and table.',
 ].join(' ');
 

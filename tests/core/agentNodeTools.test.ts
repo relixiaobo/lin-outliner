@@ -105,9 +105,11 @@ function hostFor(core: Core, overrides: Partial<OutlinerToolHost> = {}): Outline
       if (command === 'update_display_field') return core.updateDisplayField(String(args.displayFieldId), {
         field: nullableString(args.field),
         visible: args.visible === undefined ? undefined : Boolean(args.visible),
-        width: args.width === undefined ? undefined : nullableNumber(args.width),
-        order: args.order === undefined ? undefined : nullableNumber(args.order),
-        label: args.label === undefined ? undefined : nullableString(args.label),
+        width: nullableNumber(args.width),
+        order: nullableNumber(args.order),
+        label: nullableString(args.label),
+        placement: displayPlacement(args.placement),
+        move: args.move === 'left' || args.move === 'right' ? args.move : undefined,
       });
       if (command === 'remove_display_field') return core.removeDisplayField(String(args.displayFieldId));
       if (command === 'undo') return core.operationHistory({ action: 'undo', origin: meta.origin === 'agent' ? 'agent' : 'all' });
@@ -129,6 +131,11 @@ function nullableNumber(value: unknown): number | null {
   if (value === null || value === undefined) return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function displayPlacement(value: unknown) {
+  if (value === 'title' || value === 'body' || value === 'footer' || value === 'hidden') return value;
+  return null;
 }
 
 function arrayArg(value: unknown): string[] {
@@ -324,6 +331,7 @@ describe('agent node tools', () => {
     expect(nodeCreateOutlineDescription).toContain('Do not represent a document table');
     expect(nodeCreateOutlineDescription).toContain('do not automatically become visible columns');
     expect(nodeCreateOutlineDescription).toContain('add a %%view-display%% configuration line');
+    expect(nodeCreateOutlineDescription).toContain('field-entry id');
     expect(nodeCreateOutlineDescription).toContain('Use %%view-sort%%');
     expect(nodeCreateOutlineDescription).toContain('set visible:: false instead of deleting %%view-display%%');
     expect(`${nodeCreate.description}${nodeCreateOutlineDescription}`.split('Markdown inline syntax creates rich-text marks').length - 1).toBe(1);
@@ -1874,6 +1882,35 @@ describe('agent node tools', () => {
       })]);
   });
 
+  test('node_create preserves the auto-assigned order when patching a new display field', async () => {
+    const core = Core.new();
+    const statusFieldId = mustFocus(core.createFieldDefinition('Status', 'plain'));
+    const created = await executeTool<{ createdRootIds: string[] }>(core, 'node_create', {
+      parent_id: core.projection().todayId,
+      outline: [
+        '- Board',
+        '  - %%view-display%%',
+        `    - field:: ${nodeRef(core, statusFieldId)}`,
+        '    - visible:: false',
+      ].join('\n'),
+    });
+
+    expect(created.ok).toBe(true);
+    const state = core.state();
+    const ownerId = created.data!.createdRootIds[0]!;
+    const viewDef = state.nodes[ownerId]!.children
+      .map((childId) => state.nodes[childId])
+      .find((child) => child?.type === 'viewDef')!;
+    expect(viewDef.children.map((childId) => state.nodes[childId]!)).toEqual([
+      expect.objectContaining({
+        type: 'displayField',
+        displayField: statusFieldId,
+        displayVisible: false,
+        displayOrder: 0,
+      }),
+    ]);
+  });
+
   test('node_edit persists an ordinary table directive through set_view_mode', async () => {
     const core = Core.new();
     const ownerId = mustFocus(core.createNode(core.projection().todayId, null, 'Projects'));
@@ -2193,6 +2230,132 @@ describe('agent node tools', () => {
     expect(clearedView.groupField).toBeUndefined();
   });
 
+  test('node_edit reserves annotated display identities and preserves unexposed placement', async () => {
+    const core = Core.new();
+    const ownerId = mustFocus(core.createNode(core.projection().todayId, null, 'Board'));
+    const statusFieldId = mustFocus(core.createFieldDefinition('Status', 'plain'));
+    const statusDisplayId = mustFocus(core.addDisplayField(ownerId, statusFieldId));
+    core.updateDisplayField(statusDisplayId, {
+      label: 'Keep me',
+      width: 321,
+      visible: true,
+      order: 0,
+      placement: 'footer',
+    });
+    const read = await executeTool<{ items: Array<{ revision: string }> }>(core, 'node_read', {
+      node_id: ownerId,
+      depth: 0,
+    });
+
+    const edited = await executeTool(core, 'node_edit', {
+      node_id: ownerId,
+      old_string: '*',
+      expected_revision: read.data!.items[0]!.revision,
+      new_string: [
+        '- Board',
+        '  - %%view-display%%',
+        '    - field:: sys:done',
+        '    - visible:: true',
+        '    - order:: 0',
+        `  - %%node:${statusDisplayId}%% %%view-display%%`,
+        `    - field:: ${nodeRef(core, statusFieldId)}`,
+        '    - label:: Keep me',
+        '    - width:: 321',
+        '    - visible:: true',
+        '    - order:: 1',
+      ].join('\n'),
+    });
+
+    expect(edited.ok).toBe(true);
+    expect(core.state().nodes[statusDisplayId]).toMatchObject({
+      type: 'displayField',
+      displayField: statusFieldId,
+      displayLabel: 'Keep me',
+      displayWidth: 321,
+      displayVisible: true,
+      displayOrder: 1,
+      displayPlacement: 'footer',
+    });
+    const state = core.state();
+    const viewDef = state.nodes[ownerId]!.children
+      .map((childId) => state.nodes[childId])
+      .find((child) => child?.type === 'viewDef')!;
+    expect(viewDef.children.map((childId) => state.nodes[childId]!)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ displayField: 'sys:done', displayOrder: 0 }),
+      expect.objectContaining({ id: statusDisplayId, displayField: statusFieldId, displayOrder: 1 }),
+    ]));
+  });
+
+  test('node_read keeps view configuration on requested roots and round-trips owner and day fields', async () => {
+    const core = Core.new();
+    const ownerId = mustFocus(core.createNode(core.projection().todayId, null, 'Board'));
+    const childId = mustFocus(core.createNode(ownerId, null, 'Nested table'));
+    core.addSortRule(ownerId, 'sys:day', 'desc');
+    core.setGroupField(ownerId, 'sys:owner');
+    core.addDisplayField(ownerId, 'sys:owner');
+    core.addSortRule(childId, 'sys:refCount', 'asc');
+
+    const ownerRead = await executeRawTool<{ items: Array<{ outline?: string }> }>(core, 'node_read', {
+      node_id: ownerId,
+      depth: 1,
+    });
+    const visible = parseVisibleToolResult<{ data?: { outline?: string } }>(ownerRead.contentText);
+    expect(ownerRead.details.data!.items[0]!.outline).toContain('field:: sys:day');
+    expect(ownerRead.details.data!.items[0]!.outline).toContain('field:: sys:owner');
+    expect(ownerRead.details.data!.items[0]!.outline).not.toContain('field:: sys:refCount');
+    expect(visible.data!.outline).not.toContain('field:: sys:refCount');
+
+    const childRead = await executeTool<{ items: Array<{ outline?: string }> }>(core, 'node_read', {
+      node_id: childId,
+      depth: 0,
+    });
+    expect(childRead.data!.items[0]!.outline).toContain('field:: sys:refCount');
+
+    const renamed = await executeTool(core, 'node_edit', {
+      node_id: ownerId,
+      old_string: '- Board',
+      new_string: '- Planning board',
+    });
+    expect(renamed.ok).toBe(true);
+    const state = core.state();
+    const viewDef = state.nodes[ownerId]!.children
+      .map((storedId) => state.nodes[storedId])
+      .find((stored) => stored?.type === 'viewDef')!;
+    expect(viewDef.groupField).toBe('sys:owner');
+    expect(viewDef.children.map((storedId) => state.nodes[storedId]!)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'sortRule', sortField: 'sys:day', sortDirection: 'desc' }),
+      expect.objectContaining({ type: 'displayField', displayField: 'sys:owner' }),
+    ]));
+  });
+
+  test('view configuration accepts an annotated field entry id as a field definition handle', async () => {
+    const core = Core.new();
+    const ownerId = mustFocus(core.createNode(core.projection().todayId, null, 'Board'));
+    const rowId = mustFocus(core.createNode(ownerId, null, 'First row'));
+    const fieldEntryId = mustFocus(core.createInlineField(rowId, null, 'Status', 'plain'));
+    const fieldDefId = core.state().nodes[fieldEntryId]!.fieldDefId!;
+
+    const edited = await executeTool(core, 'node_edit', {
+      node_id: ownerId,
+      old_string: '- Board',
+      new_string: [
+        '- Board',
+        '  - %%view-display%%',
+        `    - field:: ${fieldEntryId}`,
+        '    - visible:: true',
+      ].join('\n'),
+    });
+
+    expect(edited.ok).toBe(true);
+    const state = core.state();
+    const viewDef = state.nodes[ownerId]!.children
+      .map((childId) => state.nodes[childId])
+      .find((child) => child?.type === 'viewDef')!;
+    expect(viewDef.children.map((childId) => state.nodes[childId]!)).toEqual([
+      expect.objectContaining({ type: 'displayField', displayField: fieldDefId }),
+    ]);
+  });
+
   test('node_read degrades malformed persisted view configuration and a complete edit heals it', async () => {
     const legacy = new LoroOutlinerDocument();
     legacy.createNodeWithId(WORKSPACE_ID, undefined, undefined, undefined, (node) => {
@@ -2273,13 +2436,29 @@ describe('agent node tools', () => {
         '  - STRING_MATCH',
         '    - value:: notes',
         '  - %%view-sort%%',
-        '    - field:: sys:updatedAt',
+        '    - field:: Status',
         '    - direction:: desc',
       ].join('\n'),
     });
     expect(temporarySearch.ok).toBe(false);
     expect(temporarySearch.error?.code).toBe('invalid_view_config');
     expect(temporarySearch.error?.message).toContain('do not persist view configuration');
+
+    const batchSearch = await executeTool(core, 'node_search', {
+      count: true,
+      queries: [{
+        name: 'recent',
+        query: [
+          '- STRING_MATCH',
+          '  - value:: notes',
+          '  - %%view-display%%',
+          '    - field:: Missing',
+        ].join('\n'),
+      }],
+    });
+    expect(batchSearch.ok).toBe(false);
+    expect(batchSearch.error?.code).toBe('invalid_view_config');
+    expect(batchSearch.error?.message).toContain('do not persist view configuration');
 
     const headerMetadata = await executeTool(core, 'node_edit', {
       node_id: ownerId,
@@ -2290,6 +2469,63 @@ describe('agent node tools', () => {
     expect(headerMetadata.error?.code).toBe('invalid_view_config');
     expect(headerMetadata.error?.message).toContain('header must not include');
     expect(core.state().nodes[ownerId]!.updatedAt).toBe(before);
+  });
+
+  test('view configuration rejects invalid owners and display numbers before mutation', async () => {
+    const core = Core.new();
+    const today = core.projection().todayId;
+    const ownerId = mustFocus(core.createNode(today, null, 'Board'));
+    const initialOwnerRevision = core.state().nodes[ownerId]!.updatedAt;
+
+    for (const [property, value, message] of [
+      ['width', '-100', 'whole number between 112 and 520'],
+      ['width', '0x80', 'whole number between 112 and 520'],
+      ['order', '-5.5', 'whole number at least 0'],
+    ] as const) {
+      const invalid = await executeTool(core, 'node_edit', {
+        node_id: ownerId,
+        old_string: '- Board',
+        new_string: [
+          '- Board',
+          '  - %%view-display%%',
+          '    - field:: sys:name',
+          `    - ${property}:: ${value}`,
+        ].join('\n'),
+      });
+      expect(invalid.ok).toBe(false);
+      expect(invalid.error?.code).toBe('invalid_view_config');
+      expect(invalid.error?.message).toContain(message);
+      expect(core.state().nodes[ownerId]!.updatedAt).toBe(initialOwnerRevision);
+    }
+
+    const childCount = core.state().nodes[today]!.children.length;
+    const codeBlock = await executeTool(core, 'node_create', {
+      parent_id: today,
+      outline: [
+        '- ```ts',
+        'const value = 1;',
+        '```',
+        '  - %%view-sort%%',
+        '    - field:: sys:name',
+      ].join('\n'),
+    });
+    expect(codeBlock.ok).toBe(false);
+    expect(codeBlock.error?.code).toBe('invalid_view_config');
+    expect(codeBlock.error?.message).toContain('not code blocks or references');
+
+    const targetId = mustFocus(core.createNode(today, null, 'Target'));
+    const reference = await executeTool(core, 'node_create', {
+      parent_id: today,
+      outline: [
+        `- ${nodeRef(core, targetId)}`,
+        '  - %%view-sort%%',
+        '    - field:: sys:name',
+      ].join('\n'),
+    });
+    expect(reference.ok).toBe(false);
+    expect(reference.error?.code).toBe('invalid_view_config');
+    expect(reference.error?.message).toContain('not code blocks or references');
+    expect(core.state().nodes[today]!.children).toHaveLength(childCount + 1);
   });
 
   test('node_create preview validates canonical saved search rules', async () => {

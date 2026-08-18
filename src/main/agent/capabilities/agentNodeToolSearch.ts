@@ -319,9 +319,9 @@ export function resolveSearchQueryFragment(index: ProjectionIndex, outline: stri
       instructions: 'Use one query rule/group outline fragment with "- " lines and 2-space indentation.',
     };
   }
+  if (documentHasOutlineViewConfig(parsed.document)) return temporarySearchViewConfigIssue();
   const viewConfigValidation = validateViewConfigs(index, parsed.document);
   if (viewConfigValidation) return viewConfigValidation;
-  if (documentHasOutlineViewConfig(parsed.document)) return temporarySearchViewConfigIssue();
   if (parsed.document.fields.length > 0 || parsed.document.roots.length !== 1) {
     return {
       code: 'ambiguous_search',
@@ -445,9 +445,9 @@ function parseSearchOutline(index: ProjectionIndex, outline: string): ResolvedSe
       instructions: 'Fix the search outline so every non-empty line uses "- " and 2-space indentation.',
     };
   }
+  if (documentHasOutlineViewConfig(parsed.document)) return temporarySearchViewConfigIssue();
   const viewConfigValidation = validateViewConfigs(index, parsed.document);
   if (viewConfigValidation) return viewConfigValidation;
-  if (documentHasOutlineViewConfig(parsed.document)) return temporarySearchViewConfigIssue();
   if (parsed.document.roots.length !== 1) {
     return {
       code: 'ambiguous_search',

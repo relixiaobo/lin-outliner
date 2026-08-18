@@ -70,10 +70,13 @@ unrendered mode fails as `view_mode_not_available`, while preserving the same
 already-stored mode on the edited root is allowed so unrelated edits can
 proceed. An unknown mode fails as `invalid_view_mode` and names the allowed set.
 
-Persisted view configuration serializes directly under its owner at every read
-depth, including depth 0. The typed outline lines share the saved-search
-rule/operand shape but use a view-specific namespace so they cannot be mistaken
-for document children or query rules:
+Persisted view configuration serializes directly under each requested read root
+at every requested depth, including depth 0. Configuration for descendant owners
+is omitted from a recursive read to keep the bounded content traversal from
+multiplying view metadata; reading a descendant as a root exposes its config.
+The typed outline lines share the saved-search rule/operand shape but use a
+view-specific namespace so they cannot be mistaken for document children or
+query rules:
 
 ```text
 - %%view:table%% Work
@@ -99,23 +102,31 @@ for document children or query rules:
 `%%view-filter%%` accepts `field::`, an existing filter `operator::`,
 `logic:: any|all`, and repeated `value::` lines; at most one
 `%%view-group%%` supplies its `field::`; and each `%%view-display%%` supplies a
-field plus optional view-local label, finite width, visibility, and finite
-order. Custom fields use field-definition Node references; supported system
-fields use their `sys:*` identifiers. A configuration header accepts only its
+field plus optional view-local label, width, visibility, and order. Width is a
+whole number from 112 through 520, and order is a non-negative
+whole number. Custom fields use field-definition Node references or an active
+field-entry id obtained from an annotated `Field::` line; supported system fields
+are `sys:name`, `sys:createdAt`, `sys:updatedAt`, `sys:day`, `sys:done`,
+`sys:doneAt`, `sys:tags`, `sys:refCount`, and `sys:owner`. A configuration header accepts only its
 typed directive and the optional Node annotation emitted by `node_read`; tags,
 checkbox state, descriptions, and other Node directives fail validation rather
 than being discarded. Annotated `node_read` output puts the stored
 sort/filter/display Node id on its typed line; group has no id because it is a
 `viewDef` property.
 
-`node_create` applies typed configuration after creating the owner and before
+Only ordinary nodes and saved searches own view configuration; code blocks and
+references reject it before mutation. `node_create` applies typed configuration after creating the owner and before
 entering its requested mode. `node_edit` treats the configuration present in a
 complete editable outline as the desired config and reconciles it through the
 existing add/update/remove/clear commands. Partial string replacements retain
 untouched lines naturally; a whole-outline replacement must retain any config
 that should survive. Semantic no-ops preserve the existing config Nodes, and
-annotated sort/filter lines keep their Node identity across deletions and
-same-order edits when the stored order permits it.
+annotated sort/filter/display lines reserve their matching Nodes before
+positional reconciliation. Sort/filter identity survives same-order edits when
+the stored order permits it; display identity also survives insertion because
+explicit display order can change independently. Display reconciliation
+preserves placement metadata that this outline grammar does not expose, and a
+new display field retains the order assigned by Core when `order::` is omitted.
 Unknown directives, unsupported operands, invalid field references, and
 ambiguous duplicates fail before mutation as `invalid_view_config` with the
 recovery grammar. Inspection skips malformed persisted config entries rather

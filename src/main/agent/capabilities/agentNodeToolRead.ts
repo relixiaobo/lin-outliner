@@ -134,7 +134,7 @@ export function serializeOutline(
   childLimit: number,
   includeDeleted: boolean,
 ): string {
-  return serializeOutlineNode(index, nodeId, depth, 0, childOffset, childLimit, includeDeleted).join('\n');
+  return serializeOutlineNode(index, nodeId, depth, 0, childOffset, childLimit, includeDeleted, true).join('\n');
 }
 
 export function serializeAnnotatedOutlines(
@@ -157,7 +157,7 @@ export function serializeAnnotatedOutline(
   childLimit: number,
   includeDeleted: boolean,
 ): string {
-  return serializeAnnotatedOutlineNode(index, nodeId, depth, 0, childOffset, childLimit, includeDeleted).join('\n');
+  return serializeAnnotatedOutlineNode(index, nodeId, depth, 0, childOffset, childLimit, includeDeleted, true).join('\n');
 }
 
 export function serializeEditableNodeOutline(index: ProjectionIndex, nodeId: string): string {
@@ -177,6 +177,7 @@ function serializeAnnotatedOutlineNode(
   childOffset: number,
   childLimit: number,
   includeDeleted: boolean,
+  includeViewConfig: boolean,
 ): string[] {
   const node = requiredNode(index, nodeId);
   const indent = '  '.repeat(level);
@@ -185,7 +186,7 @@ function serializeAnnotatedOutlineNode(
     if (depth <= 0) return lines;
     const childIds = normalChildIds(index, nodeId, includeDeleted).slice(childOffset, childOffset + childLimit);
     for (const childId of childIds) {
-      lines.push(...serializeAnnotatedOutlineNode(index, childId, depth - 1, level + 1, 0, childLimit, includeDeleted));
+      lines.push(...serializeAnnotatedOutlineNode(index, childId, depth - 1, level + 1, 0, childLimit, includeDeleted, false));
     }
     return lines;
   }
@@ -202,12 +203,14 @@ function serializeAnnotatedOutlineNode(
   if (node.type === 'search') {
     lines.push(...searchQueryOutlineLines(index, node, level + 1));
   }
-  lines.push(...viewConfigOutlineLines(index, node, level + 1, { annotations: true }));
+  if (includeViewConfig) {
+    lines.push(...viewConfigOutlineLines(index, node, level + 1, { annotations: true }));
+  }
   if (node.type === 'search') return lines;
   if (depth <= 0) return lines;
   const childIds = normalChildIds(index, nodeId, includeDeleted).slice(childOffset, childOffset + childLimit);
   for (const childId of childIds) {
-    lines.push(...serializeAnnotatedOutlineNode(index, childId, depth - 1, level + 1, 0, childLimit, includeDeleted));
+    lines.push(...serializeAnnotatedOutlineNode(index, childId, depth - 1, level + 1, 0, childLimit, includeDeleted, false));
   }
   return lines;
 }
@@ -233,6 +236,7 @@ function serializeOutlineNode(
   childOffset: number,
   childLimit: number,
   includeDeleted: boolean,
+  includeViewConfig: boolean,
 ): string[] {
   const node = requiredNode(index, nodeId);
   const indent = '  '.repeat(level);
@@ -241,7 +245,7 @@ function serializeOutlineNode(
     if (depth <= 0) return lines;
     const childIds = normalChildIds(index, nodeId, includeDeleted).slice(childOffset, childOffset + childLimit);
     for (const childId of childIds) {
-      lines.push(...serializeOutlineNode(index, childId, depth - 1, level + 1, 0, childLimit, includeDeleted));
+      lines.push(...serializeOutlineNode(index, childId, depth - 1, level + 1, 0, childLimit, includeDeleted, false));
     }
     return lines;
   }
@@ -260,12 +264,12 @@ function serializeOutlineNode(
   if (node.type === 'search') {
     lines.push(...searchQueryOutlineLines(index, node, level + 1));
   }
-  lines.push(...viewConfigOutlineLines(index, node, level + 1));
+  if (includeViewConfig) lines.push(...viewConfigOutlineLines(index, node, level + 1));
   if (node.type === 'search') return lines;
   if (depth <= 0) return lines;
   const childIds = normalChildIds(index, nodeId, includeDeleted).slice(childOffset, childOffset + childLimit);
   for (const childId of childIds) {
-    lines.push(...serializeOutlineNode(index, childId, depth - 1, level + 1, 0, childLimit, includeDeleted));
+    lines.push(...serializeOutlineNode(index, childId, depth - 1, level + 1, 0, childLimit, includeDeleted, false));
   }
   return lines;
 }

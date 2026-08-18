@@ -1,5 +1,6 @@
 import { formatNodeReferenceMarker } from '../../../core/referenceMarkup';
 import { escapeSemanticText } from '../../../core/semanticIngest/inlineScanner';
+import { NAME_FIELD, SYSTEM_FIELD_CHOICES } from '../../../core/systemFields';
 import type {
   DisplayFieldNode,
   FilterOperator,
@@ -20,16 +21,10 @@ import type {
 } from './agentOutlineParser';
 import { isInTrash, nodeTitle } from './agentNodeToolProjection';
 import type { NodeToolIssue, ProjectionIndex } from './agentNodeToolTypes';
+import { firstDuplicate } from './agentNodeToolUtils';
 
-const VIEW_SYSTEM_FIELDS = new Set<ViewFieldRef>([
-  'sys:name',
-  'sys:createdAt',
-  'sys:updatedAt',
-  'sys:done',
-  'sys:doneAt',
-  'sys:tags',
-  'sys:refCount',
-]);
+const VIEW_SYSTEM_FIELD_IDS = [NAME_FIELD, ...SYSTEM_FIELD_CHOICES.map((choice) => choice.id)];
+const VIEW_SYSTEM_FIELDS = new Set<ViewFieldRef>(VIEW_SYSTEM_FIELD_IDS);
 
 const FILTER_OPERATORS = new Set<FilterOperator>([
   'is',
@@ -57,8 +52,9 @@ export const VIEW_CONFIG_OUTLINE_GUIDANCE = [
   'Use %%view-sort%% with field:: and direction:: asc|desc.',
   'Use %%view-filter%% with field::, operator::, logic:: any|all, and zero or more value:: lines.',
   'Use at most one %%view-group%% with field::.',
-  'Use %%view-display%% with field:: plus optional label::, width::, visible:: true|false, and order::.',
-  'Custom fields use [[node:Field name^field-definition-id]]; supported system fields use sys:name, sys:createdAt, sys:updatedAt, sys:done, sys:doneAt, sys:tags, or sys:refCount.',
+  'Use %%view-display%% with field:: plus optional label::, width:: 112-520, visible:: true|false, and non-negative whole-number order::.',
+  'Custom fields use [[node:Field name^field-definition-id]]; when only an annotated Field:: line is available, use its field-entry id as the field:: value without the %%node:...%% wrapper.',
+  `Supported system fields use ${VIEW_SYSTEM_FIELD_IDS.join(', ')}.`,
 ].join(' ');
 
 export interface ResolvedViewSortRule {
@@ -158,18 +154,20 @@ export function resolveViewConfig(
   owner: OutlineNode,
 ): ResolvedViewConfig | NodeToolIssue {
   const lines = owner.viewConfig ?? [];
-  const unknown = lines.find((line) => !line.kind);
-  if (unknown) {
-    return viewConfigIssue(`Unknown view configuration directive: ${unknown.directive}`);
+  if (lines.length > 0 && (owner.codeBlock || owner.referenceTargetId)) {
+    return viewConfigIssue('View configuration is supported only on ordinary nodes and saved searches, not code blocks or references.');
   }
   for (const line of lines) {
+    if (!line.kind) {
+      return viewConfigIssue(`Unknown view configuration directive: ${line.directive}`);
+    }
     if (line.hasUnsupportedHeaderSyntax) {
       return viewConfigIssue(`${line.directive} header must not include tags, checkbox state, descriptions, search/view directives, references, or code-block syntax.`);
     }
     if (line.children.length > 0) {
       return viewConfigIssue(`${line.directive} accepts field lines only; nested rule nodes are not allowed.`);
     }
-    const allowed = line.kind ? CONFIG_FIELD_NAMES[line.kind] : new Set<string>();
+    const allowed = CONFIG_FIELD_NAMES[line.kind];
     const unsupported = line.fields.find((field) => !allowed.has(normalizedFieldName(field)));
     if (unsupported) {
       return viewConfigIssue(`${line.directive} does not support ${unsupported.name.trim()}::.`);
@@ -180,7 +178,17 @@ export function resolveViewConfig(
     if (annotatedOperand) {
       return viewConfigIssue(`${line.directive} operand lines must not carry %%node:id%% markers.`);
     }
-    const annotationIssue = validateConfigAnnotation(index, owner, line);
+    if (line.kind === 'group' && line.nodeId) {
+      return viewConfigIssue('%%view-group%% stores on the view owner and must not carry a %%node:id%% marker.');
+    }
+    const expectedType = line.kind === 'sort'
+      ? 'sortRule'
+      : line.kind === 'filter'
+        ? 'filterRule'
+        : 'displayField';
+    const annotationIssue = line.kind === 'group'
+      ? null
+      : validateConfigAnnotation(index, owner, line, expectedType);
     if (annotationIssue) return annotationIssue;
   }
 
@@ -245,9 +253,9 @@ export function resolveViewConfig(
       if (visible.value !== undefined && visible.value !== 'true' && visible.value !== 'false') {
         return viewConfigIssue('%%view-display%% visible:: must be true or false.');
       }
-      const width = optionalNumber(line, 'width', {});
+      const width = optionalNumber(line, 'width', { integer: true, min: 112, max: 520 });
       if ('error' in width) return width;
-      const order = optionalNumber(line, 'order', {});
+      const order = optionalNumber(line, 'order', { integer: true, min: 0 });
       if ('error' in order) return order;
       const label = optionalScalar(line, 'label', { allowClear: true });
       if ('error' in label) return label;
@@ -274,21 +282,12 @@ function validateConfigAnnotation(
   index: ProjectionIndex,
   owner: OutlineNode,
   line: OutlineViewConfigLine,
+  expectedType: 'sortRule' | 'filterRule' | 'displayField',
 ): NodeToolIssue | null {
   if (!line.nodeId) return null;
-  if (line.kind === 'group') {
-    return viewConfigIssue('%%view-group%% stores on the view owner and must not carry a %%node:id%% marker.');
-  }
-  const expectedType = line.kind === 'sort'
-    ? 'sortRule'
-    : line.kind === 'filter'
-      ? 'filterRule'
-      : line.kind === 'display'
-        ? 'displayField'
-        : undefined;
   const stored = index.nodes.get(line.nodeId);
-  if (!expectedType || stored?.type !== expectedType) {
-    return viewConfigIssue(`${line.directive} annotation ${line.nodeId} does not identify an existing ${expectedType ?? 'view configuration'} node.`);
+  if (stored?.type !== expectedType) {
+    return viewConfigIssue(`${line.directive} annotation ${line.nodeId} does not identify an existing ${expectedType} node.`);
   }
   const persistedOwner = owner.nodeId ? index.nodes.get(owner.nodeId) : undefined;
   const viewDef = findViewDef(index.nodes, persistedOwner);
@@ -307,11 +306,19 @@ function requiredViewField(
   if (!scalar.present || !scalar.value) return viewConfigIssue(`${line.directive} requires exactly one field:: value.`);
   const candidate = scalar.value.targetId ?? scalar.value.text.trim();
   if (VIEW_SYSTEM_FIELDS.has(candidate as ViewFieldRef)) return { value: candidate as ViewFieldRef };
-  const field = index.nodes.get(candidate);
-  if (!field || field.type !== 'fieldDef' || isInTrash(index, candidate)) {
+  const candidateNode = index.nodes.get(candidate);
+  const fieldDefId = candidateNode?.type === 'fieldEntry' ? candidateNode.fieldDefId : candidate;
+  if (candidateNode?.type === 'fieldEntry' && isInTrash(index, candidate)) {
+    return viewConfigIssue(`${line.directive} field:: must reference an active field definition, active field entry, or supported sys: field; received ${candidate || '(empty)'}.`);
+  }
+  if (fieldDefId && VIEW_SYSTEM_FIELDS.has(fieldDefId as ViewFieldRef)) {
+    return { value: fieldDefId as ViewFieldRef };
+  }
+  const field = fieldDefId ? index.nodes.get(fieldDefId) : undefined;
+  if (!field || field.type !== 'fieldDef' || isInTrash(index, field.id)) {
     return viewConfigIssue(`${line.directive} field:: must reference an active field definition or supported sys: field; received ${candidate || '(empty)'}.`);
   }
-  return { value: candidate };
+  return { value: field.id };
 }
 
 function optionalScalar(
@@ -335,18 +342,22 @@ function optionalNumber(
   const parsed = optionalScalar(line, name);
   if ('error' in parsed) return parsed;
   if (parsed.value === undefined) return {};
+  const decimal = /^-?(?:0|[1-9]\d*)(?:\.\d+)?$/u;
   const value = Number(parsed.value);
-  const invalid = !Number.isFinite(value)
+  const invalid = !decimal.test(parsed.value)
+    || !Number.isFinite(value)
     || (options.integer === true && !Number.isInteger(value))
     || (options.min !== undefined && value < options.min)
     || (options.max !== undefined && value > options.max);
   if (invalid) {
     const range = options.min !== undefined && options.max !== undefined
-      ? `${options.min}-${options.max}`
+      ? ` between ${options.min} and ${options.max}`
       : options.min !== undefined
-        ? `at least ${options.min}`
-        : 'finite';
-    return viewConfigIssue(`${line.directive} ${name}:: must be a ${options.integer ? 'whole number' : 'number'} ${range}.`);
+        ? ` at least ${options.min}`
+        : options.max !== undefined
+          ? ` no greater than ${options.max}`
+          : '';
+    return viewConfigIssue(`${line.directive} ${name}:: must be a ${options.integer ? 'whole number' : 'number'}${range}.`);
   }
   return { value };
 }
@@ -384,15 +395,6 @@ function repeatedValues(
 
 function normalizedFieldName(field: OutlineField): string {
   return field.name.trim().toLowerCase();
-}
-
-function firstDuplicate<T>(values: readonly T[]): T | undefined {
-  const seen = new Set<T>();
-  for (const value of values) {
-    if (seen.has(value)) return value;
-    seen.add(value);
-  }
-  return undefined;
 }
 
 function viewConfigIssue(error: string): NodeToolIssue {

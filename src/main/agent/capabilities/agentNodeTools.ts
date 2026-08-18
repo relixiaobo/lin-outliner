@@ -4136,7 +4136,8 @@ async function syncSortRules(
     await handleMutation(host, collector, 'clear_sort_rules', { nodeId });
     return;
   }
-  const matches = matchOrderedConfigNodes(existing, desired);
+  const matches = matchConfigNodes(existing, desired, { preserveExistingOrder: true })
+    .flatMap((match) => match ? [match] : []);
   const keptIds = new Set(matches.map((rule) => rule.id));
   for (let index = existing.length - 1; index >= 0; index -= 1) {
     const current = existing[index]!;
@@ -4176,7 +4177,8 @@ async function syncFilterRules(
     await handleMutation(host, collector, 'clear_filter_rules', { nodeId });
     return;
   }
-  const matches = matchOrderedConfigNodes(existing, desired);
+  const matches = matchConfigNodes(existing, desired, { preserveExistingOrder: true })
+    .flatMap((match) => match ? [match] : []);
   const keptIds = new Set(matches.map((rule) => rule.id));
   for (let index = existing.length - 1; index >= 0; index -= 1) {
     const current = existing[index]!;
@@ -4214,54 +4216,54 @@ async function syncFilterRules(
   }
 }
 
-function matchOrderedConfigNodes<T extends { id: string }>(
+function matchConfigNodes<T extends { id: string }, TDesired extends { nodeId?: string }>(
   existing: readonly T[],
-  desired: readonly { nodeId?: string }[],
-): T[] {
-  const maxMatches = Math.min(existing.length, desired.length);
-  const positional = existing.slice(0, maxMatches);
-  if (maxMatches === 0) return positional;
+  desired: readonly TDesired[],
+  options: {
+    sameValue?: (current: T, next: TDesired) => boolean;
+    preserveExistingOrder?: boolean;
+  } = {},
+): Array<T | undefined> {
+  const unused = new Set(existing.map((node) => node.id));
+  const byId = new Map(existing.map((node) => [node.id, node]));
+  const matches: Array<T | undefined> = Array.from({ length: desired.length });
 
-  const existingIndexById = new Map(existing.map((node, index) => [node.id, index]));
-  const constraints = desired.flatMap((item, desiredIndex) => {
-    if (!item.nodeId) return [];
-    const existingIndex = existingIndexById.get(item.nodeId);
-    return existingIndex === undefined ? [] : [{ desiredIndex, existingIndex }];
-  });
-  const minimumMatches = constraints.length > 0
-    ? constraints[constraints.length - 1]!.desiredIndex + 1
-    : maxMatches;
-  for (let matchCount = maxMatches; matchCount >= minimumMatches; matchCount -= 1) {
-    const matches = matchOrderedConfigPrefix(existing, constraints, matchCount);
-    if (matches) return matches;
+  for (const [desiredIndex, next] of desired.entries()) {
+    if (!next.nodeId) continue;
+    const annotated = byId.get(next.nodeId);
+    if (!annotated || !unused.has(annotated.id)) continue;
+    matches[desiredIndex] = annotated;
+    unused.delete(annotated.id);
   }
-  return positional;
-}
 
-function matchOrderedConfigPrefix<T extends { id: string }>(
-  existing: readonly T[],
-  constraints: readonly { desiredIndex: number; existingIndex: number }[],
-  matchCount: number,
-): T[] | null {
-  let previousDesiredIndex = -1;
-  let previousExistingIndex = -1;
-  for (const constraint of constraints) {
-    const desiredGap = constraint.desiredIndex - previousDesiredIndex;
-    const existingGap = constraint.existingIndex - previousExistingIndex;
-    if (constraint.desiredIndex >= matchCount || existingGap < desiredGap) return null;
-    previousDesiredIndex = constraint.desiredIndex;
-    previousExistingIndex = constraint.existingIndex;
+  for (const [desiredIndex, next] of desired.entries()) {
+    if (matches[desiredIndex] || next.nodeId) continue;
+    const sameValue = options.sameValue
+      ? existing.find((current) => unused.has(current.id) && options.sameValue!(current, next))
+      : undefined;
+    const positional = existing[desiredIndex];
+    const match = sameValue
+      ?? (positional && unused.has(positional.id) ? positional : undefined)
+      ?? existing.find((current) => unused.has(current.id));
+    if (!match) continue;
+    matches[desiredIndex] = match;
+    unused.delete(match.id);
   }
-  if (existing.length - previousExistingIndex < matchCount - previousDesiredIndex) return null;
 
-  const constraintByDesiredIndex = new Map(
-    constraints.map(({ desiredIndex, existingIndex }) => [desiredIndex, existingIndex]),
-  );
-  const matches: T[] = [];
-  let existingIndex = -1;
-  for (let desiredIndex = 0; desiredIndex < matchCount; desiredIndex += 1) {
-    existingIndex = constraintByDesiredIndex.get(desiredIndex) ?? existingIndex + 1;
-    matches.push(existing[existingIndex]!);
+  if (options.preserveExistingOrder) {
+    const existingIndexById = new Map(existing.map((node, index) => [node.id, index]));
+    let previousExistingIndex = -1;
+    let recreateSuffix = false;
+    for (let desiredIndex = 0; desiredIndex < matches.length; desiredIndex += 1) {
+      const match = matches[desiredIndex];
+      const existingIndex = match ? existingIndexById.get(match.id) : undefined;
+      if (recreateSuffix || existingIndex === undefined || existingIndex <= previousExistingIndex) {
+        matches[desiredIndex] = undefined;
+        recreateSuffix = true;
+        continue;
+      }
+      previousExistingIndex = existingIndex;
+    }
   }
   return matches;
 }
@@ -4289,18 +4291,15 @@ async function syncDisplayFields(
 ): Promise<void> {
   const existing = persistedViewChildren(currentMutationIndex(host, collector), nodeId)
     .filter((node): node is Extract<NodeProjection, { type: 'displayField' }> => node.type === 'displayField');
-  const unused = new Set(existing.map((display) => display.id));
-  const matches = desired.map((next, desiredIndex) => {
-    const annotated = next.nodeId ? existing.find((display) => display.id === next.nodeId && unused.has(display.id)) : undefined;
-    const sameField = annotated ?? existing.find((display) => display.displayField === next.field && unused.has(display.id));
-    const positional = sameField ?? existing.find((display, existingIndex) => existingIndex === desiredIndex && unused.has(display.id));
-    const fallback = positional ?? existing.find((display) => unused.has(display.id));
-    if (fallback) unused.delete(fallback.id);
-    return fallback;
+  const matches = matchConfigNodes(existing, desired, {
+    sameValue: (display, next) => display.displayField === next.field,
   });
+  const keptIds = new Set(matches.flatMap((display) => display ? [display.id] : []));
 
-  for (const displayId of unused) {
-    await handleMutation(host, collector, 'remove_display_field', { displayFieldId: displayId });
+  for (const display of existing) {
+    if (!keptIds.has(display.id)) {
+      await handleMutation(host, collector, 'remove_display_field', { displayFieldId: display.id });
+    }
   }
 
   for (const [index, next] of desired.entries()) {
@@ -4310,19 +4309,20 @@ async function syncDisplayFields(
         nodeId,
         field: next.field,
       }));
-      const patch: Record<string, unknown> = {
-        displayFieldId,
-        visible: next.visible,
-      };
-      if (next.width !== undefined) patch.width = next.width;
-      if (next.order !== undefined) patch.order = next.order;
-      if (next.label !== undefined) patch.label = next.label;
       const created = currentMutationIndex(host, collector).nodes.get(displayFieldId);
       if (
         created?.type !== 'displayField'
         || !newDisplayFieldMatches(created, next)
       ) {
-        await handleMutation(host, collector, 'update_display_field', patch);
+        await handleMutation(host, collector, 'update_display_field', {
+          displayFieldId,
+          field: next.field,
+          visible: next.visible,
+          width: next.width ?? (created?.type === 'displayField' ? created.displayWidth ?? null : null),
+          order: next.order ?? (created?.type === 'displayField' ? created.displayOrder ?? null : null),
+          label: next.label ?? (created?.type === 'displayField' ? created.displayLabel ?? null : null),
+          placement: created?.type === 'displayField' ? created.displayPlacement ?? null : null,
+        });
       }
       continue;
     }
@@ -4334,6 +4334,7 @@ async function syncDisplayFields(
       width: next.width ?? null,
       order: next.order ?? null,
       label: next.label ?? null,
+      placement: current.displayPlacement ?? null,
     });
   }
 }
