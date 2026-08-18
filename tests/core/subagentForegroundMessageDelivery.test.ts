@@ -40,7 +40,7 @@ interface AdmissionSeam {
   }>;
 }
 
-interface TerminalSettlementSeam extends AdmissionSeam {
+interface TerminalSettlementSeam extends AdmissionSeam, MainMessageSeam {
   terminalSettlementDeferreds: Map<string, { readonly promise: Promise<unknown> }>;
   beginThreadDeletion(threadIds: readonly string[]): void;
   finishThreadDeletion(threadIds: readonly string[]): void;
@@ -863,6 +863,45 @@ describe('foreground Agent main-message delivery', () => {
       `Agent generation changed before terminal settlement: ${child.id}`,
     );
     expect(fixture.seam.terminalSettlementReservations.has(`${child.id}:1`)).toBe(false);
+    fixture.close();
+  });
+
+  test('lets invoking Turn abort win while an idle foreground child settles independently', async () => {
+    const fixture = foregroundSettlementFixture();
+    const controller = new AbortController();
+    const stopped = new Error('Root Turn stopped');
+    const spawn = fixture.spawn(controller.signal);
+    const child = await fixture.childSpawned;
+    fixture.setActive(child.id, false);
+    await fixture.seam.sendAgentMessageToMain(child.id, 'This foreground message becomes stale.');
+    expect(fixture.ledger.pendingParentMessages(PARENT_ID)).toMatchObject([{
+      senderAgentId: child.id,
+      generation: 1,
+      deliveryMode: 'foreground',
+    }]);
+
+    controller.abort(stopped);
+
+    await expect(withTimeout(spawn, 1_000)).rejects.toBe(stopped);
+    expect(fixture.ledger.terminalNotification(child.id, 1)).toBeNull();
+    expect(fixture.ledger.pendingParentMessages(PARENT_ID)).toEqual([]);
+    expect(fixture.seam.terminalSettlementDeferreds.has(`${child.id}:1`)).toBe(true);
+    await fixture.seam.sendAgentMessageToMain(child.id, 'This message races the child interrupt.');
+    expect(fixture.ledger.pendingParentMessages(PARENT_ID)).toHaveLength(1);
+
+    const turn = terminalTurn(child.turnId);
+    fixture.setTerminalTurn(child.id, turn);
+    fixture.seam.prepareChildTerminalSettlement(child.thread, turn);
+    fixture.seam.queueChildTurnActivity(child.thread, turn);
+    await fixture.seam.terminalPipelines.get(`${child.id}:1`);
+
+    expect(fixture.ledger.terminalNotification(child.id, 1)).toMatchObject({
+      status: 'completed',
+      state: 'delivered',
+    });
+    await Promise.resolve();
+    expect(fixture.ledger.pendingParentMessages(PARENT_ID)).toEqual([]);
+    expect(fixture.seam.terminalSettlementDeferreds.has(`${child.id}:1`)).toBe(false);
     fixture.close();
   });
 
@@ -2842,7 +2881,7 @@ function foregroundSettlementFixture() {
     collaboration,
     ledger,
     seam,
-    spawn: () => collaboration.spawnAgent({
+    spawn: (signal?: AbortSignal) => collaboration.spawnAgent({
       senderThreadId: PARENT_ID,
       senderTurnId: 'parent-turn',
       parentItemId: 'agent-tool',
@@ -2851,6 +2890,7 @@ function foregroundSettlementFixture() {
       agentType: 'general-purpose',
       runInBackground: false,
       isolation: null,
+      ...(signal === undefined ? {} : { signal }),
     }),
     addBackgroundChild: (parentThreadId: string, agentId: string, turnId: string) => {
       const thread = delegatedFixtureThread(agentId, parentThreadId);

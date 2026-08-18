@@ -8313,6 +8313,64 @@ describe('ThreadService', () => {
     await fixture.service.close();
   });
 
+  test('Stop interrupts a root Turn waiting on a foreground Agent while the child settles independently', async () => {
+    const fixture = await createFixture(undefined, { resolveSubagentTokenBudget: () => null });
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Wait for one foreground Agent' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    const rootContext = fixture.executor.contexts[0]!;
+    await recordCollaborationSpawnBoundary(rootContext, 'foreground-stop-spawn');
+    const tools = await fixture.service.collaborationToolContributions({
+      threadId: root.id,
+      turnId: rootTurn.turn.id,
+    });
+    const foreground = executeTool(tools, 'agent', 'foreground-stop-spawn', {
+      description: 'foreground stop fixture',
+      prompt: 'Remain active until the parent stops',
+      subagent_type: 'general-purpose',
+      run_in_background: false,
+    }, rootContext.signal);
+    const foregroundOutcome = foreground.then(
+      () => ({ kind: 'resolved' as const, error: null }),
+      (error: unknown) => ({ kind: 'rejected' as const, error }),
+    );
+    await fixture.executor.waitUntilWaiting(1);
+    const child = fixture.service.listThreadDescendants({ threadId: root.id }).data[0];
+    if (!child) throw new Error('Foreground Agent was not created');
+
+    await fixture.service.interruptUserWork(root.id, rootTurn.turn.id);
+    await Promise.all([
+      fixture.service.waitForIdle(root.id),
+      fixture.service.waitForIdle(child.id),
+    ]);
+
+    expect(await foregroundOutcome).toEqual({
+      kind: 'rejected',
+      error: expect.objectContaining({ name: 'AbortError' }),
+    });
+    expect(fixture.service.readThread({ threadId: root.id, includeTurns: true })
+      .thread.turns?.find((turn) => turn.id === rootTurn.turn.id)?.status).toBe('interrupted');
+    expect(fixture.service.readThread({ threadId: child.id, includeTurns: true })
+      .thread.turns?.at(-1)?.status).toBe('interrupted');
+    await withTimeout(
+      waitUntil(() => fixture.stores.subagentExecutions.terminalNotification(child.id, 1) !== null),
+      1_000,
+    );
+    expect(fixture.stores.subagentExecutions.terminalNotification(child.id, 1)).toMatchObject({
+      status: 'interrupted',
+      state: 'delivered',
+    });
+    await fixture.service.close();
+  });
+
   test('copies the exact child Turn error into terminal parent activity', async () => {
     const fixture = await createFixture();
     const root = (await fixture.service.startThread({
@@ -12798,10 +12856,11 @@ async function executeTool(
   name: string,
   itemId: string,
   params: Record<string, unknown>,
+  signal?: AbortSignal,
 ) {
   const tool = tools.find((candidate) => candidate.name === name);
   if (!tool) throw new Error(`Tool not found: ${name}`);
-  return tool.execute(itemId, params);
+  return tool.execute(itemId, params, signal);
 }
 
 /** Invoke the canonical Agent message tool from an already active Turn. */
