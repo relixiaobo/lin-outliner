@@ -53,15 +53,15 @@ hairline. Everything else follows from that size:
   beside the words they are labelling. A tile that out-shouts the message is
   too saturated for this surface, whatever it looks like at full size.
 
-The current art carries a pale watercolour ground, which has no edge of its
-own: on a light panel it dissolves into the surface, on a dark one it reads as
-a lit block. The hairline on `.thread-speaker-avatar` is what frames it in
-both. A future set exported with a tinted or darker ground could revisit that
-frame.
+The current set is head-and-shoulders art on a painted ground, which is what
+makes it work at tile size: at 28px only the face and the largest colour areas
+survive, so a portrait framed like a portrait reads, and a full figure in a
+landscape does not. The ground still has no edge of its own, so the hairline on
+`.thread-speaker-avatar` is what frames it on both a light and a dark panel.
 
 ## Provenance
 
-Supplied by the PM as 1024px watercolour character illustrations, downscaled to
+Supplied by the PM as 1024px watercolour character portraits, downscaled to
 128px for the bundle. No image generation at runtime, no network. Verify a
 change by rendering all four at tile size on both a light and a near-black
 field before committing.
