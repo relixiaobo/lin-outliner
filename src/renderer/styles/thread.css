@@ -963,14 +963,15 @@
   min-width: 0;
   overflow: hidden;
   color: var(--text-primary);
-  /* The CONTENT register, not the meta one: in a message stream the name is
-     the first thing the message says, a bold lead-in to the words below, not a
-     caption over them. Every IM sets it at body size for that reason (Slack and
-     Discord both run name and message at the same size). At meta size the
-     header read as a small grey cluster floating above a much larger block of
-     text, which is what made it feel detached from its own words. Its line-height
-     stays tight so a bigger name does not also make the header taller. */
-  font-size: var(--font-content);
+  /* ONE STEP above the metadata beside it, not the body's size. The name is
+     the header's anchor and has to out-rank the type and the elapsed sharing
+     its lines — weight and colour do most of that, and one size step finishes
+     it. Body size was right while the message hung from the name in a shared
+     column, the way Slack sets it; once the message took the full width the
+     header became its own row above the words rather than their first line, and
+     a body-sized name in it jumped a third over everything else on the same
+     line and read as shouting. */
+  font-size: var(--font-ui-sm);
   /* The repo's emphasis weight. */
   font-weight: 650;
   line-height: var(--line-meta);

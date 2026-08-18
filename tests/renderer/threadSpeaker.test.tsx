@@ -48,11 +48,14 @@ describe('speaker headers', () => {
       .toBe('fox');
   });
 
-  test('gives the conversation its own name and a translated role', async () => {
+  test('names the conversation\'s own agent and does not label it', async () => {
     const { document } = await renderSpeaker({ avatarKey: 'main', name: 'main' });
 
     expect(document.querySelector('.thread-speaker-name')?.textContent).toBe('Tenon');
-    expect(document.querySelector('.thread-speaker-role')?.textContent).toBe('main');
+    // There is one `main`, the reader is addressing it, and saying so states
+    // the only thing about this participant nobody was wondering. A type label
+    // answers "which kind of helper is this" — a delegate's question.
+    expect(document.querySelector('.thread-speaker-role')).toBeNull();
     expect(document.querySelector('.thread-speaker-avatar svg')?.getAttribute('data-fixture-portrait'))
       .toBe('beaver');
   });

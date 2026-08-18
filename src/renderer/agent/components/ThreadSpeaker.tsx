@@ -1,5 +1,4 @@
 import type { ReactNode } from 'react';
-import { useT } from '../../i18n/I18nProvider';
 import { MAIN_IDENTITY_KEY, resolveAgentIdentity } from '../agentIdentity';
 import { agentPortraitSvg } from '../agentPortraits';
 import { useIdentityCatalog, type ThreadSnapshotSource } from '../store/threadStore';
@@ -70,21 +69,24 @@ export function ThreadSpeakerGroup({
   /** The roster to resolve against; the app's own store unless a test says otherwise. */
   readonly source?: ThreadSnapshotSource;
 }) {
-  const t = useT();
   const catalog = useIdentityCatalog(source);
   // Resolved from the TYPE the caller named, with the caller's own name as the
   // fallback: a participant that is not a type at all — an isolated Skill —
   // keeps the name it came with and simply has no persona to find.
   const identity = resolveAgentIdentity(catalog, speaker.avatarKey, speaker.name);
   const portrait = agentPortraitSvg(identity.avatarKey);
-  // What it IS, beside what it is called. Present only when the participant is
-  // a known type: `main` reads as a translated word because it is a role in
-  // this conversation rather than a name a user types, and every other type
-  // appears verbatim because that IS the string they configure and pass to
-  // `subagent_type`. A Skill has no type line — its name already says it.
-  const roleLabel = speaker.avatarKey === MAIN_IDENTITY_KEY
-    ? t.agent.thread.agent.main
-    : catalog.has(speaker.avatarKey) ? speaker.avatarKey : null;
+  // What it IS, beside what it is called — for DELEGATES only. The
+  // conversation's own agent needs no label: there is exactly one of it, the
+  // reader is talking to it, and `main` beside its name states the only thing
+  // about this participant nobody was wondering. What the label answers is
+  // "which kind of helper is this", a question only a delegate raises.
+  //
+  // A type appears verbatim because that IS the string a user configures and
+  // passes as `subagent_type`. A Skill has no type line — its name already
+  // says what it is.
+  const roleLabel = speaker.avatarKey === MAIN_IDENTITY_KEY || !catalog.has(speaker.avatarKey)
+    ? null
+    : speaker.avatarKey;
   return (
     <div className="thread-speaker">
       <div className="thread-speaker-header">

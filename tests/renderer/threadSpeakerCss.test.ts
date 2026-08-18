@@ -45,10 +45,9 @@ describe('speaker header column CSS guards', () => {
     const name = threadCss.match(/\.thread-speaker-name \{[^}]*\}/)?.[0] ?? '';
     expect(name).toContain('color: var(--text-primary);');
     expect(name).toContain('font-weight: 650;');
-    // Body size, not meta size: the name opens the message rather than
-    // captioning it, which is what every IM does and what stopped the header
-    // reading as a small grey cluster above a much larger block.
-    expect(name).toContain('font-size: var(--font-content);');
+    // One step above the metadata sharing its lines — enough to anchor the
+    // header without jumping a third over everything beside it.
+    expect(name).toContain('font-size: var(--font-ui-sm);');
     const role = threadCss.match(/\.thread-speaker-role \{[^}]*\}/)?.[0] ?? '';
     expect(role).toContain('color: var(--text-secondary);');
   });

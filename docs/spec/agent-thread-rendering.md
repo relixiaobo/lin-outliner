@@ -170,14 +170,18 @@ from those apps in one way, deliberately: they put the timestamp on the name's
 own line, which is only safe because a timestamp is fixed-width. Ours grows
 while a Turn runs.
 
-The persona is set at the CONTENT register, not the meta one. In a message
-stream the name is the first thing the message says — a bold lead-in to the
-words below, not a caption over them — which is why Slack and Discord both run
-the sender's name at body size and shrink only the timestamp. At meta size the
-header read as a small grey cluster floating above a much larger block of text,
-detached from its own words (PM 2026-08-18). Its line-height stays tight so the
-larger name does not also make the header taller, and the header sits at near
-line spacing from the words it names: one utterance, not two blocks.
+The persona sits ONE STEP above the metadata beside it, and the header sits at
+near line spacing from the words it names: one utterance, not two blocks. Body
+size — the way Slack sets a sender's name — is right while the message hangs
+from that name in a shared column; with the message at full width the header is
+its own row above the words rather than their first line, and a body-sized name
+jumps a third over everything else on its own lines (PM 2026-08-18). Weight and
+colour carry the anchoring; the size step finishes it.
+
+**A delegate wears its type; the conversation's own agent does not.** There is
+exactly one `main`, the reader is addressing it, and labelling it states the
+only thing about that participant nobody was wondering. The label answers
+"which kind of helper is this", which is a question only a delegate raises.
 
 One header, one anchor. The header's own two lines share one left edge beside
 the portrait: nothing in it may poke outside the block or indent past that
