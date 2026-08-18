@@ -548,6 +548,17 @@ completion therefore consumes the level-triggered settlement state machine
 directly; it does not maintain a second edge-triggered idle/activity predicate
 or run a duplicate terminal pipeline wait afterwards.
 
+The invoking Turn's `AbortSignal` races that foreground settlement deferred.
+Abort still interrupts an active child Turn, but it also rejects the parent wait
+when the child is already idle and there is nothing to interrupt. The terminal
+settlement machine is not cancelled: it continues to record the child
+generation independently after the parent stops waiting. Because the ordinary
+foreground delivery tail no longer runs, every pending direct-root foreground
+`agent_message("main")` row from that generation is claimed and discarded;
+the independent settlement tail repeats that cleanup after the child reaches
+terminal so a message racing the interrupt cannot survive. Background-delivery
+rows keep their independent lifecycle.
+
 ### Skills
 
 `skill` invokes one configuration-selected Skill by canonical identity. Skill

@@ -26,7 +26,7 @@ import {
   type SubagentPendingNotification,
 } from '../persistence/SubagentExecutionLedger';
 import type { ResolvedAgentType } from '../AgentConfigurationLoader';
-import { throwIfAborted } from '../capabilities/agentAwaitWithAbort';
+import { awaitWithAbort, isAbortError, throwIfAborted } from '../capabilities/agentAwaitWithAbort';
 import { filterSubagentToolKeys,subagentToolAllowed } from '../capabilities/subagentToolPolicy';
 import type {
   AgentWorktreeIntentInput,
@@ -521,6 +521,7 @@ export class SubagentCollaboration {
       throw new Error('Agent worktree isolation is unavailable');
     }
     const parent = this.core.requireThread(input.senderThreadId).thread;
+    const rootThreadId = input.runInBackground ? null : this.rootThreadIdFor(parent.id);
     const inheritedWorktreeIsolation = parent.parentThreadId !== null && (
       this.executions.read(parent.id)?.toolPolicy.worktree === true
       || this.worktreeForThread(parent.id) !== null
@@ -595,7 +596,7 @@ export class SubagentCollaboration {
         outputFile: this.transcripts.pathForPendingReader(execution.agentId),
       };
     }
-    if (!foregroundSettlementKey || !foregroundSettlement) {
+    if (!foregroundSettlementKey || !foregroundSettlement || !rootThreadId) {
       throw new Error('Foreground Agent settlement authority was not created');
     }
     if (execution.agentId !== agentId || execution.generation !== 1) {
@@ -609,21 +610,38 @@ export class SubagentCollaboration {
       if (turnId) void this.turnLifecycle.interruptTurn(execution.agentId, turnId).catch(() => undefined);
     };
     input.signal?.addEventListener('abort', abort, { once: true });
-    let settlementResult: TerminalSettlementResult;
+    if (input.signal?.aborted) abort();
+    let keepSettlementAuthority = false;
     try {
-      settlementResult = await foregroundSettlement.promise;
+      const settlementResult = await awaitWithAbort(foregroundSettlement.promise, { signal: input.signal });
+      if (settlementResult.status !== 'settled') throw settlementResult.error;
+    } catch (error) {
+      const foreground = {
+        senderAgentId: execution.agentId,
+        generation: execution.generation,
+      };
+      this.discardForegroundParentMessages(rootThreadId, foreground);
+      if (isAbortError(error, input.signal)) {
+        keepSettlementAuthority = true;
+        void foregroundSettlement.promise.then(() => {
+          this.discardForegroundParentMessages(rootThreadId, foreground);
+        });
+      }
+      throw error;
     } finally {
       input.signal?.removeEventListener('abort', abort);
-      if (this.terminalSettlementDeferreds.get(foregroundSettlementKey) === foregroundSettlement) {
+      if (
+        !keepSettlementAuthority
+        && this.terminalSettlementDeferreds.get(foregroundSettlementKey) === foregroundSettlement
+      ) {
         this.terminalSettlementDeferreds.delete(foregroundSettlementKey);
       }
     }
-    if (settlementResult.status !== 'settled') throw settlementResult.error;
     // A foreground child may send `agent_message("main")` while its provider
     // turn is running. Deliver that envelope only after the ordinary Agent
     // result is ready, so the parent consumes it immediately before its next
     // provider request rather than as an unsolicited root Turn.
-    await this.deliverParentMessages(this.rootThreadIdFor(execution.parentThreadId), {
+    await this.deliverParentMessages(rootThreadId, {
       senderAgentId: execution.agentId,
       generation: execution.generation,
     });
@@ -2143,6 +2161,27 @@ export class SubagentCollaboration {
           console.warn(`[agent] Agent main-route message delivery deferred for ${message.senderAgentId}`, error);
           return;
         }
+      }
+    }
+
+  private discardForegroundParentMessages(
+    parentThreadId: ThreadId,
+    foreground: { readonly senderAgentId: ThreadId; readonly generation: number },
+  ): void {
+      try {
+        for (const message of this.executions.pendingForegroundParentMessages(
+          parentThreadId,
+          foreground.senderAgentId,
+          foreground.generation,
+        )) {
+          if (!this.executions.claimParentMessage(message.id)) continue;
+          this.executions.discardParentMessage(message.id);
+        }
+      } catch (error) {
+        console.warn(
+          `[agent] Foreground Agent main-route message cleanup deferred for ${foreground.senderAgentId}`,
+          error,
+        );
       }
     }
 
