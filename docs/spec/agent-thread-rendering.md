@@ -176,6 +176,15 @@ from those apps in one way, deliberately: they put the timestamp on the name's
 own line, which is only safe because a timestamp is fixed-width. Ours grows
 while a Turn runs.
 
+The persona is set at the CONTENT register, not the meta one. In a message
+stream the name is the first thing the message says — a bold lead-in to the
+words below, not a caption over them — which is why Slack and Discord both run
+the sender's name at body size and shrink only the timestamp. At meta size the
+header read as a small grey cluster floating above a much larger block of text,
+detached from its own words (PM 2026-08-18). Its line-height stays tight so the
+larger name does not also make the header taller, and the header sits at near
+line spacing from the words it names: one utterance, not two blocks.
+
 One column, one anchor. The portrait sits in the margin lane and every text
 line of the block — the persona, the work line under it, and the words below —
 hangs from the SAME left edge (`--speaker-text-inset`); nothing in the header

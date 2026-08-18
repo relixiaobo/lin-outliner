@@ -841,10 +841,12 @@
   width: 100%;
   min-width: 0;
   flex-direction: column;
-  /* Tighter than the 12px between blocks, so a header still binds to its own
-     content, but with enough air that a bordered card is not pressed against
-     the line naming it — a hard edge needs more room than a line of text. */
-  gap: var(--space-4);
+  /* A header binds to the words it names: they are one utterance, so the space
+     between them is smaller than the space between two blocks. Held down to
+     near line spacing — the distance an IM leaves between a sender's name and
+     their message — because a header floating a full line above its own text
+     stops reading as its opening. */
+  gap: var(--space-3);
 }
 
 /* Portrait, name, and what this participant is, on ONE line — with the words
@@ -968,7 +970,14 @@
   min-width: 0;
   overflow: hidden;
   color: var(--text-primary);
-  font-size: var(--font-meta);
+  /* The CONTENT register, not the meta one: in a message stream the name is
+     the first thing the message says, a bold lead-in to the words below, not a
+     caption over them. Every IM sets it at body size for that reason (Slack and
+     Discord both run name and message at the same size). At meta size the
+     header read as a small grey cluster floating above a much larger block of
+     text, which is what made it feel detached from its own words. Its line-height
+     stays tight so a bigger name does not also make the header taller. */
+  font-size: var(--font-content);
   /* The repo's emphasis weight. */
   font-weight: 650;
   line-height: var(--line-meta);
