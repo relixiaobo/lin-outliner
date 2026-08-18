@@ -190,10 +190,18 @@ readonly presentation?: {
   equal speeds read as a machine. Scheduled by ref-driven class toggles, never
   React state (A9: a transcript of marks must not re-render to blink);
   `prefers-reduced-motion` stills them entirely.
-- **Deferred, deliberately:** the demo's expression system (mood-parameterised
-  eye strokes) and spherical gaze pose. Both are proven in
-  `tmp/agent-marks/demo.html` and belong to surfaces large enough to read them
-  — the detail view and the PR-B editor — not to a 28px transcript mark.
+- **Expressions and gaze (PM-ratified into PR-A).** The demo's full rig ships:
+  moods as parameter sets over one stroke rig (`agentMarkGeometry`, pure and
+  invariant-tested — silhouette containment swept over every mood × pose),
+  morphing transitions, spherical pose with limb foreshortening, header-hover
+  gaze pursuit with inertia, and the working line-scan. Moods wire to state
+  the transcript already knows: the Turn's status for the conversation's own
+  agent (working / needs-you / failed / interrupted→stopped / idle), the
+  registry entry's outcome for a delivered report (done / failed / stopped).
+  Expressions RESTATE the adjacent status text; they never carry information
+  of their own. One module-wide rAF loop, ref-driven, animating only marks in
+  motion (A9); `prefers-reduced-motion` keeps static mood shapes with nothing
+  moving.
 
 ### 3. Conversation-flow identity layout (PR-A)
 

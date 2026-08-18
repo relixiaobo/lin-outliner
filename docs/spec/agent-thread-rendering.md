@@ -211,9 +211,33 @@ danger-adjacent red (PM 2026-08-18, replacing the portrait assets tried
 first). The conversation's own agent is named the same way as the rest and does
 NOT carry the product's name: a transcript names the participants in it, not
 the application they run inside (PM 2026-08-18). Keyed by Agent TYPE: **one
-type, one mark — everywhere, in every conversation.** The marks BLINK — mostly
-both eyes, now and then just one, each mark on its own clock — with a fast shut
-and a relaxed open; `prefers-reduced-motion` stills them entirely.
+type, one mark — everywhere, in every conversation.** The marks are ALIVE, within strict bounds:
+
+- **Expressions.** The eyes are one thick round-capped stroke per side,
+  parameterised (`agentMarkGeometry`); a mood is data over that rig, so states
+  MORPH rather than swap. Moods restate state the text beside them already
+  tells, never more: a Turn in progress reads down and scans (working), one
+  blocked on an input request looks straight out (needs-you), a failed Turn
+  droops — sorry, not angry, because an agent that failed the user has nothing
+  to be cross about — a user-interrupted one sleeps, and a delegate signs its
+  delivered report with a smile (or the failure's droop, or the stop's closed
+  eyes). Everything settled and ordinary is idle.
+- **The sphere.** The face is a ball, not a disc: each eye is a point on a
+  sphere, the pose turns it, the far eye narrows toward the limb, and the
+  stroke is clamped inside the silhouette — a hole crossing the outline reads
+  as a bite out of the face. A unit invariant sweeps every mood over the full
+  pose envelope and holds containment.
+- **Gaze.** While the pointer crosses a speaker HEADER, that mark turns to
+  follow it with inertia (the head has more mass than the expression); events
+  bind to the header only, so a still pointer costs nothing. A working mark
+  scans line-by-line on its own.
+- **Blinking.** Mostly both eyes, now and then just one, each mark on its own
+  clock, fast shut and relaxed open. Closed-eye moods (done, stopped, failed)
+  do not blink.
+- **Motion discipline.** One module-wide rAF loop animates only marks with
+  something actually moving and stops when none has; updates are ref-driven
+  attribute writes, never React state (A9). `prefers-reduced-motion` keeps
+  each mood's static shape and stills everything.
 Derived rather than enumerated, since a project can name a type anything at all
 in `.claude/agents/*.md` and a hand-kept table would miss exactly the ones that
 matter to that workspace. Keyed by Agent id instead, two `general-purpose`

@@ -51,6 +51,16 @@ describe('speaker headers', () => {
       ?.getAttribute('fill')).toBe('var(--identity-tint-4)');
   });
 
+  test('forwards the caller\'s mood to the mark and defaults to idle', async () => {
+    const idle = await renderSpeaker({ avatarKey: 'explore', name: 'explore' });
+    expect(idle.document.querySelector('.thread-speaker-avatar svg')?.getAttribute('data-mood'))
+      .toBe('idle');
+    const failed = await renderSpeaker({ avatarKey: 'explore', name: 'explore', mood: 'failed' });
+    // The face restates what the status text says — here, that the run failed.
+    expect(failed.document.querySelector('.thread-speaker-avatar svg')?.getAttribute('data-mood'))
+      .toBe('failed');
+  });
+
   test('gives every identity the same mark with two independent eyes', async () => {
     const { document } = await renderSpeaker({ avatarKey: 'auditor', name: 'auditor' });
 
@@ -91,6 +101,7 @@ describe('speaker headers', () => {
 async function renderSpeaker({ meta, ...speaker }: {
   readonly avatarKey: string;
   readonly name: string;
+  readonly mood?: import('../../src/renderer/agent/agentMarkGeometry').MarkMood;
   readonly meta?: ReactNode;
 }): Promise<{ readonly document: Document }> {
   const { ThreadSpeakerGroup } = await import('../../src/renderer/agent/components/ThreadSpeaker');

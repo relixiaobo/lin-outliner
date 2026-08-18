@@ -1,7 +1,8 @@
-import type { ReactNode } from 'react';
+import { useCallback, useRef, type PointerEvent, type ReactNode } from 'react';
 import { MAIN_IDENTITY_KEY, resolveAgentIdentity } from '../agentIdentity';
+import type { MarkMood } from '../agentMarkGeometry';
 import { useIdentityCatalog, type ThreadSnapshotSource } from '../store/threadStore';
-import { AgentMark } from './AgentMark';
+import { AgentMark, type AgentMarkHandle } from './AgentMark';
 
 /** Who said the block beneath: which participant, what it looks like, its name. */
 export interface ThreadSpeaker {
@@ -23,6 +24,13 @@ export interface ThreadSpeaker {
    */
   readonly avatarKey: string;
   readonly name: string;
+  /**
+   * The state the mark's eyes express — working, needs-you, reported, stopped,
+   * failed — supplied by the caller that knows it (the Turn, the registry
+   * entry). Absent means awake and unhurried. Expressions restate what the
+   * text beside them already says; they never say something it does not.
+   */
+  readonly mood?: MarkMood;
 }
 
 /**
@@ -86,11 +94,33 @@ export function ThreadSpeakerGroup({
   const roleLabel = speaker.avatarKey === MAIN_IDENTITY_KEY || !catalog.has(speaker.avatarKey)
     ? null
     : speaker.avatarKey;
+  // Gaze: the face turns toward the pointer while it crosses the HEADER — the
+  // row is wide enough for the turn to read, where hovering only the 28px mark
+  // would move the eyes by a hair. Events fire only over the header, so a
+  // still pointer costs nothing anywhere else (A9).
+  const markHandle = useRef<AgentMarkHandle>(null);
+  const onPointerMove = useCallback((event: PointerEvent<HTMLDivElement>) => {
+    const mark = markHandle.current;
+    const header = event.currentTarget;
+    const anchor = header.querySelector('.thread-speaker-avatar');
+    if (!mark || !anchor) return;
+    const rect = anchor.getBoundingClientRect();
+    const unit = Math.max(rect.width, 1);
+    mark.setPointer(
+      (event.clientX - (rect.left + rect.width / 2)) / unit,
+      (event.clientY - (rect.top + rect.height / 2)) / unit,
+    );
+  }, []);
+  const onPointerLeave = useCallback(() => markHandle.current?.clearPointer(), []);
   return (
     <div className="thread-speaker">
-      <div className="thread-speaker-header">
+      <div
+        className="thread-speaker-header"
+        onPointerLeave={onPointerLeave}
+        onPointerMove={onPointerMove}
+      >
         <span aria-hidden className="thread-speaker-avatar">
-          <AgentMark size={28} tint={identity.tint} />
+          <AgentMark mood={speaker.mood ?? 'idle'} ref={markHandle} size={28} tint={identity.tint} />
         </span>
         <div className="thread-speaker-identity">
           <div className="thread-speaker-title">
