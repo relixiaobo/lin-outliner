@@ -1201,3 +1201,24 @@ before calling the review done. Assertions on one layer's computed style say
 nothing about what the other layer is painting underneath it. This is the whole
 reason the gate table sends UI diffs to visual verification rather than to a
 closer read.
+
+## Deleting a "not supported here" warning is not the same as making it supported
+
+`agent-view-surface` PR 1 (#556) generalized `%%view:<mode>%%` from saved
+searches to every node. The diff did the obvious thing: renamed
+`applySearchViewSpec` to `applyViewSpec`, widened its callers, and deleted the
+`View directives are only persisted on search nodes today.` warning sites that
+had become false. Two of the gate's four findings came out of that one move.
+Adding a directive worked, but *removing* one now returned `ok: true` while the
+document kept its table — the warning had been the only thing telling the model
+its edit did nothing, and nothing took over the "no" it used to say. The
+guidance rewritten in the same PR then promised a second path (`add columns as
+fields`) that the widened mechanism still did not implement, so the Agent would
+report success on a column the user never saw. **A refusal site is load-bearing:
+when you widen a capability past one, each deleted warning must become either
+the real behavior or a new warning — never just an absence.** The tell is a
+`if (!x) return` early exit where a `warnings.push` used to be; that is a
+silent success, and a silent success is worse than the refusal it replaced,
+because the model believes it and moves on. Probe both directions of every
+newly-general operation — set *and* unset, enter *and* leave — since the added
+direction is the one the author tested.

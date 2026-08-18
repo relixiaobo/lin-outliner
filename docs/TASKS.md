@@ -158,7 +158,7 @@ before any directional/security-sensitive build.
 
 - **agent-program** (P1, `meta` — umbrella) — read first; it maps the rest (foundation /
   dependency graph / event taxonomy / milestones). See `docs/plans/reference/agent-program.md`.
-- **agent-view-surface** (P2, `draft` 2026-08-16) — the agent can neither see
+- **agent-view-surface** (P2, `in-progress` 2026-08-16) — the agent can neither see
   nor set node view modes: `%%view:%%` parses but persists only on search
   nodes, read paths hide an ordinary table node's mode, and no model-facing
   text mentions views at all (observed dev:main failure: "整理成表格" produced
@@ -167,7 +167,14 @@ before any directional/security-sensitive build.
   existing sort/filter/group/display-field commands, sequenced after
   `tag-schema-projection` PR 1 (#545, same reader files). Designed
   mode-agnostic so future `cards`/`calendar` views extend a vocabulary
-  constant, not the surface. See [`plans/agent-view-surface.md`](plans/agent-view-surface.md).
+  constant, not the surface.
+  **PR 1 shipped #556 (2026-08-18, codex-3)** — mode awareness: `%%view:<mode>%%`
+  reads and writes on ordinary nodes, vocabulary validated against the renderable
+  set, guidance teaches the table task mapping; high gate found 4 issues (two
+  silent no-ops, a fail-closed error that bricked a node for the agent, and
+  guidance promising a column path the agent does not have), all fixed
+  on-branch. PR 2 (view-config read/write) remains.
+  See [`plans/agent-view-surface.md`](plans/agent-view-surface.md).
 - **skill-directory-is-itself-a-skill** (P3, `draft`, *no plan file yet* — cut from #470
   at the gate 2026-08-01, deliberately, not abandoned) — picking `~/work/my-pdf-skill`
   is at least as natural as picking its parent, but the loader only ever looks one

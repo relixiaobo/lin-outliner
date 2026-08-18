@@ -10,6 +10,45 @@ Entries reference the pull request that introduced them.
 
 `main` is the `0.6.0` train; entries here move under the next tag.
 
+### Added
+
+- **The Agent can see and set a node's view mode (PR #556, codex-3)** — asked to
+  "整理成表格", the Agent produced space-aligned ASCII inside a code block,
+  because nothing in its surface knew views existed: `%%view:<mode>%%` parsed but
+  persisted only on saved searches, the read paths hid an ordinary table node's
+  mode entirely, and no model-facing text mentioned views at all. The directive
+  on the owner's line is now the single read/write representation for every node
+  — `node_read` and user-view context emit it, `node_create` and `node_edit`
+  persist it through the existing `set_view_mode` command, so core's
+  entering-table transaction (search materialize-first, column
+  auto-initialization in Schema order) comes for free. The settable vocabulary is
+  one exported constant of renderer-renderable modes (`list`, `table` today): a
+  core-known but unshipped mode (`cards`, `calendar`) fails as
+  `view_mode_not_available`, an unknown string as `invalid_view_mode` naming the
+  allowed set, and shipping a future view extends the constant rather than the
+  surface. Omitting the directive from a complete root outline means `list`, so
+  deleting the marker is how the Agent turns a table off; a code-block owner is
+  exempt because that syntax cannot carry the directive, and re-applying the
+  effective mode is a structural no-op that will not conjure a `viewDef` on a
+  plain list node. Guidance teaches the task mapping — rows as direct child
+  records, `Field::` names as column identities, values as cells, never a
+  Markdown table in a code block — including the one sharp edge: fields present
+  when an owner *enters* table mode initialize its columns, so a field added
+  later needs a list-and-back re-entry until PR 2 exposes display-field
+  configuration. The high gate found 4 issues, all fixed on-branch: the guidance
+  told the model to "add columns as fields" on an existing table, a path that
+  does not exist (`addMissingTableDisplayFieldsDirect` only runs on entry), so
+  the Agent would report success on a column the user never got; deleting
+  `%%view:table%%` returned `ok` with the document unchanged, because
+  generalizing `applySearchViewSpec` had dropped its warning sites without
+  replacing the behavior; `view_mode_not_available` fired on a directive
+  `node_read` itself had emitted, permanently blocking every unrelated edit to an
+  unrenderable-mode node — A12's fail-closed-at-the-wrong-boundary shape, now
+  narrowed to newly requested modes; and an explicit `%%view:list%%` round-tripped
+  into a `set_view_mode` that created a stray `viewDef` child on an otherwise
+  plain node, with no read-back to tell the model to stop. PR 2 (view-config
+  read/write over the existing sort/filter/group/display-field commands) remains.
+
 ### Changed
 
 - **A tool output is read and hash-verified once per agent Turn, not once per
