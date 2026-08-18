@@ -68,39 +68,42 @@ export async function freezePendingToolOutputProjections(input: {
   }
 
   const published: ContextEvidenceThreadItem[] = [];
-  for (const item of tools) {
-    const outputRef = item.outputRef;
-    if (!outputRef) continue;
-    const outputKey = outputReferenceKey(outputRef);
-    if (existing.has(outputKey) || unavailable.has(outputKey)) continue;
-    const fullTokens = estimateOutputReferenceTokens(outputRef.byteLength);
-    const visible = toolItemVisibleOutputText(item);
-    const projection: ToolOutputProjection = fullTokens <= MAX_SINGLE_FULL_OUTPUT_TOKENS
-      && fullTokens <= remainingFullTokens
-      ? { type: 'full' }
-      : {
-          type: 'inline',
-          text: [
-            `[Frozen tool output projection: ${outputRef.byteLength} bytes, sha256=${outputRef.id}, full output available from the canonical Item.]`,
-            visible,
-          ].join('\n'),
-        };
-    const payload: ToolOutputProjectionContextPayload = {
-      schemaVersion: 1,
-      kind: 'toolOutputProjection',
-      outputRef,
-      projection,
-    };
-    const evidence = await input.persist(
-      payload,
-      `Frozen tool output (${projection.type}, ${outputRef.byteLength} bytes)`,
-    );
-    existing.set(outputReferenceKey(outputRef), payload);
-    published.push(evidence);
-    if (projection.type === 'full') remainingFullTokens -= fullTokens;
+  try {
+    for (const item of tools) {
+      const outputRef = item.outputRef;
+      if (!outputRef) continue;
+      const outputKey = outputReferenceKey(outputRef);
+      if (existing.has(outputKey) || unavailable.has(outputKey)) continue;
+      const fullTokens = estimateOutputReferenceTokens(outputRef.byteLength);
+      const visible = toolItemVisibleOutputText(item);
+      const projection: ToolOutputProjection = fullTokens <= MAX_SINGLE_FULL_OUTPUT_TOKENS
+        && fullTokens <= remainingFullTokens
+        ? { type: 'full' }
+        : {
+            type: 'inline',
+            text: [
+              `[Frozen tool output projection: ${outputRef.byteLength} bytes, sha256=${outputRef.id}, full output available from the canonical Item.]`,
+              visible,
+            ].join('\n'),
+          };
+      const payload: ToolOutputProjectionContextPayload = {
+        schemaVersion: 1,
+        kind: 'toolOutputProjection',
+        outputRef,
+        projection,
+      };
+      const evidence = await input.persist(
+        payload,
+        `Frozen tool output (${projection.type}, ${outputRef.byteLength} bytes)`,
+      );
+      existing.set(outputReferenceKey(outputRef), payload);
+      published.push(evidence);
+      if (projection.type === 'full') remainingFullTokens -= fullTokens;
+    }
+    return published;
+  } finally {
+    input.onActiveOutputKeys?.([...existing.keys()]);
   }
-  input.onActiveOutputKeys?.([...existing.keys()]);
-  return published;
 }
 
 function estimateOutputReferenceTokens(byteLength: number): number {

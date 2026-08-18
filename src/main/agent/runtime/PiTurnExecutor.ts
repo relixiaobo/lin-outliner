@@ -260,29 +260,34 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
         : async () => {
             await normalizer.flush();
             await this.options.beforeProviderContext?.(context);
-            await freezePendingToolOutputProjections({
-              turns: [...context.historyBeforeTurn, {
-                ...context.turn,
-                items: currentTurnItems(context),
-              }],
-              model: runtime.model,
-              readContext: projectionContext.readContext,
-              persist: (payload, summary) => context.persistContextEvidence(payload, summary),
-              onActiveOutputKeys: turnScopedReads.retainOutputReads,
-            });
-            return projectCanonicalProviderContext(
-              projectionContext,
-              runtime.model,
-              systemPrompt,
-              tools,
-              prompt,
-              reasoningReplay,
-              liveModelToolCalls,
-              {
-                prepared: (prepared) => diagnostics.prepareProviderPlan(prepared),
-                compacted: (compacted) => diagnostics.captureContextCompaction(compacted),
-              },
-            );
+            turnScopedReads.beginBoundary();
+            try {
+              await freezePendingToolOutputProjections({
+                turns: [...context.historyBeforeTurn, {
+                  ...context.turn,
+                  items: currentTurnItems(context),
+                }],
+                model: runtime.model,
+                readContext: projectionContext.readContext,
+                persist: (payload, summary) => context.persistContextEvidence(payload, summary),
+                onActiveOutputKeys: turnScopedReads.retainOutputReads,
+              });
+              return await projectCanonicalProviderContext(
+                projectionContext,
+                runtime.model,
+                systemPrompt,
+                tools,
+                prompt,
+                reasoningReplay,
+                liveModelToolCalls,
+                {
+                  prepared: (prepared) => diagnostics.prepareProviderPlan(prepared),
+                  compacted: (compacted) => diagnostics.captureContextCompaction(compacted),
+                },
+              );
+            } finally {
+              turnScopedReads.finishBoundary();
+            }
           };
       const gatewayOptions: PiModelGatewayOptions = {
         onProviderContext: (providerContext) => diagnostics.captureProviderContext(providerContext),
@@ -1232,15 +1237,20 @@ async function executionDetails(
 
 function withTurnScopedContextReads(context: TurnExecutionContext): {
   readonly context: TurnExecutionContext;
+  readonly beginBoundary: () => void;
   readonly retainOutputReads: (activeKeys: readonly string[]) => void;
+  readonly finishBoundary: () => void;
 } {
   const contextReads = new Map<string, ReturnType<TurnExecutionContext['readContext']>>();
   const outputReads = new Map<string, ReturnType<TurnExecutionContext['readOutput']>>();
+  let activeContextKeys: Set<string> | null = null;
+  let activeOutputKeys: Set<string> | null = null;
   return {
     context: {
       ...context,
       readContext: (ref) => {
         const key = contextPayloadReferenceKey(ref);
+        activeContextKeys?.add(key);
         const cached = contextReads.get(key);
         if (cached) return cached;
         const pending = context.readContext(ref).then(
@@ -1258,6 +1268,7 @@ function withTurnScopedContextReads(context: TurnExecutionContext): {
       },
       readOutput: (ref) => {
         const key = outputReferenceKey(ref);
+        activeOutputKeys?.add(key);
         const cached = outputReads.get(key);
         if (cached) return cached;
         const pending = context.readOutput(ref).then(
@@ -1274,11 +1285,24 @@ function withTurnScopedContextReads(context: TurnExecutionContext): {
         return pending;
       },
     },
+    beginBoundary: () => {
+      activeContextKeys = new Set();
+      activeOutputKeys = new Set();
+    },
     retainOutputReads: (activeKeys) => {
-      const retained = new Set(activeKeys);
-      for (const key of outputReads.keys()) {
-        if (!retained.has(key)) outputReads.delete(key);
+      if (!activeOutputKeys) return;
+      for (const key of activeKeys) activeOutputKeys.add(key);
+    },
+    finishBoundary: () => {
+      if (!activeContextKeys || !activeOutputKeys) return;
+      for (const key of contextReads.keys()) {
+        if (!activeContextKeys.has(key)) contextReads.delete(key);
       }
+      for (const key of outputReads.keys()) {
+        if (!activeOutputKeys.has(key)) outputReads.delete(key);
+      }
+      activeContextKeys = null;
+      activeOutputKeys = null;
     },
   };
 }

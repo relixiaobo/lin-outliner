@@ -848,11 +848,11 @@ diagnostic copy immediately before persistence. Serialized function-call argumen
 scanned only at their outer adapter boundary and nested JSON strings are left intact.
 Each provider copy has a 64,000-character scan budget; text beyond it is replaced only in
 diagnostics. The ordered budget is spent before one batched scan; sufficiently large
-batches run the same whole-string scanner on the shared Node worker, while small batches
-run directly and worker failure retries directly. No chunk boundary can change a
-credential match. An unexpected whole-copy failure stores a typed omission marker. The
-live provider request and the raw normalized value used for its fingerprint remain
-unchanged.
+batches run the same whole-string scanner on the bounded Node worker pool, while small
+batches run directly exactly once. A worker error or watchdog timeout terminates that
+worker and stores a typed whole-copy omission marker without a main-thread retry. No
+chunk boundary can change a credential match. The live provider request and the raw
+normalized value used for its fingerprint remain unchanged.
 If diagnostic preparation or provenance alignment itself fails, the collector is
 disabled for that Turn and `diagnosticsRef` remains null; provider transport, event
 normalization, and the Turn continue.
@@ -933,8 +933,11 @@ usage.
 Fresh projection reducers are constructed at every provider boundary so environment,
 view, and additional-context deltas are replayed from canonical state. They share
 Turn-scoped immutable payload read caches for context payloads and full tool outputs,
-each keyed by the complete typed reference. Successful content-addressed reads therefore
-hit storage once per Turn, while missing or failed reads are not negatively cached and
-can become available after a new canonical write. Every output-projection freeze also
-drops successful output reads whose keys are absent from the effective context's frozen
-projection set, so compaction releases payloads that the provider can no longer reach.
+each keyed by the complete typed reference. Every provider boundary records the context
+and output keys actually visited by freezing and projection, including recursive
+inherited-context reads; the freeze contributes all active frozen output keys even when
+projection publication fails. When the boundary ends, successful cached reads absent
+from those active sets are evicted. A payload that remains reachable therefore hits
+storage once per Turn, while compaction releases context and output payloads the provider
+can no longer reach; a later re-entry reads and verifies them again. Missing or failed
+reads are not negatively cached and can become available after a new canonical write.

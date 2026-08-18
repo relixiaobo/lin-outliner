@@ -132,7 +132,7 @@ import { ThreadCore,type NotificationListener } from './thread/ThreadCore';
 import { ThreadResourceOps } from './thread/ThreadResourceOps';
 import { threadTranscriptRoot } from './thread/ThreadTranscriptArtifact';
 import { documentDriftNotice,driftAttribution,DRIFT_ATTRIBUTION_SCAN,DRIFT_NOTICE_NODE_LIMIT,type DocumentDriftAttribution } from './context/documentDriftNotice';
-import { beliefsFromToolResult,type DocumentBelief } from './context/DocumentBeliefs';
+import { beliefsFromToolResult,isBeliefBearingTool,type DocumentBelief } from './context/DocumentBeliefs';
 import { ThreadDocumentBeliefs } from './context/ThreadDocumentBeliefs';
 import { indexProjection } from './capabilities/agentNodeToolProjection';
 import { ThreadTranscriptExclusions } from './thread/ThreadTranscriptExclusions';
@@ -713,12 +713,15 @@ export class ThreadService implements ThreadServiceExtensionHost {
         // projection of that set, so recomputing it earlier would only describe
         // a directory that is about to change.
         .then(() => { this.transcriptIndex.schedule(); }),
-      ...reconciledThreadIds.flatMap((threadId) => [
-        this.core.payloads.pruneUnreferencedResources(threadId, this.resourceOps.threadResourceReferences(threadId)),
-        this.core.payloads.pruneUnreferencedContexts(threadId, this.resourceOps.threadContextPayloadReferences(threadId)),
-        this.core.payloads.pruneUnreferencedTurnDiagnostics(threadId, this.resourceOps.threadTurnDiagnosticsReferences(threadId)),
-        this.core.payloads.pruneUnreferencedTextOutputs(threadId, this.resourceOps.threadTextPayloadReferences(threadId)),
-      ]),
+      ...reconciledThreadIds.flatMap((threadId) => {
+        const references = this.resourceOps.threadStorageReferences(threadId);
+        return [
+          this.core.payloads.pruneUnreferencedResources(threadId, references.resources),
+          this.core.payloads.pruneUnreferencedContexts(threadId, references.contexts),
+          this.core.payloads.pruneUnreferencedTurnDiagnostics(threadId, references.diagnostics),
+          this.core.payloads.pruneUnreferencedTextOutputs(threadId, references.textOutputs),
+        ];
+      }),
     ]);
     const resumableThreads: Thread[] = [];
     for (const threadId of resumableThreadIds) {
@@ -1821,16 +1824,21 @@ export class ThreadService implements ThreadServiceExtensionHost {
    */
   private async rebuildDocumentBeliefs(threadId: ThreadId): Promise<readonly DocumentBelief[]> {
     const projection = this.getDocumentProjection();
-    const index = projection ? indexProjection(projection) : null;
+    let index: ReturnType<typeof indexProjection> | null | undefined;
     const beliefs: DocumentBelief[] = [];
     for (const turn of this.core.allTurns(threadId)) {
       const observedAt = turn.completedAt ?? turn.startedAt;
       for (const item of turn.items) {
-        if (item.type !== 'dynamicToolCall' || !item.outputRef) continue;
+        if (
+          item.type !== 'dynamicToolCall'
+          || !item.outputRef
+          || !isBeliefBearingTool(item.tool)
+        ) continue;
+        index ??= projection ? indexProjection(projection) : null;
         const text = await this.core.payloads.readTextReference(threadId, item.outputRef).catch(() => null);
         if (!text) continue;
         try {
-          beliefs.push(...beliefsFromToolResult(item.tool, JSON.parse(text), index, observedAt));
+          beliefs.push(...beliefsFromToolResult(item.tool, JSON.parse(text), index ?? null, observedAt));
         } catch {
           // Not JSON, or truncated past parsing: no belief rather than a wrong one.
         }

@@ -762,7 +762,7 @@ class AbortIgnoringExecutor extends ControlledExecutor {
 }
 
 describe('ThreadService', () => {
-  test('reuses one canonical Turn snapshot across terminal payload pruning', async () => {
+  test('refreshes terminal references after resource cleanup and shares the payload snapshot', async () => {
     const fixture = await createFixture();
     const thread = (await fixture.service.startThread({
       source: 'app',
@@ -777,25 +777,27 @@ describe('ThreadService', () => {
     await fixture.executor.waitUntilWaiting();
 
     const allTurns = spyOn(fixture.stores.history, 'allTurns');
-    const pruneContexts = fixture.stores.payloads.pruneUnreferencedContexts.bind(fixture.stores.payloads);
-    const pruneDiagnostics = fixture.stores.payloads.pruneUnreferencedTurnDiagnostics.bind(fixture.stores.payloads);
+    const pruneContexts = fixture.stores.payloads.pruneUnreferencedContexts;
+    const pruneDiagnostics = fixture.stores.payloads.pruneUnreferencedTurnDiagnostics;
     const allTurnsCountsAtPrune: number[] = [];
     fixture.stores.payloads.pruneUnreferencedContexts = async (...args) => {
       allTurnsCountsAtPrune.push(allTurns.mock.calls.length);
-      return await pruneContexts(...args);
+      return await pruneContexts.call(fixture.stores.payloads, ...args);
     };
     fixture.stores.payloads.pruneUnreferencedTurnDiagnostics = async (...args) => {
       allTurnsCountsAtPrune.push(allTurns.mock.calls.length);
-      return await pruneDiagnostics(...args);
+      return await pruneDiagnostics.call(fixture.stores.payloads, ...args);
     };
 
-    fixture.executor.finish();
-    await fixture.service.waitForIdle(thread.id);
-
-    expect(allTurnsCountsAtPrune).toEqual([1, 1]);
-    allTurns.mockRestore();
-    fixture.stores.payloads.pruneUnreferencedContexts = pruneContexts;
-    fixture.stores.payloads.pruneUnreferencedTurnDiagnostics = pruneDiagnostics;
+    try {
+      fixture.executor.finish();
+      await fixture.service.waitForIdle(thread.id);
+      expect(allTurnsCountsAtPrune).toEqual([2, 2]);
+    } finally {
+      allTurns.mockRestore();
+      fixture.stores.payloads.pruneUnreferencedContexts = pruneContexts;
+      fixture.stores.payloads.pruneUnreferencedTurnDiagnostics = pruneDiagnostics;
+    }
   });
 
   test('resolves renderer-owned Thread defaults at the host boundary', async () => {
@@ -13071,6 +13073,27 @@ describe('document drift notice', () => {
       'node_read output',
     );
     await context.recorder.completed({ ...started, status: 'completed', outputRef, success: true, durationMs: 1 });
+    const fileReadItemId = context.recorder.createItemId();
+    const fileReadOutputRef = await context.persistOutputText(
+      fileReadItemId,
+      JSON.stringify({ ok: true, data: { content: 'Large unrelated file output.' } }),
+      'application/json',
+      'file_read output',
+    );
+    await context.recorder.completedImmediately({
+      type: 'dynamicToolCall',
+      id: fileReadItemId,
+      provenance: context.recorder.localProvenance(fileReadItemId),
+      status: 'completed',
+      outputRef: fileReadOutputRef,
+      namespace: null,
+      tool: 'file_read',
+      arguments: { file_path: '/workspace/unrelated.txt' },
+      contentItems: [{ type: 'text', text: 'Large unrelated file output.' }],
+      success: true,
+      durationMs: 1,
+      modelCall: replayableModelCall('file_read', { file_path: '/workspace/unrelated.txt' }),
+    });
     fixture.executor.finish(0, completedExecutionResult(0));
     await fixture.service.waitForIdle(thread.id);
 
@@ -13078,14 +13101,21 @@ describe('document drift notice', () => {
     // fork inheriting a history it never observed live.
     fixture.service.dropDocumentBeliefs(thread.id);
     projection = contextProjection([contextNode(PRICING, 'Enterprise ¥4,800/seat', { updatedAt: 2 })]);
+    const readTextReference = spyOn(fixture.stores.payloads, 'readTextReference');
 
-    await fixture.service.startRendererTurn({
-      threadId: thread.id,
-      input: [{ type: 'text', text: 'What do we charge?' }],
-    });
-    await fixture.executor.waitUntilWaiting(1);
+    try {
+      await fixture.service.startRendererTurn({
+        threadId: thread.id,
+        input: [{ type: 'text', text: 'What do we charge?' }],
+      });
+      await fixture.executor.waitUntilWaiting(1);
 
-    expect(await driftNoticeFor(fixture, thread.id, 1)).toContain('Enterprise ¥4,800/seat');
+      expect(await driftNoticeFor(fixture, thread.id, 1)).toContain('Enterprise ¥4,800/seat');
+      expect(readTextReference.mock.calls.some(([, ref]) => ref.id === outputRef.id)).toBe(true);
+      expect(readTextReference.mock.calls.some(([, ref]) => ref.id === fileReadOutputRef.id)).toBe(false);
+    } finally {
+      readTextReference.mockRestore();
+    }
 
     fixture.executor.finish(1, completedExecutionResult(0));
     await fixture.service.waitForIdle(thread.id);

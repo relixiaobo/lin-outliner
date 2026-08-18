@@ -16,8 +16,8 @@ const SECRET_SCAN_RULES = (recommendedSecretlintRules as readonly SecretLintRule
   .filter((rule) => rule.meta.type === 'scanner');
 
 const PARTIAL_PRIVATE_KEY_HEADER = /-----BEGIN [A-Z ]*PRIVATE KEY-----/g;
+const PRIVATE_KEY_MARKER_PATTERN = /-----(BEGIN|END) ([A-Z0-9 ]*PRIVATE KEY)-----/g;
 const SUPPLEMENTAL_HIGH_CONFIDENCE_PATTERNS: readonly RegExp[] = [
-  /-----BEGIN ([A-Z0-9 ]*PRIVATE KEY)-----[\s\S]*?-----END \1-----/g,
   /\bsk-[A-Za-z0-9_-]{24,}\b/g,
   /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/g,
   /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g,
@@ -102,6 +102,7 @@ export function containsSecretLikeContent(content: string): boolean {
   PARTIAL_PRIVATE_KEY_HEADER.lastIndex = 0;
   if (PARTIAL_PRIVATE_KEY_HEADER.test(content)) return true;
   if (secretlintRanges(content).length > 0) return true;
+  if (privateKeyRanges(content).length > 0) return true;
   if (patternRanges(content, SUPPLEMENTAL_HIGH_CONFIDENCE_PATTERNS).length > 0) return true;
   return environmentAssignmentRanges(content).length > 0;
 }
@@ -190,9 +191,58 @@ function redactKnownCredentialText(content: string): string {
 function credentialTextRanges(content: string): TextRange[] {
   return mergeRanges([
     ...secretlintRanges(content),
+    ...privateKeyRanges(content),
     ...patternRanges(content, SUPPLEMENTAL_HIGH_CONFIDENCE_PATTERNS),
     ...environmentAssignmentRanges(content),
   ]);
+}
+
+function privateKeyRanges(content: string): TextRange[] {
+  const begins: Array<{ readonly start: number; readonly end: number; readonly label: string }> = [];
+  const ends = new Map<string, Array<{ readonly start: number; readonly end: number }>>();
+  PRIVATE_KEY_MARKER_PATTERN.lastIndex = 0;
+  for (const match of content.matchAll(PRIVATE_KEY_MARKER_PATTERN)) {
+    const start = match.index;
+    const kind = match[1];
+    const label = match[2];
+    if (start === undefined || !kind || !label) continue;
+    const marker = { start, end: start + match[0].length };
+    if (kind === 'BEGIN') {
+      begins.push({ ...marker, label });
+    } else {
+      const matching = ends.get(label) ?? [];
+      matching.push(marker);
+      ends.set(label, matching);
+    }
+  }
+
+  const ranges: TextRange[] = [];
+  let nextSearchStart = 0;
+  for (const begin of begins) {
+    if (begin.start < nextSearchStart) continue;
+    const matchingEnds = ends.get(begin.label);
+    if (!matchingEnds) continue;
+    const endIndex = lowerBoundMarkerStart(matchingEnds, begin.end);
+    const end = matchingEnds[endIndex];
+    if (!end) continue;
+    ranges.push({ start: begin.start, end: end.end });
+    nextSearchStart = end.end;
+  }
+  return ranges;
+}
+
+function lowerBoundMarkerStart(
+  markers: readonly { readonly start: number }[],
+  minimumStart: number,
+): number {
+  let low = 0;
+  let high = markers.length;
+  while (low < high) {
+    const midpoint = Math.floor((low + high) / 2);
+    if (markers[midpoint]!.start < minimumStart) low = midpoint + 1;
+    else high = midpoint;
+  }
+  return low;
 }
 
 function scanJsonValue(

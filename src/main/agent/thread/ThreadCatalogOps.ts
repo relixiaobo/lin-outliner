@@ -522,18 +522,16 @@ export class ThreadCatalogOps {
         //
         // The other three belong to the Turn that went away and nothing re-sends
         // them. Startup sweeps all four for every known Thread.
+        const references = this.resourceOps.threadStorageReferences(thread.id);
         const resurrectable = [
-          ...this.resourceOps.threadResourceReferences(thread.id),
+          ...references.resources,
           ...omitted.flatMap((turn) => turn.items.flatMap(itemResourceReferences)),
         ];
         await Promise.all([
           this.core.payloads.pruneUnreferencedResources(thread.id, resurrectable),
-          this.core.payloads.pruneUnreferencedContexts(thread.id, this.resourceOps.threadContextPayloadReferences(thread.id)),
-          this.core.payloads.pruneUnreferencedTurnDiagnostics(
-            thread.id,
-            this.resourceOps.threadTurnDiagnosticsReferences(thread.id),
-          ),
-          this.core.payloads.pruneUnreferencedTextOutputs(thread.id, this.resourceOps.threadTextPayloadReferences(thread.id)),
+          this.core.payloads.pruneUnreferencedContexts(thread.id, references.contexts),
+          this.core.payloads.pruneUnreferencedTurnDiagnostics(thread.id, references.diagnostics),
+          this.core.payloads.pruneUnreferencedTextOutputs(thread.id, references.textOutputs),
         ]).catch(() => undefined);
         if (request.numTurns === turns.length) this.clearAutomaticThreadName(thread.id);
         return { thread: this.core.requireThread(thread.id).thread };

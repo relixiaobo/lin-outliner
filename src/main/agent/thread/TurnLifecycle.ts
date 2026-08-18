@@ -499,13 +499,15 @@ export class TurnLifecycle {
           admissionGuard?.();
           await active.recorder.completedImmediatelyBatch(admittedItems, acceptedAt);
         } catch (error) {
-          await this.resourceOps.discardUnreferencedCreatedResources(
+          const references = this.resourceOps.threadStorageReferences(thread.id);
+          await this.resourceOps.discardCreatedResourcesAgainstReferences(
             thread.id,
             [...admission.createdResources, ...createdEvidenceResources],
+            references.resources,
           );
           await this.core.payloads.pruneUnreferencedContexts(
             thread.id,
-            this.resourceOps.threadContextPayloadReferences(thread.id),
+            references.contexts,
           );
           throw error;
         }
@@ -866,13 +868,15 @@ export class TurnLifecycle {
           admissionGuard,
         );
       } catch (error) {
-        await this.resourceOps.discardUnreferencedCreatedResources(
+        const references = this.resourceOps.threadStorageReferences(record.thread.id);
+        await this.resourceOps.discardCreatedResourcesAgainstReferences(
           record.thread.id,
           [...admission.createdResources, ...createdEvidenceResources],
+          references.resources,
         );
         await this.core.payloads.pruneUnreferencedContexts(
           record.thread.id,
-          this.resourceOps.threadContextPayloadReferences(record.thread.id),
+          references.contexts,
         );
         throw error;
       }
@@ -1337,20 +1341,17 @@ export class TurnLifecycle {
         // safely drive reference-based garbage collection until startup rebuilds
         // it from the rollout.
         if (projectionReadable) {
-          const canonicalTurns = this.core.allTurns(active.threadId);
-          await this.resourceOps.discardUnreferencedCreatedResources(
+          const resourceReferences = this.resourceOps.threadStorageReferences(active.threadId);
+          await this.resourceOps.discardCreatedResourcesAgainstReferences(
             active.threadId,
             createdOutputResources,
-            canonicalTurns,
+            resourceReferences.resources,
           ).catch(() => undefined);
-          await this.core.payloads.pruneUnreferencedContexts(
-            active.threadId,
-            this.resourceOps.threadContextPayloadReferences(active.threadId, canonicalTurns),
-          ).catch(() => undefined);
-          await this.core.payloads.pruneUnreferencedTurnDiagnostics(
-            active.threadId,
-            this.resourceOps.threadTurnDiagnosticsReferences(active.threadId, canonicalTurns),
-          ).catch(() => undefined);
+          const payloadReferences = this.resourceOps.threadStorageReferences(active.threadId);
+          await Promise.all([
+            this.core.payloads.pruneUnreferencedContexts(active.threadId, payloadReferences.contexts),
+            this.core.payloads.pruneUnreferencedTurnDiagnostics(active.threadId, payloadReferences.diagnostics),
+          ]).catch(() => undefined);
         }
         if (active.admissionCommitted) this.accrueSubagentBudgetUsage(active, thread, turn.execution);
         this.settleSubagentInFlightUsage(active);
@@ -1718,15 +1719,15 @@ export class TurnLifecycle {
           // Thread, closing the same concurrency admission window as success.
           this.collaboration.prepareChildTerminalSettlement(thread, failedTurn);
         }
-        const canonicalTurns = this.core.allTurns(active.threadId);
+        const references = this.resourceOps.threadStorageReferences(active.threadId);
         await Promise.all([
           this.core.payloads.pruneUnreferencedContexts(
             active.threadId,
-            this.resourceOps.threadContextPayloadReferences(active.threadId, canonicalTurns),
+            references.contexts,
           ),
           this.core.payloads.pruneUnreferencedTurnDiagnostics(
             active.threadId,
-            this.resourceOps.threadTurnDiagnosticsReferences(active.threadId, canonicalTurns),
+            references.diagnostics,
           ),
         ]).catch(() => undefined);
         if (this.activeTurns.get(active.threadId) === active) this.activeTurns.delete(active.threadId);

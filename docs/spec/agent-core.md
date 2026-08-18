@@ -542,21 +542,28 @@ letters and digits. Serialized JSON key inspection is limited to `args`, `argume
 nested JSON strings. Rule exceptions, unsupported asynchronous rules, malformed JSON,
 and scanner depth failures all fail open. Each structured value stages its strings in
 canonical traversal order. A sufficiently large batch runs the same complete scanner on
-a lazy unreferenced Node worker; a small batch runs directly, and worker failure retries
-the direct scanner before the fail-open boundary. Durable scanning has no character
-budget. Diagnostic copies separately spend one 64,000-character budget before dispatch
-and use an omission marker beyond it. Whole strings are scanned without chunking, so
-credential matches spanning arbitrary distances retain identical coverage and bytes.
+a bounded pool of at most two lazy unreferenced Node workers; a small batch runs the
+direct scanner exactly once. Every pooled request has a five-second
+enqueue-to-completion watchdog. A worker error or timeout terminates that worker and
+takes a large durable batch directly to the fail-open boundary rather than repeating the
+unbounded scan on Electron's main thread. Private-key matching pre-indexes BEGIN/END
+markers, and whole strings are scanned without chunking, so credential matches spanning
+arbitrary distances retain identical coverage and bytes without repeated suffix scans.
+Durable scanning has no character budget. Diagnostic copies separately spend one
+64,000-character budget before dispatch and use an omission marker beyond it.
 The diagnostic copy never becomes Item or replay data. Redacted replay
 compatibility is decided once
 against the admission schema: a compatible copy becomes `redactedReplay`; an
 incompatible copy becomes executed `evidenceOnly`, while the validated transient source
 call may still run. Evidence provider names, corrections, and argument summaries have
 independent UTF-8 bounds, and malformed redaction pointers fail at the
-codec boundary. Turn finalization reads canonical Turns once and derives created-resource,
-context-payload, and diagnostics retention sets from that one snapshot. A newly written
-tool image that no terminal Item references is reclaimed there; startup reconciliation
-handles crash leftovers.
+codec boundary. Cleanup boundaries decode canonical Turns once into shared resource,
+context-payload, diagnostics, and text-output reference sets. Turn finalization first
+takes the resource-reference snapshot and reclaims newly written tool images that no
+terminal Item references. It then refreshes the canonical payload-reference snapshot
+once and prunes contexts and diagnostics in parallel, so canonical appends during the
+resource cleanup are visible to both payload pruners. Startup reconciliation handles
+crash leftovers.
 
 A history rollback reclaims contexts, Turn diagnostics, and tool text outputs
 against the surviving history, and resources against the surviving history PLUS
@@ -745,7 +752,9 @@ hand. There is no per-tool hook, so a node tool added later is covered without
 remembering to call anything, and `node_search` is covered like every other even
 though its arguments never say which nodes the model will see: its results are
 the rendering. Tool-name eligibility is checked before building a document
-projection index, so non-belief tools do no document-wide observation work.
+projection index on the live path and before projection indexing, payload reads,
+or JSON parsing during canonical rebuild, so non-belief tools do no document-wide
+observation or output-materialization work.
 
 **The belief set is a projection of the canonical record** and takes its bound
 from the record rather than from a cap of its own. Re-observing a node replaces

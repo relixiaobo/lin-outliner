@@ -314,7 +314,7 @@ describe('agent secret redaction', () => {
     expect(result.redactedPaths).toEqual(['/second', '/third']);
   });
 
-  test('keeps arbitrary-span private-key redaction byte-identical in a large batch', async () => {
+  test('keeps arbitrary-span private-key redaction byte-identical in a large direct-path batch', async () => {
     const privateKey = [
       '-----BEGIN OPENSSH PRIVATE KEY-----',
       'ordinary key material words '.repeat(10_000),

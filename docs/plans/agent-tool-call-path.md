@@ -114,9 +114,10 @@ explicitly NOT part of this plan.
 
 - **Turn-scoped `readOutput` memoization**, extending the already-sanctioned
   Turn-scoped immutable read cache (the `readContext` memo in
-  `withTurnScopedContextReads`) to output payloads: each content-addressed
-  payload is read and hash-verified once per Turn, not once per step. This is
-  the contract-compatible bulk of the win.
+  `withTurnScopedContextReads`) to output payloads: each reachable
+  content-addressed payload is read and hash-verified once across consecutive
+  provider steps. This is the contract-compatible bulk of the win; PR-3 bounds
+  retention when a payload leaves provider context.
 - **Token-count caching: dropped.** `estimateProviderMessageTokens` is a
   length-based estimator (no real tokenizer), so any cache keyed by a
   stableJson+hash of the raw message costs MORE per lookup than the estimate it
@@ -138,26 +139,35 @@ explicitly NOT part of this plan.
 ### PR-3 — small tails
 
 - Hoist the `BELIEF_BEARING_TOOLS` check in front of `indexProjection` in
-  `ThreadDocumentBeliefs.observe`.
+  `ThreadDocumentBeliefs.observe`, and apply the same filter during canonical
+  belief rebuild before projection indexing, payload reads, or JSON parsing.
 - **Shared secret-scan scheduling, distinct budgets.** Profiling measured the
   64,000-character diagnostics copy, while the durable path deliberately has a
   null budget and must scan completely; bounding durable work would let a large
   crafted output bypass redaction into storage deterministically. Both paths
   stage their ordered strings into one batch and use the same pure scanner.
-  Sufficiently large batches run on one lazy, unreferenced Node worker; small
-  batches run directly to avoid IPC overhead, and worker failure retries the
-  same complete scanner directly before the existing fail-open boundary.
+  Sufficiently large batches use a bounded pool of at most two lazy,
+  unreferenced Node workers; small batches run the direct scanner exactly once
+  to avoid IPC overhead. Every pooled request has an enqueue-to-completion
+  watchdog. A worker error or timeout terminates that worker and takes the large
+  batch directly to the existing fail-open boundary, without repeating an
+  unbounded scan on Electron's main thread. Private-key matching pre-indexes
+  BEGIN/END markers so unmatched markers do not repeatedly rescan the suffix.
   Diagnostics spends its global budget before worker dispatch and preserves its
   omission markers. The worker scans whole strings rather than chunks, so
   arbitrary-span credentials such as private keys require no overlap heuristic
   and redaction outcomes remain byte-identical.
-- At every provider freeze, evict successful Turn-scoped `readOutput` entries
-  whose complete typed keys are absent from the effective context's existing
-  frozen-projection set. Compacted-away output stays recoverable from storage
-  but no longer stays resident for the rest of the Turn.
-- Turn completion computes `allTurns` once and passes the result to both prune
-  sweeps and the created-resource retention check, so all three derive from one
-  canonical snapshot.
+- At every provider boundary, track the complete typed keys actually visited by
+  `readContext` and `readOutput`, including recursive inherited-context reads.
+  The freeze contributes all active frozen output keys even if projection
+  publication fails. When the boundary ends, evict successful context and
+  output reads absent from those active sets. Compacted-away payloads stay
+  recoverable from storage but no longer stay resident for the rest of the Turn.
+- Cleanup boundaries derive resource, context, diagnostics, and text-output
+  reference sets from one canonical decode. Turn completion first takes the
+  resource snapshot and performs created-resource cleanup, then refreshes the
+  canonical payload snapshot once and prunes contexts and diagnostics in
+  parallel, so an append during resource cleanup is visible to both pruners.
 
 ## Verification
 
@@ -176,11 +186,14 @@ explicitly NOT part of this plan.
 - Existing agent tool and memory extension suites stay green, with one scoped
   exception: `node_search` ranking fixtures under a filter update once to the
   ratified indexed semantics. Everything else in PR-1/2/3 is pure cost.
-- PR-3 additionally proves that non-belief tools never index a projection, a
-  compacted-away output is re-read if it later re-enters effective context,
-  terminal cleanup performs one canonical Turn decode, the diagnostics budget
-  remains ordered across a batch, and long cross-boundary credential fixtures
-  produce the same bytes through direct and worker scans.
+- PR-3 additionally proves that non-belief tools neither index a projection nor
+  read their persisted outputs during rebuild; context and output payloads leave
+  the Turn cache when the provider can no longer reach them; inherited full
+  outputs remain cached while reachable; terminal cleanup refreshes once between
+  its resource and payload phases; the diagnostics budget remains ordered across
+  a batch; and a real `worker_threads` entry produces the same bytes as the direct
+  scanner for long cross-boundary credentials. A packaged-ASAR probe launches the
+  generated worker entry and resolves its scanner chunk from the same archive.
 - **A9 manual:** a multi-tool research Turn (10+ tool calls) on the large test
   document — wall-clock and main-process CPU before/after each PR, recorded in
   the PR body.

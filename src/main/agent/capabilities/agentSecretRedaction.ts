@@ -27,8 +27,9 @@ export interface SecretRedactionResult<T> {
 }
 
 /**
- * Redact complete durable values. Large batches run on the scanner worker; a
- * worker failure falls back to the same complete scanner on the main thread.
+ * Redact complete durable values. Large batches run on the scanner worker;
+ * scanner failure reaches the existing fail-open boundary without blocking
+ * Electron's main loop with a second synchronous scan.
  */
 export async function redactSecretLikeJsonAsync<T>(value: T): Promise<SecretRedactionResult<T>> {
   try {
@@ -53,12 +54,11 @@ export async function redactSecretLikeJsonForDiagnostics<T>(
 }
 
 class PendingSecretString {
-  output: string | null = null;
-
   constructor(
     readonly job: SecretStringScanJob,
     readonly path: string,
     readonly order: number,
+    readonly apply: (output: string) => void,
   ) {}
 }
 
@@ -76,6 +76,7 @@ async function scanSecretLikeJson<T>(
   let lastYieldAt = performance.now();
   const pending: PendingSecretString[] = [];
   const redactedPaths: RedactedPath[] = [];
+  const root: { value?: unknown } = {};
 
   const yieldIfNeeded = async () => {
     if (performance.now() - lastYieldAt < SECRET_SCAN_YIELD_INTERVAL_MS) return;
@@ -86,31 +87,51 @@ async function scanSecretLikeJson<T>(
     content: string,
     path: string,
     inspectEncodedJson: boolean,
-  ): string | PendingSecretString => {
+    apply: (output: string) => void,
+  ): void => {
     const order = pathOrder++;
     if (remainingChars !== null) {
       if (content.length > remainingChars) {
         const omission = `[diagnostic text omitted after secret-scan budget: ${content.length} chars]`;
         if (omission !== content) redactedPaths.push({ path: path || '', order });
-        return omission;
+        apply(omission);
+        return;
       }
       remainingChars -= content.length;
     }
-    const entry = new PendingSecretString({ content, inspectEncodedJson }, path || '', order);
-    pending.push(entry);
-    return entry;
+    // Establish the original container key/index order before deferred worker output arrives.
+    apply(content);
+    pending.push(new PendingSecretString(
+      { content, inspectEncodedJson },
+      path || '',
+      order,
+      apply,
+    ));
   };
-  const visit = async (input: unknown, path: string, inspectEncodedJson = false): Promise<unknown> => {
-    if (typeof input === 'string') return stageString(input, path, inspectEncodedJson);
+  const visit = async (
+    input: unknown,
+    path: string,
+    inspectEncodedJson: boolean,
+    apply: (output: unknown) => void,
+  ): Promise<void> => {
+    if (typeof input === 'string') {
+      stageString(input, path, inspectEncodedJson, apply);
+      return;
+    }
     if (Array.isArray(input)) {
       const output: unknown[] = [];
+      apply(output);
       for (const [index, entry] of input.entries()) {
-        output.push(await visit(entry, `${path}/${index}`, inspectEncodedJson));
+        await visit(entry, `${path}/${index}`, inspectEncodedJson, (value) => { output[index] = value; });
       }
-      return output;
+      return;
     }
-    if (input === null || typeof input !== 'object') return input;
+    if (input === null || typeof input !== 'object') {
+      apply(input);
+      return;
+    }
     const output: Record<string, unknown> = {};
+    apply(output);
     for (const [key, entry] of Object.entries(input as Record<string, unknown>)) {
       const childPath = `${path}/${escapeJsonPointerToken(key)}`;
       const confidence = secretStringFieldConfidence(key);
@@ -119,48 +140,29 @@ async function scanSecretLikeJson<T>(
         if (entry !== REDACTED_SECRET) redactedPaths.push({ path: childPath, order });
         output[key] = REDACTED_SECRET;
       } else {
-        output[key] = await visit(entry, childPath, isJsonEncodedArgumentField(key));
+        await visit(entry, childPath, isJsonEncodedArgumentField(key), (value) => { output[key] = value; });
       }
       await yieldIfNeeded();
     }
-    return output;
   };
 
-  const staged = await visit(value, '');
+  await visit(value, '', false, (output) => { root.value = output; });
   const jobs = pending.map((entry) => entry.job);
-  let outputs: readonly string[];
-  try {
-    outputs = await scanSecretStringsOffMain(jobs);
-  } catch {
-    outputs = scanSecretStrings(jobs);
-  }
+  const outputs = await scanSecretStringsOffMain(jobs) ?? scanSecretStrings(jobs);
   if (outputs.length !== pending.length) throw new Error('Secret scanner returned an incomplete batch.');
   for (const [index, entry] of pending.entries()) {
     const output = outputs[index];
     if (output === undefined) throw new Error('Secret scanner omitted a string result.');
-    entry.output = output;
+    entry.apply(output);
     if (output !== entry.job.content) redactedPaths.push({ path: entry.path, order: entry.order });
   }
 
   return {
-    value: materializeStagedValue(staged) as T,
+    value: root.value as T,
     redactedPaths: redactedPaths
       .sort((left, right) => left.order - right.order)
       .map((entry) => entry.path),
   };
-}
-
-function materializeStagedValue(value: unknown): unknown {
-  if (value instanceof PendingSecretString) {
-    if (value.output === null) throw new Error('Secret scanner result was not materialized.');
-    return value.output;
-  }
-  if (Array.isArray(value)) return value.map(materializeStagedValue);
-  if (value === null || typeof value !== 'object') return value;
-  return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>)
-      .map(([key, entry]) => [key, materializeStagedValue(entry)]),
-  );
 }
 
 function escapeJsonPointerToken(value: string): string {
