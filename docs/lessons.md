@@ -1183,3 +1183,21 @@ instead of as a type error. **When you add to or rename on an interface, `rg` th
 test doubles by hand**; the compiler is not covering them for you. A green
 typecheck says nothing about the fakes, and a fake that no current test exercises
 will look fine until the day one does.
+
+## An absolutely-positioned overlay is invisible to a diff and to the DOM query that renders it
+
+During #553's gate the accept control and the inherited-default ghost were read
+carefully in the diff, in the CSS, and in the E2E assertions, and all three
+looked right. Rendering the row showed the ghost's `Inbox` painted directly on
+top of the empty editor's `Empty` placeholder — same origin, both drawn — so the
+feature's most common state was illegible. Nothing in the review could have
+caught it: the two texts live in different elements, one is a `::before` on a
+descendant, and the overlap only exists once both are laid out. The E2E test
+already asserted the ghost's text, its `pointer-events`, and its computed color
+against `--text-tertiary`, and every one of those passed over the defect.
+**A `position: absolute` layer over content you did not author is a visual
+question, so answer it visually** — screenshot the element, in both themes,
+before calling the review done. Assertions on one layer's computed style say
+nothing about what the other layer is painting underneath it. This is the whole
+reason the gate table sends UI diffs to visual verification rather than to a
+closer read.
