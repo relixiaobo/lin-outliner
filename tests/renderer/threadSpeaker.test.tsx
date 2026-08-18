@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test';
-import { act } from 'react';
+import { act, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 
@@ -65,6 +65,23 @@ describe('speaker headers', () => {
     expect(avatar?.textContent).toBe('A');
   });
 
+  test('stacks what a participant did under who they are', async () => {
+    const { document } = await renderSpeaker({
+      avatarKey: 'explore',
+      name: 'explore',
+      meta: <span className="thread-speaker-meta">Worked for 2min33s</span>,
+    });
+
+    // Who and what-they-did are separate lines: the elapsed time grows as a
+    // Turn runs, and beside the name it would eat the one string that must
+    // never truncate.
+    const title = document.querySelector('.thread-speaker-title');
+    expect(title?.querySelector('.thread-speaker-name')).not.toBeNull();
+    expect(title?.querySelector('.thread-speaker-meta')).toBeNull();
+    expect(document.querySelector('.thread-speaker-identity > .thread-speaker-meta')?.textContent)
+      .toBe('Worked for 2min33s');
+  });
+
   test('leaves a participant that is not a type unlabelled', async () => {
     // An isolated Skill: its own name IS what it is, so a role line would only
     // repeat it.
@@ -75,9 +92,10 @@ describe('speaker headers', () => {
   });
 });
 
-async function renderSpeaker(speaker: {
+async function renderSpeaker({ meta, ...speaker }: {
   readonly avatarKey: string;
   readonly name: string;
+  readonly meta?: ReactNode;
 }): Promise<{ readonly document: Document }> {
   const { ThreadSpeakerGroup } = await import('../../src/renderer/agent/components/ThreadSpeaker');
   const store = new ThreadStore(
@@ -102,6 +120,7 @@ async function renderSpeaker(speaker: {
   act(() => root.render(
     <I18nProvider>
       <ThreadSpeakerGroup
+        meta={meta}
         speaker={{ participantId: speaker.avatarKey, ...speaker }}
         source={store}
       >

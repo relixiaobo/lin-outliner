@@ -78,14 +78,18 @@ request and the work it produced. What differs is which actions are valid.
 delegation graph is a set of participants sending each other messages, and every
 surface that shows one reads like any message stream.
 
-Every non-reader block therefore wears the SAME structure — a one-line header
-carrying an avatar, the participant's name, and what they did (the Turn's work
-summary for this transcript's own agent; a delegated child's own elapsed for its
-report) — then what they said at full width beneath it. Who spoke and how long
-it took is one sentence, so it is one line: that header IS the work summary and
-the only control that opens the timeline. It was a name row, a summary line, a
-rule, and sometimes a second summary line — four elements for one sentence (PM
-2026-08-15). One structure for all of them: the conversation's own agent
+Every non-reader block therefore wears the SAME structure — a header carrying a
+portrait beside two stacked lines, WHO (persona and Agent type) over WHAT THEY
+DID (the Turn's work summary for this transcript's own agent; a delegated
+child's own elapsed for its report) — then what they said beneath it. The work
+line IS the work summary and the only control that opens the timeline. It is
+two lines rather than one because they answer different questions and the
+second one GROWS: an elapsed time ticking up beside a name squeezes the name at
+deck width, and a persona is the thing that must never be truncated. What the
+earlier one-line rule refused was four elements for one sentence — a name row,
+a summary line, a rule, and sometimes a second summary line (PM 2026-08-15);
+two tight lines under one portrait are not that, and the prototype the identity
+system was ratified from stacks them (PM 2026-08-18). One structure for all of them: the conversation's own agent
 answering, a delegated child delivering its report, the Agent that wrote a
 brief. The header is one line, and the words beneath HANG FROM THE NAME: the
 portrait sits in a margin lane and every line of text in the block — header and
@@ -157,8 +161,8 @@ Naming (who is speaking) and identification (which one is this) are different
 questions (PM 2026-08-15). An isolated Skill keeps its own name, which is its
 type.
 
-Both halves of a header — the name and what that participant did — are one
-sentence on one line, and share one meta rule. Styled apart, the child's elapsed
+Both halves of a header — the name and what that participant did — share one
+meta rule. Styled apart, the child's elapsed
 came out at content size and stood its whole header taller than the agent's
 above it, so two headers that say the same kind of thing did not look alike.
 

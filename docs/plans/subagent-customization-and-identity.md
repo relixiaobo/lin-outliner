@@ -240,7 +240,11 @@ portrait. `--speaker-avatar-size` moves 16px → 24px — a 16px disc carries an
 initial, not a face. `avatarKey` semantics (one type, one avatar, everywhere)
 are unchanged.
 
-**Upgrade 2 — persona names.** The speaker name becomes the persona: "Fox"
+**Upgrade 2 — persona names, on their own line.** The header becomes a
+portrait beside two stacked lines — persona + type, then the work line — as the
+ratified prototype draws it. It is still one header and one control.
+
+The speaker name becomes the persona: "Fox"
 where `subagentSpeakerName` shows the raw type `explore` today; "Tenon"
 (untranslated) for main. A Role/type label joins the header line in
 `--text-secondary` (the type ladder is

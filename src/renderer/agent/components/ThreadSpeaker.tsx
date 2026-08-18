@@ -30,8 +30,11 @@ export interface ThreadSpeaker {
  * One participant speaking, in the shape every message stream uses: a portrait
  * and a name over what they said.
  *
- * The header is ONE line — portrait, persona, and what that participant is —
- * and the words below hang from the NAME, sharing its left edge. That lane
+ * The header is a portrait beside TWO stacked lines — who this is, then what
+ * they did — and the words below hang from the NAME, sharing its left edge.
+ * Stacked rather than run together because the second line grows: an elapsed
+ * time ticking up beside a name squeezes the name at deck width, and the
+ * persona is the one thing here that must never truncate. The portrait lane
  * costs a tenth of the reading measure in a 344px deck, which is only worth
  * paying because it carries a face: a portrait identifies a speaker before its
  * name is read, so the lane says something the header does not repeat. (It
@@ -59,10 +62,10 @@ export function ThreadSpeakerGroup({
 }: {
   readonly children: ReactNode;
   /**
-   * What this participant did, on the same line as who they are: the Turn's
+   * What this participant did, on its own line under who they are: the Turn's
    * work summary for the transcript's own agent, a delegated child's own
-   * elapsed for its report. Two lines and a rule said this before; who spoke
-   * and how long they took is one sentence, so it is one line.
+   * elapsed for its report. Still one header and one control — the line that
+   * says how long it took is the line that opens the timeline.
    */
   readonly meta?: ReactNode;
   readonly speaker: ThreadSpeaker;
@@ -100,9 +103,13 @@ export function ThreadSpeakerGroup({
             // Vendored markup, not user content: these files are in the bundle.
             : { dangerouslySetInnerHTML: { __html: portrait } })}
         />
-        <span className="thread-speaker-name">{identity.name}</span>
-        {roleLabel === null ? null : <span className="thread-speaker-role">{roleLabel}</span>}
-        {meta}
+        <div className="thread-speaker-identity">
+          <div className="thread-speaker-title">
+            <span className="thread-speaker-name">{identity.name}</span>
+            {roleLabel === null ? null : <span className="thread-speaker-role">{roleLabel}</span>}
+          </div>
+          {meta}
+        </div>
       </div>
       <div className="thread-speaker-content">{children}</div>
     </div>
