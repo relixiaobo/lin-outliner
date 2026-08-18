@@ -30,6 +30,9 @@ describe('speaker header column CSS guards', () => {
     // ancestor clipped a flat edge onto it.
     expect(avatar).not.toMatch(/margin-left:\s*calc\(var\(--space-1\)\s*\*\s*-1\)/);
     expect(avatar).toContain('overflow: hidden;');
+    // A portrait's own ground has no edge: unframed it dissolves into a light
+    // panel and glares on a dark one.
+    expect(avatar).toContain('box-shadow: var(--inset-hairline);');
   });
 
   test('lands the work line on the same edge as the name it sits under', () => {

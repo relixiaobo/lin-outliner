@@ -909,6 +909,12 @@
      icon CONTROLS, whose fills must stay pill-shaped; this is an identity mark,
      and the app's other identity marks are rounded squares. */
   border-radius: var(--radius-sm);
+  /* The painted art carries its own pale ground, which has no edge of its own:
+     on a light panel it dissolves into the surface and the character floats,
+     on a dark one it reads as a lit block. The hairline gives the picture a
+     frame in both — the same edge grouped cards use to become their own
+     region. */
+  box-shadow: var(--inset-hairline);
   font-size: var(--font-ui-xs);
   /* The repo's emphasis weight: an initial needs it to hold the disc. */
   font-weight: 650;
@@ -917,10 +923,12 @@
   user-select: none;
 }
 
-.thread-speaker-avatar > svg {
+.thread-speaker-avatar > img {
   width: 100%;
   height: 100%;
   display: block;
+  /* Painted square art: fill the tile, never letterbox inside it. */
+  object-fit: cover;
 }
 
 /* What the participant IS, beside what it is called. Quieter than the name: one

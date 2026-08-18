@@ -3,13 +3,14 @@ import { act, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 
-// agentPortraits.ts loads the vendored roster through Vite's import.meta.glob,
-// which does not exist outside the bundler. Stubbed with markup so the header's
-// portrait branch — the one production takes — is what these assertions read,
-// rather than the initial-disc fallback it degrades to under a test runner.
+// agentPortraits.ts resolves the vendored roster through Vite's
+// import.meta.glob, which does not exist outside the bundler. Stubbed with URLs
+// so the header's portrait branch — the one production takes — is what these
+// assertions read, rather than the initial-disc fallback it degrades to under a
+// test runner.
 mock.module('../../src/renderer/agent/agentPortraits', () => ({
-  agentPortraitSvg: (avatarKey: string | null) => (
-    avatarKey === null ? undefined : `<svg data-fixture-portrait="${avatarKey}"></svg>`
+  agentPortraitUrl: (avatarKey: string | null) => (
+    avatarKey === null ? undefined : `/fixture/${avatarKey}.png`
   ),
 }));
 
@@ -44,8 +45,8 @@ describe('speaker headers', () => {
     expect(document.querySelector('.thread-speaker-name')?.textContent).toBe('Rena');
     // The type stays visible: a persona says who, the label says what.
     expect(document.querySelector('.thread-speaker-role')?.textContent).toBe('explore');
-    expect(document.querySelector('.thread-speaker-avatar svg')?.getAttribute('data-fixture-portrait'))
-      .toBe('fox');
+    expect(document.querySelector('.thread-speaker-avatar img')?.getAttribute('src'))
+      .toBe('/fixture/fox.png');
   });
 
   test('names the conversation\'s own agent and does not label it', async () => {
@@ -56,15 +57,15 @@ describe('speaker headers', () => {
     // the only thing about this participant nobody was wondering. A type label
     // answers "which kind of helper is this" — a delegate's question.
     expect(document.querySelector('.thread-speaker-role')).toBeNull();
-    expect(document.querySelector('.thread-speaker-avatar svg')?.getAttribute('data-fixture-portrait'))
-      .toBe('beaver');
+    expect(document.querySelector('.thread-speaker-avatar img')?.getAttribute('src'))
+      .toBe('/fixture/beaver.png');
   });
 
   test('wears the initial disc when an identity has no portrait', async () => {
     const { document } = await renderSpeaker({ avatarKey: 'auditor', name: 'auditor' });
 
     const avatar = document.querySelector('.thread-speaker-avatar');
-    expect(avatar?.querySelector('svg')).toBeNull();
+    expect(avatar?.querySelector('img')).toBeNull();
     expect(avatar?.textContent).toBe('A');
   });
 

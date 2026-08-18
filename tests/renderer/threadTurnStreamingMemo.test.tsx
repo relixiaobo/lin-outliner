@@ -7,8 +7,8 @@ import { parseHTML } from 'linkedom';
 // undefined so the speaker header renders its portrait branch — the one
 // production takes — instead of the initial-disc fallback.
 mock.module('../../src/renderer/agent/agentPortraits', () => ({
-  agentPortraitSvg: (avatarKey: string | null) => (
-    avatarKey === null ? undefined : `<svg data-fixture-portrait="${avatarKey}"></svg>`
+  agentPortraitUrl: (avatarKey: string | null) => (
+    avatarKey === null ? undefined : `/fixture/${avatarKey}.png`
   ),
 }));
 

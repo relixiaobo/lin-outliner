@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { MAIN_IDENTITY_KEY, resolveAgentIdentity } from '../agentIdentity';
-import { agentPortraitSvg } from '../agentPortraits';
+import { agentPortraitUrl } from '../agentPortraits';
 import { useIdentityCatalog, type ThreadSnapshotSource } from '../store/threadStore';
 
 /** Who said the block beneath: which participant, what it looks like, its name. */
@@ -74,7 +74,7 @@ export function ThreadSpeakerGroup({
   // fallback: a participant that is not a type at all — an isolated Skill —
   // keeps the name it came with and simply has no persona to find.
   const identity = resolveAgentIdentity(catalog, speaker.avatarKey, speaker.name);
-  const portrait = agentPortraitSvg(identity.avatarKey);
+  const portrait = agentPortraitUrl(identity.avatarKey);
   // What it IS, beside what it is called — for DELEGATES only. The
   // conversation's own agent needs no label: there is exactly one of it, the
   // reader is talking to it, and `main` beside its name states the only thing
@@ -93,16 +93,18 @@ export function ThreadSpeakerGroup({
         <span
           aria-hidden
           className="thread-speaker-avatar"
-          // The disc colour rides along even under a portrait: it is what shows
-          // if the portrait is missing, and what the initial sits on.
+          // The tint rides along under a portrait too: it is what shows if the
+          // portrait is missing, and what the initial sits on.
           style={portrait === undefined
             ? { background: identity.color.background, color: identity.color.text }
             : undefined}
-          {...(portrait === undefined
-            ? { children: identity.initial }
-            // Vendored markup, not user content: these files are in the bundle.
-            : { dangerouslySetInnerHTML: { __html: portrait } })}
-        />
+        >
+          {portrait === undefined
+            ? identity.initial
+            // Decorative: the name is right beside it, so a second reading of
+            // the same identity would only repeat itself to a screen reader.
+            : <img alt="" src={portrait} />}
+        </span>
         <div className="thread-speaker-identity">
           <div className="thread-speaker-title">
             <span className="thread-speaker-name">{identity.name}</span>

@@ -195,9 +195,11 @@ its own meaning (PM 2026-08-18).
 
 The portrait is a rounded square on the identity-tile ladder the settings
 surface already uses (`--radius-sm` at this size), not a pill: B6 reserves the
-pill for an icon CONTROL's fill, and this is an identity mark. It is drawn
-muted — a flat field of saturated colour is the heaviest fill a box can carry,
-and these sit in a rail whose every other mark is neutral.
+pill for an icon CONTROL's fill, and this is an identity mark. It carries an inset hairline, because a
+portrait's own ground has no edge: on a light panel it dissolves into the
+surface, on a dark one it reads as a lit block, and the frame is what makes it a
+picture in both. Portrait art stays quiet against the words beside it — these
+sit in a rail whose every other mark is neutral.
 
 The avatar is a bundled PORTRAIT where the identity has one
 (`src/renderer/assets/agent-avatars/`, resolved by `agentPortraits.ts`), and
