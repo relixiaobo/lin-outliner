@@ -527,19 +527,26 @@ empty text result.
 A foreground `agent` call waits on the terminal-settlement authority for its
 exact `{agentId, generation}`. The spawning call and the first terminal
 reservation share one deferred even when the child settles before admission
-returns. The reservation resolves it only when the generation's terminal
-pipeline succeeds and removes that reservation; discovering outstanding
-background descendants is a normal deferral and does not resolve it. The same
-reservation survives the child's notification Turns, so the foreground result
-cannot return at the child's first idle edge while a descendant result is still
+returns. Its result is explicitly one of `settled`, `abandoned`, or `failed`.
+Only `settled` permits the caller to read the final Turn and construct a
+successful tool result.
+
+The authority reports `settled` only when the current generation and Turn still
+own a successful terminal pipeline. Outstanding background descendants are a
+normal deferral. A notification Turn advances `currentTurnId` without advancing
+the generation, so that transition preserves the reservation until the new Turn
+terminalizes and revises it; it never settles the old Turn as the generation's
+result. This keeps the foreground call waiting while descendant output is
 pending or being consumed.
 
-Every path that makes the reservation unable or unnecessary to continue also
-settles that deferred: a stale generation/Turn removal and orderly service close
-resolve it, while terminal retry exhaustion rejects it with the stable recovery
-error. Foreground completion therefore consumes the level-triggered settlement
-state machine directly; it does not maintain a second edge-triggered idle/activity
-predicate or run a duplicate terminal pipeline wait afterwards.
+Initial-admission failure and terminal retry exhaustion report `failed`, with
+the original admission error or the stable recovery error. Generation
+replacement, Thread deletion, and service close report `abandoned`. Those
+outcomes reject the foreground operation before it reads execution or Turn
+state, so teardown cannot fabricate a completed Agent result. Foreground
+completion therefore consumes the level-triggered settlement state machine
+directly; it does not maintain a second edge-triggered idle/activity predicate
+or run a duplicate terminal pipeline wait afterwards.
 
 ### Skills
 

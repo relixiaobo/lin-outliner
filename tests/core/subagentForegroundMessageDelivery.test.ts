@@ -41,11 +41,11 @@ interface AdmissionSeam {
 }
 
 interface TerminalSettlementSeam extends AdmissionSeam {
-  foregroundSettlementWaits: Set<string>;
-  terminalSettlementDeferreds: Map<string, { readonly promise: Promise<void> }>;
+  terminalSettlementDeferreds: Map<string, { readonly promise: Promise<unknown> }>;
   beginThreadDeletion(threadIds: readonly string[]): void;
   finishThreadDeletion(threadIds: readonly string[]): void;
   beginClose(): void;
+  clearThreadCoordinationState(threadIds: readonly string[]): void;
   drainForClose(deadline: number): Promise<boolean>;
   deliverParentWork(parentThreadId: string): Promise<void>;
   ensureTerminalPipeline(agentId: string, generation: number): Promise<void>;
@@ -742,8 +742,10 @@ describe('foreground Agent main-message delivery', () => {
     })).toBe(true);
     fixture.ledger.markDelivered(SECOND_AGENT_ID, 1, 102);
     fixture.setActive(child.id, true);
+    fixture.seam.threadBecameIdle(SECOND_AGENT_ID);
     await Promise.resolve();
     expect(spawnState).toBe('pending');
+    expect(fixture.seam.terminalSettlementReservations.has(`${child.id}:1`)).toBe(true);
 
     const notificationTurn = terminalTurn('notification-turn');
     fixture.setTerminalTurn(child.id, notificationTurn);
@@ -757,6 +759,8 @@ describe('foreground Agent main-message delivery', () => {
       runMode: 'foreground',
     });
     expect(spawnState).toBe('resolved');
+    expect(fixture.seam.terminalSettlementDeferreds.has(`${child.id}:1`)).toBe(false);
+    expect(fixture.seam.terminalSettlementDeferreds.has(`${SECOND_AGENT_ID}:1`)).toBe(false);
     fixture.close();
   });
 
@@ -766,7 +770,7 @@ describe('foreground Agent main-message delivery', () => {
     const child = await fixture.childSpawned;
     const key = `${child.id}:1`;
     await Promise.resolve();
-    expect(fixture.seam.foregroundSettlementWaits.has(key)).toBe(true);
+    expect(fixture.seam.terminalSettlementDeferreds.has(key)).toBe(true);
     let recordAttempts = 0;
     fixture.ledger.recordTerminal = () => {
       recordAttempts += 1;
@@ -799,24 +803,66 @@ describe('foreground Agent main-message delivery', () => {
       retryExhausted: true,
       retryTimer: null,
     });
+    expect(fixture.seam.terminalSettlementDeferreds.has(key)).toBe(false);
     warning.mockRestore();
     fixture.close();
   });
 
-  test('settles a foreground wait when close begins before a terminal reservation exists', async () => {
+  test('abandons a foreground wait when close begins before terminal settlement', async () => {
     const fixture = foregroundSettlementFixture();
     const spawn = fixture.spawn();
     const child = await fixture.childSpawned;
-    fixture.setTerminalTurn(child.id, terminalTurn(child.turnId));
     await Promise.resolve();
     expect(fixture.seam.terminalSettlementDeferreds.has(`${child.id}:1`)).toBe(true);
 
     fixture.seam.beginClose();
 
-    await expect(withTimeout(spawn, 1_000)).resolves.toMatchObject({
+    await expect(withTimeout(spawn, 1_000)).rejects.toThrow('Agent service is shutting down');
+    expect(fixture.seam.terminalSettlementDeferreds.has(`${child.id}:1`)).toBe(false);
+    fixture.close();
+  });
+
+  test('abandons a foreground wait when its Thread coordination state is cleared', async () => {
+    const fixture = foregroundSettlementFixture();
+    const spawn = fixture.spawn();
+    const child = await fixture.childSpawned;
+
+    fixture.seam.clearThreadCoordinationState([child.id]);
+
+    await expect(withTimeout(spawn, 1_000)).rejects.toThrow(
+      `Agent Thread was deleted before terminal settlement: ${child.id}`,
+    );
+    expect(fixture.seam.terminalSettlementDeferreds.has(`${child.id}:1`)).toBe(false);
+    fixture.close();
+  });
+
+  test('abandons a foreground wait when another generation replaces its reservation', async () => {
+    const fixture = foregroundSettlementFixture();
+    const spawn = fixture.spawn();
+    const child = await fixture.childSpawned;
+    await Promise.resolve();
+    const turn = terminalTurn(child.turnId);
+    fixture.setTerminalTurn(child.id, turn);
+    fixture.setActive(child.id, false);
+    fixture.seam.prepareChildTerminalSettlement(child.thread, turn);
+    const snapshot = fixture.ledger.generationSnapshot(child.id);
+    expect(fixture.ledger.beginNextGenerationIfCurrent({
       agentId: child.id,
+      expectedGeneration: snapshot.generation,
+      expectedTurnId: snapshot.currentTurnId,
+      turnId: 'replacement-turn',
+      toolUseId: 'replacement-tool',
       runMode: 'foreground',
-    });
+      previous: snapshot,
+      updatedAt: 101,
+    })).not.toBeNull();
+
+    fixture.seam.threadBecameIdle(child.id);
+
+    await expect(withTimeout(spawn, 1_000)).rejects.toThrow(
+      `Agent generation changed before terminal settlement: ${child.id}`,
+    );
+    expect(fixture.seam.terminalSettlementReservations.has(`${child.id}:1`)).toBe(false);
     fixture.close();
   });
 
@@ -2776,6 +2822,7 @@ function foregroundSettlementFixture() {
     (message) => new Error(message),
     {
       flushForTerminalSettlement: async () => undefined,
+      forgetCursor: () => undefined,
       pathForReader: async (threadId: string) => `/tmp/${threadId}.jsonl`,
     } as never,
   );
