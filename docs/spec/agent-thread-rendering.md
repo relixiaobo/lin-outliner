@@ -91,20 +91,14 @@ a summary line, a rule, and sometimes a second summary line (PM 2026-08-15);
 two tight lines under one portrait are not that, and the prototype the identity
 system was ratified from stacks them (PM 2026-08-18). One structure for all of them: the conversation's own agent
 answering, a delegated child delivering its report, the Agent that wrote a
-brief. The header is one line, and the words beneath HANG FROM THE NAME: the
-portrait sits in a margin lane and every line of text in the block — header and
-content alike — shares one left edge (`--speaker-text-inset`, the portrait plus
-its gap). That lane costs a tenth of the reading measure in a 344px deck, and
-what buys it is the PORTRAIT: a face identifies a speaker before its name is
-read, so the lane carries something the header does not repeat, and one shared
-text edge makes a change of speaker visible without reading. This deliberately
-reverses the first shape, an initial disc over full-width text, which was the
-right call while the avatar was a letter — a letter restates the name, and
-paying a margin for a restatement is what that rule refused (PM 2026-08-15;
-reversed PM 2026-08-18 with portraits). Media is the exception and breaks back
-out to the portrait's edge: a picture is not read off a text edge, and at this
-width the reclaimed lane is the difference between seeing it and squinting.
-Before this, `main` was unattributed prose and a child's report was a
+brief. The portrait and the two identity lines form a header ROW at the block's
+left edge, and the words beneath take the WHOLE column — no avatar lane, no
+hanging indent. An avatar lane is what a chat app spends on short bubbles; what
+arrives in this deck is documents — tables, code blocks, galleries — in the
+narrowest column the app has, where a lane costs 13% of the measure and a
+three-column table pays for it (PM 2026-08-18). What an indent would buy is a
+visible change of speaker, and the header row says that louder anyway: a
+portrait, and a persona in the content register. Before this, `main` was unattributed prose and a child's report was a
 labelled bubble, which made two participants look like two different sorts of
 thing (PM 2026-08-15). Consecutive blocks group under a single header only within one
 PARTICIPANT — never merely within one type. A `general-purpose` child inside a
@@ -185,15 +179,15 @@ detached from its own words (PM 2026-08-18). Its line-height stays tight so the
 larger name does not also make the header taller, and the header sits at near
 line spacing from the words it names: one utterance, not two blocks.
 
-One column, one anchor. The portrait sits in the margin lane and every text
-line of the block — the persona, the work line under it, and the words below —
-hangs from the SAME left edge (`--speaker-text-inset`); nothing in the header
-may poke outside that block or indent past it, which is why the portrait
-carries no optical overhang and the work line's control carries no inline
-padding. Within the header the PERSONA is the only emphasis, because a message
-stream is scanned by who said it; the Agent type beside it and the work line
-below share one quieter level. Three separate greys made the header read as
-loose fragments and grouped it against its own meaning (PM 2026-08-18).
+One header, one anchor. The header's own two lines share one left edge beside
+the portrait: nothing in it may poke outside the block or indent past that
+edge, which is why the portrait carries no optical overhang and the work line's
+control carries no inline padding — as a `<button>` it otherwise wears the UA's
+inline padding and steps out of the column. Within the header the PERSONA is
+the only emphasis, because a message stream is scanned by who said it; the
+Agent type beside it and the work line below share one quieter level. Three
+separate greys made the header read as loose fragments and grouped it against
+its own meaning (PM 2026-08-18).
 
 The portrait is a rounded square on the identity-tile ladder the settings
 surface already uses (`--radius-sm` at this size), not a pill: B6 reserves the

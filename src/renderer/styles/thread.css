@@ -887,13 +887,6 @@
   gap: var(--space-2);
 }
 
-/* The lane the words hang from: portrait, its optical shift, and the gap that
-   follows it. Derived here so the header and the content below cannot drift
-   apart when the portrait size changes. */
-.thread-speaker {
-  --speaker-text-inset: calc(var(--speaker-avatar-size) + var(--space-4));
-}
-
 .thread-speaker-avatar {
   display: flex;
   width: var(--speaker-avatar-size);
@@ -945,24 +938,19 @@
 }
 
 /* The blocks keep the Turn's own rhythm: the speaker column replaces
-   `.thread-turn` as their flex parent, so it must not quietly respace them. */
+   `.thread-turn` as their flex parent, so it must not quietly respace them.
+
+   FULL WIDTH, deliberately not hung from the name above it. An avatar lane is
+   what a chat app spends on short bubbles; what arrives here is documents —
+   tables, code, galleries — in the narrowest column this app has, where the
+   lane costs 13% of the measure and a three-column table pays for it. What the
+   indent was buying is a visible change of speaker, and the header row already
+   says that louder: a portrait and a name in the content register. */
 .thread-speaker-content {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  /* Hung from the name above, so a block of prose and the line naming it read
-     as one column. */
-  padding-left: var(--speaker-text-inset);
   gap: var(--space-6);
-}
-
-/* Media breaks the lane and reclaims it. A picture is not read left-to-right
-   off a text edge, and at 344px the difference between 276px and 302px of
-   image is the difference between seeing it and squinting — the same trade
-   every IM makes for wide media. */
-.thread-speaker-content > .thread-image-gallery,
-.thread-speaker-content > .thread-item > .thread-image-gallery {
-  margin-left: calc(var(--speaker-text-inset) * -1);
 }
 
 /* The one thing in this header the eye should land on. A message stream is

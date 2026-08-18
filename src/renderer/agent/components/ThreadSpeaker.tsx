@@ -31,17 +31,15 @@ export interface ThreadSpeaker {
  * and a name over what they said.
  *
  * The header is a portrait beside TWO stacked lines — who this is, then what
- * they did — and the words below hang from the NAME, sharing its left edge.
- * Stacked rather than run together because the second line grows: an elapsed
- * time ticking up beside a name squeezes the name at deck width, and the
- * persona is the one thing here that must never truncate. The portrait lane
- * costs a tenth of the reading measure in a 344px deck, which is only worth
- * paying because it carries a face: a portrait identifies a speaker before its
- * name is read, so the lane says something the header does not repeat. (It
- * deliberately reverses this component's first shape, where a 16px initial disc
- * sat over full-width text — an initial IS a restatement of the name, and paying
- * a margin for one was the wrong trade.) The measure that remains is what
- * mobile IM reads at, which is where this layout is proven.
+ * they did — and the words below take the WHOLE column. Stacked rather than run
+ * together because the second line grows: an elapsed time ticking up beside a
+ * name squeezes the name at deck width, and the persona is the one thing here
+ * that must never truncate. Full width rather than hung from the name because
+ * an avatar lane is what a chat app spends on short bubbles, and what arrives
+ * here is documents — tables, code, galleries — in the narrowest column this
+ * app has. The lane's real prize is a visible change of speaker, and this
+ * header already says that louder: a portrait, and a name in the content
+ * register.
  *
  * Every non-reader block wears this — the conversation's own agent, a delegated
  * child delivering a result, the Agent that wrote a brief. One structure for

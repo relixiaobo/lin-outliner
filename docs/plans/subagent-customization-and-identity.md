@@ -254,7 +254,16 @@ verbatim; the persona is a literal proper noun and is never translated.
 `SubagentChip`, the work strip, and the detail-view title adopt the same names
 through the shared resolver; their visual form is otherwise unchanged.
 
-**Upgrade 3 — hanging indent (a deliberate reversal of a shipped decision).**
+**Upgrade 3 — full-width message body (superseded the hanging indent).**
+Ratified 2026-08-18 after seeing a three-column table in the deck: the portrait
+and identity lines form a header row, and the message keeps the whole column.
+An avatar lane is a chat-app trade for short bubbles; Tenon's messages are
+documents in the app's narrowest column, where the lane costs 13% of the
+measure. The paragraph below records the reasoning that first argued for the
+lane, because the trade it describes is real and only loses to what the content
+turned out to be.
+
+**Superseded rationale — hanging indent.**
 The shipped header keeps the body at full column width, and the
 `ThreadSpeaker.tsx` comment argues the position: a ~34px avatar lane in a
 344px deck spends a tenth of the reading measure repeating what the header

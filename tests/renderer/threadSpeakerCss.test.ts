@@ -12,11 +12,12 @@ const tokensCss = await Bun.file('src/renderer/styles/tokens.css').text();
  * held here rather than left to a screenshot.
  */
 describe('speaker header column CSS guards', () => {
-  test('derives the text inset from the portrait and its gap, with nothing to compensate for', () => {
-    expect(threadCss).toMatch(
-      /--speaker-text-inset:\s*calc\(var\(--speaker-avatar-size\)\s*\+\s*var\(--space-4\)\);/,
-    );
-    expect(threadCss).toMatch(/\.thread-speaker-content \{[^}]*padding-left:\s*var\(--speaker-text-inset\);/);
+  test('gives the message the whole column instead of an avatar lane', () => {
+    // Documents, not chat bubbles: a table in this rail pays for every pixel an
+    // indent would take. The header row is what marks a change of speaker.
+    const content = threadCss.match(/\.thread-speaker-content \{[^}]*\}/)?.[0] ?? '';
+    expect(content).not.toContain('padding-left');
+    expect(threadCss).not.toContain('--speaker-text-inset');
   });
 
   test('keeps the portrait inside the block box, and square-cropped', () => {
