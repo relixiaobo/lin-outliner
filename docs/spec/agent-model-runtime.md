@@ -209,11 +209,16 @@ results retain their ordered text, JSON, and actual image content at the provide
 boundary. Each image is preceded by a stable identity marker derived from its alt text
 and canonical source filename or path, plus immutable snapshot MIME and byte length;
 images no longer degrade to filename-only text. Plans and context
-reset Items select context state rather than becoming user prose. Subagent activity
-and viewed images intentionally remain textual context because the model must know that
-it delegated work and observed an image; neither fact has an equivalent private native
-replay contract. The `[Subagent ...]` marker's imitation risk, including hallucinated
-delegation, is a separate follow-up rather than a reason to broaden the reasoning fix.
+reset Items select context state rather than becoming user prose. Tenon authors no
+bracketed marker into the assistant channel at all: that channel is a few-shot
+demonstration of the model's own prose, so an authored `[Subagent ...]` or
+`[Viewed image: ...]` line teaches the model to write more of them — observed as
+invented lifecycle kinds and hallucinated delegation. Subagent activity and viewed
+image Items therefore project like reasoning: they keep their Item id for boundary
+and provenance accounting and contribute no provider content. The model still learns
+what it delegated from the `agent`/`skill` tool call and result, and learns each
+terminal transition from the task notification, or for an isolated Skill from the
+awaited `skill` result; the Item itself exists for the parent-visible row.
 A compaction serializes its lossy summary, uses
 its validated reducer checkpoint to restore complete Skill/Role catalogs, inline Skill
 instructions, user view, Thread state, file/Node observations, and optional durable

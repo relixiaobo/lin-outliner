@@ -411,19 +411,20 @@ export class CanonicalContextProjector {
           assistantItemIds.push(item.id);
           if (item.text) assistantContent.push({ type: 'text', text: item.text });
           break;
+        // The assistant channel is a few-shot demonstration of what this model
+        // writes, so anything Tenon authors into it teaches the model to write
+        // it too. These Items therefore keep their Item id — boundaries and
+        // provenance still account for them — and contribute no content.
+        // A Subagent's facts already reach the model through channels it cannot
+        // mistake for its own prose: the delegation is the `agent`/`skill` tool
+        // call and its result, and the terminal transition is the
+        // task-notification (or, for an isolated Skill, the `skill` result the
+        // caller is awaiting). The Item itself exists for the parent-visible
+        // row. An `imageView` has no producer left at all.
         case 'reasoning':
-          assistantItemIds.push(item.id);
-          break;
         case 'subAgentActivity':
-          assistantItemIds.push(item.id);
-          assistantContent.push({
-            type: 'text',
-            text: `[Subagent ${item.kind}: ${item.agentPath} (${item.agentThreadId})]`,
-          });
-          break;
         case 'imageView':
           assistantItemIds.push(item.id);
-          assistantContent.push({ type: 'text', text: `[Viewed image: ${item.path}]` });
           break;
       }
     }
