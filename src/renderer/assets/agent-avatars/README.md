@@ -5,14 +5,27 @@ One SVG per avatar key (`<key>.svg`), resolved at build time by
 An identity with no `avatar` key — every custom Role until someone picks one —
 falls back to the initial disc in `agentAvatarColor.ts` instead.
 
-The default roster: `beaver` (Tenon, the conversation's own agent), `fox`
-(`explore`), `owl` (`plan`), `bear` (`general-purpose`).
+The default roster: `beaver` (Tenon), `fox` (Rena), `owl` (Ada), `bear`
+(Bruno).
 
-## The rule that makes the set learnable
+## The rule that keeps the set legible
 
-**The persona IS the animal.** What you see is what it is called, so a roster
-needs no legend. Adding a portrait is adding an animal name to the roster, not
-adding decoration to an existing one.
+**A portrait names the KIND; the persona names the ONE.** They must not say the
+same thing. A bear face signed `Bear` adds nothing the face already said, so the
+word reads as a caption instead of as somebody speaking — which is exactly how
+it felt in the running app. Three layers, no overlap:
+
+| layer | answers | example |
+|---|---|---|
+| portrait | which kind is this, at a glance | 🐻 a bear |
+| persona | who is speaking, and what to call them | Bruno |
+| Agent type | which agent exactly, for configuration | `general-purpose` |
+
+The roster: **Tenon** (beaver) is the conversation's own agent and carries the
+product's name, because it is the product speaking; the helpers it dispatches
+are **Rena** (fox, `explore`), **Ada** (owl, `plan`), and **Bruno** (bear,
+`general-purpose`). Rena, Ada and Tenon are drawn as female characters, Bruno
+as male — worth keeping if these are ever redrawn, since the names are staying.
 
 ## Drawing constraints
 

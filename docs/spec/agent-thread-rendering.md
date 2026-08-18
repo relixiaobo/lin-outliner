@@ -202,9 +202,12 @@ and these sit in a rail whose every other mark is neutral.
 The avatar is a bundled PORTRAIT where the identity has one
 (`src/renderer/assets/agent-avatars/`, resolved by `agentPortraits.ts`), and
 otherwise a coloured disc carrying the first character of the name. The default
-roster is Tenon (beaver, `main`), Fox (`explore`), Owl (`plan`), and Bear
-(`general-purpose`) — **the persona IS the animal**, so a roster is learnable
-without a legend. Portraits are drawn once and frozen: a redrawn face reads as a
+roster is Tenon (beaver, `main`), Rena (fox, `explore`), Ada (owl, `plan`), and
+Bruno (bear, `general-purpose`). **A portrait names the kind; the persona names
+the one**, and the two never say the same thing — a bear face signed `Bear`
+adds nothing the face already said, so the word reads as a caption rather than
+as somebody speaking (PM 2026-08-18). That also settles what `main` is called:
+Tenon is a name like any other here, not an exception to a rule about animals. Portraits are drawn once and frozen: a redrawn face reads as a
 different participant. Every custom Role wears the disc until someone gives it a
 portrait, and the disc is also what a missing portrait degrades to, so a
 transcript never depends on an image. The disc hue comes from the shared

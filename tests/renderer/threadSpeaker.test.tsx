@@ -20,7 +20,7 @@ import { I18nProvider } from '../../src/renderer/i18n/I18nProvider';
 
 const ROSTER = [
   { agentType: 'main', persona: 'Tenon', avatar: 'beaver', source: 'built-in' },
-  { agentType: 'explore', persona: 'Fox', avatar: 'fox', source: 'built-in' },
+  { agentType: 'explore', persona: 'Rena', avatar: 'fox', source: 'built-in' },
   { agentType: 'auditor', persona: 'auditor', avatar: null, source: 'user' },
 ] satisfies AgentIdentityEntry[];
 
@@ -41,7 +41,7 @@ describe('speaker headers', () => {
   test('names a participant by its persona, with what it is beside it', async () => {
     const { document } = await renderSpeaker({ avatarKey: 'explore', name: 'explore' });
 
-    expect(document.querySelector('.thread-speaker-name')?.textContent).toBe('Fox');
+    expect(document.querySelector('.thread-speaker-name')?.textContent).toBe('Rena');
     // The type stays visible: a persona says who, the label says what.
     expect(document.querySelector('.thread-speaker-role')?.textContent).toBe('explore');
     expect(document.querySelector('.thread-speaker-avatar svg')?.getAttribute('data-fixture-portrait'))

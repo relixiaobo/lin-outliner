@@ -8,16 +8,16 @@ import {
 
 const CATALOG = identityCatalogFrom([
   { agentType: 'main', persona: 'Tenon', avatar: 'beaver', source: 'built-in' },
-  { agentType: 'explore', persona: 'Fox', avatar: 'fox', source: 'built-in' },
+  { agentType: 'explore', persona: 'Rena', avatar: 'fox', source: 'built-in' },
   { agentType: 'auditor', persona: 'auditor', avatar: null, source: 'user' },
 ] satisfies AgentIdentityEntry[]);
 
 describe('agent identity resolution', () => {
   test('names a configured type by its persona and dresses it in its portrait', () => {
     expect(resolveAgentIdentity(CATALOG, 'explore')).toMatchObject({
-      name: 'Fox',
+      name: 'Rena',
       avatarKey: 'fox',
-      initial: 'F',
+      initial: 'R',
     });
   });
 

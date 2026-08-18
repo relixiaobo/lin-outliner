@@ -15,8 +15,9 @@ Concretely, this ships:
 1. Presentation fields (`persona`, `avatar`) on Agent Role definitions, plus a
    `presentationOverrides` layer so built-ins and the root identity are
    customizable without redefining them.
-2. A default roster with bundled avatar art: **Tenon** (beaver, main), **Fox**
-   (fox, `explore`), **Owl** (owl, `plan`), **Bear** (bear, `general-purpose`).
+2. A default roster with bundled avatar art: **Tenon** (beaver, main), **Rena**
+   (fox, `explore`), **Ada** (owl, `plan`), **Bruno** (bear,
+   `general-purpose`).
 3. The portrait/persona/layout upgrade of the shipped speaker system in the
    344px agent deck (§3).
 4. An "Agents" management pane: list, create, edit, delete; built-ins editable
@@ -149,13 +150,19 @@ readonly presentation?: {
   | identity | agent type | persona | avatar key |
   |---|---|---|---|
   | root | main | Tenon | `beaver` |
-  | built-in | `explore` | Fox | `fox` |
-  | built-in | `plan` | Owl | `owl` |
-  | built-in | `general-purpose` | Bear | `bear` |
+  | built-in | `explore` | Rena | `fox` |
+  | built-in | `plan` | Ada | `owl` |
+  | built-in | `general-purpose` | Bruno | `bear` |
 
-  **Naming principle (binding for future additions):** the persona IS the
-  avatar animal — one English word, capitalized, matching the picture. What you
-  see is what it's called; no human names, no learning cost.
+  **Naming principle (binding for future additions):** a portrait names the
+  KIND, a persona names the ONE, and they never say the same thing. `Bear` over
+  a bear face is a caption, not a signature — the word adds nothing the picture
+  already said, which is how it read in the running app (PM 2026-08-18). Names
+  are short proper names with a hook worth remembering: Rena from Reynard the
+  fox, Ada from Ada Lovelace (who wrote the first plan a machine could run),
+  Bruno from the brown of a bear. This supersedes the earlier
+  persona-is-the-animal rule, and with it the apparent exception of `main`
+  being called Tenon: Tenon is simply a name, like the rest.
 - **Model-surface isolation (hard rule).** `presentation` must not change any
   model-facing byte: `RoleCatalogContextPayload` / `RoleCatalogEntry` entries
   and hashes (`buildRoleCatalogSnapshot`), stable-prompt blocks, tool

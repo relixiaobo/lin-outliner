@@ -66,8 +66,13 @@ export interface AgentPresentation {
 /**
  * The bundled portraits.
  *
- * The persona IS the animal: what you see is what it is called, so a roster
- * stays learnable without a legend. Adding a key here is adding an image to
+ * A portrait names the KIND; the persona names the ONE. They must not say the
+ * same thing: a bear face signed `Bear` adds nothing the face did not already
+ * say, so the eye reads the word as a caption rather than as somebody speaking.
+ * Three layers, no overlap — the face is recognised, the name is spoken, and
+ * the Agent type beside it is exact.
+ *
+ * Adding a key here is adding an image to
  * `src/renderer/assets/agent-avatars/`; a configuration naming a key that does
  * not exist is refused at the write boundary rather than silently drawn blank.
  */
@@ -87,9 +92,9 @@ export const MAIN_PRESENTATION_KEY = 'main';
 /** The roster a fresh install starts with, keyed by Agent type. */
 export const DEFAULT_AGENT_PRESENTATIONS: Readonly<Record<string, AgentPresentation>> = Object.freeze({
   [MAIN_PRESENTATION_KEY]: Object.freeze({ persona: 'Tenon', avatar: 'beaver' }),
-  'general-purpose': Object.freeze({ persona: 'Bear', avatar: 'bear' }),
-  explore: Object.freeze({ persona: 'Fox', avatar: 'fox' }),
-  plan: Object.freeze({ persona: 'Owl', avatar: 'owl' }),
+  'general-purpose': Object.freeze({ persona: 'Bruno', avatar: 'bear' }),
+  explore: Object.freeze({ persona: 'Rena', avatar: 'fox' }),
+  plan: Object.freeze({ persona: 'Ada', avatar: 'owl' }),
 });
 
 export interface EffectiveThreadConfiguration {

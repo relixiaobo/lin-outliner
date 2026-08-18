@@ -241,9 +241,9 @@ describe('AgentConfigurationLoader', () => {
 
     expect(catalog).toEqual([
       { agentType: 'main', persona: 'Tenon', avatar: 'beaver', source: 'built-in' },
-      { agentType: 'general-purpose', persona: 'Bear', avatar: 'bear', source: 'built-in' },
-      { agentType: 'explore', persona: 'Fox', avatar: 'fox', source: 'built-in' },
-      { agentType: 'plan', persona: 'Owl', avatar: 'owl', source: 'built-in' },
+      { agentType: 'general-purpose', persona: 'Bruno', avatar: 'bear', source: 'built-in' },
+      { agentType: 'explore', persona: 'Rena', avatar: 'fox', source: 'built-in' },
+      { agentType: 'plan', persona: 'Ada', avatar: 'owl', source: 'built-in' },
     ]);
   });
 
