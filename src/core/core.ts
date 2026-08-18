@@ -223,6 +223,20 @@ export type FieldSlotMutation =
     }
   | { kind: 'commit'; entryId?: NodeId };
 
+export interface TagTemplateBackfillPreview {
+  readonly nodeCount: number;
+  readonly additionCount: number;
+}
+
+interface TagTemplateBackfillTarget {
+  readonly nodeId: NodeId;
+  readonly templateNodeIds: readonly NodeId[];
+}
+
+interface TagTemplateBackfillPlan extends TagTemplateBackfillPreview {
+  readonly targets: readonly TagTemplateBackfillTarget[];
+}
+
 type FieldEntryIdsByDefinition = ReadonlyMap<NodeId, readonly NodeId[]>;
 
 interface TreeMaterializeContext {
@@ -3315,6 +3329,35 @@ export class Core {
     });
   }
 
+  previewTagTemplateBackfill(tagId: string): TagTemplateBackfillPreview {
+    this.refreshStateFromLoro();
+    ensureTagDefinition(this.stateValue, tagId);
+    const { nodeCount, additionCount } = buildTagTemplateBackfillPlan(
+      this.stateValue,
+      tagId,
+      this.protectedDocumentSystemTagIds(),
+    );
+    return { nodeCount, additionCount };
+  }
+
+  applyTemplateToTaggedNodes(tagId: string): CommandOutcome {
+    return this.mutate(() => {
+      const state = this.snapshot();
+      ensureTagDefinition(state, tagId);
+      const plan = buildTagTemplateBackfillPlan(
+        state,
+        tagId,
+        this.protectedDocumentSystemTagIds(),
+      );
+      for (const target of plan.targets) {
+        for (const templateNodeId of target.templateNodeIds) {
+          this.cloneTemplateContentNodeShallowDirect(target.nodeId, templateNodeId);
+        }
+      }
+      return undefined;
+    });
+  }
+
   backlinks(targetId: string): Backlink[] {
     this.refreshStateFromLoro();
     const byId = new Map(Object.values(this.stateValue.nodes).map((node) => [node.id, node]));
@@ -4812,10 +4855,8 @@ export class Core {
     // template objects are inherited wholesale, not just fields). Ancestor-first
     // so a base tag's content precedes the more specific tag's; dedup by
     // templateId keeps re-application idempotent.
-    for (const chainTagId of [...getExtendsChain(state, tagId)].reverse()) {
-      for (const templateNodeId of getTemplateContentNodes(state, chainTagId)) {
-        this.cloneTemplateContentNodeShallowDirect(nodeId, templateNodeId);
-      }
+    for (const templateNodeId of tagTemplateContentNodeIds(state, tagId)) {
+      this.cloneTemplateContentNodeShallowDirect(nodeId, templateNodeId);
     }
   }
 
@@ -6129,9 +6170,60 @@ function getTemplateContentNodes(state: DocumentState, tagId: string) {
   });
 }
 
-function findNodesWithTag(state: DocumentState, tagId: string) {
+function tagTemplateContentNodeIds(state: DocumentState, tagId: string): NodeId[] {
+  const result: NodeId[] = [];
+  const seen = new Set<NodeId>();
+  for (const chainTagId of [...getExtendsChain(state, tagId)].reverse()) {
+    for (const templateNodeId of getTemplateContentNodes(state, chainTagId)) {
+      if (seen.has(templateNodeId)) continue;
+      seen.add(templateNodeId);
+      result.push(templateNodeId);
+    }
+  }
+  return result;
+}
+
+function buildTagTemplateBackfillPlan(
+  state: DocumentState,
+  tagId: NodeId,
+  protectedNodeIds: ReadonlySet<NodeId>,
+): TagTemplateBackfillPlan {
+  const templateNodeIds = tagTemplateContentNodeIds(state, tagId);
+  const targets: TagTemplateBackfillTarget[] = [];
+  let additionCount = 0;
+  for (const nodeId of findNodesWithTagInExtendsChain(state, tagId)) {
+    if (protectedNodeIds.has(nodeId)) continue;
+    const node = state.nodes[nodeId];
+    if (!node || node.locked || isInternalConfigNode(node)) continue;
+    const existingTemplateIds = new Set(node.children
+      .map((childId) => state.nodes[childId]?.templateId)
+      .filter((templateId): templateId is NodeId => Boolean(templateId)));
+    const missingTemplateNodeIds = templateNodeIds.filter((templateNodeId) => (
+      !existingTemplateIds.has(templateNodeId)
+    ));
+    if (missingTemplateNodeIds.length === 0) continue;
+    additionCount += missingTemplateNodeIds.length;
+    targets.push({ nodeId, templateNodeIds: missingTemplateNodeIds });
+  }
+  return {
+    nodeCount: targets.length,
+    additionCount,
+    targets,
+  };
+}
+
+function findNodesWithTagInExtendsChain(state: DocumentState, tagId: string) {
+  const matchingAppliedTagIds = new Set(Object.values(state.nodes)
+    .filter((node) => (
+      node.type === 'tagDef'
+      && getExtendsChain(state, node.id).includes(tagId)
+    ))
+    .map((node) => node.id));
   return Object.values(state.nodes)
-    .filter((node) => node.tags.includes(tagId) && !isInTrash(state, node.id))
+    .filter((node) => (
+      !isInTrash(state, node.id)
+      && node.tags.some((appliedTagId) => matchingAppliedTagIds.has(appliedTagId))
+    ))
     .map((node) => node.id);
 }
 

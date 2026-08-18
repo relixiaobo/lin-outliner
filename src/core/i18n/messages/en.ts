@@ -1791,6 +1791,14 @@ export const en = {
     // name verbatim.
     menuLabel: ({ label }: { label: string }) => `${label} tag actions`,
     everythingTagged: ({ label }: { label: string }) => `Everything tagged #${label}`,
+    applyTemplate: 'Apply template to tagged nodes',
+    applyTemplateTitle: ({ label }: { label: string }) => `Apply #${label} template?`,
+    applyTemplateMessage: ({ additionCount, nodeCount }: { additionCount: number; nodeCount: number }) => (
+      additionCount === 0
+        ? 'All tagged nodes already include this template.'
+        : `This adds ${additionCount} template ${additionCount === 1 ? 'child' : 'children'} to ${nodeCount} tagged ${nodeCount === 1 ? 'node' : 'nodes'}.`
+    ),
+    applyTemplateConfirm: 'Apply',
     configureTag: 'Configure tag',
   },
   // The search-node inline query builder and materialized-result counter.

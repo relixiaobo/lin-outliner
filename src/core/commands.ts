@@ -55,6 +55,8 @@ export const DOCUMENT_COMMANDS = [
   'toggle_done',
   'cycle_done_state',
   'create_tag',
+  'preview_tag_template_backfill',
+  'apply_template_to_tagged_nodes',
   'apply_tag',
   'remove_tag',
   'set_tag_config',
