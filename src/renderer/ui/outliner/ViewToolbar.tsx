@@ -66,6 +66,7 @@ import {
 } from '../../../core/systemFields';
 import { useT } from '../../i18n/I18nProvider';
 import type { Messages } from '../../../core/i18n';
+import { RENDERABLE_VIEW_MODES, type RenderableViewMode } from '../../../core/viewConfig';
 
 type ViewToolbarMessages = Messages['outliner']['viewToolbar'];
 
@@ -144,7 +145,7 @@ interface ViewToolbarProps {
   variant?: 'bar' | 'compact';
 }
 
-type ViewMode = 'list' | 'table';
+type ViewMode = RenderableViewMode;
 
 interface ViewModeControlProps {
   viewMode: ViewMode;
@@ -153,14 +154,18 @@ interface ViewModeControlProps {
   onChange: (mode: ViewMode) => void;
 }
 
-const VIEW_MODE_OPTIONS: ReadonlyArray<{
-  mode: ViewMode;
+const VIEW_MODE_PRESENTATION: Record<ViewMode, {
   icon: IconComponent;
   label: keyof Pick<ViewToolbarMessages, 'outline' | 'table'>;
-}> = [
-  { mode: 'list', icon: NodeReadToolIcon, label: 'outline' },
-  { mode: 'table', icon: TableIcon, label: 'table' },
-];
+}> = {
+  list: { icon: NodeReadToolIcon, label: 'outline' },
+  table: { icon: TableIcon, label: 'table' },
+};
+
+const VIEW_MODE_OPTIONS = RENDERABLE_VIEW_MODES.map((mode) => ({
+  mode,
+  ...VIEW_MODE_PRESENTATION[mode],
+}));
 
 // Keep mode selection visibly two-state in the compact result toolbar. The
 // context menu remains a secondary text entry point for users who discover

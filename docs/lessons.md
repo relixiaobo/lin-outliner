@@ -1113,3 +1113,112 @@ still owes its measurement**: the attribution is the deliverable, because it
 re-orders what remains — here it promoted the secret-scan scheduling item from
 "small tail" to the real remaining win. Record the profile in the PR and the
 board, not just the code you kept.
+
+## "Pre-release needs no migration" is a claim about dev data, not about the app you installed
+
+The tool rename that collapsed `spawn_agent`/`wait_agent` into
+`agent`/`agent_message`/`task_stop` (#535) shipped with no migration, which the
+pre-release rule allows — its escape hatch is "wipe `~/.lin-outliner-*` dev
+userData". But the **daily-use install** at
+`~/Library/Application Support/Tenon/` is never wiped, and its history is
+append-only, so the retired names sat there permanently. The next build could
+not decode 14 rows, and the app **exited at launch, every launch**. Narrowing a
+persisted enum is a data change against every store that survives the upgrade;
+the dev-wipe hatch only covers the stores we throw away. Before removing a value
+from a persisted enum, ask which store keeps it forever, and either migrate it
+there or make the reader tolerate it.
+
+The second half of the same incident is about where a degrade is allowed to cut.
+The obvious fix — skip the Item that will not decode — was wrong twice over, and
+the review caught both: a Turn with one Item skipped no longer matches the
+terminal-Turn mutation check, and the projected rollout snapshot is not a read at
+all (`restoreMissing` writes it back, then `rebuildThread` cascades the old rows
+away), so "skipping" a row there **destroys its last surviving copy** where the
+throw had preserved the bytes for a later protocol fix. **A degrade has to cut
+along a boundary that is self-consistent.** An Item is not one — it is half of a
+Turn's invariants. A Thread is: quarantine it for the session, report it, leave
+its bytes alone.
+
+Then check what *reads* the thing you just filtered. Hiding the quarantined Thread
+from `persistentRootThreads()` protected the fan-out that was crashing — and
+silently armed a different one: the memory orphan-admission sweep deletes every
+row whose Turn it cannot enumerate, so the filtered list made that Thread's Turns
+look deleted and wiped its extraction state for good. **A filter is invisible to
+the consumer that treats absence as deletion**, which turns a session-scoped,
+in-memory quarantine into a permanent write. When you narrow an enumeration, grep
+its callers for the ones that delete, prune, or reconcile on absence, and give
+them the incompleteness explicitly (`hasHiddenRootThreads()` here, which skips the
+sweep for the session).
+
+Ordering counts too: the readability probe ran one line *after* the Thread was
+pushed onto the reconciled/resumable lists, so the launch still died on a
+different unguarded fan-out over exactly those lists. **A guard placed after the
+registration it is supposed to prevent is not a guard.**
+
+The fix for the filter problem then grew the same bug a third time, in a new
+place: a second quarantine path set only one of the two tracking sets, so the
+enumeration was incomplete while the "enumeration is incomplete" flag read false.
+**Two sets that must agree will not.** The durable fix was to delete the second
+set — the flag now evaluates the very predicate the filter evaluates, so it cannot
+disagree with itself — and to funnel every writer through one method. When a
+correctness property is "these two things always match", encode it as one thing.
+
+And find the caller before choosing the layer. The fatal path here was not the
+one the stack trace showed: Node's default `Error.stackTraceLimit = 10` truncated
+it exactly at `listTurns`, which made the projection decode look like the culprit.
+Raising the limit to 80 and re-running showed the real shape — startup's
+`MemoryExtension.prepareForTurnAdmission` fanning out over every root Thread with
+no per-Thread guard. **A stack that ends suspiciously close to where you were
+already looking is probably truncated**; check the frame count against the limit
+before you conclude anything from where it stops.
+
+## A typecheck that excludes tests will not tell you a test double has gone stale
+
+`tsconfig.json` here is `"include": ["src", …]`, so `bun run typecheck` never
+looks at `tests/`. During #555 an interface gained a required method and the only
+other implementation — a hand-written fake in `agentMemory.test.ts` — was not
+updated; typecheck stayed green over a structurally invalid object, and the same
+gap swallowed a later rename, which surfaced as `x is not a function` at runtime
+instead of as a type error. **When you add to or rename on an interface, `rg` the
+test doubles by hand**; the compiler is not covering them for you. A green
+typecheck says nothing about the fakes, and a fake that no current test exercises
+will look fine until the day one does.
+
+## An absolutely-positioned overlay is invisible to a diff and to the DOM query that renders it
+
+During #553's gate the accept control and the inherited-default ghost were read
+carefully in the diff, in the CSS, and in the E2E assertions, and all three
+looked right. Rendering the row showed the ghost's `Inbox` painted directly on
+top of the empty editor's `Empty` placeholder — same origin, both drawn — so the
+feature's most common state was illegible. Nothing in the review could have
+caught it: the two texts live in different elements, one is a `::before` on a
+descendant, and the overlap only exists once both are laid out. The E2E test
+already asserted the ghost's text, its `pointer-events`, and its computed color
+against `--text-tertiary`, and every one of those passed over the defect.
+**A `position: absolute` layer over content you did not author is a visual
+question, so answer it visually** — screenshot the element, in both themes,
+before calling the review done. Assertions on one layer's computed style say
+nothing about what the other layer is painting underneath it. This is the whole
+reason the gate table sends UI diffs to visual verification rather than to a
+closer read.
+
+## Deleting a "not supported here" warning is not the same as making it supported
+
+`agent-view-surface` PR 1 (#556) generalized `%%view:<mode>%%` from saved
+searches to every node. The diff did the obvious thing: renamed
+`applySearchViewSpec` to `applyViewSpec`, widened its callers, and deleted the
+`View directives are only persisted on search nodes today.` warning sites that
+had become false. Two of the gate's four findings came out of that one move.
+Adding a directive worked, but *removing* one now returned `ok: true` while the
+document kept its table — the warning had been the only thing telling the model
+its edit did nothing, and nothing took over the "no" it used to say. The
+guidance rewritten in the same PR then promised a second path (`add columns as
+fields`) that the widened mechanism still did not implement, so the Agent would
+report success on a column the user never saw. **A refusal site is load-bearing:
+when you widen a capability past one, each deleted warning must become either
+the real behavior or a new warning — never just an absence.** The tell is a
+`if (!x) return` early exit where a `warnings.push` used to be; that is a
+silent success, and a silent success is worse than the refusal it replaced,
+because the model believes it and moves on. Probe both directions of every
+newly-general operation — set *and* unset, enter *and* leave — since the added
+direction is the one the author tested.

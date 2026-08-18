@@ -12,6 +12,8 @@ import { useT } from '../../i18n/I18nProvider';
 
 interface CheckboxFieldControlProps {
   entryId?: string;
+  displayValue?: string;
+  inherited?: boolean;
   onCreateValue?: (value: string) => Promise<unknown> | unknown;
   run: CommandRunner;
   valueNode?: NodeProjection;
@@ -32,7 +34,7 @@ interface CheckboxFieldControlProps {
 export function CheckboxFieldControl(props: CheckboxFieldControlProps) {
   const t = useT();
   const buttonRef = useRef<HTMLButtonElement | null>(null);
-  const checked = booleanValue(props.valueNode?.content.text ?? '');
+  const checked = booleanValue(props.valueNode?.content.text ?? props.displayValue ?? '');
 
   useEffect(() => {
     const request = props.focusRequest;
@@ -106,7 +108,7 @@ export function CheckboxFieldControl(props: CheckboxFieldControlProps) {
   return (
     <ButtonControl
       ref={buttonRef}
-      className={`typed-field-boolean typed-field-checkbox ${checked ? 'checked' : ''}`}
+      className={`typed-field-boolean typed-field-checkbox ${checked ? 'checked' : ''} ${props.inherited ? 'inherited' : ''}`}
       role="checkbox"
       aria-checked={checked}
       onFocus={props.onFocus}

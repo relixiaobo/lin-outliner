@@ -661,6 +661,8 @@ export class DocumentService implements DocumentSystemHost {
         return this.searchNodes(String(args.query ?? ''));
       case 'backlinks':
         return this.core.backlinks(String(args.targetId));
+      case 'preview_tag_template_backfill':
+        return this.mutationQueue.then(() => this.core.previewTagTemplateBackfill(String(args.tagId)));
       default:
         return this.mutate(command, args, meta);
     }
@@ -1049,6 +1051,8 @@ export class DocumentService implements DocumentSystemHost {
           return this.core.cycleDoneState(String(args.nodeId));
         case 'create_tag':
           return this.core.createTag(String(args.name ?? ''));
+        case 'apply_template_to_tagged_nodes':
+          return this.core.applyTemplateToTaggedNodes(String(args.tagId));
         case 'apply_tag':
           return this.core.applyTag(String(args.nodeId), String(args.tagId));
         case 'remove_tag':
@@ -1075,7 +1079,9 @@ export class DocumentService implements DocumentSystemHost {
           const kind = String(args.kind);
           const entryId = typeof args.entryId === 'string' ? args.entryId : undefined;
           let mutation: FieldSlotMutation;
-          if (kind === 'appendText') {
+          if (kind === 'acceptDefault') {
+            mutation = { kind };
+          } else if (kind === 'appendText') {
             mutation = {
               kind,
               text: String(args.text ?? ''),

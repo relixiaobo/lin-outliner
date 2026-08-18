@@ -1,4 +1,4 @@
-import type { CSSProperties, MouseEventHandler } from 'react';
+import type { CSSProperties, MouseEventHandler, Ref } from 'react';
 import { CloseIcon, ICON_SIZE, TrashIcon, WarningIcon } from '../icons';
 import { ButtonControl } from '../primitives/ButtonControl';
 import { useT } from '../../i18n/I18nProvider';
@@ -11,6 +11,7 @@ interface AppliedTagProps {
   onOpen: () => void;
   onRemove: () => void;
   onContextMenu?: MouseEventHandler<HTMLSpanElement>;
+  rootRef?: Ref<HTMLSpanElement>;
 }
 
 export function AppliedTag({
@@ -20,11 +21,12 @@ export function AppliedTag({
   onOpen,
   onRemove,
   onContextMenu,
+  rootRef,
 }: AppliedTagProps) {
   const t = useT();
   if (trashed) {
     return (
-      <span className="tag-badge trashed" title={t.tags.deletedTitle({ label })}>
+      <span className="tag-badge trashed" ref={rootRef} title={t.tags.deletedTitle({ label })}>
         <span className="tag-badge-hash">#</span>
         <span className="tag-badge-label">{label}</span>
         <WarningIcon size={ICON_SIZE.tiny + 1} />
@@ -36,6 +38,7 @@ export function AppliedTag({
   return (
     <span
       className="tag-badge"
+      ref={rootRef}
       style={{
         '--tag-bg': color.background,
         '--tag-text': color.text,

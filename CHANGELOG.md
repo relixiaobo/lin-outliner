@@ -10,6 +10,45 @@ Entries reference the pull request that introduced them.
 
 `main` is the `0.6.0` train; entries here move under the next tag.
 
+### Added
+
+- **The Agent can see and set a node's view mode (PR #556, codex-3)** — asked to
+  "整理成表格", the Agent produced space-aligned ASCII inside a code block,
+  because nothing in its surface knew views existed: `%%view:<mode>%%` parsed but
+  persisted only on saved searches, the read paths hid an ordinary table node's
+  mode entirely, and no model-facing text mentioned views at all. The directive
+  on the owner's line is now the single read/write representation for every node
+  — `node_read` and user-view context emit it, `node_create` and `node_edit`
+  persist it through the existing `set_view_mode` command, so core's
+  entering-table transaction (search materialize-first, column
+  auto-initialization in Schema order) comes for free. The settable vocabulary is
+  one exported constant of renderer-renderable modes (`list`, `table` today): a
+  core-known but unshipped mode (`cards`, `calendar`) fails as
+  `view_mode_not_available`, an unknown string as `invalid_view_mode` naming the
+  allowed set, and shipping a future view extends the constant rather than the
+  surface. Omitting the directive from a complete root outline means `list`, so
+  deleting the marker is how the Agent turns a table off; a code-block owner is
+  exempt because that syntax cannot carry the directive, and re-applying the
+  effective mode is a structural no-op that will not conjure a `viewDef` on a
+  plain list node. Guidance teaches the task mapping — rows as direct child
+  records, `Field::` names as column identities, values as cells, never a
+  Markdown table in a code block — including the one sharp edge: fields present
+  when an owner *enters* table mode initialize its columns, so a field added
+  later needs a list-and-back re-entry until PR 2 exposes display-field
+  configuration. The high gate found 4 issues, all fixed on-branch: the guidance
+  told the model to "add columns as fields" on an existing table, a path that
+  does not exist (`addMissingTableDisplayFieldsDirect` only runs on entry), so
+  the Agent would report success on a column the user never got; deleting
+  `%%view:table%%` returned `ok` with the document unchanged, because
+  generalizing `applySearchViewSpec` had dropped its warning sites without
+  replacing the behavior; `view_mode_not_available` fired on a directive
+  `node_read` itself had emitted, permanently blocking every unrelated edit to an
+  unrenderable-mode node — A12's fail-closed-at-the-wrong-boundary shape, now
+  narrowed to newly requested modes; and an explicit `%%view:list%%` round-tripped
+  into a `set_view_mode` that created a stray `viewDef` child on an otherwise
+  plain node, with no read-back to tell the model to stop. PR 2 (view-config
+  read/write over the existing sort/filter/group/display-field commands) remains.
+
 ### Changed
 
 - **A tool output is read and hash-verified once per agent Turn, not once per
@@ -44,6 +83,112 @@ Entries reference the pull request that introduced them.
   successful entries are never evicted, so outputs compacted out of the effective
   context stay resident for the rest of the Turn — bounded per entry by
   `MAX_SINGLE_FULL_OUTPUT_TOKENS` (~32 KB), a few MB in the worst realistic case.
+
+- **A tag's static field default now shows on every node already carrying the
+  tag, without writing anything (PR #553, codex)** — a literal value typed into a
+  tag's field slot (`Status: Inbox`) is context-free, so it is now read at
+  projection time as an inherited ghost rather than stamped into each node when
+  the tag is applied. Adding or editing a default is instantly true for every
+  instance, past and future, with zero writes and no risk of overwriting a value
+  someone typed; the old behavior reached only nodes tagged after the edit. The
+  ghost renders in `--text-tertiary` and is inert — it takes no pointer input, so
+  clicking or typing in the row creates the user's own value, and a trailing
+  check affordance revealed on row hover or keyboard focus is the explicit way to
+  accept and materialize the default. A whole-field control such as a checkbox
+  shows the inherited state in the native control instead of a text ghost. Once a
+  value is stored it is the user's and never tracks the template again. Ghosts
+  answer reads as well as renders: search comparison, sort, filter, date and text
+  operators, Table, and the agent node projection all resolve the slot's stored
+  entry first and its inherited default second (decision D2). The accepted cost,
+  ratified with the plan: on a field that carries a static default, `is empty`
+  matches nothing, because clearing a stored value dematerializes the entry and
+  the ghost returns — the empty state is reached by storing a real value or
+  removing the default from the tag. The high gate found five issues, all fixed
+  on-branch: the accept control covered the whole value area so no mouse user
+  could ever type their own value; `overdueDateRanges` was the one date reader
+  left unconverted, so `IS_OVERDUE` disagreed with `DATE_BEFORE` on the same
+  nodes; the checkbox suppression test and the ghost render test read different
+  values, leaving a checkbox field with no affordance at all when a template
+  child rendered empty; `fieldDefinitionHasAutoInitialize` accepted any reference
+  instead of validating the strategy, silently hiding a ghost that Search and
+  Agent still honored; and the per-slot deleted-node ancestor walk added to the
+  search hot path was removed rather than traded, once the slot builder was
+  confirmed to filter deleted entries already (A9). Visual verification then
+  caught what static reading had missed: the ghost painted directly on top of the
+  empty editor's `Empty` placeholder, at the same origin in both themes, so the
+  feature's most common state read as illegible overlapping text — the
+  placeholder is now suppressed while a ghost shows and restored when the editor
+  takes focus, with E2E guards on both halves.
+
+- **A tag's freeform template children can now be handed to nodes that already
+  carry the tag, on demand (PR #554, codex)** — template *fields* project at read
+  time, but freeform content children stay one-shot seeds copied when the tag is
+  applied, so a seed added later never reached older nodes and there was no way
+  to give it to them short of re-tagging. Right-clicking a tag badge now offers
+  an explicit backfill: `preview_tag_template_backfill(tagId)` reports how many
+  active, editable nodes are missing at least one seed and how many clones would
+  be added, and `apply_template_to_tagged_nodes(tagId)` adds only the missing
+  ones, deduplicated by `templateId`, preserving inherited ancestor-first
+  template order, as a single mutation and therefore a single undo step. Explicit
+  user intent, no background mirroring and no heuristic about what an unedited
+  copy means. Nodes in Trash, locked nodes, and protected document-system tag
+  definitions are excluded from both the counts and the writes. The high gate
+  found three issues, all fixed on-branch: the backfill skipped the
+  locked-node guard that `apply_tag` enforces, so seeds a locked node had
+  legitimately refused were injected anyway; the seed set was collected over the
+  whole `extends` chain while the target set matched direct appliers only, so
+  with `#task extends #work` a new `#work` seed silently missed every `#task`
+  node and the dialog's counts understated the work; and a zero-addition preview
+  still opened a dialog with a live Apply button that dispatched a no-op. A
+  fourth defect was in the new test rather than the feature: it locked its
+  fixture node by writing straight to Loro after the Core was live, which
+  bypassed touch tracking and tripped the projection-cache verifier on the *next*
+  mutation — the failure pointed at an innocent `createNode`, and because the
+  test threw before its first assertion the ratified locked-node skip was
+  effectively unverified. The fixture is now built before the Core exists.
+
+### Fixed
+
+- **One unreadable Agent conversation no longer stops the app from starting (PR
+  #555, main)** — the installed app exited at launch, every launch, against a
+  userData directory that had been in daily use since 2026-08-05. PR #535
+  collapsed the agent tools into `agent` / `agent_message` / `task_stop` and
+  dropped `spawn_agent` / `wait_agent` from the codec enum with no migration,
+  which the pre-release rule permits — but its escape hatch is "wipe dev
+  userData", and the daily-use install is never wiped. 14 Items recorded on
+  2026-08-10 kept the retired names, history is append-only so those rows are
+  never rewritten, and the decode threw on every launch. The fatal caller was not
+  the one the stack trace named: Node truncates stacks at 10 frames, which cut it
+  off exactly at the projection read. The real path is startup's
+  `MemoryExtension.prepareForTurnAdmission`, which fans out over every root Thread
+  and reads its Turns inside `initialize` with no per-Thread guard — so one
+  Thread's bad row ended the process, even though reconciliation had already
+  caught the same failure and moved on. Startup now decodes each Thread's history
+  once and **quarantines for the session** any Thread that fails: it is kept out
+  of resume, out of `persistentRootThreads`, and out of the history reads, which
+  answer a named `ThreadBusyError` instead of leaking the codec error, and it is
+  reported once as a `thread-history-unreadable` diagnostic. A metadata-only read
+  still succeeds, so the Thread list can name what it cannot open. Quarantine is
+  in-memory and recomputed each launch, so the bytes stay untouched and a build
+  that can read them again picks the Thread back up. A torn rollout still does
+  *not* quarantine anything — that history remains browsable out of its
+  projection; the only question asked is whether the Thread decodes. Verified
+  against the real broken userData. Two review rounds shaped this and both are
+  worth reading. The first attempt skipped the undecodable *Item*, which silently
+  broke the terminal-Turn mutation check and — because the projected rollout
+  snapshot is written back before the old rows are cascaded away — would have
+  destroyed the last copy of the very data it was trying to survive. The second
+  attempt then placed the readability probe one line after the Thread joined the
+  reconciled list, leaving an unguarded prune fan-out to kill the launch anyway,
+  and hiding the Thread from `persistentRootThreads()` armed the memory
+  orphan-admission sweep to delete its extraction state permanently — a filter is
+  invisible to a consumer that treats absence as deletion. The third round found
+  that same delete armed once more on a second quarantine path, because the fix
+  had introduced two sets that were supposed to agree and did not; the signal now
+  evaluates the same predicate the filter does, so it cannot disagree with itself.
+  The rules are in `docs/lessons.md` — including that a typecheck scoped to `src`
+  will not tell you a test double has gone stale; `docs/spec/agent-core.md` states
+  the quarantine contract.
 
 ## [0.5.0] - 2026-08-17
 

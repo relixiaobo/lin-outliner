@@ -25,7 +25,7 @@ import type {
   ProjectionIndex,
 } from './agentNodeToolTypes';
 import { unique } from './agentNodeToolUtils';
-import { nodeFieldSlots } from '../../../core/fieldSlots';
+import { fieldSlotValueSource, nodeFieldSlots } from '../../../core/fieldSlots';
 
 const SYSTEM_IDS = new Set([
   WORKSPACE_ID,
@@ -52,8 +52,9 @@ export function fieldReads(index: ProjectionIndex, node: NodeProjection, include
   const reads = nodeFieldSlots(index.nodes, node.id)
     .filter((slot) => includeDeleted || !slot.entryId || !isInTrash(index, slot.entryId))
     .map((slot) => {
-      const fieldEntry = slot.entryId ? index.nodes.get(slot.entryId) : undefined;
-      return fieldRead(index, slot.fieldDefId, fieldEntry, includeDeleted);
+      const valueSource = fieldSlotValueSource(index.nodes, slot);
+      const fieldEntry = valueSource ? index.nodes.get(valueSource.entryId) : undefined;
+      return fieldRead(index, slot.fieldDefId, fieldEntry, includeDeleted, valueSource?.inherited === true);
     });
   if (!includeDeleted) return reads;
 
@@ -76,6 +77,7 @@ function fieldRead(
   fieldDefId: string | undefined,
   fieldEntry: NodeProjection | undefined,
   includeDeleted = true,
+  inherited = false,
 ): NodeFieldRead {
   const fieldDef = fieldDefId ? index.nodes.get(fieldDefId) : undefined;
   const values = (fieldEntry?.children ?? [])
@@ -83,7 +85,7 @@ function fieldRead(
     .filter((value): value is NodeProjection => value !== undefined && (includeDeleted || !isInTrash(index, value.id)))
     .map((value) => ({
       text: referenceText(index, value) ?? nodeContentText(value),
-      valueNodeId: value.id,
+      ...(!inherited ? { valueNodeId: value.id } : {}),
       targetId: value.type === 'reference' ? value.targetId : undefined,
     }));
   const options = fieldDef?.children
@@ -95,7 +97,7 @@ function fieldRead(
     name: systemFieldLabel(fieldDefId ?? '') ?? fieldDef?.content.text ?? fieldEntry?.content.text ?? 'Field',
     type: fieldDef?.type === 'fieldDef' ? projectFieldConfig(index.nodes, fieldDef).fieldType : 'plain',
     values,
-    fieldEntryId: fieldEntry?.id,
+    ...(!inherited && fieldEntry ? { fieldEntryId: fieldEntry.id } : {}),
     options: options && options.length ? options : undefined,
   };
 }

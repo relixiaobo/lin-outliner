@@ -1195,6 +1195,67 @@ describe('Core', () => {
     expect(nodeFieldSlots(core.state(), emptyNodeId)).toEqual([]);
   });
 
+  test('accepts an inherited static default once without replacing authored values', () => {
+    const core = Core.new();
+    const tagId = mustFocus(core.createTag('project'));
+    const acceptedNodeId = mustFocus(core.createNode(core.projection().todayId, null, 'Accepted project'));
+    const authoredNodeId = mustFocus(core.createNode(core.projection().todayId, null, 'Authored project'));
+    core.applyTag(acceptedNodeId, tagId);
+    core.applyTag(authoredNodeId, tagId);
+
+    const templateEntryId = mustFocus(core.createFieldDef(tagId, 'Status', 'plain'));
+    const fieldDefId = core.state().nodes[templateEntryId].fieldDefId!;
+    core.setFieldFreeTextValue(templateEntryId, 'Inbox');
+    expect(fieldEntries(core, acceptedNodeId)).toEqual([]);
+    expect(fieldEntries(core, authoredNodeId)).toEqual([]);
+
+    core.updateFieldSlot(acceptedNodeId, fieldDefId, { kind: 'acceptDefault' });
+    const acceptedEntry = fieldEntryForDefinition(core, acceptedNodeId, fieldDefId)!;
+    expect(fieldValueTexts(core, acceptedEntry.id)).toEqual(['Inbox']);
+    expect(acceptedEntry.id).not.toBe(templateEntryId);
+    expect(core.state().nodes[acceptedEntry.children[0]!]!.parentId).toBe(acceptedEntry.id);
+
+    const acceptedChildren = [...acceptedEntry.children];
+    core.updateFieldSlot(acceptedNodeId, fieldDefId, { kind: 'acceptDefault' });
+    expect(fieldEntryForDefinition(core, acceptedNodeId, fieldDefId)!.children).toEqual(acceptedChildren);
+
+    core.updateFieldSlot(authoredNodeId, fieldDefId, { kind: 'appendText', text: 'Active' });
+    core.updateFieldSlot(authoredNodeId, fieldDefId, { kind: 'acceptDefault' });
+    expect(fieldValueTexts(core, fieldEntryForDefinition(core, authoredNodeId, fieldDefId)!.id))
+      .toEqual(['Active']);
+
+    const templateValueId = core.state().nodes[templateEntryId].children[0]!;
+    core.applyNodeTextPatch(templateValueId, replaceAllRichTextPatch(plainText('Backlog')));
+    expect(fieldValueTexts(core, acceptedEntry.id)).toEqual(['Inbox']);
+  });
+
+  test('accepting an inherited option default applies reverse done-state mapping', () => {
+    const core = Core.new();
+    const tagId = mustFocus(core.createTag('task'));
+    const templateEntryId = mustFocus(core.createFieldDef(tagId, 'Status', 'options'));
+    const fieldDefId = core.state().nodes[templateEntryId].fieldDefId!;
+    const doneOptionId = mustFocus(core.registerCollectedOption(fieldDefId, 'Done'));
+    core.setTagConfig(tagId, {
+      showCheckbox: true,
+      doneStateEnabled: true,
+      doneMapChecked: [doneOptionId],
+    });
+    core.selectFieldOption(templateEntryId, doneOptionId);
+
+    const nodeId = mustFocus(core.createNode(core.projection().todayId, null, 'Ship it'));
+    core.applyTag(nodeId, tagId);
+    expect(core.state().nodes[nodeId].completedAt).toBeUndefined();
+
+    core.updateFieldSlot(nodeId, fieldDefId, { kind: 'acceptDefault' });
+
+    expect(core.state().nodes[nodeId].completedAt).toBeGreaterThan(0);
+    const acceptedEntry = fieldEntryForDefinition(core, nodeId, fieldDefId)!;
+    expect(core.state().nodes[acceptedEntry.children[0]!]!).toMatchObject({
+      type: 'reference',
+      targetId: doneOptionId,
+    });
+  });
+
   test('updates the requested duplicate stored slot by entry identity', () => {
     const core = Core.new();
     const nodeId = mustFocus(core.createNode(core.projection().todayId, null, 'Record'));
@@ -2967,6 +3028,69 @@ describe('Core', () => {
       .map((id) => core.state().nodes[id]!)
       .filter((child) => child.type === undefined || child.type === 'codeBlock');
     expect(afterReapply.length).toBe(2);
+  });
+
+  test('tag template backfill follows extends, skips locked nodes, and applies as one undoable step', () => {
+    const seed = Core.new();
+    const tagId = mustFocus(seed.createTag('project'));
+    const childTagId = mustFocus(seed.createTag('task'));
+    seed.setTagConfig(childTagId, { extends: tagId });
+    const missingBothId = mustFocus(seed.createNode(seed.projection().todayId, null, 'Missing both'));
+    const derivedTagId = mustFocus(seed.createNode(seed.projection().todayId, null, 'Derived tag'));
+    const lockedId = mustFocus(seed.createNode(seed.projection().todayId, null, 'Locked'));
+    const trashedId = mustFocus(seed.createNode(seed.projection().todayId, null, 'Trashed'));
+    seed.applyTag(missingBothId, tagId);
+    seed.applyTag(derivedTagId, childTagId);
+    seed.applyTag(lockedId, tagId);
+    seed.applyTag(trashedId, tagId);
+    seed.trashNode(trashedId);
+
+    const shared = seed.exportSharedState();
+    const document = new LoroOutlinerDocument({ shared: shared.document });
+    const locked = structuredClone(seed.state().nodes[lockedId]!);
+    locked.locked = true;
+    document.writeNode(locked);
+    const core = Core.fromSharedState({
+      ...shared,
+      document: document.exportSharedState('system:test-lock'),
+    });
+
+    const firstTemplateId = mustFocus(core.createNode(tagId, null, 'First seed'));
+    const missingOneId = mustFocus(core.createNode(core.projection().todayId, null, 'Missing one'));
+    core.applyTag(missingOneId, tagId);
+    const secondTemplateId = mustFocus(core.createNode(tagId, null, 'Second seed'));
+
+    expect(core.previewTagTemplateBackfill(tagId)).toEqual({
+      nodeCount: 3,
+      additionCount: 5,
+    });
+
+    core.applyTemplateToTaggedNodes(tagId);
+
+    const templateIdsFor = (nodeId: string) => core.state().nodes[nodeId].children
+      .map((childId) => core.state().nodes[childId]?.templateId)
+      .filter((templateId): templateId is string => Boolean(templateId));
+    expect(templateIdsFor(missingBothId)).toEqual([firstTemplateId, secondTemplateId]);
+    expect(templateIdsFor(derivedTagId)).toEqual([firstTemplateId, secondTemplateId]);
+    expect(templateIdsFor(missingOneId)).toEqual([firstTemplateId, secondTemplateId]);
+    expect(core.state().nodes[lockedId].children).toEqual([]);
+    expect(core.state().nodes[trashedId].children).toEqual([]);
+    expect(core.previewTagTemplateBackfill(tagId)).toEqual({
+      nodeCount: 0,
+      additionCount: 0,
+    });
+
+    core.applyTemplateToTaggedNodes(tagId);
+    expect(templateIdsFor(missingBothId)).toEqual([firstTemplateId, secondTemplateId]);
+    expect(templateIdsFor(derivedTagId)).toEqual([firstTemplateId, secondTemplateId]);
+    expect(templateIdsFor(missingOneId)).toEqual([firstTemplateId, secondTemplateId]);
+
+    core.undo();
+    expect(templateIdsFor(missingBothId)).toEqual([]);
+    expect(templateIdsFor(derivedTagId)).toEqual([]);
+    expect(templateIdsFor(missingOneId)).toEqual([firstTemplateId]);
+    expect(core.state().nodes[lockedId].children).toEqual([]);
+    expect(core.state().nodes[trashedId].children).toEqual([]);
   });
 
   test('replace node with reference creates backlinks and remains undoable', () => {

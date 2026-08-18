@@ -66,7 +66,7 @@ theme-section entry below; this list is the ordering, not a second record):
 - **Outliner correctness lane (added 2026-08-13, build-ready 2026-08-14)**:
   [`tag-merge-and-split-fixes`](plans/archive/tag-merge-and-split-fixes.md) PRs A/B
   both shipped (#542, #540, 2026-08-15), and
-  [`tag-schema-projection`](plans/tag-schema-projection.md) PR 1 shipped
+  [`tag-schema-projection`](plans/archive/tag-schema-projection.md) PR 1 shipped
   (#545, 2026-08-16); the lane's remaining work is that plan's PR 2 (defaults
   as inherited ghosts) and PR 3 (seed backfill action).
 - **Lane D — test-signal infrastructure**: **still unclaimed and now the oldest
@@ -158,7 +158,7 @@ before any directional/security-sensitive build.
 
 - **agent-program** (P1, `meta` — umbrella) — read first; it maps the rest (foundation /
   dependency graph / event taxonomy / milestones). See `docs/plans/reference/agent-program.md`.
-- **agent-view-surface** (P2, `draft` 2026-08-16) — the agent can neither see
+- **agent-view-surface** (P2, `in-progress` 2026-08-16) — the agent can neither see
   nor set node view modes: `%%view:%%` parses but persists only on search
   nodes, read paths hide an ordinary table node's mode, and no model-facing
   text mentions views at all (observed dev:main failure: "整理成表格" produced
@@ -167,7 +167,14 @@ before any directional/security-sensitive build.
   existing sort/filter/group/display-field commands, sequenced after
   `tag-schema-projection` PR 1 (#545, same reader files). Designed
   mode-agnostic so future `cards`/`calendar` views extend a vocabulary
-  constant, not the surface. See [`plans/agent-view-surface.md`](plans/agent-view-surface.md).
+  constant, not the surface.
+  **PR 1 shipped #556 (2026-08-18, codex-3)** — mode awareness: `%%view:<mode>%%`
+  reads and writes on ordinary nodes, vocabulary validated against the renderable
+  set, guidance teaches the table task mapping; high gate found 4 issues (two
+  silent no-ops, a fail-closed error that bricked a node for the agent, and
+  guidance promising a column path the agent does not have), all fixed
+  on-branch. PR 2 (view-config read/write) remains.
+  See [`plans/agent-view-surface.md`](plans/agent-view-surface.md).
 - **skill-directory-is-itself-a-skill** (P3, `draft`, *no plan file yet* — cut from #470
   at the gate 2026-08-01, deliberately, not abandoned) — picking `~/work/my-pdf-skill`
   is at least as natural as picking its parent, but the loader only ever looks one
@@ -571,7 +578,7 @@ archived `done` (see Recently completed). Remaining active work:
   **inline alt-text editing** (`mediaAlt` is writable only at node creation today).
 ### Outliner & UI polish
 
-- **tag-schema-projection** (P1, `in-progress` 2026-08-16, **PM-ratified 2026-08-13**) —
+- **tag-schema-projection** (P1, `done` 2026-08-18, **PM-ratified 2026-08-13**) —
   fixes the PM-reported bug that template edits never reach already-tagged nodes,
   by making fields a read-time projection of the tag chain (nodes store values
   only), static defaults inherited ghosts, and seed content one-shot copies with
@@ -582,9 +589,14 @@ archived `done` (see Recently completed). Remaining active work:
   tag fields) has a stated default and does not block.
   **PR 1 shipped #545 (2026-08-16, codex)** — read-time slot projection; xhigh
   gate found 15 issues, all fixed on-branch (retrospective in the CHANGELOG entry
-  and the PR). Remaining: PR 2 (static defaults as inherited ghosts — the
-  template-defaults deferral is PM-ratified PR-2 scope) and PR 3 (seed backfill).
-  Design: [`tag-schema-projection`](plans/tag-schema-projection.md).
+  and the PR). **PR 2 shipped #553 (2026-08-18, codex)** — static defaults as
+  inherited ghosts; high gate found 5 issues plus a rendered-only overlap the
+  first pass missed, all fixed on-branch. **PR 3 shipped #554 (2026-08-18,
+  codex)** — on-demand seed backfill; high gate found 3 issues plus a fixture
+  defect that left the ratified locked-node skip unverified, all fixed
+  on-branch. All three PRs shipped; design folded into
+  `spec/commands.md`, `spec/ui-behavior.md` and `spec/search-query-grammar.md`.
+  Design: [`tag-schema-projection`](plans/archive/tag-schema-projection.md).
 - **tag-merge-and-split-fixes** (P1, `done` 2026-08-15, **PM-ratified 2026-08-13**) —
   kills the crash-class remainder of the field/supertag audit (#537's review
   follow-up), all repro-verified: same-named fields from two tags make the tags
@@ -1105,6 +1117,20 @@ One line per merge, newest first; the retrospective lives in the CHANGELOG entry
 and the merged PR, distilled rules in [`lessons.md`](lessons.md). Everything
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
+
+- **unreadable-thread-quarantine** (main, PR #555, merged 2026-08-18 — fast-track, no
+  plan file) — the installed app exited at launch, every launch: #535's tool-enum
+  narrowing shipped with no migration under the pre-release dev-wipe rule, but the
+  daily-use install is never wiped, so 14 rows from 2026-08-10 stayed undecodable and
+  the startup fan-out over root Threads (`MemoryExtension.prepareForTurnAdmission`) had
+  no per-Thread guard. Startup now probes each Thread's history before admitting it
+  anywhere and quarantines the ones that fail, for the session only. Three `/code-review
+  high` rounds: round 1 killed the original Item-level skip (it broke the terminal-Turn
+  check and would have destroyed the last copy of the data via `rolloutSnapshot`), round
+  2 caught the probe running after registration and the filter arming a permanent
+  `turn_admissions` delete, round 3 caught that same delete armed again by two sets that
+  had to agree. Gate: typecheck + `docs:check` + `test:core` (2450) + real broken
+  userData (app starts, one diagnostic, `turn_admissions` 27 before and after).
 
 - **pathless-upload-chunk-test** (codex, PR #551, merged 2026-08-17 — fast-track, no
   plan file) — the streaming-upload e2e spec pinned Chromium's `file.stream()` buffer

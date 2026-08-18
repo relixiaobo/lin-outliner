@@ -35,7 +35,7 @@ import type {
   TagConfigPatch,
   ViewMode,
 } from './types';
-import type { FieldSlotMutation } from '../../core/core';
+import type { FieldSlotMutation, TagTemplateBackfillPreview } from '../../core/core';
 import { replaceAllRichTextPatch } from './types';
 import type {
   AgentCoreMethod,
@@ -293,6 +293,10 @@ export const api = {
   toggleDone: (nodeId: string) => command<CommandResult>('toggle_done', { nodeId }),
   cycleDoneState: (nodeId: string) => command<CommandResult>('cycle_done_state', { nodeId }),
   createTag: (name: string) => command<CommandResult>('create_tag', { name }),
+  previewTagTemplateBackfill: (tagId: string) =>
+    command<TagTemplateBackfillPreview>('preview_tag_template_backfill', { tagId }),
+  applyTemplateToTaggedNodes: (tagId: string) =>
+    command<CommandResult>('apply_template_to_tagged_nodes', { tagId }),
   applyTag: (nodeId: string, tagId: string) =>
     command<CommandResult>('apply_tag', { nodeId, tagId }),
   removeTag: (nodeId: string, tagId: string) =>

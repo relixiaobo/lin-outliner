@@ -14,7 +14,7 @@ import {
   revisionOf,
   tagLabels,
 } from './agentNodeToolProjection';
-import { searchQueryOutlineLines, searchViewModeOf } from './agentNodeToolSearch';
+import { searchQueryOutlineLines } from './agentNodeToolSearch';
 import { escapeSemanticText } from '../../../core/semanticIngest/inlineScanner';
 import { richTextToMarkdownReferenceMarkup } from '../../../core/markdownRichText';
 import type {
@@ -26,6 +26,7 @@ import type {
   ProjectionIndex,
 } from './agentNodeToolTypes';
 import { asRecord, clampInteger, compactOutline } from './agentNodeToolUtils';
+import { viewModeOf } from './agentNodeToolView';
 
 export function normalizeReadParams(rawParams: unknown): NormalizedReadParams {
   const input = asRecord(rawParams);
@@ -269,10 +270,8 @@ function serializeOutlineNode(
 function outlineNodeText(index: ProjectionIndex, node: NodeProjection): string {
   const parts: string[] = [];
   if (node.type === 'search') parts.push('%%search%%');
-  const viewMode = node.type === 'search'
-    ? searchViewModeOf(index, node)
-    : node.type === 'viewDef' ? node.viewMode : undefined;
-  if (viewMode) parts.push(`%%view:${viewMode}%%`);
+  const viewMode = viewModeOf(index.nodes, node);
+  if (viewMode !== 'list') parts.push(`%%view:${viewMode}%%`);
   if (nodeIsDone(node)) parts.push('[x]');
   else if (nodeShowsCheckbox(index.nodes, node)) parts.push('[ ]');
   const tags = tagLabels(index, node);

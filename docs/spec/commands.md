@@ -100,7 +100,8 @@ creating a duplicate. New display fields receive the next finite display order.
 normalization are one mutation.
 
 ### Document — knowledge model (tags and fields)
-`create_tag`, `apply_tag`, `remove_tag`, `set_tag_config`, `set_field_config`,
+`create_tag`, `preview_tag_template_backfill`, `apply_template_to_tagged_nodes`,
+`apply_tag`, `remove_tag`, `set_tag_config`, `set_field_config`,
 `create_field_def`, `create_inline_field`, `create_inline_field_after_node`,
 `update_field_slot`, `reuse_field_definition`, `register_collected_option`,
 `create_collected_field_option`, `select_field_option`,
@@ -131,18 +132,35 @@ own slots in child order.
 `autoInitialize` value that resolves successfully at acquisition time, because
 date- and ancestor-dependent values must stay frozen to that moment and tree
 position. Static values stored on a tag template entry are not copied into the
-instance. Reapplying a tag remains idempotent. `remove_tag` removes the projected
+instance. An unmaterialized slot reads them as an inherited default unless the
+field has an `autoInitialize` strategy; accepting the default copies its value
+subtree into a new instance entry exactly once. A stored value always wins and
+never tracks a later template edit. Reapplying a tag remains idempotent.
+`remove_tag` removes the projected
 shape without deleting user data: an entry that already holds a value survives
 as an own field. Instance field entries carry no template provenance; tag and
 template provenance lives on the projected slot, while `templateId` remains only
 on one-shot freeform seed clones.
+
+Freeform template children remain one-shot seeds. The read-only
+`preview_tag_template_backfill(tagId)` command computes how many active, editable
+nodes are missing at least one seed and the total number of shallow clones that
+would be added. Targets include nodes carrying `tagId` directly and nodes whose
+applied tag extends `tagId`. `apply_template_to_tagged_nodes(tagId)` recomputes
+that plan and adds only the missing clones, preserving inherited ancestor-first
+template order and deduplicating each node by `templateId`. The whole fan-out is
+one mutation and therefore one undo step. Nodes in Trash, locked nodes, and
+protected document-system tag definitions are excluded from both counts and
+writes.
 
 `update_field_slot(ownerId, fieldDefId, mutation)` is the slot-aware value write
 boundary used by renderer, Table, and agent paths; paste enforces the same
 invariant inside its surrounding tree transaction. `appendText`,
 `appendReference`, and `selectOption` create a backing entry together with the
 first accepted value when needed; failed or empty writes leave a virtual slot
-unmaterialized. `commit` removes an empty tag-backed entry and returns the
+unmaterialized. `acceptDefault` materializes the current inherited static
+default and is a no-op once the slot has a stored entry. `commit` removes an
+empty tag-backed entry and returns the
 field to its virtual form. Empty own entries survive because their entry is the
 only record that the field exists. `clear_field_value` and removal of the final
 value enforce the same dematerialization rule. A mutation may carry the exact

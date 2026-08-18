@@ -20,7 +20,7 @@ import type { ReferenceSummary } from '../../core/references';
 import { isDescendantOf, resolveReferenceChainTargetId } from '../../core/actions/rowFacets';
 import { TRASH_ID } from '../../core/types';
 import { INTERNAL_VIEW_NODE_TYPES, orderedByFiniteOrder } from '../../core/viewConfig';
-import { nodeFieldSlots, type NodeFieldSlot } from '../../core/fieldSlots';
+import { fieldSlotValueSource, nodeFieldSlots, type NodeFieldSlot } from '../../core/fieldSlots';
 
 export type OutlinerRowItem =
   | { id: NodeId; type: 'field'; slot: NodeFieldSlot }
@@ -251,8 +251,9 @@ function resolvedViewFieldValuesFor(
   // a computed projection resolved by the shared `systemFields` module.
   if (isSystemFieldId(fieldId)) return systemFieldValues(displayed, fieldId, byId, systemFieldContext);
 
-  const entryId = nodeFieldSlots(byId, displayed.id)
-    .find((slot) => slot.fieldDefId === fieldId)?.entryId;
+  const slot = nodeFieldSlots(byId, displayed.id)
+    .find((candidate) => candidate.fieldDefId === fieldId);
+  const entryId = slot ? fieldSlotValueSource(byId, slot)?.entryId : undefined;
   const fieldEntry = entryId ? byId.get(entryId) : undefined;
   if (fieldEntry?.type !== 'fieldEntry') return [];
 
@@ -296,7 +297,8 @@ function isHiddenFieldSlot(slot: NodeFieldSlot, byId: Map<NodeId, NodeProjection
   const field = byId.get(slot.fieldDefId);
   const mode = field ? projectFieldConfig(byId, field).hideField : undefined;
   if (mode === 'always' || mode === 'hidden') return true;
-  const entry = slot.entryId ? byId.get(slot.entryId) : undefined;
+  const valueSource = fieldSlotValueSource(byId, slot);
+  const entry = valueSource ? byId.get(valueSource.entryId) : undefined;
   const value = entry ? hiddenFieldValue(entry, byId).trim() : '';
   if (mode === 'empty') return value.length === 0;
   if (mode === 'not_empty') return value.length > 0;
