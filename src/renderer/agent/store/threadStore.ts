@@ -326,6 +326,7 @@ export class ThreadStore {
   async send(
     contentInput: readonly ThreadUserContent[],
     userView?: RendererUserViewHints,
+    clientMessageId?: string,
   ): Promise<Turn | null> {
     const threadId = this.snapshot.selectedThreadId;
     if (!threadId) return null;
@@ -337,7 +338,13 @@ export class ThreadStore {
     // does not silently re-send a page the user has moved on from.
     const additionalContext = pendingComposerAdditionalContext();
     const stagedKeys = Object.keys(additionalContext);
-    const result = await this.sendToThread(threadId, content, userView, additionalContext);
+    const result = await this.sendToThread(
+      threadId,
+      content,
+      userView,
+      additionalContext,
+      clientMessageId,
+    );
     for (const key of stagedKeys) acknowledgeThreadComposerContext(key);
     return result;
   }
@@ -356,6 +363,9 @@ export class ThreadStore {
     contentInput: readonly ThreadUserContent[],
     userView?: RendererUserViewHints,
     additionalContext: Readonly<Record<string, { readonly value: string; readonly kind: 'untrusted' }>> = {},
+    // Minted by the caller when it needs to recognize the Item this send
+    // becomes before `turn/submit` answers — the transcript anchors on it.
+    clientMessageId?: string,
   ): Promise<Turn | null> {
     const content = normalizeUserContent(contentInput);
     if (content.length === 0) return null;
@@ -363,7 +373,7 @@ export class ThreadStore {
     const response = await this.client.agentCoreRequest('turn/submit', {
       threadId,
       input: content,
-      clientUserMessageId: crypto.randomUUID(),
+      clientUserMessageId: clientMessageId ?? crypto.randomUUID(),
       ...(userView ? { userView } : {}),
       ...withContext,
     });

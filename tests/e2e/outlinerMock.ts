@@ -2896,6 +2896,78 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             backwardsCursor: null,
           }) as T;
         }
+        const contextCommandText = method === 'turn/submit'
+          && Array.isArray(input.input)
+          && input.input.length === 1
+          && (input.input[0] as { type?: string; text?: string }).type === 'text'
+          ? String((input.input[0] as { text?: string }).text ?? '').trim()
+          : null;
+        // `/clear` and `/compact` are ordinary composer text on the way out, and
+        // the host routes them into a context command: a Turn whose Item is a
+        // `contextReset`, never a `userMessage`. It is the one submission that
+        // comes back carrying nothing of the reader's, and both of the host's
+        // branches matter here — a fresh reset, and the deduplicated repeat that
+        // answers `turn: null` when nothing has been added since the last one.
+        if (contextCommandText === '/clear') {
+          const thread = threadById(String(input.threadId));
+          const turns = mockTurns.get(thread.id) ?? [];
+          const last = turns.at(-1);
+          const lastItem = last?.items.at(-1);
+          if (lastItem?.type === 'contextReset') {
+            return clone({
+              turn: null,
+              turnId: last!.id,
+              acceptedItemId: lastItem.id,
+              deduplicated: true,
+            }) as T;
+          }
+          const turnId = nextCanonicalId();
+          const itemId = nextCanonicalId();
+          const startedAt = ++now;
+          const resetTurn: MockTurn = {
+            id: turnId,
+            items: [{
+              id: itemId,
+              type: 'contextReset',
+              provenance: itemProvenance(thread.id, turnId, itemId),
+              clearedThrough: {
+                turnId: last?.id ?? turnId,
+                itemId: lastItem?.id ?? itemId,
+              },
+            }],
+            itemsView: 'full',
+            provenance: {
+              originThreadId: thread.id,
+              originTurnId: turnId,
+              trigger: { kind: 'feature' as const, feature: 'context.clear', ref: String(input.clientUserMessageId ?? '') },
+            },
+            status: 'completed',
+            error: null,
+            execution: {
+              ...mockThreadConfigurations.get(thread.id)!,
+              usage: {
+                input: 0,
+                output: 0,
+                cacheRead: 0,
+                cacheWrite: 0,
+                totalTokens: 0,
+                cost: null,
+              },
+            },
+            startedAt,
+            completedAt: startedAt,
+            durationMs: 0,
+          };
+          thread.updatedAt = startedAt;
+          emitAgentCoreNotification({ type: 'turn/started', threadId: thread.id, turnId, turn: resetTurn });
+          emitAgentCoreNotification({ type: 'turn/completed', threadId: thread.id, turnId, turn: resetTurn });
+          return clone({
+            turn: resetTurn,
+            turnId,
+            acceptedItemId: itemId,
+            deduplicated: false,
+          }) as T;
+        }
         let submittedActiveTurn = method === 'turn/submit'
           ? (mockTurns.get(String(input.threadId)) ?? []).findLast((turn) => turn.status === 'inProgress')
           : undefined;

@@ -6415,6 +6415,342 @@ test.describe('canonical agent Thread surface', () => {
     ))).toBeLessThanOrEqual(1);
   });
 
+  /**
+   * The end state was already covered above; this covers the way there.
+   *
+   * A sent message reaches the transcript on the `turn/started` notification, a
+   * whole round trip before `turn/submit` answers — and the anchor used to wait
+   * for that answer, so the reader watched their message sit at the bottom edge
+   * and then watched the viewport travel a full screen to put it at the top,
+   * overshooting it by ~40px on the way. Nothing about the settled position
+   * showed any of that, so the assertion here is over every frame.
+   *
+   * Reduced motion, so the anchor is the cut it used to be and every frame can
+   * be pinned exactly: the message exists at the anchor or it does not exist.
+   * The animated arrival is the next test.
+   */
+  test('puts a sent message at the top on the frame it first renders when motion is reduced', async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await createNewThread(page);
+    await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+      const threadId = response?.data[0]?.id;
+      if (!threadId) throw new Error('Mock Thread not found');
+      for (let index = 0; index < 10; index += 1) {
+        await target.lin?.agentCoreRequest('turn/start', {
+          threadId,
+          input: [{ type: 'text', text: `Earlier scroll evidence ${index + 1}` }],
+          clientUserMessageId: `frame-evidence-${index + 1}`,
+        });
+      }
+    });
+    const transcript = page.locator('.thread-transcript');
+    await expect(
+      page.locator('.thread-user-message').filter({ hasText: 'Earlier scroll evidence' }),
+    ).toHaveCount(10);
+    await expect.poll(() => transcript.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+
+    // The mock answers `turn/submit` in the same microtask as the notification
+    // it emits, which is the one ordering the real host never has. Holding the
+    // response back restores the gap the reader actually sits through.
+    await page.evaluate(() => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: (method: string, input?: Record<string, unknown>) => Promise<unknown> };
+      };
+      const original = target.lin!.agentCoreRequest.bind(target.lin);
+      target.lin!.agentCoreRequest = (method: string, input?: Record<string, unknown>) => {
+        const pending = original(method, input);
+        if (method !== 'turn/submit') return pending;
+        return pending.then(async (result) => {
+          await new Promise((resolve) => { setTimeout(resolve, 180); });
+          return result;
+        });
+      };
+    });
+
+    const recording = page.evaluate(async () => {
+      const scroller = document.querySelector('.thread-transcript');
+      if (!(scroller instanceof HTMLElement)) throw new Error('Missing transcript');
+      const topInset = Number.parseFloat(getComputedStyle(scroller).paddingTop) || 0;
+      const frames: Array<{ readonly offset: number; readonly top: number }> = [];
+      for (let frame = 0; frame < 90; frame += 1) {
+        await new Promise<void>((resolve) => { requestAnimationFrame(() => resolve()); });
+        const message = [...document.querySelectorAll('.thread-user-message')]
+          .find((element) => element.textContent?.includes('Anchor on arrival.'));
+        if (!message) continue;
+        frames.push({
+          offset: message.getBoundingClientRect().top - scroller.getBoundingClientRect().top - topInset,
+          top: scroller.scrollTop,
+        });
+      }
+      return frames;
+    });
+
+    const composer = page.getByRole('textbox', { name: 'Message this Thread' });
+    await composer.fill('Anchor on arrival.');
+    await page.getByRole('button', { name: 'Send' }).click();
+    const frames = await recording;
+
+    expect(frames.length).toBeGreaterThan(10);
+    // Every frame, not just the last: an intermediate position is the bug.
+    const offBy = frames.map((frame) => Math.abs(frame.offset));
+    expect(Math.max(...offBy)).toBeLessThanOrEqual(2);
+    const tops = frames.map((frame) => frame.top);
+    expect(Math.max(...tops) - Math.min(...tops)).toBeLessThanOrEqual(1);
+  });
+
+  /**
+   * With motion allowed the anchor is spent as travel rather than as a cut, and
+   * the shape of that travel is the assertion: one arrival, decelerating, never
+   * reversing, never past the top, finished inside the layout-motion budget.
+   * The bug it replaces looked nothing like this — a long stall at the bottom
+   * edge, then a single frame across the whole viewport, then a step back.
+   */
+  test('travels to the anchor in one arrival instead of cutting to it', async ({ page }) => {
+    await createNewThread(page);
+    await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+      const threadId = response?.data[0]?.id;
+      if (!threadId) throw new Error('Mock Thread not found');
+      for (let index = 0; index < 10; index += 1) {
+        await target.lin?.agentCoreRequest('turn/start', {
+          threadId,
+          input: [{ type: 'text', text: `Earlier travel evidence ${index + 1}` }],
+          clientUserMessageId: `travel-evidence-${index + 1}`,
+        });
+      }
+    });
+    const transcript = page.locator('.thread-transcript');
+    await expect(
+      page.locator('.thread-user-message').filter({ hasText: 'Earlier travel evidence' }),
+    ).toHaveCount(10);
+    await expect.poll(() => transcript.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+
+    const recording = page.evaluate(async () => {
+      const scroller = document.querySelector('.thread-transcript');
+      if (!(scroller instanceof HTMLElement)) throw new Error('Missing transcript');
+      const topInset = Number.parseFloat(getComputedStyle(scroller).paddingTop) || 0;
+      const frames: Array<{ readonly at: number; readonly offset: number }> = [];
+      for (let frame = 0; frame < 120; frame += 1) {
+        await new Promise<void>((resolve) => { requestAnimationFrame(() => resolve()); });
+        const message = [...document.querySelectorAll('.thread-user-message')]
+          .find((element) => element.textContent?.includes('Travel to the anchor.'));
+        if (!message) continue;
+        frames.push({
+          at: performance.now(),
+          offset: message.getBoundingClientRect().top - scroller.getBoundingClientRect().top - topInset,
+        });
+      }
+      return frames;
+    });
+
+    await page.getByRole('textbox', { name: 'Message this Thread' }).fill('Travel to the anchor.');
+    await page.getByRole('button', { name: 'Send' }).click();
+    const frames = await recording;
+
+    expect(frames.length).toBeGreaterThan(10);
+    const first = frames[0]!;
+    // It starts below the anchor and moves: a cut would already be at the top.
+    expect(first.offset).toBeGreaterThan(2);
+    for (let index = 1; index < frames.length; index += 1) {
+      // Monotone: every frame is at or above the previous one. The overshoot
+      // this replaces went past the top and came back, which reverses here.
+      expect(frames[index]!.offset).toBeLessThanOrEqual(frames[index - 1]!.offset + 1);
+    }
+    expect(Math.min(...frames.map((frame) => frame.offset))).toBeGreaterThanOrEqual(-2);
+    const settled = frames.find((frame) => Math.abs(frame.offset) <= 2);
+    expect(settled).toBeDefined();
+    // The whole arrival is one layout-motion budget, with slack for the frame
+    // the send itself costs. A stall would blow straight through it.
+    expect(settled!.at - first.at).toBeLessThan(400);
+    expect(Math.abs(frames.at(-1)!.offset)).toBeLessThanOrEqual(2);
+  });
+
+  /**
+   * The gate holds `turn/submit` before it reaches the mock, so while it is shut
+   * the host has not seen the send at all — no Turn, no notification, nothing
+   * the transcript could be drawing from. Whatever is on screen in that window
+   * is the composer's own echo, which is the point: the reader's message is not
+   * supposed to wait for a round trip. Releasing the gate then has to be a swap
+   * and not an arrival — one message before, one after, never two.
+   */
+  test('draws the sent message before the host has it, then swaps it for the canonical Turn', async ({ page }) => {
+    await createNewThread(page);
+    await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+      const threadId = response?.data[0]?.id;
+      if (!threadId) throw new Error('Mock Thread not found');
+      for (let index = 0; index < 10; index += 1) {
+        await target.lin?.agentCoreRequest('turn/start', {
+          threadId,
+          input: [{ type: 'text', text: `Earlier echo evidence ${index + 1}` }],
+          clientUserMessageId: `echo-evidence-${index + 1}`,
+        });
+      }
+    });
+    const transcript = page.locator('.thread-transcript');
+    await expect(
+      page.locator('.thread-user-message').filter({ hasText: 'Earlier echo evidence' }),
+    ).toHaveCount(10);
+    await expect.poll(() => transcript.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+
+    await page.evaluate(() => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: (method: string, input?: Record<string, unknown>) => Promise<unknown> };
+        __SUBMIT_GATE__?: { open: () => void };
+      };
+      const original = target.lin!.agentCoreRequest.bind(target.lin);
+      let openGate = (): void => undefined;
+      const gate = new Promise<void>((resolve) => { openGate = () => resolve(); });
+      target.__SUBMIT_GATE__ = { open: openGate };
+      target.lin!.agentCoreRequest = async (method: string, input?: Record<string, unknown>) => {
+        if (method === 'turn/submit') await gate;
+        return original(method, input);
+      };
+    });
+
+    const composer = page.getByRole('textbox', { name: 'Message this Thread' });
+    await composer.fill('Echo before the host knows.');
+    await page.getByRole('button', { name: 'Send' }).click();
+
+    const sent = page.locator('.thread-user-message').filter({ hasText: 'Echo before the host knows.' });
+    await expect(sent).toHaveCount(1);
+    expect((await commandCalls(page)).filter((call) => call.cmd === 'turn/submit')).toHaveLength(0);
+    const anchoredOffset = async () => sent.evaluate((element) => {
+      const scroller = element.closest('.thread-transcript');
+      if (!(scroller instanceof HTMLElement)) throw new Error('Missing transcript');
+      const topInset = Number.parseFloat(getComputedStyle(scroller).paddingTop) || 0;
+      return Math.abs(element.getBoundingClientRect().top - scroller.getBoundingClientRect().top - topInset);
+    });
+    // Polled, not immediate: the anchor is spent as travel, and where the echo
+    // ends up is this test's business while how long it takes to get there is
+    // the travel test's.
+    await expect.poll(anchoredOffset).toBeLessThanOrEqual(2);
+
+    // Watch the handover frame by frame: the echo leaves in the same commit the
+    // canonical row arrives, so no frame may hold two of the message.
+    const handover = page.evaluate(async () => {
+      const counts: number[] = [];
+      for (let frame = 0; frame < 45; frame += 1) {
+        await new Promise<void>((resolve) => { requestAnimationFrame(() => resolve()); });
+        counts.push([...document.querySelectorAll('.thread-user-message')]
+          .filter((element) => element.textContent?.includes('Echo before the host knows.')).length);
+      }
+      return counts;
+    });
+    await page.evaluate(() => {
+      (window as Window & { __SUBMIT_GATE__?: { open: () => void } }).__SUBMIT_GATE__?.open();
+    });
+    expect(Math.max(...(await handover))).toBe(1);
+
+    await expect.poll(async () => (
+      (await commandCalls(page)).filter((call) => call.cmd === 'turn/submit').length
+    )).toBe(1);
+    await expect(sent).toHaveCount(1);
+    // The reply is the proof the row is the canonical Turn now: the echo has no
+    // response to render, and the row it occupied is the one that grew one.
+    const sentRow = page.locator('[data-thread-turn-row]').filter({ has: sent });
+    await expect(sentRow.getByText('Current outline focuses on design-system work.')).toBeVisible();
+    await expect.poll(anchoredOffset).toBeLessThanOrEqual(2);
+  });
+
+  /**
+   * Not every send becomes a message. `/clear` and `/compact` leave the composer
+   * as ordinary text and come back as a `contextReset` Item under a Turn of
+   * their own, carrying nothing of the reader's — so the client id the stand-in
+   * row waits for never arrives, and waiting on it alone left a permanent
+   * phantom bubble spinning under the reset it had just performed. The Turn the
+   * host reports accepting is the other way home, and the deduplicated repeat —
+   * which reports no Turn at all — has to retire the row on the spot.
+   */
+  test('retires the stand-in row for a send that becomes no message at all', async ({ page }) => {
+    await createNewThread(page);
+    await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+      const threadId = response?.data[0]?.id;
+      if (!threadId) throw new Error('Mock Thread not found');
+      for (let index = 0; index < 3; index += 1) {
+        await target.lin?.agentCoreRequest('turn/start', {
+          threadId,
+          input: [{ type: 'text', text: `Context evidence ${index + 1}` }],
+          clientUserMessageId: `context-evidence-${index + 1}`,
+        });
+      }
+    });
+    const composer = page.getByRole('textbox', { name: 'Message this Thread' });
+    const phantom = page.locator('.thread-user-message').filter({ hasText: '/clear' });
+
+    await composer.fill('/clear');
+    await page.getByRole('button', { name: 'Send' }).click();
+    await expect(page.getByText('Context cleared.')).toHaveCount(1);
+    await expect(phantom).toHaveCount(0);
+
+    // The repeat is deduplicated by the host, which answers with no Turn at all.
+    await composer.fill('/clear');
+    await page.getByRole('button', { name: 'Send' }).click();
+    await expect.poll(async () => (
+      (await commandCalls(page)).filter((call) => call.cmd === 'turn/submit').length
+    )).toBe(2);
+    await expect(phantom).toHaveCount(0);
+    await expect(page.getByText('Context cleared.')).toHaveCount(1);
+  });
+
+  /**
+   * The virtualized path is where a latched anchor target used to become fatal:
+   * the row has no measured height on the pass that first sees it, so the anchor
+   * bails there and has to come back on a later pass — against a Turn id it must
+   * resolve afresh, because the id it saw first may have been the stand-in's and
+   * that row leaves the DOM as soon as the canonical Turn lands. An anchor that
+   * never completes also never releases, and a pending anchor is what suspends
+   * the bottom pin.
+   */
+  test('completes the anchor for a send into a virtualized transcript', async ({ page }) => {
+    await createNewThread(page);
+    await page.evaluate(async () => {
+      const target = window as Window & {
+        lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+      };
+      const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+      const threadId = response?.data[0]?.id;
+      if (!threadId) throw new Error('Mock Thread not found');
+      // Past TRANSCRIPT_VIRTUAL_MIN_TURNS, so the transcript virtualizes.
+      for (let index = 0; index < 45; index += 1) {
+        await target.lin?.agentCoreRequest('turn/start', {
+          threadId,
+          input: [{ type: 'text', text: `Virtual evidence ${index + 1}` }],
+          clientUserMessageId: `virtual-evidence-${index + 1}`,
+        });
+      }
+    });
+    const transcript = page.locator('.thread-transcript');
+    await expect.poll(() => transcript.evaluate((element) => (
+      element.querySelector('[data-virtualized="true"]') !== null
+    ))).toBe(true);
+
+    await page.getByRole('textbox', { name: 'Message this Thread' }).fill('Send into a virtual transcript.');
+    await page.getByRole('button', { name: 'Send' }).click();
+    const sent = page.locator('.thread-user-message').filter({ hasText: 'Send into a virtual transcript.' });
+    await expect(sent).toHaveCount(1);
+    await expect.poll(() => sent.evaluate((element) => {
+      const scroller = element.closest('.thread-transcript');
+      if (!(scroller instanceof HTMLElement)) throw new Error('Missing transcript');
+      const topInset = Number.parseFloat(getComputedStyle(scroller).paddingTop) || 0;
+      return Math.abs(element.getBoundingClientRect().top - scroller.getBoundingClientRect().top - topInset);
+    })).toBeLessThanOrEqual(2);
+  });
+
   test('keeps a bottom-positioned long-message disclosure anchored', async ({ page }) => {
     await createNewThread(page);
     const composer = page.getByRole('textbox', { name: 'Message this Thread' });
@@ -7099,6 +7435,48 @@ test('restores the reader position when turn/submit rejects', async ({ page }) =
   await expect.poll(() => transcript.evaluate((element) => element.scrollTop))
     .toBeLessThan(savedTop + 2);
   await expect(page.getByRole('button', { name: 'Jump to latest' })).toBeVisible();
+});
+
+/**
+ * The other half of the same rule: a steer joins the Turn already running, so
+ * anchoring it would drag the viewport to the top of a reply the reader is in
+ * the middle of. The transcript tells the two apart by which Turn the Item
+ * lands in, and only a Turn that did not exist at click time is anchored.
+ */
+test('keeps a steer on the bottom-follow path instead of anchoring the reply it joined', async ({ page }) => {
+  await openMockedApp(page, { agentTurnStaysActive: true });
+  await createNewThread(page);
+  await page.evaluate(async () => {
+    const target = window as Window & {
+      lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+    };
+    const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+    const threadId = response?.data[0]?.id;
+    if (!threadId) throw new Error('Mock Thread not found');
+    for (let index = 0; index < 10; index += 1) {
+      await target.lin?.agentCoreRequest('turn/start', {
+        threadId,
+        input: [{ type: 'text', text: `Earlier steer evidence ${index + 1}` }],
+        clientUserMessageId: `steer-evidence-${index + 1}`,
+      });
+    }
+  });
+  const transcript = page.locator('.thread-transcript');
+  await expect.poll(() => transcript.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+  await setTranscriptFollowingBottom(page);
+
+  const composer = page.getByRole('textbox', { name: 'Message this Thread' });
+  await composer.fill('Steer the running reply.');
+  await expect(page.getByRole('button', { name: 'Steer' })).toBeVisible();
+  await page.getByRole('button', { name: 'Steer' }).click();
+
+  const steered = page.locator('.thread-user-message').filter({ hasText: 'Steer the running reply.' });
+  await expect(steered).toBeVisible();
+  await expect(page.locator('.thread-send-anchor-spacer')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Jump to latest' })).toHaveCount(0);
+  await expect.poll(() => transcript.evaluate((element) => (
+    element.scrollHeight - element.scrollTop - element.clientHeight
+  ))).toBeLessThanOrEqual(1);
 });
 
 test('anchors a new Turn when the request-time active Turn finishes during submission', async ({ page }) => {

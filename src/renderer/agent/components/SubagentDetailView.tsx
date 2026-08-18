@@ -123,8 +123,8 @@ export function SubagentDetailView({
     [agentId],
   );
   const send = useCallback(
-    (content: Parameters<typeof threadStore.sendToThread>[1]) => (
-      threadStore.sendToThread(agentId, content, getUserView())
+    (content: Parameters<typeof threadStore.sendToThread>[1], clientMessageId: string) => (
+      threadStore.sendToThread(agentId, content, getUserView(), {}, clientMessageId)
     ),
     [agentId, getUserView],
   );
