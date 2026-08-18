@@ -1,6 +1,6 @@
 import { describe, expect, spyOn, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import type { Api, Message, Model, TextContent } from '@earendil-works/pi-ai';
+import type { Api, AssistantMessage, Message, Model, TextContent } from '@earendil-works/pi-ai';
 import { encodeThreadContextPayload } from '../../src/core/agent/codec';
 import type { EffectiveThreadConfiguration } from '../../src/core/agent/configuration';
 import type {
@@ -641,9 +641,26 @@ describe('canonical context projection', () => {
       expect(messageText(message)).not.toContain('[Subagent ');
       expect(messageText(message)).not.toContain('[Viewed image:');
     }
-    const assistant = messages.filter((message) => message.role === 'assistant');
+    const assistant = messages.filter((message): message is AssistantMessage => message.role === 'assistant');
     expect(assistant).toHaveLength(1);
     expect(messageText(assistant[0]!)).toBe('Delegating.');
+  });
+
+  test('keeps a Subagent activity recorded mid-batch out of the provider message boundary', async () => {
+    const payloads = new Map<string, ThreadContextPayload>();
+    const messages = await new CanonicalContextProjector(model, projectionResources(payloads)).projectTurns([
+      turn(1, [
+        userItem('user-1', 1_720_000_000_123, 'Delegate both parts'),
+        dynamicToolItem('tool-1', 'file_read', 'first'),
+        subAgentActivityItem('activity-started', 'started'),
+        dynamicToolItem('tool-2', 'file_read', 'second'),
+      ], true),
+    ]);
+
+    const assistant = messages.filter((message): message is AssistantMessage => message.role === 'assistant');
+    expect(assistant).toHaveLength(1);
+    expect(assistant[0]!.content.filter((part) => part.type === 'toolCall')).toHaveLength(2);
+    expect(messages.filter((message) => message.role === 'toolResult')).toHaveLength(2);
   });
 
   test('projects inline Skill instructions but keeps isolated instructions out of the parent context', async () => {

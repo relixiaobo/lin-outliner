@@ -380,6 +380,24 @@ export class CanonicalContextProjector {
         )]));
         continue;
       }
+      // The assistant channel is a few-shot demonstration of what this model
+      // writes, so anything Tenon authors into it teaches the model to write it
+      // too: the `[Subagent <kind>: <path> (<id>)]` line this used to emit
+      // taught one Thread to invent `[Subagent finished: ...]` kinds that do not
+      // exist and render them to its user as a hallucinated delegation. A
+      // Subagent's facts already reach the model through channels it cannot
+      // mistake for its own prose — the delegation is the `agent`/`skill` tool
+      // call and its result, and the terminal transition is the task
+      // notification, or for an isolated Skill the `skill` result its caller
+      // awaits — so the Item exists for the parent-visible row and contributes
+      // nothing here. `imageView` has no producer left at all.
+      //
+      // Skipped before the flushes rather than handled below them, because an
+      // Item that contributes no content must not act as a boundary either: a
+      // child's `started` activity is recorded between the two `agent` calls of
+      // one batch, and reached after the tool flush it would split a single
+      // provider assistant message in two for nothing.
+      if (item.type === 'subAgentActivity' || item.type === 'imageView') continue;
       if (pendingUserContent.length > 0 || pendingContextBlocks.length > 0) flushPendingUser(turn.startedAt);
       if (isToolItem(item)) {
         const projectionKey = item.outputRef ? outputReferenceKey(item.outputRef) : null;
@@ -411,19 +429,7 @@ export class CanonicalContextProjector {
           assistantItemIds.push(item.id);
           if (item.text) assistantContent.push({ type: 'text', text: item.text });
           break;
-        // The assistant channel is a few-shot demonstration of what this model
-        // writes, so anything Tenon authors into it teaches the model to write
-        // it too. These Items therefore keep their Item id — boundaries and
-        // provenance still account for them — and contribute no content.
-        // A Subagent's facts already reach the model through channels it cannot
-        // mistake for its own prose: the delegation is the `agent`/`skill` tool
-        // call and its result, and the terminal transition is the
-        // task-notification (or, for an isolated Skill, the `skill` result the
-        // caller is awaiting). The Item itself exists for the parent-visible
-        // row. An `imageView` has no producer left at all.
         case 'reasoning':
-        case 'subAgentActivity':
-        case 'imageView':
           assistantItemIds.push(item.id);
           break;
       }
