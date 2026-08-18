@@ -165,6 +165,69 @@ describe('agent outline parser', () => {
     });
   });
 
+  test('extracts typed view configuration lines without consuming document children', () => {
+    const parsed = parseLinOutline([
+      '- %%view:table%% Projects',
+      '  - %%node:sort-a%% %%view-sort%%',
+      '    - field:: sys:updatedAt',
+      '    - direction:: desc',
+      '  - %%view-filter%%',
+      '    - field:: [[node:Status^field-status]]',
+      '    - operator:: is',
+      '    - logic:: any',
+      '    - value:: Active',
+      '  - %%view-group%%',
+      '    - field:: [[node:Status^field-status]]',
+      '  - %%node:display-a%% %%view-display%%',
+      '    - field:: [[node:Status^field-status]]',
+      '    - label:: State',
+      '    - width:: 180',
+      '    - visible:: true',
+      '    - order:: 0',
+      '  - Record',
+    ].join('\n'), { annotations: 'allow' });
+
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    const filterConfig = parsed.document.roots[0]!.viewConfig!
+      .find((config) => config.kind === 'filter');
+    expect(filterConfig?.fields).toEqual([
+      expect.objectContaining({ name: 'field', values: [expect.objectContaining({ targetId: 'field-status' })] }),
+      expect.objectContaining({ name: 'operator', values: [{ text: 'is' }] }),
+      expect.objectContaining({ name: 'logic', values: [{ text: 'any' }] }),
+      expect.objectContaining({ name: 'value', values: [{ text: 'Active' }] }),
+    ]);
+    expect(parsed.document.roots[0]).toMatchObject({
+      title: 'Projects',
+      view: 'table',
+      children: [expect.objectContaining({ title: 'Record' })],
+      viewConfig: [
+        expect.objectContaining({ nodeId: 'sort-a', directive: '%%view-sort%%', kind: 'sort' }),
+        expect.objectContaining({ directive: '%%view-filter%%', kind: 'filter' }),
+        expect.objectContaining({ directive: '%%view-group%%', kind: 'group' }),
+        expect.objectContaining({ nodeId: 'display-a', directive: '%%view-display%%', kind: 'display' }),
+      ],
+    });
+  });
+
+  test('retains unsupported view configuration header syntax for fail-closed validation', () => {
+    const parsed = parseLinOutline([
+      '- Board',
+      '  - [x] %%view-sort%% #workflow - accidental metadata',
+      '    - field:: sys:updatedAt',
+    ].join('\n'));
+
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.document.roots[0]!.viewConfig).toEqual([
+      expect.objectContaining({
+        directive: '%%view-sort%%',
+        kind: 'sort',
+        hasUnsupportedHeaderSyntax: true,
+      }),
+    ]);
+  });
+
   test('canonical escaping round-trips generated field and description boundaries', () => {
     const alphabet = ['A', ':', '-', '#', '%', '\\', '[', ']', '*'];
     const fieldNames = [

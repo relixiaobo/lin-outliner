@@ -1,3 +1,5 @@
+import { VIEW_CONFIG_OUTLINE_GUIDANCE } from './agentNodeToolViewConfig';
+
 export const DATE_FIELD_VALUE_GUIDANCE =
   'Date field values use YYYY-MM-DD, YYYY-MM-DDTHH:mm, or start/end with "/" such as 2026-05-20/2026-05-24. Do not use ".." for date ranges.';
 
@@ -12,8 +14,16 @@ export const VIEW_MODE_GUIDANCE = [
   'Do not represent a document table as space-aligned text or a Markdown table inside a code block.',
   'When creating a table owner and its rows in one outline, the rows\' Field:: values initialize the visible columns.',
   'When an existing owner line contains %%view:table%%, it is already a table the user sees; add rows as child records and store their cells as Field:: values instead of restructuring it.',
-  'New Field:: values added while the owner remains in table mode do not automatically become visible columns; after adding a new field, change the owner to %%view:list%% and then back to %%view:table%% to initialize missing columns.',
+  'New Field:: values added while the owner remains in table mode do not automatically become visible columns; add a %%view-display%% configuration line for each new column that should be visible.',
   'Leave small inline enumerations as ordinary lists. Agent-settable view modes are list and table.',
+].join(' ');
+
+export const VIEW_CONFIG_GUIDANCE = [
+  VIEW_CONFIG_OUTLINE_GUIDANCE,
+  'node_read emits these typed lines at depth 0 whenever persisted view configuration exists; node_edit writes them through the existing view commands.',
+  'Keep existing %%node:id%% markers on unchanged sort, filter, and display configuration lines during node_edit.',
+  'In a whole-outline replacement, the typed lines are the complete desired view configuration, so preserve unchanged lines during unrelated edits.',
+  'For table columns, set visible:: false instead of deleting %%view-display%%; hiding preserves the view-local label, width, order, and values for later restoration.',
 ].join(' ');
 
 export const LIN_OUTLINE_CREATE_GUIDANCE = [
@@ -25,19 +35,21 @@ export const LIN_OUTLINE_CREATE_GUIDANCE = [
   'Use Field:: values, #tags, and [ ]/[x] checkbox state conservatively: only when the user asks for structured fields/tags/tasks, when preserving existing structure, or when the outline must be filterable/searchable as that structure.',
   'Field:: writes resolve existing owner fields and document field definitions before creating new fields; existing field types are preserved and incompatible values are rejected.',
   VIEW_MODE_GUIDANCE,
+  VIEW_CONFIG_GUIDANCE,
   DATE_FIELD_VALUE_GUIDANCE,
   'Do not include %%node:id%% markers when creating new nodes; those markers belong to node_read/node_edit protocol.',
 ].join(' ');
 
 export const ANNOTATED_OUTLINE_EDIT_GUIDANCE = [
   'Annotated outlines come from node_read and include %%node:id%% markers for exact follow-up edits.',
-  'For content edits, call node_edit with operation "replace_outline". It edits one existing node only: its own text, description, checkbox state, tags, fields, field values, or saved-search config.',
+  'For content edits, call node_edit with operation "replace_outline". It edits one existing node only: its own text, description, checkbox state, tags, fields, field values, view configuration, or saved-search config.',
   'Use old_string "*" only when replacing that whole single-node editable outline; non-preview "*" edits must include expected_revision from node_read.',
   'For the target root line only, old_string/new_string may omit the leading %%node:id%% marker because node_id already names that node.',
   'Keep field and field-value %%node:id%% markers when updating existing field/value lines; they are not redundant with the target node_id.',
   'Do not edit child structure through node_edit outline fragments. Use node_create for new children, node_edit move for reordering/reparenting, and node_delete for removals.',
   'Omitted fields and field values are preserved; delete them explicitly with node_delete by id.',
   VIEW_MODE_GUIDANCE,
+  VIEW_CONFIG_GUIDANCE,
   'Treat %%node:id%% as protocol metadata, not user-visible node text.',
   FINAL_ANSWER_NODE_REFERENCE_GUIDANCE,
 ].join(' ');
@@ -125,7 +137,7 @@ export const NODE_EDIT_DESCRIPTION = [
   '',
   'Usage:',
   '- Set operation explicitly: replace_outline, move, merge, replace_with_reference, configure_definition, reuse_field_definition, or merge_definition.',
-  '- For operation "replace_outline", use node_read first, then pass exact old_string/new_string against the target node line, its view directive, field lines, field value lines, or saved-search config.',
+  '- For operation "replace_outline", use node_read first, then pass exact old_string/new_string against the target node line, its view directive, typed view configuration, field lines, field value lines, or saved-search config.',
   '- For operation "configure_definition", target a tagDef or fieldDef node_id and pass definition_patch. Do not edit locked defConfig child rows directly.',
   '- For operation "reuse_field_definition", target a field entry node_id and pass target_definition_id to relink the entry to an existing field definition.',
   '- For operation "merge_definition", target the surviving tagDef/fieldDef node_id and pass duplicate definitions in merge_from_node_ids. Do not use ordinary merge for definitions.',
@@ -137,7 +149,7 @@ export const NODE_EDIT_DESCRIPTION = [
 ].join('\n');
 
 export const NODE_EDIT_NEW_STRING_PARAMETER_DESCRIPTION = [
-  'Replacement fragment for the target node line, view directive, field lines, field value lines, or saved-search config. It must leave the one-node editable outline parseable and may keep %%node:id%% markers for existing nodes.',
+  'Replacement fragment for the target node line, view directive, typed view configuration, field lines, field value lines, or saved-search config. It must leave the one-node editable outline parseable and may keep %%node:id%% markers for existing nodes.',
   ANNOTATED_OUTLINE_EDIT_GUIDANCE,
   DATE_FIELD_VALUE_GUIDANCE,
 ].join(' ');

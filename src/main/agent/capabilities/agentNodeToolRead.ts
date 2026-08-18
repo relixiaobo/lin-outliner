@@ -27,6 +27,7 @@ import type {
 } from './agentNodeToolTypes';
 import { asRecord, clampInteger, compactOutline } from './agentNodeToolUtils';
 import { viewModeOf } from './agentNodeToolView';
+import { viewConfigOutlineLines } from './agentNodeToolViewConfig';
 
 export function normalizeReadParams(rawParams: unknown): NormalizedReadParams {
   const input = asRecord(rawParams);
@@ -200,8 +201,9 @@ function serializeAnnotatedOutlineNode(
   }
   if (node.type === 'search') {
     lines.push(...searchQueryOutlineLines(index, node, level + 1));
-    return lines;
   }
+  lines.push(...viewConfigOutlineLines(index, node, level + 1, { annotations: true }));
+  if (node.type === 'search') return lines;
   if (depth <= 0) return lines;
   const childIds = normalChildIds(index, nodeId, includeDeleted).slice(childOffset, childOffset + childLimit);
   for (const childId of childIds) {
@@ -257,8 +259,9 @@ function serializeOutlineNode(
   }
   if (node.type === 'search') {
     lines.push(...searchQueryOutlineLines(index, node, level + 1));
-    return lines;
   }
+  lines.push(...viewConfigOutlineLines(index, node, level + 1));
+  if (node.type === 'search') return lines;
   if (depth <= 0) return lines;
   const childIds = normalChildIds(index, nodeId, includeDeleted).slice(childOffset, childOffset + childLimit);
   for (const childId of childIds) {

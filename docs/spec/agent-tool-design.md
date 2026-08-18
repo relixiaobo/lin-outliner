@@ -70,14 +70,66 @@ unrendered mode fails as `view_mode_not_available`, while preserving the same
 already-stored mode on the edited root is allowed so unrelated edits can
 proceed. An unknown mode fails as `invalid_view_mode` and names the allowed set.
 
+Persisted view configuration serializes directly under its owner at every read
+depth, including depth 0. The typed outline lines share the saved-search
+rule/operand shape but use a view-specific namespace so they cannot be mistaken
+for document children or query rules:
+
+```text
+- %%view:table%% Work
+  - %%view-sort%%
+    - field:: sys:updatedAt
+    - direction:: desc
+  - %%view-filter%%
+    - field:: [[node:Status^field-definition-id]]
+    - operator:: is
+    - logic:: any
+    - value:: Active
+  - %%view-group%%
+    - field:: [[node:Status^field-definition-id]]
+  - %%view-display%%
+    - field:: [[node:Status^field-definition-id]]
+    - label:: State
+    - width:: 180
+    - visible:: true
+    - order:: 0
+```
+
+`%%view-sort%%` accepts `field::` plus `direction:: asc|desc`;
+`%%view-filter%%` accepts `field::`, an existing filter `operator::`,
+`logic:: any|all`, and repeated `value::` lines; at most one
+`%%view-group%%` supplies its `field::`; and each `%%view-display%%` supplies a
+field plus optional view-local label, finite width, visibility, and finite
+order. Custom fields use field-definition Node references; supported system
+fields use their `sys:*` identifiers. A configuration header accepts only its
+typed directive and the optional Node annotation emitted by `node_read`; tags,
+checkbox state, descriptions, and other Node directives fail validation rather
+than being discarded. Annotated `node_read` output puts the stored
+sort/filter/display Node id on its typed line; group has no id because it is a
+`viewDef` property.
+
+`node_create` applies typed configuration after creating the owner and before
+entering its requested mode. `node_edit` treats the configuration present in a
+complete editable outline as the desired config and reconciles it through the
+existing add/update/remove/clear commands. Partial string replacements retain
+untouched lines naturally; a whole-outline replacement must retain any config
+that should survive. Semantic no-ops preserve the existing config Nodes, and
+annotated sort/filter lines keep their Node identity across deletions and
+same-order edits when the stored order permits it.
+Unknown directives, unsupported operands, invalid field references, and
+ambiguous duplicates fail before mutation as `invalid_view_config` with the
+recovery grammar. Inspection skips malformed persisted config entries rather
+than failing the read; a later complete edit can heal them.
+
 Tabular document content uses a parent with `%%view:table%%`, direct child
 records as rows, `Field::` names as column identities, and their values as
 cells. Fields present when an owner enters table mode initialize its visible
 columns. Adding a field while the owner remains in table mode preserves the
-configured columns; the Agent switches the owner to list and back to table to
-append missing used fields. The Agent does not simulate a document table with
-space-aligned or Markdown text inside code blocks; small inline enumerations
-remain ordinary lists.
+configured columns; the Agent adds a `%%view-display%%` line for a new visible
+column. Hiding a column uses `visible:: false` rather than removing its display
+line, preserving the view-local label, width, order, and values for restoration.
+The Agent does not simulate a document table with space-aligned or Markdown
+text inside code blocks; small inline enumerations remain ordinary lists.
 
 `node_edit` uses expected revisions for optimistic conflict detection. Results
 return stable Node edit handles for subsequent tool calls; final user text uses
