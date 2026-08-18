@@ -183,6 +183,44 @@ Entries reference the pull request that introduced them.
   test threw before its first assertion the ratified locked-node skip was
   effectively unverified. The fixture is now built before the Core exists.
 
+- **The agent secret scan runs off Electron's main thread, and Turn caches
+  release what the provider can no longer reach (PR #557, codex-2)** — the last
+  PR of `agent-tool-call-path`, aimed at what PR #552's profiling had actually
+  measured: ~73% of the remaining per-model-call cost sat in the Secretlint
+  scan, not in the diagnostics work the plan had originally guessed at. Large
+  batches now go to a bounded pool of at most two lazy, unreferenced Node
+  workers; small batches keep running the direct scanner once, since IPC would
+  cost more than the scan. On a synthetic probe the ~4 MB durable workload drops
+  from 167.67 ms elapsed / 16.38 ms longest timer delay to 134.24 ms / 5.07 ms,
+  and the ~64k-char diagnostics workload from 46.19 ms / 46.09 ms to 26.95 ms /
+  1.86 ms — the timer-delay column is the point, not the elapsed one. Private-key
+  matching also stopped being quadratic: the old
+  `-----BEGIN …-----[\s\S]*?-----END \1-----` pattern made every unmatched
+  BEGIN marker rescan to end-of-string, so a large output full of headers with no
+  matching END could wedge the scan outright; BEGIN/END markers are now
+  pre-indexed and paired by binary search. Alongside it, the Turn-scoped read
+  cache learned to evict: each provider boundary records the keys `readContext`
+  and `readOutput` actually visited — including the recursive reads made by the
+  nested inherited-context projector — and drops everything else when the
+  boundary ends, which closes the retention cost PR #552 knowingly carried
+  forward. Cleanup boundaries decode canonical Turns once into shared resource,
+  context, diagnostics and text-output reference sets instead of four separate
+  full decodes; canonical belief rebuild checks `isBeliefBearingTool` before it
+  reads and parses a payload, so a long thread no longer reads every `bash` and
+  `file_read` output from disk to produce nothing. The `xhigh` gate found 15
+  issues, all fixed on-branch, and the packaged-ASAR question it raised was
+  answered with a real probe rather than an argument: the built `app.asar` was
+  opened and its worker chunk launched from inside the archive. The re-review
+  then found the fix for one finding had created a worse one. Moving the scan
+  off-thread made a previously unreachable fail-open `catch` load-bearing: a
+  worker timeout, crash, or startup failure would have persisted durable tool
+  arguments and results **unredacted**, silently, where the old main-thread path
+  had always redacted at the cost of a UI hitch. That path is now
+  structure-preserving fail-closed — containers and non-string scalars survive,
+  every pending string becomes `[redacted]`, and one fixed content-free warning
+  is logged — and the watchdog was re-armed at dispatch rather than at enqueue,
+  so queue pressure alone can no longer trigger it.
+
 ### Fixed
 
 - **Sending a message is one movement now, and it starts on the keystroke (PR

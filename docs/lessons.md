@@ -1279,3 +1279,31 @@ that one is about doubles the compiler stopped checking, this one is about
 doubles the compiler still accepts and that lie anyway. It also earns a review
 habit — when a finding implies "the tests should have caught this", diff the
 double against the real handler before believing the tests.
+
+## Moving work off-thread makes a dormant error boundary load-bearing
+
+`agent-tool-call-path` PR 3 (#557) moved the durable secret scan from a
+cooperative main-thread scanner into a worker pool. The scan's caller already
+had `try { … } catch { return { value, redactedPaths: [] } }` — a fail-open
+boundary that had been in the file for months and read as deliberate policy. It
+was, in practice, dead code: the only `throw`s reachable inside the durable path
+were encoded-JSON helpers that were caught locally, so the outer `catch` had
+never fired. The worker gave it three live routes at once — startup failure, a
+crash, and the new watchdog — and on any of them a tool call's durable arguments
+and results would have been persisted **unredacted**, silently, where the
+main-thread path had always redacted at the cost of a UI hitch. The off-thread
+move was measured, reviewed, and correct on its own terms; the regression was
+entirely in a handler nobody had touched. **When an operation crosses a
+process or thread boundary, re-audit every error boundary it passes through: the
+failure modes are new, the handlers are old, and a handler written for a failure
+that could not happen encodes no policy at all — it just picks whichever
+direction was easy to type.** The question to ask at the seam is not "is this
+`catch` correct?" but "what does this `catch` do now that it can actually fire,
+and is that the trade I want?" The answer here was to fail *closed* on the
+durable path (structure preserved, every pending string `[redacted]`, one fixed
+content-free warning) while diagnostics kept its whole-payload omission marker —
+and to move the watchdog from enqueue to dispatch, so queue pressure could not
+trigger the new boundary on its own. This is A12 read in the other direction:
+A12 says put fail-closed `throw`s at write boundaries and let the user path
+degrade, and this is the case where a write boundary had been quietly degrading
+because its `throw` was unreachable.

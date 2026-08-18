@@ -57,7 +57,8 @@ theme-section entry below; this list is the ordering, not a second record):
 - **Perf-audit lane (added 2026-08-11)**: a whole-app performance audit landed
   five items under **Performance** — [`typing-hot-path`](plans/archive/typing-hot-path.md)
   (the board's only P0) **closed 2026-08-15 with PR-C (#541)**, so the lane no
-  longer outranks Lane A; [`agent-tool-call-path`](plans/agent-tool-call-path.md) (P1) now leads
+  longer outranks Lane A; [`agent-tool-call-path`](plans/archive/agent-tool-call-path.md) (P1)
+  closed 2026-08-18 with PR 3 (#557)
   (the agent-streaming sub-lane is now closed end to end:
   `agent-streaming-followups` #539 2026-08-14, then its P2
   `streaming-markdown-repair-cost` tail #547 2026-08-15);
@@ -788,31 +789,20 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
   wait for the row to stop being `aria-disabled`, on small fixture documents.
   Queueing the pending selection and applying it when reachability lands would
   keep both the rule and the keystroke.
-- **agent-tool-call-path** (P1, `in-progress` 2026-08-11) — host overhead
-  dominates agent Turns. `MemoryExtension.filterProjection` decodes the entire
-  thread history and builds the memory graph 2-3× on every `getProjection()`
-  (1-3 per node tool call, plus N+1 SQLite), and its mere presence disables the
-  read model + text index for ALL agent tools (`node_search` goes linear,
-  `node_edit` does per-node `JSON.stringify` diffs — #414's work is switched off
-  on this path). Each model call re-projects the full history, re-tokenizes every
-  message, re-reads + re-hashes every `full` tool output from disk, and
-  deep-clones the whole context for diagnostics; tool-result secret scans run
-  unbudgeted. Three independent PRs: filter cost + read-model re-enablement /
-  per-model-call costs / small tails. PR 1 (filter cost + read-model
-  re-enablement) shipped 2026-08-15 in #546; PR 2 (per-model-call costs) shipped
-  2026-08-17 in #552 — the Turn-scoped immutable read cache now covers `full`
-  tool-output payloads, so each is read and hash-verified once per Turn instead
-  of once per model call (~9.5× less wall time on the storage probe). PR 2's
-  measurement also redirects PR 3: with the payload reads gone, profiling put
-  ~73% of the remaining per-call cost in the bounded Secretlint scan and only
-  ~1% in diagnostics SHA fingerprinting, so the plan's diagnostics
-  fingerprint/deep-copy item was measured and dropped (A9), and PR 3's secret-scan
-  scheduling item is the real remaining win. Carry one known cost into PR 3: the
-  new `outputReads` memo never evicts successful entries, so outputs compacted
-  out of the effective context stay resident for the rest of the Turn (bounded
-  per entry by `MAX_SINGLE_FULL_OUTPUT_TOKENS`; evict keys absent from the
-  current freeze's `existing` set). Design:
-  [`agent-tool-call-path`](plans/agent-tool-call-path.md).
+- **agent-tool-call-path** — `done` 2026-08-18 (three PRs, codex-2: #546 filter
+  cost + read-model re-enablement 2026-08-15, #552 per-model-call costs
+  2026-08-17, #557 secret-scan scheduling + cache eviction + cleanup decodes
+  2026-08-18; #557's xhigh gate found 15 issues and the re-review found a
+  sixteenth that the fixes had introduced — moving the scan off-thread made a
+  dormant fail-open `catch` load-bearing, so a worker failure would have
+  persisted durable tool arguments unredacted; all fixed on-branch, and the gate
+  reran typecheck / core (2491 pass) / docs:check on merged `main`). The plan's
+  own measurement redirected it twice, which is the durable lesson: PR 2's
+  profiling killed the pre-approved diagnostics-fingerprint item (~1% of cost)
+  and promoted the secret scan (~73%). Design folded into
+  [`agent-core`](spec/agent-core.md) and
+  [`agent-model-runtime`](spec/agent-model-runtime.md); plan archived at
+  [`agent-tool-call-path`](plans/archive/agent-tool-call-path.md).
 - **subagent-interaction** — `done` 2026-08-16 (#544, cc; two review rounds —
   xhigh 14 + high 10 findings — all 24 fixed on-branch; the gate re-verified
   the fixes in code, reran typecheck / core / renderer / docs:check and the
