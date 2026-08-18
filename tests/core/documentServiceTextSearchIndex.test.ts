@@ -279,6 +279,36 @@ describe('DocumentService text search index', () => {
     expect(await searchNodeIds(service, 'extended projected field')).toContain(ownerId);
   });
 
+  test('refreshes inherited default values when a tag template changes', async () => {
+    const service = await createService();
+    const rootId = service.getProjection().rootId;
+    const tagId = focusNodeId(await service.handle('create_tag', { name: 'project' }));
+    const ownerId = focusNodeId(await service.handle('create_node', {
+      parentId: rootId,
+      index: null,
+      text: 'Inherited default owner',
+    }));
+    await service.handle('apply_tag', { nodeId: ownerId, tagId });
+    const templateEntryId = focusNodeId(await service.handle('create_field_def', {
+      tagId,
+      name: 'Status',
+      fieldType: 'plain',
+    }));
+    const defaultValueId = focusNodeId(await service.handle('create_node', {
+      parentId: templateEntryId,
+      index: null,
+      text: 'Inherited inbox value',
+    }));
+
+    expect(await searchNodeIds(service, 'inherited inbox value')).toContain(ownerId);
+    await service.handle('apply_node_text_patch', {
+      nodeId: defaultValueId,
+      patch: replaceAllRichTextPatch(plainText('Inherited backlog value')),
+    });
+    expect(await searchNodeIds(service, 'inherited inbox value')).not.toContain(ownerId);
+    expect(await searchNodeIds(service, 'inherited backlog value')).toContain(ownerId);
+  });
+
   test('restores projected-field search dependencies after a tag definition leaves Trash', async () => {
     const service = await createService();
     const rootId = service.getProjection().rootId;

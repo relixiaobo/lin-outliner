@@ -184,6 +184,17 @@ stored values survive untagging as own fields. Clearing or removing the last
 value and committing an empty tag slot dematerializes its entry, while an empty
 own field entry remains stored.
 
+When the template entry carries a static value, an unmaterialized slot presents
+that value as an inherited ghost in `--text-tertiary`. The ghost is read-only:
+it does not take pointer input, so clicking or typing in the underlying empty
+editor creates the user's own value. A trailing check affordance revealed by row
+hover or keyboard focus explicitly accepts and materializes the current default.
+Whole-field controls such as checkbox present the inherited state in their native
+control while keeping the same separate accept affordance. A stored value replaces
+the ghost and no longer follows template edits. Fields configured with
+`autoInitialize` never show a ghost because their acquisition-time value is
+resolved and frozen only when the tag is applied.
+
 | Interaction | Expected behavior |
 | --- | --- |
 | Type in field name | Show a reuse popover of matching active existing fields ("Fields") and built-in system fields ("System fields"). Field definitions in Trash are excluded. Nothing is highlighted by default. Fields already present on the same owner node are excluded — a node may not carry the same field twice. |

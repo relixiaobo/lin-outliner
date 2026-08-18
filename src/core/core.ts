@@ -48,7 +48,7 @@ import {
   validateFieldValuesForType,
   type FieldResolutionNode,
 } from './fieldResolution';
-import { nodeFieldSlots, tagDefinitionChainSpecificFirst } from './fieldSlots';
+import { fieldSlotValueSource, nodeFieldSlots, tagDefinitionChainSpecificFirst } from './fieldSlots';
 import type { TextSearchIndex } from './textSearchIndex';
 import {
   CONFIG_SCHEMA,
@@ -179,6 +179,7 @@ interface TemplateFieldRef {
 }
 
 export type FieldSlotMutation =
+  | { kind: 'acceptDefault'; entryId?: undefined }
   | { kind: 'appendText'; text: string; id?: NodeId; collect?: boolean; entryId?: NodeId }
   | { kind: 'appendReference'; targetId: NodeId; id?: NodeId; entryId?: NodeId }
   | { kind: 'selectOption'; optionNodeId: NodeId; id?: NodeId; entryId?: NodeId }
@@ -2786,6 +2787,40 @@ export class Core {
         if (!slot) return focus(ownerId);
         const survivingEntryId = this.commitFieldSlotDirect(ownerId, fieldDefId, slot.entryId);
         return focus(survivingEntryId ?? ownerId);
+      }
+
+      if (mutation.kind === 'acceptDefault') {
+        if (slot?.entryId) return focus(slot.entryId);
+        const valueSource = slot ? fieldSlotValueSource(state, slot) : undefined;
+        if (!valueSource?.inherited) return focus(ownerId);
+        const templateEntry = state.nodes[valueSource.entryId];
+        if (templateEntry?.type !== 'fieldEntry') return focus(ownerId);
+
+        const entryId = this.insertFieldEntryNodeDirect(ownerId, undefined, fieldDefId);
+        const acceptedOptionIds: string[] = [];
+        for (const valueId of templateEntry.children) {
+          const value = state.nodes[valueId];
+          if (!value || isInTrash(state, valueId)) continue;
+          this.cloneSubtreeDirect(valueId, entryId, undefined);
+          if (value.type !== 'reference' || !value.targetId) continue;
+          const optionId = state.nodes[fieldDefId]?.children.find((candidateId) => {
+            const candidate = state.nodes[candidateId];
+            if (!candidate || isInternalConfigNode(candidate) || isInTrash(state, candidateId)) return false;
+            return candidate.type === 'reference'
+              ? candidate.targetId === value.targetId
+              : candidate.id === value.targetId;
+          });
+          if (optionId) acceptedOptionIds.push(optionId);
+        }
+        const entry = this.snapshot().nodes[entryId];
+        if (entry?.type !== 'fieldEntry' || entry.children.length === 0) {
+          this.removeSubtreeDirect(entryId);
+          return focus(ownerId);
+        }
+        for (const optionId of acceptedOptionIds) {
+          this.applyReverseDoneMappingDirect(ownerId, fieldDefId, optionId);
+        }
+        return focus(entryId);
       }
 
       if (mutation.kind === 'appendNodes') {
