@@ -19,9 +19,12 @@ describe('speaker header column CSS guards', () => {
     expect(threadCss).toMatch(/\.thread-speaker-content \{[^}]*padding-left:\s*var\(--speaker-text-inset\);/);
   });
 
-  test('keeps the portrait inside the block box, and round', () => {
+  test('keeps the portrait inside the block box, and square-cropped', () => {
     const avatar = threadCss.match(/\.thread-speaker-avatar \{[^}]*\}/)?.[0] ?? '';
     expect(avatar).toContain('aspect-ratio: 1;');
+    // On the identity-tile ladder (--radius-sm at 22px, --radius-md at 38px),
+    // not the pill an icon control's fill would take.
+    expect(avatar).toContain('border-radius: var(--radius-sm);');
     // A negative inline margin put the disc outside its own block, where an
     // ancestor clipped a flat edge onto it.
     expect(avatar).not.toMatch(/margin-left:\s*calc\(var\(--space-1\)\s*\*\s*-1\)/);

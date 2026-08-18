@@ -908,9 +908,14 @@
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  /* A portrait fills its disc edge to edge; the crop is the frame. */
+  /* A portrait fills its tile edge to edge; the crop is the frame. */
   overflow: hidden;
-  border-radius: var(--radius-pill);
+  /* A rounded square, on the ladder this app already uses for identity tiles:
+     `.settings-provider-avatar` takes --radius-sm at 22px and --radius-md at
+     38px, and 28px sits nearer the small end. Not a B6 case — that rule governs
+     icon CONTROLS, whose fills must stay pill-shaped; this is an identity mark,
+     and the app's other identity marks are rounded squares. */
+  border-radius: var(--radius-sm);
   font-size: var(--font-ui-xs);
   /* The repo's emphasis weight: an initial needs it to hold the disc. */
   font-weight: 650;

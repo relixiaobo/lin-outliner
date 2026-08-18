@@ -20,8 +20,10 @@ These are read at **24px** in the transcript, circle-cropped by CSS. Everything
 about the style follows from that size:
 
 - 24×24 viewBox, drawn edge to edge — the parent does the cropping, so a full
-  background square becomes the disc. Keep detail inside a radius of ~11 from
-  centre or the crop eats it.
+  background square becomes the tile. The crop is a ROUNDED SQUARE
+  (`--radius-sm` at the transcript's 28px), matching the identity tiles the
+  settings surface already uses; only the four corners are shaved, so art may
+  use the full square as long as nothing load-bearing sits in a corner.
 - Flat shapes, no gradients, no strokes thinner than 0.5. One background hue,
   one warm off-white for the head (`#E9DDCE`), one shading tint (`#D6C4B0`),
   one near-black for features (`#2E251F`).
@@ -39,6 +41,14 @@ about the style follows from that size:
 - Distinct background hues, muted enough to sit under text on both a light and
   a dark deck. They are not species colours; they are what tells four discs
   apart at a glance.
+
+## Status
+
+**These four are PLACEHOLDER art.** The PM is supplying the default roster;
+when those land, replace the files here and nothing else changes — the shape,
+size, and crop live in CSS, and the key→file mapping is the only contract. The
+constraints below are what a replacement has to satisfy, not a description of
+what must be kept.
 
 ## Provenance
 
