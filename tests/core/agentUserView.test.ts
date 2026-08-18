@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { RendererUserViewHints } from '../../src/core/agent/protocol';
 import type { DocumentProjection, NodeProjection } from '../../src/core/types';
-import { buildUserViewPayload } from '../../src/main/agent/context/userView';
+import { buildUserViewPayload, outlineText } from '../../src/main/agent/context/userView';
 
 describe('main-owned Agent user view', () => {
   test('derives reference child counts from the resolved displayed parent', () => {
@@ -41,6 +41,18 @@ describe('main-owned Agent user view', () => {
         { nodeId: 'child', childCount: 0, collapsed: false },
       ],
     });
+  });
+
+  test('surfaces an ordinary table owner through the shared view directive', () => {
+    const nodes = [
+      node('root', 'Projects', { children: ['view'] }),
+      node('view', '', { parentId: 'root', type: 'viewDef', viewMode: 'table' }),
+      node('plain', 'Notes'),
+    ];
+    const byId = new Map(nodes.map((entry) => [entry.id, entry]));
+
+    expect(outlineText(byId.get('root')!, byId)).toBe('%%view:table%% Projects');
+    expect(outlineText(byId.get('plain')!, byId)).toBe('Notes');
   });
 });
 

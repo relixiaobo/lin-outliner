@@ -239,7 +239,7 @@ export const NODE_EDIT_PARAMETERS = {
     old_string: {
       type: 'string',
       minLength: 1,
-      description: 'Exact fragment from node_read for this node only: target line, field lines, field value lines, or saved-search config. Use "*" only to replace the target node\'s whole editable outline; non-preview "*" edits require expected_revision from node_read. For the target root line only, the leading %%node:id%% marker may be omitted because node_id already names it. Include enough surrounding lines to make partial fragments unique.',
+      description: 'Exact fragment from node_read for this node only: target line, %%view:<mode>%% directive, field lines, field value lines, or saved-search config. Use "*" only to replace the target node\'s whole editable outline; non-preview "*" edits require expected_revision from node_read. For the target root line only, the leading %%node:id%% marker may be omitted because node_id already names it. Include enough surrounding lines to make partial fragments unique.',
     },
     new_string: {
       type: 'string',

@@ -10,6 +10,7 @@ import {
 } from '../../../core/referenceMarkup';
 import { formatTag } from '../../../core/textSyntax';
 import type { DocumentProjection, NodeProjection } from '../../../core/types';
+import { viewModeOf } from '../capabilities/agentNodeToolView';
 
 const MAX_TITLE_CHARS = 160;
 const MAX_BREADCRUMB_NODES = 6;
@@ -141,10 +142,8 @@ export function outlineText(
 
   const parts: string[] = [];
   if (node.type === 'search') parts.push('%%search%%');
-  const viewMode = node.type === 'search'
-    ? searchViewMode(node, byId)
-    : node.type === 'viewDef' ? node.viewMode : undefined;
-  if (viewMode) parts.push(`%%view:${viewMode}%%`);
+  const viewMode = viewModeOf(byId, node);
+  if (viewMode !== 'list') parts.push(`%%view:${viewMode}%%`);
   if (nodeIsDone(node)) parts.push('[x]');
   else if (nodeShowsCheckbox(byId, node)) parts.push('[ ]');
   parts.push(referenceText(node, byId) ?? nodeTitle(node));
@@ -165,16 +164,6 @@ function referenceText(
   if (node.type !== 'reference' || !node.targetId) return null;
   const target = byId.get(node.targetId);
   return formatNodeReferenceMarker(target ? nodeTitle(target) : node.targetId, node.targetId);
-}
-
-function searchViewMode(
-  node: NodeProjection,
-  byId: ReadonlyMap<string, NodeProjection>,
-): Extract<NodeProjection, { type: 'viewDef' }>['viewMode'] | 'list' {
-  const view = node.children
-    .map((childId) => byId.get(childId))
-    .find((child): child is Extract<NodeProjection, { type: 'viewDef' }> => child?.type === 'viewDef');
-  return view?.viewMode ?? 'list';
 }
 
 function panelSnapshot(

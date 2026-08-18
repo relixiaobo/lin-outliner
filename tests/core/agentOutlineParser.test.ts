@@ -149,6 +149,22 @@ describe('agent outline parser', () => {
     });
   });
 
+  test('parses a view directive on an ordinary node owner', () => {
+    const parsed = parseLinOutline([
+      '- %%view:table%% Projects',
+      '  - Alpha',
+    ].join('\n'));
+
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.document.roots[0]).toMatchObject({
+      title: 'Projects',
+      search: false,
+      view: 'table',
+      children: [expect.objectContaining({ title: 'Alpha' })],
+    });
+  });
+
   test('canonical escaping round-trips generated field and description boundaries', () => {
     const alphabet = ['A', ':', '-', '#', '%', '\\', '[', ']', '*'];
     const fieldNames = [
