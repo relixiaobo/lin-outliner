@@ -23,8 +23,15 @@ about the style follows from that size:
   background square becomes the disc. Keep detail inside a radius of ~11 from
   centre or the crop eats it.
 - Flat shapes, no gradients, no strokes thinner than 0.5. One background hue,
-  one warm off-white for the head (`#F2E7DA`), one shading tint (`#E0CDB8`),
+  one warm off-white for the head (`#E9DDCE`), one shading tint (`#D6C4B0`),
   one near-black for features (`#2E251F`).
+- **Muted, not vivid.** A flat field of saturated colour is the heaviest fill a
+  box can have, and these sit in a rail where every other mark is neutral — at
+  full saturation a 28px disc out-shouts the words beside it. The hues are
+  pulled toward their own luminance so they read as identity without competing
+  with the message. (Squaring the disc is not an alternative: a rounded square
+  is ~26% more area than a circle in the same box, so it reads heavier, not
+  lighter. The lever is saturation.)
 - **Silhouette carries the species**, because features vanish first: the fox's
   triangular ears, the owl's two huge eyes, the bear's round ears, the beaver's
   wide head and pair of incisors. Two animals that share a silhouette must not
