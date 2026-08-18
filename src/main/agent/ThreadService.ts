@@ -403,6 +403,13 @@ export class ThreadService implements ThreadServiceExtensionHost {
   private readonly settleAgentWorktree: ThreadServiceOptions['settleAgentWorktree'];
   private readonly reportError: (report: ErrorReport) => Promise<void>;
   private readonly startupQuarantinedThreadIds = new Set<ThreadId>();
+  /**
+   * The subset quarantined because their recorded history does not decode. Kept
+   * apart from the admission-recovery quarantine above: those Threads read fine
+   * and were held back over a worktree, so answering their history reads with
+   * "could not be read" would be a lie.
+   */
+  private readonly unreadableThreadIds = new Set<ThreadId>();
   private readonly resourceOps: ThreadResourceOps;
   private readonly catalogOps: ThreadCatalogOps;
   private readonly collaboration: SubagentCollaboration;
@@ -673,14 +680,40 @@ export class ThreadService implements ThreadServiceExtensionHost {
         const page = this.core.metadata.list({ archived, cursor, limit: 100 });
         for (const thread of page.data) {
           knownThreadIds.push(thread.id);
-          if (this.startupQuarantinedThreadIds.has(thread.id)) continue;
+          if (this.startupQuarantinedThreadIds.has(thread.id)) {
+            // Held back by delegated-Agent admission recovery, which says nothing
+            // about whether its history decodes. Ask anyway: without this its reads
+            // would leak the raw codec failure instead of the contracted refusal,
+            // and the guard keys off unreadability, not off quarantine.
+            await this.quarantineThreadIfUnreadable(thread.id);
+            continue;
+          }
+          let reconciled = false;
           try {
             await this.catalogOps.reconcileThread(thread.id);
-            reconciledThreadIds.push(thread.id);
-            if (!archived) resumableThreadIds.push(thread.id);
+            reconciled = true;
           } catch (error) {
             console.error(`[agent] failed to reconcile Thread ${thread.id}`, error);
           }
+          // Reconciliation failing is survivable and deliberately not disqualifying:
+          // a torn rollout leaves a Thread that no longer advances but still reads
+          // out of its projection, and that history stays browsable. What the launch
+          // cannot survive is a Thread whose history does not READ, because the
+          // startup fan-out over Threads is not guarded per Thread. So the question
+          // asked here is exactly the one that matters — does this Thread decode? —
+          // and only a Thread that fails it is quarantined (A12).
+          //
+          // This runs BEFORE the Thread joins either list, and both lists are then
+          // gated on the verdict: reconciliation decodes every Item but only the
+          // newest Turn row, so a Thread can reconcile and still fail to read. The
+          // payload-prune fan-out below walks `allTurns` for every reconciled id
+          // with no guard of its own, and resume refuses a quarantined Thread — so
+          // admitting one to either list is how a caught failure becomes an
+          // uncaught one.
+          await this.quarantineThreadIfUnreadable(thread.id);
+          if (!reconciled || this.startupQuarantinedThreadIds.has(thread.id)) continue;
+          reconciledThreadIds.push(thread.id);
+          if (!archived) resumableThreadIds.push(thread.id);
         }
         cursor = page.nextCursor;
       } while (cursor);
@@ -722,8 +755,24 @@ export class ThreadService implements ThreadServiceExtensionHost {
     ]);
     const resumableThreads: Thread[] = [];
     for (const threadId of resumableThreadIds) {
-      const { thread } = await this.resumeThread(threadId);
-      resumableThreads.push(thread);
+      try {
+        const { thread } = await this.resumeThread(threadId);
+        resumableThreads.push(thread);
+      } catch (error) {
+        // Same blast radius as reconciliation above: resume reads the Thread's
+        // history, so a Thread that reconciled but cannot be projected still has
+        // to cost only itself.
+        console.error(`[agent] failed to resume Thread ${threadId}`, error);
+        // Already quarantined means this Thread was swept up in an ancestor's
+        // subtree between passing its own probe and being resumed — a background
+        // delegated Agent sorts ahead of its parent under `updated_at DESC`, so
+        // this happens. The refusal it hit is an availability check, not a decode
+        // failure, and reporting it would name a perfectly readable Thread in the
+        // one durable trace quarantine leaves.
+        if (this.startupQuarantinedThreadIds.has(threadId)) continue;
+        this.markThreadUnreadable(threadId);
+        await this.reportUnreadableThread(threadId, 'resume', error);
+      }
     }
     await this.collaboration.recoverPendingNotifications();
     await this.beforeInitialTurnAdmission();
@@ -1097,12 +1146,91 @@ export class ThreadService implements ThreadServiceExtensionHost {
     return threads;
   }
 
+  /**
+   * Decode this Thread's recorded history once, at startup, and quarantine it if
+   * that fails. The read is the check: the same `allTurns` walk that every later
+   * consumer performs, so a Thread that survives here cannot fail on them.
+   * Quarantine is in-memory and recomputed every launch, so a build that can
+   * read the Thread again picks it back up with nothing to undo.
+   */
+  private async quarantineThreadIfUnreadable(threadId: ThreadId): Promise<void> {
+    if (this.unreadableThreadIds.has(threadId)) return;
+    try {
+      // Page and discard rather than `readThread({ includeTurns: true })`: the
+      // check needs every Turn and Item decoded, but nothing needs them all
+      // resident at once, and this runs for every Thread on the launch path (A9).
+      let cursor: string | null = null;
+      do {
+        const page: ThreadTurnsListResponse = this.core.history.listTurns({
+          threadId,
+          cursor,
+          limit: 50,
+          itemsView: 'full',
+        });
+        cursor = page.nextCursor;
+      } while (cursor);
+    } catch (error) {
+      console.error(`[agent] quarantined unreadable Thread ${threadId}`, error);
+      this.markThreadUnreadable(threadId);
+      await this.reportUnreadableThread(threadId, 'read', error);
+    }
+  }
+
+  /**
+   * The only durable trace a quarantined Thread leaves. Quarantine is in-memory
+   * and recomputed every launch, so nothing on disk records that this happened —
+   * without this report a Thread would just quietly stop appearing.
+   */
+  private async reportUnreadableThread(
+    threadId: ThreadId,
+    operation: 'read' | 'resume',
+    error: unknown,
+  ): Promise<void> {
+    try {
+      await this.reportError({
+        domain: 'persistence',
+        severity: 'error',
+        code: 'thread-history-unreadable',
+        message: 'A Thread\'s recorded history could not be read and the Thread was quarantined for this session.',
+        context: { operation: `startup-${operation}`, threadId },
+        error,
+      });
+    } catch {
+      console.warn(`[agent] Failed to report an unreadable Thread: ${threadId}`);
+    }
+  }
+
+  /**
+   * The single writer of unreadability. Both quarantine sets are always set
+   * together here, because the read guard keys off one and the root enumeration
+   * off the other, and updating only one is what previously let a session-scoped
+   * quarantine become a permanent delete.
+   */
+  private markThreadUnreadable(threadId: ThreadId): void {
+    this.unreadableThreadIds.add(threadId);
+    this.quarantineStartupSubtree(threadId);
+  }
+
   private quarantineStartupSubtree(threadId: ThreadId): void {
     this.startupQuarantinedThreadIds.add(threadId);
     if (!this.core.metadata.read(threadId)) return;
     for (const edge of this.core.metadata.childEdges(threadId, true)) {
       this.startupQuarantinedThreadIds.add(edge.childThreadId);
     }
+  }
+
+  /**
+   * Unreadable-history quarantine only — deliberately not the full
+   * `assertStartupThreadAvailable`, whose delegated-Agent admission checks belong
+   * to write paths and cover Threads that decode perfectly well. History reads
+   * need this narrow one so an unreadable Thread answers with what actually
+   * happened instead of leaking the raw codec failure through IPC.
+   */
+  private assertThreadHistoryReadable(threadId: ThreadId): void {
+    if (!this.unreadableThreadIds.has(threadId)) return;
+    throw new ThreadBusyError(
+      `Thread history could not be read and the Thread is quarantined for this session: ${threadId}`,
+    );
   }
 
   private assertStartupThreadAvailable(threadId: ThreadId): void {
@@ -1187,7 +1315,37 @@ export class ThreadService implements ThreadServiceExtensionHost {
   }
   subscribe(listener: NotificationListener): () => void { return this.core.subscribe(listener); }
   async waitForIdle(threadId: ThreadId): Promise<void> { return this.turnLifecycle.waitForIdle(threadId); }
-  persistentRootThreads(): readonly Thread[] { return this.catalogOps.persistentRootThreads(); }
+  /**
+   * Host-facing enumeration, so it must exclude quarantined Threads: extensions
+   * fan out over this list and read each Thread's turns, and `MemoryExtension`
+   * does so during `beforeInitialTurnAdmission` — inside `initialize`, with no
+   * per-Thread guard. That is the path on which one unreadable Thread used to
+   * take the process down at launch, after reconciliation had already caught the
+   * same failure and moved on.
+   */
+  persistentRootThreads(): readonly Thread[] {
+    return this.catalogOps.persistentRootThreads()
+      .filter((thread) => !this.isHiddenFromRootEnumeration(thread.id));
+  }
+
+  /**
+   * Whether this session is enumerating an incomplete view of the root Threads.
+   * Consumers that delete on absence — the memory orphan-admission sweep — must
+   * not read a hidden Thread's Turns as gone.
+   *
+   * Deliberately asks the same predicate `persistentRootThreads()` filters on,
+   * rather than tracking a parallel set: the first version of this pair kept two
+   * sets and they promptly diverged, which is how a session-scoped quarantine
+   * turned into a permanent delete. One predicate cannot disagree with itself.
+   */
+  hasHiddenRootThreads(): boolean {
+    return this.catalogOps.persistentRootThreads()
+      .some((thread) => this.isHiddenFromRootEnumeration(thread.id));
+  }
+
+  private isHiddenFromRootEnumeration(threadId: ThreadId): boolean {
+    return this.startupQuarantinedThreadIds.has(threadId);
+  }
   persistentThreadExecutionContext(threadId: ThreadId): PersistentThreadExecutionContext { return this.catalogOps.persistentThreadExecutionContext(threadId); }
   readTurnForHost(threadId: ThreadId, turnId: TurnId): Turn | null { return this.core.readTurn(threadId, turnId); }
   readTurnByClientUserMessageIdForHost(threadId: ThreadId, clientId: string): Turn | null { return this.turnLifecycle.readTurnByClientUserMessageIdForHost(threadId, clientId); }
@@ -1316,7 +1474,10 @@ export class ThreadService implements ThreadServiceExtensionHost {
         return emptyResponse() as AgentCoreResponseByMethod[Method];
     }
   }
-  listTurns(request: ThreadTurnsListRequest): ThreadTurnsListResponse { return this.catalogOps.listTurns(request); }
+  listTurns(request: ThreadTurnsListRequest): ThreadTurnsListResponse {
+    this.assertThreadHistoryReadable(request.threadId);
+    return this.catalogOps.listTurns(request);
+  }
   async readItemOutput(request: ThreadItemOutputReadRequest): Promise<ThreadItemOutputReadResponse> { return this.resourceOps.readItemOutput(request); }
   async readContextPayload(request: ThreadContextReadRequest): Promise<ThreadContextReadResponse> { return this.resourceOps.readContextPayload(request); }
   async readTurnDetails(request: ThreadTurnDetailsReadRequest): Promise<ThreadTurnDetailsReadResponse> { return this.resourceOps.readTurnDetails(request); }
@@ -1387,7 +1548,10 @@ export class ThreadService implements ThreadServiceExtensionHost {
   ): Promise<ResolvedThreadImageArtifactFile | null> {
     return this.resourceOps.resolveImageArtifactFile(threadId, artifact);
   }
-  listItems(request: ThreadItemsListRequest): ThreadItemsListResponse { return this.catalogOps.listItems(request); }
+  listItems(request: ThreadItemsListRequest): ThreadItemsListResponse {
+    this.assertThreadHistoryReadable(request.threadId);
+    return this.catalogOps.listItems(request);
+  }
   listThreads(request: ThreadListRequest = {}): ThreadListResponse { return this.catalogOps.listThreads(request); }
   listThreadDescendants(request: ThreadDescendantsRequest): ThreadDescendantsResponse {
     return this.catalogOps.listThreadDescendants(request);
@@ -1438,7 +1602,12 @@ export class ThreadService implements ThreadServiceExtensionHost {
       console.warn(`[agent] Subagent execution notification skipped for ${agentId}`, error);
     }
   }
-  readThread(request: ThreadReadRequest): ThreadReadResponse { return this.catalogOps.readThread(request); }
+  readThread(request: ThreadReadRequest): ThreadReadResponse {
+    // Only the history read is refused. A metadata-only read never touches the
+    // codec, and the sidebar still has to name the Thread it cannot open.
+    if (request.includeTurns) this.assertThreadHistoryReadable(request.threadId);
+    return this.catalogOps.readThread(request);
+  }
   getThreadConfiguration(threadId: ThreadId): ThreadConfigurationResponse { return this.catalogOps.getThreadConfiguration(threadId); }
   async setThreadConfiguration(request: ThreadConfigurationSetRequest): Promise<ThreadConfigurationResponse> { return this.catalogOps.setThreadConfiguration(request); }
   async startThread(requestInput: AgentCoreRequestByMethod['thread/start']): Promise<ThreadStartResponse> {

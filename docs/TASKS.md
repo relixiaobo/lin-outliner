@@ -1108,6 +1108,20 @@ and the merged PR, distilled rules in [`lessons.md`](lessons.md). Everything
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
 
+- **unreadable-thread-quarantine** (main, PR #555, merged 2026-08-18 — fast-track, no
+  plan file) — the installed app exited at launch, every launch: #535's tool-enum
+  narrowing shipped with no migration under the pre-release dev-wipe rule, but the
+  daily-use install is never wiped, so 14 rows from 2026-08-10 stayed undecodable and
+  the startup fan-out over root Threads (`MemoryExtension.prepareForTurnAdmission`) had
+  no per-Thread guard. Startup now probes each Thread's history before admitting it
+  anywhere and quarantines the ones that fail, for the session only. Three `/code-review
+  high` rounds: round 1 killed the original Item-level skip (it broke the terminal-Turn
+  check and would have destroyed the last copy of the data via `rolloutSnapshot`), round
+  2 caught the probe running after registration and the filter arming a permanent
+  `turn_admissions` delete, round 3 caught that same delete armed again by two sets that
+  had to agree. Gate: typecheck + `docs:check` + `test:core` (2450) + real broken
+  userData (app starts, one diagnostic, `turn_admissions` 27 before and after).
+
 - **pathless-upload-chunk-test** (codex, PR #551, merged 2026-08-17 — fast-track, no
   plan file) — the streaming-upload e2e spec pinned Chromium's `file.stream()` buffer
   sizes as if they were the contract; it now asserts what the renderer guarantees —

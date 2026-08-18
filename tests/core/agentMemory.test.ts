@@ -142,6 +142,35 @@ describe('Codex Memory contracts', () => {
       .toEqual(['new history']);
   });
 
+  test('skips the orphan-admission sweep while a Thread is hidden from root enumeration', async () => {
+    // The sweep deletes every admission row whose Turn it cannot enumerate, so it
+    // is only sound over a complete list. A quarantined Thread is filtered out of
+    // `persistentRootThreads()`, which would make its Turns look deleted and
+    // discard its extraction state for good — a permanent write out of a
+    // quarantine that is supposed to last one session.
+    const quarantinedTurn = userTurn('history behind a quarantine', undefined, { kind: 'user' }, 'turn:hidden', 'item:hidden');
+    const hidden = rootThread([quarantinedTurn]);
+
+    for (const hasHiddenRootThreads of [true, false]) {
+      const store = memoryStore();
+      store.writeAdmission(admissionSnapshot(quarantinedTurn));
+      expect(store.admission(quarantinedTurn.id)).not.toBeNull();
+      const extension = new MemoryExtension(store, new TimelineMemoryStore(mutableTimelineHost(memoryProjection()).host));
+      extension.bindHost({
+        ...memoryThreadHost(hidden),
+        // What quarantine looks like to this consumer either way: the Thread is
+        // simply absent. The flag is the only thing that tells it the absence is
+        // not a deletion, so it is the only variable here.
+        persistentRootThreads: () => [],
+        hasHiddenRootThreads: () => hasHiddenRootThreads,
+      });
+      await extension.prepareForTurnAdmission();
+      // Flag set: the row survives. Flag clear: the sweep runs over an empty set
+      // and deletes it — which is exactly what the flag exists to prevent.
+      expect(store.admission(quarantinedTurn.id) === null).toBe(!hasHiddenRootThreads);
+    }
+  });
+
   test('commits rollback invalidation atomically and removes stale origins', () => {
     const store = memoryStore();
     expect(store.claimOrigin(ITEM_ID, THREAD_ID, TURN_ID, '2026-07-24', 'hash')).toBe(true);
@@ -2652,6 +2681,7 @@ function mutableTimelineHost(initial: DocumentProjection) {
 function memoryThreadHost(thread: Thread): MemoryThreadHost {
   return {
     persistentRootThreads: () => [thread],
+    hasHiddenRootThreads: () => false,
     activeRootUserTurns: () => [],
     interruptRootTurns: async () => undefined,
     readThread: () => ({ thread }),
