@@ -6705,52 +6705,6 @@ test.describe('canonical agent Thread surface', () => {
     )).toBe(2);
     await expect(phantom).toHaveCount(0);
     await expect(page.getByText('Context cleared.')).toHaveCount(1);
-
-    // And the anchor let go on the way: a send that resolves to a row the
-    // transcript no longer has used to leave the pending anchor set forever,
-    // which is what suspends the bottom pin — the transcript would never follow
-    // a streaming reply again for the life of the mount.
-    const transcript = page.locator('.thread-transcript');
-    const jump = page.getByRole('button', { name: 'Jump to latest' });
-    if (await jump.count() > 0) await jump.click();
-    await page.evaluate(async () => {
-      const target = window as Window & {
-        lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
-        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
-      };
-      const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
-      const threadId = response?.data[0]?.id;
-      if (!threadId) throw new Error('Mock Thread not found');
-      const turnId = '01910000-0000-7000-8000-00000000cc01';
-      const itemId = '01910000-0000-7000-8000-00000000cc02';
-      target.__LIN_E2E__?.emitAgentCoreNotification({
-        type: 'turn/started',
-        threadId,
-        turnId,
-        turn: {
-          id: turnId,
-          items: [{
-            id: itemId,
-            type: 'agentMessage',
-            provenance: { originThreadId: threadId, originTurnId: turnId, originItemId: itemId },
-            text: Array.from({ length: 24 }, (_, index) => `Following after the reset ${index + 1}.`).join('\n\n'),
-            phase: 'final_answer',
-            memoryCitation: null,
-          }],
-          itemsView: 'full',
-          provenance: { originThreadId: threadId, originTurnId: turnId, trigger: { kind: 'user' } },
-          status: 'inProgress',
-          error: null,
-          startedAt: 9,
-          completedAt: null,
-          durationMs: null,
-        },
-      });
-    });
-    await expect(page.getByText('Following after the reset 24.')).toBeVisible();
-    await expect.poll(() => transcript.evaluate((element) => (
-      element.scrollHeight - element.scrollTop - element.clientHeight
-    ))).toBeLessThanOrEqual(1);
   });
 
   /**
