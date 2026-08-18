@@ -1095,6 +1095,16 @@ and the merged PR, distilled rules in [`lessons.md`](lessons.md). Everything
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
 
+- **subagent-marker-assistant-channel** (cc, PR #561, merged 2026-08-18 —
+  fast-track, no plan file) — a root Thread was writing
+  `[Subagent finished: …]` to its user, a `kind` that does not exist: it had
+  learned the marker shape from the ones `ContextProjector` authored into its own
+  assistant content. `subAgentActivity` and `imageView` now contribute no
+  provider content and are skipped before the flushes, so they cannot split a
+  batch either. Gate: `/code-review high` found four (spec over-claiming against
+  the live `redactedReplayMarker` path, the mid-batch boundary split, two stale
+  claims), all fixed on-branch; typecheck + `docs:check` + `test:core` (2493).
+
 - **agent-view-surface PR 2** (codex-3, PR #559, merged 2026-08-18 — completes
   the two-PR set) — the Agent can now read and write a view's sort, filter,
   group, and column configuration as typed `%%view-*%%` lines under the owner,

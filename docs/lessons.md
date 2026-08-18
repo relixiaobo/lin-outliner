@@ -1307,3 +1307,33 @@ trigger the new boundary on its own. This is A12 read in the other direction:
 A12 says put fail-closed `throw`s at write boundaries and let the user path
 degrade, and this is the case where a write boundary had been quietly degrading
 because its `throw` was unreachable.
+
+## The assistant channel is a few-shot demonstration, not a place to write notes
+
+`subagent-marker-assistant-channel` (#561). `ContextProjector` had, for months,
+pushed a `[Subagent started: <path> (<id>)]` line into the *assistant* content it
+replays to the model — a status note, obviously informational, addressed to
+nobody. In a `main` dev run a root Thread then streamed
+`[Subagent message sent: …][Subagent finished: …]` to its user as ordinary prose.
+Those were real `agentMessage` deltas: the model wrote them, and neither `kind`
+exists in the protocol. It had not copied our text, it had learned the *shape*
+from three genuine markers seconds earlier and continued the pattern — a
+hallucinated delegation rendered to a human. **Anything the runtime authors into
+the assistant channel is a worked example of what to write next, because that
+channel is the model's own voice being shown back to it.** A fact the model needs
+belongs in a channel it cannot mistake for its prose: the tool call and its
+result, a tool-result message, a user-role observation. Ask of every authored
+string not "is this accurate?" but "am I willing to see the model produce more
+lines like it?" The one authored line we kept — the redacted-replay notice —
+earns its place by having to stay atomic with the tool call it explains, and that
+exception is named in the spec rather than left for the next reader to
+rediscover.
+
+The second-order rule, found at the gate: **an Item that contributes no content
+must not act as a boundary either.** The first fix left the two Item types in the
+projection switch, below the tool flush, so they emitted nothing but still closed
+a provider assistant message — and `SubagentCollaboration` records a child's
+`started` activity *between* the two `agent` calls of one batch, so a single
+batch replayed as two assistant messages and lost that much cached prefix. "Emits
+no content" and "has no effect" are different claims; in a projector that
+batches, position relative to the flushes is the effect.

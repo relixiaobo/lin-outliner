@@ -10,6 +10,42 @@ Entries reference the pull request that introduced them.
 
 `main` is the `0.7.0` train; entries here move under the next tag.
 
+### Fixed
+
+- **The model stopped inventing delegations it never made (PR #561, cc)** —
+  caught in the `main` dev run: a root Thread streamed
+  `[Subagent message sent: …][Subagent finished: …]` to its user as ordinary
+  assistant prose. Both were real `agentMessage` deltas — the model wrote them —
+  and neither `kind` exists; the protocol has only
+  `started | completed | interrupted | errored`. It was not replaying our string,
+  it had learned the *shape* `[Subagent X: path (id)]` from the three genuine
+  `started` markers `ContextProjector` had pushed into its own assistant content
+  seconds earlier, and carried the pattern on. The assistant channel is a
+  few-shot demonstration of the model's own prose, so every line Tenon authors
+  into it is a worked example of something to write more of. `subAgentActivity`
+  and `imageView` now contribute no provider content at all, and — since an Item
+  that contributes nothing must not act as a boundary either — are skipped
+  *before* the pending-user and tool flushes: a child's `started` activity is
+  recorded between the two `agent` calls of one batch, so reaching the flush it
+  would have split a single provider assistant message in two and busted that
+  much of the cached prefix for zero content. Nothing is lost, because every fact
+  already arrives through a channel the model cannot mistake for its own voice:
+  the delegation is the `agent`/`skill` tool call and its result, the terminal
+  transition is the task notification opening its own Turn, and an isolated
+  Skill's outcome is the `skill` result its caller awaits. `imageView` had no
+  producer left in `src/` at all. The parent-visible row is untouched — no
+  renderer file changed. The failure class was named and deferred in
+  `agent-reasoning-replay-fidelity`, which called an imitated delegation
+  "strictly worse than a stray reasoning label"; it has now fired, so the spec
+  states the rule instead of the deferral. `/code-review high` at the gate found
+  the boundary split above, that the rewritten spec paragraph had over-claimed
+  ("no bracketed marker **at all**") while `redactedReplayMarker` still authors
+  one — deliberately, since it must stay atomic with the tool call whose redacted
+  arguments it explains — and two stale claims left behind by the rewrite; all
+  four fixed on-branch in 579d524a. Gate: typecheck + `docs:check` + `test:core`
+  (2493), with a guard that reproduces the production string on the pre-fix tree
+  and a second that pins the one-message, two-tool-call batch.
+
 ## [0.6.0] - 2026-08-18
 
 **Ask for a table, get a table.** The agent can now see, set, and configure
