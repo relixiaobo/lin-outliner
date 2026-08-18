@@ -51,6 +51,13 @@ const LEGACY_PATTERNS: ReadonlyArray<{ readonly label: string; readonly pattern:
     pattern: /\b(?:ask_user_question|agent_session_start|agent_session_read|agent_session_send_message|agent_session_stop|past_chats|internal_delegation)\b/,
   },
   {
+    // Automations were ported from the Codex app, and its `codex_app.` tool
+    // namespace came along into our own catalog. Host tools carry no vendor
+    // namespace; `namespace` exists for MCP servers and plugins.
+    label: 'vendor-namespaced host tool',
+    pattern: /\bcodex_app\b/,
+  },
+  {
     label: 'legacy profile terminology',
     pattern: /\bagent[- ]profiles?\b/i,
   },

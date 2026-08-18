@@ -4,6 +4,7 @@ import type { EffectiveThreadConfiguration } from '../../src/core/agent/configur
 import {
   MODEL_TOOL_CATALOG,
   canonicalModelToolKey,
+  providerToolSchemaFailure,
   type ModelToolContract,
 } from '../../src/core/agent/tools';
 import type { ThreadService } from '../../src/main/agent/ThreadService';
@@ -45,6 +46,41 @@ describe('canonical provider tool catalog', () => {
       }
     }
     expect(failures).toEqual([]);
+  });
+
+  test('offers every static model-tool schema to providers as an object-rooted schema', () => {
+    const unsendable = MODEL_TOOL_CATALOG
+      .filter((contract) => contract.inputSchema !== null)
+      .map((contract) => `${canonicalModelToolKey(contract.identity)}: ${providerToolSchemaFailure(contract.inputSchema)}`)
+      .filter((entry) => !entry.endsWith(': null'));
+    expect(unsendable).toEqual([]);
+  });
+
+  test('names the root-union shape every provider answers with HTTP 400', () => {
+    // `{ oneOf: [...] }` is legal JSON Schema and compiles, which is exactly why
+    // the compile guard above waved `automation_update` through for two weeks
+    // while OpenAI answered `schema must be a JSON Schema of 'type: "object"',
+    // got 'type: null'` on every root Turn that offered the tool.
+    const rootUnion = { oneOf: [{ type: 'object', properties: {} }] };
+    expect(() => compileToolParameters(rootUnion as never)).not.toThrow();
+    expect(providerToolSchemaFailure(rootUnion)).toBe('schema root must be \'type: "object"\', got null');
+    expect(providerToolSchemaFailure({ type: 'string' })).toBe('schema root must be \'type: "object"\', got "string"');
+    expect(providerToolSchemaFailure([{ type: 'object' }])).toBe('schema must be a JSON Schema object');
+    expect(providerToolSchemaFailure(null)).toBe('schema must be a JSON Schema object');
+  });
+
+  test('fails closed when a Core capability schema is not object-rooted', async () => {
+    const tools = runtimeSchemaTools().map((tool) => tool.name === 'bash'
+      ? { ...tool, parameters: { oneOf: [{ type: 'object' }] } as never }
+      : tool);
+    const runtime = new ToolRuntime(runtimeService(), {
+      capabilityTools: () => tools,
+      assembleRegistry: true,
+    });
+
+    await expect(runtime.createTools(RUNTIME_CONTEXT)).rejects.toThrow(
+      'Runtime model-tool schema is invalid: bash',
+    );
   });
 
   test('fails closed before an invalid extension schema can shadow a Core tool', async () => {

@@ -242,7 +242,7 @@ const automationScheduleSchema = objectSchema({
 }, ['rrule', 'timezone']);
 
 const automationDestinationSchema: JsonSchema = {
-  oneOf: [
+  anyOf: [
     objectSchema({ kind: enumSchema(['standalone']) }, ['kind']),
     objectSchema({
       kind: enumSchema(['existingThread']),
@@ -258,12 +258,12 @@ const automationProjectBindingSchema = objectSchema({
 }, ['id', 'cwd', 'executionMode']);
 
 const nullableStringSchema: JsonSchema = {
-  oneOf: [boundedStringSchema(AUTOMATION_IDENTIFIER_MAX_LENGTH), { type: 'null' }],
+  anyOf: [boundedStringSchema(AUTOMATION_IDENTIFIER_MAX_LENGTH), { type: 'null' }],
 };
 const automationConfigurationSchema = objectSchema({
   modelProvider: nullableStringSchema,
   model: nullableStringSchema,
-  reasoningEffort: { oneOf: [enumSchema(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']), { type: 'null' }] },
+  reasoningEffort: { anyOf: [enumSchema(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']), { type: 'null' }] },
 });
 
 const automationDefinitionProperties = {
@@ -279,31 +279,36 @@ const automationMutableProperties = {
   status: enumSchema(['active', 'paused']),
 };
 
-const automationUpdateToolSchema: JsonSchema = {
-  oneOf: [
-    objectSchema({
-      mode: enumSchema(['create']),
-      definition: objectSchema({
-        ...automationMutableProperties,
-      }, ['name', 'prompt', 'schedule', 'destination']),
-    }, ['mode', 'definition']),
-    objectSchema({
-      mode: enumSchema(['update']),
-      automation_id: boundedStringSchema(AUTOMATION_IDENTIFIER_MAX_LENGTH),
-      expected_revision: { type: 'integer', minimum: 1 },
-      patch: { ...objectSchema(automationMutableProperties), minProperties: 1 },
-    }, ['mode', 'automation_id', 'expected_revision', 'patch']),
-    objectSchema({
-      mode: enumSchema(['view']),
-      automation_id: boundedStringSchema(AUTOMATION_IDENTIFIER_MAX_LENGTH),
-    }, ['mode']),
-    objectSchema({
-      mode: enumSchema(['delete']),
-      automation_id: boundedStringSchema(AUTOMATION_IDENTIFIER_MAX_LENGTH),
-      expected_revision: { type: 'integer', minimum: 1 },
-    }, ['mode', 'automation_id']),
-  ],
-};
+const automationUpdateToolSchema: JsonSchema = objectSchema({
+  mode: enumSchema(
+    ['create', 'update', 'view', 'delete'],
+    [
+      'Operation to perform. Each mode accepts exactly its own fields and rejects the rest:',
+      '"create" takes definition;',
+      '"update" takes automation_id, expected_revision, and patch;',
+      '"view" takes an optional automation_id and lists every Automation when it is omitted;',
+      '"delete" takes automation_id and expected_revision.',
+    ].join(' '),
+  ),
+  definition: {
+    ...objectSchema(automationMutableProperties, ['name', 'prompt', 'schedule', 'destination']),
+    description: 'Full definition for mode "create".',
+  },
+  automation_id: boundedStringSchema(
+    AUTOMATION_IDENTIFIER_MAX_LENGTH,
+    'Target Automation UUIDv7 for modes "update", "delete", and single-Automation "view".',
+  ),
+  expected_revision: {
+    type: 'integer',
+    minimum: 1,
+    description: 'Revision last observed by the caller; modes "update" and "delete" fail on a stale value.',
+  },
+  patch: {
+    ...objectSchema(automationMutableProperties),
+    minProperties: 1,
+    description: 'At least one field to change, for mode "update".',
+  },
+}, ['mode']);
 
 export const AGENT_TOOL_DESCRIPTION = `Launch a new agent to handle complex, multi-step tasks. Each agent type has specific capabilities and tools available to it.
 
@@ -457,7 +462,7 @@ const agentTaskToolContracts: readonly ModelToolContract[] = [
 
 const coreControlToolContracts: readonly ModelToolContract[] = [
   {
-    identity: { namespace: 'codex_app', name: 'automation_update' },
+    identity: { namespace: null, name: 'automation_update' },
     description: [
       'Create, update, view, or delete a host-owned Automation definition for scheduled agent work.',
       'This tool manages definitions only: Automation status is not Run verification.',
@@ -582,6 +587,24 @@ const CONTRACTS_BY_KEY = new Map(MODEL_TOOL_CATALOG.map((contract) => [
   canonicalModelToolKey(contract.identity),
   contract,
 ]));
+
+/**
+ * Providers reject a model-facing tool schema whose root is not an object schema:
+ * OpenAI answers `schema must be a JSON Schema of 'type: "object"'` and Anthropic
+ * rejects the same shape in `input_schema`. A root `oneOf`/`$ref` is legal JSON
+ * Schema and compiles locally, so nothing but this check stands between an
+ * unsendable schema and a provider HTTP 400 on every Turn that offers the tool.
+ */
+export function providerToolSchemaFailure(schema: unknown): string | null {
+  if (typeof schema !== 'object' || schema === null || Array.isArray(schema)) {
+    return 'schema must be a JSON Schema object';
+  }
+  const { type } = schema as { readonly type?: unknown };
+  if (type !== 'object') {
+    return `schema root must be 'type: "object"', got ${JSON.stringify(type ?? null)}`;
+  }
+  return null;
+}
 
 export function canonicalModelToolKey(identity: ModelToolIdentity): string {
   validateToolName(identity.name, 'tool name');

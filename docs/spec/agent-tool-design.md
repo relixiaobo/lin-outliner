@@ -22,8 +22,15 @@ Extensions must provide complete schemas and cannot shadow a Core identity.
 Registry assembly fails when a required schema is missing, a canonical identity
 duplicates another, an extension uses an unsupported action kind, or provider
 encoding would collide. Flat provider names use `namespace__name`; tool-name
-components cannot contain the separator, making the mapping reversible.
+components cannot contain the separator, making the mapping reversible. A
+namespace identifies an MCP server or a plugin: host tools are unnamespaced, and
+no host identity carries the name of another product.
 Every concrete static catalog schema is compilation-guarded by the test suite.
+Compiling is necessary but not sufficient: every model-facing schema must also be
+one every provider accepts, which means an object-rooted schema. A root `oneOf`
+or `$ref` compiles locally and is rejected by the provider, so the same admission
+boundary that compiles a schema also rejects a non-object root, and the catalog
+guard asserts it for every static contract.
 `ToolRuntime` also compiles extension contracts and runtime implementations before
 exposure. A malformed dynamic, extension, or MCP-backed schema omits only that
 canonical contribution and emits one bounded diagnostic; valid siblings remain
@@ -352,8 +359,8 @@ The write carries the executing Item's causation.
 - `get_goal`: read the current Thread Goal
 - `create_goal`: create a Goal only when explicitly requested
 - `update_goal`: mark that Goal `complete` or genuinely `blocked`
-- `codex_app.automation_update`: create, update, view, or delete a host-owned
-  Automation on a root Thread
+- `automation_update`: create, update, view, or delete a host-owned Automation
+  on a root Thread
 
 `request_user_input` is not an authorization tool. It supports an optional
 bounded auto-resolution timeout only for useful, non-blocking questions. Each
@@ -366,9 +373,12 @@ suffixes and preserves labels verbatim for answer round-tripping.
 At most one plan step is `in_progress`. Plans are Items within a Turn and do not
 create durable work entities.
 
-`codex_app.automation_update` uses one bounded exact schema and the same
-revisioned host service as renderer commands. It never writes scheduler tables
-from model code or introduces a permission profile. Scheduled execution and
+`automation_update` uses one bounded exact schema and the same revisioned host
+service as renderer commands. That schema is a single object discriminated by
+`mode`, matching `data_import`: the per-mode field sets are exact, but their
+exactness is enforced by the tool decoder and the Automation input decoders
+rather than by a union of shapes at the provider boundary. It never writes
+scheduler tables from model code or introduces a permission profile. Scheduled execution and
 standing authorization are specified in
 [`agent-automations.md`](agent-automations.md).
 

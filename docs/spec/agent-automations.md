@@ -210,10 +210,12 @@ and service failures are evaluated by their existing owners. A root Automation
 Turn may use `request_user_input` for missing product input; while its Turn waits,
 later occurrences continue to coalesce instead of overlapping.
 
-The root-only `codex_app.automation_update` model tool provides strict create,
-update, view, and delete modes over the same service. Its schema and runtime
-decoder reject unknown fields, invalid UUIDv7 identities, empty updates,
-unsupported schedules, and inputs beyond the shared length/count bounds. It is
+The root-only `automation_update` model tool provides strict create, update,
+view, and delete modes over the same service. Its schema is one object
+discriminated by `mode`; the decoder rejects any field the named mode does not
+take, and it and the shared Automation decoders reject unknown fields, invalid
+UUIDv7 identities, empty updates, unsupported schedules, and inputs beyond the
+shared length/count bounds. It is
 subject to the `agent.automation.manage` capability action like every other
 model tool.
 
@@ -249,7 +251,7 @@ Core entities. Methods cover list/read/create/update/pause/resume/delete,
 Start now, run list/read, read state, and worktree pin state. Preload decodes every
 response and notification before renderer state changes.
 
-The model-facing `codex_app.automation_update` tool manages definitions only.
+The model-facing `automation_update` tool manages definitions only.
 Creating, updating, or reading a definition never verifies an AutomationRun,
 and a completed finite definition means that its recurrence is exhausted rather
 than proving a Turn result. When a user asks to test the workflow, the model runs

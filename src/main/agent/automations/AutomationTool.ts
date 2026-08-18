@@ -6,23 +6,27 @@ import type { AutomationCreateInput, AutomationUpdateInput } from '../../../core
 import type { AutomationService } from './AutomationService';
 
 export function createAutomationTool(service: AutomationService): AgentTool {
-  const contract = modelToolContract('codex_app.automation_update');
-  if (!contract?.inputSchema) throw new Error('Missing codex_app.automation_update contract');
+  const contract = modelToolContract('automation_update');
+  if (!contract?.inputSchema) throw new Error('Missing automation_update contract');
   return {
-    name: 'codex_app__automation_update',
+    name: 'automation_update',
     label: 'Update Automation',
     description: contract.description,
     parameters: contract.inputSchema as TSchema,
     executionMode: 'sequential',
     execute: async (_itemId, value, signal) => {
       if (signal?.aborted) throw abortError();
-      const input = objectValue(value, 'codex_app.automation_update');
+      const input = objectValue(value, 'automation_update');
       const mode = requiredString(input.mode, 'mode');
       let result: unknown;
       switch (mode) {
         case 'create':
           exactKeys(input, ['mode', 'definition']);
-          result = { automation: await service.create(input.definition as AutomationCreateInput) };
+          result = {
+            automation: await service.create(
+              objectValue(input.definition, 'definition') as unknown as AutomationCreateInput,
+            ),
+          };
           break;
         case 'update': {
           exactKeys(input, ['mode', 'automation_id', 'expected_revision', 'patch']);
@@ -50,7 +54,7 @@ export function createAutomationTool(service: AutomationService): AgentTool {
           });
           break;
         default:
-          throw new Error(`Unknown codex_app.automation_update mode: ${mode}`);
+          throw new Error(`Unknown automation_update mode: ${mode}`);
       }
       return toolResult(result);
     },
@@ -73,7 +77,7 @@ function objectValue(value: unknown, path: string): Record<string, unknown> {
 function exactKeys(record: Record<string, unknown>, allowed: readonly string[]): void {
   const expected = new Set(allowed);
   const unknown = Object.keys(record).filter((key) => !expected.has(key));
-  if (unknown.length > 0) throw new Error(`codex_app.automation_update contains unknown fields: ${unknown.join(', ')}`);
+  if (unknown.length > 0) throw new Error(`automation_update contains unknown fields: ${unknown.join(', ')}`);
 }
 
 function requiredString(value: unknown, path: string): string {

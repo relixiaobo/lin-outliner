@@ -9,6 +9,7 @@ import {
   MODEL_TOOL_ACTION_KINDS,
   modelToolContract,
   normalizeTaskStopToolInput,
+  providerToolSchemaFailure,
   type ModelToolContract,
   type ModelToolIdentity,
   type ModelToolSchemaContribution,
@@ -559,6 +560,8 @@ export class ToolRuntime {
   }
 
   private toolSchemaFailure(schema: unknown): string | null {
+    const unsendable = providerToolSchemaFailure(schema);
+    if (unsendable !== null) return `invalid schema (${boundedDiagnostic(unsendable, 240)})`;
     try {
       compileToolParameters(schema as TSchema);
       return null;
