@@ -46,8 +46,44 @@ Entries reference the pull request that introduced them.
   unrenderable-mode node — A12's fail-closed-at-the-wrong-boundary shape, now
   narrowed to newly requested modes; and an explicit `%%view:list%%` round-tripped
   into a `set_view_mode` that created a stray `viewDef` child on an otherwise
-  plain node, with no read-back to tell the model to stop. PR 2 (view-config
-  read/write over the existing sort/filter/group/display-field commands) remains.
+  plain node, with no read-back to tell the model to stop.
+
+- **The Agent can read and write a view's sort, filter, group, and column
+  configuration (PR #559, codex-3)** — PR #556 gave the Agent the view *mode*,
+  but a table's actual shape stayed invisible: it could turn `%%view:table%%` on
+  and then had no way to say what the table sorts by, filters to, groups on, or
+  shows as columns, and a field added after the owner entered table mode needed a
+  list-and-back re-entry to become a column at all. Persisted configuration now
+  serializes as typed lines directly under its owner — `%%view-sort%%`,
+  `%%view-filter%%`, `%%view-group%%`, `%%view-display%%` — sharing the
+  saved-search rule/operand shape but in a view-specific namespace so they can
+  never be mistaken for document children or query rules. `node_read` emits them
+  for each requested root without consuming child pagination; `node_edit` treats
+  the configuration in a complete editable outline as the desired state and
+  reconciles it through the existing `add`/`update`/`remove`/`clear` commands, so
+  no new core command was needed. Annotated reads carry each rule's stored Node
+  id, and a matcher reserves every annotated line's Node before positional
+  matching, so identity survives insertion and reordering rather than being
+  handed to whichever line came first. Custom fields accept a field-definition
+  reference or an active field-entry id — the id an annotated `Field::` line
+  already shows — because requiring the definition id would have named a handle
+  no read path exposes. Only ordinary nodes and saved searches own configuration;
+  a code block or reference is refused before any mutation, `width` and `order`
+  are held to the table's real integer bounds (112–520, and non-negative), and
+  the reconciler preserves the two things the grammar cannot express: a column's
+  placement and the order Core assigns a freshly added column. The `xhigh` gate
+  found 13 issues, all fixed on-branch, and the most valuable one was in the
+  tests: the core test host's `update_display_field` shim forwarded only the keys
+  it was given, while `documentService` coerces every absent key to `null` — the
+  value core reads as *clear this*. Under real semantics an edit that touched
+  only a column's width silently deleted its placement, and a new column's
+  auto-assigned order was wiped by the very patch that finished creating it;
+  under the shim both were invisible and every new view-config test passed. The
+  system-field set had also been hand-copied and had drifted from the picker's,
+  so `sys:owner` and `sys:day` read back as nothing and an unrelated rename
+  deleted the user's grouping, column, and sort rule; it is now derived from
+  `core/systemFields.ts`. Verified against the pre-fix tree: six independent
+  probes reproducing the reported data loss fail before the fixes and pass after.
 
 ### Changed
 

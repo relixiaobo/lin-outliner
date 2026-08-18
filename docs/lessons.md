@@ -1254,3 +1254,28 @@ holds is a second, response-derived handle (the Turn the host reports accepting)
 plus an explicit retire on "no Turn at all" — never a renderer-side whitelist of
 the commands that behave differently, which re-derives the host's routing in the
 one place that cannot see it.
+
+## A test double must copy the boundary's coercion, not just its signature
+
+`agent-view-surface` PR 2 (#559) reconciles view configuration by patching
+display fields through `update_display_field`. The core tests drive that command
+through a hand-written host shim, and the shim forwarded only the keys it was
+handed: `width: args.width === undefined ? undefined : nullableNumber(...)`, with
+no `placement` key at all. `documentService` — the real boundary — instead
+coerces *every* absent key to `null`: `width: nullableNumber(args.width)`,
+`placement: displayPlacement(args.placement)`. Core reads `undefined` as "leave
+it alone" and `null` as "clear it". The two objects satisfy the same type and
+mean opposite things. Under the real coercion an edit that changed only a
+column's width silently deleted its placement, and the patch that finished
+creating a new column wiped the order Core had just assigned it — while every new
+test passed, because the shim never sent the `null`s that do the damage. **Where
+a test double stands in for a boundary that normalizes its arguments, copy the
+normalization verbatim; a double that only satisfies the type tests a contract
+the app does not have.** The tell is a double that is more careful than
+production — a `=== undefined ? undefined :` guard the real handler does not have
+is not defensive, it is a different API. This is the semantic half of *A
+typecheck that excludes tests will not tell you a test double has gone stale*:
+that one is about doubles the compiler stopped checking, this one is about
+doubles the compiler still accepts and that lie anyway. It also earns a review
+habit — when a finding implies "the tests should have caught this", diff the
+double against the real handler before believing the tests.

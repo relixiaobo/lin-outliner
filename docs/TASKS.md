@@ -158,23 +158,12 @@ before any directional/security-sensitive build.
 
 - **agent-program** (P1, `meta` — umbrella) — read first; it maps the rest (foundation /
   dependency graph / event taxonomy / milestones). See `docs/plans/reference/agent-program.md`.
-- **agent-view-surface** (P2, `in-progress` 2026-08-16) — the agent can neither see
-  nor set node view modes: `%%view:%%` parses but persists only on search
-  nodes, read paths hide an ordinary table node's mode, and no model-facing
-  text mentions views at all (observed dev:main failure: "整理成表格" produced
-  ASCII tables in code blocks). Two-PR set: (1) mode awareness — read + write +
-  vocabulary validation + guidance; (2) view-config read/write over the
-  existing sort/filter/group/display-field commands, sequenced after
-  `tag-schema-projection` PR 1 (#545, same reader files). Designed
-  mode-agnostic so future `cards`/`calendar` views extend a vocabulary
-  constant, not the surface.
-  **PR 1 shipped #556 (2026-08-18, codex-3)** — mode awareness: `%%view:<mode>%%`
-  reads and writes on ordinary nodes, vocabulary validated against the renderable
-  set, guidance teaches the table task mapping; high gate found 4 issues (two
-  silent no-ops, a fail-closed error that bricked a node for the agent, and
-  guidance promising a column path the agent does not have), all fixed
-  on-branch. PR 2 (view-config read/write) remains.
-  See [`plans/agent-view-surface.md`](plans/agent-view-surface.md).
+- **agent-view-surface** (P2, `done` 2026-08-18) — both PRs shipped: mode
+  awareness (#556) and view sort/filter/group/column configuration (#559), both
+  codex-3. The Agent reads and writes a node's view mode and its persisted
+  configuration through typed `%%view-*%%` outline lines over the existing core
+  commands; design folded into `docs/spec/agent-tool-design.md`, plan archived at
+  `docs/plans/archive/agent-view-surface.md`. See *Recently completed*.
 - **skill-directory-is-itself-a-skill** (P3, `draft`, *no plan file yet* — cut from #470
   at the gate 2026-08-01, deliberately, not abandoned) — picking `~/work/my-pdf-skill`
   is at least as natural as picking its parent, but the loader only ever looks one
@@ -1117,6 +1106,18 @@ One line per merge, newest first; the retrospective lives in the CHANGELOG entry
 and the merged PR, distilled rules in [`lessons.md`](lessons.md). Everything
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
+
+- **agent-view-surface PR 2** (codex-3, PR #559, merged 2026-08-18 — completes
+  the two-PR set) — the Agent can now read and write a view's sort, filter,
+  group, and column configuration as typed `%%view-*%%` lines under the owner,
+  reconciled through the existing core commands, with annotated Node ids reserved
+  before positional matching so identity survives insertion and reordering.
+  `/code-review xhigh` found 13 issues, all fixed on-branch; the root one was a
+  test-host shim that forwarded only the keys it was given while
+  `documentService` coerces every absent key to `null`, hiding two silent
+  data-loss bugs behind green tests. Gate: typecheck + `docs:check` +
+  `test:core` (2477) + `test:renderer` (1280), plus six probes that fail on the
+  pre-fix tree and pass after.
 
 - **send-scroll-anchor** (cc, PR #558, merged 2026-08-18 — fast-track, no plan
   file) — a send used to be three movements and a stall; the transcript now draws
