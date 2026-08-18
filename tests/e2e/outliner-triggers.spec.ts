@@ -1970,8 +1970,13 @@ test.describe('tag-projected field slot interactions', () => {
     });
 
     const ghost = row(page, alphaSlotId).locator('.field-value-inherited-default');
+    const emptyEditor = row(page, alphaSlotId).locator('.row-editor.is-empty').first();
     await expect(ghost).toHaveText('Inbox');
     await expect(ghost).toHaveCSS('pointer-events', 'none');
+    await expect(emptyEditor).toHaveAttribute('data-placeholder', 'Empty');
+    await expect.poll(() => emptyEditor.evaluate((element) => (
+      getComputedStyle(element, '::before').content
+    ))).toBe('none');
     await expect.poll(() => storedFieldEntryId(page, ids.alpha, ids.statusField)).toBeUndefined();
     for (const colorScheme of ['light', 'dark'] as const) {
       await page.emulateMedia({ colorScheme });
@@ -1991,6 +1996,15 @@ test.describe('tag-projected field slot interactions', () => {
 
     await trailingEditor(page, alphaSlotId).click();
     await expect(trailingEditor(page, alphaSlotId)).toBeFocused();
+    await expect(ghost).toHaveCSS('visibility', 'hidden');
+    await expect.poll(() => emptyEditor.evaluate((element) => {
+      const style = getComputedStyle(element, '::before');
+      return {
+        content: style.content,
+        opacity: style.opacity,
+        placeholder: JSON.stringify(element.getAttribute('data-placeholder') ?? ''),
+      };
+    })).toEqual({ content: '"Empty"', opacity: '1', placeholder: '"Empty"' });
     await expect.poll(() => storedFieldEntryId(page, ids.alpha, ids.statusField)).toBeUndefined();
     await page.keyboard.type('Blocked');
     await expect.poll(() => storedFieldEntryId(page, ids.alpha, ids.statusField)).toBeUndefined();
