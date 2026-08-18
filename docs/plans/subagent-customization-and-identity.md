@@ -15,7 +15,7 @@ Concretely, this ships:
 1. Presentation fields (`persona`, `avatar`) on Agent Role definitions, plus a
    `presentationOverrides` layer so built-ins and the root identity are
    customizable without redefining them.
-2. A default roster with bundled avatar art: **Tenon** (beaver, main), **Rena**
+2. A default roster with bundled avatar art: **Aspen** (beaver, main), **Rena**
    (fox, `explore`), **Ada** (owl, `plan`), **Bruno** (bear,
    `general-purpose`).
 3. The portrait/persona/layout upgrade of the shipped speaker system in the
@@ -142,14 +142,14 @@ readonly presentation?: {
   `presentation`. The pseudo-key `main` addresses the root agent, which has no
   Role.
 - **The root identity.** A frozen constant in `configuration.ts` —
-  `DEFAULT_AGENT_PRESENTATIONS.main = { persona: 'Tenon', avatar: 'beaver' }` —
+  `DEFAULT_AGENT_PRESENTATIONS.main = { persona: 'Aspen', avatar: 'beaver' }` —
   overlayable through `presentationOverrides.main`.
 - **Default roster.** Built-in Roles carry default presentation in their
   definitions:
 
   | identity | agent type | persona | avatar key |
   |---|---|---|---|
-  | root | main | Tenon | `beaver` |
+  | root | main | Aspen | `beaver` |
   | built-in | `explore` | Rena | `fox` |
   | built-in | `plan` | Ada | `owl` |
   | built-in | `general-purpose` | Bruno | `bear` |
@@ -160,9 +160,11 @@ readonly presentation?: {
   already said, which is how it read in the running app (PM 2026-08-18). Names
   are short proper names with a hook worth remembering: Rena from Reynard the
   fox, Ada from Ada Lovelace (who wrote the first plan a machine could run),
-  Bruno from the brown of a bear. This supersedes the earlier
-  persona-is-the-animal rule, and with it the apparent exception of `main`
-  being called Tenon: Tenon is simply a name, like the rest.
+  Bruno from the brown of a bear, Aspen from the tree a beaver builds with. This
+  supersedes the earlier persona-is-the-animal rule. The conversation's own
+  agent is named like the rest and does NOT carry the product's name: a
+  transcript names the participants in it, not the application they run
+  inside.
 - **Model-surface isolation (hard rule).** `presentation` must not change any
   model-facing byte: `RoleCatalogContextPayload` / `RoleCatalogEntry` entries
   and hashes (`buildRoleCatalogSnapshot`), stable-prompt blocks, tool
@@ -251,8 +253,8 @@ are unchanged.
 portrait beside two stacked lines — persona + type, then the work line — as the
 ratified prototype draws it. It is still one header and one control.
 
-The speaker name becomes the persona: "Fox"
-where `subagentSpeakerName` shows the raw type `explore` today; "Tenon"
+The speaker name becomes the persona: "Rena"
+where `subagentSpeakerName` shows the raw type `explore` today; "Aspen"
 (untranslated) for main. A Role/type label joins the header line in
 `--text-secondary` (the type ladder is
 `--text-primary/secondary/tertiary/quaternary`; there is no numeric

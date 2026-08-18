@@ -240,7 +240,7 @@ describe('AgentConfigurationLoader', () => {
     const catalog = loader.resolveIdentityCatalog(cwd);
 
     expect(catalog).toEqual([
-      { agentType: 'main', persona: 'Tenon', avatar: 'beaver', source: 'built-in' },
+      { agentType: 'main', persona: 'Aspen', avatar: 'beaver', source: 'built-in' },
       { agentType: 'general-purpose', persona: 'Bruno', avatar: 'bear', source: 'built-in' },
       { agentType: 'explore', persona: 'Rena', avatar: 'fox', source: 'built-in' },
       { agentType: 'plan', persona: 'Ada', avatar: 'owl', source: 'built-in' },

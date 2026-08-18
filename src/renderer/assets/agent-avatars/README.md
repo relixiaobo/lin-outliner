@@ -5,7 +5,7 @@ One SVG per avatar key (`<key>.svg`), resolved at build time by
 An identity with no `avatar` key — every custom Role until someone picks one —
 falls back to the initial disc in `agentAvatarColor.ts` instead.
 
-The default roster: `beaver` (Tenon), `fox` (Rena), `owl` (Ada), `bear`
+The default roster: `beaver` (Aspen), `fox` (Rena), `owl` (Ada), `bear`
 (Bruno).
 
 ## The rule that keeps the set legible
@@ -21,11 +21,16 @@ it felt in the running app. Three layers, no overlap:
 | persona | who is speaking, and what to call them | Bruno |
 | Agent type | which agent exactly, for configuration | `general-purpose` |
 
-The roster: **Tenon** (beaver) is the conversation's own agent and carries the
-product's name, because it is the product speaking; the helpers it dispatches
-are **Rena** (fox, `explore`), **Ada** (owl, `plan`), and **Bruno** (bear,
-`general-purpose`). Rena, Ada and Tenon are drawn as female characters, Bruno
-as male — worth keeping if these are ever redrawn, since the names are staying.
+The roster: **Aspen** (beaver) is the conversation's own agent — the one the
+reader talks to — and the helpers she dispatches are **Rena** (fox,
+`explore`), **Ada** (owl, `plan`), and **Bruno** (bear, `general-purpose`).
+Aspen, Rena and Ada are drawn as female characters, Bruno as male — worth
+keeping if these are ever redrawn, since the names are staying.
+
+The product's name is not among them, deliberately: a transcript names the
+participants in it, not the application they run inside. Aspen is a beaver
+named for the tree beavers build with, which is the same joinery the product
+is named for — the tie is in the world, not in the signature.
 
 ## Drawing constraints
 

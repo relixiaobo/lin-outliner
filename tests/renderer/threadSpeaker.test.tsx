@@ -19,7 +19,7 @@ import { ThreadStore } from '../../src/renderer/agent/store/threadStore';
 import { I18nProvider } from '../../src/renderer/i18n/I18nProvider';
 
 const ROSTER = [
-  { agentType: 'main', persona: 'Tenon', avatar: 'beaver', source: 'built-in' },
+  { agentType: 'main', persona: 'Aspen', avatar: 'beaver', source: 'built-in' },
   { agentType: 'explore', persona: 'Rena', avatar: 'fox', source: 'built-in' },
   { agentType: 'auditor', persona: 'auditor', avatar: null, source: 'user' },
 ] satisfies AgentIdentityEntry[];
@@ -51,7 +51,7 @@ describe('speaker headers', () => {
   test('names the conversation\'s own agent and does not label it', async () => {
     const { document } = await renderSpeaker({ avatarKey: 'main', name: 'main' });
 
-    expect(document.querySelector('.thread-speaker-name')?.textContent).toBe('Tenon');
+    expect(document.querySelector('.thread-speaker-name')?.textContent).toBe('Aspen');
     // There is one `main`, the reader is addressing it, and saying so states
     // the only thing about this participant nobody was wondering. A type label
     // answers "which kind of helper is this" — a delegate's question.

@@ -91,7 +91,7 @@ export const MAIN_PRESENTATION_KEY = 'main';
 
 /** The roster a fresh install starts with, keyed by Agent type. */
 export const DEFAULT_AGENT_PRESENTATIONS: Readonly<Record<string, AgentPresentation>> = Object.freeze({
-  [MAIN_PRESENTATION_KEY]: Object.freeze({ persona: 'Tenon', avatar: 'beaver' }),
+  [MAIN_PRESENTATION_KEY]: Object.freeze({ persona: 'Aspen', avatar: 'beaver' }),
   'general-purpose': Object.freeze({ persona: 'Bruno', avatar: 'bear' }),
   explore: Object.freeze({ persona: 'Rena', avatar: 'fox' }),
   plan: Object.freeze({ persona: 'Ada', avatar: 'owl' }),
