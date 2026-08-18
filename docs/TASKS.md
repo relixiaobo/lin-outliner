@@ -1118,6 +1118,20 @@ and the merged PR, distilled rules in [`lessons.md`](lessons.md). Everything
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
 
+- **send-scroll-anchor** (cc, PR #558, merged 2026-08-18 — fast-track, no plan
+  file) — a send used to be three movements and a stall; the transcript now draws
+  the sent message from the composer as a view-only Turn on the keystroke,
+  anchors it at the top inset on the pass it first renders, and travels there in
+  one tween. Two `/code-review high` rounds: round 1 found `/clear` and
+  `/compact` leaving a permanent phantom "sending" row (a context command
+  produces no `userMessage`, so the client id the row waited on was never
+  written) and a latched anchor target that could suspend the bottom pin for the
+  life of the mount; round 2 confirmed the fixes, verified the new `/clear` guard
+  fails against the pre-fix tree, and found the replacement coverage claimed for
+  the deleted anchor-latch assertion empty — that half ships fixed by
+  construction and unguarded. Gate: typecheck + `docs:check` + `test:renderer`
+  (1279) + `agent-thread` e2e (88).
+
 - **unreadable-thread-quarantine** (main, PR #555, merged 2026-08-18 — fast-track, no
   plan file) — the installed app exited at launch, every launch: #535's tool-enum
   narrowing shipped with no migration under the pre-release dev-wipe rule, but the

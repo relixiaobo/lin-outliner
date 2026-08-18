@@ -149,6 +149,51 @@ Entries reference the pull request that introduced them.
 
 ### Fixed
 
+- **Sending a message is one movement now, and it starts on the keystroke (PR
+  #558, cc)** — reported by the PM while testing: the transcript jumped after a
+  send, in the conversation and in a Subagent's detail view alike. A per-frame
+  probe found three movements and a stall that the settled position hid. The
+  anchor needed `acceptedTurn.id` from the `turn/submit` round trip, but the Turn
+  reaches the transcript on the `turn/started` notification a round trip earlier,
+  so the bottom pin owned the gap; submit opened with a jump to the very end, a
+  movement spent arriving somewhere it does not stay; the runway spacer and the
+  scroll were written a frame apart, so the scroll used numbers the spacer had
+  already changed and one frame put the message 42px past the top; and nothing at
+  all was on screen between the keystroke and the host's answer. The transcript
+  now draws the sent message itself, from the composer, as a view-only
+  in-progress Turn appended after the canonical list and never admitted to the
+  store; the view mints the `clientUserMessageId` and passes it through the
+  submit, which is how the anchor tells its own send from a delegated Agent's
+  result delivery arriving in the same window; the anchor runs synchronously from
+  the layout effects on the pass the message first renders, so spacer and scroll
+  land in one pre-paint pass; a steer keeps the bottom-follow path, since it
+  joins a reply the reader is already in the middle of; and the travel is a tween
+  over `--motion-layout-duration`, with reduced motion, sub-pixel distances and
+  distances over two viewports still cutting. Deliberately not a FLIP transform:
+  a transformed descendant contributes its *transformed* geometry to the scroll
+  container's overflow, which is exactly the number the runway spacer is computed
+  from, so that version undid its own anchor over a dozen frames — tweening the
+  scroll keeps every measurement true at every instant. Two `/code-review high`
+  rounds. Round 1 found the stand-in row waiting on an id that a whole class of
+  sends never writes: `/clear` and `/compact` leave the composer as ordinary text
+  and come back as a `contextReset` / `contextCompaction` Item under a Turn of
+  their own, so the phantom "sending" bubble sat under the reset it had just
+  performed, spinning, for the life of the mount — and the deduplicated repeat,
+  which the host answers with no Turn at all, left it there the same way. It also
+  found a latched anchor target that could name the stand-in row after that row
+  had left the DOM, stranding the pending anchor — and since a pending anchor is
+  what suspends the bottom pin, the transcript would never follow a streaming
+  reply again for the life of the mount — plus a measured-height entry leaked on
+  the refused-send path. The Turn a send became is now resolved by the client id
+  *or* by the Turn the host reports accepting, re-run on every anchor pass and
+  never latched, and a submission answered with no Turn retires the row on the
+  spot. Round 2 confirmed all four fixes and found the new `/clear` guard real —
+  it fails against the pre-fix tree — but the coverage claimed for the deleted
+  anchor-latch assertion empty: the virtualized-transcript test offered as its
+  replacement passes with or without that half of the fix, so that behavior ships
+  fixed by construction and unguarded. Gate: typecheck + `docs:check` +
+  `test:renderer` (1279) + the full `agent-thread` e2e spec (88).
+
 - **One unreadable Agent conversation no longer stops the app from starting (PR
   #555, main)** — the installed app exited at launch, every launch, against a
   userData directory that had been in daily use since 2026-08-05. PR #535

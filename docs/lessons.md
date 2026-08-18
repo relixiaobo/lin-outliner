@@ -1222,3 +1222,35 @@ silent success, and a silent success is worse than the refusal it replaced,
 because the model believes it and moves on. Probe both directions of every
 newly-general operation — set *and* unset, enter *and* leave — since the added
 direction is the one the author tested.
+
+## A coverage claim is verified by reverting the fix, not by reading the test
+
+#558's second gate round deleted an assertion whose premise was genuinely wrong
+and justified it by naming another test as the replacement cover. Reading both,
+the claim was plausible. Reverting only the fixed source file and re-running,
+the replacement **passed** — it never exercised the defect at all, so the
+behavior would have shipped with no guard while the PR said otherwise. The
+inverse check is just as cheap and just as necessary for a *new* guard: the
+`/clear` test added in the same round did fail against the pre-fix tree, which
+is the only thing that makes it a regression test rather than a description.
+**A test's coverage is a claim about code that no longer exists; the only way to
+read it is to put that code back.** `git checkout <pre-fix-sha> -- <file>`, run,
+restore — a minute at the gate, against a guard everyone will trust for years.
+
+## An optimistic row needs a way home from every answer, not only the one that echoes it
+
+The transcript in #558 draws the sent message immediately and retires it when
+the canonical Turn carrying the same `clientUserMessageId` arrives. That is
+exactly right for the send that becomes a message — and `/clear` and `/compact`
+are not those: they leave the composer as ordinary text, the host routes them
+into a context command, and what comes back is a `contextReset` Item under a Turn
+of its own. The id the row was waiting for is never written anywhere, so the
+stand-in spun forever under the reset it had just performed; the deduplicated
+repeat, answered with no Turn at all, was the same hole through a different
+branch. **When a view draws a stand-in for a request, enumerate the host's answer
+shapes, not the happy one: the answer that returns something else, and the answer
+that returns nothing, each need their own way to retire the row.** The fix that
+holds is a second, response-derived handle (the Turn the host reports accepting)
+plus an explicit retire on "no Turn at all" — never a renderer-side whitelist of
+the commands that behave differently, which re-derives the host's routing in the
+one place that cannot see it.
