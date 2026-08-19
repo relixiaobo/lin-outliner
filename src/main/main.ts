@@ -225,6 +225,7 @@ import type {
 import { loadWindowState, trackWindowState } from './windowState';
 import {
   loadAppPreferences,
+  saveLastAgentThreadConfiguration,
   saveLanguagePreference,
   saveThemePreference,
   saveTranslationLanguagePreference,
@@ -732,6 +733,27 @@ threadService = ThreadService.open(
     cleanupResidualAgentWorktree: (input) => agentWorktree.cleanupResidual(input),
     reportError,
     resolveRendererStartDefaults: async () => {
+      const remembered = loadAppPreferences().lastAgentThreadConfiguration;
+      if (remembered) {
+        const provider = await getProviderRuntimeConfig(remembered.modelProvider);
+        if (provider) {
+          try {
+            validateAgentModelSelection(
+              remembered.model,
+              remembered.reasoningEffort,
+              provider,
+            );
+            return {
+              modelProvider: remembered.modelProvider,
+              cwd: agentLocalFileRoot,
+              executionSelection: remembered,
+            };
+          } catch {
+            // Provider catalogs can change between launches. A stale preference
+            // falls through to the current provider and Profile defaults.
+          }
+        }
+      }
       const provider = await getActiveProviderRuntimeConfig();
       if (!provider) throw new Error('Configure an AI provider before starting a Thread.');
       return { modelProvider: provider.providerId, cwd: agentLocalFileRoot };
@@ -741,6 +763,7 @@ threadService = ThreadService.open(
       if (!provider) throw new Error(`Provider is not configured: ${selection.modelProvider}`);
       validateAgentModelSelection(selection.model, selection.reasoningEffort, provider);
     },
+    onRendererConfigurationCommitted: saveLastAgentThreadConfiguration,
     resolveUserContent: (content, context) => attachmentResolver.resolve(content, context),
     normalizeOutputImage: async ({ bytes, mimeType, signal }) => {
       try {

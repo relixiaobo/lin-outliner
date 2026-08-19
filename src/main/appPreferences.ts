@@ -1,6 +1,8 @@
 import { app } from 'electron';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { REASONING_EFFORTS, type ReasoningEffort } from '../core/agent/configuration';
+import type { ThreadConfigurationSummary } from '../core/agent/protocol';
 import { isThemeMode, type ThemeMode } from '../core/theme';
 import { isLocale, type Locale } from '../core/locale';
 import { isTranslationLanguage, type TranslationLanguage } from '../core/translationLanguage';
@@ -11,9 +13,8 @@ import {
 import { writeJsonFileSync } from './jsonFileStore';
 
 // Persist app-level UI preferences across launches (stored in userData, which is
-// already per-clone isolated). The appearance/theme preference and the display
-// language; new General-pane settings extend this shape. Kept separate from
-// window-state.ts (geometry) and the agent settings store (provider/runtime config).
+// already per-clone isolated). Kept separate from window-state.ts (geometry) and
+// the agent settings store (provider/runtime configuration and credentials).
 
 interface PersistedAppPreferences {
   theme: ThemeMode;
@@ -29,6 +30,8 @@ interface PersistedAppPreferences {
   autoTranslateUrls: boolean;
   // Local EPUB text has an independent explicit provider-sharing opt-in.
   autoTranslateEpubs: boolean;
+  // The last root Thread selection the user saved in the Agent composer.
+  lastAgentThreadConfiguration: ThreadConfigurationSummary | null;
 }
 
 const DEFAULTS: PersistedAppPreferences = {
@@ -38,6 +41,7 @@ const DEFAULTS: PersistedAppPreferences = {
   translationModel: null,
   autoTranslateUrls: false,
   autoTranslateEpubs: false,
+  lastAgentThreadConfiguration: null,
 };
 
 let currentPreferences: PersistedAppPreferences | null = null;
@@ -60,6 +64,9 @@ export function loadAppPreferences(): PersistedAppPreferences {
       translationModel: normalizeTranslationModel(parsed.translationModel),
       autoTranslateUrls: parsed.autoTranslateUrls === true,
       autoTranslateEpubs: parsed.autoTranslateEpubs === true,
+      lastAgentThreadConfiguration: normalizeAgentThreadConfiguration(
+        parsed.lastAgentThreadConfiguration,
+      ),
     };
   } catch {
     // No prior preferences, or the file is unreadable/invalid — fall back to defaults.
@@ -85,6 +92,14 @@ export function saveUrlPageTranslationPreferences(preferences: UrlPageTranslatio
   savePreferences(preferences);
 }
 
+export function saveLastAgentThreadConfiguration(
+  configuration: ThreadConfigurationSummary,
+): void {
+  savePreferences({
+    lastAgentThreadConfiguration: Object.freeze({ ...configuration }),
+  });
+}
+
 export function resetAppPreferencesForTests(): void {
   currentPreferences = null;
 }
@@ -104,4 +119,21 @@ function savePreferences(patch: Partial<PersistedAppPreferences>): void {
 
 function normalizeTranslationModel(value: unknown): string | null {
   return isUrlPageTranslationModel(value) ? value : null;
+}
+
+function normalizeAgentThreadConfiguration(value: unknown): ThreadConfigurationSummary | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (!isCanonicalSelectionString(record.modelProvider)) return null;
+  if (!isCanonicalSelectionString(record.model)) return null;
+  if (!REASONING_EFFORTS.includes(record.reasoningEffort as ReasoningEffort)) return null;
+  return Object.freeze({
+    modelProvider: record.modelProvider,
+    model: record.model,
+    reasoningEffort: record.reasoningEffort as ReasoningEffort,
+  });
+}
+
+function isCanonicalSelectionString(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value === value.trim();
 }

@@ -1125,8 +1125,9 @@ catalog has no Thread, the dock automatically starts and selects one root user
 Thread. The first usable surface is therefore the focused composer, not an
 explanatory empty state followed by a second creation click. Provider loading is
 neutral. When no provider is usable, the dock creates nothing and offers the
-Providers settings action instead. Starting a Thread resolves the current
-provider and working directory at the main-process boundary.
+Providers settings action instead. Starting a Thread resolves the remembered
+execution selection when it is still usable, or the current provider and Profile
+defaults otherwise, plus the working directory at the main-process boundary.
 
 The first accepted user input sets a Thread's empty preview from the first
 non-empty text part, then an attachment name, then a Node-reference note. The
@@ -1157,6 +1158,19 @@ viewport clamping are retained. A selection submits one atomic
 `thread/configuration/set` request. The chip is disabled during an active Turn,
 while a request is pending, and for non-root Threads; it never edits another
 agent entity or exposes host-private capability configuration.
+
+Once `thread/configuration/set` commits, the host immediately remembers the
+complete provider, model, and reasoning-effort selection as the default for new
+root conversations. This persistence happens when the user chooses the setting;
+it does not wait for a message, Turn, or model request. The choice survives an
+app restart and is shared by the Thread-list action and `/new`. Thread creation
+revalidates the remembered provider, model, and effort against the current
+catalog; an unavailable selection falls back to the current active provider and
+fresh Configuration Profile defaults instead of blocking creation. The overlay
+replaces only model and reasoning effort, so the fresh Profile still owns tools,
+Skills, plugins, MCP servers, developer instructions, and capability ceilings.
+Existing Threads remain unchanged, and forks continue to inherit their source
+Thread.
 
 Model selection is model-first. The list is flat: the model name leads each row,
 and the provider appears only as a secondary origin label, only when more than

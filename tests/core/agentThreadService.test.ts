@@ -24,6 +24,7 @@ import type {
   AgentCoreNotification,
   AgentCoreRecordedNotification,
   Thread,
+  ThreadConfigurationSummary,
   ThreadFileSource,
   ThreadImageArtifactReference,
   ThreadItem,
@@ -813,6 +814,59 @@ describe('ThreadService', () => {
     await fixture.service.close();
   });
 
+  test('starts a renderer-owned Thread with the remembered execution selection', async () => {
+    const resolvedProviders: string[] = [];
+    const fixture = await createFixture(undefined, {
+      resolveRendererStartDefaults: () => ({
+        modelProvider: 'openai',
+        cwd: '/tmp/agent-workdir',
+        executionSelection: {
+          modelProvider: 'anthropic',
+          model: 'anthropic/claude-sonnet-4',
+          reasoningEffort: 'high',
+        },
+      }),
+      resolveConfiguration: (request) => {
+        resolvedProviders.push(request.modelProvider);
+        return {
+          profileName: 'fresh-profile',
+          developerInstructions: ['Fresh instructions'],
+          model: 'inherit',
+          reasoningEffort: 'low',
+          tools: ['node_read'],
+          skills: ['fresh-skill'],
+          preloadedSkills: [],
+          plugins: ['fresh-plugin'],
+          mcpServers: ['fresh-mcp'],
+        };
+      },
+    });
+
+    const thread = (await fixture.service.startThread({ name: 'Remembered selection' })).thread;
+
+    expect(thread).toMatchObject({
+      modelProvider: 'anthropic',
+      cwd: '/tmp/agent-workdir',
+    });
+    expect(resolvedProviders).toEqual(['anthropic']);
+    expect(fixture.service.getThreadConfiguration(thread.id).configuration).toEqual({
+      modelProvider: 'anthropic',
+      model: 'anthropic/claude-sonnet-4',
+      reasoningEffort: 'high',
+    });
+    expect(fixture.stores.metadata.require(thread.id).configuration).toMatchObject({
+      profileName: 'fresh-profile',
+      developerInstructions: ['Fresh instructions'],
+      model: 'anthropic/claude-sonnet-4',
+      reasoningEffort: 'high',
+      tools: ['node_read'],
+      skills: ['fresh-skill'],
+      plugins: ['fresh-plugin'],
+      mcpServers: ['fresh-mcp'],
+    });
+    await fixture.service.close();
+  });
+
   test('derives the initial Thread preview for persistent and ephemeral Threads', async () => {
     const fixture = await createFixture();
     const persistent = (await fixture.service.startThread({
@@ -1437,6 +1491,63 @@ describe('ThreadService', () => {
         reasoningEffort: 'high',
       },
     });
+    await fixture.service.close();
+  });
+
+  test('reports a saved execution selection immediately without waiting for a Turn', async () => {
+    const committed: ThreadConfigurationSummary[] = [];
+    const fixture = await createFixture(undefined, {
+      onRendererConfigurationCommitted: (configuration) => { committed.push(configuration); },
+    });
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+
+    await fixture.service.request('thread/configuration/set', {
+      threadId: root.id,
+      modelProvider: 'anthropic',
+      model: 'anthropic/claude-sonnet-4',
+      reasoningEffort: 'high',
+    });
+
+    expect(committed).toEqual([{
+      modelProvider: 'anthropic',
+      model: 'anthropic/claude-sonnet-4',
+      reasoningEffort: 'high',
+    }]);
+    expect(fixture.service.listTurns({ threadId: root.id }).data).toEqual([]);
+    await fixture.service.close();
+  });
+
+  test('does not report preference persistence failure as a configuration failure', async () => {
+    const fixture = await createFixture(undefined, {
+      onRendererConfigurationCommitted: () => { throw new Error('preference write failed'); },
+    });
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+
+    await expect(fixture.service.request('thread/configuration/set', {
+      threadId: root.id,
+      modelProvider: 'anthropic',
+      model: 'anthropic/claude-sonnet-4',
+      reasoningEffort: 'high',
+    })).resolves.toMatchObject({
+      thread: { modelProvider: 'anthropic' },
+      configuration: {
+        modelProvider: 'anthropic',
+        model: 'anthropic/claude-sonnet-4',
+        reasoningEffort: 'high',
+      },
+    });
+    expect(fixture.stores.metadata.require(root.id).configuration.model)
+      .toBe('anthropic/claude-sonnet-4');
     await fixture.service.close();
   });
 
@@ -12439,6 +12550,7 @@ async function createFixture(
     | 'resolveSkillAdmission'
     | 'resolveUserContent'
     | 'validateRendererConfiguration'
+    | 'onRendererConfigurationCommitted'
     | 'nameGenerator'
     | 'normalizeOutputImage'
     | 'beforeInitialTurnAdmission'
@@ -12562,6 +12674,7 @@ async function openFixture(
     | 'resolveSkillAdmission'
     | 'resolveUserContent'
     | 'validateRendererConfiguration'
+    | 'onRendererConfigurationCommitted'
     | 'nameGenerator'
     | 'normalizeOutputImage'
     | 'beforeInitialTurnAdmission'

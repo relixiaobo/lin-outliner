@@ -74,6 +74,8 @@ export class ThreadCatalogOps {
     private readonly resolveConfiguration: (request: ThreadStartRequest) => EffectiveThreadConfiguration | Promise<EffectiveThreadConfiguration>,
     private readonly resolveRendererStartDefaults: () => RendererThreadStartDefaults | Promise<RendererThreadStartDefaults>,
     private readonly validateRendererConfiguration: (configuration: ThreadConfigurationSummary) => void | Promise<void>,
+    private readonly onRendererConfigurationCommitted:
+      ((configuration: ThreadConfigurationSummary) => void) | undefined,
     private readonly now: () => number,
     private readonly isClosing: () => boolean,
     private readonly turnLifecycle: TurnLifecycle,
@@ -277,6 +279,12 @@ export class ThreadCatalogOps {
             now,
           );
         }
+        try {
+          this.onRendererConfigurationCommitted?.(configuration);
+        } catch {
+          // The Thread update is canonical; a secondary preference must not turn
+          // that committed change into a false renderer-visible failure.
+        }
         return { thread, configuration };
       });
     }
@@ -284,20 +292,34 @@ export class ThreadCatalogOps {
       const defaults = requestInput.modelProvider && requestInput.cwd
         ? null
         : await this.resolveRendererStartDefaults();
+      const executionSelection = requestInput.modelProvider === undefined && requestInput.cwd === undefined
+        ? defaults?.executionSelection
+        : undefined;
       const request: ThreadStartRequest = {
         ...requestInput,
         source: requestInput.source ?? 'app',
         threadSource: requestInput.threadSource ?? 'user',
-        modelProvider: requestInput.modelProvider ?? defaults?.modelProvider ?? '',
+        modelProvider: executionSelection?.modelProvider
+          ?? requestInput.modelProvider
+          ?? defaults?.modelProvider
+          ?? '',
         cwd: requestInput.cwd ?? defaults?.cwd ?? '',
       };
       return this.core.hostRootMutex.run(async () => {
+        const configuration = executionSelection
+          ? Object.freeze({
+              ...await this.resolveConfiguration(request),
+              model: executionSelection.model,
+              reasoningEffort: executionSelection.reasoningEffort,
+            })
+          : undefined;
         const thread = await this.createThread(request, {
           sessionId: uuidV7(this.now()),
           parentThreadId: null,
           forkedFromId: null,
           agentRole: null,
           agentNickname: null,
+          ...(configuration ? { configuration } : {}),
         });
         return { thread };
       });

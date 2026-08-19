@@ -3,9 +3,11 @@
 ## Goal
 
 New root conversations reuse the last execution selection that the user
-successfully chose in the Agent composer. The remembered selection includes the
-provider, model, and reasoning effort, survives an app restart, and applies to
-creation from both the conversation list and `/new`.
+successfully saved in the Agent composer. Saving happens immediately when the
+user chooses a model or reasoning effort; it does not wait for a message, Turn,
+or model request. The remembered selection includes the provider, model, and
+reasoning effort, survives an app restart, and applies to creation from both the
+conversation list and `/new`.
 
 This is one complete feature in one PR.
 
@@ -29,10 +31,11 @@ other preferences.
 
 `ThreadCatalogOps.setThreadConfiguration` remains the atomic write authority.
 After validation and the canonical Thread configuration update both succeed, it
-notifies an optional `ThreadService` host callback with the committed summary.
-The Electron main composition root uses that callback to save the preference.
-Preference persistence is best effort and cannot turn a committed Thread update
-into a renderer-visible failure.
+immediately notifies an optional `ThreadService` host callback with the committed
+summary. The Electron main composition root uses that callback to save the
+preference before any message or model request is needed. Preference persistence
+is best effort and cannot turn a committed Thread update into a renderer-visible
+failure.
 
 ### New Thread defaults
 
@@ -99,14 +102,13 @@ Run `bun run typecheck`, the focused Core tests, `bun run test:core`,
 
 ## Collision Result
 
-`gh pr list`, `docs/TASKS.md`, and active-plan scope show no implementation-file
-overlap. Open PR #564 also edits `docs/spec/agent-core.md`, so this change keeps
-its behavior update in the owning `docs/spec/agent-thread-rendering.md` document
-and does not touch that shared file. No infrastructure-ownership file or Agent
-Core protocol surface is involved.
+`gh pr list`, `docs/TASKS.md`, and active-plan scope show no conflicting hunk or
+symbol. PR #564 merged during the build and changed no implementation file in
+this scope. Open PR #565 overlaps only on `src/main/main.ts`: its Agent identity
+writer imports and command registrations are disjoint from this change's app
+preference import and Thread-service options. No infrastructure-ownership file
+or Agent Core protocol surface is involved.
 
 ## Open Questions
 
-PM ratification: treat provider, model, and reasoning effort as one remembered
-execution selection, and retain it across app restarts rather than only copying
-the currently open conversation within one renderer session.
+None.
