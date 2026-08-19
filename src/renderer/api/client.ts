@@ -479,6 +479,9 @@ export const api = {
     cwd?: string;
     name: string;
     profile: AgentProfileDraft;
+    /** The same agent's re-skin, applied in the same validated edit. */
+    agentType?: string;
+    presentation?: { persona?: string; color?: string };
   }) => command<AgentEditorView>('agent_write_profile', input),
   agentWritePresentation: (input: {
     layer: 'user' | 'project';

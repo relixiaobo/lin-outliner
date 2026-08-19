@@ -9,6 +9,7 @@ import {
   userConfigurationPath,
 } from '../../src/main/agent/AgentConfigurationLoader';
 import { AgentConfigurationWriter } from '../../src/main/agent/AgentConfigurationWriter';
+import { resolveChildConfiguration } from '../../src/core/agent/configuration';
 
 const roots: string[] = [];
 
@@ -63,20 +64,89 @@ describe('AgentConfigurationWriter', () => {
       skills: ['review'],
     });
 
-    // An empty list is the editor saying "everything is checked" — which must
-    // clear the narrowing rather than write today's catalogue out, or a tool
-    // added to Tenon later would be excluded by a list nobody meant as final.
+    // `null` is the editor saying "everything is checked" — which must clear the
+    // narrowing rather than write today's catalogue out, or a tool added to
+    // Tenon later would be excluded by a list nobody meant as final.
     await writer.writeRole('user', cwd, {
       name: 'auditor',
       description: 'Audits.',
       developerInstructions: 'Read the diff.',
-      tools: [],
-      skills: [],
+      tools: null,
+      skills: null,
     }, 'update');
 
     expect(loader.listEditableRoles(cwd)[0]).toMatchObject({ tools: null, skills: null });
     expect(JSON.parse(await readFile(userConfigurationPath(userData), 'utf8')).roles.auditor.overrides)
       .toBeUndefined();
+  });
+
+  test('an empty capability list is a ban, not a shorthand for inherit', async () => {
+    const { writer, loader, cwd } = await fixture();
+
+    await writer.writeRole('user', cwd, {
+      name: 'reviewer',
+      description: 'Reads only.',
+      developerInstructions: 'Read, never act.',
+      tools: [],
+    }, 'create');
+
+    // A user who unchecks every tool means none. Collapsing that to "no
+    // narrowing" would hand the Role its parent's ENTIRE tool set on the next
+    // spawn — the exact opposite of what they asked for.
+    expect(loader.listEditableRoles(cwd)[0]).toMatchObject({ tools: [] });
+    const child = resolveChildConfiguration(
+      loader.resolveProfile(undefined, cwd),
+      { role: loader.resolveRole('reviewer', cwd) },
+    );
+    expect(child.tools).toEqual([]);
+  });
+
+  test('a Profile save keeps the model the editor has no field for', async () => {
+    const { writer, loader, cwd, userData } = await fixture();
+    await writeJson(userConfigurationPath(userData), {
+      profiles: { default: { model: 'gpt-5', reasoningEffort: 'high', developerInstructions: 'Old.' } },
+    });
+
+    // What the editor sends: instructions and the two capability lists. It has
+    // no box for model or reasoning, so a Save must not remove them.
+    await writer.writeProfile('user', cwd, 'default', {
+      developerInstructions: 'New.',
+      tools: null,
+      skills: null,
+    });
+
+    expect(loader.resolveEditableProfile(cwd)).toMatchObject({
+      developerInstructions: 'New.',
+      model: 'gpt-5',
+      reasoningEffort: 'high',
+    });
+  });
+
+  test('the conversation agent\'s identity and Profile land in one edit', async () => {
+    const { writer, loader, cwd } = await fixture();
+
+    await writer.writeProfile('user', cwd, 'default', { developerInstructions: 'Answer in Chinese.' }, {
+      agentType: 'main',
+      draft: { persona: 'Juniper' },
+    });
+
+    // One Save, one validated edit: a refused half must not leave the other half
+    // on disk.
+    expect(loader.resolveEditableProfile(cwd)).toMatchObject({ developerInstructions: 'Answer in Chinese.' });
+    expect(loader.listPresentationOverrides(cwd))
+      .toEqual([{ agentType: 'main', layer: 'user', persona: 'Juniper', color: null }]);
+  });
+
+  test('a refused Profile write leaves the paired identity change unwritten too', async () => {
+    const { writer, loader, cwd } = await fixture();
+
+    await expect(writer.writeProfile('user', cwd, 'default', { developerInstructions: 'Kept?' }, {
+      agentType: 'main',
+      draft: { persona: 'Juniper', color: 'chartreuse' },
+    })).rejects.toThrow(/chartreuse/);
+
+    expect(loader.resolveEditableProfile(cwd)).toMatchObject({ layer: null });
+    expect(loader.listPresentationOverrides(cwd)).toEqual([]);
   });
 
   test('the conversation agent\'s Profile carries instructions and the ceiling', async () => {
@@ -109,10 +179,31 @@ describe('AgentConfigurationWriter', () => {
     const { writer, loader, cwd, userData } = await fixture();
     await writer.writeProfile('user', cwd, 'default', { developerInstructions: 'Temporary.' });
 
-    await writer.writeProfile('user', cwd, 'default', {});
+    // What clearing looks like from the editor: instructions emptied, every box
+    // checked. An empty DRAFT means "mentioned nothing", which changes nothing.
+    await writer.writeProfile('user', cwd, 'default', {
+      developerInstructions: '',
+      tools: null,
+      skills: null,
+    });
 
     expect(loader.resolveEditableProfile(cwd)).toMatchObject({ layer: null, developerInstructions: null });
     expect(JSON.parse(await readFile(userConfigurationPath(userData), 'utf8'))).toEqual({});
+  });
+
+  test('a draft that mentions nothing changes nothing', async () => {
+    const { writer, loader, cwd } = await fixture();
+    await writer.writeProfile('user', cwd, 'default', {
+      developerInstructions: 'Kept.',
+      tools: ['file_read'],
+    });
+
+    await writer.writeProfile('user', cwd, 'default', {});
+
+    expect(loader.resolveEditableProfile(cwd)).toMatchObject({
+      developerInstructions: 'Kept.',
+      tools: ['file_read'],
+    });
   });
 
   test('a save keeps the overrides the editor never shows', async () => {
@@ -170,7 +261,9 @@ describe('AgentConfigurationWriter', () => {
     const { writer, cwd } = await fixture();
     const draft = { description: 'Impostor.', developerInstructions: 'Take the work.' };
 
-    for (const name of ['main', 'general-purpose', 'explore', 'plan']) {
+    // Including the BACKING names: every spawn that names no role asks for
+    // `default`, and `resolveRole` prefers a configured entry over the built-in.
+    for (const name of ['main', 'general-purpose', 'explore', 'plan', 'default', 'explorer']) {
       // `main` names the conversation's own agent; a built-in canonical type is
       // dropped by `agentTypeCandidates` yet preferred by `resolveRole`, so a
       // Role by that name would never dispatch while shadowing the built-in's
@@ -283,6 +376,27 @@ describe('AgentConfigurationWriter', () => {
     // An empty `roles: {}` left behind would read as "the user has an empty
     // collection" instead of "the user has none".
     expect(JSON.parse(await readFile(userConfigurationPath(userData), 'utf8'))).toEqual({});
+  });
+
+  test('names a Thread by its type, and an isolated Skill by its own name', async () => {
+    const { writer, loader, cwd } = await fixture();
+    const thread = { parentThreadId: 'parent', agentRole: 'explorer', agentNickname: null, cwd };
+
+    // A child records its BACKING Role while identity keys on the canonical
+    // type, so this has to hop `explorer` → `explore` or it would be told a
+    // name the reader never sees.
+    expect(loader.resolveThreadPersona(thread)).toBe('Rena');
+    expect(loader.resolveThreadPersona({ ...thread, parentThreadId: null })).toBe('Aspen');
+
+    // An isolated Skill is spawned with `role: 'default'` and the Skill's name
+    // as its nickname. Resolving by type would tell it it is Bruno.
+    expect(loader.resolveThreadPersona({
+      ...thread, agentRole: 'default', agentNickname: 'code-review',
+    })).toBe('code-review');
+
+    await writer.writePresentation('user', cwd, 'explore', { persona: 'Juniper' });
+    // And it follows configuration, so a rename reaches the next Turn.
+    expect(loader.resolveThreadPersona(thread)).toBe('Juniper');
   });
 
   test('deleting a Role that is not there says so instead of writing a no-op', async () => {

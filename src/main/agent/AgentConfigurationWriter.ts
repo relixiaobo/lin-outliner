@@ -118,18 +118,27 @@ export class AgentConfigurationWriter {
     cwd: string,
     name: string,
     draft: AgentProfileDraft,
+    /**
+     * The conversation agent's own re-skin, applied in the SAME edit. From the
+     * user's side "change this agent" was one Save; as two sequential writes a
+     * refused second one left the first already on disk.
+     */
+    presentation?: { readonly agentType: string; readonly draft: PresentationDraft },
   ): Promise<void> {
     await this.edit(target, cwd, (config) => {
+      if (presentation) {
+        config = applyPresentation(config, presentation.agentType, presentation.draft);
+      }
       const profiles = asObject(config.profiles);
       const existing = asObject(profiles[name]);
       const next: JsonObject = { ...existing };
-      const instructions = draft.developerInstructions?.trim();
-      if (instructions) next.developerInstructions = instructions;
-      else delete next.developerInstructions;
-      if (draft.model) next.model = draft.model;
-      else delete next.model;
-      if (draft.reasoningEffort) next.reasoningEffort = draft.reasoningEffort;
-      else delete next.reasoningEffort;
+      // Same rule as capabilities: a field the draft never mentioned survives.
+      // The editor shows instructions and the two capability lists; `model` and
+      // `reasoningEffort` it does not, and a Save must not delete a model the
+      // user hand-wrote just because this form has no box for it.
+      applyText(next, 'developerInstructions', draft.developerInstructions);
+      applyText(next, 'model', draft.model);
+      applyText(next, 'reasoningEffort', draft.reasoningEffort);
       applyCapabilities(next, draft);
       if (Object.keys(next).length > 0) profiles[name] = next;
       else delete profiles[name];
@@ -169,18 +178,7 @@ export class AgentConfigurationWriter {
     agentType: string,
     draft: PresentationDraft,
   ): Promise<void> {
-    await this.edit(target, cwd, (config) => {
-      const overrides = asObject(config.presentationOverrides);
-      const entry: JsonObject = {};
-      const persona = draft.persona?.trim();
-      if (persona !== undefined && persona.length > 0) entry.persona = persona;
-      if (draft.color !== undefined && draft.color.length > 0) entry.color = assertColor(draft.color);
-      if (Object.keys(entry).length > 0) overrides[agentType] = entry;
-      else delete overrides[agentType];
-      return Object.keys(overrides).length > 0
-        ? { ...config, presentationOverrides: overrides }
-        : withoutKey(config, 'presentationOverrides');
-    });
+    await this.edit(target, cwd, (config) => applyPresentation(config, agentType, draft));
   }
 
   private layerPath(target: ConfigurationLayerTarget, cwd: string): string {
@@ -238,24 +236,50 @@ export class AgentConfigurationWriter {
 }
 
 /**
- * Apply a capability narrowing, where ABSENCE is the meaningful state.
+ * Apply a capability narrowing across its three real states.
  *
- * `undefined` leaves whatever is on disk alone — the editor may not show these
- * fields at all. An empty array clears the narrowing, which restores "inherit
- * everything": it is the caller's job to send `[]` rather than today's full
- * catalogue, because a written-out full list freezes the set and quietly
- * excludes every tool or Skill added afterwards.
+ * `undefined` leaves what is on disk alone — a draft that never mentioned a
+ * field must not destroy it. `null` REMOVES the narrowing, which restores
+ * inherit-everything; the editor sends this rather than today's full catalogue,
+ * because a written-out full list freezes the set and quietly excludes every
+ * tool or Skill added afterwards. An array is the exact set, and an EMPTY array
+ * is a ban rather than a shorthand for inherit — `constrainChildCapabilities`
+ * honours it, so collapsing it here would turn a user's "none" into "all".
  */
 function applyCapabilities(
   target: JsonObject,
-  draft: { readonly tools?: readonly string[]; readonly skills?: readonly string[] },
+  draft: {
+    readonly tools?: readonly string[] | null;
+    readonly skills?: readonly string[] | null;
+  },
 ): void {
   for (const key of ['tools', 'skills'] as const) {
     const value = draft[key];
     if (value === undefined) continue;
-    if (value.length === 0) delete target[key];
+    if (value === null) delete target[key];
     else target[key] = [...value];
   }
+}
+
+function applyPresentation(config: JsonObject, agentType: string, draft: PresentationDraft): JsonObject {
+  const overrides = asObject(config.presentationOverrides);
+  const entry: JsonObject = {};
+  const persona = draft.persona?.trim();
+  if (persona !== undefined && persona.length > 0) entry.persona = persona;
+  if (draft.color !== undefined && draft.color.length > 0) entry.color = assertColor(draft.color);
+  if (Object.keys(entry).length > 0) overrides[agentType] = entry;
+  else delete overrides[agentType];
+  return Object.keys(overrides).length > 0
+    ? { ...config, presentationOverrides: overrides }
+    : withoutKey(config, 'presentationOverrides');
+}
+
+/** Absent leaves the key; empty removes it so the built-in default returns. */
+function applyText(target: JsonObject, key: string, value: string | undefined): void {
+  if (value === undefined) return;
+  const trimmed = value.trim();
+  if (trimmed.length > 0) target[key] = trimmed;
+  else delete target[key];
 }
 
 function asObject(value: unknown): JsonObject {

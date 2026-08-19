@@ -3624,6 +3624,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           const role = args.role as {
             name: string; description: string; developerInstructions: string;
             persona?: string; color?: string;
+            tools?: string[] | null; skills?: string[] | null;
           };
           const layer = args.layer === 'project' ? 'project' : 'user';
           const clash = agentRoles.find((candidate) => candidate.name === role.name);
@@ -3641,7 +3642,8 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             // no field for these, so it must not be able to erase them.
             model: clash?.model ?? null,
             reasoningEffort: clash?.reasoningEffort ?? null,
-            tools: clash?.tools ?? null,
+            tools: role.tools === undefined ? clash?.tools ?? null : role.tools,
+            skills: role.skills === undefined ? clash?.skills ?? null : role.skills,
           };
           const index = agentRoles.findIndex((candidate) => candidate.name === role.name);
           if (index >= 0) agentRoles[index] = next;
@@ -3657,14 +3659,22 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         }
         if (cmd === 'agent_write_profile') {
           const profile = (args.profile ?? {}) as {
-            developerInstructions?: string; tools?: string[]; skills?: string[];
+            developerInstructions?: string; tools?: string[] | null; skills?: string[] | null;
           };
           agentProfile.layer = args.layer === 'project' ? 'project' : 'user';
           agentProfile.developerInstructions = profile.developerInstructions || null;
-          // Absence is the meaningful state: an empty list clears the narrowing
-          // back to inheriting everything, exactly as the writer does.
-          agentProfile.tools = profile.tools && profile.tools.length > 0 ? profile.tools : null;
-          agentProfile.skills = profile.skills && profile.skills.length > 0 ? profile.skills : null;
+          // Three states, like the writer: undefined leaves it, null removes the
+          // narrowing, an array — including empty — is the exact set.
+          if (profile.tools !== undefined) agentProfile.tools = profile.tools;
+          if (profile.skills !== undefined) agentProfile.skills = profile.skills;
+          // The paired re-skin lands in the same write, not a second one.
+          const presentation = args.presentation as { persona?: string; color?: string } | undefined;
+          if (presentation) {
+            const agentType = String(args.agentType ?? '');
+            const entry = agentIdentityEntries.find((candidate) => candidate.agentType === agentType);
+            if (entry && presentation.persona) entry.persona = presentation.persona;
+            if (entry && presentation.color) entry.color = presentation.color;
+          }
           return clone(agentIdentityView()) as T;
         }
         if (cmd === 'agent_write_presentation') {

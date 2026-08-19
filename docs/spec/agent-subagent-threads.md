@@ -191,7 +191,16 @@ It is resolved **per Turn** (`resolveAgentPersona`), not recorded in the
 configuration a resumed Turn replays: a rename reaches the next Turn, and a
 display name never has to be versioned into the configuration codec. A Thread
 records its BACKING Role (`explorer`) while identity is keyed on the canonical
-type (`explore`), so the resolver maps one to the other.
+type (`explore`), so the resolver maps one to the other. A recorded **nickname
+wins**: an isolated Skill is spawned as `role: 'default'` with the Skill's name
+as its nickname, and resolving it by type would tell it it is `Bruno` when its
+own name is what it is.
+
+The reserved names a Role may not take are `main`, every built-in canonical
+type, AND every built-in BACKING name — `resolveRole` prefers a configured entry
+over the built-in definition, and every spawn that names no role asks for
+`default`, so a user Role called `default` would quietly become the instructions
+every untyped Subagent runs.
 
 What still does NOT carry a persona is DISPATCH. The Role catalog's entries and
 its `contentHash` exclude presentation, so renaming an Agent does not
@@ -266,16 +275,32 @@ conversation agent's Configuration Profile is the ceiling they are narrowed
 from. Both are edited as checkbox lists of everything the install has, all
 checked by default: checked means available, and unchecking is the only gesture.
 
-**All-checked is written as the ABSENCE of a list, never as today's catalogue.**
-A written-out full list freezes the set, so a tool or Skill added to Tenon later
+A narrowing has **three** states and the write protocol carries all three:
+absent leaves what is on disk (a draft that never mentioned a field must not
+destroy it), `null` REMOVES the narrowing so everything is inherited, and an
+array is the exact set — **including an empty array, which is a ban rather than
+a shorthand for inherit**, because `constrainChildCapabilities` honours it and
+collapsing it would turn a user's "none" into "all".
+
+All-checked is therefore written as `null`, never as today's catalogue: a
+written-out full list freezes the set, so a tool or Skill added to Tenon later
 would be silently excluded by a list nobody meant as final. The stored `['*']`
-Skill wildcard reads back as every Skill for the same reason. The catalogue of
-what may be named travels with the editor's view rather than being imported by
-the renderer, so a settings pane cannot drift from the runtime's real tool set.
+Skill wildcard reads back as every Skill for the same reason. Anything already
+stored that the catalogue does not know — an MCP or extension tool, a Skill
+declared but not installed — is RENDERED as its own row, so a save cannot
+silently drop what the editor could not name. The catalogue itself travels with
+the editor's view rather than being imported by the renderer, so a settings pane
+cannot drift from the runtime's real tool set.
 
 `plugins` and `mcpServers` are narrowable in the file but have no editor field;
 a Role write MERGES `overrides`, so they — and anything else hand-written —
-survive a save untouched.
+survive a save untouched. The Profile write follows the same rule for `model`
+and `reasoningEffort`, which the editor also does not show.
+
+The conversation agent's identity and its Profile are **one** command
+(`agent_write_profile` carrying an optional presentation), applied inside a
+single validated edit: they are two parts of one file, the user pressed Save
+once, and as two sequential writes a refused second one left the first on disk.
 
 The model choice resolves in this order: per-call override, Role override, then
 parent model. Reasoning effort has no model-visible Agent argument; a Role may

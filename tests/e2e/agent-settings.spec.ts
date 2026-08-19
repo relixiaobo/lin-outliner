@@ -288,11 +288,24 @@ test.describe('agent settings window', () => {
     await expect(dialog.getByRole('textbox', { name: 'Type' })).toHaveValue('');
   });
 
+  test('a refused write is readable, because the pane banner sits behind the modal', async ({ page }) => {
+    const settings = await openSettings(page, '&category=agent/agents');
+    await settings.getByRole('button', { name: 'Add an agent' }).click();
+    const dialog = page.getByRole('dialog');
+
+    // The name rule is stated at the field rather than left to the write
+    // boundary — where the message would land behind the backdrop and Save
+    // would read as doing nothing at all.
+    await dialog.getByRole('textbox', { name: 'Type' }).fill('Code Reviewer');
+
+    await expect(dialog.getByRole('alert')).toContainText('letters, digits, hyphens');
+    await expect(dialog.getByRole('button', { name: 'Save' })).toBeDisabled();
+  });
+
   test('refuses to create an agent over a name that already exists', async ({ page }) => {
     const settings = await openSettings(page, '&category=agent/agents');
 
-    await settings.getByRole('list', { name: 'Agents you defined' }).getByRole('button', { name: /Add an agent/ })
-      .or(settings.getByRole('button', { name: 'Add an agent' })).first().click();
+    await settings.getByRole('button', { name: 'Add an agent' }).click();
     const dialog = page.getByRole('dialog');
     await dialog.getByRole('textbox', { name: 'Type' }).fill('auditor');
 

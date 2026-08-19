@@ -218,6 +218,11 @@ const BUILT_IN_AGENT_TYPES = [
 export const RESERVED_AGENT_TYPE_NAMES: readonly string[] = Object.freeze([
   MAIN_PRESENTATION_KEY,
   ...BUILT_IN_AGENT_TYPES.map((entry) => entry.canonicalType),
+  // The BACKING names too. `resolveRole` prefers a configured entry over the
+  // built-in definition, and every spawn that names no role asks for
+  // `default` — so a user Role called `default` would quietly become the
+  // instructions every untyped Subagent runs.
+  ...BUILT_IN_AGENT_TYPES.map((entry) => entry.backingRole),
 ]);
 
 export class AgentConfigurationLoader {
@@ -361,6 +366,27 @@ export class AgentConfigurationLoader {
     // Named after itself when the catalog has nothing — the same degradation the
     // renderer's resolver makes, so the two never disagree about who is talking.
     return entry?.persona.trim() || key;
+  }
+
+  /**
+   * The name one Thread's agent answers to.
+   *
+   * A recorded nickname wins over the type's persona: an isolated Skill is
+   * spawned with `role: 'default'` and the Skill's own name as its nickname, so
+   * resolving by type would tell it it is `Bruno` — the general-purpose persona
+   * — when its own name IS what it is.
+   */
+  resolveThreadPersona(thread: {
+    readonly parentThreadId: string | null;
+    readonly agentRole: string | null;
+    readonly agentNickname: string | null;
+    readonly cwd: string;
+  }): string {
+    return thread.agentNickname?.trim()
+      || this.resolveAgentPersona(
+        thread.parentThreadId === null ? null : thread.agentRole,
+        thread.cwd,
+      );
   }
 
   /**

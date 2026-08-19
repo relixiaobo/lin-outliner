@@ -324,9 +324,9 @@ Exact placement was the reversible local decision; the contract below is not.
   identity-palette hue) write to `presentationOverrides` in the chosen layer.
   Behaviour is stated as locked rather than shown read-only: the built-in
   instructions are code, not configuration, so displaying them would invite an
-  edit the surface cannot accept. A **"Duplicate as custom Role"** action is
-  deferred — it needs the built-in definitions exported as seed data, which is
-  a protocol change, not an editor change.
+  edit the surface cannot accept. **"Duplicate as custom Role"** ships (see §4b):
+  `listBuiltInDefinitions` exports the frozen definitions as seed data, so the
+  copy starts from the real thing rather than a blank form.
 - **Custom Roles: fully editable.** Canonical name (loader validation via
   `normalizeSelectedName`; renaming = create + delete), persona, colour,
   description, `developerInstructions`, and `overrides` (model,

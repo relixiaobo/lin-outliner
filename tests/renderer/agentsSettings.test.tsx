@@ -159,10 +159,29 @@ describe('the Agents editor', () => {
     expect(dialog?.textContent).toContain('Capabilities');
 
     await click(document.querySelector('.agent-editor-actions .button-primary')!);
-    // Identity and configuration are two writes behind one Save, because from
-    // the user's side "change this agent" was one gesture.
+    // ONE write, carrying both halves: identity and configuration live in the
+    // same file, and as two sequential writes a refused second one left the
+    // first already on disk.
     expect(calls.map((call) => call.name))
-      .toEqual(['agent_identity_catalog', 'agent_write_presentation', 'agent_write_profile']);
+      .toEqual(['agent_identity_catalog', 'agent_write_profile']);
+    expect(calls[1]!.args).toMatchObject({ agentType: 'main' });
+  });
+
+  test('a refused write reports inside the dialog, not behind its backdrop', async () => {
+    const { document, click } = await renderAgents({
+      onInvoke: (name) => {
+        if (name !== 'agent_identity_catalog') throw new Error('Refused: roles.x must use letters');
+        return VIEW;
+      },
+    });
+    await click(rowByLabel(document, 'Wren'));
+
+    await click(document.querySelector('.agent-editor-actions .button-primary')!);
+
+    // The pane's shared feedback block is behind the modal backdrop, so an
+    // error raised there made Save look like it did nothing at all.
+    const dialog = document.querySelector('.agent-editor-dialog');
+    expect(dialog?.querySelector('[role="alert"]')?.textContent).toContain('Refused:');
   });
 
   test('an untouched capability list is written as inherit, not as today\'s catalogue', async () => {
@@ -188,6 +207,53 @@ describe('the Agents editor', () => {
 
     const role = (calls[1]!.args as { role: { tools: string[] } }).role;
     expect(role.tools).toEqual(['file_read', 'bash']);
+  });
+
+  test('unchecking every tool is a ban, not a grant of everything', async () => {
+    const { document, click, calls } = await renderAgents();
+    await click(rowByLabel(document, 'Wren'));
+
+    for (const key of ['file_read', 'file_write', 'bash']) await click(capability(document, key));
+    await click(document.querySelector('.agent-editor-actions .button-primary')!);
+
+    // `[]`, not `null`. A user who unchecks every row means none; writing "no
+    // narrowing" would hand the Role its parent's entire tool set instead.
+    expect((calls[1]!.args as { role: { tools: string[] } }).role.tools).toEqual([]);
+  });
+
+  test('a narrowing the catalogue does not know about is shown and kept', async () => {
+    const { document, click, calls } = await renderAgents({
+      view: {
+        ...VIEW,
+        roles: [{ ...VIEW.roles[0]!, tools: ['file_read', 'mcp.search'] }],
+      },
+    });
+
+    await click(rowByLabel(document, 'Wren'));
+
+    // An MCP or extension tool is stored but absent from the catalogue. It has
+    // to be RENDERED, or saving would silently delete it.
+    expect(() => capability(document, 'mcp.search')).not.toThrow();
+    await click(document.querySelector('.agent-editor-actions .button-primary')!);
+    expect((calls[1]!.args as { role: { tools: string[] } }).role.tools)
+      .toEqual(['file_read', 'mcp.search']);
+  });
+
+  test('the conversation agent\'s ceiling can be widened back after it is narrowed', async () => {
+    const { document, click, calls } = await renderAgents({
+      view: { ...VIEW, profile: { ...VIEW.profile, layer: 'user', tools: ['file_read'] } },
+    });
+
+    await click(rowByLabel(document, 'Aspen'));
+    // Re-check what was excluded, so every box is checked again.
+    await click(capability(document, 'file_write'));
+    await click(capability(document, 'bash'));
+    await click(document.querySelector('.agent-editor-actions .button-primary')!);
+
+    // `null` REMOVES the stored list. Omitting the key would leave the stale
+    // narrowing on disk while the UI showed the tools enabled.
+    const profile = (calls[1]!.args as { profile: { tools: unknown } }).profile;
+    expect(profile.tools).toBeNull();
   });
 
   test('duplicating a built-in seeds a Role from its real definition', async () => {
@@ -241,7 +307,7 @@ describe('the Agents editor', () => {
   });
 
   test('a refused write reports why and leaves the editor standing', async () => {
-    const { document, click, onError } = await renderAgents({
+    const { document, click } = await renderAgents({
       onInvoke: (name) => {
         if (name !== 'agent_identity_catalog') throw new Error("Refused: Unknown identity colour 'chartreuse'");
         return VIEW;
@@ -252,8 +318,10 @@ describe('the Agents editor', () => {
     await click(document.querySelector('.agent-editor-actions .button-primary')!);
 
     // The loader's own words reach the user: "refused" is the whole story, and
-    // paraphrasing it would lose which field it was about.
-    expect(onError.at(-1)).toBe("Refused: Unknown identity colour 'chartreuse'");
+    // paraphrasing it would lose which field it was about. It is said INSIDE the
+    // dialog, because the pane's feedback block sits behind the modal backdrop.
+    expect(document.querySelector('.agent-editor-dialog [role="alert"]')?.textContent)
+      .toBe("Refused: Unknown identity colour 'chartreuse'");
     // Still open, still populated. Closing on failure would discard the edit
     // the user is being asked to correct.
     expect(document.querySelector('.agent-editor-dialog')).not.toBeNull();

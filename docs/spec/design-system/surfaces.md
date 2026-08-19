@@ -385,7 +385,10 @@ built-in's real description and instructions rather than a blank form. An existi
 identity are stored under — and a new Role whose type is already taken says so
 in the card rather than at the write boundary, where finding out would cost the
 user the rest of what they typed. A refused write leaves the dialog standing
-with its values, and reports the write boundary's own sentence.
+with its values and reports the write boundary's own sentence **inside the
+dialog**: the pane's shared feedback block is a sticky element at `z-index: 1`
+and the modal backdrop is fixed at `--z-modal`, so an error raised there landed
+behind it and Save read as doing nothing at all.
 
 **Preview.** Translation owns target language, webpage/EPUB auto-translation,
 model, and clearing saved translations; Websites clears URL-preview session data.

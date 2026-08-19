@@ -33,6 +33,9 @@ import { InsetGroup, InsetRow } from './SettingsInsetList';
 /** Before the view loads there is nothing to narrow; an empty catalogue reads as "no choices yet", not "none allowed". */
 const EMPTY_CAPABILITIES: AgentCapabilityCatalog = { tools: [], skills: [] };
 
+/** The loader's `validateDefinitionName` rule, mirrored so the editor can say it. */
+const DEFINITION_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/u;
+
 /**
  * The Agents page: who is in the conversation, and who the user may change.
  *
@@ -55,6 +58,11 @@ export function AgentsSettings({ onError, onNotice }: {
   const [view, setView] = useState<AgentEditorView | null>(null);
   const [editing, setEditing] = useState<EditorTarget | null>(null);
   const [busy, setBusy] = useState(false);
+  // A refused write has to report INSIDE the dialog. The pane's shared feedback
+  // block is `position: sticky; z-index: 1` and the dialog backdrop is fixed at
+  // `--z-modal`, so an error raised while the editor is open landed behind it
+  // and Save simply looked like it did nothing.
+  const [editorError, setEditorError] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -78,14 +86,16 @@ export function AgentsSettings({ onError, onNotice }: {
     setBusy(true);
     onError(null);
     onNotice(null);
+    setEditorError(null);
     try {
       setView(await action());
       onNotice(notice);
       setEditing(null);
     } catch (caught) {
-      // Refused, not half-applied: the loader validates the candidate before it
-      // is kept, so the file the user had is still the file on disk.
-      onError(errorText(caught));
+      // Refused, not half-applied: the writer validates the candidate before
+      // anything reaches disk, so the file the user had is still the file on
+      // disk — and the message belongs where the user is looking.
+      setEditorError(errorText(caught));
     } finally {
       setBusy(false);
     }
@@ -152,7 +162,8 @@ export function AgentsSettings({ onError, onNotice }: {
           // previous agent's fields.
           key={editorKey(editing)}
           busy={busy}
-          onCancel={() => setEditing(null)}
+          error={editorError}
+          onCancel={() => { setEditorError(null); setEditing(null); }}
           onDelete={editing.kind !== 'role' ? undefined : () => void run(
             () => api.agentDeleteRole({ layer: editing.role.layer, name: editing.role.name }),
             t.settings.agents.deleted({ name: editing.role.name }),
@@ -164,22 +175,24 @@ export function AgentsSettings({ onError, onNotice }: {
           })}
           onSave={(draft, layer) => void run(
             async () => {
-              // The conversation agent is two writes in one gesture: its identity
-              // is presentation, its instructions and ceiling are a Configuration
-              // Profile. The user pressed Save once, so both land or neither does.
+              // The conversation agent's identity is presentation and its
+              // instructions and ceiling are a Configuration Profile — two parts
+              // of one file. ONE command applies both inside a single validated
+              // edit: as two sequential writes, a refused second one left the
+              // first already on disk while the dialog reported failure.
               if (editing.kind === 'main') {
-                await api.agentWritePresentation({
-                  agentType: editing.entry.agentType,
-                  layer,
-                  presentation: { persona: draft.persona, color: draft.color },
-                });
                 return api.agentWriteProfile({
                   layer,
                   name: view?.profile.name ?? 'default',
+                  agentType: editing.entry.agentType,
+                  presentation: { persona: draft.persona, color: draft.color },
                   profile: {
                     developerInstructions: draft.developerInstructions,
-                    ...(draft.tools === null ? {} : { tools: draft.tools }),
-                    ...(draft.skills === null ? {} : { skills: draft.skills }),
+                    // Always sent, never omitted: omitting meant the writer left
+                    // a stale list on disk, so a narrowing could be tightened
+                    // and never widened back while the UI showed it restored.
+                    tools: draft.tools,
+                    skills: draft.skills,
                   },
                 });
               }
@@ -303,7 +316,7 @@ interface EditorDraft {
  * lands in.
  */
 function AgentEditorDialog({
-  target, override, takenNames, profile, capabilities, busy, onSave, onCancel, onDelete, onDuplicate,
+  target, override, takenNames, profile, capabilities, busy, error, onSave, onCancel, onDelete, onDuplicate,
 }: {
   readonly target: EditorTarget;
   /** What is actually written down for this identity, or null when nothing is. */
@@ -314,6 +327,8 @@ function AgentEditorDialog({
   readonly profile: AgentProfileView | null;
   readonly capabilities: AgentCapabilityCatalog;
   readonly busy: boolean;
+  /** A refused write, said where the user is looking rather than behind the backdrop. */
+  readonly error: string | null;
   readonly onSave: (draft: EditorDraft, layer: 'user' | 'project') => void;
   readonly onCancel: () => void;
   readonly onDelete?: () => void;
@@ -343,14 +358,26 @@ function AgentEditorDialog({
   const [layer, setLayer] = useState<'user' | 'project'>(
     role?.layer ?? (isMain ? profile?.layer ?? 'user' : 'user'),
   );
-  // Checked means available. All-checked is written as "inherit" rather than as
-  // a list, so a tool added to Tenon later is not silently excluded.
-  const [tools, setTools] = useState<ReadonlySet<string>>(() => new Set(
-    (isMain ? profile?.tools : role?.tools) ?? capabilities.tools.map((tool) => tool.key),
-  ));
-  const [skills, setSkills] = useState<ReadonlySet<string>>(() => new Set(
-    resolveSkillSelection(isMain ? profile?.skills : role?.skills, capabilities.skills),
-  ));
+  // What is stored may name things the catalogue does not: an MCP or extension
+  // tool, or a Skill declared but not installed. Those rows are RENDERED, so the
+  // user can see and keep them — filtering the save against the catalogue alone
+  // deleted them silently.
+  const storedTools = isMain ? profile?.tools ?? null : role?.tools ?? null;
+  const storedSkills = isMain ? profile?.skills ?? null : role?.skills ?? null;
+  const toolKeys = useMemo(
+    () => union(capabilities.tools.map((tool) => tool.key), storedTools),
+    [capabilities.tools, storedTools],
+  );
+  const skillKeys = useMemo(
+    () => union(capabilities.skills, storedSkills?.filter((name) => name !== '*') ?? null),
+    [capabilities.skills, storedSkills],
+  );
+  // Checked means available. Nothing stored means everything is inherited, so
+  // everything starts checked.
+  const [tools, setTools] = useState<ReadonlySet<string>>(() => new Set(storedTools ?? toolKeys));
+  const [skills, setSkills] = useState<ReadonlySet<string>>(
+    () => new Set(resolveSkillSelection(storedSkills, skillKeys)),
+  );
 
   // A Role needs the two fields that make it dispatchable at all: what it is
   // for (how the main agent chooses it) and what it should do. Identity is
@@ -359,10 +386,15 @@ function AgentEditorDialog({
   // A name already in use is refused at the write boundary too; saying so here
   // is what keeps the user from losing everything else they typed.
   const nameTaken = target.kind === 'new' && takenNames.has(name.trim());
+  // The loader's own rule, said here rather than only at decode. A space in the
+  // name used to be refused into a banner the dialog covers, so Save read as
+  // doing nothing at all.
+  const nameInvalid = target.kind === 'new' && name.trim().length > 0
+    && !DEFINITION_NAME_PATTERN.test(name.trim());
   const canSave = isMain || !editable
     ? true
     : name.trim().length > 0 && description.trim().length > 0
-      && instructions.trim().length > 0 && !nameTaken;
+      && instructions.trim().length > 0 && !nameTaken && !nameInvalid;
 
   // The mark beside the title is the actual component the transcript draws, so
   // a colour is chosen against the thing it will produce rather than a swatch
@@ -475,6 +507,14 @@ function AgentEditorDialog({
               variant="bare"
             />
           </label>
+          {nameTaken || nameInvalid ? null : (
+            <p className="settings-sheet-note agent-editor-hint">{t.settings.agents.nameSublabel}</p>
+          )}
+          {nameInvalid ? (
+            <p className="settings-sheet-note agent-editor-conflict" role="alert">
+              {t.settings.agents.nameInvalid}
+            </p>
+          ) : null}
           {nameTaken ? (
             // Said before Save is pressed. The write boundary refuses this name
             // too, but finding out there costs the user everything else they
@@ -527,14 +567,14 @@ function AgentEditorDialog({
           label={t.settings.agents.capabilitiesGroup}
         >
           <CapabilityList
-            all={capabilities.tools.map((tool) => tool.key)}
+            all={toolKeys}
             describe={(key) => capabilities.tools.find((tool) => tool.key === key)?.description ?? ''}
             label={t.settings.agents.tools}
             onChange={setTools}
             selected={tools}
           />
           <CapabilityList
-            all={capabilities.skills}
+            all={skillKeys}
             label={t.settings.agents.skills}
             onChange={setSkills}
             selected={skills}
@@ -562,6 +602,10 @@ function AgentEditorDialog({
         />
       </InsetGroup>
 
+      {error ? (
+        <p className="settings-sheet-note agent-editor-conflict" role="alert">{error}</p>
+      ) : null}
+
       <div className="confirm-dialog-actions agent-editor-actions">
         {onDelete ? (
           // Quiet at rest, loud only in the confirmation: a Delete that is
@@ -580,8 +624,8 @@ function AgentEditorDialog({
             developerInstructions: instructions.trim(),
             persona: persona.trim(),
             color,
-            tools: narrowing(tools, capabilities.tools.map((tool) => tool.key)),
-            skills: narrowing(skills, capabilities.skills),
+            tools: narrowing(tools, toolKeys),
+            skills: narrowing(skills, skillKeys),
           }, layer)}
           tone="subtle"
           variant="primary"
@@ -672,12 +716,22 @@ function resolveSkillSelection(
   return stored;
 }
 
+/** The catalogue plus anything already written that it does not know about. */
+function union(known: readonly string[], stored: readonly string[] | null): readonly string[] {
+  if (!stored) return known;
+  return [...known, ...stored.filter((key) => !known.includes(key))];
+}
+
 /**
- * What to write for a checkbox list: nothing when everything is checked.
+ * What to write for a checkbox list.
  *
- * Writing out today's full catalogue would freeze it — a tool or Skill added to
- * Tenon later would be excluded by a list the user never meant as exhaustive.
- * An empty array clears the narrowing back to inherit-everything.
+ * Everything checked → `null`, which REMOVES the narrowing. Writing today's
+ * catalogue out instead would freeze it, excluding every tool or Skill added
+ * later by a list the user never meant as exhaustive.
+ *
+ * Anything unchecked → the exact remaining set, and that includes the empty
+ * set: a user who unchecks every row means "none", and collapsing that to
+ * `null` would turn their ban into a grant of everything the parent has.
  */
 function narrowing(selected: ReadonlySet<string>, all: readonly string[]): readonly string[] | null {
   if (all.every((key) => selected.has(key))) return null;

@@ -1158,9 +1158,15 @@ export interface AgentRoleDraft {
   readonly color?: string;
   readonly model?: string;
   readonly reasoningEffort?: string;
-  /** Omitted keeps whatever is on disk; present replaces it. */
-  readonly tools?: readonly string[];
-  readonly skills?: readonly string[];
+  /**
+   * A capability narrowing has THREE states and the protocol carries all three:
+   * `undefined` leaves whatever is on disk (the draft did not mention it),
+   * `null` removes the narrowing so everything is inherited, and an array —
+   * INCLUDING an empty one — is the exact set allowed. `[]` is a ban, not a
+   * shorthand for "inherit": `constrainChildCapabilities` honours it.
+   */
+  readonly tools?: readonly string[] | null;
+  readonly skills?: readonly string[] | null;
 }
 
 /**
@@ -1170,11 +1176,13 @@ export interface AgentRoleDraft {
  * is simply "the agent I talk to".
  */
 export interface AgentProfileDraft {
+  /** Omitted leaves what is on disk; empty removes it so the default returns. */
   readonly developerInstructions?: string;
   readonly model?: string;
   readonly reasoningEffort?: string;
-  readonly tools?: readonly string[];
-  readonly skills?: readonly string[];
+  /** Three states, as on `AgentRoleDraft`. */
+  readonly tools?: readonly string[] | null;
+  readonly skills?: readonly string[] | null;
 }
 
 /** The Profile in force, as WRITTEN — null fields inherit the built-in default. */

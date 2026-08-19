@@ -4,7 +4,6 @@ import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync } from 'node:fs';
 import { mkdir, open, readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { basename, dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pathToFileURL } from 'node:url';
@@ -715,10 +714,7 @@ const turnExecutor = new PiTurnExecutor({
   // One name, wherever it is drawn or spoken: the prompt now asks configuration
   // who this agent is instead of hard-coding a name the transcript disagreed
   // with. The root Thread is `main`; a child is named by its Agent type.
-  resolvePersona: (thread) => agentConfigurationLoader.resolveAgentPersona(
-    thread.parentThreadId === null ? null : thread.agentRole,
-    thread.cwd,
-  ),
+  resolvePersona: (thread) => agentConfigurationLoader.resolveThreadPersona(thread),
 });
 threadService = ThreadService.open(
   resolvedUserDataDir,
@@ -734,10 +730,7 @@ threadService = ThreadService.open(
     resolveAgentType: (name, cwd) => agentConfigurationLoader.resolveAgentType(name, cwd),
     resolveRoleCatalog: (cwd) => agentConfigurationLoader.buildRoleCatalogSnapshot(cwd),
     resolveIdentityCatalog: (cwd) => agentConfigurationLoader.resolveIdentityCatalog(cwd),
-    resolvePersona: (thread) => agentConfigurationLoader.resolveAgentPersona(
-      thread.parentThreadId === null ? null : thread.agentRole,
-      thread.cwd,
-    ),
+    resolvePersona: (thread) => agentConfigurationLoader.resolveThreadPersona(thread),
     resolveProviderModelIds: (providerId) => rankedModels(providerId).map((model) => model.id),
     resolveSubagentTokenBudget: async () => (await getAgentRuntimeSettings()).subagentTokenBudget,
     resolveSubagentLimits: async () => {
@@ -3676,8 +3669,13 @@ function decodeProfileDraft(value: unknown): AgentProfileDraft {
   };
 }
 
-function textList(value: unknown, path: string): readonly string[] {
-  if (!Array.isArray(value)) throw new Error(`${path} must be an array of strings`);
+/**
+ * Null is meaningful here — it removes a narrowing — so it survives decode
+ * rather than being folded into "absent" or into an empty list.
+ */
+function textList(value: unknown, path: string): readonly string[] | null {
+  if (value === null) return null;
+  if (!Array.isArray(value)) throw new Error(`${path} must be an array of strings or null`);
   return value.map((entry, index) => requiredText(entry, `${path}[${index}]`));
 }
 
@@ -4695,6 +4693,10 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
         cwd,
         requiredText(args.name, 'name'),
         decodeProfileDraft(args.profile),
+        args.presentation === undefined ? undefined : {
+          agentType: requiredText(args.agentType, 'agentType'),
+          draft: decodePresentationDraft(args.presentation),
+        },
       );
       notifySettingsChanged(BrowserWindow.fromWebContents(event.sender));
       return await agentEditorView(cwd);

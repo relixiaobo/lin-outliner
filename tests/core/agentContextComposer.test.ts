@@ -91,6 +91,14 @@ describe('stable agent prompt composition', () => {
     // split the transcript header makes.
     expect(child.text).toContain('You are Rena, a headless Tenon Subagent Thread');
     expect(child.text).toContain('Role: explorer');
+
+    // A participant with no resolved name keeps the sentence it had before
+    // there was one, rather than being called after its Role key.
+    const unnamed = composeStablePrompt({
+      thread: { ...rootThread(1), parentThreadId: 'thread-parent', agentRole: 'default' },
+      configuration,
+    });
+    expect(unnamed.text).toContain('You are a headless Tenon Subagent Thread');
   });
 
   test('names the conversation agent from configuration and selects modules from canonical tool keys', () => {
