@@ -818,7 +818,6 @@ describe('ThreadService', () => {
     const resolvedProviders: string[] = [];
     const fixture = await createFixture(undefined, {
       resolveRendererStartDefaults: () => ({
-        modelProvider: 'openai',
         cwd: '/tmp/agent-workdir',
         executionSelection: {
           modelProvider: 'anthropic',
@@ -863,6 +862,60 @@ describe('ThreadService', () => {
       skills: ['fresh-skill'],
       plugins: ['fresh-plugin'],
       mcpServers: ['fresh-mcp'],
+    });
+
+    const cwdPinned = (await fixture.service.startThread({
+      name: 'Remembered selection with cwd',
+      cwd: '/tmp/explicit-workdir',
+    })).thread;
+    expect(cwdPinned).toMatchObject({
+      modelProvider: 'anthropic',
+      cwd: '/tmp/explicit-workdir',
+    });
+    expect(fixture.service.getThreadConfiguration(cwdPinned.id).configuration).toEqual({
+      modelProvider: 'anthropic',
+      model: 'anthropic/claude-sonnet-4',
+      reasoningEffort: 'high',
+    });
+    expect(resolvedProviders).toEqual(['anthropic', 'anthropic']);
+    await fixture.service.close();
+  });
+
+  test('keeps an explicitly requested Configuration Profile execution selection', async () => {
+    const fixture = await createFixture(undefined, {
+      resolveRendererStartDefaults: (request) => request.configurationProfile
+        ? { modelProvider: 'openai', cwd: '/tmp/agent-workdir' }
+        : {
+            cwd: '/tmp/agent-workdir',
+            executionSelection: {
+              modelProvider: 'anthropic',
+              model: 'anthropic/claude-sonnet-4',
+              reasoningEffort: 'high',
+            },
+          },
+      resolveConfiguration: (request) => ({
+        profileName: request.configurationProfile ?? 'default',
+        developerInstructions: [],
+        model: 'openai/gpt-5',
+        reasoningEffort: 'low',
+        tools: ['node_read'],
+        skills: [],
+        preloadedSkills: [],
+        plugins: [],
+        mcpServers: [],
+      }),
+    });
+
+    const thread = (await fixture.service.startThread({
+      name: 'Research profile',
+      configurationProfile: 'research',
+    })).thread;
+
+    expect(thread.modelProvider).toBe('openai');
+    expect(fixture.service.getThreadConfiguration(thread.id).configuration).toEqual({
+      modelProvider: 'openai',
+      model: 'openai/gpt-5',
+      reasoningEffort: 'low',
     });
     await fixture.service.close();
   });
@@ -1524,7 +1577,9 @@ describe('ThreadService', () => {
 
   test('does not report preference persistence failure as a configuration failure', async () => {
     const fixture = await createFixture(undefined, {
-      onRendererConfigurationCommitted: () => { throw new Error('preference write failed'); },
+      onRendererConfigurationCommitted: async () => {
+        throw new Error('preference write failed');
+      },
     });
     const root = (await fixture.service.startThread({
       source: 'app',
@@ -1548,6 +1603,56 @@ describe('ThreadService', () => {
     });
     expect(fixture.stores.metadata.require(root.id).configuration.model)
       .toBe('anthropic/claude-sonnet-4');
+    await fixture.service.close();
+  });
+
+  test('remembers configuration only from active persistent root user Threads', async () => {
+    const committed: ThreadConfigurationSummary[] = [];
+    const fixture = await createFixture(undefined, {
+      onRendererConfigurationCommitted: async (configuration) => {
+        await Promise.resolve();
+        committed.push(configuration);
+      },
+    });
+    const persistent = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const ephemeral = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+      ephemeral: true,
+    })).thread;
+
+    await fixture.service.setThreadConfiguration({
+      threadId: persistent.id,
+      modelProvider: 'anthropic',
+      model: 'anthropic/claude-sonnet-4',
+      reasoningEffort: 'high',
+    });
+    await fixture.service.setThreadArchived(persistent.id, true);
+    await fixture.service.setThreadConfiguration({
+      threadId: persistent.id,
+      modelProvider: 'openai',
+      model: 'openai/gpt-5',
+      reasoningEffort: 'low',
+    });
+    await fixture.service.setThreadConfiguration({
+      threadId: ephemeral.id,
+      modelProvider: 'openai',
+      model: 'openai/gpt-5-mini',
+      reasoningEffort: 'medium',
+    });
+
+    expect(committed).toEqual([{
+      modelProvider: 'anthropic',
+      model: 'anthropic/claude-sonnet-4',
+      reasoningEffort: 'high',
+    }]);
     await fixture.service.close();
   });
 

@@ -1159,18 +1159,33 @@ viewport clamping are retained. A selection submits one atomic
 while a request is pending, and for non-root Threads; it never edits another
 agent entity or exposes host-private capability configuration.
 
-Once `thread/configuration/set` commits, the host immediately remembers the
-complete provider, model, and reasoning-effort selection as the default for new
-root conversations. This persistence happens when the user chooses the setting;
-it does not wait for a message, Turn, or model request. The choice survives an
-app restart and is shared by the Thread-list action and `/new`. Thread creation
-revalidates the remembered provider, model, and effort against the current
-catalog; an unavailable selection falls back to the current active provider and
-fresh Configuration Profile defaults instead of blocking creation. The overlay
-replaces only model and reasoning effort, so the fresh Profile still owns tools,
-Skills, plugins, MCP servers, developer instructions, and capability ceilings.
+Once `thread/configuration/set` commits on an active, persistent root user
+Thread, the host immediately remembers the complete provider, model, and
+reasoning-effort selection as the default for new root conversations. Archived
+and ephemeral Thread edits do not replace that app-wide default. Persistence
+happens when the user chooses the setting; it does not wait for a message, Turn,
+or model request. The choice survives an app restart and is shared by the
+Thread-list action and `/new`.
+
+Thread creation revalidates the remembered provider, model, and effort against
+the current catalog. Provider lookup failure, an unavailable provider, or a
+stale model/effort falls back to the current active provider and fresh
+Configuration Profile defaults instead of blocking creation. The remembered
+overlay applies only when the request does not explicitly name a provider or
+Configuration Profile. It replaces only model and reasoning effort, so the fresh
+default Profile still owns tools, Skills, plugins, MCP servers, developer
+instructions, and capability ceilings; an explicitly requested Profile keeps
+its own pinned model and effort.
+
+Provider Settings and composer memory follow last explicit action wins. A
+successful Set as Active, provider disable, or provider delete clears the
+remembered selection; startup reconciliation does the same when it moves the
+persisted active-provider pointer. New Threads then follow the Settings/Profile
+path until another successful composer selection establishes new memory.
 Existing Threads remain unchanged, and forks continue to inherit their source
-Thread.
+Thread. A child Agent Role without its own model or reasoning override continues
+to inherit the effective model and effort of its parent root Thread, including a
+selection applied from this memory.
 
 Model selection is model-first. The list is flat: the model name leads each row,
 and the provider appears only as a secondary origin label, only when more than

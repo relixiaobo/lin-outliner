@@ -11,6 +11,7 @@ import { DocumentService } from './documentService';
 import { AppQuitCoordinator, type QuitDecision } from './appQuitCoordinator';
 import { AssetService, mimeTypeForFilename, sniffMimeType } from './assetService';
 import { ThreadService } from './agent/ThreadService';
+import { resolveRendererThreadStartDefaults } from './agent/rendererThreadStartDefaults';
 import { gitOutput } from './agent/context/AgentStartupContext';
 import { closeAgentServices } from './agent/closeAgentServices';
 import { ExtensionRegistry } from './agent/ExtensionRegistry';
@@ -224,6 +225,7 @@ import type {
 } from '../core/types';
 import { loadWindowState, trackWindowState } from './windowState';
 import {
+  clearLastAgentThreadConfiguration,
   loadAppPreferences,
   saveLastAgentThreadConfiguration,
   saveLanguagePreference,
@@ -732,32 +734,16 @@ threadService = ThreadService.open(
     recoverAgentWorktree: (input) => agentWorktree.recover(input),
     cleanupResidualAgentWorktree: (input) => agentWorktree.cleanupResidual(input),
     reportError,
-    resolveRendererStartDefaults: async () => {
-      const remembered = loadAppPreferences().lastAgentThreadConfiguration;
-      if (remembered) {
-        const provider = await getProviderRuntimeConfig(remembered.modelProvider);
-        if (provider) {
-          try {
-            validateAgentModelSelection(
-              remembered.model,
-              remembered.reasoningEffort,
-              provider,
-            );
-            return {
-              modelProvider: remembered.modelProvider,
-              cwd: agentLocalFileRoot,
-              executionSelection: remembered,
-            };
-          } catch {
-            // Provider catalogs can change between launches. A stale preference
-            // falls through to the current provider and Profile defaults.
-          }
-        }
-      }
-      const provider = await getActiveProviderRuntimeConfig();
-      if (!provider) throw new Error('Configure an AI provider before starting a Thread.');
-      return { modelProvider: provider.providerId, cwd: agentLocalFileRoot };
-    },
+    resolveRendererStartDefaults: (request) => resolveRendererThreadStartDefaults({
+      request,
+      remembered: loadAppPreferences().lastAgentThreadConfiguration,
+      cwd: agentLocalFileRoot,
+      getProviderRuntimeConfig,
+      getActiveProviderRuntimeConfig,
+      validateRememberedSelection: (selection, provider) => {
+        validateAgentModelSelection(selection.model, selection.reasoningEffort, provider);
+      },
+    }),
     validateRendererConfiguration: async (selection) => {
       const provider = await getProviderRuntimeConfig(selection.modelProvider);
       if (!provider) throw new Error(`Provider is not configured: ${selection.modelProvider}`);
@@ -4446,6 +4432,7 @@ async function handleAgentCommand(_event: IpcMainInvokeEvent, command: AgentComm
     case 'agent_upsert_provider_config': {
       const input = args.provider as AgentProviderConfigInput;
       const settings = withCanonicalSkillDirectories(await upsertProviderConfig(input));
+      if (input.enabled === false) clearLastAgentThreadConfiguration();
       // Prove the connection AFTER committing it when the caller says this was a
       // connection save. The same upsert command also backs the provider-list
       // enable switch; that switch must not spend a billed completion merely to
@@ -4463,10 +4450,20 @@ async function handleAgentCommand(_event: IpcMainInvokeEvent, command: AgentComm
       if (args.probeConnection === true) void probeAndRecordConnection(input.providerId);
       return settings;
     }
-    case 'agent_delete_provider_config':
-      return withCanonicalSkillDirectories(await deleteProviderConfig(String(args.providerId)));
-    case 'agent_set_active_provider':
-      return withCanonicalSkillDirectories(await setActiveProvider(String(args.providerId)));
+    case 'agent_delete_provider_config': {
+      const settings = withCanonicalSkillDirectories(
+        await deleteProviderConfig(String(args.providerId)),
+      );
+      clearLastAgentThreadConfiguration();
+      return settings;
+    }
+    case 'agent_set_active_provider': {
+      const settings = withCanonicalSkillDirectories(
+        await setActiveProvider(String(args.providerId)),
+      );
+      clearLastAgentThreadConfiguration();
+      return settings;
+    }
     case 'agent_set_provider_api_key':
       return setProviderApiKey(String(args.providerId), String(args.apiKey ?? ''));
     case 'agent_delete_provider_api_key':
@@ -4684,7 +4681,8 @@ if (!app.requestSingleInstanceLock()) {
     // Restore persisted dynamic model catalogs before Threads or Automations can
     // resolve a saved model. The same best-effort pass cleans legacy keyless rows;
     // neither local catalog corruption nor cleanup failure may block app startup.
-    await reconcileProviderConfig().catch(() => { /* best-effort; catalog reads remain guarded */ });
+    const providerReconcile = await reconcileProviderConfig().catch(() => null);
+    if (providerReconcile?.activeProviderChanged) clearLastAgentThreadConfiguration();
     await documentService.initWorkspace();
     memoryExtension.initializeMutationIndex(documentService.liveProjection());
     await threadService.initialize();

@@ -18,6 +18,7 @@ mock.module('electron', () => ({
 }));
 
 const {
+  clearLastAgentThreadConfiguration,
   loadAppPreferences,
   resetAppPreferencesForTests,
   saveLastAgentThreadConfiguration,
@@ -73,21 +74,62 @@ describe('app preferences persistence', () => {
     expect(loadAppPreferences().lastAgentThreadConfiguration).toEqual(selection);
   });
 
-  test('ignores an invalid persisted Agent Thread execution selection', async () => {
-    await writeFile(
-      path.join(userData, 'app-preferences.json'),
-      JSON.stringify({
-        theme: 'system',
-        language: null,
-        translationLanguage: null,
-        lastAgentThreadConfiguration: {
-          modelProvider: 'openai',
-          model: 'openai/gpt-5',
-          reasoningEffort: 'turbo',
-        },
-      }),
-    );
+  test('clears the remembered Agent Thread execution selection', () => {
+    saveLastAgentThreadConfiguration({
+      modelProvider: 'anthropic',
+      model: 'anthropic/claude-sonnet-4',
+      reasoningEffort: 'high',
+    });
+
+    clearLastAgentThreadConfiguration();
     resetAppPreferencesForTests();
+
+    expect(loadAppPreferences().lastAgentThreadConfiguration).toBeNull();
+  });
+
+  test('ignores an invalid persisted Agent Thread execution selection', async () => {
+    const invalidSelections = [
+      {
+        modelProvider: 'openai',
+        model: 'openai/gpt-5',
+        reasoningEffort: 'turbo',
+      },
+      {
+        modelProvider: 'openai',
+        model: 'anthropic/claude-sonnet-4',
+        reasoningEffort: 'high',
+      },
+      {
+        modelProvider: 'openai',
+        model: `openai/${'x'.repeat(512)}`,
+        reasoningEffort: 'high',
+      },
+    ];
+
+    for (const lastAgentThreadConfiguration of invalidSelections) {
+      await writeFile(
+        path.join(userData, 'app-preferences.json'),
+        JSON.stringify({
+          theme: 'system',
+          language: null,
+          translationLanguage: null,
+          lastAgentThreadConfiguration,
+        }),
+      );
+      resetAppPreferencesForTests();
+
+      expect(loadAppPreferences().lastAgentThreadConfiguration).toBeNull();
+    }
+  });
+
+  test('rejects an invalid Agent Thread execution selection on write', () => {
+    expect(() => saveLastAgentThreadConfiguration(
+      {
+          modelProvider: 'openai',
+          model: 'anthropic/claude-sonnet-4',
+          reasoningEffort: 'high',
+        },
+    )).toThrow('expected a bare model id, inherit, or a model qualified by modelProvider');
 
     expect(loadAppPreferences().lastAgentThreadConfiguration).toBeNull();
   });

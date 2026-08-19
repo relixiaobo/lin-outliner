@@ -1384,10 +1384,11 @@ function decodeThreadConfigurationResponse(
   });
 }
 
-function decodeThreadConfigurationSummary(
-  record: Record<string, unknown>,
-  path: string,
+export function decodeThreadConfigurationSummary(
+  value: unknown,
+  path = 'thread configuration',
 ): AgentCoreResponseByMethod['thread/configuration/get']['configuration'] {
+  const record = recordValue(value, path);
   exactKeys(record, ['modelProvider', 'model', 'reasoningEffort'], path);
   const modelProvider = nonEmptyTrimmedString(record.modelProvider, `${path}.modelProvider`);
   const model = nonEmptyTrimmedString(record.model, `${path}.model`);

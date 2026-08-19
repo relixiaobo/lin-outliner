@@ -1,7 +1,7 @@
 import { app } from 'electron';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { REASONING_EFFORTS, type ReasoningEffort } from '../core/agent/configuration';
+import { decodeThreadConfigurationSummary } from '../core/agent/codec';
 import type { ThreadConfigurationSummary } from '../core/agent/protocol';
 import { isThemeMode, type ThemeMode } from '../core/theme';
 import { isLocale, type Locale } from '../core/locale';
@@ -45,6 +45,7 @@ const DEFAULTS: PersistedAppPreferences = {
 };
 
 let currentPreferences: PersistedAppPreferences | null = null;
+const MAX_AGENT_THREAD_SELECTION_CHARS = 512;
 
 function preferencesFilePath(): string {
   return join(app.getPath('userData'), 'app-preferences.json');
@@ -95,9 +96,14 @@ export function saveUrlPageTranslationPreferences(preferences: UrlPageTranslatio
 export function saveLastAgentThreadConfiguration(
   configuration: ThreadConfigurationSummary,
 ): void {
+  const decoded = decodePersistedAgentThreadConfiguration(configuration);
   savePreferences({
-    lastAgentThreadConfiguration: Object.freeze({ ...configuration }),
+    lastAgentThreadConfiguration: decoded,
   });
+}
+
+export function clearLastAgentThreadConfiguration(): void {
+  savePreferences({ lastAgentThreadConfiguration: null });
 }
 
 export function resetAppPreferencesForTests(): void {
@@ -122,18 +128,23 @@ function normalizeTranslationModel(value: unknown): string | null {
 }
 
 function normalizeAgentThreadConfiguration(value: unknown): ThreadConfigurationSummary | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const record = value as Record<string, unknown>;
-  if (!isCanonicalSelectionString(record.modelProvider)) return null;
-  if (!isCanonicalSelectionString(record.model)) return null;
-  if (!REASONING_EFFORTS.includes(record.reasoningEffort as ReasoningEffort)) return null;
-  return Object.freeze({
-    modelProvider: record.modelProvider,
-    model: record.model,
-    reasoningEffort: record.reasoningEffort as ReasoningEffort,
-  });
+  try {
+    return decodePersistedAgentThreadConfiguration(value);
+  } catch {
+    return null;
+  }
 }
 
-function isCanonicalSelectionString(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0 && value === value.trim();
+function decodePersistedAgentThreadConfiguration(value: unknown): ThreadConfigurationSummary {
+  const decoded = decodeThreadConfigurationSummary(
+    value,
+    'app-preferences.lastAgentThreadConfiguration',
+  );
+  if (
+    decoded.modelProvider.length > MAX_AGENT_THREAD_SELECTION_CHARS
+    || decoded.model.length > MAX_AGENT_THREAD_SELECTION_CHARS
+  ) {
+    throw new Error('Agent Thread selection exceeds the persisted preference limit');
+  }
+  return decoded;
 }
