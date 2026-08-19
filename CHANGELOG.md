@@ -44,6 +44,27 @@ Entries reference the pull request that introduced them.
   row does. Both `agent-thread-rendering.md` and `design-system/patterns.md`
   record the supersession with its reason.
 
+- **A model picked in the composer is now the default for the next conversation
+  (PR #566, codex)** — the provider, model, and reasoning effort are remembered
+  the moment `thread/configuration/set` commits, not at the first message, Turn,
+  or model request, so the choice survives a restart and is shared by `/new` and
+  the Thread-list action. Creation revalidates the selection against the current
+  catalog and falls back to the active provider plus fresh Configuration Profile
+  defaults when it no longer resolves — including when the provider store itself
+  fails to read, which must never be the reason a conversation cannot start. The
+  overlay replaces only model and effort, so the Profile still owns tools,
+  Skills, plugins, MCP servers, developer instructions, and capability ceilings,
+  and a request that explicitly names a provider or a Profile keeps its own
+  pinned values. Because "which provider starts a conversation" now has two
+  possible authors, they follow last-explicit-action-wins: a successful Set as
+  Active, a provider disable, a provider delete, and a startup reconcile that
+  moves the active-provider pointer each clear the memory, and the next composer
+  selection re-establishes it. Archived and ephemeral Thread edits are excluded,
+  so nudging the effort on an old conversation no longer repoints every future
+  one. A child Agent Role with no model or effort override still inherits its
+  parent root Thread's effective values, including one applied from this memory
+  — stated in the spec rather than left to be discovered from a token bill.
+
 ### Fixed
 
 - **Automations were unreachable and every root Turn died before the model ran

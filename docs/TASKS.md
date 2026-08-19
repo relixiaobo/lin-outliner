@@ -1111,6 +1111,16 @@ and the merged PR, distilled rules in [`lessons.md`](lessons.md). Everything
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
 
+- **remember-last-agent-model** (codex, PR #566, merged 2026-08-19 —
+  [plan](plans/archive/remember-last-agent-model.md)) — a model chosen in the
+  composer is now the default for the next conversation, persisted the moment
+  the selection commits rather than at the first Turn. The directional call at
+  the gate: provider Settings and composer memory follow last-explicit-action-
+  wins, so Set as Active, a disable, a delete, or a startup reconcile that moves
+  the active pointer each clear the memory — otherwise a remembered pick would
+  have silently outranked the Settings action forever. Gate: `/code-review
+  xhigh` found 12 (all blocking and should-fix items resolved; two perf minors
+  accepted).
 - **automation-tool-identity-and-schema** (cc, PR #564, merged 2026-08-19 —
   fast-track, no plan file) — every root Turn had been failing with a provider
   HTTP 400 since 2026-07-25 on `automation_update`'s root-union schema. The root

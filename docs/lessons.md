@@ -1432,3 +1432,35 @@ substring match**: the residue guard written to outlaw `codex_app` used
 word character — i.e. it could not match the exact string the provider's 400 had
 named.
 
+
+## A second source for an existing setting needs an invalidation rule, not just a fallback
+
+Remembering the last composer model selection (PR #566) gave "which provider
+starts a conversation" a second author. The design handled the case where the
+remembered selection stopped being *valid* — an unavailable provider or a stale
+model falls back to the active provider — but not the case where the user had
+since said otherwise. Nothing cleared the memory, and it was consulted first, so
+Settings → Providers → Set as Active would show its success toast and then be
+silently ignored by every `/new` for the rest of the app's life. **When you add a
+second source for a value that already has an authoritative one, the design
+question is not "which one wins" but "what makes the new one stop being true".**
+A fallback answers *the value went bad*; only an invalidation rule answers *the
+user changed their mind*. The shipped rule is last-explicit-action-wins: every
+explicit provider action clears the memory.
+
+The failure mode to look for is specific — an explicit, confirmed user action
+that becomes a no-op. That is worse than a wrong default, because the app
+acknowledged the instruction.
+
+Two smaller rules from the same merge. **Mutual exclusivity belongs in the type,
+not in two `if`s.** The original code decided "did the host supply a remembered
+selection?" in one place and "may I use it?" in another, with different
+conditions; a request carrying only `cwd` therefore took the remembered provider
+and the Profile's model — a pair the configuration codec rejects on the next
+read, leaving a Thread whose model could never be shown or changed. Making the
+return a discriminated union (`modelProvider` xor `executionSelection`) deleted
+the possibility rather than the symptom. And **a hand-copied validator forks the
+invariant it was copied from**: the preference decoder re-implemented the codec's
+`ThreadConfigurationSummary` check minus the model/provider qualifier agreement,
+so the persisted file could hold exactly the pair the protocol forbids. Export
+the decoder and reuse it — a second spelling of a rule is a second rule.
