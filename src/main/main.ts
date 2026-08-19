@@ -2,7 +2,7 @@ import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nati
 import type { IpcMainInvokeEvent, NativeImage } from 'electron';
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { mkdir, open, readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,6 +25,11 @@ import { AutomationStore } from './agent/automations/AutomationStore';
 import { createAutomationTool } from './agent/automations/AutomationTool';
 import { AutomationWorktree } from './agent/automations/AutomationWorktree';
 import { AgentConfigurationLoader } from './agent/AgentConfigurationLoader';
+import { MODEL_TOOL_CATALOG, canonicalModelToolKey } from '../core/agent/tools';
+import {
+  AgentConfigurationWriter,
+  type ConfigurationLayerTarget,
+} from './agent/AgentConfigurationWriter';
 import { PiTurnExecutor } from './agent/runtime/PiTurnExecutor';
 import { ToolRuntime } from './agent/runtime/ToolRuntime';
 import { observedSkillFilePaths } from './agent/context/SkillContextReducer';
@@ -157,6 +162,10 @@ import {
   LIN_DOCUMENT_EVENT_CHANNEL,
   DAILY_NOTES_ID,
   TRASH_ID,
+  type AgentCapabilityCatalog,
+  type AgentEditorView,
+  type AgentProfileDraft,
+  type AgentRoleDraft,
   type AssetIngestInput,
   type CommandResult,
   type NodeProjection,
@@ -660,6 +669,7 @@ async function findUnmanagedSkillNameConflict(name: string) {
 }
 let toolRuntime!: ToolRuntime;
 const agentConfigurationLoader = new AgentConfigurationLoader(resolvedUserDataDir);
+const agentConfigurationWriter = new AgentConfigurationWriter(resolvedUserDataDir);
 const agentWorktree = new AgentWorktree(resolvedUserDataDir);
 let threadService!: ThreadService;
 
@@ -704,6 +714,10 @@ const turnExecutor = new PiTurnExecutor({
   createTools: (context) => toolRuntime.createTools(context),
   beforeProviderContext: (context) => toolRuntime.prepareProviderContext(context),
   transcriptIndexPath: threadTranscriptIndexPath(threadTranscriptRoot(resolvedUserDataDir)),
+  // One name, wherever it is drawn or spoken: the prompt now asks configuration
+  // who this agent is instead of hard-coding a name the transcript disagreed
+  // with. The root Thread is `main`; a child is named by its Agent type.
+  resolvePersona: (thread) => agentConfigurationLoader.resolveThreadPersona(thread),
 });
 threadService = ThreadService.open(
   resolvedUserDataDir,
@@ -719,6 +733,7 @@ threadService = ThreadService.open(
     resolveAgentType: (name, cwd) => agentConfigurationLoader.resolveAgentType(name, cwd),
     resolveRoleCatalog: (cwd) => agentConfigurationLoader.buildRoleCatalogSnapshot(cwd),
     resolveIdentityCatalog: (cwd) => agentConfigurationLoader.resolveIdentityCatalog(cwd),
+    resolvePersona: (thread) => agentConfigurationLoader.resolveThreadPersona(thread),
     resolveProviderModelIds: (providerId) => rankedModels(providerId).map((model) => model.id),
     resolveSubagentTokenBudget: async () => (await getAgentRuntimeSettings()).subagentTokenBudget,
     resolveSubagentLimits: async () => {
@@ -3566,6 +3581,141 @@ function notifySettingsChanged(origin?: BrowserWindow | null): void {
 }
 
 /**
+ * Which layer an editor change lands in. Anything unrecognised is the user
+ * layer: a write must not silently reach into a project the caller did not
+ * name.
+ */
+function layerTarget(value: unknown): ConfigurationLayerTarget {
+  return value === 'project' ? 'project' : 'user';
+}
+
+/**
+ * The working directory an editor request resolves project configuration
+ * against. The renderer may name one — the conversation it is editing from —
+ * but never a path outside a real directory.
+ *
+ * The fallback is the agent's own working root, because that is the directory
+ * Threads are created in (`defaultCwd: agentLocalFileRoot`) and therefore the
+ * project layer the transcript actually resolves. Falling back to the home
+ * directory pointed the editor at a layer nothing reads: "This project" wrote a
+ * file no Thread would ever load, and Roles defined in the real workspace were
+ * invisible to the page that claims to list them.
+ */
+function agentEditorCwd(value: unknown): string {
+  return typeof value === 'string' && value.length > 0 && existsSync(value)
+    ? value
+    : agentLocalFileRoot;
+}
+
+/**
+ * The Agents editor's whole view: the catalog the transcript draws from beside
+ * the Roles the user may change. One helper so the two halves are always read
+ * from the same cwd, and so a handler resolves that cwd once rather than per
+ * response literal.
+ */
+async function agentEditorView(cwd: string): Promise<AgentEditorView> {
+  return {
+    entries: agentConfigurationLoader.resolveIdentityCatalog(cwd),
+    roles: agentConfigurationLoader.listEditableRoles(cwd),
+    presentationOverrides: agentConfigurationLoader.listPresentationOverrides(cwd),
+    profile: agentConfigurationLoader.resolveEditableProfile(cwd),
+    builtInDefinitions: agentConfigurationLoader.listBuiltInDefinitions(),
+    capabilities: await agentCapabilityCatalog(),
+  };
+}
+
+/**
+ * What a capability narrowing may name. Resolved here rather than imported by
+ * the renderer: a settings pane that read the runtime's own tool module would
+ * drift the moment the runtime gained a tool, and would pull the codec into the
+ * renderer bundle to do it.
+ */
+async function agentCapabilityCatalog(): Promise<AgentCapabilityCatalog> {
+  return {
+    tools: MODEL_TOOL_CATALOG.map((tool) => ({
+      key: canonicalModelToolKey(tool.identity),
+      description: tool.description,
+    })),
+    // Every Skill the install can see, so a narrowing names real Skills; which
+    // of them are enabled is a separate setting on its own page.
+    skills: (await skillRuntime.listAllSkills()).map((skill) => skill.name),
+  };
+}
+
+/**
+ * Decode a Role draft at the boundary rather than casting it through.
+ *
+ * A12 puts fail-closed `throw` exactly here: this is the decode point between
+ * an untrusted renderer payload and a write. Casting with `as never` let a
+ * malformed payload reach the writer and surface as an internal `TypeError`
+ * stack, where the design is that the boundary's own sentence reaches the user.
+ */
+function decodeRoleDraft(value: unknown): AgentRoleDraft {
+  const record = plainObject(value, 'role');
+  return {
+    name: requiredText(record.name, 'role.name'),
+    description: requiredText(record.description, 'role.description'),
+    developerInstructions: requiredText(record.developerInstructions, 'role.developerInstructions'),
+    ...(record.persona === undefined ? {} : { persona: requiredText(record.persona, 'role.persona') }),
+    ...(record.color === undefined ? {} : { color: requiredText(record.color, 'role.color') }),
+    ...(record.tools === undefined ? {} : { tools: textList(record.tools, 'role.tools') }),
+    ...(record.skills === undefined ? {} : { skills: textList(record.skills, 'role.skills') }),
+  };
+}
+
+function decodeProfileDraft(value: unknown): AgentProfileDraft {
+  const record = plainObject(value, 'profile');
+  return {
+    ...(record.developerInstructions === undefined
+      ? {}
+      : { developerInstructions: optionalText(record.developerInstructions, 'profile.developerInstructions') }),
+    ...(record.model === undefined ? {} : { model: optionalText(record.model, 'profile.model') }),
+    ...(record.reasoningEffort === undefined
+      ? {}
+      : { reasoningEffort: optionalText(record.reasoningEffort, 'profile.reasoningEffort') }),
+    ...(record.tools === undefined ? {} : { tools: textList(record.tools, 'profile.tools') }),
+    ...(record.skills === undefined ? {} : { skills: textList(record.skills, 'profile.skills') }),
+  };
+}
+
+/**
+ * Null is meaningful here — it removes a narrowing — so it survives decode
+ * rather than being folded into "absent" or into an empty list.
+ */
+function textList(value: unknown, path: string): readonly string[] | null {
+  if (value === null) return null;
+  if (!Array.isArray(value)) throw new Error(`${path} must be an array of strings or null`);
+  return value.map((entry, index) => requiredText(entry, `${path}[${index}]`));
+}
+
+function decodePresentationDraft(value: unknown): { persona?: string; color?: string } {
+  const record = plainObject(value, 'presentation');
+  return {
+    ...(record.persona === undefined ? {} : { persona: optionalText(record.persona, 'presentation.persona') }),
+    ...(record.color === undefined ? {} : { color: optionalText(record.color, 'presentation.color') }),
+  };
+}
+
+function plainObject(value: unknown, path: string): Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error(`${path} must be an object`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function requiredText(value: unknown, path: string): string {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error(`${path} must be a non-empty string`);
+  }
+  return value;
+}
+
+function optionalText(value: unknown, path: string): string {
+  if (typeof value !== 'string') throw new Error(`${path} must be a string`);
+  return value;
+}
+
+/**
  * Run the connection probe for a provider and store what it found. Failures here
  * are not the user's problem — a probe that cannot run leaves the row unverified,
  * which is the honest state and the one it started in.
@@ -4291,7 +4441,7 @@ async function managedSkillCommand<T>(operation: () => Promise<T> | T): Promise<
   }
 }
 
-async function handleAgentCommand(_event: IpcMainInvokeEvent, command: AgentCommand, args: Record<string, unknown>) {
+async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentCommand, args: Record<string, unknown>) {
   switch (command) {
     case 'agent_get_provider_settings':
       return withCanonicalSkillDirectories(await getProviderSettings());
@@ -4530,6 +4680,59 @@ async function handleAgentCommand(_event: IpcMainInvokeEvent, command: AgentComm
       await refreshTurnSkillProvenanceRecords();
       return skillRuntime.listAllSkills();
     }
+    // The Agents editor. Configuration file IO stays behind the seam (A2): the
+    // renderer names an Agent and a layer, never a path, so no renderer-side
+    // value can turn these into a write anywhere else on disk.
+    case 'agent_identity_catalog':
+      return await agentEditorView(agentEditorCwd(args.cwd));
+    case 'agent_write_role': {
+      const cwd = agentEditorCwd(args.cwd);
+      await agentConfigurationWriter.writeRole(
+        layerTarget(args.layer),
+        cwd,
+        decodeRoleDraft(args.role),
+        args.mode === 'create' ? 'create' : 'update',
+      );
+      notifySettingsChanged(BrowserWindow.fromWebContents(event.sender));
+      return await agentEditorView(cwd);
+    }
+    case 'agent_delete_role': {
+      const cwd = agentEditorCwd(args.cwd);
+      await agentConfigurationWriter.deleteRole(
+        layerTarget(args.layer),
+        cwd,
+        requiredText(args.name, 'name'),
+      );
+      notifySettingsChanged(BrowserWindow.fromWebContents(event.sender));
+      return await agentEditorView(cwd);
+    }
+    case 'agent_write_profile': {
+      const cwd = agentEditorCwd(args.cwd);
+      await agentConfigurationWriter.writeProfile(
+        layerTarget(args.layer),
+        cwd,
+        requiredText(args.name, 'name'),
+        decodeProfileDraft(args.profile),
+        args.presentation === undefined ? undefined : {
+          agentType: requiredText(args.agentType, 'agentType'),
+          draft: decodePresentationDraft(args.presentation),
+        },
+      );
+      notifySettingsChanged(BrowserWindow.fromWebContents(event.sender));
+      return await agentEditorView(cwd);
+    }
+    case 'agent_write_presentation': {
+      const cwd = agentEditorCwd(args.cwd);
+      await agentConfigurationWriter.writePresentation(
+        layerTarget(args.layer),
+        cwd,
+        requiredText(args.agentType, 'agentType'),
+        decodePresentationDraft(args.presentation),
+      );
+      notifySettingsChanged(BrowserWindow.fromWebContents(event.sender));
+      return await agentEditorView(cwd);
+    }
+
     case 'agent_managed_skill_catalog':
       return managedSkillCommand(() => managedSkillService.loadCatalog());
     case 'agent_managed_skill_discover':

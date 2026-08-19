@@ -221,6 +221,11 @@ export interface ThreadServiceOptions {
     cwd: string,
   ) => RoleCatalogContextPayload | Promise<RoleCatalogContextPayload>;
   readonly resolveIdentityCatalog?: (cwd: string) => readonly AgentIdentityEntry[];
+  /**
+   * The name a Thread's agent answers to. Resolved per Turn rather than read
+   * from the recorded configuration, so a rename reaches the next Turn.
+   */
+  readonly resolvePersona?: (thread: Thread) => string;
   readonly resolveProviderModelIds?: (
     providerId: string,
   ) => readonly string[] | Promise<readonly string[]>;
@@ -404,6 +409,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
     cwd: string,
   ) => Promise<RoleCatalogContextPayload | null>;
   private readonly resolveIdentityCatalog: (cwd: string) => readonly AgentIdentityEntry[];
+  private readonly resolvePersona: (thread: Thread) => string | null;
   private readonly resolveProviderModelIds: (providerId: string) => Promise<readonly string[]>;
   private readonly resolveAgentStartupContext: (
     parent: Pick<Thread, 'id' | 'sessionId' | 'cwd'>,
@@ -464,6 +470,9 @@ export class ThreadService implements ThreadServiceExtensionHost {
     const resolveAgentType = options.resolveAgentType ?? defaultResolvedAgentType;
     this.resolveRoleCatalog = async (cwd) => await options.resolveRoleCatalog?.(cwd) ?? null;
     this.resolveIdentityCatalog = options.resolveIdentityCatalog ?? (() => []);
+    // Null when nothing resolves it: the environment then says what it said
+    // before there was a configured name, rather than inventing one.
+    this.resolvePersona = (thread) => options.resolvePersona?.(thread) ?? null;
     this.resolveProviderModelIds = async (providerId) => (
       await options.resolveProviderModelIds?.(providerId) ?? []
     );
@@ -579,6 +588,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       this.resolveReferencedAsset,
       this.resolveSkillAdmission,
       this.resolveRoleCatalog,
+      (thread) => this.resolvePersona(thread),
       { addUsage: (...args) => this.goals.addUsage(...args) },
       options.normalizeOutputImage,
       this.now,

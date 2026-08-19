@@ -34,6 +34,7 @@ import { SettingsProvidersSection } from './SettingsProvidersSection';
 import { SettingsSkillLibrarySection } from './SettingsSkillLibrarySection';
 import { SettingsAgentSection } from './SettingsAgentSection';
 import { SettingsPreviewSection } from './SettingsPreviewSection';
+import { AgentsSettings } from './AgentsSettings';
 import { SettingsAboutSection } from './SettingsAboutSection';
 import { capabilitySettingsRemovalPatch } from './agentCapabilitySettings';
 import { beginKeyedMutation, isCurrentKeyedMutation } from '../keyedMutationGeneration';
@@ -751,6 +752,8 @@ export function AgentSettingsView({ onApplied, onClose, initialTarget }: AgentSe
                 settings={settings}
                 toggleErrors={providerToggleErrors}
               />
+            ) : route.page === 'agents' ? (
+              <AgentsSettings onError={setError} onNotice={setNotice} />
             ) : route.page === 'about' ? (
               <SettingsAboutSection
                 appUpdate={appUpdate}

@@ -1,0 +1,172 @@
+/* The Agents page and its editor.
+ *
+ * The list itself is the shared inset-list primitive; what is local here is the
+ * editor sheet and the colour picker, whose swatches are the real mark the
+ * transcript draws rather than a plain colour chip — so a choice is made
+ * against the thing it produces. Every value is a token (B1) and the picker's
+ * selection stays on the neutral ladder (B3): the identity colour is inside the
+ * swatch, so the *selection* must not also be coloured, or two colours would
+ * compete to mean "chosen". */
+
+.agent-editor-dialog {
+  width: min(560px, calc(100vw - 32px));
+  max-height: min(760px, calc(100vh - 48px));
+  overflow: auto;
+  border-radius: var(--radius-overlay-sm);
+  background: var(--bg-elevated);
+  box-shadow: var(--overlay-shadow-level-2);
+  padding: var(--space-6);
+}
+
+.agent-editor-dialog .inset-group {
+  margin-top: var(--space-5);
+}
+
+/* The mark beside the title is a live preview, so the heading is where the
+   user sees the colour they just picked take effect. */
+.agent-editor-heading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+/* Instructions are the one multi-line field: the label sits above rather than
+   beside it, because a label vertically centred against five rows of text reads
+   as floating. */
+.settings-sheet-row-stacked {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  padding-bottom: var(--space-3);
+}
+
+.settings-sheet-row-stacked .settings-sheet-row-label {
+  width: auto;
+}
+
+.settings-sheet-row-stacked .settings-sheet-row-input {
+  resize: vertical;
+  line-height: var(--line-ui-md);
+}
+
+.agent-colour-choices {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* B6: the swatch is the mark, so the chosen state is a neutral ring around it,
+   never a fill that would tint the mark it contains. B7: the ring is drawn in
+   the padding that is always reserved, so choosing never moves the row. */
+.agent-colour-choice {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-1);
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  background: transparent;
+}
+
+.agent-colour-choice:hover {
+  background: var(--control-hover);
+}
+
+.agent-colour-choice.is-selected {
+  border-color: var(--separator);
+  background: var(--control-active);
+}
+
+/* Delete belongs to the object, not to the dialog's commit pair — it sits at
+   the leading edge so it is never the button next to Save. */
+.agent-editor-actions .agent-editor-delete {
+  margin-right: auto;
+}
+
+/* "Default" sits before the hues and means the absence of a choice, so a hairline
+   separates it from the palette rather than a second visual language. */
+.agent-colour-choice.is-default {
+  margin-right: var(--space-2);
+  border-right: 1px solid var(--separator);
+  border-radius: var(--radius-pill) 0 0 var(--radius-pill);
+  padding-right: var(--space-3);
+}
+
+/* The name conflict speaks inside the card it is about, not from the pane's
+   shared alert at the bottom of a scrolled dialog. */
+.agent-editor-conflict {
+  margin: var(--space-2) 0 0;
+  color: var(--status-danger);
+}
+
+/* Capability lists are scannable columns rather than one long ladder: 17 tools
+   in a single column would push Save below the fold of the dialog. */
+.agent-capability-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: var(--space-1) var(--space-4);
+  /* Capped against the window, not at a fixed rung: the point is that a long
+     catalogue never pushes Save below the fold of the dialog. */
+  max-height: min(220px, calc(100vh - 480px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* The row IS the control: a label carrying the styled mark, with the native box
+   hidden but still focusable and still the thing assistive tech and Playwright
+   operate. Leaving it visible drew two checkboxes per row. */
+.agent-capability-item {
+  display: grid;
+  grid-template-columns: var(--checkbox-mark-size) minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  min-height: var(--settings-tile-size);
+  color: var(--text-primary);
+  font-size: var(--font-ui-sm);
+}
+
+.agent-capability-item > span,
+.agent-capability-item {
+  overflow-wrap: anywhere;
+}
+
+.agent-capability-item > input[type='checkbox'] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* Keyboard focus lands on the hidden input, so the ring has to be drawn by the
+   mark beside it or it would be invisible (B8). */
+.agent-capability-item > input[type='checkbox']:focus-visible + .checkbox-mark {
+  outline: none;
+  box-shadow: var(--focus-ring-shadow);
+}
+
+/* The count states the ceiling ("all 17"), so the list reads as narrowing
+   rather than as granting each row. */
+.agent-capability-count {
+  margin-left: var(--space-2);
+  color: var(--text-tertiary);
+  font-weight: 400;
+}
+
+.agent-editor-builtin {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+/* The name rule, stated where the field is rather than left for the write
+   boundary to reveal. */
+.agent-editor-hint {
+  margin: var(--space-2) 0 0;
+  color: var(--text-tertiary);
+}

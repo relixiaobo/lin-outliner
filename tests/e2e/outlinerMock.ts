@@ -637,6 +637,69 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     // to be correct in that state, and a spec that wants rows opts into them.
     const managedSkills = (options.managedSkills ?? []).map((skill) => ({ ...skill }));
     const managedCatalogEntries = options.managedCatalogEntries ?? [];
+    const IDENTITY_COLOR_NAMES = ['orange', 'amber', 'green', 'teal', 'blue', 'violet', 'pink'];
+    const agentIdentityEntries = [
+      { agentType: 'main', persona: 'Aspen', color: 'teal', source: 'built-in' },
+      { agentType: 'general-purpose', persona: 'Bruno', color: 'amber', source: 'built-in' },
+      { agentType: 'explore', persona: 'Rena', color: 'orange', source: 'built-in' },
+      { agentType: 'plan', persona: 'Ada', color: 'blue', source: 'built-in' },
+    ];
+    const agentRoles: Array<{
+      name: string; layer: string; description: string; developerInstructions: string;
+      persona: string | null; color: string | null;
+      model: string | null; reasoningEffort: string | null; tools: string[] | null;
+    }> = [{
+      name: 'auditor',
+      layer: 'user',
+      description: 'Audits a change before it is proposed.',
+      developerInstructions: 'Read the diff and report what is wrong.',
+      persona: 'Wren',
+      color: 'violet',
+      model: null,
+      reasoningEffort: null,
+      tools: null,
+    }];
+    const agentPresentationOverrides: Array<{
+      agentType: string; layer: string; persona: string | null; color: string | null;
+    }> = [];
+    const agentProfile = {
+      name: 'default',
+      layer: null as string | null,
+      developerInstructions: null as string | null,
+      model: null as string | null,
+      reasoningEffort: null as string | null,
+      tools: null as string[] | null,
+      skills: null as string[] | null,
+    };
+    const agentCapabilityCatalog = {
+      tools: [
+        { key: 'file_read', description: 'Read a file.' },
+        { key: 'file_write', description: 'Write a file.' },
+        { key: 'bash', description: 'Run a command.' },
+      ],
+      skills: ['review', 'summarize'],
+    };
+    const agentBuiltInDefinitions = [
+      { agentType: 'general-purpose', description: 'General-purpose agent.', developerInstructions: 'Do the task fully.' },
+      { agentType: 'explore', description: 'Fast codebase explorer.', developerInstructions: 'Search, never write.' },
+      { agentType: 'plan', description: 'Software architect.', developerInstructions: 'Design, never write.' },
+    ];
+    const agentIdentityView = () => ({
+      entries: [
+        ...agentIdentityEntries,
+        ...agentRoles.map((role) => ({
+          agentType: role.name,
+          persona: role.persona ?? role.name,
+          color: role.color ?? 'green',
+          source: role.layer,
+        })),
+      ],
+      roles: agentRoles,
+      presentationOverrides: agentPresentationOverrides,
+      profile: { ...agentProfile },
+      builtInDefinitions: agentBuiltInDefinitions,
+      capabilities: agentCapabilityCatalog,
+    });
     const agentSkills = [{
       name: 'workspace-review',
       source: 'project',
@@ -3550,6 +3613,93 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             ? { defaultModel: settings.defaultModel }
             : {};
           return clone(agentSettings) as T;
+        }
+        // The Agents editor's whole surface: one read, three writes, all
+        // answering with the refreshed view — the same contract the real
+        // commands have, so a spec that drives the editor drives it for real.
+        if (cmd === 'agent_identity_catalog') {
+          return clone(agentIdentityView()) as T;
+        }
+        if (cmd === 'agent_write_role') {
+          const role = args.role as {
+            name: string; description: string; developerInstructions: string;
+            persona?: string; color?: string;
+            tools?: string[] | null; skills?: string[] | null;
+          };
+          const layer = args.layer === 'project' ? 'project' : 'user';
+          const clash = agentRoles.find((candidate) => candidate.name === role.name);
+          if (args.mode === 'create' && clash) {
+            throw new Error(`An agent named '${role.name}' already exists in this layer`);
+          }
+          const next = {
+            name: role.name,
+            layer,
+            description: role.description,
+            developerInstructions: role.developerInstructions,
+            persona: role.persona ?? null,
+            color: role.color ?? null,
+            // Preserved across a save, like the writer does: the editor shows
+            // no field for these, so it must not be able to erase them.
+            model: clash?.model ?? null,
+            reasoningEffort: clash?.reasoningEffort ?? null,
+            tools: role.tools === undefined ? clash?.tools ?? null : role.tools,
+            skills: role.skills === undefined ? clash?.skills ?? null : role.skills,
+          };
+          const index = agentRoles.findIndex((candidate) => candidate.name === role.name);
+          if (index >= 0) agentRoles[index] = next;
+          else agentRoles.push(next);
+          return clone(agentIdentityView()) as T;
+        }
+        if (cmd === 'agent_delete_role') {
+          const name = String(args.name ?? '');
+          const index = agentRoles.findIndex((candidate) => candidate.name === name);
+          if (index < 0) throw new Error(`No Agent Role named '${name}' in this configuration`);
+          agentRoles.splice(index, 1);
+          return clone(agentIdentityView()) as T;
+        }
+        if (cmd === 'agent_write_profile') {
+          const profile = (args.profile ?? {}) as {
+            developerInstructions?: string; tools?: string[] | null; skills?: string[] | null;
+          };
+          agentProfile.layer = args.layer === 'project' ? 'project' : 'user';
+          agentProfile.developerInstructions = profile.developerInstructions || null;
+          // Three states, like the writer: undefined leaves it, null removes the
+          // narrowing, an array — including empty — is the exact set.
+          if (profile.tools !== undefined) agentProfile.tools = profile.tools;
+          if (profile.skills !== undefined) agentProfile.skills = profile.skills;
+          // The paired re-skin lands in the same write, not a second one.
+          const presentation = args.presentation as { persona?: string; color?: string } | undefined;
+          if (presentation) {
+            const agentType = String(args.agentType ?? '');
+            const entry = agentIdentityEntries.find((candidate) => candidate.agentType === agentType);
+            if (entry && presentation.persona) entry.persona = presentation.persona;
+            if (entry && presentation.color) entry.color = presentation.color;
+          }
+          return clone(agentIdentityView()) as T;
+        }
+        if (cmd === 'agent_write_presentation') {
+          const agentType = String(args.agentType ?? '');
+          const presentation = (args.presentation ?? {}) as { persona?: string; color?: string };
+          if (presentation.color && !IDENTITY_COLOR_NAMES.includes(presentation.color)) {
+            throw new Error(`Refused: Unknown identity colour '${presentation.color}'`);
+          }
+          const entry = agentIdentityEntries.find((candidate) => candidate.agentType === agentType);
+          if (entry) {
+            if (presentation.persona) entry.persona = presentation.persona;
+            if (presentation.color) entry.color = presentation.color;
+          }
+          const layer = args.layer === 'project' ? 'project' : 'user';
+          const index = agentPresentationOverrides.findIndex((row) => row.agentType === agentType);
+          if (index >= 0) agentPresentationOverrides.splice(index, 1);
+          if (presentation.persona || presentation.color) {
+            agentPresentationOverrides.push({
+              agentType,
+              layer,
+              persona: presentation.persona || null,
+              color: presentation.color || null,
+            });
+          }
+          return clone(agentIdentityView()) as T;
         }
         if (cmd === 'agent_list_all_skills') {
           if (options.agentSkillsDelayMs) await delay(options.agentSkillsDelayMs);

@@ -323,7 +323,8 @@ cut along user intent rather than implementation subsystem. The content pane is
 an opaque Preferences base constrained to `--settings-content-max-width` (920px).
 Rail, toolbar, and category render immediately; provider/runtime data loads locally.
 
-**Pages.** Model services and Skills sit under Agent; About sits under General.
+**Pages.** Model services, Agents, and Skills sit under Agent; About sits under
+General.
 An unbounded collection the user installs or connects becomes a page; bounded
 settings stay inline. Page rows carry chevrons, history walks real routes, and
 per-provider configuration remains a native child window. Entering, leaving, or
@@ -332,7 +333,7 @@ category-to-category navigation does not trigger that reset. An explicit deep-
 link anchor then positions its requested group.
 
 **Deep links.** Categories are `general|agent|preview`; pages are
-`agent/services`, `agent/skills`, and `general/about`. An optional bounded
+`agent/services`, `agent/agents`, `agent/skills`, and `general/about`. An optional bounded
 lowercase-slug anchor (`[a-z0-9][a-z0-9-]{0,63}`) scrolls to and briefly
 highlights a group. Category/page mismatches do not route; retired ids have no
 aliases. Explicit targets retarget an open window, while `Cmd+,` only focuses it.
@@ -358,11 +359,36 @@ fixed slot is reserved while hidden so async state cannot move adjacent content.
 This is a presence-based status, not unread state: opening About does not clear it; catching
 up to the release or disabling automatic checks does.
 
-**Agent.** Model services and Skills are pages; Memory and Permissions stay
-inline. Permissions states the Full Access boundary, lists explicit blocks, and
-commits removal on the row; boundary explanation is a footnote under that row.
+**Agent.** Model services, Agents, and Skills are pages; Memory and Permissions
+stay inline. Permissions states the Full Access boundary, lists explicit blocks,
+and commits removal on the row; boundary explanation is a footnote under that row.
 The Skill library is a scan-and-toggle surface: descriptions stay clamped to two
 lines, and focusing or operating a row's menu or switch never expands the row.
+
+The Agents page lists the Roles a user wrote above the built-in types, each row
+wearing the same generated mark the transcript draws for it, so the editor and
+the conversation are visibly about one participant. A row opens a level-2 editor
+dialog rather than a third route, remounted per subject so it never holds the
+previous agent's fields. Identity (name, colour) for every agent; **the
+conversation agent** additionally gets its standing instructions and the
+capability ceiling; a Role gets definition (type, use-it-for, instructions,
+layer) and its own narrowing. Capabilities are checkbox lists of everything the
+install has, all checked, because unchecking is the whole gesture — a list can
+only narrow what the agent handing out work already had, never grant. Colour swatches
+are the mark itself, so a hue is chosen against what it produces; the chosen
+swatch is marked on the neutral ladder, never by tinting the mark. A leading
+**Default** swatch shows what would be inherited and is the only way to send an
+empty colour — without it the documented reset is unreachable from the UI. A built-in
+shows identity only and offers no Delete, because there is nothing of the user's
+to remove — instead it offers **Duplicate**, which seeds a new Role from the
+built-in's real description and instructions rather than a blank form. An existing Role's type is fixed — it is the key both dispatch and
+identity are stored under — and a new Role whose type is already taken says so
+in the card rather than at the write boundary, where finding out would cost the
+user the rest of what they typed. A refused write leaves the dialog standing
+with its values and reports the write boundary's own sentence **inside the
+dialog**: the pane's shared feedback block is a sticky element at `z-index: 1`
+and the modal backdrop is fixed at `--z-modal`, so an error raised there landed
+behind it and Save read as doing nothing at all.
 
 **Preview.** Translation owns target language, webpage/EPUB auto-translation,
 model, and clearing saved translations; Websites clears URL-preview session data.

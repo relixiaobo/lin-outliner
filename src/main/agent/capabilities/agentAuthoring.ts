@@ -1,8 +1,9 @@
 // Self-definition roots for the `file_write` skill-authoring gate.
 //
-// After the single-agent collapse there are no file-backed agents to create,
-// load, edit, or delete — the product has exactly one agent, the built-in Neva,
-// who is edited in place through the settings overlay (not a file). So the agent
+// After the single-agent collapse there are no file-backed agents for the MODEL
+// to create, load, edit, or delete: the conversation agent is built in, and the
+// Roles a user defines are written by the Agents settings page through the
+// configuration writer — never by the agent through file tools. So the agent
 // authoring file-ops and the `.agents/agents/` content gate are gone; what remains
 // is only the skill self-definition root map, shared with the `file_write` gate in
 // agentLocalTools and the ownership boundary in agentCapabilities.

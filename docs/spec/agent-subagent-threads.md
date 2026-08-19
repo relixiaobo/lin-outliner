@@ -177,11 +177,35 @@ types. Diagnostics and persistence use the canonical result.
 Every Agent type carries a **presentation** — a `persona` (the name a reader
 sees) and a `color` (an identity-palette name; the generated mark is drawn in
 that hue) — resolved into the identity catalog that the renderer reads through
-`identities/get`. Presentation is
-host-side only: the model addresses canonical types and raw Agent IDs, and no
-persona reaches a tool description, a catalog payload, a prompt block, or the
-`contentHash` that gates catalog re-announcement. Renaming an Agent on screen
-therefore tells the model nothing.
+`identities/get`.
+
+**The persona is the agent's own name, not a label the host puts on it.** It is
+spoken into the L2 identity block (`agentPersonaPrompt` for the conversation
+agent; `You are <persona>, a headless Tenon Subagent Thread…` for a child) and
+into the Turn environment's `replyIdentity`. Asked who it is, an agent answers
+with the name on its header — the two used to be different strings, and a reader
+who asked was told something the screen contradicted. The default is `Aspen`,
+anchored to `DEFAULT_AGENT_PRESENTATIONS.main` so one constant drives both.
+
+It is resolved **per Turn** (`resolveAgentPersona`), not recorded in the
+configuration a resumed Turn replays: a rename reaches the next Turn, and a
+display name never has to be versioned into the configuration codec. A Thread
+records its BACKING Role (`explorer`) while identity is keyed on the canonical
+type (`explore`), so the resolver maps one to the other. A recorded **nickname
+wins**: an isolated Skill is spawned as `role: 'default'` with the Skill's name
+as its nickname, and resolving it by type would tell it it is `Bruno` when its
+own name is what it is.
+
+The reserved names a Role may not take are `main`, every built-in canonical
+type, AND every built-in BACKING name — `resolveRole` prefers a configured entry
+over the built-in definition, and every spawn that names no role asks for
+`default`, so a user Role called `default` would quietly become the instructions
+every untyped Subagent runs.
+
+What still does NOT carry a persona is DISPATCH. The Role catalog's entries and
+its `contentHash` exclude presentation, so renaming an Agent does not
+re-announce the catalog or change how the model addresses anyone: the model
+hands work to `explore`, and `Rena` is who answers.
 
 A Role declares its own under `presentation`. The identities a user cannot
 redefine without forking them — the three built-in types and the conversation's
@@ -193,6 +217,47 @@ spaces cannot collide, and a `color` outside the palette is refused at the
 write boundary; at the read boundary a stale colour degrades to derivation
 rather than drawing nothing.
 
+Both halves are user-editable from Settings → Agent → Agents, which reads the
+whole editable view in one answer — the identity catalog the transcript draws
+from beside the Roles the user may change — and writes through
+`agent_write_role`, `agent_delete_role`, and `agent_write_presentation`. Writing
+is a boundary and fails closed (A12): each command re-reads one layer, applies
+one change, and validates the candidate **in memory** through the loader's own
+decoder before anything reaches disk, then writes atomically. Nothing is written
+until the result is known to be readable, so there is no window in which
+rejected bytes are the live configuration, no rollback that can itself fail, and
+a refused edit leaves neither a file nor the directory it would have sat in.
+Only the layer being written is validated — a broken file in the OTHER layer is
+someone else's to fix and must not make this one uneditable. A layer that
+already fails to parse is reported rather than replaced, because a hand-written
+configuration belongs to whoever wrote it; that check is the loader's full
+decode rather than a shape guess, so `{"roles": ["auditor"]}` — valid JSON the
+loader rejects — is refused instead of silently dropped.
+
+A Role write replaces the entry, so two things are explicit. Its `overrides`
+(model, reasoningEffort, tools, skills, plugins, mcpServers) are MERGED rather
+than replaced: the editor shows no field for them, and a surface must not
+destroy what it cannot show. And the write carries a create/update intent, so
+creating over an existing name is refused instead of silently replacing a
+definition, with no confirmation and no undo. A Role may not take `main` or a
+built-in canonical type: `agentTypeCandidates` drops a Role colliding with a
+built-in while `resolveRole` prefers it, so such a name would resolve two
+different ways and never dispatch.
+
+The editor seeds its fields from the overrides as WRITTEN
+(`listPresentationOverrides`), never from the resolved catalog. Seeding from
+what resolves and saving it back would write today's built-in default in as a
+permanent override, silently opting that user out of every later change to it.
+Clearing a presentation field REMOVES the override instead of storing it blank,
+so the built-in default shows through again and a later change to that default
+still reaches the user. Deleting a Role affects future spawns only: a running
+child keeps the configuration it resolved at spawn, and past transcripts fall
+through the identity chain rather than losing their speaker. Every write
+broadcasts the settings-changed notification the settings window already uses,
+and the dock re-reads its catalog on it — so an Agent renamed in the editor is
+renamed in an open transcript at once, rather than at the next conversation
+switch.
+
 Defaults are Aspen (teal, `main`), Rena (orange, `explore`), Ada (blue,
 `plan`), and Bruno (amber, `general-purpose`) — pinned, well-separated hues. An
 identity with no persona is named after its type; one with no colour derives a
@@ -201,6 +266,41 @@ danger-adjacent red — distinct the moment it exists, with nothing drawn by
 anyone. Identity attaches to the TYPE, not to an Agent: concurrent children of
 one type share a persona and a colour by design, and the task on each one's
 report is what tells them apart.
+
+#### Capabilities
+
+A Role's `overrides` narrow what it may use — `constrainChildCapabilities` can
+only ever produce a subset of the parent's, never a superset — and the
+conversation agent's Configuration Profile is the ceiling they are narrowed
+from. Both are edited as checkbox lists of everything the install has, all
+checked by default: checked means available, and unchecking is the only gesture.
+
+A narrowing has **three** states and the write protocol carries all three:
+absent leaves what is on disk (a draft that never mentioned a field must not
+destroy it), `null` REMOVES the narrowing so everything is inherited, and an
+array is the exact set — **including an empty array, which is a ban rather than
+a shorthand for inherit**, because `constrainChildCapabilities` honours it and
+collapsing it would turn a user's "none" into "all".
+
+All-checked is therefore written as `null`, never as today's catalogue: a
+written-out full list freezes the set, so a tool or Skill added to Tenon later
+would be silently excluded by a list nobody meant as final. The stored `['*']`
+Skill wildcard reads back as every Skill for the same reason. Anything already
+stored that the catalogue does not know — an MCP or extension tool, a Skill
+declared but not installed — is RENDERED as its own row, so a save cannot
+silently drop what the editor could not name. The catalogue itself travels with
+the editor's view rather than being imported by the renderer, so a settings pane
+cannot drift from the runtime's real tool set.
+
+`plugins` and `mcpServers` are narrowable in the file but have no editor field;
+a Role write MERGES `overrides`, so they — and anything else hand-written —
+survive a save untouched. The Profile write follows the same rule for `model`
+and `reasoningEffort`, which the editor also does not show.
+
+The conversation agent's identity and its Profile are **one** command
+(`agent_write_profile` carrying an optional presentation), applied inside a
+single validated edit: they are two parts of one file, the user pressed Save
+once, and as two sequential writes a refused second one left the first on disk.
 
 The model choice resolves in this order: per-call override, Role override, then
 parent model. Reasoning effort has no model-visible Agent argument; a Role may

@@ -127,6 +127,12 @@ export interface PiTurnExecutorOptions {
    * and the path is a pure function of `userData` either way.
    */
   readonly transcriptIndexPath?: string | null;
+  /**
+   * The name this Thread's agent answers to. Resolved per Turn rather than read
+   * from the recorded configuration, so renaming an agent reaches the next Turn
+   * instead of being frozen at spawn.
+   */
+  readonly resolvePersona?: (thread: TurnExecutionContext['thread']) => string;
 }
 
 export type PiRuntimeContext = Pick<TurnExecutionContext, 'thread' | 'configuration'>;
@@ -172,6 +178,7 @@ export class PiTurnExecutor implements TurnExecutor, ThreadNameGenerator {
             availableToolNames: tools.map((tool) => tool.name),
             transcriptIndexPath: this.options.transcriptIndexPath ?? null,
             startupContext: context.startupContext ?? null,
+            persona: this.options.resolvePersona?.(context.thread) ?? null,
           });
       const systemPrompt = stablePrompt?.text
         ?? context.configuration.developerInstructions.join('\n\n');

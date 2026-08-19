@@ -18,6 +18,12 @@ import {
 } from '../../core/agent/configuration';
 import { MODEL_TOOL_CATALOG, canonicalModelToolKey } from '../../core/agent/tools';
 import type { AgentIdentityEntry, RoleCatalogContextPayload, RoleCatalogEntry } from '../../core/agent/protocol';
+import type {
+  AgentBuiltInDefinition,
+  AgentEditableRole,
+  AgentPresentationOverrideRow,
+  AgentProfileView,
+} from '../../core/types';
 
 interface ConfigurationLayer {
   readonly defaultProfile: string | null;
@@ -200,6 +206,25 @@ const BUILT_IN_AGENT_TYPES = [
   },
 ] as const;
 
+/**
+ * Agent-type names a Role may not claim.
+ *
+ * `main` addresses the conversation's own agent wherever presentation is
+ * written. A built-in canonical type is worse than merely taken: `agentTypeCandidates`
+ * drops a dynamic Role that collides with one, so the Role would never dispatch —
+ * while `resolveRole` prefers the configured entry, leaving the two resolution
+ * paths disagreeing about which definition wins.
+ */
+export const RESERVED_AGENT_TYPE_NAMES: readonly string[] = Object.freeze([
+  MAIN_PRESENTATION_KEY,
+  ...BUILT_IN_AGENT_TYPES.map((entry) => entry.canonicalType),
+  // The BACKING names too. `resolveRole` prefers a configured entry over the
+  // built-in definition, and every spawn that names no role asks for
+  // `default` — so a user Role called `default` would quietly become the
+  // instructions every untyped Subagent runs.
+  ...BUILT_IN_AGENT_TYPES.map((entry) => entry.backingRole),
+]);
+
 export class AgentConfigurationLoader {
   constructor(private readonly userDataPath: string) {}
 
@@ -322,6 +347,148 @@ export class AgentConfigurationLoader {
     return Object.freeze(entries);
   }
 
+  /**
+   * The name one participant answers to, resolved the way the transcript
+   * resolves it.
+   *
+   * Live rather than recorded at spawn: a rename reaches the next Turn instead
+   * of being frozen into the configuration a resumed Turn replays. It also
+   * keeps `persona` out of the recorded configuration and its codec, where a
+   * display name would have to be versioned forever.
+   */
+  resolveAgentPersona(agentType: string | null, cwd: string): string {
+    // A Thread records its BACKING Role (`explorer`), while identity is keyed on
+    // the canonical Agent type (`explore`). Without this hop a subagent would be
+    // told a name the reader never sees.
+    const backing = BUILT_IN_AGENT_TYPES.find((entry) => entry.backingRole === agentType);
+    const key = backing?.canonicalType ?? agentType ?? MAIN_PRESENTATION_KEY;
+    const entry = this.resolveIdentityCatalog(cwd).find((row) => row.agentType === key);
+    // Named after itself when the catalog has nothing — the same degradation the
+    // renderer's resolver makes, so the two never disagree about who is talking.
+    return entry?.persona.trim() || key;
+  }
+
+  /**
+   * The name one Thread's agent answers to.
+   *
+   * A recorded nickname wins over the type's persona: an isolated Skill is
+   * spawned with `role: 'default'` and the Skill's own name as its nickname, so
+   * resolving by type would tell it it is `Bruno` — the general-purpose persona
+   * — when its own name IS what it is.
+   */
+  resolveThreadPersona(thread: {
+    readonly parentThreadId: string | null;
+    readonly agentRole: string | null;
+    readonly agentNickname: string | null;
+    readonly cwd: string;
+  }): string {
+    return thread.agentNickname?.trim()
+      || this.resolveAgentPersona(
+        thread.parentThreadId === null ? null : thread.agentRole,
+        thread.cwd,
+      );
+  }
+
+  /**
+   * The Roles a user may edit, with the layer each came from.
+   *
+   * Separate from `resolveIdentityCatalog`, which answers what the transcript
+   * DRAWS: this answers what the editor may CHANGE. Built-in types are absent
+   * on purpose — their definitions are frozen code constants, and the editor
+   * re-skins them through `presentationOverrides` rather than pretending they
+   * can be rewritten in place.
+   */
+  listEditableRoles(cwd: string): readonly AgentEditableRole[] {
+    const user = readLayer(userConfigurationPath(this.userDataPath), 'user');
+    const project = readLayer(projectConfigurationPath(cwd), 'project');
+    const rows: AgentEditableRole[] = [];
+    for (const [layer, source] of [[user, 'user'], [project, 'project']] as const) {
+      for (const role of layer.roles.values()) {
+        rows.push({
+          name: role.name,
+          layer: source,
+          description: role.description,
+          developerInstructions: role.developerInstructions,
+          persona: role.presentation?.persona ?? null,
+          color: role.presentation?.color ?? null,
+          model: role.overrides?.model ?? null,
+          reasoningEffort: role.overrides?.reasoningEffort ?? null,
+          tools: role.overrides?.tools ?? null,
+          skills: role.overrides?.skills ?? null,
+        });
+      }
+    }
+    return Object.freeze(rows.sort((left, right) => compareStableText(left.name, right.name)));
+  }
+
+  /**
+   * The Configuration Profile in force, as WRITTEN.
+   *
+   * A field left null inherits the built-in default rather than meaning "empty",
+   * which is what lets a later change to that default still reach the user —
+   * the same rule presentation overrides follow.
+   */
+  resolveEditableProfile(cwd: string): AgentProfileView {
+    const merged = this.loadMerged(cwd);
+    const name = merged.defaultProfile ?? DEFAULT_PROFILE.name;
+    const user = readLayer(userConfigurationPath(this.userDataPath), 'user');
+    const project = readLayer(projectConfigurationPath(cwd), 'project');
+    // Project replaces user entry-by-entry, matching how the layers resolve.
+    const written = project.profiles.get(name) ?? user.profiles.get(name) ?? null;
+    const layer = project.profiles.has(name)
+      ? 'project'
+      : user.profiles.has(name) ? 'user' : null;
+    return {
+      name,
+      layer,
+      developerInstructions: written?.developerInstructions ?? null,
+      model: written?.model ?? null,
+      reasoningEffort: written?.reasoningEffort ?? null,
+      tools: written?.tools ?? null,
+      skills: written?.skills ?? null,
+    };
+  }
+
+  /**
+   * The built-in definitions, so the editor can seed a duplicate from one. They
+   * are code constants and read-only everywhere: duplicating produces a Role the
+   * user owns, it does not make the built-in editable.
+   */
+  listBuiltInDefinitions(): readonly AgentBuiltInDefinition[] {
+    return Object.freeze(BUILT_IN_AGENT_TYPES.map((entry) => ({
+      agentType: entry.canonicalType,
+      description: entry.description,
+      developerInstructions: BUILT_IN_AGENT_ROLE_DEFINITIONS[entry.backingRole]!.developerInstructions,
+    })));
+  }
+
+  /**
+   * The re-skins actually written down, per layer — as opposed to
+   * `resolveIdentityCatalog`, which answers with the RESOLVED identity and so
+   * cannot tell an override apart from the built-in default it happens to
+   * equal.
+   *
+   * The editor needs the difference: seeding a field from the resolved value
+   * and saving it back writes today's default in as a permanent override,
+   * after which a later change to that default never reaches the user again.
+   */
+  listPresentationOverrides(cwd: string): readonly AgentPresentationOverrideRow[] {
+    const user = readLayer(userConfigurationPath(this.userDataPath), 'user');
+    const project = readLayer(projectConfigurationPath(cwd), 'project');
+    const rows: AgentPresentationOverrideRow[] = [];
+    for (const [layer, source] of [[user, 'user'], [project, 'project']] as const) {
+      for (const [agentType, override] of layer.presentationOverrides) {
+        rows.push({
+          agentType,
+          layer: source,
+          persona: override.persona ?? null,
+          color: override.color ?? null,
+        });
+      }
+    }
+    return Object.freeze(rows);
+  }
+
   private agentTypeCandidates(cwd: string, preloaded?: ConfigurationLayer): ResolvedAgentType[] {
     const merged = preloaded ?? this.loadMerged(cwd);
     const builtIns = BUILT_IN_AGENT_TYPES.map((entry): ResolvedAgentType => ({
@@ -398,6 +565,23 @@ function readLayer(path: string, source: 'user' | 'project'): ConfigurationLayer
   } catch (error) {
     throw new Error(`Invalid Agent configuration at ${path}: ${errorMessage(error)}`);
   }
+  return decodeConfigurationLayer(value, source, path);
+}
+
+/**
+ * Decode one layer from an in-memory value.
+ *
+ * Split out of `readLayer` so a WRITE can be validated before it exists on
+ * disk: the writer builds a candidate, runs it through this — the same and only
+ * parser the reader uses — and writes only if it survives. Validating a
+ * candidate by writing it and re-reading leaves a window in which the rejected
+ * bytes ARE the live configuration.
+ */
+export function decodeConfigurationLayer(
+  value: unknown,
+  source: 'user' | 'project',
+  path: string,
+): ConfigurationLayer {
   const root = objectValue(value, path);
   exactKeys(root, ['defaultProfile', 'profiles', 'roles', 'presentationOverrides'], path);
   const profiles = new Map<string, ConfigurationProfile>();

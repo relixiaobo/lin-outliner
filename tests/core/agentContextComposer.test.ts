@@ -18,7 +18,8 @@ import {
   CanonicalContextProjector,
 } from '../../src/main/agent/context/ContextProjector';
 import {
-  NEVA_AGENT_PERSONA,
+  agentPersonaPrompt,
+  DEFAULT_AGENT_PERSONA_NAME,
   composeStablePrompt,
 } from '../../src/main/agent/context/stablePrompt';
 import { uuidV7 } from '../../src/main/agent/uuid';
@@ -74,9 +75,37 @@ const projectionTools = [
 ] as const;
 
 describe('stable agent prompt composition', () => {
-  test('restores the exact Neva persona and selects modules from canonical tool keys', () => {
-    expect(NEVA_AGENT_PERSONA).toBe([
-      `You are Neva. Use the user's language unless they ask otherwise.`,
+  test('a renamed agent is named that way in its own prompt, and a child is named too', () => {
+    const renamed = composeStablePrompt({ thread: rootThread(1), configuration, persona: 'Juniper' });
+    expect(renamed.text).toContain('You are Juniper.');
+    // The reader's header and the agent's own answer to "who are you" come from
+    // one configured name; they used to be two different strings.
+    expect(renamed.text).not.toContain(`You are ${DEFAULT_AGENT_PERSONA_NAME}.`);
+
+    const child = composeStablePrompt({
+      thread: { ...rootThread(1), parentThreadId: 'thread-parent', agentRole: 'explorer' },
+      configuration,
+      persona: 'Rena',
+    });
+    // Named AND typed: the name says who, the Role line says what — the same
+    // split the transcript header makes.
+    expect(child.text).toContain('You are Rena, a headless Tenon Subagent Thread');
+    expect(child.text).toContain('Role: explorer');
+
+    // A participant with no resolved name keeps the sentence it had before
+    // there was one, rather than being called after its Role key.
+    const unnamed = composeStablePrompt({
+      thread: { ...rootThread(1), parentThreadId: 'thread-parent', agentRole: 'default' },
+      configuration,
+    });
+    expect(unnamed.text).toContain('You are a headless Tenon Subagent Thread');
+  });
+
+  test('names the conversation agent from configuration and selects modules from canonical tool keys', () => {
+    // The name is the ONLY part that varies. Everything below the first line is
+    // character, and freezing it here is what keeps a prompt edit deliberate.
+    expect(agentPersonaPrompt('Juniper')).toBe([
+      `You are Juniper. Use the user's language unless they ask otherwise.`,
       `You live in someone's thinking — their half-formed arguments, the notes they've shown no one, the ideas still reaching for their shape. Your one purpose is to make them think better, which is the opposite of thinking for them. A conclusion they reached themselves outranks a better one you could hand over: theirs takes root, yours is only borrowed.`,
       `So you push. The one thing you will not do is agree in order to be agreeable. When their reasoning is weak you say so, and say why; when they push back you reconsider for real before you yield, because they can be wrong and so can you. Flattering them would be the cruelest thing you could do here — a wrong idea you nod along to gets written down and hardens.`,
       `Be hard on the idea and reverent with the person. Stress-test the argument, name the gap, steelman it before you break it. But their words and their work are theirs: point at what isn't working and let them fix it; never quietly rewrite their voice into your own, never reshape what they made without asking. You are a sparring partner for the thought and a self-effacing editor for the expression — never the author.`,
@@ -85,6 +114,10 @@ describe('stable agent prompt composition', () => {
       `You are still water: you add nothing for the sake of adding. You distrust your own fluency — a thin idea in clean prose is harder to see through than an honest mess — so you write plain: no flattery openers, no restating the question, no "it's worth noting", no padding, no false balance when one side is stronger. One true sentence over five fine ones. When you don't know, you say so.`,
       `You would rather ask the one question that cracks the whole thing open than answer the wrong one in full.`,
     ].join('\n'));
+    // With nothing configured the shipped default is what the transcript draws
+    // for `main`, so the reader and the model cannot be told two different names.
+    expect(composeStablePrompt({ thread: rootThread(1), configuration }).text)
+      .toContain(`You are ${DEFAULT_AGENT_PERSONA_NAME}.`);
 
     const prompt = composeStablePrompt({ thread: rootThread(1), configuration });
     expect(prompt.blocks.map((block) => block.id)).toEqual([
@@ -94,7 +127,7 @@ describe('stable agent prompt composition', () => {
       'memory',
       'skills',
       'agent',
-      'neva-identity',
+      'agent-identity',
     ]);
     expect(prompt.text).toContain('# Agents');
     expect(prompt.text).toContain('work product to synthesize');
@@ -177,7 +210,7 @@ describe('stable agent prompt composition', () => {
     });
     expect(extensionOnly.blocks.map((block) => block.id)).toEqual([
       'framework-firmware',
-      'neva-identity',
+      'agent-identity',
     ]);
 
     const agentMessageOnly = composeStablePrompt({
@@ -187,7 +220,7 @@ describe('stable agent prompt composition', () => {
     expect(agentMessageOnly.blocks.map((block) => block.id)).toEqual([
       'framework-firmware',
       'agent',
-      'neva-identity',
+      'agent-identity',
     ]);
   });
 
@@ -266,7 +299,7 @@ describe('stable agent prompt composition', () => {
     expect(child.fingerprints.l0).toBe(first.fingerprints.l0);
     expect(child.fingerprints.l1).not.toBe(first.fingerprints.l1);
     expect(child.fingerprints.l2).not.toBe(first.fingerprints.l2);
-    expect(child.text).not.toContain(NEVA_AGENT_PERSONA);
+    expect(child.text).not.toContain(agentPersonaPrompt(DEFAULT_AGENT_PERSONA_NAME));
     expect(child.text).toContain('You are a headless Tenon Subagent Thread');
     expect(child.text).toContain('concurrent Threads share files, processes, ports, credentials');
     expect(child.text).toContain('Execute the assigned implementation and verify it.');

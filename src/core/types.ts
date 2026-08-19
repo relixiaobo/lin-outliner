@@ -1,4 +1,5 @@
 import type { CaptureNodeMetadata } from './launcher/sources';
+import type { AgentIdentityEntry } from './agent/protocol';
 
 export type {
   DocumentSystemReceipt,
@@ -13,6 +14,7 @@ export type {
   AdditionalContext,
   AdditionalContextEntry,
   AgentCoreNotification,
+  AgentIdentityEntry,
   AgentMutationCausation,
   ItemProvenance,
   MemoryCitation,
@@ -1126,6 +1128,123 @@ export interface AgentProviderOption {
    */
   capabilities?: AgentProviderCapabilitySummary[];
   models: AgentModelOption[];
+}
+
+/** One user- or project-defined Role, as the Agents editor edits it. */
+export interface AgentEditableRole {
+  readonly name: string;
+  readonly layer: 'user' | 'project';
+  readonly description: string;
+  readonly developerInstructions: string;
+  readonly persona: string | null;
+  readonly color: string | null;
+  readonly model: string | null;
+  readonly reasoningEffort: string | null;
+  /**
+   * Null means "inherit", not "none". A capability list only ever NARROWS what
+   * the parent has, so an absent list is the full inherited set and an empty one
+   * would be a deliberate ban.
+   */
+  readonly tools: readonly string[] | null;
+  readonly skills: readonly string[] | null;
+}
+
+/** What the editor writes: everything optional except the identity itself. */
+export interface AgentRoleDraft {
+  readonly name: string;
+  readonly description: string;
+  readonly developerInstructions: string;
+  readonly persona?: string;
+  readonly color?: string;
+  readonly model?: string;
+  readonly reasoningEffort?: string;
+  /**
+   * A capability narrowing has THREE states and the protocol carries all three:
+   * `undefined` leaves whatever is on disk (the draft did not mention it),
+   * `null` removes the narrowing so everything is inherited, and an array —
+   * INCLUDING an empty one — is the exact set allowed. `[]` is a ban, not a
+   * shorthand for "inherit": `constrainChildCapabilities` honours it.
+   */
+  readonly tools?: readonly string[] | null;
+  readonly skills?: readonly string[] | null;
+}
+
+/**
+ * The conversation agent's own configuration — its standing instructions and the
+ * capability ceiling every Subagent is narrowed from. Written as a Configuration
+ * Profile; the editor never says the word, because from the reader's side this
+ * is simply "the agent I talk to".
+ */
+export interface AgentProfileDraft {
+  /** Omitted leaves what is on disk; empty removes it so the default returns. */
+  readonly developerInstructions?: string;
+  readonly model?: string;
+  readonly reasoningEffort?: string;
+  /** Three states, as on `AgentRoleDraft`. */
+  readonly tools?: readonly string[] | null;
+  readonly skills?: readonly string[] | null;
+}
+
+/** The Profile in force, as WRITTEN — null fields inherit the built-in default. */
+export interface AgentProfileView {
+  readonly name: string;
+  /** Null when nothing is written down and the built-in default is in force. */
+  readonly layer: 'user' | 'project' | null;
+  readonly developerInstructions: string | null;
+  readonly model: string | null;
+  readonly reasoningEffort: string | null;
+  readonly tools: readonly string[] | null;
+  readonly skills: readonly string[] | null;
+}
+
+/**
+ * A built-in Agent type's frozen definition, carried so the editor can seed a
+ * duplicate from it. Read-only everywhere else: this is code, not configuration.
+ */
+export interface AgentBuiltInDefinition {
+  readonly agentType: string;
+  readonly description: string;
+  readonly developerInstructions: string;
+}
+
+/**
+ * What a capability list may contain, resolved in main.
+ *
+ * The catalogue travels with the view rather than being imported by the
+ * renderer: a settings pane naming tools it read out of the runtime's own
+ * module would drift the moment the runtime gained one.
+ */
+export interface AgentCapabilityCatalog {
+  readonly tools: readonly { readonly key: string; readonly description: string }[];
+  readonly skills: readonly string[];
+}
+
+/**
+ * One presentation re-skin exactly as it is written down, before layering
+ * resolves it. The editor seeds its fields from this rather than from the
+ * resolved catalog, so opening an identity and saving cannot turn today's
+ * built-in default into a permanent override.
+ */
+export interface AgentPresentationOverrideRow {
+  readonly agentType: string;
+  readonly layer: 'user' | 'project';
+  readonly persona: string | null;
+  readonly color: string | null;
+}
+
+/**
+ * The Agents editor's whole view in one answer: what the transcript can draw
+ * (`entries`, the same catalog the renderer resolves identities from) beside
+ * what the user may change (`roles`). Built-in types appear only in `entries`
+ * — their definitions are frozen, and the editor re-skins them instead.
+ */
+export interface AgentEditorView {
+  readonly entries: readonly AgentIdentityEntry[];
+  readonly roles: readonly AgentEditableRole[];
+  readonly presentationOverrides: readonly AgentPresentationOverrideRow[];
+  readonly profile: AgentProfileView;
+  readonly builtInDefinitions: readonly AgentBuiltInDefinition[];
+  readonly capabilities: AgentCapabilityCatalog;
 }
 
 export interface AgentProviderSettingsView {

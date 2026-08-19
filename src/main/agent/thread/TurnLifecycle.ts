@@ -100,7 +100,10 @@ export class TurnLifecycle {
     private readonly getDocumentProjection: () => DocumentProjection | null,
     private readonly resolveReferencedAsset: ((assetId: string) => Promise<import('../capabilities/agentReferencedAssets').ReferencedAssetResolution | null>) | undefined,
     private readonly resolveSkillAdmission: (input: SkillAdmissionResolutionInput) => Promise<SkillAdmissionResolution>,
-    private readonly resolveRoleCatalog: (cwd: string) => Promise<RoleCatalogContextPayload | null>, private readonly goalUsage: TurnLifecycleGoalUsage,
+    private readonly resolveRoleCatalog: (cwd: string) => Promise<RoleCatalogContextPayload | null>,
+    /** The name this Thread's agent answers to, resolved per Turn. */
+    private readonly resolvePersona: (thread: Thread) => string | null,
+    private readonly goalUsage: TurnLifecycleGoalUsage,
     private readonly normalizeOutputImage: OutputImageObservationNormalizer | undefined,
     private readonly now: () => number,
     private readonly createThreadBusyError: (message: string, rendererSubmissionRetryable?: boolean) => Error,
@@ -460,6 +463,7 @@ export class TurnLifecycle {
           const admissionProjection = this.getDocumentProjection();
           const evidence = await admitContextEvidence({
             thread,
+            persona: this.resolvePersona(thread),
             turnId: active.turnId,
             acceptedAt,
             content: admission.content,
@@ -977,6 +981,7 @@ export class TurnLifecycle {
       const drift = await this.documentDrift.noticeFor(record.thread.id, admissionProjection);
       const evidence = await admitContextEvidence({
         thread: record.thread,
+        persona: this.resolvePersona(record.thread),
         turnId,
         acceptedAt: startedAt,
         content: input,
