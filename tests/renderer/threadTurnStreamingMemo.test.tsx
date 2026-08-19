@@ -95,6 +95,60 @@ describe('streaming Turn item memoization', () => {
   });
 });
 
+describe('Turn provider recovery', () => {
+  test('distinguishes request retries from stream reconnection', async () => {
+    const { document, root } = installDom();
+    const ThreadTurnView = await loadThreadTurnView();
+    const value = turn([userMessage('Wait for the provider')]);
+
+    await render(root, (
+      <ThreadTurnView
+        {...turnProps()}
+        {...turnAnchors(value)}
+        providerRetry={{ kind: 'request', attempt: 1, maxRetries: 5 }}
+      />
+    ));
+    expect(document.querySelector('.thread-provider-retry')?.textContent).toBe('Retrying 1/5');
+
+    await render(root, (
+      <ThreadTurnView
+        {...turnProps()}
+        {...turnAnchors(value)}
+        providerRetry={{ kind: 'stream', attempt: 2, maxRetries: 5 }}
+      />
+    ));
+    expect(document.querySelector('.thread-provider-retry')?.textContent).toBe('Reconnecting 2/5');
+    await act(async () => root.unmount());
+  });
+
+  test('routes a host-authored failed Turn Retry through onRetryTurn only', async () => {
+    const { document, root } = installDom();
+    const ThreadTurnView = await loadThreadTurnView();
+    const failed = failedHostTurn();
+    const retried: Turn[] = [];
+    let editCalls = 0;
+
+    await render(root, (
+      <ThreadTurnView
+        {...turnProps()}
+        {...turnAnchors(failed)}
+        onEditUserMessage={async () => { editCalls += 1; }}
+        onRetryTurn={async (candidate) => { retried.push(candidate); }}
+      />
+    ));
+    const retry = document.querySelector<HTMLButtonElement>('button[aria-label="Retry"]');
+    expect(retry).not.toBeNull();
+    await act(async () => {
+      retry?.click();
+      await Promise.resolve();
+    });
+
+    expect(retried).toEqual([failed]);
+    expect(editCalls).toBe(0);
+    await act(async () => root.unmount());
+  });
+});
+
 /** A Turn with no delegation in it: its own Items, no anchors. */
 function turnAnchors(value: Turn) {
   return { turn: value, anchors: emptyTurnAnchors(value), delivery: null };
@@ -103,6 +157,7 @@ function turnAnchors(value: Turn) {
 function turnProps() {
   return {
     active: true,
+    agentTranscript: false,
     canEditUserMessage: false,
     composerEnabled: true,
     expandState: {
@@ -134,6 +189,7 @@ function turnProps() {
     onOpenTurnDetails: () => undefined,
     onReadToolArguments: async () => null,
     onReadToolOutput: async () => null,
+    onRetryTurn: async () => undefined,
     providerRetry: null,
     selfSpeaker: { participantId: 'main', avatarKey: 'main', name: 'main' },
     threadCwd: '/workspace',
@@ -141,6 +197,36 @@ function turnProps() {
     threadsById: new Map(),
     waitingOnUserInput: false,
   } as const;
+}
+
+function userMessage(text: string): Extract<ThreadItem, { type: 'userMessage' }> {
+  return {
+    id: 'user',
+    provenance: { originThreadId: 'thread', originTurnId: 'turn', originItemId: 'user' },
+    type: 'userMessage',
+    clientId: 'user-client-id',
+    content: [{ type: 'text', text }],
+    acceptedAt: 1,
+  };
+}
+
+function failedHostTurn(): Turn {
+  return {
+    ...turn([userMessage('[Agent finished] Canonical host notice')]),
+    provenance: {
+      originThreadId: 'thread',
+      originTurnId: 'turn',
+      trigger: {
+        kind: 'subagent',
+        parentThreadId: 'thread',
+        parentItemId: 'parent-tool',
+      },
+    },
+    status: 'failed',
+    error: { code: 'runtime_failure', message: 'Provider unavailable' },
+    completedAt: 2,
+    durationMs: 1,
+  };
 }
 
 function turn(items: readonly ThreadItem[]): Turn {

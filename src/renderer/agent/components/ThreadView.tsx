@@ -189,6 +189,7 @@ interface ThreadViewProps {
   readonly threadCreationBlocked: boolean;
   readonly threadCreationPending: boolean;
   readonly onEditUserMessage: (turn: Turn, content: readonly ThreadUserContent[]) => Promise<void>;
+  readonly onRetryTurn: (turn: Turn) => Promise<void>;
   readonly onContinueInNewChat: (turn: Turn) => Promise<void>;
   readonly onCreateThread: () => Promise<boolean>;
   readonly onInterrupt: () => Promise<void>;
@@ -648,6 +649,7 @@ export function ThreadView({
   threadCreationBlocked,
   threadCreationPending,
   onEditUserMessage,
+  onRetryTurn,
   onContinueInNewChat,
   onCreateThread,
   onInterrupt,
@@ -2085,6 +2087,7 @@ export function ThreadView({
                         getUserView={getUserView}
                         indexStore={indexStore}
                         onEditUserMessage={onEditUserMessage}
+                        onRetryTurn={onRetryTurn}
                         onContinueInNewChat={onContinueInNewChat}
                         onOpenSubagentTurnDetails={onOpenSubagentTurnDetails}
                         agentTranscript={agentTranscript}
@@ -2357,6 +2360,7 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   latchedReasoning,
   liveReasoningSeen,
   onEditUserMessage,
+  onRetryTurn,
   onContinueInNewChat,
   onInterruptThread,
   onOpenNodeReference,
@@ -2390,6 +2394,7 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   /** Reasoning Item ids first observed while their Turn was live. */
   readonly liveReasoningSeen: Set<string>;
   readonly onEditUserMessage: (turn: Turn, content: readonly ThreadUserContent[]) => Promise<void>;
+  readonly onRetryTurn: (turn: Turn) => Promise<void>;
   readonly onContinueInNewChat: (turn: Turn) => Promise<void>;
   readonly onInterruptThread: (threadId: string) => Promise<void>;
   readonly onOpenNodeReference: ThreadNodeReferenceOpenHandler;
@@ -2567,37 +2572,17 @@ export const ThreadTurnView = memo(function ThreadTurnView({
     else if (action === 'continueInNewChat') await continueInNewChat();
     else if (action === 'details') openTurnDetails();
   }, [agentTranscript, continueInNewChat, copyTurn, openTurnDetails, turn.id]);
-  /**
-   * Running the same request again, for a Turn where that could go differently.
-   *
-   * A failure the user did not cause has no exit today: the only way forward is
-   * to hover their OWN message and edit it, which frames a crash as something
-   * they mistyped — and is unavailable outright for a message with more than one
-   * text part. Retry re-sends this Turn's request unchanged, through the same
-   * rollback-and-send path Edit uses, so the failed Turn does not linger as a
-   * dead branch and the question is not asked twice.
-   *
-   * Only the last Turn: that path rolls back exactly one Turn, so offering it
-   * further up would roll back somebody else's.
-   */
-  const retryContent = useMemo(() => {
-    // The same condition the composer uses: rollback is available only on a
-    // persistent root user Thread, so anywhere the user cannot type they must
-    // not be offered a button that can only fail.
-    if (hostAuthoredEvent
-      || agentTranscript
+  const retryEligible = useMemo(() => {
+    if (agentTranscript
       || !composerEnabled
       || !isLastTurn
-      || !isRetryableTurn(turn)) return null;
-    const request = turn.items.find((item) => item.type === 'userMessage');
-    return request?.content ?? null;
-  }, [agentTranscript, composerEnabled, hostAuthoredEvent, isLastTurn, turn]);
-  const retryContentRef = useRef(retryContent);
-  retryContentRef.current = retryContent;
-  const retryTurn = useCallback(async () => {
-    const content = retryContentRef.current;
-    if (content) await onEditUserMessage(turnRef.current, content);
-  }, [onEditUserMessage, turn.id]);
+      || !isRetryableTurn(turn)) return false;
+    return turn.items.some((item) => item.type === 'userMessage');
+  }, [agentTranscript, composerEnabled, isLastTurn, turn]);
+  const retryTurn = useCallback(
+    () => onRetryTurn(turnRef.current),
+    [onRetryTurn, turn.id],
+  );
   const responseTail = useMemo(
     () => standaloneContextBoundary ? null : (
       <ThreadResponseTail
@@ -2605,7 +2590,7 @@ export const ThreadTurnView = memo(function ThreadTurnView({
         onCopy={copyTurn}
         onContinueInNewChat={continueInNewChat}
         onOpenDetails={openTurnDetails}
-        onRetry={retryContent !== null ? retryTurn : null}
+        onRetry={retryEligible ? retryTurn : null}
         providerRetry={providerRetry}
         shapeMotionSuppressed={shapeMotionSuppressed}
         workingTextOwnsMotion={workingTextOwnsMotion}
@@ -2622,7 +2607,7 @@ export const ThreadTurnView = memo(function ThreadTurnView({
       openTurnDetails,
       providerRetry,
       responseTailTurn,
-      retryContent,
+      retryEligible,
       retryTurn,
       shapeMotionSuppressed,
       standaloneContextBoundary,
@@ -2927,18 +2912,15 @@ function ThreadResponseTail({
                 icon={RefreshIcon}
                 iconSize={ICON_SIZE.menu}
                 label={t.agent.thread.retryTurn}
-                // Latched, because the rollback that precedes the re-send is a
-                // round trip during which this Turn and this button stay
-                // mounted. A second click inside that window rolls back the
-                // Turn BEFORE this one — a successful one, permanently — and
-                // then sends the same request twice.
+                // Latched while main admits and atomically replaces this latest
+                // Turn. A second request in that window can only race the same
+                // identity and return a stale-target failure.
                 onClick={() => {
                   if (retrying) return;
                   setRetrying(true);
                   setRetryError(null);
                   void onRetry()
-                    // Reported, never swallowed: a Thread the host left in an
-                    // error state refuses the rollback, and a Retry that
+                    // Reported, never swallowed: a stale or busy retry that
                     // silently does nothing is worse than one that says why.
                     .catch((error: unknown) => setRetryError(errorMessage(error)))
                     .finally(() => setRetrying(false));
@@ -3031,16 +3013,18 @@ function ThreadUsageHoverCard({
 
 function ThreadProviderRetryStatus({ status }: { readonly status: ProviderRetryStatus }) {
   const t = useT();
+  const label = providerRetryLabel(status, t.agent.thread);
   return (
     <div aria-hidden className="thread-provider-retry">
       <LoaderIcon aria-hidden size={ICON_SIZE.tiny} />
-      <span>{t.agent.thread.reconnecting({ attempt: status.attempt, maxRetries: status.maxRetries })}</span>
+      <span>{label}</span>
     </div>
   );
 }
 
 function ThreadProviderRetryAnnouncement({ status }: { readonly status: ProviderRetryStatus }) {
   const t = useT();
+  const label = providerRetryLabel(status, t.agent.thread);
   return (
     <span
       aria-atomic="true"
@@ -3048,9 +3032,17 @@ function ThreadProviderRetryAnnouncement({ status }: { readonly status: Provider
       className="thread-provider-retry-announcer thread-visually-hidden"
       role="status"
     >
-      {t.agent.thread.reconnecting({ attempt: status.attempt, maxRetries: status.maxRetries })}
+      {label}
     </span>
   );
+}
+
+function providerRetryLabel(
+  status: ProviderRetryStatus,
+  messages: ReturnType<typeof useT>['agent']['thread'],
+): string {
+  const input = { attempt: status.attempt, maxRetries: status.maxRetries };
+  return status.kind === 'request' ? messages.retrying(input) : messages.reconnecting(input);
 }
 
 /**

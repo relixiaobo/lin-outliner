@@ -17,7 +17,7 @@ canonical manual retry path for exhausted Turns.
 - Remove intermediate failures and retry state after recovery. Persist and show
   an error only after the automatic budget is exhausted.
 - Let the user retry an exhausted failure manually without changing whether the
-  original Turn was user-authored, host-authored, scheduled, or delegated.
+  root conversation Turn was user-authored or host-authored by subagent delivery.
 - Preserve the existing no-duplicate-output and no-duplicate-tool-execution
   safety boundary.
 
@@ -88,23 +88,26 @@ the pure delay bounds separately.
 ### Canonical manual retry command
 
 Add `turn/retry` to the core agent command protocol. The renderer sends only the
-Thread and failed Turn identity; it never reconstructs message text or chooses
+Thread and terminal Turn identity; it never reconstructs message text or chooses
 a new trigger.
 
 Main admits the command only when the target Turn is:
 
 - present in the selected Thread;
 - the latest Turn;
-- terminal and failed with a retryable provider error;
+- a retryable terminal failure or host-restart interruption;
 - not already active, superseded, or being retried.
 
-Admission atomically rolls back the failed Turn and starts a replacement from
-the original canonical input. The replacement preserves the original
-`TurnTrigger`, source, context evidence, and provenance. This is required for
-host-authored subagent notifications: replay must remain an `agent_message`
-delivery and must never become a user message. Delivery bookkeeping remains
-consistent with admission so a recovered notification is neither lost nor
-delivered twice.
+Admission prepares the replacement from the original canonical input while the
+terminal Turn is still present. One internal `history/retry` rollout event then
+removes the terminal Turn and starts the replacement in the same projection
+transaction. An admission or append failure leaves the terminal Turn unchanged;
+restart sees either the complete old state or the complete replacement. The
+replacement preserves the original `TurnTrigger`, stable client ID, context
+evidence, and host provenance. This is required for host-authored subagent
+notifications: replay must remain an `agent_message` delivery and must never
+become a user message. Delivery bookkeeping remains consistent with admission
+so a recovered notification is neither lost nor delivered twice.
 
 Stale, non-latest, active, missing, and non-retryable targets fail closed at the
 command boundary with no Thread mutation. Double activation is serialized by
@@ -121,8 +124,8 @@ The status remains a polite live region outside canonical history and updates
 in place. It disappears on successful recovery, terminal settlement,
 cancellation, Thread switch, hydration, or close.
 
-A terminal retryable provider error renders one Retry action even when its Turn
-was host-authored. The action invokes `ThreadStore.retryTurn(threadId, turnId)`
+A retryable terminal Turn renders one Retry action even when it was host-authored.
+The action invokes `ThreadStore.retryTurn(threadId, turnId)`
 and relies on main admission for eligibility. The renderer does not reuse the
 user-message edit/rollback path and does not subscribe to broader state merely
 to drive the click handler.
@@ -143,7 +146,7 @@ Focused tests cover:
 - manual retry for user-authored and host-authored Turns with unchanged trigger
   and provenance;
 - refusal of stale, non-latest, active, missing, and non-retryable Turns;
-- one terminal Retry action and replacement of the failed Turn after success.
+- one terminal Retry action and replacement of the prior terminal Turn after success.
 
 ## Open questions
 

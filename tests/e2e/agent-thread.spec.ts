@@ -821,6 +821,19 @@ test.describe('canonical agent Thread surface', () => {
         type: 'turn/providerRetry/changed',
         threadId,
         turnId: liveTurnId,
+        status: { kind: 'request', attempt: 1, maxRetries: 5 },
+      });
+    }, ids);
+    const retrying = liveTurn.locator('.thread-response-footer .thread-provider-retry');
+    await expect(retrying).toHaveText('Retrying 1/5');
+    await page.evaluate(({ liveTurnId, threadId }) => {
+      const target = window as Window & {
+        __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+      };
+      target.__LIN_E2E__?.emitAgentCoreNotification({
+        type: 'turn/providerRetry/changed',
+        threadId,
+        turnId: liveTurnId,
         status: { kind: 'stream', attempt: 1, maxRetries: 3 },
       });
     }, ids);
@@ -7671,6 +7684,35 @@ test.describe('terminal Thread history actions', () => {
     ]);
     expect(calls.filter((call) => call.cmd === 'thread/rollback')).toHaveLength(1);
     expect(calls.filter((call) => call.cmd === 'thread/fork')).toHaveLength(0);
+  });
+
+  test('retries a failed Turn through turn/retry without renderer rollback or resubmission', async ({ page }) => {
+    await openMockedApp(page, { agentTurnFailure: 'Mock provider failure' });
+    await createNewThread(page);
+    const composer = page.getByRole('textbox', { name: 'Message this Thread' });
+    await composer.fill('Retry this canonical request');
+    await page.getByRole('button', { name: 'Send' }).click();
+
+    const response = page.locator('.thread-agent-message-response').last();
+    await expect(response.locator('.thread-response-error')).toHaveText('Mock provider failure');
+    const failedRow = page.locator('[data-thread-turn-row]').filter({ has: response });
+    const failedTurnId = await failedRow.getAttribute('data-thread-turn-row');
+    expect(failedTurnId).toBeTruthy();
+    await response.hover();
+    await response.getByRole('button', { name: 'Retry' }).click();
+
+    await expect.poll(async () => (
+      (await commandCalls(page)).filter((call) => call.cmd === 'turn/retry').length
+    )).toBe(1);
+    await expect(page.locator(`[data-thread-turn-row="${failedTurnId}"]`)).toHaveCount(0);
+    await expect(page.getByLabel('Assistant is responding')).toBeVisible();
+    const calls = await commandCalls(page);
+    expect(calls.filter((call) => call.cmd === 'turn/retry')).toEqual([{
+      cmd: 'turn/retry',
+      args: { threadId: expect.any(String), turnId: failedTurnId },
+    }]);
+    expect(calls.filter((call) => call.cmd === 'thread/rollback')).toHaveLength(0);
+    expect(calls.filter((call) => call.cmd === 'turn/submit')).toHaveLength(1);
   });
 
   test('keeps an interrupted partial response without Retry or Regenerate', async ({ page }) => {

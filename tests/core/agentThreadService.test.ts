@@ -4665,6 +4665,266 @@ describe('ThreadService', () => {
     await service.close();
   });
 
+  test('retries the latest failed Turn from canonical user input and evidence', async () => {
+    const fixture = await createFixture();
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const accepted = await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Retry this exact request' }],
+      clientUserMessageId: 'retry-user-input',
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    fixture.executor.finish(0, { status: 'failed', error: { message: 'Provider unavailable' } });
+    await fixture.service.waitForIdle(thread.id);
+
+    const failed = fixture.service.readTurnForHost(thread.id, accepted.turn.id)!;
+    const failedInput = failed.items.find((item) => item.type === 'userMessage')!;
+    const failedEvidence = failed.items
+      .filter((item) => item.type === 'contextEvidence')
+      .map((item) => ({ kind: item.kind, payloadRef: item.payloadRef, summary: item.summary }));
+    const retried = await fixture.service.request('turn/retry', {
+      threadId: thread.id,
+      turnId: failed.id,
+    });
+
+    expect(retried.replacedTurnId).toBe(failed.id);
+    expect(retried.turn.id).not.toBe(failed.id);
+    expect(retried.turn.provenance.trigger).toEqual({ kind: 'user' });
+    expect(retried.turn.items.find((item) => item.type === 'userMessage')).toMatchObject({
+      clientId: failedInput.clientId,
+      content: failedInput.content,
+    });
+    expect(retried.turn.items
+      .filter((item) => item.type === 'contextEvidence')
+      .map((item) => ({ kind: item.kind, payloadRef: item.payloadRef, summary: item.summary })))
+      .toEqual(failedEvidence);
+    expect(fixture.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns
+      ?.map((turn) => turn.id)).toEqual([retried.turn.id]);
+
+    await fixture.executor.waitUntilWaiting(1);
+    fixture.executor.finish(1);
+    await fixture.service.waitForIdle(thread.id);
+    expect(fixture.service.readTurnForHost(thread.id, retried.turn.id)).toMatchObject({
+      status: 'completed',
+      error: null,
+    });
+    await fixture.service.close();
+  });
+
+  test('keeps the failed Turn intact when retry admission fails before the atomic replacement', async () => {
+    const registry = new ExtensionRegistry();
+    let admissionCount = 0;
+    registry.register({
+      id: 'retry-admission-failure',
+      contributeTurnAdmission: () => {
+        admissionCount += 1;
+        if (admissionCount === 2) throw new Error('retry admission failed');
+        return { extensionId: 'retry-admission-failure', snapshotId: 'initial-admission' };
+      },
+    });
+    const fixture = await createFixture(registry);
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const accepted = await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Keep this failed Turn' }],
+      clientUserMessageId: 'atomic-retry-input',
+    });
+    await fixture.executor.waitUntilWaiting();
+    fixture.executor.finish(0, { status: 'failed', error: { message: 'Provider unavailable' } });
+    await fixture.service.waitForIdle(thread.id);
+    const before = fixture.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns;
+
+    await expect(fixture.service.request('turn/retry', {
+      threadId: thread.id,
+      turnId: accepted.turn.id,
+    })).rejects.toThrow('retry admission failed');
+
+    expect(fixture.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns)
+      .toEqual(before);
+    expect((await fixture.stores.rollout.read(thread.id)).some((entry) => (
+      entry.event.type === 'history/retry'
+    ))).toBe(false);
+    await fixture.service.close();
+  });
+
+  test('drains retry admission and fences its atomic replacement during shutdown', async () => {
+    let releaseRetryAdmission!: () => void;
+    let retryAdmissionStarted!: () => void;
+    const retryAdmissionRelease = new Promise<void>((resolve) => { releaseRetryAdmission = resolve; });
+    const retryAdmissionStart = new Promise<void>((resolve) => { retryAdmissionStarted = resolve; });
+    let admissionCount = 0;
+    const registry = new ExtensionRegistry();
+    registry.register({
+      id: 'retry-shutdown-fence',
+      contributeTurnAdmission: async () => {
+        admissionCount += 1;
+        if (admissionCount === 2) {
+          retryAdmissionStarted();
+          await retryAdmissionRelease;
+        }
+        return { extensionId: 'retry-shutdown-fence', snapshotId: `admission-${admissionCount}` };
+      },
+    });
+    const fixture = await createFixture(registry);
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const accepted = await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Do not replace this failure after shutdown starts' }],
+    });
+    await fixture.executor.waitUntilWaiting();
+    fixture.executor.finish(0, { status: 'failed', error: { message: 'Provider unavailable' } });
+    await fixture.service.waitForIdle(thread.id);
+
+    const retried = fixture.service.request('turn/retry', {
+      threadId: thread.id,
+      turnId: accepted.turn.id,
+    });
+    await retryAdmissionStart;
+
+    let closeSettled = false;
+    const closing = fixture.service.close().finally(() => { closeSettled = true; });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(closeSettled).toBe(false);
+    releaseRetryAdmission();
+
+    await expect(retried).rejects.toThrow('Agent service is shutting down');
+    await closing;
+    expect(fixture.executor.contexts).toHaveLength(1);
+    expect((await fixture.stores.rollout.read(thread.id)).some((entry) => (
+      entry.event.type === 'history/retry'
+    ))).toBe(false);
+  });
+
+  test('keeps the failed Turn intact when the atomic retry append fails', async () => {
+    const fixture = await createFixture();
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const accepted = await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Keep this durable failure' }],
+    });
+    await fixture.executor.waitUntilWaiting();
+    fixture.executor.finish(0, { status: 'failed', error: { message: 'Provider unavailable' } });
+    await fixture.service.waitForIdle(thread.id);
+    const before = fixture.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns;
+    const appendHistoryRetry = fixture.stores.rollout.appendHistoryRetry.bind(fixture.stores.rollout);
+    fixture.stores.rollout.appendHistoryRetry = async () => {
+      throw new Error('atomic retry append failed');
+    };
+
+    await expect(fixture.service.request('turn/retry', {
+      threadId: thread.id,
+      turnId: accepted.turn.id,
+    })).rejects.toThrow('atomic retry append failed');
+    fixture.stores.rollout.appendHistoryRetry = appendHistoryRetry;
+
+    expect(fixture.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns)
+      .toEqual(before);
+    expect((await fixture.stores.rollout.read(thread.id)).some((entry) => (
+      entry.event.type === 'history/retry'
+    ))).toBe(false);
+    await fixture.service.close();
+  });
+
+  test('preserves a host-authored subagent trigger and stable delivery client id on retry', async () => {
+    const fixture = await createFixture();
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const trigger = {
+      kind: 'subagent' as const,
+      parentThreadId: thread.id,
+      parentItemId: 'agent-notification-tool',
+    };
+    const accepted = await fixture.service.startPrivilegedTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: '[Agent finished] Canonical host notice' }],
+      clientUserMessageId: 'agent-notification-stable-id',
+      trigger,
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    fixture.executor.finish(0, { status: 'failed', error: { message: 'Provider unavailable' } });
+    await fixture.service.waitForIdle(thread.id);
+
+    const retried = await fixture.service.request('turn/retry', {
+      threadId: thread.id,
+      turnId: accepted.turn.id,
+    });
+    expect(retried.turn.provenance.trigger).toEqual(trigger);
+    expect(retried.turn.items.find((item) => item.type === 'userMessage')).toMatchObject({
+      clientId: 'agent-notification-stable-id',
+      content: [{ type: 'text', text: '[Agent finished] Canonical host notice' }],
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    fixture.executor.finish(1);
+    await fixture.service.waitForIdle(thread.id);
+    await fixture.service.close();
+  });
+
+  test('refuses active, stale, and non-retryable Turn retry requests without changing history', async () => {
+    const fixture = await createFixture();
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const first = await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'First failure' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    await expect(fixture.service.request('turn/retry', {
+      threadId: thread.id,
+      turnId: first.turn.id,
+    })).rejects.toThrow('active work');
+    fixture.executor.finish(0, { status: 'failed', error: { message: 'First failure' } });
+    await fixture.service.waitForIdle(thread.id);
+
+    const second = await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Successful request' }],
+    });
+    await fixture.executor.waitUntilWaiting(1);
+    fixture.executor.finish(1);
+    await fixture.service.waitForIdle(thread.id);
+    const before = fixture.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns!;
+
+    await expect(fixture.service.request('turn/retry', {
+      threadId: thread.id,
+      turnId: first.turn.id,
+    })).rejects.toThrow('latest Turn');
+    await expect(fixture.service.request('turn/retry', {
+      threadId: thread.id,
+      turnId: second.turn.id,
+    })).rejects.toThrow('not retryable');
+    expect(fixture.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns)
+      .toEqual(before);
+    await fixture.service.close();
+  });
+
   test('rolls back the terminal Turn in place and retries failed commit hooks without restart', async () => {
     const extension = new HistoryRollbackProbe('memory-probe', { commitFailures: 1 });
     const registry = new ExtensionRegistry();

@@ -18,6 +18,7 @@ import type {
   RolloutEntry,
   RolloutEvent,
   RolloutSnapshotEvent,
+  ThreadHistoryRetryMarker,
   ThreadHistoryRollbackMarker,
 } from './RolloutStore';
 import { openSqlite, type SqliteDatabase, type SqliteValue } from './sqlite';
@@ -436,6 +437,11 @@ export class ThreadHistoryProjectionStore {
   }
 
   private projectEvent(ordinal: number, projectionVersion: number, event: RolloutEvent): void {
+    if (event.type === 'history/retry') {
+      this.projectRollback(ordinal, projectionVersion, event);
+      this.projectNotification(ordinal, event.replacement);
+      return;
+    }
     if (event.type === 'history/rollback') {
       this.projectRollback(ordinal, projectionVersion, event);
       return;
@@ -446,7 +452,7 @@ export class ThreadHistoryProjectionStore {
   private projectRollback(
     ordinal: number,
     projectionVersion: number,
-    marker: ThreadHistoryRollbackMarker,
+    marker: ThreadHistoryRollbackMarker | ThreadHistoryRetryMarker,
   ): void {
     if (marker.beforeProjectionVersion !== projectionVersion) {
       throw new Error(`History rollback before-version mismatch: ${marker.rollbackId}`);
@@ -925,10 +931,14 @@ function reconstructOpenItems(
   for (const entry of entries) {
     if (entry.event.threadId !== threadId) throw new Error('Cannot recover a Thread from another rollout');
     const event = entry.event;
-    if (event.type === 'history/rollback') {
+    if (event.type === 'history/rollback' || event.type === 'history/retry') {
       if (event.omittedTurnIds.includes(turnId)) {
         openItems.clear();
         turnStarted = false;
+      }
+      if (event.type === 'history/retry' && event.replacement.turnId === turnId) {
+        openItems.clear();
+        turnStarted = true;
       }
       continue;
     }

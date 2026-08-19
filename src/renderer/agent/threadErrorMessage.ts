@@ -1,35 +1,9 @@
 import {
-  HOST_RESTART_ERROR_CODE,
   SUBAGENT_BUDGET_EXHAUSTED_ERROR_CODE,
-  SUBAGENT_STRUCTURAL_LIMIT_ERROR_CODE,
   normalizeTurnErrorCode,
   type TurnError,
-  type TurnStatus,
 } from '../../core/agent/protocol';
-
-/**
- * Whether running this Turn's request again could end differently.
- *
- * A failure is circumstance, so it qualifies — including one with no recorded
- * error at all, where there is nothing to argue it away. An exhausted Subagent
- * budget qualifies too: the pool belongs to the request, so a new user Turn
- * delegates against a fresh grant, and restating the need is the recovery path
- * the budget design names (`docs/spec/agent-subagent-threads.md`). A structural
- * limit does not: depth and the direct-child count are Thread-lifetime, so the
- * next attempt meets the same wall, and an exit that isn't one wastes the
- * user's time twice.
- *
- * An INTERRUPTED Turn qualifies only when the host restarted under it. That is
- * recorded as an interrupt but is nobody's decision — unlike a user pressing
- * Stop, which stays without Retry because they meant it.
- */
-export function isRetryableTurn(turn: {
-  readonly status: TurnStatus;
-  readonly error: TurnError | null;
-}): boolean {
-  if (turn.status === 'interrupted') return turn.error?.code === HOST_RESTART_ERROR_CODE;
-  return turn.status === 'failed' && turn.error?.code !== SUBAGENT_STRUCTURAL_LIMIT_ERROR_CODE;
-}
+export { isRetryableTurn } from '../../core/agent/turnRetry';
 
 const ERROR_PREVIEW_MAX = 280;
 

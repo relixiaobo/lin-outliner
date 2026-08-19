@@ -2689,6 +2689,45 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           thread.updatedAt = ++now;
           return clone({ thread }) as T;
         }
+        if (method === 'turn/retry') {
+          const thread = threadById(String(input.threadId));
+          const turns = mockTurns.get(thread.id) ?? [];
+          const target = turns.at(-1);
+          if (!target || target.id !== input.turnId) throw new Error('Only the latest Turn can be retried.');
+          if (target.status !== 'failed') throw new Error('This Turn is not retryable.');
+          const sourceUserItem = target.items.find((item) => item.type === 'userMessage');
+          if (!sourceUserItem) throw new Error('Retry input is missing from the canonical Turn.');
+          const turnId = nextCanonicalId();
+          const userItemId = nextCanonicalId();
+          const startedAt = ++now;
+          const userItem: MockThreadItem = {
+            ...clone(sourceUserItem),
+            id: userItemId,
+            provenance: itemProvenance(thread.id, turnId, userItemId),
+            acceptedAt: startedAt,
+          };
+          const replacement: MockTurn = {
+            ...clone(target),
+            id: turnId,
+            items: [userItem],
+            provenance: {
+              originThreadId: thread.id,
+              originTurnId: turnId,
+              trigger: clone(target.provenance.trigger),
+            },
+            status: 'inProgress',
+            error: null,
+            startedAt,
+            completedAt: null,
+            durationMs: null,
+          };
+          turns.pop();
+          emitAgentCoreNotification({ type: 'turn/started', threadId: thread.id, turnId, turn: replacement });
+          thread.status = { type: 'active', activeFlags: [] };
+          thread.updatedAt = startedAt;
+          emitAgentCoreNotification({ type: 'thread/status/changed', threadId: thread.id, status: thread.status });
+          return clone({ thread, turn: replacement, replacedTurnId: target.id }) as T;
+        }
         if (method === 'thread/name/set') {
           const thread = threadById(String(input.threadId));
           thread.name = typeof input.name === 'string' ? input.name : null;

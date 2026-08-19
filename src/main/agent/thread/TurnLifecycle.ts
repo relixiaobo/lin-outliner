@@ -43,12 +43,21 @@ interface ActiveTurn {
 interface PendingUserInput { readonly request: RequestUserInputRequest; readonly resolve: (response: RequestUserInputResponse) => void;
   readonly reject: (error: Error) => void; readonly abort: () => void; timer: ReturnType<typeof setTimeout> | null; }
 interface AcceptedTurn { readonly response: TurnStartResponse; readonly thread: Thread; readonly active: ActiveTurn | null; }
-type InternalTurnStartRequest = PrivilegedTurnStartRequest & { readonly stagedContextEvidence?: readonly StagedContextEvidence[]; };
+type InternalTurnStartRequest = PrivilegedTurnStartRequest & {
+  readonly stagedContextEvidence?: readonly StagedContextEvidence[];
+  readonly reuseStagedContextEvidenceOnly?: boolean;
+  readonly retryReplacementTarget?: Turn;
+};
+export type CanonicalTurnRetryAdmission = PrivilegedTurnStartRequest & {
+  readonly stagedContextEvidence: readonly StagedContextEvidence[];
+  readonly replacedTurn: Turn;
+};
 interface TurnLifecycleCatalog {
   createThread: import('./ThreadCatalogOps').ThreadCatalogOps['createThread']; deleteThread: import('./ThreadCatalogOps').ThreadCatalogOps['deleteThread'];
   setInitialPreview: import('./ThreadCatalogOps').ThreadCatalogOps['setInitialPreview']; scheduleAutomaticThreadName: import('./ThreadCatalogOps').ThreadCatalogOps['scheduleAutomaticThreadName'];
   hasPendingDelegatedThreadStart: import('./ThreadCatalogOps').ThreadCatalogOps['hasPendingDelegatedThreadStart'];
   publishDelegatedThreadStart: import('./ThreadCatalogOps').ThreadCatalogOps['publishDelegatedThreadStart'];
+  replaceLatestTurnForRetryWithLocksHeld: import('./ThreadCatalogOps').ThreadCatalogOps['replaceLatestTurnForRetryWithLocksHeld'];
 }
 interface TurnLifecycleCollaboration {
   pendingActivities(threadId: ThreadId): readonly PendingSubagentActivity[]; hasPendingActivities(threadId: ThreadId): boolean;
@@ -395,6 +404,20 @@ export class TurnLifecycle {
       }); }
   async startPrivilegedTurn(request: PrivilegedTurnStartRequest): Promise<TurnStartResponse> {
       return (await this.acceptAndLaunch(decodePrivilegedTurnStartRequest(request))).response;
+    }
+  async startRetriedRootTurnWithHostLock(
+      request: CanonicalTurnRetryAdmission,
+      admissionGuard?: () => void,
+    ): Promise<TurnStartResponse> {
+      const { stagedContextEvidence, replacedTurn, ...canonicalRequest } = request;
+      const accepted = await this.core.threadMutex.run(request.threadId, () => this.acceptTurn({
+        ...decodePrivilegedTurnStartRequest(canonicalRequest),
+        stagedContextEvidence,
+        reuseStagedContextEvidenceOnly: true,
+        retryReplacementTarget: replacedTurn,
+      }, true, admissionGuard));
+      this.scheduleAcceptedTurn(accepted);
+      return accepted.response;
     }
   async tryStartTurnIfIdle(request: PrivilegedTurnStartRequest): Promise<Turn | null> {
       try {
@@ -812,15 +835,17 @@ export class TurnLifecycle {
       const accepted = record.thread.parentThreadId === null
         ? await this.core.hostRootMutex.run(accept)
         : await accept();
-      if (accepted.active) {
-        void this.launchActiveTurn(accepted)
-          .catch((error) => this.failActiveTurn(
-            accepted.active!,
-            error instanceof Error ? error : new Error(String(error)),
-          ))
-          .finally(accepted.active.resolveCompletion);
-      }
+      this.scheduleAcceptedTurn(accepted);
       return accepted;
+    }
+  private scheduleAcceptedTurn(accepted: AcceptedTurn): void {
+      if (!accepted.active) return;
+      void this.launchActiveTurn(accepted)
+        .catch((error) => this.failActiveTurn(
+          accepted.active!,
+          error instanceof Error ? error : new Error(String(error)),
+        ))
+        .finally(accepted.active.resolveCompletion);
     }
   private async launchActiveTurn(accepted: AcceptedTurn): Promise<void> {
       if (!accepted.active) return;
@@ -844,11 +869,17 @@ export class TurnLifecycle {
         ? this.readCanonicalClientBinding(request.threadId, request.clientUserMessageId)
         : null;
       if (existing) {
+        if (request.retryReplacementTarget) {
+          if (existing.turn.id !== request.retryReplacementTarget.id) {
+            throw new Error('Retry client id is already bound to another Turn');
+          }
+        } else {
         return {
           response: { turn: existing.turn, acceptedItemId: existing.itemId, deduplicated: true },
           thread: record.thread,
           active: null,
         };
+        }
       }
       if (request.trigger.kind !== 'user') this.assertSubagentBudgetAvailable(request.threadId);
       if (this.core.stoppingThreads.has(request.threadId)) throw this.createThreadBusyError('Thread is stopping');
@@ -940,7 +971,8 @@ export class TurnLifecycle {
           hostBarrier,
         });
       }
-      const extensionContext = this.core.hiddenEphemeralThreads.has(request.threadId)
+      const reuseCanonicalEvidence = request.reuseStagedContextEvidenceOnly === true;
+      const extensionContext = reuseCanonicalEvidence || this.core.hiddenEphemeralThreads.has(request.threadId)
         ? []
         : await this.extensions.threadContext(record.thread);
       const priorTurns = this.core.allTurns(request.threadId);
@@ -948,7 +980,7 @@ export class TurnLifecycle {
         ...priorTurns,
         ...(stagedItems.length > 0 ? [{ ...provisionalTurn, items: stagedItems }] : []),
       ];
-      const skillAdmission = this.core.hiddenEphemeralThreads.has(request.threadId)
+      const skillAdmission = reuseCanonicalEvidence || this.core.hiddenEphemeralThreads.has(request.threadId)
         ? { catalogSnapshot: null, preloadedInvocations: [], invocation: null }
         : await this.resolveSkillAdmission({
             thread: record.thread,
@@ -961,14 +993,14 @@ export class TurnLifecycle {
             acceptedAt: startedAt,
             observedFilePaths: observedSkillFilePaths(canonicalTurns),
           });
-      const skillCatalog = await planSkillCatalogEvidence({
+      const skillCatalog = reuseCanonicalEvidence ? null : await planSkillCatalogEvidence({
         turns: canonicalTurns,
         snapshot: specializedChildSkillCatalogOmitted(record.thread)
           ? null
           : skillAdmission.catalogSnapshot,
         readContext: (ref) => this.core.payloads.readContext(record.thread.id, ref),
       });
-      const roleCatalog = await planRoleCatalogEvidence({
+      const roleCatalog = reuseCanonicalEvidence ? null : await planRoleCatalogEvidence({
         turns: canonicalTurns,
         snapshot: this.collaboration.canSpawnAgent(record.thread.id, record.configuration)
           ? await this.resolveRoleCatalog(record.thread.cwd)
@@ -977,9 +1009,11 @@ export class TurnLifecycle {
       });
       // One projection for both, so the notice and the evidence describe the
       // same instant rather than two moments a mutation could sit between.
-      const admissionProjection = this.getDocumentProjection();
-      const drift = await this.documentDrift.noticeFor(record.thread.id, admissionProjection);
-      const evidence = await admitContextEvidence({
+      const admissionProjection = reuseCanonicalEvidence ? null : this.getDocumentProjection();
+      const drift = reuseCanonicalEvidence
+        ? { context: null, settle: () => undefined }
+        : await this.documentDrift.noticeFor(record.thread.id, admissionProjection);
+      const evidence = reuseCanonicalEvidence ? { items: [] } : await admitContextEvidence({
         thread: record.thread,
         persona: this.resolvePersona(record.thread),
         turnId,
@@ -1005,7 +1039,9 @@ export class TurnLifecycle {
         ),
         onResourceCreated: recordCreatedEvidenceResource,
       });
-      const pendingSubagentActivities = this.collaboration.pendingActivities(request.threadId);
+      const pendingSubagentActivities = reuseCanonicalEvidence
+        ? []
+        : this.collaboration.pendingActivities(request.threadId);
       const pendingSubagentItems = this.collaboration.materializePendingActivityItems(
         request.threadId,
         turnId,
@@ -1050,9 +1086,17 @@ export class TurnLifecycle {
       let durableProjectionError: RecordedNotificationProjectionError | null = null;
       try {
         admissionGuard?.();
-        await this.core.recordNotification(startedNotification, {
-          deferObservers: !active.lifecyclePublished,
-        });
+        if (request.retryReplacementTarget) {
+          await this.catalog.replaceLatestTurnForRetryWithLocksHeld(
+            request.threadId,
+            request.retryReplacementTarget,
+            startedNotification,
+          );
+        } else {
+          await this.core.recordNotification(startedNotification, {
+            deferObservers: !active.lifecyclePublished,
+          });
+        }
       } catch (error) {
         if (active.lifecyclePublished || !(error instanceof RecordedNotificationProjectionError)) throw error;
         durableProjectionError = error;
@@ -1128,6 +1172,9 @@ export class TurnLifecycle {
       }
       if (request.clientUserMessageId) {
         try {
+          if (request.retryReplacementTarget && !this.core.ephemeral.has(request.threadId)) {
+            this.core.metadata.deleteClientInput(request.threadId, request.clientUserMessageId);
+          }
           this.bindClientInput(request.threadId, request.clientUserMessageId, turnId, item.id);
         } catch (error) {
           this.failCommittedActiveTurn(active, error);

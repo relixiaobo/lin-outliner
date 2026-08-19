@@ -764,8 +764,15 @@ provider resolver nor renderer receives the registry key. Provider-specific
 endpoint materialization, including Cloudflare account and Gateway placeholders,
 occurs inside provider dispatch after auth environment values have resolved.
 
-Retryable provider request/stream failures use bounded Codex-style backoff. Responses
-request retries include rate limits, server failures, and classified transport failures.
+Retryable provider request/stream failures use bounded Codex-style backoff. A Responses
+request has one initial request plus a default budget of five retries: recovery ordinals
+are `1/5` through `5/5`, for at most six transport requests. The initial request is not
+retry zero and does not consume that budget. Pre-stream classification delegates to
+pi-ai's canonical `isRetryableAssistantError`, so structured transient failures such as
+`rate_limit_exceeded: Concurrency limit exceeded for account, please retry later` recover
+without requiring an HTTP-status wrapper, while `insufficient_quota`, authentication,
+validation, and other permanent failures remain terminal.
+
 For a custom OpenAI Responses endpoint, an error after the stream has started is retryable
 only when it is a classified rate limit, server failure, transport failure, legacy
 termination, or known relay/idle stream interruption. Unknown statusless `badRequest`
@@ -773,19 +780,22 @@ messages stay terminal so invalid credentials, missing models, and exhausted quo
 resend the full context. The default stream budget is three retries; an explicit provider
 retry setting still wins. A pre-stream failure belongs only to the request budget and
 cannot fall through into the stream budget after exhausting it. Material text or a partial
-tool call does not suppress retry, because tools execute only after the stream settles.
-Any fully parsed tool call suppresses retry. Only the legacy premature-termination
-allowlist may salvage a message whose every tool call completed; a 429, 5xx, or transport
-failure remains terminal and cannot execute a mutating tool as successful output. Stream
-retries wait through the same bounded exponential delay as request retries. Official
-OpenAI and Azure Responses retain their legacy one-retry premature-termination allowlist
-and do not retry after material output.
+tool call does not suppress retry for a custom endpoint, because tools execute only after
+the stream settles. Any fully parsed tool call suppresses retry. Only the legacy
+premature-termination allowlist may salvage a message whose every tool call completed; a
+429, 5xx, or transport failure remains terminal and cannot execute a mutating tool as
+successful output. Stream retries wait through the same bounded exponential delay as
+request retries. Official OpenAI and Azure Responses retain their legacy one-retry
+premature-termination allowlist and do not retry after material output.
+
 The kernel retry policy is the sole retry owner for transient failures and context
 overflow recovery. `PiModelGateway` calls the transport with its request retry count
-disabled, so configured attempts cannot multiply. The
-executor emits `turn/providerRetry/changed` only as transient notification state
-and clears it on recovery or terminalization; reconnect attempts do not create
-Items or persist as transcript history.
+disabled, so configured attempts cannot multiply. Failed intermediate attempts do not
+emit a canonical Turn error. The executor emits `turn/providerRetry/changed` only as
+transient notification state, including the recovery class and retry ordinal, and clears
+it when replacement output begins, recovery settles, cancellation wins, or the Turn
+terminalizes. Request retries and stream reconnections create neither Items nor persisted
+transcript history; only the final exhausted or non-retryable failure reaches the Turn.
 
 Timeout, maximum transient retries, maximum retry delay, and cache retention are read
 once at Turn execution start and applied consistently to each provider request. Custom

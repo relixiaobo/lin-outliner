@@ -8,7 +8,10 @@ import type {
   ProviderResponse,
   SimpleStreamOptions,
 } from '@earendil-works/pi-ai';
-import { createAssistantMessageEventStream } from '@earendil-works/pi-ai';
+import {
+  createAssistantMessageEventStream,
+  isRetryableAssistantError,
+} from '@earendil-works/pi-ai';
 import { piStreamSimple } from '../../../piModels';
 import type { ModelError, StreamFn } from './types';
 
@@ -144,6 +147,10 @@ export function classifyModelFailure(message: AssistantMessage): ModelError | nu
   }
   if (message.stopReason !== 'error') return null;
   return classifyErrorMessage(message.errorMessage ?? 'Model request failed');
+}
+
+export function isRetryableProviderFailure(message: AssistantMessage): boolean {
+  return isRetryableAssistantError(message);
 }
 
 function classifyErrorMessage(errorMessage: string): ModelError {

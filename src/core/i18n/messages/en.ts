@@ -1359,6 +1359,7 @@ export const en = {
       turnFailed: 'Turn failed',
       turnInterrupted: 'Turn interrupted',
       resourceLimitReached: 'Task reached the system resource limit. Results have been preserved.',
+      retrying: ({ attempt, maxRetries }: { attempt: number; maxRetries: number }) => `Retrying ${attempt}/${maxRetries}`,
       reconnecting: ({ attempt, maxRetries }: { attempt: number; maxRetries: number }) => `Reconnecting ${attempt}/${maxRetries}`,
       retryTurn: 'Retry',
       stopUnavailable: 'That work already finished.',

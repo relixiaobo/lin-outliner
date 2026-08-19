@@ -522,6 +522,7 @@ export const ThreadDock = memo(function ThreadDock({
               onEditUserMessage={(_turn, content: readonly ThreadUserContent[]) => (
                 threadStore.rollbackAndSend(thread.id, content, getUserView())
               )}
+              onRetryTurn={(turn) => threadStore.retryTurn(thread.id, turn.id)}
               onContinueInNewChat={(turn) => threadStore.continueInNewChat(thread.id, turn.id).then(() => undefined)}
               onInterrupt={() => threadStore.interrupt(thread.id)}
               onInterruptThread={interruptThread}

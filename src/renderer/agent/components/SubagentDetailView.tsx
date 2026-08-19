@@ -176,6 +176,7 @@ export function SubagentDetailView({
             onContinueInNewChat={noop}
             onCreateThread={noFallback}
             onEditUserMessage={noop}
+            onRetryTurn={noop}
             onInterrupt={interrupt}
             onInterruptThread={(target) => threadStore.interruptThread(target)}
             onOpenNodeReference={onOpenNodeReference}
