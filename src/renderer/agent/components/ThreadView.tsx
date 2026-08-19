@@ -1067,12 +1067,34 @@ export function ThreadView({
     capturePendingAnchor(captureDisclosureScrollAnchor(anchorElement, scroller));
   }, [cancelPendingVirtualScrollAdjustment, capturePendingAnchor]);
 
-  // The pin's own notion of follow, not a fresh geometry read: a disclosure that
-  // has to choose between holding its control and holding its content is really
-  // asking whether the bottom pin is live, and answering from anything else lets
-  // the two disagree about the same transaction. Runway already in place would
-  // make a raw read say "not at the bottom" while the pin still rides it.
-  const isFollowingBottom = useCallback(() => followRef.current, []);
+  /**
+   * Riding a tail the reader could actually scroll away from.
+   *
+   * `follow` alone is not that. `isTranscriptFollowing` measures distance to the
+   * bottom, which a transcript shorter than its viewport satisfies at rest, and
+   * `follow` starts true besides — so every short Thread reports itself as
+   * riding a tail it does not have. A disclosure asking this question is asking
+   * whether holding its control means "stay at the bottom"; in a view that shows
+   * all of itself there is no bottom to stay at, and the answer has to be no or
+   * the commonest Subagent transcript there is — one brief, one short result —
+   * keeps the very behavior this predicate exists to end.
+   *
+   * The range is measured over real content: the send spacer and the anchor
+   * runway are renderer-only scroll range, and counting them would invent a tail
+   * out of the space a previous disclosure borrowed. `follow` still gates it,
+   * because it is the pin's own state and the two must not disagree about one
+   * layout transaction.
+   */
+  const isFollowingBottom = useCallback(() => {
+    if (!followRef.current) return false;
+    const scroll = scrollRef.current;
+    if (!scroll) return false;
+    const spacer = scroll.querySelector<HTMLElement>('.thread-send-anchor-spacer');
+    const contentHeight = scroll.scrollHeight
+      - (spacer?.getBoundingClientRect().height ?? 0)
+      - disclosureAnchorRunwayRef.current;
+    return contentHeight - scroll.clientHeight > 1;
+  }, []);
 
   const expandState = useMemo<ThreadDisclosureState>(() => ({
     captureAnchor: captureLocalDisclosureAnchor,

@@ -67,6 +67,7 @@ import { IconButton } from '../../../ui/primitives/IconButton';
 import { ButtonControl } from '../../../ui/primitives/ButtonControl';
 import { WorkingText } from '../../../ui/primitives/WorkingText';
 import { canEditUserContentText, replaceUserContentText } from '../../threadInput';
+import { messageDisclosureAnchor } from '../../messageDisclosureAnchor';
 import {
   threadNodeReferenceDisplayLabel,
   threadNodeReferenceHref,
@@ -620,18 +621,12 @@ function UserMessageCollapsibleContent({
           aria-expanded={expanded}
           className="thread-user-expand-button"
           onClick={(event) => {
-            // This control hangs BELOW the text it opens, so the two stable
-            // points are not interchangeable. Riding the bottom, the control is
-            // the bottom, and holding it is how the reader stays there. Read
-            // anywhere else — an Agent's brief at the head of its own
-            // transcript, an old message reached by scrolling back — holding it
-            // would grow every revealed line UPWARD, shove the message's first
-            // line off the top, and borrow tail runway to do it. There the
-            // message's own top edge is the fixed point and the text opens
-            // downward, the way a disclosure whose chevron sits above its
-            // content already behaves.
+            const anchor = messageDisclosureAnchor({
+              closing: expanded,
+              ridingScrollableBottom: isFollowingBottom(),
+            });
             captureDisclosureAnchor(
-              isFollowingBottom() ? event.currentTarget : shellRef.current,
+              anchor === 'control' ? event.currentTarget : shellRef.current,
             );
             setExpanded((current) => !current);
           }}

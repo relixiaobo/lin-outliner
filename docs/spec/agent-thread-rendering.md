@@ -1524,16 +1524,7 @@ because the `+N` control unmounts when the full grid replaces it. Follow is deri
 from the resulting geometry after the anchor settles rather than released by the
 toggle.
 
-Which point of the activated surface stays fixed follows from where its control
-sits. A control above the content it opens — every persisted process, reasoning,
-tool-group, and tool-detail chevron — is itself that point, and its content opens
-below it. The measured long-user-message control hangs below its own text, so
-pinning it would open every revealed line upward: it is the fixed point only while
-the transcript is following the bottom, where holding the control is what staying
-at the bottom means. Read anywhere else the message's collapsed block keeps its own
-top edge and opens downward, so an Agent's brief at the head of its transcript and
-a long message reached by scrolling back both stay where they are read instead of
-being pushed off the top. Capture starts its fallback restore loop immediately, so an owning row that
+Capture starts its fallback restore loop immediately, so an owning row that
 unmounts before its layout effect cannot latch the transcript. Bottom-follow work
 caused by canonical Turn changes is replayed after release, while disclosure-only
 ResizeObserver work is discarded because replaying it would move the activated
@@ -1550,6 +1541,23 @@ cancels the pending correction immediately. Sending or choosing Jump to latest
 explicitly supersedes the anchor; pending send-anchor layout otherwise resumes on
 release. Virtual row compensation yields while the explicit anchor is active,
 because that anchor is authoritative for concurrent geometry changes.
+
+Which point of the activated surface stays fixed follows from where its control
+sits and which way the surface is moving. A control above the content it opens —
+every persisted process, reasoning, tool-group, and tool-detail chevron — is
+itself that point, and its content opens below it. The measured
+long-user-message control hangs below its own text, so pinning it while opening
+would grow every revealed line upward: opening holds the message's collapsed
+block by its own top edge instead, and an Agent's brief at the head of its
+transcript and a long message reached by scrolling back both open downward from
+where they are read. The exception is a transcript riding a tail it can actually
+scroll, where holding the control is what staying at the bottom means; a
+transcript shorter than its viewport has no such tail, and the range is measured
+over real content so neither the send spacer nor the anchor runway can invent
+one. Collapsing holds the control in every case, because nothing grows: the
+control is what the reader just clicked and the only point the geometry
+guarantees is on screen, while the block's top edge in a message taller than the
+viewport is far above it.
 
 ## Pagination And Notifications
 

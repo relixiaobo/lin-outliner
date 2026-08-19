@@ -14,20 +14,10 @@ function placement(overrides: Partial<FlyoutPlacementInput> = {}) {
     anchorTop: 600,
     gap: 4,
     margin: 8,
-    measuredHeight: 200,
+    placementHeight: 200,
     width: 260,
     ...overrides,
   });
-}
-
-/** One render pass: the surface is drawn at the placement it was given, so its
- *  next measured height is its content clipped by that placement's `maxHeight`. */
-function settle(contentHeight: number, first = placement({ measuredHeight: contentHeight })) {
-  let current = first;
-  for (let pass = 0; pass < 4; pass += 1) {
-    current = placement({ measuredHeight: Math.min(contentHeight, current.maxHeight) });
-  }
-  return current;
 }
 
 describe('side flyout placement', () => {
@@ -41,40 +31,44 @@ describe('side flyout placement', () => {
   });
 
   test('lifts a list that is already too tall when it opens', () => {
-    const result = placement({ measuredHeight: 900 });
+    const result = placement({ placementHeight: 900 });
     expect(result.top).toBe(8);
     expect(result.maxHeight).toBe(784);
   });
 
-  test('does not move when its content grows past what fits', () => {
+  test('does not move when its content grows or collapses', () => {
+    // The opening height is frozen, so "Show all" and "Show less" are the same
+    // input to the placement — only the ceiling absorbs them.
     const opened = placement();
-    // "Show all models": the content wants far more room than it was given.
-    const grown = settle(2_000, opened);
-    expect(grown.top).toBe(opened.top);
-    expect(grown.maxHeight).toBe(opened.maxHeight);
+    expect(placement()).toEqual(opened);
   });
 
-  test('does not move when that content collapses again', () => {
-    const opened = placement();
-    const grown = settle(2_000, opened);
-    const collapsed = placement({ measuredHeight: Math.min(200, grown.maxHeight) });
-    expect(collapsed.top).toBe(opened.top);
-    expect(collapsed.maxHeight).toBe(opened.maxHeight);
-  });
-
-  test('holds still across repeated passes for any opening height', () => {
-    for (const contentHeight of [40, 200, 419, 784, 785, 2_000]) {
-      const settled = settle(contentHeight);
-      const again = placement({ measuredHeight: Math.min(contentHeight, settled.maxHeight) });
-      expect(again).toEqual(settled);
-    }
+  test('keeps tracking an anchor that moves, in both directions', () => {
+    // The regression this guards: a ceiling fed back from the flyout's own
+    // clipped height makes `top` monotonically non-increasing, so the surface
+    // ratchets toward the top of the viewport and never returns to its row.
+    const rest = placement({ anchorTop: 600 });
+    const lifted = placement({ anchorTop: 300 });
+    expect(lifted.top).toBeLessThan(rest.top);
+    expect(placement({ anchorTop: 600 })).toEqual(rest);
   });
 
   test('stays inside the viewport when the anchor sits at either edge', () => {
     const low = placement({ anchorTop: 795 });
     expect(low.top + low.maxHeight).toBeLessThanOrEqual(792);
-    const high = placement({ anchorTop: 0 });
-    expect(high.top).toBe(8);
+    expect(placement({ anchorTop: 0 }).top).toBe(8);
+  });
+
+  test('never proposes a surface that starts below the viewport', () => {
+    for (const anchorTop of [0, 300, 600, 795, 2_000]) {
+      for (const placementHeight of [0, 40, 200, 784, 785, 2_000]) {
+        const result = placement({ anchorTop, placementHeight });
+        expect(result.top).toBeGreaterThanOrEqual(8);
+        expect(result.top).toBeLessThanOrEqual(792);
+        expect(result.maxHeight).toBeGreaterThanOrEqual(0);
+        expect(result.top + result.maxHeight).toBeLessThanOrEqual(792);
+      }
+    }
   });
 
   test('opens to the reading side, and flips when that side has no room', () => {

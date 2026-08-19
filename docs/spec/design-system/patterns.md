@@ -42,17 +42,23 @@ Rules:
   (generalizes the tag-hover rule).
 - **Expansion grows from a fixed edge.** Opening a disclosure, or a floating
   surface growing while it is open, must leave what the reader is already looking
-  at exactly where it is. The fixed point is always at or above the top of what
-  grows: a chevron above its content is that point; a control that hangs BELOW its
-  own content is not, and anchoring it opens every revealed line upward, off the
-  top of the viewport. One exception, because it is the same thing said twice: a
-  scroller riding its bottom keeps holding the control, since holding it IS staying
-  at the bottom. A floating surface absorbs its own growth by scrolling inside a
-  ceiling derived from where it was placed — re-deriving its position from its own
-  height answers growth by teleporting out from under the cursor. Content that
-  lands late (an image, a lazily measured row, an injected translation) obeys the
-  same rule: reserve the box, or hold the topmost thing still on screen.
-  (`disclosureScrollAnchor.ts`, `flyoutPlacement.ts`.)
+  at exactly where it is. The fixed point is at or above the top of what grows: a
+  chevron above its content is that point; a control that hangs BELOW its own
+  content is not, and anchoring it opens every revealed line upward, off the top
+  of the viewport. Two things this does not say. A scroller riding a tail it can
+  actually scroll keeps holding the control, since there holding it IS staying at
+  the bottom — but a surface shorter than its viewport has no tail to ride, and
+  scroll range borrowed by the machinery itself does not count as one. And nothing
+  grows on the way back: **collapsing holds the control**, which is what the reader
+  just clicked and the only point the geometry guarantees is on screen, while the
+  block's top edge may by then be far above it. A floating surface absorbs its own
+  growth by scrolling inside a ceiling derived from where it was placed; deriving
+  the position from its own current height instead answers growth by teleporting
+  out from under the cursor, and feeding back a clipped height turns the position
+  into a one-way valve that never returns to its anchor. Content that lands late
+  (an image, a lazily measured row, an injected translation) obeys the same rule:
+  reserve the box, or hold the topmost thing still on screen.
+  (`messageDisclosureAnchor.ts`, `disclosureScrollAnchor.ts`, `flyoutPlacement.ts`.)
 - **No pointer cursor on hoverable rows.** Native lists do not switch the cursor;
   a pointer cursor reads as web. Text cursor only on real text. `cursor: help` is
   allowed for inline diagnostic hints or native-title tooltips, and resize cursors

@@ -106,6 +106,60 @@ async function seedOverflowingTranscript(page: Page): Promise<void> {
   await expect(page.getByText('Earlier transcript evidence 32.')).toBeVisible();
 }
 
+/** A settled Turn whose user message is long enough to clamp, with a short reply
+ *  under it. Seeded rather than sent, so no send anchor or tail spacer is in
+ *  flight while the disclosure is measured. */
+async function seedLongUserMessageTurn(page: Page, label: string): Promise<void> {
+  await page.evaluate(async (evidence) => {
+    const target = window as Window & {
+      lin?: { agentCoreRequest: <T>(method: string, input?: Record<string, unknown>) => Promise<T> };
+      __LIN_E2E__?: { emitAgentCoreNotification: (notification: unknown) => void };
+    };
+    const response = await target.lin?.agentCoreRequest<{ data: Array<{ id: string }> }>('thread/list', {});
+    const threadId = response?.data[0]?.id;
+    if (!threadId) throw new Error('Mock Thread not found');
+    const turnId = '01910000-0000-7000-8000-00000000fb01';
+    const userItemId = '01910000-0000-7000-8000-00000000fb02';
+    const replyItemId = '01910000-0000-7000-8000-00000000fb03';
+    const provenance = (originItemId: string) => ({ originThreadId: threadId, originTurnId: turnId, originItemId });
+    target.__LIN_E2E__?.emitAgentCoreNotification({
+      type: 'turn/completed',
+      threadId,
+      turnId,
+      turn: {
+        id: turnId,
+        items: [
+          {
+            id: userItemId,
+            type: 'userMessage',
+            provenance: provenance(userItemId),
+            content: [{
+              type: 'text',
+              text: Array.from({ length: 80 }, (_, index) => `${evidence} ${index + 1}.`).join(' '),
+            }],
+          },
+          {
+            id: replyItemId,
+            type: 'agentMessage',
+            provenance: provenance(replyItemId),
+            text: 'Understood.',
+            phase: 'final_answer',
+            memoryCitation: null,
+          },
+        ],
+        itemsView: 'full',
+        provenance: { originThreadId: threadId, originTurnId: turnId, trigger: { kind: 'user' } },
+        status: 'completed',
+        error: null,
+        startedAt: 1,
+        completedAt: 2,
+        durationMs: 1,
+      },
+    });
+  }, label);
+  await expect(page.locator('.thread-user-expand-button')).toBeVisible();
+}
+
 /**
  * A conversation tall enough to scroll but under the virtualization threshold —
  * the flow-layout transcript nearly every real conversation is, where a saved
@@ -6777,22 +6831,25 @@ test.describe('canonical agent Thread surface', () => {
     })).toBeLessThanOrEqual(2);
   });
 
+  // Which point of a clamped message holds still, over the geometries that make
+  // the answer differ: riding a real tail, scrolled back, no tail at all, and the
+  // way back from expanded.
   test('keeps a bottom-positioned long-message disclosure anchored', async ({ page }) => {
     await createNewThread(page);
-    const composer = page.getByRole('textbox', { name: 'Message this Thread' });
-    await composer.fill(Array.from(
-      { length: 80 },
-      (_, index) => `Long message evidence ${index + 1}.`,
-    ).join(' '));
-    await page.getByRole('button', { name: 'Send' }).click();
+    // A tail the reader could actually scroll away from. Without content above
+    // it the transcript is shorter than its own viewport, which is a different
+    // case with a different answer — the no-scroll-range judge below.
+    await seedOverflowingTranscript(page);
+    await seedLongUserMessageTurn(page, 'Long message evidence');
 
     const transcript = page.locator('.thread-transcript');
+    await expect.poll(() => transcript.evaluate((element) => (
+      element.scrollHeight - element.clientHeight
+    ))).toBeGreaterThan(0);
+    await setTranscriptFollowingBottom(page);
     const disclosure = page.locator('.thread-user-expand-button');
     await expect(disclosure).toHaveAccessibleName('Show more');
     await expect(page.getByRole('button', { name: 'Jump to latest' })).toHaveCount(0);
-    await expect.poll(() => transcript.evaluate((element) => (
-      element.scrollHeight - element.scrollTop - element.clientHeight
-    ))).toBeLessThanOrEqual(1);
 
     await toggleDisclosureWithStableAnchor(disclosure);
     await expect(disclosure).toHaveAccessibleName('Show less');
@@ -6807,6 +6864,30 @@ test.describe('canonical agent Thread surface', () => {
     await expect.poll(() => transcript.evaluate((element) => (
       element.scrollHeight - element.scrollTop - element.clientHeight
     ))).toBeLessThanOrEqual(1);
+  });
+
+  test('opens a long message downward when the transcript has no tail to ride', async ({ page }) => {
+    await createNewThread(page);
+    // The shape an Agent's own transcript usually has: a brief the reader is
+    // looking straight at, and not enough below it to scroll. `follow` is true
+    // here only because there is nowhere to go, which is not the same as riding
+    // a bottom — reading it as one is what pushed the brief off the top.
+    await seedLongUserMessageTurn(page, 'Briefing evidence');
+
+    const transcript = page.locator('.thread-transcript');
+    await expect.poll(() => transcript.evaluate((element) => (
+      element.scrollHeight - element.clientHeight
+    ))).toBeLessThanOrEqual(1);
+    const shell = page.locator('.thread-user-message .thread-user-content-shell');
+    const disclosure = page.locator('.thread-user-expand-button');
+    const collapsed = await transcript.evaluate((element) => element.scrollTop);
+
+    await toggleDisclosureWithStableAnchor(disclosure, shell);
+    await expect(disclosure).toHaveAccessibleName('Show less');
+    expect(await transcript.evaluate((element) => element.scrollTop)).toBe(collapsed);
+    await expect.poll(() => page.locator('.thread-transcript-content').evaluate((element) => (
+      element.style.paddingBottom
+    ))).toBe('');
   });
 
   test('opens a scrolled-back long-message disclosure downward from its own top edge', async ({ page }) => {
@@ -6864,6 +6945,47 @@ test.describe('canonical agent Thread surface', () => {
     // The control travelled the full height of what it revealed, which is what
     // "downward" means: nothing above it moved to make the room.
     expect(expanded.buttonTop).toBeGreaterThan(collapsed.buttonTop + 100);
+  });
+
+  test('collapses a scrolled-back long message under the control that closed it', async ({ page }) => {
+    await createNewThread(page);
+    // The message first, the bulk after it, so scrolling back puts the clamped
+    // message on screen with a tail still below.
+    await seedLongUserMessageTurn(page, 'Collapse evidence');
+    await seedOverflowingTranscript(page);
+
+    const transcript = page.locator('.thread-transcript');
+    await transcript.hover();
+    await page.mouse.wheel(0, -10_000);
+    await expect.poll(() => transcript.evaluate((element) => element.scrollTop))
+      .toBeLessThanOrEqual(1);
+    await expect(page.getByRole('button', { name: 'Jump to latest' })).toBeVisible();
+    const disclosure = page.locator('.thread-user-expand-button');
+    await toggleDisclosureWithStableAnchor(
+      disclosure,
+      page.locator('.thread-user-message .thread-user-content-shell'),
+    );
+    await expect(disclosure).toHaveAccessibleName('Show less');
+
+    // Reaching Show less in a message taller than the viewport means scrolling
+    // well past the block's top edge. Nothing grows on the way back, so the
+    // control is the fixed point — holding the block instead pins a point far
+    // above the reader and drops the collapsed message out of view behind them.
+    await disclosure.scrollIntoViewIfNeeded();
+    const expanded = await transcript.evaluate((element) => element.scrollTop);
+    expect(expanded).toBeGreaterThan(0);
+    await disclosure.click();
+    await expect(disclosure).toHaveAccessibleName('Show more');
+
+    const shell = page.locator('.thread-user-message .thread-user-content-shell');
+    await expect(shell).toBeInViewport();
+    // Not pushed further down the transcript to hold a point that is no longer
+    // anywhere near the reader.
+    await expect.poll(() => transcript.evaluate((element) => element.scrollTop))
+      .toBeLessThanOrEqual(expanded);
+    await expect.poll(() => page.locator('.thread-transcript-content').evaluate((element) => (
+      element.style.paddingBottom
+    ))).toBe('');
   });
 
   test('lets a keyboard send supersede a pending disclosure anchor', async ({ page }) => {
@@ -7706,6 +7828,36 @@ test('holds the model submenu still when its list is expanded', async ({ page })
   expect(after.firstRowTop).toBeCloseTo(before.firstRowTop!, 0);
   expect(after.scrolls).toBe(true);
   expect(after.withinViewport).toBe(true);
+});
+
+test('places the model submenu the same however the reader reached it', async ({ page }) => {
+  await openMockedApp(page, { manyModelProvider: true });
+  await page.getByRole('button', { name: 'Show Threads' }).click();
+  await page.getByRole('dialog', { name: 'Threads' }).getByRole('button', { name: 'New Thread' }).click();
+
+  const menu = page.getByRole('menu', { name: 'Model and reasoning' });
+  const submenu = page.getByRole('menu', { name: 'Model', exact: true });
+  const readGeometry = () => submenu.evaluate((element) => ({
+    maxHeight: element.style.maxHeight,
+    top: Math.round(element.getBoundingClientRect().top),
+  }));
+
+  await page.getByRole('button', { name: 'Model and reasoning' }).click();
+  await menu.getByRole('menuitem', { name: 'GPT-5.4' }).click();
+  await expect(submenu).toBeVisible();
+  const direct = await readGeometry();
+
+  // Straight across to the sibling flyout, which is much shorter, and straight
+  // back — no close in between, so the surface would still be wearing the other
+  // one's ceiling. Measured while clipped it places itself short, and the
+  // placement being a fixed point, it stays short for the rest of the session.
+  await menu.getByRole('menuitem', { name: /Reasoning/ }).click();
+  await expect(page.getByRole('menu', { name: 'Reasoning', exact: true })).toBeVisible();
+  await expect(submenu).toHaveCount(0);
+  await menu.getByRole('menuitem', { name: 'GPT-5.4' }).click();
+  await expect(submenu).toBeVisible();
+
+  expect(await readGeometry()).toEqual(direct);
 });
 
 test.describe('terminal Thread history actions', () => {
