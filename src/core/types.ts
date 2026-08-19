@@ -1,4 +1,5 @@
 import type { CaptureNodeMetadata } from './launcher/sources';
+import type { AgentIdentityEntry } from './agent/protocol';
 
 export type {
   DocumentSystemReceipt,
@@ -13,6 +14,7 @@ export type {
   AdditionalContext,
   AdditionalContextEntry,
   AgentCoreNotification,
+  AgentIdentityEntry,
   AgentMutationCausation,
   ItemProvenance,
   MemoryCitation,
@@ -1126,6 +1128,42 @@ export interface AgentProviderOption {
    */
   capabilities?: AgentProviderCapabilitySummary[];
   models: AgentModelOption[];
+}
+
+/** One user- or project-defined Role, as the Agents editor edits it. */
+export interface AgentEditableRole {
+  readonly name: string;
+  readonly layer: 'user' | 'project';
+  readonly description: string;
+  readonly developerInstructions: string;
+  readonly persona: string | null;
+  readonly color: string | null;
+  readonly model: string | null;
+  readonly reasoningEffort: string | null;
+  readonly tools: readonly string[] | null;
+}
+
+/** What the editor writes: everything optional except the identity itself. */
+export interface AgentRoleDraft {
+  readonly name: string;
+  readonly description: string;
+  readonly developerInstructions: string;
+  readonly persona?: string;
+  readonly color?: string;
+  readonly model?: string;
+  readonly reasoningEffort?: string;
+  readonly tools?: readonly string[];
+}
+
+/**
+ * The Agents editor's whole view in one answer: what the transcript can draw
+ * (`entries`, the same catalog the renderer resolves identities from) beside
+ * what the user may change (`roles`). Built-in types appear only in `entries`
+ * — their definitions are frozen, and the editor re-skins them instead.
+ */
+export interface AgentEditorView {
+  readonly entries: readonly AgentIdentityEntry[];
+  readonly roles: readonly AgentEditableRole[];
 }
 
 export interface AgentProviderSettingsView {

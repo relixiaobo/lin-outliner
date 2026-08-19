@@ -307,21 +307,28 @@ column; measured heights still win.
 
 ### 4. Agent editor (PR-B)
 
-Surface: an "Agents" management pane in the settings family
-(`src/renderer/ui/agent/`, beside `ProviderConfigWindow`), opened from the dock
-header menu. Exact placement is a reversible local decision; the contract below
-is not.
+Surface: an **Agents page under the Agent settings category**, beside Model
+services and Skills. `SettingsAgentSection.tsx` already states the rule — a
+collection the user installs or connects, unbounded and carrying its own
+lifecycle, earns a page — and identities are exactly that. (This supersedes the
+earlier guess of a pane beside `ProviderConfigWindow`, which would have been a
+second window for something that is neither modal nor credential-bearing.)
+Exact placement was the reversible local decision; the contract below is not.
 
-- **List.** Main first, then built-ins, then custom Roles; each row shows
-  avatar + persona + type + source badge (`built-in` / `user` / `project`).
-- **Built-ins and main: presentation editable, behavior locked.** Persona
-  (text field) and avatar (picker over the bundled set, plus the letter
-  fallback) write to `presentationOverrides` in the chosen layer. Description,
-  instructions, and tool policy are displayed read-only. A **"Duplicate as
-  custom Role"** action seeds a new editable Role from the built-in's visible
-  configuration.
+- **List.** The user's own Roles first, then the built-ins; each row shows the
+  generated mark + persona + what it is. A Role appears in exactly one group,
+  even though it is also an Agent type in the catalog — two groups would mean
+  two editors for one identity, one of which could not delete it.
+- **Built-ins and main: presentation editable, behavior locked.** Persona (text
+  field) and colour (a picker whose swatches are the mark itself, drawn in each
+  identity-palette hue) write to `presentationOverrides` in the chosen layer.
+  Behaviour is stated as locked rather than shown read-only: the built-in
+  instructions are code, not configuration, so displaying them would invite an
+  edit the surface cannot accept. A **"Duplicate as custom Role"** action is
+  deferred — it needs the built-in definitions exported as seed data, which is
+  a protocol change, not an editor change.
 - **Custom Roles: fully editable.** Canonical name (loader validation via
-  `normalizeSelectedName`; renaming = create + delete), persona, avatar,
+  `normalizeSelectedName`; renaming = create + delete), persona, colour,
   description, `developerInstructions`, and `overrides` (model,
   reasoningEffort, tools). Validation reuses the loader's existing validators
   and parity's Role tool-admission semantics — do **not** build a second
@@ -331,12 +338,16 @@ is not.
 - **Scope.** Create-time choice of layer: user
   (`<userData>/agent/config.json`) or project (`<cwd>/.tenon/agent.json`,
   git-shareable); shown on the row.
-- **Write path.** New protocol requests (suggested `roles/write`,
-  `roles/delete`, `profiles/updatePresentation`) handled in the main process —
-  config file IO stays behind the process seam (A2). Whole-file
-  read-modify-write on the JSON layer; a malformed existing file fails the
-  write with the loader's error surfaced (a write boundary may throw, A12).
-  Every successful write re-reads and broadcasts the refreshed profile catalog.
+- **Write path.** Four commands — `agent_identity_catalog`, `agent_write_role`,
+  `agent_delete_role`, `agent_write_presentation` — handled in the main process,
+  so config file IO stays behind the process seam (A2). Whole-file
+  read-modify-write on the JSON layer, then the candidate is validated **by the
+  loader itself** before it is kept; on failure the previous bytes are restored
+  (a write boundary fails closed, A12). A malformed existing file is reported,
+  never replaced. Every successful write answers with the refreshed editable
+  view and broadcasts the settings-changed notification the settings window
+  already uses — which is where the deferred `profiles/changed` earns its keep,
+  without a second notification channel meaning the same thing.
 - **Deletion semantics.** Deleting a Role affects future spawns only: running
   children keep their resolved configuration; historical transcripts degrade
   through the identity fallback chain (§1). Confirmation dialog; no cascade.
@@ -380,8 +391,22 @@ Renderer:
   to the avatar edge (guard-style DOM/CSS assertions)
 - "a custom Role named `main` is rejected" (loader)
 
-PR-B: editor write → reload round-trip; duplicate-as-custom seeds correctly;
-post-deletion transcripts render through the fallback chain.
+PR-B (`agentConfigurationWriter.test.ts`, `agentsSettings.test.tsx`): a written
+Role comes back as an Agent type; `main` is refused as a Role name; an unknown
+colour and a loader-rejected candidate both leave the file byte-identical; an
+unparseable layer is reported rather than rewritten; the last Role's deletion
+removes the section rather than leaving `roles: {}`; clearing a presentation
+removes the override so the built-in default shows through; project beats user
+for one type. In the editor: a Role appears in one group only; a built-in offers
+no Delete and no definition fields; re-skinning writes a presentation and never
+a Role; saving carries the WHOLE definition, not just the edited fields; an
+existing Role's type is fixed; a refused write reports the boundary's own
+sentence and leaves the dialog standing.
+
+Note on the harness: React's synthetic `onChange` is not deliverable under
+linkedom (only `onInput` is), so these judges assert what a save CARRIES rather
+than simulating keystrokes. `DateValuePicker` wires both handlers for the same
+reason.
 
 Gate: visual verification in light and dark (the UI row of the gate table).
 

@@ -2,8 +2,9 @@ import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nati
 import type { IpcMainInvokeEvent, NativeImage } from 'electron';
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { mkdir, open, readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { basename, dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pathToFileURL } from 'node:url';
@@ -24,6 +25,10 @@ import { AutomationStore } from './agent/automations/AutomationStore';
 import { createAutomationTool } from './agent/automations/AutomationTool';
 import { AutomationWorktree } from './agent/automations/AutomationWorktree';
 import { AgentConfigurationLoader } from './agent/AgentConfigurationLoader';
+import {
+  AgentConfigurationWriter,
+  type ConfigurationLayerTarget,
+} from './agent/AgentConfigurationWriter';
 import { PiTurnExecutor } from './agent/runtime/PiTurnExecutor';
 import { ToolRuntime } from './agent/runtime/ToolRuntime';
 import { observedSkillFilePaths } from './agent/context/SkillContextReducer';
@@ -657,6 +662,10 @@ async function findUnmanagedSkillNameConflict(name: string) {
 }
 let toolRuntime!: ToolRuntime;
 const agentConfigurationLoader = new AgentConfigurationLoader(resolvedUserDataDir);
+const agentConfigurationWriter = new AgentConfigurationWriter(
+  resolvedUserDataDir,
+  agentConfigurationLoader,
+);
 const agentWorktree = new AgentWorktree(resolvedUserDataDir);
 let threadService!: ThreadService;
 
@@ -3557,6 +3566,25 @@ function notifySettingsChanged(origin?: BrowserWindow | null): void {
 }
 
 /**
+ * Which layer an editor change lands in. Anything unrecognised is the user
+ * layer: a write must not silently reach into a project the caller did not
+ * name.
+ */
+function layerTarget(value: unknown): ConfigurationLayerTarget {
+  return value === 'project' ? 'project' : 'user';
+}
+
+/**
+ * The working directory an editor request resolves project configuration
+ * against. The renderer may name one — the conversation it is editing from —
+ * but never a path outside a real directory: an absent or unusable value falls
+ * back to the home directory, where only the user layer exists.
+ */
+function agentEditorCwd(value: unknown): string {
+  return typeof value === 'string' && value.length > 0 && existsSync(value) ? value : homedir();
+}
+
+/**
  * Run the connection probe for a provider and store what it found. Failures here
  * are not the user's problem — a probe that cannot run leaves the row unverified,
  * which is the honest state and the one it started in.
@@ -4509,6 +4537,51 @@ async function handleAgentCommand(_event: IpcMainInvokeEvent, command: AgentComm
       await skillRuntime.undoLastAgentSkillEdit(String(args.skillName));
       await refreshTurnSkillProvenanceRecords();
       return skillRuntime.listAllSkills();
+    }
+    // The Agents editor. Configuration file IO stays behind the seam (A2): the
+    // renderer names an Agent and a layer, never a path, so no renderer-side
+    // value can turn these into a write anywhere else on disk.
+    case 'agent_identity_catalog':
+      return {
+        entries: agentConfigurationLoader.resolveIdentityCatalog(agentEditorCwd(args.cwd)),
+        roles: agentConfigurationLoader.listEditableRoles(agentEditorCwd(args.cwd)),
+      };
+    case 'agent_write_role': {
+      agentConfigurationWriter.writeRole(
+        layerTarget(args.layer),
+        agentEditorCwd(args.cwd),
+        args.role as never,
+      );
+      notifySettingsChanged();
+      return {
+        entries: agentConfigurationLoader.resolveIdentityCatalog(agentEditorCwd(args.cwd)),
+        roles: agentConfigurationLoader.listEditableRoles(agentEditorCwd(args.cwd)),
+      };
+    }
+    case 'agent_delete_role': {
+      agentConfigurationWriter.deleteRole(
+        layerTarget(args.layer),
+        agentEditorCwd(args.cwd),
+        String(args.name ?? ''),
+      );
+      notifySettingsChanged();
+      return {
+        entries: agentConfigurationLoader.resolveIdentityCatalog(agentEditorCwd(args.cwd)),
+        roles: agentConfigurationLoader.listEditableRoles(agentEditorCwd(args.cwd)),
+      };
+    }
+    case 'agent_write_presentation': {
+      agentConfigurationWriter.writePresentation(
+        layerTarget(args.layer),
+        agentEditorCwd(args.cwd),
+        String(args.agentType ?? ''),
+        args.presentation as never,
+      );
+      notifySettingsChanged();
+      return {
+        entries: agentConfigurationLoader.resolveIdentityCatalog(agentEditorCwd(args.cwd)),
+        roles: agentConfigurationLoader.listEditableRoles(agentEditorCwd(args.cwd)),
+      };
     }
     case 'agent_managed_skill_catalog':
       return managedSkillCommand(() => managedSkillService.loadCatalog());

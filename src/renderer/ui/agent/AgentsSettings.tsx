@@ -1,0 +1,414 @@
+import { useCallback, useEffect, useId, useMemo, useState } from 'react';
+import {
+  IDENTITY_COLORS,
+  IDENTITY_COLOR_TINT,
+  MAIN_PRESENTATION_KEY,
+  type IdentityColor,
+} from '../../../core/agent/configuration';
+import type { AgentEditableRole, AgentEditorView, AgentIdentityEntry } from '../../api/types';
+import { api } from '../../api/client';
+import { AgentMark } from '../../agent/components/AgentMark';
+import { identityCatalogFrom, resolveAgentIdentity } from '../../agent/agentIdentity';
+import { useT } from '../../i18n/I18nProvider';
+import { Button } from '../primitives/Button';
+import { ButtonControl } from '../primitives/ButtonControl';
+import { IconButton } from '../primitives/IconButton';
+import { ConfirmDialog } from '../primitives/ConfirmDialog';
+import { Dialog } from '../primitives/Dialog';
+import { Input } from '../primitives/Input';
+import { SelectControl } from '../primitives/SelectControl';
+import { Textarea } from '../primitives/Textarea';
+import { AddIcon, ICON_SIZE } from '../icons';
+import { InsetGroup, InsetRow } from './SettingsInsetList';
+
+/**
+ * The Agents page: who is in the conversation, and who the user may change.
+ *
+ * Two populations, one list. Built-in types are frozen definitions — the editor
+ * re-skins them (a name, a colour) and never pretends their behaviour can be
+ * rewritten in place. Roles the user writes are theirs entirely: description,
+ * instructions, and identity alike.
+ *
+ * Every write goes through main (A2) and is validated by the LOADER before it
+ * lands, so an edit that would produce a configuration the app cannot read is
+ * refused with the file untouched. Each write answers with the same catalog the
+ * transcript draws from, so this list is never a second opinion about what
+ * shipped.
+ */
+export function AgentsSettings({ onError, onNotice }: {
+  readonly onError: (message: string | null) => void;
+  readonly onNotice: (message: string | null) => void;
+}) {
+  const t = useT();
+  const [view, setView] = useState<AgentEditorView | null>(null);
+  const [editing, setEditing] = useState<EditorTarget | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    void api.agentIdentityCatalog()
+      .then((next) => { if (active) setView(next); })
+      .catch((caught: unknown) => { if (active) onError(errorText(caught)); });
+    return () => { active = false; };
+  }, [onError]);
+
+  const catalog = useMemo(() => identityCatalogFrom(view?.entries ?? []), [view]);
+  const roleNames = useMemo(
+    () => new Set((view?.roles ?? []).map((role) => role.name)),
+    [view],
+  );
+  // A Role's own entry is already in `entries` — it is an Agent type like any
+  // other. Listing it under both headings would offer two different editors for
+  // one identity, so the built-in group is what remains after the user's own.
+  const builtIns = (view?.entries ?? []).filter((entry) => !roleNames.has(entry.agentType));
+
+  const run = useCallback(async (action: () => Promise<AgentEditorView>, notice: string) => {
+    setBusy(true);
+    onError(null);
+    onNotice(null);
+    try {
+      setView(await action());
+      onNotice(notice);
+      setEditing(null);
+    } catch (caught) {
+      // Refused, not half-applied: the loader validates the candidate before it
+      // is kept, so the file the user had is still the file on disk.
+      onError(errorText(caught));
+    } finally {
+      setBusy(false);
+    }
+  }, [onError, onNotice]);
+
+  return (
+    <section aria-label={t.settings.agents.sectionAriaLabel} className="agent-settings-section">
+      <InsetGroup
+        ariaLabel={t.settings.agents.customAriaLabel}
+        footnote={t.settings.agents.customFootnote}
+        headerAction={(
+          <IconButton
+            className="rail-toggle"
+            icon={AddIcon}
+            iconSize={ICON_SIZE.menu}
+            label={t.settings.agents.create}
+            onClick={() => setEditing({ kind: 'new' })}
+            variant="chrome"
+          />
+        )}
+        id="agents"
+        label={t.settings.agents.customGroup}
+      >
+        {view === null ? (
+          <InsetRow empty label={t.settings.agents.loading} />
+        ) : view.roles.length === 0 ? (
+          <InsetRow empty label={t.settings.agents.none} />
+        ) : view.roles.map((role) => (
+          <AgentListRow
+            key={`${role.layer}:${role.name}`}
+            entry={catalog.get(role.name)}
+            name={role.name}
+            onSelect={() => setEditing({ kind: 'role', role })}
+            sublabel={role.description || layerLabel(role.layer, t)}
+          />
+        ))}
+      </InsetGroup>
+
+      <InsetGroup
+        ariaLabel={t.settings.agents.builtInAriaLabel}
+        footnote={t.settings.agents.builtInFootnote}
+        label={t.settings.agents.builtInGroup}
+      >
+        {builtIns.map((entry) => (
+          <AgentListRow
+            key={entry.agentType}
+            entry={entry}
+            name={entry.agentType}
+            onSelect={() => setEditing({ kind: 'presentation', entry })}
+            sublabel={entry.agentType === MAIN_PRESENTATION_KEY
+              ? t.settings.agents.mainSublabel
+              : entry.agentType}
+          />
+        ))}
+      </InsetGroup>
+
+      {editing === null ? null : (
+        <AgentEditorDialog
+          busy={busy}
+          onCancel={() => setEditing(null)}
+          onDelete={editing.kind !== 'role' ? undefined : () => void run(
+            () => api.agentDeleteRole({ layer: editing.role.layer, name: editing.role.name }),
+            t.settings.agents.deleted({ name: editing.role.name }),
+          )}
+          onSave={(draft, layer) => void run(
+            () => (editing.kind === 'presentation'
+              ? api.agentWritePresentation({
+                agentType: editing.entry.agentType,
+                layer,
+                presentation: { persona: draft.persona, color: draft.color },
+              })
+              : api.agentWriteRole({
+                layer,
+                role: {
+                  name: draft.name,
+                  description: draft.description,
+                  developerInstructions: draft.developerInstructions,
+                  ...(draft.persona ? { persona: draft.persona } : {}),
+                  ...(draft.color ? { color: draft.color } : {}),
+                },
+              })),
+            t.settings.agents.saved({
+              name: draft.persona || draft.name
+                || (editing.kind === 'presentation' ? editing.entry.agentType : ''),
+            }),
+          )}
+          target={editing}
+        />
+      )}
+    </section>
+  );
+}
+
+/** What the editor is open on: an existing Role, a new one, or a built-in's skin. */
+type EditorTarget =
+  | { readonly kind: 'role'; readonly role: AgentEditableRole }
+  | { readonly kind: 'presentation'; readonly entry: AgentIdentityEntry }
+  | { readonly kind: 'new' };
+
+/**
+ * One list row, wearing the same mark the transcript gives this Agent — so the
+ * editor and the conversation are visibly about the same participant, which is
+ * the whole point of the identity being configuration rather than decoration.
+ */
+function AgentListRow({ entry, name, sublabel, onSelect }: {
+  readonly entry: AgentIdentityEntry | undefined;
+  readonly name: string;
+  readonly sublabel: string;
+  readonly onSelect: () => void;
+}) {
+  const identity = resolveAgentIdentity(entry ? new Map([[name, entry]]) : new Map(), name);
+  return (
+    <InsetRow
+      label={identity.name}
+      leading={<AgentMark size={24} tint={identity.tint} />}
+      onSelect={onSelect}
+      sublabel={sublabel}
+    />
+  );
+}
+
+interface EditorDraft {
+  readonly name: string;
+  readonly description: string;
+  readonly developerInstructions: string;
+  readonly persona: string;
+  readonly color: string;
+}
+
+/**
+ * The editor itself. A built-in shows only what it may change; a Role shows
+ * everything. Both commit through the same Save, because from the user's side
+ * "change this agent" is one gesture regardless of which half of the file it
+ * lands in.
+ */
+function AgentEditorDialog({ target, busy, onSave, onCancel, onDelete }: {
+  readonly target: EditorTarget;
+  readonly busy: boolean;
+  readonly onSave: (draft: EditorDraft, layer: 'user' | 'project') => void;
+  readonly onCancel: () => void;
+  readonly onDelete?: () => void;
+}) {
+  const t = useT();
+  const titleId = useId();
+  const role = target.kind === 'role' ? target.role : null;
+  const entry = target.kind === 'presentation' ? target.entry : null;
+  const editable = target.kind !== 'presentation';
+
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [name, setName] = useState(role?.name ?? '');
+  const [persona, setPersona] = useState(role?.persona ?? entry?.persona ?? '');
+  const [color, setColor] = useState(role?.color ?? entry?.color ?? '');
+  const [description, setDescription] = useState(role?.description ?? '');
+  const [instructions, setInstructions] = useState(role?.developerInstructions ?? '');
+  const [layer, setLayer] = useState<'user' | 'project'>(role?.layer ?? 'user');
+
+  // A Role needs the two fields that make it dispatchable at all: what it is
+  // for (how the main agent chooses it) and what it should do. Identity is
+  // optional — an unnamed Role is drawn from its own name, which is the
+  // intended first appearance rather than an error state.
+  const canSave = editable
+    ? name.trim().length > 0 && description.trim().length > 0 && instructions.trim().length > 0
+    : true;
+
+  // The mark beside the title is the actual component the transcript draws, so
+  // a colour is chosen against the thing it will produce rather than a swatch
+  // that approximates it. With no colour set it shows what derivation gives —
+  // which is what an unconfigured Role will really wear.
+  const previewIdentity = resolveAgentIdentity(
+    new Map(),
+    persona.trim() || name.trim() || entry?.agentType || null,
+  );
+  const previewTint = Object.hasOwn(IDENTITY_COLOR_TINT, color)
+    ? IDENTITY_COLOR_TINT[color as IdentityColor]
+    : previewIdentity.tint;
+
+  return (
+    <Dialog
+      backdropClassName="confirm-dialog-backdrop"
+      labelledBy={titleId}
+      onBackdropMouseDown={onCancel}
+      onEscapeKeyDown={onCancel}
+      surfaceClassName="agent-editor-dialog"
+    >
+      <div className="agent-editor-heading">
+        <AgentMark mood="idle" size={40} tint={previewTint} />
+        <h2 className="confirm-dialog-title" id={titleId}>
+          {target.kind === 'new' ? t.settings.agents.createTitle : t.settings.agents.editTitle}
+        </h2>
+      </div>
+
+      <InsetGroup ariaLabel={t.settings.agents.identityAriaLabel} label={t.settings.agents.identityGroup}>
+        <label className="settings-sheet-row">
+          <span className="settings-sheet-row-label">{t.settings.agents.persona}</span>
+          <Input
+            className="settings-sheet-row-input"
+            label={t.settings.agents.persona}
+            onChange={(event) => setPersona(event.target.value)}
+            placeholder={entry?.persona ?? name.trim() ?? ''}
+            value={persona}
+            variant="bare"
+          />
+        </label>
+        <div className="settings-sheet-row">
+          <span className="settings-sheet-row-label">{t.settings.agents.colour}</span>
+          <div aria-label={t.settings.agents.colour} className="agent-colour-choices" role="radiogroup">
+            {IDENTITY_COLORS.map((choice, index) => (
+              <ButtonControl
+                aria-checked={color === choice}
+                aria-label={t.settings.agents.colourNames[choice]}
+                className={`agent-colour-choice${color === choice ? ' is-selected' : ''}`}
+                key={choice}
+                onClick={() => setColor(choice)}
+                role="radio"
+              >
+                <AgentMark size={22} tint={index + 1} />
+              </ButtonControl>
+            ))}
+          </div>
+        </div>
+      </InsetGroup>
+
+      {editable ? (
+        <InsetGroup ariaLabel={t.settings.agents.definitionAriaLabel} label={t.settings.agents.definitionGroup}>
+          <label className="settings-sheet-row">
+            <span className="settings-sheet-row-label">{t.settings.agents.name}</span>
+            <Input
+              className="settings-sheet-row-input"
+              // A Role's name IS its Agent type — the key the main agent
+              // dispatches by and identity is stored under. Renaming in place
+              // would silently orphan both, so an existing Role's name is fixed
+              // and a different name is a different Role.
+              disabled={role !== null}
+              label={t.settings.agents.name}
+              onChange={(event) => setName(event.target.value)}
+              placeholder={t.settings.agents.namePlaceholder}
+              value={name}
+              variant="bare"
+            />
+          </label>
+          <label className="settings-sheet-row">
+            <span className="settings-sheet-row-label">{t.settings.agents.description}</span>
+            <Input
+              className="settings-sheet-row-input"
+              label={t.settings.agents.description}
+              onChange={(event) => setDescription(event.target.value)}
+              placeholder={t.settings.agents.descriptionPlaceholder}
+              value={description}
+              variant="bare"
+            />
+          </label>
+          <div className="settings-sheet-row settings-sheet-row-stacked">
+            <span className="settings-sheet-row-label">{t.settings.agents.instructions}</span>
+            <Textarea
+              className="settings-sheet-row-input"
+              label={t.settings.agents.instructions}
+              onChange={(event) => setInstructions(event.target.value)}
+              placeholder={t.settings.agents.instructionsPlaceholder}
+              rows={4}
+              value={instructions}
+              variant="bare"
+            />
+          </div>
+        </InsetGroup>
+      ) : (
+        <p className="settings-sheet-note">{t.settings.agents.builtInNote}</p>
+      )}
+
+      <InsetGroup ariaLabel={t.settings.agents.layerAriaLabel}>
+        <InsetRow
+          label={t.settings.agents.layer}
+          sublabel={t.settings.agents.layerSublabel}
+          trailing={(
+            <SelectControl
+              disabled={role !== null}
+              label={t.settings.agents.layer}
+              onChange={(event) => setLayer(event.target.value === 'project' ? 'project' : 'user')}
+              value={layer}
+              variant="popup"
+            >
+              <option value="user">{t.settings.agents.layerUser}</option>
+              <option value="project">{t.settings.agents.layerProject}</option>
+            </SelectControl>
+          )}
+          wrap
+        />
+      </InsetGroup>
+
+      <div className="confirm-dialog-actions agent-editor-actions">
+        {onDelete ? (
+          // Quiet at rest, loud only in the confirmation: a Delete that is
+          // already a solid red block reads as the dialog's main action, beside
+          // a Save it is meant to be secondary to.
+          <Button className="agent-editor-delete" disabled={busy} onClick={() => setConfirmingDelete(true)} variant="danger">
+            {t.settings.agents.delete}
+          </Button>
+        ) : null}
+        <Button onClick={onCancel} variant="ghost">{t.dialog.cancel}</Button>
+        <Button
+          disabled={busy || !canSave}
+          onClick={() => onSave({
+            name: name.trim(),
+            description: description.trim(),
+            developerInstructions: instructions.trim(),
+            persona: persona.trim(),
+            color,
+          }, layer)}
+          tone="subtle"
+          variant="primary"
+        >
+          {t.settings.agents.save}
+        </Button>
+      </div>
+
+      {confirmingDelete && onDelete ? (
+        <ConfirmDialog
+          confirmLabel={t.settings.agents.delete}
+          danger
+          // Says what deleting actually costs, and what it does not: a running
+          // child keeps the configuration it started with, and past transcripts
+          // still render their speaker.
+          message={t.settings.agents.deleteMessage}
+          onCancel={() => setConfirmingDelete(false)}
+          onConfirm={() => { setConfirmingDelete(false); onDelete(); }}
+          title={t.settings.agents.deleteTitle({ name: persona.trim() || name })}
+        />
+      ) : null}
+    </Dialog>
+  );
+}
+
+function layerLabel(layer: 'user' | 'project', t: ReturnType<typeof useT>): string {
+  return layer === 'project' ? t.settings.agents.layerProject : t.settings.agents.layerUser;
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}

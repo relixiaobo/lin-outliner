@@ -4,7 +4,8 @@ import { ThreadStore, mergeLoadedTurns } from '../../src/renderer/agent/store/th
 import type { api } from '../../src/renderer/api/client';
 import { replayableModelCall } from '../fixtures/agentToolCallHistory';
 
-type ThreadStoreClient = Pick<typeof api, 'agentCoreRequest' | 'onAgentCoreNotification'>;
+type ThreadStoreClient = Pick<typeof api, 'agentCoreRequest' | 'onAgentCoreNotification'>
+  & Partial<Pick<typeof api, 'onSettingsChanged'>>;
 
 describe('renderer Thread store', () => {
   test('resolves the identity roster against the conversation it restored', async () => {
@@ -71,6 +72,46 @@ describe('renderer Thread store', () => {
     await Promise.resolve();
 
     expect(store.getSnapshot().identityCatalog.get('main')?.persona).toBe('Second');
+  });
+
+  test('re-reads the roster when configuration changes, not only when threads do', async () => {
+    // Identities are configuration: they change from the settings window, which
+    // produces no Turn and no core notification. Without this the transcript
+    // would keep calling an Agent by its old name until the reader switched
+    // conversations.
+    const owner = thread('thread-1', 1);
+    let persona = 'Aspen';
+    let notifySettings: () => void = () => undefined;
+    const client = {
+      onAgentCoreNotification: () => () => undefined,
+      onSettingsChanged: (listener: () => void) => {
+        notifySettings = listener;
+        return () => undefined;
+      },
+      agentCoreRequest: async (method: string) => {
+        if (method === 'thread/list') return { data: [owner], nextCursor: null };
+        if (method === 'identities/get') {
+          return { entries: [{ agentType: 'main', persona, color: 'teal', source: 'built-in' }] };
+        }
+        if (method === 'thread/turns/list') return { data: [], nextCursor: null, backwardsCursor: null };
+        if (method === 'goal/get') return { goal: null };
+        if (method === 'thread/configuration/get') return configurationResponse(owner);
+        if (method === 'thread/descendants') return { data: [], queuedWorkThreadIds: [] };
+        if (method === 'thread/subagents/list') return { data: [] };
+        throw new Error(`Unexpected method: ${method}`);
+      },
+    } as unknown as ThreadStoreClient;
+    const store = new ThreadStore(client);
+    await store.initialize();
+    await Promise.resolve();
+    expect(store.getSnapshot().identityCatalog.get('main')?.persona).toBe('Aspen');
+
+    persona = 'Juniper';
+    notifySettings();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(store.getSnapshot().identityCatalog.get('main')?.persona).toBe('Juniper');
   });
 
   test('does not let an older page response overwrite a realtime terminal Turn', async () => {

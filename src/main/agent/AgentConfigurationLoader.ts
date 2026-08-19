@@ -19,6 +19,19 @@ import {
 import { MODEL_TOOL_CATALOG, canonicalModelToolKey } from '../../core/agent/tools';
 import type { AgentIdentityEntry, RoleCatalogContextPayload, RoleCatalogEntry } from '../../core/agent/protocol';
 
+/** One user- or project-defined Role, as the editor edits it. */
+export interface EditableAgentRole {
+  readonly name: string;
+  readonly layer: 'user' | 'project';
+  readonly description: string;
+  readonly developerInstructions: string;
+  readonly persona: string | null;
+  readonly color: string | null;
+  readonly model: string | null;
+  readonly reasoningEffort: string | null;
+  readonly tools: readonly string[] | null;
+}
+
 interface ConfigurationLayer {
   readonly defaultProfile: string | null;
   readonly profiles: ReadonlyMap<string, ConfigurationProfile>;
@@ -320,6 +333,37 @@ export class AgentConfigurationLoader {
       });
     }
     return Object.freeze(entries);
+  }
+
+  /**
+   * The Roles a user may edit, with the layer each came from.
+   *
+   * Separate from `resolveIdentityCatalog`, which answers what the transcript
+   * DRAWS: this answers what the editor may CHANGE. Built-in types are absent
+   * on purpose — their definitions are frozen code constants, and the editor
+   * re-skins them through `presentationOverrides` rather than pretending they
+   * can be rewritten in place.
+   */
+  listEditableRoles(cwd: string): readonly EditableAgentRole[] {
+    const user = readLayer(userConfigurationPath(this.userDataPath), 'user');
+    const project = readLayer(projectConfigurationPath(cwd), 'project');
+    const rows: EditableAgentRole[] = [];
+    for (const [layer, source] of [[user, 'user'], [project, 'project']] as const) {
+      for (const role of layer.roles.values()) {
+        rows.push({
+          name: role.name,
+          layer: source,
+          description: role.description,
+          developerInstructions: role.developerInstructions,
+          persona: role.presentation?.persona ?? null,
+          color: role.presentation?.color ?? null,
+          model: role.overrides?.model ?? null,
+          reasoningEffort: role.overrides?.reasoningEffort ?? null,
+          tools: role.overrides?.tools ?? null,
+        });
+      }
+    }
+    return Object.freeze(rows.sort((left, right) => compareStableText(left.name, right.name)));
   }
 
   private agentTypeCandidates(cwd: string, preloaded?: ConfigurationLayer): ResolvedAgentType[] {

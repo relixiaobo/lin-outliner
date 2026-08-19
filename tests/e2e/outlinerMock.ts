@@ -637,6 +637,40 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     // to be correct in that state, and a spec that wants rows opts into them.
     const managedSkills = (options.managedSkills ?? []).map((skill) => ({ ...skill }));
     const managedCatalogEntries = options.managedCatalogEntries ?? [];
+    const IDENTITY_COLOR_NAMES = ['orange', 'amber', 'green', 'teal', 'blue', 'violet', 'pink'];
+    const agentIdentityEntries = [
+      { agentType: 'main', persona: 'Aspen', color: 'teal', source: 'built-in' },
+      { agentType: 'general-purpose', persona: 'Bruno', color: 'amber', source: 'built-in' },
+      { agentType: 'explore', persona: 'Rena', color: 'orange', source: 'built-in' },
+      { agentType: 'plan', persona: 'Ada', color: 'blue', source: 'built-in' },
+    ];
+    const agentRoles: Array<{
+      name: string; layer: string; description: string; developerInstructions: string;
+      persona: string | null; color: string | null;
+      model: string | null; reasoningEffort: string | null; tools: string[] | null;
+    }> = [{
+      name: 'auditor',
+      layer: 'user',
+      description: 'Audits a change before it is proposed.',
+      developerInstructions: 'Read the diff and report what is wrong.',
+      persona: 'Wren',
+      color: 'violet',
+      model: null,
+      reasoningEffort: null,
+      tools: null,
+    }];
+    const agentIdentityView = () => ({
+      entries: [
+        ...agentIdentityEntries,
+        ...agentRoles.map((role) => ({
+          agentType: role.name,
+          persona: role.persona ?? role.name,
+          color: role.color ?? 'green',
+          source: role.layer,
+        })),
+      ],
+      roles: agentRoles,
+    });
     const agentSkills = [{
       name: 'workspace-review',
       source: 'project',
@@ -3550,6 +3584,54 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             ? { defaultModel: settings.defaultModel }
             : {};
           return clone(agentSettings) as T;
+        }
+        // The Agents editor's whole surface: one read, three writes, all
+        // answering with the refreshed view — the same contract the real
+        // commands have, so a spec that drives the editor drives it for real.
+        if (cmd === 'agent_identity_catalog') {
+          return clone(agentIdentityView()) as T;
+        }
+        if (cmd === 'agent_write_role') {
+          const role = args.role as {
+            name: string; description: string; developerInstructions: string;
+            persona?: string; color?: string;
+          };
+          const layer = args.layer === 'project' ? 'project' : 'user';
+          const next = {
+            name: role.name,
+            layer,
+            description: role.description,
+            developerInstructions: role.developerInstructions,
+            persona: role.persona ?? null,
+            color: role.color ?? null,
+            model: null,
+            reasoningEffort: null,
+            tools: null,
+          };
+          const index = agentRoles.findIndex((candidate) => candidate.name === role.name);
+          if (index >= 0) agentRoles[index] = next;
+          else agentRoles.push(next);
+          return clone(agentIdentityView()) as T;
+        }
+        if (cmd === 'agent_delete_role') {
+          const name = String(args.name ?? '');
+          const index = agentRoles.findIndex((candidate) => candidate.name === name);
+          if (index < 0) throw new Error(`No Agent Role named '${name}' in this configuration`);
+          agentRoles.splice(index, 1);
+          return clone(agentIdentityView()) as T;
+        }
+        if (cmd === 'agent_write_presentation') {
+          const agentType = String(args.agentType ?? '');
+          const presentation = (args.presentation ?? {}) as { persona?: string; color?: string };
+          if (presentation.color && !IDENTITY_COLOR_NAMES.includes(presentation.color)) {
+            throw new Error(`Refused: Unknown identity colour '${presentation.color}'`);
+          }
+          const entry = agentIdentityEntries.find((candidate) => candidate.agentType === agentType);
+          if (entry) {
+            if (presentation.persona) entry.persona = presentation.persona;
+            if (presentation.color) entry.color = presentation.color;
+          }
+          return clone(agentIdentityView()) as T;
         }
         if (cmd === 'agent_list_all_skills') {
           if (options.agentSkillsDelayMs) await delay(options.agentSkillsDelayMs);

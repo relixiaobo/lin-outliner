@@ -226,6 +226,16 @@ const INVOKE_RESULTS: Record<string, unknown> = {
   agent_get_provider_settings: PROVIDER_SETTINGS,
   agent_get_capability_settings: CAPABILITY_SETTINGS,
   agent_list_all_skills: ALL_SKILLS,
+  // The identity catalog the Agents row counts. Stubbed rather than left to
+  // fail: the row's count is silent on failure, so an unstubbed channel would
+  // freeze the *degraded* row instead of the one production renders.
+  agent_identity_catalog: {
+    entries: [
+      { agentType: 'main', persona: 'Aspen', color: 'teal' },
+      { agentType: 'general-purpose', persona: 'Bruno', color: 'amber' },
+    ],
+    roles: [],
+  },
   agent_managed_skill_list: { ok: true, value: MANAGED_SKILLS },
   agent_managed_skill_catalog: { ok: true, value: CATALOG },
   agent_managed_skill_check_updates: { ok: true, value: MANAGED_SKILLS },

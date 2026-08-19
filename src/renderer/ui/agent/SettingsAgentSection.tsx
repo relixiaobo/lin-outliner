@@ -1,4 +1,6 @@
+import { useEffect, useState } from 'react';
 import type { AgentProviderSettingsView } from '../../api/types';
+import { api } from '../../api/client';
 import type { SettingsPageTarget } from '../../../core/settingsWindow';
 import { useT } from '../../i18n/I18nProvider';
 import { InsetGroup, InsetRow } from './SettingsInsetList';
@@ -43,6 +45,18 @@ export function SettingsAgentSection({
 }: SettingsAgentSectionProps) {
   const t = useT();
 
+  // Read-only and silent on failure, like the Skill badge: a count that cannot
+  // be computed is simply absent rather than an alert on a row the user has not
+  // touched.
+  const [agentCount, setAgentCount] = useState<number | null>(null);
+  useEffect(() => {
+    let active = true;
+    void api.agentIdentityCatalog()
+      .then((view) => { if (active) setAgentCount(view.entries.length); })
+      .catch(() => { /* no count */ });
+    return () => { active = false; };
+  }, []);
+
   // The active connection, said in the same words its own page and row use.
   const choices = settings ? buildProviderChoices(settings, '', new Map(
     (settings.availableProviders ?? []).map((provider) => [provider.providerId, provider]),
@@ -60,6 +74,12 @@ export function SettingsAgentSection({
           label={t.settings.pages.services}
           onSelect={() => onOpenPage('services')}
           sublabel={servicesValue ?? t.settings.agent.noServiceConnected}
+        />
+        <InsetRow
+          drillsDown
+          label={t.settings.pages.agents}
+          onSelect={() => onOpenPage('agents')}
+          sublabel={agentCount === null ? undefined : t.settings.agent.agentCount({ count: agentCount })}
         />
         <InsetRow
           badge={skillUpdateCount > 0 ? skillUpdateCount : undefined}

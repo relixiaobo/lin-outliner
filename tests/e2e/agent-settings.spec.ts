@@ -192,6 +192,105 @@ test.describe('agent settings window', () => {
     await expect(settings.getByRole('alert')).toHaveCount(0);
   });
 
+  // The Agents page is the one settings surface whose rows draw a live
+  // component — the same generated mark the transcript uses. These run in a
+  // real browser because that is the only place the mark's SVG, the dialog's
+  // elevation, and the deep link actually exist.
+  test('opens the Agents page from its own deep link with the marks the transcript draws', async ({ page }) => {
+    const settings = await openSettings(page, '&category=agent/agents');
+
+    const yours = settings.getByRole('list', { name: 'Agents you defined' });
+    await expect(yours.getByText('Wren')).toBeVisible();
+    // Its own description, not its layer: what the main agent dispatches on is
+    // what tells a reader what this agent is for.
+    await expect(yours.getByText('Audits a change before it is proposed.')).toBeVisible();
+    const builtIn = settings.getByRole('list', { name: 'Built-in agents' });
+    await expect(builtIn.getByText('Aspen')).toBeVisible();
+    await expect(builtIn.getByText('The agent you talk to')).toBeVisible();
+    // A Role is an Agent type too, so it must not also appear among built-ins.
+    await expect(builtIn.getByText('Wren')).toHaveCount(0);
+    // Every row wears the mark, drawn in its identity's palette token.
+    await expect(yours.locator('svg [fill="var(--identity-tint-6)"]').first()).toBeVisible();
+  });
+
+  test('separates what a built-in may change from what a Role may', async ({ page }) => {
+    const settings = await openSettings(page, '&category=agent/agents');
+
+    await settings.getByRole('button', { name: /Rena/ }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByRole('list', { name: 'How this agent appears' })).toBeVisible();
+    // A built-in's behaviour is code, so the editor says so rather than showing
+    // a field that cannot be saved — and there is nothing of the user's to delete.
+    await expect(dialog.getByRole('list', { name: 'What this agent is and does' })).toHaveCount(0);
+    await expect(dialog.getByRole('button', { name: 'Delete' })).toHaveCount(0);
+
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    await settings.getByRole('button', { name: /Wren/ }).click();
+    const roleDialog = page.getByRole('dialog');
+    await expect(roleDialog.getByRole('list', { name: 'What this agent is and does' })).toBeVisible();
+    await expect(roleDialog.getByRole('button', { name: 'Delete' })).toBeVisible();
+  });
+
+  test('renames an agent and answers with the catalog the transcript reads', async ({ page }) => {
+    const settings = await openSettings(page, '&category=agent/agents');
+    await settings.getByRole('button', { name: /Rena/ }).click();
+    const dialog = page.getByRole('dialog');
+
+    await dialog.getByRole('textbox', { name: 'Name' }).fill('Juniper');
+    await dialog.getByRole('button', { name: 'Save' }).click();
+
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(settings.getByRole('list', { name: 'Built-in agents' }).getByText('Juniper')).toBeVisible();
+    await expect(settings.getByRole('status')).toContainText('Juniper');
+  });
+
+  test('asks before deleting an agent, and says what deleting does not take away', async ({ page }) => {
+    const settings = await openSettings(page, '&category=agent/agents');
+    await settings.getByRole('button', { name: /Wren/ }).click();
+    const editor = page.getByRole('dialog').first();
+
+    await editor.getByRole('button', { name: 'Delete' }).click();
+    // Deleting a Role the user wrote is not recoverable from this surface, so
+    // it is confirmed — and the confirmation states the blast radius, which is
+    // narrower than "delete" sounds.
+    const confirm = page.getByRole('dialog').last();
+    await expect(confirm).toContainText('past conversations still show who spoke');
+    await confirm.getByRole('button', { name: 'Delete' }).click();
+
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(settings.getByRole('list', { name: 'Agents you defined' })).toContainText('No agents yet');
+    // Gone from the list the user manages, and gone from the roster the
+    // transcript draws — one answer feeds both.
+    await expect(settings.getByRole('list', { name: 'Built-in agents' }).getByText('Wren')).toHaveCount(0);
+  });
+
+  for (const colorScheme of ['light', 'dark'] as const) {
+    test(`keeps the Agents editor's colour choices on the neutral ladder in ${colorScheme} mode`, async ({ page }) => {
+      await page.emulateMedia({ colorScheme });
+      const settings = await openSettings(page, '&category=agent/agents');
+      await settings.getByRole('button', { name: /Wren/ }).click();
+      const dialog = page.getByRole('dialog');
+
+      const swatches = dialog.getByRole('radio');
+      await expect(swatches).toHaveCount(7);
+      // B3/B4: the identity colour lives INSIDE the swatch, so the chosen state
+      // is drawn on the neutral fill ladder. A brand or status tint here would
+      // put two colours in one control, each claiming to mean "this one".
+      const selectedBackground = await dialog.locator('.agent-colour-choice.is-selected')
+        .evaluate((element) => getComputedStyle(element).backgroundColor);
+      const neutral = await settings.evaluate((element) => {
+        const style = getComputedStyle(element);
+        const probe = document.createElement('div');
+        probe.style.backgroundColor = style.getPropertyValue('--control-active').trim();
+        document.body.append(probe);
+        const resolved = getComputedStyle(probe).backgroundColor;
+        probe.remove();
+        return resolved;
+      });
+      expect(selectedBackground).toBe(neutral);
+    });
+  }
+
   test('uses a flat settings pop-up button for select controls', async ({ page }) => {
     const settings = await openSettings(page);
     await settings.getByRole('button', { name: 'General', exact: true }).click();

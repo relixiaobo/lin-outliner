@@ -139,6 +139,12 @@ export const AGENT_COMMANDS = [
   'agent_managed_skill_set_enabled',
   'agent_managed_skill_rollback',
   'agent_managed_skill_uninstall',
+  // The Agents editor. Configuration file IO belongs to main (A2); the
+  // renderer names an Agent type and a layer, never a path.
+  'agent_identity_catalog',
+  'agent_write_role',
+  'agent_delete_role',
+  'agent_write_presentation',
 ] as const;
 
 export const ASSET_COMMANDS = [

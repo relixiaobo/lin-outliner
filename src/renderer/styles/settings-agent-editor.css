@@ -1,0 +1,86 @@
+/* The Agents page and its editor.
+ *
+ * The list itself is the shared inset-list primitive; what is local here is the
+ * editor sheet and the colour picker, whose swatches are the real mark the
+ * transcript draws rather than a plain colour chip — so a choice is made
+ * against the thing it produces. Every value is a token (B1) and the picker's
+ * selection stays on the neutral ladder (B3): the identity colour is inside the
+ * swatch, so the *selection* must not also be coloured, or two colours would
+ * compete to mean "chosen". */
+
+.agent-editor-dialog {
+  width: min(560px, calc(100vw - 32px));
+  max-height: min(760px, calc(100vh - 48px));
+  overflow: auto;
+  border-radius: var(--radius-overlay-sm);
+  background: var(--bg-elevated);
+  box-shadow: var(--overlay-shadow-level-2);
+  padding: var(--space-6);
+}
+
+.agent-editor-dialog .inset-group {
+  margin-top: var(--space-5);
+}
+
+/* The mark beside the title is a live preview, so the heading is where the
+   user sees the colour they just picked take effect. */
+.agent-editor-heading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+/* Instructions are the one multi-line field: the label sits above rather than
+   beside it, because a label vertically centred against five rows of text reads
+   as floating. */
+.settings-sheet-row-stacked {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  padding-bottom: var(--space-3);
+}
+
+.settings-sheet-row-stacked .settings-sheet-row-label {
+  width: auto;
+}
+
+.settings-sheet-row-stacked .settings-sheet-row-input {
+  resize: vertical;
+  line-height: var(--line-ui-md);
+}
+
+.agent-colour-choices {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* B6: the swatch is the mark, so the chosen state is a neutral ring around it,
+   never a fill that would tint the mark it contains. B7: the ring is drawn in
+   the padding that is always reserved, so choosing never moves the row. */
+.agent-colour-choice {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-1);
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  background: transparent;
+}
+
+.agent-colour-choice:hover {
+  background: var(--control-hover);
+}
+
+.agent-colour-choice.is-selected {
+  border-color: var(--separator);
+  background: var(--control-active);
+}
+
+/* Delete belongs to the object, not to the dialog's commit pair — it sits at
+   the leading edge so it is never the button next to Save. */
+.agent-editor-actions .agent-editor-delete {
+  margin-right: auto;
+}

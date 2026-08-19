@@ -193,6 +193,25 @@ spaces cannot collide, and a `color` outside the palette is refused at the
 write boundary; at the read boundary a stale colour degrades to derivation
 rather than drawing nothing.
 
+Both halves are user-editable from Settings → Agent → Agents, which reads the
+whole editable view in one answer — the identity catalog the transcript draws
+from beside the Roles the user may change — and writes through
+`agent_write_role`, `agent_delete_role`, and `agent_write_presentation`. Writing
+is a boundary and fails closed (A12): each command re-reads one layer, applies
+one change, and hands the candidate back through the LOADER's own parser before
+it is kept; if the result would not parse, the previous bytes are restored and
+the command reports why. A layer that already fails to parse is reported rather
+than replaced, because a hand-written configuration belongs to whoever wrote it.
+Clearing a presentation field REMOVES the override instead of storing it blank,
+so the built-in default shows through again and a later change to that default
+still reaches the user. Deleting a Role affects future spawns only: a running
+child keeps the configuration it resolved at spawn, and past transcripts fall
+through the identity chain rather than losing their speaker. Every write
+broadcasts the settings-changed notification the settings window already uses,
+and the dock re-reads its catalog on it — so an Agent renamed in the editor is
+renamed in an open transcript at once, rather than at the next conversation
+switch.
+
 Defaults are Aspen (teal, `main`), Rena (orange, `explore`), Ada (blue,
 `plan`), and Bruno (amber, `general-purpose`) — pinned, well-separated hues. An
 identity with no persona is named after its type; one with no colour derives a

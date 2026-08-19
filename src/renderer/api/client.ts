@@ -1,4 +1,6 @@
 import type {
+  AgentEditorView,
+  AgentRoleDraft,
   AssetMetadata,
   Backlink,
   AgentProviderConfigInput,
@@ -105,6 +107,14 @@ export const api = {
     if (window.lin) return window.lin.agentCoreRequest(method, input);
     return Promise.reject(new Error('Tenon desktop bridge is unavailable'));
   },
+  /**
+   * Configuration changed somewhere — including in the settings window. The
+   * dock listens so an Agent renamed or re-skinned in the editor is renamed in
+   * the transcript at once, rather than at the next conversation switch.
+   */
+  onSettingsChanged: (listener: () => void) => (
+    window.lin?.onSettingsChanged(listener) ?? (() => undefined)
+  ),
   onAgentCoreNotification: (listener: (notification: AgentCoreNotification) => void) => (
     window.lin?.onAgentCoreNotification(listener) ?? (() => undefined)
   ),
@@ -441,6 +451,24 @@ export const api = {
     command<SkillDefinition[]>('agent_list_all_skills', { userInvocableOnly: true }),
   agentUndoSkillAgentEdit: (skillName: string) =>
     command<SkillDefinition[]>('agent_undo_skill_agent_edit', { skillName }),
+  /**
+   * The Agents editor's view: every identity the transcript can draw, plus the
+   * Roles a user may actually change. `cwd` names the conversation being
+   * edited from, so a project's own layer is included; main resolves it and
+   * ignores anything that is not a real directory.
+   */
+  agentIdentityCatalog: (cwd?: string) =>
+    command<AgentEditorView>('agent_identity_catalog', { cwd }),
+  agentWriteRole: (input: { layer: 'user' | 'project'; cwd?: string; role: AgentRoleDraft }) =>
+    command<AgentEditorView>('agent_write_role', input),
+  agentDeleteRole: (input: { layer: 'user' | 'project'; cwd?: string; name: string }) =>
+    command<AgentEditorView>('agent_delete_role', input),
+  agentWritePresentation: (input: {
+    layer: 'user' | 'project';
+    cwd?: string;
+    agentType: string;
+    presentation: { persona?: string; color?: string };
+  }) => command<AgentEditorView>('agent_write_presentation', input),
   agentManagedSkillCatalog: () =>
     managedCommand<ManagedSkillCatalogView>('agent_managed_skill_catalog'),
   agentManagedSkillDiscover: (input: { sourceUrl?: string; catalogId?: string }) =>

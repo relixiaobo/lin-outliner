@@ -20,7 +20,7 @@ export type SettingsCategoryTarget = 'general' | 'agent' | 'preview';
  * inline on its category. About is a page for the same reason: it is content, not
  * controls.
  */
-export type SettingsPageTarget = 'services' | 'skills' | 'about';
+export type SettingsPageTarget = 'services' | 'skills' | 'agents' | 'about';
 
 export interface SettingsOpenTarget {
   category?: SettingsCategoryTarget;
@@ -42,6 +42,7 @@ const SETTINGS_ANCHOR_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const PAGE_CATEGORY: Record<SettingsPageTarget, SettingsCategoryTarget> = {
   services: 'agent',
   skills: 'agent',
+  agents: 'agent',
   about: 'general',
 };
 
@@ -57,7 +58,7 @@ export function isSettingsCategoryTarget(value: unknown): value is SettingsCateg
 }
 
 export function isSettingsPageTarget(value: unknown): value is SettingsPageTarget {
-  return value === 'services' || value === 'skills' || value === 'about';
+  return value === 'services' || value === 'skills' || value === 'agents' || value === 'about';
 }
 
 export function isSettingsAnchorTarget(value: unknown): value is string {

@@ -100,6 +100,7 @@ export class ThreadStore {
   private snapshot = EMPTY_SNAPSHOT;
   private readonly listeners = new Set<() => void>();
   private unsubscribeNotifications: (() => void) | null = null;
+  private unsubscribeSettings: (() => void) | null = null;
   private initializePromise: Promise<void> | null = null;
   private readonly loadGenerations = new Map<ThreadId, number>();
   private identityCatalogGeneration = 0;
@@ -111,7 +112,8 @@ export class ThreadStore {
   private listenerFlushGeneration = 0;
 
   constructor(
-    private readonly client: Pick<typeof api, 'agentCoreRequest' | 'onAgentCoreNotification'> = api,
+    private readonly client: Pick<typeof api, 'agentCoreRequest' | 'onAgentCoreNotification'>
+      & Partial<Pick<typeof api, 'onSettingsChanged'>> = api,
     private readonly scheduleListenerFlush: ThreadStoreListenerScheduler = scheduleOnNextFrame,
   ) {}
 
@@ -125,6 +127,15 @@ export class ThreadStore {
   initialize(): Promise<void> {
     if (!this.unsubscribeNotifications) {
       this.unsubscribeNotifications = this.client.onAgentCoreNotification((notification) => this.applyNotification(notification));
+    }
+    // Identities are configuration, so they change from the settings window
+    // rather than through a Turn. Without this, a persona edited in the editor
+    // would keep its old name in an open transcript until the reader switched
+    // conversations.
+    if (!this.unsubscribeSettings) {
+      this.unsubscribeSettings = this.client.onSettingsChanged?.(() => {
+        void this.reloadIdentityCatalog();
+      }) ?? null;
     }
     if (this.initializePromise) return this.initializePromise;
     this.initializePromise = this.reloadThreads().catch((error) => {
@@ -164,6 +175,8 @@ export class ThreadStore {
   dispose(): void {
     this.unsubscribeNotifications?.();
     this.unsubscribeNotifications = null;
+    this.unsubscribeSettings?.();
+    this.unsubscribeSettings = null;
   }
 
   async reloadThreads(): Promise<void> {

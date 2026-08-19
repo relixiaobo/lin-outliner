@@ -27,6 +27,7 @@
 @import './settings-providers.css';
 @import './settings-fields.css';
 @import './settings-skills.css';
+@import './settings-agent-editor.css';
 @import './panel.css';
 @import './popover-command.css';
 @import './overlay-palette.css';
