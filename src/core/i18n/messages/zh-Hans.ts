@@ -323,6 +323,7 @@ export const zhHans: PartialMessages = {
       identityAriaLabel: '这个智能体的外观',
       persona: '名字',
       colour: '颜色',
+      colourDefault: '默认',
       colourNames: {
         orange: '橙',
         amber: '琥珀',
@@ -336,6 +337,7 @@ export const zhHans: PartialMessages = {
       definitionAriaLabel: '这个智能体是什么、做什么',
       name: '类型',
       namePlaceholder: 'reviewer',
+      nameTaken: '已经有同名的智能体了。',
       nameSublabel: '工作按这个名字派发给它，之后不能更改。',
       description: '用途',
       descriptionPlaceholder: '在提交前审查一份改动',

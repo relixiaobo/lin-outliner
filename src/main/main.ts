@@ -161,6 +161,7 @@ import {
   LIN_DOCUMENT_EVENT_CHANNEL,
   DAILY_NOTES_ID,
   TRASH_ID,
+  type AgentRoleDraft,
   type AssetIngestInput,
   type CommandResult,
   type NodeProjection,
@@ -662,10 +663,7 @@ async function findUnmanagedSkillNameConflict(name: string) {
 }
 let toolRuntime!: ToolRuntime;
 const agentConfigurationLoader = new AgentConfigurationLoader(resolvedUserDataDir);
-const agentConfigurationWriter = new AgentConfigurationWriter(
-  resolvedUserDataDir,
-  agentConfigurationLoader,
-);
+const agentConfigurationWriter = new AgentConfigurationWriter(resolvedUserDataDir);
 const agentWorktree = new AgentWorktree(resolvedUserDataDir);
 let threadService!: ThreadService;
 
@@ -3577,11 +3575,79 @@ function layerTarget(value: unknown): ConfigurationLayerTarget {
 /**
  * The working directory an editor request resolves project configuration
  * against. The renderer may name one — the conversation it is editing from —
- * but never a path outside a real directory: an absent or unusable value falls
- * back to the home directory, where only the user layer exists.
+ * but never a path outside a real directory.
+ *
+ * The fallback is the agent's own working root, because that is the directory
+ * Threads are created in (`defaultCwd: agentLocalFileRoot`) and therefore the
+ * project layer the transcript actually resolves. Falling back to the home
+ * directory pointed the editor at a layer nothing reads: "This project" wrote a
+ * file no Thread would ever load, and Roles defined in the real workspace were
+ * invisible to the page that claims to list them.
  */
 function agentEditorCwd(value: unknown): string {
-  return typeof value === 'string' && value.length > 0 && existsSync(value) ? value : homedir();
+  return typeof value === 'string' && value.length > 0 && existsSync(value)
+    ? value
+    : agentLocalFileRoot;
+}
+
+/**
+ * The Agents editor's whole view: the catalog the transcript draws from beside
+ * the Roles the user may change. One helper so the two halves are always read
+ * from the same cwd, and so a handler resolves that cwd once rather than per
+ * response literal.
+ */
+function agentEditorView(cwd: string) {
+  return {
+    entries: agentConfigurationLoader.resolveIdentityCatalog(cwd),
+    roles: agentConfigurationLoader.listEditableRoles(cwd),
+    presentationOverrides: agentConfigurationLoader.listPresentationOverrides(cwd),
+  };
+}
+
+/**
+ * Decode a Role draft at the boundary rather than casting it through.
+ *
+ * A12 puts fail-closed `throw` exactly here: this is the decode point between
+ * an untrusted renderer payload and a write. Casting with `as never` let a
+ * malformed payload reach the writer and surface as an internal `TypeError`
+ * stack, where the design is that the boundary's own sentence reaches the user.
+ */
+function decodeRoleDraft(value: unknown): AgentRoleDraft {
+  const record = plainObject(value, 'role');
+  return {
+    name: requiredText(record.name, 'role.name'),
+    description: requiredText(record.description, 'role.description'),
+    developerInstructions: requiredText(record.developerInstructions, 'role.developerInstructions'),
+    ...(record.persona === undefined ? {} : { persona: requiredText(record.persona, 'role.persona') }),
+    ...(record.color === undefined ? {} : { color: requiredText(record.color, 'role.color') }),
+  };
+}
+
+function decodePresentationDraft(value: unknown): { persona?: string; color?: string } {
+  const record = plainObject(value, 'presentation');
+  return {
+    ...(record.persona === undefined ? {} : { persona: optionalText(record.persona, 'presentation.persona') }),
+    ...(record.color === undefined ? {} : { color: optionalText(record.color, 'presentation.color') }),
+  };
+}
+
+function plainObject(value: unknown, path: string): Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error(`${path} must be an object`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function requiredText(value: unknown, path: string): string {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error(`${path} must be a non-empty string`);
+  }
+  return value;
+}
+
+function optionalText(value: unknown, path: string): string {
+  if (typeof value !== 'string') throw new Error(`${path} must be a string`);
+  return value;
 }
 
 /**
@@ -4310,7 +4376,7 @@ async function managedSkillCommand<T>(operation: () => Promise<T> | T): Promise<
   }
 }
 
-async function handleAgentCommand(_event: IpcMainInvokeEvent, command: AgentCommand, args: Record<string, unknown>) {
+async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentCommand, args: Record<string, unknown>) {
   switch (command) {
     case 'agent_get_provider_settings':
       return withCanonicalSkillDirectories(await getProviderSettings());
@@ -4542,47 +4608,40 @@ async function handleAgentCommand(_event: IpcMainInvokeEvent, command: AgentComm
     // renderer names an Agent and a layer, never a path, so no renderer-side
     // value can turn these into a write anywhere else on disk.
     case 'agent_identity_catalog':
-      return {
-        entries: agentConfigurationLoader.resolveIdentityCatalog(agentEditorCwd(args.cwd)),
-        roles: agentConfigurationLoader.listEditableRoles(agentEditorCwd(args.cwd)),
-      };
+      return agentEditorView(agentEditorCwd(args.cwd));
     case 'agent_write_role': {
-      agentConfigurationWriter.writeRole(
+      const cwd = agentEditorCwd(args.cwd);
+      await agentConfigurationWriter.writeRole(
         layerTarget(args.layer),
-        agentEditorCwd(args.cwd),
-        args.role as never,
+        cwd,
+        decodeRoleDraft(args.role),
+        args.mode === 'create' ? 'create' : 'update',
       );
-      notifySettingsChanged();
-      return {
-        entries: agentConfigurationLoader.resolveIdentityCatalog(agentEditorCwd(args.cwd)),
-        roles: agentConfigurationLoader.listEditableRoles(agentEditorCwd(args.cwd)),
-      };
+      notifySettingsChanged(BrowserWindow.fromWebContents(event.sender));
+      return agentEditorView(cwd);
     }
     case 'agent_delete_role': {
-      agentConfigurationWriter.deleteRole(
+      const cwd = agentEditorCwd(args.cwd);
+      await agentConfigurationWriter.deleteRole(
         layerTarget(args.layer),
-        agentEditorCwd(args.cwd),
-        String(args.name ?? ''),
+        cwd,
+        requiredText(args.name, 'name'),
       );
-      notifySettingsChanged();
-      return {
-        entries: agentConfigurationLoader.resolveIdentityCatalog(agentEditorCwd(args.cwd)),
-        roles: agentConfigurationLoader.listEditableRoles(agentEditorCwd(args.cwd)),
-      };
+      notifySettingsChanged(BrowserWindow.fromWebContents(event.sender));
+      return agentEditorView(cwd);
     }
     case 'agent_write_presentation': {
-      agentConfigurationWriter.writePresentation(
+      const cwd = agentEditorCwd(args.cwd);
+      await agentConfigurationWriter.writePresentation(
         layerTarget(args.layer),
-        agentEditorCwd(args.cwd),
-        String(args.agentType ?? ''),
-        args.presentation as never,
+        cwd,
+        requiredText(args.agentType, 'agentType'),
+        decodePresentationDraft(args.presentation),
       );
-      notifySettingsChanged();
-      return {
-        entries: agentConfigurationLoader.resolveIdentityCatalog(agentEditorCwd(args.cwd)),
-        roles: agentConfigurationLoader.listEditableRoles(agentEditorCwd(args.cwd)),
-      };
+      notifySettingsChanged(BrowserWindow.fromWebContents(event.sender));
+      return agentEditorView(cwd);
     }
+
     case 'agent_managed_skill_catalog':
       return managedSkillCommand(() => managedSkillService.loadCatalog());
     case 'agent_managed_skill_discover':

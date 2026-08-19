@@ -659,6 +659,9 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       reasoningEffort: null,
       tools: null,
     }];
+    const agentPresentationOverrides: Array<{
+      agentType: string; layer: string; persona: string | null; color: string | null;
+    }> = [];
     const agentIdentityView = () => ({
       entries: [
         ...agentIdentityEntries,
@@ -670,6 +673,7 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
         })),
       ],
       roles: agentRoles,
+      presentationOverrides: agentPresentationOverrides,
     });
     const agentSkills = [{
       name: 'workspace-review',
@@ -3597,6 +3601,10 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             persona?: string; color?: string;
           };
           const layer = args.layer === 'project' ? 'project' : 'user';
+          const clash = agentRoles.find((candidate) => candidate.name === role.name);
+          if (args.mode === 'create' && clash) {
+            throw new Error(`An agent named '${role.name}' already exists in this layer`);
+          }
           const next = {
             name: role.name,
             layer,
@@ -3604,9 +3612,11 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             developerInstructions: role.developerInstructions,
             persona: role.persona ?? null,
             color: role.color ?? null,
-            model: null,
-            reasoningEffort: null,
-            tools: null,
+            // Preserved across a save, like the writer does: the editor shows
+            // no field for these, so it must not be able to erase them.
+            model: clash?.model ?? null,
+            reasoningEffort: clash?.reasoningEffort ?? null,
+            tools: clash?.tools ?? null,
           };
           const index = agentRoles.findIndex((candidate) => candidate.name === role.name);
           if (index >= 0) agentRoles[index] = next;
@@ -3630,6 +3640,17 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           if (entry) {
             if (presentation.persona) entry.persona = presentation.persona;
             if (presentation.color) entry.color = presentation.color;
+          }
+          const layer = args.layer === 'project' ? 'project' : 'user';
+          const index = agentPresentationOverrides.findIndex((row) => row.agentType === agentType);
+          if (index >= 0) agentPresentationOverrides.splice(index, 1);
+          if (presentation.persona || presentation.color) {
+            agentPresentationOverrides.push({
+              agentType,
+              layer,
+              persona: presentation.persona || null,
+              color: presentation.color || null,
+            });
           }
           return clone(agentIdentityView()) as T;
         }

@@ -52,7 +52,10 @@ export function SettingsAgentSection({
   useEffect(() => {
     let active = true;
     void api.agentIdentityCatalog()
-      .then((view) => { if (active) setAgentCount(view.entries.length); })
+      // The Roles the user defined — what the page's own empty state counts.
+      // `entries` also holds `main` and the built-ins, so counting it made the
+      // row read "4 agents" above a page saying "No agents yet".
+      .then((view) => { if (active) setAgentCount(view.roles.length); })
       .catch(() => { /* no count */ });
     return () => { active = false; };
   }, []);

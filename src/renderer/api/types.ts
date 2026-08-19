@@ -16,6 +16,7 @@ export type {
   AgentEditorView,
   AgentEditableRole,
   AgentIdentityEntry,
+  AgentPresentationOverrideRow,
   AgentRoleDraft,
   AgentProviderSettingsView,
   AgentProviderAuthKind,

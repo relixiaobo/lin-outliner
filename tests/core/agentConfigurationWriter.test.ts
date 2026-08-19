@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import {
   AgentConfigurationLoader,
   projectConfigurationPath,
@@ -19,13 +20,13 @@ describe('AgentConfigurationWriter', () => {
   test('writes a Role the loader then resolves as an Agent type', async () => {
     const { writer, loader, cwd } = await fixture();
 
-    writer.writeRole('project', cwd, {
+    await writer.writeRole('project', cwd, {
       name: 'reviewer',
       description: 'Reviews a diff.',
       developerInstructions: 'Read the diff and report what is wrong.',
       persona: 'Wren',
       color: 'violet',
-    });
+    }, 'create');
 
     expect(loader.listEditableRoles(cwd)).toEqual([{
       name: 'reviewer',
@@ -46,59 +47,104 @@ describe('AgentConfigurationWriter', () => {
     });
   });
 
-  test('refuses a Role named `main`, which would own two different identities', async () => {
-    const { writer, cwd } = await fixture();
+  test('a save keeps the overrides the editor never shows', async () => {
+    const { writer, loader, cwd, userData } = await fixture();
+    // Hand-written: a model, a narrowed tool set, and a narrowed Skill set —
+    // none of which the editor renders a field for.
+    await writeJson(userConfigurationPath(userData), {
+      roles: {
+        auditor: {
+          description: 'Audits.',
+          developerInstructions: 'Read the diff.',
+          overrides: { model: 'gpt-5', tools: ['file_read'], skills: ['review'] },
+        },
+      },
+    });
 
-    expect(() => writer.writeRole('user', cwd, {
-      name: 'main',
-      description: 'Impostor.',
-      developerInstructions: 'Take the conversation.',
-    })).toThrow(/reserved/);
+    // The editor's save: identity and definition only.
+    await writer.writeRole('user', cwd, {
+      name: 'auditor',
+      description: 'Audits.',
+      developerInstructions: 'Read the diff.',
+      color: 'pink',
+    }, 'update');
+
+    const written = JSON.parse(await readFile(userConfigurationPath(userData), 'utf8'));
+    // Editing a colour must not silently reset the model and hand the Role the
+    // full tool catalogue on its next spawn.
+    expect(written.roles.auditor.overrides).toEqual({
+      model: 'gpt-5',
+      tools: ['file_read'],
+      skills: ['review'],
+    });
+    expect(loader.listEditableRoles(cwd)[0]).toMatchObject({ model: 'gpt-5', color: 'pink' });
   });
 
-  test('refuses an unknown colour without touching the file', async () => {
+  test('creating over an existing name is refused instead of replacing it', async () => {
     const { writer, cwd, userData } = await fixture();
-    writer.writeRole('user', cwd, {
-      name: 'keeper',
-      description: 'Kept.',
-      developerInstructions: 'Stay.',
-      color: 'teal',
-    });
+    await writer.writeRole('user', cwd, {
+      name: 'auditor',
+      description: 'The original.',
+      developerInstructions: 'A long definition the user wrote.',
+    }, 'create');
     const before = await readFile(userConfigurationPath(userData), 'utf8');
 
-    expect(() => writer.writeRole('user', cwd, {
+    await expect(writer.writeRole('user', cwd, {
+      name: 'auditor',
+      description: 'One line.',
+      developerInstructions: 'Oops.',
+    }, 'create')).rejects.toThrow(/already exists/);
+
+    expect(await readFile(userConfigurationPath(userData), 'utf8')).toBe(before);
+  });
+
+  test('refuses a Role named `main` or after a built-in agent type', async () => {
+    const { writer, cwd } = await fixture();
+    const draft = { description: 'Impostor.', developerInstructions: 'Take the work.' };
+
+    for (const name of ['main', 'general-purpose', 'explore', 'plan']) {
+      // `main` names the conversation's own agent; a built-in canonical type is
+      // dropped by `agentTypeCandidates` yet preferred by `resolveRole`, so a
+      // Role by that name would never dispatch while shadowing the built-in's
+      // row in the editor.
+      await expect(writer.writeRole('user', cwd, { name, ...draft }, 'create'))
+        .rejects.toThrow(/built-in agent name|reserved/);
+    }
+  });
+
+  test('refuses an unknown colour without creating the file', async () => {
+    const { writer, cwd, userData } = await fixture();
+
+    await expect(writer.writeRole('user', cwd, {
       name: 'intruder',
       description: 'Rejected.',
       developerInstructions: 'Never lands.',
       color: 'chartreuse',
-    })).toThrow(/chartreuse/);
+    }, 'create')).rejects.toThrow(/chartreuse/);
 
-    // The rejected write must not be half-applied: `intruder` is refused BEFORE
-    // serialization, so the previous file is still byte-identical.
-    expect(await readFile(userConfigurationPath(userData), 'utf8')).toBe(before);
+    // Nothing is written before the candidate is known to be readable, so a
+    // refused edit leaves neither a file nor the directory it would have sat in.
+    expect(existsSync(userConfigurationPath(userData))).toBe(false);
+    expect(existsSync(dirname(userConfigurationPath(userData)))).toBe(false);
   });
 
-  test('restores the previous bytes when the candidate does not survive the loader', async () => {
+  test('a candidate the loader would reject never reaches disk', async () => {
     const { writer, loader, cwd, userData } = await fixture();
-    writer.writeRole('user', cwd, {
+    await writer.writeRole('user', cwd, {
       name: 'keeper',
       description: 'Kept.',
       developerInstructions: 'Stay.',
-    });
+    }, 'create');
     const before = await readFile(userConfigurationPath(userData), 'utf8');
 
-    // A loader that rejects everything stands in for any future validation the
-    // writer does not know about: whatever the reason, a candidate the reader
-    // cannot read must leave the file as the user had it.
-    const hostile = new AgentConfigurationWriter(userData, {
-      resolveIdentityCatalog: () => { throw new Error('unreadable layer'); },
-    } as unknown as AgentConfigurationLoader);
-
-    expect(() => hostile.writeRole('user', cwd, {
+    // An empty description is valid JSON and rejected by the loader's
+    // `nonEmptyString`. The old design wrote first and restored afterwards, so
+    // a crash between the two left the unreadable file as the live config.
+    await expect(writer.writeRole('user', cwd, {
       name: 'doomed',
-      description: 'Rejected.',
+      description: '   ',
       developerInstructions: 'Never lands.',
-    })).toThrow(/Refused: unreadable layer/);
+    }, 'create')).rejects.toThrow(/Refused:/);
 
     expect(await readFile(userConfigurationPath(userData), 'utf8')).toBe(before);
     expect(loader.listEditableRoles(cwd).map((role) => role.name)).toEqual(['keeper']);
@@ -107,28 +153,64 @@ describe('AgentConfigurationWriter', () => {
   test('refuses to rewrite a layer it could not parse, rather than replacing it', async () => {
     const { writer, cwd } = await fixture();
     const path = projectConfigurationPath(cwd);
-    await mkdir(join(cwd, '.tenon'), { recursive: true }).catch(() => undefined);
+    await mkdir(dirname(path), { recursive: true });
     await writeFile(path, '{ this is not JSON', 'utf8');
 
-    expect(() => writer.writeRole('project', cwd, {
+    await expect(writer.writeRole('project', cwd, {
       name: 'reviewer',
       description: 'Reviews.',
       developerInstructions: 'Review.',
-    })).toThrow(/Cannot edit/);
+    }, 'create')).rejects.toThrow(/Cannot edit/);
 
-    // The user's hand-written file is still theirs.
     expect(await readFile(path, 'utf8')).toBe('{ this is not JSON');
+  });
+
+  test('refuses a layer that parses as JSON but not as configuration', async () => {
+    const { writer, cwd, userData } = await fixture();
+    // Valid JSON, rejected by the loader's `objectValue`. Treating it as "no
+    // roles" would drop the user's array and report success.
+    await writeJson(userConfigurationPath(userData), { roles: ['auditor'] });
+
+    await expect(writer.writeRole('user', cwd, {
+      name: 'reviewer',
+      description: 'Reviews.',
+      developerInstructions: 'Review.',
+    }, 'create')).rejects.toThrow(/Cannot edit/);
+
+    expect(JSON.parse(await readFile(userConfigurationPath(userData), 'utf8')))
+      .toEqual({ roles: ['auditor'] });
+  });
+
+  test('a broken OTHER layer does not make this one uneditable', async () => {
+    const { writer, loader, cwd } = await fixture();
+    // The project file is wrong. Editing a USER-layer agent must still work:
+    // rolling this back would strand the user with an error naming a file the
+    // editor never said it was reading.
+    await writeJson(projectConfigurationPath(cwd), {
+      roles: { broken: { description: '', developerInstructions: 'x' } },
+    });
+
+    await writer.writeRole('user', cwd, {
+      name: 'reviewer',
+      description: 'Reviews.',
+      developerInstructions: 'Review.',
+    }, 'create');
+
+    expect(() => loader.listEditableRoles(cwd)).toThrow();
+    // The user layer alone is readable and holds the write.
+    const solo = new AgentConfigurationLoader(writerUserData(writer));
+    expect(solo.listEditableRoles(join(cwd, 'empty')).map((role) => role.name)).toEqual(['reviewer']);
   });
 
   test('deleting a Role removes the key, and the last one removes the section', async () => {
     const { writer, loader, cwd, userData } = await fixture();
-    writer.writeRole('user', cwd, { name: 'a', description: 'A.', developerInstructions: 'A.' });
-    writer.writeRole('user', cwd, { name: 'b', description: 'B.', developerInstructions: 'B.' });
+    await writer.writeRole('user', cwd, { name: 'a', description: 'A.', developerInstructions: 'A.' }, 'create');
+    await writer.writeRole('user', cwd, { name: 'b', description: 'B.', developerInstructions: 'B.' }, 'create');
 
-    writer.deleteRole('user', cwd, 'a');
+    await writer.deleteRole('user', cwd, 'a');
     expect(loader.listEditableRoles(cwd).map((role) => role.name)).toEqual(['b']);
 
-    writer.deleteRole('user', cwd, 'b');
+    await writer.deleteRole('user', cwd, 'b');
     expect(loader.listEditableRoles(cwd)).toEqual([]);
     // An empty `roles: {}` left behind would read as "the user has an empty
     // collection" instead of "the user has none".
@@ -138,47 +220,60 @@ describe('AgentConfigurationWriter', () => {
   test('deleting a Role that is not there says so instead of writing a no-op', async () => {
     const { writer, cwd } = await fixture();
 
-    expect(() => writer.deleteRole('user', cwd, 'ghost')).toThrow(/No Agent Role named 'ghost'/);
+    await expect(writer.deleteRole('user', cwd, 'ghost')).rejects.toThrow(/No Agent Role named 'ghost'/);
   });
 
   test('a presentation override renames a built-in type without redefining it', async () => {
     const { writer, loader, cwd } = await fixture();
 
-    writer.writePresentation('user', cwd, 'explore', { persona: 'Juniper', color: 'pink' });
+    await writer.writePresentation('user', cwd, 'explore', { persona: 'Juniper', color: 'pink' });
 
     // `source` stays `built-in`: it says where the TYPE comes from, not where
-    // its skin was written. A re-skinned built-in that reported itself as a
-    // user Role would invite an editor to offer Delete on something it cannot
-    // delete.
+    // its skin was written.
     expect(loader.resolveIdentityCatalog(cwd)).toContainEqual({
       agentType: 'explore',
       persona: 'Juniper',
       color: 'pink',
       source: 'built-in',
     });
-    // Re-skinning is not redefining: `explore` is still a built-in, so it must
-    // not appear among the Roles the user may edit or delete.
     expect(loader.listEditableRoles(cwd)).toEqual([]);
+    // What is WRITTEN, as opposed to what resolves — the editor seeds from this.
+    expect(loader.listPresentationOverrides(cwd)).toEqual([
+      { agentType: 'explore', layer: 'user', persona: 'Juniper', color: 'pink' },
+    ]);
+  });
+
+  test('a colour-only re-skin does not write the default persona in beside it', async () => {
+    const { writer, loader, cwd } = await fixture();
+
+    await writer.writePresentation('user', cwd, 'explore', { color: 'pink' });
+
+    // Only the colour is overridden, so a later change to the built-in's name
+    // still reaches this user.
+    expect(loader.listPresentationOverrides(cwd)).toEqual([
+      { agentType: 'explore', layer: 'user', persona: null, color: 'pink' },
+    ]);
+    expect(loader.resolveIdentityCatalog(cwd))
+      .toContainEqual({ agentType: 'explore', persona: 'Rena', color: 'pink', source: 'built-in' });
   });
 
   test('clearing a presentation removes the override so the default shows through', async () => {
     const { writer, loader, cwd, userData } = await fixture();
-    writer.writePresentation('user', cwd, 'explore', { persona: 'Juniper', color: 'pink' });
+    await writer.writePresentation('user', cwd, 'explore', { persona: 'Juniper', color: 'pink' });
 
-    writer.writePresentation('user', cwd, 'explore', { persona: '', color: '' });
+    await writer.writePresentation('user', cwd, 'explore', { persona: '', color: '' });
 
-    const entry = loader.resolveIdentityCatalog(cwd).find((row) => row.agentType === 'explore');
-    expect(entry).toMatchObject({ persona: 'Rena', color: 'orange' });
-    // Reset is the ABSENCE of an override, not a second copy of the default —
-    // otherwise a later change to the built-in name would not reach the user.
+    expect(loader.resolveIdentityCatalog(cwd).find((row) => row.agentType === 'explore'))
+      .toMatchObject({ persona: 'Rena', color: 'orange' });
+    expect(loader.listPresentationOverrides(cwd)).toEqual([]);
     expect(JSON.parse(await readFile(userConfigurationPath(userData), 'utf8'))).toEqual({});
   });
 
   test('the project layer wins over the user layer for the same Agent type', async () => {
     const { writer, loader, cwd } = await fixture();
-    writer.writePresentation('user', cwd, 'plan', { persona: 'User Ada' });
+    await writer.writePresentation('user', cwd, 'plan', { persona: 'User Ada' });
 
-    writer.writePresentation('project', cwd, 'plan', { persona: 'Project Ada' });
+    await writer.writePresentation('project', cwd, 'plan', { persona: 'Project Ada' });
 
     expect(loader.resolveIdentityCatalog(cwd)).toContainEqual({
       agentType: 'plan',
@@ -187,7 +282,31 @@ describe('AgentConfigurationWriter', () => {
       source: 'built-in',
     });
   });
+
+  test('leaves the rest of the file alone', async () => {
+    const { writer, cwd, userData } = await fixture();
+    await writeJson(userConfigurationPath(userData), {
+      defaultProfile: 'focused',
+      profiles: { focused: { description: 'Focused.', model: 'gpt-5' } },
+    });
+
+    await writer.writeRole('user', cwd, {
+      name: 'reviewer',
+      description: 'Reviews.',
+      developerInstructions: 'Review.',
+    }, 'create');
+
+    const written = JSON.parse(await readFile(userConfigurationPath(userData), 'utf8'));
+    // Profiles are not the editor's business, and a read-modify-write that
+    // dropped them would silently reconfigure the root Thread.
+    expect(written.defaultProfile).toBe('focused');
+    expect(written.profiles.focused).toEqual({ description: 'Focused.', model: 'gpt-5' });
+  });
 });
+
+function writerUserData(writer: AgentConfigurationWriter): string {
+  return (writer as unknown as { userDataPath: string }).userDataPath;
+}
 
 async function fixture(): Promise<{
   writer: AgentConfigurationWriter;
@@ -200,6 +319,15 @@ async function fixture(): Promise<{
   const userData = join(root, 'user-data');
   const cwd = join(root, 'project');
   await Promise.all([mkdir(userData, { recursive: true }), mkdir(cwd, { recursive: true })]);
-  const loader = new AgentConfigurationLoader(userData);
-  return { writer: new AgentConfigurationWriter(userData, loader), loader, userData, cwd };
+  return {
+    writer: new AgentConfigurationWriter(userData),
+    loader: new AgentConfigurationLoader(userData),
+    userData,
+    cwd,
+  };
+}
+
+async function writeJson(path: string, value: unknown): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, JSON.stringify(value, null, 2), 'utf8');
 }

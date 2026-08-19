@@ -84,3 +84,19 @@
 .agent-editor-actions .agent-editor-delete {
   margin-right: auto;
 }
+
+/* "Default" sits before the hues and means the absence of a choice, so a hairline
+   separates it from the palette rather than a second visual language. */
+.agent-colour-choice.is-default {
+  margin-right: var(--space-2);
+  border-right: 1px solid var(--separator);
+  border-radius: var(--radius-pill) 0 0 var(--radius-pill);
+  padding-right: var(--space-3);
+}
+
+/* The name conflict speaks inside the card it is about, not from the pane's
+   shared alert at the bottom of a scrolled dialog. */
+.agent-editor-conflict {
+  margin: var(--space-2) 0 0;
+  color: var(--status-danger);
+}

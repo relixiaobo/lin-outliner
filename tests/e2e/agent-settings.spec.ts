@@ -244,6 +244,20 @@ test.describe('agent settings window', () => {
     await expect(settings.getByRole('status')).toContainText('Juniper');
   });
 
+  test('refuses to create an agent over a name that already exists', async ({ page }) => {
+    const settings = await openSettings(page, '&category=agent/agents');
+
+    await settings.getByRole('list', { name: 'Agents you defined' }).getByRole('button', { name: /Add an agent/ })
+      .or(settings.getByRole('button', { name: 'Add an agent' })).first().click();
+    const dialog = page.getByRole('dialog');
+    await dialog.getByRole('textbox', { name: 'Type' }).fill('auditor');
+
+    // Said before Save, because finding out at the write boundary costs the
+    // user everything else they typed into this dialog.
+    await expect(dialog.getByRole('alert')).toContainText('already exists');
+    await expect(dialog.getByRole('button', { name: 'Save' })).toBeDisabled();
+  });
+
   test('asks before deleting an agent, and says what deleting does not take away', async ({ page }) => {
     const settings = await openSettings(page, '&category=agent/agents');
     await settings.getByRole('button', { name: /Wren/ }).click();
@@ -271,8 +285,9 @@ test.describe('agent settings window', () => {
       await settings.getByRole('button', { name: /Wren/ }).click();
       const dialog = page.getByRole('dialog');
 
-      const swatches = dialog.getByRole('radio');
-      await expect(swatches).toHaveCount(7);
+      // Seven palette hues plus Default, which is what makes clearing an
+      // override — and therefore the documented reset — reachable at all.
+      await expect(dialog.getByRole('radio')).toHaveCount(8);
       // B3/B4: the identity colour lives INSIDE the swatch, so the chosen state
       // is drawn on the neutral fill ladder. A brand or status tint here would
       // put two colours in one control, each claiming to mean "this one".

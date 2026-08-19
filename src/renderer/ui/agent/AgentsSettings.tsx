@@ -5,7 +5,12 @@ import {
   MAIN_PRESENTATION_KEY,
   type IdentityColor,
 } from '../../../core/agent/configuration';
-import type { AgentEditableRole, AgentEditorView, AgentIdentityEntry } from '../../api/types';
+import type {
+  AgentEditableRole,
+  AgentEditorView,
+  AgentIdentityEntry,
+  AgentPresentationOverrideRow,
+} from '../../api/types';
 import { api } from '../../api/client';
 import { AgentMark } from '../../agent/components/AgentMark';
 import { identityCatalogFrom, resolveAgentIdentity } from '../../agent/agentIdentity';
@@ -143,10 +148,18 @@ export function AgentsSettings({ onError, onNotice }: {
               ? api.agentWritePresentation({
                 agentType: editing.entry.agentType,
                 layer,
+                // Only what the user actually set. An empty field is the
+                // ABSENCE of an override, which is what makes reset reachable
+                // and keeps a later change to the built-in default flowing
+                // through.
                 presentation: { persona: draft.persona, color: draft.color },
               })
               : api.agentWriteRole({
                 layer,
+                // The write is a replace, so the intent has to be explicit:
+                // `create` fails closed on a name that already exists rather
+                // than silently overwriting the definition behind it.
+                mode: editing.kind === 'new' ? 'create' : 'update',
                 role: {
                   name: draft.name,
                   description: draft.description,
@@ -160,11 +173,29 @@ export function AgentsSettings({ onError, onNotice }: {
                 || (editing.kind === 'presentation' ? editing.entry.agentType : ''),
             }),
           )}
+          override={overrideFor(view, editing)}
+          takenNames={roleNames}
           target={editing}
         />
       )}
     </section>
   );
+}
+
+/**
+ * The re-skin written down for whatever the editor is open on, in the layer the
+ * dialog will write to. A Role carries its own presentation, so only a built-in
+ * looks here.
+ */
+function overrideFor(
+  view: AgentEditorView | null,
+  target: EditorTarget,
+): AgentPresentationOverrideRow | null {
+  if (view === null || target.kind !== 'presentation') return null;
+  const rows = view.presentationOverrides.filter((row) => row.agentType === target.entry.agentType);
+  // Project wins over user, matching how the layers resolve — so the dialog
+  // shows the value that is actually in force.
+  return rows.find((row) => row.layer === 'project') ?? rows.find((row) => row.layer === 'user') ?? null;
 }
 
 /** What the editor is open on: an existing Role, a new one, or a built-in's skin. */
@@ -209,8 +240,12 @@ interface EditorDraft {
  * "change this agent" is one gesture regardless of which half of the file it
  * lands in.
  */
-function AgentEditorDialog({ target, busy, onSave, onCancel, onDelete }: {
+function AgentEditorDialog({ target, override, takenNames, busy, onSave, onCancel, onDelete }: {
   readonly target: EditorTarget;
+  /** What is actually written down for this identity, or null when nothing is. */
+  readonly override: AgentPresentationOverrideRow | null;
+  /** Role names already defined, so create can refuse before the user loses their typing. */
+  readonly takenNames: ReadonlySet<string>;
   readonly busy: boolean;
   readonly onSave: (draft: EditorDraft, layer: 'user' | 'project') => void;
   readonly onCancel: () => void;
@@ -224,8 +259,12 @@ function AgentEditorDialog({ target, busy, onSave, onCancel, onDelete }: {
 
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [name, setName] = useState(role?.name ?? '');
-  const [persona, setPersona] = useState(role?.persona ?? entry?.persona ?? '');
-  const [color, setColor] = useState(role?.color ?? entry?.color ?? '');
+  // Seeded from what is WRITTEN, never from what is resolved. Opening `explore`
+  // and changing only its colour must not also write `persona: 'Rena'` — that
+  // pins today's default as a permanent override and silently opts the user out
+  // of every future change to it.
+  const [persona, setPersona] = useState(role?.persona ?? override?.persona ?? '');
+  const [color, setColor] = useState(role?.color ?? override?.color ?? '');
   const [description, setDescription] = useState(role?.description ?? '');
   const [instructions, setInstructions] = useState(role?.developerInstructions ?? '');
   const [layer, setLayer] = useState<'user' | 'project'>(role?.layer ?? 'user');
@@ -234,21 +273,24 @@ function AgentEditorDialog({ target, busy, onSave, onCancel, onDelete }: {
   // for (how the main agent chooses it) and what it should do. Identity is
   // optional — an unnamed Role is drawn from its own name, which is the
   // intended first appearance rather than an error state.
+  // A name already in use is refused at the write boundary too; saying so here
+  // is what keeps the user from losing everything else they typed.
+  const nameTaken = target.kind === 'new' && takenNames.has(name.trim());
   const canSave = editable
-    ? name.trim().length > 0 && description.trim().length > 0 && instructions.trim().length > 0
+    ? name.trim().length > 0 && description.trim().length > 0
+      && instructions.trim().length > 0 && !nameTaken
     : true;
 
   // The mark beside the title is the actual component the transcript draws, so
   // a colour is chosen against the thing it will produce rather than a swatch
   // that approximates it. With no colour set it shows what derivation gives —
   // which is what an unconfigured Role will really wear.
-  const previewIdentity = resolveAgentIdentity(
-    new Map(),
-    persona.trim() || name.trim() || entry?.agentType || null,
-  );
+  const inheritedTint = entry !== null && Object.hasOwn(IDENTITY_COLOR_TINT, entry.color)
+    ? IDENTITY_COLOR_TINT[entry.color as IdentityColor]
+    : resolveAgentIdentity(new Map(), name.trim() || entry?.agentType || null).tint;
   const previewTint = Object.hasOwn(IDENTITY_COLOR_TINT, color)
     ? IDENTITY_COLOR_TINT[color as IdentityColor]
-    : previewIdentity.tint;
+    : inheritedTint;
 
   return (
     <Dialog
@@ -280,7 +322,21 @@ function AgentEditorDialog({ target, busy, onSave, onCancel, onDelete }: {
         <div className="settings-sheet-row">
           <span className="settings-sheet-row-label">{t.settings.agents.colour}</span>
           <div aria-label={t.settings.agents.colour} className="agent-colour-choices" role="radiogroup">
-            {IDENTITY_COLORS.map((choice, index) => (
+            {/* Without a way to choose "none" the documented reset is
+                unreachable: `writePresentation` removes the entry only when
+                every field is empty, and a picker of hues alone can never send
+                an empty colour. The swatch shows what would be inherited. */}
+            <ButtonControl
+              aria-checked={color === ''}
+              aria-label={t.settings.agents.colourDefault}
+              className={`agent-colour-choice is-default${color === '' ? ' is-selected' : ''}`}
+              onClick={() => setColor('')}
+              role="radio"
+              title={t.settings.agents.colourDefault}
+            >
+              <AgentMark size={22} tint={inheritedTint} />
+            </ButtonControl>
+            {IDENTITY_COLORS.map((choice) => (
               <ButtonControl
                 aria-checked={color === choice}
                 aria-label={t.settings.agents.colourNames[choice]}
@@ -289,7 +345,7 @@ function AgentEditorDialog({ target, busy, onSave, onCancel, onDelete }: {
                 onClick={() => setColor(choice)}
                 role="radio"
               >
-                <AgentMark size={22} tint={index + 1} />
+                <AgentMark size={22} tint={IDENTITY_COLOR_TINT[choice]} />
               </ButtonControl>
             ))}
           </div>
@@ -314,6 +370,14 @@ function AgentEditorDialog({ target, busy, onSave, onCancel, onDelete }: {
               variant="bare"
             />
           </label>
+          {nameTaken ? (
+            // Said before Save is pressed. The write boundary refuses this name
+            // too, but finding out there costs the user everything else they
+            // typed into the dialog.
+            <p className="settings-sheet-note agent-editor-conflict" role="alert">
+              {t.settings.agents.nameTaken}
+            </p>
+          ) : null}
           <label className="settings-sheet-row">
             <span className="settings-sheet-row-label">{t.settings.agents.description}</span>
             <Input

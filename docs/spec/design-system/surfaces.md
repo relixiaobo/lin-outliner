@@ -371,11 +371,15 @@ the conversation are visibly about one participant. A row opens a level-2 editor
 dialog rather than a third route: identity (name, colour) for every agent, plus
 definition (type, use-it-for, instructions, layer) for a Role. Colour swatches
 are the mark itself, so a hue is chosen against what it produces; the chosen
-swatch is marked on the neutral ladder, never by tinting the mark. A built-in
+swatch is marked on the neutral ladder, never by tinting the mark. A leading
+**Default** swatch shows what would be inherited and is the only way to send an
+empty colour — without it the documented reset is unreachable from the UI. A built-in
 shows identity only and offers no Delete, because there is nothing of the user's
 to remove. An existing Role's type is fixed — it is the key both dispatch and
-identity are stored under. A refused write leaves the dialog standing with its
-values, and reports the write boundary's own sentence.
+identity are stored under — and a new Role whose type is already taken says so
+in the card rather than at the write boundary, where finding out would cost the
+user the rest of what they typed. A refused write leaves the dialog standing
+with its values, and reports the write boundary's own sentence.
 
 **Preview.** Translation owns target language, webpage/EPUB auto-translation,
 model, and clearing saved translations; Websites clears URL-preview session data.

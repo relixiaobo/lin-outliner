@@ -254,7 +254,7 @@ exports[`settings page DOM renders the agent category byte-stably 1`] = `
               <button type="button" class="inset-row-main">
                 <span class="inset-row-text">
                   <span class="inset-row-label">Agents</span>
-                  <span class="inset-row-sublabel">2 agents</span>
+                  <span class="inset-row-sublabel">1 agent</span>
                 </span>
                 <span aria-hidden="true" class="settings-drilldown-chevron">
                   <svg aria-hidden="true" class="lucide lucide-chevron-right" stroke-linejoin="round" stroke-linecap="round" stroke-width="1.75" stroke="currentColor" fill="none" viewBox="0 0 24 24" height="14" width="14" xmlns="http://www.w3.org/2000/svg">

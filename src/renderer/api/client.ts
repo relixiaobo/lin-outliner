@@ -459,7 +459,13 @@ export const api = {
    */
   agentIdentityCatalog: (cwd?: string) =>
     command<AgentEditorView>('agent_identity_catalog', { cwd }),
-  agentWriteRole: (input: { layer: 'user' | 'project'; cwd?: string; role: AgentRoleDraft }) =>
+  agentWriteRole: (input: {
+    layer: 'user' | 'project';
+    cwd?: string;
+    /** `create` refuses a name that already exists instead of replacing it. */
+    mode: 'create' | 'update';
+    role: AgentRoleDraft;
+  }) =>
     command<AgentEditorView>('agent_write_role', input),
   agentDeleteRole: (input: { layer: 'user' | 'project'; cwd?: string; name: string }) =>
     command<AgentEditorView>('agent_delete_role', input),

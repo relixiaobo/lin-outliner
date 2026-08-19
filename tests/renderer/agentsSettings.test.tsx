@@ -7,6 +7,9 @@ import type { AgentEditorView } from '../../src/renderer/api/types';
 import { I18nProvider } from '../../src/renderer/i18n/I18nProvider';
 
 const VIEW: AgentEditorView = {
+  // Nothing is re-skinned: every built-in identity below is the resolved
+  // default, which is exactly the case the editor must not write back.
+  presentationOverrides: [],
   entries: [
     { agentType: 'main', persona: 'Aspen', color: 'teal', source: 'built-in' },
     { agentType: 'general-purpose', persona: 'Bruno', color: 'amber', source: 'built-in' },
@@ -65,19 +68,62 @@ describe('the Agents editor', () => {
     expect(document.querySelector('.agent-editor-dialog textarea')).toBeNull();
   });
 
+  test('tells the write which agent already exists, so create cannot replace', async () => {
+    const { document, click, calls } = await renderAgents();
+
+    await click(rowByLabel(document, 'Wren'));
+    await click(document.querySelector('.agent-editor-actions .button-primary')!);
+
+    // Editing an existing Role is an update; only the + dialog creates.
+    expect(calls[1]!.args).toMatchObject({ mode: 'update' });
+  });
+
   test('re-skinning a built-in writes a presentation, never a Role', async () => {
     const { document, click, calls } = await renderAgents();
     await click(rowByLabel(document, 'Rena'));
 
+    await click(swatch(document, 'Pink'));
     await click(document.querySelector('.agent-editor-actions .button-primary')!);
 
     expect(calls.map((call) => call.name)).toEqual(['agent_identity_catalog', 'agent_write_presentation']);
-    expect(calls[1]!.args).toMatchObject({
-      agentType: 'explore',
-      layer: 'user',
-      presentation: { persona: 'Rena', color: 'orange' },
-    });
+    expect(calls[1]!.args).toMatchObject({ agentType: 'explore', layer: 'user' });
+    const written = (calls[1]!.args as { presentation: Record<string, unknown> }).presentation;
+    expect(written.color).toBe('pink');
+    // The persona was NOT touched, so it must not be written. Seeding the field
+    // from the resolved catalog would save `Rena` as a permanent override and
+    // opt this user out of every future change to the built-in's name.
+    expect(written.persona).toBeFalsy();
   });
+
+  test('a built-in with nothing written down offers Default as the chosen colour', async () => {
+    const { document, click } = await renderAgents();
+
+    await click(rowByLabel(document, 'Rena'));
+
+    // Eight swatches: the palette plus "Default", which is the only way to send
+    // an empty colour and so the only way the documented reset is reachable.
+    const dialog = document.querySelector('.agent-editor-dialog');
+    expect(dialog?.querySelectorAll('.agent-colour-choice').length).toBe(8);
+    expect(dialog?.querySelector('.agent-colour-choice.is-selected')?.classList.contains('is-default'))
+      .toBe(true);
+  });
+
+  test('an existing re-skin seeds the fields it actually wrote', async () => {
+    const { document, click } = await renderAgents({
+      view: {
+        ...VIEW,
+        presentationOverrides: [{ agentType: 'explore', layer: 'user', persona: null, color: 'pink' }],
+      },
+    });
+
+    await click(rowByLabel(document, 'Rena'));
+
+    expect((fieldByLabel(document, 'Name') as { value?: string }).value).toBe('');
+    const selected = document.querySelector('.agent-editor-dialog .agent-colour-choice.is-selected');
+    expect(selected?.getAttribute('aria-label')).toBe('Pink');
+  });
+
+
 
   test('a Role is saved with the whole definition, not just what was retyped', async () => {
     const { document, click, calls } = await renderAgents();
@@ -134,6 +180,13 @@ describe('the Agents editor', () => {
   });
 });
 
+function swatch(document: Document, label: string): Element {
+  const found = [...document.querySelectorAll('.agent-colour-choice')]
+    .find((node) => node.getAttribute('aria-label') === label);
+  if (!found) throw new Error(`No colour swatch labelled ${label}`);
+  return found;
+}
+
 function rowByLabel(document: Document, label: string): Element {
   const row = [...document.querySelectorAll('.inset-row-label')]
     .find((node) => node.textContent === label);
@@ -149,7 +202,10 @@ function fieldByLabel(document: Document, label: string): Element {
   return field;
 }
 
-async function renderAgents(options: { onInvoke?: (name: string) => unknown } = {}): Promise<{
+async function renderAgents(options: {
+  onInvoke?: (name: string) => unknown;
+  view?: AgentEditorView;
+} = {}): Promise<{
   readonly document: Document;
   readonly calls: Array<{ name: string; args: unknown }>;
   readonly onError: string[];
@@ -171,7 +227,7 @@ async function renderAgents(options: { onInvoke?: (name: string) => unknown } = 
   (globalThis as Record<string, unknown>).lin = {
     invoke: async (name: string, args: unknown) => {
       calls.push({ name, args });
-      return options.onInvoke ? options.onInvoke(name) : VIEW;
+      return options.onInvoke ? options.onInvoke(name) : (options.view ?? VIEW);
     },
   };
   (window as unknown as Record<string, unknown>).lin = (globalThis as Record<string, unknown>).lin;

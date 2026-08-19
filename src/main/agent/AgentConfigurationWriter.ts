@@ -1,12 +1,10 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { IDENTITY_COLORS, type IdentityColor } from '../../core/agent/configuration';
+import type { AgentRoleDraft } from '../../core/types';
+import { atomicWriteFile } from '../jsonFileStore';
 import {
-  IDENTITY_COLORS,
-  MAIN_PRESENTATION_KEY,
-  type IdentityColor,
-} from '../../core/agent/configuration';
-import {
-  AgentConfigurationLoader,
+  RESERVED_AGENT_TYPE_NAMES,
+  decodeConfigurationLayer,
   projectConfigurationPath,
   userConfigurationPath,
 } from './AgentConfigurationLoader';
@@ -16,31 +14,37 @@ import {
  *
  * Reading is forgiving by design — a transcript renders whatever it can — but
  * writing is a boundary, and a boundary fails closed (A12). Every write here
- * re-reads the layer it is about to touch, applies one change, and hands the
- * result back through the LOADER's own parser before it reaches disk: if the
- * edit would produce a file the loader cannot read, the write is refused and
- * nothing is saved. That is what keeps the editor from being a way to brick
- * the configuration it edits.
+ * re-reads the layer it is about to touch, applies one change, and validates
+ * the candidate **in memory** through the loader's own decoder before anything
+ * reaches disk. Nothing is written until the result is known to be readable, so
+ * there is no window in which the rejected bytes are the live configuration and
+ * no rollback that can itself fail.
  *
  * It never rewrites a file it did not understand, either. A layer that already
  * fails to parse is surfaced as an error rather than silently replaced with a
  * clean one, because the user's hand-written config is theirs — a UI that
- * "fixes" it by deleting it is worse than a UI that refuses.
+ * "fixes" it by deleting it is worse than a UI that refuses. That check is the
+ * loader's full decode, not a shape guess: `{"roles": ["auditor"]}` is valid
+ * JSON the loader rejects, and treating it as "no roles" would drop the user's
+ * content while reporting success.
+ *
+ * It also never destroys what it cannot show. The editor writes a Role's
+ * description, instructions, and identity; a Role's `overrides` (model,
+ * reasoningEffort, tools, skills, plugins, mcpServers) survive a save
+ * untouched unless the draft names them.
  */
 
 /** Which configuration layer a change is written to. */
 export type ConfigurationLayerTarget = 'user' | 'project';
 
-export interface AgentRoleDraft {
-  readonly name: string;
-  readonly description: string;
-  readonly developerInstructions: string;
-  readonly persona?: string;
-  readonly color?: string;
-  readonly model?: string;
-  readonly reasoningEffort?: string;
-  readonly tools?: readonly string[];
-}
+/**
+ * Whether a Role write may land on a name that already exists.
+ *
+ * An unguarded upsert makes "add an agent" able to silently replace a Role the
+ * user spent real effort on: same name, no confirmation, no undo. Intent is
+ * explicit so create can fail closed.
+ */
+export type RoleWriteMode = 'create' | 'update';
 
 export interface PresentationDraft {
   readonly persona?: string;
@@ -50,30 +54,46 @@ export interface PresentationDraft {
 type JsonObject = Record<string, unknown>;
 
 export class AgentConfigurationWriter {
-  constructor(
-    private readonly userDataPath: string,
-    private readonly loader: AgentConfigurationLoader,
-  ) {}
+  // Only the user-data root: validation goes through the loader's decoder as a
+  // module function, so the writer does not hold — or appear to depend on — a
+  // reader instance it never asks anything.
+  constructor(private readonly userDataPath: string) {}
 
   /** Create or replace one Role in the chosen layer. */
-  writeRole(target: ConfigurationLayerTarget, cwd: string, draft: AgentRoleDraft): void {
+  async writeRole(
+    target: ConfigurationLayerTarget,
+    cwd: string,
+    draft: AgentRoleDraft,
+    mode: RoleWriteMode,
+  ): Promise<void> {
     const name = draft.name.trim();
     // `main` addresses the conversation's own agent wherever presentation is
-    // written; a Role by that name would resolve to one identity in the
-    // override map and another in the Agent-type catalog. The loader refuses
-    // it too — this is the same rule, said before the user loses their typing.
-    if (name === MAIN_PRESENTATION_KEY) {
-      throw new Error(`'${MAIN_PRESENTATION_KEY}' is reserved for the conversation's own agent`);
+    // written, and a built-in canonical type is claimed by a definition the
+    // user cannot replace — a Role by either name resolves one way through
+    // `resolveRole` and another through `agentTypeCandidates`. The loader
+    // refuses `main` too; this is the same rule, said before the user loses
+    // their typing.
+    if (RESERVED_AGENT_TYPE_NAMES.includes(name)) {
+      throw new Error(`'${name}' is a built-in agent name and cannot be reused`);
     }
-    this.edit(target, cwd, (config) => {
+    await this.edit(target, cwd, (config) => {
       const roles = asObject(config.roles);
+      const existing = asObject(roles[name]);
+      if (mode === 'create' && Object.hasOwn(roles, name)) {
+        throw new Error(`An agent named '${name}' already exists in this layer`);
+      }
       const presentation: JsonObject = {};
       if (draft.persona !== undefined && draft.persona.trim().length > 0) {
         presentation.persona = draft.persona.trim();
       }
-      if (draft.color !== undefined) presentation.color = assertColor(draft.color);
-      const overrides: JsonObject = {};
-      if (draft.model !== undefined && draft.model.length > 0) overrides.model = draft.model;
+      if (draft.color !== undefined && draft.color.length > 0) {
+        presentation.color = assertColor(draft.color);
+      }
+      // Merged, not replaced: the editor does not show `overrides`, so a save
+      // that never mentioned them must not delete the model, tools, or skills
+      // the user hand-wrote.
+      const overrides: JsonObject = asObject(existing.overrides);
+      if (draft.model !== undefined) overrides.model = draft.model;
       if (draft.reasoningEffort !== undefined) overrides.reasoningEffort = draft.reasoningEffort;
       if (draft.tools !== undefined) overrides.tools = [...draft.tools];
       roles[name] = {
@@ -92,8 +112,8 @@ export class AgentConfigurationWriter {
    * transcripts fall through the identity chain rather than losing their
    * speaker.
    */
-  deleteRole(target: ConfigurationLayerTarget, cwd: string, name: string): void {
-    this.edit(target, cwd, (config) => {
+  async deleteRole(target: ConfigurationLayerTarget, cwd: string, name: string): Promise<void> {
+    await this.edit(target, cwd, (config) => {
       const roles = asObject(config.roles);
       if (!(name in roles)) throw new Error(`No Agent Role named '${name}' in this configuration`);
       delete roles[name];
@@ -110,13 +130,13 @@ export class AgentConfigurationWriter {
    * through again — the editor's "reset" is the absence of an override, not a
    * second copy of the default.
    */
-  writePresentation(
+  async writePresentation(
     target: ConfigurationLayerTarget,
     cwd: string,
     agentType: string,
     draft: PresentationDraft,
-  ): void {
-    this.edit(target, cwd, (config) => {
+  ): Promise<void> {
+    await this.edit(target, cwd, (config) => {
       const overrides = asObject(config.presentationOverrides);
       const entry: JsonObject = {};
       const persona = draft.persona?.trim();
@@ -135,47 +155,52 @@ export class AgentConfigurationWriter {
   }
 
   /**
-   * Read-modify-write one layer, validated before it lands. The candidate is
-   * written to disk only after the loader has parsed the result: on any
-   * failure the previous bytes are restored, so a rejected edit leaves the
-   * file exactly as the user had it.
+   * Read-modify-write one layer, validated before it lands.
+   *
+   * Both ends are checked against the loader's own decoder, and only THIS
+   * layer: a broken file in the other layer is someone else's problem to fix
+   * and must not make this one uneditable. Nothing touches disk until the
+   * candidate has parsed, so a refused edit leaves the file — and the
+   * directory — exactly as the user had them.
    */
-  private edit(
+  private async edit(
     target: ConfigurationLayerTarget,
     cwd: string,
     change: (config: JsonObject) => JsonObject,
-  ): void {
+  ): Promise<void> {
     const path = this.layerPath(target, cwd);
-    const existed = existsSync(path);
-    const original = existed ? readFileSync(path, 'utf8') : null;
     let current: JsonObject = {};
-    if (original !== null && original.trim().length > 0) {
-      try {
-        const parsed: unknown = JSON.parse(original);
-        if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-          throw new Error('the file is not a JSON object');
+    if (existsSync(path)) {
+      const original = readFileSync(path, 'utf8');
+      if (original.trim().length > 0) {
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(original);
+        } catch (error) {
+          // Not repaired, not replaced: a hand-written configuration belongs to
+          // whoever wrote it, and an editor that silently discards it is worse
+          // than one that refuses to write.
+          throw new Error(`Cannot edit ${path}: ${errorText(error)}`);
+        }
+        try {
+          decodeConfigurationLayer(parsed, target, path);
+        } catch (error) {
+          throw new Error(`Cannot edit ${path}: ${errorText(error)}`);
         }
         current = parsed as JsonObject;
-      } catch (error) {
-        // Not repaired, not replaced: a hand-written configuration belongs to
-        // whoever wrote it, and an editor that silently discards it is worse
-        // than one that refuses to write.
-        throw new Error(`Cannot edit ${path}: ${errorText(error)}`);
       }
     }
     const next = change(current);
-    const serialized = `${JSON.stringify(next, null, 2)}\n`;
-    mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, serialized, 'utf8');
     try {
       // The loader is the authority on what a valid layer is; validating with
       // a second, kinder parser here is how the two drift apart.
-      this.loader.resolveIdentityCatalog(cwd);
+      decodeConfigurationLayer(next, target, path);
     } catch (error) {
-      if (original === null) writeFileSync(path, '{}\n', 'utf8');
-      else writeFileSync(path, original, 'utf8');
       throw new Error(`Refused: ${errorText(error)}`);
     }
+    await atomicWriteFile(path, `${JSON.stringify(next, null, 2)}\n`);
+    // The loader holds no cache, so the next read sees this write. Resolving
+    // the catalog here would only re-read what the caller is about to.
   }
 }
 

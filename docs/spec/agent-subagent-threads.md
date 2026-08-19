@@ -198,10 +198,32 @@ whole editable view in one answer — the identity catalog the transcript draws
 from beside the Roles the user may change — and writes through
 `agent_write_role`, `agent_delete_role`, and `agent_write_presentation`. Writing
 is a boundary and fails closed (A12): each command re-reads one layer, applies
-one change, and hands the candidate back through the LOADER's own parser before
-it is kept; if the result would not parse, the previous bytes are restored and
-the command reports why. A layer that already fails to parse is reported rather
-than replaced, because a hand-written configuration belongs to whoever wrote it.
+one change, and validates the candidate **in memory** through the loader's own
+decoder before anything reaches disk, then writes atomically. Nothing is written
+until the result is known to be readable, so there is no window in which
+rejected bytes are the live configuration, no rollback that can itself fail, and
+a refused edit leaves neither a file nor the directory it would have sat in.
+Only the layer being written is validated — a broken file in the OTHER layer is
+someone else's to fix and must not make this one uneditable. A layer that
+already fails to parse is reported rather than replaced, because a hand-written
+configuration belongs to whoever wrote it; that check is the loader's full
+decode rather than a shape guess, so `{"roles": ["auditor"]}` — valid JSON the
+loader rejects — is refused instead of silently dropped.
+
+A Role write replaces the entry, so two things are explicit. Its `overrides`
+(model, reasoningEffort, tools, skills, plugins, mcpServers) are MERGED rather
+than replaced: the editor shows no field for them, and a surface must not
+destroy what it cannot show. And the write carries a create/update intent, so
+creating over an existing name is refused instead of silently replacing a
+definition, with no confirmation and no undo. A Role may not take `main` or a
+built-in canonical type: `agentTypeCandidates` drops a Role colliding with a
+built-in while `resolveRole` prefers it, so such a name would resolve two
+different ways and never dispatch.
+
+The editor seeds its fields from the overrides as WRITTEN
+(`listPresentationOverrides`), never from the resolved catalog. Seeding from
+what resolves and saving it back would write today's built-in default in as a
+permanent override, silently opting that user out of every later change to it.
 Clearing a presentation field REMOVES the override instead of storing it blank,
 so the built-in default shows through again and a later change to that default
 still reaches the user. Deleting a Role affects future spawns only: a running

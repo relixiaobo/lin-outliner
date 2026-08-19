@@ -1156,6 +1156,19 @@ export interface AgentRoleDraft {
 }
 
 /**
+ * One presentation re-skin exactly as it is written down, before layering
+ * resolves it. The editor seeds its fields from this rather than from the
+ * resolved catalog, so opening an identity and saving cannot turn today's
+ * built-in default into a permanent override.
+ */
+export interface AgentPresentationOverrideRow {
+  readonly agentType: string;
+  readonly layer: 'user' | 'project';
+  readonly persona: string | null;
+  readonly color: string | null;
+}
+
+/**
  * The Agents editor's whole view in one answer: what the transcript can draw
  * (`entries`, the same catalog the renderer resolves identities from) beside
  * what the user may change (`roles`). Built-in types appear only in `entries`
@@ -1164,6 +1177,7 @@ export interface AgentRoleDraft {
 export interface AgentEditorView {
   readonly entries: readonly AgentIdentityEntry[];
   readonly roles: readonly AgentEditableRole[];
+  readonly presentationOverrides: readonly AgentPresentationOverrideRow[];
 }
 
 export interface AgentProviderSettingsView {

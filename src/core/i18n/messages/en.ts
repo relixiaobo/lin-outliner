@@ -356,6 +356,7 @@ export const en = {
       identityAriaLabel: 'How this agent appears',
       persona: 'Name',
       colour: 'Colour',
+      colourDefault: 'Default',
       colourNames: {
         orange: 'Orange',
         amber: 'Amber',
@@ -369,6 +370,7 @@ export const en = {
       definitionAriaLabel: 'What this agent is and does',
       name: 'Type',
       namePlaceholder: 'reviewer',
+      nameTaken: 'An agent with this name already exists.',
       nameSublabel: 'How work is addressed to this agent. It cannot be changed later.',
       description: 'Use it for',
       descriptionPlaceholder: 'Reviewing a diff before it is proposed',

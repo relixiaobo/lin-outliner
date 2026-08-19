@@ -340,14 +340,20 @@ Exact placement was the reversible local decision; the contract below is not.
   git-shareable); shown on the row.
 - **Write path.** Four commands — `agent_identity_catalog`, `agent_write_role`,
   `agent_delete_role`, `agent_write_presentation` — handled in the main process,
-  so config file IO stays behind the process seam (A2). Whole-file
-  read-modify-write on the JSON layer, then the candidate is validated **by the
-  loader itself** before it is kept; on failure the previous bytes are restored
-  (a write boundary fails closed, A12). A malformed existing file is reported,
-  never replaced. Every successful write answers with the refreshed editable
-  view and broadcasts the settings-changed notification the settings window
-  already uses — which is where the deferred `profiles/changed` earns its keep,
-  without a second notification channel meaning the same thing.
+  so config file IO stays behind the process seam (A2), and decoded at that
+  boundary rather than cast through it. Whole-file read-modify-write on the JSON
+  layer, with the candidate validated **in memory** by the loader's own decoder
+  and only then written atomically: nothing reaches disk until it is known to be
+  readable, so there is no write-then-rollback window (a write boundary fails
+  closed, A12). Only the layer being written is validated. A malformed existing
+  file is reported, never replaced. A Role's `overrides` are merged rather than
+  replaced — the editor shows no field for them and must not destroy them — and
+  the write carries a create/update intent so create cannot silently replace an
+  existing definition. Every successful write answers with the refreshed
+  editable view and broadcasts the settings-changed notification the settings
+  window already uses, scoped away from its own sender — which is where the
+  deferred `profiles/changed` earns its keep, without a second notification
+  channel meaning the same thing.
 - **Deletion semantics.** Deleting a Role affects future spawns only: running
   children keep their resolved configuration; historical transcripts degrade
   through the identity fallback chain (§1). Confirmation dialog; no cascade.
