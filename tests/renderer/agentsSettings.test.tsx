@@ -184,18 +184,32 @@ describe('the Agents editor', () => {
     expect(dialog?.querySelector('[role="alert"]')?.textContent).toContain('Refused:');
   });
 
-  test('an untouched capability list is written as inherit, not as today\'s catalogue', async () => {
-    const { document, click, calls } = await renderAgents();
-    await click(rowByLabel(document, 'Wren'));
+  test('everything-checked and nothing-checked are opposite payloads, never the same one', async () => {
+    // The two intents used to be asserted separately, each as `[]`, one
+    // commented "inherit" and one "ban" — so the pair passed while the save
+    // path folded them together and a brand-new Role got zero tools. Asserted
+    // together here: whatever they are, they cannot be equal.
+    const untouched = await renderAgents();
+    await untouched.click(rowByLabel(untouched.document, 'Wren'));
+    await untouched.click(untouched.document.querySelector('.agent-editor-actions .button-primary')!);
+    const inherit = (untouched.calls[1]!.args as { role: { tools: unknown; skills: unknown } }).role;
 
-    await click(document.querySelector('.agent-editor-actions .button-primary')!);
+    // Every box checked: nothing is narrowed. `null` REMOVES the narrowing —
+    // writing the three tools out would freeze the set and silently exclude the
+    // fourth tool Tenon gains next month.
+    expect(inherit.tools).toBeNull();
+    expect(inherit.skills).toBeNull();
 
-    // Every box is checked, so nothing is narrowed. Writing the three tools out
-    // would freeze the set and silently exclude the fourth tool Tenon gains
-    // next month.
-    const role = (calls[1]!.args as { role: { tools: string[]; skills: string[] } }).role;
-    expect(role.tools).toEqual([]);
-    expect(role.skills).toEqual([]);
+    const banned = await renderAgents();
+    await banned.click(rowByLabel(banned.document, 'Wren'));
+    for (const key of ['file_read', 'file_write', 'bash']) {
+      await banned.click(capability(banned.document, key));
+    }
+    await banned.click(banned.document.querySelector('.agent-editor-actions .button-primary')!);
+    const ban = (banned.calls[1]!.args as { role: { tools: unknown } }).role;
+
+    expect(ban.tools).toEqual([]);
+    expect(ban.tools).not.toEqual(inherit.tools);
   });
 
   test('unchecking a tool narrows the agent to what is left', async () => {

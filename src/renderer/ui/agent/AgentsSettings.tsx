@@ -218,10 +218,12 @@ export function AgentsSettings({ onError, onNotice }: {
                   developerInstructions: draft.developerInstructions,
                   ...(draft.persona ? { persona: draft.persona } : {}),
                   ...(draft.color ? { color: draft.color } : {}),
-                  // Absent leaves whatever is on disk; `[]` clears the narrowing
-                  // back to inheriting everything the parent has.
-                  tools: draft.tools ?? [],
-                  skills: draft.skills ?? [],
+                  // Sent exactly as computed: `null` removes the narrowing so
+                  // everything is inherited, `[]` bans, a list is the exact set.
+                  // Folding `null` into `[]` here gave a brand-new Role — whose
+                  // every box is checked — zero tools and zero Skills.
+                  tools: draft.tools,
+                  skills: draft.skills,
                 },
               });
             },

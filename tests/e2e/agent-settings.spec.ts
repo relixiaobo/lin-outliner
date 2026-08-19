@@ -302,6 +302,28 @@ test.describe('agent settings window', () => {
     await expect(dialog.getByRole('button', { name: 'Save' })).toBeDisabled();
   });
 
+  test('a new agent created with nothing unchecked keeps every capability', async ({ page }) => {
+    const settings = await openSettings(page, '&category=agent/agents');
+    await settings.getByRole('button', { name: 'Add an agent' }).click();
+    const dialog = page.getByRole('dialog');
+    await dialog.getByRole('textbox', { name: 'Type' }).fill('reviewer');
+    await dialog.getByRole('textbox', { name: 'Use it for' }).fill('Reviewing a diff.');
+    await dialog.getByRole('textbox', { name: 'Instructions' }).fill('Read the diff.');
+
+    await dialog.getByRole('button', { name: 'Save' }).click();
+
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await settings.getByRole('list', { name: 'Agents you defined' })
+      .getByRole('button', { name: /reviewer/ }).click();
+    // Every box checked is the default of the create form, so this is the path
+    // everyone takes first. It must round-trip as "inherit everything", not as
+    // an agent that was silently handed no tools at all.
+    const reopened = page.getByRole('dialog');
+    for (const key of ['file_read', 'file_write', 'bash']) {
+      await expect(reopened.getByRole('checkbox', { name: key })).toBeChecked();
+    }
+  });
+
   test('refuses to create an agent over a name that already exists', async ({ page }) => {
     const settings = await openSettings(page, '&category=agent/agents');
 

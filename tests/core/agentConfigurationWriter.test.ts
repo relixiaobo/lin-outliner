@@ -101,6 +101,30 @@ describe('AgentConfigurationWriter', () => {
     expect(child.tools).toEqual([]);
   });
 
+  test('a new Role with nothing unchecked inherits the parent, it is not stripped', async () => {
+    const { writer, loader, cwd } = await fixture();
+
+    // Exactly what the editor builds for a brand-new Role whose every box is
+    // checked. `null`, not `[]` — folding the two together handed a new Role
+    // zero tools and zero Skills on its first spawn, which is the default
+    // create path and so the likeliest thing anyone does here.
+    await writer.writeRole('project', cwd, {
+      name: 'reviewer',
+      description: 'Reviews a diff.',
+      developerInstructions: 'Read the diff.',
+      tools: null,
+      skills: null,
+    }, 'create');
+
+    const child = resolveChildConfiguration(
+      loader.resolveProfile(undefined, cwd),
+      { role: loader.resolveRole('reviewer', cwd) },
+    );
+    expect(child.tools.length).toBeGreaterThan(0);
+    expect(child.tools).toEqual(loader.resolveProfile(undefined, cwd).tools);
+    expect(child.skills).toEqual(loader.resolveProfile(undefined, cwd).skills);
+  });
+
   test('a Profile save keeps the model the editor has no field for', async () => {
     const { writer, loader, cwd, userData } = await fixture();
     await writeJson(userConfigurationPath(userData), {
