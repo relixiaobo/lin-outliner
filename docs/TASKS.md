@@ -158,14 +158,15 @@ before any directional/security-sensitive build.
 
 - **agent-program** (P1, `meta` — umbrella) — read first; it maps the rest (foundation /
   dependency graph / event taxonomy / milestones). See `docs/plans/reference/agent-program.md`.
-- **[subagent-customization-and-identity](plans/subagent-customization-and-identity.md)**
-  (P2, `in-progress` — PR-A shipped 2026-08-19) — **PR-A landed as #560** (cc-2): the
-  identity model (`presentation { persona, color }`, `presentationOverrides`,
-  `identities/get`), generated marks with moods and gaze, and the speaker header.
-  **PR-B remains**: the Agents editor that writes configuration, which is also where
-  the deferred `profiles/changed` notification earns its keep. Design for the shipped
-  half is folded into `docs/spec/agent-thread-rendering.md`,
-  `docs/spec/agent-subagent-threads.md` and `docs/spec/design-system/patterns.md`.
+- **[subagent-customization-and-identity](plans/archive/subagent-customization-and-identity.md)**
+  (P2, `done` 2026-08-19) — both PRs shipped, both cc-2: the identity model
+  (`presentation { persona, color }`, `presentationOverrides`, `identities/get`),
+  generated marks with moods and gaze, and the speaker header (#560); then the
+  Agents editor that writes configuration (#565), where the deferred
+  `profiles/changed` notification landed as the settings-changed broadcast the
+  settings window already had. Design folded into
+  `docs/spec/agent-thread-rendering.md`, `docs/spec/agent-subagent-threads.md`,
+  `docs/spec/design-system/patterns.md` and `docs/spec/design-system/surfaces.md`.
 - **[foreground-agent-settlement-wait](plans/archive/foreground-agent-settlement-wait.md)**
   (P0, `done` 2026-08-18) — both PRs shipped: settlement authority (#562) and
   Stop cancellation (#563), both codex. A foreground `agent` call now waits on
@@ -1132,6 +1133,17 @@ older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
   declined with reason); the gate's own first suggestion, a root-sibling `anyOf`,
   was caught and reversed on the second pass. **A Thread created before this
   version silently loses the tool — the release note owes a line.**
+- **subagent-customization-and-identity PR-B** (cc-2, PR #565, merged 2026-08-19)
+  — the Agents page: rename and re-skin any agent, write and delete your own
+  Roles, with every write validated by the loader's own parser or rolled back.
+  Gate: three passes (`/code-review xhigh` found 15, then `high` found 9 on the
+  rewritten surface), and the fix for those nine introduced a regression the
+  third pass caught — a capability list gained three states and one call site
+  still folded "inherit" into "ban", so every newly created Role was written with
+  zero tools. Merged on the PM's call with `/code-review ultra` and the light/dark
+  visual pass **not** run, and with the protocol-surface additions landing in the
+  same PR as their consumer rather than interface-first.
+
 - **subagent-customization-and-identity PR-A** (cc-2, PR #560, merged 2026-08-19)
   — every participant now has a persona and a generated mark, and the speaker
   header replaces unattributed prose. Gate: `/code-review xhigh` found 15, all

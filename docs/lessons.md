@@ -1464,3 +1464,43 @@ invariant it was copied from**: the preference decoder re-implemented the codec'
 `ThreadConfigurationSummary` check minus the model/provider qualifier agreement,
 so the persisted file could hold exactly the pair the protocol forbids. Export
 the decoder and reuse it — a second spelling of a rule is a second rule.
+
+## A value that gains a third state must be re-read at every call site, and two judges asserting the same payload for opposite intents prove nothing
+
+The Agents editor (PR #565) wrote a capability narrowing as two states, so
+"the user unchecked everything" and "the user changed nothing" both collapsed
+into "inherit everything" — a read-only Role was written with its parent's
+entire tool set. The fix gave the list its three real states: absent leaves what
+is on disk, `null` removes the narrowing, an array is the exact set, and `[]` is
+a ban. It also left `tools: draft.tools ?? []` standing at the Role save path,
+which folded the new `null` back into `[]`. Every box checked is the default of
+the create form, so **every newly created Role was written with zero tools and
+zero Skills** — the inversion, now pointing the other way, on the likeliest path
+anyone takes.
+
+Two rules, both cheap.
+
+**When you widen what a value can mean, the edit is not the definition — it is
+every producer and consumer of it.** Grep the call sites and read what each one
+does with the new state before writing the commit message that says the states
+are now distinct. Here the intended edit to that call site had silently not
+applied (a string replace whose anchor no longer matched) and the file was never
+re-read, so a comment describing the *previous* semantics sat directly above the
+line that contradicted them. After an edit whose anchor may have moved, re-read
+the file rather than trusting that it landed.
+
+**A pair of tests that assert the same value for opposite intents is not
+coverage, it is a matched pair of wrong answers.** The suite held
+`expect(role.tools).toEqual([])` for everything-checked, commented *inherit*, and
+`expect(role.tools).toEqual([])` for nothing-checked, commented *ban*. Both
+passed throughout. The property that was actually broken — that the two are
+different — was asserted nowhere, and no individual judge can hold it. When two
+states must differ, **assert the difference in one judge**, not each state in its
+own.
+
+The corollary is where the judge lives. Both of those tests asserted a *payload*,
+which is the layer the bug was in, so the payload could be inverted and still
+match. The judges that would have caught it run the real chain — writer, then
+loader, then `resolveChildConfiguration` — and a browser round-trip that creates
+an agent and reopens it. Assert the outcome the user gets, not the argument you
+happened to pass.

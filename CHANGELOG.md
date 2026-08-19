@@ -65,6 +65,38 @@ Entries reference the pull request that introduced them.
   parent root Thread's effective values, including one applied from this memory
   — stated in the spec rather than left to be discovered from a token bill.
 
+- **The agents in a conversation are now the user's to name, re-skin, and write
+  (PR #565, cc-2)** — an **Agents page** under the Agent settings category,
+  beside Model services and Skills: an unbounded collection the user creates and
+  carries a lifecycle earns a page, and identities are exactly that. The user's
+  own Roles list above the built-ins, each row wearing the same generated mark
+  the transcript draws, so the editor and the conversation are visibly about one
+  participant. Every agent may be renamed and recoloured; only a Role may be
+  redefined, because a built-in's behaviour is code rather than configuration
+  and a read-only form would invite an edit the surface cannot accept. An
+  existing Role's type is fixed — it is the key both dispatch and identity are
+  stored under, so renaming in place would orphan both — and the colour swatches
+  are the mark itself, with the chosen one marked on the neutral fill ladder
+  rather than tinted (B3/B4). Writing fails closed: `AgentConfigurationWriter`
+  re-reads one layer, applies one change, and hands the candidate back through
+  **the loader's own parser** before keeping it, restoring the previous bytes and
+  reporting why if it would not parse (A12). Validating with a second, kinder
+  parser is how the two drift apart, so there isn't one, and a layer that already
+  fails to parse is reported rather than replaced — a hand-written configuration
+  belongs to whoever wrote it. Clearing a presentation field REMOVES the override
+  instead of storing it blank, so the built-in default shows through again and a
+  later change to that default still reaches the user. A capability list carries
+  its three real states: absent leaves what is on disk, `null` removes the
+  narrowing, and a list is the exact set — including the empty list, which is a
+  ban and not a grant of everything the parent has. Deleting is confirmed and the
+  confirmation states the blast radius, which is narrower than "delete" sounds:
+  work already running keeps the definition it started with, and past
+  conversations still show who spoke. The deferred `profiles/changed`
+  notification lands as the settings-changed broadcast the settings window
+  already has rather than a new agent-core channel meaning the same thing, so an
+  agent renamed in the editor is renamed in an open transcript at once instead of
+  at the next conversation switch.
+
 ### Fixed
 
 - **Automations were unreachable and every root Turn died before the model ran
