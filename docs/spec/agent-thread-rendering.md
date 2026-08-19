@@ -1522,7 +1522,18 @@ measurements settle, so frame-level bottom follow yields instead of moving the
 surface the user just activated. The image gallery anchors its persistent container
 because the `+N` control unmounts when the full grid replaces it. Follow is derived
 from the resulting geometry after the anchor settles rather than released by the
-toggle. Capture starts its fallback restore loop immediately, so an owning row that
+toggle.
+
+Which point of the activated surface stays fixed follows from where its control
+sits. A control above the content it opens — every persisted process, reasoning,
+tool-group, and tool-detail chevron — is itself that point, and its content opens
+below it. The measured long-user-message control hangs below its own text, so
+pinning it would open every revealed line upward: it is the fixed point only while
+the transcript is following the bottom, where holding the control is what staying
+at the bottom means. Read anywhere else the message's collapsed block keeps its own
+top edge and opens downward, so an Agent's brief at the head of its transcript and
+a long message reached by scrolling back both stay where they are read instead of
+being pushed off the top. Capture starts its fallback restore loop immediately, so an owning row that
 unmounts before its layout effect cannot latch the transcript. Bottom-follow work
 caused by canonical Turn changes is replayed after release, while disclosure-only
 ResizeObserver work is discarded because replaying it would move the activated

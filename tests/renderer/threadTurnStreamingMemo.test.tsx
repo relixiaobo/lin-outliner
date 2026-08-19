@@ -109,6 +109,7 @@ function turnProps() {
       captureAnchor: () => undefined,
       holdAnchorUntilSettled: () => null,
       isExpanded: () => false,
+      isFollowingBottom: () => false,
       restoreAnchor: () => undefined,
       toggle: () => undefined,
     },

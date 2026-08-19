@@ -1067,10 +1067,18 @@ export function ThreadView({
     capturePendingAnchor(captureDisclosureScrollAnchor(anchorElement, scroller));
   }, [cancelPendingVirtualScrollAdjustment, capturePendingAnchor]);
 
+  // The pin's own notion of follow, not a fresh geometry read: a disclosure that
+  // has to choose between holding its control and holding its content is really
+  // asking whether the bottom pin is live, and answering from anything else lets
+  // the two disagree about the same transaction. Runway already in place would
+  // make a raw read say "not at the bottom" while the pin still rides it.
+  const isFollowingBottom = useCallback(() => followRef.current, []);
+
   const expandState = useMemo<ThreadDisclosureState>(() => ({
     captureAnchor: captureLocalDisclosureAnchor,
     holdAnchorUntilSettled: holdUntilSettled,
     isExpanded: (id, defaultExpanded = false) => disclosureOverrides[id] ?? defaultExpanded,
+    isFollowingBottom,
     restoreAnchor: restorePendingAnchor,
     toggle: (id, currentlyExpanded, anchorElement) => {
       cancelPendingVirtualScrollAdjustment();
@@ -1093,6 +1101,7 @@ export function ThreadView({
     capturePendingAnchor,
     disclosureOverrides,
     holdUntilSettled,
+    isFollowingBottom,
     restorePendingAnchor,
     threadId,
   ]);

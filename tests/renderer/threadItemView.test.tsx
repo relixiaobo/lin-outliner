@@ -1229,6 +1229,7 @@ function ThreadToolGroupProbe({
         captureAnchor: () => undefined,
         holdAnchorUntilSettled: () => null,
         isExpanded: (id) => id.startsWith('tools:') && expanded,
+        isFollowingBottom: () => false,
         restoreAnchor: () => undefined,
         toggle: (id) => {
           if (id.startsWith('tools:')) setExpanded((current) => !current);
@@ -1424,6 +1425,7 @@ function ThreadItemProbe({
         captureAnchor: () => undefined,
         holdAnchorUntilSettled,
         isExpanded: () => expanded,
+        isFollowingBottom: () => false,
         restoreAnchor: () => undefined,
         toggle: (_id, currentlyExpanded) => setExpanded(!currentlyExpanded),
       }}

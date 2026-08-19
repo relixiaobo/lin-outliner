@@ -6809,6 +6809,63 @@ test.describe('canonical agent Thread surface', () => {
     ))).toBeLessThanOrEqual(1);
   });
 
+  test('opens a scrolled-back long-message disclosure downward from its own top edge', async ({ page }) => {
+    await createNewThread(page);
+    const composer = page.getByRole('textbox', { name: 'Message this Thread' });
+    await composer.fill(Array.from(
+      { length: 80 },
+      (_, index) => `Scrolled-back evidence ${index + 1}.`,
+    ).join(' '));
+    await page.getByRole('button', { name: 'Send' }).click();
+    // Content below the message, so the reader can be off the tail with the
+    // clamped message still on screen — the way an Agent's brief sits at the
+    // head of its own transcript.
+    await seedOverflowingTranscript(page);
+
+    const transcript = page.locator('.thread-transcript');
+    const shell = page.locator('.thread-user-message .thread-user-content-shell');
+    const disclosure = page.locator('.thread-user-expand-button');
+    await expect(disclosure).toHaveAccessibleName('Show more');
+    // Back to the head of the transcript, where the clamped message is what the
+    // reader is looking at.
+    await transcript.hover();
+    await page.mouse.wheel(0, -10_000);
+    await expect.poll(() => transcript.evaluate((element) => element.scrollTop))
+      .toBeLessThanOrEqual(1);
+    // Proof the reader is genuinely off the tail: the bottom pin is what makes
+    // holding the control the right answer, and it is not riding here.
+    await expect(page.getByRole('button', { name: 'Jump to latest' })).toBeVisible();
+    const collapsed = await page.evaluate(() => {
+      const scroller = document.querySelector<HTMLElement>('.thread-transcript');
+      const button = document.querySelector<HTMLElement>('.thread-user-expand-button');
+      if (!scroller || !button) throw new Error('Missing transcript or disclosure');
+      return { buttonTop: button.getBoundingClientRect().top, scrollTop: scroller.scrollTop };
+    });
+
+    // The message's own top edge is the fixed point, so the revealed lines open
+    // downward instead of shoving its first line off the top of the viewport.
+    await toggleDisclosureWithStableAnchor(disclosure, shell);
+    await expect(disclosure).toHaveAccessibleName('Show less');
+    const expanded = await page.evaluate(() => {
+      const scroller = document.querySelector<HTMLElement>('.thread-transcript');
+      const button = document.querySelector<HTMLElement>('.thread-user-expand-button');
+      const content = document.querySelector<HTMLElement>('.thread-transcript-content');
+      if (!scroller || !button || !content) throw new Error('Missing transcript or disclosure');
+      return {
+        buttonTop: button.getBoundingClientRect().top,
+        // Growing downward needs no scroll range that is not already there, so
+        // the transient tail runway never appears.
+        paddingBottom: content.style.paddingBottom,
+        scrollTop: scroller.scrollTop,
+      };
+    });
+    expect(expanded.scrollTop).toBe(collapsed.scrollTop);
+    expect(expanded.paddingBottom).toBe('');
+    // The control travelled the full height of what it revealed, which is what
+    // "downward" means: nothing above it moved to make the room.
+    expect(expanded.buttonTop).toBeGreaterThan(collapsed.buttonTop + 100);
+  });
+
   test('lets a keyboard send supersede a pending disclosure anchor', async ({ page }) => {
     await createNewThread(page);
     const composer = page.getByRole('textbox', { name: 'Message this Thread' });

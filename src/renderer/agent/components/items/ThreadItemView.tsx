@@ -143,6 +143,11 @@ export interface ThreadDisclosureState {
   readonly captureAnchor: (anchorElement: HTMLElement | null) => void;
   readonly holdAnchorUntilSettled: () => DisclosureScrollAnchorHold | null;
   readonly isExpanded: (id: string, defaultExpanded?: boolean) => boolean;
+  /** Whether the transcript is riding the bottom right now. A disclosure whose
+   *  control sits BELOW the content it opens has to know: pinning that control
+   *  is the same thing as staying at the bottom, and is only what the reader
+   *  wants while they are already there. */
+  readonly isFollowingBottom: () => boolean;
   readonly restoreAnchor: () => void;
   readonly toggle: (id: string, currentlyExpanded: boolean, anchorElement?: HTMLElement | null) => void;
 }
@@ -572,9 +577,11 @@ function UserMessageCollapsibleContent({
 }) {
   const t = useT();
   const contentRef = useRef<HTMLDivElement | null>(null);
+  const shellRef = useRef<HTMLDivElement | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [canCollapse, setCanCollapse] = useState(false);
   const captureDisclosureAnchor = useLocalDisclosureAnchor(expanded, expandState);
+  const isFollowingBottom = expandState.isFollowingBottom;
 
   useLayoutEffect(() => {
     setExpanded(false);
@@ -601,7 +608,7 @@ function UserMessageCollapsibleContent({
 
   const collapsed = canCollapse && !expanded;
   return (
-    <div className="thread-user-content-shell">
+    <div className="thread-user-content-shell" ref={shellRef}>
       <div
         className={`thread-user-content-body${collapsed ? ' is-collapsed' : ''}`}
         ref={contentRef}
@@ -613,7 +620,19 @@ function UserMessageCollapsibleContent({
           aria-expanded={expanded}
           className="thread-user-expand-button"
           onClick={(event) => {
-            captureDisclosureAnchor(event.currentTarget);
+            // This control hangs BELOW the text it opens, so the two stable
+            // points are not interchangeable. Riding the bottom, the control is
+            // the bottom, and holding it is how the reader stays there. Read
+            // anywhere else — an Agent's brief at the head of its own
+            // transcript, an old message reached by scrolling back — holding it
+            // would grow every revealed line UPWARD, shove the message's first
+            // line off the top, and borrow tail runway to do it. There the
+            // message's own top edge is the fixed point and the text opens
+            // downward, the way a disclosure whose chevron sits above its
+            // content already behaves.
+            captureDisclosureAnchor(
+              isFollowingBottom() ? event.currentTarget : shellRef.current,
+            );
             setExpanded((current) => !current);
           }}
         >
