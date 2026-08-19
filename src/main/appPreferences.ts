@@ -1,6 +1,8 @@
 import { app } from 'electron';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { decodeThreadConfigurationSummary } from '../core/agent/codec';
+import type { ThreadConfigurationSummary } from '../core/agent/protocol';
 import { isThemeMode, type ThemeMode } from '../core/theme';
 import { isLocale, type Locale } from '../core/locale';
 import { isTranslationLanguage, type TranslationLanguage } from '../core/translationLanguage';
@@ -11,9 +13,8 @@ import {
 import { writeJsonFileSync } from './jsonFileStore';
 
 // Persist app-level UI preferences across launches (stored in userData, which is
-// already per-clone isolated). The appearance/theme preference and the display
-// language; new General-pane settings extend this shape. Kept separate from
-// window-state.ts (geometry) and the agent settings store (provider/runtime config).
+// already per-clone isolated). Kept separate from window-state.ts (geometry) and
+// the agent settings store (provider/runtime configuration and credentials).
 
 interface PersistedAppPreferences {
   theme: ThemeMode;
@@ -29,6 +30,8 @@ interface PersistedAppPreferences {
   autoTranslateUrls: boolean;
   // Local EPUB text has an independent explicit provider-sharing opt-in.
   autoTranslateEpubs: boolean;
+  // The last root Thread selection the user saved in the Agent composer.
+  lastAgentThreadConfiguration: ThreadConfigurationSummary | null;
 }
 
 const DEFAULTS: PersistedAppPreferences = {
@@ -38,9 +41,11 @@ const DEFAULTS: PersistedAppPreferences = {
   translationModel: null,
   autoTranslateUrls: false,
   autoTranslateEpubs: false,
+  lastAgentThreadConfiguration: null,
 };
 
 let currentPreferences: PersistedAppPreferences | null = null;
+const MAX_AGENT_THREAD_SELECTION_CHARS = 512;
 
 function preferencesFilePath(): string {
   return join(app.getPath('userData'), 'app-preferences.json');
@@ -60,6 +65,9 @@ export function loadAppPreferences(): PersistedAppPreferences {
       translationModel: normalizeTranslationModel(parsed.translationModel),
       autoTranslateUrls: parsed.autoTranslateUrls === true,
       autoTranslateEpubs: parsed.autoTranslateEpubs === true,
+      lastAgentThreadConfiguration: normalizeAgentThreadConfiguration(
+        parsed.lastAgentThreadConfiguration,
+      ),
     };
   } catch {
     // No prior preferences, or the file is unreadable/invalid — fall back to defaults.
@@ -85,6 +93,19 @@ export function saveUrlPageTranslationPreferences(preferences: UrlPageTranslatio
   savePreferences(preferences);
 }
 
+export function saveLastAgentThreadConfiguration(
+  configuration: ThreadConfigurationSummary,
+): void {
+  const decoded = decodePersistedAgentThreadConfiguration(configuration);
+  savePreferences({
+    lastAgentThreadConfiguration: decoded,
+  });
+}
+
+export function clearLastAgentThreadConfiguration(): void {
+  savePreferences({ lastAgentThreadConfiguration: null });
+}
+
 export function resetAppPreferencesForTests(): void {
   currentPreferences = null;
 }
@@ -104,4 +125,26 @@ function savePreferences(patch: Partial<PersistedAppPreferences>): void {
 
 function normalizeTranslationModel(value: unknown): string | null {
   return isUrlPageTranslationModel(value) ? value : null;
+}
+
+function normalizeAgentThreadConfiguration(value: unknown): ThreadConfigurationSummary | null {
+  try {
+    return decodePersistedAgentThreadConfiguration(value);
+  } catch {
+    return null;
+  }
+}
+
+function decodePersistedAgentThreadConfiguration(value: unknown): ThreadConfigurationSummary {
+  const decoded = decodeThreadConfigurationSummary(
+    value,
+    'app-preferences.lastAgentThreadConfiguration',
+  );
+  if (
+    decoded.modelProvider.length > MAX_AGENT_THREAD_SELECTION_CHARS
+    || decoded.model.length > MAX_AGENT_THREAD_SELECTION_CHARS
+  ) {
+    throw new Error('Agent Thread selection exceeds the persisted preference limit');
+  }
+  return decoded;
 }

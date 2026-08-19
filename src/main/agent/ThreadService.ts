@@ -189,10 +189,15 @@ export interface ThreadServiceOptions {
   readonly resolveConfiguration?: (
     request: ThreadStartRequest,
   ) => EffectiveThreadConfiguration | Promise<EffectiveThreadConfiguration>;
-  readonly resolveRendererStartDefaults?: () =>
+  readonly resolveRendererStartDefaults?: (
+    request: AgentCoreRequestByMethod['thread/start'],
+  ) =>
     | RendererThreadStartDefaults
     | Promise<RendererThreadStartDefaults>;
   readonly validateRendererConfiguration?: (
+    configuration: ThreadConfigurationSummary,
+  ) => void | Promise<void>;
+  readonly onRendererConfigurationCommitted?: (
     configuration: ThreadConfigurationSummary,
   ) => void | Promise<void>;
   readonly resolveUserContent?: (
@@ -270,10 +275,17 @@ export interface SkillAdmissionResolution {
   readonly invocation: SkillInvocationContextPayload | null;
 }
 
-export interface RendererThreadStartDefaults {
-  readonly modelProvider: string;
-  readonly cwd: string;
-}
+export type RendererThreadStartDefaults =
+  | {
+      readonly modelProvider: string;
+      readonly cwd: string;
+      readonly executionSelection?: never;
+    }
+  | {
+      readonly modelProvider?: never;
+      readonly cwd: string;
+      readonly executionSelection: ThreadConfigurationSummary;
+    };
 
 const EMPTY_AGENT_STARTUP_CONTEXT: AgentStartupContextSnapshot = Object.freeze({
   repositoryInstructions: Object.freeze([]),
@@ -608,6 +620,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
       options.resolveConfiguration ?? defaultConfiguration,
       options.resolveRendererStartDefaults ?? missingRendererStartDefaults,
       options.validateRendererConfiguration ?? (() => undefined),
+      options.onRendererConfigurationCommitted,
       this.now,
       () => this.closing,
       this.turnLifecycle,

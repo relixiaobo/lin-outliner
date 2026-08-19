@@ -159,7 +159,7 @@ describe('provider config startup reconcile (Part A)', () => {
       providers: [{ providerId: 'openai', enabled: true }],
     });
 
-    await reconcileProviderConfig();
+    expect(await reconcileProviderConfig()).toEqual({ activeProviderChanged: true });
 
     const view = await getProviderSettings();
     expect(view.providers).toHaveLength(0);
@@ -173,7 +173,7 @@ describe('provider config startup reconcile (Part A)', () => {
     // self-heals); the next startup reconcile removes it instead of leaving a
     // removable-yet-keyless contradiction behind.
     await upsertProviderConfig({ providerId: 'openai', enabled: true });
-    await reconcileProviderConfig();
+    expect(await reconcileProviderConfig()).toEqual({ activeProviderChanged: false });
 
     const view = await getProviderSettings();
     expect(view.providers.find((p) => p.providerId === 'openai')).toBeUndefined();
@@ -184,7 +184,7 @@ describe('provider config startup reconcile (Part A)', () => {
     // The real config-window order: credential first, then the row.
     await setProviderApiKey('openai', 'sk-test');
     await upsertProviderConfig({ providerId: 'openai', enabled: true });
-    await reconcileProviderConfig();
+    expect(await reconcileProviderConfig()).toEqual({ activeProviderChanged: true });
 
     const view = await getProviderSettings();
     const openai = view.providers.find((p) => p.providerId === 'openai');
@@ -248,7 +248,7 @@ describe('provider config startup reconcile (Part A)', () => {
   test('oauth login (credential then ensureProviderConfig) reconciles to active', async () => {
     await persistOAuthCredential('anthropic', { refresh: 'r', access: 'a', expires: 999 });
     await ensureProviderConfig('anthropic');
-    await reconcileProviderConfig();
+    expect(await reconcileProviderConfig()).toEqual({ activeProviderChanged: true });
 
     const view = await getProviderSettings();
     expect(view.providers.find((p) => p.providerId === 'anthropic')).toBeDefined();
@@ -262,7 +262,7 @@ describe('provider config startup reconcile (Part A)', () => {
       ],
     });
 
-    await reconcileProviderConfig();
+    expect(await reconcileProviderConfig()).toEqual({ activeProviderChanged: false });
 
     const view = await getProviderSettings();
     expect(view.providers.find((p) => p.providerId === 'local-llm')).toBeDefined();
@@ -284,7 +284,7 @@ describe('provider config startup reconcile (Part A)', () => {
       ],
     });
 
-    await reconcileProviderConfig();
+    expect(await reconcileProviderConfig()).toEqual({ activeProviderChanged: false });
 
     expect((await readProviderFileRaw()).providers).toEqual([
       { providerId: CC_SWITCH_LOCAL_PROVIDER_ID, enabled: true },
@@ -321,7 +321,7 @@ describe('provider config startup reconcile (Part A)', () => {
       ],
     });
 
-    await reconcileProviderConfig();
+    expect(await reconcileProviderConfig()).toEqual({ activeProviderChanged: true });
 
     const view = await getProviderSettings();
     expect(view.providers.map((p) => p.providerId)).toEqual(['anthropic']);
@@ -339,7 +339,7 @@ describe('provider config startup reconcile (Part A)', () => {
     });
     const before = await readFile(providerPath(), 'utf8');
 
-    await reconcileProviderConfig();
+    expect(await reconcileProviderConfig()).toEqual({ activeProviderChanged: false });
 
     // Nothing pruned, file byte-for-byte untouched.
     expect(await readFile(providerPath(), 'utf8')).toBe(before);

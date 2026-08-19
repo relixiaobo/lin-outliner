@@ -1032,13 +1032,19 @@ async function findUsableProvider(
  *    oauth kinds are exempt outright: managed credentials are always ambient, and
  *    oauth rows carry a stored credential.
  */
-export async function reconcileProviderConfig(): Promise<void> {
+export async function reconcileProviderConfig(): Promise<{
+  readonly activeProviderChanged: boolean;
+}> {
   await piRestoreDynamicModels();
   const { secrets, readable } = await readSecretsWithStatus();
-  if (!readable) return; // rule 1: credential picture unknown → touch nothing
+  if (!readable) return { activeProviderChanged: false }; // rule 1: credential picture unknown → touch nothing
+  let activeProviderChanged = false;
   await mutateProviderFile((file) => {
+    const previousActiveProviderId = file.activeProviderId;
     reconcileProviderFile(file, secrets);
+    activeProviderChanged ||= file.activeProviderId !== previousActiveProviderId;
   });
+  return Object.freeze({ activeProviderChanged });
 }
 
 /** Mutates `file` in place; returns whether anything changed. See `reconcileProviderConfig`. */

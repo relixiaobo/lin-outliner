@@ -18,8 +18,10 @@ mock.module('electron', () => ({
 }));
 
 const {
+  clearLastAgentThreadConfiguration,
   loadAppPreferences,
   resetAppPreferencesForTests,
+  saveLastAgentThreadConfiguration,
   saveLanguagePreference,
   saveThemePreference,
   saveTranslationLanguagePreference,
@@ -47,7 +49,7 @@ describe('app preferences persistence', () => {
     });
 
     const raw = await readFile(path.join(userData, 'app-preferences.json'), 'utf8');
-    expect(raw).toBe('{"theme":"dark","language":"zh-Hans","translationLanguage":"ja","translationModel":"openai/gpt-4.1-mini","autoTranslateUrls":true,"autoTranslateEpubs":true}');
+    expect(raw).toBe('{"theme":"dark","language":"zh-Hans","translationLanguage":"ja","translationModel":"openai/gpt-4.1-mini","autoTranslateUrls":true,"autoTranslateEpubs":true,"lastAgentThreadConfiguration":null}');
     expect(loadAppPreferences()).toEqual({
       theme: 'dark',
       language: 'zh-Hans',
@@ -55,7 +57,81 @@ describe('app preferences persistence', () => {
       translationModel: 'openai/gpt-4.1-mini',
       autoTranslateUrls: true,
       autoTranslateEpubs: true,
+      lastAgentThreadConfiguration: null,
     });
+  });
+
+  test('persists the last Agent Thread execution selection', () => {
+    const selection = {
+      modelProvider: 'anthropic',
+      model: 'anthropic/claude-sonnet-4',
+      reasoningEffort: 'high',
+    } as const;
+
+    saveLastAgentThreadConfiguration(selection);
+    resetAppPreferencesForTests();
+
+    expect(loadAppPreferences().lastAgentThreadConfiguration).toEqual(selection);
+  });
+
+  test('clears the remembered Agent Thread execution selection', () => {
+    saveLastAgentThreadConfiguration({
+      modelProvider: 'anthropic',
+      model: 'anthropic/claude-sonnet-4',
+      reasoningEffort: 'high',
+    });
+
+    clearLastAgentThreadConfiguration();
+    resetAppPreferencesForTests();
+
+    expect(loadAppPreferences().lastAgentThreadConfiguration).toBeNull();
+  });
+
+  test('ignores an invalid persisted Agent Thread execution selection', async () => {
+    const invalidSelections = [
+      {
+        modelProvider: 'openai',
+        model: 'openai/gpt-5',
+        reasoningEffort: 'turbo',
+      },
+      {
+        modelProvider: 'openai',
+        model: 'anthropic/claude-sonnet-4',
+        reasoningEffort: 'high',
+      },
+      {
+        modelProvider: 'openai',
+        model: `openai/${'x'.repeat(512)}`,
+        reasoningEffort: 'high',
+      },
+    ];
+
+    for (const lastAgentThreadConfiguration of invalidSelections) {
+      await writeFile(
+        path.join(userData, 'app-preferences.json'),
+        JSON.stringify({
+          theme: 'system',
+          language: null,
+          translationLanguage: null,
+          lastAgentThreadConfiguration,
+        }),
+      );
+      resetAppPreferencesForTests();
+
+      expect(loadAppPreferences().lastAgentThreadConfiguration).toBeNull();
+    }
+  });
+
+  test('rejects an invalid Agent Thread execution selection on write', () => {
+    expect(() => saveLastAgentThreadConfiguration(
+      {
+          modelProvider: 'openai',
+          model: 'anthropic/claude-sonnet-4',
+          reasoningEffort: 'high',
+        },
+    )).toThrow('expected a bare model id, inherit, or a model qualified by modelProvider');
+
+    expect(loadAppPreferences().lastAgentThreadConfiguration).toBeNull();
   });
 
   test('defaults older files to Follow Agent with automatic translation off', async () => {
