@@ -1337,3 +1337,37 @@ a provider assistant message — and `SubagentCollaboration` records a child's
 batch replayed as two assistant messages and lost that much cached prefix. "Emits
 no content" and "has no effect" are different claims; in a projector that
 batches, position relative to the flushes is the effect.
+
+## One signal cannot mean both "it finished" and "we stopped tracking it"
+
+`foreground-agent-settlement-wait` (#562, #563). A foreground `agent` call used
+to wait on a hand-rolled edge-triggered predicate, which could spend every
+wake-up before it parked and wedge the root Turn until the process was killed.
+The right fix was to attach the wait to the settlement state machine that
+already computed the answer — but the first round expressed that authority as a
+bare `resolve()`, and *every* path that removed a settlement reservation
+resolved it. Half of those paths mean "this generation settled"; the other half
+mean "we abandoned tracking this generation" — a descendant notification Turn
+advancing `currentTurnId`, a Thread deletion, app close. The caller could only
+act on the first, so on the others it woke, read a still-running Turn, and wrote
+a fabricated "finished" Agent result into the parent's rollout.
+
+**When a wait is handed off to a state machine, the handoff must carry the
+machine's outcome, not just its edge.** Model it as a value the caller must
+branch on — here `settled | abandoned | failed` — so that adding a new removal
+path forces the author to say which one it is. A `void`-shaped completion makes
+"abandoned" indistinguishable from "done" at the type level, and the wrong branch
+is silent: it produces a plausible result rather than an error.
+
+The paired liveness lesson: **a wait whose only settle paths hang off one
+mechanism inherits that mechanism's every precondition.** All reservation
+creation was gated on `TurnLifecycle`'s `admissionCommitted`, so an
+initial-admission failure created no reservation, and the new wait — unlike the
+`ensureTerminalPipeline` call it replaced, which terminated on "no reservation,
+no pipeline" — simply never woke. Removing a deadlock by rerouting its wait
+reintroduces the deadlock through every door the new route does not cover; the
+question to ask is not "does this settle on success?" but "enumerate the states
+in which nothing will ever call this." Both PRs also confirm A12 from the
+liveness side: an uncancellable await on the user path is a failure shape on its
+own, which is why the Stop race in #563 was worth shipping even after #562
+landed clean.

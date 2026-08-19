@@ -6473,6 +6473,59 @@ describe('ThreadService', () => {
     }
   });
 
+  test('rejects a foreground Agent call when initial execution admission fails', async () => {
+    const fixture = await createFixture();
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Delegate through a failed admission' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    const rootContext = fixture.executor.contexts[0]!;
+    await recordCollaborationSpawnBoundary(rootContext, 'foreground-admission-failure');
+    const completeInitialAdmissionIfCurrent = fixture.stores.subagentExecutions
+      .completeInitialAdmissionIfCurrent.bind(fixture.stores.subagentExecutions);
+    fixture.stores.subagentExecutions.completeInitialAdmissionIfCurrent = () => {
+      throw new Error('simulated foreground admission failure');
+    };
+
+    try {
+      const tools = await fixture.service.collaborationToolContributions({
+        threadId: root.id,
+        turnId: rootTurn.turn.id,
+      });
+      const foreground = executeTool(tools, 'agent', 'foreground-admission-failure', {
+        description: 'failed admission fixture',
+        prompt: 'This Turn must fail before provider execution',
+        subagent_type: 'general-purpose',
+        run_in_background: false,
+      });
+
+      await expect(withTimeout(foreground, 1_000)).rejects.toThrow(
+        'simulated foreground admission failure',
+      );
+      const pending = fixture.stores.subagentExecutions.pendingInitialAdmissions();
+      expect(pending).toHaveLength(1);
+      await fixture.service.waitForIdle(pending[0]!.agentId);
+      expect(fixture.service.readTurnForHost(
+        pending[0]!.agentId,
+        pending[0]!.currentTurnId,
+      )).toMatchObject({ status: 'failed' });
+      expect(fixture.executor.contexts).toHaveLength(1);
+    } finally {
+      fixture.stores.subagentExecutions.completeInitialAdmissionIfCurrent = completeInitialAdmissionIfCurrent;
+    }
+
+    fixture.executor.finish(0, completedExecutionResult(0));
+    await fixture.service.waitForIdle(root.id);
+    await fixture.service.close();
+  });
+
   test('persists delegated Turns before publishing lifecycle once in marker-first order', async () => {
     for (const ephemeral of [false, true]) {
       let childId = '';
@@ -8257,6 +8310,64 @@ describe('ThreadService', () => {
 
     fixture.executor.finish(0);
     await fixture.service.waitForIdle(root.id);
+    await fixture.service.close();
+  });
+
+  test('Stop interrupts a root Turn waiting on a foreground Agent while the child settles independently', async () => {
+    const fixture = await createFixture(undefined, { resolveSubagentTokenBudget: () => null });
+    const root = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+    const rootTurn = await fixture.service.startRendererTurn({
+      threadId: root.id,
+      input: [{ type: 'text', text: 'Wait for one foreground Agent' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    const rootContext = fixture.executor.contexts[0]!;
+    await recordCollaborationSpawnBoundary(rootContext, 'foreground-stop-spawn');
+    const tools = await fixture.service.collaborationToolContributions({
+      threadId: root.id,
+      turnId: rootTurn.turn.id,
+    });
+    const foreground = executeTool(tools, 'agent', 'foreground-stop-spawn', {
+      description: 'foreground stop fixture',
+      prompt: 'Remain active until the parent stops',
+      subagent_type: 'general-purpose',
+      run_in_background: false,
+    }, rootContext.signal);
+    const foregroundOutcome = foreground.then(
+      () => ({ kind: 'resolved' as const, error: null }),
+      (error: unknown) => ({ kind: 'rejected' as const, error }),
+    );
+    await fixture.executor.waitUntilWaiting(1);
+    const child = fixture.service.listThreadDescendants({ threadId: root.id }).data[0];
+    if (!child) throw new Error('Foreground Agent was not created');
+
+    await fixture.service.interruptUserWork(root.id, rootTurn.turn.id);
+    await Promise.all([
+      fixture.service.waitForIdle(root.id),
+      fixture.service.waitForIdle(child.id),
+    ]);
+
+    expect(await foregroundOutcome).toEqual({
+      kind: 'rejected',
+      error: expect.objectContaining({ name: 'AbortError' }),
+    });
+    expect(fixture.service.readThread({ threadId: root.id, includeTurns: true })
+      .thread.turns?.find((turn) => turn.id === rootTurn.turn.id)?.status).toBe('interrupted');
+    expect(fixture.service.readThread({ threadId: child.id, includeTurns: true })
+      .thread.turns?.at(-1)?.status).toBe('interrupted');
+    await withTimeout(
+      waitUntil(() => fixture.stores.subagentExecutions.terminalNotification(child.id, 1) !== null),
+      1_000,
+    );
+    expect(fixture.stores.subagentExecutions.terminalNotification(child.id, 1)).toMatchObject({
+      status: 'interrupted',
+      state: 'delivered',
+    });
     await fixture.service.close();
   });
 
@@ -12637,6 +12748,20 @@ async function waitUntil(predicate: () => boolean): Promise<void> {
   while (!predicate()) await new Promise<void>((resolve) => setImmediate(resolve));
 }
 
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(`Timed out after ${timeoutMs} ms`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 function outputImageArtifact(
   persisted: PersistedOutputImageObservation,
   original: ThreadFileSource | null = null,
@@ -12731,10 +12856,11 @@ async function executeTool(
   name: string,
   itemId: string,
   params: Record<string, unknown>,
+  signal?: AbortSignal,
 ) {
   const tool = tools.find((candidate) => candidate.name === name);
   if (!tool) throw new Error(`Tool not found: ${name}`);
-  return tool.execute(itemId, params);
+  return tool.execute(itemId, params, signal);
 }
 
 /** Invoke the canonical Agent message tool from an already active Turn. */

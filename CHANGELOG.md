@@ -12,6 +12,43 @@ Entries reference the pull request that introduced them.
 
 ### Fixed
 
+- **A foreground Agent that spawns background Agents no longer wedges the Turn
+  (PR #562 + #563, codex)** — found live on `dev:main`: a root Turn stayed
+  `inProgress` forever, its `agent` tool call never completed, and Stop could not
+  break it, so only killing the process cleared it. The durable ledger showed
+  every participant finished; only the parent's wait never woke. The cause was
+  design, not a missing edge — the same "is this child done?" predicate was
+  answered in three places, and the foreground path asked it twice, once through
+  a hand-rolled edge-triggered wait whose wake-ups could all be spent before it
+  parked. #562 deletes that parallel mechanism and attaches the wait to the
+  terminal-settlement state machine that already computes the answer, as one
+  authority per `{agentId, generation}`. #563 races that wait against the
+  invoking Turn's `AbortSignal`, so any future wedge degrades to a cancelled Turn
+  instead of a restart; the settlement machine is not cancelled and still records
+  the child generation independently. `/code-review xhigh` at the gate rejected
+  the first round: the authority's outcome was a bare `resolve()`, which
+  collapsed "this generation settled" and "we stopped tracking it" into one
+  signal — so a descendant notification Turn (which advances `currentTurnId`
+  without advancing the generation), a thread deletion, or app close each woke the
+  parent, which then read a still-running Turn and fabricated a completed Agent
+  result from it, in practice `Agent finished without text output.` written into
+  the parent's rollout. Initial-admission failure was worse: every
+  reservation-creation path is gated on `admissionCommitted`, so no reservation
+  was ever created and the deferred was never settled at all — the exact deadlock
+  the PR set out to remove, reintroduced through a different door. The rework
+  makes the outcome an explicit `settled | abandoned | failed`: only `settled`
+  lets the caller read the final Turn, admission failure and retry exhaustion
+  report `failed`, and generation replacement, Thread deletion, and close report
+  `abandoned`, so teardown can no longer fabricate a result. The gate also took a
+  spec that contradicted itself, a settlement key derived twice with no assertion
+  that the two agreed (now an explicit check), an aborted Stop that stranded the
+  child's `agent_message("main")` envelope `pending` until the next process
+  start, and a Stop test that spun on an unbounded wait — a regression in the
+  liveness property it guards would have surfaced as a suite timeout, which under
+  the known load-flake pattern reads as a busy machine rather than a real
+  failure. The one path that broke the invariant is now the one path the
+  regression test drives. Gate: typecheck + `test:core` (2501 pass) +
+  `docs:check`, on an isolated worktree.
 - **The model stopped inventing delegations it never made (PR #561, cc)** —
   caught in the `main` dev run: a root Thread streamed
   `[Subagent message sent: …][Subagent finished: …]` to its user as ordinary

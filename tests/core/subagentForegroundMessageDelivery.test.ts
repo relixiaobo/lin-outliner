@@ -40,10 +40,12 @@ interface AdmissionSeam {
   }>;
 }
 
-interface TerminalSettlementSeam extends AdmissionSeam {
+interface TerminalSettlementSeam extends AdmissionSeam, MainMessageSeam {
+  terminalSettlementDeferreds: Map<string, { readonly promise: Promise<unknown> }>;
   beginThreadDeletion(threadIds: readonly string[]): void;
   finishThreadDeletion(threadIds: readonly string[]): void;
   beginClose(): void;
+  clearThreadCoordinationState(threadIds: readonly string[]): void;
   drainForClose(deadline: number): Promise<boolean>;
   deliverParentWork(parentThreadId: string): Promise<void>;
   ensureTerminalPipeline(agentId: string, generation: number): Promise<void>;
@@ -694,6 +696,213 @@ describe('foreground Agent main-message delivery', () => {
     expect(warningText).not.toContain('/managed/moved-worktree');
     warning.mockRestore();
     database.close();
+  });
+
+  test('waits for a foreground generation through its background descendant notification Turn', async () => {
+    const fixture = foregroundSettlementFixture();
+    const spawn = fixture.spawn();
+    const child = await fixture.childSpawned;
+    const descendant = fixture.addBackgroundChild(child.id, SECOND_AGENT_ID, 'descendant-turn');
+    let spawnState: 'pending' | 'resolved' | 'rejected' = 'pending';
+    void spawn.then(
+      () => { spawnState = 'resolved'; },
+      () => { spawnState = 'rejected'; },
+    );
+
+    const descendantTurn = terminalTurn('descendant-turn');
+    fixture.setTerminalTurn(SECOND_AGENT_ID, descendantTurn);
+    fixture.setActive(SECOND_AGENT_ID, false);
+    fixture.seam.prepareChildTerminalSettlement(descendant, descendantTurn);
+    fixture.seam.queueChildTurnActivity(descendant, descendantTurn);
+    await fixture.seam.terminalPipelines.get(`${SECOND_AGENT_ID}:1`);
+    expect(fixture.ledger.pendingForParent(child.id)).toMatchObject([{
+      agentId: SECOND_AGENT_ID,
+      generation: 1,
+      state: 'pending',
+    }]);
+
+    const firstTurn = terminalTurn(child.turnId);
+    fixture.setTerminalTurn(child.id, firstTurn);
+    fixture.setActive(child.id, false);
+    fixture.seam.prepareChildTerminalSettlement(child.thread, firstTurn);
+    fixture.seam.queueChildTurnActivity(child.thread, firstTurn);
+    await Promise.resolve();
+
+    expect(spawnState).toBe('pending');
+    expect(fixture.seam.terminalPipelines.has(`${child.id}:1`)).toBe(false);
+
+    expect(fixture.ledger.claim(SECOND_AGENT_ID, 1)).toBe(true);
+    const snapshot = fixture.ledger.generationSnapshot(child.id);
+    expect(fixture.ledger.continueGeneration({
+      agentId: child.id,
+      expectedGeneration: snapshot.generation,
+      expectedTurnId: snapshot.currentTurnId,
+      turnId: 'notification-turn',
+      updatedAt: 101,
+    })).toBe(true);
+    fixture.ledger.markDelivered(SECOND_AGENT_ID, 1, 102);
+    fixture.setActive(child.id, true);
+    fixture.seam.threadBecameIdle(SECOND_AGENT_ID);
+    await Promise.resolve();
+    expect(spawnState).toBe('pending');
+    expect(fixture.seam.terminalSettlementReservations.has(`${child.id}:1`)).toBe(true);
+
+    const notificationTurn = terminalTurn('notification-turn');
+    fixture.setTerminalTurn(child.id, notificationTurn);
+    fixture.setActive(child.id, false);
+    fixture.seam.prepareChildTerminalSettlement(child.thread, notificationTurn);
+    fixture.seam.queueChildTurnActivity(child.thread, notificationTurn);
+    await fixture.seam.terminalPipelines.get(`${child.id}:1`);
+
+    await expect(withTimeout(spawn, 1_000)).resolves.toMatchObject({
+      agentId: child.id,
+      runMode: 'foreground',
+    });
+    expect(spawnState).toBe('resolved');
+    expect(fixture.seam.terminalSettlementDeferreds.has(`${child.id}:1`)).toBe(false);
+    expect(fixture.seam.terminalSettlementDeferreds.has(`${SECOND_AGENT_ID}:1`)).toBe(false);
+    fixture.close();
+  });
+
+  test('rejects a foreground settlement wait when terminal retries are exhausted', async () => {
+    const fixture = foregroundSettlementFixture();
+    const spawn = fixture.spawn();
+    const child = await fixture.childSpawned;
+    const key = `${child.id}:1`;
+    await Promise.resolve();
+    expect(fixture.seam.terminalSettlementDeferreds.has(key)).toBe(true);
+    let recordAttempts = 0;
+    fixture.ledger.recordTerminal = () => {
+      recordAttempts += 1;
+      throw new Error('sqlite remains unavailable');
+    };
+    const warning = spyOn(console, 'warn').mockImplementation(() => undefined);
+    let spawnError: unknown;
+    const observedSpawn = spawn.catch((error) => { spawnError = error; });
+
+    const turn = terminalTurn(child.turnId);
+    fixture.setTerminalTurn(child.id, turn);
+    fixture.setActive(child.id, false);
+    fixture.seam.prepareChildTerminalSettlement(child.thread, turn);
+    expect(fixture.seam.terminalSettlementDeferreds.has(key)).toBe(true);
+    fixture.seam.queueChildTurnActivity(child.thread, turn);
+    for (let attempt = 1; attempt <= 5; attempt += 1) {
+      const pipeline = fixture.seam.terminalPipelines.get(key);
+      expect(pipeline).toBeDefined();
+      await expect(pipeline!).rejects.toThrow('sqlite remains unavailable');
+      if (attempt < 5) fixture.seam.threadBecameIdle(child.id);
+    }
+
+    await withTimeout(observedSpawn, 1_000);
+    expect(spawnError).toEqual(expect.objectContaining({
+      message: 'Agent terminal settlement failed after 5 attempts. Restart Tenon to retry durable recovery.',
+    }));
+    expect(recordAttempts).toBe(5);
+    expect(fixture.seam.terminalSettlementReservations.get(key)).toMatchObject({
+      retryAttempt: 4,
+      retryExhausted: true,
+      retryTimer: null,
+    });
+    expect(fixture.seam.terminalSettlementDeferreds.has(key)).toBe(false);
+    warning.mockRestore();
+    fixture.close();
+  });
+
+  test('abandons a foreground wait when close begins before terminal settlement', async () => {
+    const fixture = foregroundSettlementFixture();
+    const spawn = fixture.spawn();
+    const child = await fixture.childSpawned;
+    await Promise.resolve();
+    expect(fixture.seam.terminalSettlementDeferreds.has(`${child.id}:1`)).toBe(true);
+
+    fixture.seam.beginClose();
+
+    await expect(withTimeout(spawn, 1_000)).rejects.toThrow('Agent service is shutting down');
+    expect(fixture.seam.terminalSettlementDeferreds.has(`${child.id}:1`)).toBe(false);
+    fixture.close();
+  });
+
+  test('abandons a foreground wait when its Thread coordination state is cleared', async () => {
+    const fixture = foregroundSettlementFixture();
+    const spawn = fixture.spawn();
+    const child = await fixture.childSpawned;
+
+    fixture.seam.clearThreadCoordinationState([child.id]);
+
+    await expect(withTimeout(spawn, 1_000)).rejects.toThrow(
+      `Agent Thread was deleted before terminal settlement: ${child.id}`,
+    );
+    expect(fixture.seam.terminalSettlementDeferreds.has(`${child.id}:1`)).toBe(false);
+    fixture.close();
+  });
+
+  test('abandons a foreground wait when another generation replaces its reservation', async () => {
+    const fixture = foregroundSettlementFixture();
+    const spawn = fixture.spawn();
+    const child = await fixture.childSpawned;
+    await Promise.resolve();
+    const turn = terminalTurn(child.turnId);
+    fixture.setTerminalTurn(child.id, turn);
+    fixture.setActive(child.id, false);
+    fixture.seam.prepareChildTerminalSettlement(child.thread, turn);
+    const snapshot = fixture.ledger.generationSnapshot(child.id);
+    expect(fixture.ledger.beginNextGenerationIfCurrent({
+      agentId: child.id,
+      expectedGeneration: snapshot.generation,
+      expectedTurnId: snapshot.currentTurnId,
+      turnId: 'replacement-turn',
+      toolUseId: 'replacement-tool',
+      runMode: 'foreground',
+      previous: snapshot,
+      updatedAt: 101,
+    })).not.toBeNull();
+
+    fixture.seam.threadBecameIdle(child.id);
+
+    await expect(withTimeout(spawn, 1_000)).rejects.toThrow(
+      `Agent generation changed before terminal settlement: ${child.id}`,
+    );
+    expect(fixture.seam.terminalSettlementReservations.has(`${child.id}:1`)).toBe(false);
+    fixture.close();
+  });
+
+  test('lets invoking Turn abort win while an idle foreground child settles independently', async () => {
+    const fixture = foregroundSettlementFixture();
+    const controller = new AbortController();
+    const stopped = new Error('Root Turn stopped');
+    const spawn = fixture.spawn(controller.signal);
+    const child = await fixture.childSpawned;
+    fixture.setActive(child.id, false);
+    await fixture.seam.sendAgentMessageToMain(child.id, 'This foreground message becomes stale.');
+    expect(fixture.ledger.pendingParentMessages(PARENT_ID)).toMatchObject([{
+      senderAgentId: child.id,
+      generation: 1,
+      deliveryMode: 'foreground',
+    }]);
+
+    controller.abort(stopped);
+
+    await expect(withTimeout(spawn, 1_000)).rejects.toBe(stopped);
+    expect(fixture.ledger.terminalNotification(child.id, 1)).toBeNull();
+    expect(fixture.ledger.pendingParentMessages(PARENT_ID)).toEqual([]);
+    expect(fixture.seam.terminalSettlementDeferreds.has(`${child.id}:1`)).toBe(true);
+    await fixture.seam.sendAgentMessageToMain(child.id, 'This message races the child interrupt.');
+    expect(fixture.ledger.pendingParentMessages(PARENT_ID)).toHaveLength(1);
+
+    const turn = terminalTurn(child.turnId);
+    fixture.setTerminalTurn(child.id, turn);
+    fixture.seam.prepareChildTerminalSettlement(child.thread, turn);
+    fixture.seam.queueChildTurnActivity(child.thread, turn);
+    await fixture.seam.terminalPipelines.get(`${child.id}:1`);
+
+    expect(fixture.ledger.terminalNotification(child.id, 1)).toMatchObject({
+      status: 'completed',
+      state: 'delivered',
+    });
+    await Promise.resolve();
+    expect(fixture.ledger.pendingParentMessages(PARENT_ID)).toEqual([]);
+    expect(fixture.seam.terminalSettlementDeferreds.has(`${child.id}:1`)).toBe(false);
+    fixture.close();
   });
 
   test('reserves terminal settlement before idle and retries a failed ledger write later', async () => {
@@ -2525,6 +2734,217 @@ describe('foreground Agent main-message delivery', () => {
     database.close();
   });
 });
+
+function foregroundSettlementFixture() {
+  const database = new Database(':memory:') as unknown as SqliteDatabase;
+  const ledger = new SubagentExecutionLedger(database);
+  const role = {
+    name: 'default',
+    source: 'builtIn',
+    description: 'General-purpose Agent.',
+    developerInstructions: 'Complete the delegated task.',
+  } as const;
+  const configuration = {
+    profileName: 'default',
+    developerInstructions: [],
+    model: 'test-model',
+    reasoningEffort: 'medium',
+    tools: [],
+    skills: [],
+    preloadedSkills: [],
+    plugins: [],
+    mcpServers: [],
+  } as const;
+  const parent = {
+    id: PARENT_ID,
+    sessionId: 'session',
+    parentThreadId: null,
+    forkedFromId: null,
+    agentNickname: null,
+    agentRole: null,
+    name: 'Parent',
+    preview: '',
+    ephemeral: true,
+    source: 'app',
+    threadSource: 'user',
+    modelProvider: 'openai',
+    cwd: '/repo',
+    createdAt: 1,
+    updatedAt: 1,
+    status: { type: 'idle' },
+    historyMode: 'full',
+  } as const;
+  const spawnItem = {
+    type: 'collabAgentToolCall',
+    id: 'agent-tool',
+    tool: 'agent',
+    status: 'inProgress',
+  } as const;
+  const threads = new Map<string, unknown>([[PARENT_ID, parent]]);
+  const terminalTurns = new Map<string, ReturnType<typeof terminalTurn>>();
+  const activeThreadIds = new Set<string>([PARENT_ID]);
+  const idleWaiters = new Map<string, Set<() => void>>();
+  let resolveChildSpawned!: (value: {
+    readonly id: string;
+    readonly turnId: string;
+    readonly thread: ReturnType<typeof delegatedFixtureThread>;
+  }) => void;
+  const childSpawned = new Promise<{
+    readonly id: string;
+    readonly turnId: string;
+    readonly thread: ReturnType<typeof delegatedFixtureThread>;
+  }>((resolve) => { resolveChildSpawned = resolve; });
+
+  const setActive = (threadId: string, active: boolean): void => {
+    if (active) {
+      activeThreadIds.add(threadId);
+      return;
+    }
+    activeThreadIds.delete(threadId);
+    for (const resolve of idleWaiters.get(threadId) ?? []) resolve();
+    idleWaiters.delete(threadId);
+  };
+
+  const collaboration = new SubagentCollaboration(
+    {
+      requireThread: (threadId: string) => {
+        const thread = threads.get(threadId);
+        if (!thread) throw new Error(`Thread not found: ${threadId}`);
+        return { thread, configuration };
+      },
+      readTurn: (threadId: string, turnId: string) => {
+        if (threadId === PARENT_ID && turnId === 'parent-turn') {
+          return { id: turnId, items: [spawnItem] };
+        }
+        return terminalTurns.get(`${threadId}:${turnId}`) ?? null;
+      },
+      metadata: {
+        spawnEdgeForChild: (threadId: string) => (
+          threadId === PARENT_ID ? null : { taskPath: `/root/${threadId}` }
+        ),
+        childEdges: () => [],
+      },
+    } as never,
+    {} as never,
+    {} as never,
+    {
+      requireActiveTurn: (threadId: string) => {
+        if (!activeThreadIds.has(threadId)) throw new Error('Parent Turn is no longer active');
+      },
+      activeTurnId: (threadId: string) => (
+        activeThreadIds.has(threadId) ? `${threadId}-active-turn` : null
+      ),
+      hasActiveTurn: (threadId: string) => activeThreadIds.has(threadId),
+      waitForIdle: async (threadId: string) => {
+        if (!activeThreadIds.has(threadId)) return;
+        await new Promise<void>((resolve) => {
+          const waiters = idleWaiters.get(threadId) ?? new Set<() => void>();
+          waiters.add(resolve);
+          idleWaiters.set(threadId, waiters);
+        });
+      },
+      interruptTurn: async (threadId: string) => { setActive(threadId, false); },
+    } as never,
+    {} as never,
+    ledger,
+    () => role,
+    () => ({ canonicalType: 'general-purpose', role, kind: 'general-purpose' }),
+    async () => null,
+    async () => ({ maxDepth: 3, maxConcurrent: 20 }),
+    async () => null,
+    undefined,
+    undefined,
+    undefined,
+    () => 100,
+    ((value: unknown) => value) as never,
+    () => undefined,
+    (message) => new Error(message),
+    {
+      flushForTerminalSettlement: async () => undefined,
+      forgetCursor: () => undefined,
+      pathForReader: async (threadId: string) => `/tmp/${threadId}.jsonl`,
+    } as never,
+  );
+  collaboration.spawnChild = async (input) => {
+    if (!input.id || !input.turnId) throw new Error('Fixture requires explicit child identities');
+    const thread = delegatedFixtureThread(input.id, input.parentThreadId);
+    threads.set(input.id, thread);
+    createExecution(ledger, input.id, input.turnId, input.parentItemId, input.parentThreadId);
+    setActive(input.id, true);
+    resolveChildSpawned({ id: input.id, turnId: input.turnId, thread });
+    return { thread, turn: { id: input.turnId }, taskPath: input.taskPath } as never;
+  };
+  const seam = collaboration as unknown as TerminalSettlementSeam;
+
+  return {
+    childSpawned,
+    collaboration,
+    ledger,
+    seam,
+    spawn: (signal?: AbortSignal) => collaboration.spawnAgent({
+      senderThreadId: PARENT_ID,
+      senderTurnId: 'parent-turn',
+      parentItemId: 'agent-tool',
+      description: 'Coordinate descendants',
+      prompt: 'Coordinate descendants',
+      agentType: 'general-purpose',
+      runInBackground: false,
+      isolation: null,
+      ...(signal === undefined ? {} : { signal }),
+    }),
+    addBackgroundChild: (parentThreadId: string, agentId: string, turnId: string) => {
+      const thread = delegatedFixtureThread(agentId, parentThreadId);
+      threads.set(agentId, thread);
+      createBackgroundExecution(ledger, agentId, turnId, `${agentId}-tool`, parentThreadId);
+      setActive(agentId, true);
+      return thread;
+    },
+    setActive,
+    setTerminalTurn: (threadId: string, turn: ReturnType<typeof terminalTurn>) => {
+      terminalTurns.set(`${threadId}:${turn.id}`, turn);
+    },
+    close: () => {
+      seam.beginClose();
+      database.close();
+    },
+  };
+}
+
+function delegatedFixtureThread(id: string, parentThreadId: string) {
+  return {
+    id,
+    sessionId: 'session',
+    parentThreadId,
+    forkedFromId: null,
+    agentNickname: null,
+    agentRole: 'default',
+    name: id,
+    preview: '',
+    ephemeral: true,
+    source: 'collaboration',
+    threadSource: 'subagent',
+    modelProvider: 'openai',
+    cwd: '/repo',
+    createdAt: 1,
+    updatedAt: 1,
+    status: { type: 'idle' },
+    historyMode: 'full',
+  } as const;
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(`Timed out after ${timeoutMs} ms`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 interface SpawnAdmissionCollaborationOptions {
   readonly requireActiveTurn?: () => void;

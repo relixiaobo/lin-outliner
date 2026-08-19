@@ -45,10 +45,11 @@ theme-section entry below; this list is the ordering, not a second record):
   `scripts-typecheck-coverage` · `plan-reference-guard` · #208 follow-ups).
   `dark-mode-contrast-pass` still runs **last** per its own rule; `performance` P3
   remains an uncapped background lane (trail + remaining items under **Performance**).
-- **Lane B — agent reliability**: `responses-tool-contract-hardening` shipped
-  #527, so `agent-tool-artifact-resources` leads, then
-  `computer-pilot-managed-skill` on top of it. The next *major* agent bet is a PM
-  direction call, not a backlog pop.
+- **Lane B — agent reliability**: `foreground-agent-settlement-wait` shipped
+  #562 + #563, clearing the root-Turn deadlock that led the lane;
+  `responses-tool-contract-hardening` shipped #527, so
+  `agent-tool-artifact-resources` leads, then `computer-pilot-managed-skill` on
+  top of it. The next *major* agent bet is a PM direction call, not a backlog pop.
 - **Lane C — product surface**: `update-check-and-prompt` shipped #514; next is the
   `file-preview` Office tail (apply its refresh note first), then the
   `agent-skills-authoring` security tail. `signed-builds-and-auto-update` stays
@@ -157,6 +158,13 @@ before any directional/security-sensitive build.
 
 - **agent-program** (P1, `meta` — umbrella) — read first; it maps the rest (foundation /
   dependency graph / event taxonomy / milestones). See `docs/plans/reference/agent-program.md`.
+- **[foreground-agent-settlement-wait](plans/archive/foreground-agent-settlement-wait.md)**
+  (P0, `done` 2026-08-18) — both PRs shipped: settlement authority (#562) and
+  Stop cancellation (#563), both codex. A foreground `agent` call now waits on
+  the terminal-settlement authority for its exact `{agentId, generation}`, whose
+  outcome is explicitly `settled` / `abandoned` / `failed`, and the invoking
+  Turn's `AbortSignal` races that wait. Design folded into
+  `docs/spec/agent-tool-design.md`.
 - **agent-view-surface** (P2, `done` 2026-08-18) — both PRs shipped: mode
   awareness (#556) and view sort/filter/group/column configuration (#559), both
   codex-3. The Agent reads and writes a node's view mode and its persisted
