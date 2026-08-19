@@ -285,61 +285,45 @@ const automationMutableProperties = {
   status: enumSchema(['active', 'paused']),
 };
 
-const AUTOMATION_MODE_FIELDS = ['definition', 'automation_id', 'expected_revision', 'patch'] as const;
-
-/**
- * One `mode` branch. The provider boundary keeps the exactness the retired root
- * union expressed: fields the mode does not take are `false` rather than merely
- * unmentioned, so a wrong-shaped call is refused before it costs a Turn and a
- * capability evaluation. The tool decoder repeats the check at the write
- * boundary; this is the cheap half of that pair, not a replacement for it.
- */
-const automationModeBranch = (
-  mode: string,
-  required: readonly string[],
-  optional: readonly string[] = [],
-): JsonSchema => ({
-  properties: {
-    mode: { const: mode },
-    ...Object.fromEntries(AUTOMATION_MODE_FIELDS
-      .filter((field) => !required.includes(field) && !optional.includes(field))
-      .map((field) => [field, false])),
+// The root stays a flat object with no union keyword. OpenAI rejects a function
+// schema whose ROOT carries oneOf/anyOf/allOf/enum/not ("schema must have type
+// 'object' and not have ... at the top level"), which is the same rule that
+// keeps `node_search` and `node_edit` from expressing their mutually exclusive
+// argument groups in the schema — see the note at the top of
+// `src/main/agent/capabilities/agentNodeToolSchemas.ts`. Per-mode exactness
+// therefore lives in `decodeAutomationToolInput`, which refuses a wrong-shaped
+// call before anything is written; the price is that a wrong shape costs one
+// round trip. Nested unions inside a property subschema are fine.
+const automationUpdateToolSchema: ObjectJsonSchema = objectSchema({
+  mode: enumSchema(
+    ['create', 'update', 'view', 'delete'],
+    [
+      'Operation to perform. Each mode takes exactly its own fields and rejects the rest:',
+      '"create" takes definition;',
+      '"update" takes automation_id, expected_revision, and patch;',
+      '"view" takes an optional automation_id and lists every Automation when it is omitted;',
+      '"delete" takes automation_id and expected_revision.',
+    ].join(' '),
+  ),
+  definition: {
+    ...objectSchema(automationMutableProperties, ['name', 'prompt', 'schedule', 'destination']),
+    description: 'Full definition, required by mode "create" and rejected in every other mode.',
   },
-  required: ['mode', ...required],
-});
-
-const automationUpdateToolSchema: ObjectJsonSchema = {
-  ...objectSchema({
-    mode: enumSchema(
-      ['create', 'update', 'view', 'delete'],
-      'Operation to perform. "view" without automation_id lists every Automation.',
-    ),
-    definition: {
-      ...objectSchema(automationMutableProperties, ['name', 'prompt', 'schedule', 'destination']),
-      description: 'Full definition, for mode "create".',
-    },
-    automation_id: boundedStringSchema(
-      AUTOMATION_IDENTIFIER_MAX_LENGTH,
-      'Target Automation UUIDv7, for modes "update", "delete", and single-Automation "view".',
-    ),
-    expected_revision: {
-      type: 'integer',
-      minimum: 1,
-      description: 'Revision last observed by the caller; modes "update" and "delete" fail on a stale value.',
-    },
-    patch: {
-      ...objectSchema(automationMutableProperties),
-      minProperties: 1,
-      description: 'At least one field to change, for mode "update".',
-    },
-  }, ['mode']),
-  anyOf: [
-    automationModeBranch('create', ['definition']),
-    automationModeBranch('update', ['automation_id', 'expected_revision', 'patch']),
-    automationModeBranch('view', [], ['automation_id']),
-    automationModeBranch('delete', ['automation_id', 'expected_revision']),
-  ],
-};
+  automation_id: boundedStringSchema(
+    AUTOMATION_IDENTIFIER_MAX_LENGTH,
+    'Target Automation UUIDv7. Required by modes "update" and "delete", optional for "view", rejected by "create".',
+  ),
+  expected_revision: {
+    type: 'integer',
+    minimum: 1,
+    description: 'Revision last observed by the caller. Required by modes "update" and "delete" and rejected by the rest; a stale value fails the call.',
+  },
+  patch: {
+    ...objectSchema(automationMutableProperties),
+    minProperties: 1,
+    description: 'At least one field to change. Required by mode "update" and rejected in every other mode; it never carries automation_id or expected_revision.',
+  },
+}, ['mode']);
 
 export const AGENT_TOOL_DESCRIPTION = `Launch a new agent to handle complex, multi-step tasks. Each agent type has specific capabilities and tools available to it.
 
@@ -620,22 +604,31 @@ const CONTRACTS_BY_KEY = new Map(MODEL_TOOL_CATALOG.map((contract) => [
 ]));
 
 /**
- * Providers reject a model-facing tool schema whose root is not an object schema:
- * OpenAI answers `schema must be a JSON Schema of 'type: "object"'` and Anthropic
- * rejects the same shape in `input_schema`. A root `oneOf`/`$ref` is legal JSON
- * Schema and compiles locally, so nothing but this check stands between an
- * unsendable schema and a provider HTTP 400 on every Turn that offers the tool.
+ * The shape a model-facing tool schema must have to be sendable at all. OpenAI
+ * requires a function schema to be object-rooted — it answers `schema must be a
+ * JSON Schema of 'type: "object"', got 'type: null'` otherwise — and refuses a
+ * root carrying `oneOf`/`anyOf`/`allOf`/`enum`/`not` ("schema must have type
+ * 'object' and not have ... at the top level"); Anthropic rejects the same
+ * shapes in `input_schema`. All of them are legal JSON Schema that compiles
+ * locally, so nothing but this check stands between an unsendable schema and a
+ * provider HTTP 400 on every Turn that offers the tool. Express a
+ * mutually-exclusive argument group in the decoder and the descriptions instead;
+ * nested unions inside a property subschema are fine.
  */
 export function providerToolSchemaFailure(schema: unknown): string | null {
   if (typeof schema !== 'object' || schema === null || Array.isArray(schema)) {
     return 'schema must be a JSON Schema object';
   }
-  const { type } = schema as { readonly type?: unknown };
-  if (type !== 'object') {
-    return `schema root must be 'type: "object"', got ${JSON.stringify(type ?? null)}`;
+  const record = schema as Readonly<Record<string, unknown>>;
+  if (record.type !== 'object') {
+    return `schema root must be 'type: "object"', got ${JSON.stringify(record.type ?? null)}`;
   }
+  const union = ROOT_FORBIDDEN_SCHEMA_KEYWORDS.find((keyword) => record[keyword] !== undefined);
+  if (union !== undefined) return `schema root must not carry "${union}"`;
   return null;
 }
+
+const ROOT_FORBIDDEN_SCHEMA_KEYWORDS = ['oneOf', 'anyOf', 'allOf', 'enum', 'not'] as const;
 
 export function canonicalModelToolKey(identity: ModelToolIdentity): string {
   validateToolName(identity.name, 'tool name');

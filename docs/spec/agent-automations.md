@@ -211,9 +211,8 @@ Turn may use `request_user_input` for missing product input; while its Turn wait
 later occurrences continue to coalesce instead of overlapping.
 
 The root-only `automation_update` model tool provides strict create, update,
-view, and delete modes over the same service. Its schema is one object
-discriminated by `mode`, with a branch per mode that requires exactly that mode's
-fields and forbids the others; the decoder repeats the same per-mode check at the
+view, and delete modes over the same service. Its schema is one flat object
+discriminated by `mode`; the decoder enforces the exact per-mode field sets at the
 write boundary and, with the shared Automation decoders, rejects unknown fields,
 invalid UUIDv7 identities, empty updates, unsupported schedules, and inputs beyond
 the shared length/count bounds. The addressed identity and expected revision come

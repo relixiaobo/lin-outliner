@@ -56,22 +56,35 @@ describe('canonical provider tool catalog', () => {
     expect(unsendable).toEqual([]);
   });
 
-  test('names the root-union shape every provider answers with HTTP 400', () => {
-    // `{ oneOf: [...] }` is legal JSON Schema and compiles, which is exactly why
-    // the compile guard above waved `automation_update` through for two weeks
-    // while OpenAI answered `schema must be a JSON Schema of 'type: "object"',
-    // got 'type: null'` on every root Turn that offered the tool.
+  test('names every root shape a provider answers with HTTP 400', () => {
+    // All of these compile, which is exactly why the compile guard waved
+    // `automation_update` through for two weeks while OpenAI answered `schema
+    // must be a JSON Schema of 'type: "object"', got 'type: null'` on every root
+    // Turn that offered the tool. A root union is refused for the same reason
+    // `node_search` and `node_edit` normalize their mutually exclusive argument
+    // groups at runtime — see `agentNodeToolSchemas.ts`.
     const rootUnion = { oneOf: [{ type: 'object', properties: {} }] };
     expect(() => compileToolParameters(rootUnion as never)).not.toThrow();
     expect(providerToolSchemaFailure(rootUnion)).toBe('schema root must be \'type: "object"\', got null');
     expect(providerToolSchemaFailure({ type: 'string' })).toBe('schema root must be \'type: "object"\', got "string"');
     expect(providerToolSchemaFailure([{ type: 'object' }])).toBe('schema must be a JSON Schema object');
     expect(providerToolSchemaFailure(null)).toBe('schema must be a JSON Schema object');
+    for (const keyword of ['oneOf', 'anyOf', 'allOf', 'enum', 'not']) {
+      const schema = { type: 'object', properties: {}, [keyword]: keyword === 'not' ? {} : [] };
+      expect(() => compileToolParameters(schema as never)).not.toThrow();
+      expect(providerToolSchemaFailure(schema)).toBe(`schema root must not carry "${keyword}"`);
+    }
+    // Nested unions stay legal: only the root is restricted.
+    expect(providerToolSchemaFailure({
+      type: 'object',
+      properties: { effort: { anyOf: [{ type: 'string' }, { type: 'null' }] } },
+    })).toBeNull();
   });
 
   test.each([
     ['cannot compile', { type: 'object', patternProperties: { '[': { type: 'string' } } }],
     ['is not object-rooted', { oneOf: [{ type: 'object' }] }],
+    ['carries a root union', { type: 'object', properties: {}, anyOf: [{ required: ['a'] }] }],
   ])('fails closed when a Core capability schema %s', async (_label, parameters) => {
     const tools = runtimeSchemaTools().map((tool) => tool.name === 'bash'
       ? { ...tool, parameters: parameters as never }

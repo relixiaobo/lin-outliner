@@ -19,6 +19,7 @@ import {
   modelToolActionKindFromRule,
   modelToolContract,
   modelToolCommandsMatch,
+  providerToolSchemaFailure,
   normalizeAgentMessageToolInput,
   normalizeAgentToolInput,
   normalizeModelToolCommandForBlockMatch,
@@ -198,11 +199,7 @@ describe('Codex Agent Core model-tool contract', () => {
       readonly type: string;
       readonly required: readonly string[];
       readonly additionalProperties: boolean;
-      readonly properties: Record<string, { readonly enum?: readonly string[] }>;
-      readonly anyOf: ReadonlyArray<{
-        readonly required: readonly string[];
-        readonly properties: Record<string, unknown>;
-      }>;
+      readonly properties: Record<string, { readonly enum?: readonly string[]; readonly description?: string }>;
     };
     expect(schema.type).toBe('object');
     expect(schema.required).toEqual(['mode']);
@@ -210,26 +207,14 @@ describe('Codex Agent Core model-tool contract', () => {
     expect(Object.keys(schema.properties))
       .toEqual(['mode', 'definition', 'automation_id', 'expected_revision', 'patch']);
     expect(schema.properties.mode.enum).toEqual(['create', 'update', 'view', 'delete']);
-    // The root stays an object — the shape every provider requires — while the
-    // `anyOf` branches keep the per-mode exactness the retired root union had:
-    // each names its own required fields and forbids the others outright.
-    expect(schema.anyOf.map((branch) => branch.required)).toEqual([
-      ['mode', 'definition'],
-      ['mode', 'automation_id', 'expected_revision', 'patch'],
-      ['mode'],
-      ['mode', 'automation_id', 'expected_revision'],
-    ]);
-    expect(schema.anyOf.map((branch) => Object.entries(branch.properties)
-      .filter(([, value]) => value === false)
-      .map(([key]) => key))).toEqual([
-      ['automation_id', 'expected_revision', 'patch'],
-      ['definition'],
-      ['definition', 'expected_revision', 'patch'],
-      ['definition', 'patch'],
-    ]);
-    // `oneOf` is the one union keyword constrained sampling refuses, so unions
-    // are spelled `anyOf` here and in the nested Automation schemas.
+    // The root carries no union keyword in any spelling: providers refuse
+    // oneOf/anyOf/allOf/enum/not at the root of a function schema, so the
+    // per-mode field sets live in the decoder and the descriptions. Nested
+    // unions inside a property subschema stay legal.
+    expect(providerToolSchemaFailure(schema)).toBeNull();
     expect(JSON.stringify(schema)).not.toContain('oneOf');
+    expect(schema.properties.mode.description)
+      .toContain('Each mode takes exactly its own fields and rejects the rest');
   });
 
   test('keeps request_user_input root-only and normalizes its bounded contract', () => {

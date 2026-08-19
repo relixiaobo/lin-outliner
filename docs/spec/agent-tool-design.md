@@ -27,11 +27,15 @@ namespace identifies an MCP server or a plugin: host tools are unnamespaced, and
 no host identity carries the name of another product.
 Every concrete static catalog schema is compilation-guarded by the test suite.
 Compiling is necessary but not sufficient: every model-facing schema must also be
-one every provider accepts, which means an object-rooted schema. A root `oneOf`
-or `$ref` compiles locally and is rejected by the provider, so a static contract
-declares an object-rooted schema in its type and cannot be written otherwise, the
-admission boundary rejects a non-object root before exposure, and the catalog
-guard asserts it for every static contract. Which side of that boundary a schema
+one every provider accepts. That means an object root carrying no union keyword —
+`oneOf`, `anyOf`, `allOf`, `enum`, and `not` are all refused at the root of a
+function schema, while nested unions inside a property subschema are fine. Such a
+schema is legal JSON Schema and compiles locally, so a static contract declares an
+object-rooted schema in its type and cannot be written otherwise, the admission
+boundary rejects both an unsendable root and a root union before exposure, and the
+catalog guard asserts it for every static contract. A mutually exclusive argument
+group is therefore expressed in the tool's decoder and its parameter descriptions,
+never in the schema root. Which side of that boundary a schema
 failure lands on is decided by ownership, not by the channel that registered the
 tool: a host-owned schema — Core, capability, or configuration — is a structural
 failure even when a dynamic factory contributed it, while extension and MCP-backed
@@ -379,13 +383,13 @@ At most one plan step is `in_progress`. Plans are Items within a Turn and do not
 create durable work entities.
 
 `automation_update` uses one bounded exact schema and the same revisioned host
-service as renderer commands. That schema is a single object discriminated by
-`mode`: the root stays the object shape providers require, and one `anyOf` branch
-per mode names the fields that mode takes and forbids the rest, so a wrong-shaped
-call is refused before it costs a Turn. The same per-mode field sets are decoded
-again at the write boundary, beside the Automation input decoders the renderer
-path uses, so model input and renderer input meet one set of bounds and one
-rejection vocabulary. The decoder addresses the Automation itself: a patch can
+service as renderer commands. That schema is a single flat object
+discriminated by `mode`, with no union at the root, and each parameter's
+description names the modes that take it. The per-mode field sets are exact and
+are enforced at the write boundary by the tool's decoder, beside the Automation
+input decoders the renderer path uses, so model input and renderer input meet one
+set of bounds and one rejection vocabulary; a wrong-shaped call costs one round
+trip and never reaches the service. The decoder addresses the Automation itself: a patch can
 never carry the identity or the expected revision it is checked against. It never
 writes scheduler tables from model code or introduces a permission profile. Scheduled execution and
 standing authorization are specified in

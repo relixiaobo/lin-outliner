@@ -29,13 +29,6 @@ describe('automation_update model tool', () => {
     }
 
     const rejected: Array<readonly [string, unknown]> = [
-      // The three shapes the retired root union rejected and a flat object alone
-      // would have waved through into a wasted Turn.
-      ['create without a definition', { mode: 'create' }],
-      ['update without a patch', { mode: 'update', automation_id: AUTOMATION_ID, expected_revision: 1 }],
-      ['view carrying a revision', { mode: 'view', expected_revision: 2 }],
-      ['delete without a revision', { mode: 'delete', automation_id: AUTOMATION_ID }],
-      ['create carrying an id', { mode: 'create', definition: DEFINITION, automation_id: AUTOMATION_ID }],
       ['an empty patch', { mode: 'update', automation_id: AUTOMATION_ID, expected_revision: 1, patch: {} }],
       ['an unknown field', { mode: 'view', automation: AUTOMATION_ID }],
       ['an unknown mode', { mode: 'pause', automation_id: AUTOMATION_ID }],
@@ -43,6 +36,35 @@ describe('automation_update model tool', () => {
     ];
     for (const [label, value] of rejected) {
       expect(() => validateExactToolArguments(tool(), value), label).toThrow('Invalid arguments for tool');
+    }
+  });
+
+  test('refuses a wrong-shaped mode at the write boundary the schema cannot express', () => {
+    // The root carries no union keyword — OpenAI refuses one — so the schema
+    // cannot say "create takes definition and nothing else". These calls are
+    // schema-valid and cost a round trip; the decoder is what keeps them from
+    // reaching the service.
+    const perMode: Array<readonly [string, unknown, string]> = [
+      ['create without a definition', { mode: 'create' }, 'automation create must be an object'],
+      ['update without a patch',
+        { mode: 'update', automation_id: AUTOMATION_ID, expected_revision: 1 },
+        'automation_update.patch must be an object'],
+      ['delete without a revision',
+        { mode: 'delete', automation_id: AUTOMATION_ID },
+        'automation_update.expected_revision must be an integer'],
+      ['view carrying a revision',
+        { mode: 'view', expected_revision: 2 },
+        'automation_update contains unknown fields: expected_revision'],
+      ['create carrying an id',
+        { mode: 'create', definition: DEFINITION, automation_id: AUTOMATION_ID },
+        'automation_update contains unknown fields: automation_id'],
+      ['delete carrying a patch',
+        { mode: 'delete', automation_id: AUTOMATION_ID, expected_revision: 1, patch: { name: 'x' } },
+        'automation_update contains unknown fields: patch'],
+    ];
+    for (const [label, value, message] of perMode) {
+      expect(() => validateExactToolArguments(tool(), value), `${label} passes the schema`).not.toThrow();
+      expect(() => decodeAutomationToolInput(value), label).toThrow(message);
     }
   });
 
