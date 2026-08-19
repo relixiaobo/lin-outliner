@@ -40,6 +40,19 @@ Rules:
   rounded square.
 - **Hover never changes layout.** No size, height, or neighbor reflow on hover
   (generalizes the tag-hover rule).
+- **Expansion grows from a fixed edge.** Opening a disclosure, or a floating
+  surface growing while it is open, must leave what the reader is already looking
+  at exactly where it is. The fixed point is always at or above the top of what
+  grows: a chevron above its content is that point; a control that hangs BELOW its
+  own content is not, and anchoring it opens every revealed line upward, off the
+  top of the viewport. One exception, because it is the same thing said twice: a
+  scroller riding its bottom keeps holding the control, since holding it IS staying
+  at the bottom. A floating surface absorbs its own growth by scrolling inside a
+  ceiling derived from where it was placed — re-deriving its position from its own
+  height answers growth by teleporting out from under the cursor. Content that
+  lands late (an image, a lazily measured row, an injected translation) obeys the
+  same rule: reserve the box, or hold the topmost thing still on screen.
+  (`disclosureScrollAnchor.ts`, `flyoutPlacement.ts`.)
 - **No pointer cursor on hoverable rows.** Native lists do not switch the cursor;
   a pointer cursor reads as web. Text cursor only on real text. `cursor: help` is
   allowed for inline diagnostic hints or native-title tooltips, and resize cursors

@@ -7673,6 +7673,41 @@ test('opens provider settings instead of creating a Thread when no provider is u
   expect(calls.some((call) => call.cmd === 'thread/start')).toBe(false);
 });
 
+test('holds the model submenu still when its list is expanded', async ({ page }) => {
+  await openMockedApp(page, { manyModelProvider: true });
+  await page.getByRole('button', { name: 'Show Threads' }).click();
+  await page.getByRole('dialog', { name: 'Threads' }).getByRole('button', { name: 'New Thread' }).click();
+
+  await page.getByRole('button', { name: 'Model and reasoning' }).click();
+  await page.getByRole('menu', { name: 'Model and reasoning' })
+    .getByRole('menuitem', { name: 'GPT-5.4' })
+    .click();
+  const submenu = page.getByRole('menu', { name: 'Model', exact: true });
+  const firstRow = submenu.getByRole('menuitemradio').first();
+  const expander = submenu.getByRole('button', { name: /Show all \(24\)/ });
+  await expect(expander).toBeVisible();
+  const before = await submenu.evaluate((element) => ({
+    firstRowTop: element.querySelector('[role="menuitemradio"]')?.getBoundingClientRect().top,
+    top: element.getBoundingClientRect().top,
+  }));
+
+  await expander.click();
+  await expect(submenu.getByRole('menuitemradio')).toHaveCount(27);
+
+  // Nothing the reader was already reading moves: the surface keeps its place
+  // and absorbs the taller list by scrolling inside itself.
+  const after = await submenu.evaluate((element) => ({
+    firstRowTop: element.querySelector('[role="menuitemradio"]')?.getBoundingClientRect().top,
+    scrolls: element.scrollHeight > element.clientHeight,
+    top: element.getBoundingClientRect().top,
+    withinViewport: element.getBoundingClientRect().bottom <= window.innerHeight,
+  }));
+  expect(after.top).toBeCloseTo(before.top!, 0);
+  expect(after.firstRowTop).toBeCloseTo(before.firstRowTop!, 0);
+  expect(after.scrolls).toBe(true);
+  expect(after.withinViewport).toBe(true);
+});
+
 test.describe('terminal Thread history actions', () => {
   test('revises an attachment-only failed Turn through same-Thread Edit', async ({ page }) => {
     await openMockedApp(page, {

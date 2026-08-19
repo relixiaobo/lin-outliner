@@ -53,6 +53,9 @@ interface MockFixtureOptions {
   oauthProvider?: boolean;
   /** Adds an OAuth-capable OpenRouter connection backed by a stored API key. */
   oauthApiKeyProvider?: boolean;
+  /** Adds a connection with more models than the composer menu lists at rest, so
+   *  the per-provider "Show all models" expander renders. */
+  manyModelProvider?: boolean;
   /** Preloads user blocklist rules for settings/security specs. */
   capabilityBlocks?: string[];
   /** Delays initial workspace restoration so startup chrome can be asserted before data arrives. */
@@ -579,6 +582,35 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
             maxTokens: 4096,
           },
         ],
+      });
+    }
+    // Past RECENT_MODEL_COUNT, so the model submenu truncates and offers to expand.
+    if (options.manyModelProvider) {
+      agentSettings.providers.push({
+        providerId: 'many-models',
+        baseUrl: '',
+        enabled: true,
+        hasApiKey: true,
+        hasEnvApiKey: false,
+        auth: { authKind: 'api-key', credentialed: true, hasStoredKey: true },
+      });
+      agentSettings.availableProviders.push({
+        providerId: 'many-models',
+        authKind: 'api-key',
+        credentialed: true,
+        detected: true,
+        connectionStatus: 'ready',
+        hasEnvApiKey: false,
+        envKeyNames: [],
+        defaultBaseUrl: 'https://many.example/v1',
+        models: Array.from({ length: 24 }, (_, index) => ({
+          id: `many-${index + 1}`,
+          name: `Many Model ${index + 1}`,
+          reasoning: false,
+          supportedThinkingLevels: ['off'],
+          contextWindow: 128_000,
+          maxTokens: 4096,
+        })),
       });
     }
     if (options.oauthApiKeyProvider) {

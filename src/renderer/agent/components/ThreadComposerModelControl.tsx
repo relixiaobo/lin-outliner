@@ -16,6 +16,7 @@ import type { AgentModelOption, AgentProviderSettingsView } from '../../api/type
 import { useT } from '../../i18n/I18nProvider';
 import { CheckIcon, ChevronDownIcon, ChevronRightIcon, ICON_SIZE } from '../../ui/icons';
 import { ButtonControl } from '../../ui/primitives/ButtonControl';
+import { resolveFlyoutPlacement } from '../../ui/primitives/flyoutPlacement';
 import { useAnchoredOverlay } from '../../ui/primitives/useAnchoredOverlay';
 import { useMenuKeyboard } from '../../ui/primitives/useMenuKeyboard';
 import { formatProviderName } from '../../ui/agent/providerNames';
@@ -455,23 +456,27 @@ function useFlyoutStyle(
       const anchor = anchorRef.current?.getBoundingClientRect();
       const element = ref.current;
       if (!anchor || !element) return;
-      const margin = 8;
-      const gap = 4;
-      const fitsLeft = anchor.left - gap - width >= margin;
-      const left = fitsLeft
-        ? Math.max(margin, anchor.left - gap - width)
-        : clamp(anchor.right + gap, margin, Math.max(margin, window.innerWidth - width - margin));
-      const top = clamp(
-        anchor.top - margin,
-        margin,
-        Math.max(margin, window.innerHeight - element.offsetHeight - margin),
-      );
+      // `offsetHeight`, not `scrollHeight`: the rendered height is what makes
+      // the placement a fixed point under a "Show all models" that doubles the
+      // list. Measuring what the content wishes it were would move the surface
+      // out from under the reader instead of scrolling inside it.
+      const placement = resolveFlyoutPlacement({
+        anchorLeft: anchor.left,
+        anchorRight: anchor.right,
+        anchorTop: anchor.top,
+        gap: 4,
+        margin: 8,
+        measuredHeight: element.offsetHeight,
+        viewportHeight: window.innerHeight,
+        viewportWidth: window.innerWidth,
+        width,
+      });
       setStyle({
         position: 'fixed',
-        left,
-        top,
+        left: placement.left,
+        top: placement.top,
         width,
-        maxHeight: Math.max(0, window.innerHeight - 2 * margin),
+        maxHeight: placement.maxHeight,
       });
     };
     update();
@@ -485,8 +490,4 @@ function useFlyoutStyle(
     };
   }, [anchorRef, layoutKey, open, ref, width]);
   return style;
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(Number.isFinite(value) ? value : 0, max));
 }
