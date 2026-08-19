@@ -199,8 +199,11 @@ readonly presentation?: {
   agent (working / needs-you / failed / interrupted→stopped / idle), the
   registry entry's outcome for a delivered report (done / failed / stopped).
   Expressions RESTATE the adjacent status text; they never carry information
-  of their own. One module-wide rAF loop, ref-driven, animating only marks in
-  motion (A9); `prefers-reduced-motion` keeps static mood shapes with nothing
+  of their own. Blinking is a rig parameter rather than a CSS transform, so the
+  stylesheet carries no motion literal and no scale — both are product-wide
+  design guards. One module-wide rAF loop, ref-driven, animating only marks in
+  motion and only while on screen (A9), re-entry-guarded against synchronous
+  schedulers; `prefers-reduced-motion` keeps static mood shapes with nothing
   moving.
 
 ### 3. Conversation-flow identity layout (PR-A)

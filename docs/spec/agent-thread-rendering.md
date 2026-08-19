@@ -232,11 +232,16 @@ type, one mark — everywhere, in every conversation.** The marks are ALIVE, wit
   bind to the header only, so a still pointer costs nothing. A working mark
   scans line-by-line on its own.
 - **Blinking.** Mostly both eyes, now and then just one, each mark on its own
-  clock, fast shut and relaxed open. Closed-eye moods (done, stopped, failed)
-  do not blink.
+  clock, fast shut and unhurried open. A blink is a rig PARAMETER — the stroke
+  collapses onto its own anchor — not a CSS transform on the mask group: a
+  scale there is the layout-free "pop" B7 refuses, and its duration would be an
+  untokenized motion literal (B1). The stylesheet holds no animation for the
+  mark at all. Closed-eye moods (done, stopped, failed) do not blink.
 - **Motion discipline.** One module-wide rAF loop animates only marks with
-  something actually moving and stops when none has; updates are ref-driven
-  attribute writes, never React state (A9). `prefers-reduced-motion` keeps
+  something actually moving, stops when none has, and sleeps between blinks on
+  a timer; marks scrolled out of view hold still. Updates are ref-driven
+  attribute writes, never React state (A9). A scheduler that calls back
+  synchronously is guarded against re-entry. `prefers-reduced-motion` keeps
   each mood's static shape and stills everything.
 Derived rather than enumerated, since a project can name a type anything at all
 in `.claude/agents/*.md` and a hand-kept table would miss exactly the ones that

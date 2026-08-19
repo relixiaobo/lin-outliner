@@ -428,26 +428,12 @@
      outliner = --panel-content-x + --row-leading-width, agent =
      --agent-content-x, settings = inset-row text padding. Do not flatten them
      into one value; converge within a surface instead. */
-  /* The participant portrait in the agent transcript, and with its gap the lane
-     everything that participant said hangs from (--speaker-text-inset). Sized
-     for a FACE rather than for an initial: at 16px a portrait is a smudge, and
-     the whole reason the lane is worth a tenth of a 344px deck is that a face
-     identifies a speaker faster than reading its name does.
-
-     Sized to ANCHOR THE HEADER, not to match one line of text — the rule every
-     mobile IM follows (Slack 36, Discord 40, WeChat/Telegram 40, iMessage 28,
-     all against ~18px lines). Tenon's header is two lines because its work line
-     grows while a Turn runs, which makes the requirement stronger, not weaker:
-     a disc scaled to one line covered the name and left the line under it
-     dangling beside empty margin.
-
-     Held at the low end of that range because this portrait is a flat drawing
-     on a saturated disc, not a photograph: it carries more graphic weight per
-     pixel than the faces those apps show, and in a rail whose every other mark
-     is neutral it starts to dominate before it reaches their sizes. It still
-     spans about three quarters of the two-line header, which is what anchoring
-     asks for. Content below hangs from the name, so rows inside it keep their
-     own glyph column intact. */
+  /* The participant mark in the agent transcript. Sized to ANCHOR the two-line
+     header rather than to match one line of text — the rule every mobile IM
+     follows (Slack 36, Discord 40, WeChat/Telegram 40, iMessage 28, all against
+     ~18px lines). Held at the low end of that range because a flat mark carries
+     more graphic weight per pixel than a photograph. The message body does NOT
+     hang from it: content takes the full column (see agent-thread-rendering). */
   --speaker-avatar-size: 28px;
   --row-leading-width: 42px;
   --row-leading-height: var(--line-content);

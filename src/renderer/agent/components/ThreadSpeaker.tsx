@@ -99,23 +99,33 @@ export function ThreadSpeakerGroup({
   // would move the eyes by a hair. Events fire only over the header, so a
   // still pointer costs nothing anywhere else (A9).
   const markHandle = useRef<AgentMarkHandle>(null);
+  // The mark's rect is measured ONCE per pointer entry, not per move: reading
+  // it on every event forces a synchronous layout flush at pointer rate, and
+  // in a streaming transcript that is the hot path (A9). It cannot move while
+  // the pointer is inside without a scroll, which ends the hover anyway.
+  const markRect = useRef<DOMRect | null>(null);
+  const onPointerEnter = useCallback((event: PointerEvent<HTMLDivElement>) => {
+    const anchor = event.currentTarget.querySelector('.thread-speaker-avatar');
+    markRect.current = anchor?.getBoundingClientRect() ?? null;
+  }, []);
   const onPointerMove = useCallback((event: PointerEvent<HTMLDivElement>) => {
-    const mark = markHandle.current;
-    const header = event.currentTarget;
-    const anchor = header.querySelector('.thread-speaker-avatar');
-    if (!mark || !anchor) return;
-    const rect = anchor.getBoundingClientRect();
+    const rect = markRect.current;
+    if (!rect) return;
     const unit = Math.max(rect.width, 1);
-    mark.setPointer(
+    markHandle.current?.setPointer(
       (event.clientX - (rect.left + rect.width / 2)) / unit,
       (event.clientY - (rect.top + rect.height / 2)) / unit,
     );
   }, []);
-  const onPointerLeave = useCallback(() => markHandle.current?.clearPointer(), []);
+  const onPointerLeave = useCallback(() => {
+    markRect.current = null;
+    markHandle.current?.clearPointer();
+  }, []);
   return (
     <div className="thread-speaker">
       <div
         className="thread-speaker-header"
+        onPointerEnter={onPointerEnter}
         onPointerLeave={onPointerLeave}
         onPointerMove={onPointerMove}
       >

@@ -31,11 +31,17 @@ describe('speaker header column CSS guards', () => {
     expect(avatar).not.toContain('box-shadow');
   });
 
-  test('blinks asymmetrically and honors reduced motion', () => {
-    // Fast shut, relaxed open — equal speeds read as a machine.
-    expect(threadCss).toMatch(/\.agent-mark-eye \{[^}]*transition:\s*transform 150ms/);
-    expect(threadCss).toMatch(/\.agent-mark-eye\.is-shut \{[^}]*transition:\s*transform 55ms/);
-    expect(threadCss).toMatch(/prefers-reduced-motion[^}]*\{[^{]*\.agent-mark-eye/);
+  test('leaves the mark\'s animation to the rig, not the stylesheet', () => {
+    // The eyes blink, morph and turn through `agentMarkGeometry` and one rAF
+    // loop. The stylesheet must hold none of it: a scale on the mask group is
+    // the layout-free "pop" B7 refuses, and a bare duration is an untokenized
+    // motion literal — both are product-wide e2e guards, and both were tripped
+    // by an earlier CSS-driven blink.
+    const eye = threadCss.match(/\.agent-mark-eye \{[^}]*\}/)?.[0] ?? '';
+    expect(eye).toContain('transform-box: view-box;');
+    expect(eye).not.toMatch(/\bscale(?:3d|X|Y|Z)?\s*\(/);
+    expect(eye).not.toMatch(/\b\d+(?:\.\d+)?m?s\b/);
+    expect(threadCss).not.toContain('agent-mark-eye.is-shut');
   });
 
   test('lands the work line on the same edge as the name it sits under', () => {

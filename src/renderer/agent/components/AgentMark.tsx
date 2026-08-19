@@ -39,6 +39,25 @@ interface LiveMark {
   mood: MarkMood;
   pointer: { x: number; y: number } | null;
   scanX: number; scanAt: number;
+  /** Which eyes the current blink closes; empty between blinks. */
+  blinking: readonly (0 | 1)[];
+  blinkStart: number; blinkAt: number;
+  /** Off-screen marks hold still: paint nobody sees is paint wasted (A9). */
+  visible: boolean;
+}
+
+// A blink is fast to shut and unhurried to open — equal speeds in both
+// directions are the tell of a machine. Milliseconds live here, in script,
+// because CSS motion must come from the `--motion-*` tokens (B1/B11) and no
+// token pairs a 55ms close with a 150ms open.
+const BLINK_SHUT_MS = 55, BLINK_HOLD_MS = 40, BLINK_OPEN_MS = 150;
+const BLINK_MIN_GAP_MS = 2600, BLINK_JITTER_MS = 4600;
+
+function blinkOpenness(elapsed: number): number {
+  if (elapsed < BLINK_SHUT_MS) return 1 - (elapsed / BLINK_SHUT_MS) ** 2;
+  if (elapsed < BLINK_SHUT_MS + BLINK_HOLD_MS) return 0;
+  const opening = (elapsed - BLINK_SHUT_MS - BLINK_HOLD_MS) / BLINK_OPEN_MS;
+  return opening >= 1 ? 1 : 1 - (1 - opening) ** 2;
 }
 
 // ── the coordinator ──────────────────────────────────────────────────────────
@@ -47,10 +66,18 @@ interface LiveMark {
 // working scan — and the loop stops entirely when the set empties.
 const live = new Set<LiveMark>();
 let raf = 0, last = 0;
+// A scheduler that calls back SYNCHRONOUSLY — a test shim, a polyfill — would
+// otherwise re-enter this frame from inside itself and recurse without bound.
+// Real rAF is always async, so the guard costs production nothing and turns a
+// stack overflow into "one frame, then still".
+let inStep = false;
 
-function apply(mark: LiveMark): void {
+function apply(mark: LiveMark, openness: readonly [number, number] = [1, 1]): void {
   for (const [index, sign] of [[0, -1], [1, 1]] as const) {
-    const eye = renderMarkEye(mark.cur, mark.yaw, mark.pitch, sign);
+    const eye = renderMarkEye(
+      { ...mark.cur, openness: mark.cur.openness * openness[index]! },
+      mark.yaw, mark.pitch, sign,
+    );
     const path = mark.eyes[index], group = mark.groups[index];
     path.setAttribute('d', eye.d);
     path.setAttribute('stroke-width', eye.width.toFixed(2));
@@ -63,6 +90,16 @@ function snapshot(mark: LiveMark): string {
 }
 
 function step(ts: number): void {
+  if (inStep) return;
+  inStep = true;
+  try {
+    stepFrame(ts);
+  } finally {
+    inStep = false;
+  }
+}
+
+function stepFrame(ts: number): void {
   const dt = Math.min(50, ts - (last || ts)); last = ts;
   const kMood = 1 - Math.exp(-dt / 110);   // expressions settle quickly
   const kPose = 1 - Math.exp(-dt / 150);   // the head has more mass
@@ -81,21 +118,69 @@ function step(ts: number): void {
     } else {
       mark.tgtYaw = 0; mark.tgtPitch = 0;
     }
+    // Blinking, scheduled per mark: mostly both eyes, now and then just one.
+    // Closed-eye moods do not blink — a sleeping face that blinks is worse
+    // than one that never does.
+    let openness: [number, number] = [1, 1];
+    if (mark.blinking.length > 0) {
+      const elapsed = ts - mark.blinkStart;
+      if (elapsed > BLINK_SHUT_MS + BLINK_HOLD_MS + BLINK_OPEN_MS) {
+        mark.blinking = [];
+        mark.blinkAt = ts + BLINK_MIN_GAP_MS + Math.random() * BLINK_JITTER_MS;
+      } else {
+        const factor = blinkOpenness(elapsed);
+        for (const eye of mark.blinking) openness[eye] = factor;
+      }
+    } else if (ts >= mark.blinkAt && AWAKE_MARK_MOODS.includes(mark.mood)) {
+      mark.blinking = Math.random() < 0.16 ? [Math.random() < 0.5 ? 0 : 1] : [0, 1];
+      mark.blinkStart = ts;
+    } else if (ts >= mark.blinkAt) {
+      mark.blinkAt = ts + BLINK_MIN_GAP_MS + Math.random() * BLINK_JITTER_MS;
+    }
     const before = snapshot(mark);
     mark.cur = mixMarkParams(mark.cur, mark.tgt, kMood);
     mark.yaw += (mark.tgtYaw - mark.yaw) * kPose;
     mark.pitch += (mark.tgtPitch - mark.pitch) * kPose;
-    apply(mark);
-    const moving = mark.pointer !== null || mark.mood === 'working' || before !== snapshot(mark);
-    if (!moving) live.delete(mark);
+    apply(mark, openness);
+    const settled = mark.pointer === null && mark.mood !== 'working'
+      && mark.blinking.length === 0 && before === snapshot(mark);
+    // A settled mark leaves the loop but keeps its place in the blink
+    // schedule; the timer that wakes it is the only thing still running.
+    if (settled) {
+      live.delete(mark);
+      if (mark.visible && AWAKE_MARK_MOODS.includes(mark.mood)) scheduleWake(mark);
+    }
   }
   raf = live.size > 0 ? requestAnimationFrame(step) : 0;
   if (raf === 0) last = 0;
 }
 
 function wake(mark: LiveMark): void {
+  const timer = wakeTimers.get(mark);
+  if (timer !== undefined) { clearTimeout(timer); wakeTimers.delete(mark); }
   live.add(mark);
   if (raf === 0 && typeof requestAnimationFrame === 'function') raf = requestAnimationFrame(step);
+}
+
+/**
+ * Sleep until this mark's next blink is due, then rejoin the loop. Between
+ * blinks a still mark costs one pending timer and nothing else — no rAF, no
+ * paint — which is what lets a transcript hold fifty of them.
+ */
+const wakeTimers = new WeakMap<LiveMark, ReturnType<typeof setTimeout>>();
+function scheduleWake(mark: LiveMark): void {
+  if (wakeTimers.has(mark)) return;
+  const delay = Math.max(16, mark.blinkAt - (typeof performance === 'object' ? performance.now() : 0));
+  wakeTimers.set(mark, setTimeout(() => {
+    wakeTimers.delete(mark);
+    if (mark.visible) wake(mark);
+  }, delay));
+}
+
+export function stopMark(mark: LiveMark): void {
+  live.delete(mark);
+  const timer = wakeTimers.get(mark);
+  if (timer !== undefined) { clearTimeout(timer); wakeTimers.delete(mark); }
 }
 
 function reducedMotion(): boolean {
@@ -129,11 +214,29 @@ export const AgentMark = forwardRef<AgentMarkHandle, {
       cur: params, tgt: params,
       yaw: 0, pitch: 0, tgtYaw: 0, tgtPitch: 0,
       mood: moodRef.current, pointer: null, scanX: -1, scanAt: 0,
+      blinking: [], blinkStart: 0,
+      blinkAt: (typeof performance === 'object' ? performance.now() : 0)
+        + 600 + Math.random() * 3400,
+      visible: true,
     };
     markRef.current = mark;
     apply(mark);
-    if (mark.mood === 'working' && !reducedMotion()) wake(mark);
-    return () => { live.delete(mark); markRef.current = null; };
+    if (reducedMotion()) return () => { stopMark(mark); markRef.current = null; };
+
+    // Only marks the reader can actually see animate. A transcript scrolled
+    // back holds dozens; blinking them all drives paint on rows nobody is
+    // looking at, and on a backgrounded window that is pure waste.
+    let observer: IntersectionObserver | null = null;
+    if (typeof IntersectionObserver === 'function') {
+      observer = new IntersectionObserver(([entry]) => {
+        mark.visible = entry?.isIntersecting ?? true;
+        if (mark.visible) wake(mark); else stopMark(mark);
+      });
+      observer.observe(svg);
+    } else {
+      wake(mark);
+    }
+    return () => { observer?.disconnect(); stopMark(mark); markRef.current = null; };
   }, []);
 
   // Mood transitions morph through the shared loop; under reduced motion the
@@ -166,34 +269,6 @@ export const AgentMark = forwardRef<AgentMarkHandle, {
     },
   }), []);
 
-  // Blinking: mostly both eyes, now and then just one, on this mark's own
-  // clock — twenty faces blinking on a shared beat read as a screensaver, and
-  // lockstep eyes are the tell of a machine. Closed-eye moods do not blink: a
-  // sleeping face that blinks is worse than one that never does.
-  useEffect(() => {
-    const svg = svgRef.current;
-    if (!svg || reducedMotion()) return;
-    const eyes = [...svg.querySelectorAll('.agent-mark-eye')];
-    if (eyes.length !== 2) return;
-    const timers = new Set<ReturnType<typeof setTimeout>>();
-    const later = (fn: () => void, ms: number) => {
-      const t = setTimeout(() => { timers.delete(t); fn(); }, ms);
-      timers.add(t);
-    };
-    const shut = (targets: Element[], ms: number) => {
-      for (const eye of targets) eye.classList.add('is-shut');
-      later(() => { for (const eye of targets) eye.classList.remove('is-shut'); }, ms);
-    };
-    const tick = () => {
-      if (AWAKE_MARK_MOODS.includes(moodRef.current)) {
-        if (Math.random() < 0.16) shut([eyes[Math.random() < 0.5 ? 0 : 1]!], 180);
-        else shut([...eyes], 100);
-      }
-      later(tick, 2600 + Math.random() * 4600);
-    };
-    later(tick, 600 + Math.random() * 3400);
-    return () => { for (const t of timers) clearTimeout(t); };
-  }, []);
 
   // First paint carries the mood's static geometry, so a mark is correct
   // before any effect runs (and permanently correct under reduced motion).

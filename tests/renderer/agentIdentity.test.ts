@@ -43,6 +43,26 @@ describe('agent identity resolution', () => {
     expect(resolveAgentIdentity(stale, 'explore').color).toBe(deriveIdentityColor('explore'));
   });
 
+  test('names the conversation\'s own agent from the caller before the catalog lands', () => {
+    // `identities/get` can be slow or fail; until it answers, every other type
+    // is named after itself, but `main` is a key the reader should never see —
+    // the caller's translated label stands in.
+    expect(resolveAgentIdentity(EMPTY_IDENTITY_CATALOG, 'main', '主对话').name).toBe('主对话');
+    // A known type still prefers its own name over any caller fallback.
+    expect(resolveAgentIdentity(EMPTY_IDENTITY_CATALOG, 'explore', 'ignored').name).toBe('explore');
+  });
+
+  test('refuses an inherited property as a colour', () => {
+    // `in` walks the prototype chain: an entry claiming `toString` would pass
+    // and hand a Function to the renderer as a tint index.
+    const hostile = identityCatalogFrom([
+      { agentType: 'explore', persona: 'Rena', color: 'toString', source: 'user' },
+    ]);
+    const resolved = resolveAgentIdentity(hostile, 'explore');
+    expect(typeof resolved.tint).toBe('number');
+    expect(resolved.color).toBe(deriveIdentityColor('explore'));
+  });
+
   test('keys the derived colour off the type, so renaming a persona cannot repaint it', () => {
     const before = resolveAgentIdentity(EMPTY_IDENTITY_CATALOG, 'reviewer');
     expect(resolveAgentIdentity(EMPTY_IDENTITY_CATALOG, 'reviewer')).toEqual(before);

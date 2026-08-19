@@ -134,6 +134,13 @@ import { SubagentReport } from './SubagentReport';
 import { ThreadSpeakerGroup, type ThreadSpeaker } from './ThreadSpeaker';
 import { MAIN_IDENTITY_KEY } from '../agentIdentity';
 import type { MarkMood } from '../agentMarkGeometry';
+
+/**
+ * The speaker id for a host notice the renderer could not attribute. Distinct
+ * from `main` so consecutive-speaker merging never folds an unnamed event into
+ * the conversation's own agent.
+ */
+const UNATTRIBUTED_PARTICIPANT_ID = 'unattributed';
 import { useSubagentEntry, useWorkingAgentIds } from './SubagentRegistryContext';
 import { classifyNewThreadCommand } from '../threadComposerCommands';
 import { parseNodeReferenceMarkers } from '../../../core/referenceMarkup';
@@ -2694,9 +2701,16 @@ export const ThreadTurnView = memo(function ThreadTurnView({
     // Only the Turn's own notice is somebody else's; anything the reader typed
     // into it afterwards is theirs, wherever the Turn came from.
     if (block.item.id !== hostNoticeItemId) return null;
+    // Nobody could be named for this notice. It must NOT borrow `main`'s
+    // identity: `resolveAgentIdentity` resolves a known type's persona over
+    // the caller's name, so `avatarKey: main` signed an unattributable event
+    // with the conversation's own persona and mark — and left the deliberately
+    // non-committal string dead in every locale. An empty key resolves to
+    // nothing, which is what falls through to that string and to a colour
+    // derived from it.
     return hostSpeaker ?? peerSpeaker ?? {
-      participantId: MAIN_IDENTITY_KEY,
-      avatarKey: MAIN_IDENTITY_KEY,
+      participantId: UNATTRIBUTED_PARTICIPANT_ID,
+      avatarKey: '',
       name: t.agent.thread.agentEvent,
     };
   };
@@ -2760,7 +2774,7 @@ export const ThreadTurnView = memo(function ThreadTurnView({
     }
   }
   if (responseItem === null && responseTail) {
-    emit(selfSpeaker, (
+    emit(moodedSelf, (
       <article
         className="thread-item thread-agent-message thread-agent-message-response"
         key={`tail:${turn.id}`}

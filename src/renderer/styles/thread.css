@@ -849,12 +849,11 @@
   gap: var(--space-3);
 }
 
-/* Portrait, name, and what this participant is, on ONE line — with the words
-   below sharing the NAME's left edge, not the portrait's. The avatar lane is
-   what mobile IM spends at exactly this width, and it earns the ~26px here
-   because it carries a face: a portrait is an identity signal in itself rather
-   than a restatement of the name beside it, and the shared text edge turns a
-   change of speaker into something the eye catches without reading. */
+/* Mark, name, and what this participant is — the header row. The words below
+   do NOT hang from the name: content takes the full column, because what
+   arrives in this deck is documents (tables, code, galleries) in the narrowest
+   column the app has. What an indent would buy is a visible change of speaker,
+   and this row says that louder anyway. */
 .thread-speaker-header {
   display: flex;
   min-width: 0;
@@ -907,24 +906,14 @@
   display: block;
 }
 
-/* The mark's eyes. Holes in the mask, closed by a fast lid and reopened by a
-   slower one — equal speeds both ways are the tell of a machine. */
+/* The mark's eyes are HOLES in a mask, and their whole animation — blink,
+   expression, gaze — is geometry recomputed by the rig's rAF loop
+   (`agentMarkGeometry`). Nothing here transitions or transforms: a scale on
+   the group would be the layout-free "pop" B7 refuses, and a bare duration
+   would be an untokenized motion literal. The stylesheet holds only what a
+   mask group needs to accept a JS-driven origin. */
 .agent-mark-eye {
   transform-box: view-box;
-  transition: transform 150ms cubic-bezier(.22, .61, .36, 1);
-}
-
-.agent-mark-eye.is-shut {
-  transform: scaleY(.08);
-  transition: transform 55ms cubic-bezier(.4, 0, 1, 1);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .agent-mark-eye,
-  .agent-mark-eye.is-shut {
-    transform: none;
-    transition: none;
-  }
 }
 
 /* What the participant IS, beside what it is called. Quieter than the name: one

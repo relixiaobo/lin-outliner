@@ -1,3 +1,5 @@
+import { identitySlot } from '../identityHash';
+
 export const REASONING_EFFORTS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
 export type ReasoningEffort = typeof REASONING_EFFORTS[number];
 
@@ -114,23 +116,17 @@ export const DERIVED_IDENTITY_COLORS: readonly IdentityColor[] = Object.freeze(
   IDENTITY_COLORS.filter((color) => !Object.values(DEFAULT_AGENT_PRESENTATIONS).some((p) => p.color === color)),
 );
 
-/** FNV-1a, folded — the stable hash the identity system keys off. */
-export function identityHash(value: string): number {
-  let hash = 2166136261;
-  for (let index = 0; index < value.length; index++) {
-    hash ^= value.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return (hash ^ (hash >>> 16)) >>> 0;
-}
-
 /**
  * The colour an identity wears when nobody chose one. Deterministic in the
  * identity key, so the same Role is the same hue in every conversation and
  * after every restart; degrades never — any string resolves to a palette hue.
+ *
+ * Keyed through the SHARED `identitySlot`, not a second hash of its own: tag
+ * chips and identity marks draw from one palette, and one family reads as one
+ * family only while there is one derivation.
  */
 export function deriveIdentityColor(key: string): IdentityColor {
-  return DERIVED_IDENTITY_COLORS[identityHash(key) % DERIVED_IDENTITY_COLORS.length]!;
+  return DERIVED_IDENTITY_COLORS[identitySlot(key, DERIVED_IDENTITY_COLORS.length)]!;
 }
 
 export interface EffectiveThreadConfiguration {

@@ -102,6 +102,7 @@ export class ThreadStore {
   private unsubscribeNotifications: (() => void) | null = null;
   private initializePromise: Promise<void> | null = null;
   private readonly loadGenerations = new Map<ThreadId, number>();
+  private identityCatalogGeneration = 0;
   private readonly historyRevisions = new Map<ThreadId, number>();
   private readonly configurationRevisions = new Map<ThreadId, number>();
   private readonly outputTextCache = new Map<string, Promise<string | null>>();
@@ -129,9 +130,10 @@ export class ThreadStore {
     this.initializePromise = this.reloadThreads().catch((error) => {
       this.patch({ loading: false, error: errorMessage(error) });
     });
-    // Alongside, not before: participants can be named from built-in defaults
-    // the moment the catalog lands, and a conversation must not wait on it.
-    void this.reloadIdentityCatalog();
+    // The catalog resolves against the SELECTED conversation's working
+    // directory, and `reloadThreads` is what picks that conversation — so it
+    // re-resolves there. Kicking one off here as well only paints the
+    // built-ins a few frames sooner, and would race the real answer.
     return this.initializePromise;
   }
 
@@ -145,8 +147,14 @@ export class ThreadStore {
    */
   async reloadIdentityCatalog(): Promise<void> {
     const threadId = this.snapshot.selectedThreadId;
+    // Generation-guarded like every other read in this store: two selections in
+    // quick succession — or startup racing the first one — otherwise let the
+    // slower answer land last and leave the roster resolved for a working
+    // directory the reader already left.
+    const generation = ++this.identityCatalogGeneration;
     try {
       const response = await this.client.agentCoreRequest('identities/get', { threadId });
+      if (generation !== this.identityCatalogGeneration) return;
       this.patch({ identityCatalog: identityCatalogFrom(response.entries) });
     } catch {
       // Keep whatever the last successful resolution produced.
@@ -191,6 +199,10 @@ export class ThreadStore {
       loading: false,
       error: null,
     });
+    // A restored conversation can live in a project that defines its own Roles
+    // or re-skins; until this resolves against its cwd, the roster is only the
+    // user layer and the built-ins.
+    void this.reloadIdentityCatalog();
     if (selected) {
       // The same two reads a selection makes: `thread/list` is roots-only, so a
       // restored conversation knows neither its Agents nor their child Threads

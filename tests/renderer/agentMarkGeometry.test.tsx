@@ -1,4 +1,7 @@
 import { describe, expect, test } from 'bun:test';
+import { act } from 'react';
+import { createRoot } from 'react-dom/client';
+import { parseHTML } from 'linkedom';
 import {
   AWAKE_MARK_MOODS,
   MARK_MOODS,
@@ -11,6 +14,45 @@ import {
 } from '../../src/renderer/agent/agentMarkGeometry';
 
 const MOOD_KEYS = Object.keys(MARK_MOODS) as MarkMood[];
+
+describe('agent mark animation loop', () => {
+  test('survives a scheduler that calls back synchronously', async () => {
+    // A synchronous rAF — a test shim, a polyfill — once re-entered the loop
+    // from inside its own frame and recursed until the stack blew. Real rAF is
+    // async, so guarding costs production nothing and turns an overflow into
+    // "one frame, then still".
+    const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
+    const saved = ['document', 'window', 'HTMLElement', 'Node', 'Event'].map(
+      (key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)] as const,
+    );
+    for (const [key] of saved) {
+      Object.defineProperty(globalThis, key, {
+        configurable: true,
+        value: key === 'window' ? window : (window as unknown as Record<string, unknown>)[key],
+      });
+    }
+    let frames = 0;
+    const previousRaf = globalThis.requestAnimationFrame;
+    globalThis.requestAnimationFrame = ((callback: FrameRequestCallback) => {
+      frames += 1;
+      if (frames < 500) callback(frames);
+      return frames;
+    }) as typeof globalThis.requestAnimationFrame;
+    try {
+      const { AgentMark } = await import('../../src/renderer/agent/components/AgentMark');
+      const root = createRoot(document.getElementById('root')!);
+      expect(() => act(() => root.render(<AgentMark mood="working" size={28} tint={4} />)))
+        .not.toThrow();
+      act(() => root.unmount());
+    } finally {
+      globalThis.requestAnimationFrame = previousRaf;
+      for (const [key, descriptor] of saved) {
+        if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+        else delete (globalThis as Record<string, unknown>)[key];
+      }
+    }
+  });
+});
 
 describe('agent mark geometry', () => {
   test('keeps every eye inside the silhouette at every mood and pose', () => {
@@ -75,6 +117,25 @@ describe('agent mark geometry', () => {
     expect(mixMarkParams(idle, done, 1)).toEqual(done);
     const mid = mixMarkParams(idle, done, 0.5);
     expect(mid.vc).toBeCloseTo((idle.vc + done.vc) / 2, 5);
+  });
+
+  test('a blink squashes the eye onto its anchor without moving it', () => {
+    // Blinking is a rig PARAMETER, not a CSS scale on the mask group: a
+    // transform there is the layout-free pop B7 refuses, and its timing would
+    // be an untokenized motion literal. Closing must collapse the stroke
+    // vertically while the anchor — the thing the pose positions — holds.
+    const open = markMoodParams('idle');
+    const shut = { ...open, openness: 0.02 };
+    const a = renderMarkEye(open, 0, 0, -1), b = renderMarkEye(shut, 0, 0, -1);
+    expect(b.originX).toBeCloseTo(a.originX, 6);
+    expect(b.originY).toBeCloseTo(a.originY, 6);
+    const height = (eye: { d: string }) => {
+      const ys = [...eye.d.matchAll(/-?\d+\.\d+/g)].map(Number).filter((_, i) => i % 2 === 1);
+      return Math.max(...ys) - Math.min(...ys);
+    };
+    expect(height(b)).toBeLessThan(height(a) * 0.2);
+    // Stroke width is untouched: a closing eye becomes a line, not a dot.
+    expect(b.width).toBeCloseTo(a.width, 6);
   });
 
   test('closed-eye moods are exactly the ones that do not blink', () => {

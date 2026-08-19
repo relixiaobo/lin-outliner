@@ -52,11 +52,18 @@ export function resolveAgentIdentity(
   fallbackName?: string,
 ): AgentIdentity {
   const entry = agentType === null ? undefined : catalog.get(agentType);
-  const name = entry?.persona?.trim() || agentType?.trim() || fallbackName?.trim() || '?';
+  const name = entry?.persona?.trim()
+    // Before the catalog answers — or if it never does — the conversation's own
+    // agent still deserves a name rather than the raw key `main`. Every other
+    // type IS named after itself, which is what an unconfigured Role should
+    // look like.
+    || (agentType === MAIN_IDENTITY_KEY ? fallbackName?.trim() : agentType?.trim())
+    || agentType?.trim() || fallbackName?.trim() || '?';
   // The catalog's colour is trusted but not blindly: a stale entry naming a
   // hue the palette no longer has degrades to derivation instead of drawing
-  // nothing.
-  const color = entry !== undefined && entry.color in IDENTITY_COLOR_TINT
+  // nothing. `hasOwn`, not `in`: an entry claiming `toString` would otherwise
+  // pass and hand a function to the renderer as a tint.
+  const color = entry !== undefined && Object.hasOwn(IDENTITY_COLOR_TINT, entry.color)
     ? entry.color as IdentityColor
     : deriveIdentityColor(agentType ?? fallbackName ?? MAIN_IDENTITY_KEY);
   return { name, color, tint: IDENTITY_COLOR_TINT[color] };

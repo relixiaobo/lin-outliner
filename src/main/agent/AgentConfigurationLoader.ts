@@ -282,7 +282,11 @@ export class AgentConfigurationLoader {
    * Presentation must never move those bytes, so it travels its own path.
    */
   resolveIdentityCatalog(cwd: string): readonly AgentIdentityEntry[] {
+    // One parse of each layer for the whole call: `agentTypeCandidates` reads
+    // the same merge, and `loadMerged` has no cache, so taking the default
+    // path read both files twice per request.
     const merged = this.loadMerged(cwd);
+    const candidates = this.agentTypeCandidates(cwd, merged);
     const overlay = (key: string, base: AgentPresentation): AgentPresentation => {
       const override = merged.presentationOverrides.get(key);
       return {
@@ -300,7 +304,7 @@ export class AgentConfigurationLoader {
       color: main.color,
       source: 'built-in',
     }];
-    for (const candidate of this.agentTypeCandidates(cwd)) {
+    for (const candidate of candidates) {
       const type = candidate.canonicalType;
       const declared = candidate.role.presentation;
       const base: AgentPresentation = {
@@ -318,8 +322,8 @@ export class AgentConfigurationLoader {
     return Object.freeze(entries);
   }
 
-  private agentTypeCandidates(cwd: string): ResolvedAgentType[] {
-    const merged = this.loadMerged(cwd);
+  private agentTypeCandidates(cwd: string, preloaded?: ConfigurationLayer): ResolvedAgentType[] {
+    const merged = preloaded ?? this.loadMerged(cwd);
     const builtIns = BUILT_IN_AGENT_TYPES.map((entry): ResolvedAgentType => ({
       canonicalType: entry.canonicalType,
       role: BUILT_IN_AGENT_ROLE_DEFINITIONS[entry.backingRole]!,
@@ -639,7 +643,9 @@ function validateDefinitionName(value: string, path: string): void {
 const MAX_PERSONA_LENGTH = 40;
 
 function validatePersona(value: string, path: string): void {
-  if (value.trim() !== value) throw new Error(`${path} must not start or end with whitespace`);
+  // Leading/trailing space is not checked here: `nonEmptyString` upstream has
+  // already trimmed it, so the branch that once lived here could never fire
+  // and its error message promised a rejection that never happened.
   if (/[\n\r]/u.test(value)) throw new Error(`${path} must be a single line`);
   if ([...value].length > MAX_PERSONA_LENGTH) {
     throw new Error(`${path} must be at most ${MAX_PERSONA_LENGTH} characters`);

@@ -116,7 +116,13 @@ async function renderSpeaker({ meta, ...speaker }: {
     identityCatalog: identityCatalogFrom(ROSTER),
   };
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
-  savedGlobals = GLOBAL_KEYS.map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]);
+  // Captured ONCE per test: a second render inside one test would otherwise
+  // record the first render's patched globals as the "original", and afterEach
+  // would restore linkedom's document/window into every later test instead of
+  // deleting them.
+  if (savedGlobals.length === 0) {
+    savedGlobals = GLOBAL_KEYS.map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]);
+  }
   for (const key of GLOBAL_KEYS) {
     Object.defineProperty(globalThis, key, {
       configurable: true,

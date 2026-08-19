@@ -30,10 +30,19 @@ export interface MarkEyeParams {
   readonly look: number;
   /** Uniform scale, for the wide-open ask. */
   readonly grow: number;
+  /**
+   * How open the eye is, 1 → 0. A blink is a PARAMETER of the rig, not a CSS
+   * transform on the group: it collapses the stroke toward its own anchor, so
+   * it composes with whatever mood is showing (an agent can blink mid-scan)
+   * and needs neither a scale transform nor a timing literal in the
+   * stylesheet — both of which the design guards refuse, rightly, since a
+   * scale on a mask group is exactly the "hover pop" B7 exists to prevent.
+   */
+  readonly openness: number;
 }
 
 export const MARK_EYE_BASE: MarkEyeParams = Object.freeze({
-  u1: 0, v1: -1.6, uc: 0, vc: 0, u2: 0, v2: 1.6, w: 4.6, look: 0, grow: 1,
+  u1: 0, v1: -1.6, uc: 0, vc: 0, u2: 0, v2: 1.6, w: 4.6, look: 0, grow: 1, openness: 1,
 });
 
 /**
@@ -97,6 +106,9 @@ export function projectMarkEye(
   // behaviour layer never requests but the maths must still survive. When a
   // box is too large for the room at all, it centres rather than crossing.
   const uMax = Math.max(Math.abs(m.u1), Math.abs(m.u2), Math.abs(m.uc)) * m.grow;
+  // Measured at FULL openness on purpose: a blink only ever shrinks the box,
+  // so the clamp computed here stays valid mid-blink and the anchor does not
+  // drift while an eye closes.
   const vMax = Math.max(Math.abs(m.v1), Math.abs(m.v2), Math.abs(m.vc)) * m.grow;
   const halfW = uMax * fx + m.w / 2, halfH = vMax + m.w / 2;
   const clampAxis = (value: number, centre: number, half: number, otherOffset: number): number => {
@@ -131,8 +143,12 @@ export function renderMarkEye(
 ): RenderedEye {
   const { px, py, fx } = projectMarkEye(m, yaw, pitch, sign);
   const g = m.grow;
+  // Openness squashes the stroke onto its anchor; the outward axis is
+  // untouched, so a closing eye narrows to a line rather than shrinking to a
+  // dot — which is what a lid does.
+  const o = Math.max(0.02, m.openness);
   const x = (u: number) => px + sign * u * g * fx;
-  const y = (v: number) => py + v * g;
+  const y = (v: number) => py + v * g * o;
   return {
     d: `M${x(m.u1).toFixed(2)} ${y(m.v1).toFixed(2)} Q${x(m.uc).toFixed(2)} ${y(m.vc).toFixed(2)} ${x(m.u2).toFixed(2)} ${y(m.v2).toFixed(2)}`,
     width: m.w * g * (0.55 + 0.45 * fx),
@@ -153,5 +169,6 @@ export function mixMarkParams(from: MarkEyeParams, to: MarkEyeParams, k: number)
     uc: lerp(from.uc, to.uc), vc: lerp(from.vc, to.vc),
     u2: lerp(from.u2, to.u2), v2: lerp(from.v2, to.v2),
     w: lerp(from.w, to.w), look: lerp(from.look, to.look), grow: lerp(from.grow, to.grow),
+    openness: lerp(from.openness, to.openness),
   };
 }

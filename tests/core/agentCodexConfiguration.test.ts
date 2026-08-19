@@ -29,7 +29,6 @@ describe('Codex Agent Core configuration and Goal contracts', () => {
       source: 'builtIn',
       description: 'Read-only repository exploration.',
       developerInstructions: 'Inspect and report.',
-      nicknameCandidates: ['Scout'],
       overrides: {
         model: 'explorer-model',
         reasoningEffort: 'medium',
