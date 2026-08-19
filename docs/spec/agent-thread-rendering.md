@@ -138,13 +138,11 @@ the identity catalog (`identities/get`, resolved by `resolveAgentIdentity`),
 keyed by type, and an identity with none configured is named after its type,
 which is what an unconfigured Role should look like. Resolution happens at
 RENDER time, never recorded on the message: renaming a persona renames the
-speaker of every message that Agent ever sent. The type label reads as a
-translated word for `main` alone, because that is a role in this conversation
-rather than a string anyone configures; every other type appears verbatim,
-because that IS what a user writes in configuration and passes as
-`subagent_type`. A participant that is not a type at all — an isolated Skill —
-keeps its own name and shows no type label, since its name already says what it
-is. Not the task it was handed. The
+speaker of every message that Agent ever sent. A type appears verbatim, because
+that IS what a user writes in configuration and passes as `subagent_type`. Two
+participants show no type label at all: the conversation's own agent, per the
+delegate's-badge rule below, and an isolated Skill, whose own name already says
+what it is. Not the task it was handed. The
 execution record's description (`count spec Markdown`) is a task label, and a
 task label standing where a name goes reads as a sentence fragment rather than
 as somebody speaking; the task appears right below it, as the report's own first
@@ -182,6 +180,15 @@ colour carry the anchoring; the size step finishes it.
 exactly one `main`, the reader is addressing it, and labelling it states the
 only thing about that participant nobody was wondering. The label answers
 "which kind of helper is this", which is a question only a delegate raises.
+
+**The header no longer shares a glyph column with the rows beneath it**
+(PM 2026-08-19). That rule — the speaker's avatar centred on the same axis as a
+chip's 12px glyph, its name on the chip label's text column — was written for
+the one-line header carrying a 16px letter disc (PM 2026-08-15). The two-line
+header anchored by a mark sized to span it (PM 2026-08-18) cannot also sit on a
+12px glyph's axis; the two rules were incompatible, and the header wins because
+it answers WHO IS SPEAKING while a chip is a row of content inside what they
+said. What replaced it is the header's own column, below.
 
 One header, one anchor. The header's own two lines share one left edge beside
 the mark: nothing in it may poke outside the block or indent past that

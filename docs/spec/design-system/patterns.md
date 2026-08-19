@@ -137,6 +137,13 @@ through a compact title and scan-first list, not provider/model strings. Work in
 flight appears in canonical Item order, never as a floating corner pill. Live
 controls use shared overlay primitives and dense unboxed actions.
 
+A speaker header is NOT aligned to the content rows beneath it. Identity
+chrome and content rows answer different questions — who is speaking versus
+what was done — and a mark sized to anchor a two-line header cannot share an
+axis with a content row's 12px glyph. The header keeps its own internal column
+instead (PM 2026-08-19, superseding the shared-glyph-column rule of
+2026-08-15).
+
 PARTICIPANT identity is the one place identity colour lives: a generated mark
 (one shared form filled with the identity's `--identity-tint-*` hue, two eye
 holes) plus a persona and the Agent type, in the speaker header. Identity is its own decorative category — not a functional

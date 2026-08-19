@@ -2525,28 +2525,47 @@ test.describe('canonical agent Thread surface', () => {
     const briefSpeaker = detail.locator('.thread-speaker').first();
     await expect(briefSpeaker.locator('.thread-user-message.thread-host-event')).toHaveCount(1);
     await expect(briefSpeaker.locator('.thread-speaker-name')).toHaveText('main');
-    await expect(briefSpeaker.locator('.thread-speaker-avatar')).toHaveText('M');
-    // And the same COLOUR it wears out in the conversation. `main` is keyed by
-    // name everywhere, not by the conversation's Thread id: keyed by id, the one
-    // participant that is always there wore a different hue inside a pushed view
-    // than in the conversation the reader had just left.
-    expect(await briefSpeaker.locator('.thread-speaker-avatar').evaluate((disc) => {
+    // Every participant wears the same generated mark; identity is its COLOUR,
+    // and here it must be the same colour `main` wears out in the conversation.
+    // `main` is keyed by NAME everywhere, not by the conversation's Thread id:
+    // keyed by id, the one participant that is always there would wear a
+    // different hue inside a pushed view than in the conversation the reader
+    // had just left.
+    expect(await briefSpeaker.locator('.thread-speaker-avatar').evaluate((avatar) => {
+      const hue = (root: Element | null | undefined): string => {
+        const shape = root?.querySelector('svg path[mask]');
+        return shape === null || shape === undefined ? '' : getComputedStyle(shape).fill;
+      };
       const outside = [...document.querySelectorAll('.thread-dock-conversation .thread-speaker')]
         .map((group) => ({
           name: group.querySelector('.thread-speaker-name')?.textContent,
-          color: getComputedStyle(group.querySelector('.thread-speaker-avatar')!).color,
+          fill: hue(group.querySelector('.thread-speaker-avatar')),
         }))
         .find((speaker) => speaker.name === 'main');
       if (outside === undefined) throw new Error('Expected a main speaker in the conversation');
-      return getComputedStyle(disc).color === outside.color;
+      const inside = hue(avatar);
+      // A resolved paint, not an unresolved token: an empty or `none` fill
+      // would pass a naive equality check while drawing nothing.
+      if (!inside.startsWith('rgb')) throw new Error(`Expected a resolved mark fill, got ${inside}`);
+      return inside === outside.fill;
     })).toBe(true);
     // The pushed view names participants exactly as the conversation does: an
     // Agent that answers to its type out there cannot answer to its task
-    // description in here, or its avatar changes letter and hue on the way in.
-    // The TITLE bar is the other job — which Agent this is — so it keeps the
-    // task, the way a chip does.
+    // description in here, or its mark changes hue on the way in. The TITLE bar
+    // is the other job — which Agent this is — so it keeps the task, the way a
+    // chip does.
     await expect(detail.locator('.thread-speaker-name').last()).toHaveText('worker');
-    await expect(detail.locator('.thread-speaker-avatar').last()).toHaveText('W');
+    // Keyed by TYPE, so a delegate's hue is its own and not the conversation's.
+    expect(await detail.evaluate((root) => {
+      const hue = (group: Element | null): string => {
+        const shape = group?.querySelector('.thread-speaker-avatar svg path[mask]');
+        return shape === null || shape === undefined ? '' : getComputedStyle(shape).fill;
+      };
+      const groups = [...root.querySelectorAll('.thread-speaker')];
+      const worker = groups.at(-1) ?? null;
+      const brief = groups[0] ?? null;
+      return { worker: hue(worker), brief: hue(brief) };
+    })).toEqual({ worker: expect.stringMatching(/^rgb/u), brief: expect.stringMatching(/^rgb/u) });
     await expect(deckTitle).toHaveText('research');
 
     await expect(detail.getByRole('textbox', { name: 'Message this Thread' })).toBeVisible();
@@ -3524,34 +3543,36 @@ test.describe('canonical agent Thread surface', () => {
     // own first line. A task label standing where a name goes read as a
     // sentence fragment rather than as somebody speaking.
     await expect(deliveryTurn.locator('.thread-speaker-name')).toHaveText(['worker', 'main']);
-    // The avatar sits on the glyph column the rows below use — centred on it,
-    // not flush with its left edge, since the disc is wider than a 12px mark
-    // and sharing an edge left every centre 2px apart. The name lands on the
-    // same text column as a chip's label, so two glyph-and-label lines under
-    // each other do not read as a ragged edge.
-    expect(await page.evaluate(() => {
-      const chip = document.querySelector('.thread-agent-chip');
-      const avatar = document.querySelector('.thread-speaker-avatar');
-      const glyph = chip?.querySelector('svg');
-      const name = document.querySelector('.thread-speaker-name');
-      const chipName = chip?.querySelector('.thread-agent-chip-name');
-      if (!avatar || !glyph || !name || !chipName) throw new Error('Expected a chip beside a speaker');
-      const centre = (element: Element) => {
-        const box = element.getBoundingClientRect();
-        return Math.round(box.left + box.width / 2);
-      };
+    // The speaker header and the chip row below it NO LONGER share one glyph
+    // column, and deliberately so (PM 2026-08-19). That rule was written for a
+    // one-line header carrying a 16px letter disc; the header is now two lines
+    // anchored by a mark sized to span them, and a mark that anchors two lines
+    // cannot also sit on a 12px chip glyph's axis. The two rules could not both
+    // hold, and the header won: it says WHO IS SPEAKING, while a chip is a row
+    // of content inside what they said.
+    //
+    // What survives is the header's OWN column: its two lines share one left
+    // edge beside the mark, and nothing in it pokes outside the block or
+    // indents past that edge — the mark carries no optical overhang, and the
+    // work line's control no inline padding of its own.
+    expect(await deliveryTurn.locator('.thread-speaker-header').first().evaluate((header) => {
+      const avatar = header.querySelector('.thread-speaker-avatar');
+      const name = header.querySelector('.thread-speaker-name');
+      const meta = header.querySelector('.thread-process-title, .thread-speaker-meta');
+      if (!avatar || !name || !meta) throw new Error('Expected a mark, a name and a work line');
+      const left = (element: Element) => Math.round(element.getBoundingClientRect().left);
       return {
-        centresApart: Math.abs(centre(avatar) - centre(glyph)),
-        textApart: Math.abs(
-          Math.round(name.getBoundingClientRect().left)
-            - Math.round(chipName.getBoundingClientRect().left),
-        ),
+        // Who and what-they-did start on the same edge.
+        titleToWorkLine: Math.abs(left(name) - left(meta)),
+        // Nothing reaches left of the block: the mark IS the block's edge.
+        markOutdent: left(header) - left(avatar),
       };
-    })).toEqual({ centresApart: 0, textApart: 0 });
+    })).toEqual({ titleToWorkLine: 0, markOutdent: 0 });
 
-    // Both headers are one line of the same shape: who, then what they did, in
-    // the meta type. The child's elapsed is ITS OWN — the Turn around it is the
-    // parent reading a result, which took no time next to the work reported.
+    // Both headers are the same shape — who, then what they did, on its own
+    // line in the meta type. The child's elapsed is ITS OWN: the Turn around it
+    // is the parent reading a result, which took no time next to the work
+    // being reported.
     await expect(deliveryTurn.locator('.thread-speaker-meta')).toHaveText([
       'Worked for 2s',
       /^Worked for/u,
@@ -3602,7 +3623,12 @@ test.describe('canonical agent Thread surface', () => {
     })).toBe(true);
     const reportSpeaker = deliveryTurn.locator('.thread-speaker').first();
     await expect(reportSpeaker.locator('.thread-agent-report')).toHaveCount(1);
-    await expect(reportSpeaker.locator('.thread-speaker-avatar')).toHaveText('W');
+    // The delegate signs its own report: its mark, in its own hue, not the
+    // conversation's — the card came back from somewhere else.
+    expect(await reportSpeaker.evaluate((group) => {
+      const shape = group.querySelector('.thread-speaker-avatar svg path[mask]');
+      return shape === null ? '' : getComputedStyle(shape).fill;
+    })).toMatch(/^rgb/u);
     await expect(report.locator('.thread-agent-report-task')).toHaveText('research');
 
     // A preview, clamped: no in-place Show more, because opening the card is

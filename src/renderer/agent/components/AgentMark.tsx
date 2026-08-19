@@ -156,6 +156,12 @@ function stepFrame(ts: number): void {
 }
 
 function wake(mark: LiveMark): void {
+  // Checked here rather than at each call site: a mark scrolled out of view
+  // whose mood then becomes `working` would rejoin the loop and never leave it
+  // — `settled` can never be true while working — so an invisible mark would
+  // animate forever, which is exactly the cost the visibility gate removes.
+  // The observer sets `visible` before it calls, and `scheduleWake` re-checks.
+  if (!mark.visible) return;
   const timer = wakeTimers.get(mark);
   if (timer !== undefined) { clearTimeout(timer); wakeTimers.delete(mark); }
   live.add(mark);
