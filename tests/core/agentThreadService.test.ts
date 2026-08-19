@@ -2325,6 +2325,40 @@ describe('ThreadService', () => {
     await noSpawn.service.close();
   });
 
+  test('a Turn survives a configuration the loader cannot read', async () => {
+    // A12: the Role catalog is announced per Turn, on the user path. A typo in
+    // `.tenon/agent.json` is the user's to fix — not a reason to end the answer
+    // they are waiting for. Null is already what a Thread that cannot spawn
+    // Agents gets, so the model falls back to the types it always knows.
+    const fixture = await createFixture(undefined, {
+      resolveRoleCatalog: () => {
+        throw new Error('Invalid Agent configuration at /x/.tenon/agent.json: JSON Parse error');
+      },
+    });
+    const thread = (await fixture.service.startThread({
+      source: 'app',
+      threadSource: 'user',
+      modelProvider: 'openai',
+      cwd: fixture.root,
+    })).thread;
+
+    await fixture.service.startRendererTurn({
+      threadId: thread.id,
+      input: [{ type: 'text', text: 'Still answer me' }],
+    });
+    await fixture.executor.waitUntilWaiting();
+
+    const items = fixture.service.readThread({ threadId: thread.id, includeTurns: true })
+      .thread.turns![0]!.items;
+    expect(items).not.toContainEqual(expect.objectContaining({ kind: 'roleCatalog' }));
+    // The Turn reached the model: the environment evidence is there and the
+    // executor is waiting, rather than the Turn having failed at admission.
+    expect(items).toContainEqual(expect.objectContaining({ kind: 'turnEnvironment' }));
+    fixture.executor.finish();
+    await fixture.service.waitForIdle(thread.id);
+    await fixture.service.close();
+  });
+
   test('publishes steering evidence and user input as one atomic Item batch', async () => {
     const fixture = await createFixture();
     const thread = (await fixture.service.startThread({

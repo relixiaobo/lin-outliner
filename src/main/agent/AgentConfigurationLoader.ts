@@ -226,6 +226,13 @@ export const RESERVED_AGENT_TYPE_NAMES: readonly string[] = Object.freeze([
 ]);
 
 export class AgentConfigurationLoader {
+  /**
+   * Read failures already reported, so a broken configuration says so once
+   * rather than once per Turn. Keyed by the whole message, so a DIFFERENT
+   * breakage in the same file is still heard.
+   */
+  private readonly reportedReadFailures = new Set<string>();
+
   constructor(private readonly userDataPath: string) {}
 
   resolveProfile(requestedName: string | undefined, cwd: string): EffectiveThreadConfiguration {
@@ -362,10 +369,42 @@ export class AgentConfigurationLoader {
     // told a name the reader never sees.
     const backing = BUILT_IN_AGENT_TYPES.find((entry) => entry.backingRole === agentType);
     const key = backing?.canonicalType ?? agentType ?? MAIN_PRESENTATION_KEY;
-    const entry = this.resolveIdentityCatalog(cwd).find((row) => row.agentType === key);
-    // Named after itself when the catalog has nothing — the same degradation the
-    // renderer's resolver makes, so the two never disagree about who is talking.
-    return entry?.persona.trim() || key;
+    // Degrades rather than throws (A12). This runs on the USER path — every Turn
+    // of every Thread — where a configuration the loader cannot read is the
+    // user's typo, not a reason to kill the answer they are waiting for. The
+    // write boundary and the editor still fail closed, which is where a broken
+    // file is both actionable and reported.
+    const entry = this.readForUserPath(cwd, 'identity catalog', () => this.resolveIdentityCatalog(cwd))
+      ?.find((row) => row.agentType === key);
+    // Falls back through the built-in default before the bare key: with the
+    // catalog unreadable the conversation agent would otherwise be told "You are
+    // main", when what the transcript draws for an unconfigured install is
+    // `Aspen`. A type with no default is named after itself — the same
+    // degradation the renderer's resolver makes, so the two never disagree
+    // about who is talking.
+    return entry?.persona.trim()
+      || DEFAULT_AGENT_PRESENTATIONS[key]?.persona.trim()
+      || key;
+  }
+
+  /**
+   * A read on the user path, which answers `null` instead of throwing.
+   *
+   * The failure is still SAID — once per distinct message, because this runs
+   * per Turn and a broken file would otherwise fill the log with one line per
+   * message the user sends.
+   */
+  private readForUserPath<T>(cwd: string, what: string, read: () => T): T | null {
+    try {
+      return read();
+    } catch (error) {
+      const message = `[agent] ${what} unreadable for ${cwd}: ${errorMessage(error)}`;
+      if (!this.reportedReadFailures.has(message)) {
+        this.reportedReadFailures.add(message);
+        console.warn(message);
+      }
+      return null;
+    }
   }
 
   /**

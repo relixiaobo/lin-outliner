@@ -423,6 +423,50 @@ describe('AgentConfigurationWriter', () => {
     expect(loader.resolveThreadPersona(thread)).toBe('Juniper');
   });
 
+  test('a broken config degrades the name but still fails the paths that must', async () => {
+    const { loader, cwd } = await fixture();
+    await mkdir(dirname(projectConfigurationPath(cwd)), { recursive: true });
+    await writeFile(projectConfigurationPath(cwd), '{ oops', 'utf8');
+    const thread = { parentThreadId: 'parent', agentRole: 'explorer', agentNickname: null, cwd };
+
+    // USER path — every Turn of every Thread. A12: a typo in the user's own file
+    // must not end the answer they are waiting for, so the participant is named
+    // after its type instead.
+    // Falls through to the built-in default rather than the raw key, so the
+    // conversation agent is still `Aspen` and not "You are main".
+    expect(loader.resolveThreadPersona(thread)).toBe('Rena');
+    expect(loader.resolveThreadPersona({ ...thread, parentThreadId: null })).toBe('Aspen');
+    // A type the defaults do not know is named after itself.
+    expect(loader.resolveThreadPersona({ ...thread, agentRole: 'auditor' })).toBe('auditor');
+
+    // SPAWN path stays fail-closed: a Thread must not start on a configuration
+    // nobody could read, because everything it does afterwards is decided by it.
+    expect(() => loader.resolveProfile(undefined, cwd)).toThrow(/Invalid Agent configuration/);
+    expect(() => loader.resolveAgentType('explore', cwd)).toThrow(/Invalid Agent configuration/);
+
+    // EDITOR path stays fail-closed too: the Agents page is where a broken file
+    // is actionable, so it has to say so rather than render a healthy-looking
+    // list of what happens to parse.
+    expect(() => loader.resolveIdentityCatalog(cwd)).toThrow(/Invalid Agent configuration/);
+    expect(() => loader.listEditableRoles(cwd)).toThrow(/Invalid Agent configuration/);
+  });
+
+  test('a repaired config is picked up on the next Turn, not cached past the fix', async () => {
+    const { writer, loader, cwd } = await fixture();
+    await mkdir(dirname(projectConfigurationPath(cwd)), { recursive: true });
+    await writeFile(projectConfigurationPath(cwd), '{ oops', 'utf8');
+    const thread = { parentThreadId: 'parent', agentRole: 'explorer', agentNickname: null, cwd };
+    expect(loader.resolveThreadPersona(thread)).toBe('Rena');
+
+    await writeFile(projectConfigurationPath(cwd), '{}', 'utf8');
+    expect(loader.resolveThreadPersona(thread)).toBe('Rena');
+
+    // And a rename still reaches the very next Turn — the reason this resolves
+    // live rather than being recorded at spawn.
+    await writer.writePresentation('project', cwd, 'explore', { persona: 'Juniper' });
+    expect(loader.resolveThreadPersona(thread)).toBe('Juniper');
+  });
+
   test('deleting a Role that is not there says so instead of writing a no-op', async () => {
     const { writer, cwd } = await fixture();
 

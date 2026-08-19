@@ -410,6 +410,17 @@ export class ThreadService implements ThreadServiceExtensionHost {
   ) => Promise<RoleCatalogContextPayload | null>;
   private readonly resolveIdentityCatalog: (cwd: string) => readonly AgentIdentityEntry[];
   private readonly resolvePersona: (thread: Thread) => string | null;
+  /** Role-catalog read failures already reported, so a broken file says so once per Turn stream, not once per Turn. */
+  private readonly reportedRoleCatalogFailures = new Set<string>();
+
+  private reportRoleCatalogFailure(cwd: string, error: unknown): void {
+    const message = `[agent] Role catalog unreadable for ${cwd}: ${
+      error instanceof Error ? error.message : String(error)
+    }`;
+    if (this.reportedRoleCatalogFailures.has(message)) return;
+    this.reportedRoleCatalogFailures.add(message);
+    console.warn(message);
+  }
   private readonly resolveProviderModelIds: (providerId: string) => Promise<readonly string[]>;
   private readonly resolveAgentStartupContext: (
     parent: Pick<Thread, 'id' | 'sessionId' | 'cwd'>,
@@ -468,7 +479,18 @@ export class ThreadService implements ThreadServiceExtensionHost {
     };
     const resolveRole = options.resolveRole ?? defaultAgentRole;
     const resolveAgentType = options.resolveAgentType ?? defaultResolvedAgentType;
-    this.resolveRoleCatalog = async (cwd) => await options.resolveRoleCatalog?.(cwd) ?? null;
+    // Announced per Turn, so a configuration the loader cannot read degrades to
+    // "no catalog this Turn" rather than ending the Turn (A12). Null is already
+    // a legal answer here — it is what a Thread that cannot spawn Agents gets —
+    // so the model simply falls back to the built-in types it always knows.
+    this.resolveRoleCatalog = async (cwd) => {
+      try {
+        return await options.resolveRoleCatalog?.(cwd) ?? null;
+      } catch (error) {
+        this.reportRoleCatalogFailure(cwd, error);
+        return null;
+      }
+    };
     this.resolveIdentityCatalog = options.resolveIdentityCatalog ?? (() => []);
     // Null when nothing resolves it: the environment then says what it said
     // before there was a configured name, rather than inventing one.

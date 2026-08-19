@@ -189,12 +189,31 @@ anchored to `DEFAULT_AGENT_PRESENTATIONS.main` so one constant drives both.
 
 It is resolved **per Turn** (`resolveAgentPersona`), not recorded in the
 configuration a resumed Turn replays: a rename reaches the next Turn, and a
-display name never has to be versioned into the configuration codec. A Thread
+display name never has to be versioned into the configuration codec. Reading it
+costs ~0.16 ms, so it is not cached — a cache would buy noise against a model
+call and pay for it with the staleness the live read exists to avoid. A Thread
 records its BACKING Role (`explorer`) while identity is keyed on the canonical
 type (`explore`), so the resolver maps one to the other. A recorded **nickname
 wins**: an isolated Skill is spawned as `role: 'default'` with the Skill's name
 as its nickname, and resolving it by type would tell it it is `Bruno` when its
 own name is what it is.
+
+Because this runs on the USER path, it **degrades rather than throws** (A12): a
+configuration the loader cannot read leaves the participant named by its
+built-in default, and failing by its own type name. The same rule covers the
+Role catalog, which is also announced per Turn — an unreadable one becomes "no
+catalog this Turn", which is already what a Thread that cannot spawn Agents
+gets, so the model falls back to the built-in types it always knows. Either
+failure is logged once per distinct message rather than once per Turn.
+
+The paths that stay **fail-closed** are the ones where continuing would be
+worse: a spawn (`resolveProfile`, `resolveRole`, `resolveAgentType`) must not
+start a Thread on a configuration nobody could read, since everything it does
+afterwards is decided by it; and the editor's own reads must report, because the
+Agents page is where a broken file is actionable and a healthy-looking list of
+whatever happens to parse would hide it. The distinction is the whole of A12: a
+typo in the user's file is theirs to fix, not a reason to kill the answer they
+are waiting for.
 
 The reserved names a Role may not take are `main`, every built-in canonical
 type, AND every built-in BACKING name — `resolveRole` prefers a configured entry
