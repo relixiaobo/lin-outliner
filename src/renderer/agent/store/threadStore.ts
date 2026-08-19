@@ -31,6 +31,11 @@ import {
   modelCallArgumentSource,
 } from '../../../core/agent/modelCallHistory';
 import { threadPreviewFromContent } from '../../../core/agent/threadPreview';
+import {
+  EMPTY_IDENTITY_CATALOG,
+  identityCatalogFrom,
+  type AgentIdentityCatalog,
+} from '../agentIdentity';
 import { api } from '../../api/client';
 
 export interface ActiveTurnPlan extends TurnPlanSnapshot {
@@ -59,6 +64,12 @@ export interface ThreadStoreSnapshot {
    * many Turns, so its lifecycle cannot be read off the Turn that spawned it.
    */
   readonly subagentExecutionsByAgentId: ReadonlyMap<ThreadId, SubagentExecutionProjection>;
+  /**
+   * Who the participants are and what they look like, keyed by Agent type.
+   * Configuration rather than history: one catalog serves every conversation,
+   * and a renamed persona renames its speaker everywhere at once.
+   */
+  readonly identityCatalog: AgentIdentityCatalog;
   readonly loading: boolean;
   readonly error: string | null;
 }
@@ -74,6 +85,7 @@ const EMPTY_SNAPSHOT: ThreadStoreSnapshot = {
   providerRetryByThread: new Map(),
   planByThread: new Map(),
   subagentExecutionsByAgentId: new Map(),
+  identityCatalog: EMPTY_IDENTITY_CATALOG,
   loading: true,
   error: null,
 };
@@ -90,6 +102,7 @@ export class ThreadStore {
   private unsubscribeNotifications: (() => void) | null = null;
   private initializePromise: Promise<void> | null = null;
   private readonly loadGenerations = new Map<ThreadId, number>();
+  private identityCatalogGeneration = 0;
   private readonly historyRevisions = new Map<ThreadId, number>();
   private readonly configurationRevisions = new Map<ThreadId, number>();
   private readonly outputTextCache = new Map<string, Promise<string | null>>();
@@ -117,7 +130,35 @@ export class ThreadStore {
     this.initializePromise = this.reloadThreads().catch((error) => {
       this.patch({ loading: false, error: errorMessage(error) });
     });
+    // The catalog resolves against the SELECTED conversation's working
+    // directory, and `reloadThreads` is what picks that conversation — so it
+    // re-resolves there. Kicking one off here as well only paints the
+    // built-ins a few frames sooner, and would race the real answer.
     return this.initializePromise;
+  }
+
+  /**
+   * Re-resolve who the participants are.
+   *
+   * Scoped to the selected conversation because a project may define both Roles
+   * and re-skins, and a Thread is what names a working directory. A failure is
+   * swallowed to the existing catalog: names and faces are decoration over a
+   * transcript that has to render either way (A12).
+   */
+  async reloadIdentityCatalog(): Promise<void> {
+    const threadId = this.snapshot.selectedThreadId;
+    // Generation-guarded like every other read in this store: two selections in
+    // quick succession — or startup racing the first one — otherwise let the
+    // slower answer land last and leave the roster resolved for a working
+    // directory the reader already left.
+    const generation = ++this.identityCatalogGeneration;
+    try {
+      const response = await this.client.agentCoreRequest('identities/get', { threadId });
+      if (generation !== this.identityCatalogGeneration) return;
+      this.patch({ identityCatalog: identityCatalogFrom(response.entries) });
+    } catch {
+      // Keep whatever the last successful resolution produced.
+    }
   }
 
   dispose(): void {
@@ -158,6 +199,10 @@ export class ThreadStore {
       loading: false,
       error: null,
     });
+    // A restored conversation can live in a project that defines its own Roles
+    // or re-skins; until this resolves against its cwd, the roster is only the
+    // user layer and the built-ins.
+    void this.reloadIdentityCatalog();
     if (selected) {
       // The same two reads a selection makes: `thread/list` is roots-only, so a
       // restored conversation knows neither its Agents nor their child Threads
@@ -177,6 +222,9 @@ export class ThreadStore {
     // this conversation needs, and prunes children the server no longer has.
     void this.listDescendants(threadId).catch(() => undefined);
     void this.loadSubagentExecutions(threadId).catch(() => undefined);
+    // A different conversation can mean a different working directory, and a
+    // project layer names its own participants.
+    void this.reloadIdentityCatalog();
     await this.loadTurns(threadId);
   }
 
@@ -908,6 +956,18 @@ export function useThreadTurns(
     () => source.getSnapshot().turnsByThread.get(threadId),
     [source, threadId],
   );
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+}
+
+/**
+ * Who the participants are. Replaced only when configuration resolves again, so
+ * every speaker header in a streaming transcript reads it without re-rendering.
+ */
+export function useIdentityCatalog(
+  source: ThreadSnapshotSource = threadStore,
+): AgentIdentityCatalog {
+  const subscribe = useCallback((listener: () => void) => source.subscribe(listener), [source]);
+  const getSnapshot = useCallback(() => source.getSnapshot().identityCatalog, [source]);
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
 

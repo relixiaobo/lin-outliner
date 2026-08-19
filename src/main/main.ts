@@ -715,6 +715,7 @@ threadService = ThreadService.open(
     resolveRole: (name, cwd) => agentConfigurationLoader.resolveRole(name, cwd),
     resolveAgentType: (name, cwd) => agentConfigurationLoader.resolveAgentType(name, cwd),
     resolveRoleCatalog: (cwd) => agentConfigurationLoader.buildRoleCatalogSnapshot(cwd),
+    resolveIdentityCatalog: (cwd) => agentConfigurationLoader.resolveIdentityCatalog(cwd),
     resolveProviderModelIds: (providerId) => rankedModels(providerId).map((model) => model.id),
     resolveSubagentTokenBudget: async () => (await getAgentRuntimeSettings()).subagentTokenBudget,
     resolveSubagentLimits: async () => {

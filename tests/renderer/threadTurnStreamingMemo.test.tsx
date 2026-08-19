@@ -4,12 +4,17 @@ import { createRoot } from 'react-dom/client';
 import { parseHTML } from 'linkedom';
 import type { ThreadItem, Turn } from '../../src/core/agent/protocol';
 import type { DocumentProjection } from '../../src/core/types';
-import { ThreadTurnView } from '../../src/renderer/agent/components/ThreadView';
 import { emptyTurnAnchors } from '../../src/renderer/agent/subagentPresentation';
 import { I18nProvider } from '../../src/renderer/i18n/I18nProvider';
 import { buildIndex } from '../../src/renderer/state/document';
 import { DocumentIndexStore } from '../../src/renderer/state/documentIndexStore';
 import { replayableModelCall } from '../fixtures/agentToolCallHistory';
+
+// The identity mark is generated inline, so the component tree no longer pulls
+// any bundler-only module; the dynamic import is simply how this file loads it.
+async function loadThreadTurnView(): Promise<typeof import('../../src/renderer/agent/components/ThreadView')['ThreadTurnView']> {
+  return (await import('../../src/renderer/agent/components/ThreadView')).ThreadTurnView;
+}
 
 const GLOBAL_KEYS = ['document', 'Event', 'HTMLElement', 'Node', 'ResizeObserver', 'window'] as const;
 let savedGlobals: Array<[string, PropertyDescriptor | undefined]> = [];
@@ -40,6 +45,7 @@ describe('streaming Turn item memoization', () => {
     } satisfies Extract<ThreadItem, { type: 'userMessage' }>;
     const response = agentResponse('A');
     const props = turnProps();
+    const ThreadTurnView = await loadThreadTurnView();
 
     await render(root, <ThreadTurnView {...props} {...turnAnchors(turn([user, response]))} />);
     const readsAfterFirstRender = userContentReads;
@@ -70,6 +76,7 @@ describe('streaming Turn item memoization', () => {
       },
     };
 
+    const ThreadTurnView = await loadThreadTurnView();
     await render(root, (
       <ThreadTurnView {...props} {...turnAnchors(turn([firstTool, secondTool, response]))} />
     ));

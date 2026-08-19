@@ -1627,6 +1627,7 @@ describe('Codex Agent Core protocol codec', () => {
         answers: [{ questionId: 'delivery_mode', optionLabel: 'Direct' }],
         autoResolved: false,
       },
+      'identities/get': { threadId: null },
     };
     const responses: Record<string, unknown> = {
       'thread/list': { data: [thread], nextCursor: null },
@@ -1680,6 +1681,9 @@ describe('Codex Agent Core protocol codec', () => {
       'goal/create': { goal },
       'goal/update': { goal: { ...goal, status: 'complete' } },
       'userInput/respond': {},
+      'identities/get': {
+        entries: [{ agentType: 'explore', persona: 'Rena', color: 'orange', source: 'built-in' }],
+      },
     };
 
     expect(Object.keys(requests)).toEqual(AGENT_CORE_METHODS);

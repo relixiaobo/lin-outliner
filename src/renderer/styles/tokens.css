@@ -146,8 +146,9 @@
   /* control state — checked/on controls, separate from semantic status */
   --control-on: #3f9e6a;
 
-  /* identity tints — a per-agent avatar hue, assigned deterministically by
-     identity (agentAvatarColor.ts). Identity is its OWN decorative category: not a
+  /* identity tints — a per-agent mark hue, pinned for the default roster and
+     derived from the name otherwise (core deriveIdentityColor, drawn by
+     AgentMark.tsx). Identity is its OWN decorative category: not a
      functional state (B3 keeps those neutral), not a status (B4 reserves these for
      state), not the rose accent (B4). It therefore gets a dedicated muted palette.
      One family with the tag-chip palette (tagColors.ts) so the app reads as one
@@ -427,12 +428,13 @@
      outliner = --panel-content-x + --row-leading-width, agent =
      --agent-content-x, settings = inset-row text padding. Do not flatten them
      into one value; converge within a surface instead. */
-  /* The participant avatar disc in the agent transcript. Sized with its gap so
-     the name beside it lands on the SAME text column as a tool row's or a
-     chip's label directly below (their 12px glyph plus --space-3). Off that
-     column by 4px, two glyph-and-label lines under each other read as a ragged
-     left edge. */
-  --speaker-avatar-size: 16px;
+  /* The participant mark in the agent transcript. Sized to ANCHOR the two-line
+     header rather than to match one line of text — the rule every mobile IM
+     follows (Slack 36, Discord 40, WeChat/Telegram 40, iMessage 28, all against
+     ~18px lines). Held at the low end of that range because a flat mark carries
+     more graphic weight per pixel than a photograph. The message body does NOT
+     hang from it: content takes the full column (see agent-thread-rendering). */
+  --speaker-avatar-size: 28px;
   --row-leading-width: 42px;
   --row-leading-height: var(--line-content);
   --row-chevron-width: 15px;

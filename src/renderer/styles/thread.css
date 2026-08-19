@@ -623,6 +623,11 @@
   min-width: 0;
   max-width: 100%;
   align-items: center;
+  /* Starts a line of its own, so its box may not indent the column the name
+     and the words below share. As a <button> it otherwise inherits the UA's
+     6px inline padding — invisible while this sat beside the name, a visible
+     6px step once it sits under it. */
+  padding: 0;
   gap: var(--space-2);
   color: var(--text-soft);
   font-size: var(--font-meta);
@@ -836,47 +841,104 @@
   width: 100%;
   min-width: 0;
   flex-direction: column;
-  /* Tighter than the 12px between blocks, so a header still binds to its own
-     content, but with enough air that a bordered card is not pressed against
-     the line naming it — a hard edge needs more room than a line of text. */
-  gap: var(--space-4);
+  /* A header binds to the words it names: they are one utterance, so the space
+     between them is smaller than the space between two blocks. Held down to
+     near line spacing — the distance an IM leaves between a sender's name and
+     their message — because a header floating a full line above its own text
+     stops reading as its opening. */
+  gap: var(--space-3);
 }
 
-/* Avatar and name on ONE line, with the words below at full width. The margin
-   lane a desktop IM uses costs a tenth of the reading measure in a 344px deck,
-   to repeat what the line above already says. */
+/* Mark, name, and what this participant is — the header row. The words below
+   do NOT hang from the name: content takes the full column, because what
+   arrives in this deck is documents (tables, code, galleries) in the narrowest
+   column the app has. What an indent would buy is a visible change of speaker,
+   and this row says that louder anyway. */
 .thread-speaker-header {
   display: flex;
   min-width: 0;
+  /* The portrait anchors BOTH header lines, so it centres against them rather
+     than hanging off the first one. */
   align-items: center;
-  /* With the avatar's own optical shift this is the row glyph's advance: the
-     name lands on the same text column as a chip or tool label below it. */
+  gap: var(--space-4);
+}
+
+/* WHO on one line, WHAT THEY DID on the next. Both are quiet metadata over the
+   words below, but they answer different questions, and stacked they let the
+   name keep its own line at any deck width instead of being squeezed by an
+   elapsed time that grows as the Turn runs. */
+.thread-speaker-identity {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: flex-start;
+  /* Enough that two facts do not read as one sentence wrapping, not enough to
+     break them apart: they are one header. */
+  gap: var(--space-1);
+}
+
+.thread-speaker-title {
+  display: flex;
+  max-width: 100%;
+  min-width: 0;
+  align-items: baseline;
   gap: var(--space-2);
 }
 
 .thread-speaker-avatar {
   display: flex;
   width: var(--speaker-avatar-size);
-  /* Centred on the glyph column, not flush with it. The disc is wider than the
-     12px marks on the rows below, so sharing their left edge left every centre
-     2px apart and the column read as ragged. A round mark overhanging a text
-     edge by 2px is what optical alignment wants anyway. */
-  margin-left: calc(var(--space-1) * -1);
   height: var(--speaker-avatar-size);
+  aspect-ratio: 1;
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  border-radius: var(--radius-pill);
-  font-size: var(--font-ui-2xs);
-  /* The repo's emphasis weight: a 10px initial needs it to hold the disc. */
-  font-weight: 650;
-  /* The disc is a fixed circle: its glyph must not push it out of round. */
-  line-height: 1;
+  /* Deliberately frameless: the mark's form is its own edge. The tile
+     treatment — fill, rounding, hairline — existed to give raster portraits a
+     boundary their painted grounds lacked; a generated shape needs none of it. */
   user-select: none;
 }
 
+.thread-speaker-avatar > svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* The mark's eyes are HOLES in a mask, and their whole animation — blink,
+   expression, gaze — is geometry recomputed by the rig's rAF loop
+   (`agentMarkGeometry`). Nothing here transitions or transforms: a scale on
+   the group would be the layout-free "pop" B7 refuses, and a bare duration
+   would be an untokenized motion literal. The stylesheet holds only what a
+   mask group needs to accept a JS-driven origin. */
+.agent-mark-eye {
+  transform-box: view-box;
+}
+
+/* What the participant IS, beside what it is called. Quieter than the name: one
+   line answers both questions, and only the first is the identity. */
+.thread-speaker-role {
+  min-width: 0;
+  overflow: hidden;
+  flex: 0 1 auto;
+  /* The supporting level, shared with the work line below it. */
+  color: var(--text-secondary);
+  font-size: var(--font-meta);
+  line-height: var(--line-meta);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* The blocks keep the Turn's own rhythm: the speaker column replaces
-   `.thread-turn` as their flex parent, so it must not quietly respace them. */
+   `.thread-turn` as their flex parent, so it must not quietly respace them.
+
+   FULL WIDTH, deliberately not hung from the name above it. An avatar lane is
+   what a chat app spends on short bubbles; what arrives here is documents —
+   tables, code, galleries — in the narrowest column this app has, where the
+   lane costs 13% of the measure and a three-column table pays for it. What the
+   indent was buying is a visible change of speaker, and the header row already
+   says that louder: a portrait and a name in the content register. */
 .thread-speaker-content {
   display: flex;
   min-width: 0;
@@ -884,11 +946,27 @@
   gap: var(--space-6);
 }
 
+/* The one thing in this header the eye should land on. A message stream is
+   scanned by WHO said it, so the persona carries the emphasis and everything
+   else here — the type it is, how long it took — sits at one quiet level
+   beneath it. Before, the name and the elapsed shared a colour while the type
+   label was fainter than both, so the header read as three loose fragments and
+   grouped against its own meaning. */
 .thread-speaker-name {
   min-width: 0;
   overflow: hidden;
-  color: var(--text-secondary);
-  font-size: var(--font-meta);
+  color: var(--text-primary);
+  /* ONE STEP above the metadata beside it, not the body's size. The name is
+     the header's anchor and has to out-rank the type and the elapsed sharing
+     its lines — weight and colour do most of that, and one size step finishes
+     it. Body size was right while the message hung from the name in a shared
+     column, the way Slack sets it; once the message took the full width the
+     header became its own row above the words rather than their first line, and
+     a body-sized name in it jumped a third over everything else on the same
+     line and read as shouting. */
+  font-size: var(--font-ui-sm);
+  /* The repo's emphasis weight. */
+  font-weight: 650;
   line-height: var(--line-meta);
   text-overflow: ellipsis;
   white-space: nowrap;

@@ -7,6 +7,72 @@ import { replayableModelCall } from '../fixtures/agentToolCallHistory';
 type ThreadStoreClient = Pick<typeof api, 'agentCoreRequest' | 'onAgentCoreNotification'>;
 
 describe('renderer Thread store', () => {
+  test('resolves the identity roster against the conversation it restored', async () => {
+    // The roster is resolved per working directory, and the selected Thread is
+    // what names one. Resolving it alongside startup — before `thread/list`
+    // has picked a conversation — reads the home directory and misses a
+    // project's own Roles and re-skins until the reader switches threads by
+    // hand.
+    const owner = thread('thread-1', 1);
+    const asked: Array<string | null> = [];
+    const client = {
+      onAgentCoreNotification: () => () => undefined,
+      agentCoreRequest: async (method: string, input: { threadId?: string | null }) => {
+        if (method === 'thread/list') return { data: [owner], nextCursor: null };
+        if (method === 'identities/get') {
+          asked.push(input.threadId ?? null);
+          return { entries: [{ agentType: 'main', persona: 'Aspen', color: 'teal', source: 'built-in' }] };
+        }
+        if (method === 'thread/turns/list') return { data: [], nextCursor: null, backwardsCursor: null };
+        if (method === 'goal/get') return { goal: null };
+        if (method === 'thread/configuration/get') return configurationResponse(owner);
+        if (method === 'thread/descendants') return { data: [], queuedWorkThreadIds: [] };
+        if (method === 'thread/subagents/list') return { data: [] };
+        throw new Error(`Unexpected method: ${method}`);
+      },
+    } as unknown as ThreadStoreClient;
+    const store = new ThreadStore(client);
+    await store.initialize();
+    await Promise.resolve();
+
+    expect(asked).toContain(owner.id);
+    expect(store.getSnapshot().identityCatalog.get('main')?.persona).toBe('Aspen');
+  });
+
+  test('keeps the roster of the conversation selected last', async () => {
+    // Two selections in flight: the slower answer must not land last and leave
+    // the roster resolved for a directory the reader already left.
+    const first = thread('thread-1', 1), second = thread('thread-2', 2);
+    const slow = deferred<{ entries: unknown[] }>();
+    const client = {
+      onAgentCoreNotification: () => () => undefined,
+      agentCoreRequest: async (method: string, input: { threadId?: string | null }) => {
+        if (method === 'thread/list') return { data: [first, second], nextCursor: null };
+        if (method === 'identities/get') {
+          return input.threadId === first.id
+            ? slow.promise
+            : { entries: [{ agentType: 'main', persona: 'Second', color: 'blue', source: 'built-in' }] };
+        }
+        if (method === 'thread/turns/list') return { data: [], nextCursor: null, backwardsCursor: null };
+        if (method === 'goal/get') return { goal: null };
+        if (method === 'thread/configuration/get') return configurationResponse(first);
+        if (method === 'thread/descendants') return { data: [], queuedWorkThreadIds: [] };
+        if (method === 'thread/subagents/list') return { data: [] };
+        throw new Error(`Unexpected method: ${method}`);
+      },
+    } as unknown as ThreadStoreClient;
+    const store = new ThreadStore(client);
+    await store.initialize();
+    await store.selectThread(second.id);
+    await Promise.resolve();
+    // The stale answer for the first conversation arrives last, and is dropped.
+    slow.resolve({ entries: [{ agentType: 'main', persona: 'Stale', color: 'pink', source: 'built-in' }] });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(store.getSnapshot().identityCatalog.get('main')?.persona).toBe('Second');
+  });
+
   test('does not let an older page response overwrite a realtime terminal Turn', async () => {
     const owner = thread('thread-1', 1);
     const stalePage = deferred<{ data: Turn[]; nextCursor: null; backwardsCursor: null }>();

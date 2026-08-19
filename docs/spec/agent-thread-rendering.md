@@ -78,19 +78,27 @@ request and the work it produced. What differs is which actions are valid.
 delegation graph is a set of participants sending each other messages, and every
 surface that shows one reads like any message stream.
 
-Every non-reader block therefore wears the SAME structure — a one-line header
-carrying an avatar, the participant's name, and what they did (the Turn's work
-summary for this transcript's own agent; a delegated child's own elapsed for its
-report) — then what they said at full width beneath it. Who spoke and how long
-it took is one sentence, so it is one line: that header IS the work summary and
-the only control that opens the timeline. It was a name row, a summary line, a
-rule, and sometimes a second summary line — four elements for one sentence (PM
-2026-08-15). One structure for all of them: the conversation's own agent
+Every non-reader block therefore wears the SAME structure — a header carrying a
+mark beside two stacked lines, WHO (persona and Agent type) over WHAT THEY
+DID (the Turn's work summary for this transcript's own agent; a delegated
+child's own elapsed for its report) — then what they said beneath it. The work
+line IS the work summary and the only control that opens the timeline. It is
+two lines rather than one because they answer different questions and the
+second one GROWS: an elapsed time ticking up beside a name squeezes the name at
+deck width, and a persona is the thing that must never be truncated. What the
+earlier one-line rule refused was four elements for one sentence — a name row,
+a summary line, a rule, and sometimes a second summary line (PM 2026-08-15);
+two tight lines under one mark are not that, and the prototype the identity
+system was ratified from stacks them (PM 2026-08-18). One structure for all of them: the conversation's own agent
 answering, a delegated child delivering its report, the Agent that wrote a
-brief. The header is one line and the words keep the whole column on purpose:
-the avatar lane down the margin that desktop IM uses costs a tenth of the
-reading measure in a 344px deck, spent repeating what the header already says
-(PM 2026-08-15). Before this, `main` was unattributed prose and a child's report was a
+brief. The mark and the two identity lines form a header ROW at the block's
+left edge, and the words beneath take the WHOLE column — no avatar lane, no
+hanging indent. An avatar lane is what a chat app spends on short bubbles; what
+arrives in this deck is documents — tables, code blocks, galleries — in the
+narrowest column the app has, where a lane costs 13% of the measure and a
+three-column table pays for it (PM 2026-08-18). What an indent would buy is a
+visible change of speaker, and the header row says that louder anyway: a
+mark, and a persona in the content register. Before this, `main` was unattributed prose and a child's report was a
 labelled bubble, which made two participants look like two different sorts of
 thing (PM 2026-08-15). Consecutive blocks group under a single header only within one
 PARTICIPANT — never merely within one type. A `general-purpose` child inside a
@@ -123,10 +131,18 @@ identity signal in the stream, and Tenon has no user profile to draw a face
 from — so `I asked this` stays a matter of position, and `main asked this` a
 matter of the name above it. Neither is ever left to a hover.
 
-A participant is named by its TYPE everywhere it SPEAKS — in the conversation
-and inside its own pushed view alike, since the avatar is drawn from that name
-and an Agent that answered to `general-purpose` outside would otherwise change
-letter and hue on the way in. Not by the task it was handed. The
+A participant is named by its PERSONA everywhere it SPEAKS — in the
+conversation and inside its own pushed view alike — with the Agent TYPE beside
+it in a quieter register: who it is, then what it is. The persona comes from
+the identity catalog (`identities/get`, resolved by `resolveAgentIdentity`),
+keyed by type, and an identity with none configured is named after its type,
+which is what an unconfigured Role should look like. Resolution happens at
+RENDER time, never recorded on the message: renaming a persona renames the
+speaker of every message that Agent ever sent. A type appears verbatim, because
+that IS what a user writes in configuration and passes as `subagent_type`. Two
+participants show no type label at all: the conversation's own agent, per the
+delegate's-badge rule below, and an isolated Skill, whose own name already says
+what it is. Not the task it was handed. The
 execution record's description (`count spec Markdown`) is a task label, and a
 task label standing where a name goes reads as a sentence fragment rather than
 as somebody speaking; the task appears right below it, as the report's own first
@@ -137,14 +153,103 @@ Naming (who is speaking) and identification (which one is this) are different
 questions (PM 2026-08-15). An isolated Skill keeps its own name, which is its
 type.
 
-Both halves of a header — the name and what that participant did — are one
-sentence on one line, and share one meta rule. Styled apart, the child's elapsed
+Both halves of a header — the name and what that participant did — share one
+meta rule. Styled apart, the child's elapsed
 came out at content size and stood its whole header taller than the agent's
 above it, so two headers that say the same kind of thing did not look alike.
 
-The avatar is a coloured disc carrying the first character of the name. Its hue
-comes from the shared `--identity-tint-*` palette (`agentAvatarColor.ts`), keyed
-by the Agent TYPE: **one type, one avatar — everywhere, in every conversation.**
+The mark is sized to ANCHOR the header, not to match a line of text. Every
+mobile IM does this — Slack 36, Discord 40, WeChat and Telegram 40, iMessage 28,
+all against ~18px lines — and Tenon's two-line header makes the requirement
+stronger rather than weaker: a disc scaled to one line covers the name and
+leaves the work line under it dangling beside empty margin (PM 2026-08-18). It
+centres against both lines rather than hanging off the first. Tenon departs
+from those apps in one way, deliberately: they put the timestamp on the name's
+own line, which is only safe because a timestamp is fixed-width. Ours grows
+while a Turn runs.
+
+The persona sits ONE STEP above the metadata beside it, and the header sits at
+near line spacing from the words it names: one utterance, not two blocks. Body
+size — the way Slack sets a sender's name — is right while the message hangs
+from that name in a shared column; with the message at full width the header is
+its own row above the words rather than their first line, and a body-sized name
+jumps a third over everything else on its own lines (PM 2026-08-18). Weight and
+colour carry the anchoring; the size step finishes it.
+
+**A delegate wears its type; the conversation's own agent does not.** There is
+exactly one `main`, the reader is addressing it, and labelling it states the
+only thing about that participant nobody was wondering. The label answers
+"which kind of helper is this", which is a question only a delegate raises.
+
+**The header no longer shares a glyph column with the rows beneath it**
+(PM 2026-08-19). That rule — the speaker's avatar centred on the same axis as a
+chip's 12px glyph, its name on the chip label's text column — was written for
+the one-line header carrying a 16px letter disc (PM 2026-08-15). The two-line
+header anchored by a mark sized to span it (PM 2026-08-18) cannot also sit on a
+12px glyph's axis; the two rules were incompatible, and the header wins because
+it answers WHO IS SPEAKING while a chip is a row of content inside what they
+said. What replaced it is the header's own column, below.
+
+One header, one anchor. The header's own two lines share one left edge beside
+the mark: nothing in it may poke outside the block or indent past that
+edge, which is why the mark carries no optical overhang and the work line's
+control carries no inline padding — as a `<button>` it otherwise wears the UA's
+inline padding and steps out of the column. Within the header the PERSONA is
+the only emphasis, because a message stream is scanned by who said it; the
+Agent type beside it and the work line below share one quieter level. Three
+separate greys made the header read as loose fragments and grouped it against
+its own meaning (PM 2026-08-18).
+
+The mark is frameless — no tile, no crop, no hairline. The form is its own
+edge; the frame treatment existed for raster portraits whose painted grounds
+had no boundary of their own, and it retired with them.
+
+The avatar is a GENERATED MARK (`AgentMark.tsx`): one soft form shared by every
+participant, filled with the identity's colour, with two round-capped eye holes
+cut through the mask to the panel behind — so a mark has exactly one colour and
+its eyes can never be mis-paired against a theme. Identity IS the colour, from
+the shared `--identity-tint-*` palette: the default roster pins well-separated
+hues (Aspen teal `main`, Rena orange `explore`, Ada blue `plan`, Bruno amber
+`general-purpose`), and every other identity derives its hue from its type name
+(core `deriveIdentityColor`) over the hues the roster did not take — a
+user-created Role is distinct the moment it is named, nobody draws anything,
+and a fresh Role can neither walk in wearing Aspen's teal nor the
+danger-adjacent red (PM 2026-08-18, replacing the portrait assets tried
+first). The conversation's own agent is named the same way as the rest and does
+NOT carry the product's name: a transcript names the participants in it, not
+the application they run inside (PM 2026-08-18). Keyed by Agent TYPE: **one
+type, one mark — everywhere, in every conversation.** The marks are ALIVE, within strict bounds:
+
+- **Expressions.** The eyes are one thick round-capped stroke per side,
+  parameterised (`agentMarkGeometry`); a mood is data over that rig, so states
+  MORPH rather than swap. Moods restate state the text beside them already
+  tells, never more: a Turn in progress reads down and scans (working), one
+  blocked on an input request looks straight out (needs-you), a failed Turn
+  droops — sorry, not angry, because an agent that failed the user has nothing
+  to be cross about — a user-interrupted one sleeps, and a delegate signs its
+  delivered report with a smile (or the failure's droop, or the stop's closed
+  eyes). Everything settled and ordinary is idle.
+- **The sphere.** The face is a ball, not a disc: each eye is a point on a
+  sphere, the pose turns it, the far eye narrows toward the limb, and the
+  stroke is clamped inside the silhouette — a hole crossing the outline reads
+  as a bite out of the face. A unit invariant sweeps every mood over the full
+  pose envelope and holds containment.
+- **Gaze.** While the pointer crosses a speaker HEADER, that mark turns to
+  follow it with inertia (the head has more mass than the expression); events
+  bind to the header only, so a still pointer costs nothing. A working mark
+  scans line-by-line on its own.
+- **Blinking.** Mostly both eyes, now and then just one, each mark on its own
+  clock, fast shut and unhurried open. A blink is a rig PARAMETER — the stroke
+  collapses onto its own anchor — not a CSS transform on the mask group: a
+  scale there is the layout-free "pop" B7 refuses, and its duration would be an
+  untokenized motion literal (B1). The stylesheet holds no animation for the
+  mark at all. Closed-eye moods (done, stopped, failed) do not blink.
+- **Motion discipline.** One module-wide rAF loop animates only marks with
+  something actually moving, stops when none has, and sleeps between blinks on
+  a timer; marks scrolled out of view hold still. Updates are ref-driven
+  attribute writes, never React state (A9). A scheduler that calls back
+  synchronously is guarded against re-entry. `prefers-reduced-motion` keeps
+  each mood's static shape and stills everything.
 Derived rather than enumerated, since a project can name a type anything at all
 in `.claude/agents/*.md` and a hand-kept table would miss exactly the ones that
 matter to that workspace. Keyed by Agent id instead, two `general-purpose`

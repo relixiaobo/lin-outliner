@@ -132,7 +132,15 @@ import {
 } from '../subagentPresentation';
 import { SubagentReport } from './SubagentReport';
 import { ThreadSpeakerGroup, type ThreadSpeaker } from './ThreadSpeaker';
-import { MAIN_AVATAR_IDENTITY } from '../agentAvatarColor';
+import { MAIN_IDENTITY_KEY } from '../agentIdentity';
+import type { MarkMood } from '../agentMarkGeometry';
+
+/**
+ * The speaker id for a host notice the renderer could not attribute. Distinct
+ * from `main` so consecutive-speaker merging never folds an unnamed event into
+ * the conversation's own agent.
+ */
+const UNATTRIBUTED_PARTICIPANT_ID = 'unattributed';
 import { useSubagentEntry, useWorkingAgentIds } from './SubagentRegistryContext';
 import { classifyNewThreadCommand } from '../threadComposerCommands';
 import { parseNodeReferenceMarkers } from '../../../core/referenceMarkup';
@@ -2471,6 +2479,12 @@ export const ThreadTurnView = memo(function ThreadTurnView({
       participantId: delivery.agentId,
       avatarKey: subagentSpeakerName(reportEntry),
       name: subagentSpeakerName(reportEntry),
+      // The delegate signs its report with how the run ended: a smile for a
+      // result, drooped eyes for an error, closed ones when the reader stopped
+      // it. The card states the same facts in words; the face only restates.
+      mood: reportEntry.error !== null ? 'failed'
+        : reportEntry.stoppedByUser ? 'stopped'
+          : 'done',
     }
     : null;
   // A delivering child's header states ITS OWN span, not this conversation's:
@@ -2669,16 +2683,34 @@ export const ThreadTurnView = memo(function ThreadTurnView({
   // and no speaker to name, so its block is DROPPED rather than handed to this
   // Turn's host author: that produced a header standing over nothing, which
   // reads as a participant who said something the reader cannot see.
+  // The Turn's own state, on the face that owns the Turn. Live work reads as
+  // working (or needs-you while an input request blocks it); a failure stays a
+  // failure — the header is the honest record of how that Turn went, the same
+  // truth the status text beside it tells. A user interrupt sleeps: the reader
+  // ended it, and it will not stir until they do.
+  const selfMood: MarkMood = turn.status === 'inProgress'
+    ? (waitingOnUserInput ? 'needsYou' : 'working')
+    : turn.status === 'failed' ? 'failed'
+      : turn.status === 'interrupted' ? 'stopped'
+        : 'idle';
+  const moodedSelf: ThreadSpeaker = { ...selfSpeaker, mood: selfMood };
   const speakerOf = (block: ThreadContentBlock): ThreadSpeaker | null | 'drop' => {
-    if (block.kind === 'process') return selfSpeaker;
-    if (block.item.type !== 'userMessage') return selfSpeaker;
+    if (block.kind === 'process') return moodedSelf;
+    if (block.item.type !== 'userMessage') return moodedSelf;
     if (block.item.id === deliveryNoticeItemId) return reportSpeaker ?? 'drop';
     // Only the Turn's own notice is somebody else's; anything the reader typed
     // into it afterwards is theirs, wherever the Turn came from.
     if (block.item.id !== hostNoticeItemId) return null;
+    // Nobody could be named for this notice. It must NOT borrow `main`'s
+    // identity: `resolveAgentIdentity` resolves a known type's persona over
+    // the caller's name, so `avatarKey: main` signed an unattributable event
+    // with the conversation's own persona and mark — and left the deliberately
+    // non-committal string dead in every locale. An empty key resolves to
+    // nothing, which is what falls through to that string and to a colour
+    // derived from it.
     return hostSpeaker ?? peerSpeaker ?? {
-      participantId: MAIN_AVATAR_IDENTITY,
-      avatarKey: MAIN_AVATAR_IDENTITY,
+      participantId: UNATTRIBUTED_PARTICIPANT_ID,
+      avatarKey: '',
       name: t.agent.thread.agentEvent,
     };
   };
@@ -2742,7 +2774,7 @@ export const ThreadTurnView = memo(function ThreadTurnView({
     }
   }
   if (responseItem === null && responseTail) {
-    emit(selfSpeaker, (
+    emit(moodedSelf, (
       <article
         className="thread-item thread-agent-message thread-agent-message-response"
         key={`tail:${turn.id}`}

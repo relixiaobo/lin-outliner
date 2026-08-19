@@ -2,7 +2,14 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
+  DEFAULT_AGENT_PRESENTATIONS,
+  IDENTITY_COLORS,
+  MAIN_PRESENTATION_KEY,
   REASONING_EFFORTS,
+  deriveIdentityColor,
+  type AgentPresentation,
+  type AgentPresentationOverride,
+  type IdentityColor,
   type AgentRole,
   type AgentRoleOverrides,
   type ConfigurationProfile,
@@ -10,18 +17,30 @@ import {
   type ReasoningEffort,
 } from '../../core/agent/configuration';
 import { MODEL_TOOL_CATALOG, canonicalModelToolKey } from '../../core/agent/tools';
-import type { RoleCatalogContextPayload, RoleCatalogEntry } from '../../core/agent/protocol';
+import type { AgentIdentityEntry, RoleCatalogContextPayload, RoleCatalogEntry } from '../../core/agent/protocol';
 
 interface ConfigurationLayer {
   readonly defaultProfile: string | null;
   readonly profiles: ReadonlyMap<string, ConfigurationProfile>;
   readonly roles: ReadonlyMap<string, AgentRole>;
+  /**
+   * Re-skins for identities this layer does not define: the built-in Agent
+   * types and `main`. A Role carries its own presentation, so this map exists
+   * for the identities a user cannot redefine without forking them.
+   *
+   * Layered per ENTRY, like Profiles and Roles: a project override replaces a
+   * user one outright rather than merging field by field. One layering rule for
+   * the whole file is worth more than the convenience of inheriting half an
+   * override from underneath.
+   */
+  readonly presentationOverrides: ReadonlyMap<string, AgentPresentationOverride>;
 }
 
 const EMPTY_LAYER: ConfigurationLayer = Object.freeze({
   defaultProfile: null,
   profiles: new Map(),
   roles: new Map(),
+  presentationOverrides: new Map(),
 });
 
 const DEFAULT_PROFILE: ConfigurationProfile = Object.freeze({
@@ -249,8 +268,62 @@ export class AgentConfigurationLoader {
     return this.buildRoleCatalogSnapshot(cwd);
   }
 
-  private agentTypeCandidates(cwd: string): ResolvedAgentType[] {
+  /**
+   * Every identity the reader can meet, with its name and face settled.
+   *
+   * Resolution is layered the way configuration is: the definition's own
+   * presentation, then a user re-skin, then a project one. An identity with
+   * nothing to say for itself is named after its type and wears the colour its
+   * name derives — which is what an unconfigured custom Role should look like:
+   * distinct the moment it exists, without anyone drawing anything.
+   *
+   * Deliberately NOT part of `buildRoleCatalogSnapshot`: that payload is the
+   * model's view of the Agent catalog and its hashes gate re-announcement.
+   * Presentation must never move those bytes, so it travels its own path.
+   */
+  resolveIdentityCatalog(cwd: string): readonly AgentIdentityEntry[] {
+    // One parse of each layer for the whole call: `agentTypeCandidates` reads
+    // the same merge, and `loadMerged` has no cache, so taking the default
+    // path read both files twice per request.
     const merged = this.loadMerged(cwd);
+    const candidates = this.agentTypeCandidates(cwd, merged);
+    const overlay = (key: string, base: AgentPresentation): AgentPresentation => {
+      const override = merged.presentationOverrides.get(key);
+      return {
+        persona: override?.persona ?? base.persona,
+        color: override?.color ?? base.color,
+      };
+    };
+    const main = overlay(
+      MAIN_PRESENTATION_KEY,
+      DEFAULT_AGENT_PRESENTATIONS[MAIN_PRESENTATION_KEY]!,
+    );
+    const entries: AgentIdentityEntry[] = [{
+      agentType: MAIN_PRESENTATION_KEY,
+      persona: main.persona,
+      color: main.color,
+      source: 'built-in',
+    }];
+    for (const candidate of candidates) {
+      const type = candidate.canonicalType;
+      const declared = candidate.role.presentation;
+      const base: AgentPresentation = {
+        persona: declared?.persona ?? DEFAULT_AGENT_PRESENTATIONS[type]?.persona ?? type,
+        color: declared?.color ?? DEFAULT_AGENT_PRESENTATIONS[type]?.color ?? deriveIdentityColor(type),
+      };
+      const resolved = overlay(type, base);
+      entries.push({
+        agentType: type,
+        persona: resolved.persona,
+        color: resolved.color,
+        source: candidate.role.source === 'builtIn' ? 'built-in' : candidate.role.source,
+      });
+    }
+    return Object.freeze(entries);
+  }
+
+  private agentTypeCandidates(cwd: string, preloaded?: ConfigurationLayer): ResolvedAgentType[] {
+    const merged = preloaded ?? this.loadMerged(cwd);
     const builtIns = BUILT_IN_AGENT_TYPES.map((entry): ResolvedAgentType => ({
       canonicalType: entry.canonicalType,
       role: BUILT_IN_AGENT_ROLE_DEFINITIONS[entry.backingRole]!,
@@ -274,18 +347,21 @@ export class AgentConfigurationLoader {
       defaultProfile: project.defaultProfile ?? user.defaultProfile,
       profiles: new Map([...user.profiles, ...project.profiles]),
       roles: new Map([...user.roles, ...project.roles]),
+      presentationOverrides: new Map([...user.presentationOverrides, ...project.presentationOverrides]),
     };
   }
 }
 
 function roleCatalogEntry(role: AgentRole, name = role.name, description = role.description): RoleCatalogEntry {
   const source = role.source === 'builtIn' ? 'built-in' : role.source;
+  // Presentation is deliberately absent: this hash gates re-announcing the
+  // catalog to the model, and renaming an Agent on screen changes nothing the
+  // model was told.
   const contentHash = createHash('sha256').update(JSON.stringify({
     name,
     source,
     description,
     developerInstructions: role.developerInstructions,
-    nicknameCandidates: role.nicknameCandidates ?? [],
     overrides: role.overrides ?? null,
   })).digest('hex');
   return {
@@ -323,7 +399,7 @@ function readLayer(path: string, source: 'user' | 'project'): ConfigurationLayer
     throw new Error(`Invalid Agent configuration at ${path}: ${errorMessage(error)}`);
   }
   const root = objectValue(value, path);
-  exactKeys(root, ['defaultProfile', 'profiles', 'roles'], path);
+  exactKeys(root, ['defaultProfile', 'profiles', 'roles', 'presentationOverrides'], path);
   const profiles = new Map<string, ConfigurationProfile>();
   for (const [name, profileValue] of Object.entries(optionalObject(root.profiles, `${path}.profiles`))) {
     validateDefinitionName(name, `${path}.profiles`);
@@ -332,7 +408,23 @@ function readLayer(path: string, source: 'user' | 'project'): ConfigurationLayer
   const roles = new Map<string, AgentRole>();
   for (const [name, roleValue] of Object.entries(optionalObject(root.roles, `${path}.roles`))) {
     validateDefinitionName(name, `${path}.roles`);
+    // `main` names the conversation's own agent everywhere presentation is
+    // addressed. A Role by that name would resolve to one identity in the
+    // override map and another in the Agent-type catalog.
+    if (name === MAIN_PRESENTATION_KEY) {
+      throw new Error(`${path}.roles.${name} is reserved: '${MAIN_PRESENTATION_KEY}' names the conversation's own agent`);
+    }
     roles.set(name, decodeRole(name, roleValue, source, `${path}.roles.${name}`));
+  }
+  const presentationOverrides = new Map<string, AgentPresentationOverride>();
+  for (const [name, overrideValue] of Object.entries(
+    optionalObject(root.presentationOverrides, `${path}.presentationOverrides`),
+  )) {
+    if (name !== MAIN_PRESENTATION_KEY) validateDefinitionName(name, `${path}.presentationOverrides`);
+    presentationOverrides.set(
+      name,
+      decodePresentation(overrideValue, `${path}.presentationOverrides.${name}`),
+    );
   }
   return {
     defaultProfile: root.defaultProfile === undefined
@@ -340,6 +432,7 @@ function readLayer(path: string, source: 'user' | 'project'): ConfigurationLayer
       : normalizeSelectedName(stringValue(root.defaultProfile, `${path}.defaultProfile`), 'Configuration Profile'),
     profiles,
     roles,
+    presentationOverrides,
   };
 }
 
@@ -389,14 +482,14 @@ function decodeRole(
   exactKeys(record, [
     'description',
     'developerInstructions',
-    'nicknameCandidates',
+    'presentation',
     'overrides',
   ], path);
   const description = nonEmptyString(record.description, `${path}.description`);
   const developerInstructions = nonEmptyString(record.developerInstructions, `${path}.developerInstructions`);
-  const nicknameCandidates = record.nicknameCandidates === undefined
+  const presentation = record.presentation === undefined
     ? undefined
-    : uniqueStringArray(record.nicknameCandidates, `${path}.nicknameCandidates`, validateNickname);
+    : decodePresentation(record.presentation, `${path}.presentation`);
   const overrides = record.overrides === undefined
     ? undefined
     : decodeRoleOverrides(record.overrides, `${path}.overrides`);
@@ -405,8 +498,29 @@ function decodeRole(
     source,
     description,
     developerInstructions,
-    ...(nicknameCandidates === undefined ? {} : { nicknameCandidates }),
+    ...(presentation === undefined ? {} : { presentation }),
     ...(overrides === undefined ? {} : { overrides }),
+  });
+}
+
+function decodePresentation(value: unknown, path: string): AgentPresentationOverride {
+  const record = objectValue(value, path);
+  exactKeys(record, ['persona', 'color'], path);
+  const persona = record.persona === undefined
+    ? undefined
+    : nonEmptyString(record.persona, `${path}.persona`);
+  if (persona !== undefined) validatePersona(persona, `${path}.persona`);
+  const color = record.color === undefined
+    ? undefined
+    : nonEmptyString(record.color, `${path}.color`);
+  if (color !== undefined && !IDENTITY_COLORS.includes(color as IdentityColor)) {
+    throw new Error(
+      `${path}.color must be one of ${IDENTITY_COLORS.join(', ')} — got '${color}'`,
+    );
+  }
+  return Object.freeze({
+    ...(persona === undefined ? {} : { persona }),
+    ...(color === undefined ? {} : { color }),
   });
 }
 
@@ -521,9 +635,20 @@ function validateDefinitionName(value: string, path: string): void {
   }
 }
 
-function validateNickname(value: string, path: string): void {
-  if (!/^[A-Za-z0-9 _-]+$/u.test(value)) {
-    throw new Error(`${path} may use only ASCII letters, digits, spaces, hyphens, and underscores`);
+/**
+ * A persona is a display name, not an identifier: any script is welcome, so a
+ * reader can call an Agent whatever they call it. It only has to fit on one
+ * header line beside a role label in a 344px deck.
+ */
+const MAX_PERSONA_LENGTH = 40;
+
+function validatePersona(value: string, path: string): void {
+  // Leading/trailing space is not checked here: `nonEmptyString` upstream has
+  // already trimmed it, so the branch that once lived here could never fire
+  // and its error message promised a rejection that never happened.
+  if (/[\n\r]/u.test(value)) throw new Error(`${path} must be a single line`);
+  if ([...value].length > MAX_PERSONA_LENGTH) {
+    throw new Error(`${path} must be at most ${MAX_PERSONA_LENGTH} characters`);
   }
 }
 

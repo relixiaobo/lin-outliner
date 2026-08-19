@@ -1,24 +1,9 @@
 /**
- * The one hash that turns an identity into a slot in the shared identity
- * palette.
- *
- * Tag chips and participant avatars both key a colour off a stable string, and
- * both were carrying their own copy of this — same constants, same shifts, and
- * already drifting apart in the surface tint each mixed. One family reads as
- * one family only while there is one derivation.
+ * The identity palette's shared derivation, re-exported for the tag surfaces.
+ * The hash itself lives in `core/identityHash` because the agent identity
+ * catalog resolves colours on both sides of the process seam.
  */
-export function identitySlot(identity: string, slots: number): number {
-  let hash = 0;
-  for (let index = 0; index < identity.length; index += 1) {
-    hash = Math.imul(hash ^ identity.charCodeAt(index), 0x5bd1e995);
-  }
-  hash ^= hash >>> 16;
-  hash = Math.imul(hash, 0x85ebca6b);
-  hash ^= hash >>> 13;
-  hash = Math.imul(hash, 0xc2b2ae35);
-  hash ^= hash >>> 16;
-  return (hash >>> 0) % slots;
-}
+export { identitySlot } from '../../../core/identityHash';
 
 /** How far an identity hue is mixed toward the live content surface. */
 export const IDENTITY_SURFACE_TINT = '12%';

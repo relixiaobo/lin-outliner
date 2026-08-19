@@ -1028,7 +1028,10 @@ export class SubagentCollaboration {
               parentThreadId: parent.thread.id,
               forkedFromId: null,
               agentRole: role.name,
-              agentNickname: input.nickname ?? role.nicknameCandidates?.[0] ?? null,
+              // Only what the spawn itself said. A Role's display identity is
+              // presentation, resolved where it is drawn — baking it in here
+              // would freeze a name the reader can rename at any time.
+              agentNickname: input.nickname ?? null,
               configuration,
               toolCeiling,
               modelOverride: input.model ?? null,

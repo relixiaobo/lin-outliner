@@ -7,7 +7,7 @@ import { IconButton } from '../../ui/primitives/IconButton';
 import { api } from '../../api/client';
 import type { ThreadNodeReferenceOpenHandler } from '../threadReferences';
 import { threadStore, useThreadStore } from '../store/threadStore';
-import { MAIN_AVATAR_IDENTITY } from '../agentAvatarColor';
+import { MAIN_IDENTITY_KEY } from '../agentIdentity';
 import type { ThreadSpeaker } from './ThreadSpeaker';
 import { subagentSpeakerName, type SubagentConversationProjection } from '../subagentPresentation';
 import { useSubagentActions, useSubagentEntry } from './SubagentRegistryContext';
@@ -138,13 +138,13 @@ export function SubagentDetailView({
   const hostSpeaker: ThreadSpeaker = useMemo(() => (
     parentEntry === null
       ? {
-        participantId: MAIN_AVATAR_IDENTITY,
-        avatarKey: MAIN_AVATAR_IDENTITY,
+        participantId: MAIN_IDENTITY_KEY,
+        avatarKey: MAIN_IDENTITY_KEY,
         name: t.agent.thread.agent.main,
       }
       : {
         participantId: parentEntry.agentId,
-        avatarKey: parentSpeakerName ?? MAIN_AVATAR_IDENTITY,
+        avatarKey: parentSpeakerName ?? MAIN_IDENTITY_KEY,
         name: parentSpeakerName ?? t.agent.thread.agent.main,
       }
   ), [parentEntry, parentSpeakerName, t]);

@@ -1548,6 +1548,37 @@ export interface RequestUserInputResponse {
 
 export type EmptyAgentCoreResponse = Readonly<Record<string, never>>;
 
+/**
+ * One identity as the reader meets it: what it is called and what it looks
+ * like. Keyed by Agent TYPE — `main` for the conversation's own agent, a
+ * canonical built-in type, or a Role name.
+ *
+ * Presentation travels its own path rather than riding on Thread or Item
+ * records: it is configuration, not history. A persona renamed today must
+ * rename the speaker of every message that Agent ever sent, which is only true
+ * if the transcript resolves identity at render time instead of recording it.
+ */
+export interface AgentIdentityEntry {
+  readonly agentType: string;
+  readonly persona: string;
+  /** An identity-palette colour name; always resolved, never empty. */
+  readonly color: string;
+  readonly source: 'built-in' | 'user' | 'project';
+}
+
+export interface AgentIdentityCatalogRequest {
+  /**
+   * Whose project layer to read. A Thread names a working directory, and a
+   * project may define both Roles and re-skins; null asks for the user layer
+   * alone, which is what an empty dock has.
+   */
+  readonly threadId: ThreadId | null;
+}
+
+export interface AgentIdentityCatalogResponse {
+  readonly entries: readonly AgentIdentityEntry[];
+}
+
 export const AGENT_CORE_METHODS = [
   'thread/list',
   'thread/descendants',
@@ -1578,6 +1609,7 @@ export const AGENT_CORE_METHODS = [
   'goal/create',
   'goal/update',
   'userInput/respond',
+  'identities/get',
 ] as const;
 
 export type AgentCoreMethod = typeof AGENT_CORE_METHODS[number];
@@ -1612,6 +1644,7 @@ export interface AgentCoreRequestByMethod {
   readonly 'goal/create': CreateGoalInput;
   readonly 'goal/update': UpdateGoalInput;
   readonly 'userInput/respond': RequestUserInputResponse;
+  readonly 'identities/get': AgentIdentityCatalogRequest;
 }
 
 export interface AgentCoreResponseByMethod {
@@ -1644,6 +1677,7 @@ export interface AgentCoreResponseByMethod {
   readonly 'goal/create': CreateGoalResponse;
   readonly 'goal/update': UpdateGoalResponse;
   readonly 'userInput/respond': EmptyAgentCoreResponse;
+  readonly 'identities/get': AgentIdentityCatalogResponse;
 }
 
 export type ThreadItemDelta =
