@@ -27,6 +27,12 @@ export {
 export type { ModelToolIdentity } from './protocol';
 
 export type JsonSchema = Readonly<Record<string, unknown>>;
+/**
+ * The shape every provider requires of a model-facing tool schema. Static
+ * catalog contracts declare it so a root union fails `tsc` where it is written,
+ * one altitude above the runtime check in `providerToolSchemaFailure`.
+ */
+export type ObjectJsonSchema = JsonSchema & { readonly type: 'object' };
 export type ModelToolScope = 'rootThread' | 'anyThread';
 export type ModelToolSchemaOwner = 'core' | 'capability' | 'configuration' | 'extension';
 
@@ -43,6 +49,14 @@ export interface ModelToolContract {
   readonly inputSchema: JsonSchema | null;
   readonly outputSchema?: JsonSchema | null;
   readonly actionKinds: readonly ModelToolActionKind[];
+}
+
+/**
+ * A catalog contract, whose schema is written here rather than contributed by a
+ * runtime implementation.
+ */
+export interface StaticModelToolContract extends ModelToolContract {
+  readonly inputSchema: ObjectJsonSchema | null;
 }
 
 export interface ModelToolSchemaContribution {
@@ -76,14 +90,6 @@ export const RETAINED_CAPABILITY_TOOL_NAMES = [
   'web_fetch',
   'generate_image',
   'data_import',
-] as const;
-
-export const CORE_CONTROL_TOOL_NAMES = [
-  'request_user_input',
-  'update_plan',
-  'get_goal',
-  'create_goal',
-  'update_goal',
 ] as const;
 
 export const CONFIGURATION_TOOL_NAMES = ['agent', 'skill'] as const;
@@ -182,7 +188,7 @@ const numberSchema = (description?: string): JsonSchema => ({
 const objectSchema = (
   properties: Readonly<Record<string, JsonSchema>>,
   required: readonly string[] = [],
-): JsonSchema => ({
+): ObjectJsonSchema => ({
   type: 'object',
   properties,
   required,
@@ -242,7 +248,7 @@ const automationScheduleSchema = objectSchema({
 }, ['rrule', 'timezone']);
 
 const automationDestinationSchema: JsonSchema = {
-  oneOf: [
+  anyOf: [
     objectSchema({ kind: enumSchema(['standalone']) }, ['kind']),
     objectSchema({
       kind: enumSchema(['existingThread']),
@@ -258,12 +264,12 @@ const automationProjectBindingSchema = objectSchema({
 }, ['id', 'cwd', 'executionMode']);
 
 const nullableStringSchema: JsonSchema = {
-  oneOf: [boundedStringSchema(AUTOMATION_IDENTIFIER_MAX_LENGTH), { type: 'null' }],
+  anyOf: [boundedStringSchema(AUTOMATION_IDENTIFIER_MAX_LENGTH), { type: 'null' }],
 };
 const automationConfigurationSchema = objectSchema({
   modelProvider: nullableStringSchema,
   model: nullableStringSchema,
-  reasoningEffort: { oneOf: [enumSchema(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']), { type: 'null' }] },
+  reasoningEffort: { anyOf: [enumSchema(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']), { type: 'null' }] },
 });
 
 const automationDefinitionProperties = {
@@ -279,31 +285,45 @@ const automationMutableProperties = {
   status: enumSchema(['active', 'paused']),
 };
 
-const automationUpdateToolSchema: JsonSchema = {
-  oneOf: [
-    objectSchema({
-      mode: enumSchema(['create']),
-      definition: objectSchema({
-        ...automationMutableProperties,
-      }, ['name', 'prompt', 'schedule', 'destination']),
-    }, ['mode', 'definition']),
-    objectSchema({
-      mode: enumSchema(['update']),
-      automation_id: boundedStringSchema(AUTOMATION_IDENTIFIER_MAX_LENGTH),
-      expected_revision: { type: 'integer', minimum: 1 },
-      patch: { ...objectSchema(automationMutableProperties), minProperties: 1 },
-    }, ['mode', 'automation_id', 'expected_revision', 'patch']),
-    objectSchema({
-      mode: enumSchema(['view']),
-      automation_id: boundedStringSchema(AUTOMATION_IDENTIFIER_MAX_LENGTH),
-    }, ['mode']),
-    objectSchema({
-      mode: enumSchema(['delete']),
-      automation_id: boundedStringSchema(AUTOMATION_IDENTIFIER_MAX_LENGTH),
-      expected_revision: { type: 'integer', minimum: 1 },
-    }, ['mode', 'automation_id']),
-  ],
-};
+// The root stays a flat object with no union keyword. OpenAI rejects a function
+// schema whose ROOT carries oneOf/anyOf/allOf/enum/not ("schema must have type
+// 'object' and not have ... at the top level"), which is the same rule that
+// keeps `node_search` and `node_edit` from expressing their mutually exclusive
+// argument groups in the schema — see the note at the top of
+// `src/main/agent/capabilities/agentNodeToolSchemas.ts`. Per-mode exactness
+// therefore lives in `decodeAutomationToolInput`, which refuses a wrong-shaped
+// call before anything is written; the price is that a wrong shape costs one
+// round trip. Nested unions inside a property subschema are fine.
+const automationUpdateToolSchema: ObjectJsonSchema = objectSchema({
+  mode: enumSchema(
+    ['create', 'update', 'view', 'delete'],
+    [
+      'Operation to perform. Each mode takes exactly its own fields and rejects the rest:',
+      '"create" takes definition;',
+      '"update" takes automation_id, expected_revision, and patch;',
+      '"view" takes an optional automation_id and lists every Automation when it is omitted;',
+      '"delete" takes automation_id and expected_revision.',
+    ].join(' '),
+  ),
+  definition: {
+    ...objectSchema(automationMutableProperties, ['name', 'prompt', 'schedule', 'destination']),
+    description: 'Full definition, required by mode "create" and rejected in every other mode.',
+  },
+  automation_id: boundedStringSchema(
+    AUTOMATION_IDENTIFIER_MAX_LENGTH,
+    'Target Automation UUIDv7. Required by modes "update" and "delete", optional for "view", rejected by "create".',
+  ),
+  expected_revision: {
+    type: 'integer',
+    minimum: 1,
+    description: 'Revision last observed by the caller. Required by modes "update" and "delete" and rejected by the rest; a stale value fails the call.',
+  },
+  patch: {
+    ...objectSchema(automationMutableProperties),
+    minProperties: 1,
+    description: 'At least one field to change. Required by mode "update" and rejected in every other mode; it never carries automation_id or expected_revision.',
+  },
+}, ['mode']);
 
 export const AGENT_TOOL_DESCRIPTION = `Launch a new agent to handle complex, multi-step tasks. Each agent type has specific capabilities and tools available to it.
 
@@ -346,7 +366,7 @@ export const TASK_STOP_TOOL_DESCRIPTION = `
 
 const JSON_SCHEMA_DRAFT_2020_12 = 'https://json-schema.org/draft/2020-12/schema';
 
-export function agentInputSchema(modelIds: readonly string[]): JsonSchema {
+export function agentInputSchema(modelIds: readonly string[]): ObjectJsonSchema {
   const models = [...new Set(modelIds)];
   if (models.some((modelId) => typeof modelId !== 'string' || !modelId)) {
     throw new Error('agent model enum accepts only non-empty provider model ids');
@@ -389,7 +409,7 @@ export function agentInputSchema(modelIds: readonly string[]): JsonSchema {
   };
 }
 
-export const AGENT_MESSAGE_INPUT_SCHEMA: JsonSchema = {
+export const AGENT_MESSAGE_INPUT_SCHEMA: ObjectJsonSchema = {
   $schema: JSON_SCHEMA_DRAFT_2020_12,
   type: 'object',
   properties: {
@@ -412,7 +432,7 @@ export const AGENT_MESSAGE_INPUT_SCHEMA: JsonSchema = {
   additionalProperties: false,
 };
 
-export const TASK_STOP_INPUT_SCHEMA: JsonSchema = {
+export const TASK_STOP_INPUT_SCHEMA: ObjectJsonSchema = {
   $schema: JSON_SCHEMA_DRAFT_2020_12,
   type: 'object',
   properties: {
@@ -428,7 +448,7 @@ export const TASK_STOP_INPUT_SCHEMA: JsonSchema = {
   additionalProperties: false,
 };
 
-const agentTaskToolContracts: readonly ModelToolContract[] = [
+const agentTaskToolContracts: readonly StaticModelToolContract[] = [
   {
     identity: { namespace: null, name: 'agent' },
     description: AGENT_TOOL_DESCRIPTION,
@@ -455,9 +475,9 @@ const agentTaskToolContracts: readonly ModelToolContract[] = [
   },
 ];
 
-const coreControlToolContracts: readonly ModelToolContract[] = [
+const coreControlToolContracts: readonly StaticModelToolContract[] = [
   {
-    identity: { namespace: 'codex_app', name: 'automation_update' },
+    identity: { namespace: null, name: 'automation_update' },
     description: [
       'Create, update, view, or delete a host-owned Automation definition for scheduled agent work.',
       'This tool manages definitions only: Automation status is not Run verification.',
@@ -551,7 +571,7 @@ const CAPABILITY_ACTION_KINDS = {
   data_import: ['agent.data.import'],
 } as const satisfies Record<typeof RETAINED_CAPABILITY_TOOL_NAMES[number], readonly ModelToolActionKind[]>;
 
-const retainedCapabilityToolContracts: readonly ModelToolContract[] = RETAINED_CAPABILITY_TOOL_NAMES.map((name) => ({
+const retainedCapabilityToolContracts: readonly StaticModelToolContract[] = RETAINED_CAPABILITY_TOOL_NAMES.map((name) => ({
   identity: { namespace: null, name },
   description: `Provider-neutral ${name} capability.`,
   scope: 'anyThread',
@@ -560,7 +580,7 @@ const retainedCapabilityToolContracts: readonly ModelToolContract[] = RETAINED_C
   actionKinds: CAPABILITY_ACTION_KINDS[name],
 }));
 
-const configurationToolContracts: readonly ModelToolContract[] = [
+const configurationToolContracts: readonly StaticModelToolContract[] = [
   {
     identity: { namespace: null, name: 'skill' },
     description: 'Invoke a configuration-selected Skill by canonical identity.',
@@ -582,6 +602,33 @@ const CONTRACTS_BY_KEY = new Map(MODEL_TOOL_CATALOG.map((contract) => [
   canonicalModelToolKey(contract.identity),
   contract,
 ]));
+
+/**
+ * The shape a model-facing tool schema must have to be sendable at all. OpenAI
+ * requires a function schema to be object-rooted — it answers `schema must be a
+ * JSON Schema of 'type: "object"', got 'type: null'` otherwise — and refuses a
+ * root carrying `oneOf`/`anyOf`/`allOf`/`enum`/`not` ("schema must have type
+ * 'object' and not have ... at the top level"); Anthropic rejects the same
+ * shapes in `input_schema`. All of them are legal JSON Schema that compiles
+ * locally, so nothing but this check stands between an unsendable schema and a
+ * provider HTTP 400 on every Turn that offers the tool. Express a
+ * mutually-exclusive argument group in the decoder and the descriptions instead;
+ * nested unions inside a property subschema are fine.
+ */
+export function providerToolSchemaFailure(schema: unknown): string | null {
+  if (typeof schema !== 'object' || schema === null || Array.isArray(schema)) {
+    return 'schema must be a JSON Schema object';
+  }
+  const record = schema as Readonly<Record<string, unknown>>;
+  if (record.type !== 'object') {
+    return `schema root must be 'type: "object"', got ${JSON.stringify(record.type ?? null)}`;
+  }
+  const union = ROOT_FORBIDDEN_SCHEMA_KEYWORDS.find((keyword) => record[keyword] !== undefined);
+  if (union !== undefined) return `schema root must not carry "${union}"`;
+  return null;
+}
+
+const ROOT_FORBIDDEN_SCHEMA_KEYWORDS = ['oneOf', 'anyOf', 'allOf', 'enum', 'not'] as const;
 
 export function canonicalModelToolKey(identity: ModelToolIdentity): string {
   validateToolName(identity.name, 'tool name');

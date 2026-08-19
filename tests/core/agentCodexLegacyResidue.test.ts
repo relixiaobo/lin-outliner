@@ -51,6 +51,16 @@ const LEGACY_PATTERNS: ReadonlyArray<{ readonly label: string; readonly pattern:
     pattern: /\b(?:ask_user_question|agent_session_start|agent_session_read|agent_session_send_message|agent_session_stop|past_chats|internal_delegation)\b/,
   },
   {
+    // Automations were ported from the Codex app, and its `codex_app.` tool
+    // namespace came along into our own catalog. Host tools carry no vendor
+    // namespace; `namespace` exists for MCP servers and plugins. No `\b`: the
+    // flat provider form `codex_app__automation_update` is the string the
+    // provider's 400 named, and `_` is a word character, so a trailing word
+    // boundary matches the canonical form only.
+    label: 'vendor-namespaced host tool',
+    pattern: /codex_app/,
+  },
+  {
     label: 'legacy profile terminology',
     pattern: /\bagent[- ]profiles?\b/i,
   },
@@ -114,6 +124,10 @@ describe('Agent Core clean replacement', () => {
   });
 });
 
+// Active surface only: `src`, `tests`, and the two documentation trees that
+// describe current behavior. `docs/TASKS.md` and `CHANGELOG.md` are records of
+// what happened rather than statements of what is true now, so a retired name
+// survives there by design and this guard deliberately does not reach them.
 function scanFiles(): string[] {
   return [
     ...walk(join(ROOT, 'src')),

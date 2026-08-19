@@ -22,8 +22,24 @@ Extensions must provide complete schemas and cannot shadow a Core identity.
 Registry assembly fails when a required schema is missing, a canonical identity
 duplicates another, an extension uses an unsupported action kind, or provider
 encoding would collide. Flat provider names use `namespace__name`; tool-name
-components cannot contain the separator, making the mapping reversible.
+components cannot contain the separator, making the mapping reversible. A
+namespace identifies an MCP server or a plugin: host tools are unnamespaced, and
+no host identity carries the name of another product.
 Every concrete static catalog schema is compilation-guarded by the test suite.
+Compiling is necessary but not sufficient: every model-facing schema must also be
+one every provider accepts. That means an object root carrying no union keyword —
+`oneOf`, `anyOf`, `allOf`, `enum`, and `not` are all refused at the root of a
+function schema, while nested unions inside a property subschema are fine. Such a
+schema is legal JSON Schema and compiles locally, so a static contract declares an
+object-rooted schema in its type and cannot be written otherwise, the admission
+boundary rejects both an unsendable root and a root union before exposure, and the
+catalog guard asserts it for every static contract. A mutually exclusive argument
+group is therefore expressed in the tool's decoder and its parameter descriptions,
+never in the schema root. Which side of that boundary a schema
+failure lands on is decided by ownership, not by the channel that registered the
+tool: a host-owned schema — Core, capability, or configuration — is a structural
+failure even when a dynamic factory contributed it, while extension and MCP-backed
+schemas degrade to one bounded diagnostic.
 `ToolRuntime` also compiles extension contracts and runtime implementations before
 exposure. A malformed dynamic, extension, or MCP-backed schema omits only that
 canonical contribution and emits one bounded diagnostic; valid siblings remain
@@ -352,8 +368,8 @@ The write carries the executing Item's causation.
 - `get_goal`: read the current Thread Goal
 - `create_goal`: create a Goal only when explicitly requested
 - `update_goal`: mark that Goal `complete` or genuinely `blocked`
-- `codex_app.automation_update`: create, update, view, or delete a host-owned
-  Automation on a root Thread
+- `automation_update`: create, update, view, or delete a host-owned Automation
+  on a root Thread
 
 `request_user_input` is not an authorization tool. It supports an optional
 bounded auto-resolution timeout only for useful, non-blocking questions. Each
@@ -366,9 +382,16 @@ suffixes and preserves labels verbatim for answer round-tripping.
 At most one plan step is `in_progress`. Plans are Items within a Turn and do not
 create durable work entities.
 
-`codex_app.automation_update` uses one bounded exact schema and the same
-revisioned host service as renderer commands. It never writes scheduler tables
-from model code or introduces a permission profile. Scheduled execution and
+`automation_update` uses one bounded exact schema and the same revisioned host
+service as renderer commands. That schema is a single flat object
+discriminated by `mode`, with no union at the root, and each parameter's
+description names the modes that take it. The per-mode field sets are exact and
+are enforced at the write boundary by the tool's decoder, beside the Automation
+input decoders the renderer path uses, so model input and renderer input meet one
+set of bounds and one rejection vocabulary; a wrong-shaped call costs one round
+trip and never reaches the service. The decoder addresses the Automation itself: a patch can
+never carry the identity or the expected revision it is checked against. It never
+writes scheduler tables from model code or introduces a permission profile. Scheduled execution and
 standing authorization are specified in
 [`agent-automations.md`](agent-automations.md).
 

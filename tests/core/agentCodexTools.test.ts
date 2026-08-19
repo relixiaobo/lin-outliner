@@ -19,6 +19,7 @@ import {
   modelToolActionKindFromRule,
   modelToolContract,
   modelToolCommandsMatch,
+  providerToolSchemaFailure,
   normalizeAgentMessageToolInput,
   normalizeAgentToolInput,
   normalizeModelToolCommandForBlockMatch,
@@ -48,10 +49,12 @@ describe('Codex Agent Core model-tool contract', () => {
     expect(keys).toContain('create_goal');
     expect(keys).toContain('update_goal');
     expect(keys).toContain('skill');
-    expect(modelToolContract('codex_app.automation_update')?.description).toContain(
+    expect(keys).toContain('automation_update');
+    expect(keys.filter((key) => key.includes('.'))).toEqual([]);
+    expect(modelToolContract('automation_update')?.description).toContain(
       'This tool manages definitions only',
     );
-    expect(modelToolContract('codex_app.automation_update')?.description).toContain(
+    expect(modelToolContract('automation_update')?.description).toContain(
       'Never use shell sleep or polling',
     );
     expect(modelToolContract('agent')?.description).toBe(AGENT_TOOL_DESCRIPTION);
@@ -186,6 +189,32 @@ describe('Codex Agent Core model-tool contract', () => {
       ...extensionTool,
       identity: { namespace: 'foo', name: 'bar__baz' },
     }])).toThrow('reserved flat-provider separator');
+  });
+
+  test('keeps automation_update root-only behind one flat discriminated schema', () => {
+    const contract = modelToolContract('automation_update');
+    expect(contract?.identity).toEqual({ namespace: null, name: 'automation_update' });
+    expect(contract?.scope).toBe('rootThread');
+    const schema = contract?.inputSchema as {
+      readonly type: string;
+      readonly required: readonly string[];
+      readonly additionalProperties: boolean;
+      readonly properties: Record<string, { readonly enum?: readonly string[]; readonly description?: string }>;
+    };
+    expect(schema.type).toBe('object');
+    expect(schema.required).toEqual(['mode']);
+    expect(schema.additionalProperties).toBe(false);
+    expect(Object.keys(schema.properties))
+      .toEqual(['mode', 'definition', 'automation_id', 'expected_revision', 'patch']);
+    expect(schema.properties.mode.enum).toEqual(['create', 'update', 'view', 'delete']);
+    // The root carries no union keyword in any spelling: providers refuse
+    // oneOf/anyOf/allOf/enum/not at the root of a function schema, so the
+    // per-mode field sets live in the decoder and the descriptions. Nested
+    // unions inside a property subschema stay legal.
+    expect(providerToolSchemaFailure(schema)).toBeNull();
+    expect(JSON.stringify(schema)).not.toContain('oneOf');
+    expect(schema.properties.mode.description)
+      .toContain('Each mode takes exactly its own fields and rejects the rest');
   });
 
   test('keeps request_user_input root-only and normalizes its bounded contract', () => {

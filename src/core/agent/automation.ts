@@ -494,6 +494,63 @@ export function decodeAutomationUpdateInput(value: unknown): AutomationUpdateInp
   return Object.freeze(result);
 }
 
+/**
+ * Model-facing `automation_update` input. The provider schema states the same
+ * per-mode field sets, but a Turn's arguments are model output: the write
+ * boundary decodes them here, beside the decoders the renderer path uses, so
+ * one rejection message and one set of bounds serve both callers.
+ */
+export type AutomationToolCommand =
+  | { readonly mode: 'create'; readonly create: AutomationCreateInput }
+  | { readonly mode: 'update'; readonly update: AutomationUpdateInput }
+  | { readonly mode: 'view'; readonly id: string | null }
+  | { readonly mode: 'delete'; readonly id: string; readonly expectedRevision: number };
+
+const AUTOMATION_PATCH_FIELDS = [
+  'name', 'prompt', 'schedule', 'destination', 'projectBindings', 'configuration', 'status',
+] as const;
+
+export function decodeAutomationToolInput(value: unknown): AutomationToolCommand {
+  const path = 'automation_update';
+  const record = objectValue(value, path);
+  const mode = enumValue(record.mode, ['create', 'update', 'view', 'delete'] as const, `${path}.mode`);
+  switch (mode) {
+    case 'create':
+      exactKeys(record, ['mode', 'definition'], path);
+      return Object.freeze({ mode, create: decodeAutomationCreateInput(record.definition) });
+    case 'update': {
+      exactKeys(record, ['mode', 'automation_id', 'expected_revision', 'patch'], path);
+      // A patch carries changes, never identity: it may not name the Automation
+      // it addresses or the revision it is checked against, and the addressed id
+      // is applied after it, so neither layer can be talked into updating one
+      // Automation under another's optimistic-concurrency check.
+      const patch = objectValue(record.patch, `${path}.patch`);
+      exactKeys(patch, AUTOMATION_PATCH_FIELDS, `${path}.patch`);
+      return Object.freeze({
+        mode,
+        update: decodeAutomationUpdateInput({
+          ...patch,
+          id: uuid(record.automation_id, `${path}.automation_id`),
+          expectedRevision: positiveInteger(record.expected_revision, `${path}.expected_revision`),
+        }),
+      });
+    }
+    case 'view':
+      exactKeys(record, ['mode', 'automation_id'], path);
+      return Object.freeze({
+        mode,
+        id: record.automation_id === undefined ? null : uuid(record.automation_id, `${path}.automation_id`),
+      });
+    case 'delete':
+      exactKeys(record, ['mode', 'automation_id', 'expected_revision'], path);
+      return Object.freeze({
+        mode,
+        id: uuid(record.automation_id, `${path}.automation_id`),
+        expectedRevision: positiveInteger(record.expected_revision, `${path}.expected_revision`),
+      });
+  }
+}
+
 export function decodeAutomationSchedule(value: unknown, path = 'schedule'): AutomationSchedule {
   const record = objectValue(value, path);
   exactKeys(record, ['rrule', 'timezone'], path);

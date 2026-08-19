@@ -70,12 +70,14 @@ Automation definitions, rollout history, or extension-private state.
 
 ### Configuration tools
 
-One Agent Core extension contributes two namespaced tools:
+One Agent Core extension contributes two host tools. Like every other host
+tool they carry no namespace: `namespace` identifies an MCP server or a plugin,
+never Tenon itself.
 
-- `codex_app.configuration_read` returns the selected source paths, sanitized
+- `configuration_read` returns the selected source paths, sanitized
   Profile/Role definitions, the current Thread's effective snapshot, and
   validation diagnostics. It never returns credentials or unrelated settings.
-- `codex_app.configuration_edit` accepts a target (`user` or `project`), a
+- `configuration_edit` accepts a target (`user` or `project`), a
   complete replacement document, and the expected current content hash. The
   host validates exact schema, writes a temporary sibling, fsyncs it, atomically
   replaces the target, reloads it, and returns the new hash plus normalized

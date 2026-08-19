@@ -23,7 +23,7 @@ describe('Subagent tool policy', () => {
   test('removes root-only controls and undo from every Agent pool', () => {
     const keys = filterSubagentToolContracts(MODEL_TOOL_CATALOG, foreground).map(toolKey);
     expect(keys).not.toContain('request_user_input');
-    expect(keys).not.toContain('codex_app.automation_update');
+    expect(keys).not.toContain('automation_update');
     expect(keys).not.toContain('outline_undo_stack');
   });
 
