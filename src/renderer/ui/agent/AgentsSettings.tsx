@@ -6,10 +6,13 @@ import {
   type IdentityColor,
 } from '../../../core/agent/configuration';
 import type {
+  AgentBuiltInDefinition,
+  AgentCapabilityCatalog,
   AgentEditableRole,
   AgentEditorView,
   AgentIdentityEntry,
   AgentPresentationOverrideRow,
+  AgentProfileView,
 } from '../../api/types';
 import { api } from '../../api/client';
 import { AgentMark } from '../../agent/components/AgentMark';
@@ -17,6 +20,7 @@ import { identityCatalogFrom, resolveAgentIdentity } from '../../agent/agentIden
 import { useT } from '../../i18n/I18nProvider';
 import { Button } from '../primitives/Button';
 import { ButtonControl } from '../primitives/ButtonControl';
+import { CheckboxControl } from '../primitives/CheckboxControl';
 import { IconButton } from '../primitives/IconButton';
 import { ConfirmDialog } from '../primitives/ConfirmDialog';
 import { Dialog } from '../primitives/Dialog';
@@ -25,6 +29,9 @@ import { SelectControl } from '../primitives/SelectControl';
 import { Textarea } from '../primitives/Textarea';
 import { AddIcon, ICON_SIZE } from '../icons';
 import { InsetGroup, InsetRow } from './SettingsInsetList';
+
+/** Before the view loads there is nothing to narrow; an empty catalogue reads as "no choices yet", not "none allowed". */
+const EMPTY_CAPABILITIES: AgentCapabilityCatalog = { tools: [], skills: [] };
 
 /**
  * The Agents page: who is in the conversation, and who the user may change.
@@ -127,7 +134,9 @@ export function AgentsSettings({ onError, onNotice }: {
             key={entry.agentType}
             entry={entry}
             name={entry.agentType}
-            onSelect={() => setEditing({ kind: 'presentation', entry })}
+            onSelect={() => setEditing(entry.agentType === MAIN_PRESENTATION_KEY
+              ? { kind: 'main', entry }
+              : { kind: 'presentation', entry })}
             sublabel={entry.agentType === MAIN_PRESENTATION_KEY
               ? t.settings.agents.mainSublabel
               : entry.agentType}
@@ -137,14 +146,44 @@ export function AgentsSettings({ onError, onNotice }: {
 
       {editing === null ? null : (
         <AgentEditorDialog
+          // Remount when the editor changes subject. Without a key React keeps
+          // the same instance across `setEditing`, so the state initialisers do
+          // not re-run and Duplicate would open a dialog still holding the
+          // previous agent's fields.
+          key={editorKey(editing)}
           busy={busy}
           onCancel={() => setEditing(null)}
           onDelete={editing.kind !== 'role' ? undefined : () => void run(
             () => api.agentDeleteRole({ layer: editing.role.layer, name: editing.role.name }),
             t.settings.agents.deleted({ name: editing.role.name }),
           )}
+          capabilities={view?.capabilities ?? EMPTY_CAPABILITIES}
+          onDuplicate={editing.kind !== 'presentation' ? undefined : () => setEditing({
+            kind: 'new',
+            seed: view?.builtInDefinitions.find((row) => row.agentType === editing.entry.agentType),
+          })}
           onSave={(draft, layer) => void run(
-            () => (editing.kind === 'presentation'
+            async () => {
+              // The conversation agent is two writes in one gesture: its identity
+              // is presentation, its instructions and ceiling are a Configuration
+              // Profile. The user pressed Save once, so both land or neither does.
+              if (editing.kind === 'main') {
+                await api.agentWritePresentation({
+                  agentType: editing.entry.agentType,
+                  layer,
+                  presentation: { persona: draft.persona, color: draft.color },
+                });
+                return api.agentWriteProfile({
+                  layer,
+                  name: view?.profile.name ?? 'default',
+                  profile: {
+                    developerInstructions: draft.developerInstructions,
+                    ...(draft.tools === null ? {} : { tools: draft.tools }),
+                    ...(draft.skills === null ? {} : { skills: draft.skills }),
+                  },
+                });
+              }
+              return editing.kind === 'presentation'
               ? api.agentWritePresentation({
                 agentType: editing.entry.agentType,
                 layer,
@@ -166,14 +205,20 @@ export function AgentsSettings({ onError, onNotice }: {
                   developerInstructions: draft.developerInstructions,
                   ...(draft.persona ? { persona: draft.persona } : {}),
                   ...(draft.color ? { color: draft.color } : {}),
+                  // Absent leaves whatever is on disk; `[]` clears the narrowing
+                  // back to inheriting everything the parent has.
+                  tools: draft.tools ?? [],
+                  skills: draft.skills ?? [],
                 },
-              })),
+              });
+            },
             t.settings.agents.saved({
               name: draft.persona || draft.name
                 || (editing.kind === 'presentation' ? editing.entry.agentType : ''),
             }),
           )}
           override={overrideFor(view, editing)}
+          profile={view?.profile ?? null}
           takenNames={roleNames}
           target={editing}
         />
@@ -191,18 +236,28 @@ function overrideFor(
   view: AgentEditorView | null,
   target: EditorTarget,
 ): AgentPresentationOverrideRow | null {
-  if (view === null || target.kind !== 'presentation') return null;
+  if (view === null || (target.kind !== 'presentation' && target.kind !== 'main')) return null;
   const rows = view.presentationOverrides.filter((row) => row.agentType === target.entry.agentType);
   // Project wins over user, matching how the layers resolve — so the dialog
   // shows the value that is actually in force.
   return rows.find((row) => row.layer === 'project') ?? rows.find((row) => row.layer === 'user') ?? null;
 }
 
+/** Identifies the editor's subject, so switching subjects remounts it. */
+function editorKey(target: EditorTarget): string {
+  if (target.kind === 'role') return `role:${target.role.layer}:${target.role.name}`;
+  if (target.kind === 'new') return `new:${target.seed?.agentType ?? ''}`;
+  return `${target.kind}:${target.entry.agentType}`;
+}
+
 /** What the editor is open on: an existing Role, a new one, or a built-in's skin. */
 type EditorTarget =
   | { readonly kind: 'role'; readonly role: AgentEditableRole }
   | { readonly kind: 'presentation'; readonly entry: AgentIdentityEntry }
-  | { readonly kind: 'new' };
+  /** The conversation agent: identity, standing instructions, and the ceiling. */
+  | { readonly kind: 'main'; readonly entry: AgentIdentityEntry }
+  /** A new Role, optionally seeded from a built-in the user duplicated. */
+  | { readonly kind: 'new'; readonly seed?: AgentBuiltInDefinition };
 
 /**
  * One list row, wearing the same mark the transcript gives this Agent — so the
@@ -232,6 +287,13 @@ interface EditorDraft {
   readonly developerInstructions: string;
   readonly persona: string;
   readonly color: string;
+  /**
+   * The narrowed sets, or null for "inherit everything". Never today's full
+   * catalogue written out: a frozen list would silently exclude every tool or
+   * Skill added later.
+   */
+  readonly tools: readonly string[] | null;
+  readonly skills: readonly string[] | null;
 }
 
 /**
@@ -240,21 +302,29 @@ interface EditorDraft {
  * "change this agent" is one gesture regardless of which half of the file it
  * lands in.
  */
-function AgentEditorDialog({ target, override, takenNames, busy, onSave, onCancel, onDelete }: {
+function AgentEditorDialog({
+  target, override, takenNames, profile, capabilities, busy, onSave, onCancel, onDelete, onDuplicate,
+}: {
   readonly target: EditorTarget;
   /** What is actually written down for this identity, or null when nothing is. */
   readonly override: AgentPresentationOverrideRow | null;
   /** Role names already defined, so create can refuse before the user loses their typing. */
   readonly takenNames: ReadonlySet<string>;
+  /** The conversation agent's own configuration, for the `main` editor. */
+  readonly profile: AgentProfileView | null;
+  readonly capabilities: AgentCapabilityCatalog;
   readonly busy: boolean;
   readonly onSave: (draft: EditorDraft, layer: 'user' | 'project') => void;
   readonly onCancel: () => void;
   readonly onDelete?: () => void;
+  readonly onDuplicate?: () => void;
 }) {
   const t = useT();
   const titleId = useId();
   const role = target.kind === 'role' ? target.role : null;
-  const entry = target.kind === 'presentation' ? target.entry : null;
+  const entry = target.kind === 'presentation' || target.kind === 'main' ? target.entry : null;
+  const isMain = target.kind === 'main';
+  // A built-in's behaviour is code; everyone else's is theirs to write.
   const editable = target.kind !== 'presentation';
 
   const [confirmingDelete, setConfirmingDelete] = useState(false);
@@ -265,9 +335,22 @@ function AgentEditorDialog({ target, override, takenNames, busy, onSave, onCance
   // of every future change to it.
   const [persona, setPersona] = useState(role?.persona ?? override?.persona ?? '');
   const [color, setColor] = useState(role?.color ?? override?.color ?? '');
-  const [description, setDescription] = useState(role?.description ?? '');
-  const [instructions, setInstructions] = useState(role?.developerInstructions ?? '');
-  const [layer, setLayer] = useState<'user' | 'project'>(role?.layer ?? 'user');
+  const seed = target.kind === 'new' ? target.seed : undefined;
+  const [description, setDescription] = useState(role?.description ?? seed?.description ?? '');
+  const [instructions, setInstructions] = useState(
+    role?.developerInstructions ?? seed?.developerInstructions ?? (isMain ? profile?.developerInstructions ?? '' : ''),
+  );
+  const [layer, setLayer] = useState<'user' | 'project'>(
+    role?.layer ?? (isMain ? profile?.layer ?? 'user' : 'user'),
+  );
+  // Checked means available. All-checked is written as "inherit" rather than as
+  // a list, so a tool added to Tenon later is not silently excluded.
+  const [tools, setTools] = useState<ReadonlySet<string>>(() => new Set(
+    (isMain ? profile?.tools : role?.tools) ?? capabilities.tools.map((tool) => tool.key),
+  ));
+  const [skills, setSkills] = useState<ReadonlySet<string>>(() => new Set(
+    resolveSkillSelection(isMain ? profile?.skills : role?.skills, capabilities.skills),
+  ));
 
   // A Role needs the two fields that make it dispatchable at all: what it is
   // for (how the main agent chooses it) and what it should do. Identity is
@@ -276,10 +359,10 @@ function AgentEditorDialog({ target, override, takenNames, busy, onSave, onCance
   // A name already in use is refused at the write boundary too; saying so here
   // is what keeps the user from losing everything else they typed.
   const nameTaken = target.kind === 'new' && takenNames.has(name.trim());
-  const canSave = editable
-    ? name.trim().length > 0 && description.trim().length > 0
-      && instructions.trim().length > 0 && !nameTaken
-    : true;
+  const canSave = isMain || !editable
+    ? true
+    : name.trim().length > 0 && description.trim().length > 0
+      && instructions.trim().length > 0 && !nameTaken;
 
   // The mark beside the title is the actual component the transcript draws, so
   // a colour is chosen against the thing it will produce rather than a swatch
@@ -352,7 +435,29 @@ function AgentEditorDialog({ target, override, takenNames, busy, onSave, onCance
         </div>
       </InsetGroup>
 
-      {editable ? (
+      {isMain ? (
+        // The conversation agent has no type and no "use it for": there is one
+        // of it and the reader is already talking to it. What it does have is
+        // standing instructions — the one authored part of its system prompt.
+        <InsetGroup
+          ariaLabel={t.settings.agents.definitionAriaLabel}
+          footnote={t.settings.agents.mainInstructionsFootnote}
+          label={t.settings.agents.definitionGroup}
+        >
+          <div className="settings-sheet-row settings-sheet-row-stacked">
+            <span className="settings-sheet-row-label">{t.settings.agents.instructions}</span>
+            <Textarea
+              className="settings-sheet-row-input"
+              label={t.settings.agents.instructions}
+              onChange={(event) => setInstructions(event.target.value)}
+              placeholder={t.settings.agents.mainInstructionsPlaceholder}
+              rows={4}
+              value={instructions}
+              variant="bare"
+            />
+          </div>
+        </InsetGroup>
+      ) : editable ? (
         <InsetGroup ariaLabel={t.settings.agents.definitionAriaLabel} label={t.settings.agents.definitionGroup}>
           <label className="settings-sheet-row">
             <span className="settings-sheet-row-label">{t.settings.agents.name}</span>
@@ -403,8 +508,39 @@ function AgentEditorDialog({ target, override, takenNames, busy, onSave, onCance
           </div>
         </InsetGroup>
       ) : (
-        <p className="settings-sheet-note">{t.settings.agents.builtInNote}</p>
+        // A built-in's behaviour is code, so the way to change it is to own a
+        // copy — seeded from the real definition, not from a blank form.
+        <div className="settings-sheet-note agent-editor-builtin">
+          <p>{t.settings.agents.builtInNote}</p>
+          {onDuplicate ? (
+            <Button onClick={onDuplicate} variant="secondary">{t.settings.agents.duplicate}</Button>
+          ) : null}
+        </div>
       )}
+
+      {editable ? (
+        <InsetGroup
+          ariaLabel={t.settings.agents.capabilitiesAriaLabel}
+          footnote={isMain
+            ? t.settings.agents.capabilitiesMainFootnote
+            : t.settings.agents.capabilitiesFootnote}
+          label={t.settings.agents.capabilitiesGroup}
+        >
+          <CapabilityList
+            all={capabilities.tools.map((tool) => tool.key)}
+            describe={(key) => capabilities.tools.find((tool) => tool.key === key)?.description ?? ''}
+            label={t.settings.agents.tools}
+            onChange={setTools}
+            selected={tools}
+          />
+          <CapabilityList
+            all={capabilities.skills}
+            label={t.settings.agents.skills}
+            onChange={setSkills}
+            selected={skills}
+          />
+        </InsetGroup>
+      ) : null}
 
       <InsetGroup ariaLabel={t.settings.agents.layerAriaLabel}>
         <InsetRow
@@ -444,6 +580,8 @@ function AgentEditorDialog({ target, override, takenNames, busy, onSave, onCance
             developerInstructions: instructions.trim(),
             persona: persona.trim(),
             color,
+            tools: narrowing(tools, capabilities.tools.map((tool) => tool.key)),
+            skills: narrowing(skills, capabilities.skills),
           }, layer)}
           tone="subtle"
           variant="primary"
@@ -471,6 +609,79 @@ function AgentEditorDialog({ target, override, takenNames, busy, onSave, onCance
 
 function layerLabel(layer: 'user' | 'project', t: ReturnType<typeof useT>): string {
   return layer === 'project' ? t.settings.agents.layerProject : t.settings.agents.layerUser;
+}
+
+/**
+ * One capability list: every entry the install has, all checked by default.
+ *
+ * Checked is what this agent MAY use, and the list can only ever be shorter
+ * than the parent's — unchecking is the whole gesture. Nothing here can grant a
+ * capability the parent lacks, so the count states the ceiling rather than
+ * implying the user is authorising each row.
+ */
+function CapabilityList({ label, all, selected, onChange, describe }: {
+  readonly label: string;
+  readonly all: readonly string[];
+  readonly selected: ReadonlySet<string>;
+  readonly onChange: (next: ReadonlySet<string>) => void;
+  readonly describe?: (key: string) => string;
+}) {
+  const t = useT();
+  if (all.length === 0) return null;
+  const toggle = (key: string) => {
+    const next = new Set(selected);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    onChange(next);
+  };
+  return (
+    <div className="settings-sheet-row settings-sheet-row-stacked">
+      <span className="settings-sheet-row-label">
+        {label}
+        <span className="agent-capability-count">
+          {t.settings.agents.capabilityCount({ selected: selected.size, total: all.length })}
+        </span>
+      </span>
+      <div className="agent-capability-list">
+        {all.map((key) => (
+          <CheckboxControl
+            checked={selected.has(key)}
+            className="agent-capability-item"
+            key={key}
+            onCheckedChange={() => toggle(key)}
+            title={describe?.(key) || undefined}
+          >
+            {key}
+          </CheckboxControl>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Which Skills a stored narrowing means. `['*']` is the wildcard the loader
+ * ships as the default — it means every Skill, so it selects all of them rather
+ * than one Skill literally named `*`.
+ */
+function resolveSkillSelection(
+  stored: readonly string[] | null | undefined,
+  all: readonly string[],
+): readonly string[] {
+  if (!stored || stored.includes('*')) return all;
+  return stored;
+}
+
+/**
+ * What to write for a checkbox list: nothing when everything is checked.
+ *
+ * Writing out today's full catalogue would freeze it — a tool or Skill added to
+ * Tenon later would be excluded by a list the user never meant as exhaustive.
+ * An empty array clears the narrowing back to inherit-everything.
+ */
+function narrowing(selected: ReadonlySet<string>, all: readonly string[]): readonly string[] | null {
+  if (all.every((key) => selected.has(key))) return null;
+  return all.filter((key) => selected.has(key));
 }
 
 function errorText(error: unknown): string {

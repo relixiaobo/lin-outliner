@@ -662,6 +662,28 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
     const agentPresentationOverrides: Array<{
       agentType: string; layer: string; persona: string | null; color: string | null;
     }> = [];
+    const agentProfile = {
+      name: 'default',
+      layer: null as string | null,
+      developerInstructions: null as string | null,
+      model: null as string | null,
+      reasoningEffort: null as string | null,
+      tools: null as string[] | null,
+      skills: null as string[] | null,
+    };
+    const agentCapabilityCatalog = {
+      tools: [
+        { key: 'file_read', description: 'Read a file.' },
+        { key: 'file_write', description: 'Write a file.' },
+        { key: 'bash', description: 'Run a command.' },
+      ],
+      skills: ['review', 'summarize'],
+    };
+    const agentBuiltInDefinitions = [
+      { agentType: 'general-purpose', description: 'General-purpose agent.', developerInstructions: 'Do the task fully.' },
+      { agentType: 'explore', description: 'Fast codebase explorer.', developerInstructions: 'Search, never write.' },
+      { agentType: 'plan', description: 'Software architect.', developerInstructions: 'Design, never write.' },
+    ];
     const agentIdentityView = () => ({
       entries: [
         ...agentIdentityEntries,
@@ -674,6 +696,9 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
       ],
       roles: agentRoles,
       presentationOverrides: agentPresentationOverrides,
+      profile: { ...agentProfile },
+      builtInDefinitions: agentBuiltInDefinitions,
+      capabilities: agentCapabilityCatalog,
     });
     const agentSkills = [{
       name: 'workspace-review',
@@ -3628,6 +3653,18 @@ export async function installElectronMock(page: Page, options: MockFixtureOption
           const index = agentRoles.findIndex((candidate) => candidate.name === name);
           if (index < 0) throw new Error(`No Agent Role named '${name}' in this configuration`);
           agentRoles.splice(index, 1);
+          return clone(agentIdentityView()) as T;
+        }
+        if (cmd === 'agent_write_profile') {
+          const profile = (args.profile ?? {}) as {
+            developerInstructions?: string; tools?: string[]; skills?: string[];
+          };
+          agentProfile.layer = args.layer === 'project' ? 'project' : 'user';
+          agentProfile.developerInstructions = profile.developerInstructions || null;
+          // Absence is the meaningful state: an empty list clears the narrowing
+          // back to inheriting everything, exactly as the writer does.
+          agentProfile.tools = profile.tools && profile.tools.length > 0 ? profile.tools : null;
+          agentProfile.skills = profile.skills && profile.skills.length > 0 ? profile.skills : null;
           return clone(agentIdentityView()) as T;
         }
         if (cmd === 'agent_write_presentation') {

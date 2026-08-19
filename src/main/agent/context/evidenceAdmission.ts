@@ -46,6 +46,8 @@ export async function admitContextEvidence(input: {
   readonly projection: DocumentProjection | null;
   readonly locale?: string;
   readonly timeZone?: string;
+  /** The name this participant answers to, resolved from configuration. */
+  readonly persona?: string | null;
   readonly createItemId: () => string;
   readonly writeContext: (payload: ThreadContextPayload) => Promise<ThreadContextPayloadReference>;
   readonly resolveAsset?: (assetId: string) => Promise<ReferencedAssetResolution | null>;
@@ -136,6 +138,7 @@ function turnEnvironment(input: {
   readonly projection: DocumentProjection | null;
   readonly locale?: string;
   readonly timeZone?: string;
+  readonly persona?: string | null;
 }): TurnEnvironmentContextPayload {
   const instant = new Date(input.acceptedAt);
   const resolved = Intl.DateTimeFormat().resolvedOptions();
@@ -158,9 +161,13 @@ function turnEnvironment(input: {
       ? 'interactive'
       : 'headless',
     executionMode: executionMode(input.thread),
-    replyIdentity: input.thread.parentThreadId === null
-      ? 'Neva'
-      : input.thread.agentNickname ?? input.thread.agentRole,
+    // The configured name, not a constant: the reader is told who they are
+    // talking to by the header, and the agent must not answer with a different
+    // name when asked. An isolated Skill keeps its own name, which IS what it is.
+    replyIdentity: input.persona?.trim()
+      || (input.thread.parentThreadId === null
+        ? null
+        : input.thread.agentNickname ?? input.thread.agentRole),
     todayNodeId: input.projection?.todayId ?? null,
     todayNodeTitle: todayNode ? nodeTitle(todayNode) : null,
   };

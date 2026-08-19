@@ -25,6 +25,7 @@ import { AutomationStore } from './agent/automations/AutomationStore';
 import { createAutomationTool } from './agent/automations/AutomationTool';
 import { AutomationWorktree } from './agent/automations/AutomationWorktree';
 import { AgentConfigurationLoader } from './agent/AgentConfigurationLoader';
+import { MODEL_TOOL_CATALOG, canonicalModelToolKey } from '../core/agent/tools';
 import {
   AgentConfigurationWriter,
   type ConfigurationLayerTarget,
@@ -161,6 +162,9 @@ import {
   LIN_DOCUMENT_EVENT_CHANNEL,
   DAILY_NOTES_ID,
   TRASH_ID,
+  type AgentCapabilityCatalog,
+  type AgentEditorView,
+  type AgentProfileDraft,
   type AgentRoleDraft,
   type AssetIngestInput,
   type CommandResult,
@@ -708,6 +712,13 @@ const turnExecutor = new PiTurnExecutor({
   createTools: (context) => toolRuntime.createTools(context),
   beforeProviderContext: (context) => toolRuntime.prepareProviderContext(context),
   transcriptIndexPath: threadTranscriptIndexPath(threadTranscriptRoot(resolvedUserDataDir)),
+  // One name, wherever it is drawn or spoken: the prompt now asks configuration
+  // who this agent is instead of hard-coding a name the transcript disagreed
+  // with. The root Thread is `main`; a child is named by its Agent type.
+  resolvePersona: (thread) => agentConfigurationLoader.resolveAgentPersona(
+    thread.parentThreadId === null ? null : thread.agentRole,
+    thread.cwd,
+  ),
 });
 threadService = ThreadService.open(
   resolvedUserDataDir,
@@ -723,6 +734,10 @@ threadService = ThreadService.open(
     resolveAgentType: (name, cwd) => agentConfigurationLoader.resolveAgentType(name, cwd),
     resolveRoleCatalog: (cwd) => agentConfigurationLoader.buildRoleCatalogSnapshot(cwd),
     resolveIdentityCatalog: (cwd) => agentConfigurationLoader.resolveIdentityCatalog(cwd),
+    resolvePersona: (thread) => agentConfigurationLoader.resolveAgentPersona(
+      thread.parentThreadId === null ? null : thread.agentRole,
+      thread.cwd,
+    ),
     resolveProviderModelIds: (providerId) => rankedModels(providerId).map((model) => model.id),
     resolveSubagentTokenBudget: async () => (await getAgentRuntimeSettings()).subagentTokenBudget,
     resolveSubagentLimits: async () => {
@@ -3596,11 +3611,32 @@ function agentEditorCwd(value: unknown): string {
  * from the same cwd, and so a handler resolves that cwd once rather than per
  * response literal.
  */
-function agentEditorView(cwd: string) {
+async function agentEditorView(cwd: string): Promise<AgentEditorView> {
   return {
     entries: agentConfigurationLoader.resolveIdentityCatalog(cwd),
     roles: agentConfigurationLoader.listEditableRoles(cwd),
     presentationOverrides: agentConfigurationLoader.listPresentationOverrides(cwd),
+    profile: agentConfigurationLoader.resolveEditableProfile(cwd),
+    builtInDefinitions: agentConfigurationLoader.listBuiltInDefinitions(),
+    capabilities: await agentCapabilityCatalog(),
+  };
+}
+
+/**
+ * What a capability narrowing may name. Resolved here rather than imported by
+ * the renderer: a settings pane that read the runtime's own tool module would
+ * drift the moment the runtime gained a tool, and would pull the codec into the
+ * renderer bundle to do it.
+ */
+async function agentCapabilityCatalog(): Promise<AgentCapabilityCatalog> {
+  return {
+    tools: MODEL_TOOL_CATALOG.map((tool) => ({
+      key: canonicalModelToolKey(tool.identity),
+      description: tool.description,
+    })),
+    // Every Skill the install can see, so a narrowing names real Skills; which
+    // of them are enabled is a separate setting on its own page.
+    skills: (await skillRuntime.listAllSkills()).map((skill) => skill.name),
   };
 }
 
@@ -3620,7 +3656,29 @@ function decodeRoleDraft(value: unknown): AgentRoleDraft {
     developerInstructions: requiredText(record.developerInstructions, 'role.developerInstructions'),
     ...(record.persona === undefined ? {} : { persona: requiredText(record.persona, 'role.persona') }),
     ...(record.color === undefined ? {} : { color: requiredText(record.color, 'role.color') }),
+    ...(record.tools === undefined ? {} : { tools: textList(record.tools, 'role.tools') }),
+    ...(record.skills === undefined ? {} : { skills: textList(record.skills, 'role.skills') }),
   };
+}
+
+function decodeProfileDraft(value: unknown): AgentProfileDraft {
+  const record = plainObject(value, 'profile');
+  return {
+    ...(record.developerInstructions === undefined
+      ? {}
+      : { developerInstructions: optionalText(record.developerInstructions, 'profile.developerInstructions') }),
+    ...(record.model === undefined ? {} : { model: optionalText(record.model, 'profile.model') }),
+    ...(record.reasoningEffort === undefined
+      ? {}
+      : { reasoningEffort: optionalText(record.reasoningEffort, 'profile.reasoningEffort') }),
+    ...(record.tools === undefined ? {} : { tools: textList(record.tools, 'profile.tools') }),
+    ...(record.skills === undefined ? {} : { skills: textList(record.skills, 'profile.skills') }),
+  };
+}
+
+function textList(value: unknown, path: string): readonly string[] {
+  if (!Array.isArray(value)) throw new Error(`${path} must be an array of strings`);
+  return value.map((entry, index) => requiredText(entry, `${path}[${index}]`));
 }
 
 function decodePresentationDraft(value: unknown): { persona?: string; color?: string } {
@@ -4608,7 +4666,7 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
     // renderer names an Agent and a layer, never a path, so no renderer-side
     // value can turn these into a write anywhere else on disk.
     case 'agent_identity_catalog':
-      return agentEditorView(agentEditorCwd(args.cwd));
+      return await agentEditorView(agentEditorCwd(args.cwd));
     case 'agent_write_role': {
       const cwd = agentEditorCwd(args.cwd);
       await agentConfigurationWriter.writeRole(
@@ -4618,7 +4676,7 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
         args.mode === 'create' ? 'create' : 'update',
       );
       notifySettingsChanged(BrowserWindow.fromWebContents(event.sender));
-      return agentEditorView(cwd);
+      return await agentEditorView(cwd);
     }
     case 'agent_delete_role': {
       const cwd = agentEditorCwd(args.cwd);
@@ -4628,7 +4686,18 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
         requiredText(args.name, 'name'),
       );
       notifySettingsChanged(BrowserWindow.fromWebContents(event.sender));
-      return agentEditorView(cwd);
+      return await agentEditorView(cwd);
+    }
+    case 'agent_write_profile': {
+      const cwd = agentEditorCwd(args.cwd);
+      await agentConfigurationWriter.writeProfile(
+        layerTarget(args.layer),
+        cwd,
+        requiredText(args.name, 'name'),
+        decodeProfileDraft(args.profile),
+      );
+      notifySettingsChanged(BrowserWindow.fromWebContents(event.sender));
+      return await agentEditorView(cwd);
     }
     case 'agent_write_presentation': {
       const cwd = agentEditorCwd(args.cwd);
@@ -4639,7 +4708,7 @@ async function handleAgentCommand(event: IpcMainInvokeEvent, command: AgentComma
         decodePresentationDraft(args.presentation),
       );
       notifySettingsChanged(BrowserWindow.fromWebContents(event.sender));
-      return agentEditorView(cwd);
+      return await agentEditorView(cwd);
     }
 
     case 'agent_managed_skill_catalog':

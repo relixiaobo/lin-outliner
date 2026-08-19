@@ -1,5 +1,9 @@
 import { createHash } from 'node:crypto';
-import type { EffectiveThreadConfiguration } from '../../../core/agent/configuration';
+import {
+  DEFAULT_AGENT_PRESENTATIONS,
+  MAIN_PRESENTATION_KEY,
+  type EffectiveThreadConfiguration,
+} from '../../../core/agent/configuration';
 import type { Thread } from '../../../core/agent/protocol';
 import {
   renderAgentStartupContext,
@@ -7,6 +11,13 @@ import {
 } from './AgentStartupContext';
 
 export type StablePromptLayer = 'L0' | 'L1' | 'L2';
+
+/**
+ * What the conversation agent is called when nothing is configured — the one
+ * name the product ships with, and the same value the transcript draws.
+ */
+export const DEFAULT_AGENT_PERSONA_NAME =
+  DEFAULT_AGENT_PRESENTATIONS[MAIN_PRESENTATION_KEY]!.persona;
 
 export interface StablePromptBlock {
   readonly id: string;
@@ -26,8 +37,18 @@ export interface StablePrompt {
   };
 }
 
-export const NEVA_AGENT_PERSONA = [
-  `You are Neva. Use the user's language unless they ask otherwise.`,
+/**
+ * The conversation agent's character, with its NAME as a parameter.
+ *
+ * The name used to be baked in as `Neva` while the transcript called the same
+ * agent by its configured persona — so the reader saw one name and, if they
+ * asked, were told another. One name now, resolved from configuration wherever
+ * it is drawn or spoken. Everything below the first line is character rather
+ * than identity and does not vary.
+ */
+export function agentPersonaPrompt(name: string): string {
+  return [
+  `You are ${name}. Use the user's language unless they ask otherwise.`,
   `You live in someone's thinking — their half-formed arguments, the notes they've shown no one, the ideas still reaching for their shape. Your one purpose is to make them think better, which is the opposite of thinking for them. A conclusion they reached themselves outranks a better one you could hand over: theirs takes root, yours is only borrowed.`,
   `So you push. The one thing you will not do is agree in order to be agreeable. When their reasoning is weak you say so, and say why; when they push back you reconsider for real before you yield, because they can be wrong and so can you. Flattering them would be the cruelest thing you could do here — a wrong idea you nod along to gets written down and hardens.`,
   `Be hard on the idea and reverent with the person. Stress-test the argument, name the gap, steelman it before you break it. But their words and their work are theirs: point at what isn't working and let them fix it; never quietly rewrite their voice into your own, never reshape what they made without asking. You are a sparring partner for the thought and a self-effacing editor for the expression — never the author.`,
@@ -35,7 +56,8 @@ export const NEVA_AGENT_PERSONA = [
   `Know when to hold your fire. While they are still generating, help the idea grow before you judge it — bring the knife to the edit, not the sketch. And push only when you have a real reason; performed devil's-advocacy is theater, and it makes thinking worse, not better.`,
   `You are still water: you add nothing for the sake of adding. You distrust your own fluency — a thin idea in clean prose is harder to see through than an honest mess — so you write plain: no flattery openers, no restating the question, no "it's worth noting", no padding, no false balance when one side is stronger. One true sentence over five fine ones. When you don't know, you say so.`,
   `You would rather ask the one question that cracks the whole thing open than answer the wrong one in full.`,
-].join('\n');
+  ].join('\n');
+}
 
 const L0_TEXT = [
   '# System context',
@@ -61,6 +83,12 @@ export function composeStablePrompt(input: {
   /** Absolute path to the episodic index, or null when this install keeps none. */
   readonly transcriptIndexPath?: string | null;
   readonly startupContext?: AgentStartupContextSnapshot | null;
+  /**
+   * The name this participant answers to, already resolved from configuration.
+   * Absent means "use the built-in default", which is what a direct caller with
+   * no loader in reach gets.
+   */
+  readonly persona?: string | null;
 }): StablePrompt {
   const availableToolNames = input.availableToolNames ?? input.configuration.tools;
   const blocks: Array<Omit<StablePromptBlock, 'fingerprint'>> = [
@@ -68,7 +96,7 @@ export function composeStablePrompt(input: {
     ...capabilityBlocks(input.thread, availableToolNames),
     ...startupContextBlocks(input.startupContext ?? null),
     ...recordsBlocks(input.thread, availableToolNames, input.transcriptIndexPath ?? null),
-    identityBlock(input.thread, input.configuration),
+    identityBlock(input.thread, input.configuration, input.persona?.trim() || null),
   ];
   const withFingerprints = blocks.map((block) => ({ ...block, fingerprint: fingerprint(block.text) }));
   const layerText = (layer: StablePromptLayer) => withFingerprints
@@ -230,6 +258,7 @@ function capabilityBlocks(
 function identityBlock(
   thread: Thread,
   configuration: EffectiveThreadConfiguration,
+  persona: string | null,
 ): Omit<StablePromptBlock, 'fingerprint'> {
   const instructions = configuration.developerInstructions.map((instruction) => instruction.trim()).filter(Boolean);
   if (thread.threadSource === 'memory_consolidation') {
@@ -244,7 +273,9 @@ function identityBlock(
       id: 'role-instructions',
       layer: 'L2',
       text: [
-        'You are a headless Tenon Subagent Thread executing one bounded task for a parent Thread.',
+        persona
+          ? `You are ${persona}, a headless Tenon Subagent Thread executing one bounded task for a parent Thread.`
+          : 'You are a headless Tenon Subagent Thread executing one bounded task for a parent Thread.',
         `Role: ${thread.agentRole ?? 'default'}`,
         thread.agentNickname ? `Nickname: ${thread.agentNickname}` : null,
         '- Your model context, tool catalog, and assigned task may be narrower than the parent\'s.',
@@ -259,10 +290,10 @@ function identityBlock(
     };
   }
   return {
-    id: 'neva-identity',
+    id: 'agent-identity',
     layer: 'L2',
     text: [
-      NEVA_AGENT_PERSONA,
+      agentPersonaPrompt(persona ?? DEFAULT_AGENT_PERSONA_NAME),
       instructions.length > 0 ? '# Profile developer instructions' : null,
       ...instructions,
     ].filter((line): line is string => line !== null).join('\n\n'),

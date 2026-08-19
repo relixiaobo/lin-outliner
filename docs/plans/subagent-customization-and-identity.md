@@ -358,6 +358,30 @@ Exact placement was the reversible local decision; the contract below is not.
   children keep their resolved configuration; historical transcripts degrade
   through the identity fallback chain (§1). Confirmation dialog; no cascade.
 
+### 4b. The rest of the configuration surface (folded into PR-B)
+
+Four gaps closed in the same PR, at the PM's direction:
+
+- **The persona is the agent's own name.** It reaches the L2 identity block and
+  `replyIdentity` for the conversation agent AND its children, resolved per Turn
+  rather than recorded at spawn. `Neva` retires; `Aspen` is the shipped default,
+  anchored to `DEFAULT_AGENT_PRESENTATIONS.main`. Dispatch is untouched — the
+  Role catalog and its `contentHash` still exclude presentation, so the model
+  hands work to `explore` and `Rena` answers.
+- **The conversation agent's Configuration Profile is editable** from its own row
+  on the Agents page: standing instructions plus the capability ceiling. The word
+  "Profile" never appears in the UI, and multiple named Profiles stay unexposed —
+  they would need a per-conversation switcher that does not exist
+  (`configurationProfile` is never set by the renderer).
+- **Capabilities** (tools, Skills) are checkbox lists on both the Profile and a
+  Role, all checked by default, written as absence when nothing is unchecked.
+- **Duplicate** seeds a new Role from a built-in's real definition, which is what
+  makes "built-ins are not editable" a livable rule rather than a dead end.
+
+Deliberately still out: `plugins` / `mcpServers` have no field (merged, never
+destroyed), and the app-level subagent depth/concurrency/budget knobs stay
+JSON-only — they are tuning, not identity.
+
 ### 5. Spec amendments (same change as the code)
 
 - `docs/spec/agent-thread-rendering.md` — the speaker section: portrait

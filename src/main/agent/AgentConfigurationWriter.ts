@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { IDENTITY_COLORS, type IdentityColor } from '../../core/agent/configuration';
-import type { AgentRoleDraft } from '../../core/types';
+import type { AgentProfileDraft, AgentRoleDraft } from '../../core/types';
 import { atomicWriteFile } from '../jsonFileStore';
 import {
   RESERVED_AGENT_TYPE_NAMES,
@@ -93,9 +93,7 @@ export class AgentConfigurationWriter {
       // that never mentioned them must not delete the model, tools, or skills
       // the user hand-wrote.
       const overrides: JsonObject = asObject(existing.overrides);
-      if (draft.model !== undefined) overrides.model = draft.model;
-      if (draft.reasoningEffort !== undefined) overrides.reasoningEffort = draft.reasoningEffort;
-      if (draft.tools !== undefined) overrides.tools = [...draft.tools];
+      applyCapabilities(overrides, draft);
       roles[name] = {
         description: draft.description.trim(),
         developerInstructions: draft.developerInstructions.trim(),
@@ -103,6 +101,41 @@ export class AgentConfigurationWriter {
         ...(Object.keys(overrides).length > 0 ? { overrides } : {}),
       };
       return { ...config, roles };
+    });
+  }
+
+  /**
+   * Write the conversation agent's own configuration: its standing instructions
+   * and the capability ceiling every Subagent is narrowed from.
+   *
+   * A field left out is REMOVED rather than stored, so the built-in default
+   * shows through again — the same "absence means inherit" rule presentation
+   * follows, and the reason a capability list must never be written as today's
+   * full set: a frozen list would silently exclude every tool added later.
+   */
+  async writeProfile(
+    target: ConfigurationLayerTarget,
+    cwd: string,
+    name: string,
+    draft: AgentProfileDraft,
+  ): Promise<void> {
+    await this.edit(target, cwd, (config) => {
+      const profiles = asObject(config.profiles);
+      const existing = asObject(profiles[name]);
+      const next: JsonObject = { ...existing };
+      const instructions = draft.developerInstructions?.trim();
+      if (instructions) next.developerInstructions = instructions;
+      else delete next.developerInstructions;
+      if (draft.model) next.model = draft.model;
+      else delete next.model;
+      if (draft.reasoningEffort) next.reasoningEffort = draft.reasoningEffort;
+      else delete next.reasoningEffort;
+      applyCapabilities(next, draft);
+      if (Object.keys(next).length > 0) profiles[name] = next;
+      else delete profiles[name];
+      return Object.keys(profiles).length > 0
+        ? { ...config, profiles }
+        : withoutKey(config, 'profiles');
     });
   }
 
@@ -201,6 +234,27 @@ export class AgentConfigurationWriter {
     await atomicWriteFile(path, `${JSON.stringify(next, null, 2)}\n`);
     // The loader holds no cache, so the next read sees this write. Resolving
     // the catalog here would only re-read what the caller is about to.
+  }
+}
+
+/**
+ * Apply a capability narrowing, where ABSENCE is the meaningful state.
+ *
+ * `undefined` leaves whatever is on disk alone — the editor may not show these
+ * fields at all. An empty array clears the narrowing, which restores "inherit
+ * everything": it is the caller's job to send `[]` rather than today's full
+ * catalogue, because a written-out full list freezes the set and quietly
+ * excludes every tool or Skill added afterwards.
+ */
+function applyCapabilities(
+  target: JsonObject,
+  draft: { readonly tools?: readonly string[]; readonly skills?: readonly string[] },
+): void {
+  for (const key of ['tools', 'skills'] as const) {
+    const value = draft[key];
+    if (value === undefined) continue;
+    if (value.length === 0) delete target[key];
+    else target[key] = [...value];
   }
 }
 

@@ -177,11 +177,26 @@ types. Diagnostics and persistence use the canonical result.
 Every Agent type carries a **presentation** — a `persona` (the name a reader
 sees) and a `color` (an identity-palette name; the generated mark is drawn in
 that hue) — resolved into the identity catalog that the renderer reads through
-`identities/get`. Presentation is
-host-side only: the model addresses canonical types and raw Agent IDs, and no
-persona reaches a tool description, a catalog payload, a prompt block, or the
-`contentHash` that gates catalog re-announcement. Renaming an Agent on screen
-therefore tells the model nothing.
+`identities/get`.
+
+**The persona is the agent's own name, not a label the host puts on it.** It is
+spoken into the L2 identity block (`agentPersonaPrompt` for the conversation
+agent; `You are <persona>, a headless Tenon Subagent Thread…` for a child) and
+into the Turn environment's `replyIdentity`. Asked who it is, an agent answers
+with the name on its header — the two used to be different strings, and a reader
+who asked was told something the screen contradicted. The default is `Aspen`,
+anchored to `DEFAULT_AGENT_PRESENTATIONS.main` so one constant drives both.
+
+It is resolved **per Turn** (`resolveAgentPersona`), not recorded in the
+configuration a resumed Turn replays: a rename reaches the next Turn, and a
+display name never has to be versioned into the configuration codec. A Thread
+records its BACKING Role (`explorer`) while identity is keyed on the canonical
+type (`explore`), so the resolver maps one to the other.
+
+What still does NOT carry a persona is DISPATCH. The Role catalog's entries and
+its `contentHash` exclude presentation, so renaming an Agent does not
+re-announce the catalog or change how the model addresses anyone: the model
+hands work to `explore`, and `Rena` is who answers.
 
 A Role declares its own under `presentation`. The identities a user cannot
 redefine without forking them — the three built-in types and the conversation's
@@ -242,6 +257,25 @@ danger-adjacent red — distinct the moment it exists, with nothing drawn by
 anyone. Identity attaches to the TYPE, not to an Agent: concurrent children of
 one type share a persona and a colour by design, and the task on each one's
 report is what tells them apart.
+
+#### Capabilities
+
+A Role's `overrides` narrow what it may use — `constrainChildCapabilities` can
+only ever produce a subset of the parent's, never a superset — and the
+conversation agent's Configuration Profile is the ceiling they are narrowed
+from. Both are edited as checkbox lists of everything the install has, all
+checked by default: checked means available, and unchecking is the only gesture.
+
+**All-checked is written as the ABSENCE of a list, never as today's catalogue.**
+A written-out full list freezes the set, so a tool or Skill added to Tenon later
+would be silently excluded by a list nobody meant as final. The stored `['*']`
+Skill wildcard reads back as every Skill for the same reason. The catalogue of
+what may be named travels with the editor's view rather than being imported by
+the renderer, so a settings pane cannot drift from the runtime's real tool set.
+
+`plugins` and `mcpServers` are narrowable in the file but have no editor field;
+a Role write MERGES `overrides`, so they — and anything else hand-written —
+survive a save untouched.
 
 The model choice resolves in this order: per-call override, Role override, then
 parent model. Reasoning effort has no model-visible Agent argument; a Role may

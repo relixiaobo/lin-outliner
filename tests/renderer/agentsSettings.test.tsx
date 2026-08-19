@@ -10,6 +10,26 @@ const VIEW: AgentEditorView = {
   // Nothing is re-skinned: every built-in identity below is the resolved
   // default, which is exactly the case the editor must not write back.
   presentationOverrides: [],
+  profile: {
+    name: 'default',
+    layer: null,
+    developerInstructions: null,
+    model: null,
+    reasoningEffort: null,
+    tools: null,
+    skills: null,
+  },
+  builtInDefinitions: [
+    { agentType: 'explore', description: 'Explores.', developerInstructions: 'Search, never write.' },
+  ],
+  capabilities: {
+    tools: [
+      { key: 'file_read', description: 'Read a file.' },
+      { key: 'file_write', description: 'Write a file.' },
+      { key: 'bash', description: 'Run a command.' },
+    ],
+    skills: ['review', 'summarize'],
+  },
   entries: [
     { agentType: 'main', persona: 'Aspen', color: 'teal', source: 'built-in' },
     { agentType: 'general-purpose', persona: 'Bruno', color: 'amber', source: 'built-in' },
@@ -26,6 +46,7 @@ const VIEW: AgentEditorView = {
     model: null,
     reasoningEffort: null,
     tools: null,
+    skills: null,
   }],
 };
 
@@ -125,6 +146,66 @@ describe('the Agents editor', () => {
 
 
 
+  test('the conversation agent gets its own editor: instructions and the ceiling', async () => {
+    const { document, click, calls } = await renderAgents();
+
+    await click(rowByLabel(document, 'Aspen'));
+
+    const dialog = document.querySelector('.agent-editor-dialog');
+    // No type and no "use it for": there is one of it and the reader is already
+    // talking to it. What it has is standing instructions and the ceiling.
+    expect(fieldByLabel(document, 'Instructions')).not.toBeNull();
+    expect(() => fieldByLabel(document, 'Type')).toThrow();
+    expect(dialog?.textContent).toContain('Capabilities');
+
+    await click(document.querySelector('.agent-editor-actions .button-primary')!);
+    // Identity and configuration are two writes behind one Save, because from
+    // the user's side "change this agent" was one gesture.
+    expect(calls.map((call) => call.name))
+      .toEqual(['agent_identity_catalog', 'agent_write_presentation', 'agent_write_profile']);
+  });
+
+  test('an untouched capability list is written as inherit, not as today\'s catalogue', async () => {
+    const { document, click, calls } = await renderAgents();
+    await click(rowByLabel(document, 'Wren'));
+
+    await click(document.querySelector('.agent-editor-actions .button-primary')!);
+
+    // Every box is checked, so nothing is narrowed. Writing the three tools out
+    // would freeze the set and silently exclude the fourth tool Tenon gains
+    // next month.
+    const role = (calls[1]!.args as { role: { tools: string[]; skills: string[] } }).role;
+    expect(role.tools).toEqual([]);
+    expect(role.skills).toEqual([]);
+  });
+
+  test('unchecking a tool narrows the agent to what is left', async () => {
+    const { document, click, calls } = await renderAgents();
+    await click(rowByLabel(document, 'Wren'));
+
+    await click(capability(document, 'file_write'));
+    await click(document.querySelector('.agent-editor-actions .button-primary')!);
+
+    const role = (calls[1]!.args as { role: { tools: string[] } }).role;
+    expect(role.tools).toEqual(['file_read', 'bash']);
+  });
+
+  test('duplicating a built-in seeds a Role from its real definition', async () => {
+    const { document, click } = await renderAgents();
+    await click(rowByLabel(document, 'Rena'));
+
+    await click(document.querySelector('.agent-editor-builtin button')!);
+
+    // Seeded from the built-in's real definition rather than a blank form —
+    // otherwise "duplicate" would mean "start over". (The instructions textarea
+    // is asserted in the browser: linkedom exposes a controlled textarea's value
+    // through neither `.value` nor its text.)
+    expect((fieldByLabel(document, 'Use it for') as { value?: string }).value).toBe('Explores.');
+    // And it is a NEW Role: its type is open, because the built-in's name is
+    // reserved and the copy must be the user's own.
+    expect((fieldByLabel(document, 'Type') as { value?: string }).value).toBe('');
+  });
+
   test('a Role is saved with the whole definition, not just what was retyped', async () => {
     const { document, click, calls } = await renderAgents();
     await click(rowByLabel(document, 'Wren'));
@@ -179,6 +260,13 @@ describe('the Agents editor', () => {
     expect((fieldByLabel(document, 'Name') as { value?: string }).value).toBe('Wren');
   });
 });
+
+function capability(document: Document, key: string): Element {
+  const found = [...document.querySelectorAll('.agent-capability-item')]
+    .find((node) => node.textContent?.trim() === key);
+  if (!found) throw new Error(`No capability row for ${key}`);
+  return found.querySelector('input') ?? found;
+}
 
 function swatch(document: Document, label: string): Element {
   const found = [...document.querySelectorAll('.agent-colour-choice')]

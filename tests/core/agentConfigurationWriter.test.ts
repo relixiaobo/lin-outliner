@@ -38,6 +38,7 @@ describe('AgentConfigurationWriter', () => {
       model: null,
       reasoningEffort: null,
       tools: null,
+      skills: null,
     }]);
     expect(loader.resolveIdentityCatalog(cwd)).toContainEqual({
       agentType: 'reviewer',
@@ -45,6 +46,73 @@ describe('AgentConfigurationWriter', () => {
       color: 'violet',
       source: 'project',
     });
+  });
+
+  test('a capability narrowing round-trips, and clearing it restores inherit', async () => {
+    const { writer, loader, cwd, userData } = await fixture();
+    await writer.writeRole('user', cwd, {
+      name: 'auditor',
+      description: 'Audits.',
+      developerInstructions: 'Read the diff.',
+      tools: ['file_read'],
+      skills: ['review'],
+    }, 'create');
+
+    expect(loader.listEditableRoles(cwd)[0]).toMatchObject({
+      tools: ['file_read'],
+      skills: ['review'],
+    });
+
+    // An empty list is the editor saying "everything is checked" — which must
+    // clear the narrowing rather than write today's catalogue out, or a tool
+    // added to Tenon later would be excluded by a list nobody meant as final.
+    await writer.writeRole('user', cwd, {
+      name: 'auditor',
+      description: 'Audits.',
+      developerInstructions: 'Read the diff.',
+      tools: [],
+      skills: [],
+    }, 'update');
+
+    expect(loader.listEditableRoles(cwd)[0]).toMatchObject({ tools: null, skills: null });
+    expect(JSON.parse(await readFile(userConfigurationPath(userData), 'utf8')).roles.auditor.overrides)
+      .toBeUndefined();
+  });
+
+  test('the conversation agent\'s Profile carries instructions and the ceiling', async () => {
+    const { writer, loader, cwd } = await fixture();
+
+    await writer.writeProfile('user', cwd, 'default', {
+      developerInstructions: 'Always answer in Chinese.',
+      tools: ['file_read'],
+    });
+
+    const profile = loader.resolveEditableProfile(cwd);
+    expect(profile).toMatchObject({
+      name: 'default',
+      layer: 'user',
+      developerInstructions: 'Always answer in Chinese.',
+      tools: ['file_read'],
+      // Untouched fields stay absent so the built-in default keeps showing
+      // through — the same rule presentation follows.
+      model: null,
+      skills: null,
+    });
+    // And it is the configuration the root Thread actually runs on.
+    expect(loader.resolveProfile(undefined, cwd)).toMatchObject({
+      developerInstructions: ['Always answer in Chinese.'],
+      tools: ['file_read'],
+    });
+  });
+
+  test('a Profile emptied of every field removes itself rather than sitting there blank', async () => {
+    const { writer, loader, cwd, userData } = await fixture();
+    await writer.writeProfile('user', cwd, 'default', { developerInstructions: 'Temporary.' });
+
+    await writer.writeProfile('user', cwd, 'default', {});
+
+    expect(loader.resolveEditableProfile(cwd)).toMatchObject({ layer: null, developerInstructions: null });
+    expect(JSON.parse(await readFile(userConfigurationPath(userData), 'utf8'))).toEqual({});
   });
 
   test('a save keeps the overrides the editor never shows', async () => {

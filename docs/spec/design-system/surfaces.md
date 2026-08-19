@@ -368,14 +368,20 @@ lines, and focusing or operating a row's menu or switch never expands the row.
 The Agents page lists the Roles a user wrote above the built-in types, each row
 wearing the same generated mark the transcript draws for it, so the editor and
 the conversation are visibly about one participant. A row opens a level-2 editor
-dialog rather than a third route: identity (name, colour) for every agent, plus
-definition (type, use-it-for, instructions, layer) for a Role. Colour swatches
+dialog rather than a third route, remounted per subject so it never holds the
+previous agent's fields. Identity (name, colour) for every agent; **the
+conversation agent** additionally gets its standing instructions and the
+capability ceiling; a Role gets definition (type, use-it-for, instructions,
+layer) and its own narrowing. Capabilities are checkbox lists of everything the
+install has, all checked, because unchecking is the whole gesture — a list can
+only narrow what the agent handing out work already had, never grant. Colour swatches
 are the mark itself, so a hue is chosen against what it produces; the chosen
 swatch is marked on the neutral ladder, never by tinting the mark. A leading
 **Default** swatch shows what would be inherited and is the only way to send an
 empty colour — without it the documented reset is unreachable from the UI. A built-in
 shows identity only and offers no Delete, because there is nothing of the user's
-to remove. An existing Role's type is fixed — it is the key both dispatch and
+to remove — instead it offers **Duplicate**, which seeds a new Role from the
+built-in's real description and instructions rather than a blank form. An existing Role's type is fixed — it is the key both dispatch and
 identity are stored under — and a new Role whose type is already taken says so
 in the card rather than at the write boundary, where finding out would cost the
 user the rest of what they typed. A refused write leaves the dialog standing

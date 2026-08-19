@@ -145,6 +145,7 @@ export const AGENT_COMMANDS = [
   'agent_write_role',
   'agent_delete_role',
   'agent_write_presentation',
+  'agent_write_profile',
 ] as const;
 
 export const ASSET_COMMANDS = [

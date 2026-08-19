@@ -100,3 +100,66 @@
   margin: var(--space-2) 0 0;
   color: var(--status-danger);
 }
+
+/* Capability lists are scannable columns rather than one long ladder: 17 tools
+   in a single column would push Save below the fold of the dialog. */
+.agent-capability-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: var(--space-1) var(--space-4);
+  /* Capped against the window, not at a fixed rung: the point is that a long
+     catalogue never pushes Save below the fold of the dialog. */
+  max-height: min(220px, calc(100vh - 480px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* The row IS the control: a label carrying the styled mark, with the native box
+   hidden but still focusable and still the thing assistive tech and Playwright
+   operate. Leaving it visible drew two checkboxes per row. */
+.agent-capability-item {
+  display: grid;
+  grid-template-columns: var(--checkbox-mark-size) minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  min-height: var(--settings-tile-size);
+  color: var(--text-primary);
+  font-size: var(--font-ui-sm);
+}
+
+.agent-capability-item > span,
+.agent-capability-item {
+  overflow-wrap: anywhere;
+}
+
+.agent-capability-item > input[type='checkbox'] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* Keyboard focus lands on the hidden input, so the ring has to be drawn by the
+   mark beside it or it would be invisible (B8). */
+.agent-capability-item > input[type='checkbox']:focus-visible + .checkbox-mark {
+  outline: none;
+  box-shadow: var(--focus-ring-shadow);
+}
+
+/* The count states the ceiling ("all 17"), so the list reads as narrowing
+   rather than as granting each row. */
+.agent-capability-count {
+  margin-left: var(--space-2);
+  color: var(--text-tertiary);
+  font-weight: 400;
+}
+
+.agent-editor-builtin {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}

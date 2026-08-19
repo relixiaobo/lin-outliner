@@ -244,6 +244,50 @@ test.describe('agent settings window', () => {
     await expect(settings.getByRole('status')).toContainText('Juniper');
   });
 
+  test('the conversation agent owns its standing instructions and the ceiling', async ({ page }) => {
+    const settings = await openSettings(page, '&category=agent/agents');
+
+    await settings.getByRole('button', { name: /Aspen/ }).click();
+    const dialog = page.getByRole('dialog');
+    // No type, no "use it for": there is one of it and the reader is talking to
+    // it. What it has is standing instructions and the capability ceiling.
+    await expect(dialog.getByRole('textbox', { name: 'Instructions' })).toBeVisible();
+    await expect(dialog.getByRole('textbox', { name: 'Type' })).toHaveCount(0);
+    await expect(dialog.getByText('the ceiling for every agent')).toBeVisible();
+
+    await dialog.getByRole('textbox', { name: 'Instructions' }).fill('Always answer in Chinese.');
+    // Clicking the row, which is what a user does: the native box is visually
+    // hidden behind the styled mark and the whole label is the target.
+    await dialog.locator('.agent-capability-item', { hasText: 'bash' }).click();
+    await dialog.getByRole('button', { name: 'Save' }).click();
+
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await settings.getByRole('button', { name: /Aspen/ }).click();
+    const reopened = page.getByRole('dialog');
+    // Round-trips: what was written is what the editor seeds from next time.
+    await expect(reopened.getByRole('textbox', { name: 'Instructions' }))
+      .toHaveValue('Always answer in Chinese.');
+    await expect(reopened.getByRole('checkbox', { name: 'bash' })).not.toBeChecked();
+    await expect(reopened.getByRole('checkbox', { name: 'file_read' })).toBeChecked();
+  });
+
+  test('duplicating a built-in hands the user an editable copy of its real definition', async ({ page }) => {
+    const settings = await openSettings(page, '&category=agent/agents');
+    await settings.getByRole('button', { name: /Rena/ }).click();
+
+    await page.getByRole('dialog').getByRole('button', { name: /Duplicate/ }).click();
+
+    const dialog = page.getByRole('dialog');
+    // Seeded from the built-in's own instructions, not a blank form — otherwise
+    // "duplicate" would mean "start over".
+    await expect(dialog.getByRole('textbox', { name: 'Instructions' }))
+      .toHaveValue('Search, never write.');
+    await expect(dialog.getByRole('textbox', { name: 'Use it for' })).toHaveValue('Fast codebase explorer.');
+    // A copy the user owns: its type is theirs to name, because the built-in's
+    // name is reserved and would never dispatch.
+    await expect(dialog.getByRole('textbox', { name: 'Type' })).toHaveValue('');
+  });
+
   test('refuses to create an agent over a name that already exists', async ({ page }) => {
     const settings = await openSettings(page, '&category=agent/agents');
 

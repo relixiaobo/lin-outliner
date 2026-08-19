@@ -1,5 +1,6 @@
 import type {
   AgentEditorView,
+  AgentProfileDraft,
   AgentRoleDraft,
   AssetMetadata,
   Backlink,
@@ -469,6 +470,16 @@ export const api = {
     command<AgentEditorView>('agent_write_role', input),
   agentDeleteRole: (input: { layer: 'user' | 'project'; cwd?: string; name: string }) =>
     command<AgentEditorView>('agent_delete_role', input),
+  /**
+   * The conversation agent's own configuration — standing instructions and the
+   * capability ceiling its Subagents are narrowed from.
+   */
+  agentWriteProfile: (input: {
+    layer: 'user' | 'project';
+    cwd?: string;
+    name: string;
+    profile: AgentProfileDraft;
+  }) => command<AgentEditorView>('agent_write_profile', input),
   agentWritePresentation: (input: {
     layer: 'user' | 'project';
     cwd?: string;

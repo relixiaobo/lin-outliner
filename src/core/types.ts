@@ -1140,7 +1140,13 @@ export interface AgentEditableRole {
   readonly color: string | null;
   readonly model: string | null;
   readonly reasoningEffort: string | null;
+  /**
+   * Null means "inherit", not "none". A capability list only ever NARROWS what
+   * the parent has, so an absent list is the full inherited set and an empty one
+   * would be a deliberate ban.
+   */
   readonly tools: readonly string[] | null;
+  readonly skills: readonly string[] | null;
 }
 
 /** What the editor writes: everything optional except the identity itself. */
@@ -1152,7 +1158,57 @@ export interface AgentRoleDraft {
   readonly color?: string;
   readonly model?: string;
   readonly reasoningEffort?: string;
+  /** Omitted keeps whatever is on disk; present replaces it. */
   readonly tools?: readonly string[];
+  readonly skills?: readonly string[];
+}
+
+/**
+ * The conversation agent's own configuration — its standing instructions and the
+ * capability ceiling every Subagent is narrowed from. Written as a Configuration
+ * Profile; the editor never says the word, because from the reader's side this
+ * is simply "the agent I talk to".
+ */
+export interface AgentProfileDraft {
+  readonly developerInstructions?: string;
+  readonly model?: string;
+  readonly reasoningEffort?: string;
+  readonly tools?: readonly string[];
+  readonly skills?: readonly string[];
+}
+
+/** The Profile in force, as WRITTEN — null fields inherit the built-in default. */
+export interface AgentProfileView {
+  readonly name: string;
+  /** Null when nothing is written down and the built-in default is in force. */
+  readonly layer: 'user' | 'project' | null;
+  readonly developerInstructions: string | null;
+  readonly model: string | null;
+  readonly reasoningEffort: string | null;
+  readonly tools: readonly string[] | null;
+  readonly skills: readonly string[] | null;
+}
+
+/**
+ * A built-in Agent type's frozen definition, carried so the editor can seed a
+ * duplicate from it. Read-only everywhere else: this is code, not configuration.
+ */
+export interface AgentBuiltInDefinition {
+  readonly agentType: string;
+  readonly description: string;
+  readonly developerInstructions: string;
+}
+
+/**
+ * What a capability list may contain, resolved in main.
+ *
+ * The catalogue travels with the view rather than being imported by the
+ * renderer: a settings pane naming tools it read out of the runtime's own
+ * module would drift the moment the runtime gained one.
+ */
+export interface AgentCapabilityCatalog {
+  readonly tools: readonly { readonly key: string; readonly description: string }[];
+  readonly skills: readonly string[];
 }
 
 /**
@@ -1178,6 +1234,9 @@ export interface AgentEditorView {
   readonly entries: readonly AgentIdentityEntry[];
   readonly roles: readonly AgentEditableRole[];
   readonly presentationOverrides: readonly AgentPresentationOverrideRow[];
+  readonly profile: AgentProfileView;
+  readonly builtInDefinitions: readonly AgentBuiltInDefinition[];
+  readonly capabilities: AgentCapabilityCatalog;
 }
 
 export interface AgentProviderSettingsView {
