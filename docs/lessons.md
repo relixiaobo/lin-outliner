@@ -1400,3 +1400,35 @@ they are the claims that turn `main` red. Re-author them against what is now
 true — never delete them and never loosen their numbers (B11): each of those four
 was protecting a real rule (`main` keyed by name everywhere, the header's own
 column) that outlived the shape it was written against.
+
+## A provider's rule belongs in a guard, not in a comment — and "it compiles" is not "it sends"
+
+`automation_update` shipped with a `{ oneOf: [...] }` schema root and took down
+every root Turn with an HTTP 400 for two weeks (PR #564). The admission check it
+passed on the way out compiled the schema and returned: a root union is perfectly
+legal JSON Schema, so the only thing that could tell it was unsendable was the
+provider, in front of the user. **A schema is admitted for two different reasons —
+that we can validate arguments against it, and that a provider will accept it —
+and a check for the first says nothing about the second.**
+
+The rule was not even unknown here. `agentNodeToolSchemas.ts` had carried the
+provider's own message in a comment since the node tools were written, and
+`node_search` and `node_edit` both express their mutually exclusive argument
+groups at runtime *because* of it. A rule that lives in one file's comment
+protects that one file: the fix's first round re-derived the forbidden shape in a
+different spelling — the gate proposed it and the local compiler was happy to
+agree — and it took a second gate pass to notice the repo had already written it
+down. **When a provider teaches you a constraint, spend the extra hour making it
+executable** (`providerToolSchemaFailure` + the catalog guard + admission), or the
+next author, and the reviewer checking their work, will pay for it again.
+
+Two smaller rules from the same merge. **Fail-closed must key off ownership, not
+off the channel that registered the tool** — the original admission branch spared
+anything arriving through `dynamicTools`, which is precisely how the host's own
+Automation tool is registered, so the one tool the incident was about would have
+degraded to a `console.warn` instead of throwing. And **a word-boundary is not a
+substring match**: the residue guard written to outlaw `codex_app` used
+`/\bcodex_app\b/`, which cannot match `codex_app__automation_update` — `_` is a
+word character — i.e. it could not match the exact string the provider's 400 had
+named.
+

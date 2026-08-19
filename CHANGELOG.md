@@ -46,6 +46,46 @@ Entries reference the pull request that introduced them.
 
 ### Fixed
 
+- **Automations were unreachable and every root Turn died before the model ran
+  (PR #564, cc)** — `automation_update`'s schema root was `{ oneOf: [...] }` with
+  no `type`, and a provider requires an object-rooted function schema: OpenAI
+  answered `Invalid schema for function 'codex_app__automation_update': schema
+  must be a JSON Schema of 'type: "object"', got 'type: null'` on every request
+  that offered the tool. The built-in Profile enables the whole catalog and the
+  tool is `rootThread`-scoped, so the blast radius was every root Turn since
+  `f5d2bb04` (2026-07-25); subagent Turns were spared only because scope
+  filtering dropped the tool first. The root is now one flat object discriminated
+  by `mode`, with each parameter's description naming the modes that take it, and
+  the exact per-mode field sets are decoded in `decodeAutomationToolInput` beside
+  the Automation decoders the renderer path already used — so model input and
+  renderer input meet one set of bounds and one rejection vocabulary, and a patch
+  can never carry the identity or the expected revision it is checked against.
+  The tool also loses its vendor namespace (`codex_app.automation_update` →
+  `automation_update`): a namespace names an MCP server or a plugin, and this was
+  the only namespaced host tool among 27. The legacy-residue guard now fails on
+  `codex_app` anywhere in active surface. **A Thread created before this version
+  keeps the old key in its persisted configuration snapshot and silently loses
+  the tool** — the snapshot is never re-resolved and pre-release ships no
+  compatibility reader, so the remedy is a new Thread or a userData wipe.
+  The lasting repair is the guard that should have caught it: a root union is
+  legal JSON Schema that compiles locally, so `providerToolSchemaFailure` now
+  states the sendable shape once — an object root carrying no `oneOf`, `anyOf`,
+  `allOf`, `enum`, or `not` — the catalog guard asserts it for every static
+  contract, and admission decides by *ownership* rather than by registration
+  channel, so a host-owned schema fails closed even when a `dynamicTools` factory
+  contributed it, which is exactly how this tool reaches the runtime. Gate:
+  `/code-review xhigh` found 13, 11 fixed, one accepted as the stated wipe, one
+  declined because the round-trip list it asked for would have required the exact
+  string the residue guard forbids. The gate's own first suggestion — keeping
+  per-mode exactness as a root-sibling `anyOf` — was reversed on the second pass,
+  when `agentNodeToolSchemas.ts` turned out to have already recorded, from the
+  same provider's own message, that a root union is refused in *any* spelling —
+  which is why `node_search` and `node_edit` normalize their mutually exclusive
+  argument groups at runtime. That comment is now an enforced rule rather than a
+  memory. Verified with typecheck + `docs:check`
+  + `test:core` (2514) + `test:renderer` (1280), plus an independent accept/reject
+  matrix run through the real compiler and decoder at the gate. Not verified
+  against a live provider from any clone.
 - **A foreground Agent that spawns background Agents no longer wedges the Turn
   (PR #562 + #563, codex)** — found live on `dev:main`: a root Turn stayed
   `inProgress` forever, its `agent` tool call never completed, and Stop could not

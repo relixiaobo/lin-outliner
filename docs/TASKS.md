@@ -1111,6 +1111,17 @@ and the merged PR, distilled rules in [`lessons.md`](lessons.md). Everything
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
 
+- **automation-tool-identity-and-schema** (cc, PR #564, merged 2026-08-19 —
+  fast-track, no plan file) — every root Turn had been failing with a provider
+  HTTP 400 since 2026-07-25 on `automation_update`'s root-union schema. The root
+  is now a flat object, per-mode exactness moved into the shared Automation
+  decoder, the vendor `codex_app` namespace is gone, and
+  `providerToolSchemaFailure` turns "a provider refuses a root union" into an
+  admission rule that fails closed for host-owned schemas. Gate:
+  `/code-review xhigh` found 13 (11 fixed, one accepted as a stated wipe, one
+  declined with reason); the gate's own first suggestion, a root-sibling `anyOf`,
+  was caught and reversed on the second pass. **A Thread created before this
+  version silently loses the tool — the release note owes a line.**
 - **subagent-customization-and-identity PR-A** (cc-2, PR #560, merged 2026-08-19)
   — every participant now has a persona and a generated mark, and the speaker
   header replaces unattributed prose. Gate: `/code-review xhigh` found 15, all
