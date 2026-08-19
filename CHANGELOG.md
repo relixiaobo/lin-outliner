@@ -10,6 +10,40 @@ Entries reference the pull request that introduced them.
 
 `main` is the `0.7.0` train; entries here move under the next tag.
 
+### Added
+
+- **Every participant in a Thread now has a name and a face (PR #560, cc-2)** —
+  a reader used to meet `explore`; they now meet **Rena**. Agent Roles carry
+  `presentation { persona, color }`, and a `presentationOverrides` map in either
+  configuration layer re-skins the built-in types and the reserved `main`
+  pseudo-key (defaults: Aspen teal for `main`, Rena orange for `explore`, Ada
+  blue for `plan`, Bruno amber for `general-purpose`). `identities/get` on the
+  agent protocol resolves the roster against the SELECTED conversation's working
+  directory, so a project's own Roles and re-skins are seen; resolution happens
+  at render time, never recorded on the message, so renaming a persona renames
+  the speaker of every message that Agent ever sent. The face is generated, not
+  drawn: one soft form filled with the identity's `--identity-tint-*` hue, two
+  round-capped eye strokes cut through a mask to the panel behind — no assets, no
+  image generation, no network, and no tile or frame, because the form is its own
+  edge. An identity with no configured hue derives one from its type name over
+  the hues the roster did not take, with the danger-adjacent red kept out of the
+  identity palette. Moods are a parameter set over that stroke rig, so states
+  morph rather than swap, and they wire only to state the transcript already
+  knows — Turn status for the conversation's own agent, registry outcome for a
+  delivered report — so an expression only ever restates the status text beside
+  it. `nicknameCandidates` retires into `presentation.persona`.
+- **The speaker header replaces unattributed prose (PR #560, cc-2)** — a mark
+  beside two stacked lines, WHO over WHAT THEY DID, with the words beneath taking
+  the whole column: no avatar lane and no hanging indent, because what arrives in
+  a 344px deck is documents — tables, code, galleries — and a lane costs 13% of
+  the measure. The work line doubles as the process disclosure, so one header is
+  also the only control that opens the timeline. This retires the rule that a
+  speaker's glyph shares a column with the content rows beneath it (PM
+  2026-08-19): a mark sized to anchor two lines cannot also sit on a 12px chip
+  glyph's axis, and identity chrome answers a different question than a content
+  row does. Both `agent-thread-rendering.md` and `design-system/patterns.md`
+  record the supersession with its reason.
+
 ### Fixed
 
 - **A foreground Agent that spawns background Agents no longer wedges the Turn

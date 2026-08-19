@@ -1371,3 +1371,32 @@ in which nothing will ever call this." Both PRs also confirm A12 from the
 liveness side: an uncancellable await on the user path is a failure shape on its
 own, which is why the Stop race in #563 was worth shipping even after #562
 landed clean.
+
+## A guard nobody can run before the PR is a guard that fires at the gate
+
+`subagent-customization-and-identity` PR-A (#560). Two product-wide design
+guards — no `scale()` in any `transform`, no bare `ms`/`s` literal in any
+`transition` — live in `tests/e2e/typography-tokens.spec.ts`, yet both are pure
+static scans of `src/renderer/styles/*.css` that never open a browser. The
+standard pre-PR checklist is typecheck + `test:core` + `test:renderer` +
+`docs:check`, so a CSS-driven blink (`transform: scaleY(.08)` on a
+`150ms`/`55ms` transition) went green locally through three rounds of review and
+was only caught when the gate ran `test:e2e`.
+
+**Where a guard lives decides when it fires, and a guard that only fires after
+the work is finished has already let the work be built wrong.** Two rules follow.
+When you touch a surface a product-wide guard polices, mirror that guard into the
+unit suite for your surface — #560's fix added the scale/duration assertions to
+`threadSpeakerCss.test.ts`, where they fail in the loop the author is already
+running. And when a guard needs no browser, question why it sits behind one at
+all.
+
+The same PR carries the retirement half of the lesson: it retired the letter-disc
+avatar and swept the source cleanly, but **three e2e judges still asserted the
+retired shape** (`toHaveText('M')`, `toHaveText('W')`), plus one that asserted a
+layout rule the new header supersedes. A retirement sweep that greps only `src/`
+is half a sweep; the judges are where a dead subsystem's last claims live, and
+they are the claims that turn `main` red. Re-author them against what is now
+true — never delete them and never loosen their numbers (B11): each of those four
+was protecting a real rule (`main` keyed by name everywhere, the header's own
+column) that outlived the shape it was written against.

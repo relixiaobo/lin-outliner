@@ -158,6 +158,14 @@ before any directional/security-sensitive build.
 
 - **agent-program** (P1, `meta` — umbrella) — read first; it maps the rest (foundation /
   dependency graph / event taxonomy / milestones). See `docs/plans/reference/agent-program.md`.
+- **[subagent-customization-and-identity](plans/subagent-customization-and-identity.md)**
+  (P2, `in-progress` — PR-A shipped 2026-08-19) — **PR-A landed as #560** (cc-2): the
+  identity model (`presentation { persona, color }`, `presentationOverrides`,
+  `identities/get`), generated marks with moods and gaze, and the speaker header.
+  **PR-B remains**: the Agents editor that writes configuration, which is also where
+  the deferred `profiles/changed` notification earns its keep. Design for the shipped
+  half is folded into `docs/spec/agent-thread-rendering.md`,
+  `docs/spec/agent-subagent-threads.md` and `docs/spec/design-system/patterns.md`.
 - **[foreground-agent-settlement-wait](plans/archive/foreground-agent-settlement-wait.md)**
   (P0, `done` 2026-08-18) — both PRs shipped: settlement authority (#562) and
   Stop cancellation (#563), both codex. A foreground `agent` call now waits on
@@ -1103,6 +1111,14 @@ and the merged PR, distilled rules in [`lessons.md`](lessons.md). Everything
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
 
+- **subagent-customization-and-identity PR-A** (cc-2, PR #560, merged 2026-08-19)
+  — every participant now has a persona and a generated mark, and the speaker
+  header replaces unattributed prose. Gate: `/code-review xhigh` found 15, all
+  accepted; two were product-wide design guards (a `scaleY` blink on a 150ms/55ms
+  transition) that only `test:e2e` catches, and the gate's own e2e sweep found two
+  more judges the retired letter-disc left behind. The shared glyph column between
+  a speaker header and the content rows beneath it is **superseded** (PM
+  2026-08-19). PR-B (the Agents editor) is still open on the plan.
 - **subagent-marker-assistant-channel** (cc, PR #561, merged 2026-08-18 —
   fast-track, no plan file) — a root Thread was writing
   `[Subagent finished: …]` to its user, a `kind` that does not exist: it had
