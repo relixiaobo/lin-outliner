@@ -2,7 +2,7 @@ import type { AgentTool, AgentToolResult } from '../runtime/kernel/types';
 import type { TSchema } from 'typebox';
 import type { JsonValue } from '../../../core/agent/protocol';
 import { modelToolContract } from '../../../core/agent/tools';
-import type { AutomationCreateInput, AutomationUpdateInput } from '../../../core/agent/automation';
+import { decodeAutomationToolInput } from '../../../core/agent/automation';
 import type { AutomationService } from './AutomationService';
 
 export function createAutomationTool(service: AutomationService): AgentTool {
@@ -16,47 +16,22 @@ export function createAutomationTool(service: AutomationService): AgentTool {
     executionMode: 'sequential',
     execute: async (_itemId, value, signal) => {
       if (signal?.aborted) throw abortError();
-      const input = objectValue(value, 'automation_update');
-      const mode = requiredString(input.mode, 'mode');
-      let result: unknown;
-      switch (mode) {
+      const command = decodeAutomationToolInput(value);
+      switch (command.mode) {
         case 'create':
-          exactKeys(input, ['mode', 'definition']);
-          result = {
-            automation: await service.create(
-              objectValue(input.definition, 'definition') as unknown as AutomationCreateInput,
-            ),
-          };
-          break;
-        case 'update': {
-          exactKeys(input, ['mode', 'automation_id', 'expected_revision', 'patch']);
-          const patch = objectValue(input.patch, 'patch');
-          result = {
-            automation: await service.update({
-              id: requiredString(input.automation_id, 'automation_id'),
-              expectedRevision: positiveInteger(input.expected_revision, 'expected_revision'),
-              ...patch,
-            } as AutomationUpdateInput),
-          };
-          break;
-        }
+          return toolResult({ automation: await service.create(command.create) });
+        case 'update':
+          return toolResult({ automation: await service.update(command.update) });
         case 'view':
-          exactKeys(input, ['mode', 'automation_id']);
-          result = input.automation_id === undefined
+          return toolResult(command.id === null
             ? await service.request('list', {})
-            : await service.request('read', { id: requiredString(input.automation_id, 'automation_id') });
-          break;
+            : await service.request('read', { id: command.id }));
         case 'delete':
-          exactKeys(input, ['mode', 'automation_id', 'expected_revision']);
-          result = await service.request('delete', {
-            id: requiredString(input.automation_id, 'automation_id'),
-            expectedRevision: positiveInteger(input.expected_revision, 'expected_revision'),
-          });
-          break;
-        default:
-          throw new Error(`Unknown automation_update mode: ${mode}`);
+          return toolResult(await service.request('delete', {
+            id: command.id,
+            expectedRevision: command.expectedRevision,
+          }));
       }
-      return toolResult(result);
     },
   };
 }
@@ -67,27 +42,6 @@ function toolResult(value: unknown): AgentToolResult<JsonValue> {
     content: [{ type: 'text', text: JSON.stringify(details, null, 2) }],
     details,
   };
-}
-
-function objectValue(value: unknown, path: string): Record<string, unknown> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${path} must be an object`);
-  return value as Record<string, unknown>;
-}
-
-function exactKeys(record: Record<string, unknown>, allowed: readonly string[]): void {
-  const expected = new Set(allowed);
-  const unknown = Object.keys(record).filter((key) => !expected.has(key));
-  if (unknown.length > 0) throw new Error(`automation_update contains unknown fields: ${unknown.join(', ')}`);
-}
-
-function requiredString(value: unknown, path: string): string {
-  if (typeof value !== 'string' || !value.trim()) throw new Error(`${path} must be a non-empty string`);
-  return value.trim();
-}
-
-function positiveInteger(value: unknown, path: string): number {
-  if (!Number.isSafeInteger(value) || (value as number) < 1) throw new Error(`${path} must be a positive integer`);
-  return value as number;
 }
 
 function abortError(): Error {

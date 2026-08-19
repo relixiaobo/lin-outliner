@@ -212,10 +212,12 @@ later occurrences continue to coalesce instead of overlapping.
 
 The root-only `automation_update` model tool provides strict create, update,
 view, and delete modes over the same service. Its schema is one object
-discriminated by `mode`; the decoder rejects any field the named mode does not
-take, and it and the shared Automation decoders reject unknown fields, invalid
-UUIDv7 identities, empty updates, unsupported schedules, and inputs beyond the
-shared length/count bounds. It is
+discriminated by `mode`, with a branch per mode that requires exactly that mode's
+fields and forbids the others; the decoder repeats the same per-mode check at the
+write boundary and, with the shared Automation decoders, rejects unknown fields,
+invalid UUIDv7 identities, empty updates, unsupported schedules, and inputs beyond
+the shared length/count bounds. The addressed identity and expected revision come
+from the call, never from the patch. It is
 subject to the `agent.automation.manage` capability action like every other
 model tool.
 

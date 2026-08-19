@@ -27,6 +27,12 @@ export {
 export type { ModelToolIdentity } from './protocol';
 
 export type JsonSchema = Readonly<Record<string, unknown>>;
+/**
+ * The shape every provider requires of a model-facing tool schema. Static
+ * catalog contracts declare it so a root union fails `tsc` where it is written,
+ * one altitude above the runtime check in `providerToolSchemaFailure`.
+ */
+export type ObjectJsonSchema = JsonSchema & { readonly type: 'object' };
 export type ModelToolScope = 'rootThread' | 'anyThread';
 export type ModelToolSchemaOwner = 'core' | 'capability' | 'configuration' | 'extension';
 
@@ -43,6 +49,14 @@ export interface ModelToolContract {
   readonly inputSchema: JsonSchema | null;
   readonly outputSchema?: JsonSchema | null;
   readonly actionKinds: readonly ModelToolActionKind[];
+}
+
+/**
+ * A catalog contract, whose schema is written here rather than contributed by a
+ * runtime implementation.
+ */
+export interface StaticModelToolContract extends ModelToolContract {
+  readonly inputSchema: ObjectJsonSchema | null;
 }
 
 export interface ModelToolSchemaContribution {
@@ -76,14 +90,6 @@ export const RETAINED_CAPABILITY_TOOL_NAMES = [
   'web_fetch',
   'generate_image',
   'data_import',
-] as const;
-
-export const CORE_CONTROL_TOOL_NAMES = [
-  'request_user_input',
-  'update_plan',
-  'get_goal',
-  'create_goal',
-  'update_goal',
 ] as const;
 
 export const CONFIGURATION_TOOL_NAMES = ['agent', 'skill'] as const;
@@ -182,7 +188,7 @@ const numberSchema = (description?: string): JsonSchema => ({
 const objectSchema = (
   properties: Readonly<Record<string, JsonSchema>>,
   required: readonly string[] = [],
-): JsonSchema => ({
+): ObjectJsonSchema => ({
   type: 'object',
   properties,
   required,
@@ -279,36 +285,61 @@ const automationMutableProperties = {
   status: enumSchema(['active', 'paused']),
 };
 
-const automationUpdateToolSchema: JsonSchema = objectSchema({
-  mode: enumSchema(
-    ['create', 'update', 'view', 'delete'],
-    [
-      'Operation to perform. Each mode accepts exactly its own fields and rejects the rest:',
-      '"create" takes definition;',
-      '"update" takes automation_id, expected_revision, and patch;',
-      '"view" takes an optional automation_id and lists every Automation when it is omitted;',
-      '"delete" takes automation_id and expected_revision.',
-    ].join(' '),
-  ),
-  definition: {
-    ...objectSchema(automationMutableProperties, ['name', 'prompt', 'schedule', 'destination']),
-    description: 'Full definition for mode "create".',
+const AUTOMATION_MODE_FIELDS = ['definition', 'automation_id', 'expected_revision', 'patch'] as const;
+
+/**
+ * One `mode` branch. The provider boundary keeps the exactness the retired root
+ * union expressed: fields the mode does not take are `false` rather than merely
+ * unmentioned, so a wrong-shaped call is refused before it costs a Turn and a
+ * capability evaluation. The tool decoder repeats the check at the write
+ * boundary; this is the cheap half of that pair, not a replacement for it.
+ */
+const automationModeBranch = (
+  mode: string,
+  required: readonly string[],
+  optional: readonly string[] = [],
+): JsonSchema => ({
+  properties: {
+    mode: { const: mode },
+    ...Object.fromEntries(AUTOMATION_MODE_FIELDS
+      .filter((field) => !required.includes(field) && !optional.includes(field))
+      .map((field) => [field, false])),
   },
-  automation_id: boundedStringSchema(
-    AUTOMATION_IDENTIFIER_MAX_LENGTH,
-    'Target Automation UUIDv7 for modes "update", "delete", and single-Automation "view".',
-  ),
-  expected_revision: {
-    type: 'integer',
-    minimum: 1,
-    description: 'Revision last observed by the caller; modes "update" and "delete" fail on a stale value.',
-  },
-  patch: {
-    ...objectSchema(automationMutableProperties),
-    minProperties: 1,
-    description: 'At least one field to change, for mode "update".',
-  },
-}, ['mode']);
+  required: ['mode', ...required],
+});
+
+const automationUpdateToolSchema: ObjectJsonSchema = {
+  ...objectSchema({
+    mode: enumSchema(
+      ['create', 'update', 'view', 'delete'],
+      'Operation to perform. "view" without automation_id lists every Automation.',
+    ),
+    definition: {
+      ...objectSchema(automationMutableProperties, ['name', 'prompt', 'schedule', 'destination']),
+      description: 'Full definition, for mode "create".',
+    },
+    automation_id: boundedStringSchema(
+      AUTOMATION_IDENTIFIER_MAX_LENGTH,
+      'Target Automation UUIDv7, for modes "update", "delete", and single-Automation "view".',
+    ),
+    expected_revision: {
+      type: 'integer',
+      minimum: 1,
+      description: 'Revision last observed by the caller; modes "update" and "delete" fail on a stale value.',
+    },
+    patch: {
+      ...objectSchema(automationMutableProperties),
+      minProperties: 1,
+      description: 'At least one field to change, for mode "update".',
+    },
+  }, ['mode']),
+  anyOf: [
+    automationModeBranch('create', ['definition']),
+    automationModeBranch('update', ['automation_id', 'expected_revision', 'patch']),
+    automationModeBranch('view', [], ['automation_id']),
+    automationModeBranch('delete', ['automation_id', 'expected_revision']),
+  ],
+};
 
 export const AGENT_TOOL_DESCRIPTION = `Launch a new agent to handle complex, multi-step tasks. Each agent type has specific capabilities and tools available to it.
 
@@ -351,7 +382,7 @@ export const TASK_STOP_TOOL_DESCRIPTION = `
 
 const JSON_SCHEMA_DRAFT_2020_12 = 'https://json-schema.org/draft/2020-12/schema';
 
-export function agentInputSchema(modelIds: readonly string[]): JsonSchema {
+export function agentInputSchema(modelIds: readonly string[]): ObjectJsonSchema {
   const models = [...new Set(modelIds)];
   if (models.some((modelId) => typeof modelId !== 'string' || !modelId)) {
     throw new Error('agent model enum accepts only non-empty provider model ids');
@@ -394,7 +425,7 @@ export function agentInputSchema(modelIds: readonly string[]): JsonSchema {
   };
 }
 
-export const AGENT_MESSAGE_INPUT_SCHEMA: JsonSchema = {
+export const AGENT_MESSAGE_INPUT_SCHEMA: ObjectJsonSchema = {
   $schema: JSON_SCHEMA_DRAFT_2020_12,
   type: 'object',
   properties: {
@@ -417,7 +448,7 @@ export const AGENT_MESSAGE_INPUT_SCHEMA: JsonSchema = {
   additionalProperties: false,
 };
 
-export const TASK_STOP_INPUT_SCHEMA: JsonSchema = {
+export const TASK_STOP_INPUT_SCHEMA: ObjectJsonSchema = {
   $schema: JSON_SCHEMA_DRAFT_2020_12,
   type: 'object',
   properties: {
@@ -433,7 +464,7 @@ export const TASK_STOP_INPUT_SCHEMA: JsonSchema = {
   additionalProperties: false,
 };
 
-const agentTaskToolContracts: readonly ModelToolContract[] = [
+const agentTaskToolContracts: readonly StaticModelToolContract[] = [
   {
     identity: { namespace: null, name: 'agent' },
     description: AGENT_TOOL_DESCRIPTION,
@@ -460,7 +491,7 @@ const agentTaskToolContracts: readonly ModelToolContract[] = [
   },
 ];
 
-const coreControlToolContracts: readonly ModelToolContract[] = [
+const coreControlToolContracts: readonly StaticModelToolContract[] = [
   {
     identity: { namespace: null, name: 'automation_update' },
     description: [
@@ -556,7 +587,7 @@ const CAPABILITY_ACTION_KINDS = {
   data_import: ['agent.data.import'],
 } as const satisfies Record<typeof RETAINED_CAPABILITY_TOOL_NAMES[number], readonly ModelToolActionKind[]>;
 
-const retainedCapabilityToolContracts: readonly ModelToolContract[] = RETAINED_CAPABILITY_TOOL_NAMES.map((name) => ({
+const retainedCapabilityToolContracts: readonly StaticModelToolContract[] = RETAINED_CAPABILITY_TOOL_NAMES.map((name) => ({
   identity: { namespace: null, name },
   description: `Provider-neutral ${name} capability.`,
   scope: 'anyThread',
@@ -565,7 +596,7 @@ const retainedCapabilityToolContracts: readonly ModelToolContract[] = RETAINED_C
   actionKinds: CAPABILITY_ACTION_KINDS[name],
 }));
 
-const configurationToolContracts: readonly ModelToolContract[] = [
+const configurationToolContracts: readonly StaticModelToolContract[] = [
   {
     identity: { namespace: null, name: 'skill' },
     description: 'Invoke a configuration-selected Skill by canonical identity.',

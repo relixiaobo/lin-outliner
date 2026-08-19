@@ -69,9 +69,12 @@ describe('canonical provider tool catalog', () => {
     expect(providerToolSchemaFailure(null)).toBe('schema must be a JSON Schema object');
   });
 
-  test('fails closed when a Core capability schema is not object-rooted', async () => {
+  test.each([
+    ['cannot compile', { type: 'object', patternProperties: { '[': { type: 'string' } } }],
+    ['is not object-rooted', { oneOf: [{ type: 'object' }] }],
+  ])('fails closed when a Core capability schema %s', async (_label, parameters) => {
     const tools = runtimeSchemaTools().map((tool) => tool.name === 'bash'
-      ? { ...tool, parameters: { oneOf: [{ type: 'object' }] } as never }
+      ? { ...tool, parameters: parameters as never }
       : tool);
     const runtime = new ToolRuntime(runtimeService(), {
       capabilityTools: () => tools,
@@ -80,6 +83,30 @@ describe('canonical provider tool catalog', () => {
 
     await expect(runtime.createTools(RUNTIME_CONTEXT)).rejects.toThrow(
       'Runtime model-tool schema is invalid: bash',
+    );
+  });
+
+  test('fails closed for a host-owned schema a dynamic factory registered', async () => {
+    // `automation_update` reaches the runtime through `dynamicTools`, the same
+    // channel MCP-backed and extension tools use. Ownership decides: its
+    // contract is Core-owned, so an unsendable schema is a structural failure
+    // rather than a `console.warn` and a tool that quietly disappears — which is
+    // the failure this whole guard exists to prevent, for the tool it happened to.
+    const runtime = new ToolRuntime(runtimeService(), {
+      capabilityTools: runtimeSchemaTools,
+      dynamicTools: () => [{
+        name: 'automation_update',
+        label: 'Update Automation',
+        description: 'Root-union probe.',
+        parameters: { oneOf: [{ type: 'object' }] } as never,
+        executionMode: 'sequential' as const,
+        execute: async () => ({ content: [{ type: 'text' as const, text: 'ok' }], details: { ok: true } }),
+      }],
+      assembleRegistry: true,
+    });
+
+    await expect(runtime.createTools(RUNTIME_CONTEXT)).rejects.toThrow(
+      'Runtime model-tool schema is invalid: automation_update',
     );
   });
 
@@ -102,25 +129,6 @@ describe('canonical provider tool catalog', () => {
     );
   });
 
-  test('fails closed when a Core capability schema cannot compile', async () => {
-    const tools = runtimeSchemaTools().map((tool) => tool.name === 'bash'
-      ? {
-          ...tool,
-          parameters: {
-            type: 'object',
-            patternProperties: { '[': { type: 'string' } },
-          } as never,
-        }
-      : tool);
-    const runtime = new ToolRuntime(runtimeService(), {
-      capabilityTools: () => tools,
-      assembleRegistry: true,
-    });
-
-    await expect(runtime.createTools(RUNTIME_CONTEXT)).rejects.toThrow(
-      'Runtime model-tool schema is invalid: bash',
-    );
-  });
 
   test('reuses the data-import schema across runtime catalogs', async () => {
     const runtime = new ToolRuntime(runtimeService(), {

@@ -177,7 +177,17 @@ export class ToolRuntime {
       if (unavailableCanonical.has(providerCanonical)) continue;
       const schemaFailure = this.toolSchemaFailure(tool.parameters);
       if (schemaFailure !== null) {
-        if (!dynamicToolSet.has(tool) && !extensionOwners.has(providerCanonical)) {
+        // Ownership decides this, not the registration channel: a host-owned
+        // schema that cannot be sent is our defect and fails closed even when a
+        // `dynamicTools` factory contributed it. Only third-party surface — an
+        // extension contract, or a dynamic tool with no canonical contract at
+        // all — degrades to a diagnostic so one bad neighbour cannot kill the Turn.
+        const schemaOwner = contracts.get(providerCanonical)?.schemaOwner
+          ?? modelToolContract(providerCanonical)?.schemaOwner
+          ?? null;
+        const degradable = schemaOwner === 'extension'
+          || (schemaOwner === null && (dynamicToolSet.has(tool) || extensionOwners.has(providerCanonical)));
+        if (!degradable) {
           throw new Error(`Runtime model-tool schema is invalid: ${providerCanonical}: ${schemaFailure}`);
         }
         unavailableCanonical.add(providerCanonical);

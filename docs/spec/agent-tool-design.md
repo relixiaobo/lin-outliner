@@ -28,9 +28,14 @@ no host identity carries the name of another product.
 Every concrete static catalog schema is compilation-guarded by the test suite.
 Compiling is necessary but not sufficient: every model-facing schema must also be
 one every provider accepts, which means an object-rooted schema. A root `oneOf`
-or `$ref` compiles locally and is rejected by the provider, so the same admission
-boundary that compiles a schema also rejects a non-object root, and the catalog
-guard asserts it for every static contract.
+or `$ref` compiles locally and is rejected by the provider, so a static contract
+declares an object-rooted schema in its type and cannot be written otherwise, the
+admission boundary rejects a non-object root before exposure, and the catalog
+guard asserts it for every static contract. Which side of that boundary a schema
+failure lands on is decided by ownership, not by the channel that registered the
+tool: a host-owned schema — Core, capability, or configuration — is a structural
+failure even when a dynamic factory contributed it, while extension and MCP-backed
+schemas degrade to one bounded diagnostic.
 `ToolRuntime` also compiles extension contracts and runtime implementations before
 exposure. A malformed dynamic, extension, or MCP-backed schema omits only that
 canonical contribution and emits one bounded diagnostic; valid siblings remain
@@ -375,10 +380,14 @@ create durable work entities.
 
 `automation_update` uses one bounded exact schema and the same revisioned host
 service as renderer commands. That schema is a single object discriminated by
-`mode`, matching `data_import`: the per-mode field sets are exact, but their
-exactness is enforced by the tool decoder and the Automation input decoders
-rather than by a union of shapes at the provider boundary. It never writes
-scheduler tables from model code or introduces a permission profile. Scheduled execution and
+`mode`: the root stays the object shape providers require, and one `anyOf` branch
+per mode names the fields that mode takes and forbids the rest, so a wrong-shaped
+call is refused before it costs a Turn. The same per-mode field sets are decoded
+again at the write boundary, beside the Automation input decoders the renderer
+path uses, so model input and renderer input meet one set of bounds and one
+rejection vocabulary. The decoder addresses the Automation itself: a patch can
+never carry the identity or the expected revision it is checked against. It never
+writes scheduler tables from model code or introduces a permission profile. Scheduled execution and
 standing authorization are specified in
 [`agent-automations.md`](agent-automations.md).
 

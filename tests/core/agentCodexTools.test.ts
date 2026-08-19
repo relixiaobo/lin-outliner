@@ -199,6 +199,10 @@ describe('Codex Agent Core model-tool contract', () => {
       readonly required: readonly string[];
       readonly additionalProperties: boolean;
       readonly properties: Record<string, { readonly enum?: readonly string[] }>;
+      readonly anyOf: ReadonlyArray<{
+        readonly required: readonly string[];
+        readonly properties: Record<string, unknown>;
+      }>;
     };
     expect(schema.type).toBe('object');
     expect(schema.required).toEqual(['mode']);
@@ -206,9 +210,25 @@ describe('Codex Agent Core model-tool contract', () => {
     expect(Object.keys(schema.properties))
       .toEqual(['mode', 'definition', 'automation_id', 'expected_revision', 'patch']);
     expect(schema.properties.mode.enum).toEqual(['create', 'update', 'view', 'delete']);
-    // Unions are spelled `anyOf` throughout: `oneOf` is the one union keyword
-    // constrained sampling refuses, and the per-mode field sets are enforced by
-    // the tool decoder rather than by a union of Turn-time shapes.
+    // The root stays an object — the shape every provider requires — while the
+    // `anyOf` branches keep the per-mode exactness the retired root union had:
+    // each names its own required fields and forbids the others outright.
+    expect(schema.anyOf.map((branch) => branch.required)).toEqual([
+      ['mode', 'definition'],
+      ['mode', 'automation_id', 'expected_revision', 'patch'],
+      ['mode'],
+      ['mode', 'automation_id', 'expected_revision'],
+    ]);
+    expect(schema.anyOf.map((branch) => Object.entries(branch.properties)
+      .filter(([, value]) => value === false)
+      .map(([key]) => key))).toEqual([
+      ['automation_id', 'expected_revision', 'patch'],
+      ['definition'],
+      ['definition', 'expected_revision', 'patch'],
+      ['definition', 'patch'],
+    ]);
+    // `oneOf` is the one union keyword constrained sampling refuses, so unions
+    // are spelled `anyOf` here and in the nested Automation schemas.
     expect(JSON.stringify(schema)).not.toContain('oneOf');
   });
 

@@ -197,7 +197,12 @@ reasoning effort values fail closed.
 
 Root Thread creation resolves its selected Profile into one persisted
 `EffectiveThreadConfiguration` snapshot. Later file edits do not rewrite that
-root snapshot or completed Turns.
+root snapshot or completed Turns. The snapshot holds canonical tool keys
+verbatim and is never re-resolved, so renaming or retiring a canonical tool key
+strands every Thread created before the rename: the tool matches nothing in that
+Thread's allow-list and is absent from its Turns. Pre-release this is settled by
+wiping the affected `userData` and stating it in the release note, never by a
+compatibility reader in the catalog.
 
 The built-in default Profile uses the `*` Skill ceiling so existing discovered
 Skills remain available. A configured Skill list is an allow-list, while an
