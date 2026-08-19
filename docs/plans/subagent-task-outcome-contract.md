@@ -1,266 +1,300 @@
 # Subagent Task Outcome Contract
 
-Shape: **(a) ONE complete feature in one PR.** Protocol, runtime,
-persistence, notifications, renderer, tests, and current specs land together;
-shipping only one layer would preserve the same false-completion bug elsewhere.
+Shape: **(a) ONE complete feature in one PR.** The execution vocabulary,
+generation budget, persistence, output envelope, renderer, tests, and current
+specs land together. A partial slice would leave another surface calling a
+stopped run a completed assignment.
 
 ## Goal
 
 ### Purpose
 
-Make delegated Agent work truthful and resumable when one execution stops
-before its assignment is complete. Separate three facts that currently collapse
-into `completed`:
+Stop claiming that delegated work is complete merely because one Agent run
+ended normally. Preserve useful output and the exact stop cause across failure,
+kill, budget interruption, resume, delivery, and cold reopen, while replacing
+the shared request-tree budget with an isolated breaker per execution
+generation.
 
-1. **Execution lifecycle** - how one Agent generation stopped.
-2. **Assignment outcome** - whether that generation satisfied the delegated
-   request or still needs work.
-3. **Resource budget** - the circuit breaker for one generation, independent of
-   both lifecycle and task semantics.
+The host records **execution facts only**. The parent still judges whether the
+output satisfies the assignment.
 
 ## Non-goals
 
-- Do not create a `ThreadGoal` for every delegation. Exploratory work may have
-  no durable Goal, and must not inherit Goal auto-continuation or occupy the
-  Thread's one Goal slot.
-- Do not infer completion from prose, a normal provider stop, elapsed time,
-  token use, tool count, or the absence of an error.
-- Do not force a summarization call after interruption or automatically resume
-  incomplete work.
-- Do not generate success criteria, decompose tasks, add currency budgets, or
-  expose token controls in product UI.
-- Do not change root Goals, context compaction, isolated-Skill result ownership,
-  permissions, worktrees, depth/concurrency limits, or user-stop authority.
-- Do not ship a compatibility reader for the old pre-release execution/budget
-  rows or notification envelope.
+- No task-completion status or tool, Goal, generated success criteria, or host
+  inference from prose.
+- No payload tier based on inferred task outcome. All useful content uses the
+  same neutral `output` contract.
+- No forced post-interruption summary and no automatic resume.
+- No aggregate request ceiling, currency budget, or product token-control UI.
+- No changes to root Goals, context compaction, permissions, worktrees,
+  isolated-Skill result ownership, user-stop authority, depth, or concurrency.
+- No compatibility reader for retired pre-release budget/execution rows or the
+  old notification envelope.
 
 ## Design
 
 ### Decision
 
-Every `agent` spawn and terminal-Agent `agent_message` resume starts one
-**assignment generation**. The prompt may be precise, exploratory, or
-ambiguous; the host does not manufacture stronger criteria than the caller
-supplied. The generation starts `active` and receives one delegated-only tool:
+Three changes form one contract:
 
-```ts
-update_assignment({ status: 'complete' | 'needs_followup' | 'blocked' })
-```
+1. Rename delegated terminal `completed` to `finished`. It states that the run
+   reached an ordinary stop, not that the assignment is done.
+2. Give every child execution generation its own token breaker. Siblings and
+   descendants never debit one another.
+3. Deliver one neutral `output` payload with execution status and stop
+   provenance. On a normal stop, the delegated prompt asks for a concise
+   self-reported handoff: concrete work produced, checks and evidence, remaining
+   or uncertain work, and the next useful action. Parent guidance says
+   explicitly that output is where the run stopped, not necessarily where the
+   assignment stands.
 
-`complete` means the Agent believes the requested scope for this generation is
-satisfied as reasonably understood, not that its parent task or project is
-complete. `needs_followup` covers bounded exploration, unresolved scope, and
-useful partial progress. `blocked` requires input or an external-state change.
-
-A normal stop without a declaration settles as `needsFollowup`, never
-`complete`. This can produce a false negative when a model forgets the tool,
-but cannot promote partial work into false success. No status schedules another
-provider call.
-
-The existing `1,500,000` token default becomes a **per-generation circuit
-breaker**, not a shared request-tree pool. Siblings cannot consume one another's
-allowance. A budget-limited generation returns a checkpoint and is resumable
-under the same Agent ID and transcript; an explicit resume starts a new
-generation with a fresh breaker.
+No state in this design schedules another provider call. Resume remains an
+explicit parent or user action on the same Agent ID and transcript.
 
 ### Evidence, constraints, and rejected alternatives
 
-The triggering development session had a `1,500,000`-token shared pool. Its
-four initial children consumed `601,836`, `295,740`, `372,895`, and `455,090`
-tokens: `1,725,561` together, while no child approached the breaker alone.
+The triggering development session used one `1,500,000`-token tree pool. Four
+initial children consumed `601,836`, `295,740`, `372,895`, and `455,090`
+tokens: `1,725,561` together, while no individual child approached the breaker.
 Three were interrupted. Cache reads were approximately 64% of usage. Repair and
 repeated synthesis later took the conversation to approximately `6.116M`
 tokens and `$9.34`; the shared cutoff did not produce a cheaper completed task.
 
 The inspected `Coding/.research-repos/cc-2.1` snapshot has no equivalent shared
-delegation-tree token pool. It relies on compaction, transcript resume, and
-partial-output preservation on kill. Tenon adopts those continuity properties,
-but not its ambiguous reuse of `completed` for process and task lifecycle.
+delegation-tree token pool. It preserves transcript state across compaction and
+resume and can retain partial output on kill. Tenon adopts those continuity
+properties but avoids its ambiguous use of `completed` for both process and
+work semantics.
 
-Rejected options:
+Rejected alternatives:
 
 - Raising the shared pool only moves the sibling-starvation threshold.
 - Disabling every default cap leaves one vague or runaway generation unbounded.
-- Reusing `ThreadGoal` adds the wrong objective and continuation semantics; the
-  archived `subagent-budget-propagation` plan already rejected Goal as the
-  resource carrier.
-- A forced near-limit summary is not evidence of completion and consumes the
-  resource whose exhaustion caused it.
+- A machine-readable child completion declaration remains an unverified
+  self-claim, adds an A4 protocol/tool surface, and can misread in UI as
+  host-verified completion. A free-form evidence-and-gaps handoff remains useful
+  as output because the parent can inspect rather than trust it.
+- Reusing `ThreadGoal` adds objective and continuation semantics that open-ended
+  exploration may not have; the archived `subagent-budget-propagation` plan
+  already rejected Goal as the resource carrier.
+- A forced summary is not evidence of completion and spends the resource whose
+  exhaustion caused it.
 
-### State contract, flow, and requirements
+### Execution state and output requirements
 
-**FR-01: Execution lifecycle.** Rename delegated terminal `completed` to
-`finished`. `SubagentExecutionStatus` is `running | finished | failed |
-interrupted | killed`; the underlying Turn keeps its current vocabulary.
-`finished` means only that the provider loop reached its ordinary stop.
+**FR-01: Honest terminal vocabulary.** Change `SubagentTerminalStatus` from
+`completed | failed | interrupted | killed` to `finished | failed | interrupted
+| killed`. The underlying Turn retains `completed | failed | interrupted`;
+delegation settlement maps a normally completed Turn to `finished`.
 
-**FR-02: Assignment outcome.** Add `SubagentTaskStatus`: `active | complete |
-needsFollowup | blocked | budgetLimited`. `active` is live-only. Terminal
-settlement freezes one of the other four for that exact generation.
+`stopProvenance` remains `none | model | user | budget | hostRestart` and is the
+second execution fact. No new task-status axis is added. Renderer and parent
+copy derive useful distinctions from the pair, for example `finished + none`,
+`interrupted + budget`, and `killed + model`.
 
-**BR-01: Settlement matrix.** Only `(finished, complete)` is a result:
+**BR-01: One payload.** Foreground results and background notifications use one
+neutral `output` element whenever the stopped Turn contains useful scanned
+text. Failure, interrupt, kill, and budget stop preserve partial output. Empty
+output omits the element; the host invents nothing. Typed error, usage,
+worktree, output-file reference, and stop provenance remain separate.
 
-| Execution | Declaration / cause | Task | Payload |
-| --- | --- | --- | --- |
-| `finished` | `complete` | `complete` | `result` |
-| `finished` | `blocked` | `blocked` | `checkpoint` |
-| `finished` | follow-up or none | `needsFollowup` | `checkpoint` |
-| `interrupted` | generation budget | `budgetLimited` | `checkpoint` |
-| failed, other interrupted, or killed | any | `needsFollowup` | `checkpoint` |
+**BR-02: Self-reported handoff, no completion claim.** On a normal stop, the
+shared delegated-Thread prompt asks the Agent's final response to state:
 
-A checkpoint contains only useful text already recorded in the Turn, after the
-existing output scan. If none exists, omit it; the host invents nothing. Error
-and usage remain separate. A completion declaration is provisional until a
-normal stop, so a later failure cannot become a completed deliverable.
+- what it produced or concluded;
+- which checks or evidence support that work and their actual results;
+- what remains incomplete, uncertain, or unchecked, and why; and
+- the next concrete check or action when work remains.
 
-**BR-02: Steering reopens the decision.** Accepting steering into a running
-generation resets its declaration to `active` before delivery. The Agent must
-assess the expanded request again.
+Progress is stated as concrete completed and remaining work. A numeric count is
+appropriate only when the scope is objectively enumerable; the Agent does not
+invent a percentage for open-ended work. The prompt requires all four facts but
+does not prescribe a parseable template. If no check ran or no remaining issue
+is known, the response states that explicitly rather than relying on omission.
 
-**BR-03: Resume is explicit.** Resume keeps Agent ID, Thread, transcript,
-configuration, model, and worktree; it increments execution generation, resets
-task status to `active`, and creates a fresh generation budget. No checkpoint,
-blocked state, or warning auto-resumes. Unrelated work should normally use a
-new Agent; this remains guidance rather than prompt classification.
+This handoff remains untrusted model-authored content inside neutral `output`.
+The host does not parse it into an enum, validate it as a terminal precondition,
+persist a task status, or derive a renderer label from it. Missing or malformed
+handoff content does not change `finished` or trigger another provider call. If
+a failure, interrupt, or kill prevents a final response, the host preserves only
+the output that already exists and does not manufacture the handoff.
+
+A normal stop, a polished conclusion, or an error-free run never changes the
+execution fact into task completion. Every parent envelope carries one
+instruction: this is where the run stopped, not necessarily where the
+assignment stands; inspect the reported work, evidence, and gaps, then either
+use it, resume with concrete missing work, ask the user, or report the
+limitation.
+
+**BR-03: Explicit resume.** Resume keeps Agent ID, Thread, transcript,
+configuration, model, and worktree; increments execution generation; and
+creates a fresh generation breaker. No terminal status, budget warning,
+delivery retry, or idle hook resumes provider work. Unrelated work should
+normally spawn a new Agent, but the host does not classify prompt intent.
+
+### Run flow
 
 ```text
 spawn or explicit resume
-  -> running + active
-  -> finished + complete       -> result
-  -> finished + needsFollowup  -> checkpoint
-  -> finished + blocked        -> checkpoint
-  -> interrupted + budgetLimited -> checkpoint
-  -> failed/interrupted/killed + needsFollowup -> checkpoint
+  -> running
+  -> finished / failed / interrupted / killed
+  -> optional neutral output + error/usage/provenance
+  -> parent judgment
+  -> optional explicit resume as a new generation
 ```
-
-### Delegated control tool
-
-**FR-03:** Add `update_assignment` to the canonical tool catalog and
-`ToolRuntime`. It is host-required for every foreground/background collaboration
-Agent, including `explore`, `plan`, and Role-backed Agents; Role narrowing and a
-parent tool subset cannot remove it. Root Threads and isolated Skills do not see
-it. There is no summary argument that could overwrite canonical assistant text.
-
-The stable delegated prompt says the request is an assignment, not necessarily
-a Goal; the Agent must not broaden ambiguous scope to manufacture certainty;
-it uses `needs_followup` after a bounded exploratory pass and calls `complete`
-only when no material requested work remains. Declarations are guarded by
-`{agentId, generation, currentTurnId}`. Repeated calls are last-write-wins until
-terminal settlement; a stale call cannot mutate a resumed generation.
-
-### Durable outcome, failure, and recovery
-
-**FR-04:** Extend `SubagentExecutionLedger`, not Goal storage. The current
-execution row carries the provisional declaration; `SubagentGenerationSnapshot`
-includes it for admission rollback. Each terminal notification persists frozen
-execution/task statuses, terminal error, and later the exact parent
-`deliveryTurnId`. Delayed delivery and subsequent resume therefore cannot
-relabel historical output.
-
-`SubagentExecutionProjection` exposes both current statuses, typed terminal
-error, and the durable delivery link. This fully absorbs the board's
-`subagent-projection-error-surface` item: cold reopen retains failure detail,
-and a settled-but-undelivered child Turn cannot shift report cards through the
-current count-from-the-end join. Missing inspection-only projection data
-degrades to `needsFollowup` and an unlinked checkpoint under A12; it cannot fail
-a user Turn.
-
-Initial admission, declaration, steering reset, generation advance,
-notification freeze, delivery link, and rollback use existing transaction and
-compare-and-set boundaries. An older terminal pipeline cannot overwrite a
-resumed generation.
 
 ### Per-generation budget
 
-**FR-05:** Preserve request ownership/cancellation, but remove shared sibling
-debiting from the default resource policy. `subagentTokenBudget` remains
-`1_500_000` by default and applies separately to each child execution
-generation; `null` still disables it explicitly. Budget state is keyed by
-`{agentId, generation}`. Resume starts at zero. Isolated Skills use the same
-child-runtime breaker but keep Skill-owned output semantics and no assignment
-tool.
+**FR-02: Budget authority.** `subagentTokenBudget` remains `1_500_000` by
+default and now applies separately to every child execution generation;
+`null` still disables it. Budget identity is `{agentId, generation}`. Each
+generation owns persisted usage, one in-flight tally, one 80% warning latch,
+and one cap. Sibling and descendant usage is invisible to that breaker.
 
-If `SubagentRequestLedger` retains cancellation ownership, split or rename its
-API so ownership cannot be mistaken for a shared allowance. SQLite and
-transaction helpers may be reused; shared sibling debiting may not survive
-under another name. Existing depth, live concurrency, stop, and ownership
-closure continue to bound structure and cancellation.
+Isolated Skills use the same child-runtime breaker but retain Skill-owned output
+delivery. Request ownership still records which delegating Turn may close and
+cancel a descendant set; ownership no longer carries or resolves resource
+allowance. Split or rename `SubagentRequestLedger` APIs and rows so an ownership
+record cannot be mistaken for a budget pool.
 
-The 80% notice says not to claim completion unless the assignment is complete;
-otherwise preserve verified progress, unknowns, and next work before the stop.
-Hard exhaustion uses the existing typed kernel interruption and performs no
-extra provider call. Transcript, Items, partial text, worktree, tool results,
-and usage settle before notification. An already accepted final answer keeps
-the existing last-call overshoot rule.
+**FR-03: `max_total_tokens`.** `SubagentCollaboration.childTokenCap` interprets
+an explicit `max_total_tokens` as the exact breaker override for that child's
+current generation. It does not create a child pool, bind descendants, reduce
+an ancestor balance, or survive into a resumed generation unless the resume
+explicitly supplies a new override. A descendant receives its own configured
+default or its own explicit override.
 
-### Output and parent contract
+Delete `MIN_SUBAGENT_TOKEN_CAP`. Any positive safe integer is an intentional
+override and is honored exactly; zero, fractions, unsafe integers, and other
+invalid values still fail validation. The old floor's two reasons depended on
+returning a low cap to a shared pool or avoiding a private pool that exceeded
+the user's shared setting. Both mechanisms are retired. A low explicit cap can
+stop a run early, but preserved output and explicit resume make that recoverable
+rather than a reason to silently rewrite the caller's value.
 
-**FR-06:** Foreground results and background notifications use one semantic
-encoder with explicit `execution-status` and `task-status` elements. Preserve
-the non-user boundary, IDs, output file, error, usage, worktree, XML escaping,
-and scanner. A complete envelope names its payload `result`; every other useful
-payload is `checkpoint`.
+**FR-04: Warning and hard stop.** The 80% notice asks the Agent not to imply
+completion merely because the limit is near and, if work remains, to preserve
+the same handoff facts early: concrete progress, verified evidence, unknown or
+unchecked work, and the next action. Hard exhaustion uses the existing typed
+kernel interruption and performs no extra provider call. Transcript, Items,
+partial text, tool results, worktree, and usage settle before delivery. An
+already accepted terminal answer keeps the existing last-call overshoot rule.
 
-Launch/resume copy promises notification when the **run settles**, not when the
-task completes. Parent guidance says a checkpoint is incomplete evidence: it
-may synthesize verified facts, but must not report the assignment as complete.
-A continuation should name the missing work or clarification rather than
-reflexively replay `continue`.
+### Retirement of tree conservation
 
-### Renderer behavior
+This change explicitly retires the tree-conservation subsystem shipped by PR C
+of `subagent-budget-propagation`; it is not a reinterpretation of that pool.
+Against that plan's normative rulings:
 
-**FR-07:** `subagentPresentation` keeps execution and task state separate.
-Anchors, the work strip, report cards, and Agent detail use translated combined
-labels such as `Finished - Complete`, `Finished - Needs follow-up`, `Finished -
-Blocked`, `Interrupted - Budget limited`, and `Failed - Needs follow-up`.
-Token counts remain absent from product UI. Current child Turn state is live
-truth; the durable projection is settled truth after cold reopen.
+- Rulings 1-4 die as tree rules: no ancestor-pool walk, pool-covered predicate,
+  single pool per tree, child-anchored pool, sibling debit, or pool-wide live
+  tally remains.
+- Ruling 10 survives generation-scoped: the kernel port still returns one
+  authoritative live `remaining` value, but no longer takes the minimum of
+  member-cap and shared-pool constraints.
+- Ruling 11 survives generation-scoped: usage still comes from the runtime
+  normalizer, never diagnostics; its observer feeds only that generation.
+- Rulings 13 and 15 survive generation-scoped: accrual and live-tally clearance
+  remain one synchronous settlement so persisted and in-flight usage cannot be
+  double-counted.
+- Ruling 16's every-descendant observer installation survives because every
+  descendant generation may have a breaker; live ancestor coverage resolution
+  and re-binding die.
+- Typed errors, fail-soft runtime reads, transactional admission/rollback,
+  user-trigger bright lines, and user-facing token-number suppression survive
+  unchanged where they do not depend on a shared pool.
 
-Report cards title only complete output `Result`; other useful output is
-`Checkpoint`. Bulk **Delete finished Agents** excludes any subtree containing
-`needsFollowup`, `blocked`, `budgetLimited`, live, or queued work. Explicit
-single-Agent deletion remains available after inspection.
+The accepted exposure is explicit. `assertSpawnStructure` and the tree-global
+live count cap at most `DEFAULT_MAX_CONCURRENT_SUBAGENTS = 20` live
+collaboration children, with `MAX_SUBAGENT_DEPTH = 3`. At the default, twenty
+simultaneous generations can therefore consume roughly `30M` tokens before
+their independent breakers fire, about 20 times today's `1.5M` shared ceiling.
+Serial explicit resumes are unbounded in aggregate because every resume starts
+a new breaker. This trades aggregate conservation for failure isolation: the
+shared ceiling was terminating healthy fan-outs and forcing work to restart
+from zero at greater total cost.
+
+### Persistence, recovery, and delivery
+
+**FR-05:** Persist generation budget state beside the execution generation and
+carry it through initial admission, resume, rollback, terminal settlement, and
+startup recovery with existing compare-and-set guards. An older terminal
+pipeline cannot debit or overwrite a resumed generation.
+
+Extend `SubagentExecutionProjection` with the typed terminal error and the exact
+parent `deliveryTurnId`. This absorbs `subagent-projection-error-surface`: cold
+reopen keeps the failure reason, and a settled-but-undelivered child Turn cannot
+shift report cards through the current count-from-the-end join. Missing
+inspection-only projection data degrades under A12; it does not fail a user
+Turn or settlement.
+
+### Parent and renderer behavior
+
+**FR-06:** Replace the notification's ambiguous single status with explicit
+execution status and stop provenance while retaining the non-user boundary,
+IDs, neutral output, error, usage, worktree, output-file reference, escaping,
+and scanner. Launch and resume copy promises notification when the **run
+settles**, never when the task completes.
+
+`subagentPresentation` uses the single execution axis plus provenance. A normal
+run says `Finished`, not `Complete`; a budget stop may say `Interrupted - Budget
+limited`; failure and user/model stop retain their existing meanings. No task
+status or combined completion label is added. `deletableFinishedRoots` remains
+liveness/queued-work based. Product UI does not show token counts.
 
 ## Open Questions
 
-None before implementation. Reconsider a separate opt-in aggregate request
-ceiling only if post-ship telemetry shows repeated explicit resumes or broad
-fan-out, rather than one-generation runaway, is the dominant cost failure. It
-must remain independent of assignment outcome.
+None before implementation. An aggregate request ceiling may return only as a
+separate opt-in policy if post-ship telemetry shows broad fan-out or repeated
+explicit resumes, rather than one-generation runaway, dominates cost. It must
+not silently restore sibling coupling.
 
 ## Files And Ownership
 
-- `src/core/agent/tools.ts`, `src/core/agent/protocol.ts`, and
-  `src/core/agent/codec.ts` - canonical tool/status/projection contracts.
-- `ToolRuntime`, `subagentToolPolicy`, `SubagentExecutionLedger`,
-  `SubagentRequestLedger`, `TurnLifecycle`, and `SubagentCollaboration` - guarded
-  declaration, generation budget, settlement, resume, and rollback.
-- `subagentOutput` and `subagentExecutionProjection` - one outcome encoder and
-  durable projection.
+- `src/core/agent/protocol.ts` and `src/core/agent/codec.ts` - honest terminal
+  vocabulary, error/delivery projection, and clean-cut codecs.
+- `SubagentExecutionLedger`, `SubagentRequestLedger`, `TurnLifecycle`,
+  `SubagentCollaboration`, `subagentOutput`, and
+  `subagentExecutionProjection` - generation budget, ownership split,
+  settlement, resume, recovery, and delivery.
+- `stablePrompt.identityBlock` and its prompt fixtures - one canonical
+  delegated-Thread handoff instruction for built-in and custom Roles, without
+  a parser or settlement dependency.
 - `agentSettings` - unchanged numeric default, revised per-generation meaning.
-- `subagentPresentation`, Agent anchor/work-strip/detail components, i18n, and
-  deletion eligibility - dual-state UI.
-- Focused Core, renderer, E2E, codec, tool-catalog, restart, and parity fixtures.
-- `agent-subagent-threads`, `agent-thread-rendering`, `agent-tool-design`, and
-  affected Goal/runtime specs.
+- `subagentPresentation` and Agent anchor/work-strip/detail components -
+  execution-only labels and durable errors/delivery joins.
+- Focused Core, renderer, E2E, codec, restart, budget, and parity fixtures.
+- `docs/spec/agent-subagent-threads.md` - replace the shared request-pool and
+  `subagent_request_pools` / `subagent_request_members` persistence contract.
+- `docs/spec/agent-model-runtime.md` - replace ancestor-pool walk, live
+  pool tally, binding `remaining`, and explicitly capped covered-member rules
+  with generation-local runtime ports.
+- `docs/spec/agent-thread-rendering.md` and `docs/spec/agent-tool-design.md` -
+  notification vocabulary, parent instruction, and presentation.
 
-The Core tool/protocol files are shared surfaces and need coordinated ownership.
-Dev agents do not edit `docs/TASKS.md` or `CHANGELOG.md`; main owns the absorbed
-board item and changelog at merge.
+The Core protocol is a shared surface and needs coordinated ownership. Dev
+agents do not edit `docs/TASKS.md` or `CHANGELOG.md`; main owns the absorbed
+board item, retired-premise sweep, and changelog at merge.
 
 ## Risks
 
-- A model may omit `update_assignment`; the safe default is `needsFollowup`,
-  pinned by prompt/tool fixtures with no heuristic fallback.
-- Per-generation caps allow more aggregate fan-out spend. That is the deliberate
-  trade for failure isolation; depth, concurrency, explicit stop, and visible
-  generation resumes remain.
-- A parent may repeatedly resume checkpoints. No runtime continuation exists,
-  and parent guidance requires a concrete missing gap before resume.
-- Partial output can still be wrong. `checkpoint` states provenance, not quality;
+- Aggregate live exposure rises from `1.5M` to approximately `30M` tokens at
+  the twenty-Agent concurrency limit, and sequential resumes have no aggregate
+  ceiling. This is the ratified isolation trade; telemetry must distinguish
+  breadth, repeat resume, and one-generation runaway.
+- A normal `Finished` run may or may not satisfy the assignment. That ambiguity
+  is honest and intentional; the parent receives the Agent's evidence-and-gaps
+  handoff as untrusted output and makes the judgment.
+- An Agent may omit, misunderstand, or overstate part of the requested handoff.
+  Settlement remains fail-soft: the omission is visible to the parent, never
+  promoted into host status, and never repaired with a hidden provider call.
+- A very low explicit cap may stop useful work early. The exact override is
+  intentional, output is preserved, and resume is explicit.
+- Partial output can be wrong. Neutral `output` states provenance, not quality;
   scanning and the untrusted-output boundary remain.
-- Broad protocol scope raises regression risk. Foundation lands before
-  consumers, persistence is a clean cut, and the full relevant gate runs.
+- Retiring a three-pass conservation subsystem has broad blast radius. Build
+  foundation before consumers, use clean-cut persistence, and gate the retired
+  reference surface as well as runtime behavior.
 
 ## Collision Result
 
@@ -268,47 +302,63 @@ board item and changelog at merge.
   `agent-thread-rendering` and adjacent renderer code. It should land first;
   this branch rebases afterward.
 - Draft PR #567 (`provider-retry-state-machine`) plans terminal-error,
-  `ThreadService`, `threadStore`, and runtime/rendering-spec work. There is no
-  semantic dependency; whichever implementation is approved first lands first,
-  and the second adopts its terminal-error shape.
+  `ThreadService`, `threadStore`, and runtime/rendering-spec changes. It is
+  significant; whichever implementation lands second adopts the first protocol
+  shape.
+- PR #570 (`agent-config-turn-path-degrades`) directly overlaps `ThreadService`
+  and `agent-subagent-threads`. Its implementation and verification are already
+  complete; it should land before this implementation, then this branch rebases.
 - `subagent-projection-error-surface` is absorbed, not parallel work.
-- With #567 and this plan, the significant review queue is at its cap of two;
-  #568 is a small fix already through implementation review.
+- The significant queue remains at its cap of two: #567 and this plan. Under
+  the repository's lane rules, neither #568 nor #570 consumes a significant
+  review-queue slot.
 
 ## Acceptance Criteria
 
-- **AC-01:** A normal Agent stop without declaration is `finished +
-  needsFollowup` and exposes only a checkpoint.
-- **AC-02:** Only a normal stop after `complete` is `finished + complete` and
-  exposes a result; later steering, failure, interrupt, or kill prevents it.
-- **AC-03:** Failed, interrupted, killed, blocked, and undeclared generations
-  preserve useful scanned partial text without a forced provider call.
-- **AC-04:** Exhausting one generation's default budget does not debit or stop a
-  sibling. Each of the four measured incident children fits independently.
-- **AC-05:** Explicit resume preserves identity/history/worktree, increments
-  generation, resets task state, and receives a fresh breaker without erasing
-  the prior checkpoint.
-- **AC-06:** Crash recovery preserves the exact historical execution status,
-  task status, error, payload label, and delivery Turn idempotently.
-- **AC-07:** No incomplete status or budget warning starts hidden work.
-- **AC-08:** All collaboration Agent types see `update_assignment` despite Role
-  narrowing; roots and isolated Skills do not.
-- **AC-09:** Cold-reopened chips, report cards, strip, and detail agree without
-  loading every child Turn or joining deliveries by ordinal.
-- **AC-10:** Bulk cleanup preserves every incomplete, live, or queued subtree.
-- **AC-11:** Root Goals, isolated-Skill delivery, permissions, worktree
-  retention, user-stop boundaries, depth, and concurrency behavior regress none.
+- **AC-01:** Every normally settled delegated generation is `finished`, never
+  `completed`, in notification, projection, renderer, and cold-reopen fixtures.
+- **AC-02:** Normal, failed, interrupted, killed, and budget-stopped generations
+  preserve useful scanned partial output under one neutral payload name without
+  a forced provider call or task-completion claim.
+- **AC-03:** Exhausting one generation neither debits nor stops a sibling or
+  descendant; each measured incident child fits independently under the
+  default.
+- **AC-04:** Explicit resume preserves identity, transcript, and worktree,
+  increments generation, creates a fresh breaker, and preserves prior output.
+- **AC-05:** `max_total_tokens` overrides exactly one generation. Descendants do
+  not inherit it, and a later generation receives the default unless explicitly
+  overridden again.
+- **AC-06:** Positive safe-integer overrides below the former minimum are
+  honored exactly; invalid numeric values still fail validation.
+- **AC-07:** Crash recovery preserves terminal status, provenance, typed error,
+  neutral output, usage, and exact delivery Turn idempotently.
+- **AC-08:** No stop, warning, output, delivery retry, or idle hook starts hidden
+  provider work.
+- **AC-09:** The runtime has no ancestor budget walk, shared-pool gate/debit,
+  sibling tally, capped-child pool, or shared-pool persistence row after the
+  clean cut.
+- **AC-10:** Root Goals, Skill-owned delivery, permissions, worktrees, user-stop
+  boundaries, cancellation ownership, depth, concurrency, and cleanup behavior
+  regress none.
+- **AC-11:** Every delegated normal-stop prompt requests produced work, actual
+  checks/evidence, incomplete or uncertain work, and a next action; prompt tests
+  pin the contract, while missing compliance creates no task status, failed
+  settlement, parser fallback, or extra provider call.
 
 ## Build Checklist
 
-- [ ] Add canonical statuses, `update_assignment`, clean-cut codecs, ledger
-  fields, and transaction/rollback tests.
-- [ ] Separate request ownership from generation budgets and prove sibling
-  isolation in kernel/admission/accrual tests.
-- [ ] Freeze two-axis outcomes, unify foreground/background payload semantics,
-  and persist error plus delivery Turn across restart races.
-- [ ] Update renderer states, checkpoint naming, deletion safety, i18n, and
-  light/dark E2E evidence.
-- [ ] Fold behavior into current specs; run `bun run typecheck`,
-  `bun run test:core`, `bun run test:renderer`, targeted Agent E2E,
-  `bun run docs:check`, and visual verification before marking ready.
+- [ ] Rename terminal `completed` to `finished`; update codec, envelope,
+  projection, renderer, and fixtures without adding a task-status axis.
+- [ ] Split request cancellation ownership from generation-local budgets;
+  remove ancestor pools, sibling debits, capped-child pools, and stale rules.
+- [ ] Make `max_total_tokens` an exact one-generation override and delete
+  `MIN_SUBAGENT_TOKEN_CAP` plus its retired comments/tests.
+- [ ] Preserve output on every stop path; persist typed error and delivery Turn
+  across resume/rollback/restart races.
+- [ ] Add the canonical final-handoff instruction to every delegated Thread and
+  pin that it remains model-authored output rather than settlement state.
+- [ ] Rewrite the named spec sections and sweep active plans/board premises at
+  main's retirement gate.
+- [ ] Run `bun run typecheck`, `bun run test:core`, `bun run test:renderer`,
+  targeted Agent E2E, `bun run docs:check`, and light/dark visual verification
+  before marking the implementation PR ready.
