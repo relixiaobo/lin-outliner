@@ -1552,12 +1552,14 @@ block by its own top edge instead, and an Agent's brief at the head of its
 transcript and a long message reached by scrolling back both open downward from
 where they are read. The exception is a transcript riding a tail it can actually
 scroll, where holding the control is what staying at the bottom means; a
-transcript shorter than its viewport has no such tail, and the range is measured
-over real content so neither the send spacer nor the anchor runway can invent
-one. Collapsing holds the control in every case, because nothing grows: the
-control is what the reader just clicked and the only point the geometry
-guarantees is on screen, while the block's top edge in a message taller than the
-viewport is far above it.
+transcript shorter than its viewport has no such tail. A mounted send spacer owns
+the rendered bottom rather than extending real content, so while it exists a
+long message always opens from its block even when the scroller is at that
+synthetic bottom. The range is otherwise measured over real content so the
+anchor runway cannot invent a tail. Collapsing holds the control in every case,
+because nothing grows: the control is what the reader just clicked and the only
+point the geometry guarantees is on screen, while the block's top edge in a
+message taller than the viewport is far above it.
 
 ## Pagination And Notifications
 

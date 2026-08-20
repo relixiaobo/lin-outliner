@@ -7584,6 +7584,73 @@ test.describe('canonical agent Thread surface', () => {
   });
 });
 
+test('opens a long message downward while a send spacer owns the rendered bottom', async ({ page }) => {
+  await openMockedApp(page, { agentTurnStaysActive: true });
+  await createNewThread(page);
+  await seedOverflowingTranscript(page);
+
+  const composer = page.getByRole('textbox', { name: 'Message this Thread' });
+  await composer.fill(Array.from(
+    { length: 80 },
+    (_, index) => `Synthetic-bottom disclosure evidence ${index + 1}.`,
+  ).join(' '));
+  await page.getByRole('button', { name: 'Send' }).click();
+
+  const message = page.locator('.thread-user-message')
+    .filter({ hasText: 'Synthetic-bottom disclosure evidence 1.' });
+  const shell = message.locator('.thread-user-content-shell');
+  const disclosure = message.locator('.thread-user-expand-button');
+  const spacer = page.locator('.thread-send-anchor-spacer');
+  const transcript = page.locator('.thread-transcript');
+  await expect(disclosure).toHaveAccessibleName('Show more');
+  await expect(spacer).toHaveCount(1);
+  await expect.poll(() => spacer.evaluate((element) => element.getBoundingClientRect().height))
+    .toBeGreaterThan(0);
+
+  // Following this bottom means following the send anchor's temporary range,
+  // not riding real transcript content. The sent message remains the surface
+  // the reader is looking at, so it must still open from its own top edge.
+  await setTranscriptFollowingBottom(page);
+  const before = await transcript.evaluate((element) => {
+    const messageShell = document.querySelector<HTMLElement>(
+      '.thread-user-message .thread-user-content-shell',
+    );
+    const toggle = document.querySelector<HTMLElement>('.thread-user-expand-button');
+    const sendSpacer = document.querySelector<HTMLElement>('.thread-send-anchor-spacer');
+    if (!messageShell || !toggle || !sendSpacer) throw new Error('Missing disclosure geometry');
+    return {
+      bottomDistance: element.scrollHeight - element.scrollTop - element.clientHeight,
+      buttonTop: toggle.getBoundingClientRect().top,
+      shellTop: messageShell.getBoundingClientRect().top,
+      spacerHeight: sendSpacer.getBoundingClientRect().height,
+      scrollTop: element.scrollTop,
+    };
+  });
+  expect(before.bottomDistance).toBeLessThanOrEqual(1);
+  expect(before.spacerHeight).toBeGreaterThan(0);
+
+  await toggleDisclosureWithStableAnchor(disclosure, shell);
+  await expect(disclosure).toHaveAccessibleName('Show less');
+  const after = await transcript.evaluate((element) => {
+    const messageShell = document.querySelector<HTMLElement>(
+      '.thread-user-message .thread-user-content-shell',
+    );
+    const toggle = document.querySelector<HTMLElement>('.thread-user-expand-button');
+    const content = document.querySelector<HTMLElement>('.thread-transcript-content');
+    if (!messageShell || !toggle || !content) throw new Error('Missing disclosure geometry');
+    return {
+      buttonTop: toggle.getBoundingClientRect().top,
+      paddingBottom: content.style.paddingBottom,
+      shellTop: messageShell.getBoundingClientRect().top,
+      scrollTop: element.scrollTop,
+    };
+  });
+  expect(after.shellTop).toBeCloseTo(before.shellTop, 0);
+  expect(after.scrollTop).toBeCloseTo(before.scrollTop, 0);
+  expect(after.buttonTop).toBeGreaterThan(before.buttonTop + 100);
+  expect(after.paddingBottom).toBe('');
+});
+
 test('restores the reader position when turn/submit rejects', async ({ page }) => {
   await openMockedApp(page, { agentTurnSubmitReject: 'Mock turn/submit rejection' });
   await page.evaluate(async () => {

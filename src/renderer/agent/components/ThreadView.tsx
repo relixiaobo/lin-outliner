@@ -1079,19 +1079,19 @@ export function ThreadView({
    * the commonest Subagent transcript there is — one brief, one short result —
    * keeps the very behavior this predicate exists to end.
    *
-   * The range is measured over real content: the send spacer and the anchor
-   * runway are renderer-only scroll range, and counting them would invent a tail
-   * out of the space a previous disclosure borrowed. `follow` still gates it,
-   * because it is the pin's own state and the two must not disagree about one
-   * layout transaction.
+   * A mounted send spacer owns the rendered bottom, so `follow` describes that
+   * synthetic range rather than a real-content tail. It is a stronger answer
+   * than subtracting the spacer's height: the content flex gap is synthetic too,
+   * and the disclosure control can still sit near the top while the scroller is
+   * at that rendered bottom. The anchor runway is likewise renderer-only range.
+   * `follow` still gates the remaining case, because it is the pin's own state
+   * and the two must not disagree about one layout transaction.
    */
   const isFollowingBottom = useCallback(() => {
-    if (!followRef.current) return false;
+    if (!followRef.current || sendAnchorSpacerRef.current) return false;
     const scroll = scrollRef.current;
     if (!scroll) return false;
-    const spacer = scroll.querySelector<HTMLElement>('.thread-send-anchor-spacer');
     const contentHeight = scroll.scrollHeight
-      - (spacer?.getBoundingClientRect().height ?? 0)
       - disclosureAnchorRunwayRef.current;
     return contentHeight - scroll.clientHeight > 1;
   }, []);
