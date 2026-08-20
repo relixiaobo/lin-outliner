@@ -282,6 +282,19 @@ Entries reference the pull request that introduced them.
   (2493), with a guard that reproduces the production string on the pre-fix tree
   and a second that pins the one-message, two-tool-call batch.
 
+### Internal
+
+- **Thread transcript paint-continuity plan (PR #571, cc, plan-only)** — ratifies
+  one paint owner per Turn: ordinary layout for the flow cohort and the measured
+  renderer virtualizer for longer transcripts. The implementation will normalize
+  range selection to the Turn container instead of raw scroller coordinates and
+  repair uncovered ranges through phase-correct writers: event/rAF callbacks may
+  commit before returning, while layout effects prepare the range in one pass and
+  write only from a later pre-paint pass without lifecycle `flushSync`. Baseline
+  threshold `B` and branch threshold `N` keep separate owner assertions over the
+  same performance cohorts. Three review rounds closed six findings; product
+  behavior is unchanged until the implementation PR ships.
+
 ## [0.6.0] - 2026-08-18
 
 **Ask for a table, get a table.** The agent can now see, set, and configure

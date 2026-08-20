@@ -720,6 +720,14 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
 
 ### Performance
 
+- **thread-transcript-paint-continuity** (`draft`, ratified 2026-08-20; plan PR
+  #571, cc; priority pending PM assignment) — prevent empty Agent transcript
+  frames by giving each Turn one paint owner, normalizing virtual-window math to
+  the Turn container, and repairing uncovered ranges through separate
+  event/rAF and layout-effect commit contracts. Product implementation has not
+  started; ship it as one complete PR with the plan's boundary cohorts,
+  first-frame coverage judges, performance traces, and light/dark visual check.
+  Design: [`thread-transcript-paint-continuity`](plans/thread-transcript-paint-continuity.md).
 - **performance-optimization** (P0–P3 program, PR #116) — prioritized catalog from a three-way
   perf audit (`docs/plans/performance-optimization.md`). **P0 (#117) · P1 PR-A (#119) + PR-B (#121)
   · P2 (#275) · P3 hot-path cleanup #380 + core sparse transactions #413 + document read model #414 + rich-text patch runtime #415 + Agent node_create read-model routing #416 + definition create routing #417 + renderer formatting cache #418 + diagnostic log coalescing #419 + renderer delta reducer surface #420 + search query complexity budget #421 + panel date navigation index #422 + system reference values overlay #424 + field-name reuse candidate index #426 + tag selector active-tag index #427 shipped** — `ProjectionUpdate` delta over the core↔renderer seam, reverse-edge

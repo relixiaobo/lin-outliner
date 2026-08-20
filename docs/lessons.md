@@ -1606,3 +1606,18 @@ valid, broken, and repaired across root and independently configured child, with
 both the model-facing projection and renderer-facing identity asserted. A test
 that calls the safe resolver directly proves only the replacement value; it does
 not prove that production re-evaluates the right owner when the source changes.
+
+## Commit guarantees are phase-bound
+
+The first transcript paint-continuity plan (#571) routed event callbacks, rAF
+writers, and `useLayoutEffect` writers through one commit-before-return helper.
+That contract cannot hold inside a React lifecycle callback: React 19.2.6 warns
+that `flushSync` cannot flush while React is already rendering, and the call can
+return while the DOM still contains the previous state.
+
+**Define a mutation contract at the execution phase that can satisfy it.** An
+event or rAF callback may write, read the browser-clamped result, and synchronously
+commit coverage before returning. A layout effect instead prepares state in one
+pass and performs the dependent DOM write from a later layout pass that React
+still completes before paint. Share the pure calculation, not an impossible
+commit mechanism, and place acceptance samples at each phase's real guarantee.
