@@ -46,6 +46,14 @@ overscan or timeout adjustment.
   translated below the real viewport because scroller-relative `scrollTop` was
   interpreted as a Turn-local offset. The renderer window also has a coordinate
   origin defect whenever leading Goal geometry exceeds its overscan cushion.
+- **EVD-5:** The round-2 review's installed-19.2.6 probe could not synchronously
+  flush a state update from `useLayoutEffect`: `flushSync` returned with the
+  previous DOM and emitted the framework's lifecycle warning. A layout-effect
+  writer therefore cannot share the event/rAF guarantee that covering rows are
+  committed before its callback returns. A layout-effect state update does
+  trigger another render/layout pass before paint, so the satisfiable lifecycle
+  contract is to prepare coverage first and mutate `scrollTop` only in that
+  later pass.
 
 ### Decision, constraints, and options
 
@@ -80,10 +88,16 @@ Constraints:
   send anchors, disclosure anchors, and bottom following. Replacing that owner
   solely to fix scheduling would enlarge the regression surface without
   evidence that its layout model is wrong.
-- **CON-4 resolvable:** `N` is the largest Turn count that uses flow layout. It
-  begins at the current `TRANSCRIPT_VIRTUAL_MIN_TURNS` value, but if painting
-  that cohort is too expensive, lower `N` from measured evidence and rerun the
-  exact-`N` / `N + 1` gates; do not reintroduce a second paint scheduler.
+- **CON-4 resolvable:** `B` is the virtualization threshold read from the exact
+  synchronized `main` commit used as the performance baseline, then frozen for
+  that comparison; it is 40 at plan review. `N` is the largest Turn count that
+  uses flow layout on the branch. `N` begins at `B`, but if painting that
+  cohort is too expensive, lower `N` from measured evidence and rerun the
+  per-build boundary gates; do not reintroduce a second paint scheduler.
+- **CON-5 hard:** Renderer lifecycle callbacks never call `flushSync`. A
+  layout-effect scroll may take multiple pre-paint layout passes, but it must
+  finish before the browser's next paint and may not expose its target position
+  until the matching virtual range is committed.
 
 Revisit OPT-1 only when the existing virtualizer needs another structural
 capability that it cannot express, or when measured maintenance/performance cost
@@ -109,8 +123,9 @@ Move the existing layout/range math and a new pure coverage predicate into a
 small renderer-local transcript-window module. The predicate answers whether
 the currently committed range contains every Turn intersecting the actual
 Turn-local viewport. The module also owns the final threshold `N`, so production
-selection, unit tests, E2E cohorts, and performance traces cannot drift onto
-different flow/virtual paths. Overscan remains a performance cushion, never a
+selection and branch verification cannot drift onto different flow/virtual
+paths. Baseline traces retain their separately recorded `B`; they do not import
+or assert the branch policy. Overscan remains a performance cushion, never a
 correctness premise.
 
 ### Turn-local viewport coordinates
@@ -141,28 +156,41 @@ may be reused only while those geometry inputs are unchanged.
 ### Coverage-triggered scheduling
 
 Separate visibility-critical window selection from deferred scroll bookkeeping
-behind one shared coverage boundary:
+behind one pure coverage calculation and two explicitly phase-bound commit
+adapters:
 
 1. On every native scroll, read the actual scroller geometry and normalize the
    viewport into Turn-local coordinates before evaluating the committed range.
 2. If the committed virtual range still covers that viewport, retain the
    existing one-per-frame metric update. This is the normal wheel/trackpad path.
-3. If the viewport has left the committed range, synchronously commit only the
-   latest viewport/range state before the next paint, then let the normal frame
-   pass refresh anchors, follow state, and the Jump to latest metric. This is a
-   bounded recovery path for scrollbar drags and far jumps, not a global
-   `flushSync` policy.
-4. Make `setProgrammaticScrollTop` the sole product-code mutation boundary for
-   `scrollTop`, including the remaining disclosure-anchor delta write. It writes
-   the DOM position, reads the browser-clamped result and live Turn origin, and
-   synchronously commits an uncovered virtual range before returning to its
-   layout-effect, event, or rAF caller. Restore, send/disclosure anchors, bottom
-   follow, anchor travel, and virtual-height compensation therefore share the
-   same first-frame guarantee rather than relying on a later native `scroll`
-   event.
+3. If the viewport has left the committed range outside the commit lifecycle,
+   use the imperative adapter. A native scroll event starts from the position the
+   browser already applied; an event/rAF writer applies its requested position.
+   Both then read the browser-clamped result and live Turn origin and `flushSync`
+   only the latest uncovered range before the callback returns. rAF
+   virtual-height compensation, anchor-travel frames, Jump to latest, and other
+   event/rAF writers use this adapter. The normal frame still owns anchors,
+   follow state, and the Jump to latest metric.
+4. If a `useLayoutEffect` path requests an uncovered position, do not mutate
+   `scrollTop` and do not call `flushSync`. The first layout pass records one
+   pending scroll transaction and commits its target range. That state update
+   triggers a second render/layout pass before paint; only after that range is
+   present does the second pass write the predicted browser-clamped position and
+   synchronize scroll state.
+5. After the lifecycle write, read the actual clamped position again. If changed
+   geometry means the committed range no longer covers it, retain the
+   transaction, commit the corrected range, and repeat another pre-paint layout
+   pass. The existing restore-attempt bound limits exact anchor correction, not
+   coverage: at the cap, release the unreachable anchor, accept the current
+   browser-clamped position, and commit its covering range before paint. Reader
+   intent or a higher-priority writer cancels the pending transaction under
+   BR-1.
 
-Coalesce multiple pending readings to the latest DOM position. A stale scheduled
-frame must never move the virtual window back to an earlier offset.
+All product `scrollTop` assignments, including the remaining disclosure-anchor
+delta, route through the appropriate phase adapter. The pure range/coverage
+calculation is shared; the phase-specific commit mechanism is deliberately not.
+Coalesce multiple pending readings to the latest DOM position, and tag lifecycle
+transactions so a stale pass cannot write after a newer target or reader intent.
 
 ### Reader Flow And Failure Recovery
 
@@ -173,22 +201,31 @@ frame must never move the virtual window back to an earlier offset.
     Turn-local coordinates, checks committed coverage, and the normal frame pass
     advances overscan and scroll metrics.
   - **Decision point:** If the committed virtual range does not cover the new
-    viewport, the renderer commits the latest range before paint.
+    viewport, an imperative callback commits it before returning; a
+    layout-effect path prepares the range and writes the scroll in a later
+    pre-paint layout pass.
   - **Result:** At least one real Turn intersects every viewport that contains
     canonical Turn content.
   - **Failure/recovery:** A stale scheduled reading is discarded in favor of
     the latest DOM position; an expensive flow ceiling is recovered by lowering
     the renderer-virtualization threshold.
-  - **Requirements:** FR-1, FR-2, NFR-1, BR-1, BR-2.
+  - **Requirements:** FR-1, FR-2, NFR-1, BR-1, BR-2, BR-3.
 
 ### Performance decision gate
 
-Before fixing the threshold, record baseline and branch traces for exactly `N`
-mixed-height completed Turns (flow), exactly `N + 1` Turns (the first virtual
-cohort), and `L = max(80, N + 1)` Turns as an additional long-list sample.
-Assert `data-virtualized="false"` for `N` and
-`data-virtualized="true"` for `N + 1` before accepting any measurement. For
-each applicable cohort, trace:
+Capture `B` from the baseline build before changing the branch threshold.
+Candidate `N` starts at `B`; for each candidate define
+`L = max(80, B + 1, N + 1)` and run both builds over the deduplicated cohort
+set `S = {B, B + 1, N, N + 1, L}`. For every cohort value `c` in `S`, assert
+the owner that belongs to the build under test before accepting a measurement:
+
+- baseline: `data-virtualized="false"` when `c <= B`, otherwise `"true"`;
+- branch: `data-virtualized="false"` when `c <= N`, otherwise `"true"`.
+
+Record the actual owner beside every result. This compares identical Turn counts
+without pretending that baseline and branch choose the same renderer owner when
+`N != B`, while each build's `B` / `B + 1` or `N` / `N + 1` pair still
+exercises both of its paths. For each cohort, trace:
 
 - cold Thread selection and first settled paint;
 - incremental wheel/trackpad scrolling within overscan;
@@ -199,8 +236,8 @@ Report scripting, layout, paint, longest task, renderer commit count, and the
 number of urgent coverage commits in the PR. Incremental scrolling must produce
 zero urgent commits while the viewport remains covered. If removing paint
 containment creates a material long task at `N`, lower `N`, update the shared
-policy value, and repeat all exact-`N`, `N + 1`, and `L` traces and coverage
-tests; do not trade continuity back for throughput.
+branch policy value, recompute the cohort set, and repeat both builds' traces
+and the branch coverage tests; do not trade continuity back for throughput.
 
 ### Contract and specification update
 
@@ -208,34 +245,41 @@ Rewrite the scroll/restore section of `agent-thread-rendering.md` around the new
 invariant: flow Turns use real layout; virtual Turns use measured estimates and
 Turn-local viewport overscan; a coverage breach is repaired before paint.
 Document `.thread-transcript-turns` as the virtual coordinate origin and the
-shared programmatic-scroll boundary as the pre-paint authority. Preserve the
-existing Turn-and-offset restore contract, virtual height compensation, send
-anchor, disclosure anchor, bottom follow, and accessibility announcer behavior.
+shared coverage calculation as the authority behind two phase-specific scroll
+commit protocols. Document the imperative commit-before-return contract and the
+layout-effect prepare/commit passes separately. Preserve the existing
+Turn-and-offset restore contract, virtual height compensation, send anchor,
+disclosure anchor, bottom follow, and accessibility announcer behavior.
 
 ## Requirements And Acceptance Criteria
 
 - **FR-1:** The Thread transcript shall use one paint owner for every Turn and
   shall repair a renderer-window coverage breach before the next paint.
-- **FR-2:** Native and programmatic scroll paths shall evaluate renderer-window
-  coverage in Turn-local coordinates through the same urgent-commit boundary.
-- **NFR-1:** The urgent range-commit path shall run only when the committed
+- **FR-2:** Native and programmatic scroll paths shall use the same Turn-local
+  coverage calculation and shall commit through the adapter for their actual
+  execution phase.
+- **NFR-1:** A pre-paint coverage-repair path shall run only when the committed
   virtual range no longer covers the real viewport; covered scrolling remains
   coalesced to one metric update per animation frame.
 - **BR-1:** Reader intent, explicit disclosure, send anchoring, bottom follow,
   restore, and virtual compensation retain their existing ownership priority.
 - **BR-2:** Goal and other leading geometry contribute only to `turnOrigin`;
   they never masquerade as progress through the virtual Turn layout.
+- **BR-3:** Imperative event/rAF writers commit covering rows before returning.
+  Layout-effect writers prepare covering rows in one layout pass and mutate the
+  scroll position only from a later pass before paint; lifecycle code never
+  calls `flushSync`.
 
-- **AC-1:** When a transcript contains exactly the final threshold `N` Turns,
-  it shall report `data-virtualized="false"`; after a top-to-distant jump, the
-  synchronous sample and first two animation-frame samples shall each contain
-  at least one paint-eligible Turn intersecting every viewport interval that
-  overlaps Turn content.
-- **AC-2:** When a transcript contains exactly `N + 1` Turns, it shall report
-  `data-virtualized="true"`; after a jump outside the mounted window, the
-  synchronous sample and first two animation-frame samples shall each contain a
-  mounted, paint-eligible Turn intersecting every viewport interval that
-  overlaps Turn content.
+- **AC-1:** On the branch build, when a transcript contains exactly the final
+  threshold `N` Turns, it shall report `data-virtualized="false"`; after a
+  top-to-distant jump, the synchronous sample and first two animation-frame
+  samples shall each contain at least one paint-eligible Turn intersecting every
+  viewport interval that overlaps Turn content.
+- **AC-2:** On the branch build, when a transcript contains exactly `N + 1`
+  Turns, it shall report `data-virtualized="true"`; after a jump outside the
+  mounted window, the synchronous sample and first two animation-frame samples
+  shall each contain a mounted, paint-eligible Turn intersecting every viewport
+  interval that overlaps Turn content.
 - **AC-3:** While rapid wheel, trackpad, and scrollbar movements alternate among
   distant positions, every painted sample shall remain covered and the final
   viewport shall correspond to the latest scroll position, not a stale frame.
@@ -254,17 +298,29 @@ anchor, disclosure anchor, bottom follow, and accessibility announcer behavior.
   exceeds both the overscan and one viewport, far jumps to the start and middle
   of the Turn list shall use the Turn-local interval and meet the synchronous
   plus first-two-frame coverage judge from AC-2.
-- **AC-9:** When rAF virtual-height compensation or Thread restore writes a
-  position outside the committed range, the shared programmatic boundary shall
-  commit covering rows before the writer returns; its end-of-writer sample and
-  first two animation-frame samples shall never have zero Turn coverage, and
-  the final Turn-and-offset anchor shall remain within the existing tolerance.
+- **AC-9:** When rAF virtual-height compensation writes a position outside the
+  committed range, the imperative adapter shall commit covering rows before the
+  callback returns; its end-of-callback sample and first two animation-frame
+  samples shall never have zero Turn coverage, and the final Turn-and-offset
+  anchor shall remain within the existing tolerance.
+- **AC-10:** When Thread restore requests an uncovered position from
+  `useLayoutEffect`, the first pass shall leave `scrollTop` unchanged and
+  commit the target range; a later layout pass shall write only after that range
+  is mounted. The first animation-frame sample after activation and the
+  following sample shall have Turn coverage, the final anchor shall remain
+  within the existing tolerance, and no lifecycle `flushSync` warning shall be
+  emitted.
+- **AC-11:** Performance evidence shall state `B`, final `N`, every
+  deduplicated cohort value `c` in `S`, and each build's observed
+  `data-virtualized` value.
+  Baseline path assertions shall use `B`; only branch path assertions shall use
+  `N`.
 
 ## Files
 
 - `src/renderer/agent/components/ThreadView.tsx`
 - `src/renderer/agent/transcriptVirtualWindow.ts` (new, renderer-local pure
-  layout/range/coverage boundary)
+  layout/range/coverage and phase-decision boundary)
 - `src/renderer/styles/thread.css`
 - `tests/renderer/transcriptVirtualWindow.test.ts` (new)
 - `tests/e2e/agent-thread.spec.ts`
@@ -286,9 +342,18 @@ No infrastructure-ownership or protocol file is in scope.
 - A scroller-space coordinate can appear covered while every mounted row is
   displaced by a leading Goal. One Turn-local interval feeds both selection and
   the predicate, and the long-Goal E2E case guards their shared origin.
-- Existing scroll writers can race over `scrollTop`. The feature changes only
-  when the virtual range becomes visible; centralizing their mutation boundary
-  does not change writer priority.
+- Calling `flushSync` from a lifecycle callback warns and does not provide the
+  required DOM guarantee. Phase-specific adapters make that misuse structurally
+  unnecessary; the restore E2E fails on the warning as well as on empty frames.
+- Existing scroll writers can race over `scrollTop`. Tagged lifecycle
+  transactions and latest-position coalescing preserve writer priority while
+  preventing an older pre-paint pass from applying after reader intent.
+- Unsettled geometry can exhaust exact restore attempts. That degrades to the
+  nearest browser-clamped position, but coverage remains mandatory and is
+  committed before the transaction releases.
+- A lowered branch threshold can make the same cohort flow-rendered on baseline
+  and virtual-rendered on the branch. Per-build `B` / `N` assertions record
+  that fact instead of rejecting valid baseline evidence.
 
 ## Collision Result
 
@@ -317,12 +382,16 @@ retain the current measured-row virtualizer under the single-owner invariant
 ## Verification
 
 - Run the new renderer unit tests for threshold ownership, Turn-local range and
-  coverage math, leading intervals with no Turn content, the shared urgent
-  programmatic boundary, and stale-frame coalescing.
+  coverage math, leading intervals with no Turn content, imperative versus
+  layout-phase transaction decisions, browser-clamp replay, and stale-target
+  cancellation, including the attempt-cap fallback to a covered actual position.
 - Run the exact-`N`, `N + 1`, long-Goal, rapid-jump, restore, send-anchor,
   disclosure-anchor, and virtual-compensation cases in
-  `tests/e2e/agent-thread.spec.ts`; first-frame judges sample coverage, not only
-  final scroll positions.
+  `tests/e2e/agent-thread.spec.ts`; first-frame judges use the phase-specific
+  sampling boundaries from AC-9/10, fail on lifecycle `flushSync` warnings, and
+  do not only inspect final scroll positions.
+- Run baseline and branch performance cohorts with their own `B` / `N` owner
+  assertions and retain the per-build path map with the trace numbers.
 - Run the light/dark rapid-scroll visual check and retain trace numbers in the
   PR body.
 - Run `bun run typecheck`, `bun run test:renderer`, the focused E2E suite,
