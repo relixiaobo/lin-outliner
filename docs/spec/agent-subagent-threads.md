@@ -208,13 +208,18 @@ unreadable catalog becomes a stable built-in-only baseline. Normal catalog
 journaling therefore retracts any custom Roles announced before the file broke
 instead of leaving them selectable in model context. Only typed
 configuration-read failures degrade; unrelated resolver defects still
-propagate. After every successful Turn admission, the renderer re-reads the
-selected conversation's identity catalog, so an external configuration break
-or recovery reaches the open transcript without a thread switch or settings
-event. One stable warning is sent to the diagnostic log per configuration
-file's continuous failure episode. Each user/project layer ends its own episode
-as soon as that layer reads successfully, even when the other layer still
-fails, and the in-memory episode tracker has a fixed upper bound.
+propagate. `identities/get` is scoped to a Thread because that Thread's cwd is
+the authority for its project layer. The renderer retains catalogs per loaded
+Thread: opening a child reads the child's catalog, and an unresolved child
+falls back to its raw type rather than borrowing the selected root's identity.
+After every successful Turn admission, the renderer re-reads the submitted
+Thread's catalog, so an external configuration break or recovery reaches that
+transcript without a thread switch or settings event. A settings change
+re-resolves every already-loaded Thread catalog. One stable warning is sent to
+the diagnostic log per configuration file's continuous failure episode. Each
+user/project layer ends its own episode as soon as that layer reads
+successfully, even when the other layer still fails, and the in-memory episode
+tracker has a fixed upper bound.
 
 The paths that stay **fail-closed** are the ones where continuing would be
 worse. Spawn resolution (`resolveProfile`, `resolveRole`, `resolveAgentType`),
@@ -287,9 +292,9 @@ still reaches the user. Deleting a Role affects future spawns only: a running
 child keeps the configuration it resolved at spawn, and past transcripts fall
 through the identity chain rather than losing their speaker. Every write
 broadcasts the settings-changed notification the settings window already uses,
-and the dock re-reads its catalog on it — so an Agent renamed in the editor is
-renamed in an open transcript at once, rather than at the next conversation
-switch.
+and the dock re-reads every loaded Thread's catalog on it — so an Agent renamed
+in the editor is renamed in each open transcript at once, rather than at the
+next conversation switch.
 
 Defaults are Aspen (teal, `main`), Rena (orange, `explore`), Ada (blue,
 `plan`), and Bruno (amber, `general-purpose`) — pinned, well-separated hues. An

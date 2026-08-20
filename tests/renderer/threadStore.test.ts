@@ -43,12 +43,12 @@ describe('renderer Thread store', () => {
     await Promise.resolve();
 
     expect(asked).toContain(owner.id);
-    expect(store.getSnapshot().identityCatalog.get('main')?.persona).toBe('Aspen');
+    expect(store.getSnapshot().identityCatalogByThread.get(owner.id)?.get('main')?.persona).toBe('Aspen');
   });
 
-  test('keeps the roster of the conversation selected last', async () => {
-    // Two selections in flight: the slower answer must not land last and leave
-    // the roster resolved for a directory the reader already left.
+  test('keeps concurrent identity rosters under their owning Threads', async () => {
+    // Two Thread reads in flight: the slower root answer belongs under the root
+    // instead of overwriting the second Thread's worktree-specific roster.
     const first = thread('thread-1', 1), second = thread('thread-2', 2);
     const slow = deferred<{ entries: unknown[] }>();
     const client = {
@@ -72,12 +72,12 @@ describe('renderer Thread store', () => {
     await store.initialize();
     await store.selectThread(second.id);
     await Promise.resolve();
-    // The stale answer for the first conversation arrives last, and is dropped.
-    slow.resolve({ entries: [{ agentType: 'main', persona: 'Stale', color: 'pink', source: 'built-in' }] });
+    slow.resolve({ entries: [{ agentType: 'main', persona: 'First', color: 'pink', source: 'built-in' }] });
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(store.getSnapshot().identityCatalog.get('main')?.persona).toBe('Second');
+    expect(store.getSnapshot().identityCatalogByThread.get(first.id)?.get('main')?.persona).toBe('First');
+    expect(store.getSnapshot().identityCatalogByThread.get(second.id)?.get('main')?.persona).toBe('Second');
   });
 
   test('re-reads the roster when configuration changes, not only when threads do', async () => {
@@ -110,14 +110,14 @@ describe('renderer Thread store', () => {
     const store = new ThreadStore(client);
     await store.initialize();
     await Promise.resolve();
-    expect(store.getSnapshot().identityCatalog.get('main')?.persona).toBe('Aspen');
+    expect(store.getSnapshot().identityCatalogByThread.get(owner.id)?.get('main')?.persona).toBe('Aspen');
 
     persona = 'Juniper';
     notifySettings();
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(store.getSnapshot().identityCatalog.get('main')?.persona).toBe('Juniper');
+    expect(store.getSnapshot().identityCatalogByThread.get(owner.id)?.get('main')?.persona).toBe('Juniper');
   });
 
   test('refreshes the roster after Turn admission for live configuration breakage and recovery', async () => {
@@ -157,8 +157,8 @@ describe('renderer Thread store', () => {
     const store = new ThreadStore(client);
     await store.initialize();
     await Promise.resolve();
-    expect(store.getSnapshot().identityCatalog.get('main')?.persona).toBe('Juniper');
-    expect(store.getSnapshot().identityCatalog.has('reviewer')).toBe(true);
+    expect(store.getSnapshot().identityCatalogByThread.get(owner.id)?.get('main')?.persona).toBe('Juniper');
+    expect(store.getSnapshot().identityCatalogByThread.get(owner.id)?.has('reviewer')).toBe(true);
 
     entries = [
       { agentType: 'main', persona: 'Aspen', color: 'teal', source: 'built-in' },
@@ -168,8 +168,8 @@ describe('renderer Thread store', () => {
     ];
     await store.send([{ type: 'text', text: 'Observe the live break' }]);
     await Promise.resolve();
-    expect(store.getSnapshot().identityCatalog.get('main')?.persona).toBe('Aspen');
-    expect(store.getSnapshot().identityCatalog.has('reviewer')).toBe(false);
+    expect(store.getSnapshot().identityCatalogByThread.get(owner.id)?.get('main')?.persona).toBe('Aspen');
+    expect(store.getSnapshot().identityCatalogByThread.get(owner.id)?.has('reviewer')).toBe(false);
 
     entries = [
       { agentType: 'main', persona: 'Scout', color: 'blue', source: 'built-in' },
@@ -177,9 +177,86 @@ describe('renderer Thread store', () => {
     ];
     await store.send([{ type: 'text', text: 'Observe the live recovery' }]);
     await Promise.resolve();
-    expect(store.getSnapshot().identityCatalog.get('main')?.persona).toBe('Scout');
-    expect(store.getSnapshot().identityCatalog.get('reviewer')?.persona).toBe('Wren');
+    expect(store.getSnapshot().identityCatalogByThread.get(owner.id)?.get('main')?.persona).toBe('Scout');
+    expect(store.getSnapshot().identityCatalogByThread.get(owner.id)?.get('reviewer')?.persona).toBe('Wren');
     expect(identityReads).toBe(3);
+  });
+
+  test('keeps a worktree child roster isolated through live break and recovery', async () => {
+    const owner = { ...thread('thread-root', 2), cwd: '/workspace/root' };
+    const child = {
+      ...thread('thread-child', 1),
+      agentRole: 'explorer',
+      cwd: '/workspace/root/.tenon/worktrees/thread-child',
+      parentThreadId: owner.id,
+      source: 'collaboration' as const,
+      threadSource: 'subagent' as const,
+    };
+    const rootEntries: readonly AgentIdentityEntry[] = [
+      { agentType: 'main', persona: 'Aspen', color: 'teal', source: 'built-in' },
+      { agentType: 'explore', persona: 'Juniper', color: 'pink', source: 'project' },
+    ];
+    let childEntries: readonly AgentIdentityEntry[] = [
+      { agentType: 'main', persona: 'Aspen', color: 'teal', source: 'built-in' },
+      { agentType: 'explore', persona: 'Cedar', color: 'violet', source: 'project' },
+    ];
+    const identityReads: string[] = [];
+    let submittedTurns = 0;
+    const client = {
+      onAgentCoreNotification: () => () => undefined,
+      agentCoreRequest: async (method: string, input: { threadId?: string }) => {
+        if (method === 'thread/list') return { data: [owner], nextCursor: null };
+        if (method === 'thread/read') return { thread: child };
+        if (method === 'thread/turns/list') return { data: [], nextCursor: null, backwardsCursor: null };
+        if (method === 'goal/get') return { goal: null };
+        if (method === 'thread/configuration/get') return configurationResponse(owner);
+        if (method === 'thread/descendants') return { data: [child], queuedWorkThreadIds: [] };
+        if (method === 'thread/subagents/list') return { data: [] };
+        if (method === 'identities/get') {
+          const threadId = input.threadId ?? '';
+          identityReads.push(threadId);
+          return { entries: threadId === child.id ? childEntries : rootEntries };
+        }
+        if (method === 'turn/submit') {
+          submittedTurns += 1;
+          const accepted = childTurn(child.id, `turn-child-${submittedTurns}`, 'inProgress');
+          return {
+            acceptedItemId: `item-${submittedTurns}`,
+            deduplicated: false,
+            turn: accepted,
+            turnId: accepted.id,
+          };
+        }
+        throw new Error(`Unexpected method: ${method}`);
+      },
+    } as unknown as ThreadStoreClient;
+    const store = new ThreadStore(client);
+    await store.initialize();
+    await store.ensureThreadHistory(child.id);
+
+    expect(store.getSnapshot().identityCatalogByThread.get(owner.id)?.get('explore')?.persona).toBe('Juniper');
+    expect(store.getSnapshot().identityCatalogByThread.get(child.id)?.get('explore')?.persona).toBe('Cedar');
+
+    childEntries = [
+      { agentType: 'main', persona: 'Aspen', color: 'teal', source: 'built-in' },
+      { agentType: 'general-purpose', persona: 'Bruno', color: 'amber', source: 'built-in' },
+      { agentType: 'explore', persona: 'Rena', color: 'orange', source: 'built-in' },
+      { agentType: 'plan', persona: 'Ada', color: 'blue', source: 'built-in' },
+    ];
+    await store.sendToThread(child.id, [{ type: 'text', text: 'Observe the child break.' }]);
+    await Promise.resolve();
+    expect(store.getSnapshot().identityCatalogByThread.get(child.id)?.get('explore')?.persona).toBe('Rena');
+    expect(store.getSnapshot().identityCatalogByThread.get(owner.id)?.get('explore')?.persona).toBe('Juniper');
+
+    childEntries = [
+      { agentType: 'main', persona: 'Aspen', color: 'teal', source: 'built-in' },
+      { agentType: 'explore', persona: 'Willow', color: 'blue', source: 'project' },
+    ];
+    await store.sendToThread(child.id, [{ type: 'text', text: 'Observe the child recovery.' }]);
+    await Promise.resolve();
+    expect(store.getSnapshot().identityCatalogByThread.get(child.id)?.get('explore')?.persona).toBe('Willow');
+    expect(store.getSnapshot().identityCatalogByThread.get(owner.id)?.get('explore')?.persona).toBe('Juniper');
+    expect(identityReads).toEqual([owner.id, child.id, child.id, child.id]);
   });
 
   test('does not let an older page response overwrite a realtime terminal Turn', async () => {
@@ -770,7 +847,7 @@ describe('renderer Thread store', () => {
     expect(store.getSnapshot().latestTurnByThread.has(dropped.id)).toBe(false);
   });
 
-  test('clears latest canonical Turn cache entries for a deleted subtree', async () => {
+  test('clears per-Thread caches for a deleted subtree', async () => {
     const owner = thread('thread-1', 2);
     const child = { ...thread('thread-child', 1), parentThreadId: owner.id, threadSource: 'subagent' as const };
     let notify: (notification: AgentCoreNotification) => void = () => undefined;
@@ -784,19 +861,27 @@ describe('renderer Thread store', () => {
         if (method === 'thread/turns/list') return { data: [], nextCursor: null, backwardsCursor: null };
         if (method === 'goal/get') return { goal: null };
         if (method === 'thread/configuration/get') return configurationResponse(owner);
+        if (method === 'identities/get') {
+          return { entries: [{ agentType: 'main', persona: 'Aspen', color: 'teal', source: 'built-in' }] };
+        }
         if (method === 'thread/delete') return {};
         throw new Error(`Unexpected method: ${method}`);
       },
     } as unknown as ThreadStoreClient;
     const store = new ThreadStore(client);
     await store.initialize();
+    await store.reloadIdentityCatalog(child.id);
     const completed = turn('turn-child', 'completed', 'done');
     notify({ type: 'turn/completed', threadId: child.id, turnId: completed.id, turn: completed });
+
+    expect([...store.getSnapshot().identityCatalogByThread.keys()].toSorted())
+      .toEqual([owner.id, child.id].toSorted());
 
     await store.deleteThread(owner.id);
 
     expect(store.getSnapshot().threads).toEqual([]);
     expect(store.getSnapshot().latestTurnByThread.size).toBe(0);
+    expect(store.getSnapshot().identityCatalogByThread.size).toBe(0);
   });
 
   test('removes a transient fork notification when Continue in new chat fails', async () => {

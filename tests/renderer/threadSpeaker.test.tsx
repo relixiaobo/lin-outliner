@@ -110,10 +110,17 @@ async function renderSpeaker({ meta, ...speaker }: {
     (flush) => flush(),
   );
   // Placed straight into the snapshot: this judge is about what a resolved
-  // roster draws, not about how it is fetched.
+  // roster draws, not about how it is fetched. The unrelated root entry proves
+  // the speaker resolves against its own transcript rather than the selection.
   (store as unknown as { snapshot: Record<string, unknown> }).snapshot = {
     ...store.getSnapshot(),
-    identityCatalog: identityCatalogFrom(ROSTER),
+    identityCatalogByThread: new Map([
+      ['thread-root', identityCatalogFrom([
+        { agentType: 'main', persona: 'Juniper', color: 'pink', source: 'project' },
+        { agentType: 'explore', persona: 'Juniper', color: 'pink', source: 'project' },
+      ])],
+      ['thread-speaker', identityCatalogFrom(ROSTER)],
+    ]),
   };
   const { document, window } = parseHTML('<!doctype html><html><body><div id="root"></div></body></html>');
   // Captured ONCE per test: a second render inside one test would otherwise
@@ -136,6 +143,7 @@ async function renderSpeaker({ meta, ...speaker }: {
         meta={meta}
         speaker={{ participantId: speaker.avatarKey, ...speaker }}
         source={store}
+        threadId="thread-speaker"
       >
         <p>said something</p>
       </ThreadSpeakerGroup>

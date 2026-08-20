@@ -2791,6 +2791,7 @@ export const ThreadTurnView = memo(function ThreadTurnView({
           key={`speaker:${turn.id}:${runIndex}`}
           {...(run.meta === undefined ? {} : { meta: run.meta })}
           speaker={run.speaker}
+          threadId={threadId}
         >
           {run.nodes}
         </ThreadSpeakerGroup>
