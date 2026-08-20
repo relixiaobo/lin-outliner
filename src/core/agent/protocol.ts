@@ -1512,6 +1512,17 @@ export interface TurnInterruptResponse {
   readonly turnId: TurnId;
 }
 
+export interface TurnRetryRequest {
+  readonly threadId: ThreadId;
+  readonly turnId: TurnId;
+}
+
+export interface TurnRetryResponse {
+  readonly thread: Thread;
+  readonly turn: Turn;
+  readonly replacedTurnId: TurnId;
+}
+
 export interface RequestUserInputOption {
   readonly label: string;
   readonly description: string;
@@ -1605,6 +1616,7 @@ export const AGENT_CORE_METHODS = [
   'turn/start',
   'turn/steer',
   'turn/interrupt',
+  'turn/retry',
   'goal/get',
   'goal/create',
   'goal/update',
@@ -1640,6 +1652,7 @@ export interface AgentCoreRequestByMethod {
   readonly 'turn/start': RendererTurnStartRequest;
   readonly 'turn/steer': RendererTurnSteerRequest;
   readonly 'turn/interrupt': TurnInterruptRequest;
+  readonly 'turn/retry': TurnRetryRequest;
   readonly 'goal/get': GetGoalInput;
   readonly 'goal/create': CreateGoalInput;
   readonly 'goal/update': UpdateGoalInput;
@@ -1673,6 +1686,7 @@ export interface AgentCoreResponseByMethod {
   readonly 'turn/start': TurnStartResponse;
   readonly 'turn/steer': TurnSteerResponse;
   readonly 'turn/interrupt': TurnInterruptResponse;
+  readonly 'turn/retry': TurnRetryResponse;
   readonly 'goal/get': GetGoalResponse;
   readonly 'goal/create': CreateGoalResponse;
   readonly 'goal/update': UpdateGoalResponse;

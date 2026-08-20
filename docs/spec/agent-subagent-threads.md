@@ -564,6 +564,17 @@ Turn first, the user's stable submission is steered into it while it accepts
 input or starts a user Turn after its finishing boundary. Renderer cache timing
 never turns this ordering choice into `ThreadBusyError` or dropped user input.
 
+If the provider terminally fails after a notification has started its root Turn,
+manual `turn/retry` replays that Turn's canonical host envelope rather than
+claiming the delivery again. The replacement receives a new Turn identity but
+retains the original `subagent` trigger, stable delivery client ID, structured
+input, and context evidence. Any steering accepted after that host envelope is
+restored in order with its own evidence, timestamp, and stable client ID. It does
+not materialize or consume newly pending Agent activity during replay. The failed
+Turn and replacement start commit as one durable history-retry event, so a failed
+retry admission cannot erase the notification and a successful one cannot turn it
+into user-authored input, drop steering, or deliver either input twice.
+
 ## Messaging, Resume, And Stop
 
 `agent_message.message` is the complete plain-text direction. `summary` is a UI

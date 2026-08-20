@@ -1262,6 +1262,7 @@ export const zhHans: PartialMessages = {
       turnFailed: '本轮失败',
       turnInterrupted: '本轮已中断',
       resourceLimitReached: '任务达到系统资源上限，成果已保全。',
+      retrying: ({ attempt, maxRetries }) => `正在重试 ${attempt}/${maxRetries}`,
       reconnecting: ({ attempt, maxRetries }) => `正在重新连接 ${attempt}/${maxRetries}`,
       retryTurn: '重试',
       stopUnavailable: '该工作已经结束。',

@@ -599,6 +599,98 @@ describe('renderer Thread store', () => {
     expect(store.getSnapshot().turnsByThread.get(owner.id)).toEqual([]);
   });
 
+  test('retries by Turn identity and replaces the failed Turn with the admitted retry', async () => {
+    const owner = thread('thread-1', 1);
+    const failed = turn('turn-failed', 'failed', 'failed response');
+    const replacement = turn('turn-replacement', 'inProgress', '');
+    const calls: Array<{ method: string; input: Record<string, unknown> }> = [];
+    const client = {
+      onAgentCoreNotification: () => () => undefined,
+      agentCoreRequest: async (method: string, input: Record<string, unknown>) => {
+        calls.push({ method, input });
+        if (method === 'thread/list') return { data: [owner], nextCursor: null };
+        if (method === 'thread/turns/list') return { data: [failed], nextCursor: null, backwardsCursor: null };
+        if (method === 'goal/get') return { goal: null };
+        if (method === 'thread/configuration/get') return configurationResponse(owner);
+        if (method === 'turn/retry') {
+          return {
+            thread: { ...owner, status: { type: 'active', activeFlags: [] }, updatedAt: 2 },
+            turn: replacement,
+            replacedTurnId: failed.id,
+          };
+        }
+        throw new Error(`Unexpected method: ${method}`);
+      },
+    } as unknown as ThreadStoreClient;
+    const store = new ThreadStore(client);
+    await store.initialize();
+
+    await store.retryTurn(owner.id, failed.id);
+
+    expect(calls.filter((call) => call.method === 'turn/retry')).toEqual([{
+      method: 'turn/retry',
+      input: { threadId: owner.id, turnId: failed.id },
+    }]);
+    expect(calls.some((call) => call.method === 'thread/rollback' || call.method === 'turn/submit')).toBe(false);
+    expect(store.getSnapshot().turnsByThread.get(owner.id)).toEqual([replacement]);
+    expect(store.getSnapshot().latestTurnByThread.get(owner.id)).toEqual(replacement);
+  });
+
+  test('does not regress a retry that completes before its command response arrives', async () => {
+    const owner = thread('thread-1', 1);
+    const failed = turn('turn-failed', 'failed', 'failed response');
+    const replacement = turn('turn-replacement', 'inProgress', '');
+    const completed = {
+      ...replacement,
+      status: 'completed' as const,
+      items: turn('turn-replacement', 'completed', 'recovered').items,
+      completedAt: 3,
+      durationMs: 2,
+    };
+    let notify: (notification: AgentCoreNotification) => void = () => undefined;
+    const client = {
+      onAgentCoreNotification: (listener: (notification: AgentCoreNotification) => void) => {
+        notify = listener;
+        return () => undefined;
+      },
+      agentCoreRequest: async (method: string) => {
+        if (method === 'thread/list') return { data: [owner], nextCursor: null };
+        if (method === 'thread/turns/list') return { data: [failed], nextCursor: null, backwardsCursor: null };
+        if (method === 'goal/get') return { goal: null };
+        if (method === 'thread/configuration/get') return configurationResponse(owner);
+        if (method === 'turn/retry') {
+          notify({
+            type: 'turn/started',
+            threadId: owner.id,
+            turnId: replacement.id,
+            turn: replacement,
+          });
+          notify({
+            type: 'turn/completed',
+            threadId: owner.id,
+            turnId: completed.id,
+            turn: completed,
+          });
+          notify({ type: 'thread/status/changed', threadId: owner.id, status: { type: 'idle' } });
+          return {
+            thread: { ...owner, status: { type: 'active', activeFlags: [] }, updatedAt: 2 },
+            turn: replacement,
+            replacedTurnId: failed.id,
+          };
+        }
+        throw new Error(`Unexpected method: ${method}`);
+      },
+    } as unknown as ThreadStoreClient;
+    const store = new ThreadStore(client);
+    await store.initialize();
+
+    await store.retryTurn(owner.id, failed.id);
+
+    expect(store.getSnapshot().turnsByThread.get(owner.id)).toEqual([completed]);
+    expect(store.getSnapshot().latestTurnByThread.get(owner.id)).toEqual(completed);
+    expect(store.getSnapshot().threads.find((thread) => thread.id === owner.id)?.status).toEqual({ type: 'idle' });
+  });
+
   test('updates catalog metadata without manufacturing history for an unloaded Thread', async () => {
     const selected = thread('thread-1', 50);
     const unloaded = { ...thread('thread-2', 10), preview: '' };

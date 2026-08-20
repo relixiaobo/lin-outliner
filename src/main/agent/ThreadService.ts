@@ -42,6 +42,7 @@ ThreadContextReadResponse,
 ThreadFeatureSource,
 ThreadForkRequest,
 ThreadId,
+ThreadItem,
 ThreadItemOutputReadRequest,
 ThreadItemOutputReadResponse,
 ThreadItemsListRequest,
@@ -70,8 +71,11 @@ TurnId,
 TurnStartResponse,
 TurnSubmitResponse,
 TurnSteerRequest,
-TurnSteerResponse
+TurnSteerResponse,
+TurnRetryRequest,
+TurnRetryResponse
 } from '../../core/agent/protocol';
+import { isRetryableTurn } from '../../core/agent/turnRetry';
 import {
 normalizeUpdatePlanToolInput,
 type ModelToolIdentity,
@@ -128,7 +132,7 @@ ThreadNameGenerator,
 TurnExecutor
 } from './runtime/types';
 import type { AgentTool } from './runtime/kernel/types';
-import { SubagentCollaboration } from './thread/SubagentCollaboration';
+import { SubagentCollaboration,type StagedContextEvidence } from './thread/SubagentCollaboration';
 import { ThreadCatalogOps } from './thread/ThreadCatalogOps';
 import { ThreadCore,type NotificationListener } from './thread/ThreadCore';
 import { ThreadResourceOps } from './thread/ThreadResourceOps';
@@ -141,7 +145,7 @@ import { ThreadTranscriptExclusions } from './thread/ThreadTranscriptExclusions'
 import { ThreadTranscriptIndex } from './thread/ThreadTranscriptIndex';
 import { rootTranscriptSubject,ThreadTranscriptWriter } from './thread/ThreadTranscriptWriter';
 import type { TranscriptSubject } from './thread/TranscriptRenderer';
-import { TurnLifecycle } from './thread/TurnLifecycle';
+import { TurnLifecycle,type CanonicalTurnRetryInputBatch } from './thread/TurnLifecycle';
 
 const THREAD_SERVICE_CLOSE_DRAIN_TIMEOUT_MS = 2_000;
 
@@ -441,7 +445,7 @@ export class ThreadService implements ThreadServiceExtensionHost {
   private readonly beliefs: ThreadDocumentBeliefs;
   private readonly turnLifecycle: TurnLifecycle;
   private readonly rendererSubmissionMutex = new KeyedMutex();
-  private readonly pendingRendererSubmissions = new Set<Promise<TurnSubmitResponse>>();
+  private readonly pendingRendererSubmissions = new Set<Promise<unknown>>();
   private initialized = false;
   private closing = false;
 
@@ -563,6 +567,9 @@ export class ThreadService implements ThreadServiceExtensionHost {
         scheduleAutomaticThreadName: (...args) => this.catalogOps.scheduleAutomaticThreadName(...args),
         hasPendingDelegatedThreadStart: (threadId) => this.catalogOps.hasPendingDelegatedThreadStart(threadId),
         publishDelegatedThreadStart: (threadId) => this.catalogOps.publishDelegatedThreadStart(threadId),
+        replaceLatestTurnForRetryWithLocksHeld: (...args) => (
+          this.catalogOps.replaceLatestTurnForRetryWithLocksHeld(...args)
+        ),
       },
       {
         pendingActivities: (threadId) => this.collaboration.pendingActivities(threadId),
@@ -1507,6 +1514,10 @@ export class ThreadService implements ThreadServiceExtensionHost {
         await this.interruptUserWork(request.threadId, request.turnId);
         return { turnId: request.turnId } as AgentCoreResponseByMethod[Method];
       }
+      case 'turn/retry':
+        return await this.retryTurn(
+          decoded as AgentCoreRequestByMethod['turn/retry'],
+        ) as AgentCoreResponseByMethod[Method];
       case 'goal/get':
         return this.goals.get(decoded as AgentCoreRequestByMethod['goal/get']) as AgentCoreResponseByMethod[Method];
       case 'goal/create':
@@ -1761,6 +1772,81 @@ export class ThreadService implements ThreadServiceExtensionHost {
   async startPrivilegedTurn(request: PrivilegedTurnStartRequest): Promise<TurnStartResponse> {
     this.assertStartupThreadAvailable(request.threadId);
     return this.turnLifecycle.startPrivilegedTurn(request);
+  }
+  async retryTurn(request: TurnRetryRequest): Promise<TurnRetryResponse> {
+    this.assertStartupThreadAvailable(request.threadId);
+    const retry = this.rendererSubmissionMutex.run(request.threadId, async () => (
+      this.core.hostRootMutex.run(async () => {
+        this.assertRendererSubmissionOpen();
+        const record = this.core.requireThread(request.threadId);
+        const turns = this.core.allTurns(request.threadId);
+        const target = turns.at(-1);
+        if (!target || target.id !== request.turnId) {
+          throw new Error('Only the latest Turn can be retried');
+        }
+        if (this.turnLifecycle.hasActiveTurn(request.threadId) || record.thread.status.type !== 'idle') {
+          throw new ThreadBusyError('Cannot retry a Thread with active work');
+        }
+        if (!isRetryableTurn(target)) throw new Error('This Turn is not retryable');
+        const inputBatches: CanonicalTurnRetryInputBatch[] = [];
+        let pendingEvidence: Array<Extract<ThreadItem, { readonly type: 'contextEvidence' }>> = [];
+        for (const item of target.items) {
+          if (item.type === 'contextEvidence') {
+            // Every persistent input admission starts with turnEnvironment.
+            // Drop runtime-only evidence accumulated after the prior input when
+            // the next atomic admission batch begins.
+            if (item.kind === 'turnEnvironment' && inputBatches.length > 0) pendingEvidence = [];
+            pendingEvidence.push(item);
+            continue;
+          }
+          if (item.type !== 'userMessage') {
+            pendingEvidence = [];
+            continue;
+          }
+          const stagedContextEvidence: StagedContextEvidence[] = [];
+          for (const evidence of pendingEvidence) {
+            const payload = await this.core.payloads.readContext(request.threadId, evidence.payloadRef);
+            if (!payload || payload.kind !== evidence.kind) {
+              throw new Error(`Retry context evidence is unavailable: ${evidence.id}`);
+            }
+            stagedContextEvidence.push({
+              payload: payload as StagedContextEvidence['payload'],
+              payloadRef: evidence.payloadRef,
+              contextRefs: evidence.contextRefs,
+              resourceRefs: evidence.resourceRefs,
+              outputRefs: evidence.outputRefs,
+              summary: evidence.summary,
+            });
+          }
+          inputBatches.push({
+            input: item.content,
+            clientUserMessageId: item.clientId,
+            acceptedAt: item.acceptedAt,
+            stagedContextEvidence,
+          });
+          pendingEvidence = [];
+        }
+        if (inputBatches.length === 0) throw new Error('Retry input is missing from the canonical Turn');
+
+        const started = await this.turnLifecycle.startRetriedRootTurnWithHostLock({
+          threadId: request.threadId,
+          trigger: target.provenance.trigger,
+          inputBatches,
+          replacedTurn: target,
+        }, () => this.assertRendererSubmissionOpen());
+        return {
+          thread: this.core.requireThread(request.threadId).thread,
+          turn: started.turn,
+          replacedTurnId: target.id,
+        };
+      })
+    ));
+    this.pendingRendererSubmissions.add(retry);
+    try {
+      return await retry;
+    } finally {
+      this.pendingRendererSubmissions.delete(retry);
+    }
   }
   async tryStartTurnIfIdle(request: PrivilegedTurnStartRequest): Promise<Turn | null> {
     this.assertStartupThreadAvailable(request.threadId);

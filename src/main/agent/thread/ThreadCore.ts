@@ -8,6 +8,7 @@ createHostRootTurnAdmissionBarrierSnapshot,
 createThreadAdmissionBarrierSnapshot,
 type HostRootTurnAdmissionBarrierSnapshot,
 type ThreadAdmissionBarrierSnapshot,
+type ThreadHistoryRollbackContext,
 } from '../../../core/agent/extensions';
 import type {
 AgentCoreNotification,
@@ -147,6 +148,42 @@ export class ThreadCore {
         if (!options.deferObservers) await this.publishDecodedNotification(decoded);
       });
     }
+
+  async persistHistoryRetry(
+    context: ThreadHistoryRollbackContext,
+    replacementInput: Extract<AgentCoreRecordedNotification, { readonly type: 'turn/started' }>,
+  ): Promise<void> {
+    const replacement = decodeAgentCoreRecordedNotification(replacementInput);
+    if (replacement.type !== 'turn/started') throw new Error('History retry replacement must start a Turn');
+    if (replacement.threadId !== context.threadId) {
+      throw new Error('History retry replacement Thread does not match its rollback');
+    }
+    if (this.requireThread(context.threadId).thread.ephemeral) {
+      throw new Error('History retry requires a persistent Thread');
+    }
+    await this.enqueueNotification(context.threadId, async () => {
+      await this.flushPendingItemDeltaBestEffort(context.threadId);
+      let entry;
+      try {
+        entry = await this.rollout.appendHistoryRetry(context, replacement);
+      } catch (appendError) {
+        entry = (await this.rollout.read(context.threadId)).find((candidate) => (
+          candidate.event.type === 'history/retry'
+          && candidate.event.rollbackId === context.rollbackId
+        ));
+        if (!entry) throw appendError;
+      }
+      try {
+        this.history.apply(entry);
+      } catch (projectionError) {
+        try {
+          this.history.rebuildThread(context.threadId, await this.rollout.read(context.threadId));
+        } catch (rebuildError) {
+          throw new RecordedNotificationProjectionError([projectionError, rebuildError]);
+        }
+      }
+    });
+  }
 
   async publishRecordedNotification(notification: AgentCoreRecordedNotification): Promise<void> {
       const decoded = decodeAgentCoreRecordedNotification(notification);

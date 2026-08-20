@@ -545,6 +545,41 @@ export class ThreadStore {
     });
   }
 
+  async retryTurn(threadId: ThreadId, turnId: TurnId): Promise<void> {
+    const response = await this.client.agentCoreRequest('turn/retry', { threadId, turnId });
+    this.loadGenerations.set(threadId, (this.loadGenerations.get(threadId) ?? 0) + 1);
+    this.historyRevisions.set(threadId, (this.historyRevisions.get(threadId) ?? 0) + 1);
+    const turnsByThread = new Map(this.snapshot.turnsByThread);
+    const currentTurns = turnsByThread.get(threadId) ?? [];
+    const replacement = mergeLoadedTurn(
+      response.turn,
+      currentTurns.find((turn) => turn.id === response.turn.id),
+    );
+    const surviving = currentTurns
+      .filter((turn) => turn.id !== response.replacedTurnId);
+    turnsByThread.set(threadId, upsertById(surviving, replacement));
+    const latestTurnByThread = new Map(this.snapshot.latestTurnByThread);
+    const currentLatest = latestTurnByThread.get(threadId);
+    latestTurnByThread.set(
+      threadId,
+      currentLatest?.id === response.replacedTurnId
+        ? replacement
+        : newerTurn(currentLatest, replacement),
+    );
+    const providerRetryByThread = new Map(this.snapshot.providerRetryByThread);
+    providerRetryByThread.delete(threadId);
+    const currentThread = this.snapshot.threads.find((thread) => thread.id === threadId);
+    this.patch({
+      threads: sortThreads(upsertById(
+        this.snapshot.threads,
+        mergeConfiguredThread(response.thread, currentThread),
+      )),
+      turnsByThread,
+      latestTurnByThread,
+      providerRetryByThread,
+    });
+  }
+
   async respondToUserInput(
     request: RequestUserInputRequest,
     answers: readonly RequestUserInputAnswer[],

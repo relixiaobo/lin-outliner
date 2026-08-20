@@ -1071,6 +1071,9 @@ export function decodeAgentCoreRequest<M extends AgentCoreMethod>(
     case 'turn/interrupt':
       decoded = decodeTurnInterruptRequest(value);
       break;
+    case 'turn/retry':
+      decoded = decodeTurnRetryRequest(value);
+      break;
     case 'goal/get':
       decoded = decodeGoalGetInput(value);
       break;
@@ -1156,6 +1159,9 @@ export function decodeAgentCoreResponse<M extends AgentCoreMethod>(
       break;
     case 'turn/start':
       decoded = decodeTurnStartResponse(value);
+      break;
+    case 'turn/retry':
+      decoded = decodeTurnRetryResponse(value);
       break;
     case 'turn/steer':
       decoded = decodeTurnSteerResponse(value);
@@ -1508,6 +1514,15 @@ function decodeTurnInterruptRequest(value: unknown): AgentCoreRequestByMethod['t
   });
 }
 
+function decodeTurnRetryRequest(value: unknown): AgentCoreRequestByMethod['turn/retry'] {
+  const record = recordValue(value, 'turn/retry');
+  exactKeys(record, ['threadId', 'turnId'], 'turn/retry');
+  return deepFreeze({
+    threadId: uuidV7(record.threadId, 'turn/retry.threadId'),
+    turnId: uuidV7(record.turnId, 'turn/retry.turnId'),
+  });
+}
+
 function decodeGoalGetInput(value: unknown): AgentCoreRequestByMethod['goal/get'] {
   const record = recordValue(value, 'goal/get');
   exactKeys(record, ['threadId'], 'goal/get');
@@ -1752,6 +1767,16 @@ function decodeTurnStartResponse(value: unknown): AgentCoreResponseByMethod['tur
     turn: decodeTurn(record.turn),
     acceptedItemId: stringValue(record.acceptedItemId, 'turn/start response.acceptedItemId'),
     deduplicated: booleanValue(record.deduplicated, 'turn/start response.deduplicated'),
+  });
+}
+
+function decodeTurnRetryResponse(value: unknown): AgentCoreResponseByMethod['turn/retry'] {
+  const record = recordValue(value, 'turn/retry response');
+  exactKeys(record, ['thread', 'turn', 'replacedTurnId'], 'turn/retry response');
+  return deepFreeze({
+    thread: decodeThread(record.thread),
+    turn: decodeTurn(record.turn),
+    replacedTurnId: uuidV7(record.replacedTurnId, 'turn/retry response.replacedTurnId'),
   });
 }
 

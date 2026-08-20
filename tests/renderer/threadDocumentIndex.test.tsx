@@ -302,6 +302,7 @@ function threadSnapshot(loading: boolean): ThreadStoreSnapshot {
 function turnProps(indexStore: DocumentIndexStore) {
   return {
     active: true,
+    agentTranscript: false,
     canEditUserMessage: false,
     composerEnabled: true,
     expandState: {
@@ -334,6 +335,7 @@ function turnProps(indexStore: DocumentIndexStore) {
     onOpenTurnDetails: () => undefined,
     onReadToolArguments: async () => null,
     onReadToolOutput: async () => null,
+    onRetryTurn: async () => undefined,
     providerRetry: null,
     // No delegation in these Turns: their own Items, no anchors, no delivery.
     delivery: null,
@@ -366,6 +368,7 @@ function threadViewProps(indexStore: DocumentIndexStore) {
     onOpenTurnDetails: () => undefined,
     onReadToolArguments: async () => null,
     onReadToolOutput: async () => null,
+    onRetryTurn: async () => undefined,
     onSend: async () => null,
     onSubmitUserInput: async () => undefined,
     plan: null,

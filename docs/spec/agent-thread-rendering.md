@@ -797,9 +797,11 @@ lone multi-line terminal reasoning Item first observed only after settlement
 still opens for readability; that terminal default and the live-observation
 latch are Thread-session state, not persisted overrides. The empty placeholder
 carries the same classes as the populated one so the first token does not
-restyle the element. Reconnect recovery belongs to the matching Turn's response
-footer and replaces its rose generating indicator; it does not append a second
-row below that indicator. While reconnect is visible, that Turn renders every
+restyle the element. Provider recovery belongs to the matching Turn's response
+footer and replaces its rose generating indicator; request recovery reads
+`Retrying {current}/{max}`, stream recovery reads
+`Reconnecting {current}/{max}`, and neither appends a second row below that
+indicator. While recovery is visible, that Turn renders every
 mapped working phrase through its ordinary static text branch, including a
 closed Plan outside the transcript, so the retry spinner is its sole motion
 owner. This arbitration is passed explicitly within one `ThreadView`; it never
@@ -831,16 +833,24 @@ single text-motion owner as the default mode. A failed or interrupted Turn
 with partial response prose keeps its process presentation neutral because the
 response tail already owns the terminal error or stopped state.
 
-A last Turn the user did not end leads its action row with **Retry**, which
-re-sends that Turn's own request unchanged through the same rollback-and-send
-path Edit uses. Without it the only way forward is to edit their own message —
-which frames a crash as something they mistyped, and is unavailable outright for
-a message carrying more than one text part.
+A last Turn the user did not end leads its action row with **Retry**, which sends
+only `{threadId, turnId}` through the canonical `turn/retry` command. Main, not
+the renderer, reconstructs the replacement from the sealed Turn's structured
+input batches, stable client IDs, accepted timestamps, admission evidence, and
+original trigger. The initial input and every accepted steering input keep
+their canonical order and evidence/user-message boundary in the replacement;
+failed-attempt assistant/tool output is not replayed. A host-authored subagent
+delivery therefore remains host-authored; Retry never converts its hidden
+notification envelope into reader-authored text. The renderer does not reuse
+Edit's rollback-and-send path or infer replay input from visible prose.
+Without Retry the only way forward would be to edit a reader message — which
+frames a crash as something they mistyped and cannot represent a host-authored
+Turn at all.
 
 It is offered only where the action can actually run and could end differently.
-Only on the last Turn, because that path rolls back exactly one. Only where the
-composer is enabled, since rollback is available only on a persistent root user
-Thread — anywhere the user cannot type, a Retry could only fail. A failure
+Only on the last Turn, because the command replaces exactly one. Only where the
+composer is enabled, since retry admission is available only on a persistent
+root user Thread — anywhere the user cannot type, a Retry could only fail. A failure
 qualifies, including one with no recorded error; an exhausted Agent request budget
 qualifies because spend is request-scoped, so a new user Turn delegates against a
 fresh grant. A structural depth limit does not, because the next attempt from the
@@ -850,11 +860,19 @@ ONLY when the host restarted under the Turn: that is recorded as an interrupt bu
 was nobody's decision, unlike a user pressing Stop, which keeps its ruling that
 neither Retry nor Regenerate is offered for a choice they made.
 
-Retry is latched while it runs — the rollback is a round trip during which the
-Turn and its button stay mounted, and a second click inside that window would
-roll back the PRECEDING Turn — and a refusal is reported in place rather than
-swallowed, so a Thread the host left in an error state says so instead of
-presenting a button that does nothing.
+Main serializes retry with renderer submission and root host admission, then
+prepares every fallible admission step while the failed Turn is still canonical.
+The commit is one internal `history/retry` rollout event: projection removes the
+failed suffix Turn and inserts the replacement `turn/started` inside one SQLite
+transaction. Admission or append failure therefore leaves the old Turn intact;
+restart can observe only the complete old or complete replacement state. Payload
+cleanup and `turn/started` publication happen after that commit. Every restored
+client ID is rebound to its new canonical user Item only after the replacement
+is durable.
+
+Retry is latched while the single command round trip is in flight, and a refusal
+is reported in place rather than swallowed, so a Thread the host left in an
+error state says so instead of presenting a button that does nothing.
 
 Unknown Item kinds are protocol errors, not generic fallback cards. Item status
 comes from the Item itself; the renderer never infers completion from missing
@@ -1484,9 +1502,12 @@ terminal state, so completion never swaps a measured live height for an intrinsi
 fallback.
 
 Provider request and stream retries are transient execution state, not Items.
-The selected Thread shows reconnecting status in the matching Turn's response
-footer while retrying, replacing the rose generating indicator in that fixed
-slot, and removes it when the provider recovers or the Turn becomes terminal.
+The selected Thread shows `Retrying` for request recovery and `Reconnecting` for
+stream recovery in the matching Turn's response footer, replacing the rose
+generating indicator in that fixed slot. The initial request is separate from
+request retries `1/5` through `5/5`. The status and every intermediate failure
+disappear when the provider recovers; exhaustion leaves only the terminal Turn
+error and its manual Retry action.
 
 `update_plan` is an ordinary tool call and is recorded like any other: the
 session shows the complete, actual process, so a Plan update the agent

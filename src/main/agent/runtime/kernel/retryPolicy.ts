@@ -8,7 +8,7 @@ import {
   type Model,
 } from '@earendil-works/pi-ai';
 import { isCustomOpenAIResponsesEndpoint } from '../../../openAIResponsesCompat';
-import { classifyModelFailure } from './ModelGateway';
+import { classifyModelFailure, isRetryableProviderFailure } from './ModelGateway';
 import {
   EMPTY_USAGE,
   type ProviderRetryLifecycleEvent,
@@ -18,7 +18,7 @@ import {
 type AssistantToolCall = Extract<AssistantMessage['content'][number], { type: 'toolCall' }>;
 type RetryOutcome = 'settled' | 'retry-request' | 'retry-stream' | 'retry-overflow';
 
-const MAX_RETRYABLE_RESPONSES_REQUEST_FAILURES = 4;
+const MAX_RETRYABLE_RESPONSES_REQUEST_FAILURES = 5;
 const MAX_RETRYABLE_RESPONSES_TERMINATIONS = 1;
 const MAX_RETRYABLE_CUSTOM_RESPONSES_STREAM_ERRORS = 3;
 const RESPONSES_REQUEST_RETRY_INITIAL_DELAY_MS = 200;
@@ -422,11 +422,7 @@ function retryOutcomeForResponsesError(
 ): Exclude<RetryOutcome, 'settled' | 'retry-overflow'> | null {
   if (reason !== 'error' || completedToolCallIds.size > 0) return null;
   if (sawMaterialOutput && !isCustomOpenAIResponsesEndpoint(model)) return null;
-  const failure = classifyModelFailure(message);
-  const retryableRequestFailure = failure?.kind === 'rateLimit'
-    || failure?.kind === 'serverError'
-    || failure?.kind === 'transport';
-  if (!sawStreamEvent && retryableRequestFailure) {
+  if (!sawStreamEvent && isRetryableProviderFailure(message)) {
     return requestRetryCount < maxRequestRetries ? 'retry-request' : null;
   }
   if (streamRetryCount < maxStreamRetries && isRetryableResponsesStreamError(message, model)) {
@@ -555,7 +551,7 @@ function isRetryableResponsesStreamError(message: AssistantMessage, model: Model
     && failure.status < 500
     && failure.status !== 429
   ) return false;
-  if (failure?.kind === 'rateLimit' || failure?.kind === 'serverError' || failure?.kind === 'transport') {
+  if (isRetryableProviderFailure(message)) {
     return true;
   }
   return isTerminatedResponsesStreamError(message)

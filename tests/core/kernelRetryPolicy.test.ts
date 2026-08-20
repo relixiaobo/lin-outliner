@@ -18,6 +18,7 @@ import {
 } from '../../src/main/agent/runtime/kernel/retryPolicy';
 import {
   classifyModelFailure,
+  isRetryableProviderFailure,
   isRetryableResponsesRequestError,
 } from '../../src/main/agent/runtime/kernel/ModelGateway';
 
@@ -176,7 +177,7 @@ describe('kernel retry policy', () => {
     expect(event.value.error.errorMessage).toBe('stream setup failed');
   });
 
-  test('retries custom OpenAI Responses 524 failures four times and succeeds on the fifth attempt', async () => {
+  test('reports retries 1/5 through 5/5 and succeeds on the sixth request', async () => {
     let attempts = 0;
     const retryCounts: number[] = [];
     const retryEvents: Array<{
@@ -187,7 +188,7 @@ describe('kernel retry policy', () => {
     }> = [];
     const streamFn = createPolicyStreamFn((() => {
       attempts += 1;
-      return attempts <= 4
+      return attempts <= 5
         ? errorStream('OpenAI API error (524): 524 status code (no body)', CUSTOM_RESPONSES_MODEL)
         : textStream('recovered after 524', CUSTOM_RESPONSES_MODEL);
     }) as StreamFn, {
@@ -202,14 +203,15 @@ describe('kernel retry policy', () => {
     const events = [];
     for await (const event of stream) events.push(event);
 
-    expect(attempts).toBe(5);
-    expect(retryCounts).toEqual([1, 2, 3, 4]);
+    expect(attempts).toBe(6);
+    expect(retryCounts).toEqual([1, 2, 3, 4, 5]);
     expect(retryEvents).toEqual([
-      { phase: 'retrying', kind: 'request', attempt: 1, maxRetries: 4 },
-      { phase: 'retrying', kind: 'request', attempt: 2, maxRetries: 4 },
-      { phase: 'retrying', kind: 'request', attempt: 3, maxRetries: 4 },
-      { phase: 'retrying', kind: 'request', attempt: 4, maxRetries: 4 },
-      { phase: 'cleared', kind: 'request', attempt: 4, maxRetries: 4 },
+      { phase: 'retrying', kind: 'request', attempt: 1, maxRetries: 5 },
+      { phase: 'retrying', kind: 'request', attempt: 2, maxRetries: 5 },
+      { phase: 'retrying', kind: 'request', attempt: 3, maxRetries: 5 },
+      { phase: 'retrying', kind: 'request', attempt: 4, maxRetries: 5 },
+      { phase: 'retrying', kind: 'request', attempt: 5, maxRetries: 5 },
+      { phase: 'cleared', kind: 'request', attempt: 5, maxRetries: 5 },
     ]);
     expect(events.map((event) => event.type)).toEqual(['start', 'text_start', 'text_delta', 'text_end', 'done']);
     expect(JSON.stringify(events)).not.toContain('524 status code');
@@ -231,8 +233,15 @@ describe('kernel retry policy', () => {
     const events = [];
     for await (const event of stream) events.push(event);
 
-    expect(attempts).toBe(5);
-    expect(retryPhases).toEqual(['retrying:1', 'retrying:2', 'retrying:3', 'retrying:4', 'cleared:4']);
+    expect(attempts).toBe(6);
+    expect(retryPhases).toEqual([
+      'retrying:1',
+      'retrying:2',
+      'retrying:3',
+      'retrying:4',
+      'retrying:5',
+      'cleared:5',
+    ]);
     expect(events.map((event) => event.type)).toEqual(['error']);
     if (events[0]?.type !== 'error') throw new Error('Expected final error event.');
     expect(events[0].error.errorMessage).toBe('OpenAI API error (524): 524 status code (no body)');
@@ -390,6 +399,17 @@ describe('kernel retry policy', () => {
     expect(isRetryableResponsesRequestError('stream setup failed')).toBe(false);
   });
 
+  test('uses pi-ai transient classification for structured provider limits', () => {
+    expect(isRetryableProviderFailure(normalizeAssistant(fauxAssistantMessage([], {
+      stopReason: 'error',
+      errorMessage: 'rate_limit_exceeded: Concurrency limit exceeded for account, please retry later',
+    }), OPENAI_RESPONSES_MODEL))).toBe(true);
+    expect(isRetryableProviderFailure(normalizeAssistant(fauxAssistantMessage([], {
+      stopReason: 'error',
+      errorMessage: 'insufficient_quota: quota exceeded',
+    }), OPENAI_RESPONSES_MODEL))).toBe(false);
+  });
+
   test('classifies provider context overflow without matching ordinary capacity language', () => {
     expect(classifyError('context_length_exceeded')?.kind).toBe('contextOverflow');
     expect(classifyError('Prompt is too long: 120000 tokens > 100000 maximum')?.kind).toBe('contextOverflow');
@@ -405,6 +425,24 @@ describe('kernel retry policy', () => {
     expect(responsesRequestRetryDelayMs(2, () => 0.5)).toBe(400);
     expect(responsesRequestRetryDelayMs(3, () => 0.5)).toBe(800);
     expect(responsesRequestRetryDelayMs(4, () => 0.5)).toBe(1600);
+    expect(responsesRequestRetryDelayMs(5, () => 0.5)).toBe(3200);
+  });
+
+  test('retries a structured concurrency limit without an HTTP status wrapper', async () => {
+    let attempts = 0;
+    const streamFn = createPolicyStreamFn((() => {
+      attempts += 1;
+      return attempts === 1
+        ? errorStream('rate_limit_exceeded: Concurrency limit exceeded for account, please retry later')
+        : textStream('recovered after concurrency limit');
+    }) as StreamFn, { requestRetryDelayMs: () => 0 });
+
+    const stream = streamFn(OPENAI_RESPONSES_MODEL, { messages: [], tools: [] });
+    const events = [];
+    for await (const event of stream) events.push(event);
+
+    expect(attempts).toBe(2);
+    expect(events.map((event) => event.type)).toEqual(['start', 'text_start', 'text_delta', 'text_end', 'done']);
   });
 
   test('retries 429 Responses request failures with the default Responses fallback', async () => {

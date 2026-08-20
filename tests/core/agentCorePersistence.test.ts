@@ -705,6 +705,53 @@ describe('Agent Core persistence', () => {
     rebuilt.close();
   });
 
+  test('projects a failed Turn retry as one atomic rollout event', async () => {
+    const root = await tempRoot();
+    const rollout = trackedRolloutStore(join(root, 'retry-rollouts'));
+    const threadId = uuidV7(2_200);
+    const originalLifecycle = lifecycle(threadId, 4_500);
+    for (const notification of originalLifecycle) await rollout.append(threadId, notification);
+
+    const incremental = new ThreadHistoryProjectionStore(
+      join(root, 'retry-history.sqlite'),
+      testDatabase(join(root, 'retry-history.sqlite')),
+    );
+    incremental.applyMany(await rollout.read(threadId));
+    const originalTurnId = incremental.listTurns({ threadId }).data[0]!.id;
+    const replacementLifecycle = lifecycle(threadId, 4_600);
+    const replacementStarted = replacementLifecycle[0];
+    if (replacementStarted?.type !== 'turn/started') throw new Error('Missing replacement Turn start');
+    const beforeRetry = incremental.projectionVersion(threadId);
+    const retry = await rollout.appendHistoryRetry(createThreadHistoryRollbackContext(
+      uuidV7(4_700),
+      threadId,
+      [originalTurnId],
+      beforeRetry,
+      beforeRetry + 1,
+    ), replacementStarted);
+
+    incremental.apply(retry);
+    expect(incremental.listTurns({ threadId }).data.map((turn) => ({ id: turn.id, status: turn.status })))
+      .toEqual([{ id: replacementStarted.turnId, status: 'inProgress' }]);
+    expect(incremental.rollbackMarker(retry.event.rollbackId)?.omittedTurnIds).toEqual([originalTurnId]);
+    for (const notification of replacementLifecycle.slice(1)) {
+      incremental.apply(await rollout.append(threadId, notification));
+    }
+
+    const entries = await rollout.read(threadId);
+    expect(entries.filter((entry) => entry.event.type === 'history/retry')).toHaveLength(1);
+    const rebuilt = new ThreadHistoryProjectionStore(
+      join(root, 'retry-history-rebuilt.sqlite'),
+      testDatabase(join(root, 'retry-history-rebuilt.sqlite')),
+    );
+    rebuilt.rebuildThread(threadId, entries);
+    expect(rebuilt.listTurns({ threadId })).toEqual(incremental.listTurns({ threadId }));
+    expect(rebuilt.listItems({ threadId })).toEqual(incremental.listItems({ threadId }));
+    expect(rebuilt.rollbackMarkers(threadId)).toEqual(incremental.rollbackMarkers(threadId));
+    incremental.close();
+    rebuilt.close();
+  });
+
   test('replays an interrupted Turn with a completed partial stream exactly', async () => {
     const root = await tempRoot();
     const rollout = trackedRolloutStore(join(root, 'interrupted-rollouts'));

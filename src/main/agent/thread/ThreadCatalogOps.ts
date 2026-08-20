@@ -1,7 +1,7 @@
 import { decodeThread,decodeThreadItem,decodeTurn } from '../../../core/agent/codec';
 import type { EffectiveThreadConfiguration } from '../../../core/agent/configuration';
 import { createThreadHistoryRollbackContext,type AgentCoreExtension,type ThreadHistoryRollbackContext } from '../../../core/agent/extensions';
-import { HOST_RESTART_ERROR_CODE,type AgentCoreRequestByMethod,type ContextCursor,type Thread,type ThreadConfigurationResponse,type ThreadConfigurationSetRequest,type ThreadConfigurationSummary,type ThreadDescendantsRequest,type ThreadDescendantsResponse,type ThreadForkRequest,type ThreadId,type ThreadItem,type ThreadItemEntry,type ThreadItemsListRequest,type ThreadItemsListResponse,type ThreadListRequest,type ThreadListResponse,type ThreadReadRequest,type ThreadReadResponse,type ThreadRollbackRequest,type ThreadStartRequest,type ThreadStartResponse,type ThreadTurnsListRequest,type ThreadTurnsListResponse,type Turn,type TurnDiagnosticsPayload } from '../../../core/agent/protocol';
+import { HOST_RESTART_ERROR_CODE,type AgentCoreRecordedNotification,type AgentCoreRequestByMethod,type ContextCursor,type Thread,type ThreadConfigurationResponse,type ThreadConfigurationSetRequest,type ThreadConfigurationSummary,type ThreadDescendantsRequest,type ThreadDescendantsResponse,type ThreadForkRequest,type ThreadId,type ThreadItem,type ThreadItemEntry,type ThreadItemsListRequest,type ThreadItemsListResponse,type ThreadListRequest,type ThreadListResponse,type ThreadReadRequest,type ThreadReadResponse,type ThreadRollbackRequest,type ThreadStartRequest,type ThreadStartResponse,type ThreadTurnsListRequest,type ThreadTurnsListResponse,type Turn,type TurnDiagnosticsPayload } from '../../../core/agent/protocol';
 import {
   assertContextPayloadDependencies,
   contextPayloadReferenceKey,
@@ -18,7 +18,7 @@ import type { RollbackHookRecoveryTarget } from '../RollbackHookRecoveryQueue';
 import type { ThreadNameGenerator } from '../runtime/types';
 import type { FeatureRootThreadInput,PersistentThreadExecutionContext,RendererThreadStartDefaults } from '../ThreadService';
 import { uuidV7 } from '../uuid';
-import { ThreadCore } from './ThreadCore';
+import { RecordedNotificationProjectionError,ThreadCore } from './ThreadCore';
 import { ThreadResourceOps } from './ThreadResourceOps';
 import type { TurnLifecycle } from './TurnLifecycle';
 
@@ -465,6 +465,69 @@ export class ThreadCatalogOps {
         ? copiedTurn
         : decodeTurn({ ...copiedTurn, execution: { ...copiedTurn.execution, diagnosticsRef } });
     }
+  async replaceLatestTurnForRetryWithLocksHeld(
+      threadId: ThreadId,
+      target: Turn,
+      replacement: Extract<AgentCoreRecordedNotification, { readonly type: 'turn/started' }>,
+    ): Promise<void> {
+      const record = this.core.requireThread(threadId);
+      const thread = record.thread;
+      if (thread.ephemeral || thread.parentThreadId !== null || thread.threadSource !== 'user') {
+        throw new Error('Turn retry is available only for persistent root user Threads');
+      }
+      if (replacement.threadId !== thread.id || replacement.turnId === target.id) {
+        throw new Error('Turn retry replacement does not match its target');
+      }
+      const turns = this.core.allTurns(thread.id);
+      if (turns.at(-1)?.id !== target.id || target.status === 'inProgress') {
+        throw this.createThreadBusyError('Turn retry target is no longer the latest terminal Turn');
+      }
+      await this.flushThreadNotificationsBestEffort(thread.id);
+      const beforeProjectionVersion = this.core.history.projectionVersion(thread.id);
+      const context = createThreadHistoryRollbackContext(
+        uuidV7(this.now()),
+        thread.id,
+        [target.id],
+        beforeProjectionVersion,
+        beforeProjectionVersion + 1,
+      );
+      const prepared: AgentCoreExtension[] = [];
+      try {
+        for (const extension of this.extensions.historyRollbackExtensions()) {
+          await this.extensions.invokeHistoryRollbackHook(extension, 'prepare', context);
+          prepared.push(extension);
+        }
+      } catch (error) {
+        await this.finalizeHistoryRollbackHooks([...prepared].reverse(), 'abort', context);
+        throw error;
+      }
+
+      let projectionError: RecordedNotificationProjectionError | null = null;
+      try {
+        await this.core.persistHistoryRetry(context, replacement);
+      } catch (error) {
+        if (error instanceof RecordedNotificationProjectionError) {
+          projectionError = error;
+        } else {
+          await this.finalizeHistoryRollbackHooks([...prepared].reverse(), 'abort', context);
+          throw error;
+        }
+      }
+      await this.finalizeHistoryRollbackHooks(prepared, 'commit', context);
+      if (projectionError) {
+        throw projectionError;
+      }
+
+      const references = this.resourceOps.threadStorageReferences(thread.id);
+      await Promise.all([
+        this.core.payloads.pruneUnreferencedResources(thread.id, references.resources),
+        this.core.payloads.pruneUnreferencedContexts(thread.id, references.contexts),
+        this.core.payloads.pruneUnreferencedTurnDiagnostics(thread.id, references.diagnostics),
+        this.core.payloads.pruneUnreferencedTextOutputs(thread.id, references.textOutputs),
+      ]).catch(() => undefined);
+      await this.core.publishRecordedNotification(replacement);
+    }
+
   async rollbackThread(request: ThreadRollbackRequest): Promise<{ thread: Thread }> {
       return this.core.threadMutex.run(request.threadId, async () => {
         const record = this.core.requireThread(request.threadId);
@@ -535,14 +598,13 @@ export class ThreadCatalogOps {
         //
         // RESOURCES are reclaimed against the surviving history PLUS the Turns
         // just removed. A rollback exists to be followed by a re-send of the
-        // very content it removed — Edit does it, and Retry does it on the
-        // failure case, where an attachment is most likely to still matter — so
-        // a payload the omitted Turns referenced is one the next call is about
-        // to reference again, and deleting it leaves the resent message pointing
-        // at nothing. What neither set references is true garbage no re-send can
-        // reach, and reclaiming it here keeps those bytes out of the resource
-        // quota, which counts every byte on disk but can only ever offer
-        // surviving history as reclaim candidates.
+        // very content it removed — Edit does exactly that — so a payload the
+        // omitted Turns referenced is one the next call is about to reference
+        // again, and deleting it leaves the resent message pointing at nothing.
+        // What neither set references is true garbage no re-send can reach, and
+        // reclaiming it here keeps those bytes out of the resource quota, which
+        // counts every byte on disk but can only ever offer surviving history as
+        // reclaim candidates.
         //
         // The other three belong to the Turn that went away and nothing re-sends
         // them. Startup sweeps all four for every known Thread.
