@@ -1504,3 +1504,34 @@ match. The judges that would have caught it run the real chain — writer, then
 loader, then `resolveChildConfiguration` — and a browser round-trip that creates
 an agent and reopens it. Assert the outcome the user gets, not the argument you
 happened to pass.
+
+## Synthetic layout range cannot prove that the reader follows real content
+
+The fixed-edge expansion change (PR #568) needed to distinguish two states that
+look identical at the bottom of a DOM scroller. A transcript riding a real tail
+should hold the disclosure control while a long message opens, because holding
+that control is what staying at the bottom means. A message held at the top by a
+temporary send spacer should hold its own block instead, so its text opens
+downward. Both states reported `follow = true` and a bottom distance of zero.
+
+The first repair tried to recover the distinction by subtracting the send
+spacer and disclosure runway from `scrollHeight`. It still failed while the
+spacer was mounted: the scroll handler had already derived `follow` from the
+rendered range, and the subtraction missed the flex gap that range introduced.
+The predicate therefore selected the control anchor and moved the message shell
+from `2px` to `-2154px` when it opened — the same failure under a narrower state.
+
+**Renderer-owned geometry is a mode, not content with a few pixels to subtract.**
+When a spacer, runway, placeholder, or virtualization pad owns the range being
+measured, branch on that ownership before asking a content-state question. A
+boolean derived from synthetic geometry does not become truthful because a
+later calculation normalizes one of its contributors, and an inventory of
+pixel deductions is brittle because CSS gaps and future layout terms are part
+of the same range.
+
+The regression judge must mount the machinery that creates the synthetic state.
+A pure helper test can prove which anchor a boolean selects; only the real send
+path can prove that the boolean means what its name claims while the spacer is
+present. Re-run the exact counterexample as well as the new judge: after the fix,
+both the shell-top delta and the `scrollTop` delta were zero while the disclosure
+control moved downward with the revealed text.

@@ -99,6 +99,26 @@ Entries reference the pull request that introduced them.
 
 ### Fixed
 
+- **Long messages and model flyouts now expand from a fixed edge (PR #568,
+  cc)** — `Show more` used to hold the control below a long message while every
+  revealed line appeared above it, pushing the text the reader was looking at
+  out of the viewport. Opening now holds the message block unless the transcript
+  is riding a real scrollable tail; closing holds the clicked control, the only
+  point guaranteed to be on screen. Renderer-owned range is not mistaken for a
+  tail: a disclosure runway is excluded from the measurement, and an active
+  send spacer selects the block path outright, so the message sent to the top of
+  the viewport opens downward without moving either its first line or
+  `scrollTop`. The model and reasoning side flyouts now freeze the height that
+  chose their opening placement and derive their ceiling from that resolved
+  edge, so changing submenu or revealing more models turns the surface into an
+  internal scroller instead of teleporting it. Closing resets the hidden
+  measurement seed, unchanged placements skip their React write, and both
+  overlay paths share one clamping primitive. Gate: `/code-review xhigh` found
+  ten issues; the re-review then caught the live send spacer still inventing a
+  bottom. The exact counterexample moved the message top from `2px` to
+  `-2154px` before the final fix and by `0px` after it. Verified with typecheck,
+  `docs:check`, the full renderer suite, seven focused disclosure/scroll e2e
+  tests, and five green CI samples.
 - **Automations were unreachable and every root Turn died before the model ran
   (PR #564, cc)** — `automation_update`'s schema root was `{ oneOf: [...] }` with
   no `type`, and a provider requires an object-rooted function schema: OpenAI

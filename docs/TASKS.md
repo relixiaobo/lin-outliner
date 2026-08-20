@@ -1112,6 +1112,16 @@ and the merged PR, distilled rules in [`lessons.md`](lessons.md). Everything
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
 
+- **fixed-edge-expansion** (cc, PR #568, merged 2026-08-20 — fast-track, no
+  plan file) — long user messages now open downward from their own top edge
+  unless the transcript is riding a real scrollable tail; collapsing keeps the
+  clicked control fixed, and a live send spacer can no longer manufacture the
+  tail decision. Model and reasoning flyouts keep the placement chosen when
+  they open while later rows scroll inside it. Gate: `/code-review xhigh` found
+  ten, all addressed; re-review found one remaining synthetic-send-bottom
+  blocker, fixed in `2c9c7f24`, then cleared with typecheck, `docs:check`, the
+  full renderer suite, seven focused geometry e2e tests, and five green CI
+  samples.
 - **remember-last-agent-model** (codex, PR #566, merged 2026-08-19 —
   [plan](plans/archive/remember-last-agent-model.md)) — a model chosen in the
   composer is now the default for the next conversation, persisted the moment
