@@ -103,11 +103,15 @@ terminal Turn is still present. One internal `history/retry` rollout event then
 removes the terminal Turn and starts the replacement in the same projection
 transaction. An admission or append failure leaves the terminal Turn unchanged;
 restart sees either the complete old state or the complete replacement. The
-replacement preserves the original `TurnTrigger`, stable client ID, context
-evidence, and host provenance. This is required for host-authored subagent
-notifications: replay must remain an `agent_message` delivery and must never
-become a user message. Delivery bookkeeping remains consistent with admission
-so a recovered notification is neither lost nor delivered twice.
+replacement preserves the original `TurnTrigger`, host provenance, and the
+complete ordered sequence of accepted input batches: the initial input plus
+every steering input, each with its own structured content, stable client ID,
+accepted timestamp, and immediately preceding admission evidence. Failed-attempt
+assistant/tool output and runtime-only evidence are not replayed. This is
+required for host-authored subagent notifications: replay must remain an
+`agent_message` delivery and must never become a user message. Delivery
+bookkeeping remains consistent with every restored client binding so a recovered
+notification or steering input is neither lost nor delivered twice.
 
 Stale, non-latest, active, missing, and non-retryable targets fail closed at the
 command boundary with no Thread mutation. Double activation is serialized by
@@ -143,8 +147,8 @@ Focused tests cover:
 - retry ordinals `1/5` through `5/5`, recovery cleanup, exhaustion, and abort;
 - request versus stream wording and lifecycle cleanup;
 - no retry after material output or replay-unsafe tool activity;
-- manual retry for user-authored and host-authored Turns with unchanged trigger
-  and provenance;
+- manual retry for user-authored and host-authored Turns with unchanged trigger,
+  provenance, ordered initial/steering inputs, evidence boundaries, and client IDs;
 - refusal of stale, non-latest, active, missing, and non-retryable Turns;
 - one terminal Retry action and replacement of the prior terminal Turn after success.
 
@@ -182,8 +186,9 @@ part of the dev-agent PR.
   failures. Exact positive and negative fixtures pin the canonical boundary.
 - Retrying after canonical material output could duplicate text or mutations.
   Existing replay-safety gates remain mandatory and receive regression tests.
-- A manual retry that reconstructs renderer-visible text can corrupt hidden
-  input or host provenance. Main rebuilds exclusively from canonical Turn data.
+- A manual retry that reconstructs renderer-visible text or only the first
+  accepted input can corrupt hidden input, steering, or host provenance. Main
+  rebuilds every input batch exclusively from canonical Turn data.
 - Rollback and host-notification delivery can race. Admission and delivery
   bookkeeping must settle as one lifecycle operation before execution starts.
 - A missing clear event can leave stale retry UI. Every success, terminal,

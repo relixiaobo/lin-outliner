@@ -797,6 +797,14 @@ it when replacement output begins, recovery settles, cancellation wins, or the T
 terminalizes. Request retries and stream reconnections create neither Items nor persisted
 transcript history; only the final exhausted or non-retryable failure reaches the Turn.
 
+Manual retry is a new Turn, not another transport attempt. Its first provider
+request projects the complete ordered canonical replacement: initial input followed
+by every steering input accepted by the failed Turn, with each input's structured
+content, accepted timestamp, stable client ID, and admission evidence preserved.
+The atomic replacement excludes assistant/tool output and runtime-only evidence
+from the failed attempt, so retry cannot duplicate an effect or flatten steering
+context ahead of the initial request.
+
 Timeout, maximum transient retries, maximum retry delay, and cache retention are read
 once at Turn execution start and applied consistently to each provider request. Custom
 OpenAI Responses endpoints retain the configured cache policy; auxiliary naming alone

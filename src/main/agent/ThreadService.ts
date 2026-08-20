@@ -42,6 +42,7 @@ ThreadContextReadResponse,
 ThreadFeatureSource,
 ThreadForkRequest,
 ThreadId,
+ThreadItem,
 ThreadItemOutputReadRequest,
 ThreadItemOutputReadResponse,
 ThreadItemsListRequest,
@@ -144,7 +145,7 @@ import { ThreadTranscriptExclusions } from './thread/ThreadTranscriptExclusions'
 import { ThreadTranscriptIndex } from './thread/ThreadTranscriptIndex';
 import { rootTranscriptSubject,ThreadTranscriptWriter } from './thread/ThreadTranscriptWriter';
 import type { TranscriptSubject } from './thread/TranscriptRenderer';
-import { TurnLifecycle } from './thread/TurnLifecycle';
+import { TurnLifecycle,type CanonicalTurnRetryInputBatch } from './thread/TurnLifecycle';
 
 const THREAD_SERVICE_CLOSE_DRAIN_TIMEOUT_MS = 2_000;
 
@@ -1787,32 +1788,50 @@ export class ThreadService implements ThreadServiceExtensionHost {
           throw new ThreadBusyError('Cannot retry a Thread with active work');
         }
         if (!isRetryableTurn(target)) throw new Error('This Turn is not retryable');
-        const userInput = target.items.find((item) => item.type === 'userMessage');
-        if (!userInput) throw new Error('Retry input is missing from the canonical Turn');
-
-        const stagedContextEvidence: StagedContextEvidence[] = [];
+        const inputBatches: CanonicalTurnRetryInputBatch[] = [];
+        let pendingEvidence: Array<Extract<ThreadItem, { readonly type: 'contextEvidence' }>> = [];
         for (const item of target.items) {
-          if (item.type !== 'contextEvidence') continue;
-          const payload = await this.core.payloads.readContext(request.threadId, item.payloadRef);
-          if (!payload || payload.kind !== item.kind) {
-            throw new Error(`Retry context evidence is unavailable: ${item.id}`);
+          if (item.type === 'contextEvidence') {
+            // Every persistent input admission starts with turnEnvironment.
+            // Drop runtime-only evidence accumulated after the prior input when
+            // the next atomic admission batch begins.
+            if (item.kind === 'turnEnvironment' && inputBatches.length > 0) pendingEvidence = [];
+            pendingEvidence.push(item);
+            continue;
           }
-          stagedContextEvidence.push({
-            payload: payload as StagedContextEvidence['payload'],
-            payloadRef: item.payloadRef,
-            contextRefs: item.contextRefs,
-            resourceRefs: item.resourceRefs,
-            outputRefs: item.outputRefs,
-            summary: item.summary,
+          if (item.type !== 'userMessage') {
+            pendingEvidence = [];
+            continue;
+          }
+          const stagedContextEvidence: StagedContextEvidence[] = [];
+          for (const evidence of pendingEvidence) {
+            const payload = await this.core.payloads.readContext(request.threadId, evidence.payloadRef);
+            if (!payload || payload.kind !== evidence.kind) {
+              throw new Error(`Retry context evidence is unavailable: ${evidence.id}`);
+            }
+            stagedContextEvidence.push({
+              payload: payload as StagedContextEvidence['payload'],
+              payloadRef: evidence.payloadRef,
+              contextRefs: evidence.contextRefs,
+              resourceRefs: evidence.resourceRefs,
+              outputRefs: evidence.outputRefs,
+              summary: evidence.summary,
+            });
+          }
+          inputBatches.push({
+            input: item.content,
+            clientUserMessageId: item.clientId,
+            acceptedAt: item.acceptedAt,
+            stagedContextEvidence,
           });
+          pendingEvidence = [];
         }
+        if (inputBatches.length === 0) throw new Error('Retry input is missing from the canonical Turn');
 
         const started = await this.turnLifecycle.startRetriedRootTurnWithHostLock({
           threadId: request.threadId,
-          input: userInput.content,
-          clientUserMessageId: userInput.clientId,
           trigger: target.provenance.trigger,
-          stagedContextEvidence,
+          inputBatches,
           replacedTurn: target,
         }, () => this.assertRendererSubmissionOpen());
         return {

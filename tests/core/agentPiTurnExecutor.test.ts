@@ -1313,6 +1313,54 @@ describe('PiTurnExecutor event normalization', () => {
     ]));
   });
 
+  test('includes every canonical retry input in the first provider request', async () => {
+    const fixture = createContext();
+    const steeringAcceptedAt = 1_720_000_000_150;
+    const steeringItemId = uuidV7(steeringAcceptedAt);
+    const retriedTurn = decodeTurn({
+      ...fixture.context.turn,
+      items: [...fixture.context.turn.items, {
+        type: 'userMessage',
+        id: steeringItemId,
+        provenance: fixture.recorder.localProvenance(steeringItemId),
+        clientId: 'retried-steering-input',
+        acceptedAt: steeringAcceptedAt,
+        content: [{ type: 'text', text: 'Also include costs' }],
+      }],
+    });
+    const providerContexts: Message[][] = [];
+    const executor = new PiTurnExecutor({
+      resolveRuntime: async () => runtimeSelection(),
+      resolveRuntimeSettings: async () => runtimeSettings(),
+      createTools: async () => [],
+      createGateway: (hooks) => new PiModelGateway({
+        ...hooks,
+        streamSimple: (_model, providerContext) => {
+          providerContexts.push(structuredClone(providerContext.messages));
+          const stream = createAssistantMessageEventStream();
+          const message = assistantMessage([{ type: 'text', text: 'Done' }]);
+          queueMicrotask(() => emitAssistantMessage(stream, message));
+          return stream;
+        },
+      }),
+    });
+
+    await expect(executor.execute({
+      ...fixture.context,
+      turn: retriedTurn,
+    })).resolves.toMatchObject({ status: 'completed' });
+
+    expect(providerContexts).toHaveLength(1);
+    expect(providerContexts[0]?.filter((message) => message.role === 'user').map((message) => (
+      typeof message.content === 'string'
+        ? message.content
+        : message.content
+          .filter((part) => part.type === 'text')
+          .map((part) => part.text)
+          .join('')
+    ))).toEqual(['Test request', 'Also include costs']);
+  });
+
   test('memoizes immutable context payload reads across provider boundaries in one Turn', async () => {
     const fixture = createContext();
     const payload = {

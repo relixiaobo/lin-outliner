@@ -4665,7 +4665,7 @@ describe('ThreadService', () => {
     await service.close();
   });
 
-  test('retries the latest failed Turn from canonical user input and evidence', async () => {
+  test('retries every accepted input batch with its evidence and stable client id', async () => {
     const fixture = await createFixture();
     const thread = (await fixture.service.startThread({
       source: 'app',
@@ -4675,18 +4675,38 @@ describe('ThreadService', () => {
     })).thread;
     const accepted = await fixture.service.startRendererTurn({
       threadId: thread.id,
-      input: [{ type: 'text', text: 'Retry this exact request' }],
-      clientUserMessageId: 'retry-user-input',
+      input: [{ type: 'text', text: 'Draft a plan' }],
+      clientUserMessageId: 'retry-initial-input',
     });
     await fixture.executor.waitUntilWaiting(0);
+    await fixture.service.steerTurn({
+      threadId: thread.id,
+      expectedTurnId: accepted.turn.id,
+      input: [{ type: 'text', text: 'Also include costs' }],
+      clientUserMessageId: 'retry-steering-input',
+    });
     fixture.executor.finish(0, { status: 'failed', error: { message: 'Provider unavailable' } });
     await fixture.service.waitForIdle(thread.id);
 
     const failed = fixture.service.readTurnForHost(thread.id, accepted.turn.id)!;
-    const failedInput = failed.items.find((item) => item.type === 'userMessage')!;
-    const failedEvidence = failed.items
-      .filter((item) => item.type === 'contextEvidence')
-      .map((item) => ({ kind: item.kind, payloadRef: item.payloadRef, summary: item.summary }));
+    const acceptedInputSignature = (turn: Turn) => turn.items.flatMap((item) => {
+      if (item.type === 'contextEvidence') return [{
+        type: item.type,
+        kind: item.kind,
+        payloadRef: item.payloadRef,
+        contextRefs: item.contextRefs,
+        resourceRefs: item.resourceRefs,
+        outputRefs: item.outputRefs,
+        summary: item.summary,
+      }];
+      if (item.type === 'userMessage') return [{
+        type: item.type,
+        clientId: item.clientId,
+        content: item.content,
+        acceptedAt: item.acceptedAt,
+      }];
+      return [];
+    });
     const retried = await fixture.service.request('turn/retry', {
       threadId: thread.id,
       turnId: failed.id,
@@ -4695,18 +4715,27 @@ describe('ThreadService', () => {
     expect(retried.replacedTurnId).toBe(failed.id);
     expect(retried.turn.id).not.toBe(failed.id);
     expect(retried.turn.provenance.trigger).toEqual({ kind: 'user' });
-    expect(retried.turn.items.find((item) => item.type === 'userMessage')).toMatchObject({
-      clientId: failedInput.clientId,
-      content: failedInput.content,
+    expect(acceptedInputSignature(retried.turn)).toEqual(acceptedInputSignature(failed));
+    const retriedInputs = retried.turn.items.filter((item) => item.type === 'userMessage');
+    expect(retriedInputs.map((item) => ({ clientId: item.clientId, content: item.content }))).toEqual([
+      { clientId: 'retry-initial-input', content: [{ type: 'text', text: 'Draft a plan' }] },
+      { clientId: 'retry-steering-input', content: [{ type: 'text', text: 'Also include costs' }] },
+    ]);
+    expect(fixture.stores.metadata.readClientInput(thread.id, 'retry-initial-input')).toMatchObject({
+      turnId: retried.turn.id,
+      itemId: retriedInputs[0]!.id,
     });
-    expect(retried.turn.items
-      .filter((item) => item.type === 'contextEvidence')
-      .map((item) => ({ kind: item.kind, payloadRef: item.payloadRef, summary: item.summary })))
-      .toEqual(failedEvidence);
+    expect(fixture.stores.metadata.readClientInput(thread.id, 'retry-steering-input')).toMatchObject({
+      turnId: retried.turn.id,
+      itemId: retriedInputs[1]!.id,
+    });
     expect(fixture.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns
       ?.map((turn) => turn.id)).toEqual([retried.turn.id]);
 
     await fixture.executor.waitUntilWaiting(1);
+    expect(fixture.executor.contexts[1]!.turn.items
+      .filter((item) => item.type === 'userMessage')
+      .map((item) => item.content)).toEqual(retriedInputs.map((item) => item.content));
     fixture.executor.finish(1);
     await fixture.service.waitForIdle(thread.id);
     expect(fixture.service.readTurnForHost(thread.id, retried.turn.id)).toMatchObject({

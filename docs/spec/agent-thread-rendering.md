@@ -836,10 +836,13 @@ response tail already owns the terminal error or stopped state.
 A last Turn the user did not end leads its action row with **Retry**, which sends
 only `{threadId, turnId}` through the canonical `turn/retry` command. Main, not
 the renderer, reconstructs the replacement from the sealed Turn's structured
-input, stable client ID, context evidence, and original trigger. A host-authored
-subagent delivery therefore remains host-authored; Retry never converts its
-hidden notification envelope into reader-authored text. The renderer does not
-reuse Edit's rollback-and-send path or infer replay input from visible prose.
+input batches, stable client IDs, accepted timestamps, admission evidence, and
+original trigger. The initial input and every accepted steering input keep
+their canonical order and evidence/user-message boundary in the replacement;
+failed-attempt assistant/tool output is not replayed. A host-authored subagent
+delivery therefore remains host-authored; Retry never converts its hidden
+notification envelope into reader-authored text. The renderer does not reuse
+Edit's rollback-and-send path or infer replay input from visible prose.
 Without Retry the only way forward would be to edit a reader message — which
 frames a crash as something they mistyped and cannot represent a host-authored
 Turn at all.
@@ -863,7 +866,9 @@ The commit is one internal `history/retry` rollout event: projection removes the
 failed suffix Turn and inserts the replacement `turn/started` inside one SQLite
 transaction. Admission or append failure therefore leaves the old Turn intact;
 restart can observe only the complete old or complete replacement state. Payload
-cleanup and `turn/started` publication happen after that commit.
+cleanup and `turn/started` publication happen after that commit. Every restored
+client ID is rebound to its new canonical user Item only after the replacement
+is durable.
 
 Retry is latched while the single command round trip is in flight, and a refusal
 is reported in place rather than swallowed, so a Thread the host left in an

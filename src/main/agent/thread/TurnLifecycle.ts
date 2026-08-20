@@ -12,6 +12,7 @@ import { cursorFor,selectEffectiveContext } from '../context/ContextEpoch';
 import { admitContextEvidence,contextEvidenceItem } from '../context/evidenceAdmission';
 import { planRoleCatalogEvidence } from '../context/RoleContextReducer';
 import { observedSkillFilePaths,planSkillCatalogEvidence } from '../context/SkillContextReducer';
+import { assertCanonicalUserContent } from '../context/userContentIntegrity';
 import type { ExtensionRegistry } from '../ExtensionRegistry';
 import { readAgentImageDimensions } from '../capabilities/agentLocalTools';
 import { ImageObservationNormalizationError } from '../imageArtifacts';
@@ -47,9 +48,16 @@ type InternalTurnStartRequest = PrivilegedTurnStartRequest & {
   readonly stagedContextEvidence?: readonly StagedContextEvidence[];
   readonly reuseStagedContextEvidenceOnly?: boolean;
   readonly retryReplacementTarget?: Turn;
+  readonly retryInputBatches?: readonly CanonicalTurnRetryInputBatch[];
 };
-export type CanonicalTurnRetryAdmission = PrivilegedTurnStartRequest & {
+export interface CanonicalTurnRetryInputBatch {
+  readonly input: readonly ThreadUserContent[];
+  readonly clientUserMessageId: string | null;
+  readonly acceptedAt: number;
   readonly stagedContextEvidence: readonly StagedContextEvidence[];
+}
+export type CanonicalTurnRetryAdmission = Pick<PrivilegedTurnStartRequest, 'threadId' | 'trigger'> & {
+  readonly inputBatches: readonly CanonicalTurnRetryInputBatch[];
   readonly replacedTurn: Turn;
 };
 interface TurnLifecycleCatalog {
@@ -409,12 +417,21 @@ export class TurnLifecycle {
       request: CanonicalTurnRetryAdmission,
       admissionGuard?: () => void,
     ): Promise<TurnStartResponse> {
-      const { stagedContextEvidence, replacedTurn, ...canonicalRequest } = request;
+      const initialInput = request.inputBatches[0];
+      if (!initialInput) throw new Error('Retry input is missing from the canonical Turn');
+      for (const batch of request.inputBatches) assertCanonicalUserContent(batch.input);
+      const canonicalRequest = decodePrivilegedTurnStartRequest({
+        threadId: request.threadId,
+        input: initialInput.input,
+        clientUserMessageId: initialInput.clientUserMessageId,
+        trigger: request.trigger,
+      });
       const accepted = await this.core.threadMutex.run(request.threadId, () => this.acceptTurn({
-        ...decodePrivilegedTurnStartRequest(canonicalRequest),
-        stagedContextEvidence,
+        ...canonicalRequest,
+        stagedContextEvidence: initialInput.stagedContextEvidence,
         reuseStagedContextEvidenceOnly: true,
-        retryReplacementTarget: replacedTurn,
+        retryReplacementTarget: request.replacedTurn,
+        retryInputBatches: request.inputBatches,
       }, true, admissionGuard));
       this.scheduleAcceptedTurn(accepted);
       return accepted.response;
@@ -865,20 +882,26 @@ export class TurnLifecycle {
     ): Promise<AcceptedTurn> {
       admissionGuard?.();
       const record = this.core.requireThread(request.threadId);
-      const existing = request.clientUserMessageId
-        ? this.readCanonicalClientBinding(request.threadId, request.clientUserMessageId)
-        : null;
-      if (existing) {
-        if (request.retryReplacementTarget) {
-          if (existing.turn.id !== request.retryReplacementTarget.id) {
+      if (request.retryReplacementTarget) {
+        const clientIds = (request.retryInputBatches ?? [])
+          .flatMap((batch) => batch.clientUserMessageId ? [batch.clientUserMessageId] : []);
+        if (new Set(clientIds).size !== clientIds.length) {
+          throw new Error('Retry input contains duplicate client ids');
+        }
+        for (const clientId of clientIds) {
+          const retryBinding = this.readCanonicalClientBinding(request.threadId, clientId);
+          if (retryBinding && retryBinding.turn.id !== request.retryReplacementTarget.id) {
             throw new Error('Retry client id is already bound to another Turn');
           }
-        } else {
-        return {
-          response: { turn: existing.turn, acceptedItemId: existing.itemId, deduplicated: true },
-          thread: record.thread,
-          active: null,
-        };
+        }
+      } else if (request.clientUserMessageId) {
+        const existing = this.readCanonicalClientBinding(request.threadId, request.clientUserMessageId);
+        if (existing) {
+          return {
+            response: { turn: existing.turn, acceptedItemId: existing.itemId, deduplicated: true },
+            thread: record.thread,
+            active: null,
+          };
         }
       }
       if (request.trigger.kind !== 'user') this.assertSubagentBudgetAvailable(request.threadId);
@@ -890,7 +913,9 @@ export class TurnLifecycle {
       if (onlyIfIdle && record.thread.status.type !== 'idle') throw this.createThreadBusyError('Thread is not idle');
       const startedAt = this.now();
       const turnId = request.turnId ?? uuidV7(startedAt);
-      const admission = await this.resourceOps.resolveAdmissionContent(request.input, record.thread);
+      const admission = request.retryInputBatches
+        ? { content: request.input, createdResources: [] }
+        : await this.resourceOps.resolveAdmissionContent(request.input, record.thread);
       const createdEvidenceResources: ThreadResourceReference[] = [];
       try {
         return await this.commitAcceptedTurn(
@@ -926,7 +951,15 @@ export class TurnLifecycle {
       admissionGuard?: () => void,
     ): Promise<AcceptedTurn> {
       const preview = threadPreviewFromContent(input);
-      const item = userMessage(request.threadId, turnId, input, request.clientUserMessageId ?? null, startedAt);
+      const retryInputBatches = request.retryInputBatches ?? [];
+      const initialRetryInput = retryInputBatches[0];
+      const item = userMessage(
+        request.threadId,
+        turnId,
+        input,
+        request.clientUserMessageId ?? null,
+        initialRetryInput?.acceptedAt ?? startedAt,
+      );
       const provenance = {
         originThreadId: request.threadId,
         originTurnId: turnId,
@@ -944,17 +977,33 @@ export class TurnLifecycle {
         completedAt: null,
         durationMs: null,
       });
-      const stagedItems = (request.stagedContextEvidence ?? []).map((staged) => {
-        const stagedItem = contextEvidenceItem({
-          thread: record.thread,
+      const materializeStagedEvidence = (stagedEvidence: readonly StagedContextEvidence[]) => (
+        stagedEvidence.map((staged) => {
+          const stagedItem = contextEvidenceItem({
+            thread: record.thread,
+            turnId,
+            createItemId: () => uuidV7(),
+          }, staged.payload.kind, staged.payloadRef, staged.summary, staged.resourceRefs, {
+            contextRefs: staged.contextRefs,
+            outputRefs: staged.outputRefs,
+          });
+          assertContextPayloadDependencies(stagedItem, staged.payload);
+          return stagedItem;
+        })
+      );
+      const stagedItems = materializeStagedEvidence(request.stagedContextEvidence ?? []);
+      const replayedInputs = retryInputBatches.slice(1).map((batch) => {
+        const replayedUser = userMessage(
+          request.threadId,
           turnId,
-          createItemId: () => uuidV7(),
-        }, staged.payload.kind, staged.payloadRef, staged.summary, staged.resourceRefs, {
-          contextRefs: staged.contextRefs,
-          outputRefs: staged.outputRefs,
-        });
-        assertContextPayloadDependencies(stagedItem, staged.payload);
-        return stagedItem;
+          batch.input,
+          batch.clientUserMessageId,
+          batch.acceptedAt,
+        );
+        return {
+          items: [...materializeStagedEvidence(batch.stagedContextEvidence), replayedUser],
+          user: replayedUser,
+        };
       });
       const threadBarrier = createThreadAdmissionBarrierSnapshot(
         request.threadId,
@@ -1047,7 +1096,13 @@ export class TurnLifecycle {
         turnId,
         pendingSubagentActivities,
       );
-      const initialItems = [...pendingSubagentItems, ...stagedItems, ...evidence.items, item];
+      const initialItems = [
+        ...pendingSubagentItems,
+        ...stagedItems,
+        ...evidence.items,
+        item,
+        ...replayedInputs.flatMap((batch) => batch.items),
+      ];
       const turn = decodeTurn({ ...provisionalTurn, items: initialItems });
       const recorder = new ItemRecorder(
         request.threadId,
@@ -1170,12 +1225,22 @@ export class TurnLifecycle {
       } catch (error) {
         this.failCommittedActiveTurn(active, error);
       }
-      if (request.clientUserMessageId) {
+      const retryUserItems = retryInputBatches.length > 0
+        ? [item, ...replayedInputs.map((batch) => batch.user)]
+        : [item];
+      const clientUserItems = retryUserItems.filter((candidate): candidate is typeof candidate & {
+        readonly clientId: string;
+      } => candidate.clientId !== null);
+      if (clientUserItems.length > 0) {
         try {
           if (request.retryReplacementTarget && !this.core.ephemeral.has(request.threadId)) {
-            this.core.metadata.deleteClientInput(request.threadId, request.clientUserMessageId);
+            for (const clientItem of clientUserItems) {
+              this.core.metadata.deleteClientInput(request.threadId, clientItem.clientId);
+            }
           }
-          this.bindClientInput(request.threadId, request.clientUserMessageId, turnId, item.id);
+          for (const clientItem of clientUserItems) {
+            this.bindClientInput(request.threadId, clientItem.clientId, turnId, clientItem.id);
+          }
         } catch (error) {
           this.failCommittedActiveTurn(active, error);
         }
@@ -1969,7 +2034,7 @@ function userMessage(
   content: readonly ThreadUserContent[],
   clientId: string | null,
   acceptedAt: number,
-): ThreadItem {
+): Extract<ThreadItem, { readonly type: 'userMessage' }> {
   const id = uuidV7();
   return decodeThreadItem({
     type: 'userMessage',
@@ -1978,7 +2043,7 @@ function userMessage(
     clientId,
     content,
     acceptedAt,
-  });
+  }) as Extract<ThreadItem, { readonly type: 'userMessage' }>;
 }
 function initialTurnExecution(
   thread: Thread,
