@@ -448,7 +448,8 @@ describe('AgentConfigurationWriter', () => {
       { agentType: 'explore', persona: 'Rena', color: 'orange', source: 'built-in' },
       { agentType: 'plan', persona: 'Ada', color: 'blue', source: 'built-in' },
     ]);
-    expect(loader.buildRoleCatalogSnapshotForUserPath(cwd, reportFailure)).toBeNull();
+    expect(loader.buildRoleCatalogSnapshotForUserPath(cwd, reportFailure).entries.map((entry) => entry.name))
+      .toEqual(['general-purpose', 'explore', 'plan']);
     // Parse offsets and messages move while the file is being edited. The path
     // still represents one continuous failure episode.
     await writeFile(projectConfigurationPath(cwd), '{ a different broken shape', 'utf8');
@@ -501,6 +502,35 @@ describe('AgentConfigurationWriter', () => {
     await writeFile(projectConfigurationPath(cwd), '{ broken again', 'utf8');
     expect(loader.resolveThreadPersona(thread, reportFailure)).toBe('Rena');
     expect(reports).toHaveLength(2);
+  });
+
+  test('tracks interleaved user and project failure episodes independently', async () => {
+    const { loader, userData, cwd } = await fixture();
+    const userPath = userConfigurationPath(userData);
+    const projectPath = projectConfigurationPath(cwd);
+    await Promise.all([
+      mkdir(dirname(userPath), { recursive: true }),
+      mkdir(dirname(projectPath), { recursive: true }),
+    ]);
+    await Promise.all([
+      writeFile(userPath, '{ broken user', 'utf8'),
+      writeFile(projectPath, '{ broken project', 'utf8'),
+    ]);
+    const thread = { parentThreadId: null, agentRole: null, agentNickname: null, cwd };
+    const reports: ErrorReport[] = [];
+    const reportFailure = (report: ErrorReport) => { reports.push(report); };
+
+    expect(loader.resolveThreadPersona(thread, reportFailure)).toBe('Aspen');
+    await writeFile(userPath, '{}', 'utf8');
+    expect(loader.resolveThreadPersona(thread, reportFailure)).toBe('Aspen');
+    await writeFile(userPath, '{ broken user again', 'utf8');
+    expect(loader.resolveThreadPersona(thread, reportFailure)).toBe('Aspen');
+
+    expect(reports.map((report) => report.context?.source)).toEqual([
+      'user',
+      'project',
+      'user',
+    ]);
   });
 
   test('deleting a Role that is not there says so instead of writing a no-op', async () => {

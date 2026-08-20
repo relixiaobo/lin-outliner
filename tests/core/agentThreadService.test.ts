@@ -2329,16 +2329,23 @@ describe('ThreadService', () => {
     await noSpawn.service.close();
   });
 
-  test('a Turn survives a configuration the loader cannot read', async () => {
-    // A12: the Role catalog is announced per Turn, on the user path. A typo in
-    // `.tenon/agent.json` is the user's to fix — not a reason to end the answer
-    // they are waiting for. Null is already what a Thread that cannot spawn
-    // Agents gets, so the model falls back to the types it always knows.
+  test('a live configuration failure retracts custom Roles without ending the Turn', async () => {
+    // A12: the Role catalog is announced per Turn, on the user path. A typo is
+    // the user's to fix, but the failure baseline must still retract a custom
+    // Role the preceding Turn announced.
     const configurationRoot = await mkdtemp(join(tmpdir(), 'tenon-thread-service-agent-config-'));
     roots.push(configurationRoot);
     const userData = join(configurationRoot, 'user-data');
     await mkdir(join(userData, 'agent'), { recursive: true });
-    await writeFile(userConfigurationPath(userData), '{ oops', 'utf8');
+    const configurationPath = userConfigurationPath(userData);
+    await writeFile(configurationPath, JSON.stringify({
+      roles: {
+        reviewer: {
+          description: 'Reviews the current change.',
+          developerInstructions: 'Read the change and report correctness issues.',
+        },
+      },
+    }), 'utf8');
     const loader = new AgentConfigurationLoader(userData);
     const roleCatalogRead = spyOn(loader, 'buildRoleCatalogSnapshot');
     const identityCatalogRead = spyOn(loader, 'resolveIdentityCatalog');
@@ -2362,17 +2369,48 @@ describe('ThreadService', () => {
 
     await fixture.service.startRendererTurn({
       threadId: thread.id,
+      input: [{ type: 'text', text: 'Use the reviewer' }],
+    });
+    await fixture.executor.waitUntilWaiting(0);
+    const firstTurn = fixture.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns![0]!;
+    const firstRoleItem = firstTurn.items.find((item) => (
+      item.type === 'contextEvidence' && item.kind === 'roleCatalog'
+    ));
+    expect(firstRoleItem).toBeDefined();
+    expect((await fixture.stores.payloads.readContext(thread.id, firstRoleItem!.payloadRef)))
+      .toMatchObject({
+        mode: 'baseline',
+        entries: [
+          { name: 'general-purpose', change: 'available' },
+          { name: 'explore', change: 'available' },
+          { name: 'plan', change: 'available' },
+          { name: 'reviewer', change: 'available' },
+        ],
+      });
+    fixture.executor.finish(0);
+    await fixture.service.waitForIdle(thread.id);
+
+    await writeFile(configurationPath, '{ oops', 'utf8');
+    await fixture.service.startRendererTurn({
+      threadId: thread.id,
       input: [{ type: 'text', text: 'Still answer me' }],
     });
-    await fixture.executor.waitUntilWaiting();
+    await fixture.executor.waitUntilWaiting(1);
 
-    const items = fixture.service.readThread({ threadId: thread.id, includeTurns: true })
-      .thread.turns![0]!.items;
-    expect(roleCatalogRead).toHaveBeenCalledTimes(1);
-    expect(items).not.toContainEqual(expect.objectContaining({ kind: 'roleCatalog' }));
+    const secondTurn = fixture.service.readThread({ threadId: thread.id, includeTurns: true }).thread.turns![1]!;
+    const secondRoleItem = secondTurn.items.find((item) => (
+      item.type === 'contextEvidence' && item.kind === 'roleCatalog'
+    ));
+    expect(roleCatalogRead).toHaveBeenCalledTimes(2);
+    expect(secondRoleItem).toBeDefined();
+    expect((await fixture.stores.payloads.readContext(thread.id, secondRoleItem!.payloadRef)))
+      .toMatchObject({
+        mode: 'delta',
+        entries: [{ name: 'reviewer', change: 'removed' }],
+      });
     // The Turn reached the model: the environment evidence is there and the
     // executor is waiting, rather than the Turn having failed at admission.
-    expect(items).toContainEqual(expect.objectContaining({ kind: 'turnEnvironment' }));
+    expect(secondTurn.items).toContainEqual(expect.objectContaining({ kind: 'turnEnvironment' }));
     const identities = await fixture.service.request('identities/get', { threadId: thread.id });
     expect(identityCatalogRead).toHaveBeenCalledTimes(1);
     expect(identities.entries).toEqual([
@@ -2388,7 +2426,7 @@ describe('ThreadService', () => {
       code: 'agent-configuration-user-path-degraded',
       context: { operation: 'resolve-role-catalog', source: 'user' },
     });
-    fixture.executor.finish();
+    fixture.executor.finish(1);
     await fixture.service.waitForIdle(thread.id);
     await fixture.service.close();
   });

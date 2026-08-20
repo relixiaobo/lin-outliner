@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import type { AgentCoreNotification, Thread, ThreadItem, Turn } from '../../src/core/agent/protocol';
+import type {
+  AgentCoreNotification,
+  AgentIdentityEntry,
+  Thread,
+  ThreadItem,
+  Turn,
+} from '../../src/core/agent/protocol';
 import { ThreadStore, mergeLoadedTurns } from '../../src/renderer/agent/store/threadStore';
 import type { api } from '../../src/renderer/api/client';
 import { replayableModelCall } from '../fixtures/agentToolCallHistory';
@@ -112,6 +118,68 @@ describe('renderer Thread store', () => {
     await Promise.resolve();
 
     expect(store.getSnapshot().identityCatalog.get('main')?.persona).toBe('Juniper');
+  });
+
+  test('refreshes the roster after Turn admission for live configuration breakage and recovery', async () => {
+    const owner = thread('thread-1', 1);
+    let entries: readonly AgentIdentityEntry[] = [
+      { agentType: 'main', persona: 'Juniper', color: 'pink', source: 'built-in' },
+      { agentType: 'reviewer', persona: 'Wren', color: 'violet', source: 'project' },
+    ];
+    let identityReads = 0;
+    let submittedTurns = 0;
+    const client = {
+      onAgentCoreNotification: () => () => undefined,
+      agentCoreRequest: async (method: string) => {
+        if (method === 'thread/list') return { data: [owner], nextCursor: null };
+        if (method === 'identities/get') {
+          identityReads += 1;
+          return { entries };
+        }
+        if (method === 'thread/turns/list') return { data: [], nextCursor: null, backwardsCursor: null };
+        if (method === 'goal/get') return { goal: null };
+        if (method === 'thread/configuration/get') return configurationResponse(owner);
+        if (method === 'thread/descendants') return { data: [], queuedWorkThreadIds: [] };
+        if (method === 'thread/subagents/list') return { data: [] };
+        if (method === 'turn/submit') {
+          submittedTurns += 1;
+          const accepted = turn(`turn-${submittedTurns}`, 'inProgress', '');
+          return {
+            acceptedItemId: `item-${submittedTurns}`,
+            deduplicated: false,
+            turn: accepted,
+            turnId: accepted.id,
+          };
+        }
+        throw new Error(`Unexpected method: ${method}`);
+      },
+    } as unknown as ThreadStoreClient;
+    const store = new ThreadStore(client);
+    await store.initialize();
+    await Promise.resolve();
+    expect(store.getSnapshot().identityCatalog.get('main')?.persona).toBe('Juniper');
+    expect(store.getSnapshot().identityCatalog.has('reviewer')).toBe(true);
+
+    entries = [
+      { agentType: 'main', persona: 'Aspen', color: 'teal', source: 'built-in' },
+      { agentType: 'general-purpose', persona: 'Bruno', color: 'amber', source: 'built-in' },
+      { agentType: 'explore', persona: 'Rena', color: 'orange', source: 'built-in' },
+      { agentType: 'plan', persona: 'Ada', color: 'blue', source: 'built-in' },
+    ];
+    await store.send([{ type: 'text', text: 'Observe the live break' }]);
+    await Promise.resolve();
+    expect(store.getSnapshot().identityCatalog.get('main')?.persona).toBe('Aspen');
+    expect(store.getSnapshot().identityCatalog.has('reviewer')).toBe(false);
+
+    entries = [
+      { agentType: 'main', persona: 'Scout', color: 'blue', source: 'built-in' },
+      { agentType: 'reviewer', persona: 'Wren', color: 'violet', source: 'project' },
+    ];
+    await store.send([{ type: 'text', text: 'Observe the live recovery' }]);
+    await Promise.resolve();
+    expect(store.getSnapshot().identityCatalog.get('main')?.persona).toBe('Scout');
+    expect(store.getSnapshot().identityCatalog.get('reviewer')?.persona).toBe('Wren');
+    expect(identityReads).toBe(3);
   });
 
   test('does not let an older page response overwrite a realtime terminal Turn', async () => {

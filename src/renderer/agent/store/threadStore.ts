@@ -172,6 +172,13 @@ export class ThreadStore {
     }
   }
 
+  private refreshIdentityCatalogAfterTurnAdmission(): void {
+    // A configuration file may be edited outside the settings window. Turn
+    // admission is the first product boundary guaranteed to observe that live
+    // break or recovery, so let the selected transcript follow the same read.
+    void this.reloadIdentityCatalog();
+  }
+
   dispose(): void {
     this.unsubscribeNotifications?.();
     this.unsubscribeNotifications = null;
@@ -438,6 +445,7 @@ export class ThreadStore {
       ...(userView ? { userView } : {}),
       ...withContext,
     });
+    this.refreshIdentityCatalogAfterTurnAdmission();
     return response.turn;
   }
 
@@ -543,6 +551,7 @@ export class ThreadStore {
       clientUserMessageId: crypto.randomUUID(),
       ...(userView ? { userView } : {}),
     });
+    this.refreshIdentityCatalogAfterTurnAdmission();
   }
 
   async respondToUserInput(

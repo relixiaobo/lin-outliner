@@ -204,12 +204,17 @@ built-in default; a type without a built-in default is named after its own key.
 `identities/get` returns the same built-in fallback catalog, so the prompt and
 renderer never disagree about a built-in participant during degradation. The
 same rule covers the Role catalog, which is also announced per Turn: an
-unreadable catalog becomes "no catalog this Turn", already the result for a
-Thread that cannot spawn Agents, so the model falls back to the built-in types
-it always knows. Only typed configuration-read failures degrade; unrelated
-resolver defects still propagate. One stable warning is sent to the diagnostic
-log per configuration file's continuous failure episode. A successful read
-ends the episode, and the in-memory episode tracker has a fixed upper bound.
+unreadable catalog becomes a stable built-in-only baseline. Normal catalog
+journaling therefore retracts any custom Roles announced before the file broke
+instead of leaving them selectable in model context. Only typed
+configuration-read failures degrade; unrelated resolver defects still
+propagate. After every successful Turn admission, the renderer re-reads the
+selected conversation's identity catalog, so an external configuration break
+or recovery reaches the open transcript without a thread switch or settings
+event. One stable warning is sent to the diagnostic log per configuration
+file's continuous failure episode. Each user/project layer ends its own episode
+as soon as that layer reads successfully, even when the other layer still
+fails, and the in-memory episode tracker has a fixed upper bound.
 
 The paths that stay **fail-closed** are the ones where continuing would be
 worse. Spawn resolution (`resolveProfile`, `resolveRole`, `resolveAgentType`),
