@@ -1564,3 +1564,45 @@ a Turn, admit steering while it runs, fail the provider, retry, and assert both
 the replacement history and the first replacement provider request. Also assert
 that every client identity now resolves to the replacement. A single-message
 fixture can prove the happy path while leaving the data-loss path untouched.
+
+## A live fallback needs a replacement value, a refresh boundary, and an owner
+
+PR #570 began with the right A12 decision: malformed Agent configuration should
+not end the Turn that is trying to resolve a persona or Role catalog. The first
+repair still returned `null` for a broken Role catalog. That looked like a safe
+absence at the loader boundary, but the downstream journal already defined
+`null` as "no update." A custom Role announced by the previous healthy Turn
+therefore remained in model context after the file broke, even though the next
+spawn could no longer resolve it.
+
+**A fallback is not complete until it says what state replaces the failed
+state.** For snapshot or projection data, "nothing" often means retain the old
+value. Degradation needs a canonical replacement or an explicit tombstone: here,
+a stable built-in-only snapshot makes normal catalog journaling remove stale
+custom Roles. Test the transition, not just the isolated failure: healthy custom
+state, broken source, then recovered source, with the removal and restoration
+both asserted.
+
+The renderer exposed the other two parts of the same contract. Returning a safe
+catalog in `identities/get` did not help an already-open transcript because no
+production event asked for it after an external file edit. Refreshing after Turn
+admission fixed the root conversation, but the refresh implicitly used the
+selected root while a child-detail composer submits to an unselected child. A
+worktree child can have a different `.tenon/agent.json`, so the child prompt used
+its own fallback while its visible speaker kept the root's persona.
+
+**Every live fallback must name both the boundary that re-evaluates it and the
+owner whose state is being replaced.** Configuration edited inside Settings can
+use its broadcast; configuration edited outside the app is first guaranteed to
+be observed at Turn admission, so admission refreshes the submitted Thread.
+Catalog values and stale-response generations are keyed by that Thread, not by
+ambient selection, and concurrent reads for two Threads cannot invalidate each
+other. The same ownership rule applies to failure episodes: each user/project
+layer clears its own diagnostic state when that layer recovers, even while the
+other remains broken.
+
+The regression shape is therefore a matrix rather than one happy-path judge:
+valid, broken, and repaired across root and independently configured child, with
+both the model-facing projection and renderer-facing identity asserted. A test
+that calls the safe resolver directly proves only the replacement value; it does
+not prove that production re-evaluates the right owner when the source changes.

@@ -1114,6 +1114,17 @@ and the merged PR, distilled rules in [`lessons.md`](lessons.md). Everything
 older than this window is recorded in [`CHANGELOG.md`](../CHANGELOG.md) under
 `[0.1.0]` and in the PR history.
 
+- **agent-config-turn-path-degrades** (cc-2, PR #570, merged 2026-08-20 —
+  fast-track, no plan file) — malformed user or project Agent configuration now
+  degrades the Turn-time persona, Role snapshot, and identity roster to
+  built-in-safe values while spawn, editor, and writer boundaries still reject
+  it. Runtime catalogs re-read live and stay isolated per Thread, including
+  worktree children. Gate: `/code-review ultra` found ten issues; re-review
+  found three live failure/recovery gaps and then one child-scope gap. All were
+  fixed, and the final re-review found no reportable issue. Merge-state
+  typecheck, `docs:check`, 266 focused core tests, and 45 focused renderer tests
+  passed, with five green CI samples; the branch-head full suites passed 2567
+  core tests (6 skipped) and 1323 renderer tests.
 - **provider-retry-state-machine** (codex-2, PR #567, merged 2026-08-20 —
   [plan](plans/archive/provider-retry-state-machine.md)) — provider execution now
   separates the initial request from five explicit transient retries, names

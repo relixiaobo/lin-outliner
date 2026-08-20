@@ -99,6 +99,32 @@ Entries reference the pull request that introduced them.
 
 ### Fixed
 
+- **A broken Agent configuration no longer kills the Turn waiting on it
+  (PR #570, cc-2)** — a malformed user or project `.tenon/agent.json` used to
+  throw while every Turn resolved its persona and Role catalog, ending the
+  user's action before the model ran. Turn-time reads now degrade only typed
+  configuration read/decode failures: the participant keeps its built-in name,
+  the renderer receives the same built-in identity roster, and a stable
+  built-in-only Role snapshot retracts custom Roles announced before the file
+  broke. Programming defects still propagate, while spawn, editor, raw-catalog,
+  and writer-validation paths remain fail-closed because continuing there would
+  hide or execute unreadable configuration. Diagnostics are bounded and keyed
+  by configuration path, and each user/project layer starts a new episode after
+  its own successful read rather than waiting for the other layer to recover.
+  The reads remain live instead of cached, so the next admitted Turn observes a
+  repair. Renderer identity catalogs and stale-response guards are now scoped
+  per Thread: root selection, child-detail loading, settings changes, Turn
+  admission, and deletion all target the Thread they actually affect. A
+  worktree child's prompt and visible speaker therefore resolve from the same
+  child cwd instead of borrowing the selected root's identity. Gate:
+  `/code-review ultra` found ten issues; the first re-review found three live
+  failure/recovery gaps, and the next found the remaining worktree-child scope
+  error. `eba322b6`, `610a8945`, and `6833c4f9` closed them in sequence; the
+  final re-review found no reportable issue. Verified on the clean merge state
+  with typecheck, `docs:check`, 266 focused core tests, 45 focused renderer
+  tests, and five green CI E2E samples plus baseline subtraction. The branch
+  head also passed the full core suite (2567 pass, 6 environment skips) and full
+  renderer suite (1323 pass).
 - **Provider failures recover without losing what the user actually asked
   (PR #567, codex-2)** — the initial provider request is no longer counted as a
   retry: transient request failures now show `Retrying 1/5` through
