@@ -163,9 +163,11 @@ notification, delivery retry, or idle hook resumes the stopped child. The
 canonical notification continuation of a direct parent is delivery within that
 parent's current generation, not a child resume or a new generation. Once
 FR-04 closes that generation's notification cutoff, a later child generation
-remains addressable and resumable, but its result waits durably for the parent's
-next explicit generation rather than reopening the closed one. Unrelated work
-should normally spawn a new Agent, but the host does not classify prompt intent.
+remains addressable and resumable. Its later result becomes eligible for the
+first explicit parent generation admitted after that notification is durable;
+it never reopens the closed generation or targets a parent generation merely
+because the child started. Unrelated work should normally spawn a new Agent, but
+the host does not classify prompt intent.
 
 ### Run flow
 
@@ -228,8 +230,8 @@ from `usage >= cap`. A provider failure, user/model stop, or host-restart
 interruption does not become eligible merely because usage also crossed the
 breaker. Once its descendants settle, that noneligible generation closes with
 its existing terminal fact and carries all unconsumed direct-child notifications
-forward to the parent's next explicit generation; it neither deadlocks nor
-starts provider work that would erase the stop boundary.
+forward under the same durable-after-admission rule below; it neither deadlocks
+nor starts provider work that would erase the stop boundary.
 
 An eligible generation settles as follows:
 
@@ -269,13 +271,16 @@ newest first, and select round-robin across groups. This represents each direct
 Agent's latest pending generation before repeated generations from one Agent can
 consume every slot. Take only the selection prefix whose fixed metadata and
 aggregate marker fit both ceilings. Provider input identifies full output by the
-fixed `{agentId, generation, turnId}` tuple; unbounded paths and messages stay in
-the host manifest. Fixed metadata also includes execution status, provenance,
-usage, typed-error code, and any nested settlement-coverage counts. Description,
-error message, and output text share the variable allowance. Divide that
-allowance equally among selected members and redistribute unused shares in the
-same stable order. Each excerpt keeps a deterministic head and tail, favoring
-the tail where the requested handoff should appear.
+fixed `{agentId, generation, turnId}` tuple. The host manifest stores only those
+validated identities, execution status, provenance, usage numbers, typed-error
+code, source byte/token counts, disposition, and nested coverage counts. It
+never copies a description, error message, output text, worktree path, or
+transcript path. The envelope resolves those variable fields from their
+canonical source, then makes description, error message, and output text share
+the variable allowance. Divide that allowance equally among selected members
+and redistribute unused shares in the same stable order. Each excerpt keeps a
+deterministic head and tail, favoring the tail where the requested handoff should
+appear.
 
 Every batch member receives a durable `full | excerpted | omitted` disposition.
 An excerpted member carries its own marker with exact omitted UTF-8 bytes and
@@ -290,13 +295,16 @@ settlement coverage in the parent's eventual foreground result or background
 notification and projection.
 
 Full output remains authoritative in each child's canonical Turn Items and
-transcript. The host-side batch manifest durably resolves every fixed tuple to
-its existing `output-file` inspection path; it does not copy or truncate the
-source or put an unbounded path into provider input. The tool-free epilogue
-cannot read omitted content and never claims otherwise. The user can inspect the
-full child transcript from the Agent detail. A later parent generation still
-receives bounded evidence and may explicitly resume a named child, but no hidden
-chunk call or model-facing read tool is added.
+transcript. The host resolves a manifest tuple through those existing records;
+it does not persist a second path or content copy. The manifest never crosses the
+process seam and this plan adds no manifest-list or manifest-member IPC. The
+existing execution projection carries only bounded coverage derived from that
+manifest: aggregate `full` / `excerpted` / `omitted` counts on the parent and one
+disposition plus numeric omitted-byte/token counts on a projected child
+generation. The user opens the existing child Thread to inspect its complete
+transcript. The tool-free epilogue cannot read omitted content and never claims
+otherwise; a later parent generation may explicitly resume a named child, but
+no hidden chunk call or model-facing read tool is added.
 
 **Single-round admission boundary.** Persist `exhaustedSettlement` before the
 Turn becomes active. Renderer submission and `agent_message` must detect that
@@ -348,16 +356,46 @@ settles the committed Turn as failed with zero provider attempts and explicit
 zero-consumption coverage. This at-most-one-round choice prefers an honest
 incomplete handoff over a duplicate overshoot.
 
-The batch transaction also closes a notification cutoff for that parent
-generation. It serializes against direct-child resume: a resume that commits
-first makes the batch recheck fail and wait; a cutoff that commits first lets the
-child start but tags its later notification for the parent's next generation.
-Post-cutoff notifications neither hold the closed generation open nor admit a
-second epilogue. A later user message or `agent_message` that explicitly starts
-the parent generation atomically claims those carry-forward notifications into
-its initial bounded envelope before provider I/O. The same excerpt and omission
-rules apply, while the fresh generation otherwise runs with its ordinary tools,
-rounds, and breaker.
+**Carry-forward eligibility.** The batch transaction closes a notification
+cutoff for that parent generation, but child resume does not preassign a future
+parent target. The transaction that makes a post-cutoff terminal notification
+durable reads the parent's currently committed generation and stores that number
+as `eligibleAfterGeneration`. Explicit parent generation `H` may claim only
+pending rows with `eligibleAfterGeneration < H` whose notification commit
+linearizes before the generation-and-initial-Turn admission commit for `H`.
+
+Notification commit and explicit parent admission/claim use the same per-parent
+admission lock plus one ledger transaction or equivalent compare-and-set
+protocol; their commit order is the eligibility order. If the notification
+commits while parent generation `G` is current, `G+1` may claim it. If `G+1`
+admission commits first, even if provider I/O has already begun when the child
+settles, the notification records `G+1` and `G+2` is its earliest eligible
+generation. It is never injected into running `G+1`, ordinary idle/startup
+delivery skips it, and it never starts a hidden continuation. Capacity deferral
+leaves the row pending with the same eligibility rather than pinning or
+retargeting it. With no later explicit parent generation, the durable pending
+count remains visible and no provider work occurs.
+
+**Fresh-generation capacity priority.** Carry-forward is an optional non-user
+sidecar, not part of the mandatory explicit input. Before claiming eligible
+rows, admission resolves the ordinary stable prompt and tool schemas, preserves
+the complete explicit user/Agent input plus its context evidence and attachments,
+reserves the model response allowance, and proves that base request fits without
+carry-forward. A base request that does not fit follows the existing capacity
+failure path and moves no notification state.
+
+Only the remaining estimated-token allowance may hold carry-forward, additionally
+capped at `16_384` estimated tokens and `65_536` UTF-8 bytes. The fixed pending
+marker itself is capped at 128 estimated tokens and 512 UTF-8 bytes. If that
+marker does not fit, admission starts the otherwise-valid explicit generation
+unchanged, claims no rows, and exposes their pending count only through the host
+projection. If it fits, admission applies the same deterministic selection,
+fair-share excerpt, and omission rules to all then-eligible rows within the
+residual allowance. Under the admission lock, the final encoded-fit check
+shrinks or drops the sidecar before one transaction commits generation `H`, its
+initial Turn, and the final immutable claim set. A dropped sidecar claims no
+rows; no post-commit compensation release is required. This transaction can
+never reject or truncate a base request that fit on its own.
 
 Non-exhausted parents and root Threads keep the ordinary notification path. The
 exception exists only to close an eligible delegated generation without
@@ -410,11 +448,12 @@ at greater total cost.
 
 **FR-05:** Persist the frozen cap, settled usage, warning latch, pre-epilogue
 origin, exhausted-settlement mode, immutable batch manifest, member coverage,
-notification cutoff/carry-forward target, provider-attempt marker, and
-continuation identity beside the execution generation. Carry that state through
-initial admission, explicit resume, rollback, each Turn settlement, terminal
-settlement, and startup recovery with compare-and-set guards. An older terminal
-pipeline cannot debit, rebind, or overwrite a resumed generation.
+notification cutoff, carry-forward `eligibleAfterGeneration`, provider-attempt
+marker, and continuation identity beside the execution generation. Carry that
+state through initial admission, explicit resume, rollback, each Turn
+settlement, terminal settlement, and startup recovery with compare-and-set
+guards. An older terminal pipeline cannot debit, rebind, or overwrite a resumed
+generation.
 
 Usage becomes durable at ordinary or failure Turn settlement, as it does today.
 A hard process crash may lose usage observed only in the in-flight model call;
@@ -424,13 +463,15 @@ per-call journal. The next explicit generation still receives a fresh breaker.
 
 Extend `SubagentExecutionProjection` with the typed terminal error, exact parent
 `deliveryTurnId`, and bounded settlement-coverage summary, including its origin.
-The unbounded member manifest remains host-side; the detail surface reads it by
-batch identity in deterministic pages of at most 100 members rather than
-crossing the process seam as one array. This absorbs
-`subagent-projection-error-surface`: cold reopen keeps the failure reason, and a
-settled-but-undelivered child Turn cannot shift report cards through the current
-count-from-the-end join. Missing inspection-only projection data degrades under
-A12; it does not fail a user Turn or settlement.
+The new error projection carries its bounded code plus a UTF-8-safe message
+preview capped at 4,096 bytes and the exact omitted-byte count. Every other field
+added by this plan is a bounded enum, validated ID, safe integer, or aggregate
+count; the fixed-identity manifest never crosses the process seam. Full variable
+content stays in its canonical child Turn and existing transcript surface. This
+absorbs `subagent-projection-error-surface`: cold reopen keeps the failure
+reason, and a settled-but-undelivered child Turn cannot shift report cards
+through the current count-from-the-end join. Missing inspection-only projection
+data degrades under A12; it does not fail a user Turn or settlement.
 
 ### Parent and renderer behavior
 
@@ -447,7 +488,9 @@ rewrites the child output or resumes the child. Exhausted delegated parents use
 FR-04's single bounded settlement continuation. When that continuation did not
 receive every full member output, its foreground result or next parent
 notification and Agent detail show the host-recorded included/excerpted/omitted
-counts and whether provider I/O began; model prose cannot hide the gap.
+counts and whether provider I/O began. Carry-forward rows deferred for timing or
+capacity show as a separate pending count until claimed; model prose cannot hide
+either gap.
 
 `subagentPresentation` uses the single execution axis plus provenance. A normal
 run says `Finished`, not `Complete`; a budget stop may say `Interrupted - Budget
@@ -471,10 +514,12 @@ semantics rather than a hidden reuse of the new-Agent counter.
 - `SubagentExecutionLedger`, `SubagentRequestLedger`, `TurnLifecycle`,
   `SubagentCollaboration`, `subagentOutput`, and
   `subagentExecutionProjection` - generation budget, ownership split, durable
-  batch manifest, bounded envelope, resume, recovery, and delivery.
+  fixed-identity batch manifest, durable-after-admission carry-forward,
+  bounded envelope, resume, recovery, and delivery.
 - `ThreadService`, `PiTurnExecutor`, `ContextBudgetPlanner`, and native kernel
-  fixtures - atomic no-steering admission, provider-aware input fit, ordinary
-  generation enforcement, and the tool-free single-round settlement mode.
+  fixtures - atomic no-steering admission, base-request-first capacity planning,
+  ordinary generation enforcement, and the tool-free single-round settlement
+  mode.
 - `stablePrompt.identityBlock` and its prompt fixtures - one canonical
   delegated-Thread handoff instruction for built-in and custom Roles, without
   a parser or settlement dependency.
@@ -516,9 +561,14 @@ board item, retired-premise sweep, and changelog at merge.
   parent handoff, but preserves user-stop authority, stable delivery identity,
   and a finite overshoot. Fresh explicit input remains the recovery path.
 - Child generations that finish after a parent cutoff can accumulate durable
-  carry-forward notifications. They are visible as pending and enter the next
-  explicit parent generation through the same bounded envelope; they never
-  reopen a closed generation or create another hidden overshoot.
+  carry-forward notifications. A row becomes eligible only after its own durable
+  commit and waits for the first later explicit parent generation with marker
+  capacity. It is never injected into a generation already admitted, never
+  overrides explicit-input capacity, and never creates a hidden continuation.
+- The coordination manifest is unbounded in member count but contains only fixed
+  identities and scalar facts and never crosses IPC. Aggregate coverage and
+  per-generation dispositions cross as bounded projection fields; full text
+  remains in the existing child transcript surface.
 - A normal `Finished` run may or may not satisfy the assignment. That ambiguity
   is honest and intentional; the parent receives the Agent's evidence-and-gaps
   handoff as untrusted output and makes the judgment.
@@ -579,8 +629,8 @@ board item, retired-premise sweep, and changelog at merge.
   child generation from admitting a second epilogue.
 - **AC-07:** Crash recovery preserves terminal status, provenance, typed error,
   neutral output, exact delivery Turn, pre-epilogue origin, member coverage,
-  notification cutoff/carry-forward target, provider-attempt fact, and usage
-  committed before the crash. Pre-commit retry cannot issue provider I/O;
+  notification cutoff, `eligibleAfterGeneration`, provider-attempt fact, and
+  usage committed before the crash. Pre-commit retry cannot issue provider I/O;
   post-attempt recovery cannot replay it; tests retain the ordinary in-flight
   usage-loss residual.
 - **AC-08:** No stop, warning, output, delivery retry, idle hook, rejected
@@ -605,15 +655,29 @@ board item, retired-premise sweep, and changelog at merge.
   input allowance. Fixtures cover 20 maximum-fan-out Agents, more than 20
   concurrently resumed Agents, repeated generations from one Agent, oversized
   output/error/path text, deterministic fair selection, excerpt markers,
-  whole-member omission, a pre-provider capacity failure, resume racing the
-  cutoff, post-cutoff completion, and carry-forward consumption by the next
-  explicit parent generation. Manifest detail fixtures pin stable 100-member
-  pagination without an unbounded IPC payload.
+  whole-member omission, and a pre-provider capacity failure.
 - **AC-13:** Status fixtures pin every FR-04 matrix row. In particular, a
   successful hard-interruption epilogue is `interrupted + budget`, a successful
   normal last-call overshoot is `finished + none`, and epilogue failure, user
   stop, model stop, and ambiguous host restart report their own terminal facts
   rather than deriving status from `usage >= cap`.
+- **AC-14:** Carry-forward ordering fixtures serialize notification durability
+  against parent admission. If `G+1` provider I/O begins before the child
+  notification settles, the row records `eligibleAfterGeneration = G+1`, is not
+  injected or idle-delivered, and is first eligible for `G+2`. If the row
+  commits first, `G+1` may claim it. A row deferred for capacity stays pending
+  and eligible without a hidden continuation or numeric retarget.
+- **AC-15:** A fresh explicit generation plans its stable prompt, ordinary
+  tools, complete explicit input/evidence/attachments, and response reserve
+  before carry-forward. A fixture with a near-capacity attachment, large tool
+  schemas, and a large backlog starts exactly as it would without that backlog;
+  the sidecar shrinks or disappears, claims remain pending when even its
+  128-token / 512-byte marker cannot fit, and bounded host coverage stays visible.
+- **AC-16:** The batch manifest stores no free-form text or paths and has no
+  renderer IPC. Projection fixtures cap the new error preview at 4,096 UTF-8
+  bytes with an exact omission count and prove that all other new cross-process
+  fields are bounded identities, enums, safe integers, or aggregate counts even
+  when one source member is oversized.
 
 ## Build Checklist
 
@@ -630,7 +694,10 @@ board item, retired-premise sweep, and changelog at merge.
   plus batch origin, coverage, and attempt identity across resume/rollback/
   restart races, while retaining hard-crash in-flight usage loss explicitly.
 - [ ] Pin the provider-aware envelope builder, fair member selection, durable
-  full-output manifest, omission disclosure, and pre-provider capacity failure.
+  fixed-identity manifest, omission disclosure, and pre-provider capacity
+  failure without adding manifest IPC.
+- [ ] Serialize carry-forward durability against explicit parent admission;
+  protect the complete base request before allocating residual sidecar capacity.
 - [ ] Add the canonical final-handoff instruction to every delegated Thread and
   pin that it remains model-authored output rather than settlement state.
 - [ ] Rewrite the named spec sections and sweep active plans/board premises at
