@@ -228,20 +228,27 @@ are eligible for the exceptional continuation:
 Persist that origin from the actual pre-epilogue Turn. Do not infer it later
 from `usage >= cap`. A provider failure, user/model stop, or host-restart
 interruption does not become eligible merely because usage also crossed the
-breaker. Once its descendants settle, that noneligible generation closes with
-its existing terminal fact and carries all unconsumed direct-child notifications
-forward under the same durable-after-admission rule below; it neither deadlocks
-nor starts provider work that would erase the stop boundary.
+breaker. Before publishing either an eligible or noneligible stopped generation
+as idle, persist the generation-closing latch defined below. Once its descendants
+settle, a noneligible generation closes with its existing terminal fact and
+reclassifies all unconsumed direct-child notifications as carry-forward in the
+cutoff transaction. It neither deadlocks nor starts provider work that would
+erase the stop boundary.
 
 An eligible generation settles as follows:
 
 1. Wait until every direct background child is terminal and its notification is
    durable, preserving the existing descendant-before-parent ordering.
-2. Claim every pending direct-child notification in stable ledger order and
-   reserve one immutable batch in the same parent generation. The batch stores
-   its origin and complete ordered `{agentId, generation, turnId}` member set.
-3. Build the bounded envelope below, then commit one idempotent notification
-   Turn together with the batch and every member's exact `deliveryTurnId`.
+2. Build a candidate bounded envelope from that immutable terminal snapshot.
+   Under the parent-generation gate, recheck the full descendant and notification
+   set. A changed snapshot releases the gate and restarts this step; a stable one
+   closes the cutoff and prepares one batch in `goals.sqlite` with its origin,
+   reserved Turn ID, and complete ordered `{agentId, generation, turnId}` member
+   set.
+3. Append one idempotent `turn/started` carrying the prepared batch identity and
+   envelope digest to the parent rollout. That exact append is the cross-store
+   commit point. Finalize every member's `deliveryTurnId` in the ledger before
+   provider launch.
 4. Run that Turn in persisted `exhaustedSettlement` mode. It bypasses only the
    exhausted-budget admission check, exposes no tools, accepts no steering, and
    permits at most one logical assistant round. Canonical automatic provider
@@ -259,7 +266,9 @@ estimator and `65_536` UTF-8 bytes. Its actual ceiling is lower when necessary:
 the provider-aware allowance subtracts the stable prompt, provider framing, and
 reserved response budget from the selected model's input window; no tools are
 present. The builder shrinks content before Turn execution; it never relies on a
-provider overflow to discover that mandatory input does not fit. The static
+provider overflow as its sizing mechanism. An unexpected provider-reported
+overflow remains a typed epilogue context failure with provider-attempted but
+zero child-judgment coverage, not permission for a second epilogue. The static
 ceilings leave room for the parent's response while bounding multibyte and
 escaping expansion; the 20-entry limit matches the default new-Agent fan-out,
 while resumed overflow is disclosed rather than treated as impossible.
@@ -316,11 +325,14 @@ resume work after a later user stop. Once the epilogue is terminal, only a newly
 submitted user message or a fresh `agent_message` call may take the ordinary
 explicit-resume path and create a new generation with a new breaker.
 
-Batch activation and renderer/Agent input use the same per-Thread admission
-lock. The batch commits only while no accepted input or pending steering exists.
-If explicit input commits first, the batch releases and that input starts the
-fresh generation with carry-forward notifications; if the batch commits first,
-the no-mutation rejection above applies. No race can attach input to the
+Batch activation and renderer/Agent input use the same parent-generation gate.
+The batch prepares only while no accepted input or pending steering exists. If
+explicit admission acquires the gate first, it reclassifies the old generation's
+pending rows as carry-forward, prepares the fresh generation, and holds the gate
+through its cross-store commit or rollback. A successful commit closes the old
+generation without an epilogue and claims only the rows that fit the new
+sidecar; rollback lets the closing pipeline retry. If the cutoff/batch prepares
+first, the no-mutation rejection above applies. No race can attach input to the
 single-round Turn without letting the model consume it.
 
 Renderer Stop, `task_stop`, and host interruption still abort the live provider
@@ -345,36 +357,108 @@ epilogue preserves the pre-epilogue execution meaning; a failed or explicitly
 stopped epilogue reports what actually ended the generation. Crossing the cap
 alone never rewrites a normal answer into a budget interruption.
 
-Before the batch/Turn transaction commits, claim or admission failure releases
-the complete batch and the existing idle/startup delivery retry may try again
-without provider I/O. After commit, the stable Turn and member links are the
-only delivery identity. Persist an attempt marker immediately before provider
-I/O. Startup may execute a committed Turn whose marker proves no attempt began;
-if an attempt may have begun, it terminalizes that same Turn as `interrupted +
+**Generation-closing cutoff.** Every eligible and noneligible exhausted parent
+uses one `open -> closing -> closed` generation record. The actual pre-epilogue
+terminal event writes `closing` before the idle hook can claim ordinary delivery;
+startup resumes that closing work without provider I/O. The closing pipeline
+waits for descendants outside the lock, then takes one parent-generation gate
+shared by direct-child generation admission, terminal-notification commit,
+ordinary notification claim/Turn admission, and explicit parent admission. It
+never waits for a child while holding that gate. The parent-generation gate is
+always acquired before a child resume lock or the parent's existing Turn-
+admission lock; no callback may acquire them in the reverse order.
+
+At the cutoff linearization point, recheck that no direct child generation is
+live, prepared, or in terminal settlement and that no pre-cutoff notification is
+already delivering. One `goals.sqlite` transaction then records `closed` and:
+
+- for an eligible origin, freezes every pending pre-cutoff row into the prepared
+  epilogue batch; or
+- for a noneligible origin, leaves no Turn to run and atomically reclassifies
+  every pending pre-cutoff row as carry-forward with
+  `eligibleAfterGeneration = G`.
+
+An explicit parent admission that wins the gate before an eligible epilogue
+prepare uses the same closing transaction with an `explicitAdmission`
+disposition: all pending pre-cutoff rows first become carry-forward eligible
+after `G`, and only the residual-capacity subset is claimed into prepared
+generation `G+1`. Rows that do not fit remain pending; the generation rollback
+restores the cutoff to `closing` and every row to its pre-prepare classification,
+so the eligible epilogue may compete again. Only a rollout commit makes the
+`explicitAdmission` cutoff and carry-forward classification final.
+
+If direct-child resume linearizes first, its newly prepared generation makes the
+cutoff recheck fail and the closing pipeline waits for that generation's durable
+terminal notification. If the cutoff linearizes first, resume may proceed but
+records that child generation as carry-forward-only; it cannot reopen `G`.
+Ordinary delivery that linearizes first must finish or roll back its Turn
+admission before cutoff can close; after `closing` is durable, no new ordinary
+delivery claim may begin. A closed cutoff makes idle/startup delivery skip its
+carry-forward rows. Those rows remain liveness and inspection facts, but no
+longer count as outstanding descendant work that can keep generation `G` open.
+
+**Prepared cross-store admission.** Neither an epilogue nor a fresh-generation
+sidecar claims crash atomicity across stores. Its `goals.sqlite` prepare record
+is written first and contains the admission kind, reserved Turn ID, stable batch
+ID, immutable member set and dispositions, serialized-envelope digest, and, for
+an explicit generation, the complete previous-generation, cutoff, and member-
+classification snapshot. The exact rollout `turn/started` containing the same
+bounded batch ID and digest is the commit point; `thread_history.sqlite` is a
+rebuildable projection, not an authority. Turn execution and provider I/O remain
+blocked until the ledger finalizes the committed generation and every active
+member link.
+
+Startup reconciles prepared records against the rollout before notification
+delivery, child terminal recovery, or new admission:
+
+- when no `turn/started` exists for the reserved Turn ID, an explicit generation
+  atomically restores its previous generation, previous cutoff state, and pre-
+  prepare notification classifications; a prepared epilogue keeps its closed
+  cutoff but cancels that admission and returns its members to pending, after
+  which settlement recovery may prepare a new Turn/batch without provider I/O;
+- when that reserved Turn carries the exact prepared batch ID and envelope
+  digest, startup finalizes the generation and its links to the one durable Turn
+  and never rolls back or appends a replacement; and
+- when the reserved Turn ID exists but its admission identity or digest differs,
+  startup still commits the generation identity, marks the batch
+  `admissionFailed`, starts no provider work, terminalizes that Turn with the
+  typed admission error, and links no member. Explicit-sidecar rows regain their
+  pre-prepare eligibility; failed-epilogue rows become pending carry-forward
+  eligible after `G`.
+
+The parent-generation gate stays held from ledger prepare through Turn append
+and ledger finalize during live admission. Therefore a terminal notification
+never observes a merely prepared generation as current. A crash drops the
+in-process gate, but startup reconciliation restores the same ordering before
+any competing pipeline runs. After live admission or startup reconciliation
+settles, every notification is consequently either pending with its defined
+eligibility or linked to exactly one durable initial Turn.
+
+For an epilogue, persist an attempt marker immediately before provider I/O.
+Startup may execute a committed Turn whose marker proves no attempt began; if an
+attempt may have begun, it terminalizes that same Turn as `interrupted +
 hostRestart` and never replays it. A deterministic preflight capacity failure
 settles the committed Turn as failed with zero provider attempts and explicit
 zero-consumption coverage. This at-most-one-round choice prefers an honest
 incomplete handoff over a duplicate overshoot.
 
-**Carry-forward eligibility.** The batch transaction closes a notification
-cutoff for that parent generation, but child resume does not preassign a future
-parent target. The transaction that makes a post-cutoff terminal notification
-durable reads the parent's currently committed generation and stores that number
-as `eligibleAfterGeneration`. Explicit parent generation `H` may claim only
-pending rows with `eligibleAfterGeneration < H` whose notification commit
-linearizes before the generation-and-initial-Turn admission commit for `H`.
+**Carry-forward eligibility.** Child resume does not preassign a numeric parent
+target. A carry-forward-only child generation's terminal transaction reads the
+parent's last committed generation after prepared-admission reconciliation and
+stores that number as `eligibleAfterGeneration`. Explicit parent generation `H`
+may claim only pending rows with `eligibleAfterGeneration < H` whose notification
+commit linearizes before the prepare for `H`.
 
-Notification commit and explicit parent admission/claim use the same per-parent
-admission lock plus one ledger transaction or equivalent compare-and-set
-protocol; their commit order is the eligibility order. If the notification
-commits while parent generation `G` is current, `G+1` may claim it. If `G+1`
-admission commits first, even if provider I/O has already begun when the child
-settles, the notification records `G+1` and `G+2` is its earliest eligible
-generation. It is never injected into running `G+1`, ordinary idle/startup
-delivery skips it, and it never starts a hidden continuation. Capacity deferral
-leaves the row pending with the same eligibility rather than pinning or
-retargeting it. With no later explicit parent generation, the durable pending
-count remains visible and no provider work occurs.
+Notification commit and explicit parent prepare use the same parent-generation
+gate, and their committed order is the eligibility order. If the notification
+commits while parent generation `G` is committed, `G+1` may claim it. If `G+1`
+commits first, even if provider I/O has already begun when the child settles, the
+notification records `G+1` and `G+2` is its earliest eligible generation. It is
+never injected into running `G+1`, ordinary idle/startup delivery skips it, and
+it never starts a hidden continuation. Capacity deferral leaves the row pending
+with the same eligibility rather than pinning or retargeting it. With no later
+explicit parent generation, the durable pending count remains visible and no
+provider work occurs.
 
 **Fresh-generation capacity priority.** Carry-forward is an optional non-user
 sidecar, not part of the mandatory explicit input. Before claiming eligible
@@ -391,15 +475,40 @@ marker does not fit, admission starts the otherwise-valid explicit generation
 unchanged, claims no rows, and exposes their pending count only through the host
 projection. If it fits, admission applies the same deterministic selection,
 fair-share excerpt, and omission rules to all then-eligible rows within the
-residual allowance. Under the admission lock, the final encoded-fit check
-shrinks or drops the sidecar before one transaction commits generation `H`, its
-initial Turn, and the final immutable claim set. A dropped sidecar claims no
-rows; no post-commit compensation release is required. This transaction can
-never reject or truncate a base request that fit on its own.
+residual allowance. Under the parent-generation gate, the final encoded-fit
+check shrinks or drops the sidecar before the ledger prepares generation `H`,
+its reserved Turn, and the immutable claim set. A dropped sidecar claims no
+rows. The cross-store protocol above, rather than a fictitious shared
+transaction, then commits or rolls back that preparation. Carry-forward can
+never reject or truncate a base request that fit on its own during admission.
 
-Non-exhausted parents and root Threads keep the ordinary notification path. The
-exception exists only to close an eligible delegated generation without
-discarding child output or deadlocking its parent.
+**Pre-output overflow fallback.** The common estimator remains intentionally
+approximate. If the provider rejects the first fresh-generation request for
+context overflow before any assistant content or tool admission, and that Turn
+has a carry-forward sidecar, one dedicated sidecar fallback detaches that
+optional evidence before the canonical overflow-compaction counter runs. It is
+available at most once per Turn and does not consume #567's ordinary compaction
+retry. Under the parent-generation gate, one ledger transaction marks the batch
+`detachedForOverflow`, clears its active Turn links, and returns every member to
+pending with unchanged eligibility. The durable detached state makes all later
+projections of that generation omit the sidecar even though its batch reference
+remains in the canonical Turn for audit.
+
+The same logical assistant round then retries exactly the stable prompt, tools,
+explicit input, evidence, attachments, and response reserve that the no-backlog
+generation would have sent. It adds no compaction or replacement Turn. If the
+durable detach write itself fails, fail closed as an independent persistence
+error; if any output/tool admission already occurred, no sidecar-free retry is
+allowed and the actual provider failure settles normally with the existing links
+authoritative. If the base-only retry also overflows, it enters the unchanged
+ordinary overflow path with the full canonical compaction retry still available.
+This fallback protects explicit work from estimator error without claiming that
+provider tokenization is locally exact.
+
+Non-exhausted delegated parents and root Threads keep the ordinary notification
+path. The unified cutoff applies only when an exhausted delegated generation has
+already reached its pre-epilogue terminal boundary: eligible origins receive the
+one bounded continuation, while noneligible origins close without provider work.
 
 ### Retirement of tree conservation
 
@@ -447,13 +556,24 @@ at greater total cost.
 ### Persistence, recovery, and delivery
 
 **FR-05:** Persist the frozen cap, settled usage, warning latch, pre-epilogue
-origin, exhausted-settlement mode, immutable batch manifest, member coverage,
-notification cutoff, carry-forward `eligibleAfterGeneration`, provider-attempt
-marker, and continuation identity beside the execution generation. Carry that
-state through initial admission, explicit resume, rollback, each Turn
+origin, `open | closing | closed` notification state, exhausted-settlement mode,
+prepared admission and previous-generation snapshot, fixed batch identity and
+digest, immutable member manifest, batch link state (`prepared | linked |
+detachedForOverflow | admissionFailed`), member coverage,
+child-generation carry-forward class, `eligibleAfterGeneration`, provider-
+attempt marker, and continuation identity beside the execution generation.
+Carry that state through initial admission, explicit resume, rollback, each Turn
 settlement, terminal settlement, and startup recovery with compare-and-set
 guards. An older terminal pipeline cannot debit, rebind, or overwrite a resumed
 generation.
+
+Recovery treats rollout `turn/started` as the only cross-store commit fact and
+runs prepared-admission reconciliation before generic crashed-Turn settlement,
+notification delivery, or child terminal replay. The read projection may be
+rebuilt after that decision but cannot cause a generation rollback or finalize a
+batch by itself. Batch detachment after recognized pre-output overflow is a
+durable ledger transition, so restart cannot reinsert the omitted sidecar or
+lose the rows returned to pending.
 
 Usage becomes durable at ordinary or failure Turn settlement, as it does today.
 A hard process crash may lose usage observed only in the in-flight model call;
@@ -482,15 +602,17 @@ and scanner. Launch and resume copy promises notification when the **run
 settles**, never when the task completes.
 
 `threadBecameIdle` and `deliverPendingNotifications` remain the canonical
-delivery route and may start the direct parent's notification Turn. Their
-provider work lets the parent judge already-recorded child output; it never
-rewrites the child output or resumes the child. Exhausted delegated parents use
-FR-04's single bounded settlement continuation. When that continuation did not
-receive every full member output, its foreground result or next parent
-notification and Agent detail show the host-recorded included/excerpted/omitted
-counts and whether provider I/O began. Carry-forward rows deferred for timing or
-capacity show as a separate pending count until claimed; model prose cannot hide
-either gap.
+delivery route for open, ordinary rows and may start the direct parent's
+notification Turn. They must take the parent-generation gate and skip a closing
+or closed generation's carry-forward rows. Their provider work lets the parent
+judge already-recorded child output; it never rewrites the child output or
+resumes the child. Exhausted delegated parents use FR-04's single bounded
+settlement continuation. When that continuation did not receive every full
+member output, its foreground result or next parent notification and Agent
+detail show the host-recorded included/excerpted/omitted counts and whether
+provider I/O began. Carry-forward rows deferred for timing, capacity, or
+pre-output overflow show as a separate pending count until claimed; model prose
+cannot hide either gap.
 
 `subagentPresentation` uses the single execution axis plus provenance. A normal
 run says `Finished`, not `Complete`; a budget stop may say `Interrupted - Budget
@@ -517,9 +639,13 @@ semantics rather than a hidden reuse of the new-Agent counter.
   fixed-identity batch manifest, durable-after-admission carry-forward,
   bounded envelope, resume, recovery, and delivery.
 - `ThreadService`, `PiTurnExecutor`, `ContextBudgetPlanner`, and native kernel
-  fixtures - atomic no-steering admission, base-request-first capacity planning,
+  and provider-retry fixtures - pre-mutation steering rejection,
+  base-request-first capacity planning, sidecar-aware overflow recovery,
   ordinary generation enforcement, and the tool-free single-round settlement
   mode.
+- `ContextProjector` - omit a durably detached carry-forward sidecar from every
+  later provider projection of that generation without deleting its canonical
+  audit reference.
 - `stablePrompt.identityBlock` and its prompt fixtures - one canonical
   delegated-Thread handoff instruction for built-in and custom Roles, without
   a parser or settlement dependency.
@@ -565,6 +691,19 @@ board item, retired-premise sweep, and changelog at merge.
   commit and waits for the first later explicit parent generation with marker
   capacity. It is never injected into a generation already admitted, never
   overrides explicit-input capacity, and never creates a hidden continuation.
+- A direct child resumed before cutoff keeps the parent generation open until
+  that child settles; a resume after cutoff is carry-forward-only. Repeated
+  explicit resumes can therefore delay closure, but cannot let a parent report
+  terminal ahead of live descendant work or reopen a closed generation.
+- Generation/notification state and canonical Turns cannot share a storage
+  transaction. Durable prepare records, rollout `turn/started` as commit point,
+  provider-launch gating, and startup reconciliation replace crash atomicity.
+  A mismatch fails admission rather than guessing which store won.
+- A provider can reject an estimated-to-fit fresh request before output. The
+  sidecar-detach fallback may spend one extra rejected provider attempt, but the
+  retry is the unchanged base request, every row returns to pending, #567's
+  canonical compaction allowance remains intact, and no second logical assistant
+  round or replacement Turn is created.
 - The coordination manifest is unbounded in member count but contains only fixed
   identities and scalar facts and never crosses IPC. Aggregate coverage and
   per-generation dispositions cross as bounded projection fields; full text
@@ -586,22 +725,20 @@ board item, retired-premise sweep, and changelog at merge.
 
 ## Collision Result
 
-- PR #568 (`long-message-disclosure-anchor`) has merged. Its
-  `agent-thread-rendering` and adjacent renderer changes are baseline; this
-  branch rebases onto that baseline before implementation.
-- Non-Draft PR #567 (`provider-retry-state-machine`) plans terminal-error,
-  `ThreadService`, `threadStore`, and runtime/rendering-spec changes. It is
-  significant and makes ordinary host-authored notification failures manually
-  retryable. This plan must land after it or coordinate the shared interface so
-  `exhaustedSettlement` is the explicit no-Retry exception; whichever
-  implementation lands second adopts the first protocol shape.
-- Non-Draft PR #570 (`agent-config-turn-path-degrades`) directly overlaps
-  `ThreadService` and `agent-subagent-threads`. It should land before this
-  implementation, then this branch rebases.
+- This branch is rebased onto `main` at `42409996`, including merged PR #567
+  (`provider-retry-state-machine`) and #570 (`agent-config-turn-path-degrades`).
+  Their Retry, typed-error, prepared-generation, `ThreadService`, and fail-soft
+  config contracts are baseline. `exhaustedSettlement` remains the explicit
+  no-manual-Retry exception to #567.
+- Open Draft PR #571 (`thread-transcript-paint-continuity`) plans changes to
+  `ThreadView.tsx`, `tests/e2e/agent-thread.spec.ts`, and
+  `docs/spec/agent-thread-rendering.md`, which this plan also names. #571 should
+  implement and land first because its renderer-only paint ownership is
+  independent and smaller; this implementation then rebases and preserves that
+  baseline while changing Agent execution presentation. The overlap is a file
+  radar signal and does not serialize plan review.
 - `subagent-projection-error-surface` is absorbed, not parallel work.
-- The significant queue remains at its cap of two: #567 and this plan. Under
-  the repository's lane rules, #570 does not consume a significant review-queue
-  slot.
+- The significant review queue is at its cap of two: #569 and #571.
 
 ## Acceptance Criteria
 
@@ -610,7 +747,7 @@ board item, retired-premise sweep, and changelog at merge.
 - **AC-02:** Normal, failed, interrupted, killed, and budget-stopped generations
   preserve useful scanned partial output under one neutral payload name without
   a provider call that rewrites the stopped Turn or a task-completion claim;
-  direct-parent delivery follows AC-06.
+  direct-parent delivery follows FR-04 and AC-06/AC-17 as applicable.
 - **AC-03:** Exhausting one generation neither debits nor stops a sibling or
   descendant; each measured incident child fits independently under the
   default.
@@ -625,14 +762,16 @@ board item, retired-premise sweep, and changelog at merge.
   injection, descendant work, or manual Retry. It makes at most one logical
   assistant round under the bounded automatic provider-attempt policy, records
   overshoot usage, and reaches terminal on every outcome without rebinding any
-  member's `deliveryTurnId`. Its atomic notification cutoff prevents a later
-  child generation from admitting a second epilogue.
+  member's active `deliveryTurnId`. Its unified notification cutoff prevents a
+  later child generation from admitting a second epilogue.
 - **AC-07:** Crash recovery preserves terminal status, provenance, typed error,
   neutral output, exact delivery Turn, pre-epilogue origin, member coverage,
-  notification cutoff, `eligibleAfterGeneration`, provider-attempt fact, and
-  usage committed before the crash. Pre-commit retry cannot issue provider I/O;
-  post-attempt recovery cannot replay it; tests retain the ordinary in-flight
-  usage-loss residual.
+  notification cutoff/closing state, `eligibleAfterGeneration`, prepared batch
+  identity/digest, provider-attempt fact, and usage committed before the crash.
+  A prepared epilogue with no rollout commit returns its rows to pending while
+  retaining the closed cutoff; settlement recovery may prepare again without
+  prior provider I/O. Post-attempt recovery cannot replay it. Tests retain the
+  ordinary in-flight usage-loss residual.
 - **AC-08:** No stop, warning, output, delivery retry, idle hook, rejected
   steering, or Turn Retry resumes a stopped child or manufactures its handoff.
   Renderer and Agent input racing an active epilogue mutates no target state;
@@ -672,12 +811,37 @@ board item, retired-premise sweep, and changelog at merge.
   before carry-forward. A fixture with a near-capacity attachment, large tool
   schemas, and a large backlog starts exactly as it would without that backlog;
   the sidecar shrinks or disappears, claims remain pending when even its
-  128-token / 512-byte marker cannot fit, and bounded host coverage stays visible.
+  128-token / 512-byte marker cannot fit, and bounded host coverage stays
+  visible. A second fixture makes the common estimator admit a high-tokenization
+  sidecar while the provider reports overflow and no prior Turn is compactable:
+  before output, the batch durably detaches, its rows return to pending, and the
+  same logical round retries the byte-identical no-sidecar base request without
+  consuming the ordinary compaction retry counter.
 - **AC-16:** The batch manifest stores no free-form text or paths and has no
   renderer IPC. Projection fixtures cap the new error preview at 4,096 UTF-8
   bytes with an exact omission count and prove that all other new cross-process
   fields are bounded identities, enums, safe integers, or aggregate counts even
   when one source member is oversized.
+- **AC-17:** Cutoff race fixtures put a direct-child resume between the terminal
+  observation and cutoff. Resume-first makes the parent recheck fail and wait;
+  cutoff-first admits only a carry-forward child generation. For provider
+  failure, user stop, model stop, and host restart whose settled usage is also at
+  or above the breaker, fixtures place a notification both before and after
+  cutoff and prove that the parent closes with its original terminal fact,
+  ordinary delivery starts no provider work, and every row stays visible and
+  eligible for a later explicit generation.
+- **AC-18:** Cross-store admission fixtures crash an explicit carry-forward
+  generation after ledger prepare but before rollout append, after the exact
+  `turn/started` append but before ledger finalization, and after ledger
+  finalization but before provider launch. The first rolls back the precise
+  generation and restores the prior cutoff state and notification
+  classifications; the latter two retain the same committed generation, cutoff
+  disposition, and Turn without replacement. Fixtures cover both a later
+  admission from an already-closed cutoff and an explicit admission that
+  preempts `closing`. A reserved Turn whose batch identity or digest mismatches
+  starts no provider work. After every recovery, each notification is either
+  pending with its pre-prepare eligibility or linked once to that durable initial
+  Turn, and history projection rebuild cannot change the decision.
 
 ## Build Checklist
 
@@ -690,14 +854,21 @@ board item, retired-premise sweep, and changelog at merge.
 - [ ] Preserve ordinary parent notification continuation; add the idempotent
   batched, bounded, tool-free single-round settlement path for an eligible
   exhausted parent, including rejection of steering and manual Retry.
+- [ ] Add one persisted generation-closing cutoff for eligible and noneligible
+  origins; serialize child resume, notification commit, ordinary delivery, and
+  explicit parent admission through the parent-generation gate.
 - [ ] Preserve output on every stop path; persist typed error and delivery Turn
   plus batch origin, coverage, and attempt identity across resume/rollback/
   restart races, while retaining hard-crash in-flight usage loss explicitly.
 - [ ] Pin the provider-aware envelope builder, fair member selection, durable
   fixed-identity manifest, omission disclosure, and pre-provider capacity
   failure without adding manifest IPC.
-- [ ] Serialize carry-forward durability against explicit parent admission;
-  protect the complete base request before allocating residual sidecar capacity.
+- [ ] Extend prepared-generation admission across the sidecar/batch identity,
+  use rollout `turn/started` as commit point, and pin rollback/finalization for
+  every cross-store crash window.
+- [ ] Protect the complete base request before allocating residual sidecar
+  capacity; on recognized pre-output overflow, durably detach the sidecar and
+  retry the unchanged base while returning its rows to pending.
 - [ ] Add the canonical final-handoff instruction to every delegated Thread and
   pin that it remains model-authored output rather than settlement state.
 - [ ] Rewrite the named spec sections and sweep active plans/board premises at
