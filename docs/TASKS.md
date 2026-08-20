@@ -181,9 +181,10 @@ before any directional/security-sensitive build.
   durable, omission-aware, and safe across cutoff, Retry, overflow, Stop, and
   restart races. This absorbs `subagent-projection-error-surface`: typed terminal
   errors and retry-stable delivery anchors ship as part of the same coordinated
-  protocol change. Product implementation has not started; the #571 transcript-
-  paint implementation lands first, then this ships as one complete PR with its
-  specs, focused restart/race fixtures, and light/dark verification. Design:
+  protocol change. Product implementation has not started; Draft PR #572 claims
+  the #571 transcript-paint implementation and lands first, then this ships as
+  one complete PR with its specs, focused restart/race fixtures, and light/dark
+  verification. Design:
   [`subagent-task-outcome-contract`](plans/subagent-task-outcome-contract.md).
 - **agent-view-surface** (P2, `done` 2026-08-18) — both PRs shipped: mode
   awareness (#556) and view sort/filter/group/column configuration (#559), both
@@ -732,12 +733,13 @@ three-layer build order. Layer 1 (#228) + Layer 2 (#234) + `keyboard-a11y` (Laye
 ### Performance
 
 - **thread-transcript-paint-continuity** (`draft`, ratified 2026-08-20; plan PR
-  #571, cc; priority pending PM assignment) — prevent empty Agent transcript
-  frames by giving each Turn one paint owner, normalizing virtual-window math to
-  the Turn container, and repairing uncovered ranges through separate
-  event/rAF and layout-effect commit contracts. Product implementation has not
-  started; ship it as one complete PR with the plan's boundary cohorts,
-  first-frame coverage judges, performance traces, and light/dark visual check.
+  #571, implementation Draft PR #572, cc; priority pending PM assignment) —
+  prevent empty Agent transcript frames by giving each Turn one paint owner,
+  normalizing virtual-window math to the Turn container, and repairing uncovered
+  ranges through separate event/rAF and layout-effect commit contracts. #572 is
+  the active claim, but product code has not started; ship it as one complete PR
+  with the plan's boundary cohorts, first-frame coverage judges, performance
+  traces, and light/dark visual check.
   Design: [`thread-transcript-paint-continuity`](plans/thread-transcript-paint-continuity.md).
 - **performance-optimization** (P0–P3 program, PR #116) — prioritized catalog from a three-way
   perf audit (`docs/plans/performance-optimization.md`). **P0 (#117) · P1 PR-A (#119) + PR-B (#121)
